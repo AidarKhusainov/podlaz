@@ -58,7 +58,7 @@ The project should not initially prioritize:
 
 TunWarden must be fully usable through CLI commands.
 
-Required commands:
+Required command families:
 
 ```bash
 tunwarden status
@@ -66,6 +66,7 @@ tunwarden connect <profile-or-node>
 tunwarden disconnect
 tunwarden doctor
 tunwarden logs
+tunwarden plan <profile-or-node>
 tunwarden panic-reset
 ```
 
@@ -84,12 +85,12 @@ privileged root daemon
 
 ### G3. Transactional network changes
 
-Every VPN activation must be treated as a transaction:
+Every privileged VPN activation must be treated as a transaction:
 
 ```text
 plan -> snapshot -> apply -> verify -> commit
-                         ↓
-                      rollback
+                             ↓
+                          rollback
 ```
 
 TunWarden must keep enough state to clean up after failed attempts and crashes.
@@ -120,25 +121,47 @@ tunwarden explain dns
 tunwarden explain firewall
 ```
 
-## 5. MVP scope
+## 5. Scope and sequencing
 
-### Included in MVP
+The product has two early technical milestones. This avoids mixing a safe proxy-only preview with the higher-risk full TUN implementation.
+
+### v0.1.0: proxy-only technical preview
+
+Included:
 
 - Linux only.
 - CLI only.
 - Root daemon managed by systemd.
+- Local IPC between CLI and daemon.
 - Xray core lifecycle management.
 - Manual node import for VLESS, VMess, Trojan, Shadowsocks where feasible.
 - Base64 subscription import.
-- TUN full-tunnel mode.
 - Proxy-only mode.
+- `status`, `logs`, and `doctor` basics.
+- No system route, DNS, firewall, or TUN mutation.
+
+Exit expectation:
+
+- A user can import a profile/subscription, start Xray in proxy-only mode, inspect status/logs, and stop it cleanly.
+
+### v0.2.0: safe TUN preview
+
+Included:
+
+- TUN full-tunnel mode.
 - systemd-resolved DNS backend.
-- NetworkManager integration.
+- NetworkManager event integration.
 - nftables-based firewall/kill-switch foundation.
-- `doctor` diagnostics.
+- Transaction apply/verify/commit/rollback.
+- `plan` dry-run output.
+- `doctor` diagnostics for route/DNS/TUN/firewall/core state.
 - `panic-reset` cleanup.
 
-### Excluded from MVP
+Exit expectation:
+
+- Failed connection attempts roll back, disconnect leaves no TunWarden-owned networking state, and panic reset can recover from common broken states.
+
+### Excluded from early milestones
 
 - GUI.
 - Windows/macOS/mobile.
@@ -153,7 +176,7 @@ tunwarden explain firewall
 
 ### FR-001: Profile management
 
-TunWarden must support storing, listing, showing, and deleting profiles.
+TunWarden must support storing, listing, showing, validating, and deleting profiles.
 
 A profile must include:
 
@@ -240,6 +263,31 @@ It must clean:
 - TunWarden core processes,
 - pending transaction state.
 
+### FR-007: Proxy-only mode
+
+Proxy-only mode must allow validating profiles and running Xray without modifying system networking.
+
+It must not:
+
+- create a TUN interface,
+- replace the default route,
+- mutate global DNS,
+- install nftables redirect rules,
+- claim full VPN leak protection.
+
+### FR-008: Full-tunnel mode
+
+Full-tunnel mode must be implemented only through the network transaction model.
+
+It must:
+
+- create and own a stable TUN interface,
+- route general traffic through the TUN interface,
+- route the VPN server outside the TUN interface,
+- configure DNS intentionally,
+- verify health before commit,
+- roll back on failure.
+
 ## 7. Non-functional requirements
 
 ### NFR-001: Safety
@@ -269,12 +317,21 @@ TunWarden must not assume:
 
 Core planners must be testable without root privileges by producing desired state plans from input snapshots.
 
+### NFR-006: Lightweight operation
+
+TunWarden should avoid unnecessary resident components, polling loops, broad dependency chains, and hidden global mutation. Background work should be justified by reliability or observability.
+
+### NFR-007: Secure defaults
+
+TunWarden must not silently accept unsafe profile settings. Risky settings such as insecure TLS, unsupported transports, ambiguous DNS behavior, and incomplete IPv6 handling must be visible to the user.
+
 ## 8. Success metrics
 
 Early success should be measured by reliability, not feature count.
 
 Examples:
 
+- Proxy-only mode starts and stops Xray cleanly without touching system networking.
 - Connection/disconnection leaves no stale TunWarden routes/rules/firewall state.
 - Suspend/resume reconnects automatically on Ubuntu LTS.
 - `panic-reset` restores direct internet connectivity in common failure cases.
