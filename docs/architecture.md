@@ -6,6 +6,11 @@ TunWarden must separate unprivileged user interaction from privileged Linux netw
 
 The architecture must make dangerous operations explicit, observable, reversible, and testable.
 
+The early architecture has two execution modes:
+
+1. **Proxy-only mode:** starts and supervises Xray without changing system routes, DNS, firewall, or TUN state.
+2. **TUN full-tunnel mode:** applies Linux networking changes only through the transaction model.
+
 ## 2. High-level components
 
 ```text
@@ -64,6 +69,8 @@ Responsibilities:
 - handle cleanup and recovery,
 - expose a restricted local API.
 
+The daemon should be the only long-lived owner of privileged mutable state.
+
 ### 3.3 Core process
 
 Xray should be treated as a child engine process, not as the application supervisor.
@@ -102,6 +109,7 @@ Initial API operations:
 - `Doctor()`
 - `PanicReset()`
 - `ListProfiles()`
+- `ImportProfile(source)`
 - `ImportSubscription(source)`
 
 ## 5. State model
@@ -158,7 +166,9 @@ tunwarden logs --network
 
 ## 6. Transaction model
 
-All network changes must happen through a transaction object.
+All full-tunnel network changes must happen through a transaction object.
+
+Proxy-only mode does not need a network transaction because it must not modify system networking. It still needs process lifecycle state for Xray supervision and cleanup.
 
 ```text
 NetworkTransaction
@@ -239,6 +249,8 @@ Executors:
 - `CoreExecutor`,
 - `NetworkManagerExecutor`.
 
+Executor implementations must be narrow and auditable. They should not contain hidden planning decisions.
+
 ## 8. Engine abstraction
 
 TunWarden starts as Xray-first but should not make networking depend on Xray internals.
@@ -310,6 +322,7 @@ Generated files may live under:
 - Cleanup must be idempotent.
 - Core crashes must not imply system networking cleanup was completed.
 - NetworkManager limited connectivity must not automatically be treated as connection failure.
+- Proxy-only failure must not trigger full network cleanup unless stale TunWarden-owned network state is detected separately.
 
 ## 12. Testing architecture
 
@@ -317,10 +330,11 @@ Required test layers:
 
 1. Unit tests for profile parsing and normalization.
 2. Unit tests for route/DNS/firewall planners.
-3. Integration tests in Linux network namespaces.
-4. VM tests for Ubuntu/Debian/Fedora.
-5. Suspend/resume simulation where possible.
-6. Failure injection tests:
+3. Unit tests for engine config generation.
+4. Integration tests in Linux network namespaces.
+5. VM tests for Ubuntu/Debian/Fedora.
+6. Suspend/resume simulation where possible.
+7. Failure injection tests:
    - core crash,
    - daemon crash,
    - DNS apply failure,
