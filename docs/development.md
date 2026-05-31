@@ -2,7 +2,7 @@
 
 ## 1. Requirements
 
-- Go 1.23 or newer.
+- Go 1.26 or newer.
 - Linux for networking implementation work.
 - Ubuntu LTS or Debian stable for Tier 1 manual testing.
 - `iproute2`, `nftables`, `systemd`, `systemd-resolved`, and NetworkManager for full networking work.
@@ -26,14 +26,16 @@ test -z "$(gofmt -l .)"
 go test ./...
 ```
 
+CI uses the Go version declared in `go.mod`.
+
 ## 3. Safety rules for contributors
 
-These rules are mandatory for any code touching privileged networking:
+These rules are mandatory for any code touching privileged Linux networking:
 
-1. Do not add route, rule, DNS, nftables, TUN, or process mutations without a rollback path.
+1. Add a rollback path before adding route, rule, DNS, nftables, TUN, or process-state changes.
 2. Do not add SUID binaries.
 3. Do not write directly to `/etc/resolv.conf` in normal operation.
-4. Do not hide route/DNS/firewall changes behind vague helper functions.
+4. Keep route, DNS, and firewall behavior explicit and reviewable.
 5. Prefer dry-run output before execution.
 6. Keep cleanup idempotent.
 7. Keep daemon-owned resources identifiable by name, marker, table ID, or state file.
@@ -117,7 +119,7 @@ Before declaring TUN mode stable, run manual tests on Ubuntu LTS at minimum:
 - Wi-Fi reconnect,
 - DHCP renewal,
 - DNS change,
-- `recover --execute --yes` after simulated crash.
+- `recover --execute --yes` after simulated failure.
 
 ## 7. Implementation preferences
 
@@ -136,4 +138,4 @@ Before declaring TUN mode stable, run manual tests on Ubuntu LTS at minimum:
 
 ## 8. Current implementation limitation
 
-The current foundation build is intentionally safe and mostly declarative. Commands print contracts, diagnostic summaries, and cleanup plans. They do not yet mutate system networking state.
+The current foundation build is intentionally safe and mostly declarative. Commands print contracts, diagnostic summaries, and recovery plans. They do not yet change host networking state.
