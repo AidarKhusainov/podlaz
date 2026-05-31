@@ -19,8 +19,6 @@ go run ./cmd/tunwarden doctor
 go run ./cmd/tunwarden recover
 ```
 
-The current foundation build may still expose `panic-reset` as a temporary compatibility command while implementation catches up with the canonical `recover` contract.
-
 CI currently checks:
 
 ```bash
