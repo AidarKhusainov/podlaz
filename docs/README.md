@@ -12,6 +12,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 - If code behavior changes, update the related requirement or roadmap section in the same pull request.
 - Architecture and networking rules are requirements, not implementation notes.
 - CLI command names, arguments, flags, and milestone boundaries are owned by [CLI contract](./cli.md).
+- Filesystem layout, output redaction, JSON compatibility, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
 - Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 - Historical uppercase documents are deprecated and must not be used as canonical references.
 
@@ -22,6 +23,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | [Product requirements](./product-requirements.md) | Product thesis, target users, scope, functional requirements, non-functional requirements, success metrics. |
 | [CLI contract](./cli.md) | Canonical command names, arguments, flags, output expectations, safety semantics, and milestone boundaries. |
 | [Architecture](./architecture.md) | CLI/daemon split, privilege boundary, state model, transaction model, engine abstraction, backend interfaces. |
+| [State and security requirements](./state-and-security.md) | User/daemon/system state separation, XDG/systemd paths, JSON compatibility, redaction, confirmations, service hardening, and core process safety. |
 | [Package boundaries](./package-boundaries.md) | Dependency direction between CLI, daemon, API, domain, planner, executor, and adapter packages. |
 | [Networking and reliability requirements](./networking-reliability.md) | TUN, routing, DNS, nftables, NetworkManager, sleep/resume, health checks, recovery, reliability tests. |
 | [Subscriptions and profiles](./subscriptions-and-profiles.md) | Subscription inputs, format adapters, normalized profile model, validation, update behavior, storage. |
@@ -70,8 +72,8 @@ The primary value proposition is:
 1. **No blind system mutation.** Every privileged networking operation must be planned, logged, and reversible.
 2. **Rollback and recovery first.** Cleanup and recovery must exist before advanced full-tunnel features are considered stable.
 3. **CLI-first.** The first UX is a stable command-line tool.
-4. **Daemon-owned privilege.** Privileged networking belongs in a root daemon, not in a SUID GUI/client binary.
-5. **Observable by default.** Users must be able to inspect routes, DNS, firewall state, core process status, and connection health.
+4. **Daemon-owned privilege.** Privileged networking belongs in the daemon, not in a SUID GUI/client binary.
+5. **Observable by default.** Users must be able to inspect routes, DNS, firewall state, core process status, and connection health without leaking secrets.
 6. **Linux networking is dynamic.** Sleep/resume, Wi-Fi roaming, DHCP changes, DNS changes, and interface changes are normal events.
 7. **NetworkManager connectivity is advisory.** Desktop connectivity indicators may be wrong while the VPN data path still works; TunWarden must run independent health checks.
 8. **Small reliable core before convenience.** Proxy-only and safe TUN foundations come before GUI, auto-select, complex routing UI, and additional engines.
