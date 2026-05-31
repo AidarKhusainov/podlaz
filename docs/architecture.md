@@ -92,14 +92,14 @@ Core process safety requirements are owned by [State and security requirements](
 The current foundation build uses this package layout:
 
 ```text
-cmd/tunwarden      user-facing CLI
-cmd/tunwardend     daemon entrypoint
-internal/app       executable entrypoints and command dispatch
-internal/doctor    safe diagnostics
-internal/network   transaction and network planning model
-internal/profile   normalized VPN profile model
-internal/recover   recovery plan and future cleanup behavior
-internal/sub       subscription source model
+cmd/tunwarden       user-facing CLI
+cmd/tunwardend      daemon entrypoint
+internal/app        executable entrypoints and command dispatch
+internal/doctor     safe diagnostics
+internal/network    transaction and network planning model
+internal/profile    normalized VPN profile model
+internal/recovery   recovery plan and future cleanup behavior
+internal/sub        subscription source model
 ```
 
 This layout is expected to evolve, but the CLI/daemon boundary and planner/executor split should remain stable architectural constraints.
@@ -135,8 +135,6 @@ Initial API operations:
 - `ImportProfile(source)`
 - `ImportSubscription(source)`
 - `Import(source)`
-
-A temporary `PanicReset()` compatibility alias may exist only while the current skeleton is migrated to the canonical `recover` command.
 
 ## 5. State model
 
