@@ -4,7 +4,7 @@
 
 TunWarden must separate unprivileged user interaction from privileged Linux networking operations.
 
-The architecture must make dangerous operations explicit, observable, reversible, and testable.
+The architecture must make high-impact operations explicit, observable, reversible, and testable.
 
 The early architecture has two execution modes:
 
@@ -23,7 +23,7 @@ The early architecture has two execution modes:
             v
 +-----------------------+
 | tunwardend            |
-| privileged root daemon|
+| privileged daemon     |
 +-----------+-----------+
             |
             +----------------------------+
@@ -51,22 +51,23 @@ Responsibilities:
 
 - parse user commands,
 - render status and diagnostics,
-- submit requests to daemon,
+- manage user-owned configuration and user state through documented paths,
+- submit selected user intent to daemon,
 - print plans and errors,
 - never directly mutate routes, DNS, nftables, or TUN state.
 
 ### 3.2 Daemon
 
-The daemon must run as root under systemd.
+The daemon must run under systemd and own privileged runtime behavior.
 
 Responsibilities:
 
 - validate user requests,
 - manage privileged operations,
-- own connection state,
+- own active connection state,
 - manage core process lifecycle,
 - perform network transactions,
-- handle cleanup and recovery,
+- handle recovery,
 - expose a restricted local API.
 
 The daemon should be the only long-lived owner of privileged mutable state.
@@ -78,11 +79,13 @@ Xray should be treated as a child engine process, not as the application supervi
 Responsibilities:
 
 - execute proxy protocols,
-- apply generated Xray config,
+- apply generated runtime config,
 - expose logs/stats if configured,
 - terminate cleanly on daemon request.
 
 The core must not be the only holder of network state. TunWarden must know what system-level changes were applied.
+
+Core process safety requirements are owned by [State and security requirements](./state-and-security.md).
 
 ### 3.4 Current code layout
 
@@ -90,16 +93,18 @@ The current foundation build uses this package layout:
 
 ```text
 cmd/tunwarden      user-facing CLI
-cmd/tunwardend     privileged daemon entrypoint
+cmd/tunwardend     daemon entrypoint
 internal/app       executable entrypoints and command dispatch
 internal/doctor    safe diagnostics
 internal/network   transaction and network planning model
 internal/profile   normalized VPN profile model
-internal/reset     emergency recovery plan
+internal/recover   recovery plan and future cleanup behavior
 internal/sub       subscription source model
 ```
 
 This layout is expected to evolve, but the CLI/daemon boundary and planner/executor split should remain stable architectural constraints.
+
+Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 
 ## 4. Privilege boundary
 
@@ -119,56 +124,38 @@ The daemon API must be intentionally small.
 Initial API operations:
 
 - `Status()`
-- `PlanConnect(profile_id)`
-- `Connect(profile_id)`
+- `PlanConnect(profile_id, mode)`
+- `Connect(profile_id, mode)`
 - `Disconnect()`
 - `Reconnect()`
-- `Doctor()`
-- `PanicReset()`
+- `Doctor(scope)`
+- `RecoverPlan()`
+- `RecoverExecute()`
 - `ListProfiles()`
 - `ImportProfile(source)`
 - `ImportSubscription(source)`
+- `Import(source)`
+
+A temporary `PanicReset()` compatibility alias may exist only while the current skeleton is migrated to the canonical `recover` command.
 
 ## 5. State model
 
-TunWarden must distinguish persistent state from volatile state.
+TunWarden must distinguish three levels of state:
 
-### 5.1 Persistent state
+1. **User intent/state:** profiles, subscriptions, preferences, selected defaults, and import metadata.
+2. **Daemon runtime/state:** active connection snapshot, locks, generated runtime config, child process state, and transaction state.
+3. **System networking state:** TUN interfaces, routes, rules, DNS link configuration, and nftables state.
 
-Suggested location:
+The canonical filesystem layout and ownership rules are defined in [State and security requirements](./state-and-security.md).
 
-```text
-/var/lib/tunwarden/
-```
+Important constraints:
 
-Contents:
+- User intent must not be hidden only in daemon-private directories.
+- Daemon runtime state must be enough to recover without the original CLI process.
+- System networking state must be identifiable as TunWarden-owned.
+- Generated core config is runtime output, not persistent source of truth.
 
-- profiles,
-- subscriptions,
-- subscription cache,
-- user preferences,
-- known provider metadata,
-- last successful profile ID.
-
-### 5.2 Volatile runtime state
-
-Suggested location:
-
-```text
-/run/tunwarden/
-```
-
-Contents:
-
-- active connection state,
-- pending transaction state,
-- applied transaction ID,
-- generated core config,
-- daemon socket,
-- health status,
-- lock files.
-
-### 5.3 Logs
+### Logs
 
 Use journald as the primary logging destination.
 
@@ -181,11 +168,13 @@ tunwarden logs --core
 tunwarden logs --network
 ```
 
+Logs must follow the redaction policy in [State and security requirements](./state-and-security.md).
+
 ## 6. Transaction model
 
 All full-tunnel network changes must happen through a transaction object.
 
-Proxy-only mode does not need a network transaction because it must not modify system networking. It still needs process lifecycle state for Xray supervision and cleanup.
+Proxy-only mode does not need a network transaction because it must not modify system networking. It still needs process lifecycle state for Xray supervision and recovery.
 
 ```text
 NetworkTransaction
@@ -252,6 +241,8 @@ Output:
 - ordered apply steps,
 - ordered rollback steps,
 - warnings.
+
+Planner output must be inspectable through `tunwarden plan`.
 
 ### Executor
 
@@ -332,6 +323,8 @@ Generated files may live under:
 /run/tunwarden/generated/
 ```
 
+Generated config permissions, atomic writes, and logging rules are owned by [State and security requirements](./state-and-security.md).
+
 ## 11. Error handling principles
 
 - Prefer explicit failure over silent partial success.
@@ -341,7 +334,13 @@ Generated files may live under:
 - NetworkManager limited connectivity must not automatically be treated as connection failure.
 - Proxy-only failure must not trigger full network cleanup unless stale TunWarden-owned network state is detected separately.
 
-## 12. Testing architecture
+## 12. systemd service hardening
+
+The daemon service must start from least privilege. The canonical hardening requirements are defined in [State and security requirements](./state-and-security.md).
+
+A privileged daemon release is blocked until the unit file documents the final hardening choices and justifies any relaxation from the documented baseline.
+
+## 13. Testing architecture
 
 Required test layers:
 
@@ -359,7 +358,7 @@ Required test layers:
    - nft apply failure,
    - Wi-Fi/default route change.
 
-## 13. Future GUI rule
+## 14. Future GUI rule
 
 A future GUI must be a client of the daemon API.
 
