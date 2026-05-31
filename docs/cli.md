@@ -6,6 +6,8 @@ Other documents may show examples, but this file owns command names, argument sh
 
 TunWarden is a Linux-first, CLI-first networking tool. The CLI must optimize for clarity, safe defaults, recoverability, and observability instead of command count.
 
+State layout, JSON compatibility, redaction, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
+
 ## 1. Design principles
 
 ### User task names before implementation names
@@ -32,7 +34,7 @@ Commands that can affect Linux networking must be inspectable before they change
 Rules:
 
 - read-only commands must not require root;
-- recovery cleanup must require an explicit `--execute` flag;
+- recovery cleanup must require explicit `--execute` and `--yes` flags;
 - full-tunnel networking changes must be planned before they are applied;
 - proxy-only mode must not mutate routes, DNS, TUN, nftables, or firewall state.
 
@@ -61,7 +63,69 @@ Commands likely to be scripted should support `--json`, especially:
 - `subscription show`
 - `plan`
 
-Primary output goes to stdout. Errors go to stderr. Exit code `0` means success; non-zero means failure or a documented unhealthy state.
+Primary output goes to stdout. Errors go to stderr.
+
+Exit codes:
+
+| Code | Meaning |
+| ---: | --- |
+| 0 | Command completed successfully and no unhealthy state was found. |
+| 1 | Runtime or operation failed. |
+| 2 | Invalid usage, invalid flags, or invalid arguments. |
+| 3 | Diagnostic command completed but found unhealthy state. |
+| 4 | Permission or authorization failure. |
+| 5 | Daemon unavailable when the command requires daemon access. |
+
+`doctor` returns `0` only when diagnostics complete and required checks are healthy. It returns `3` when diagnostics complete but one or more checks fail. It returns `1` when diagnostics cannot complete because of an unexpected runtime error.
+
+### JSON compatibility
+
+JSON output is a stable public interface starting with v0.1.
+
+Rules:
+
+- every JSON response must include `schema_version`;
+- existing field names and meanings must not change without a documented compatibility note;
+- new fields may be added;
+- consumers must ignore unknown fields;
+- human output and JSON output must apply the same redaction policy.
+
+Common top-level shape:
+
+```json
+{
+  "schema_version": "v1",
+  "status": "ok|warn|fail",
+  "warnings": [],
+  "errors": []
+}
+```
+
+Command-specific top-level fields:
+
+```text
+status:
+  daemon
+  connection
+  runtime
+
+doctor:
+  checks
+
+plan:
+  mode
+  plan
+  steps
+  rollback_steps
+```
+
+The detailed schema can evolve during implementation, but these top-level meanings are part of the CLI contract.
+
+### Redaction
+
+`status`, `doctor`, `logs`, `plan`, `recover`, and every `--json` output must follow the redaction rules in [State and security requirements](./state-and-security.md).
+
+Default output must not print full subscription URLs, full share URIs, generated core configs containing credentials, private keys, passwords, auth headers, or provider tokens.
 
 ### Flags over command proliferation
 
@@ -97,9 +161,16 @@ Common flags, where relevant:
 --json       Print machine-readable JSON output.
 --verbose    Print additional diagnostic detail.
 --quiet      Print only essential output.
+--yes        Confirm a command that removes state or executes recovery cleanup.
 ```
 
-Short flags should be added only for frequent operations. For example, `logs -f` may alias `logs --follow`, but rare or high-impact flags should stay long-only.
+Short flags should be added only for frequent operations. For example, `logs -f` may alias `logs --follow`, but rare or high-impact flags such as `--execute` and `--yes` must stay long-only.
+
+Commands that remove user state or execute recovery cleanup must follow this model:
+
+- interactive TTY: ask for confirmation unless `--yes` is passed;
+- non-interactive mode: fail unless `--yes` is passed;
+- `--json` mode: fail unless `--yes` is passed.
 
 Connection modes:
 
@@ -150,7 +221,7 @@ tunwarden profile add --name <name> --server <host> --port <port> --protocol <vl
 tunwarden profile import <share-uri>
 tunwarden profile list [--json]
 tunwarden profile show <profile-id> [--json]
-tunwarden profile delete <profile-id>
+tunwarden profile delete <profile-id> [--yes]
 ```
 
 Purpose: explicit lifecycle management for individual profiles.
@@ -169,7 +240,7 @@ tunwarden subscription add --name <name> --url <url>
 tunwarden subscription update <subscription-id>
 tunwarden subscription list [--json]
 tunwarden subscription show <subscription-id> [--json]
-tunwarden subscription delete <subscription-id>
+tunwarden subscription delete <subscription-id> [--yes]
 ```
 
 Purpose: explicit lifecycle management for subscription sources.
@@ -285,7 +356,7 @@ v0.1 safety boundary:
 
 ```bash
 tunwarden recover
-tunwarden recover --execute
+tunwarden recover --execute --yes
 ```
 
 Purpose: inspect and later clean up stale TunWarden-owned state.
@@ -293,7 +364,7 @@ Purpose: inspect and later clean up stale TunWarden-owned state.
 Mutation level:
 
 - `recover`: read-only dry-run;
-- `recover --execute`: explicit cleanup of TunWarden-owned state only; deferred until safe TUN work.
+- `recover --execute --yes`: explicit cleanup of TunWarden-owned state only; deferred until safe TUN work.
 
 v0.1 requirement:
 
@@ -319,7 +390,7 @@ v0.2 adds privileged networking only through the transaction model.
 tunwarden plan --mode tun <profile-id> [--json]
 tunwarden connect --mode tun <profile-id>
 tunwarden reconnect
-tunwarden recover --execute
+tunwarden recover --execute --yes
 tunwarden logs --network
 tunwarden doctor --network
 tunwarden doctor --dns
@@ -333,7 +404,7 @@ tunwarden doctor --firewall
 
 `reconnect` should become public only when the daemon has a real state machine for core crash, suspend/resume, and network change handling.
 
-`recover --execute` must affect only identifiable TunWarden-owned state and must print what changed and what could not be changed.
+`recover --execute --yes` must affect only identifiable TunWarden-owned state and must print what changed and what could not be changed.
 
 ## 5. Explicitly deferred commands
 
