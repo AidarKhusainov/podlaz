@@ -42,9 +42,9 @@ func Run(_ context.Context) Report {
 			Message:  "network mutation checks are not implemented yet; this build is read-only",
 		},
 		{
-			Name:     "panic-reset",
+			Name:     "recover",
 			Severity: SeverityOK,
-			Message:  "emergency reset plan is available in dry-run mode",
+			Message:  "recovery plan is available in dry-run mode",
 		},
 	}
 
