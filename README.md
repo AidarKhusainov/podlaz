@@ -73,4 +73,4 @@ Primary documents:
 
 ## License
 
-A license has not been selected yet. Choose one before accepting external contributions.
+TunWarden is licensed under the MIT License. See [LICENSE](LICENSE).
