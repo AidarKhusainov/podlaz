@@ -58,16 +58,19 @@ The project should not initially prioritize:
 
 TunWarden must be fully usable through CLI commands.
 
-Required command families:
+The canonical command contract is maintained in [CLI contract](./cli.md). Required command families:
 
 ```bash
+tunwarden import <uri-or-file-or-url>
+tunwarden profile ...
+tunwarden subscription ...
 tunwarden status
-tunwarden connect <profile-or-node>
+tunwarden connect <profile-id>
 tunwarden disconnect
 tunwarden doctor
 tunwarden logs
-tunwarden plan <profile-or-node>
-tunwarden panic-reset
+tunwarden plan --mode <proxy-only|tun> <profile-id>
+tunwarden recover
 ```
 
 ### G2. Safe privileged networking
@@ -79,7 +82,7 @@ Required model:
 ```text
 unprivileged CLI/user client
   -> Unix socket or D-Bus
-privileged root daemon
+privileged daemon
   -> TUN, routes, DNS, nftables, core lifecycle
 ```
 
@@ -93,7 +96,7 @@ plan -> snapshot -> apply -> verify -> commit
                           rollback
 ```
 
-TunWarden must keep enough state to clean up after failed attempts and crashes.
+TunWarden must keep enough state to recover after failed attempts and crashes.
 
 ### G4. Reliable laptop behavior
 
@@ -114,11 +117,11 @@ TunWarden must explain its decisions.
 Examples:
 
 ```bash
-tunwarden plan my-profile
+tunwarden plan --mode tun my-profile
 tunwarden doctor
-tunwarden explain routes
-tunwarden explain dns
-tunwarden explain firewall
+tunwarden doctor --routes
+tunwarden doctor --dns
+tunwarden doctor --firewall
 ```
 
 ## 5. Scope and sequencing
@@ -131,18 +134,18 @@ Included:
 
 - Linux only.
 - CLI only.
-- Root daemon managed by systemd.
+- Daemon managed by systemd.
 - Local IPC between CLI and daemon.
 - Xray core lifecycle management.
 - Manual node import for VLESS, VMess, Trojan, Shadowsocks where feasible.
 - Base64 subscription import.
 - Proxy-only mode.
-- `status`, `logs`, and `doctor` basics.
+- `status`, `logs`, `doctor`, `plan --mode proxy-only`, and dry-run `recover` basics.
 - No system route, DNS, firewall, or TUN mutation.
 
 Exit expectation:
 
-- A user can import a profile/subscription, start Xray in proxy-only mode, inspect status/logs, and stop it cleanly.
+- A user can import a profile/subscription, start Xray in proxy-only mode, inspect status/logs, preview the proxy-only runtime plan, and stop it cleanly.
 
 ### v0.2.0: safe TUN preview
 
@@ -153,13 +156,13 @@ Included:
 - NetworkManager event integration.
 - nftables-based firewall/kill-switch foundation.
 - Transaction apply/verify/commit/rollback.
-- `plan` dry-run output.
+- `plan --mode tun` dry-run output.
 - `doctor` diagnostics for route/DNS/TUN/firewall/core state.
-- `panic-reset` cleanup.
+- `recover --execute --yes` cleanup of TunWarden-owned state.
 
 Exit expectation:
 
-- Failed connection attempts roll back, disconnect leaves no TunWarden-owned networking state, and panic reset can recover from common broken states.
+- Failed connection attempts roll back, disconnect leaves no TunWarden-owned networking state, and `recover --execute --yes` can recover from common broken states.
 
 ### Excluded from early milestones
 
@@ -208,11 +211,15 @@ Example output categories:
 
 `tunwarden doctor` must check daemon status, core process status, TUN interface status, default route, policy rules, route to VPN server, DNS configuration, DNS resolution, nftables state, NetworkManager state, external TCP connectivity, optional UDP connectivity, and stale TunWarden-owned state.
 
-### FR-006: Panic reset
+Facet flags such as `doctor --core`, `doctor --routes`, `doctor --dns`, and `doctor --firewall` should be preferred over separate low-level check command families.
 
-`tunwarden panic-reset` must remove TunWarden-owned volatile state even if the daemon has crashed.
+### FR-006: Recovery
 
-It must clean TunWarden TUN interfaces, policy rules, routing tables, nftables state, DNS settings where possible, core processes, and pending transaction state.
+`tunwarden recover` must inspect TunWarden-owned stale state even if the daemon has crashed.
+
+`tunwarden recover --execute --yes`, introduced only after safe TUN work is ready, must clean TunWarden-owned TUN interfaces, policy rules, routing tables, nftables state, DNS settings where possible, core processes, and pending transaction state.
+
+The default `recover` command must be read-only. Cleanup requires explicit `--execute --yes`.
 
 ### FR-007: Proxy-only mode
 
@@ -256,6 +263,8 @@ TunWarden should avoid unnecessary resident components, polling loops, broad dep
 
 TunWarden must not silently accept unsafe profile settings. Risky settings such as insecure TLS, unsupported transports, ambiguous DNS behavior, and incomplete IPv6 handling must be visible to the user.
 
+Output redaction, JSON compatibility, filesystem layout, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
+
 ## 8. Success metrics
 
 Early success should be measured by reliability, not feature count.
@@ -265,6 +274,6 @@ Examples:
 - Proxy-only mode starts and stops Xray cleanly without touching system networking.
 - Connection/disconnection leaves no stale TunWarden routes/rules/firewall state.
 - Suspend/resume reconnects automatically on Ubuntu LTS.
-- `panic-reset` restores direct internet connectivity in common failure cases.
+- `recover --execute --yes` restores direct internet connectivity in common failure cases once safe TUN work is implemented.
 - `doctor` reports actionable causes for DNS/routing failures.
 - At least one common subscription source can be imported end-to-end.

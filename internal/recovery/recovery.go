@@ -1,19 +1,19 @@
-package reset
+package recovery
 
 import (
 	"fmt"
 	"strings"
 )
 
-// Step describes one emergency cleanup action.
+// Step describes one recovery action.
 type Step struct {
 	Name        string
 	Description string
 	Command     string
 }
 
-// ResetPlan is the dry-run representation of emergency recovery.
-type ResetPlan struct {
+// PlanResult is the dry-run representation of emergency recovery.
+type PlanResult struct {
 	Steps []Step
 }
 
@@ -21,8 +21,8 @@ type ResetPlan struct {
 //
 // It intentionally returns commands as text. Actual execution must be explicit,
 // audited, and implemented behind the privileged daemon.
-func Plan() ResetPlan {
-	return ResetPlan{Steps: []Step{
+func Plan() PlanResult {
+	return PlanResult{Steps: []Step{
 		{
 			Name:        "stop-daemon",
 			Description: "stop the privileged daemon if it is running",
@@ -51,10 +51,10 @@ func Plan() ResetPlan {
 	}}
 }
 
-// String renders the reset plan in a stable, CLI-friendly format.
-func (p ResetPlan) String() string {
+// String renders the recovery plan in a stable, CLI-friendly format.
+func (p PlanResult) String() string {
 	var b strings.Builder
-	b.WriteString("TunWarden panic-reset plan (dry-run)\n")
+	b.WriteString("TunWarden recover plan (dry-run)\n")
 	for i, step := range p.Steps {
 		fmt.Fprintf(&b, "%d. %s: %s\n   command: %s\n", i+1, step.Name, step.Description, step.Command)
 	}

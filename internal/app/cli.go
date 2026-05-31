@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/reset"
+	"github.com/AidarKhusainov/tunwarden/internal/recovery"
 )
 
 const version = "0.0.0-dev"
@@ -39,8 +39,8 @@ func runCLI(ctx context.Context, args []string, stdout io.Writer) error {
 			return errors.New("doctor found failing checks")
 		}
 		return nil
-	case "panic-reset":
-		plan := reset.Plan()
+	case "recover":
+		plan := recovery.Plan()
 		fmt.Fprint(stdout, plan.String())
 		return nil
 	default:
@@ -54,7 +54,7 @@ func printUsage(w io.Writer) {
 Usage:
   tunwarden version
   tunwarden doctor
-  tunwarden panic-reset
+  tunwarden recover
 
 Current status:
   This is an early foundation build. Commands print contracts and diagnostic

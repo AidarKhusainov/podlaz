@@ -34,6 +34,42 @@ Important notes for TunWarden:
 - The Throne client appears to benefit from sing-box/sing-tun behavior for TUN/routing stability.
 - TunWarden can learn from this model while still remaining Xray-first.
 
+## XDG Base Directory Specification
+
+Reference:
+
+- https://specifications.freedesktop.org/basedir-spec/latest/
+
+Important notes for TunWarden:
+
+- User-owned configuration, state, and cache should follow XDG paths.
+- `$XDG_CONFIG_HOME`, `$XDG_STATE_HOME`, and `$XDG_CACHE_HOME` are the right basis for CLI-owned profile, subscription, preference, and cache files.
+- Daemon-owned state should not be confused with user intent.
+
+## systemd service execution and hardening
+
+Reference:
+
+- https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html
+
+Important notes for TunWarden:
+
+- `RuntimeDirectory=`, `StateDirectory=`, and `LogsDirectory=` are the right basis for package-managed daemon directories.
+- `CapabilityBoundingSet=`, `AmbientCapabilities=`, `NoNewPrivileges=`, `ProtectSystem=`, and related service sandboxing directives should shape the daemon unit.
+- TunWarden should start from least privilege and justify any relaxation needed for real networking behavior.
+
+## Linux capabilities
+
+Reference:
+
+- https://man7.org/linux/man-pages/man7/capabilities.7.html
+
+Important notes for TunWarden:
+
+- `CAP_NET_ADMIN` is expected for interface, routing, and firewall work.
+- Broad file permission bypass capabilities should not be in the default daemon baseline.
+- Capability requirements should be validated and minimized during implementation.
+
 ## systemd-resolved
 
 ### Per-link DNS and routing domains

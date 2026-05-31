@@ -8,7 +8,7 @@ The main requirement is simple:
 
 > TunWarden must not leave the user's Linux machine without recoverable networking.
 
-VPN correctness is not enough. Cleanup, rollback, and diagnostics are part of the product.
+VPN correctness is not enough. Cleanup, rollback, recovery, and diagnostics are part of the product.
 
 ## 2. Supported initial environment
 
@@ -163,7 +163,7 @@ ID: chosen and documented during implementation
 
 ### RT-003: Route planning must be inspectable
 
-`tunwarden plan <profile>` must show intended route changes before applying them.
+`tunwarden plan --mode tun <profile>` must show intended route changes before applying them.
 
 ### RT-004: Default interface must be re-detected
 
@@ -260,9 +260,9 @@ Suggested semantics:
 - `soft`: prevent accidental leaks during transition but restore direct connectivity on failure.
 - `strict`: block non-VPN traffic if VPN fails, except recovery/control traffic.
 
-### FW-004: Panic reset must override kill-switch
+### FW-004: Recovery must override kill-switch
 
-`panic-reset` must remove TunWarden-owned kill-switch rules even in strict mode.
+`recover --execute --yes` must remove TunWarden-owned kill-switch rules even in strict mode.
 
 ## 9. Sleep/resume requirements
 
@@ -372,11 +372,25 @@ NetworkManager connectivity state should be shown in diagnostics but must not be
 - optional HTTP probe,
 - NetworkManager connectivity state shown separately.
 
-## 12. Panic reset requirements
+## 12. Recovery requirements
 
-`panic-reset` must be designed as an emergency command.
+`recover` must be designed as an emergency recovery command.
 
-It should:
+Default behavior:
+
+```bash
+tunwarden recover
+```
+
+This must be a read-only recovery plan.
+
+Explicit cleanup behavior:
+
+```bash
+tunwarden recover --execute --yes
+```
+
+This should:
 
 - stop TunWarden daemon-managed core processes,
 - delete TunWarden TUN interfaces,
@@ -384,7 +398,7 @@ It should:
 - remove TunWarden nftables state,
 - revert TunWarden DNS settings where possible,
 - clean `/run/tunwarden`,
-- print what was removed and what could not be removed.
+- print what changed and what could not be changed.
 
 It must be safe to run when TunWarden is disconnected.
 
@@ -401,10 +415,10 @@ Required tests before declaring TUN mode stable:
 7. Change Wi-Fi network while connected.
 8. Renew DHCP while connected.
 9. Enable/disable IPv6 while connected.
-10. Run `panic-reset` after simulated crash.
+10. Run `recover --execute --yes` after simulated crash.
 
 ## 14. Design warning
 
 A VPN client that can connect but cannot reliably disconnect is not acceptable.
 
-Disconnect, rollback, and panic reset are core features, not maintenance tasks.
+Disconnect, rollback, and recovery are core features, not maintenance tasks.
