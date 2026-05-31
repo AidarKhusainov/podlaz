@@ -84,6 +84,23 @@ Responsibilities:
 
 The core must not be the only holder of network state. TunWarden must know what system-level changes were applied.
 
+### 3.4 Current code layout
+
+The current foundation build uses this package layout:
+
+```text
+cmd/tunwarden      user-facing CLI
+cmd/tunwardend     privileged daemon entrypoint
+internal/app       executable entrypoints and command dispatch
+internal/doctor    safe diagnostics
+internal/network   transaction and network planning model
+internal/profile   normalized VPN profile model
+internal/reset     emergency recovery plan
+internal/sub       subscription source model
+```
+
+This layout is expected to evolve, but the CLI/daemon boundary and planner/executor split should remain stable architectural constraints.
+
 ## 4. Privilege boundary
 
 TunWarden must not use a SUID GUI/client binary as the primary privilege model.
