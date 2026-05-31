@@ -2,11 +2,39 @@
 
 ## 1. Roadmap principles
 
-TunWarden development should prioritize safety before feature breadth.
+TunWarden development must prioritize safety before feature breadth.
 
-The roadmap is intentionally staged so that privileged networking is implemented only after planning, rollback, and diagnostics are designed.
+The roadmap is intentionally staged so that privileged networking is implemented only after planning, rollback, diagnostics, and recovery behavior are designed and testable.
 
-## Phase 0: Documentation and repository foundation
+Important ordering rule:
+
+> Do not add convenience features that hide networking state before the client can reliably connect, disconnect, diagnose, roll back, and recover.
+
+## 2. Current repository state
+
+The repository currently contains a foundation build:
+
+- `tunwarden` CLI skeleton,
+- `tunwardend` daemon skeleton,
+- read-only `doctor` command contract,
+- dry-run `panic-reset` command contract,
+- initial transaction/profile/subscription models,
+- CI with `gofmt` and `go test`,
+- canonical documentation under `docs/`.
+
+The repository does **not** yet contain:
+
+- real Xray process management,
+- profile import,
+- subscription parsing,
+- TUN creation,
+- route/DNS/nftables mutation,
+- systemd unit files,
+- real daemon IPC.
+
+## 3. Phase 0: Documentation and repository foundation
+
+Status: mostly complete.
 
 Goal: define the project before writing privileged code.
 
@@ -17,31 +45,43 @@ Deliverables:
 - architecture requirements,
 - networking/reliability requirements,
 - subscription/profile requirements,
-- contribution guidelines later,
-- initial issue labels later,
-- CI skeleton later.
+- development guide,
+- technical references,
+- initial CI skeleton,
+- initial CLI/daemon skeleton.
 
 Exit criteria:
 
-- The MVP scope is clear.
+- MVP scope is clear.
 - Non-goals are documented.
 - Networking invariants are documented.
 - Panic reset and rollback are treated as first-class requirements.
+- Documentation has one canonical location per concern.
 
-## Phase 1: CLI and daemon skeleton
+## 4. Phase 1: CLI, daemon, local IPC, and read-only diagnostics foundation
 
-Goal: create the basic process model without risky networking changes.
+Goal: create the basic process model and diagnostic surface without risky networking changes.
 
 Deliverables:
 
-- `tunwarden` CLI skeleton,
-- `tunwardend` daemon skeleton,
-- local IPC design,
-- systemd unit draft,
+- `tunwarden` command structure,
+- `tunwardend` daemon process,
+- local IPC design and implementation,
+- restricted daemon API,
+- systemd service draft,
 - journald logging,
-- status command,
-- version command,
-- structured error model.
+- `status` command,
+- `logs` command,
+- structured error model,
+- daemon startup recovery scan in read-only mode,
+- read-only Linux diagnostics for:
+  - default route,
+  - default interface,
+  - NetworkManager availability/state,
+  - systemd-resolved availability/state,
+  - DNS mode,
+  - nftables availability,
+  - stale TunWarden-owned resources.
 
 Exit criteria:
 
@@ -49,8 +89,9 @@ Exit criteria:
 - Daemon can run under systemd.
 - Logs are visible through `journalctl` and `tunwarden logs`.
 - No privileged networking changes are performed yet.
+- Read-only recovery scan can report stale TunWarden-owned state without removing it.
 
-## Phase 2: Profile and subscription foundation
+## 5. Phase 2: Profile and subscription foundation
 
 Goal: import and normalize profiles before connecting anything.
 
@@ -77,30 +118,33 @@ Exit criteria:
 - Profiles can be imported, listed, shown, validated, and deleted.
 - Subscription update failure preserves last known good state.
 - Unsupported formats fail clearly.
+- Unsafe profile settings are reported as warnings rather than silently accepted.
 
-## Phase 3: Xray engine lifecycle
+## 6. Phase 3: Xray engine lifecycle in proxy-only mode
 
-Goal: start and stop Xray safely in proxy-only mode.
+Goal: start and stop Xray safely without touching system routes, DNS, TUN, or firewall state.
 
 Deliverables:
 
 - Xray engine manager,
-- generated runtime config,
+- generated runtime config under `/run/tunwarden/`,
 - local SOCKS/HTTP/mixed inbound where supported,
 - core process supervision,
 - graceful stop,
 - forced stop,
 - core logs,
-- basic health check.
+- basic health check,
+- proxy-only `connect` and `disconnect`.
 
 Exit criteria:
 
 - A manual profile can run in proxy-only mode.
 - The daemon can stop Xray cleanly.
 - Core crash is detected and reported.
-- No system routes/DNS/firewall are modified.
+- No system routes, DNS, firewall rules, or TUN devices are modified.
+- Generated Xray config is runtime output, not persistent source of truth.
 
-## Phase 4: Network planner and dry-run
+## 7. Phase 4: Network planner and dry-run
 
 Goal: design network changes without applying them.
 
@@ -110,9 +154,11 @@ Deliverables:
 - route planner,
 - DNS planner,
 - firewall planner,
+- TUN planner,
 - transaction model,
 - `tunwarden plan <profile>`,
-- planner unit tests.
+- planner unit tests,
+- fake system snapshots for common desktop topologies.
 
 Exit criteria:
 
@@ -120,8 +166,9 @@ Exit criteria:
 - Plan output is readable by technical users.
 - Planner can detect route loop risk.
 - Planner can produce rollback steps.
+- Planner can explain warnings for DNS, IPv6, NetworkManager, and kill-switch behavior.
 
-## Phase 5: Safe TUN MVP
+## 8. Phase 5: Safe TUN MVP
 
 Goal: implement full-tunnel mode with rollback.
 
@@ -132,20 +179,21 @@ Deliverables:
 - systemd-resolved DNS apply,
 - nftables foundation,
 - transaction apply/commit/rollback,
-- `panic-reset`,
-- `doctor`,
-- integration tests in network namespaces where possible.
+- `panic-reset --execute` or equivalent explicit destructive mode,
+- `doctor` checks for route/DNS/TUN/firewall/core state,
+- integration tests in Linux network namespaces where possible.
 
 Exit criteria:
 
 - Failed connection attempts roll back.
-- Disconnect leaves no TunWarden-owned routes/rules/DNS/nftables state.
+- Disconnect leaves no TunWarden-owned routes, rules, DNS, nftables state, TUN interfaces, generated configs, or child processes.
 - `panic-reset` works when disconnected and after simulated failure.
 - VPN server route bypasses TUN.
+- Strict kill-switch behavior is explicit and recoverable.
 
-## Phase 6: Laptop reliability
+## 9. Phase 6: Laptop reliability
 
-Goal: make the client robust on real laptops.
+Goal: make the client robust on real Linux laptops.
 
 Deliverables:
 
@@ -164,8 +212,9 @@ Exit criteria:
 - Active connection recovers after Wi-Fi reconnect.
 - DHCP/DNS changes are handled without stale state.
 - NetworkManager limited connectivity is reported but not blindly treated as VPN failure.
+- Reconnect loops are rate-limited and observable.
 
-## Phase 7: Packaging
+## 10. Phase 7: Packaging
 
 Goal: make installation and service management reliable.
 
@@ -181,9 +230,10 @@ Deliverables:
 
 Exit criteria:
 
-- Fresh Ubuntu installation can install, start daemon, connect, disconnect, and uninstall safely.
+- Fresh Ubuntu installation can install, start daemon, connect, disconnect, run `doctor`, run `panic-reset`, and uninstall safely.
+- Package removal has a documented cleanup policy.
 
-## Phase 8: Advanced features
+## 11. Phase 8: Advanced features
 
 Goal: add convenience only after reliability is solid.
 
@@ -196,11 +246,12 @@ Candidates:
 - routing rule DSL,
 - IPv6 full support,
 - AmneziaWG engine,
+- optional sing-box compatibility experiments,
 - GUI client,
 - provider-specific subscription metadata,
-- auto-update core with verification.
+- auto-update core with signature/checksum verification.
 
-## Explicit deferrals
+## 12. Explicit deferrals
 
 The following should not be started until the earlier reliability phases are strong:
 
@@ -209,9 +260,10 @@ The following should not be started until the earlier reliability phases are str
 - complex visual routing editor,
 - router mode,
 - plugin system,
-- broad non-Xray protocol expansion.
+- broad non-Xray protocol expansion,
+- automatic privileged core updater.
 
-## First milestone proposal
+## 13. First milestone proposal
 
 A realistic first public milestone:
 
@@ -221,7 +273,7 @@ v0.1.0: proxy-only technical preview
 
 Features:
 
-- CLI + daemon,
+- CLI + daemon + IPC,
 - manual profile import,
 - Base64 subscription import,
 - Xray proxy-only mode,

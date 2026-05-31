@@ -1,36 +1,41 @@
 # TunWarden
 
-TunWarden is a Linux-first VPN client foundation focused on safe TUN networking, predictable DNS behavior, and crash-proof recovery.
+TunWarden is a Linux-first, CLI-first VPN/proxy client foundation for Xray-compatible configurations.
 
-The project starts as a CLI + privileged daemon rather than a GUI. The core goal is not to be another configuration wrapper, but to make Linux networking changes explicit, inspectable, reversible, and resilient across Wi-Fi changes, sleep/resume, and process crashes.
-
-## Design goals
-
-- **Linux-first:** Ubuntu is the first target; Debian, Fedora, and Arch should be supported through explicit platform adapters.
-- **CLI-first:** GUI can come later. The first-class interface is a deterministic command line.
-- **Safe networking:** routes, rules, DNS, nftables, and TUN state must be treated as a transaction.
-- **Crash recovery:** every privileged network change must have a cleanup path.
-- **Developer-grade diagnostics:** `doctor`, `status`, `explain-routing`, and `panic-reset` should be useful before the first GUI exists.
-- **Engine abstraction:** Xray is the first intended protocol engine; AmneziaWG and other engines should be possible later.
-
-## Initial architecture
-
-```text
-cmd/tunwarden      user-facing CLI
-cmd/tunwardend     privileged daemon
-internal/app       application entrypoints
-internal/doctor    diagnostics checks
-internal/network   route/DNS/TUN transaction model
-internal/reset     emergency cleanup plans
-internal/profile   normalized VPN profile model
-internal/sub       subscription model and future parsers
-```
+The product goal is to provide a safe, lightweight, and predictable Linux VPN client for technical users. TunWarden should make route, DNS, firewall, TUN, and process lifecycle changes explicit, inspectable, reversible, and recoverable across Wi-Fi changes, suspend/resume, daemon crashes, and failed connection attempts.
 
 ## Current status
 
-This repository is intentionally at foundation stage. The initial code compiles into two binaries and defines the contracts for safe networking, diagnostics, and recovery. It does not yet establish a real VPN tunnel.
+This repository is at foundation stage.
 
-## Commands
+What exists now:
+
+- Go module and CI skeleton.
+- `tunwarden` CLI skeleton.
+- `tunwardend` daemon skeleton.
+- Read-only `doctor` command contract.
+- Dry-run `panic-reset` command contract.
+- Initial internal models for transactions, profiles, and subscriptions.
+- Product, architecture, networking, subscription, roadmap, and development documentation.
+
+What does not exist yet:
+
+- No real VPN tunnel is established yet.
+- No Xray process is started yet.
+- No TUN interface, route, DNS, or firewall mutation is applied yet.
+- No GUI is planned for the early product.
+
+## Product principles
+
+1. **Linux-first:** Ubuntu LTS and Debian stable are Tier 1. Fedora and Arch should be supported through explicit platform adapters.
+2. **CLI-first:** the first-class interface is a deterministic command line.
+3. **Daemon-owned privilege:** privileged networking belongs in a supervised root daemon, not in a SUID frontend or GUI.
+4. **Transactional networking:** every privileged network mutation must have a plan, snapshot, verification path, and rollback path.
+5. **Observable behavior:** `status`, `doctor`, `plan`, logs, and explain commands must make route, DNS, firewall, and core state understandable.
+6. **Recoverability over feature count:** disconnect, rollback, and panic reset are core product capabilities, not maintenance helpers.
+7. **Lightweight by default:** avoid unnecessary background components, hidden global mutation, and broad protocol expansion before reliability is proven.
+
+## Commands available in the foundation build
 
 ```bash
 go test ./...
@@ -41,30 +46,31 @@ go run ./cmd/tunwarden panic-reset
 go run ./cmd/tunwardend
 ```
 
-## Safety model
-
-TunWarden should never silently mutate system networking state. The intended lifecycle is:
+## Intended lifecycle model
 
 ```text
-snapshot -> plan -> apply -> verify -> commit
-                         \-> rollback on failure
+plan -> snapshot -> apply -> verify -> commit
+                             \-> rollback on failure
 ```
 
-Emergency cleanup is exposed as:
-
-```bash
-tunwarden panic-reset
-```
-
-By default, this prints the cleanup plan. Destructive execution should remain explicit.
+`panic-reset` exists as an emergency recovery path. In the current build it prints a dry-run cleanup plan only.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Networking model](docs/NETWORKING_MODEL.md)
-- [Development guide](docs/DEVELOPMENT.md)
-- [Roadmap](docs/ROADMAP.md)
+Start with the documentation index:
+
+- [Documentation map](docs/README.md)
+
+Primary documents:
+
+- [Product requirements](docs/product-requirements.md)
+- [Architecture](docs/architecture.md)
+- [Networking and reliability requirements](docs/networking-reliability.md)
+- [Subscriptions and profiles](docs/subscriptions-and-profiles.md)
+- [Roadmap](docs/roadmap.md)
+- [Development guide](docs/development.md)
+- [References](docs/references.md)
 
 ## License
 
-A license has not been selected yet. Choose one before accepting external contributions.
+TunWarden is licensed under the MIT License. See [LICENSE](LICENSE).

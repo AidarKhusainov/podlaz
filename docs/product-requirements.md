@@ -58,7 +58,7 @@ The project should not initially prioritize:
 
 TunWarden must be fully usable through CLI commands.
 
-Required commands:
+Required command families:
 
 ```bash
 tunwarden status
@@ -66,6 +66,7 @@ tunwarden connect <profile-or-node>
 tunwarden disconnect
 tunwarden doctor
 tunwarden logs
+tunwarden plan <profile-or-node>
 tunwarden panic-reset
 ```
 
@@ -84,12 +85,12 @@ privileged root daemon
 
 ### G3. Transactional network changes
 
-Every VPN activation must be treated as a transaction:
+Every privileged VPN activation must be treated as a transaction:
 
 ```text
 plan -> snapshot -> apply -> verify -> commit
-                         ↓
-                      rollback
+                             ↓
+                          rollback
 ```
 
 TunWarden must keep enough state to clean up after failed attempts and crashes.
@@ -120,25 +121,47 @@ tunwarden explain dns
 tunwarden explain firewall
 ```
 
-## 5. MVP scope
+## 5. Scope and sequencing
 
-### Included in MVP
+The product has two early technical milestones. This avoids mixing a safe proxy-only preview with the higher-risk full TUN implementation.
+
+### v0.1.0: proxy-only technical preview
+
+Included:
 
 - Linux only.
 - CLI only.
 - Root daemon managed by systemd.
+- Local IPC between CLI and daemon.
 - Xray core lifecycle management.
 - Manual node import for VLESS, VMess, Trojan, Shadowsocks where feasible.
 - Base64 subscription import.
-- TUN full-tunnel mode.
 - Proxy-only mode.
+- `status`, `logs`, and `doctor` basics.
+- No system route, DNS, firewall, or TUN mutation.
+
+Exit expectation:
+
+- A user can import a profile/subscription, start Xray in proxy-only mode, inspect status/logs, and stop it cleanly.
+
+### v0.2.0: safe TUN preview
+
+Included:
+
+- TUN full-tunnel mode.
 - systemd-resolved DNS backend.
-- NetworkManager integration.
+- NetworkManager event integration.
 - nftables-based firewall/kill-switch foundation.
-- `doctor` diagnostics.
+- Transaction apply/verify/commit/rollback.
+- `plan` dry-run output.
+- `doctor` diagnostics for route/DNS/TUN/firewall/core state.
 - `panic-reset` cleanup.
 
-### Excluded from MVP
+Exit expectation:
+
+- Failed connection attempts roll back, disconnect leaves no TunWarden-owned networking state, and panic reset can recover from common broken states.
+
+### Excluded from early milestones
 
 - GUI.
 - Windows/macOS/mobile.
@@ -153,46 +176,19 @@ tunwarden explain firewall
 
 ### FR-001: Profile management
 
-TunWarden must support storing, listing, showing, and deleting profiles.
+TunWarden must support storing, listing, showing, validating, and deleting profiles.
 
-A profile must include:
-
-- profile ID,
-- display name,
-- source type,
-- protocol,
-- server address,
-- server port,
-- security settings,
-- transport settings,
-- DNS policy,
-- routing policy,
-- metadata.
+A profile must include profile ID, display name, source type, protocol, server address, server port, security settings, transport settings, DNS policy, routing policy, and metadata.
 
 ### FR-002: Subscription management
 
 TunWarden must support adding and updating subscription sources.
 
-A subscription source must include:
-
-- source ID,
-- URL,
-- format detection mode,
-- update interval,
-- last update status,
-- imported profiles/nodes,
-- optional provider metadata.
+A subscription source must include source ID, URL, format detection mode, update interval, last update status, imported profiles/nodes, and optional provider metadata.
 
 ### FR-003: Connection lifecycle
 
-TunWarden must support:
-
-- connect,
-- disconnect,
-- reconnect,
-- status,
-- graceful shutdown,
-- forced cleanup.
+TunWarden must support connect, disconnect, reconnect, status, graceful shutdown, and forced cleanup.
 
 ### FR-004: Dry-run planning
 
@@ -210,35 +206,25 @@ Example output categories:
 
 ### FR-005: Diagnostics
 
-`tunwarden doctor` must check:
-
-- daemon status,
-- core process status,
-- TUN interface status,
-- default route,
-- policy rules,
-- route to VPN server,
-- DNS configuration,
-- DNS resolution,
-- nftables state,
-- NetworkManager state,
-- external TCP connectivity,
-- optional UDP connectivity,
-- stale TunWarden-owned state.
+`tunwarden doctor` must check daemon status, core process status, TUN interface status, default route, policy rules, route to VPN server, DNS configuration, DNS resolution, nftables state, NetworkManager state, external TCP connectivity, optional UDP connectivity, and stale TunWarden-owned state.
 
 ### FR-006: Panic reset
 
 `tunwarden panic-reset` must remove TunWarden-owned volatile state even if the daemon has crashed.
 
-It must clean:
+It must clean TunWarden TUN interfaces, policy rules, routing tables, nftables state, DNS settings where possible, core processes, and pending transaction state.
 
-- TunWarden TUN interfaces,
-- TunWarden policy rules,
-- TunWarden routing tables,
-- TunWarden nftables tables/chains,
-- TunWarden DNS settings where possible,
-- TunWarden core processes,
-- pending transaction state.
+### FR-007: Proxy-only mode
+
+Proxy-only mode must allow validating profiles and running Xray without modifying system networking.
+
+It must not create a TUN interface, replace the default route, mutate global DNS, install nftables redirect rules, or claim full VPN leak protection.
+
+### FR-008: Full-tunnel mode
+
+Full-tunnel mode must be implemented only through the network transaction model.
+
+It must create and own a stable TUN interface, route general traffic through the TUN interface, route the VPN server outside the TUN interface, configure DNS intentionally, verify health before commit, and roll back on failure.
 
 ## 7. Non-functional requirements
 
@@ -256,18 +242,19 @@ Cleanup operations must be safe to run multiple times.
 
 ### NFR-004: Minimal assumptions
 
-TunWarden must not assume:
-
-- interface names are stable,
-- Wi-Fi is the only uplink,
-- IPv6 is available,
-- systemd-resolved is always configured the same way,
-- NetworkManager connectivity state is always accurate,
-- subscription format is always correctly declared.
+TunWarden must not assume interface names are stable, Wi-Fi is the only uplink, IPv6 is available, systemd-resolved is always configured the same way, NetworkManager connectivity state is always accurate, or subscription format is always correctly declared.
 
 ### NFR-005: Testability
 
 Core planners must be testable without root privileges by producing desired state plans from input snapshots.
+
+### NFR-006: Lightweight operation
+
+TunWarden should avoid unnecessary resident components, polling loops, broad dependency chains, and hidden global mutation. Background work should be justified by reliability or observability.
+
+### NFR-007: Secure defaults
+
+TunWarden must not silently accept unsafe profile settings. Risky settings such as insecure TLS, unsupported transports, ambiguous DNS behavior, and incomplete IPv6 handling must be visible to the user.
 
 ## 8. Success metrics
 
@@ -275,6 +262,7 @@ Early success should be measured by reliability, not feature count.
 
 Examples:
 
+- Proxy-only mode starts and stops Xray cleanly without touching system networking.
 - Connection/disconnection leaves no stale TunWarden routes/rules/firewall state.
 - Suspend/resume reconnects automatically on Ubuntu LTS.
 - `panic-reset` restores direct internet connectivity in common failure cases.
