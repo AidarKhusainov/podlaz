@@ -4,7 +4,7 @@
 
 TunWarden development must prioritize safety before feature breadth.
 
-The roadmap is intentionally staged so that privileged networking is implemented only after planning, rollback, diagnostics, and recovery behavior are designed and testable.
+The roadmap is intentionally staged so that privileged networking is implemented only after planning, rollback, diagnostics, recovery behavior, state ownership, and output redaction are designed and testable.
 
 Important ordering rule:
 
@@ -43,7 +43,9 @@ Deliverables:
 - documentation index,
 - product requirements,
 - CLI contract,
+- state and security requirements,
 - architecture requirements,
+- package boundary requirements,
 - networking/reliability requirements,
 - subscription/profile requirements,
 - development guide,
@@ -57,6 +59,8 @@ Exit criteria:
 - Non-goals are documented.
 - Networking invariants are documented.
 - Recovery and rollback are treated as first-class requirements.
+- Filesystem state ownership is documented.
+- JSON compatibility and output redaction rules are documented.
 - Documentation has one canonical location per concern.
 
 ## 4. Phase 1: CLI, daemon, local IPC, and read-only diagnostics foundation
@@ -74,6 +78,8 @@ Deliverables:
 - `status` command,
 - `logs` command,
 - structured error model,
+- JSON output shape for `status`, `doctor`, and `plan`,
+- shared redaction helpers for human and JSON output,
 - daemon startup recovery scan in read-only mode,
 - read-only Linux diagnostics for:
   - default route,
@@ -91,6 +97,7 @@ Exit criteria:
 - Logs are visible through `journalctl` and `tunwarden logs`.
 - No privileged networking changes are performed yet.
 - Read-only recovery scan can report stale TunWarden-owned state without removing it.
+- Default output and `--json` output redact secrets consistently.
 
 ## 5. Phase 2: Profile and subscription foundation
 
@@ -101,11 +108,13 @@ Deliverables:
 - internal profile model,
 - manual profile support,
 - convenience `tunwarden import` entrypoint,
+- XDG-based user config/state layout,
 - share link parser for initial protocols,
 - Base64 subscription parser,
 - subscription storage,
 - update diff,
 - validation and warnings,
+- delete confirmation behavior,
 - fixture-based tests.
 
 Initial protocols:
@@ -123,6 +132,7 @@ Exit criteria:
 - Subscription update failure preserves last known good state.
 - Unsupported formats fail clearly.
 - Unsafe profile settings are reported as warnings rather than silently accepted.
+- Stored user intent follows the documented XDG layout.
 
 ## 6. Phase 3: Xray engine lifecycle in proxy-only mode
 
@@ -133,8 +143,10 @@ Deliverables:
 - Xray engine manager,
 - `doctor --core` Xray validation,
 - generated runtime config under `/run/tunwarden/`,
+- generated core config permissions and atomic writes,
 - local SOCKS/HTTP/mixed inbound where supported,
 - core process supervision,
+- core process privilege minimization,
 - graceful stop,
 - forced stop,
 - core logs,
@@ -149,6 +161,7 @@ Exit criteria:
 - Core crash is detected and reported.
 - No system routes, DNS, firewall rules, or TUN devices are modified.
 - Generated Xray config is runtime output, not persistent source of truth.
+- Generated core config is not logged in full by default.
 
 ## 7. Phase 4: Network planner and dry-run
 
@@ -173,6 +186,7 @@ Exit criteria:
 - Planner can detect route loop risk.
 - Planner can produce rollback steps.
 - Planner can explain warnings for DNS, IPv6, NetworkManager, and kill-switch behavior.
+- Plan output redacts sensitive values.
 
 ## 8. Phase 5: Safe TUN MVP
 
@@ -185,17 +199,19 @@ Deliverables:
 - systemd-resolved DNS apply,
 - nftables foundation,
 - transaction apply/commit/rollback,
-- `recover --execute` explicit cleanup mode,
+- `recover --execute --yes` explicit cleanup mode,
 - `doctor` checks for route/DNS/TUN/firewall/core state,
+- systemd hardening baseline for privileged daemon release,
 - integration tests in Linux network namespaces where possible.
 
 Exit criteria:
 
 - Failed connection attempts roll back.
 - Disconnect leaves no TunWarden-owned routes, rules, DNS, nftables state, TUN interfaces, generated configs, or child processes.
-- `recover --execute` works when disconnected and after simulated failure.
+- `recover --execute --yes` works when disconnected and after simulated failure.
 - VPN server route bypasses TUN.
 - Strict kill-switch behavior is explicit and recoverable.
+- The systemd unit documents final hardening choices and justifies deviations from the documented baseline.
 
 ## 9. Phase 6: Laptop reliability
 
@@ -300,5 +316,6 @@ Features:
 - transaction rollback,
 - systemd-resolved backend,
 - nftables foundation,
-- `recover --execute`,
+- `recover --execute --yes`,
+- systemd hardening baseline,
 - Ubuntu LTS test checklist.
