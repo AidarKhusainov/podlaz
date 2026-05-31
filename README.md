@@ -16,7 +16,7 @@ What exists now:
 - Read-only `doctor` command contract.
 - Dry-run recovery command contract.
 - Initial internal models for transactions, profiles, and subscriptions.
-- Product, CLI, architecture, networking, subscription, roadmap, and development documentation.
+- Product, CLI, architecture, state/security, networking, subscription, roadmap, and development documentation.
 
 What does not exist yet:
 
@@ -29,9 +29,9 @@ What does not exist yet:
 
 1. **Linux-first:** Ubuntu LTS and Debian stable are Tier 1. Fedora and Arch should be supported through explicit platform adapters.
 2. **CLI-first:** the first-class interface is a deterministic command line.
-3. **Daemon-owned privilege:** privileged networking belongs in a supervised root daemon, not in a SUID frontend or GUI.
+3. **Daemon-owned privilege:** privileged networking belongs in a supervised daemon, not in a SUID frontend or GUI.
 4. **Transactional networking:** every privileged network mutation must have a plan, snapshot, verification path, and rollback path.
-5. **Observable behavior:** `status`, `doctor`, `plan`, logs, and scoped diagnostics must make route, DNS, firewall, and core state understandable.
+5. **Observable behavior:** `status`, `doctor`, `plan`, logs, and scoped diagnostics must make route, DNS, firewall, and core state understandable without leaking secrets.
 6. **Recoverability over feature count:** disconnect, rollback, and recovery are core product capabilities, not maintenance helpers.
 7. **Lightweight by default:** avoid unnecessary background components, hidden global mutation, and broad protocol expansion before reliability is proven.
 
@@ -70,6 +70,7 @@ Primary documents:
 - [Product requirements](docs/product-requirements.md)
 - [CLI contract](docs/cli.md)
 - [Architecture](docs/architecture.md)
+- [State and security requirements](docs/state-and-security.md)
 - [Package boundaries](docs/package-boundaries.md)
 - [Networking and reliability requirements](docs/networking-reliability.md)
 - [Subscriptions and profiles](docs/subscriptions-and-profiles.md)
