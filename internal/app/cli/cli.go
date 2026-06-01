@@ -42,7 +42,7 @@ func ExitCode(err error) int {
 
 type options struct {
 	doctor  func(context.Context) doctor.Report
-	recover func() recovery.PlanResult
+	recover func(context.Context) recovery.PlanResult
 }
 
 // Run executes the user-facing TunWarden command line interface.
@@ -77,7 +77,7 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 	case "doctor":
 		return runDoctorCommand(ctx, commandArgs, stdout, opts)
 	case "recover":
-		return runRecoverCommand(commandArgs, stdout, opts)
+		return runRecoverCommand(ctx, commandArgs, stdout, opts)
 	default:
 		return usageError("unknown command %q", args[0])
 	}
@@ -135,7 +135,7 @@ func runDoctorCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	return nil
 }
 
-func runRecoverCommand(args []string, stdout io.Writer, opts options) error {
+func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
 	if isHelp(args) {
 		printRecoverHelp(stdout)
 		return nil
@@ -147,7 +147,7 @@ func runRecoverCommand(args []string, stdout io.Writer, opts options) error {
 		return usageError("unsupported recover argument %q", args[0])
 	}
 
-	plan := runRecover(opts)
+	plan := runRecover(ctx, opts)
 	fmt.Fprint(stdout, plan.String())
 	return nil
 }
@@ -170,11 +170,11 @@ func runDoctor(ctx context.Context, opts options) doctor.Report {
 	return doctor.Run(ctx)
 }
 
-func runRecover(opts options) recovery.PlanResult {
+func runRecover(ctx context.Context, opts options) recovery.PlanResult {
 	if opts.recover != nil {
-		return opts.recover()
+		return opts.recover(ctx)
 	}
-	return recovery.Plan()
+	return recovery.Plan(ctx)
 }
 
 func isHelp(args []string) bool {
@@ -236,7 +236,8 @@ func printRecoverHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden recover
 
-Print the read-only recovery plan. Cleanup execution is intentionally not
-implemented in v0.1; recover --execute is rejected.
+Print the read-only recovery dry-run plan for clearly TunWarden-owned resources.
+Cleanup execution is intentionally not implemented in v0.1; recover --execute is
+rejected.
 `)
 }
