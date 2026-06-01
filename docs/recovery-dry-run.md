@@ -61,7 +61,7 @@ Would recover runtime directory: /run/tunwarden
 No changes were applied.
 ```
 
-When the host is clean, the command prints:
+When all implemented inspections complete and no recovery candidates are found, the command prints:
 
 ```text
 TunWarden recovery dry-run
@@ -75,7 +75,7 @@ If a read-only inspection cannot complete, the command appends a warning without
 Warning: could not inspect <target>: <reason>
 ```
 
-Warnings mean the dry-run had incomplete visibility. They are not cleanup actions.
+Warnings mean the dry-run had incomplete visibility. They are not cleanup actions, and warning-only output must not claim that no TunWarden-owned recovery candidates were found.
 
 ## v0.1 recovery candidates
 
@@ -88,7 +88,7 @@ The v0.1 scan is intentionally narrow. It reports only clearly TunWarden-owned r
 | Generated runtime configs | `/run/tunwarden/generated` exists | `Would recover generated runtime configs: /run/tunwarden/generated` |
 | Runtime directory | `/run/tunwarden` exists | `Would recover runtime directory: /run/tunwarden` |
 
-Absent resources are treated as healthy and are not printed as candidates.
+Absent resources are treated as healthy only when the corresponding inspection completes successfully enough to distinguish absence from incomplete visibility.
 
 The scan must not infer ownership from vague patterns. It must not scan arbitrary interfaces, nftables tables, routes, DNS settings, user home directories, or non-documented paths. Future recovery candidates need documented TunWarden ownership markers before they are added.
 
