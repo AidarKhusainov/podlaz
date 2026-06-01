@@ -42,34 +42,19 @@ func (r fakeRunner) Run(_ context.Context, name string, args ...string) (Command
 }
 
 func TestRunWithOptionsReportsSuccessfulLinuxDiagnostics(t *testing.T) {
-	report := RunWithOptions(context.Background(), Options{
-		Runner: fakeRunner{
-			paths: map[string]string{
-				"ip":         "/usr/sbin/ip",
-				"nmcli":      "/usr/bin/nmcli",
-				"systemctl":  "/usr/bin/systemctl",
-				"resolvectl": "/usr/bin/resolvectl",
-				"nft":        "/usr/sbin/nft",
-			},
-			commands: map[string]fakeCommand{
-				"ip route show default": {
-					stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp src 192.0.2.10 metric 600",
-				},
-				"ip link show dev tunwarden0": {
-					stderr:   "Device \"tunwarden0\" does not exist.",
-					exitCode: 1,
-					err:      errors.New("exit status 1"),
-				},
-				"nft list table inet tunwarden": {
-					stderr:   "Error: No such file or directory",
-					exitCode: 1,
-					err:      errors.New("exit status 1"),
-				},
-			},
-		},
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
-	})
+	report := successfulReport(t)
 
+	assertCheckOrder(t, report, []string{
+		"platform",
+		"iproute2",
+		"default-route",
+		"default-interface",
+		"networkmanager",
+		"systemd",
+		"resolved",
+		"nftables",
+		"stale-resources",
+	})
 	assertCheck(t, report, "iproute2", SeverityOK, "ip found at /usr/sbin/ip")
 	assertCheck(t, report, "default-route", SeverityOK, "default via 192.0.2.1 dev wlp0s20f3")
 	assertCheck(t, report, "default-interface", SeverityOK, "wlp0s20f3")
@@ -143,6 +128,80 @@ func TestRunWithOptionsReportsCommandFailures(t *testing.T) {
 
 	if !report.HasFailures() {
 		t.Fatal("failed diagnostic command must be reported as a failure")
+	}
+}
+
+func TestRunWithOptionsPreservesStaleResourceWarnings(t *testing.T) {
+	report := RunWithOptions(context.Background(), Options{
+		Runner: fakeRunner{
+			paths: map[string]string{
+				"ip":  "/usr/sbin/ip",
+				"nft": "/usr/sbin/nft",
+			},
+			commands: map[string]fakeCommand{
+				"ip route show default": {
+					stdout: "default via 192.0.2.1 dev wlp0s20f3",
+				},
+				"ip link show dev tunwarden0": {
+					stdout: "2: tunwarden0: <POINTOPOINT,UP> mtu 1500",
+				},
+				"nft list table inet tunwarden": {
+					stderr:   "Operation not permitted",
+					exitCode: 1,
+					err:      errors.New("exit status 1"),
+				},
+			},
+		},
+		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+	})
+
+	assertCheck(t, report, "stale-resources", SeverityWarning, "found interface tunwarden0 exists")
+	assertCheck(t, report, "stale-resources", SeverityWarning, "incomplete checks: cannot inspect nft table inet tunwarden")
+	assertCheck(t, report, "stale-resources", SeverityWarning, "Operation not permitted")
+}
+
+func successfulReport(t *testing.T) Report {
+	t.Helper()
+
+	return RunWithOptions(context.Background(), Options{
+		Runner: fakeRunner{
+			paths: map[string]string{
+				"ip":         "/usr/sbin/ip",
+				"nmcli":      "/usr/bin/nmcli",
+				"systemctl":  "/usr/bin/systemctl",
+				"resolvectl": "/usr/bin/resolvectl",
+				"nft":        "/usr/sbin/nft",
+			},
+			commands: map[string]fakeCommand{
+				"ip route show default": {
+					stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp src 192.0.2.10 metric 600",
+				},
+				"ip link show dev tunwarden0": {
+					stderr:   "Device \"tunwarden0\" does not exist.",
+					exitCode: 1,
+					err:      errors.New("exit status 1"),
+				},
+				"nft list table inet tunwarden": {
+					stderr:   "Error: No such file or directory",
+					exitCode: 1,
+					err:      errors.New("exit status 1"),
+				},
+			},
+		},
+		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+	})
+}
+
+func assertCheckOrder(t *testing.T, report Report, want []string) {
+	t.Helper()
+
+	if len(report.Checks) != len(want) {
+		t.Fatalf("expected %d checks, got %d: %#v", len(want), len(report.Checks), report.Checks)
+	}
+	for i, name := range want {
+		if got := report.Checks[i].Name; got != name {
+			t.Fatalf("check %d: expected %q, got %q", i, name, got)
+		}
 	}
 }
 
