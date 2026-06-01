@@ -11,6 +11,6 @@ import (
 func main() {
 	if err := cli.Run(context.Background(), os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "tunwarden:", err)
-		os.Exit(1)
+		os.Exit(cli.ExitCode(err))
 	}
 }

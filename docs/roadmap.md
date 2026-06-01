@@ -16,7 +16,7 @@ The repository currently contains a foundation build:
 
 - `tunwarden` CLI skeleton,
 - `tunwardend` daemon skeleton,
-- read-only `doctor` command contract,
+- read-only `doctor` diagnostics basics for platform, command availability, default route/interface, and stale TunWarden-owned resources,
 - dry-run `recover` command contract,
 - initial transaction/profile/subscription models,
 - CI with `gofmt` and `go test`,

@@ -13,7 +13,7 @@ What exists now:
 - Go module and CI skeleton.
 - `tunwarden` CLI skeleton.
 - `tunwardend` daemon skeleton.
-- Read-only `doctor` command contract.
+- Read-only `doctor` command with local Linux host diagnostics.
 - Dry-run `recover` command contract.
 - Initial internal models for transactions, profiles, and subscriptions.
 - Product, CLI, architecture, state/security, networking, subscription, roadmap, and development documentation.
@@ -46,7 +46,7 @@ go run ./cmd/tunwarden recover
 go run ./cmd/tunwardend
 ```
 
-Canonical command names are defined in [CLI contract](docs/cli.md).
+Canonical command names are defined in [CLI contract](docs/cli.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md).
 
 ## Intended lifecycle model
 
@@ -67,6 +67,7 @@ Primary documents:
 
 - [Product requirements](docs/product-requirements.md)
 - [CLI contract](docs/cli.md)
+- [Doctor diagnostics](docs/doctor-diagnostics.md)
 - [Architecture](docs/architecture.md)
 - [State and security requirements](docs/state-and-security.md)
 - [Package boundaries](docs/package-boundaries.md)
