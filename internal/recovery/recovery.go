@@ -147,12 +147,13 @@ func PlanWithOptions(ctx context.Context, opts Options) PlanResult {
 func (p PlanResult) String() string {
 	var b strings.Builder
 	b.WriteString("TunWarden recovery dry-run\n")
-	if len(p.Candidates) == 0 {
-		b.WriteString("No TunWarden-owned recovery candidates found.\n")
-	} else {
+	switch {
+	case len(p.Candidates) > 0:
 		for _, candidate := range p.Candidates {
 			fmt.Fprintf(&b, "Would recover %s: %s\n", candidate.Description, candidate.Target)
 		}
+	case len(p.Warnings) == 0:
+		b.WriteString("No TunWarden-owned recovery candidates found.\n")
 	}
 	for _, warning := range p.Warnings {
 		fmt.Fprintf(&b, "Warning: could not inspect %s: %s\n", warning.Target, warning.Message)
@@ -187,55 +188,60 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	return result
 }
 
-func (r *ScanResult) scanManagedInterface(ctx context.Context, runner CommandRunner) {
-	ipPath, err := runner.LookPath("ip")
-	if err != nil {
-		r.Warnings = append(r.Warnings, Warning{
-			Target:  "TUN interface " + managedInterface,
-			Message: "ip command is unavailable",
-		})
-		return
-	}
+type commandCandidateScan struct {
+	command            string
+	commandUnavailable string
+	args               []string
+	candidate          Candidate
+	warningTarget      string
+}
 
-	cmdResult, err := runCommand(ctx, runner, ipPath, "link", "show", "dev", managedInterface)
-	switch {
-	case commandSucceeded(cmdResult, err):
-		r.Candidates = append(r.Candidates, Candidate{
+func (r *ScanResult) scanManagedInterface(ctx context.Context, runner CommandRunner) {
+	r.scanCommandCandidate(ctx, runner, commandCandidateScan{
+		command:            "ip",
+		commandUnavailable: "ip command is unavailable",
+		args:               []string{"link", "show", "dev", managedInterface},
+		candidate: Candidate{
 			Kind:        "tun-interface",
 			Description: "TUN interface",
 			Target:      managedInterface,
-		})
-	case resourceMissing(cmdResult):
-	case commandFailedUnexpectedly(cmdResult, err):
-		r.Warnings = append(r.Warnings, Warning{
-			Target:  "TUN interface " + managedInterface,
-			Message: commandFailureMessage(cmdResult, err),
-		})
-	}
+		},
+		warningTarget: "TUN interface " + managedInterface,
+	})
 }
 
 func (r *ScanResult) scanManagedNFTTable(ctx context.Context, runner CommandRunner) {
-	nftPath, err := runner.LookPath("nft")
+	r.scanCommandCandidate(ctx, runner, commandCandidateScan{
+		command:            "nft",
+		commandUnavailable: "nft command is unavailable",
+		args:               []string{"list", "table", managedNFTFamily, managedNFTTableName},
+		candidate: Candidate{
+			Kind:        "nftables-table",
+			Description: "nftables table",
+			Target:      managedNFTTable,
+		},
+		warningTarget: "nftables table " + managedNFTTable,
+	})
+}
+
+func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRunner, scan commandCandidateScan) {
+	commandPath, err := runner.LookPath(scan.command)
 	if err != nil {
 		r.Warnings = append(r.Warnings, Warning{
-			Target:  "nftables table " + managedNFTTable,
-			Message: "nft command is unavailable",
+			Target:  scan.warningTarget,
+			Message: scan.commandUnavailable,
 		})
 		return
 	}
 
-	cmdResult, err := runCommand(ctx, runner, nftPath, "list", "table", managedNFTFamily, managedNFTTableName)
+	cmdResult, err := runCommand(ctx, runner, commandPath, scan.args...)
 	switch {
 	case commandSucceeded(cmdResult, err):
-		r.Candidates = append(r.Candidates, Candidate{
-			Kind:        "nftables-table",
-			Description: "nftables table",
-			Target:      managedNFTTable,
-		})
+		r.Candidates = append(r.Candidates, scan.candidate)
 	case resourceMissing(cmdResult):
 	case commandFailedUnexpectedly(cmdResult, err):
 		r.Warnings = append(r.Warnings, Warning{
-			Target:  "nftables table " + managedNFTTable,
+			Target:  scan.warningTarget,
 			Message: commandFailureMessage(cmdResult, err),
 		})
 	}
