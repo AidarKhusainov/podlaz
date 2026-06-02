@@ -38,13 +38,17 @@ func (s Server) Run(ctx context.Context) error {
 	defer func() { _ = lock.Close(); _ = os.Remove(lockPath) }()
 
 	socketPath := api.SocketPath(runtimeDir)
-	_ = os.Remove(socketPath)
+	if err := removeStaleSocket(socketPath); err != nil {
+		return err
+	}
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen on daemon socket %s: %w", socketPath, err)
 	}
 	defer func() { _ = listener.Close(); _ = os.Remove(socketPath) }()
-	_ = os.Chmod(socketPath, 0o660)
+	if err := os.Chmod(socketPath, 0o660); err != nil {
+		return fmt.Errorf("set daemon socket permissions %s: %w", socketPath, err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
@@ -86,4 +90,21 @@ func (s Server) Run(ctx context.Context) error {
 
 func DefaultStatus(context.Context) api.StatusResponse {
 	return api.StatusResponse{Daemon: "running", Connection: "inactive", RuntimeDirectory: "present", Proxy: "inactive", TUN: "disabled"}
+}
+
+func removeStaleSocket(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect daemon socket path %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("daemon socket path %s exists and is not a Unix socket", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove stale daemon socket %s: %w", path, err)
+	}
+	return nil
 }
