@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -20,6 +21,23 @@ type StatusResponse struct {
 	Proxy            string   `json:"proxy"`
 	TUN              string   `json:"tun"`
 	Warnings         []string `json:"warnings,omitempty"`
+}
+
+func ValidateStatusResponse(s StatusResponse) error {
+	switch {
+	case s.Daemon == "":
+		return errors.New("missing daemon field")
+	case s.Connection == "":
+		return errors.New("missing connection field")
+	case s.RuntimeDirectory == "":
+		return errors.New("missing runtime_directory field")
+	case s.Proxy == "":
+		return errors.New("missing proxy field")
+	case s.TUN == "":
+		return errors.New("missing tun field")
+	default:
+		return nil
+	}
 }
 
 func RuntimeDirFromEnv() string {
