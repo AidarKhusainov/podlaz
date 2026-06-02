@@ -54,6 +54,37 @@ func TestDoctorRejectsIncompleteDaemonResponse(t *testing.T) {
 	}
 }
 
+func TestDoctorRejectsInvalidDaemonSource(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{\"source\":\"local fallback\",\"checks\":[{\"name\":\"daemon\",\"severity\":\"OK\",\"message\":\"running\"}]}"))
+	})}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	defer func() {
+		_ = server.Close()
+		<-done
+	}()
+
+	_, err = (DoctorClient{SocketPath: socketPath}).Doctor(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid daemon source to fail")
+	}
+	if strings.Contains(err.Error(), "tunwardend unavailable") {
+		t.Fatalf("protocol errors must not be classified as daemon unavailable: %v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid source field") {
+		t.Fatalf("expected invalid source validation error, got %v", err)
+	}
+}
+
 func TestDoctorReadsDaemonResponse(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
 	listener, err := net.Listen("unix", socketPath)
