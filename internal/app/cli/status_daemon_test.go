@@ -18,6 +18,7 @@ func TestRunCLIStatusUsesDaemonWhenReachable(t *testing.T) {
 		daemonStatus: func(context.Context) (status.Report, error) {
 			return status.Report{
 				Daemon:           "running",
+				Service:          "systemd",
 				Connection:       "inactive",
 				RuntimeDirectory: status.RuntimeDirectory{Message: "present"},
 				Proxy:            "inactive",
@@ -30,7 +31,7 @@ func TestRunCLIStatusUsesDaemonWhenReachable(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"Daemon: running", "Connection: inactive", "Proxy: inactive", "TUN: disabled"} {
+	for _, want := range []string{"Daemon: running", "Service: systemd", "Connection: inactive", "Proxy: inactive", "TUN: disabled"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %q", want, got)
 		}
