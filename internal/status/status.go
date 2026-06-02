@@ -110,17 +110,17 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	return report
 }
 
-// FromDaemon converts a daemon API response into the user-facing status report.
+// FromDaemon converts a validated daemon API response into the user-facing status report.
 func FromDaemon(s api.StatusResponse) Report {
 	return Report{
-		Daemon:     valueOrDefault(s.Daemon, "running"),
-		Connection: valueOrDefault(s.Connection, "inactive"),
+		Daemon:     s.Daemon,
+		Connection: s.Connection,
 		RuntimeDirectory: RuntimeDirectory{
 			State:   RuntimeDirectoryPresent,
-			Message: valueOrDefault(s.RuntimeDirectory, "present"),
+			Message: s.RuntimeDirectory,
 		},
-		Proxy:    valueOrDefault(s.Proxy, "inactive"),
-		TUN:      valueOrDefault(s.TUN, "disabled"),
+		Proxy:    s.Proxy,
+		TUN:      s.TUN,
 		Warnings: warningsFromStrings("daemon", s.Warnings),
 	}
 }
@@ -272,13 +272,6 @@ func candidateNoun(count int) string {
 		return "candidate"
 	}
 	return "candidates"
-}
-
-func valueOrDefault(value, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
 }
 
 func warningsFromStrings(target string, warnings []string) []Warning {
