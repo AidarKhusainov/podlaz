@@ -12,6 +12,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 - If code behavior changes, update the related requirement or roadmap section in the same pull request.
 - Architecture and networking rules are requirements, not implementation notes.
 - CLI command names, arguments, flags, and milestone boundaries are owned by [CLI contract](./cli.md).
+- `tunwarden status`'s implemented local fallback behavior is owned by [Status command](./status.md).
 - `tunwarden doctor`'s implemented local diagnostic set is owned by [Doctor diagnostics](./doctor-diagnostics.md).
 - `tunwarden recover`'s implemented local dry-run scan is owned by [Recovery dry-run](./recovery-dry-run.md).
 - Filesystem layout, output redaction, JSON compatibility, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
@@ -24,6 +25,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | --- | --- |
 | [Product requirements](./product-requirements.md) | Product thesis, target users, scope, functional requirements, non-functional requirements, success metrics. |
 | [CLI contract](./cli.md) | Canonical command names, arguments, flags, output expectations, safety semantics, and milestone boundaries. |
+| [Status command](./status.md) | Implemented v0.1 read-only `tunwarden status` local fallback behavior, output shape, and safety boundary. |
 | [Doctor diagnostics](./doctor-diagnostics.md) | Implemented v0.1 read-only `tunwarden doctor` checks, severities, and stale resource detection boundaries. |
 | [Recovery dry-run](./recovery-dry-run.md) | Implemented v0.1 read-only `tunwarden recover` candidate scan, output shape, and safety boundary. |
 | [Architecture](./architecture.md) | CLI/daemon split, privilege boundary, state model, transaction model, engine abstraction, backend interfaces. |
@@ -77,7 +79,7 @@ The primary value proposition is:
 2. **Rollback and recovery first.** Cleanup and recovery must exist before advanced full-tunnel features are considered stable.
 3. **CLI-first.** The first UX is a stable command-line tool.
 4. **Daemon-owned privilege.** Privileged networking belongs in the daemon, not in a SUID GUI/client binary.
-5. **Observable by default.** Users must be able to inspect routes, DNS, firewall state, core process status, and connection health without leaking secrets.
+5. **Observable by default.** Users must be able to inspect routes, DNS, firewall state, core process status, and connection health while respecting the documented output policy.
 6. **Linux networking is dynamic.** Sleep/resume, Wi-Fi roaming, DHCP changes, DNS changes, and interface changes are normal events.
 7. **NetworkManager connectivity is advisory.** Desktop connectivity indicators may be wrong while the VPN data path still works; TunWarden must run independent health checks.
 8. **Small reliable core before convenience.** Proxy-only and safe TUN foundations come before GUI, auto-select, complex routing UI, and additional engines.

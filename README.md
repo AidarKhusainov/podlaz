@@ -13,6 +13,7 @@ What exists now:
 - Go module and CI skeleton.
 - `tunwarden` CLI skeleton.
 - `tunwardend` daemon skeleton.
+- Read-only `status` command with local runtime fallback status.
 - Read-only `doctor` command with local Linux host diagnostics.
 - Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
 - Initial internal models for transactions, profiles, and subscriptions.
@@ -31,29 +32,24 @@ What does not exist yet:
 2. **CLI-first:** the first-class interface is a deterministic command line.
 3. **Daemon-owned privilege:** privileged networking belongs in a supervised daemon.
 4. **Transactional networking:** every privileged network mutation must have a plan, snapshot, verification path, and rollback path.
-5. **Observable behavior:** `status`, `doctor`, `plan`, logs, and scoped diagnostics must make route, DNS, firewall, and core state understandable without leaking secrets.
+5. **Observable behavior:** `status`, `doctor`, `plan`, logs, and scoped diagnostics must make route, DNS, firewall, and core state understandable.
 6. **Recoverability over feature count:** disconnect, rollback, and recovery are core product capabilities, not maintenance helpers.
 7. **Lightweight by default:** avoid unnecessary background components, hidden global mutation, and broad protocol expansion before reliability is proven.
 
 ## Commands available in the foundation build
 
-```bash
-go test ./...
-go run ./cmd/tunwarden version
-go run ./cmd/tunwarden doctor
-go run ./cmd/tunwarden recover
+- `go test ./...`
+- `go run ./cmd/tunwarden version`
+- `go run ./cmd/tunwarden status`
+- `go run ./cmd/tunwarden doctor`
+- `go run ./cmd/tunwarden recover`
+- `go run ./cmd/tunwardend`
 
-go run ./cmd/tunwardend
-```
-
-Canonical command names are defined in [CLI contract](docs/cli.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
+Canonical command names are defined in [CLI contract](docs/cli.md). The implemented v0.1 `status` fallback is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
 
 ## Intended lifecycle model
 
-```text
-plan -> snapshot -> apply -> verify -> commit
-                             \-> rollback on failure
-```
+`plan -> snapshot -> apply -> verify -> commit`, with rollback on failure.
 
 `recover` exists as the recovery path. In early builds it is dry-run only and must not change host networking state.
 
@@ -67,6 +63,7 @@ Primary documents:
 
 - [Product requirements](docs/product-requirements.md)
 - [CLI contract](docs/cli.md)
+- [Status command](docs/status.md)
 - [Doctor diagnostics](docs/doctor-diagnostics.md)
 - [Recovery dry-run](docs/recovery-dry-run.md)
 - [Architecture](docs/architecture.md)

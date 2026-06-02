@@ -78,9 +78,11 @@ Exit codes:
 
 `doctor` returns `0` only when diagnostics complete and required checks are healthy. It returns `3` when diagnostics complete but one or more checks fail. It returns `1` when diagnostics cannot complete because of an unexpected runtime error.
 
+`status` returns `0` for a clean inactive local state in the v0.1 local fallback. It returns `3` when the local fallback finds stale runtime state or incomplete visibility.
+
 ### JSON compatibility
 
-JSON output is a stable public interface starting with v0.1.
+JSON output is a stable public interface once implemented for a command.
 
 Rules:
 
@@ -119,7 +121,9 @@ plan:
   rollback_steps
 ```
 
-The detailed schema can evolve during implementation, but these top-level meanings are part of the CLI contract.
+The detailed schema can evolve during implementation, but these top-level meanings are part of the CLI contract once the corresponding command's `--json` output is implemented.
+
+If a command-specific implementation issue explicitly defers JSON, that command must fail fast for `--json` with exit code `2` until the JSON contract is implemented in a dedicated change.
 
 ### Redaction
 
@@ -259,7 +263,7 @@ Required behavior:
 ### Status
 
 ```bash
-tunwarden status [--json]
+tunwarden status
 ```
 
 Purpose: report local and daemon-backed TunWarden state.
@@ -268,7 +272,18 @@ Mutation level: read-only.
 
 Daemon requirement: optional. The command must use daemon-backed status when available and a conservative local fallback otherwise.
 
-Expected categories:
+Implemented in the issue #5 local fallback:
+
+- human output only;
+- daemon fallback state;
+- conservative connection, proxy, and TUN state;
+- runtime directory state;
+- stale runtime state summary;
+- guidance to `tunwarden recover` when recovery candidates exist.
+
+`status --json` is deferred to a separate issue. Until implemented, `status --json` must fail fast as invalid usage with exit code `2`.
+
+Expected eventual categories:
 
 - daemon state;
 - connection state;

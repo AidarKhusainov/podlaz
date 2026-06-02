@@ -10,6 +10,7 @@ import (
 
 	"github.com/AidarKhusainov/tunwarden/internal/doctor"
 	"github.com/AidarKhusainov/tunwarden/internal/recovery"
+	"github.com/AidarKhusainov/tunwarden/internal/status"
 )
 
 const version = "0.0.0-dev"
@@ -43,6 +44,7 @@ func ExitCode(err error) int {
 type options struct {
 	doctor  func(context.Context) doctor.Report
 	recover func(context.Context) recovery.PlanResult
+	status  func(context.Context) status.Report
 }
 
 // Run executes the user-facing TunWarden command line interface.
@@ -74,6 +76,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return nil
 	case "version", "--version":
 		return runVersionCommand(commandArgs, stdout)
+	case "status":
+		return runStatusCommand(ctx, commandArgs, stdout, opts)
 	case "doctor":
 		return runDoctorCommand(ctx, commandArgs, stdout, opts)
 	case "recover":
@@ -95,6 +99,8 @@ func runHelp(args []string, stdout io.Writer) error {
 	switch strings.ToLower(args[0]) {
 	case "version":
 		printVersionHelp(stdout)
+	case "status":
+		printStatusHelp(stdout)
 	case "doctor":
 		printDoctorHelp(stdout)
 	case "recover":
@@ -115,6 +121,23 @@ func runVersionCommand(args []string, stdout io.Writer) error {
 	}
 
 	fmt.Fprintf(stdout, "tunwarden %s\n", version)
+	return nil
+}
+
+func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
+	if isHelp(args) {
+		printStatusHelp(stdout)
+		return nil
+	}
+	if len(args) > 0 {
+		return unsupportedStatusArgument(args[0])
+	}
+
+	report := runStatus(ctx, opts)
+	fmt.Fprint(stdout, report.String())
+	if report.HasUnhealthyState() {
+		return exitError{code: 3, err: errors.New("status found stale or incomplete local state")}
+	}
 	return nil
 }
 
@@ -152,6 +175,15 @@ func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opt
 	return nil
 }
 
+func unsupportedStatusArgument(arg string) error {
+	switch arg {
+	case "--json":
+		return usageError("status --json is not implemented yet")
+	default:
+		return usageError("unsupported status argument %q", arg)
+	}
+}
+
 func unsupportedDoctorArgument(arg string) error {
 	switch arg {
 	case "--json":
@@ -161,6 +193,13 @@ func unsupportedDoctorArgument(arg string) error {
 	default:
 		return usageError("unsupported doctor argument %q", arg)
 	}
+}
+
+func runStatus(ctx context.Context, opts options) status.Report {
+	if opts.status != nil {
+		return opts.status(ctx)
+	}
+	return status.Inspect(ctx)
 }
 
 func runDoctor(ctx context.Context, opts options) doctor.Report {
@@ -199,13 +238,14 @@ func printUsage(w io.Writer) {
 
 Usage:
   tunwarden version
+  tunwarden status
   tunwarden doctor
   tunwarden recover
   tunwarden help [command]
 
 Current status:
-  This is an early foundation build. Commands print contracts and diagnostic
-  plans; they do not yet mutate system networking state.
+  This is an early foundation build. Commands print contracts, local status,
+  diagnostics, and recovery plans; they do not yet mutate system networking state.
 `)
 }
 
@@ -214,6 +254,21 @@ func printVersionHelp(w io.Writer) {
   tunwarden version
 
 Print the TunWarden CLI version.
+`)
+}
+
+func printStatusHelp(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  tunwarden status
+
+Report local TunWarden runtime state without requiring daemon IPC.
+
+Implemented in v0.1:
+  daemon fallback state, conservative connection/proxy/TUN state, runtime
+  directory state, stale runtime candidate summary, and recovery guidance.
+
+Not implemented yet:
+  --json, daemon-backed active connection status
 `)
 }
 

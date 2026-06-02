@@ -23,6 +23,7 @@ cmd/tunwarden
   -> internal/client       # daemon-backed operations once IPC exists
   -> internal/api          # shared request/response contracts
   -> internal/render       # CLI output rendering helpers
+  -> internal/status       # local read-only status fallback in foundation builds
   -> internal/doctor       # local read-only diagnostics in foundation builds
   -> internal/recovery     # local read-only recovery planning in foundation builds
 
@@ -41,7 +42,7 @@ cmd/tunwardend
 
 The exact names may evolve, but the direction should remain stable.
 
-In the foundation build, `internal/app/cli` may call local read-only diagnostic packages such as `internal/doctor` and dry-run recovery planning packages such as `internal/recovery` directly. Once daemon IPC exists, privileged or daemon-owned behavior must move behind `internal/client` and `internal/api`.
+In the foundation build, `internal/app/cli` may call local read-only status, diagnostic, and dry-run recovery packages directly. Once daemon IPC exists, privileged or daemon-owned behavior must move behind `internal/client` and `internal/api`.
 
 ## 3. Domain packages
 
