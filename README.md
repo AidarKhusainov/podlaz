@@ -12,7 +12,8 @@ What exists now:
 
 - Go module and CI skeleton.
 - `tunwarden` CLI skeleton.
-- `tunwardend` daemon skeleton.
+- `tunwardend` daemon skeleton with a read-only local Unix socket status API.
+- Read-only `status` command with daemon-backed status and local runtime fallback.
 - Read-only `doctor` command with local Linux host diagnostics.
 - Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
 - Initial internal models for transactions, profiles, and subscriptions.
@@ -40,13 +41,14 @@ What does not exist yet:
 ```bash
 go test ./...
 go run ./cmd/tunwarden version
+go run ./cmd/tunwarden status
 go run ./cmd/tunwarden doctor
 go run ./cmd/tunwarden recover
 
 go run ./cmd/tunwardend
 ```
 
-Canonical command names are defined in [CLI contract](docs/cli.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
+Canonical command names are defined in [CLI contract](docs/cli.md). The implemented v0.1 daemon transport is defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
 
 ## Intended lifecycle model
 
@@ -67,6 +69,8 @@ Primary documents:
 
 - [Product requirements](docs/product-requirements.md)
 - [CLI contract](docs/cli.md)
+- [Daemon local API](docs/daemon-api.md)
+- [Status command](docs/status.md)
 - [Doctor diagnostics](docs/doctor-diagnostics.md)
 - [Recovery dry-run](docs/recovery-dry-run.md)
 - [Architecture](docs/architecture.md)
