@@ -73,8 +73,9 @@ For packaged systemd units, prefer:
 ```ini
 RuntimeDirectory=tunwarden
 StateDirectory=tunwarden
-LogsDirectory=tunwarden
 ```
+
+`LogsDirectory=tunwarden` is intentionally not required while the daemon logs to stdout/stderr and the unit sends those streams to journald. Add a logs directory only when file-based package logs become a real product requirement.
 
 ### 1.3 System networking state
 
@@ -188,11 +189,20 @@ tunwarden recover --execute --yes
 
 The daemon service must start from least privilege. Every relaxation must be justified in documentation or in comments near the unit file.
 
-Candidate baseline for the packaged service:
+Implemented v0.1 service behavior:
+
+- `packaging/systemd/tunwardend.service` starts `tunwardend` as `root:tunwarden` so the daemon can own `/run/tunwarden` and expose a group-readable Unix socket.
+- The dedicated `tunwarden` group is the packaged socket access boundary for read-only CLI commands.
+- `RuntimeDirectory=tunwarden` with `RuntimeDirectoryMode=0750` keeps `/run/tunwarden` accessible only to root and the `tunwarden` group.
+- The daemon itself applies socket mode `0660` to `/run/tunwarden/tunwardend.sock`.
+- `StateDirectory=tunwarden` reserves `/var/lib/tunwarden` for future daemon-owned persistent state, but v0.1 does not write persistent daemon state yet.
+- `StandardOutput=journal` and `StandardError=journal` make daemon logs visible through `journalctl -u tunwardend`.
+
+Current v0.1 hardening baseline:
 
 ```ini
 NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=yes
@@ -202,17 +212,19 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RuntimeDirectory=tunwarden
+RuntimeDirectoryMode=0750
 StateDirectory=tunwarden
-LogsDirectory=tunwarden
+StateDirectoryMode=0750
 ```
 
 Notes:
 
-- `CAP_NET_ADMIN` is expected for TUN, routing, and firewall work.
-- `CAP_NET_RAW` should be justified by concrete health checks or removed.
-- Broad file permission bypass capabilities should not be in the baseline.
-- Some sandboxing options may conflict with real Linux networking behavior and must be validated before release.
-- Privileged daemon release is blocked until the unit file documents the final hardening choices.
+- v0.1 performs service startup only and must not mutate TUN, route, DNS, nftables, firewall, or core process state.
+- The service intentionally grants no capabilities in v0.1. Add `CAP_NET_ADMIN` only when a later issue implements and documents daemon-owned TUN, route, DNS, or firewall mutations.
+- Add `CAP_NET_RAW` only if a concrete health check or networking feature needs it and the PR documents why.
+- Broad file permission bypass capabilities must not be in the baseline.
+- `PrivateDevices=yes`, restrictive address-family filters, and kernel-tunable protections are deferred because they can conflict with future `/dev/net/tun`, netlink, routing, or nftables work and must be validated together with those features.
+- Privileged daemon release is blocked until the unit file documents the final hardening choices and justifies deviations from the documented baseline.
 
 ## 6. Core engine process safety
 
