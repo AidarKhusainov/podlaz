@@ -8,13 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AidarKhusainov/tunwarden/internal/api"
 	"github.com/AidarKhusainov/tunwarden/internal/render"
 )
 
-const (
-	defaultRuntimeDir = "/run/tunwarden"
-	generatedDirName  = "generated"
-)
+const generatedDirName = "generated"
 
 // RuntimeDirectoryState describes local TunWarden runtime directory visibility.
 type RuntimeDirectoryState string
@@ -71,7 +69,7 @@ func Inspect(ctx context.Context) Report {
 func InspectWithOptions(ctx context.Context, opts Options) Report {
 	runtimeDir := opts.RuntimeDir
 	if runtimeDir == "" {
-		runtimeDir = defaultRuntimeDir
+		runtimeDir = api.RuntimeDirFromEnv()
 	}
 
 	report := Report{
@@ -110,6 +108,27 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	report.Candidates = append(report.Candidates, runtimeCandidate(runtime)...)
 	report.Connection = connectionState(report.Candidates, report.Warnings)
 	return report
+}
+
+// FromDaemon converts a daemon API response into the user-facing status report.
+func FromDaemon(s api.StatusResponse) Report {
+	return Report{
+		Daemon:     valueOrDefault(s.Daemon, "running"),
+		Connection: valueOrDefault(s.Connection, "inactive"),
+		RuntimeDirectory: RuntimeDirectory{
+			State:   RuntimeDirectoryPresent,
+			Message: valueOrDefault(s.RuntimeDirectory, "present"),
+		},
+		Proxy:    valueOrDefault(s.Proxy, "inactive"),
+		TUN:      valueOrDefault(s.TUN, "disabled"),
+		Warnings: warningsFromStrings("daemon", s.Warnings),
+	}
+}
+
+// WithDaemonUnavailable annotates a local fallback report with actionable daemon availability guidance.
+func WithDaemonUnavailable(base Report, message string) Report {
+	base.Daemon = "not reachable (" + message + "); using local fallback"
+	return base
 }
 
 // HasUnhealthyState reports whether status found stale state or incomplete visibility.
@@ -253,4 +272,19 @@ func candidateNoun(count int) string {
 		return "candidate"
 	}
 	return "candidates"
+}
+
+func valueOrDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func warningsFromStrings(target string, warnings []string) []Warning {
+	out := make([]Warning, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, Warning{Target: target, Message: warning})
+	}
+	return out
 }
