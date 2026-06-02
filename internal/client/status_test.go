@@ -3,7 +3,10 @@ package client
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,5 +20,36 @@ func TestStatusReturnsUnavailableWhenSocketMissing(t *testing.T) {
 	}
 	if got := UnavailableMessage(err); got == "" {
 		t.Fatal("expected actionable unavailable message")
+	}
+}
+
+func TestStatusRejectsIncompleteDaemonResponse(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	})}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	defer func() {
+		_ = server.Close()
+		<-done
+	}()
+
+	_, err = (StatusClient{SocketPath: socketPath}).Status(context.Background())
+	if err == nil {
+		t.Fatal("expected incomplete daemon response to fail")
+	}
+	if strings.Contains(err.Error(), "tunwardend unavailable") {
+		t.Fatalf("protocol errors must not be classified as daemon unavailable: %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing daemon field") {
+		t.Fatalf("expected missing field validation error, got %v", err)
 	}
 }
