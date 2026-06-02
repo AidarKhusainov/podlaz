@@ -58,7 +58,7 @@ Warnings mean the status snapshot had incomplete visibility. Warning-only output
 
 Status output must use the shared TunWarden redaction policy from [State and security requirements](./state-and-security.md).
 
-Default human output must not print secrets, credentials, full share URIs, full subscription URLs, or generated core configs.
+Default human output must not print full subscription URLs, full share URIs, generated core configs containing credentials, UUID-like user identifiers, passwords, authorization headers, private keys, provider tokens, or secret-looking query parameters.
 
 ## Deferred behavior
 
