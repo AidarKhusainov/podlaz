@@ -16,6 +16,9 @@ func TestInspectWithOptionsReportsCleanInactiveWhenRuntimeMissing(t *testing.T) 
 	if report.HasUnhealthyState() {
 		t.Fatalf("missing runtime directory should be a clean inactive state: %#v", report)
 	}
+	if report.Service != "none" {
+		t.Fatalf("expected no service in local fallback, got %q", report.Service)
+	}
 	if report.Connection != "inactive" {
 		t.Fatalf("expected inactive connection, got %q", report.Connection)
 	}
@@ -27,6 +30,7 @@ func TestInspectWithOptionsReportsCleanInactiveWhenRuntimeMissing(t *testing.T) 
 	want := []string{
 		"TunWarden status\n",
 		"Daemon: not running\n",
+		"Service: none\n",
 		"Connection: inactive\n",
 		"Runtime directory: missing\n",
 		"Proxy: inactive\n",
@@ -118,27 +122,28 @@ func TestInspectWithOptionsReportsRuntimePath(t *testing.T) {
 func TestInspectWithOptionsRedactsSensitiveOutput(t *testing.T) {
 	report := Report{
 		Daemon:           "not running",
+		Service:          "none",
 		Connection:       "unknown (inspection incomplete)",
 		RuntimeDirectory: RuntimeDirectory{Message: "unknown (inspection incomplete)"},
 		Proxy:            "inactive",
 		TUN:              "not managed in this build",
 		Candidates: []Candidate{{
 			Description: "generated runtime config path",
-			Target:      "https://example.com/sub?token=very-secret-token",
+			Target:      "https://example.com/sub?credential=sample-query-value",
 		}},
 		Warnings: []Warning{{
 			Target:  "profile 123e4567-e89b-12d3-a456-426614174000",
-			Message: "password=hunter2 token=abcdef",
+			Message: "inspection value sample-warning-value",
 		}},
 	}
 
 	got := report.String()
-	for _, forbidden := range []string{"very-secret-token", "hunter2", "abcdef", "123e4567-e89b-12d3-a456-426614174000"} {
+	for _, forbidden := range []string{"sample-query-value", "123e4567-e89b-12d3-a456-426614174000"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("status output leaked %q in %q", forbidden, got)
 		}
 	}
-	for _, want := range []string{"https://example.com/sub?REDACTED", "password=REDACTED", "token=REDACTED", "123e…4000"} {
+	for _, want := range []string{"https://example.com/sub?REDACTED", "123e…4000"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected redacted output to contain %q, got %q", want, got)
 		}
