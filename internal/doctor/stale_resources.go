@@ -9,11 +9,12 @@ import (
 )
 
 type staleResourceOptions struct {
-	ipPath     string
-	ipOK       bool
-	nftPath    string
-	nftOK      bool
-	runtimeDir string
+	ipPath                  string
+	ipOK                    bool
+	nftPath                 string
+	nftOK                   bool
+	runtimeDir              string
+	runtimeDirOwnedByDaemon bool
 }
 
 func staleResources(ctx context.Context, runner CommandRunner, opts staleResourceOptions) Check {
@@ -47,7 +48,9 @@ func staleResources(ctx context.Context, runner CommandRunner, opts staleResourc
 	}
 
 	if stat, err := os.Stat(opts.runtimeDir); err == nil {
-		if stat.IsDir() {
+		if stat.IsDir() && opts.runtimeDirOwnedByDaemon {
+			// A live daemon owns its runtime directory, so its mere presence is not stale state.
+		} else if stat.IsDir() {
 			stale = append(stale, fmt.Sprintf("runtime directory %s exists", opts.runtimeDir))
 		} else {
 			stale = append(stale, fmt.Sprintf("runtime path %s exists", opts.runtimeDir))
