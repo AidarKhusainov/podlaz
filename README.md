@@ -12,9 +12,10 @@ What exists now:
 
 - Go module and CI skeleton.
 - `tunwarden` CLI skeleton.
-- `tunwardend` daemon skeleton with a read-only local Unix socket status API.
+- `tunwardend` daemon skeleton with read-only local Unix socket status and doctor APIs.
+- `packaging/systemd/tunwardend.service` for manual systemd service startup with journald logging.
 - Read-only `status` command with daemon-backed status and local runtime fallback.
-- Read-only `doctor` command with local Linux host diagnostics.
+- Read-only `doctor` command with daemon-backed diagnostics and local Linux host fallback.
 - Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
 - Initial internal models for transactions, profiles, and subscriptions.
 - Product, CLI, architecture, state/security, networking, subscription, roadmap, and development documentation.
@@ -44,6 +45,7 @@ What does not exist yet:
 - `go run ./cmd/tunwarden doctor`
 - `go run ./cmd/tunwarden recover`
 - `go run ./cmd/tunwardend`
+- `sudo systemctl start tunwardend` after manually installing `packaging/systemd/tunwardend.service` and the daemon binary.
 
 Canonical command names are defined in [CLI contract](docs/cli.md). The implemented v0.1 daemon transport is defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
 
