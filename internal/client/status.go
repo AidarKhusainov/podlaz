@@ -81,7 +81,18 @@ func unavailableDetail(socketPath string, err error) string {
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Sprintf("daemon socket %s does not exist; start tunwardend", socketPath)
 	}
+	if isTimeout(err) {
+		return fmt.Sprintf("daemon socket %s did not respond before timeout; start or restart tunwardend", socketPath)
+	}
 	return fmt.Sprintf("daemon socket %s is not reachable; start or restart tunwardend", socketPath)
+}
+
+func isTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func stringsAfterWrapped(s string) string {
