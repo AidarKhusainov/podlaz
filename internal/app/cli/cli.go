@@ -44,6 +44,7 @@ func ExitCode(err error) int {
 
 type options struct {
 	doctor       func(context.Context) doctor.Report
+	daemonDoctor func(context.Context) (doctor.Report, error)
 	recover      func(context.Context) recovery.PlanResult
 	status       func(context.Context) status.Report
 	daemonStatus func(context.Context) (status.Report, error)
@@ -235,6 +236,48 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 }
 
 func runDoctor(ctx context.Context, opts options) doctor.Report {
+	if opts.daemonDoctor != nil {
+		report, err := opts.daemonDoctor(ctx)
+		if err == nil {
+			return report
+		}
+		return localDoctorWithDaemonWarning(ctx, opts, err)
+	}
+	if opts.doctor != nil {
+		return opts.doctor(ctx)
+	}
+
+	daemonDoctor, err := runDaemonDoctor(ctx, opts)
+	if err == nil {
+		return daemonDoctor
+	}
+	return localDoctorWithDaemonWarning(ctx, opts, err)
+}
+
+func runDaemonDoctor(ctx context.Context, opts options) (doctor.Report, error) {
+	if opts.daemonDoctor != nil {
+		return opts.daemonDoctor(ctx)
+	}
+
+	response, err := (client.DoctorClient{}).Doctor(ctx)
+	if err != nil {
+		return doctor.Report{}, err
+	}
+	return doctor.FromDaemon(response), nil
+}
+
+func localDoctorWithDaemonWarning(ctx context.Context, opts options, err error) doctor.Report {
+	local := localDoctor(ctx, opts)
+	message := err.Error()
+	if client.IsDaemonUnavailable(err) {
+		message = client.UnavailableMessage(err)
+	} else {
+		message = "daemon doctor API unavailable: " + message
+	}
+	return doctor.WithDaemonCheck(local, doctor.SeverityWarning, message)
+}
+
+func localDoctor(ctx context.Context, opts options) doctor.Report {
 	if opts.doctor != nil {
 		return opts.doctor(ctx)
 	}
@@ -311,11 +354,14 @@ func printDoctorHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden doctor
 
-Run read-only local diagnostics for the current Linux host.
+Run read-only diagnostics for the current Linux host. The command uses
+daemon-backed diagnostics when the local Unix socket API is reachable and falls
+back to local read-only diagnostics when it is not.
 
 Implemented in v0.1:
-  platform, command availability, default route, default interface, and stale
-  TunWarden-owned resource detection.
+  daemon-backed source reporting, local fallback, platform, command
+  availability, default route, default interface, and stale TunWarden-owned
+  resource detection.
 
 Not implemented yet:
   --json, --core, --network, --dns, --routes, --firewall
