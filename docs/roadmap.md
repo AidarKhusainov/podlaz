@@ -16,7 +16,9 @@ The repository currently contains a foundation build:
 
 - `tunwarden` CLI skeleton,
 - `tunwardend` daemon skeleton,
-- read-only `doctor` diagnostics basics for platform, command availability, default route/interface, and stale TunWarden-owned resources,
+- local Unix socket HTTP/JSON daemon IPC for read-only status and doctor diagnostics,
+- read-only `status` with daemon-backed status and conservative local fallback,
+- read-only `doctor` with daemon-backed diagnostics and local fallback for platform, command availability, default route/interface, and stale TunWarden-owned resources,
 - dry-run `recover` command contract,
 - initial transaction/profile/subscription models,
 - CI with `gofmt` and `go test`,
@@ -30,7 +32,7 @@ The repository does **not** yet contain:
 - TUN creation,
 - route/DNS/nftables mutation,
 - systemd unit files,
-- real daemon IPC.
+- packaged daemon socket access model.
 
 ## 3. Phase 0: Documentation and repository foundation
 
@@ -89,6 +91,16 @@ Deliverables:
   - DNS mode,
   - nftables availability,
   - stale TunWarden-owned resources.
+
+Implemented foundation subset:
+
+- CLI skeleton,
+- daemon skeleton,
+- local Unix socket HTTP/JSON transport,
+- daemon-backed `status` with local fallback,
+- daemon-backed `doctor` with local fallback,
+- shared human-output redaction for implemented status and doctor output,
+- read-only local recovery dry-run scan.
 
 Exit criteria:
 
