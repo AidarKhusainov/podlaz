@@ -1,14 +1,45 @@
 [Unit]
-Description=TunWarden privileged networking daemon
-Documentation=https://github.com/AidarKhusainov/tunwarden
-After=network-online.target
-Wants=network-online.target
+Description=TunWarden daemon
+Documentation=https://github.com/AidarKhusainov/tunwarden/tree/master/docs
+After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/tunwardend
+ExecStart=/usr/local/bin/tunwardend
 Restart=on-failure
 RestartSec=2s
+
+# v0.1 runs read-only status and doctor APIs. It intentionally does not create
+# TUN devices, routes, DNS settings, nftables rules, firewall rules, or Xray
+# processes. Root is kept as the daemon user for the future privileged daemon
+# model; capabilities stay empty until a later networking issue documents and
+# enables the exact required set.
+User=root
+Group=tunwarden
+UMask=0007
+Environment=TUNWARDEN_SERVICE=systemd
+
+# systemd owns the packaged runtime path. The daemon still defaults to the same
+# /run/tunwarden path, so the CLI can reach /run/tunwarden/tunwardend.sock.
+RuntimeDirectory=tunwarden
+RuntimeDirectoryMode=0750
+StateDirectory=tunwarden
+StateDirectoryMode=0750
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tunwardend
 
 [Install]
 WantedBy=multi-user.target
