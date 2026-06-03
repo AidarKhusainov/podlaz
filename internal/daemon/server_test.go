@@ -20,10 +20,12 @@ func TestServerExposesStatusOverUnixSocket(t *testing.T) {
 
 	statusClient := client.StatusClient{SocketPath: runtimeDir + "/tunwardend.sock", Timeout: time.Second}
 	var daemon string
+	var service string
 	for i := 0; i < 50; i++ {
 		status, err := statusClient.Status(context.Background())
 		if err == nil {
 			daemon = status.Daemon
+			service = status.Service
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -34,6 +36,19 @@ func TestServerExposesStatusOverUnixSocket(t *testing.T) {
 	}
 	if daemon != "running" {
 		t.Fatalf("expected daemon running status, got %q", daemon)
+	}
+	if service != api.ServiceManual {
+		t.Fatalf("expected manual service status outside systemd, got %q", service)
+	}
+}
+
+func TestDefaultStatusReportsSystemdServiceFromEnvironment(t *testing.T) {
+	t.Setenv(api.ServiceEnv, api.ServiceSystemd)
+
+	status := DefaultStatus(context.Background())
+
+	if status.Service != api.ServiceSystemd {
+		t.Fatalf("expected %q service, got %q", api.ServiceSystemd, status.Service)
 	}
 }
 

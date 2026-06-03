@@ -105,7 +105,7 @@ func (s Server) Run(ctx context.Context) error {
 }
 
 func DefaultStatus(context.Context) api.StatusResponse {
-	return api.StatusResponse{Daemon: "running", Connection: "inactive", RuntimeDirectory: "present", Proxy: "inactive", TUN: "disabled"}
+	return api.StatusResponse{Daemon: "running", Service: api.ServiceFromEnv(), Connection: "inactive", RuntimeDirectory: "present", Proxy: "inactive", TUN: "disabled"}
 }
 
 func DefaultDoctor(ctx context.Context, runtimeDir string) api.DoctorResponse {
