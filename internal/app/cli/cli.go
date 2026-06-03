@@ -220,14 +220,23 @@ func unsupportedDoctorArgument(arg string) error {
 func parseLogsArgs(args []string) (logs.Options, error) {
 	var opts logs.Options
 	for i := 0; i < len(args); i++ {
-		switch args[i] {
+		arg := args[i]
+		if value, ok := strings.CutPrefix(arg, "--since="); ok {
+			if strings.TrimSpace(value) == "" {
+				return opts, usageError("logs --since requires a value")
+			}
+			opts.Since = value
+			continue
+		}
+
+		switch arg {
 		case "--follow", "-f":
 			opts.Follow = true
 		case "--daemon":
 			// Daemon logs are the default and only implemented v0.1 source.
 		case "--since":
 			i++
-			if i >= len(args) || strings.TrimSpace(args[i]) == "" || strings.HasPrefix(args[i], "-") {
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
 				return opts, usageError("logs --since requires a value")
 			}
 			opts.Since = args[i]
@@ -236,7 +245,7 @@ func parseLogsArgs(args []string) (logs.Options, error) {
 		case "--core":
 			return opts, usageError("logs --core is not implemented yet")
 		default:
-			return opts, usageError("unsupported logs argument %q", args[i])
+			return opts, usageError("unsupported logs argument %q", arg)
 		}
 	}
 	return opts, nil
@@ -425,9 +434,9 @@ func printLogsHelp(w io.Writer) {
   tunwarden logs [--follow] [--daemon] [--since <duration>]
   tunwarden logs -f
 
-Print recent tunwardend logs from journald using journalctl. This command is
-read-only and applies the standard TunWarden output redaction policy before
-printing log lines.
+Print recent tunwardend logs from the system journal using journalctl. This
+command is read-only and applies the standard TunWarden output redaction policy
+before printing log lines.
 
 Implemented in v0.1:
   recent daemon logs, --follow, -f, --daemon, --since
