@@ -114,6 +114,12 @@ status:
 doctor:
   checks
 
+profile list:
+  profiles
+
+profile show:
+  profile
+
 plan:
   mode
   plan
@@ -221,14 +227,33 @@ Non-goal: this command must not connect or start Xray.
 ### Profile management
 
 ```bash
-tunwarden profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks> [...]
+tunwarden profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
 tunwarden profile import <share-uri>
 tunwarden profile list [--json]
 tunwarden profile show <profile-id> [--json]
-tunwarden profile delete <profile-id> [--yes]
+tunwarden profile delete <profile-id> --yes
 ```
 
 Purpose: explicit lifecycle management for individual profiles.
+
+Implemented in the issue #10 manual profile management view:
+
+- manual profile add, list, show, and delete;
+- persistent local profile storage at the documented XDG user state location;
+- human output for all implemented profile commands;
+- `profile list --json` and `profile show --json` with `schema_version: "v1"`;
+- required-field validation for manual profile name, protocol, server, and port;
+- atomic profile store writes with restrictive file permissions;
+- corrupt or unreadable profile storage fails safely with a clear error;
+- `profile delete` requires `--yes` in the current non-interactive v0.1 CLI path.
+
+Deferred behavior:
+
+- `profile import <share-uri>`;
+- VLESS URI import;
+- subscription parsing;
+- Xray config generation;
+- connect/disconnect behavior.
 
 Mutation level:
 
