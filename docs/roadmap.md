@@ -21,6 +21,7 @@ The repository currently contains a foundation build:
 - group-based daemon socket access model for the repository systemd unit,
 - read-only `status` with daemon-backed status and conservative local fallback,
 - read-only `doctor` with daemon-backed diagnostics and local fallback for platform, command availability, default route/interface, and stale TunWarden-owned resources,
+- read-only `logs` with journald-backed daemon log inspection,
 - dry-run `recover` command contract,
 - initial transaction/profile/subscription models,
 - CI with `gofmt` and `go test`,
@@ -103,7 +104,8 @@ Implemented foundation subset:
 - journald logging through the systemd unit,
 - daemon-backed `status` with local fallback,
 - daemon-backed `doctor` with local fallback,
-- shared human-output redaction for implemented status and doctor output,
+- journald-backed `logs` command for daemon logs,
+- shared human-output redaction for implemented status, doctor, logs, and recover output,
 - read-only local recovery dry-run scan.
 
 Exit criteria:

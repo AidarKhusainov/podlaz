@@ -101,6 +101,7 @@ internal/client            CLI-side daemon client adapters
 internal/daemon            daemon coordination
 internal/doctor            safe local diagnostics
 internal/engine            core engine lifecycle coordination
+internal/logs              read-only journald/system-log integration
 internal/network           transaction and network planning model
 internal/network/planner   pure network planning logic
 internal/network/executor  narrow platform adapters
@@ -114,7 +115,7 @@ internal/sub               subscription source model
 
 This layout is expected to evolve, but the CLI/daemon boundary and planner/executor split should remain stable architectural constraints.
 
-In the foundation build, `internal/app/cli` may call local read-only diagnostics and dry-run recovery planning directly. Privileged or daemon-owned behavior must move behind the daemon client/API boundary once it is implemented.
+In the foundation build, `internal/app/cli` may call local read-only diagnostics, read-only system-log inspection, and dry-run recovery planning directly. Privileged or daemon-owned behavior must move behind the daemon client/API boundary once it is implemented.
 
 Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 

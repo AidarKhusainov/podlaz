@@ -10,6 +10,7 @@ import (
 
 	"github.com/AidarKhusainov/tunwarden/internal/client"
 	"github.com/AidarKhusainov/tunwarden/internal/doctor"
+	"github.com/AidarKhusainov/tunwarden/internal/logs"
 	"github.com/AidarKhusainov/tunwarden/internal/recovery"
 	"github.com/AidarKhusainov/tunwarden/internal/status"
 )
@@ -45,6 +46,7 @@ func ExitCode(err error) int {
 type options struct {
 	doctor       func(context.Context) doctor.Report
 	daemonDoctor func(context.Context) (doctor.Report, error)
+	logs         func(context.Context, io.Writer, logs.Options) error
 	recover      func(context.Context) recovery.PlanResult
 	status       func(context.Context) status.Report
 	daemonStatus func(context.Context) (status.Report, error)
@@ -83,6 +85,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runStatusCommand(ctx, commandArgs, stdout, opts)
 	case "doctor":
 		return runDoctorCommand(ctx, commandArgs, stdout, opts)
+	case "logs":
+		return runLogsCommand(ctx, commandArgs, stdout, opts)
 	case "recover":
 		return runRecoverCommand(ctx, commandArgs, stdout, opts)
 	default:
@@ -106,6 +110,8 @@ func runHelp(args []string, stdout io.Writer) error {
 		printStatusHelp(stdout)
 	case "doctor":
 		printDoctorHelp(stdout)
+	case "logs":
+		printLogsHelp(stdout)
 	case "recover":
 		printRecoverHelp(stdout)
 	default:
@@ -161,6 +167,19 @@ func runDoctorCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	return nil
 }
 
+func runLogsCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
+	if isHelp(args) {
+		printLogsHelp(stdout)
+		return nil
+	}
+
+	logOptions, err := parseLogsArgs(args)
+	if err != nil {
+		return err
+	}
+	return runLogs(ctx, stdout, opts, logOptions)
+}
+
 func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
 	if isHelp(args) {
 		printRecoverHelp(stdout)
@@ -195,6 +214,52 @@ func unsupportedDoctorArgument(arg string) error {
 		return usageError("doctor %s is not implemented yet", arg)
 	default:
 		return usageError("unsupported doctor argument %q", arg)
+	}
+}
+
+func parseLogsArgs(args []string) (logs.Options, error) {
+	var opts logs.Options
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if value, ok := strings.CutPrefix(arg, "--since="); ok {
+			if strings.TrimSpace(value) == "" {
+				return opts, usageError("logs --since requires a value")
+			}
+			opts.Since = value
+			continue
+		}
+
+		switch arg {
+		case "--follow", "-f":
+			opts.Follow = true
+		case "--daemon":
+			// Daemon logs are the default and only implemented v0.1 source.
+		case "--since":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" || isLogsOption(args[i]) {
+				return opts, usageError("logs --since requires a value")
+			}
+			opts.Since = args[i]
+		case "--json":
+			return opts, usageError("logs --json is not implemented yet")
+		case "--core":
+			return opts, usageError("logs --core is not implemented yet")
+		default:
+			return opts, usageError("unsupported logs argument %q", arg)
+		}
+	}
+	return opts, nil
+}
+
+func isLogsOption(arg string) bool {
+	if _, ok := strings.CutPrefix(arg, "--since="); ok {
+		return true
+	}
+	switch arg {
+	case "--follow", "-f", "--daemon", "--since", "--json", "--core":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -284,6 +349,13 @@ func localDoctor(ctx context.Context, opts options) doctor.Report {
 	return doctor.Run(ctx)
 }
 
+func runLogs(ctx context.Context, stdout io.Writer, opts options, logOptions logs.Options) error {
+	if opts.logs != nil {
+		return opts.logs(ctx, stdout, logOptions)
+	}
+	return logs.Run(ctx, stdout, logOptions)
+}
+
 func runRecover(ctx context.Context, opts options) recovery.PlanResult {
 	if opts.recover != nil {
 		return opts.recover(ctx)
@@ -315,13 +387,14 @@ Usage:
   tunwarden version
   tunwarden status
   tunwarden doctor
+  tunwarden logs
   tunwarden recover
   tunwarden help [command]
 
 Current status:
   This is an early foundation build. Commands print contracts, daemon-backed
-  or local status, diagnostics, and recovery plans; they do not yet mutate
-  system networking state.
+  or local status, diagnostics, daemon logs, and recovery plans; they do not
+  yet mutate system networking state.
 `)
 }
 
@@ -365,6 +438,23 @@ Implemented in v0.1:
 
 Not implemented yet:
   --json, --core, --network, --dns, --routes, --firewall
+`)
+}
+
+func printLogsHelp(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  tunwarden logs [--follow] [--daemon] [--since <duration>]
+  tunwarden logs -f
+
+Print recent tunwardend logs from the system journal using journalctl. This
+command is read-only and applies the standard TunWarden output redaction policy
+before printing log lines.
+
+Implemented in v0.1:
+  recent daemon logs, --follow, -f, --daemon, --since
+
+Not implemented yet:
+  --json, --core
 `)
 }
 

@@ -324,6 +324,19 @@ Purpose: inspect TunWarden daemon and core logs.
 
 Mutation level: read-only.
 
+Implemented in the issue #9 journald-backed daemon log view:
+
+- human output only;
+- recent `tunwardend.service` logs through the system journal with `journalctl --system`;
+- `--follow` and `-f` for live log following;
+- `--daemon` as the explicit daemon log source;
+- `--since <duration>` and `--since=<duration>` passed to journalctl, including relative values such as `-1h`;
+- shared human-output redaction for each printed log line.
+
+`logs --json` and `logs --core` are deferred to separate issues. Until implemented, they must fail fast as invalid usage with exit code `2`.
+
+If `journalctl` is unavailable, the command must fail clearly with an actionable message. If the current user cannot read the system journal, the command must surface the redacted `journalctl` error.
+
 `-f` may alias `--follow` because it is a common log-following pattern.
 
 ### Plan

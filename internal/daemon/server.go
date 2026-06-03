@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -51,9 +52,11 @@ func (s Server) Run(ctx context.Context) error {
 	if err := os.Chmod(socketPath, 0o660); err != nil {
 		return fmt.Errorf("set daemon socket permissions %s: %w", socketPath, err)
 	}
+	log.Printf("tunwardend: daemon API listening on Unix socket")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("tunwardend: status request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -64,8 +67,10 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(statusFn(r.Context()))
+		log.Printf("tunwardend: status request handled")
 	})
 	mux.HandleFunc(api.DoctorPath, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("tunwardend: doctor request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -78,6 +83,7 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(doctorFn(r.Context()))
+		log.Printf("tunwardend: doctor request handled")
 	})
 
 	httpServer := http.Server{Handler: mux}
