@@ -180,3 +180,160 @@ Exit criteria:
 - No system routes, DNS, firewall rules, or TUN devices are modified.
 - Generated Xray config is runtime output, not persistent source of truth.
 - Generated core config is not logged in full by default.
+
+## 7. Phase 4: Network planner and dry-run
+
+Goal: design network changes without applying them.
+
+Deliverables:
+
+- system snapshot model,
+- route planner,
+- DNS planner,
+- firewall planner,
+- TUN planner,
+- transaction model,
+- `tunwarden plan --mode tun <profile>`,
+- planner unit tests,
+- fake system snapshots for common desktop topologies.
+
+Exit criteria:
+
+- A full-tunnel plan can be generated from a fake system snapshot.
+- Plan output is readable by technical users.
+- Planner can detect route loop risk.
+- Planner can produce rollback steps.
+- Planner can explain warnings for DNS, IPv6, NetworkManager, and kill-switch behavior.
+- Plan output redacts sensitive values.
+
+## 8. Phase 5: Safe TUN MVP
+
+Goal: implement full-tunnel mode with rollback.
+
+Deliverables:
+
+- TUN interface creation,
+- routing table/rule apply,
+- systemd-resolved DNS apply,
+- nftables foundation,
+- transaction apply/commit/rollback,
+- `recover --execute --yes` explicit cleanup mode,
+- `doctor` checks for route/DNS/TUN/firewall/core state,
+- systemd hardening baseline for privileged daemon release,
+- integration tests in Linux network namespaces where possible.
+
+Exit criteria:
+
+- Failed connection attempts roll back.
+- Disconnect leaves no TunWarden-owned routes, rules, DNS, nftables state, TUN interfaces, generated configs, or child processes.
+- `recover --execute --yes` works when disconnected and after simulated failure.
+- VPN server route bypasses TUN.
+- Strict kill-switch behavior is explicit and recoverable.
+- The systemd unit documents final hardening choices and justifies deviations from the documented baseline.
+
+## 9. Phase 6: Laptop reliability
+
+Goal: make the client robust on real Linux laptops.
+
+Deliverables:
+
+- NetworkManager event handling,
+- default route/interface change handling,
+- DNS change handling,
+- suspend/resume hooks,
+- reconnect state machine,
+- rate-limited retries,
+- health checks after resume,
+- Ubuntu LTS manual test checklist.
+
+Exit criteria:
+
+- Active connection recovers after suspend/resume.
+- Active connection recovers after Wi-Fi reconnect.
+- DHCP/DNS changes are handled without stale state.
+- NetworkManager limited connectivity is reported but not blindly treated as VPN failure.
+- Reconnect loops are rate-limited and observable.
+
+## 10. Phase 7: Packaging
+
+Goal: make installation and service management reliable.
+
+Deliverables:
+
+- `.deb` package,
+- systemd units,
+- default config files,
+- uninstall cleanup policy,
+- shell completions,
+- man pages later,
+- Fedora/Arch packaging plan.
+
+Exit criteria:
+
+- Fresh Ubuntu installation can install, start daemon, connect, disconnect, run `doctor`, run `recover`, and uninstall safely.
+- Package removal has a documented cleanup policy.
+
+## 11. Phase 8: Advanced features
+
+Goal: add convenience only after reliability is solid.
+
+Candidates:
+
+- latency test,
+- URL test,
+- auto-select,
+- split tunnel,
+- routing rule DSL,
+- IPv6 full support,
+- AmneziaWG engine,
+- optional sing-box compatibility experiments,
+- GUI client,
+- provider-specific subscription metadata,
+- auto-update core with signature/checksum verification.
+
+## 12. Explicit deferrals
+
+The following should not be started until the earlier reliability phases are strong:
+
+- GUI,
+- mobile clients,
+- complex visual routing editor,
+- router mode,
+- plugin system,
+- broad non-Xray protocol expansion,
+- automatic privileged core updater.
+
+## 13. First milestone proposal
+
+A realistic first public milestone:
+
+```text
+v0.1.0: proxy-only technical preview
+```
+
+Features:
+
+- CLI + daemon + IPC,
+- manual profile import,
+- Base64 subscription import,
+- Xray proxy-only mode,
+- status/logs/doctor basics,
+- `plan --mode proxy-only`,
+- dry-run `recover`,
+- no TUN mode yet.
+
+Second milestone:
+
+```text
+v0.2.0: safe TUN preview
+```
+
+Features:
+
+- TUN full-tunnel,
+- transaction rollback,
+- systemd-resolved backend,
+- nftables foundation,
+- `recover --execute --yes`,
+- systemd hardening baseline,
+- Ubuntu LTS test checklist.
