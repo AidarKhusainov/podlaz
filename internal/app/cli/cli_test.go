@@ -9,6 +9,7 @@ import (
 
 	"github.com/AidarKhusainov/tunwarden/internal/client"
 	"github.com/AidarKhusainov/tunwarden/internal/doctor"
+	"github.com/AidarKhusainov/tunwarden/internal/logs"
 	"github.com/AidarKhusainov/tunwarden/internal/recovery"
 	"github.com/AidarKhusainov/tunwarden/internal/status"
 )
@@ -250,6 +251,104 @@ func TestRunCLIDoctorRejectsUnsupportedArguments(t *testing.T) {
 		{name: "json", args: []string{"doctor", "--json"}, wantMessage: "doctor --json is not implemented yet"},
 		{name: "core", args: []string{"doctor", "--core"}, wantMessage: "doctor --core is not implemented yet"},
 		{name: "garbage", args: []string{"doctor", "garbage"}, wantMessage: "unsupported doctor argument"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := run(context.Background(), tt.args, &out)
+			if err == nil {
+				t.Fatalf("expected %v to fail", tt.args)
+			}
+			if got := ExitCode(err); got != 2 {
+				t.Fatalf("expected exit code 2, got %d", got)
+			}
+			if !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Fatalf("expected error containing %q, got %q", tt.wantMessage, err.Error())
+			}
+			if got := out.String(); got != "" {
+				t.Fatalf("expected no stdout on usage error, got %q", got)
+			}
+		})
+	}
+}
+
+func TestRunCLILogsHelp(t *testing.T) {
+	var out bytes.Buffer
+
+	err := run(context.Background(), []string{"logs", "--help"}, &out)
+	if err != nil {
+		t.Fatalf("logs --help failed: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "Usage:\n  tunwarden logs") || !strings.Contains(got, "journalctl") {
+		t.Fatalf("expected logs help output, got %q", got)
+	}
+}
+
+func TestRunCLIHelpLogs(t *testing.T) {
+	var out bytes.Buffer
+
+	err := run(context.Background(), []string{"help", "logs"}, &out)
+	if err != nil {
+		t.Fatalf("help logs failed: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "recent tunwardend logs") {
+		t.Fatalf("expected logs help output, got %q", got)
+	}
+}
+
+func TestRunCLILogsRunsDefaultDaemonLogs(t *testing.T) {
+	var out bytes.Buffer
+	var gotOptions logs.Options
+
+	err := runWithOptions(context.Background(), []string{"logs"}, &out, options{
+		logs: func(_ context.Context, w io.Writer, opts logs.Options) error {
+			gotOptions = opts
+			_, _ = fmt.Fprintln(w, "TunWarden daemon logs")
+			_, _ = fmt.Fprintln(w, "Jun 03 host tunwardend[123]: daemon started")
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("logs failed: %v", err)
+	}
+	if gotOptions != (logs.Options{}) {
+		t.Fatalf("expected default logs options, got %#v", gotOptions)
+	}
+	if got := out.String(); !strings.Contains(got, "TunWarden daemon logs") || !strings.Contains(got, "daemon started") {
+		t.Fatalf("expected daemon logs output, got %q", got)
+	}
+}
+
+func TestRunCLILogsParsesFollowDaemonAndSince(t *testing.T) {
+	var out bytes.Buffer
+	var gotOptions logs.Options
+
+	err := runWithOptions(context.Background(), []string{"logs", "--daemon", "--since", "1 hour ago", "-f"}, &out, options{
+		logs: func(_ context.Context, _ io.Writer, opts logs.Options) error {
+			gotOptions = opts
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("logs failed: %v", err)
+	}
+	if !gotOptions.Follow || gotOptions.Since != "1 hour ago" {
+		t.Fatalf("expected follow and since logs options, got %#v", gotOptions)
+	}
+}
+
+func TestRunCLILogsRejectsUnsupportedArguments(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantMessage string
+	}{
+		{name: "json", args: []string{"logs", "--json"}, wantMessage: "logs --json is not implemented yet"},
+		{name: "core", args: []string{"logs", "--core"}, wantMessage: "logs --core is not implemented yet"},
+		{name: "missing-since", args: []string{"logs", "--since"}, wantMessage: "logs --since requires a value"},
+		{name: "flag-since", args: []string{"logs", "--since", "--follow"}, wantMessage: "logs --since requires a value"},
+		{name: "garbage", args: []string{"logs", "garbage"}, wantMessage: "unsupported logs argument"},
 	}
 
 	for _, tt := range tests {
