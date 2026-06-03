@@ -15,6 +15,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 - The implemented v0.1 daemon transport is owned by [Daemon local API](./daemon-api.md).
 - `tunwarden status`'s implemented daemon-backed and local fallback behavior is owned by [Status command](./status.md).
 - `tunwarden doctor`'s implemented daemon-backed and local fallback diagnostic behavior is owned by [Doctor diagnostics](./doctor-diagnostics.md).
+- `tunwarden logs`'s implemented journald-backed daemon log behavior is owned by [Logs command](./logs.md).
 - `tunwarden recover`'s implemented local dry-run scan is owned by [Recovery dry-run](./recovery-dry-run.md).
 - Filesystem layout, output redaction, JSON compatibility, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
 - Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
@@ -29,6 +30,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | [Daemon local API](./daemon-api.md) | Implemented v0.1 Unix socket daemon API transport, status and doctor endpoints, lifecycle, and safety boundary. |
 | [Status command](./status.md) | Implemented v0.1 read-only `tunwarden status` daemon-backed behavior, local fallback behavior, output shape, and safety boundary. |
 | [Doctor diagnostics](./doctor-diagnostics.md) | Implemented v0.1 read-only `tunwarden doctor` daemon-backed behavior, local fallback checks, severities, and stale resource detection boundaries. |
+| [Logs command](./logs.md) | Implemented v0.1 read-only `tunwarden logs` journald integration, daemon log source, redaction, and failure behavior. |
 | [Recovery dry-run](./recovery-dry-run.md) | Implemented v0.1 read-only `tunwarden recover` candidate scan, output shape, and safety boundary. |
 | [Architecture](./architecture.md) | CLI/daemon split, privilege boundary, state model, transaction model, engine abstraction, backend interfaces. |
 | [State and security requirements](./state-and-security.md) | User/daemon/system state separation, XDG/systemd paths, JSON compatibility, redaction, confirmations, service hardening, and core process safety. |
