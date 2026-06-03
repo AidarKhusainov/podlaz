@@ -133,17 +133,17 @@ func TestInspectWithOptionsRedactsSensitiveOutput(t *testing.T) {
 		}},
 		Warnings: []Warning{{
 			Target:  "profile 123e4567-e89b-12d3-a456-426614174000",
-			Message: "inspection value sample-warning-value",
+			Message: "password=example-password-value token=example-token-value",
 		}},
 	}
 
 	got := report.String()
-	for _, forbidden := range []string{"sample-query-value", "123e4567-e89b-12d3-a456-426614174000"} {
+	for _, forbidden := range []string{"sample-query-value", "example-password-value", "example-token-value", "123e4567-e89b-12d3-a456-426614174000"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("status output leaked %q in %q", forbidden, got)
 		}
 	}
-	for _, want := range []string{"https://example.com/sub?REDACTED", "123e…4000"} {
+	for _, want := range []string{"https://example.com/sub?REDACTED", "password=REDACTED", "token=REDACTED", "123e…4000"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected redacted output to contain %q, got %q", want, got)
 		}
