@@ -2,10 +2,12 @@
 
 ## 1. Requirements
 
-- Go 1.26 or newer.
+- Go 1.26.4, the current pinned project toolchain.
 - Linux for networking implementation work.
 - Ubuntu LTS or Debian stable for Tier 1 manual testing.
 - `iproute2`, `nftables`, `systemd`, `systemd-resolved`, and NetworkManager for full networking work.
+
+The module language version is declared as `go 1.26` in `go.mod`; the exact stable toolchain is pinned with `toolchain go1.26.4` and mirrored in CI.
 
 ## 2. Local checks
 
@@ -26,7 +28,7 @@ test -z "$(gofmt -l .)"
 go test ./...
 ```
 
-CI uses the Go version declared in `go.mod`.
+CI uses Go 1.26.4. Local development should use the same toolchain unless a PR explicitly updates `go.mod`, CI, and this guide together.
 
 ## 3. Safety rules for contributors
 
