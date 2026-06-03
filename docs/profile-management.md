@@ -48,7 +48,20 @@ test      test   vless     example.com  443
 
 ## JSON output
 
-`profile list --json` and `profile show --json` are implemented and include `schema_version: "v1"`.
+`profile list --json` and `profile show --json` are implemented with the common top-level JSON contract:
+
+```json
+{
+  "schema_version": "v1",
+  "status": "ok",
+  "warnings": [],
+  "errors": []
+}
+```
+
+`profile list --json` also includes `profiles`.
+
+`profile show --json` also includes `profile`.
 
 `profile add --json` and `profile delete --json` are not implemented in v0.1.
 
@@ -60,13 +73,13 @@ Profiles are stored in the documented user state location:
 $XDG_STATE_HOME/tunwarden/profiles.json
 ```
 
-When `XDG_STATE_HOME` is unset, the fallback is:
+When `XDG_STATE_HOME` is unset or relative, the fallback is:
 
 ```text
 ~/.local/state/tunwarden/profiles.json
 ```
 
-The profile store is user-owned state and must not require root. Writes use an atomic temporary-file-and-rename flow and store files with restrictive permissions.
+The profile store is user-owned state and must not require root. Writes use an atomic temporary-file-and-rename flow and store files with restrictive permissions. After replacing the profile store, the parent directory is synced for stronger crash durability.
 
 ## Validation and failure behavior
 
