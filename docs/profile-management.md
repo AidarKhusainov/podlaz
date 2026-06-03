@@ -79,7 +79,7 @@ When `XDG_STATE_HOME` is unset or relative, the fallback is:
 ~/.local/state/tunwarden/profiles.json
 ```
 
-The profile store is user-owned state and must not require root. Writes use an atomic temporary-file-and-rename flow and store files with restrictive permissions. After replacing the profile store, the parent directory is synced for stronger crash durability.
+The profile store is user-owned state and must not require root. Writes use an atomic temporary-file-and-rename flow and store files with restrictive permissions.
 
 ## Validation and failure behavior
 
