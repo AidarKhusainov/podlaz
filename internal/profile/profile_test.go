@@ -30,6 +30,21 @@ func TestValidateRejectsInvalidProfile(t *testing.T) {
 	}
 }
 
+func TestDefaultStorePathIgnoresRelativeXDGStateHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "relative-state")
+
+	got, err := DefaultStorePath()
+	if err != nil {
+		t.Fatalf("default store path: %v", err)
+	}
+	want := filepath.Join(home, ".local", "state", "tunwarden", "profiles.json")
+	if got != want {
+		t.Fatalf("expected fallback path %q, got %q", want, got)
+	}
+}
+
 func TestStorePersistsProfilesAcrossInstances(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.json")
 	store, err := NewStore(path)
