@@ -24,14 +24,16 @@ The repository currently contains a foundation build:
 - read-only `logs` with journald-backed daemon log inspection,
 - dry-run `recover` command contract,
 - initial transaction/profile/subscription models,
+- manual profile management and VLESS share URI profile import,
 - CI with `gofmt` and `go test`,
 - canonical documentation under `docs/`.
 
 The repository does **not** yet contain:
 
 - real Xray process management,
-- profile import,
+- top-level `tunwarden import` format detection,
 - subscription parsing,
+- VMess, Trojan, or Shadowsocks URI import,
 - TUN creation,
 - route/DNS/nftables mutation,
 - `.deb` package or installer,
@@ -125,9 +127,10 @@ Deliverables:
 
 - internal profile model,
 - manual profile support,
+- VLESS share URI parser for `tunwarden profile import`,
 - convenience `tunwarden import` entrypoint,
 - XDG-based user config/state layout,
-- share link parser for initial protocols,
+- share link parsers for remaining initial protocols,
 - Base64 subscription parser,
 - subscription storage,
 - update diff,
@@ -135,12 +138,20 @@ Deliverables:
 - delete confirmation behavior,
 - fixture-based tests.
 
+Implemented foundation subset:
+
+- internal profile model,
+- manual profile add, list, show, and delete,
+- VLESS share URI import through `tunwarden profile import`,
+- persistent user-owned profile storage under the documented XDG state path,
+- validation, warning, and fixture coverage for implemented manual and VLESS-import profile behavior.
+
 Initial protocols:
 
-- VLESS,
-- VMess,
-- Trojan,
-- Shadowsocks.
+- VLESS implemented for `tunwarden profile import`,
+- VMess deferred,
+- Trojan deferred,
+- Shadowsocks deferred.
 
 Exit criteria:
 
@@ -314,7 +325,7 @@ v0.1.0: proxy-only technical preview
 Features:
 
 - CLI + daemon + IPC,
-- manual profile import,
+- manual and VLESS share URI profile import,
 - Base64 subscription import,
 - Xray proxy-only mode,
 - status/logs/doctor basics,
