@@ -29,8 +29,23 @@ func TestImportVLESSURIValidRealityFixture(t *testing.T) {
 	if p.ServerName != "example.com" || p.Fingerprint != "chrome" || p.RealityPublicKey != "public-key" || p.RealityShortID != "abcd" || p.RealitySpiderX != "/" {
 		t.Fatalf("unexpected VLESS metadata fields: %#v", p)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "flow is preserved") {
-		t.Fatalf("expected flow warning, got %#v", warnings)
+	if len(warnings) != 0 {
+		t.Fatalf("flow is supported by proxy-only Xray config generation and should not warn, got %#v", warnings)
+	}
+}
+
+func TestImportVLESSURIPreservesFlowWithoutWarning(t *testing.T) {
+	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls&encryption=none&flow=xtls-rprx-vision#flow-profile"
+
+	p, warnings, err := ImportVLESSURI(uri)
+	if err != nil {
+		t.Fatalf("import VLESS URI: %v", err)
+	}
+	if p.Flow != "xtls-rprx-vision" {
+		t.Fatalf("expected flow to be preserved, got %q", p.Flow)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warning for supported flow, got %#v", warnings)
 	}
 }
 

@@ -47,15 +47,15 @@ Profile added: test
 - `protocol: vless`
 - VLESS query metadata used by Xray-oriented profiles, including transport `type`, `security`, `encryption`, `flow`, `sni`, `alpn`, `fp`, `path`, `host`, `serviceName`, `pbk`, `sid`, and `spx`
 
-A successful import prints the deterministic profile ID and any parser warnings:
+A successful import prints the deterministic profile ID and any parser warnings for unsupported options:
 
 ```text
 Imported profile: test-a1b2c3d4e5
 Warnings: 1
-- flow is preserved for future Xray config generation but is not applied in this build
+- unsupported VLESS option "ed" ignored
 ```
 
-Unsupported VLESS query options are reported as warnings and ignored. Unsupported URI schemes, malformed percent-encoding in the URI query, unsupported VLESS transport/security values, and incompatible VLESS transport/security combinations fail clearly with exit code `2`.
+Supported VLESS options such as `flow` are preserved for proxy-only Xray config planning and must not produce warnings. Unsupported VLESS query options are reported as warnings and ignored. Unsupported URI schemes, malformed percent-encoding in the URI query, unsupported VLESS transport/security values, and incompatible VLESS transport/security combinations fail clearly with exit code `2`.
 
 `profile list` prints a stable table:
 
@@ -124,6 +124,5 @@ The following are not implemented in v0.1:
 - VLESS custom string IDs
 - VMess, Trojan, and Shadowsocks URI import
 - subscription parsing
-- Xray config generation
 - connect/disconnect behavior
 - TUN, route, DNS, nftables, or firewall mutation

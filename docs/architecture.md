@@ -115,7 +115,7 @@ internal/sub               subscription source model
 
 This layout is expected to evolve, but the CLI/daemon boundary and planner/executor split should remain stable architectural constraints.
 
-In the foundation build, `internal/app/cli` may call user-owned profile storage, local read-only diagnostics, read-only system-log inspection, and dry-run recovery planning directly. Privileged or daemon-owned behavior must move behind the daemon client/API boundary once it is implemented.
+In the foundation build, `internal/app/cli` may call user-owned profile storage, local read-only proxy-only planning, local read-only diagnostics, read-only system-log inspection, and dry-run recovery planning directly. Privileged or daemon-owned behavior must move behind the daemon client/API boundary once it is implemented.
 
 Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 

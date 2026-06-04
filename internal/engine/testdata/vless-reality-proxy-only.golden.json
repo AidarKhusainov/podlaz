@@ -1,0 +1,53 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "tunwarden-socks",
+      "listen": "127.0.0.1",
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false,
+        "userLevel": 0
+      }
+    },
+    {
+      "tag": "tunwarden-http",
+      "listen": "127.0.0.1",
+      "port": 8080,
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false,
+        "userLevel": 0
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "tunwarden-proxy",
+      "protocol": "vless",
+      "settings": {
+        "address": "example.com",
+        "port": 443,
+        "id": "11111111-1111-4111-8111-111111111111",
+        "encryption": "none",
+        "flow": "xtls-rprx-vision",
+        "level": 0
+      },
+      "streamSettings": {
+        "network": "raw",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "publicKey": "test-public-key",
+          "serverName": "www.example.com",
+          "shortId": "abcd",
+          "spiderX": "/"
+        },
+        "security": "reality"
+      }
+    }
+  ]
+}

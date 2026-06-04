@@ -87,9 +87,6 @@ func ImportVLESSURI(raw string) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	if flow != "" {
-		warnings = append(warnings, "flow is preserved for future Xray config generation but is not applied in this build")
-	}
 
 	serverName, err := vlessQueryValue(query, "sni", false)
 	if err != nil {
