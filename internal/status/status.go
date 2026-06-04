@@ -46,14 +46,19 @@ type Warning struct {
 
 // Report is the local status snapshot rendered by the v0.1 CLI fallback.
 type Report struct {
-	Daemon           string
-	Service          string
-	Connection       string
-	RuntimeDirectory RuntimeDirectory
-	Proxy            string
-	TUN              string
-	Candidates       []Candidate
-	Warnings         []Warning
+	Daemon            string
+	Service           string
+	Connection        string
+	Mode              string
+	RuntimeDirectory  RuntimeDirectory
+	RuntimeConfigPath string
+	Proxy             string
+	TUN               string
+	Routes            string
+	DNS               string
+	Firewall          string
+	Candidates        []Candidate
+	Warnings          []Warning
 }
 
 // Options controls local status inspection. Zero values use safe production defaults.
@@ -118,13 +123,18 @@ func FromDaemon(s api.StatusResponse) Report {
 		Daemon:     s.Daemon,
 		Service:    s.Service,
 		Connection: s.Connection,
+		Mode:       s.Mode,
 		RuntimeDirectory: RuntimeDirectory{
 			State:   RuntimeDirectoryPresent,
 			Message: s.RuntimeDirectory,
 		},
-		Proxy:    s.Proxy,
-		TUN:      s.TUN,
-		Warnings: warningsFromStrings("daemon", s.Warnings),
+		RuntimeConfigPath: s.RuntimeConfigPath,
+		Proxy:             s.Proxy,
+		TUN:               s.TUN,
+		Routes:            s.Routes,
+		DNS:               s.DNS,
+		Firewall:          s.Firewall,
+		Warnings:          warningsFromStrings("daemon", s.Warnings),
 	}
 }
 
@@ -146,9 +156,24 @@ func (r Report) String() string {
 	fmt.Fprintf(&b, "Daemon: %s\n", render.Redact(r.Daemon))
 	fmt.Fprintf(&b, "Service: %s\n", render.Redact(serviceLine(r.Service)))
 	fmt.Fprintf(&b, "Connection: %s\n", render.Redact(r.Connection))
+	if r.Mode != "" {
+		fmt.Fprintf(&b, "Mode: %s\n", render.Redact(r.Mode))
+	}
 	fmt.Fprintf(&b, "Runtime directory: %s\n", render.Redact(r.RuntimeDirectory.Message))
+	if r.RuntimeConfigPath != "" {
+		fmt.Fprintf(&b, "Runtime config: %s\n", render.Redact(r.RuntimeConfigPath))
+	}
 	fmt.Fprintf(&b, "Proxy: %s\n", render.Redact(r.Proxy))
 	fmt.Fprintf(&b, "TUN: %s\n", render.Redact(r.TUN))
+	if r.Routes != "" {
+		fmt.Fprintf(&b, "Routes: %s\n", render.Redact(r.Routes))
+	}
+	if r.DNS != "" {
+		fmt.Fprintf(&b, "DNS: %s\n", render.Redact(r.DNS))
+	}
+	if r.Firewall != "" {
+		fmt.Fprintf(&b, "Firewall: %s\n", render.Redact(r.Firewall))
+	}
 	fmt.Fprintf(&b, "Stale state: %s\n", render.Redact(staleStateLine(r.Candidates, r.Warnings)))
 
 	if len(r.Candidates) > 0 {
