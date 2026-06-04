@@ -240,11 +240,13 @@ Implemented foundation profile management view:
 
 - manual profile add, list, show, and delete;
 - VLESS share URI import through `profile import <share-uri>`;
+- deterministic imported VLESS IDs based on display name plus stable connection fingerprint;
 - persistent local profile storage at the documented XDG user state location;
 - human output for all implemented profile commands;
 - `profile list --json` and `profile show --json` with `schema_version: "v1"`;
 - required-field validation for manual profile name, protocol, server, and port;
 - required-field and compatibility validation for VLESS URI user identity, server, port, transport, and security;
+- clear failure for malformed VLESS query percent-encoding;
 - warnings for unsupported VLESS query options that are ignored by the current build;
 - atomic profile store writes with restrictive file permissions;
 - corrupt or unreadable profile storage fails safely with a clear error;
@@ -253,6 +255,7 @@ Implemented foundation profile management view:
 Deferred behavior:
 
 - `profile import --json`;
+- VLESS custom string IDs;
 - VMess, Trojan, and Shadowsocks URI import;
 - subscription parsing;
 - Xray config generation;
