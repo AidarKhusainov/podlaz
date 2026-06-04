@@ -19,8 +19,11 @@ func TestRunCLIProfileImportVLESSListAndShow(t *testing.T) {
 		t.Fatalf("profile import failed: %v", err)
 	}
 	importOutput := importOut.String()
-	if !strings.Contains(importOutput, "Imported profile: my-vless-profile-") || !strings.Contains(importOutput, "Warnings: 1") || !strings.Contains(importOutput, "flow is preserved") {
+	if !strings.Contains(importOutput, "Imported profile: my-vless-profile-") {
 		t.Fatalf("unexpected import output: %q", importOutput)
+	}
+	if strings.Contains(importOutput, "Warnings:") || strings.Contains(importOutput, "flow is preserved") {
+		t.Fatalf("import output should not warn for flow supported by proxy-only planning: %q", importOutput)
 	}
 	if strings.Contains(importOutput, "00000000-0000-0000-0000-000000000001") {
 		t.Fatalf("import output leaked VLESS user identity: %q", importOutput)
