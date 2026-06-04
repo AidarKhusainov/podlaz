@@ -69,7 +69,7 @@ func TestRunCLIProfileDeleteRequiresYes(t *testing.T) {
 }
 
 func TestRunCLIProfileAddInvalidInputReturnsUsageError(t *testing.T) {
-	err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "bad", "--server", "bad host", "--port", "0", "--protocol", "ftp"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
+	err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "bad", "--server", "bad host", "--port", "443", "--protocol", "ftp"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
 	if err == nil {
 		t.Fatal("expected invalid input to fail")
 	}
