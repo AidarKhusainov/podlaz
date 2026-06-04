@@ -236,21 +236,24 @@ tunwarden profile delete <profile-id> --yes
 
 Purpose: explicit lifecycle management for individual profiles.
 
-Implemented in the issue #10 manual profile management view:
+Implemented foundation profile management view:
 
 - manual profile add, list, show, and delete;
+- VLESS share URI import through `profile import <share-uri>`;
 - persistent local profile storage at the documented XDG user state location;
 - human output for all implemented profile commands;
 - `profile list --json` and `profile show --json` with `schema_version: "v1"`;
 - required-field validation for manual profile name, protocol, server, and port;
+- required-field and compatibility validation for VLESS URI user identity, server, port, transport, and security;
+- warnings for unsupported VLESS query options that are ignored by the current build;
 - atomic profile store writes with restrictive file permissions;
 - corrupt or unreadable profile storage fails safely with a clear error;
 - `profile delete` requires `--yes` in the current non-interactive v0.1 CLI path.
 
 Deferred behavior:
 
-- `profile import <share-uri>`;
-- VLESS URI import;
+- `profile import --json`;
+- VMess, Trojan, and Shadowsocks URI import;
 - subscription parsing;
 - Xray config generation;
 - connect/disconnect behavior.
