@@ -44,7 +44,7 @@ func printDoctorHelp(w io.Writer) {
   tunwarden doctor
   tunwarden doctor --core --xray <path> [--json]
 
-Run read-only diagnostics. The core scope validates a local Xray binary without starting a long-running process.
+Run read-only daemon-backed diagnostics or local fallback diagnostics. The core scope validates a local Xray binary without starting a long-running process.
 
 Not implemented yet:
   doctor --json without --core, --network, --dns, --routes, --firewall
