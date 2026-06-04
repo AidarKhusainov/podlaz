@@ -44,12 +44,13 @@ func ExitCode(err error) int {
 }
 
 type options struct {
-	doctor       func(context.Context) doctor.Report
-	daemonDoctor func(context.Context) (doctor.Report, error)
-	logs         func(context.Context, io.Writer, logs.Options) error
-	recover      func(context.Context) recovery.PlanResult
-	status       func(context.Context) status.Report
-	daemonStatus func(context.Context) (status.Report, error)
+	doctor           func(context.Context) doctor.Report
+	daemonDoctor     func(context.Context) (doctor.Report, error)
+	logs             func(context.Context, io.Writer, logs.Options) error
+	profileStorePath string
+	recover          func(context.Context) recovery.PlanResult
+	status           func(context.Context) status.Report
+	daemonStatus     func(context.Context) (status.Report, error)
 }
 
 // Run executes the user-facing TunWarden command line interface.
@@ -81,6 +82,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return nil
 	case "version", "--version":
 		return runVersionCommand(commandArgs, stdout)
+	case "profile":
+		return runProfileCommand(ctx, commandArgs, stdout, opts)
 	case "status":
 		return runStatusCommand(ctx, commandArgs, stdout, opts)
 	case "doctor":
@@ -106,6 +109,8 @@ func runHelp(args []string, stdout io.Writer) error {
 	switch strings.ToLower(args[0]) {
 	case "version":
 		printVersionHelp(stdout)
+	case "profile":
+		printProfileHelp(stdout)
 	case "status":
 		printStatusHelp(stdout)
 	case "doctor":
@@ -385,6 +390,7 @@ func printUsage(w io.Writer) {
 
 Usage:
   tunwarden version
+  tunwarden profile <add|list|show|delete>
   tunwarden status
   tunwarden doctor
   tunwarden logs
@@ -392,9 +398,9 @@ Usage:
   tunwarden help [command]
 
 Current status:
-  This is an early foundation build. Commands print contracts, daemon-backed
-  or local status, diagnostics, daemon logs, and recovery plans; they do not
-  yet mutate system networking state.
+  This is an early foundation build. Commands manage local profiles, print
+  daemon-backed or local status, diagnostics, daemon logs, and recovery plans;
+  they do not yet mutate system networking state.
 `)
 }
 

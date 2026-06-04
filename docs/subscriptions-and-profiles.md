@@ -6,6 +6,8 @@ TunWarden must support both direct/manual connections and subscription-based pro
 
 The goal is not to preserve every provider-specific detail forever. The goal is to normalize different inputs into a stable internal profile model that can be validated, tested, and converted into runtime core configuration.
 
+Implemented manual profile management behavior is documented in [Profile management](./profile-management.md).
+
 ## 2. Input sources
 
 ### 2.1 Manual profiles
@@ -20,6 +22,8 @@ Initial protocols to consider:
 - Shadowsocks.
 
 Manual profiles are required for development because they make networking tests independent from subscription providers.
+
+The v0.1 foundation implementation supports explicit manual `profile add`, `profile list`, `profile show`, and `profile delete --yes` commands for persistent user-owned local profile state.
 
 ### 2.2 Subscription URLs
 
@@ -269,11 +273,24 @@ TunWarden should initially treat it as a generic subscription source unless prov
 
 ## 11. Storage requirements
 
-Suggested persistent layout:
+Manual profile source of truth is user-owned state and must use the documented user state location from [State and security requirements](./state-and-security.md):
+
+```text
+$XDG_STATE_HOME/tunwarden/profiles.json
+```
+
+When `XDG_STATE_HOME` is unset, the fallback is:
+
+```text
+~/.local/state/tunwarden/profiles.json
+```
+
+User-owned profile and subscription source of truth must not require root and must not be hidden only in daemon-private directories.
+
+Future daemon-owned or package-owned cache/state may use explicit daemon state locations when that behavior is implemented and documented, for example:
 
 ```text
 /var/lib/tunwarden/subscriptions.json
-/var/lib/tunwarden/profiles.json
 /var/lib/tunwarden/cache/subscriptions/<subscription-id>/last-good.raw
 /var/lib/tunwarden/cache/subscriptions/<subscription-id>/last-good.normalized.json
 ```
@@ -287,6 +304,9 @@ Potential future requirement:
 ## 12. CLI examples
 
 ```bash
+# Add a manual profile
+tunwarden profile add --name test --server example.com --port 443 --protocol vless
+
 # Add a subscription
 tunwarden subscription add personal https://example.com/sub
 
