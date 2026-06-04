@@ -84,6 +84,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runVersionCommand(commandArgs, stdout)
 	case "profile":
 		return runProfileCommand(ctx, commandArgs, stdout, opts)
+	case "plan":
+		return runPlanCommand(ctx, commandArgs, stdout, opts)
 	case "status":
 		return runStatusCommand(ctx, commandArgs, stdout, opts)
 	case "doctor":
@@ -111,6 +113,8 @@ func runHelp(args []string, stdout io.Writer) error {
 		printVersionHelp(stdout)
 	case "profile":
 		printProfileHelp(stdout)
+	case "plan":
+		printPlanHelp(stdout)
 	case "status":
 		printStatusHelp(stdout)
 	case "doctor":
@@ -390,7 +394,8 @@ func printUsage(w io.Writer) {
 
 Usage:
   tunwarden version
-  tunwarden profile <add|list|show|delete>
+  tunwarden profile <add|import|list|show|delete>
+  tunwarden plan --mode proxy-only <profile-id>
   tunwarden status
   tunwarden doctor
   tunwarden logs
@@ -399,8 +404,8 @@ Usage:
 
 Current status:
   This is an early foundation build. Commands manage local profiles, print
-  daemon-backed or local status, diagnostics, daemon logs, and recovery plans;
-  they do not yet mutate system networking state.
+  proxy-only plans, daemon-backed or local status, diagnostics, daemon logs, and
+  recovery plans; they do not yet mutate system networking state.
 `)
 }
 
