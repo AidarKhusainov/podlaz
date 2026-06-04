@@ -144,7 +144,7 @@ Use flags to select facets of an existing task.
 Preferred:
 
 ```bash
-tunwarden doctor --core
+tunwarden doctor --core --xray <path>
 tunwarden doctor --dns
 tunwarden doctor --routes
 tunwarden logs --core
@@ -329,7 +329,7 @@ Expected eventual categories:
 
 ```bash
 tunwarden doctor [--json]
-tunwarden doctor --core [--xray <path>] [--json]
+tunwarden doctor --core --xray <path> [--json]
 tunwarden doctor --network [--json]
 tunwarden doctor --dns [--json]
 tunwarden doctor --routes [--json]
@@ -340,7 +340,19 @@ Purpose: explain environment and runtime health.
 
 Mutation level: read-only.
 
-Daemon requirement: optional. The command must use daemon-backed diagnostics when available and local read-only diagnostics otherwise.
+Daemon requirement: optional. The default command must use daemon-backed diagnostics when available and local read-only diagnostics otherwise. The v0.1 `doctor --core --xray <path>` scope is explicitly local-only.
+
+Implemented foundation doctor behavior:
+
+- default human output with daemon-backed diagnostics or local fallback;
+- local host diagnostics for platform, command availability, default route, default interface, and stale TunWarden-owned resources;
+- local-only `doctor --core --xray <path>` validation of an explicitly provided Xray binary;
+- `doctor --core --xray <path> --json` with the common top-level JSON shape and `checks`;
+- shared human/JSON redaction for doctor output.
+
+`doctor --json` without `--core` is deferred to a separate issue. Until implemented, it must fail fast as invalid usage with exit code `2`.
+
+`doctor --core` without `--xray <path>` is deferred in v0.1. It must fail fast as invalid usage with exit code `2` instead of guessing a default Xray path.
 
 `doctor --core` is the preferred public UX for validating the Xray binary and runtime core health. A lower-level `core check` command is not part of the v0.1 public contract.
 

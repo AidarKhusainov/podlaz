@@ -2,7 +2,7 @@
 
 This document defines the implemented v0.1 diagnostics for `tunwarden doctor`.
 
-The command name, flags, exit codes, stdout/stderr rules, and JSON compatibility are owned by [CLI contract](./cli.md). This document owns the current read-only Linux diagnostic set and its safety boundaries.
+The command name, flags, exit codes, stdout/stderr rules, and JSON compatibility are owned by [CLI contract](./cli.md). This document owns the current read-only Linux diagnostic set, explicit local Xray binary validation, and their safety boundaries.
 
 ## Safety boundary
 
@@ -15,11 +15,15 @@ It must not:
 - add, remove, or replace routes;
 - change DNS configuration;
 - create, modify, or delete nftables state;
-- stop, start, or signal system services.
+- stop, start, or signal system services;
+- download or install Xray;
+- start a long-running Xray process.
 
-It may inspect host state through read-only commands and filesystem checks.
+It may inspect host state through read-only commands and filesystem checks. `doctor --core --xray <path>` may run the short-lived `xray version` command for the explicitly provided local binary.
 
-When `tunwardend` is reachable, the CLI requests the report through the local daemon API. When the daemon is missing, inaccessible, times out, or returns an invalid response, the CLI falls back to the same local read-only diagnostic model and prints a daemon warning.
+When `tunwardend` is reachable, the CLI requests the default report through the local daemon API. When the daemon is missing, inaccessible, times out, or returns an invalid response, the CLI falls back to the same local read-only diagnostic model and prints a daemon warning.
+
+`doctor --core --xray <path>` is currently local-only in v0.1. It validates the provided Xray binary before proxy-only connection work starts using it.
 
 ## Human output contract
 
@@ -42,6 +46,15 @@ Local fallback reports include a daemon warning before local checks, for example
 [WARN] daemon: daemon socket /run/tunwarden/tunwardend.sock does not exist; start tunwardend
 ```
 
+The core report starts with:
+
+```text
+TunWarden core diagnostics
+[OK] xray: /usr/local/bin/xray is executable
+[OK] xray-version: Xray ...
+[WARN] config-test: not checked
+```
+
 The v0.1 local check order after any daemon reachability check is stable enough for tests:
 
 1. `platform`
@@ -54,13 +67,36 @@ The v0.1 local check order after any daemon reachability check is stable enough 
 8. `nftables`
 9. `stale-resources`
 
+The v0.1 core check order is:
+
+1. `xray`
+2. `xray-version`
+3. `config-test`
+
 Each check uses one of these severities:
 
 - `OK`: the check completed and did not find an unhealthy condition;
-- `WARN`: the check completed with missing optional tooling, missing optional state, incomplete visibility, or daemon fallback;
+- `WARN`: the check completed with missing optional tooling, missing optional state, incomplete visibility, daemon fallback, or a deliberately deferred optional core check;
 - `FAIL`: a required diagnostic command failed in a way that makes the result unreliable.
 
-Missing host tools must produce `WARN` results instead of panics or crashes.
+Missing host tools must produce `WARN` results instead of panics or crashes. Missing, non-executable, or unusable explicitly provided Xray binaries must produce `FAIL` results and diagnostic exit code `3`.
+
+## JSON output
+
+`doctor --core --xray <path> --json` is implemented with the common top-level shape:
+
+```json
+{
+  "schema_version": "v1",
+  "status": "ok|warn|fail",
+  "warnings": [],
+  "errors": [],
+  "source": "local core",
+  "checks": []
+}
+```
+
+Human and JSON output both use the shared redaction policy. `doctor --json` without `--core` is still deferred and fails fast with exit code `2`.
 
 ## v0.1 checks
 
@@ -135,3 +171,23 @@ Detects known TunWarden-owned resource names:
 - runtime path `/run/tunwarden` through filesystem metadata.
 
 Absent resources are healthy. Existing TunWarden-owned resources are reported as `WARN` until cleanup behavior is explicitly implemented in a later milestone. When diagnostics run through a live daemon, the daemon-owned runtime directory itself is not treated as stale merely because it exists.
+
+### `xray`
+
+Validates the explicit `--xray <path>` argument for `doctor --core`.
+
+The check is `OK` when the path exists, is not a directory, and has at least one executable bit set. Missing, directory, non-executable, or uninspectable paths are `FAIL` with an actionable message.
+
+### `xray-version`
+
+Runs:
+
+```bash
+<xray-path> version
+```
+
+The first non-empty stdout or stderr line is reported. A non-zero exit or execution error is `FAIL`.
+
+### `config-test`
+
+Currently reports `WARN: not checked` in v0.1. Config validation/test-mode detection is intentionally deferred until generated runtime config validation is wired into the connection lifecycle.

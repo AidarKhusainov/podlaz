@@ -17,7 +17,7 @@ What exists now:
 - Manual `profile add`, VLESS `profile import`, `profile list`, `profile show`, and `profile delete --yes` commands backed by local user state.
 - Read-only `plan --mode proxy-only` dry-run for stored VLESS profiles with deterministic generated Xray config validation.
 - Read-only `status` command with daemon-backed status and local runtime fallback.
-- Read-only `doctor` command with daemon-backed diagnostics and local Linux host fallback.
+- Read-only `doctor` command with daemon-backed diagnostics, local Linux host fallback, and explicit `doctor --core --xray <path>` local Xray binary validation.
 - Read-only `logs` command for recent `tunwardend` journald logs.
 - Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
 - Initial internal models for transactions, profiles, and subscriptions.
@@ -53,6 +53,7 @@ What does not exist yet:
 - `go run ./cmd/tunwarden plan --mode proxy-only <profile-id>`
 - `go run ./cmd/tunwarden status`
 - `go run ./cmd/tunwarden doctor`
+- `go run ./cmd/tunwarden doctor --core --xray /usr/local/bin/xray`
 - `go run ./cmd/tunwarden logs`
 - `go run ./cmd/tunwarden recover`
 - `go run ./cmd/tunwardend`
