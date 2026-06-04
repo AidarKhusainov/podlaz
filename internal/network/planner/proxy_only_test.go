@@ -29,7 +29,8 @@ func TestPlanProxyOnlyBuildsInspectableDryRun(t *testing.T) {
 		t.Fatalf("expected generated Xray config in plan, got %s", plan.XrayConfig)
 	}
 	for _, step := range plan.Steps {
-		if strings.Contains(strings.ToLower(step), "apply route") || strings.Contains(strings.ToLower(step), "nft") {
+		lower := strings.ToLower(step)
+		if strings.Contains(lower, "apply route") || strings.Contains(lower, "apply nft") || strings.Contains(lower, "mutate") {
 			t.Fatalf("proxy-only plan contains a networking mutation step: %q", step)
 		}
 	}
