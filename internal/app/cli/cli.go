@@ -43,6 +43,8 @@ func ExitCode(err error) int {
 }
 
 type options struct {
+	connect          connectRunner
+	disconnect       disconnectRunner
 	doctor           func(context.Context) doctor.Report
 	coreDoctor       func(context.Context, string) doctor.Report
 	daemonDoctor     func(context.Context) (doctor.Report, error)
@@ -86,6 +88,10 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runProfileCommand(ctx, commandArgs, stdout, opts)
 	case "plan":
 		return runPlanCommand(ctx, commandArgs, stdout, opts)
+	case "connect":
+		return runConnectCommand(ctx, commandArgs, stdout, opts)
+	case "disconnect":
+		return runDisconnectCommand(ctx, commandArgs, stdout, opts)
 	case "status":
 		return runStatusCommand(ctx, commandArgs, stdout, opts)
 	case "doctor":
@@ -115,6 +121,10 @@ func runHelp(args []string, stdout io.Writer) error {
 		printProfileHelp(stdout)
 	case "plan":
 		printPlanHelp(stdout)
+	case "connect":
+		printConnectHelp(stdout)
+	case "disconnect":
+		printDisconnectHelp(stdout)
 	case "status":
 		printStatusHelp(stdout)
 	case "doctor":
