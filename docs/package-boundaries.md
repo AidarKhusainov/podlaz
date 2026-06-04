@@ -24,6 +24,7 @@ cmd/tunwarden
   -> internal/api          # shared request/response contracts
   -> internal/render       # CLI output rendering helpers
   -> internal/profile      # user-owned manual profile model and store
+  -> internal/network/planner # local read-only proxy-only planning in foundation builds
   -> internal/status       # local read-only status fallback in foundation builds
   -> internal/doctor       # local read-only diagnostics in foundation builds
   -> internal/logs         # local read-only journald/system-log inspection in foundation builds
@@ -40,11 +41,15 @@ cmd/tunwardend
   -> internal/profile
   -> internal/sub
   -> internal/state
+
+internal/network/planner
+  -> internal/engine       # deterministic generated core config for inspectable dry-run plans
+  -> internal/profile
 ```
 
 The exact names may evolve, but the direction should remain stable.
 
-In the foundation build, `internal/app/cli` may call user-owned profile storage, local read-only status, diagnostic, system-log inspection, and dry-run recovery packages directly. Once daemon IPC exists, privileged or daemon-owned behavior must move behind `internal/client` and `internal/api`.
+In the foundation build, `internal/app/cli` may call user-owned profile storage, local read-only proxy-only planning, local read-only status, diagnostic, system-log inspection, and dry-run recovery packages directly. Once daemon IPC exists, privileged or daemon-owned behavior must move behind `internal/client` and `internal/api`.
 
 ## 3. Domain packages
 
@@ -63,7 +68,7 @@ Expected properties:
 CLI packages should:
 
 - parse user input;
-- call client, user-owned local state, or local read-only diagnostic/logging abstractions;
+- call client, user-owned local state, or local read-only diagnostic/logging/planning abstractions;
 - render output;
 - keep command behavior aligned with `docs/cli.md`;
 - avoid directly mutating privileged system networking state.
