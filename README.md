@@ -14,7 +14,7 @@ What exists now:
 - `tunwarden` CLI skeleton.
 - `tunwardend` daemon skeleton with read-only local Unix socket status and doctor APIs.
 - `packaging/systemd/tunwardend.service` for manual systemd service startup with journald logging.
-- Manual `profile add`, `profile list`, `profile show`, and `profile delete --yes` commands backed by local user state.
+- Manual `profile add`, VLESS `profile import`, `profile list`, `profile show`, and `profile delete --yes` commands backed by local user state.
 - Read-only `status` command with daemon-backed status and local runtime fallback.
 - Read-only `doctor` command with daemon-backed diagnostics and local Linux host fallback.
 - Read-only `logs` command for recent `tunwardend` journald logs.
@@ -44,6 +44,7 @@ What does not exist yet:
 - `go test ./...`
 - `go run ./cmd/tunwarden version`
 - `go run ./cmd/tunwarden profile add --name test --server example.com --port 443 --protocol vless`
+- `go run ./cmd/tunwarden profile import '<vless-share-uri>'`
 - `go run ./cmd/tunwarden profile list`
 - `go run ./cmd/tunwarden profile show test`
 - `go run ./cmd/tunwarden profile delete test --yes`
@@ -54,7 +55,7 @@ What does not exist yet:
 - `go run ./cmd/tunwardend`
 - `sudo systemctl start tunwardend` after manually installing `packaging/systemd/tunwardend.service` and the daemon binary.
 
-Canonical command names are defined in [CLI contract](docs/cli.md). The implemented manual profile behavior is defined in [Profile management](docs/profile-management.md). The implemented v0.1 daemon transport is defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
+Canonical command names are defined in [CLI contract](docs/cli.md). The implemented manual and VLESS-import profile behavior is defined in [Profile management](docs/profile-management.md). The implemented v0.1 daemon transport is defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
 
 ## Intended lifecycle model
 
