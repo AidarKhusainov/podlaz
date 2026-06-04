@@ -12,7 +12,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 - If code behavior changes, update the related requirement or roadmap section in the same pull request.
 - Architecture and networking rules are requirements, not implementation notes.
 - CLI command names, arguments, flags, and milestone boundaries are owned by [CLI contract](./cli.md).
-- Implemented manual `tunwarden profile` behavior is owned by [Profile management](./profile-management.md).
+- Implemented manual and VLESS-import `tunwarden profile` behavior is owned by [Profile management](./profile-management.md).
 - Implemented `tunwarden plan --mode proxy-only` behavior is owned by [Proxy-only plan](./proxy-only-plan.md).
 - The implemented v0.1 daemon transport is owned by [Daemon local API](./daemon-api.md).
 - `tunwarden status`'s implemented daemon-backed and local fallback behavior is owned by [Status command](./status.md).
@@ -29,7 +29,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | --- | --- |
 | [Product requirements](./product-requirements.md) | Product thesis, target users, scope, functional requirements, non-functional requirements, success metrics. |
 | [CLI contract](./cli.md) | Canonical command names, arguments, flags, output expectations, safety semantics, and milestone boundaries. |
-| [Profile management](./profile-management.md) | Implemented v0.1 manual profile add, list, show, delete, validation, storage, JSON output, and safety boundary. |
+| [Profile management](./profile-management.md) | Implemented v0.1 manual profile add, VLESS profile import, list, show, delete, validation, storage, JSON output, and safety boundary. |
 | [Proxy-only plan](./proxy-only-plan.md) | Implemented v0.1 read-only proxy-only planning, generated Xray config validation, local proxy listeners, JSON output, and safety boundary. |
 | [Daemon local API](./daemon-api.md) | Implemented v0.1 Unix socket daemon API transport, status and doctor endpoints, lifecycle, and safety boundary. |
 | [Status command](./status.md) | Implemented v0.1 read-only `tunwarden status` daemon-backed behavior, local fallback behavior, output shape, and safety boundary. |
@@ -102,6 +102,7 @@ tunwarden import <uri-or-file-or-url>
 
 # explicit resources
 tunwarden profile add --name test --server example.com --port 443 --protocol vless
+tunwarden profile import '<vless-share-uri>'
 tunwarden profile list
 tunwarden profile show <profile-id>
 tunwarden subscription list
@@ -118,13 +119,3 @@ tunwarden logs
 tunwarden plan --mode proxy-only <profile-id>
 tunwarden recover
 ```
-
-## Definition of done for early development
-
-The first implementation is not ready until the following are true:
-
-- `tunwarden recover` can inspect recovery candidates after an interrupted connection attempt.
-- `tunwarden doctor` can explain route, DNS, TUN, firewall, core, daemon, and NetworkManager status.
-- The daemon can survive or recover from core process crashes.
-- The connection can be re-established after suspend/resume and Wi-Fi reconnection.
-- A failed connection attempt cannot leave stale routes, rules, DNS settings, nftables rules, generated configs, or core processes behind.
