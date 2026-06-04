@@ -119,3 +119,13 @@ tunwarden logs
 tunwarden plan --mode proxy-only <profile-id>
 tunwarden recover
 ```
+
+## Definition of done for early development
+
+The first implementation is not ready until the following are true:
+
+- `tunwarden recover` can inspect recovery candidates after an interrupted connection attempt.
+- `tunwarden doctor` can explain route, DNS, TUN, firewall, core, daemon, and NetworkManager status.
+- The daemon can survive or recover from core process crashes.
+- The connection can be re-established after suspend/resume and Wi-Fi reconnection.
+- A failed connection attempt cannot leave stale routes, rules, DNS settings, nftables rules, generated configs, or core processes behind.
