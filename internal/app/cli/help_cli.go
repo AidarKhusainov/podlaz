@@ -56,7 +56,7 @@ func printLogsHelp(w io.Writer) {
   tunwarden logs [--follow] [--daemon] [--since <duration>]
   tunwarden logs -f
 
-Print recent tunwardend logs from the system journal.
+Print recent tunwardend logs from the system journal using journalctl.
 
 Not implemented yet:
   --json, --core
