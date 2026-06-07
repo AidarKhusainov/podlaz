@@ -85,6 +85,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return nil
 	case "version", "--version":
 		return runVersionCommand(commandArgs, stdout)
+	case "import":
+		return runImportCommand(ctx, commandArgs, stdout, opts)
 	case "profile":
 		return runProfileCommand(ctx, commandArgs, stdout, opts)
 	case "subscription":
@@ -120,6 +122,8 @@ func runHelp(args []string, stdout io.Writer) error {
 	switch strings.ToLower(args[0]) {
 	case "version":
 		printVersionHelp(stdout)
+	case "import":
+		printImportHelp(stdout)
 	case "profile":
 		printProfileHelp(stdout)
 	case "subscription":
