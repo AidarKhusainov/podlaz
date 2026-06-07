@@ -37,7 +37,9 @@ func parseLogsArgs(args []string) (logs.Options, error) {
 		case "--follow", "-f":
 			opts.Follow = true
 		case "--daemon":
-			// Daemon logs are the default and only implemented v0.1 source.
+			// Daemon logs are the default source.
+		case "--core":
+			opts.Core = true
 		case "--since":
 			i++
 			if i >= len(args) || strings.TrimSpace(args[i]) == "" || isLogsOption(args[i]) {
@@ -46,8 +48,6 @@ func parseLogsArgs(args []string) (logs.Options, error) {
 			opts.Since = args[i]
 		case "--json":
 			return opts, usageError("logs --json is not implemented yet")
-		case "--core":
-			return opts, usageError("logs --core is not implemented yet")
 		default:
 			return opts, usageError("unsupported logs argument %q", arg)
 		}
