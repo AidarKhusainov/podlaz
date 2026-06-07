@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -44,7 +45,7 @@ func runSubscriptionCommand(ctx context.Context, args []string, stdout io.Writer
 		if err != nil {
 			return err
 		}
-		return runSubscriptionUpdate(ctx, store, profileStore, args[1:], stdout)
+		return runSubscriptionUpdate(ctx, store, profileStore, args[1:], stdout, opts)
 	default:
 		return usageError("unknown subscription subcommand %q", args[0])
 	}
@@ -59,7 +60,7 @@ func runSubscriptionAdd(store sub.Store, args []string, stdout io.Writer) error 
 	if err := store.Add(source); err != nil {
 		return subscriptionCommandError(err)
 	}
-	fmt.Fprintf(stdout, "Subscription added: %s\n", source.ID)
+	fmt.Fprintf(stdout, "Subscription added: %s\n", render.Redact(source.ID))
 	return nil
 }
 
@@ -113,7 +114,7 @@ func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error
 	return nil
 }
 
-func runSubscriptionUpdate(ctx context.Context, store sub.Store, profileStore profile.Store, args []string, stdout io.Writer) error {
+func runSubscriptionUpdate(ctx context.Context, store sub.Store, profileStore profile.Store, args []string, stdout io.Writer, opts options) error {
 	id, err := parseSubscriptionUpdateArgs(args)
 	if err != nil {
 		return err
@@ -130,14 +131,29 @@ func runSubscriptionUpdate(ctx context.Context, store sub.Store, profileStore pr
 	if err != nil {
 		return err
 	}
+	profileSnapshot, profileExisted, err := snapshotFile(profileStore.Path())
+	if err != nil {
+		return err
+	}
 	diff, err := profileStore.ReplaceSubscriptionProfiles(source.ProfileIDs, parsed.Profiles)
 	if err != nil {
 		return err
 	}
+	rollbackProfiles := func(applyErr error) error {
+		if restoreErr := restoreFile(profileStore.Path(), profileSnapshot, profileExisted); restoreErr != nil {
+			return fmt.Errorf("subscription update failed after profile apply: %w; additionally failed to restore profile store: %v", applyErr, restoreErr)
+		}
+		return applyErr
+	}
+	if opts.subscriptionAfterProfileApplyHook != nil {
+		if err := opts.subscriptionAfterProfileApplyHook(); err != nil {
+			return rollbackProfiles(err)
+		}
+	}
 	source.ProfileIDs = profileIDs(parsed.Profiles)
 	source.LastUpdatedAt = time.Now().UTC()
 	if err := store.Update(source); err != nil {
-		return err
+		return rollbackProfiles(err)
 	}
 	result := sub.UpdateResult{
 		Subscription: source,
@@ -310,6 +326,33 @@ func profileIDs(profiles []profile.Profile) []string {
 	return ids
 }
 
+func snapshotFile(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("snapshot file %s: %w", path, err)
+	}
+	return data, true, nil
+}
+
+func restoreFile(path string, data []byte, existed bool) error {
+	if !existed {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove newly created file %s: %w", path, err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create restore directory: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("restore file %s: %w", path, err)
+	}
+	return nil
+}
+
 func resolvedSubscriptionStorePath(opts options) (string, error) {
 	if opts.subscriptionStorePath != "" {
 		return opts.subscriptionStorePath, nil
@@ -335,7 +378,8 @@ Implemented in v0.1:
   add/list/show/update, file/http/https subscription fetch, Base64 URI-list
   parsing, supported VLESS entry import into the profile store, unsupported
   entry reporting, JSON list/show output, and last-known-good profile state
-  preservation when fetch, decode, parse, or validation fails before apply.
+  preservation when fetch, decode, parse, validation, or subscription metadata
+  update fails after profile apply.
 
 Not implemented yet:
   subscription delete, scheduled updates, provider metadata, VMess/Trojan/
