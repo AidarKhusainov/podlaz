@@ -11,6 +11,7 @@ func printUsage(w io.Writer) {
 Usage:
   tunwarden version
   tunwarden profile <add|import|list|show|delete>
+  tunwarden subscription <add|list|show|update>
   tunwarden plan --mode proxy-only <profile-id>
   tunwarden connect [--mode proxy-only] <profile-id>
   tunwarden disconnect
@@ -21,10 +22,11 @@ Usage:
   tunwarden help [command]
 
 Current status:
-  This is an early foundation build. Commands manage local profiles, print
-  proxy-only plans, start and stop daemon-managed proxy-only Xray, report
-  daemon-backed or local status, diagnostics, daemon/core logs, and recovery
-  plans; they do not mutate TUN, routes, DNS, nftables, or firewall state.
+  This is an early foundation build. Commands manage local profiles and Base64
+  subscriptions, print proxy-only plans, start and stop daemon-managed proxy-only
+  Xray, report daemon-backed or local status, diagnostics, daemon/core logs, and
+  recovery plans; they do not mutate TUN, routes, DNS, nftables, or firewall
+  state.
 `)
 }
 
