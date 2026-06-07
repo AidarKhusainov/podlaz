@@ -25,6 +25,12 @@ func (l Listener) Endpoint() string {
 	return fmt.Sprintf("%s:%d", l.Address, l.Port)
 }
 
+// ProxyOnlyOptions controls generated runtime output details for proxy-only mode.
+type ProxyOnlyOptions struct {
+	RuntimeConfigPath string
+	Config            engine.XrayProxyOnlyConfigOptions
+}
+
 // ProxyOnlyPlan is the inspectable dry-run plan for proxy-only mode.
 type ProxyOnlyPlan struct {
 	Mode              string
@@ -40,25 +46,38 @@ type ProxyOnlyPlan struct {
 
 // PlanProxyOnly builds a pure dry-run plan for a stored profile without writing files or starting Xray.
 func PlanProxyOnly(p profile.Profile) (ProxyOnlyPlan, error) {
-	opts := engine.DefaultXrayProxyOnlyConfigOptions()
-	xrayConfig, err := engine.GenerateXrayProxyOnlyConfig(p, opts)
+	return PlanProxyOnlyWithOptions(p, ProxyOnlyOptions{})
+}
+
+// PlanProxyOnlyWithOptions builds a proxy-only plan for a stored profile using injectable runtime details.
+func PlanProxyOnlyWithOptions(p profile.Profile, opts ProxyOnlyOptions) (ProxyOnlyPlan, error) {
+	configOpts := opts.Config
+	if configOpts == (engine.XrayProxyOnlyConfigOptions{}) {
+		configOpts = engine.DefaultXrayProxyOnlyConfigOptions()
+	}
+	runtimeConfigPath := opts.RuntimeConfigPath
+	if runtimeConfigPath == "" {
+		runtimeConfigPath = DefaultRuntimeConfigPath
+	}
+
+	xrayConfig, err := engine.GenerateXrayProxyOnlyConfig(p, configOpts)
 	if err != nil {
 		return ProxyOnlyPlan{}, err
 	}
 
 	listeners := []Listener{
-		{Protocol: "SOCKS", Address: opts.SOCKSListen, Port: opts.SOCKSPort},
-		{Protocol: "HTTP", Address: opts.HTTPListen, Port: opts.HTTPPort},
+		{Protocol: "SOCKS", Address: configOpts.SOCKSListen, Port: configOpts.SOCKSPort},
+		{Protocol: "HTTP", Address: configOpts.HTTPListen, Port: configOpts.HTTPPort},
 	}
 
 	return ProxyOnlyPlan{
 		Mode:              ModeProxyOnly,
 		ProfileID:         p.ID,
 		ProfileName:       p.Name,
-		RuntimeConfigPath: DefaultRuntimeConfigPath,
+		RuntimeConfigPath: runtimeConfigPath,
 		Listeners:         listeners,
 		Steps: []string{
-			"Generate runtime Xray config in memory for " + DefaultRuntimeConfigPath,
+			"Generate runtime Xray config in memory for " + runtimeConfigPath,
 			"Listen on SOCKS " + listeners[0].Endpoint(),
 			"Listen on HTTP " + listeners[1].Endpoint(),
 			"Leave TUN, routes, DNS, nftables, and firewall unchanged",

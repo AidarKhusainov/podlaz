@@ -2,7 +2,7 @@
 
 This document defines the implemented v0.1 local daemon API transport and its safety boundary.
 
-The command names, user-visible output, and exit codes are owned by [CLI contract](./cli.md). Runtime paths and daemon state ownership are owned by [State and security requirements](./state-and-security.md).
+The command names, user-visible output, and exit codes are owned by [CLI contract](./cli.md). Runtime paths and daemon state ownership are owned by [State and security requirements](./state-and-security.md). Proxy-only process lifecycle behavior is owned by [Proxy-only lifecycle](./proxy-only-lifecycle.md).
 
 ## MVP transport decision
 
@@ -24,29 +24,33 @@ This keeps the first daemon API small, local-only, and testable with Go's standa
 
 The v0.1 server sets the daemon socket mode to `0660` and fails startup if permissions cannot be applied.
 
-For local development and manual testing, run both `tunwardend` and `tunwarden status` as the same user and set `TUNWARDEN_RUNTIME_DIR` to a user-owned directory, for example:
+For local development and manual testing, run both `tunwardend` and `tunwarden` as the same non-root user and set `TUNWARDEN_RUNTIME_DIR` to a user-owned directory, for example:
 
 ```bash
 TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwardend
 TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden status
+TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden doctor
 ```
 
-The same local development model applies to daemon-backed diagnostics:
+For proxy-only lifecycle testing, the daemon must also be able to resolve an Xray executable through `TUNWARDEN_XRAY_PATH` or `PATH`:
 
 ```bash
-TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwardend
-TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden doctor
+TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev TUNWARDEN_XRAY_PATH=/usr/local/bin/xray go run ./cmd/tunwardend
+TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden connect --mode proxy-only <profile-id>
+TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden disconnect
 ```
 
 For the manual systemd service in `packaging/systemd/tunwardend.service`, the packaged access model is:
 
 - systemd creates `/run/tunwarden` with `RuntimeDirectory=tunwarden` and `RuntimeDirectoryMode=0750`;
-- `packaging/sysusers.d/tunwarden.conf` declares the `tunwarden` system group for packaged installs;
-- `tunwardend` runs as `root:tunwarden`;
+- `packaging/sysusers.d/tunwarden.conf` declares the unprivileged `tunwarden` service identity for packaged installs;
+- `tunwardend` runs as `tunwarden:tunwarden` because v0.1 proxy-only lifecycle does not require root;
+- Xray child processes inherit the same unprivileged service identity;
+- the current unit grants no ambient or bounding capabilities;
 - the daemon creates `/run/tunwarden/tunwardend.sock` and applies socket mode `0660`;
-- users that should run read-only CLI commands against the daemon need access through the `tunwarden` group.
+- users that should run CLI commands against the daemon need access through the `tunwarden` group.
 
-This keeps read-only CLI commands non-root while avoiding a world-writable daemon socket. If the user does not have socket access, daemon-backed `status` and `doctor` may be unavailable and the CLI keeps the documented conservative local fallback behavior.
+This keeps CLI commands non-root while avoiding a world-writable daemon socket. If the user does not have socket access, daemon-backed `status` and `doctor` may be unavailable and the CLI keeps the documented conservative local fallback behavior. Daemon-required lifecycle commands such as `connect` and `disconnect` fail clearly when the daemon is unavailable or inaccessible.
 
 Read-only CLI commands must not require root. The packaged daemon access model preserves that rule by granting socket access through the dedicated `tunwarden` group instead of requiring elevated CLI execution.
 
@@ -56,13 +60,14 @@ D-Bus and polkit are intentionally not implemented in this issue.
 
 Reasons:
 
-- v0.1 status and diagnostics are read-only and do not require an authorization policy engine;
-- there are no privileged route, DNS, nftables, firewall, TUN, or core process mutations in this issue;
-- Unix sockets are enough for a local daemon health/status/diagnostics API;
+- v0.1 daemon API is local-only and intentionally narrow;
+- proxy-only lifecycle starts and stops only a daemon-owned Xray child process and generated runtime config;
+- there are still no privileged route, DNS, nftables, firewall, or TUN mutations;
+- Unix sockets are enough for a local daemon health/status/diagnostics/lifecycle API;
 - HTTP/JSON over Unix sockets is simple to unit test without a system bus;
-- polkit decisions should be introduced together with real privileged operations and documented authorization rules.
+- polkit decisions should be introduced together with real privileged networking operations and documented authorization rules.
 
-D-Bus and polkit remain valid future options for packaged desktop integration and authorization, but adding them before daemon-owned mutations would increase complexity without improving the current user-visible behavior.
+D-Bus and polkit remain valid future options for packaged desktop integration and authorization, but adding them before daemon-owned network mutations would increase complexity without improving the current user-visible behavior.
 
 ## Implemented endpoints
 
@@ -70,7 +75,7 @@ D-Bus and polkit remain valid future options for packaged desktop integration an
 
 Returns the current daemon-backed status snapshot.
 
-Current v0.1 response shape:
+Current v0.1 response shape when inactive:
 
 ```json
 {
@@ -79,7 +84,28 @@ Current v0.1 response shape:
   "connection": "inactive",
   "runtime_directory": "present",
   "proxy": "inactive",
-  "tun": "disabled"
+  "tun": "disabled",
+  "routes": "not modified",
+  "dns": "not modified",
+  "firewall": "not modified"
+}
+```
+
+Current v0.1 response shape when proxy-only Xray is active:
+
+```json
+{
+  "daemon": "running",
+  "service": "manual|systemd",
+  "connection": "active",
+  "mode": "proxy-only",
+  "runtime_directory": "present",
+  "runtime_config_path": "/run/tunwarden/generated/xray.json",
+  "proxy": "listening on 127.0.0.1:1080 (SOCKS), 127.0.0.1:8080 (HTTP)",
+  "tun": "disabled",
+  "routes": "not modified",
+  "dns": "not modified",
+  "firewall": "not modified"
 }
 ```
 
@@ -89,13 +115,18 @@ Fields:
 | --- | --- |
 | `daemon` | Daemon availability from the daemon's own process. |
 | `service` | Daemon supervisor model. `manual` is used for direct execution. `systemd` is used by the repository systemd unit. |
-| `connection` | Current connection state. v0.1 reports `inactive`. |
+| `connection` | Current connection state: `inactive`, `active`, or `error (core exited)` for an unexpected Xray exit. |
+| `mode` | Active connection mode. Present for active proxy-only lifecycle state. |
 | `runtime_directory` | Daemon runtime directory visibility. |
-| `proxy` | Proxy lifecycle state. v0.1 reports `inactive`. |
+| `runtime_config_path` | Generated runtime Xray config path when an active or failed proxy-only lifecycle has one. |
+| `proxy` | Proxy lifecycle state and local listeners. |
 | `tun` | TUN mode state. v0.1 reports `disabled`. |
-| `warnings` | Optional daemon-side visibility warnings. |
+| `routes` | Route mutation state. v0.1 reports `not modified`. |
+| `dns` | DNS mutation state. v0.1 reports `not modified`. |
+| `firewall` | nftables/firewall mutation state. v0.1 reports `not modified`. |
+| `warnings` | Optional daemon-side warnings such as unexpected Xray process exit. |
 
-All listed fields except `warnings` are required in daemon responses. The CLI treats missing required fields, invalid `service` values, or otherwise invalid responses as daemon protocol errors and uses the existing warning/fallback path instead of rendering a healthy daemon-backed status.
+All listed fields except `mode`, `runtime_config_path`, `routes`, `dns`, `firewall`, and `warnings` are required in daemon responses. The CLI treats missing required fields, invalid `service` values, or otherwise invalid responses as daemon protocol errors and uses the existing warning/fallback path instead of rendering a healthy daemon-backed status.
 
 This is an internal local API contract, not the public `status --json` CLI contract. `tunwarden status --json` remains deferred until the CLI JSON schema is implemented.
 
@@ -132,6 +163,61 @@ All listed fields are required. The CLI treats missing fields, invalid severitie
 
 This is an internal local API contract, not the public `doctor --json` CLI contract. `tunwarden doctor --json` remains deferred until the CLI JSON schema is implemented.
 
+### `POST /v1/connect`
+
+Starts a stored profile in proxy-only mode through daemon-managed Xray lifecycle.
+
+Request shape:
+
+```json
+{
+  "mode": "proxy-only",
+  "profile": {
+    "id": "profile-id",
+    "name": "profile name",
+    "source": "manual|subscription|imported_file|imported_uri",
+    "engine": "xray",
+    "server": "example.com",
+    "port": 443,
+    "protocol": "vless"
+  }
+}
+```
+
+The profile payload is a normalized snapshot supplied by the CLI from user-owned profile state. The daemon validates the snapshot before planning, writing runtime config, or starting Xray.
+
+Successful response shape:
+
+```json
+{
+  "connection": "active",
+  "mode": "proxy-only",
+  "proxy": "listening on 127.0.0.1:1080 (SOCKS), 127.0.0.1:8080 (HTTP)",
+  "tun": "disabled",
+  "routes": "not modified",
+  "dns": "not modified",
+  "firewall": "not modified",
+  "runtime_config_path": "/run/tunwarden/generated/xray.json"
+}
+```
+
+### `POST /v1/disconnect`
+
+Stops daemon-managed Xray if it is running. The operation is idempotent.
+
+Successful response shape:
+
+```json
+{
+  "connection": "inactive",
+  "proxy": "inactive",
+  "tun": "disabled",
+  "routes": "not modified",
+  "dns": "not modified",
+  "firewall": "not modified"
+}
+```
+
 ## Runtime lifecycle
 
 On startup, `tunwardend`:
@@ -142,16 +228,35 @@ On startup, `tunwardend`:
 4. fails explicitly when the socket path exists but is not a Unix socket;
 5. listens on the Unix socket;
 6. applies the socket mode;
-7. serves the read-only status and doctor endpoints.
+7. serves status, doctor, connect, and disconnect endpoints.
 
-When started by the repository systemd unit, systemd creates the runtime directory before daemon startup and captures daemon stdout/stderr in journald.
+When started by the repository systemd unit, systemd creates the runtime directory before daemon startup, owns it for `tunwarden:tunwarden`, and captures daemon stdout/stderr in journald.
 
-On graceful shutdown, `tunwardend`:
+During proxy-only connect, `tunwardend`:
 
-1. shuts down the HTTP server;
-2. closes the Unix socket listener;
-3. removes the socket path;
-4. removes the lock file.
+1. refuses to start Xray if the daemon process is running as root;
+2. validates the requested mode and profile snapshot;
+3. builds the proxy-only plan and generated Xray config using the existing planner/engine config generator;
+4. writes generated runtime config under `/run/tunwarden/generated/` using restrictive permissions and atomic replacement;
+5. starts Xray as a supervised child process under the same unprivileged service identity;
+6. records active state for daemon-backed status.
+
+On graceful daemon shutdown, `tunwardend`:
+
+1. stops any active Xray child process;
+2. shuts down the HTTP server;
+3. closes the Unix socket listener;
+4. removes the socket path;
+5. removes the lock file.
+
+On disconnect, `tunwardend`:
+
+1. sends a graceful termination signal to active Xray;
+2. force-stops Xray if it does not exit before the timeout;
+3. removes the generated runtime config path;
+4. reports inactive connection and proxy state.
+
+If Xray exits unexpectedly, the daemon keeps the generated config for inspection/recovery and reports `connection: error (core exited)` with a warning in daemon-backed status.
 
 If another daemon appears to be running or a previous shutdown left an unclean lock file, startup fails explicitly instead of silently taking over daemon-owned state.
 
@@ -180,13 +285,13 @@ journalctl -u tunwardend -n 50 --no-pager
 sudo systemctl stop tunwardend
 ```
 
-If `systemd-sysusers` is unavailable during manual testing, create the system group explicitly before starting the service:
+If `systemd-sysusers` is unavailable during manual testing, create the system user explicitly before starting the service:
 
 ```bash
-sudo groupadd --system tunwarden
+sudo useradd --system --home-dir /var/lib/tunwarden --shell /usr/sbin/nologin --user-group tunwarden
 ```
 
-Expected daemon-backed status includes:
+Expected daemon-backed inactive status includes:
 
 ```text
 TunWarden status
@@ -196,12 +301,15 @@ Connection: inactive
 Runtime directory: present
 Proxy: inactive
 TUN: disabled
+Routes: not modified
+DNS: not modified
+Firewall: not modified
 Stale state: none
 ```
 
 ## Safety boundary
 
-The v0.1 daemon API is local-only and read-only.
+The v0.1 daemon API is local-only. It may mutate only daemon-owned proxy-only Xray process state and volatile TunWarden runtime config files for `connect` and `disconnect`.
 
 It must not:
 
@@ -209,7 +317,6 @@ It must not:
 - add, remove, or replace routes;
 - change DNS configuration;
 - create, modify, flush, or delete nftables or firewall state;
-- start, stop, or supervise Xray;
 - mutate user profiles or subscriptions.
 
-The current endpoints only report daemon availability, conservative inactive runtime state, and read-only host diagnostics.
+The current lifecycle endpoints only start/stop supervised Xray in proxy-only mode, report daemon status/diagnostics, and keep system networking unchanged.

@@ -12,11 +12,12 @@ What exists now:
 
 - Go module and CI skeleton.
 - `tunwarden` CLI skeleton.
-- `tunwardend` daemon skeleton with read-only local Unix socket status and doctor APIs.
+- `tunwardend` daemon skeleton with local Unix socket status, doctor, connect, and disconnect APIs.
 - `packaging/systemd/tunwardend.service` for manual systemd service startup with journald logging.
 - Manual `profile add`, VLESS `profile import`, `profile list`, `profile show`, and `profile delete --yes` commands backed by local user state.
 - Read-only `plan --mode proxy-only` dry-run for stored VLESS profiles with deterministic generated Xray config validation.
-- Read-only `status` command with daemon-backed status and local runtime fallback.
+- Daemon-managed `connect --mode proxy-only` and `disconnect` for starting and stopping Xray without changing system networking.
+- `status` command with daemon-backed active/inactive proxy-only status and local runtime fallback.
 - Read-only `doctor` command with daemon-backed diagnostics, local Linux host fallback, and explicit `doctor --core --xray <path>` local Xray binary validation.
 - Read-only `logs` command for recent `tunwardend` journald logs.
 - Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
@@ -25,10 +26,9 @@ What exists now:
 
 What does not exist yet:
 
-- No real VPN tunnel is established yet.
-- No Xray process is started yet.
-- No generated runtime config is written yet.
-- No TUN interface, route, DNS, or firewall mutation is applied yet.
+- No TUN/full-tunnel VPN mode is established yet.
+- No route, DNS, nftables, or firewall mutation is applied yet.
+- No automatic Xray download/update is implemented yet.
 - No GUI is planned for the early product.
 
 ## Product principles
@@ -51,7 +51,9 @@ What does not exist yet:
 - `go run ./cmd/tunwarden profile show test`
 - `go run ./cmd/tunwarden profile delete test --yes`
 - `go run ./cmd/tunwarden plan --mode proxy-only <profile-id>`
+- `go run ./cmd/tunwarden connect --mode proxy-only <profile-id>`
 - `go run ./cmd/tunwarden status`
+- `go run ./cmd/tunwarden disconnect`
 - `go run ./cmd/tunwarden doctor`
 - `go run ./cmd/tunwarden doctor --core --xray /usr/local/bin/xray`
 - `go run ./cmd/tunwarden logs`
@@ -59,11 +61,13 @@ What does not exist yet:
 - `go run ./cmd/tunwardend`
 - `sudo systemctl start tunwardend` after manually installing `packaging/systemd/tunwardend.service` and the daemon binary.
 
-Canonical command names are defined in [CLI contract](docs/cli.md). The implemented manual and VLESS-import profile behavior is defined in [Profile management](docs/profile-management.md). The implemented v0.1 proxy-only plan behavior is defined in [Proxy-only plan](docs/proxy-only-plan.md). The implemented v0.1 daemon transport is defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
+Canonical command names are defined in [CLI contract](docs/cli.md). The implemented manual and VLESS-import profile behavior is defined in [Profile management](docs/profile-management.md). The implemented v0.1 proxy-only plan behavior is defined in [Proxy-only plan](docs/proxy-only-plan.md). The implemented v0.1 daemon transport and lifecycle API are defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md).
 
 ## Intended lifecycle model
 
 `plan -> snapshot -> apply -> verify -> commit`, with rollback on failure.
+
+`connect --mode proxy-only` currently applies only daemon-owned Xray process lifecycle and generated runtime config state. It must not mutate TUN, routes, DNS, nftables, or firewall state.
 
 `recover` exists as the recovery path. In early builds it is dry-run only and must not change host networking state.
 

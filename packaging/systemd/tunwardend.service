@@ -9,12 +9,11 @@ ExecStart=/usr/local/bin/tunwardend
 Restart=on-failure
 RestartSec=2s
 
-# v0.1 runs read-only status and doctor APIs. It intentionally does not create
-# TUN devices, routes, DNS settings, nftables rules, firewall rules, or Xray
-# processes. Root is kept as the daemon user for the future privileged daemon
-# model; capabilities stay empty until a later networking issue documents and
-# enables the exact required set.
-User=root
+# v0.1 proxy-only lifecycle does not require root. The packaged daemon runs as
+# the dedicated unprivileged tunwarden user, starts Xray as the same user, and
+# intentionally receives no capabilities. TUN devices, routes, DNS settings,
+# nftables rules, and firewall rules remain out of scope for this unit.
+User=tunwarden
 Group=tunwarden
 UMask=0007
 Environment=TUNWARDEN_SERVICE=systemd

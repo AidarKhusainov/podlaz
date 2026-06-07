@@ -20,13 +20,18 @@ const (
 )
 
 type StatusResponse struct {
-	Daemon           string   `json:"daemon"`
-	Service          string   `json:"service"`
-	Connection       string   `json:"connection"`
-	RuntimeDirectory string   `json:"runtime_directory"`
-	Proxy            string   `json:"proxy"`
-	TUN              string   `json:"tun"`
-	Warnings         []string `json:"warnings,omitempty"`
+	Daemon            string   `json:"daemon"`
+	Service           string   `json:"service"`
+	Connection        string   `json:"connection"`
+	Mode              string   `json:"mode,omitempty"`
+	RuntimeDirectory  string   `json:"runtime_directory"`
+	RuntimeConfigPath string   `json:"runtime_config_path,omitempty"`
+	Proxy             string   `json:"proxy"`
+	TUN               string   `json:"tun"`
+	Routes            string   `json:"routes,omitempty"`
+	DNS               string   `json:"dns,omitempty"`
+	Firewall          string   `json:"firewall,omitempty"`
+	Warnings          []string `json:"warnings,omitempty"`
 }
 
 func ValidateStatusResponse(s StatusResponse) error {

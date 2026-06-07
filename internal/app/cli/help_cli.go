@@ -12,6 +12,8 @@ Usage:
   tunwarden version
   tunwarden profile <add|import|list|show|delete>
   tunwarden plan --mode proxy-only <profile-id>
+  tunwarden connect [--mode proxy-only] <profile-id>
+  tunwarden disconnect
   tunwarden status
   tunwarden doctor
   tunwarden logs
@@ -20,8 +22,9 @@ Usage:
 
 Current status:
   This is an early foundation build. Commands manage local profiles, print
-  proxy-only plans, daemon-backed or local status, diagnostics, daemon logs, and
-  recovery plans; they do not yet mutate system networking state.
+  proxy-only plans, start and stop daemon-managed proxy-only Xray, report
+  daemon-backed or local status, diagnostics, daemon logs, and recovery plans;
+  they do not mutate TUN, routes, DNS, nftables, or firewall state.
 `)
 }
 
@@ -42,11 +45,12 @@ when the local Unix socket API is reachable and falls back to read-only local
 inspection when it is not.
 
 Implemented in v0.1:
-  daemon-backed inactive status, conservative local fallback, runtime directory
-  state, stale runtime candidate summary, and recovery guidance.
+  daemon-backed inactive and active proxy-only status, conservative local
+  fallback, runtime directory state, stale runtime candidate summary, Xray crash
+  visibility through daemon warnings, and recovery guidance.
 
 Not implemented yet:
-  --json, active profile/mode, proxy process lifecycle, core health
+  --json, TUN mode, route/DNS/firewall health status
 `)
 }
 

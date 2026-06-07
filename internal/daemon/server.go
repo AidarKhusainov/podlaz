@@ -19,6 +19,7 @@ type Server struct {
 	RuntimeDir string
 	Status     func(context.Context) api.StatusResponse
 	Doctor     func(context.Context) api.DoctorResponse
+	Lifecycle  *XrayManager
 }
 
 func (s Server) Run(ctx context.Context) error {
@@ -28,6 +29,13 @@ func (s Server) Run(ctx context.Context) error {
 	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return fmt.Errorf("create runtime directory %s: %w", runtimeDir, err)
+	}
+
+	lifecycle := s.Lifecycle
+	if lifecycle == nil {
+		lifecycle = NewXrayManager(runtimeDir)
+	} else if lifecycle.RuntimeDir == "" {
+		lifecycle.RuntimeDir = runtimeDir
 	}
 
 	lockPath := api.LockPath(runtimeDir)
@@ -63,7 +71,7 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		statusFn := s.Status
 		if statusFn == nil {
-			statusFn = DefaultStatus
+			statusFn = lifecycle.Status
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(statusFn(r.Context()))
@@ -85,6 +93,7 @@ func (s Server) Run(ctx context.Context) error {
 		_ = json.NewEncoder(w).Encode(doctorFn(r.Context()))
 		log.Printf("tunwardend: doctor request handled")
 	})
+	registerLifecycleHandlers(mux, lifecycle)
 
 	httpServer := http.Server{Handler: mux}
 	errc := make(chan error, 1)
@@ -99,6 +108,7 @@ func (s Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
+		_, _ = lifecycle.Disconnect(context.Background())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -106,6 +116,7 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		return <-errc
 	case err := <-errc:
+		_, _ = lifecycle.Disconnect(context.Background())
 		return err
 	}
 }
