@@ -1,7 +1,10 @@
 package sub
 
 import (
+	"context"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -69,6 +72,26 @@ func TestParseBase64SubscriptionDeduplicatesProfiles(t *testing.T) {
 	}
 	if got := len(parsed.Unsupported); got != 1 || !strings.Contains(parsed.Unsupported[0].Message, "duplicate profile id") {
 		t.Fatalf("expected duplicate issue, got %#v", parsed.Unsupported)
+	}
+}
+
+func TestFetchSourceRejectsCrossOriginRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("cross-origin redirect target should not be requested; got %s", r.URL.String())
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/sub?provider_token=secret", http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	_, err := FetchSource(context.Background(), Source{ID: "redirect", Name: "redirect", URL: redirector.URL + "/sub?provider_token=secret", Format: FormatBase64})
+	if err == nil {
+		t.Fatal("expected cross-origin redirect to fail")
+	}
+	if !strings.Contains(err.Error(), "refusing cross-origin subscription redirect") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
