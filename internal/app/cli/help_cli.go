@@ -23,8 +23,8 @@ Usage:
 Current status:
   This is an early foundation build. Commands manage local profiles, print
   proxy-only plans, start and stop daemon-managed proxy-only Xray, report
-  daemon-backed or local status, diagnostics, daemon logs, and recovery plans;
-  they do not mutate TUN, routes, DNS, nftables, or firewall state.
+  daemon-backed or local status, diagnostics, daemon/core logs, and recovery
+  plans; they do not mutate TUN, routes, DNS, nftables, or firewall state.
 `)
 }
 
@@ -77,18 +77,19 @@ Not implemented yet:
 
 func printLogsHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden logs [--follow] [--daemon] [--since <duration>]
+  tunwarden logs [--follow] [--daemon] [--core] [--since <duration>]
   tunwarden logs -f
 
-Print recent tunwardend logs from the system journal using journalctl. This
-command is read-only and applies the standard TunWarden output redaction policy
-before printing log lines.
+Print recent TunWarden logs from the system journal using journalctl. The default
+source is daemon logs. --core filters Xray lifecycle and forwarded stdout/stderr
+lines marked by tunwardend. This command is read-only and applies the standard
+TunWarden output redaction policy before printing log lines.
 
 Implemented in v0.1:
-  recent daemon logs, --follow, -f, --daemon, --since
+  recent daemon logs, recent core logs, --follow, -f, --daemon, --core, --since
 
 Not implemented yet:
-  --json, --core
+  --json
 `)
 }
 
