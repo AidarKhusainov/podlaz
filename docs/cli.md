@@ -258,8 +258,6 @@ Deferred behavior:
 - VLESS custom string IDs;
 - VMess, Trojan, and Shadowsocks URI import;
 - subscription parsing;
-- Xray config generation;
-- connect/disconnect behavior.
 
 Mutation level:
 
@@ -303,11 +301,15 @@ Mutation level: read-only.
 
 Daemon requirement: optional. The command must use daemon-backed status when available and a conservative local fallback otherwise.
 
-Implemented in the issue #5 local fallback:
+Implemented foundation status behavior:
 
 - human output only;
-- daemon fallback state;
-- conservative connection, proxy, and TUN state;
+- daemon-backed inactive and active proxy-only state;
+- active mode when proxy-only lifecycle is running;
+- local proxy listener state when proxy-only lifecycle is running;
+- Xray crash visibility through daemon warnings;
+- explicit TUN, route, DNS, and firewall non-mutation state from the daemon;
+- conservative local fallback when daemon is unavailable;
 - runtime directory state;
 - stale runtime state summary;
 - guidance to `tunwarden recover` when recovery candidates exist.
@@ -413,7 +415,17 @@ Purpose: start and stop proxy-only Xray lifecycle.
 
 Mutation level: process lifecycle and volatile TunWarden runtime state only.
 
-Daemon requirement: daemon required once process supervision is implemented.
+Implemented v0.1 behavior:
+
+- daemon-required lifecycle through the local Unix socket API;
+- stored profile lookup in user-owned local profile state before sending a normalized profile snapshot to the daemon;
+- daemon-side profile validation before process start;
+- generated runtime Xray config under the daemon runtime directory;
+- daemon-managed Xray start and stop;
+- dropped Xray child credentials when `tunwardend` runs as root;
+- graceful stop and forced-stop fallback;
+- idempotent disconnect;
+- Xray crash visible in daemon-backed `status`.
 
 v0.1 safety boundary:
 
@@ -421,6 +433,7 @@ v0.1 safety boundary:
 - no route mutation;
 - no DNS mutation;
 - no nftables/firewall mutation;
+- no automatic Xray download/update;
 - no full leak-protection claim.
 
 ### Recovery
