@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 )
 
 const profilesFileName = "profiles.json"
@@ -17,6 +18,14 @@ var ErrAlreadyExists = errors.New("profile already exists")
 // Store persists user-owned profiles under the documented TunWarden user state location.
 type Store struct {
 	path string
+}
+
+// SubscriptionUpdateDiff describes how a subscription update changed persisted profiles.
+type SubscriptionUpdateDiff struct {
+	Imported  int
+	Updated   int
+	Unchanged int
+	Removed   int
 }
 
 // NewStore returns a profile store at path. If path is empty, the documented
@@ -107,6 +116,72 @@ func (s Store) Delete(id string) error {
 	}
 	SortStable(kept)
 	return s.save(kept)
+}
+
+// ReplaceSubscriptionProfiles atomically replaces the profiles previously owned
+// by a subscription with the latest successfully parsed subscription profiles.
+// Profiles not owned by the subscription are preserved. The existing store file
+// is left untouched when validation fails before the atomic file replacement.
+func (s Store) ReplaceSubscriptionProfiles(previousIDs []string, next []Profile) (SubscriptionUpdateDiff, error) {
+	current, err := s.load()
+	if err != nil {
+		return SubscriptionUpdateDiff{}, err
+	}
+
+	previous := make(map[string]struct{}, len(previousIDs))
+	for _, id := range previousIDs {
+		previous[id] = struct{}{}
+	}
+
+	existingByID := make(map[string]Profile, len(current))
+	for _, p := range current {
+		existingByID[p.ID] = p
+	}
+
+	seenNext := make(map[string]struct{}, len(next))
+	for _, p := range next {
+		if err := Validate(p); err != nil {
+			return SubscriptionUpdateDiff{}, err
+		}
+		if p.Source != SourceSubscription {
+			return SubscriptionUpdateDiff{}, ValidationError{Messages: []string{fmt.Sprintf("subscription profile %q must have source subscription", p.ID)}}
+		}
+		if _, ok := seenNext[p.ID]; ok {
+			return SubscriptionUpdateDiff{}, fmt.Errorf("duplicate subscription profile id %q", p.ID)
+		}
+		seenNext[p.ID] = struct{}{}
+		if _, ok := existingByID[p.ID]; ok {
+			if _, ownedByThisSubscription := previous[p.ID]; !ownedByThisSubscription {
+				return SubscriptionUpdateDiff{}, fmt.Errorf("profile id collision with existing profile %q", p.ID)
+			}
+		}
+	}
+
+	diff := SubscriptionUpdateDiff{}
+	kept := make([]Profile, 0, len(current)+len(next))
+	for _, p := range current {
+		if _, remove := previous[p.ID]; remove {
+			if _, stillPresent := seenNext[p.ID]; !stillPresent {
+				diff.Removed++
+			}
+			continue
+		}
+		kept = append(kept, p)
+	}
+
+	for _, p := range next {
+		if existing, ok := existingByID[p.ID]; !ok {
+			diff.Imported++
+		} else if reflect.DeepEqual(existing, p) {
+			diff.Unchanged++
+		} else {
+			diff.Updated++
+		}
+		kept = append(kept, p)
+	}
+
+	SortStable(kept)
+	return diff, s.save(kept)
 }
 
 type storeFile struct {
