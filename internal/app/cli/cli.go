@@ -43,18 +43,17 @@ func ExitCode(err error) int {
 }
 
 type options struct {
-	connect                            connectRunner
-	disconnect                         disconnectRunner
-	doctor                             func(context.Context) doctor.Report
-	coreDoctor                         func(context.Context, string) doctor.Report
-	daemonDoctor                       func(context.Context) (doctor.Report, error)
-	logs                               func(context.Context, io.Writer, logs.Options) error
-	profileStorePath                   string
-	subscriptionStorePath              string
-	subscriptionAfterProfileApplyHook  func() error
-	recover                            func(context.Context) recovery.PlanResult
-	status                             func(context.Context) status.Report
-	daemonStatus                       func(context.Context) (status.Report, error)
+	connect               connectRunner
+	disconnect            disconnectRunner
+	doctor                func(context.Context) doctor.Report
+	coreDoctor            func(context.Context, string) doctor.Report
+	daemonDoctor          func(context.Context) (doctor.Report, error)
+	logs                  func(context.Context, io.Writer, logs.Options) error
+	profileStorePath      string
+	subscriptionStorePath string
+	recover               func(context.Context) recovery.PlanResult
+	status                func(context.Context) status.Report
+	daemonStatus          func(context.Context) (status.Report, error)
 }
 
 // Run executes the user-facing TunWarden command line interface.
