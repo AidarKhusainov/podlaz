@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 	"github.com/AidarKhusainov/tunwarden/internal/api"
 	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/tunwarden/internal/render"
 )
 
 const (
@@ -93,13 +97,28 @@ func (m *XrayManager) Connect(ctx context.Context, req api.ConnectRequest) (api.
 	}
 
 	cmd := exec.Command(xrayPath, "run", "-config", runtimeConfigPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		m.mu.Unlock()
+		removeGeneratedConfig(runtimeConfigPath)
+		return api.LifecycleResponse{}, fmt.Errorf("prepare Xray stdout: %w", err)
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		m.mu.Unlock()
+		removeGeneratedConfig(runtimeConfigPath)
+		return api.LifecycleResponse{}, fmt.Errorf("prepare Xray stderr: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
 		m.mu.Unlock()
 		removeGeneratedConfig(runtimeConfigPath)
+		logCoreStartFailed(p.ID, err)
 		return api.LifecycleResponse{}, fmt.Errorf("start Xray: %w", err)
 	}
+
+	pid := cmd.Process.Pid
+	outputDone := forwardCoreOutput(pid, p.ID, stdoutPipe, stderrPipe)
+	logCoreStarted(pid, p.ID)
 
 	done := make(chan struct{})
 	active := xrayState{
@@ -122,7 +141,7 @@ func (m *XrayManager) Connect(ctx context.Context, req api.ConnectRequest) (api.
 	m.state = active
 	m.mu.Unlock()
 
-	go m.waitForExit(cmd, done, runtimeConfigPath)
+	go m.waitForExit(cmd, done, outputDone, runtimeConfigPath, p.ID)
 	return lifecycleResponse(active), nil
 }
 
@@ -189,8 +208,16 @@ func (m *XrayManager) Status(context.Context) api.StatusResponse {
 	}
 }
 
-func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, runtimeConfigPath string) {
+func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, outputDone <-chan struct{}, runtimeConfigPath, profileID string) {
 	err := cmd.Wait()
+	if outputDone != nil {
+		<-outputDone
+	}
+	pid := 0
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer close(done)
@@ -204,11 +231,14 @@ func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, runtimeConf
 		m.stopping = false
 		m.state = inactiveXrayState()
 		removeGeneratedConfig(runtimeConfigPath)
+		logCoreStopped(pid, profileID)
 		return
 	}
+	exitMessage := processExitMessage(err)
 	m.state.Connection = "error (core exited)"
 	m.state.Proxy = "inactive"
-	m.state.Warnings = append(m.state.Warnings, processExitMessage(err))
+	m.state.Warnings = append(m.state.Warnings, exitMessage)
+	logCoreExited(pid, profileID, exitMessage)
 }
 
 func (m *XrayManager) runtimeDir() string {
@@ -313,6 +343,60 @@ func processExitMessage(err error) string {
 		return "Xray process exited unexpectedly"
 	}
 	return "Xray process exited unexpectedly: " + err.Error()
+}
+
+func forwardCoreOutput(pid int, profileID string, stdout, stderr io.Reader) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			scanCoreOutput(pid, profileID, "stdout", stdout)
+		}()
+		go func() {
+			defer wg.Done()
+			scanCoreOutput(pid, profileID, "stderr", stderr)
+		}()
+		wg.Wait()
+		close(done)
+	}()
+	return done
+}
+
+func scanCoreOutput(pid int, profileID, streamName string, src io.Reader) {
+	reader := bufio.NewReader(src)
+	for {
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimRight(line, "\r\n")
+			log.Printf("tunwardend: core xray %s pid=%d profile=%s: %s", streamName, pid, render.Redact(profileID), render.Redact(line))
+		}
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		log.Printf("tunwardend: core xray log read failed stream=%s pid=%d profile=%s error=%s", streamName, pid, render.Redact(profileID), render.Redact(err.Error()))
+		return
+	}
+}
+
+func logCoreStarted(pid int, profileID string) {
+	log.Printf("tunwardend: core xray started pid=%d profile=%s", pid, render.Redact(profileID))
+}
+
+func logCoreStartFailed(profileID string, err error) {
+	log.Printf("tunwardend: core xray start failed profile=%s error=%s", render.Redact(profileID), render.Redact(err.Error()))
+}
+
+func logCoreStopped(pid int, profileID string) {
+	log.Printf("tunwardend: core xray stopped pid=%d profile=%s", pid, render.Redact(profileID))
+}
+
+func logCoreExited(pid int, profileID, message string) {
+	log.Printf("tunwardend: core xray exited pid=%d profile=%s error=%s", pid, render.Redact(profileID), render.Redact(message))
 }
 
 func writeRuntimeConfig(path string, content []byte) error {
