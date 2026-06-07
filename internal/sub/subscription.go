@@ -276,7 +276,7 @@ func FetchSource(ctx context.Context, source Source) ([]byte, error) {
 }
 
 func sameOriginRedirectPolicy(req *http.Request, via []*http.Request) error {
-	if len(via) >= 3 {
+	if len(via) > 3 {
 		return fmt.Errorf("stopped after 3 redirects")
 	}
 	if len(via) == 0 {
