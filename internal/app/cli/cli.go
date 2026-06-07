@@ -43,16 +43,17 @@ func ExitCode(err error) int {
 }
 
 type options struct {
-	connect          connectRunner
-	disconnect       disconnectRunner
-	doctor           func(context.Context) doctor.Report
-	coreDoctor       func(context.Context, string) doctor.Report
-	daemonDoctor     func(context.Context) (doctor.Report, error)
-	logs             func(context.Context, io.Writer, logs.Options) error
-	profileStorePath string
-	recover          func(context.Context) recovery.PlanResult
-	status           func(context.Context) status.Report
-	daemonStatus     func(context.Context) (status.Report, error)
+	connect               connectRunner
+	disconnect            disconnectRunner
+	doctor                func(context.Context) doctor.Report
+	coreDoctor            func(context.Context, string) doctor.Report
+	daemonDoctor          func(context.Context) (doctor.Report, error)
+	logs                  func(context.Context, io.Writer, logs.Options) error
+	profileStorePath      string
+	subscriptionStorePath string
+	recover               func(context.Context) recovery.PlanResult
+	status                func(context.Context) status.Report
+	daemonStatus          func(context.Context) (status.Report, error)
 }
 
 // Run executes the user-facing TunWarden command line interface.
@@ -86,6 +87,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runVersionCommand(commandArgs, stdout)
 	case "profile":
 		return runProfileCommand(ctx, commandArgs, stdout, opts)
+	case "subscription":
+		return runSubscriptionCommand(ctx, commandArgs, stdout, opts)
 	case "plan":
 		return runPlanCommand(ctx, commandArgs, stdout, opts)
 	case "connect":
@@ -119,6 +122,8 @@ func runHelp(args []string, stdout io.Writer) error {
 		printVersionHelp(stdout)
 	case "profile":
 		printProfileHelp(stdout)
+	case "subscription":
+		printSubscriptionHelp(stdout)
 	case "plan":
 		printPlanHelp(stdout)
 	case "connect":
