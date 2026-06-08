@@ -45,7 +45,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | [Architecture](./architecture.md) | CLI/daemon split, privilege boundary, state model, transaction model, engine abstraction, backend interfaces. |
 | [State and security requirements](./state-and-security.md) | User/daemon/system state separation, XDG/systemd paths, JSON compatibility, redaction, confirmations, service hardening, and core process safety. |
 | [Package boundaries](./package-boundaries.md) | Dependency direction between CLI, daemon, API, domain, planner, executor, and adapter packages. |
-| [Networking and reliability requirements](./networking-reliability.md) | TUN, routing, DNS, firewall, sleep/resume, and recovery requirements. |
+| [Networking and reliability requirements](./networking-reliability.md) | TUN, routing, DNS, firewall, NetworkManager, sleep/resume, health checks, recovery, and reliability test requirements. |
 | [Subscriptions and profiles](./subscriptions-and-profiles.md) | Subscription inputs, format adapters, normalized profile model, validation, update behavior, storage. |
 | [Roadmap](./roadmap.md) | Ordered implementation phases and milestone boundaries. |
 | [Development guide](./development.md) | Local checks, contribution rules, safety constraints, documentation update rules. |
@@ -92,7 +92,7 @@ The primary value proposition is:
 1. **No blind system mutation.** Every privileged networking operation must be planned, logged, and reversible.
 2. **Rollback and recovery first.** Cleanup and recovery must exist before advanced full-tunnel features are considered stable.
 3. **CLI-first.** The first UX is a stable command-line tool.
-4. **Daemon-owned privilege.** Privileged networking belongs in the daemon, not in a SUID GUI/client binary.
+4. **Daemon-owned privilege:** Privileged networking belongs in the daemon, not in a SUID GUI/client binary.
 5. **Observable by default.** Users must be able to inspect routes, DNS, firewall state, core process status, and connection health while respecting the documented output policy.
 6. **Linux networking is dynamic.** Sleep/resume, Wi-Fi roaming, DHCP changes, DNS changes, and interface changes are normal events.
 7. **NetworkManager connectivity is advisory.** Desktop connectivity indicators may be wrong while the VPN data path still works; TunWarden must run independent health checks.
