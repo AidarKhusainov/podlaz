@@ -40,7 +40,7 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	fixturePath := filepath.Join(dir, "sub.txt")
 	writeSubscriptionFixture(t, fixturePath, []string{
 		shareLink(1, "one.example", "443", "?type=tcp&security=tls&encryption=none", "one"),
-		unsupportedLink("vm", "ess"),
+		unsupportedLink("hy", "steria"),
 		shareLink(2, "two.example", "8443", "?type=grpc&security=tls&serviceName=svc", "two"),
 	})
 	sourceURL := localFileURL(fixturePath)
@@ -50,7 +50,7 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", sourceURL}, &out, opts); err != nil {
 		t.Fatalf("top-level subscription import failed: %v", err)
 	}
-	for _, want := range []string{"Subscription imported: imported-subscription-", "Imported: 2", "Unsupported: 1", "Warnings: 0", "unsupported URI scheme"} {
+	for _, want := range []string{"Subscription imported: imported-subscription-", "Imported: 2", "Unsupported: 1", "Warnings: 0", "unsupported profile import URI scheme"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected import output to contain %q, got %q", want, out.String())
 		}
