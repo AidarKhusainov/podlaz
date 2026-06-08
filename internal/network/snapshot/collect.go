@@ -5,13 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 )
 
-const defaultCommandTimeout = 3 * time.Second
+const (
+	defaultCommandTimeout    = 3 * time.Second
+	defaultResolveHostTimeout = 3 * time.Second
+)
 
 // CommandResult contains a completed read-only command's observable output.
 type CommandResult struct {
@@ -25,6 +29,9 @@ type CommandRunner interface {
 	LookPath(file string) (string, error)
 	Run(ctx context.Context, name string, args ...string) (CommandResult, error)
 }
+
+// HostResolver abstracts hostname resolution for deterministic tests.
+type HostResolver func(ctx context.Context, host string) ([]string, error)
 
 // OSRunner executes read-only host inspection commands through os/exec.
 type OSRunner struct{}
@@ -64,9 +71,11 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 
 // Options controls read-only snapshot collection.
 type Options struct {
-	Server   string
-	TunNames []string
-	OS       string
+	Server             string
+	TunNames           []string
+	OS                 string
+	ResolveHost        HostResolver
+	ResolveHostTimeout time.Duration
 }
 
 // Collect reads the current host state without mutating networking state.
@@ -96,7 +105,7 @@ func CollectWithRunner(ctx context.Context, runner CommandRunner, opts Options) 
 	if ipOK {
 		s.DefaultIPv4 = route(ctx, runner, ipPath, "ipv4", "default", "-4", "route", "show", "default")
 		s.DefaultIPv6 = route(ctx, runner, ipPath, "ipv6", "default", "-6", "route", "show", "default")
-		s.ServerRoute = serverRoute(ctx, runner, ipPath, strings.TrimSpace(opts.Server))
+		s.ServerRoute = serverRoute(ctx, runner, ipPath, strings.TrimSpace(opts.Server), opts)
 		s.TunDevices = tunDevices(ctx, runner, ipPath, tunNames)
 	} else {
 		s.DefaultIPv4 = missingRoute("ipv4", "default", "ip command not found")
@@ -153,11 +162,69 @@ func route(ctx context.Context, runner CommandRunner, ipPath, family, destinatio
 	return Route{Status: StatusUnknown, Family: family, Destination: destination, Detail: commandFailureMessage(result, err)}
 }
 
-func serverRoute(ctx context.Context, runner CommandRunner, ipPath, server string) Route {
+func serverRoute(ctx context.Context, runner CommandRunner, ipPath, server string, opts Options) Route {
 	if server == "" {
 		return Route{Status: StatusUnknown, Destination: "server", Detail: "profile server is empty"}
 	}
-	return route(ctx, runner, ipPath, "", server, "route", "get", server)
+
+	target, detail, err := routeTarget(ctx, server, opts)
+	if err != nil {
+		return Route{Status: StatusUnknown, Destination: server, Detail: err.Error()}
+	}
+
+	r := route(ctx, runner, ipPath, "", server, "route", "get", target)
+	if detail != "" {
+		if r.Detail == "" {
+			r.Detail = detail
+		} else {
+			r.Detail = detail + "; " + r.Detail
+		}
+	}
+	return r
+}
+
+func routeTarget(ctx context.Context, server string, opts Options) (target string, detail string, err error) {
+	if ip := net.ParseIP(server); ip != nil {
+		return server, "", nil
+	}
+
+	resolver := opts.ResolveHost
+	if resolver == nil {
+		resolver = net.DefaultResolver.LookupHost
+	}
+	timeout := opts.ResolveHostTimeout
+	if timeout <= 0 {
+		timeout = defaultResolveHostTimeout
+	}
+
+	resolveCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	hosts, err := resolver(resolveCtx, server)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve server hostname %q: %w", server, err)
+	}
+	ip := chooseResolvedIP(hosts)
+	if ip == "" {
+		return "", "", fmt.Errorf("resolve server hostname %q: no IP addresses returned", server)
+	}
+	return ip, fmt.Sprintf("server hostname %s resolved to %s", server, ip), nil
+}
+
+func chooseResolvedIP(hosts []string) string {
+	var first string
+	for _, host := range hosts {
+		ip := net.ParseIP(strings.TrimSpace(host))
+		if ip == nil {
+			continue
+		}
+		if first == "" {
+			first = ip.String()
+		}
+		if ip.To4() != nil {
+			return ip.String()
+		}
+	}
+	return first
 }
 
 func missingRoute(family, destination, detail string) Route {
