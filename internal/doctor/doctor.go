@@ -8,7 +8,6 @@ import (
 
 	"github.com/AidarKhusainov/tunwarden/internal/api"
 	"github.com/AidarKhusainov/tunwarden/internal/render"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
 )
 
 const (
@@ -22,6 +21,7 @@ const (
 	SourceLocalFallback = "local fallback"
 )
 
+// Severity describes the outcome of a diagnostic check.
 type Severity string
 
 const (
@@ -30,25 +30,32 @@ const (
 	SeverityFail    Severity = "FAIL"
 )
 
+// Check is a single diagnostic result.
 type Check struct {
 	Name     string
 	Severity Severity
 	Message  string
 }
 
+// Report contains all diagnostic checks for the current host.
 type Report struct {
 	Source string
 	Checks []Check
 }
 
+// Options controls doctor execution. Zero values use safe production defaults.
 type Options struct {
 	Runner                  CommandRunner
 	RuntimeDir              string
 	RuntimeDirOwnedByDaemon bool
 }
 
-func Run(ctx context.Context) Report { return RunWithOptions(ctx, Options{}) }
+// Run executes safe diagnostics. It must not mutate system state.
+func Run(ctx context.Context) Report {
+	return RunWithOptions(ctx, Options{})
+}
 
+// RunWithOptions executes safe diagnostics with injectable dependencies for tests.
 func RunWithOptions(ctx context.Context, opts Options) Report {
 	runner := opts.Runner
 	if runner == nil {
@@ -60,7 +67,11 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 		runtimeDir = defaultRuntimeDir
 	}
 
-	checks := []Check{{Name: "platform", Severity: platformSeverity(), Message: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)}}
+	checks := []Check{{
+		Name:     "platform",
+		Severity: platformSeverity(),
+		Message:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+	}}
 
 	ipPath, ipOK := commandAvailability(runner, "ip", "iproute2")
 	checks = append(checks, ipPath.check)
@@ -80,48 +91,51 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 	nftPath, nftOK := commandAvailability(runner, "nft", "nftables")
 	checks = append(checks, nftPath.check)
 
-	checks = append(checks, staleResources(ctx, runner, staleResourceOptions{ipPath: ipPath.path, ipOK: ipOK, nftPath: nftPath.path, nftOK: nftOK, runtimeDir: runtimeDir, runtimeDirOwnedByDaemon: opts.RuntimeDirOwnedByDaemon}))
-	checks = append(checks, transactionStateCheck(runtimeDir))
+	checks = append(checks, staleResources(ctx, runner, staleResourceOptions{
+		ipPath:                  ipPath.path,
+		ipOK:                    ipOK,
+		nftPath:                 nftPath.path,
+		nftOK:                   nftOK,
+		runtimeDir:              runtimeDir,
+		runtimeDirOwnedByDaemon: opts.RuntimeDirOwnedByDaemon,
+	}))
 
 	return Report{Source: SourceLocalFallback, Checks: checks}
 }
 
-func transactionStateCheck(runtimeDir string) Check {
-	summaries, warnings := txstate.ScanTransactions(runtimeDir)
-	parts := make([]string, 0, len(summaries)+len(warnings))
-	for _, summary := range summaries {
-		if !summary.RequiresCleanup {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("transaction %s %s; rollback available: %s; state path: %s", summary.ID, summary.StatusLine(), summary.RollbackLine(), summary.Path))
-	}
-	for _, warning := range warnings {
-		parts = append(parts, "cannot inspect transaction state: "+warning)
-	}
-	if len(parts) == 0 {
-		return Check{Name: "transactions", Severity: SeverityOK, Message: "no pending transaction state found"}
-	}
-	return Check{Name: "transactions", Severity: SeverityWarning, Message: strings.Join(parts, "; ")}
-}
-
+// FromDaemon converts a validated daemon API response into the user-facing doctor report.
 func FromDaemon(d api.DoctorResponse) Report {
 	checks := make([]Check, 0, len(d.Checks))
 	for _, check := range d.Checks {
-		checks = append(checks, Check{Name: check.Name, Severity: Severity(check.Severity), Message: check.Message})
+		checks = append(checks, Check{
+			Name:     check.Name,
+			Severity: Severity(check.Severity),
+			Message:  check.Message,
+		})
 	}
 	return Report{Source: d.Source, Checks: checks}
 }
 
+// ToDaemon converts a doctor report into the daemon API response contract.
 func ToDaemon(r Report) api.DoctorResponse {
 	checks := make([]api.DoctorCheck, 0, len(r.Checks))
 	for _, check := range r.Checks {
-		checks = append(checks, api.DoctorCheck{Name: check.Name, Severity: string(check.Severity), Message: check.Message})
+		checks = append(checks, api.DoctorCheck{
+			Name:     check.Name,
+			Severity: string(check.Severity),
+			Message:  check.Message,
+		})
 	}
 	return api.DoctorResponse{Source: r.normalizedSource(), Checks: checks}
 }
 
-func WithSource(r Report, source string) Report { r.Source = source; return r }
+// WithSource returns a copy of the report with a specific source label.
+func WithSource(r Report, source string) Report {
+	r.Source = source
+	return r
+}
 
+// WithDaemonCheck prepends daemon reachability information to the report.
 func WithDaemonCheck(r Report, severity Severity, message string) Report {
 	checks := make([]Check, 0, len(r.Checks)+1)
 	checks = append(checks, Check{Name: "daemon", Severity: severity, Message: message})
@@ -130,6 +144,7 @@ func WithDaemonCheck(r Report, severity Severity, message string) Report {
 	return r
 }
 
+// HasFailures reports whether any diagnostic check failed.
 func (r Report) HasFailures() bool {
 	for _, check := range r.Checks {
 		if check.Severity == SeverityFail {
@@ -139,6 +154,7 @@ func (r Report) HasFailures() bool {
 	return false
 }
 
+// String renders the report in a stable, CLI-friendly format.
 func (r Report) String() string {
 	var b strings.Builder
 	b.WriteString("TunWarden doctor report\n")
