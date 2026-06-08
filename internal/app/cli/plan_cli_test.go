@@ -143,9 +143,18 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("decode TUN plan JSON: %v", err)
 	}
-	assertCommonJSON(t, got)
+	if got["schema_version"] != "v1" {
+		t.Fatalf("expected schema_version v1, got %#v", got["schema_version"])
+	}
 	if got["mode"] != "tun" || got["status"] != "warn" {
 		t.Fatalf("unexpected TUN plan JSON status/mode: %#v", got)
+	}
+	warnings, ok := got["warnings"].([]any)
+	if !ok || len(warnings) == 0 {
+		t.Fatalf("expected non-empty warning list for stale-resource TUN snapshot, got %#v", got["warnings"])
+	}
+	if errors, ok := got["errors"].([]any); !ok || len(errors) != 0 {
+		t.Fatalf("expected empty errors, got %#v", got["errors"])
 	}
 	plan, ok := got["plan"].(map[string]any)
 	if !ok {
