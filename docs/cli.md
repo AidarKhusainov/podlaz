@@ -37,7 +37,7 @@ Rules:
 - recovery cleanup must require explicit `--execute` and `--yes` flags;
 - full-tunnel networking changes must be planned before they are applied;
 - proxy-only mode must not mutate routes, DNS, TUN, nftables, or firewall state;
-- snapshot-only TUN planning must not create TUN devices, mutate routes, mutate DNS, mutate nftables/firewall state, start Xray, or write runtime config files.
+- TUN planning must not create TUN devices, mutate routes, mutate policy rules, mutate DNS, mutate nftables/firewall state, start Xray, or write runtime config files.
 
 ### Object groups for long-lived state
 
@@ -258,7 +258,7 @@ Deferred behavior:
 
 - `profile import --json`;
 - VLESS custom string IDs;
-- generated proxy-only Xray config support for non-VLESS imported profiles;
+- generated proxy-only Xray config support for non-VLESS imported profiles.
 
 Mutation level:
 
@@ -316,17 +316,6 @@ Implemented foundation status behavior:
 - guidance to `tunwarden recover` when recovery candidates exist.
 
 `status --json` is deferred to a separate issue. Until implemented, `status --json` must fail fast as invalid usage with exit code `2`.
-
-Expected eventual categories:
-
-- daemon state;
-- connection state;
-- active profile;
-- active mode;
-- proxy listener state;
-- core process state;
-- runtime directory state;
-- stale TunWarden-owned state summary.
 
 ### Doctor
 
@@ -408,10 +397,17 @@ Implemented proxy-only output:
 - explicit statement that no TUN, routes, DNS, nftables, or firewall state will be changed;
 - warnings for unsupported profile settings.
 
-Implemented TUN snapshot preview output:
+Implemented TUN full-tunnel dry-run output:
 
 - selected profile;
-- selected mode;
+- user-visible `Mode: full-tunnel`;
+- explicit dry-run guarantee that no TUN, route, policy-rule, DNS, nftables/firewall, Xray, or runtime config state is changed;
+- planned TUN device desired state, initially `create tunwarden0`;
+- dedicated TunWarden routing table, initially `tunwarden` with ID `51820`;
+- default IPv4 route desired state through the TunWarden table;
+- policy-rule desired state for default IPv4 traffic through the TunWarden table;
+- VPN server bypass route and policy-rule desired state only when the current read-only snapshot resolved the server route to a concrete IP address;
+- blocked/incomplete server-bypass output and warnings when the server target is not a concrete IP address;
 - current default IPv4 and IPv6 route state;
 - current default interface when detected;
 - route to the VPN server candidate after resolving hostname servers to an IP address with a read-only resolver timeout;
@@ -421,9 +417,13 @@ Implemented TUN snapshot preview output:
 - IPv4/IPv6 assumptions;
 - known TunWarden TUN device presence for names such as `tunwarden0`;
 - stale TunWarden-owned resources;
-- warnings for incomplete visibility, DNS resolution failure, optional backend absence, stale resources, and route-loop risk.
+- warnings for incomplete visibility, DNS resolution failure, optional backend absence, stale resources, and route-loop risk;
+- rollback steps for the planned TUN device, route, and policy-rule desired state;
+- final `No changes were applied.` confirmation.
 
-The implemented `plan --mode tun` behavior is a snapshot-only preview. It intentionally does not show final intended TUN apply steps, route changes, DNS changes, nftables/firewall changes, rollback steps, kill-switch behavior, or health-check behavior. Those belong to a future full TUN route/DNS/nftables planner issue.
+Implemented TUN JSON output keeps the common `schema_version`, `status`, `warnings`, and `errors` fields. Top-level `mode` remains the CLI mode selector value `tun`. The command-specific `plan.tunnel_mode` field is `full-tunnel`. The `plan` object includes `profile`, `tun`, `routes`, `policy_rules`, `server_bypass`, safety flags, and the full current `snapshot`. The snapshot includes `os`, default routes, server route, DNS, NetworkManager, nftables, TUN devices, IPv4, IPv6, and stale resources with the same redaction policy as human output.
+
+The current `plan --mode tun` implementation is still read-only. It produces an intended TUN/route/policy-rule dry-run and rollback description, but it does not yet apply anything and does not yet produce DNS, nftables/firewall, kill-switch, or health-check apply plans.
 
 ### Connect and disconnect
 
@@ -503,9 +503,7 @@ tunwarden doctor --routes
 tunwarden doctor --firewall
 ```
 
-The current `plan --mode tun` implementation is the read-only system snapshot preview required before full TUN mutation work. It explains current host state and stale TunWarden-owned resources, but it does not yet produce the final intended TUN/route/DNS/nftables apply plan, rollback plan, kill-switch plan, or health-check plan.
-
-Future full `plan --mode tun` behavior must show intended TUN, route, DNS, nftables, rollback, and health-check behavior without applying anything.
+The current `plan --mode tun` implementation is the read-only full-tunnel TUN/route dry-run required before full TUN mutation work. It combines the current host snapshot with intended TUN device, route, policy-rule, VPN server bypass, route-loop warning, and rollback output. It still does not apply anything and does not yet plan DNS, nftables/firewall, kill-switch, or health-check apply behavior.
 
 `connect --mode tun` must apply changes only through daemon-owned network transactions.
 
@@ -518,7 +516,7 @@ Future full `plan --mode tun` behavior must show intended TUN, route, DNS, nftab
 These commands are not part of v0.1 unless a later issue explicitly changes the milestone:
 
 ```bash
-tunwarden core check --xray <path>
+tunwarden core check --xray
 tunwarden explain routes
 tunwarden explain dns
 tunwarden explain firewall
