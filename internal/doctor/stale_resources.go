@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
 )
 
 type staleResourceOptions struct {
@@ -59,11 +61,26 @@ func staleResources(ctx context.Context, runner CommandRunner, opts staleResourc
 		warnings = append(warnings, fmt.Sprintf("cannot inspect runtime directory %s: %v", opts.runtimeDir, err))
 	}
 
+	appendTransactionState(&stale, &warnings, opts.runtimeDir)
+
 	message := staleResourceMessage(stale, warnings)
 	if len(stale) > 0 || len(warnings) > 0 {
 		return Check{Name: "stale-resources", Severity: SeverityWarning, Message: message}
 	}
 	return Check{Name: "stale-resources", Severity: SeverityOK, Message: message}
+}
+
+func appendTransactionState(stale *[]string, warnings *[]string, runtimeDir string) {
+	summaries, scanWarnings := txstate.ScanTransactions(runtimeDir)
+	for _, summary := range summaries {
+		if !summary.RequiresCleanup {
+			continue
+		}
+		*stale = append(*stale, fmt.Sprintf("transaction %s %s; rollback available: %s; state path: %s", summary.ID, summary.StatusLine(), summary.RollbackLine(), summary.Path))
+	}
+	for _, warning := range scanWarnings {
+		*warnings = append(*warnings, "cannot inspect transaction state: "+warning)
+	}
 }
 
 func staleResourceMessage(stale []string, warnings []string) string {
