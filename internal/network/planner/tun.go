@@ -23,7 +23,6 @@ const (
 	IPv4DefaultSelector = "from all"
 )
 
-// TunDevicePlan describes the TUN interface desired state for a dry-run plan.
 type TunDevicePlan struct {
 	Name   string
 	MTU    int
@@ -31,7 +30,6 @@ type TunDevicePlan struct {
 	Reason string
 }
 
-// TunRoutePlan describes an intended route without applying it.
 type TunRoutePlan struct {
 	Family      string
 	Destination string
@@ -42,7 +40,6 @@ type TunRoutePlan struct {
 	Reason      string
 }
 
-// TunPolicyRulePlan describes an intended policy routing rule without applying it.
 type TunPolicyRulePlan struct {
 	Family   string
 	Priority int
@@ -52,7 +49,6 @@ type TunPolicyRulePlan struct {
 	Reason   string
 }
 
-// TunPlan is the inspectable read-only full-tunnel route/TUN dry-run plan.
 type TunPlan struct {
 	Mode          string
 	TunnelMode    string
@@ -69,93 +65,84 @@ type TunPlan struct {
 	RollbackSteps []string
 }
 
-// PlanTun builds a read-only full-tunnel route/TUN plan from an already collected system snapshot.
 func PlanTun(p profile.Profile, s snapshot.Snapshot) (TunPlan, error) {
 	if err := profile.Validate(p); err != nil {
 		return TunPlan{}, err
 	}
 
-	device := TunDevicePlan{
-		Name:   snapshot.DefaultTunName,
-		MTU:    DefaultTunMTU,
-		Action: "create",
-		Reason: "stable TunWarden full-tunnel interface",
-	}
-	serverTarget := serverBypassTarget(p, s)
-	serverDestination := serverBypassDestination(serverTarget)
-	serverSelector := serverBypassSelector(serverTarget)
+	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "create", Reason: "stable TunWarden full-tunnel interface"}
+	serverIP := concreteServerBypassIP(s)
+	serverBypass := serverBypassRoute(s, serverIP)
 
-	policyRules := []TunPolicyRulePlan{
-		{
+	routes := []TunRoutePlan{{
+		Family:      "ipv4",
+		Destination: IPv4DefaultRoute,
+		Table:       TunRoutingTable,
+		Interface:   snapshot.DefaultTunName,
+		Action:      "add",
+		Reason:      "route default IPv4 traffic through the TunWarden TUN interface",
+	}}
+	policyRules := []TunPolicyRulePlan{{
+		Family:   "ipv4",
+		Priority: TunRulePriority,
+		Selector: IPv4DefaultSelector,
+		Table:    TunRoutingTable,
+		Action:   "add",
+		Reason:   "send default IPv4 traffic through the TunWarden routing table",
+	}}
+	if serverIP != "" {
+		routes = append(routes, serverBypass)
+		policyRules = append([]TunPolicyRulePlan{{
 			Family:   "ipv4",
 			Priority: ServerRulePriority,
-			Selector: serverSelector,
+			Selector: "to " + serverIP + "/32",
 			Table:    MainRoutingTable,
 			Action:   "add",
 			Reason:   "keep VPN server traffic on the current uplink before full-tunnel policy routing",
-		},
-		{
-			Family:   "ipv4",
-			Priority: TunRulePriority,
-			Selector: IPv4DefaultSelector,
-			Table:    TunRoutingTable,
-			Action:   "add",
-			Reason:   "send default IPv4 traffic through the TunWarden routing table",
-		},
-	}
-
-	routes := []TunRoutePlan{
-		{
-			Family:      "ipv4",
-			Destination: IPv4DefaultRoute,
-			Table:       TunRoutingTable,
-			Interface:   snapshot.DefaultTunName,
-			Action:      "add",
-			Reason:      "route default IPv4 traffic through the TunWarden TUN interface",
-		},
-	}
-
-	serverBypass := TunRoutePlan{
-		Family:      "ipv4",
-		Destination: serverDestination,
-		Table:       MainRoutingTable,
-		Interface:   s.DefaultIPv4.Interface,
-		Gateway:     s.DefaultIPv4.Gateway,
-		Action:      "add",
-		Reason:      "pin VPN server traffic to the current default uplink outside the TUN path",
-	}
-	if serverTarget != "" {
-		routes = append(routes, serverBypass)
+		}}, policyRules...)
 	}
 
 	loopRisks := tunRouteLoopRisks(s)
 	warnings := append([]string{}, s.Warnings...)
 	warnings = append(warnings, tunSnapshotWarnings(s)...)
-	warnings = append(warnings, tunDesiredStateWarnings(s, serverTarget)...)
+	warnings = append(warnings, tunDesiredStateWarnings(s, serverIP)...)
 	warnings = append(warnings, loopRisks...)
 
+	steps := []string{
+		"Collect current host networking snapshot without requiring root",
+		fmt.Sprintf("Plan TUN interface %s with MTU %d", device.Name, device.MTU),
+		fmt.Sprintf("Plan routing table %s (%d) with IPv4 default route through %s", TunRoutingTable, TunRoutingTableID, device.Name),
+	}
+	if serverIP != "" {
+		steps = append(steps, fmt.Sprintf("Plan policy rule priority %d for VPN server bypass via %s", ServerRulePriority, MainRoutingTable))
+	}
+	steps = append(steps,
+		fmt.Sprintf("Plan policy rule priority %d for default IPv4 traffic via %s", TunRulePriority, TunRoutingTable),
+		"Leave TUN devices, routes, policy rules, DNS, nftables, firewall, and Xray process state unchanged in this dry-run",
+	)
+
 	return TunPlan{
-		Mode:         ModeTun,
-		TunnelMode:   TunTunnelMode,
-		ProfileID:    p.ID,
-		ProfileName:  p.Name,
-		Snapshot:     s,
-		TunDevice:    device,
-		Routes:       routes,
-		PolicyRules:  policyRules,
-		ServerBypass: serverBypass,
-		LoopRisks:    loopRisks,
-		Warnings:     compactWarnings(warnings),
-		Steps: []string{
-			"Collect current host networking snapshot without requiring root",
-			fmt.Sprintf("Plan TUN interface %s with MTU %d", device.Name, device.MTU),
-			fmt.Sprintf("Plan routing table %s (%d) with IPv4 default route through %s", TunRoutingTable, TunRoutingTableID, device.Name),
-			fmt.Sprintf("Plan policy rule priority %d for VPN server bypass via %s", ServerRulePriority, MainRoutingTable),
-			fmt.Sprintf("Plan policy rule priority %d for default IPv4 traffic via %s", TunRulePriority, TunRoutingTable),
-			"Leave TUN devices, routes, policy rules, DNS, nftables, firewall, and Xray process state unchanged in this dry-run",
-		},
+		Mode:          ModeTun,
+		TunnelMode:    TunTunnelMode,
+		ProfileID:     p.ID,
+		ProfileName:   p.Name,
+		Snapshot:      s,
+		TunDevice:     device,
+		Routes:        routes,
+		PolicyRules:   policyRules,
+		ServerBypass:  serverBypass,
+		LoopRisks:     loopRisks,
+		Warnings:      compactWarnings(warnings),
+		Steps:         steps,
 		RollbackSteps: rollbackSteps(device, routes, policyRules),
 	}, nil
+}
+
+func serverBypassRoute(s snapshot.Snapshot, serverIP string) TunRoutePlan {
+	if serverIP == "" {
+		return TunRoutePlan{Family: "ipv4", Destination: "<server-ip>", Table: MainRoutingTable, Action: "blocked", Reason: "server route did not resolve to a concrete IP address"}
+	}
+	return TunRoutePlan{Family: "ipv4", Destination: serverIP + "/32", Table: MainRoutingTable, Interface: s.DefaultIPv4.Interface, Gateway: s.DefaultIPv4.Gateway, Action: "add", Reason: "pin VPN server traffic to the current default uplink outside the TUN path"}
 }
 
 func tunSnapshotWarnings(s snapshot.Snapshot) []string {
@@ -181,7 +168,7 @@ func tunSnapshotWarnings(s snapshot.Snapshot) []string {
 	return compactWarnings(warnings)
 }
 
-func tunDesiredStateWarnings(s snapshot.Snapshot, serverTarget string) []string {
+func tunDesiredStateWarnings(s snapshot.Snapshot, serverIP string) []string {
 	var warnings []string
 	for _, device := range s.TunDevices {
 		if device.Name == snapshot.DefaultTunName && device.Status == snapshot.StatusDetected {
@@ -197,10 +184,8 @@ func tunDesiredStateWarnings(s snapshot.Snapshot, serverTarget string) []string 
 	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Gateway == "" {
 		warnings = append(warnings, "default IPv4 route did not expose a gateway; VPN server bypass can only pin the uplink interface")
 	}
-	if serverTarget == "" {
-		warnings = append(warnings, "VPN server bypass target is unknown; resolve the server route before applying full-tunnel routing")
-	} else if net.ParseIP(strings.TrimSuffix(serverTarget, "/32")) == nil {
-		warnings = append(warnings, fmt.Sprintf("VPN server bypass target %q is not a concrete IP address; hostname resolution must succeed before apply", serverTarget))
+	if serverIP == "" {
+		warnings = append(warnings, "VPN server bypass target is unknown; route and policy-rule desired state is blocked until hostname resolution returns a concrete IP address")
 	}
 	return compactWarnings(warnings)
 }
@@ -216,14 +201,11 @@ func tunRouteLoopRisks(s snapshot.Snapshot) []string {
 	return compactWarnings(risks)
 }
 
-func serverBypassTarget(p profile.Profile, s snapshot.Snapshot) string {
-	if target := firstIPFromRoute(s.ServerRoute); target != "" {
-		return target
+func concreteServerBypassIP(s snapshot.Snapshot) string {
+	if s.ServerRoute.Status != snapshot.StatusDetected {
+		return ""
 	}
-	if s.ServerRoute.Destination != "" && s.ServerRoute.Destination != "server" {
-		return s.ServerRoute.Destination
-	}
-	return strings.TrimSpace(p.Server)
+	return firstIPFromRoute(s.ServerRoute)
 }
 
 func firstIPFromRoute(route snapshot.Route) string {
@@ -239,24 +221,6 @@ func firstIPFromRoute(route snapshot.Route) string {
 	return ""
 }
 
-func serverBypassDestination(target string) string {
-	if target == "" {
-		return "unknown"
-	}
-	if ip := net.ParseIP(strings.TrimSpace(target)); ip != nil {
-		return ip.String() + "/32"
-	}
-	return target
-}
-
-func serverBypassSelector(target string) string {
-	destination := serverBypassDestination(target)
-	if destination == "unknown" {
-		return "to <server-ip>"
-	}
-	return "to " + destination
-}
-
 func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolicyRulePlan) []string {
 	steps := make([]string, 0, len(routes)+len(rules)+1)
 	for i := len(rules) - 1; i >= 0; i-- {
@@ -265,6 +229,9 @@ func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolic
 	}
 	for i := len(routes) - 1; i >= 0; i-- {
 		route := routes[i]
+		if route.Action != "add" {
+			continue
+		}
 		steps = append(steps, rollbackRouteStep(route))
 	}
 	steps = append(steps, fmt.Sprintf("Delete TUN interface %s only if this transaction created it and ownership matches TunWarden", device.Name))
