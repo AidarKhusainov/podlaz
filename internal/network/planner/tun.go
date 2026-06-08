@@ -21,7 +21,25 @@ const (
 	MainRoutingTable    = "main"
 	IPv4DefaultRoute    = "default"
 	IPv4DefaultSelector = "from all"
+
+	DNSBackendSystemdResolved = "systemd-resolved per-link DNS"
+	DNSActionConfigure        = "configure"
+	DNSActionBlocked          = "blocked"
+	DNSRollbackRestore        = "restore previous per-link DNS state where possible"
+
+	FirewallBackendNftables = "nftables"
+	FirewallTableAction     = "create"
+	FirewallActionBlocked   = "blocked"
+	FirewallRollbackRemove  = "remove inet tunwarden"
+
+	KillSwitchPolicyOff    = "off"
+	KillSwitchPolicySoft   = "soft"
+	KillSwitchPolicyStrict = "strict"
 )
+
+type TunOptions struct {
+	KillSwitchPolicy string
+}
 
 type TunDevicePlan struct {
 	Name   string
@@ -49,6 +67,35 @@ type TunPolicyRulePlan struct {
 	Reason   string
 }
 
+type TunDNSPlan struct {
+	Backend       string
+	TargetLink    string
+	Action        string
+	Reason        string
+	Rollback      string
+	RollbackSteps []string
+}
+
+type TunFirewallPlan struct {
+	Backend       string
+	Family        string
+	Table         string
+	TableAction   string
+	ServerBypass  string
+	KillSwitch    TunKillSwitchPlan
+	Reason        string
+	Rollback      string
+	RollbackSteps []string
+}
+
+type TunKillSwitchPlan struct {
+	Policy      string
+	Action      string
+	Scope       string
+	Recovery    string
+	Limitations []string
+}
+
 type TunPlan struct {
 	Mode          string
 	TunnelMode    string
@@ -59,6 +106,8 @@ type TunPlan struct {
 	Routes        []TunRoutePlan
 	PolicyRules   []TunPolicyRulePlan
 	ServerBypass  TunRoutePlan
+	DNS           TunDNSPlan
+	Firewall      TunFirewallPlan
 	LoopRisks     []string
 	Warnings      []string
 	Steps         []string
@@ -66,6 +115,10 @@ type TunPlan struct {
 }
 
 func PlanTun(p profile.Profile, s snapshot.Snapshot) (TunPlan, error) {
+	return PlanTunWithOptions(p, s, TunOptions{})
+}
+
+func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions) (TunPlan, error) {
 	if err := profile.Validate(p); err != nil {
 		return TunPlan{}, err
 	}
@@ -73,7 +126,6 @@ func PlanTun(p profile.Profile, s snapshot.Snapshot) (TunPlan, error) {
 	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "create", Reason: "stable TunWarden full-tunnel interface"}
 	serverIP := concreteServerBypassIP(s)
 	serverBypass := serverBypassRoute(s, serverIP)
-
 	routes := []TunRoutePlan{{
 		Family:      "ipv4",
 		Destination: IPv4DefaultRoute,
@@ -102,10 +154,15 @@ func PlanTun(p profile.Profile, s snapshot.Snapshot) (TunPlan, error) {
 		}}, policyRules...)
 	}
 
+	dnsPlan := dnsPlan(s, device)
+	firewallPlan := firewallPlan(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, serverIP)
+
 	loopRisks := tunRouteLoopRisks(s)
 	warnings := append([]string{}, s.Warnings...)
 	warnings = append(warnings, tunSnapshotWarnings(s)...)
 	warnings = append(warnings, tunDesiredStateWarnings(s, serverIP)...)
+	warnings = append(warnings, dnsPlanWarnings(s, dnsPlan)...)
+	warnings = append(warnings, firewallPlanWarnings(s, firewallPlan)...)
 	warnings = append(warnings, loopRisks...)
 
 	steps := []string{
@@ -118,6 +175,8 @@ func PlanTun(p profile.Profile, s snapshot.Snapshot) (TunPlan, error) {
 	}
 	steps = append(steps,
 		fmt.Sprintf("Plan policy rule priority %d for default IPv4 traffic via %s", TunRulePriority, TunRoutingTable),
+		fmt.Sprintf("Plan DNS backend %s on link %s", dnsPlan.Backend, dnsPlan.TargetLink),
+		fmt.Sprintf("Plan nftables table %s %s with %s kill-switch policy", firewallPlan.Family, firewallPlan.Table, firewallPlan.KillSwitch.Policy),
 		"Leave TUN devices, routes, policy rules, DNS, nftables, firewall, and Xray process state unchanged in this dry-run",
 	)
 
@@ -131,10 +190,12 @@ func PlanTun(p profile.Profile, s snapshot.Snapshot) (TunPlan, error) {
 		Routes:        routes,
 		PolicyRules:   policyRules,
 		ServerBypass:  serverBypass,
+		DNS:           dnsPlan,
+		Firewall:      firewallPlan,
 		LoopRisks:     loopRisks,
 		Warnings:      compactWarnings(warnings),
 		Steps:         steps,
-		RollbackSteps: rollbackSteps(device, routes, policyRules),
+		RollbackSteps: rollbackSteps(device, routes, policyRules, dnsPlan, firewallPlan),
 	}, nil
 }
 
@@ -143,6 +204,90 @@ func serverBypassRoute(s snapshot.Snapshot, serverIP string) TunRoutePlan {
 		return TunRoutePlan{Family: "ipv4", Destination: "<server-ip>", Table: MainRoutingTable, Action: "blocked", Reason: "server route did not resolve to a concrete IP address"}
 	}
 	return TunRoutePlan{Family: "ipv4", Destination: serverIP + "/32", Table: MainRoutingTable, Interface: s.DefaultIPv4.Interface, Gateway: s.DefaultIPv4.Gateway, Action: "add", Reason: "pin VPN server traffic to the current default uplink outside the TUN path"}
+}
+
+func dnsPlan(s snapshot.Snapshot, device TunDevicePlan) TunDNSPlan {
+	plan := TunDNSPlan{
+		Backend:    DNSBackendSystemdResolved,
+		TargetLink: device.Name,
+		Action:     DNSActionConfigure,
+		Reason:     "use systemd-resolved per-link DNS for full-tunnel DNS routing without writing /etc/resolv.conf",
+		Rollback:   DNSRollbackRestore,
+		RollbackSteps: []string{
+			fmt.Sprintf("Restore previous systemd-resolved per-link DNS state for %s where possible", device.Name),
+			fmt.Sprintf("Flush TunWarden-owned DNS default-route/domain settings from %s if created by this transaction", device.Name),
+		},
+	}
+	if s.DNS.Resolved.Status != snapshot.StatusDetected {
+		plan.Action = DNSActionBlocked
+		plan.Reason = fmt.Sprintf("systemd-resolved state is %s; DNS mutation is unsafe until the backend is detected", s.DNS.Resolved.Status)
+	}
+	return plan
+}
+
+func firewallPlan(s snapshot.Snapshot, policy string, device TunDevicePlan, serverIP string) TunFirewallPlan {
+	tableAction := FirewallTableAction
+	reason := "create a TunWarden-owned nftables table for full-tunnel leak prevention dry-run state"
+	if s.Nftables.Availability.Status != snapshot.StatusDetected {
+		tableAction = FirewallActionBlocked
+		reason = fmt.Sprintf("nftables availability is %s; firewall mutation is unsafe until nft can be inspected", s.Nftables.Availability.Status)
+	}
+	if s.Nftables.TunWardenTable.Status == snapshot.StatusDetected {
+		tableAction = "validate-or-replace"
+		reason = "TunWarden nftables table already exists; future apply must validate ownership or recover it before replacing rules"
+	}
+	serverBypass := "allow VPN server bypass outside TUN"
+	if serverIP == "" {
+		serverBypass = "blocked until VPN server bypass target resolves to a concrete IP"
+	}
+
+	return TunFirewallPlan{
+		Backend:      FirewallBackendNftables,
+		Family:       snapshot.DefaultNFTFamily,
+		Table:        snapshot.DefaultNFTTable,
+		TableAction:  tableAction,
+		ServerBypass: serverBypass,
+		KillSwitch:   killSwitchPlan(policy, device),
+		Reason:       reason,
+		Rollback:     FirewallRollbackRemove,
+		RollbackSteps: []string{
+			fmt.Sprintf("Remove nftables table %s %s if created by this transaction", snapshot.DefaultNFTFamily, snapshot.DefaultNFTTable),
+		},
+	}
+}
+
+func killSwitchPlan(policy string, device TunDevicePlan) TunKillSwitchPlan {
+	plan := TunKillSwitchPlan{
+		Policy:   policy,
+		Action:   "block non-TUN traffic according to selected kill-switch policy",
+		Scope:    fmt.Sprintf("allow traffic through %s and the explicit VPN server bypass; block other non-TUN traffic according to policy", device.Name),
+		Recovery: "recover --execute --yes must be able to remove TunWarden-owned nftables state",
+	}
+	switch policy {
+	case KillSwitchPolicyOff:
+		plan.Action = "do not install leak-blocking nftables rules"
+		plan.Scope = "firewall table ownership is still planned for future cleanup visibility, but no traffic blocking is selected"
+		plan.Limitations = []string{"off policy does not claim leak protection"}
+	case KillSwitchPolicyStrict:
+		plan.Limitations = []string{
+			"strict kill-switch may intentionally keep direct connectivity blocked after VPN failure until recovery removes TunWarden-owned rules",
+			"strict kill-switch cannot be claimed as leak protection until apply, verify, rollback, and recover execution exist",
+		}
+	default:
+		plan.Limitations = []string{"soft kill-switch is a transition guard only and must restore direct connectivity on failed apply"}
+	}
+	return plan
+}
+
+func normalizeKillSwitchPolicy(policy string) string {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case KillSwitchPolicyOff:
+		return KillSwitchPolicyOff
+	case KillSwitchPolicyStrict:
+		return KillSwitchPolicyStrict
+	default:
+		return KillSwitchPolicySoft
+	}
 }
 
 func tunSnapshotWarnings(s snapshot.Snapshot) []string {
@@ -190,6 +335,25 @@ func tunDesiredStateWarnings(s snapshot.Snapshot, serverIP string) []string {
 	return compactWarnings(warnings)
 }
 
+func dnsPlanWarnings(s snapshot.Snapshot, plan TunDNSPlan) []string {
+	if plan.Action != DNSActionBlocked {
+		return nil
+	}
+	return []string{fmt.Sprintf("DNS desired state is blocked: systemd-resolved backend is %s; install/enable systemd-resolved or add a documented fallback before applying TUN DNS", s.DNS.Resolved.Status)}
+}
+
+func firewallPlanWarnings(s snapshot.Snapshot, plan TunFirewallPlan) []string {
+	var warnings []string
+	if plan.TableAction == FirewallActionBlocked {
+		warnings = append(warnings, fmt.Sprintf("firewall desired state is blocked: nftables backend is %s; install/enable nft before applying TUN firewall or kill-switch rules", s.Nftables.Availability.Status))
+	}
+	if plan.KillSwitch.Policy == KillSwitchPolicyStrict {
+		warnings = append(warnings, "strict kill-switch policy selected; direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules")
+		warnings = append(warnings, plan.KillSwitch.Limitations...)
+	}
+	return compactWarnings(warnings)
+}
+
 func tunRouteLoopRisks(s snapshot.Snapshot) []string {
 	var risks []string
 	if s.ServerRoute.Status == snapshot.StatusDetected && s.ServerRoute.Interface == snapshot.DefaultTunName {
@@ -221,8 +385,10 @@ func firstIPFromRoute(route snapshot.Route) string {
 	return ""
 }
 
-func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolicyRulePlan) []string {
-	steps := make([]string, 0, len(routes)+len(rules)+1)
+func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolicyRulePlan, dns TunDNSPlan, firewall TunFirewallPlan) []string {
+	steps := make([]string, 0, len(routes)+len(rules)+len(dns.RollbackSteps)+len(firewall.RollbackSteps)+1)
+	steps = append(steps, firewall.RollbackSteps...)
+	steps = append(steps, dns.RollbackSteps...)
 	for i := len(rules) - 1; i >= 0; i-- {
 		rule := rules[i]
 		steps = append(steps, fmt.Sprintf("Delete policy rule priority %d %s lookup %s if created by this transaction", rule.Priority, rule.Selector, rule.Table))
