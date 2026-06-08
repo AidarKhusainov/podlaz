@@ -52,6 +52,8 @@ Expected behavior:
 - prevent traffic loops,
 - clean up on disconnect/crash.
 
+The current foundation `plan --mode tun` implementation is intentionally narrower: it is a read-only system snapshot preview and does not create a TUN interface or produce final intended route/DNS/nftables apply steps.
+
 ### 3.3 Split-tunnel mode
 
 Split-tunnel mode is future scope.
@@ -71,6 +73,8 @@ ip route get <server-ip>
 ```
 
 The result must use the physical/default uplink, not the TunWarden TUN interface.
+
+For hostname profile servers, read-only snapshot collection must resolve the hostname under a bounded timeout before performing server-route lookup. DNS resolution failure must be reported as incomplete visibility instead of being hidden by planner defaults.
 
 ### INV-002: TunWarden-owned state must be identifiable
 
@@ -161,9 +165,16 @@ Table: tunwarden
 ID: chosen and documented during implementation
 ```
 
-### RT-003: Route planning must be inspectable
+### RT-003: Route visibility and future route-change planning must be inspectable
 
-`tunwarden plan --mode tun <profile>` must show intended route changes before applying them.
+The current snapshot-only `tunwarden plan --mode tun <profile>` implementation must show route visibility inputs before any TUN mutation work:
+
+- default IPv4/IPv6 route state;
+- default interface when detected;
+- server route after resolving hostname servers to a concrete IP address;
+- warning when the server route is unknown or would loop through `tunwarden0`.
+
+A future full route planner issue must extend `tunwarden plan --mode tun <profile>` to show intended route changes before applying them. The current snapshot-only plan must not claim to provide final intended route apply or rollback steps.
 
 ### RT-004: Default interface must be re-detected
 
