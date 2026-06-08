@@ -99,12 +99,23 @@ func TestScanTransactionsReportsPendingAndInvalidState(t *testing.T) {
 	}
 }
 
-func TestTransactionRejectsPersistentSecrets(t *testing.T) {
-	tx := NewTransaction("tx-secret", "profile-1", "tun", time.Now().UTC())
-	tx.Labels = map[string]string{"debug": "token=do-not-store"}
+func TestTransactionRejectsPersistentSecretFields(t *testing.T) {
+	for _, key := range []string{"token", "password", "private_key"} {
+		t.Run(key, func(t *testing.T) {
+			tx := NewTransaction("tx-secret", "profile-1", "tun", time.Now().UTC())
+			tx.Labels = map[string]string{key: "redacted"}
+			if err := ValidateTransaction(tx); err == nil {
+				t.Fatal("expected transaction validation to reject secret field")
+			}
+		})
+	}
+}
 
+func TestTransactionRejectsPersistentSecretValues(t *testing.T) {
+	tx := NewTransaction("tx-secret-value", "profile-1", "tun", time.Now().UTC())
+	tx.Labels = map[string]string{"debug": "token=redacted"}
 	if err := ValidateTransaction(tx); err == nil {
-		t.Fatal("expected transaction validation to reject persistent secrets")
+		t.Fatal("expected transaction validation to reject secret-looking value")
 	}
 }
 
