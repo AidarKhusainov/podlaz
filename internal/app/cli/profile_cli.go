@@ -65,7 +65,7 @@ func runProfileImport(store profile.Store, args []string, stdout io.Writer) erro
 		return err
 	}
 
-	p, warnings, err := profile.ImportVLESSURI(uri)
+	p, warnings, err := profile.ImportShareURI(uri)
 	if err != nil {
 		return usageError("%s", err.Error())
 	}
@@ -392,7 +392,7 @@ func printOptionalProfileField(w io.Writer, label, value string) {
 func printProfileHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
-  tunwarden profile import <vless-share-uri>
+  tunwarden profile import <share-uri>
   tunwarden profile list [--json]
   tunwarden profile show <profile-id> [--json]
   tunwarden profile delete <profile-id> --yes
@@ -401,12 +401,12 @@ Manage profiles in local TunWarden user state. These commands never start
 network processes and never mutate TUN, routes, DNS, nftables, or firewall state.
 
 Implemented in v0.1:
-  manual profile add/list/show/delete, VLESS share URI import, validation,
-  JSON list/show output, and atomic local profile storage under the documented
-  XDG user state location.
+  manual profile add/list/show/delete, VLESS/VMess/Trojan/Shadowsocks share URI
+  import, validation, JSON list/show output, and atomic local profile storage
+  under the documented XDG user state location.
 
 Not implemented yet:
-  VMess/Trojan/Shadowsocks import, subscriptions, Xray config generation,
+  profile import --json, Xray config generation for non-VLESS imported profiles,
   connect/disconnect behavior
 `)
 }
