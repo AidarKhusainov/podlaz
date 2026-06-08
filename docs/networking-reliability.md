@@ -78,7 +78,7 @@ For hostname profile servers, read-only snapshot collection must resolve the hos
 
 ### INV-002: TunWarden-owned state must be identifiable
 
-Routes, rules, nftables tables/chains, generated config files, and runtime state must be identifiable as TunWarden-owned.
+Routes, rules, nftables tables/chains, generated config files, transaction files, and runtime state must be identifiable as TunWarden-owned.
 
 Naming examples:
 
@@ -87,6 +87,7 @@ tunwarden0
 fwmark 0x... documented range
 routing table name/id reserved for TunWarden
 nft table inet tunwarden
+/run/tunwarden/transactions/<id>.json
 /run/tunwarden/*
 ```
 
@@ -102,7 +103,8 @@ This applies to:
 - nftables cleanup,
 - DNS rollback,
 - core process termination,
-- transaction file cleanup.
+- transaction file cleanup,
+- repeated rollback planning from the same transaction file.
 
 ### INV-004: Failed connection must not damage direct connectivity
 
@@ -401,6 +403,10 @@ NetworkManager connectivity state should be shown in diagnostics but must not be
 - optional HTTP probe,
 - NetworkManager connectivity state shown separately.
 
+### Transaction-state checks
+
+`status`, `doctor`, and `recover` must explain pending or stale transaction state without applying cleanup. At minimum they must show whether the transaction is pending, committed, failed, rolling back, or requires cleanup; whether rollback metadata is available; and the redacted transaction state path.
+
 ## 12. Recovery requirements
 
 `recover` must be designed as an emergency recovery command.
@@ -412,6 +418,8 @@ tunwarden recover
 ```
 
 This must be a read-only recovery plan.
+
+The read-only plan must include pending or stale transaction files under `/run/tunwarden/transactions/` as transaction-state recovery candidates when their state requires cleanup. Invalid or unreadable transaction files must be reported as inspection warnings, not ignored.
 
 Explicit cleanup behavior:
 
