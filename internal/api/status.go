@@ -76,10 +76,21 @@ func ValidateTransactionStatus(tx TransactionStatus) error {
 		return errors.New("missing transaction id")
 	case tx.State == "":
 		return errors.New("missing transaction state")
+	case !validTransactionState(tx.State):
+		return fmt.Errorf("invalid transaction state %q", tx.State)
 	case tx.Path == "":
 		return errors.New("missing transaction path")
 	default:
 		return nil
+	}
+}
+
+func validTransactionState(state string) bool {
+	switch state {
+	case "planned", "applying", "applied", "verifying", "committed", "rolling_back", "rolled_back", "failed":
+		return true
+	default:
+		return false
 	}
 }
 
