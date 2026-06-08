@@ -290,7 +290,7 @@ func sameOriginRedirectPolicy(req *http.Request, via []*http.Request) error {
 }
 
 // ParseBase64Subscription decodes a Base64 URI-list subscription and imports
-// supported VLESS entries into the normalized profile model.
+// supported share URI entries into the normalized profile model.
 func ParseBase64Subscription(content []byte) (Parsed, error) {
 	decoded, err := decodeBase64Flexible(string(content))
 	if err != nil {
@@ -363,13 +363,10 @@ func importEntry(entry string) (profile.Profile, []string, error) {
 	if err != nil {
 		return profile.Profile{}, nil, fmt.Errorf("invalid URI: %w", err)
 	}
-	if !strings.EqualFold(u.Scheme, "vless") {
-		if u.Scheme == "" {
-			return profile.Profile{}, nil, fmt.Errorf("unsupported URI entry: scheme is required")
-		}
-		return profile.Profile{}, nil, fmt.Errorf("unsupported URI scheme %q: only vless:// is implemented", u.Scheme)
+	if u.Scheme == "" {
+		return profile.Profile{}, nil, fmt.Errorf("unsupported URI entry: scheme is required")
 	}
-	p, warnings, err := profile.ImportVLESSURI(entry)
+	p, warnings, err := profile.ImportShareURI(entry)
 	if err != nil {
 		return profile.Profile{}, nil, err
 	}

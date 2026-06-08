@@ -74,12 +74,13 @@ func TestStoreReplaceSubscriptionProfilesRejectsExistingProfileCollision(t *test
 
 func subscriptionProfile(id, server string) Profile {
 	return Profile{
-		ID:       id,
-		Name:     id,
-		Source:   SourceSubscription,
-		Engine:   EngineXray,
-		Server:   server,
-		Port:     443,
-		Protocol: "vmess",
+		ID:           id,
+		Name:         id,
+		Source:       SourceSubscription,
+		Engine:       EngineXray,
+		Server:       server,
+		Port:         443,
+		Protocol:     "vmess",
+		UserIdentity: "00000000-0000-0000-0000-000000000001",
 	}
 }

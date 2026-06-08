@@ -19,7 +19,7 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	fixturePath := filepath.Join(dir, "sub.txt")
 	writeSubscriptionFixture(t, fixturePath, []string{
 		shareLink(1, "one.example", "443", "?type=tcp&security=tls&encryption=none&ignored=value", "one"),
-		unsupportedLink("vm", "ess"),
+		unsupportedLink("hy", "steria"),
 		shareLink(2, "two.example", "8443", "?type=grpc&security=tls&serviceName=svc", "two"),
 	})
 	sourceURL := localFileURL(fixturePath)
@@ -54,7 +54,7 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "update", "my-sub"}, &updateOut, opts); err != nil {
 		t.Fatalf("subscription update failed: %v", err)
 	}
-	for _, want := range []string{"Subscription updated: my-sub", "Imported: 2", "Unsupported: 1", "Warnings: 1", "unsupported URI scheme", "unsupported VLESS option"} {
+	for _, want := range []string{"Subscription updated: my-sub", "Imported: 2", "Unsupported: 1", "Warnings: 1", "unsupported profile import URI scheme", "unsupported VLESS option"} {
 		if !strings.Contains(updateOut.String(), want) {
 			t.Fatalf("expected update output to contain %q, got %q", want, updateOut.String())
 		}

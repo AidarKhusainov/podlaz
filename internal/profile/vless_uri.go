@@ -15,6 +15,10 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 
 // ImportVLESSURI parses a VLESS share URI into the normalized profile model.
 func ImportVLESSURI(raw string) (Profile, []string, error) {
+	return importVLESSURI(raw)
+}
+
+func importVLESSURI(raw string) (Profile, []string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return Profile{}, nil, fmt.Errorf("profile import requires a VLESS share URI")

@@ -8,13 +8,20 @@ Canonical CLI shape is owned by [CLI contract](./cli.md). Broader profile and su
 
 ```bash
 tunwarden profile add --name test --server example.com --port 443 --protocol vless
-tunwarden profile import '<vless-share-uri>'
+tunwarden profile import '<share-uri>'
 tunwarden profile list
 tunwarden profile list --json
 tunwarden profile show test
 tunwarden profile show test --json
 tunwarden profile delete test --yes
 ```
+
+Supported share URI schemes for `profile import` are:
+
+- `vless://`
+- `vmess://`
+- `trojan://`
+- `ss://`
 
 ## Behavior
 
@@ -36,26 +43,25 @@ A successful add prints:
 Profile added: test
 ```
 
-`profile import <share-uri>` imports one supported share URI into the same local profile store. The issue #11 implementation supports VLESS share URIs only. It normalizes:
+`profile import <share-uri>` imports one supported share URI into the same local profile store. It normalizes common endpoint metadata for VLESS, VMess, Trojan, and Shadowsocks share URIs:
 
-- UUID user identity from the URI user component
 - server host and port
-- display name from the URI fragment, or a deterministic fallback name
-- deterministic local `id` from the display name plus a hash of stable connection fields, including protocol, server, port, user identity, transport, security, encryption, fingerprint, SNI, and Reality key metadata
+- display name from the URI fragment or provider name field, or a deterministic fallback name
+- deterministic local `id` from the display name plus a hash of stable connection fields
 - `source: imported_uri`
 - `engine: xray`
-- `protocol: vless`
-- VLESS query metadata used by Xray-oriented profiles, including transport `type`, `security`, `encryption`, `flow`, `sni`, `alpn`, `fp`, `path`, `host`, `serviceName`, `pbk`, `sid`, and `spx`
+- protocol-specific identity or authentication material in `user_identity`
+- transport, security, encryption, TLS/SNI/ALPN/fingerprint, path, host header, service name, and Reality metadata where the source format provides them
 
-A successful import prints the deterministic profile ID and any parser warnings for unsupported options:
+A successful import prints the deterministic profile ID and any parser warnings for unsupported or risky options:
 
 ```text
 Imported profile: test-a1b2c3d4e5
 Warnings: 1
-- unsupported VLESS option "ed" ignored
+- unsupported Trojan option "foo" ignored
 ```
 
-Supported VLESS options such as `flow` are preserved for proxy-only Xray config planning and must not produce warnings. Unsupported VLESS query options are reported as warnings and ignored. Unsupported URI schemes, malformed percent-encoding in the URI query, unsupported VLESS transport/security values, and incompatible VLESS transport/security combinations fail clearly with exit code `2`.
+Supported VLESS options such as `flow` are preserved for proxy-only Xray config planning and must not produce warnings. Unsupported query options are reported as warnings and ignored when safe. Unsupported URI schemes, malformed percent-encoding, unsupported transport/security values, incompatible VLESS transport/security combinations, missing required identity/authentication fields, unsupported Shadowsocks plugins, and malformed VMess Base64 JSON fail clearly with exit code `2`.
 
 `profile list` prints a stable table:
 
@@ -107,9 +113,9 @@ The profile store is user-owned state and must not require root. Writes use an a
 
 Manual profile input must include a valid name, protocol, server, and port. Invalid input fails clearly with exit code `2`.
 
-VLESS URI import must include a UUID user identity, a valid server host, and a valid port. Unsupported VLESS transport or security values and incompatible transport/security pairs fail clearly instead of being silently normalized. The current v0.1 importer intentionally does not support VLESS custom string IDs; only UUID user identities are accepted.
+Imported VLESS and VMess profiles must include a UUID user identity, a valid server host, and a valid port. Imported Trojan profiles must include a password in the URI user component. Imported Shadowsocks profiles must include method/password credentials and a valid server endpoint. Unsupported transport or security values fail clearly instead of being silently normalized. The current v0.1 importer intentionally does not support VLESS custom string IDs; only UUID user identities are accepted.
 
-Duplicate profile IDs fail without overwriting the existing profile. Imported VLESS IDs include a deterministic hash suffix so distinct VLESS profiles with the same display name can coexist while re-importing the same URI remains stable.
+Duplicate profile IDs fail without overwriting the existing profile. Imported profile IDs include a deterministic hash suffix so distinct imported profiles with the same display name can coexist while re-importing the same URI remains stable.
 
 Corrupt, unreadable, unsupported, or internally invalid profile storage fails safely with a clear error instead of silently discarding or rewriting user state.
 
@@ -122,7 +128,7 @@ Profile management mutates persistent local TunWarden user state only. It must n
 The following are not implemented in v0.1:
 
 - VLESS custom string IDs
-- VMess, Trojan, and Shadowsocks URI import
-- subscription parsing
+- `profile import --json`
+- Xray config generation for non-VLESS imported profiles
 - connect/disconnect behavior
 - TUN, route, DNS, nftables, or firewall mutation

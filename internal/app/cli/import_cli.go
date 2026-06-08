@@ -30,11 +30,11 @@ func runImportCommand(ctx context.Context, args []string, stdout io.Writer, opts
 		return usageError("invalid import target: malformed URI or URL")
 	}
 	if u.Scheme == "" {
-		return usageError("import requires a VLESS share URI or a file/http/https subscription URL")
+		return usageError("import requires a supported share URI or a file/http/https subscription URL")
 	}
 
 	switch strings.ToLower(u.Scheme) {
-	case "vless":
+	case "vless", "vmess", "trojan", "ss":
 		store, err := profile.NewStore(opts.profileStorePath)
 		if err != nil {
 			return err
@@ -43,7 +43,7 @@ func runImportCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	case "file", "http", "https":
 		return runSubscriptionImport(ctx, target, stdout, opts)
 	default:
-		return usageError("unsupported import scheme %q: supported imports are vless:// share URIs and file/http/https Base64 subscriptions", u.Scheme)
+		return usageError("unsupported import scheme %q", u.Scheme)
 	}
 }
 
@@ -183,22 +183,20 @@ func printSubscriptionImportResult(stdout io.Writer, result sub.UpdateResult) {
 
 func printImportHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden import <vless-share-uri>
+  tunwarden import <share-uri>
   tunwarden import <file-or-http-subscription-url>
 
 Import one supported profile or subscription through the first-run convenience
-entrypoint. VLESS share URIs are stored as imported profiles. file/http/https
+entrypoint. Supported share URIs are stored as imported profiles. file/http/https
 subscription URLs are fetched as Base64 URI-list subscriptions, imported into the
 profile store, and tracked as subscription-owned profiles.
 
 Implemented in v0.1:
-  VLESS share URI import, file/http/https Base64 URI-list subscription import,
-  supported VLESS subscription entries, unsupported entry reporting, and
-  last-known-good rollback when subscription metadata persistence fails after
-  profile apply.
+  share URI import, file/http/https Base64 URI-list subscription import,
+  supported subscription entries, unsupported entry reporting, and rollback when
+  subscription metadata persistence fails after profile apply.
 
 Not implemented yet:
-  --json, VMess/Trojan/Shadowsocks share URI import, non-Base64 subscription
-  formats, subscription delete, scheduled updates
+  --json, non-Base64 subscription formats, subscription delete, scheduled updates
 `)
 }

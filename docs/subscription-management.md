@@ -25,11 +25,14 @@ The v0.1 implementation stores subscription metadata under the documented XDG us
 
 The source content must be a Base64-encoded URI list. Decoded entries are read line by line. Empty lines are ignored.
 
-Supported entries:
+Supported entries are normalized through the same importer used by `tunwarden profile import`:
 
-- VLESS share URIs, normalized through the same importer used by `tunwarden profile import`.
+- VLESS share URIs.
+- VMess share URIs.
+- Trojan share URIs.
+- Shadowsocks share URIs.
 
-Unsupported entries, malformed URIs, or duplicate imported profile IDs are reported as unsupported entries without failing the whole update when at least one supported VLESS profile was imported.
+Unsupported entries, malformed URIs, or duplicate imported profile IDs are reported as unsupported entries without failing the whole update when at least one supported profile was imported.
 
 ## Update behavior
 
@@ -38,7 +41,7 @@ Unsupported entries, malformed URIs, or duplicate imported profile IDs are repor
 1. read the stored subscription source;
 2. fetch the source content;
 3. decode the Base64 URI list;
-4. normalize and validate supported VLESS entries;
+4. normalize and validate supported share URI entries;
 5. report unsupported entries and warnings;
 6. replace only the profiles previously owned by that subscription;
 7. persist the updated subscription metadata with the latest imported profile IDs and update timestamp.
@@ -63,7 +66,7 @@ If fetching, Base64 decoding, parsing, normalization, or validation fails before
 
 `subscription list --json` and `subscription show --json` use the common v1 JSON shape with `schema_version`, `status`, `warnings`, and `errors`.
 
-Human and JSON output redact subscription source URLs. Full subscription URLs, full share URIs, and VLESS user identities must not be printed by subscription commands.
+Human and JSON output redact subscription source URLs. Full subscription URLs, full share URIs, and imported profile identities must not be printed by subscription commands.
 
 `subscription add --json` and `subscription update --json` are deferred. They fail fast as invalid usage with exit code `2` until their JSON contract is implemented.
 

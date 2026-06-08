@@ -65,7 +65,7 @@ func runProfileImport(store profile.Store, args []string, stdout io.Writer) erro
 		return err
 	}
 
-	p, warnings, err := profile.ImportVLESSURI(uri)
+	p, warnings, err := profile.ImportShareURI(uri)
 	if err != nil {
 		return usageError("%s", err.Error())
 	}
@@ -365,7 +365,7 @@ func profileForOutput(p profile.Profile) profile.Profile {
 	p.Name = render.Redact(p.Name)
 	p.Server = render.Redact(p.Server)
 	p.Protocol = render.Redact(p.Protocol)
-	p.UserIdentity = render.Redact(p.UserIdentity)
+	p.UserIdentity = redactedProfileUserIdentity(p)
 	p.Transport = render.Redact(p.Transport)
 	p.Security = render.Redact(p.Security)
 	p.Encryption = render.Redact(p.Encryption)
@@ -382,6 +382,18 @@ func profileForOutput(p profile.Profile) profile.Profile {
 	return p
 }
 
+func redactedProfileUserIdentity(p profile.Profile) string {
+	if strings.TrimSpace(p.UserIdentity) == "" {
+		return ""
+	}
+	switch strings.ToLower(p.Protocol) {
+	case "trojan", "shadowsocks":
+		return "REDACTED"
+	default:
+		return render.Redact(p.UserIdentity)
+	}
+}
+
 func printOptionalProfileField(w io.Writer, label, value string) {
 	if value == "" {
 		return
@@ -392,7 +404,7 @@ func printOptionalProfileField(w io.Writer, label, value string) {
 func printProfileHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
-  tunwarden profile import <vless-share-uri>
+  tunwarden profile import <share-uri>
   tunwarden profile list [--json]
   tunwarden profile show <profile-id> [--json]
   tunwarden profile delete <profile-id> --yes
@@ -401,12 +413,12 @@ Manage profiles in local TunWarden user state. These commands never start
 network processes and never mutate TUN, routes, DNS, nftables, or firewall state.
 
 Implemented in v0.1:
-  manual profile add/list/show/delete, VLESS share URI import, validation,
-  JSON list/show output, and atomic local profile storage under the documented
-  XDG user state location.
+  manual profile add/list/show/delete, VLESS/VMess/Trojan/Shadowsocks share URI
+  import, validation, JSON list/show output, and atomic local profile storage
+  under the documented XDG user state location.
 
 Not implemented yet:
-  VMess/Trojan/Shadowsocks import, subscriptions, Xray config generation,
+  profile import --json, Xray config generation for non-VLESS imported profiles,
   connect/disconnect behavior
 `)
 }

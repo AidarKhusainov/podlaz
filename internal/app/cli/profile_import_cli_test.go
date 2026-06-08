@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,112 @@ func TestRunCLIProfileImportVLESSListAndShow(t *testing.T) {
 	if strings.Contains(show, "00000000-0000-0000-0000-000000000001") {
 		t.Fatalf("profile show leaked full VLESS user identity: %q", show)
 	}
+}
+
+func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "profiles.json")
+	opts := options{profileStorePath: storePath}
+	secret := "secret-password"
+	uris := []struct {
+		name           string
+		uri            string
+		profilePrefix  string
+		protocol       string
+		showContains   []string
+		showNotContain []string
+	}{
+		{
+			name:          "vmess",
+			uri:           vmessURIForCLITest(),
+			profilePrefix: "cli-vmess-",
+			protocol:      "vmess",
+			showContains: []string{
+				"Protocol: vmess",
+				"User identity: 0000…0002",
+				"Transport: ws",
+				"Security: tls",
+			},
+			showNotContain: []string{"00000000-0000-0000-0000-000000000002"},
+		},
+		{
+			name:          "trojan",
+			uri:           "trojan://" + secret + "@example.com:443?type=grpc&security=tls&sni=example.com&serviceName=svc#cli-trojan",
+			profilePrefix: "cli-trojan-",
+			protocol:      "trojan",
+			showContains: []string{
+				"Protocol: trojan",
+				"User identity: REDACTED",
+				"Transport: grpc",
+				"Service name: svc",
+			},
+			showNotContain: []string{secret},
+		},
+		{
+			name:          "shadowsocks",
+			uri:           "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:"+secret)) + "@example.com:8388#cli-ss",
+			profilePrefix: "cli-ss-",
+			protocol:      "shadowsocks",
+			showContains: []string{
+				"Protocol: shadowsocks",
+				"User identity: REDACTED",
+				"Encryption: aes-256-gcm",
+			},
+			showNotContain: []string{secret, "aes-256-gcm:" + secret},
+		},
+	}
+
+	for _, tt := range uris {
+		t.Run(tt.name, func(t *testing.T) {
+			var importOut bytes.Buffer
+			if err := runWithOptions(context.Background(), []string{"profile", "import", tt.uri}, &importOut, opts); err != nil {
+				t.Fatalf("profile import failed: %v", err)
+			}
+			profileID := strings.TrimSpace(strings.TrimPrefix(strings.Split(importOut.String(), "\n")[0], "Imported profile: "))
+			if !strings.HasPrefix(profileID, tt.profilePrefix) {
+				t.Fatalf("expected imported profile ID with prefix %q, got %q", tt.profilePrefix, profileID)
+			}
+
+			var listOut bytes.Buffer
+			if err := runWithOptions(context.Background(), []string{"profile", "list"}, &listOut, opts); err != nil {
+				t.Fatalf("profile list failed: %v", err)
+			}
+			if got := listOut.String(); !strings.Contains(got, profileID) || !strings.Contains(got, tt.protocol) || !strings.Contains(got, "example.com") {
+				t.Fatalf("unexpected profile list output: %q", got)
+			}
+
+			var showOut bytes.Buffer
+			if err := runWithOptions(context.Background(), []string{"profile", "show", profileID}, &showOut, opts); err != nil {
+				t.Fatalf("profile show failed: %v", err)
+			}
+			show := showOut.String()
+			for _, want := range tt.showContains {
+				if !strings.Contains(show, want) {
+					t.Fatalf("expected profile show to contain %q, got %q", want, show)
+				}
+			}
+			for _, leaked := range tt.showNotContain {
+				if strings.Contains(show, leaked) || strings.Contains(listOut.String(), leaked) || strings.Contains(importOut.String(), leaked) {
+					t.Fatalf("CLI output leaked %q\nimport=%q\nlist=%q\nshow=%q", leaked, importOut.String(), listOut.String(), show)
+				}
+			}
+
+			var jsonOut bytes.Buffer
+			if err := runWithOptions(context.Background(), []string{"profile", "show", profileID, "--json"}, &jsonOut, opts); err != nil {
+				t.Fatalf("profile show --json failed: %v", err)
+			}
+			for _, leaked := range tt.showNotContain {
+				if strings.Contains(jsonOut.String(), leaked) {
+					t.Fatalf("profile show --json leaked %q in %q", leaked, jsonOut.String())
+				}
+			}
+			assertJSONEnvelope(t, jsonOut.Bytes())
+		})
+	}
+}
+
+func vmessURIForCLITest() string {
+	payload := `{"v":"2","ps":"cli-vmess","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","aid":"0","scy":"auto","net":"ws","type":"none","host":"cdn.example.com","path":"/ws","tls":"tls","sni":"example.com"}`
+	return "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(payload))
 }
 
 func TestRunCLIProfileImportRejectsMalformedVLESS(t *testing.T) {
