@@ -35,10 +35,11 @@ type StatusResponse struct {
 	Warnings          []string            `json:"warnings,omitempty"`
 }
 
+// TransactionStatus is the daemon API's redacted transaction summary. It
+// exposes facts only; human-readable status text is rendered by clients.
 type TransactionStatus struct {
 	ID                string `json:"id"`
 	State             string `json:"state"`
-	Status            string `json:"status"`
 	RollbackAvailable bool   `json:"rollback_available"`
 	RequiresCleanup   bool   `json:"requires_cleanup"`
 	Path              string `json:"path"`
@@ -75,8 +76,6 @@ func ValidateTransactionStatus(tx TransactionStatus) error {
 		return errors.New("missing transaction id")
 	case tx.State == "":
 		return errors.New("missing transaction state")
-	case tx.Status == "":
-		return errors.New("missing transaction status")
 	case tx.Path == "":
 		return errors.New("missing transaction path")
 	default:
