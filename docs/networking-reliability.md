@@ -52,7 +52,7 @@ Expected behavior:
 - prevent traffic loops,
 - clean up on disconnect/crash.
 
-The current foundation `plan --mode tun` implementation is intentionally narrower: it is a read-only system snapshot preview and does not create a TUN interface or produce final intended route/DNS/nftables apply steps.
+The current foundation `plan --mode tun` implementation is still read-only, but it now produces a full-tunnel TUN/route dry-run plan from the current system snapshot. It shows intended TUN device, route, policy-rule, VPN server bypass, route-loop warning, and rollback output without creating TUN devices or mutating host routes/rules. DNS, nftables/firewall, kill-switch, health-check apply plans, and actual TUN execution remain future daemon-owned transaction work.
 
 ### 3.3 Split-tunnel mode
 
@@ -126,11 +126,13 @@ Initial candidate:
 tunwarden0
 ```
 
+The current dry-run plan must show the intended stable TUN interface before any execution work is implemented.
+
 ### TUN-002: MTU must be configurable
 
 Default MTU should be conservative.
 
-The actual default must be validated during implementation, but the config must allow overrides.
+The actual default must be validated during implementation, but the config must allow overrides. The current dry-run plan may show the planner's initial MTU assumption without applying it.
 
 ### TUN-003: IPv6 must be explicit
 
@@ -146,7 +148,7 @@ IPv6 disabled or bypassed until full IPv6 routing/DNS leak handling is implement
 
 The daemon must own TUN creation and deletion.
 
-The CLI must not create TUN devices directly.
+The CLI must not create TUN devices directly. The current CLI `plan --mode tun` may describe a future daemon-owned TUN create step only as dry-run output.
 
 ## 6. Routing requirements
 
@@ -154,27 +156,37 @@ The CLI must not create TUN devices directly.
 
 Full-tunnel mode should use deterministic routing state rather than ad-hoc default route replacement.
 
+The current dry-run planner shows intended policy-rule state before applying anything.
+
 ### RT-002: Dedicated routing table
 
 TunWarden should use a dedicated routing table ID/name.
 
-Example:
+Initial dry-run values:
 
 ```text
 Table: tunwarden
-ID: chosen and documented during implementation
+ID: 51820
 ```
 
-### RT-003: Route visibility and future route-change planning must be inspectable
+### RT-003: Route visibility and route-change planning must be inspectable
 
-The current snapshot-only `tunwarden plan --mode tun <profile>` implementation must show route visibility inputs before any TUN mutation work:
+`tunwarden plan --mode tun <profile>` must show route visibility inputs before any TUN mutation work:
 
 - default IPv4/IPv6 route state;
 - default interface when detected;
 - server route after resolving hostname servers to a concrete IP address;
 - warning when the server route is unknown or would loop through `tunwarden0`.
 
-A future full route planner issue must extend `tunwarden plan --mode tun <profile>` to show intended route changes before applying them. The current snapshot-only plan must not claim to provide final intended route apply or rollback steps.
+It must also show intended full-tunnel route and policy-rule desired state without applying it:
+
+- default IPv4 route through the TunWarden routing table;
+- policy rule that sends default IPv4 traffic through the TunWarden table;
+- VPN server bypass route and policy rule only when the current snapshot provides a concrete server IP;
+- blocked/incomplete server-bypass output and warnings when hostname resolution or route lookup does not produce a concrete server IP;
+- rollback steps for planned routes and policy rules.
+
+The current dry-run plan must not claim to apply route changes. It is inspectable planner output only.
 
 ### RT-004: Default interface must be re-detected
 
@@ -195,6 +207,8 @@ VPN server route -> tunwarden0
 ```
 
 unless an advanced nested mode is explicitly implemented in the future.
+
+The current dry-run planner must surface this as route-loop risk in human and JSON output.
 
 ## 7. DNS requirements
 
@@ -219,6 +233,8 @@ resolvectl dns tunwarden0 <dns-server>
 resolvectl domain tunwarden0 '~.'
 resolvectl default-route tunwarden0 yes
 ```
+
+The current `plan --mode tun` implementation reports DNS snapshot visibility and warnings, but DNS apply planning remains future scope.
 
 ### DNS-004: Bootstrap DNS must avoid loops
 
@@ -254,6 +270,8 @@ TunWarden must use a clearly named nftables table, for example:
 ```text
 nft table inet tunwarden
 ```
+
+The current `plan --mode tun` implementation reports nftables availability and TunWarden table presence, but nftables/firewall apply planning remains future scope.
 
 ### FW-003: Kill-switch modes
 
