@@ -116,8 +116,15 @@ func TestRunCLIPlanTunRendersFullTunnelDryRun(t *testing.T) {
 		"Firewall plan:",
 		"- create nftables table inet tunwarden",
 		"- allow VPN server bypass outside TUN",
+		"- allow traffic through tunwarden0",
 		"- kill-switch policy: soft",
 		"- block non-TUN traffic according to selected kill-switch policy",
+		"Firewall chains:",
+		"create chain output type filter hook output priority 0 policy accept",
+		"Firewall rules:",
+		"owner=tunwarden:firewall:server-bypass rollback=inet/tunwarden/output/server-bypass",
+		"owner=tunwarden:firewall:tun-egress rollback=inet/tunwarden/output/tun-egress",
+		"owner=tunwarden:firewall:kill-switch rollback=inet/tunwarden/output/kill-switch",
 		"- rollback: remove inet tunwarden",
 		"Rollback steps:",
 		"Remove nftables table inet tunwarden",
@@ -178,6 +185,9 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 	if plan["starts_xray"] != false || plan["writes_config"] != false || plan["modifies_system_networking"] != false || plan["tunnel_mode"] != "full-tunnel" || plan["claims_leak_protection"] != false {
 		t.Fatalf("unexpected TUN plan safety flags: %#v", plan)
 	}
+	if _, exists := plan["requires_privileged_executor"]; exists {
+		t.Fatalf("requires_privileged_executor is not part of the documented JSON contract: %#v", plan)
+	}
 	for _, key := range []string{"tun", "routes", "policy_rules", "server_bypass", "dns", "firewall"} {
 		if plan[key] == nil {
 			t.Fatalf("expected TUN plan JSON key %q, got %#v", key, plan)
@@ -190,6 +200,19 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 	firewall, ok := plan["firewall"].(map[string]any)
 	if !ok || firewall["backend"] != "nftables" || firewall["family"] != "inet" || firewall["table"] != "tunwarden" {
 		t.Fatalf("unexpected TUN firewall plan JSON: %#v", plan["firewall"])
+	}
+	chains, ok := firewall["chains"].([]any)
+	if !ok || len(chains) == 0 {
+		t.Fatalf("expected structured firewall chains JSON, got %#v", firewall["chains"])
+	}
+	rules, ok := firewall["rules"].([]any)
+	if !ok || len(rules) < 3 {
+		t.Fatalf("expected structured firewall rules JSON, got %#v", firewall["rules"])
+	}
+	if !containsJSONRule(rules, "tunwarden:firewall:server-bypass", "inet/tunwarden/output/server-bypass") ||
+		!containsJSONRule(rules, "tunwarden:firewall:tun-egress", "inet/tunwarden/output/tun-egress") ||
+		!containsJSONRule(rules, "tunwarden:firewall:kill-switch", "inet/tunwarden/output/kill-switch") {
+		t.Fatalf("expected owned firewall rules with rollback keys, got %#v", rules)
 	}
 	killSwitch, ok := firewall["kill_switch"].(map[string]any)
 	if !ok || killSwitch["policy"] != "soft" {
@@ -208,6 +231,19 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 	if !ok || len(stale) != 2 {
 		t.Fatalf("expected two stale resources in snapshot, got %#v", snapshot["stale_resources"])
 	}
+}
+
+func containsJSONRule(rules []any, ownership, rollbackKey string) bool {
+	for _, value := range rules {
+		rule, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if rule["ownership"] == ownership && rule["rollback_key"] == rollbackKey && rule["chain"] != nil && rule["expr"] != nil && rule["action"] != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunCLIPlanRejectsInvalidArguments(t *testing.T) {
