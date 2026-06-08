@@ -11,7 +11,7 @@ The early architecture has two execution modes:
 1. **Proxy-only mode:** starts and supervises Xray without changing system routes, DNS, firewall, or TUN state.
 2. **TUN full-tunnel mode:** applies Linux networking changes only through the transaction model.
 
-The current foundation TUN work implements only the read-only snapshot layer used by `plan --mode tun`; it does not yet apply TUN/full-tunnel networking changes.
+The current foundation TUN work implements read-only planning plus transaction-state persistence. It does not yet apply TUN/full-tunnel networking changes.
 
 ## 2. High-level components
 
@@ -191,7 +191,7 @@ System snapshots are read-only inputs to planners. The snapshot package may insp
 
 Snapshot collection must not create TUN devices, mutate routes, mutate DNS, mutate nftables/firewall state, start or stop processes, or write runtime files.
 
-The currently implemented `plan --mode tun` command consumes this snapshot layer and renders a snapshot-only preview. It is not the same thing as the future full TUN desired plan. The final TUN desired plan must still be produced by planner code and executed only by daemon-owned executor/transaction code.
+The currently implemented `plan --mode tun` command consumes this snapshot layer and renders a read-only full-tunnel TUN/route dry-run. It is not the same thing as future execution. Actual TUN mutation must still be performed only by daemon-owned executor/transaction code.
 
 The canonical snapshot contract is owned by [System snapshot model](./system-snapshot.md).
 
@@ -201,18 +201,34 @@ All full-tunnel network changes must happen through a transaction object.
 
 Proxy-only mode does not need a network transaction because it must not modify system networking. It still needs process lifecycle state for Xray supervision and recovery.
 
+The implemented transaction persistence schema is:
+
 ```text
-NetworkTransaction
+Transaction
+  schema_version: tunwarden.transaction.v1
+  owner: tunwarden
   id
   profile_id
-  started_at
-  state: planned | applying | verifying | committed | rolling_back | rolled_back | failed
+  mode
+  state: planned | applying | applied | verifying | committed | rolling_back | rolled_back | failed
+  created_at
+  updated_at
   before_snapshot
   desired_plan
   applied_steps
-  rollback_steps
+  rollback
   health_result
+  failure_reason
+  labels
 ```
+
+The implemented runtime path is:
+
+```text
+/run/tunwarden/transactions/<id>.json
+```
+
+The transaction file is volatile daemon runtime state. It stores enough non-secret rollback metadata to plan cleanup after daemon restart for TunWarden-owned TUN devices, routes, policy rules, DNS state, nftables state, generated config files, and child processes. It must not store persistent secrets.
 
 Required flow:
 
@@ -220,11 +236,11 @@ Required flow:
 1. Build plan
 2. Acquire global network lock
 3. Snapshot relevant state
-4. Write pending transaction to /run/tunwarden
+4. Write pending transaction to /run/tunwarden/transactions/<id>.json
 5. Apply steps in deterministic order
 6. Verify health
 7. Commit transaction
-8. Remove pending marker or mark committed
+8. Mark committed or leave enough state for restart inspection
 ```
 
 If verification fails:
@@ -239,11 +255,14 @@ If verification fails:
 On daemon startup:
 
 ```text
-1. Read /run/tunwarden pending/active transaction state
-2. Detect stale TunWarden-owned system state
-3. Recover committed active connection or clean up incomplete transaction
-4. Never assume previous daemon shutdown was clean
+1. Read /run/tunwarden/transactions/*.json
+2. Detect pending, failed, or rolling-back transaction state
+3. Detect stale TunWarden-owned system state
+4. Expose pending/stale state through status, doctor, and recover
+5. Never assume previous daemon shutdown was clean
 ```
+
+The current implementation adds transaction persistence, transition helpers, startup scan primitives, daemon status summaries, and local `status`/`doctor`/`recover` visibility. It does not yet apply route, DNS, nftables, TUN, or firewall mutations.
 
 ## 8. Planner/executor split
 
@@ -285,7 +304,7 @@ Output:
 - ordered rollback steps,
 - warnings.
 
-The current TUN snapshot preview is not yet the final desired network plan. Future TUN planner work must consume the snapshot and produce intended TUN, route, DNS, nftables, rollback, and health-check behavior.
+The current TUN dry-run is not yet the final executable network plan. Future TUN planner work must consume the snapshot and produce intended DNS, nftables, kill-switch, and health-check behavior in addition to the already visible TUN/route desired state.
 
 Planner output must be inspectable through `tunwarden plan`.
 
@@ -319,98 +338,6 @@ VpnEngine
 
 Initial engine:
 
-- `XrayEngine`
+- Xray.
 
-Future engines:
-
-- `AmneziaWgEngine`,
-- `SingBoxEngine` if needed for compatibility/testing.
-
-## 10. Network backends
-
-TunWarden must support backend interfaces rather than hard-coding one environment.
-
-```text
-RouteBackend
-  iproute2 implementation
-
-DnsBackend
-  systemd-resolved implementation
-  resolvconf implementation later
-  raw resolv.conf fallback only as last resort
-
-FirewallBackend
-  nftables implementation
-  iptables fallback later only if needed
-
-NetworkEventBackend
-  NetworkManager implementation
-  rtnetlink implementation
-  systemd sleep hook implementation
-```
-
-## 11. Configuration generation
-
-Generated core config must be treated as runtime output, not as the source of truth.
-
-Source of truth:
-
-```text
-TunWarden profile model
-TunWarden routing policy
-TunWarden DNS policy
-TunWarden runtime state
-```
-
-Generated files may live under:
-
-```text
-/run/tunwarden/generated/
-```
-
-Generated config permissions, atomic writes, and logging rules are owned by [State and security requirements](./state-and-security.md).
-
-## 12. Error handling principles
-
-- Prefer explicit failure over silent partial success.
-- Every failed apply step must include the command/operation, stderr, and rollback impact.
-- Cleanup must be idempotent.
-- Core crashes must not imply system networking cleanup was completed.
-- NetworkManager limited connectivity must not automatically be treated as connection failure.
-- Proxy-only failure must not trigger full network cleanup unless stale TunWarden-owned network state is detected separately.
-
-## 13. systemd service hardening
-
-The daemon service must start from least privilege. The canonical hardening requirements are defined in [State and security requirements](./state-and-security.md).
-
-A privileged daemon release is blocked until the unit file documents the final hardening choices and justifies any relaxation from the documented baseline.
-
-## 14. Testing architecture
-
-Required test layers:
-
-1. Unit tests for profile parsing and normalization.
-2. Unit tests for route/DNS/firewall planners.
-3. Unit tests for read-only snapshot collection and fake snapshots.
-4. Unit tests for engine config generation.
-5. Integration tests in Linux network namespaces.
-6. VM tests for Ubuntu/Debian/Fedora.
-7. Suspend/resume simulation where possible.
-8. Failure injection tests:
-   - core crash,
-   - daemon crash,
-   - DNS apply failure,
-   - route apply failure,
-   - nft apply failure,
-   - Wi-Fi/default route change.
-
-## 15. Future GUI rule
-
-A future GUI must be a client of the daemon API.
-
-It must not:
-
-- run as root,
-- directly modify system networking,
-- own the connection lifecycle independently from the daemon,
-- become required for recovery.
+Future possible engines must implement the same lifecycle boundary without changing the network transaction model.
