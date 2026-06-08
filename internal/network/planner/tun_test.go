@@ -34,12 +34,7 @@ func TestPlanTunBuildsFullTunnelPlanFromFakeSnapshot(t *testing.T) {
 	if plan.DNS.Backend != DNSBackendSystemdResolved || plan.DNS.TargetLink != snapshot.DefaultTunName || plan.DNS.Action != DNSActionConfigure {
 		t.Fatalf("unexpected DNS plan: %#v", plan.DNS)
 	}
-	if plan.Firewall.Backend != FirewallBackendNftables || plan.Firewall.Family != snapshot.DefaultNFTFamily || plan.Firewall.Table != snapshot.DefaultNFTTable || plan.Firewall.TableAction != FirewallTableAction {
-		t.Fatalf("unexpected firewall plan: %#v", plan.Firewall)
-	}
-	if plan.Firewall.KillSwitch.Policy != KillSwitchPolicySoft || !strings.Contains(plan.Firewall.KillSwitch.Action, "block non-TUN traffic") {
-		t.Fatalf("unexpected kill-switch plan: %#v", plan.Firewall.KillSwitch)
-	}
+	assertDefaultFirewallPlan(t, plan.Firewall, FirewallActionAdd, FirewallVerdictReject)
 	if len(plan.RollbackSteps) == 0 {
 		t.Fatalf("expected rollback steps for planned route/TUN changes")
 	}
@@ -62,6 +57,9 @@ func TestPlanTunWarnsWhenDefaultRouteIsMissing(t *testing.T) {
 	if !containsWarning(plan.Warnings, "VPN server bypass target") {
 		t.Fatalf("expected incomplete server bypass warning, got %#v", plan.Warnings)
 	}
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallServerBypassOwner, FirewallActionBlocked, FirewallVerdictAccept, "ip daddr <server-ip>") {
+		t.Fatalf("expected blocked firewall server-bypass rule, got %#v", plan.Firewall.Rules)
+	}
 }
 
 func TestPlanTunWarnsAboutExistingTunWardenTun(t *testing.T) {
@@ -75,8 +73,11 @@ func TestPlanTunWarnsAboutExistingTunWardenTun(t *testing.T) {
 	if !containsWarning(plan.Warnings, "stale TunWarden-owned") {
 		t.Fatalf("expected stale-resource warning, got %#v", plan.Warnings)
 	}
-	if plan.Firewall.TableAction != "validate-or-replace" {
+	if plan.Firewall.TableAction != FirewallActionValidate {
 		t.Fatalf("expected existing nftables table to require validation/replacement, got %#v", plan.Firewall)
+	}
+	if !containsFirewallChain(plan.Firewall.Chains, FirewallOutputChain, FirewallOutputHook, FirewallActionValidate) {
+		t.Fatalf("expected validate-or-replace output chain, got %#v", plan.Firewall.Chains)
 	}
 }
 
@@ -116,14 +117,12 @@ func TestPlanTunBlocksDNSPlanWhenResolvedMissing(t *testing.T) {
 	}
 }
 
-func TestPlanTunPlansNftablesWhenPresent(t *testing.T) {
+func TestPlanTunPlansNftablesChainsAndRulesWhenPresent(t *testing.T) {
 	plan, err := PlanTun(testVLESSProfile(), snapshot.FakeResolvedDesktop())
 	if err != nil {
 		t.Fatalf("plan tun with nftables present: %v", err)
 	}
-	if plan.Firewall.TableAction != FirewallTableAction || plan.Firewall.ServerBypass != "allow VPN server bypass outside TUN" {
-		t.Fatalf("expected nftables firewall desired state, got %#v", plan.Firewall)
-	}
+	assertDefaultFirewallPlan(t, plan.Firewall, FirewallActionAdd, FirewallVerdictReject)
 }
 
 func TestPlanTunBlocksFirewallPlanWhenNftablesMissing(t *testing.T) {
@@ -133,6 +132,12 @@ func TestPlanTunBlocksFirewallPlanWhenNftablesMissing(t *testing.T) {
 	}
 	if plan.Firewall.TableAction != FirewallActionBlocked {
 		t.Fatalf("expected firewall plan to be blocked, got %#v", plan.Firewall)
+	}
+	if !containsFirewallChain(plan.Firewall.Chains, FirewallOutputChain, FirewallOutputHook, FirewallActionBlocked) {
+		t.Fatalf("expected blocked output chain, got %#v", plan.Firewall.Chains)
+	}
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionBlocked, FirewallVerdictReject, `oifname != "tunwarden0"`) {
+		t.Fatalf("expected blocked kill-switch rule, got %#v", plan.Firewall.Rules)
 	}
 	if !containsWarning(plan.Warnings, "firewall desired state is blocked") {
 		t.Fatalf("expected blocked firewall warning, got %#v", plan.Warnings)
@@ -147,8 +152,21 @@ func TestPlanTunWarnsAboutStrictKillSwitchPolicy(t *testing.T) {
 	if plan.Firewall.KillSwitch.Policy != KillSwitchPolicyStrict {
 		t.Fatalf("expected strict kill-switch policy, got %#v", plan.Firewall.KillSwitch)
 	}
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionAdd, FirewallVerdictDrop, `oifname != "tunwarden0"`) {
+		t.Fatalf("expected strict drop kill-switch rule, got %#v", plan.Firewall.Rules)
+	}
 	if !containsWarning(plan.Warnings, "strict kill-switch") || !containsWarning(plan.Warnings, "recover") {
 		t.Fatalf("expected strict kill-switch recovery warning, got %#v", plan.Warnings)
+	}
+}
+
+func TestPlanTunPlansOffKillSwitchWithoutBlockingRule(t *testing.T) {
+	plan, err := PlanTunWithOptions(testVLESSProfile(), snapshot.FakeResolvedDesktop(), TunOptions{KillSwitchPolicy: KillSwitchPolicyOff})
+	if err != nil {
+		t.Fatalf("plan tun with off kill-switch: %v", err)
+	}
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionSkip, "", `oifname != "tunwarden0"`) {
+		t.Fatalf("expected skipped kill-switch rule, got %#v", plan.Firewall.Rules)
 	}
 }
 
@@ -164,6 +182,28 @@ func TestPlanTunWarnsAboutMissingOptionalTools(t *testing.T) {
 	}
 }
 
+func assertDefaultFirewallPlan(t *testing.T, plan TunFirewallPlan, ruleAction, killSwitchVerdict string) {
+	t.Helper()
+	if plan.Backend != FirewallBackendNftables || plan.Family != snapshot.DefaultNFTFamily || plan.Table != snapshot.DefaultNFTTable || plan.TableAction != FirewallTableAction {
+		t.Fatalf("unexpected firewall plan: %#v", plan)
+	}
+	if plan.KillSwitch.Policy != KillSwitchPolicySoft || !strings.Contains(plan.KillSwitch.Action, "block non-TUN traffic") {
+		t.Fatalf("unexpected kill-switch plan: %#v", plan.KillSwitch)
+	}
+	if !containsFirewallChain(plan.Chains, FirewallOutputChain, FirewallOutputHook, FirewallTableAction) {
+		t.Fatalf("expected output chain in firewall plan, got %#v", plan.Chains)
+	}
+	if !containsFirewallRule(plan.Rules, FirewallServerBypassOwner, ruleAction, FirewallVerdictAccept, "ip daddr 203.0.113.10") {
+		t.Fatalf("expected server bypass firewall rule, got %#v", plan.Rules)
+	}
+	if !containsFirewallRule(plan.Rules, FirewallTunEgressOwner, ruleAction, FirewallVerdictAccept, `oifname "tunwarden0"`) {
+		t.Fatalf("expected TUN egress firewall rule, got %#v", plan.Rules)
+	}
+	if !containsFirewallRule(plan.Rules, FirewallKillSwitchOwner, ruleAction, killSwitchVerdict, `oifname != "tunwarden0"`) {
+		t.Fatalf("expected kill-switch firewall rule, got %#v", plan.Rules)
+	}
+}
+
 func containsRoute(routes []TunRoutePlan, table, destination, iface string) bool {
 	for _, route := range routes {
 		if route.Table == table && route.Destination == destination && route.Interface == iface {
@@ -176,6 +216,24 @@ func containsRoute(routes []TunRoutePlan, table, destination, iface string) bool
 func containsPolicyRule(rules []TunPolicyRulePlan, priority int, selector, table string) bool {
 	for _, rule := range rules {
 		if rule.Priority == priority && rule.Selector == selector && rule.Table == table {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFirewallChain(chains []TunFirewallChainPlan, name, hook, action string) bool {
+	for _, chain := range chains {
+		if chain.Name == name && chain.Hook == hook && chain.Action == action && chain.Type != "" && chain.Policy != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func containsFirewallRule(rules []TunFirewallRulePlan, ownership, action, verdict, expr string) bool {
+	for _, rule := range rules {
+		if rule.Ownership == ownership && rule.Action == action && rule.Verdict == verdict && rule.Expr == expr && rule.Chain != "" && rule.RollbackKey != "" {
 			return true
 		}
 	}
