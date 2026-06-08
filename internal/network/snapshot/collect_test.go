@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
@@ -165,7 +166,7 @@ func TestCollectWithRunnerReportsHostnameResolutionTimeout(t *testing.T) {
 		return nil, ctx.Err()
 	}
 
-	s := CollectWithRunner(context.Background(), runner, Options{Server: "example.com", OS: "linux", ResolveHost: resolver})
+	s := CollectWithRunner(context.Background(), runner, Options{Server: "example.com", OS: "linux", ResolveHost: resolver, ResolveHostTimeout: time.Nanosecond})
 
 	if s.ServerRoute.Status != StatusUnknown {
 		t.Fatalf("expected unknown server route on DNS timeout, got %#v", s.ServerRoute)
