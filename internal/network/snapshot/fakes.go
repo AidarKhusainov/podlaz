@@ -41,6 +41,29 @@ func FakeResolvedDesktop() Snapshot {
 	}
 }
 
+// FakeDesktopMissingDefaultRoute returns a topology where full-tunnel planning
+// cannot select a stable default uplink for server bypass.
+func FakeDesktopMissingDefaultRoute() Snapshot {
+	s := FakeResolvedDesktop()
+	s.DefaultIPv4 = Route{Status: StatusMissing, Family: "ipv4", Destination: "default", Detail: "route not found"}
+	s.IPv4 = Finding{Status: StatusMissing, Summary: "IPv4 default route missing", Detail: "route not found"}
+	s.ServerRoute = Route{Status: StatusUnknown, Destination: "example.com", Detail: "default route missing"}
+	return s
+}
+
+// FakeDesktopWithServerRouteLoop returns a topology where the VPN server route
+// already points at TunWarden's TUN interface and would loop.
+func FakeDesktopWithServerRouteLoop() Snapshot {
+	s := FakeResolvedDesktop()
+	s.ServerRoute = Route{
+		Status:      StatusDetected,
+		Destination: "example.com",
+		Interface:   DefaultTunName,
+		Raw:         "203.0.113.10 dev tunwarden0 src 10.0.0.2 uid 1000",
+	}
+	return s
+}
+
 // FakeDesktopWithoutOptionalTools returns a desktop topology where optional tools
 // used by TUN planning are unavailable but snapshot collection still succeeds.
 func FakeDesktopWithoutOptionalTools() Snapshot {
