@@ -38,14 +38,16 @@ This vocabulary lets planners distinguish host limitations from stale state and 
 
 ## Planner contract
 
-`tunwarden plan --mode tun <profile-id>` consumes a snapshot and produces an inspectable read-only plan. The plan may warn about incomplete visibility, missing optional backends, missing IPv6 support, stale TunWarden-owned resources, DNS resolution failure, or a server route that would loop through `tunwarden0`.
+`tunwarden plan --mode tun <profile-id>` consumes a snapshot and produces an inspectable read-only full-tunnel TUN/route plan. The plan includes desired TUN device state, route desired state, policy-rule desired state, explicit VPN server bypass, route-loop risks, warnings, and rollback steps.
 
-The TUN snapshot plan has no rollback steps because it does not mutate state. Future TUN execution work must still build a real transaction with before snapshot, desired plan, apply steps, verification, rollback steps, and recovery ownership.
+The TUN dry-run plan still does not mutate state. Future TUN execution work must turn the planned state and rollback steps into a real daemon-owned transaction with before snapshot, apply steps, verification, commit, rollback execution, and recovery ownership.
 
 ## Fake snapshots
 
 Planner tests should use fake snapshots for common desktop topologies. Fake snapshots must cover at least:
 
 - a systemd-resolved + NetworkManager + nftables desktop with no stale TunWarden resources;
+- a desktop with a missing default IPv4 route;
 - a desktop where optional tools such as `resolvectl`, `nmcli`, or `nft` are missing;
-- a desktop with stale TunWarden-owned resources such as `tunwarden0` and `table inet tunwarden`.
+- a desktop with stale TunWarden-owned resources such as `tunwarden0` and `table inet tunwarden`;
+- a route-loop topology where the VPN server route points at `tunwarden0`.
