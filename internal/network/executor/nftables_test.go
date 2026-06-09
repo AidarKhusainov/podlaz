@@ -34,8 +34,8 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		{"nft", "add", "table", "inet", "tunwarden"},
 		{"nft", "add", "chain", "inet", "tunwarden", "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", "accept", ";", "}"},
 		{"nft", "add", "rule", "inet", "tunwarden", "output", "ip", "daddr", "203.0.113.10", "counter", "comment", planner.FirewallServerBypassOwner, "accept"},
-		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "\"tunwarden0\"", "counter", "comment", planner.FirewallTunEgressOwner, "accept"},
-		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "!=", "\"tunwarden0\"", "counter", "comment", planner.FirewallKillSwitchOwner, "reject"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "tunwarden0", "counter", "comment", planner.FirewallTunEgressOwner, "accept"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "!=", "tunwarden0", "counter", "comment", planner.FirewallKillSwitchOwner, "reject"},
 		{"nft", "list", "table", "inet", "tunwarden"},
 		{"nft", "delete", "table", "inet", "tunwarden"},
 	}
