@@ -1,0 +1,116 @@
+package executor
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
+)
+
+func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
+	plan := firewallPlanForTest()
+	runner := &recordingRunner{stdout: nftablesListOutputForTest()}
+	exec := NftablesExecutor{Runner: runner}
+
+	step, err := exec.Apply(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("apply nftables: %v", err)
+	}
+	if step.Kind != "nftables" || step.Target != "inet tunwarden" || step.Owner != OwnerFirewall {
+		t.Fatalf("unexpected nftables step: %#v", step)
+	}
+	if err := exec.Verify(context.Background(), plan); err != nil {
+		t.Fatalf("verify nftables: %v", err)
+	}
+	if err := exec.Rollback(context.Background(), plan); err != nil {
+		t.Fatalf("rollback nftables: %v", err)
+	}
+
+	want := [][]string{
+		{"nft", "add", "table", "inet", "tunwarden"},
+		{"nft", "add", "chain", "inet", "tunwarden", "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", "accept", ";", "}"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "ip", "daddr", "203.0.113.10", "counter", "comment", planner.FirewallServerBypassOwner, "accept"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "\"tunwarden0\"", "counter", "comment", planner.FirewallTunEgressOwner, "accept"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "!=", "\"tunwarden0\"", "counter", "comment", planner.FirewallKillSwitchOwner, "reject"},
+		{"nft", "list", "table", "inet", "tunwarden"},
+		{"nft", "delete", "table", "inet", "tunwarden"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
+	}
+}
+
+func TestNftablesExecutorRejectsBlockedOrNonOwnedPlan(t *testing.T) {
+	blocked := firewallPlanForTest()
+	blocked.TableAction = planner.FirewallActionBlocked
+	if _, err := (NftablesExecutor{Runner: &recordingRunner{}}).Apply(context.Background(), blocked); err == nil {
+		t.Fatal("expected blocked firewall plan failure")
+	}
+
+	nonOwned := firewallPlanForTest()
+	nonOwned.Rules[0].Ownership = "other-project"
+	if _, err := (NftablesExecutor{Runner: &recordingRunner{}}).Apply(context.Background(), nonOwned); err == nil {
+		t.Fatal("expected non-TunWarden rule owner failure")
+	}
+}
+
+func TestNftablesExecutorRollbackIsIdempotentWhenTableIsMissing(t *testing.T) {
+	plan := firewallPlanForTest()
+	runner := &recordingRunner{err: errors.New("No such file or directory")}
+	if err := (NftablesExecutor{Runner: runner}).Rollback(context.Background(), plan); err != nil {
+		t.Fatalf("expected missing table rollback to be ignored: %v", err)
+	}
+	want := []string{"nft", "delete", "table", "inet", "tunwarden"}
+	if !reflect.DeepEqual(runner.commands[0], want) {
+		t.Fatalf("unexpected rollback command: %#v", runner.commands[0])
+	}
+}
+
+func TestNftablesExecutorVerifyRequiresOwnedRules(t *testing.T) {
+	plan := firewallPlanForTest()
+	output := strings.ReplaceAll(nftablesListOutputForTest(), planner.FirewallKillSwitchOwner, "missing-owner")
+	err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected verify failure when owned kill-switch rule is missing")
+	}
+}
+
+func firewallPlanForTest() planner.TunFirewallPlan {
+	return planner.TunFirewallPlan{
+		Backend:     planner.FirewallBackendNftables,
+		Family:      snapshot.DefaultNFTFamily,
+		Table:       snapshot.DefaultNFTTable,
+		TableAction: planner.FirewallTableAction,
+		Chains: []planner.TunFirewallChainPlan{{
+			Name:     planner.FirewallOutputChain,
+			Type:     planner.FirewallChainTypeFilter,
+			Hook:     planner.FirewallOutputHook,
+			Priority: planner.FirewallOutputPriority,
+			Policy:   planner.FirewallDefaultChainPolicy,
+			Action:   planner.FirewallTableAction,
+		}},
+		Rules: []planner.TunFirewallRulePlan{
+			{Chain: planner.FirewallOutputChain, Expr: "ip daddr 203.0.113.10", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallServerBypassOwner, RollbackKey: planner.FirewallServerBypassKey},
+			{Chain: planner.FirewallOutputChain, Expr: "oifname \"tunwarden0\"", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallTunEgressOwner, RollbackKey: planner.FirewallTunEgressKey},
+			{Chain: planner.FirewallOutputChain, Expr: "oifname != \"tunwarden0\"", Verdict: planner.FirewallVerdictReject, Action: planner.FirewallActionAdd, Ownership: planner.FirewallKillSwitchOwner, RollbackKey: planner.FirewallKillSwitchKey},
+		},
+		KillSwitch: planner.TunKillSwitchPlan{Policy: planner.KillSwitchPolicySoft},
+		Reason:     "create a TunWarden-owned nftables table",
+		Rollback:   planner.FirewallRollbackRemove,
+	}
+}
+
+func nftablesListOutputForTest() string {
+	return `table inet tunwarden {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		ip daddr 203.0.113.10 counter comment "tunwarden:firewall:server-bypass" accept
+		oifname "tunwarden0" counter comment "tunwarden:firewall:tun-egress" accept
+		oifname != "tunwarden0" counter comment "tunwarden:firewall:kill-switch" reject
+	}
+}`
+}
