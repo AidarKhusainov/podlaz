@@ -95,7 +95,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		}
 		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied TunWarden-owned networking state", err)
 	}
-	adapterDone, adapterCancel, err := startTunAdapter(ctx, tunAdapterRuntimePlan{TunDevice: plan.TunDevice.Name, SOCKSEndpoint: corePlan.SOCKSEndpoint})
+	adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, tunAdapterRuntimePlan{TunDevice: plan.TunDevice.Name, SOCKSEndpoint: corePlan.SOCKSEndpoint})
 	if err != nil {
 		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
 		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
@@ -104,6 +104,14 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		return api.LifecycleResponse{}, err
 	}
 	registerTunAdapter(m, adapterCancel, adapterDone)
+	if err := saveTunAdapterRollbackMetadata(result.Store, result.TransactionID, adapterCmd.Process.Pid, transactionNow(result.Store)); err != nil {
+		_ = stopRegisteredTunAdapter(m)
+		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
+		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
+			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after TUN adapter metadata failure: %w", rollbackErr))
+		}
+		return api.LifecycleResponse{}, err
+	}
 	if err := verifyTunConnectivity(ctx, plan, corePlan); err != nil {
 		_ = stopRegisteredTunAdapter(m)
 		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
