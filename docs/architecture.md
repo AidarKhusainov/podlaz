@@ -258,3 +258,161 @@ Inputs:
 - host OS/platform;
 - profile server hostname or IP;
 - optional test runner/resolver fakes.
+
+Output:
+
+- current default route/interface observations;
+- route to the VPN server candidate;
+- DNS/NetworkManager/nftables observations;
+- known TunWarden-owned resources;
+- visibility warnings.
+
+### Planner
+
+Pure or mostly pure code. Does not require root.
+
+Inputs:
+
+- current system snapshot;
+- profile;
+- daemon settings;
+- platform capabilities.
+
+Output:
+
+- desired network plan;
+- ordered apply steps;
+- ordered rollback steps;
+- warnings.
+
+The current TUN planner produces inspectable desired state for TUN, routes, policy rules, systemd-resolved DNS, nftables/firewall, and kill-switch behavior. `TunDNSPlan.Servers` is planner-owned desired state; executors must not choose DNS servers themselves.
+
+Planner output must be inspectable through `tunwarden plan` before mutation.
+
+### Executor
+
+Privileged code. Executes a validated plan.
+
+Executors:
+
+- `TunExecutor`,
+- `RouteExecutor`,
+- `DnsExecutor`,
+- `FirewallExecutor`,
+- `CoreExecutor`,
+- `NetworkManagerExecutor`.
+
+Executor implementations must be narrow and auditable. They should not contain hidden planning decisions. The current executor slice applies TUN, routes, policy rules, systemd-resolved DNS, and TunWarden-owned nftables state from the already-inspected plan, but user-visible full-tunnel connect remains blocked until a real TUN-mode core runtime config and connectivity verification are implemented.
+
+## 9. Engine abstraction
+
+TunWarden starts as Xray-first but should not make networking depend on Xray internals.
+
+```text
+VpnEngine
+  GenerateConfig(profile, runtime_network_state) -> EngineConfig
+  Start(config) -> EngineHandle
+  Stop(handle) -> StopResult
+  Health(handle) -> EngineHealth
+  Logs(handle) -> LogStream
+```
+
+Initial engine:
+
+- `XrayEngine`
+
+Future engines:
+
+- `AmneziaWgEngine`,
+- `SingBoxEngine` if needed for compatibility/testing.
+
+Future possible engines must implement the same lifecycle boundary without changing the network transaction model.
+
+## 10. Network backends
+
+TunWarden must support backend interfaces rather than hard-coding one environment.
+
+```text
+RouteBackend
+  iproute2 implementation
+
+DnsBackend
+  systemd-resolved implementation
+  resolvconf implementation later
+  raw resolv.conf fallback only as last resort
+
+FirewallBackend
+  nftables implementation
+  iptables fallback later only if needed
+
+NetworkEventBackend
+  NetworkManager implementation
+  rtnetlink implementation
+  systemd sleep hook implementation
+```
+
+## 11. Configuration generation
+
+Generated core config must be treated as runtime output, not as the source of truth.
+
+Source of truth:
+
+```text
+TunWarden profile model
+TunWarden routing policy
+TunWarden DNS policy
+TunWarden runtime state
+```
+
+Generated files may live under:
+
+```text
+/run/tunwarden/generated/
+```
+
+Generated config permissions, atomic writes, and logging rules are owned by [State and security requirements](./state-and-security.md).
+
+## 12. Error handling principles
+
+- Prefer explicit failure over silent partial success.
+- Every failed apply step must include the command/operation, stderr, and rollback impact.
+- Cleanup must be idempotent.
+- Core crashes must not imply system networking cleanup was completed.
+- NetworkManager limited connectivity must not automatically be treated as connection failure.
+- Proxy-only failure must not trigger full network cleanup unless stale TunWarden-owned network state is detected separately.
+
+## 13. systemd service hardening
+
+The daemon service must start from least privilege. The canonical hardening requirements are defined in [State and security requirements](./state-and-security.md).
+
+A privileged daemon release is blocked until the unit file documents the final hardening choices and justifies any relaxation from the documented baseline.
+
+## 14. Testing architecture
+
+Required test layers:
+
+1. Unit tests for profile parsing and normalization.
+2. Unit tests for route/DNS/firewall planners.
+3. Unit tests for read-only snapshot collection and fake snapshots.
+4. Unit tests for engine config generation.
+5. Integration tests in Linux network namespaces.
+6. VM tests for Ubuntu/Debian/Fedora.
+7. Suspend/resume simulation where possible.
+8. Failure injection tests:
+   - core crash,
+   - daemon crash,
+   - DNS apply failure,
+   - route apply failure,
+   - nft apply failure,
+   - Wi-Fi/default route change.
+
+## 15. Future GUI rule
+
+A future GUI must be a client of the daemon API.
+
+It must not:
+
+- run as root,
+- directly modify system networking,
+- own the connection lifecycle independently from the daemon,
+- become required for recovery.
