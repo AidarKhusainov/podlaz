@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/tunwarden/internal/client"
 	"github.com/AidarKhusainov/tunwarden/internal/recovery"
 	"github.com/AidarKhusainov/tunwarden/internal/render"
 )
@@ -45,7 +47,10 @@ func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		}
 	}
 
-	result := runRecoverExecute(ctx, opts)
+	result, err := runRecoverExecute(ctx, opts)
+	if err != nil {
+		return lifecycleCommandError(err)
+	}
 	if parsed.json {
 		if err := writeJSON(stdout, recoverExecuteJSON(result)); err != nil {
 			return err
@@ -87,7 +92,7 @@ func confirmRecoverExecute(stdout io.Writer, opts options) error {
 	if reader == nil {
 		reader = os.Stdin
 	}
-	fmt.Fprint(stdout, "Recover will remove only clearly TunWarden-owned stale state. Type yes to continue: ")
+	fmt.Fprint(stdout, "Recover will ask tunwardend to remove only clearly TunWarden-owned stale state. Type yes to continue: ")
 	line, err := bufio.NewReader(reader).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read recovery confirmation: %w", err)
@@ -117,11 +122,15 @@ func runRecover(ctx context.Context, opts options) recovery.PlanResult {
 	return recovery.Plan(ctx)
 }
 
-func runRecoverExecute(ctx context.Context, opts options) recovery.ExecuteResult {
+func runRecoverExecute(ctx context.Context, opts options) (recovery.ExecuteResult, error) {
 	if opts.recoverExecute != nil {
 		return opts.recoverExecute(ctx)
 	}
-	return recovery.Execute(ctx)
+	response, err := (client.RecoveryClient{}).Recover(ctx)
+	if err != nil {
+		return recovery.ExecuteResult{}, err
+	}
+	return recoveryResultFromAPI(response), nil
 }
 
 func recoverPlanJSON(plan recovery.PlanResult) map[string]any {
@@ -138,7 +147,7 @@ func recoverExecuteJSON(result recovery.ExecuteResult) map[string]any {
 		status = "fail"
 		errorsOut = append(errorsOut, "recover completed with cleanup failures")
 	}
-	response := map[string]any{
+	return map[string]any{
 		"schema_version": "v1",
 		"status":         status,
 		"warnings":       redactedRecoveryWarnings(result.Warnings),
@@ -146,7 +155,37 @@ func recoverExecuteJSON(result recovery.ExecuteResult) map[string]any {
 		"mode":           "execute",
 		"recovery":       redactedCleanupResults(result.Results),
 	}
-	return response
+}
+
+func recoveryResultFromAPI(response api.RecoveryResponse) recovery.ExecuteResult {
+	results := make([]recovery.CleanupResult, 0, len(response.Results))
+	for _, result := range response.Results {
+		results = append(results, recovery.CleanupResult{
+			Candidate: recoveryCandidateFromAPI(result.Candidate),
+			Status:    result.Status,
+			Message:   result.Message,
+		})
+	}
+	warnings := make([]recovery.Warning, 0, len(response.Warnings))
+	for _, warning := range response.Warnings {
+		warnings = append(warnings, recovery.Warning{Target: warning.Target, Message: warning.Message})
+	}
+	return recovery.ExecuteResult{Results: results, Warnings: warnings}
+}
+
+func recoveryCandidateFromAPI(candidate api.RecoveryCandidate) recovery.Candidate {
+	out := recovery.Candidate{Kind: candidate.Kind, Description: candidate.Description, Target: candidate.Target}
+	if candidate.Transaction != nil {
+		out.Transaction = &recovery.TransactionCandidate{
+			ID:                candidate.Transaction.ID,
+			State:             candidate.Transaction.State,
+			Status:            candidate.Transaction.Status,
+			RollbackAvailable: candidate.Transaction.RollbackAvailable,
+			RequiresCleanup:   candidate.Transaction.RequiresCleanup,
+			Path:              candidate.Transaction.Path,
+		}
+	}
+	return out
 }
 
 func redactedRecoveryPlan(plan recovery.PlanResult) map[string]any {
