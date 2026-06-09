@@ -44,11 +44,11 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
 	err := cmd.Run()
 	result := CommandResult{
-		Stdout:   strings.TrimSpace(stdout.String()),
-		Stderr:   strings.TrimSpace(stderr.String()),
-		ExitCode: 0,
+		Stdout: strings.TrimSpace(stdout.String()),
+		Stderr: strings.TrimSpace(stderr.String()),
 	}
 	if err == nil {
 		return result, nil
@@ -114,11 +114,13 @@ func (e TunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, e
 		return nil, err
 	}
 	steps := make([]Step, 0, 1+len(plan.Routes)+len(plan.PolicyRules))
+
 	step, err := e.TunDevice.Create(ctx, plan.TunDevice)
 	if err != nil {
 		return steps, err
 	}
 	steps = append(steps, step)
+
 	for _, route := range plan.Routes {
 		if route.Action != "add" {
 			continue
@@ -221,7 +223,7 @@ func (e IPTunDeviceExecutor) Create(ctx context.Context, plan planner.TunDeviceP
 	if plan.Name == "" {
 		return Step{}, errors.New("missing TUN device name")
 	}
-	if err := e.run(ctx, "ip", "tuntap", "add", "dev", plan.Name, "mode", "tun"); err != nil && !resourceExists(err) {
+	if err := e.run(ctx, "ip", "tuntap", "add", "dev", plan.Name, "mode", "tun"); err != nil {
 		return Step{}, fmt.Errorf("create TUN device %s: %w", plan.Name, err)
 	}
 	if plan.MTU > 0 {
@@ -262,7 +264,7 @@ type IPRouteExecutor struct {
 }
 
 func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (Step, error) {
-	args := routeArgs("replace", plan)
+	args := routeArgs("add", plan)
 	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("add route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
@@ -275,8 +277,12 @@ func (e IPRouteExecutor) Verify(ctx context.Context, plan planner.TunRoutePlan) 
 	if err != nil {
 		return fmt.Errorf("verify route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
-	if strings.TrimSpace(result.Stdout) == "" {
+	line := firstNonEmptyLine(result.Stdout)
+	if line == "" {
 		return fmt.Errorf("verify route %s table %s: route not found", plan.Destination, plan.Table)
+	}
+	if err := verifyRouteLine(line, plan); err != nil {
+		return fmt.Errorf("verify route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
 	return nil
 }
@@ -296,7 +302,7 @@ type IPPolicyRuleExecutor struct {
 
 func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRulePlan) (Step, error) {
 	args := ruleArgs("add", plan)
-	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil && !resourceExists(err) {
+	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("add policy rule priority %d: %w", plan.Priority, err)
 	}
 	return Step{Kind: "policy-rule", Target: ruleTarget(plan), Description: plan.Reason, Owner: OwnerPolicyRule}, nil
@@ -308,8 +314,12 @@ func (e IPPolicyRuleExecutor) Verify(ctx context.Context, plan planner.TunPolicy
 	if err != nil {
 		return fmt.Errorf("verify policy rule priority %d: %w", plan.Priority, err)
 	}
-	if strings.TrimSpace(result.Stdout) == "" {
+	line := firstNonEmptyLine(result.Stdout)
+	if line == "" {
 		return fmt.Errorf("verify policy rule priority %d: rule not found", plan.Priority)
+	}
+	if err := verifyPolicyRuleLine(line, plan); err != nil {
+		return fmt.Errorf("verify policy rule priority %d: %w", plan.Priority, err)
 	}
 	return nil
 }
@@ -381,6 +391,79 @@ func ruleArgs(op string, plan planner.TunPolicyRulePlan) []string {
 	return args
 }
 
+func verifyRouteLine(line string, plan planner.TunRoutePlan) error {
+	fields := strings.Fields(line)
+	if plan.Destination != planner.IPv4DefaultRoute && !containsField(fields, plan.Destination) {
+		return fmt.Errorf("destination mismatch in %q", line)
+	}
+	if plan.Interface != "" && !containsAdjacentFields(fields, "dev", plan.Interface) {
+		return fmt.Errorf("interface mismatch: expected dev %s in %q", plan.Interface, line)
+	}
+	if plan.Gateway != "" && !containsAdjacentFields(fields, "via", plan.Gateway) {
+		return fmt.Errorf("gateway mismatch: expected via %s in %q", plan.Gateway, line)
+	}
+	return nil
+}
+
+func verifyPolicyRuleLine(line string, plan planner.TunPolicyRulePlan) error {
+	fields := normalizeRuleFields(strings.Fields(line))
+	for _, field := range strings.Fields(plan.Selector) {
+		if !containsField(fields, field) {
+			return fmt.Errorf("selector mismatch: expected %q in %q", plan.Selector, line)
+		}
+	}
+	expectedTable := routeTable(plan.Table)
+	if !containsLookupTable(fields, expectedTable) {
+		return fmt.Errorf("lookup table mismatch: expected %s in %q", expectedTable, line)
+	}
+	return nil
+}
+
+func normalizeRuleFields(fields []string) []string {
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		out = append(out, strings.TrimSuffix(field, ":"))
+	}
+	return out
+}
+
+func containsLookupTable(fields []string, table string) bool {
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == "lookup" && (fields[i+1] == table || routeTable(fields[i+1]) == table) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAdjacentFields(fields []string, first, second string) bool {
+	for i := 0; i < len(fields)-1; i++ {
+		if fields[i] == first && fields[i+1] == second {
+			return true
+		}
+	}
+	return false
+}
+
+func containsField(fields []string, want string) bool {
+	for _, field := range fields {
+		if field == want {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
 func routeTable(table string) string {
 	if table == planner.TunRoutingTable {
 		return strconv.Itoa(planner.TunRoutingTableID)
@@ -401,10 +484,6 @@ func ruleTarget(plan planner.TunPolicyRulePlan) string {
 
 func resourceMissing(err error) bool {
 	return commandErrorContains(err, "does not exist", "cannot find device", "no such process", "no such file or directory", "no such table", "no such file")
-}
-
-func resourceExists(err error) bool {
-	return commandErrorContains(err, "file exists", "already exists", "object already exists")
 }
 
 func commandErrorContains(err error, needles ...string) bool {
