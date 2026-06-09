@@ -85,9 +85,7 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		doctorFn := s.Doctor
 		if doctorFn == nil {
-			doctorFn = func(ctx context.Context) api.DoctorResponse {
-				return DefaultDoctor(ctx, runtimeDir)
-			}
+			doctorFn = lifecycle.Doctor
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(doctorFn(r.Context()))

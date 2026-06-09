@@ -4,18 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
 	netexecutor "github.com/AidarKhusainov/tunwarden/internal/network/executor"
 	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
 	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
 )
-
-const dnsRouteOnlyDomain = "~."
 
 type tunPlanExecutor interface {
 	Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error)
@@ -27,68 +25,7 @@ type tunTransactionResult struct {
 	TransactionID   string
 	TransactionPath string
 	Plan            planner.TunPlan
-}
-
-func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
-	p := profileFromSnapshot(req.Profile)
-	if err := profile.Validate(p); err != nil {
-		return api.LifecycleResponse{}, err
-	}
-
-	m.mu.Lock()
-	if m.cmd != nil || m.state.Connection == "active" {
-		m.mu.Unlock()
-		return api.LifecycleResponse{}, errors.New("connection already active; run tunwarden disconnect before connecting another profile")
-	}
-	m.mu.Unlock()
-
-	runtimeDir := m.runtimeDir()
-	snapshot := netsnapshot.Collect(ctx, netsnapshot.Options{Server: p.Server})
-	plan, err := planner.PlanTun(p, snapshot)
-	if err != nil {
-		return api.LifecycleResponse{}, err
-	}
-
-	result, err := runTunTransaction(ctx, runtimeDir, p, plan, netexecutor.NewOSDNSExecutor(), time.Now)
-	if err != nil {
-		return api.LifecycleResponse{}, err
-	}
-
-	active := xrayState{
-		Connection:    "active",
-		Mode:          planner.ModeTun,
-		ProfileID:     p.ID,
-		ProfileName:   p.Name,
-		Proxy:         "not started in this executor slice",
-		TUN:           fmt.Sprintf("enabled (%s)", plan.TunDevice.Name),
-		Routes:        fmt.Sprintf("applied %d route(s) and %d policy rule(s)", len(appliedRoutes(plan)), len(appliedPolicyRules(plan))),
-		DNS:           dnsStatusLine(plan.DNS),
-		Firewall:      firewallStatusLine(plan.Firewall),
-		TransactionID: result.TransactionID,
-		Warnings: append([]string{
-			"TUN executor slice requires daemon CAP_NET_ADMIN privileges; nftables rollback removes only the TunWarden-owned inet tunwarden table",
-		}, plan.Warnings...),
-	}
-	m.mu.Lock()
-	m.state = active
-	m.mu.Unlock()
-	return lifecycleResponse(active), nil
-}
-
-func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
-	store := txstate.TransactionStore{RuntimeDir: m.runtimeDir()}
-	tx, _, err := store.Load(transactionID)
-	if err != nil {
-		return api.LifecycleResponse{}, fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
-	}
-	plan := tunPlanFromTransaction(tx)
-	if err := rollbackTunTransaction(ctx, store, &tx, plan, netexecutor.NewOSDNSExecutor()); err != nil {
-		return api.LifecycleResponse{}, err
-	}
-	m.mu.Lock()
-	m.state = inactiveXrayState()
-	m.mu.Unlock()
-	return lifecycleResponse(inactiveXrayState()), nil
+	Store           txstate.TransactionStore
 }
 
 func runTunTransaction(ctx context.Context, runtimeDir string, p profile.Profile, plan planner.TunPlan, executor tunPlanExecutor, now func() time.Time) (tunTransactionResult, error) {
@@ -141,11 +78,33 @@ func runTunTransaction(ctx context.Context, runtimeDir string, p profile.Profile
 		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
 		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, fmt.Errorf("verify TUN plan: %w", err))
 	}
-	if _, _, err := store.Transition(tx.ID, txstate.TransactionCommitted); err != nil {
-		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, err)
+	return tunTransactionResult{TransactionID: tx.ID, TransactionPath: path, Plan: plan, Store: store}, nil
+}
+
+func commitTunTransaction(store txstate.TransactionStore, transactionID string) error {
+	if _, _, err := store.Transition(transactionID, txstate.TransactionCommitted); err != nil {
+		return fmt.Errorf("commit TUN transaction %s: %w", transactionID, err)
 	}
-	return tunTransactionResult{TransactionID: tx.ID, TransactionPath: path, Plan: plan}, nil
+	return nil
+}
+
+func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, now time.Time) error {
+	tx, _, err := store.Load(transactionID)
+	if err != nil {
+		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
+	}
+	tx.DesiredPlan.Core = txstate.CorePlan{
+		RuntimeConfigPath: runtimeConfigPath,
+		ProcessLabel:      "xray",
+		Owner:             txstate.TransactionOwner,
+	}
+	tx.Rollback.GeneratedConfigs = []txstate.GeneratedConfigRollback{{Path: runtimeConfigPath, Owner: txstate.TransactionOwner}}
+	if pid > 0 {
+		tx.Rollback.ChildProcesses = []txstate.ChildProcessRollback{{PID: pid, Label: "xray", ConfigRef: runtimeConfigPath, Owner: txstate.TransactionOwner}}
+	}
+	tx.Health = txstate.HealthResult{Status: "core-started", CheckedAt: now.UTC(), Message: "Xray process stayed alive during startup verification"}
+	_, err = store.Save(tx)
+	return err
 }
 
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
@@ -175,14 +134,36 @@ func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore,
 			return err
 		}
 	}
+
+	var rollbackErrs []error
+	if err := stopRollbackChildProcesses(*tx); err != nil {
+		rollbackErrs = append(rollbackErrs, err)
+	}
+	for _, cfg := range tx.Rollback.GeneratedConfigs {
+		removeGeneratedConfig(cfg.Path)
+	}
 	if err := executor.Rollback(ctx, plan); err != nil {
-		return err
+		rollbackErrs = append(rollbackErrs, err)
+	}
+	if len(rollbackErrs) > 0 {
+		return errors.Join(rollbackErrs...)
 	}
 	if _, err := txstate.Transition(tx, txstate.TransactionRolledBack, transactionNow(store)); err != nil {
 		return err
 	}
 	_, err := store.Save(*tx)
 	return err
+}
+
+func removeTransactionFile(store txstate.TransactionStore, transactionID string) error {
+	path, err := store.Path(transactionID)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step) planner.TunPlan {
@@ -333,133 +314,4 @@ func appliedStepsFromExecutor(steps []netexecutor.Step, now time.Time) []txstate
 		out = append(out, txstate.AppliedStep{Kind: step.Kind, Target: step.Target, Description: step.Description, Owner: step.Owner, AppliedAt: now.UTC()})
 	}
 	return out
-}
-
-func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
-	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
-	if len(tx.Rollback.TUN) > 0 {
-		plan.TunDevice = planner.TunDevicePlan{Name: tx.Rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
-	}
-	for _, route := range tx.Rollback.Routes {
-		plan.Routes = append(plan.Routes, planner.TunRoutePlan{Family: "ipv4", Destination: route.CIDR, Table: route.Table, Gateway: route.Via, Interface: route.Dev, Action: "add"})
-	}
-	for _, rule := range tx.Rollback.PolicyRules {
-		selector := strings.TrimSpace(rule.From)
-		if rule.To != "" {
-			selector = "to " + rule.To
-		} else if selector != "" && !strings.HasPrefix(selector, "from ") {
-			selector = "from " + selector
-		}
-		plan.PolicyRules = append(plan.PolicyRules, planner.TunPolicyRulePlan{Family: "ipv4", Priority: rule.Priority, Selector: selector, Table: rule.Table, Action: "add"})
-	}
-	if len(tx.Rollback.DNS) > 0 {
-		dns := tx.Rollback.DNS[0]
-		plan.DNS = planner.TunDNSPlan{Backend: dns.Backend, TargetLink: dns.Link, Servers: append([]string{}, tx.DesiredPlan.DNS.Servers...), Action: planner.DNSActionConfigure}
-	} else if tx.DesiredPlan.DNS.Link != "" {
-		plan.DNS = planner.TunDNSPlan{Backend: tx.DesiredPlan.DNS.Backend, TargetLink: tx.DesiredPlan.DNS.Link, Servers: append([]string{}, tx.DesiredPlan.DNS.Servers...), Action: planner.DNSActionConfigure}
-	}
-	if len(tx.Rollback.NFTables) > 0 {
-		nft := tx.Rollback.NFTables[0]
-		plan.Firewall = planner.TunFirewallPlan{Backend: planner.FirewallBackendNftables, Family: nft.Family, Table: nft.Table, TableAction: planner.FirewallTableAction}
-	} else if tx.DesiredPlan.NFT.Table != "" {
-		plan.Firewall = planner.TunFirewallPlan{Backend: planner.FirewallBackendNftables, Family: tx.DesiredPlan.NFT.Family, Table: tx.DesiredPlan.NFT.Table, TableAction: planner.FirewallTableAction}
-	}
-	return plan
-}
-
-func routeTarget(route planner.TunRoutePlan) string {
-	return route.Table + " " + route.Destination
-}
-
-func policyRuleTarget(rule planner.TunPolicyRulePlan) string {
-	return fmt.Sprintf("priority %d %s lookup %s", rule.Priority, rule.Selector, rule.Table)
-}
-
-func appliedRoutes(plan planner.TunPlan) []planner.TunRoutePlan {
-	out := make([]planner.TunRoutePlan, 0, len(plan.Routes))
-	for _, route := range plan.Routes {
-		if route.Action == "add" {
-			out = append(out, route)
-		}
-	}
-	return out
-}
-
-func appliedPolicyRules(plan planner.TunPlan) []planner.TunPolicyRulePlan {
-	out := make([]planner.TunPolicyRulePlan, 0, len(plan.PolicyRules))
-	for _, rule := range plan.PolicyRules {
-		if rule.Action == "add" {
-			out = append(out, rule)
-		}
-	}
-	return out
-}
-
-func dnsStatusLine(plan planner.TunDNSPlan) string {
-	if plan.Action == planner.DNSActionConfigure && plan.TargetLink != "" {
-		return fmt.Sprintf("%s; Link: %s; Servers: %s; Rollback: available", plan.Backend, plan.TargetLink, strings.Join(plan.Servers, ", "))
-	}
-	if plan.Action == planner.DNSActionBlocked {
-		return "blocked: " + plan.Reason
-	}
-	return "not modified"
-}
-
-func firewallStatusLine(plan planner.TunFirewallPlan) string {
-	if plan.TableAction == planner.FirewallTableAction && plan.Table != "" {
-		return fmt.Sprintf("%s; Table: %s %s; Kill-switch: %s; Rollback: %s", plan.Backend, plan.Family, plan.Table, plan.KillSwitch.Policy, plan.Rollback)
-	}
-	if plan.TableAction == planner.FirewallActionBlocked {
-		return "blocked: " + plan.Reason
-	}
-	if plan.TableAction == planner.FirewallActionValidate {
-		return fmt.Sprintf("%s; Table: %s %s requires ownership validation before apply", plan.Backend, plan.Family, plan.Table)
-	}
-	return "not modified"
-}
-
-func nftChains(plan planner.TunFirewallPlan) []txstate.NFTChainPlan {
-	chains := make([]txstate.NFTChainPlan, 0, len(plan.Chains))
-	rules := firewallRuleStrings(plan.Rules)
-	for _, chain := range plan.Chains {
-		chains = append(chains, txstate.NFTChainPlan{
-			Name:     chain.Name,
-			Hook:     chain.Hook,
-			Type:     chain.Type,
-			Priority: chain.Priority,
-			Policy:   chain.Policy,
-			Rules:    append([]string{}, rules...),
-			Owner:    netexecutor.OwnerFirewall,
-		})
-	}
-	return chains
-}
-
-func firewallRuleStrings(rules []planner.TunFirewallRulePlan) []string {
-	out := make([]string, 0, len(rules))
-	for _, rule := range rules {
-		if rule.Action != planner.FirewallActionAdd {
-			continue
-		}
-		out = append(out, strings.TrimSpace(rule.Expr+" "+rule.Verdict+" owner "+rule.Ownership))
-	}
-	return out
-}
-
-func firewallTarget(plan planner.TunFirewallPlan) string {
-	return strings.TrimSpace(plan.Family + " " + plan.Table)
-}
-
-func dnsSearchDomains(plan planner.TunDNSPlan) []string {
-	if plan.Action != planner.DNSActionConfigure || plan.TargetLink == "" {
-		return nil
-	}
-	return []string{dnsRouteOnlyDomain}
-}
-
-func transactionNow(store txstate.TransactionStore) time.Time {
-	if store.Now != nil {
-		return store.Now().UTC()
-	}
-	return time.Now().UTC()
 }

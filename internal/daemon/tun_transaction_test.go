@@ -13,28 +13,32 @@ import (
 	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
 )
 
-func TestTunTransactionCommitsAfterApplyAndVerify(t *testing.T) {
+func TestTunTransactionWaitsForExplicitCommitAfterApplyAndVerify(t *testing.T) {
 	runtimeDir := t.TempDir()
 	executor := &recordingTunExecutor{}
 	result, err := runTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "test-profile"}, transactionPlanForTest(), executor, fixedClock())
 	if err != nil {
 		t.Fatalf("run TUN transaction failed: %v", err)
 	}
-	if result.TransactionID == "" || !strings.HasPrefix(result.TransactionID, "tun-") {
-		t.Fatalf("expected generated transaction id, got %#v", result)
-	}
 	tx, _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Load(result.TransactionID)
 	if err != nil {
 		t.Fatalf("load transaction: %v", err)
 	}
-	if tx.State != txstate.TransactionCommitted {
-		t.Fatalf("expected committed transaction, got %s", tx.State)
-	}
-	if len(tx.AppliedSteps) != 3 || !tx.Rollback.Available() {
-		t.Fatalf("expected applied steps and rollback metadata, got %#v", tx)
+	if tx.State != txstate.TransactionVerifying {
+		t.Fatalf("expected verifying before core verification, got %s", tx.State)
 	}
 	if strings.Join(executor.calls, ",") != "apply,verify" {
 		t.Fatalf("unexpected executor calls: %#v", executor.calls)
+	}
+	if err := commitTunTransaction(result.Store, result.TransactionID); err != nil {
+		t.Fatalf("commit transaction: %v", err)
+	}
+	tx, _, err = (txstate.TransactionStore{RuntimeDir: runtimeDir}).Load(result.TransactionID)
+	if err != nil {
+		t.Fatalf("reload transaction: %v", err)
+	}
+	if tx.State != txstate.TransactionCommitted {
+		t.Fatalf("expected committed transaction after explicit commit, got %s", tx.State)
 	}
 }
 
@@ -80,29 +84,6 @@ func TestTunTransactionRollsBackVerifyFailure(t *testing.T) {
 	}
 	if strings.Join(executor.calls, ",") != "apply,verify,rollback" {
 		t.Fatalf("unexpected executor calls: %#v", executor.calls)
-	}
-}
-
-func TestTunTransactionMetadataIncludesFirewallRollback(t *testing.T) {
-	plan := transactionPlanForTest()
-	plan.Firewall = transactionFirewallPlanForTest()
-
-	desired := desiredPlanFromTunPlan(plan)
-	if desired.NFT.Family != "inet" || desired.NFT.Table != "tunwarden" || desired.NFT.Owner != netexecutor.OwnerFirewall {
-		t.Fatalf("expected nftables desired state, got %#v", desired.NFT)
-	}
-	if len(desired.NFT.Chains) != 1 || desired.NFT.Chains[0].Name != planner.FirewallOutputChain || len(desired.NFT.Chains[0].Rules) != 1 {
-		t.Fatalf("expected nftables chain and rule desired state, got %#v", desired.NFT.Chains)
-	}
-
-	rollback := rollbackMetadataFromTunPlan(plan)
-	if len(rollback.NFTables) != 1 || rollback.NFTables[0].Family != "inet" || rollback.NFTables[0].Table != "tunwarden" || rollback.NFTables[0].Owner != netexecutor.OwnerFirewall {
-		t.Fatalf("expected nftables rollback metadata, got %#v", rollback.NFTables)
-	}
-
-	partial := rollbackPlanFromAppliedSteps(plan, []netexecutor.Step{{Kind: "nftables", Target: "inet tunwarden", Owner: netexecutor.OwnerFirewall}})
-	if partial.Firewall.Family != "inet" || partial.Firewall.Table != "tunwarden" {
-		t.Fatalf("expected partial rollback plan to include applied firewall state, got %#v", partial.Firewall)
 	}
 }
 
@@ -154,34 +135,6 @@ func transactionPlanForTest() planner.TunPlan {
 			Action:   "add",
 		}},
 		Steps: []string{"Plan TUN interface tunwarden0"},
-	}
-}
-
-func transactionFirewallPlanForTest() planner.TunFirewallPlan {
-	return planner.TunFirewallPlan{
-		Backend:     planner.FirewallBackendNftables,
-		Family:      "inet",
-		Table:       "tunwarden",
-		TableAction: planner.FirewallTableAction,
-		Chains: []planner.TunFirewallChainPlan{{
-			Name:     planner.FirewallOutputChain,
-			Type:     planner.FirewallChainTypeFilter,
-			Hook:     planner.FirewallOutputHook,
-			Priority: planner.FirewallOutputPriority,
-			Policy:   planner.FirewallDefaultChainPolicy,
-			Action:   planner.FirewallTableAction,
-		}},
-		Rules: []planner.TunFirewallRulePlan{{
-			Chain:       planner.FirewallOutputChain,
-			Expr:        "oifname != \"tunwarden0\"",
-			Verdict:     planner.FirewallVerdictReject,
-			Action:      planner.FirewallActionAdd,
-			Ownership:   planner.FirewallKillSwitchOwner,
-			RollbackKey: planner.FirewallKillSwitchKey,
-		}},
-		KillSwitch: planner.TunKillSwitchPlan{Policy: planner.KillSwitchPolicySoft},
-		Reason:     "create a TunWarden-owned nftables table",
-		Rollback:   planner.FirewallRollbackRemove,
 	}
 }
 

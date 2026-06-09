@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/tunwarden/internal/doctor"
 	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
 	"github.com/AidarKhusainov/tunwarden/internal/render"
@@ -32,6 +33,9 @@ type XrayManager struct {
 	RuntimeDir  string
 	XrayPath    string
 	StopTimeout time.Duration
+
+	tunExecutor       tunPlanExecutor
+	snapshotCollector tunSnapshotCollector
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
@@ -79,8 +83,8 @@ func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectReque
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if os.Geteuid() == 0 {
-		return api.LifecycleResponse{}, errors.New("refusing to start proxy-only Xray as root; run tunwardend as the packaged unprivileged tunwarden user or use a user-owned development runtime directory")
+	if err := ensureCoreNotRoot(planner.ModeProxyOnly); err != nil {
+		return api.LifecycleResponse{}, err
 	}
 
 	runtimeDir := m.runtimeDir()
@@ -99,30 +103,11 @@ func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectReque
 		m.mu.Unlock()
 		return api.LifecycleResponse{}, errors.New("connection already active; run tunwarden disconnect before connecting another profile")
 	}
-
-	if err := writeRuntimeConfig(runtimeConfigPath, proxyPlan.XrayConfig); err != nil {
+	if _, _, err := m.startXrayLocked(p, xrayPath, runtimeConfigPath, proxyPlan.XrayConfig); err != nil {
 		m.mu.Unlock()
 		return api.LifecycleResponse{}, err
 	}
 
-	cmd := exec.Command(xrayPath, "run", "-config", runtimeConfigPath)
-	stdoutLog := newCoreLogWriter(p.ID, "stdout")
-	stderrLog := newCoreLogWriter(p.ID, "stderr")
-	cmd.Stdout = stdoutLog
-	cmd.Stderr = stderrLog
-	if err := cmd.Start(); err != nil {
-		m.mu.Unlock()
-		removeGeneratedConfig(runtimeConfigPath)
-		logCoreStartFailed(p.ID, err)
-		return api.LifecycleResponse{}, fmt.Errorf("start Xray: %w", err)
-	}
-
-	pid := cmd.Process.Pid
-	stdoutLog.setPID(pid)
-	stderrLog.setPID(pid)
-	logCoreStarted(pid, p.ID)
-
-	done := make(chan struct{})
 	active := xrayState{
 		Connection:        "active",
 		Mode:              planner.ModeProxyOnly,
@@ -137,13 +122,8 @@ func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectReque
 		Warnings:          proxyPlan.Warnings,
 	}
 
-	m.cmd = cmd
-	m.done = done
-	m.stopping = false
 	m.state = active
 	m.mu.Unlock()
-
-	go m.waitForExit(cmd, done, []*coreLogWriter{stdoutLog, stderrLog}, runtimeConfigPath, p.ID)
 	return lifecycleResponse(active), nil
 }
 
@@ -152,9 +132,10 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 	cmd := m.cmd
 	done := m.done
 	configPath := m.state.RuntimeConfigPath
+	mode := m.state.Mode
+	transactionID := m.state.TransactionID
 	if cmd == nil {
 		if m.state.Connection == "active" && m.state.Mode == planner.ModeTun {
-			transactionID := m.state.TransactionID
 			m.mu.Unlock()
 			if transactionID == "" {
 				return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run tunwarden recover")
@@ -169,25 +150,15 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 	m.stopping = true
 	m.mu.Unlock()
 
-	if cmd.Process != nil {
-		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return api.LifecycleResponse{}, fmt.Errorf("stop Xray gracefully: %w", err)
-		}
+	if err := m.stopCoreProcess(cmd, done); err != nil {
+		return api.LifecycleResponse{}, err
 	}
-
-	stopTimeout := m.StopTimeout
-	if stopTimeout == 0 {
-		stopTimeout = defaultStopTimeout
-	}
-	select {
-	case <-done:
-	case <-time.After(stopTimeout):
-		if cmd.Process != nil {
-			if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return api.LifecycleResponse{}, fmt.Errorf("force stop Xray: %w", err)
-			}
+	removeGeneratedConfig(configPath)
+	if mode == planner.ModeTun {
+		if transactionID == "" {
+			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run tunwarden recover")
 		}
-		<-done
+		return m.disconnectTun(ctx, transactionID)
 	}
 
 	return lifecycleResponse(inactiveXrayState()), nil
@@ -219,6 +190,54 @@ func (m *XrayManager) Status(context.Context) api.StatusResponse {
 		Transactions:      transactions,
 		Warnings:          warnings,
 	}
+}
+
+func (m *XrayManager) Doctor(ctx context.Context) api.DoctorResponse {
+	report := doctor.RunWithOptions(ctx, doctor.Options{RuntimeDir: m.runtimeDir(), RuntimeDirOwnedByDaemon: true})
+	report = doctor.WithSource(report, doctor.SourceDaemon)
+	report = doctor.WithDaemonCheck(report, doctor.SeverityOK, "running")
+	report.Checks = append(report.Checks, m.lifecycleDoctorChecks(ctx)...)
+	return doctor.ToDaemon(report)
+}
+
+func (m *XrayManager) lifecycleDoctorChecks(ctx context.Context) []doctor.Check {
+	m.mu.Lock()
+	state := m.state
+	coreRunning := m.cmd != nil
+	m.mu.Unlock()
+	if state.Connection == "" {
+		state = inactiveXrayState()
+	}
+
+	coreSeverity := doctor.SeverityOK
+	coreMessage := "inactive"
+	switch {
+	case state.Connection == "error (core exited)":
+		coreSeverity = doctor.SeverityFail
+		coreMessage = "core exited unexpectedly; inspect tunwarden logs --core"
+	case coreRunning:
+		coreMessage = emptyAs(state.Proxy, "core process is running")
+	case state.Connection == "active":
+		coreSeverity = doctor.SeverityWarning
+		coreMessage = "connection is active but no supervised Xray process is registered"
+	}
+
+	checks := []doctor.Check{{Name: "core", Severity: coreSeverity, Message: coreMessage}}
+	if state.Mode != planner.ModeTun && state.TransactionID == "" {
+		return checks
+	}
+
+	snapshot := m.collectTunSnapshot(ctx, tunSnapshotOptionsForState(state))
+	checks = append(checks,
+		tunDoctorCheck(state, snapshot),
+		routeDoctorCheck(state, snapshot),
+		dnsDoctorCheck(state, snapshot),
+		firewallDoctorCheck(state, snapshot),
+	)
+	if state.TransactionID != "" {
+		checks = append(checks, transactionDoctorCheck(m.runtimeDir(), state.TransactionID))
+	}
+	return checks
 }
 
 func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, coreLogs []*coreLogWriter, runtimeConfigPath, profileID string) {
@@ -304,6 +323,76 @@ func (m *XrayManager) resolveXrayPath() (string, error) {
 	return path, nil
 }
 
+func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfigPath string, xrayConfig []byte) (*exec.Cmd, chan struct{}, error) {
+	if err := writeRuntimeConfig(runtimeConfigPath, xrayConfig); err != nil {
+		return nil, nil, err
+	}
+
+	cmd := exec.Command(xrayPath, "run", "-config", runtimeConfigPath)
+	stdoutLog := newCoreLogWriter(p.ID, "stdout")
+	stderrLog := newCoreLogWriter(p.ID, "stderr")
+	cmd.Stdout = stdoutLog
+	cmd.Stderr = stderrLog
+	if err := cmd.Start(); err != nil {
+		removeGeneratedConfig(runtimeConfigPath)
+		logCoreStartFailed(p.ID, err)
+		return nil, nil, fmt.Errorf("start Xray: %w", err)
+	}
+
+	pid := cmd.Process.Pid
+	stdoutLog.setPID(pid)
+	stderrLog.setPID(pid)
+	logCoreStarted(pid, p.ID)
+
+	done := make(chan struct{})
+	m.cmd = cmd
+	m.done = done
+	m.stopping = false
+	go m.waitForExit(cmd, done, []*coreLogWriter{stdoutLog, stderrLog}, runtimeConfigPath, p.ID)
+	return cmd, done, nil
+}
+
+func (m *XrayManager) stopStartedCore(cmd *exec.Cmd, done <-chan struct{}, runtimeConfigPath string) error {
+	m.mu.Lock()
+	if m.cmd == cmd {
+		m.stopping = true
+	}
+	m.mu.Unlock()
+	err := m.stopCoreProcess(cmd, done)
+	removeGeneratedConfig(runtimeConfigPath)
+	return err
+}
+
+func (m *XrayManager) stopCoreProcess(cmd *exec.Cmd, done <-chan struct{}) error {
+	if cmd == nil {
+		return nil
+	}
+	if cmd.Process != nil {
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("stop Xray gracefully: %w", err)
+		}
+	}
+	if done == nil {
+		return nil
+	}
+
+	stopTimeout := m.StopTimeout
+	if stopTimeout == 0 {
+		stopTimeout = defaultStopTimeout
+	}
+	select {
+	case <-done:
+	case <-time.After(stopTimeout):
+		if cmd.Process != nil {
+			if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				return fmt.Errorf("force stop Xray: %w", err)
+			}
+		}
+		<-done
+	}
+	return nil
+}
+
 func inactiveXrayState() xrayState {
 	return xrayState{
 		Connection: "inactive",
@@ -371,6 +460,23 @@ func processExitMessage(err error) string {
 		return "Xray process exited unexpectedly"
 	}
 	return "Xray process exited unexpectedly: " + err.Error()
+}
+
+func ensureCoreNotRoot(mode string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	if mode == planner.ModeProxyOnly {
+		return errors.New("refusing to start proxy-only Xray as root; run tunwardend as the packaged unprivileged tunwarden user or use a user-owned development runtime directory")
+	}
+	return errors.New("refusing to start TUN-mode Xray as root; run tunwardend as an unprivileged service user with the documented networking capabilities instead of running the core process as root")
+}
+
+func emptyAs(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 type coreLogWriter struct {

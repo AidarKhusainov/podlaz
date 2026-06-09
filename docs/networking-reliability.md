@@ -52,7 +52,7 @@ Expected behavior:
 - prevent traffic loops,
 - clean up on disconnect/crash.
 
-The current implementation has daemon-owned transaction execution for the TUN interface, routes, policy rules, and systemd-resolved per-link DNS. `plan --mode tun` remains dry-run output. nftables/firewall execution is still future work and must not be claimed as active leak protection until apply, verify, rollback, and recover are implemented for that layer too.
+The current executor layer has daemon-owned transaction execution for the TUN interface, routes, policy rules, systemd-resolved per-link DNS, and TunWarden-owned nftables state. User-visible `connect --mode tun` must still be gated on real TUN-mode Xray runtime config generation and basic connectivity verification. It must not start proxy-only Xray config and report it as an active TUN connection.
 
 ### 3.3 Split-tunnel mode
 
@@ -150,7 +150,7 @@ IPv6 disabled or bypassed until full IPv6 routing/DNS leak handling is implement
 
 The daemon must own TUN creation and deletion.
 
-The CLI must not create TUN devices directly. The current CLI `plan --mode tun` may describe a future daemon-owned TUN create step only as dry-run output.
+The CLI must not create TUN devices directly. The current CLI `plan --mode tun` may describe daemon-owned TUN create steps only as dry-run output unless the daemon is executing a transaction.
 
 ## 6. Routing requirements
 
@@ -281,7 +281,7 @@ Initial implementation should use nftables.
 
 iptables fallback is future scope.
 
-The current dry-run plan must show the intended nftables backend before applying anything and must warn clearly when `nft` or nftables table visibility is unavailable.
+The current dry-run plan must show the intended nftables backend before applying anything and must warn clearly when `nft` or nftables table visibility is unavailable. The daemon-owned executor layer may apply, verify, and roll back the TunWarden-owned nftables table from an already-inspected plan, but user-visible leak-protection claims remain blocked until full TUN core runtime config, connectivity verification, and recovery behavior are complete.
 
 ### FW-002: TunWarden-owned table
 
@@ -301,7 +301,7 @@ Firewall plan:
 - rollback: remove inet tunwarden
 ```
 
-It still must not mutate nftables or firewall state.
+Dry-run output still must not mutate nftables or firewall state.
 
 ### FW-003: Kill-switch modes
 
@@ -319,7 +319,7 @@ Suggested semantics:
 - `soft`: prevent accidental leaks during transition but restore direct connectivity on failure.
 - `strict`: block non-VPN traffic if VPN fails, except recovery/control traffic.
 
-The current dry-run planner exposes the selected kill-switch policy and its limitations. Strict kill-switch planning must warn that direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules. No dry-run output may claim leak protection until apply, verify, rollback, and recover execution exist.
+The current dry-run planner exposes the selected kill-switch policy and its limitations. Strict kill-switch planning must warn that direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules. No user-visible connect/status output may claim active leak protection until apply, verify, rollback, recover, TUN core runtime config, and connectivity verification exist for the full flow.
 
 ### FW-004: Recovery must override kill-switch
 

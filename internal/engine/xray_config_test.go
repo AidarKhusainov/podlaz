@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,41 @@ func TestGenerateXrayProxyOnlyConfigMatchesFixture(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Fatalf("generated config mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestGenerateXrayTunConfigUsesPrivateSocksInbound(t *testing.T) {
+	got, err := GenerateXrayTunConfig(proxyOnlyRealityProfile(), DefaultXrayTunConfigOptions())
+	if err != nil {
+		t.Fatalf("generate TUN-mode Xray config: %v", err)
+	}
+	var cfg struct {
+		Inbounds []struct {
+			Tag      string `json:"tag"`
+			Listen   string `json:"listen"`
+			Port     uint16 `json:"port"`
+			Protocol string `json:"protocol"`
+			Settings struct {
+				UDP bool `json:"udp"`
+			} `json:"settings"`
+		} `json:"inbounds"`
+		Outbounds []struct {
+			Tag      string `json:"tag"`
+			Protocol string `json:"protocol"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(got, &cfg); err != nil {
+		t.Fatalf("decode TUN-mode Xray config: %v", err)
+	}
+	if len(cfg.Inbounds) != 1 {
+		t.Fatalf("expected one private TUN adapter inbound, got %#v", cfg.Inbounds)
+	}
+	inbound := cfg.Inbounds[0]
+	if inbound.Tag != "tunwarden-tun-socks" || inbound.Listen != DefaultTunSOCKSListen || inbound.Port != DefaultTunSOCKSPort || inbound.Protocol != "socks" || !inbound.Settings.UDP {
+		t.Fatalf("unexpected TUN inbound: %#v", inbound)
+	}
+	if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Tag != "tunwarden-tun-proxy" || cfg.Outbounds[0].Protocol != "vless" {
+		t.Fatalf("unexpected TUN outbound: %#v", cfg.Outbounds)
 	}
 }
 
