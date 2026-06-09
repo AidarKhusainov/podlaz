@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"time"
 
 	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/tunwarden/internal/engine"
 	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
@@ -17,6 +19,7 @@ import (
 type tunCoreRuntimePlan struct {
 	RuntimeConfigPath string
 	XrayConfig        []byte
+	SOCKSEndpoint     string
 	Status            string
 	Warnings          []string
 }
@@ -92,6 +95,13 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		}
 		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied TunWarden-owned networking state", err)
 	}
+	if err := verifyTunConnectivity(ctx, plan, corePlan); err != nil {
+		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
+		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
+			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr))
+		}
+		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied TunWarden-owned networking state", err)
+	}
 
 	active := xrayState{
 		Connection:        "active",
@@ -105,9 +115,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		Firewall:          firewallStatusLine(plan.Firewall),
 		RuntimeConfigPath: corePlan.RuntimeConfigPath,
 		TransactionID:     result.TransactionID,
-		Warnings: append(append([]string{
-			"TUN transaction commits only after network verify and core startup verify pass; basic end-to-end connectivity remains a manual validation item until a dedicated probe exists",
-		}, corePlan.Warnings...), plan.Warnings...),
+		Warnings:          append(append([]string{}, corePlan.Warnings...), plan.Warnings...),
 	}
 	m.mu.Lock()
 	if m.cmd != cmd || m.done != done {
@@ -130,11 +138,23 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	return lifecycleResponse(active), nil
 }
 
-func planTunCoreRuntime(_ profile.Profile, runtimeConfigPath string) (tunCoreRuntimePlan, error) {
+func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string) (tunCoreRuntimePlan, error) {
 	if runtimeConfigPath == "" {
 		return tunCoreRuntimePlan{}, errors.New("TUN-mode Xray runtime config requires a runtime config path")
 	}
-	return tunCoreRuntimePlan{}, errors.New("TUN-mode Xray runtime config is not implemented; refusing to start proxy-only Xray config as TUN mode")
+	opts := engine.DefaultXrayTunConfigOptions()
+	xrayConfig, err := engine.GenerateXrayTunConfig(p, opts)
+	if err != nil {
+		return tunCoreRuntimePlan{}, err
+	}
+	endpoint := net.JoinHostPort(opts.SOCKSListen, fmt.Sprintf("%d", opts.SOCKSPort))
+	return tunCoreRuntimePlan{
+		RuntimeConfigPath: runtimeConfigPath,
+		XrayConfig:        xrayConfig,
+		SOCKSEndpoint:     endpoint,
+		Status:            "TUN-mode Xray runtime config with private SOCKS adapter endpoint " + endpoint,
+		Warnings:          []string{"TUN-mode connectivity is verified through the daemon-private Xray SOCKS endpoint before transaction commit"},
+	}, nil
 }
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
