@@ -93,11 +93,7 @@ func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, run
 	if err != nil {
 		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
 	}
-	tx.DesiredPlan.Core = txstate.CorePlan{
-		RuntimeConfigPath: runtimeConfigPath,
-		ProcessLabel:      "xray",
-		Owner:             txstate.TransactionOwner,
-	}
+	tx.DesiredPlan.Core = txstate.CorePlan{RuntimeConfigPath: runtimeConfigPath, ProcessLabel: "xray", Owner: txstate.TransactionOwner}
 	tx.Rollback.GeneratedConfigs = []txstate.GeneratedConfigRollback{{Path: runtimeConfigPath, Owner: txstate.TransactionOwner}}
 	if pid > 0 {
 		tx.Rollback.ChildProcesses = []txstate.ChildProcessRollback{{PID: pid, Label: "xray", ConfigRef: runtimeConfigPath, Owner: txstate.TransactionOwner}}
@@ -134,6 +130,9 @@ func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore,
 			return err
 		}
 	}
+	if err := stopRollbackChildProcesses(*tx); err != nil {
+		return err
+	}
 	for _, cfg := range tx.Rollback.GeneratedConfigs {
 		removeGeneratedConfig(cfg.Path)
 	}
@@ -163,44 +162,24 @@ func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step
 	for _, step := range steps {
 		switch step.Kind {
 		case "tun-device":
-			if step.Target == plan.TunDevice.Name {
-				rollback.TunDevice = plan.TunDevice
-			}
+			if step.Target == plan.TunDevice.Name { rollback.TunDevice = plan.TunDevice }
 		case "route":
-			for _, route := range plan.Routes {
-				if routeTarget(route) == step.Target {
-					rollback.Routes = append(rollback.Routes, route)
-				}
-			}
+			for _, route := range plan.Routes { if routeTarget(route) == step.Target { rollback.Routes = append(rollback.Routes, route) } }
 		case "policy-rule":
-			for _, rule := range plan.PolicyRules {
-				if policyRuleTarget(rule) == step.Target {
-					rollback.PolicyRules = append(rollback.PolicyRules, rule)
-				}
-			}
+			for _, rule := range plan.PolicyRules { if policyRuleTarget(rule) == step.Target { rollback.PolicyRules = append(rollback.PolicyRules, rule) } }
 		case "dns":
-			if step.Target == plan.DNS.TargetLink {
-				rollback.DNS = plan.DNS
-			}
+			if step.Target == plan.DNS.TargetLink { rollback.DNS = plan.DNS }
 		case "nftables":
-			if step.Target == firewallTarget(plan.Firewall) {
-				rollback.Firewall = plan.Firewall
-			}
+			if step.Target == firewallTarget(plan.Firewall) { rollback.Firewall = plan.Firewall }
 		}
 	}
 	return rollback
 }
 
-func newTunTransactionID(now func() time.Time) string {
-	return "tun-" + now().UTC().Format("20060102T150405.000000000Z")
-}
+func newTunTransactionID(now func() time.Time) string { return "tun-" + now().UTC().Format("20060102T150405.000000000Z") }
 
 func snapshotMetadata(s netsnapshot.Snapshot, now time.Time) txstate.SnapshotMetadata {
-	summary := []string{
-		"default IPv4 route: " + string(s.DefaultIPv4.Status),
-		"server route: " + string(s.ServerRoute.Status),
-		fmt.Sprintf("tun devices inspected: %d", len(s.TunDevices)),
-	}
+	summary := []string{"default IPv4 route: " + string(s.DefaultIPv4.Status), "server route: " + string(s.ServerRoute.Status), fmt.Sprintf("tun devices inspected: %d", len(s.TunDevices))}
 	return txstate.SnapshotMetadata{CapturedAt: now.UTC(), Source: "daemon network snapshot", Summary: summary}
 }
 
@@ -208,102 +187,37 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	routes := make([]txstate.RoutePlan, 0, len(plan.Routes))
 	steps := make([]txstate.PlannedStep, 0, len(plan.Steps)+len(plan.PolicyRules)+len(plan.Firewall.Rules)+2)
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
-			continue
-		}
-		routes = append(routes, txstate.RoutePlan{
-			Kind:      "route",
-			Table:     route.Table,
-			CIDR:      route.Destination,
-			Via:       route.Gateway,
-			Dev:       route.Interface,
-			Owner:     netexecutor.OwnerRoute,
-			Operation: route.Action,
-		})
+		if route.Action != "add" { continue }
+		routes = append(routes, txstate.RoutePlan{Kind: "route", Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute, Operation: route.Action})
 	}
-	for _, step := range plan.Steps {
-		steps = append(steps, txstate.PlannedStep{Kind: "plan", Target: planner.ModeTun, Description: step, Owner: txstate.TransactionOwner})
-	}
-	for _, rule := range plan.PolicyRules {
-		steps = append(steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleTarget(rule), Description: rule.Reason, Owner: netexecutor.OwnerPolicyRule})
-	}
-	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
-		steps = append(steps, txstate.PlannedStep{Kind: "dns", Target: plan.DNS.TargetLink, Description: plan.DNS.Reason, Owner: netexecutor.OwnerDNS})
-	}
-	if plan.Firewall.TableAction == planner.FirewallTableAction && plan.Firewall.Table != "" {
-		steps = append(steps, txstate.PlannedStep{Kind: "nftables", Target: firewallTarget(plan.Firewall), Description: plan.Firewall.Reason, Owner: netexecutor.OwnerFirewall})
-	}
-	return txstate.DesiredPlan{
-		PlanID: plan.ProfileID + ":" + planner.ModeTun,
-		TUN: txstate.TUNDesiredState{
-			InterfaceName: plan.TunDevice.Name,
-			MTU:           plan.TunDevice.MTU,
-			Owner:         netexecutor.OwnerTunDevice,
-		},
-		Routes: routes,
-		DNS: txstate.DNSPlan{
-			Backend:       plan.DNS.Backend,
-			Link:          plan.DNS.TargetLink,
-			Servers:       append([]string{}, plan.DNS.Servers...),
-			SearchDomains: dnsSearchDomains(plan.DNS),
-			Owner:         txstate.TransactionOwner,
-		},
-		NFT: txstate.NFTPlan{
-			Family: plan.Firewall.Family,
-			Table:  plan.Firewall.Table,
-			Chains: nftChains(plan.Firewall),
-			Owner:  netexecutor.OwnerFirewall,
-		},
-		Steps: steps,
-	}
+	for _, step := range plan.Steps { steps = append(steps, txstate.PlannedStep{Kind: "plan", Target: planner.ModeTun, Description: step, Owner: txstate.TransactionOwner}) }
+	for _, rule := range plan.PolicyRules { steps = append(steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleTarget(rule), Description: rule.Reason, Owner: netexecutor.OwnerPolicyRule}) }
+	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" { steps = append(steps, txstate.PlannedStep{Kind: "dns", Target: plan.DNS.TargetLink, Description: plan.DNS.Reason, Owner: netexecutor.OwnerDNS}) }
+	if plan.Firewall.TableAction == planner.FirewallTableAction && plan.Firewall.Table != "" { steps = append(steps, txstate.PlannedStep{Kind: "nftables", Target: firewallTarget(plan.Firewall), Description: plan.Firewall.Reason, Owner: netexecutor.OwnerFirewall}) }
+	return txstate.DesiredPlan{PlanID: plan.ProfileID + ":" + planner.ModeTun, TUN: txstate.TUNDesiredState{InterfaceName: plan.TunDevice.Name, MTU: plan.TunDevice.MTU, Owner: netexecutor.OwnerTunDevice}, Routes: routes, DNS: txstate.DNSPlan{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, Servers: append([]string{}, plan.DNS.Servers...), SearchDomains: dnsSearchDomains(plan.DNS), Owner: txstate.TransactionOwner}, NFT: txstate.NFTPlan{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Chains: nftChains(plan.Firewall), Owner: netexecutor.OwnerFirewall}, Steps: steps}
 }
 
 func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata {
 	routes := make([]txstate.RouteRollback, 0, len(plan.Routes))
-	for _, route := range plan.Routes {
-		if route.Action != "add" {
-			continue
-		}
-		routes = append(routes, txstate.RouteRollback{Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute})
-	}
+	for _, route := range plan.Routes { if route.Action == "add" { routes = append(routes, txstate.RouteRollback{Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute}) } }
 	rules := make([]txstate.PolicyRuleRollback, 0, len(plan.PolicyRules))
-	for _, rule := range plan.PolicyRules {
-		if rule.Action != "add" {
-			continue
-		}
-		rules = append(rules, policyRuleRollback(rule))
-	}
+	for _, rule := range plan.PolicyRules { if rule.Action == "add" { rules = append(rules, policyRuleRollback(rule)) } }
 	metadata := txstate.RollbackMetadata{Routes: routes, PolicyRules: rules}
-	if plan.TunDevice.Name != "" {
-		metadata.TUN = []txstate.TUNRollback{{InterfaceName: plan.TunDevice.Name, Owner: netexecutor.OwnerTunDevice}}
-	}
-	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
-		metadata.DNS = []txstate.DNSRollback{{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, SearchDomains: dnsSearchDomains(plan.DNS), Owner: netexecutor.OwnerDNS}}
-	}
-	if plan.Firewall.TableAction == planner.FirewallTableAction && plan.Firewall.Table != "" {
-		metadata.NFTables = []txstate.NFTablesRollback{{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Owner: netexecutor.OwnerFirewall}}
-	}
+	if plan.TunDevice.Name != "" { metadata.TUN = []txstate.TUNRollback{{InterfaceName: plan.TunDevice.Name, Owner: netexecutor.OwnerTunDevice}} }
+	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" { metadata.DNS = []txstate.DNSRollback{{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, SearchDomains: dnsSearchDomains(plan.DNS), Owner: netexecutor.OwnerDNS}} }
+	if plan.Firewall.TableAction == planner.FirewallTableAction && plan.Firewall.Table != "" { metadata.NFTables = []txstate.NFTablesRollback{{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Owner: netexecutor.OwnerFirewall}} }
 	return metadata
 }
 
 func policyRuleRollback(rule planner.TunPolicyRulePlan) txstate.PolicyRuleRollback {
 	rollback := txstate.PolicyRuleRollback{Priority: rule.Priority, Table: rule.Table, Owner: netexecutor.OwnerPolicyRule}
 	selector := strings.TrimSpace(rule.Selector)
-	switch {
-	case strings.HasPrefix(selector, "to "):
-		rollback.To = strings.TrimSpace(strings.TrimPrefix(selector, "to "))
-	case strings.HasPrefix(selector, "from "):
-		rollback.From = strings.TrimSpace(strings.TrimPrefix(selector, "from "))
-	default:
-		rollback.From = selector
-	}
+	switch { case strings.HasPrefix(selector, "to "): rollback.To = strings.TrimSpace(strings.TrimPrefix(selector, "to ")); case strings.HasPrefix(selector, "from "): rollback.From = strings.TrimSpace(strings.TrimPrefix(selector, "from ")); default: rollback.From = selector }
 	return rollback
 }
 
 func appliedStepsFromExecutor(steps []netexecutor.Step, now time.Time) []txstate.AppliedStep {
 	out := make([]txstate.AppliedStep, 0, len(steps))
-	for _, step := range steps {
-		out = append(out, txstate.AppliedStep{Kind: step.Kind, Target: step.Target, Description: step.Description, Owner: step.Owner, AppliedAt: now.UTC()})
-	}
+	for _, step := range steps { out = append(out, txstate.AppliedStep{Kind: step.Kind, Target: step.Target, Description: step.Description, Owner: step.Owner, AppliedAt: now.UTC()}) }
 	return out
 }
