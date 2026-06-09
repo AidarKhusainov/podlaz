@@ -44,6 +44,20 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	}
 }
 
+func TestNftablesExecutorRollsBackTableOnPartialApplyFailure(t *testing.T) {
+	plan := firewallPlanForTest()
+	runner := &failingNftRunner{failOn: []string{"add", "rule"}}
+	_, err := (NftablesExecutor{Runner: runner}).Apply(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected rule apply failure")
+	}
+
+	wantLast := []string{"nft", "delete", "table", "inet", "tunwarden"}
+	if len(runner.commands) < 2 || !reflect.DeepEqual(runner.commands[len(runner.commands)-1], wantLast) {
+		t.Fatalf("expected final cleanup command %v, got %#v", wantLast, runner.commands)
+	}
+}
+
 func TestNftablesExecutorRejectsBlockedOrNonOwnedPlan(t *testing.T) {
 	blocked := firewallPlanForTest()
 	blocked.TableAction = planner.FirewallActionBlocked
@@ -113,4 +127,27 @@ func nftablesListOutputForTest() string {
 		oifname != "tunwarden0" counter comment "tunwarden:firewall:kill-switch" reject
 	}
 }`
+}
+
+type failingNftRunner struct {
+	commands [][]string
+	failOn   []string
+}
+
+func (r *failingNftRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
+	command := append([]string{name}, args...)
+	r.commands = append(r.commands, command)
+	if name == "nft" && len(args) >= len(r.failOn) {
+		matches := true
+		for i, token := range r.failOn {
+			if args[i] != token {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return CommandResult{ExitCode: 1, Stderr: "injected nft failure"}, errors.New("injected nft failure")
+		}
+	}
+	return CommandResult{}, nil
 }
