@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -29,9 +28,6 @@ type tunTransactionResult struct {
 }
 
 func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
-	if os.Geteuid() != 0 {
-		return api.LifecycleResponse{}, errors.New("refusing to apply TUN networking without daemon root privileges")
-	}
 	p := profileFromSnapshot(req.Profile)
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, err
@@ -68,7 +64,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		Firewall:      "not modified",
 		TransactionID: result.TransactionID,
 		Warnings: append([]string{
-			"TUN executor slice does not mutate DNS or nftables/firewall state yet",
+			"TUN executor slice requires daemon CAP_NET_ADMIN privileges and does not mutate DNS or nftables/firewall state yet",
 		}, plan.Warnings...),
 	}
 	m.mu.Lock()
@@ -78,8 +74,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 }
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
-	runtimeDir := m.runtimeDir()
-	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	store := txstate.TransactionStore{RuntimeDir: m.runtimeDir()}
 	tx, _, err := store.Load(transactionID)
 	if err != nil {
 		return api.LifecycleResponse{}, fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
@@ -120,38 +115,47 @@ func runTunTransaction(ctx context.Context, runtimeDir string, p profile.Profile
 	}
 	steps, err := executor.Apply(ctx, plan)
 	if err != nil {
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, plan, executor, fmt.Errorf("apply TUN plan: %w", err))
+		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
+		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, fmt.Errorf("apply TUN plan: %w", err))
 	}
 	tx.AppliedSteps = appliedStepsFromExecutor(steps, now())
 	if _, err := store.Save(tx); err != nil {
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, plan, executor, fmt.Errorf("record applied TUN plan: %w", err))
+		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
+		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, fmt.Errorf("record applied TUN plan: %w", err))
 	}
 	if _, _, err := store.Transition(tx.ID, txstate.TransactionApplied); err != nil {
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, plan, executor, err)
+		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
+		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, err)
 	}
 	if _, _, err := store.Transition(tx.ID, txstate.TransactionVerifying); err != nil {
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, plan, executor, err)
+		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
+		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, err)
 	}
 	tx, _, err = store.Load(tx.ID)
 	if err != nil {
 		return tunTransactionResult{}, err
 	}
 	if err := executor.Verify(ctx, plan); err != nil {
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, plan, executor, fmt.Errorf("verify TUN plan: %w", err))
+		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
+		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, fmt.Errorf("verify TUN plan: %w", err))
 	}
 	if _, _, err := store.Transition(tx.ID, txstate.TransactionCommitted); err != nil {
-		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, plan, executor, err)
+		partialPlan := rollbackPlanFromAppliedSteps(plan, steps)
+		return tunTransactionResult{}, rollbackTunFailure(ctx, store, &tx, partialPlan, executor, steps, err)
 	}
 	return tunTransactionResult{TransactionID: tx.ID, TransactionPath: path, Plan: plan}, nil
 }
 
-func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor, cause error) error {
-	if err := rollbackTunTransaction(ctx, store, tx, plan, executor); err != nil {
-		_ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
+func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
+	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
+	tx.Rollback = rollbackMetadataFromTunPlan(rollbackPlan)
+	_, _ = store.Save(*tx)
+	if err := rollbackTunTransaction(ctx, store, tx, rollbackPlan, executor); err != nil {
+		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
 		_, _ = store.Save(*tx)
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
 	}
-	return fmt.Errorf("%w; rolled back TunWarden-owned TUN, route, and policy-rule state", cause)
+	return fmt.Errorf("%w; rolled back applied TunWarden-owned TUN, route, and policy-rule state", cause)
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
@@ -177,6 +181,31 @@ func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore,
 	}
 	_, err := store.Save(*tx)
 	return err
+}
+
+func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step) planner.TunPlan {
+	rollback := planner.TunPlan{Mode: plan.Mode, TunnelMode: plan.TunnelMode, ProfileID: plan.ProfileID, ProfileName: plan.ProfileName}
+	for _, step := range steps {
+		switch step.Kind {
+		case "tun-device":
+			if step.Target == plan.TunDevice.Name {
+				rollback.TunDevice = plan.TunDevice
+			}
+		case "route":
+			for _, route := range plan.Routes {
+				if routeTarget(route) == step.Target {
+					rollback.Routes = append(rollback.Routes, route)
+				}
+			}
+		case "policy-rule":
+			for _, rule := range plan.PolicyRules {
+				if policyRuleTarget(rule) == step.Target {
+					rollback.PolicyRules = append(rollback.PolicyRules, rule)
+				}
+			}
+		}
+	}
+	return rollback
 }
 
 func newTunTransactionID(now func() time.Time) string {
@@ -252,11 +281,11 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 		}
 		rules = append(rules, policyRuleRollback(rule))
 	}
-	return txstate.RollbackMetadata{
-		TUN:         []txstate.TUNRollback{{InterfaceName: plan.TunDevice.Name, Owner: netexecutor.OwnerTunDevice}},
-		Routes:      routes,
-		PolicyRules: rules,
+	metadata := txstate.RollbackMetadata{Routes: routes, PolicyRules: rules}
+	if plan.TunDevice.Name != "" {
+		metadata.TUN = []txstate.TUNRollback{{InterfaceName: plan.TunDevice.Name, Owner: netexecutor.OwnerTunDevice}}
 	}
+	return metadata
 }
 
 func policyRuleRollback(rule planner.TunPolicyRulePlan) txstate.PolicyRuleRollback {
@@ -299,6 +328,10 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 		plan.PolicyRules = append(plan.PolicyRules, planner.TunPolicyRulePlan{Family: "ipv4", Priority: rule.Priority, Selector: selector, Table: rule.Table, Action: "add"})
 	}
 	return plan
+}
+
+func routeTarget(route planner.TunRoutePlan) string {
+	return route.Table + " " + route.Destination
 }
 
 func policyRuleTarget(rule planner.TunPolicyRulePlan) string {
