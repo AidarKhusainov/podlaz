@@ -97,7 +97,7 @@ Common flags, where relevant:
 --yes        Confirm a command that removes state or executes recovery cleanup.
 ```
 
-Short flags should be added only for frequent operations. For example, `logs -f` may alias `logs --follow`, but rare or high-impact flags such as `--execute` and `--yes` must stay long-only.
+Short flags should be added only for frequent operations. Rare or high-impact flags such as `--execute` and `--yes` must stay long-only.
 
 Commands that remove user state or execute recovery cleanup must follow this model:
 
@@ -155,19 +155,15 @@ tunwarden profile show <profile-id> [--json]
 tunwarden profile delete <profile-id> --yes
 ```
 
-Purpose: explicit lifecycle management for individual profiles.
-
 Implemented behavior:
 
 - manual profile add, list, show, and delete;
 - VLESS, VMess, Trojan, and Shadowsocks share URI import through `profile import <share-uri>`;
-- deterministic imported profile IDs based on display name plus stable connection fingerprint;
+- deterministic imported profile IDs;
 - persistent local profile storage at the documented XDG user state location;
-- human output for all implemented profile commands;
 - `profile list --json` and `profile show --json` with `schema_version: "v1"`;
 - required-field validation and clear failure for malformed payloads;
-- warnings for unsupported share URI options ignored by the current build;
-- redaction of identity/authentication fields in human and JSON output;
+- redaction of identity/authentication fields;
 - atomic profile store writes with restrictive file permissions;
 - `profile delete` requires `--yes` in the current non-interactive path.
 
@@ -249,7 +245,7 @@ Daemon requirement: optional. The default command must use daemon-backed diagnos
 Implemented behavior:
 
 - default human output with daemon-backed diagnostics or local fallback;
-- local host diagnostics for platform, command availability, default route, default interface, and stale TunWarden-owned resources;
+- local host diagnostics for platform, command availability, default route, default interface, resolved/TunWarden DNS visibility, and stale TunWarden-owned resources;
 - local-only `doctor --core --xray <path>` validation of an explicitly provided Xray binary;
 - `doctor --core --xray <path> --json` with the common top-level JSON shape and `checks`;
 - transaction-state diagnostics through stale resource checks;
@@ -276,7 +272,7 @@ Implemented behavior:
 - recent `tunwardend.service` logs through the system journal with `journalctl --system`;
 - `--follow` and `-f` for live log following;
 - `--daemon` as the explicit daemon log source;
-- `--core` for Xray lifecycle lines and daemon-forwarded Xray stdout/stderr marked with `tunwardend: core xray ...`;
+- `--core` for Xray lifecycle lines and daemon-forwarded Xray stdout/stderr;
 - `--since <duration>` and `--since=<duration>` passed to journalctl;
 - shared human-output redaction for each printed log line;
 - clear no-core-log guidance when `--core` finds no recent matching lines in non-follow mode.
@@ -315,13 +311,13 @@ Implemented TUN full-tunnel dry-run output:
 - default IPv4 route desired state through the TunWarden table;
 - policy-rule desired state for default IPv4 traffic through the TunWarden table;
 - VPN server bypass route and policy-rule desired state only when the current read-only snapshot resolved the server route to a concrete IP address;
-- DNS desired state for systemd-resolved per-link DNS on `tunwarden0`;
+- DNS desired state for systemd-resolved per-link DNS on `tunwarden0`, including planned DNS servers, route-only domain `~.`, default-route `yes`, and rollback intent;
 - nftables/firewall desired state for TunWarden-owned `table inet tunwarden`;
 - typed nftables chain/rule desired state for future apply, verify, and recover behavior;
 - rollback steps for planned nftables, DNS, TUN device, route, and policy-rule desired state;
 - final `No changes were applied.` confirmation.
 
-Implemented TUN JSON output keeps the common `schema_version`, `status`, `warnings`, and `errors` fields. Top-level `mode` remains the CLI mode selector value `tun`. The command-specific `plan.tunnel_mode` field is `full-tunnel`. The `plan` object includes `profile`, `tun`, `routes`, `policy_rules`, `server_bypass`, `dns`, `firewall`, safety flags, and the full current `snapshot`.
+Implemented TUN JSON output keeps the common `schema_version`, `status`, `warnings`, and `errors` fields. Top-level `mode` remains the CLI mode selector value `tun`. The command-specific `plan.tunnel_mode` field is `full-tunnel`. The `plan` object includes `profile`, `tun`, `routes`, `policy_rules`, `server_bypass`, `dns`, `firewall`, safety flags, and the full current `snapshot`. `plan.dns` includes `servers`, `route_only_domain`, and `default_route` so the exact DNS desired state is inspectable before mutation.
 
 `plan --mode tun` is still read-only. It produces intended TUN/route/policy-rule/DNS/nftables/firewall/kill-switch dry-run and rollback descriptions, but it does not apply anything.
 
@@ -358,21 +354,23 @@ Implemented `connect --mode tun` executor-slice behavior:
 - executor creates the TunWarden-owned TUN interface;
 - executor adds, never replaces, planned routes;
 - executor adds, never treats pre-existing rules as owned, planned policy rules;
+- executor applies systemd-resolved per-link DNS from `TunDNSPlan.Servers` with `resolvectl dns`, `resolvectl domain '~.'`, and `resolvectl default-route yes`;
 - route verify checks the destination plus expected device and gateway where applicable;
 - policy-rule verify checks the expected selector and lookup table;
+- DNS verify checks planned DNS servers and route-only domain `~.`;
 - transaction commits only after apply and verify succeed;
-- apply, verify, or transition failure rolls back only the steps actually applied by the transaction;
+- apply, verify, or transition failure rolls back only the steps actually applied by the transaction, including DNS via `resolvectl revert` when DNS was applied;
 - `disconnect` rolls back the active TunWarden-owned TUN transaction and is safe to repeat;
-- status exposes transaction state, rollback availability, cleanup requirement, and redacted transaction path.
+- status exposes transaction state, rollback availability, cleanup requirement, redacted transaction path, and DNS desired state.
 
 Current `connect --mode tun` limitations:
 
-- it is the first privileged executor slice only;
+- it is still an executor slice, not complete full VPN mode;
 - it does not start Xray in TUN mode yet;
-- it does not mutate DNS yet;
 - it does not mutate nftables/firewall yet;
 - it does not claim full leak protection yet;
-- it requires daemon process privileges equivalent to `CAP_NET_ADMIN` for TUN, route, and policy-rule mutation.
+- it supports systemd-resolved DNS only; non-systemd fallback and user DNS configuration are future work;
+- it requires daemon process privileges equivalent to `CAP_NET_ADMIN` for TUN, route, and policy-rule mutation plus permission to call `resolvectl` against systemd-resolved.
 
 Privilege model:
 
@@ -412,7 +410,7 @@ Expected cleanup candidates:
 - TunWarden-owned TUN interfaces;
 - TunWarden-owned routes/rules actually recorded in transaction rollback metadata;
 - future TunWarden-owned nftables state;
-- future TunWarden-owned DNS state where reversible.
+- TunWarden-owned DNS state recorded in transaction rollback metadata where reversible.
 
 ## 4. Milestone boundaries
 
@@ -421,12 +419,13 @@ The current implementation contains:
 - proxy-only lifecycle for Xray;
 - read-only full-tunnel TUN planning;
 - transaction-state persistence and diagnostics;
-- the first daemon-owned privileged TUN executor slice for TUN interface, routes, and policy rules.
+- daemon-owned privileged TUN executor slice for TUN interface, routes, policy rules, and systemd-resolved DNS;
+- DNS desired-state persistence in transaction state, including planned servers.
 
 Still deferred:
 
 - TUN-mode Xray lifecycle integration;
-- DNS mutation and rollback;
+- configurable DNS policy and non-systemd DNS fallback;
 - nftables/firewall mutation and rollback;
 - full leak-protection verification;
 - `recover --execute --yes` cleanup;
