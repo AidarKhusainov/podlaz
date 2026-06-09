@@ -120,10 +120,10 @@ func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
 	if err := validateDNSPlan(plan.DNS); err != nil {
 		return err
 	}
-	if shouldApplyFirewall(plan.Firewall) && e.Firewall == nil {
-		return errors.New("missing firewall executor")
-	}
-	if e.Firewall != nil {
+	if hasFirewallPlan(plan.Firewall) {
+		if e.Firewall == nil {
+			return errors.New("missing firewall executor")
+		}
 		if err := validateFirewallPlan(plan.Firewall); err != nil {
 			return err
 		}
@@ -210,4 +210,8 @@ func validateDNSPlan(plan planner.TunDNSPlan) error {
 
 func shouldApplyDNS(plan planner.TunDNSPlan) bool {
 	return plan.Action == planner.DNSActionConfigure && strings.TrimSpace(plan.TargetLink) != ""
+}
+
+func hasFirewallPlan(plan planner.TunFirewallPlan) bool {
+	return strings.TrimSpace(plan.Backend) != "" || strings.TrimSpace(plan.Family) != "" || strings.TrimSpace(plan.Table) != "" || strings.TrimSpace(plan.TableAction) != ""
 }
