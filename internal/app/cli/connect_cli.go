@@ -94,7 +94,9 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 			parsed.profileID = arg
 		}
 	}
-	if parsed.mode != planner.ModeProxyOnly {
+	switch parsed.mode {
+	case planner.ModeProxyOnly, planner.ModeTun:
+	default:
 		return parsed, usageError("unsupported connect mode %q", parsed.mode)
 	}
 	if parsed.profileID == "" {
@@ -191,19 +193,19 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden connect [--mode proxy-only] <profile-id>
+  tunwarden connect [--mode proxy-only|tun] <profile-id>
 
-Start the stored profile through the daemon-managed proxy-only Xray lifecycle.
-The command requires a running tunwardend daemon and does not mutate TUN,
-routes, DNS, nftables, or firewall state.
+Start the stored profile through the daemon-managed lifecycle.
 
-Implemented in v0.1:
-  proxy-only mode, generated runtime Xray config, local SOCKS and HTTP listeners,
-  daemon-owned Xray process supervision, and explicit no system networking
-  mutation.
+Implemented:
+  proxy-only Xray lifecycle and the first TUN executor slice for TUN device,
+  route, and policy-rule transaction apply/verify/rollback.
+
+TUN mode requires a daemon process with CAP_NET_ADMIN-equivalent privileges. The
+packaged proxy-only daemon remains unprivileged and must not start Xray as root.
 
 Not implemented yet:
-  --json, TUN mode, route/DNS/firewall mutation, automatic Xray download
+  --json, TUN DNS mutation, nftables/firewall mutation, automatic Xray download
 `)
 }
 
@@ -211,14 +213,13 @@ func printDisconnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden disconnect
 
-Stop the daemon-managed proxy-only Xray process. Repeated disconnects are safe
-and leave the connection inactive.
+Stop proxy-only Xray or roll back an active TunWarden-owned TUN transaction.
+Repeated disconnects are safe and leave the connection inactive.
 
-Implemented in v0.1:
-  graceful Xray stop with forced-stop fallback and generated runtime config
-  cleanup.
+Implemented:
+  graceful Xray stop, generated runtime config cleanup, and TUN executor rollback.
 
 Not implemented yet:
-  --json, TUN mode cleanup, route/DNS/firewall mutation
+  --json, DNS/firewall mutation cleanup
 `)
 }

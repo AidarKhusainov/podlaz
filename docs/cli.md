@@ -6,13 +6,13 @@ Other documents may show examples, but this file owns command names, argument sh
 
 TunWarden is a Linux-first, CLI-first networking tool. The CLI must optimize for clarity, safe defaults, recoverability, and observability instead of command count.
 
-State layout, JSON compatibility, redaction, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
+State layout, JSON compatibility, redaction, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md). Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 
 ## 1. Design principles
 
 ### User task names before implementation names
 
-Public commands should describe user tasks and stable domain objects:
+Public commands describe user tasks and stable domain objects:
 
 - `profile`
 - `subscription`
@@ -37,18 +37,9 @@ Rules:
 - recovery cleanup must require explicit `--execute` and `--yes` flags;
 - full-tunnel networking changes must be planned before they are applied;
 - proxy-only mode must not mutate routes, DNS, TUN, nftables, or firewall state;
-- TUN planning must not create TUN devices, mutate routes, mutate policy rules, mutate DNS, mutate nftables/firewall state, start Xray, or write runtime config files.
-
-### Object groups for long-lived state
-
-Use command groups for resources with independent lifecycles:
-
-```bash
-tunwarden profile ...
-tunwarden subscription ...
-```
-
-A convenience `tunwarden import` command may exist for common first-run workflows, but it must not erase the distinction between profiles and subscriptions.
+- TUN planning must not create TUN devices, mutate routes, mutate policy rules, mutate DNS, mutate nftables/firewall state, start Xray, or write runtime config files;
+- TUN execution must happen only through daemon-owned transaction state and rollback metadata;
+- rollback must remove only state that the transaction actually applied.
 
 ### Human-readable first, automation-friendly when useful
 
@@ -64,6 +55,8 @@ Commands likely to be scripted should support `--json`, especially:
 - `subscription show`
 - `plan`
 
+If a command-specific implementation issue explicitly defers JSON, that command must fail fast for `--json` with exit code `2` until the JSON contract is implemented in a dedicated change.
+
 Primary output goes to stdout. Errors go to stderr.
 
 Exit codes:
@@ -77,82 +70,11 @@ Exit codes:
 | 4 | Permission or authorization failure. |
 | 5 | Daemon unavailable when the command requires daemon access. |
 
-`doctor` returns `0` only when diagnostics complete and required checks are healthy. It returns `3` when diagnostics complete but one or more checks fail. It returns `1` when diagnostics cannot complete because of an unexpected runtime error.
-
-`status` returns `0` for a clean inactive local state in the v0.1 local fallback. It returns `3` when the local fallback finds stale runtime state or incomplete visibility.
-
-### JSON compatibility
-
-JSON output is a stable public interface once implemented for a command.
-
-Rules:
-
-- every JSON response must include `schema_version`;
-- existing field names and meanings must not change without a documented compatibility note;
-- new fields may be added;
-- consumers must ignore unknown fields;
-- human output and JSON output must apply the same redaction policy.
-
-Common top-level shape:
-
-```json
-{
-  "schema_version": "v1",
-  "status": "ok|warn|fail",
-  "warnings": [],
-  "errors": []
-}
-```
-
-Command-specific top-level fields:
-
-```text
-status:
-  daemon
-  connection
-  runtime
-
-doctor:
-  checks
-
-profile list:
-  profiles
-
-profile show:
-  profile
-
-plan:
-  mode
-  plan
-  steps
-  rollback_steps
-```
-
-The detailed schema can evolve during implementation, but these top-level meanings are part of the CLI contract once the corresponding command's `--json` output is implemented.
-
-If a command-specific implementation issue explicitly defers JSON, that command must fail fast for `--json` with exit code `2` until the JSON contract is implemented in a dedicated change.
-
 ### Redaction
 
 `status`, `doctor`, `logs`, `plan`, `recover`, and every `--json` output must follow the redaction rules in [State and security requirements](./state-and-security.md).
 
-Default output must not print full subscription URLs, full share URIs, generated core configs containing credentials, private keys, passwords, auth headers, or provider tokens.
-
-### Flags over command proliferation
-
-Use flags to select facets of an existing task.
-
-Preferred:
-
-```bash
-tunwarden doctor --core --xray <path>
-tunwarden doctor --dns
-tunwarden doctor --routes
-tunwarden logs --core
-tunwarden logs --daemon
-```
-
-Avoid separate command families for checks that belong under `doctor`.
+Default output must not print full subscription URLs, full share URIs, generated core configs containing credentials, private keys, passwords, authorization headers, provider tokens, or transaction content that could contain secret-looking values.
 
 ## 2. Global behavior
 
@@ -190,11 +112,9 @@ proxy-only
 tun
 ```
 
-Initial default mode should be `proxy-only` until TUN mode is implemented and safe.
+The default connection mode is `proxy-only`.
 
-## 3. v0.1 command contract: proxy-only technical preview
-
-v0.1 must deliver a coherent proxy-only flow without TUN, route, DNS, nftables, or firewall mutation.
+## 3. Implemented command contract
 
 ### Version and help
 
@@ -237,7 +157,7 @@ tunwarden profile delete <profile-id> --yes
 
 Purpose: explicit lifecycle management for individual profiles.
 
-Implemented foundation profile management view:
+Implemented behavior:
 
 - manual profile add, list, show, and delete;
 - VLESS, VMess, Trojan, and Shadowsocks share URI import through `profile import <share-uri>`;
@@ -245,20 +165,11 @@ Implemented foundation profile management view:
 - persistent local profile storage at the documented XDG user state location;
 - human output for all implemented profile commands;
 - `profile list --json` and `profile show --json` with `schema_version: "v1"`;
-- required-field validation for manual profile name, protocol, server, and port;
-- required-field and compatibility validation for imported share URI identities, server, port, transport, and security;
-- clear failure for malformed share URI payloads and query percent-encoding;
-- warnings for unsupported share URI options that are ignored by the current build;
-- redaction of imported identity/authentication fields in human and JSON output;
+- required-field validation and clear failure for malformed payloads;
+- warnings for unsupported share URI options ignored by the current build;
+- redaction of identity/authentication fields in human and JSON output;
 - atomic profile store writes with restrictive file permissions;
-- corrupt or unreadable profile storage fails safely with a clear error;
-- `profile delete` requires `--yes` in the current non-interactive v0.1 CLI path.
-
-Deferred behavior:
-
-- `profile import --json`;
-- VLESS custom string IDs;
-- generated proxy-only Xray config support for non-VLESS imported profiles.
+- `profile delete` requires `--yes` in the current non-interactive path.
 
 Mutation level:
 
@@ -302,14 +213,15 @@ Mutation level: read-only.
 
 Daemon requirement: optional. The command must use daemon-backed status when available and a conservative local fallback otherwise.
 
-Implemented foundation status behavior:
+Implemented behavior:
 
 - human output only;
-- daemon-backed inactive and active proxy-only state;
-- active mode when proxy-only lifecycle is running;
+- daemon-backed inactive, active proxy-only, and active TUN transaction state;
+- active mode when a lifecycle is running;
 - local proxy listener state when proxy-only lifecycle is running;
 - Xray crash visibility through daemon warnings;
-- explicit TUN, route, DNS, and firewall non-mutation state from the daemon;
+- explicit TUN, route, DNS, and firewall state from the daemon;
+- transaction summaries with state, rollback availability, cleanup requirement, and redacted transaction path;
 - conservative local fallback when daemon is unavailable;
 - runtime directory state;
 - stale runtime state summary;
@@ -332,21 +244,20 @@ Purpose: explain environment and runtime health.
 
 Mutation level: read-only.
 
-Daemon requirement: optional. The default command must use daemon-backed diagnostics when available and local read-only diagnostics otherwise. The v0.1 `doctor --core --xray <path>` scope is explicitly local-only.
+Daemon requirement: optional. The default command must use daemon-backed diagnostics when available and local read-only diagnostics otherwise. The `doctor --core --xray <path>` scope is explicitly local-only.
 
-Implemented foundation doctor behavior:
+Implemented behavior:
 
 - default human output with daemon-backed diagnostics or local fallback;
 - local host diagnostics for platform, command availability, default route, default interface, and stale TunWarden-owned resources;
 - local-only `doctor --core --xray <path>` validation of an explicitly provided Xray binary;
 - `doctor --core --xray <path> --json` with the common top-level JSON shape and `checks`;
+- transaction-state diagnostics through stale resource checks;
 - shared human/JSON redaction for doctor output.
 
 `doctor --json` without `--core` is deferred to a separate issue. Until implemented, it must fail fast as invalid usage with exit code `2`.
 
-`doctor --core` without `--xray <path>` is deferred in v0.1. It must fail fast as invalid usage with exit code `2` instead of guessing a default Xray path.
-
-`doctor --core` is the preferred public UX for validating the Xray binary and runtime core health. A lower-level `core check` command is not part of the v0.1 public contract.
+`doctor --core` without `--xray <path>` is deferred. It must fail fast as invalid usage with exit code `2` instead of guessing a default Xray path.
 
 ### Logs
 
@@ -359,22 +270,20 @@ Purpose: inspect TunWarden daemon and core logs.
 
 Mutation level: read-only.
 
-Implemented v0.1 journald-backed log behavior:
+Implemented behavior:
 
 - human output only;
 - recent `tunwardend.service` logs through the system journal with `journalctl --system`;
 - `--follow` and `-f` for live log following;
 - `--daemon` as the explicit daemon log source;
 - `--core` for Xray lifecycle lines and daemon-forwarded Xray stdout/stderr marked with `tunwardend: core xray ...`;
-- `--since <duration>` and `--since=<duration>` passed to journalctl, including relative values such as `-1h`;
+- `--since <duration>` and `--since=<duration>` passed to journalctl;
 - shared human-output redaction for each printed log line;
 - clear no-core-log guidance when `--core` finds no recent matching lines in non-follow mode.
 
 `logs --json` is deferred to a separate issue. Until implemented, it must fail fast as invalid usage with exit code `2`.
 
 If `journalctl` is unavailable, the command must fail clearly with an actionable message. If the current user cannot read the system journal, the command must surface the redacted `journalctl` error.
-
-`-f` may alias `--follow` because it is a common log-following pattern.
 
 ### Plan
 
@@ -393,7 +302,6 @@ Implemented proxy-only output:
 - selected mode;
 - generated Xray config path;
 - local proxy listeners;
-- core binary path/version if known;
 - explicit statement that no TUN, routes, DNS, nftables, or firewall state will be changed;
 - warnings for unsupported profile settings.
 
@@ -407,65 +315,73 @@ Implemented TUN full-tunnel dry-run output:
 - default IPv4 route desired state through the TunWarden table;
 - policy-rule desired state for default IPv4 traffic through the TunWarden table;
 - VPN server bypass route and policy-rule desired state only when the current read-only snapshot resolved the server route to a concrete IP address;
-- blocked/incomplete server-bypass output and warnings when the server target is not a concrete IP address;
 - DNS desired state for systemd-resolved per-link DNS on `tunwarden0`;
-- DNS rollback intent to restore previous per-link DNS state where possible;
 - nftables/firewall desired state for TunWarden-owned `table inet tunwarden`;
-- typed nftables chain desired state, initially an `output` chain with `type filter`, `hook output`, `priority 0`, and `policy accept`;
-- typed nftables rule desired state for VPN server bypass, TUN egress allow, and non-TUN kill-switch blocking;
-- rule ownership markers and rollback keys for future apply, verify, and recover behavior;
-- VPN server bypass and non-TUN blocking according to the selected kill-switch policy;
-- nftables rollback intent to remove `inet tunwarden` if created by the transaction;
-- explicit kill-switch policy limitations and strict kill-switch recovery warnings;
-- current default IPv4 and IPv6 route state;
-- current default interface when detected;
-- route to the VPN server candidate after resolving hostname servers to an IP address with a read-only resolver timeout;
-- DNS mode and systemd-resolved availability/state;
-- NetworkManager availability and advisory state;
-- nftables availability and TunWarden-owned `inet tunwarden` table presence;
-- IPv4/IPv6 assumptions;
-- known TunWarden TUN device presence for names such as `tunwarden0`;
-- stale TunWarden-owned resources;
-- warnings for incomplete visibility, DNS resolution failure, optional backend absence, stale resources, unsupported DNS/firewall environments, and route-loop risk;
-- rollback steps for the planned nftables, DNS, TUN device, route, and policy-rule desired state;
+- typed nftables chain/rule desired state for future apply, verify, and recover behavior;
+- rollback steps for planned nftables, DNS, TUN device, route, and policy-rule desired state;
 - final `No changes were applied.` confirmation.
 
-Implemented TUN JSON output keeps the common `schema_version`, `status`, `warnings`, and `errors` fields. Top-level `mode` remains the CLI mode selector value `tun`. The command-specific `plan.tunnel_mode` field is `full-tunnel`. The `plan` object includes `profile`, `tun`, `routes`, `policy_rules`, `server_bypass`, `dns`, `firewall`, safety flags, and the full current `snapshot`. `plan.firewall.chains` and `plan.firewall.rules` contain typed nftables desired-state objects, including chain name/type/hook/priority/policy/action and rule chain/expression/verdict/action/reason/ownership/rollback key. The snapshot includes `os`, default routes, server route, DNS, NetworkManager, nftables, TUN devices, IPv4, IPv6, and stale resources with the same redaction policy as human output. `plan.claims_leak_protection` is `false` until apply, verify, rollback, and recover execution exist.
+Implemented TUN JSON output keeps the common `schema_version`, `status`, `warnings`, and `errors` fields. Top-level `mode` remains the CLI mode selector value `tun`. The command-specific `plan.tunnel_mode` field is `full-tunnel`. The `plan` object includes `profile`, `tun`, `routes`, `policy_rules`, `server_bypass`, `dns`, `firewall`, safety flags, and the full current `snapshot`.
 
-The current `plan --mode tun` implementation is still read-only. It produces intended TUN/route/policy-rule/DNS/nftables/firewall/kill-switch dry-run and rollback descriptions, but it does not apply anything and does not yet provide privileged execution, verified leak protection, or health-check apply/verify behavior.
+`plan --mode tun` is still read-only. It produces intended TUN/route/policy-rule/DNS/nftables/firewall/kill-switch dry-run and rollback descriptions, but it does not apply anything.
 
 ### Connect and disconnect
 
 ```bash
-tunwarden connect [--mode proxy-only] <profile-id>
+tunwarden connect [--mode proxy-only|tun] <profile-id>
 tunwarden disconnect
 ```
 
-Purpose: start and stop proxy-only Xray lifecycle.
+Purpose: start and stop daemon-managed connection lifecycle.
 
-Mutation level: process lifecycle and volatile TunWarden runtime state only.
+Daemon requirement: required through the local Unix socket API.
 
-Implemented v0.1 behavior:
+Default mode: `proxy-only`.
 
-- daemon-required lifecycle through the local Unix socket API;
+Implemented proxy-only behavior:
+
 - stored profile lookup in user-owned local profile state before sending a normalized profile snapshot to the daemon;
 - daemon-side profile validation before process start;
 - generated runtime Xray config under the daemon runtime directory;
 - daemon-managed Xray start and stop;
-- packaged `tunwardend` and Xray run as the unprivileged `tunwarden:tunwarden` service identity;
-- manual root `connect` is rejected instead of starting Xray as root;
+- packaged proxy-only `tunwardend` and Xray run as the unprivileged `tunwarden:tunwarden` service identity;
+- manual root proxy-only connect is rejected instead of starting Xray as root;
 - graceful stop and forced-stop fallback;
 - idempotent disconnect;
 - Xray crash visible in daemon-backed `status`.
 
-v0.1 safety boundary:
+Implemented `connect --mode tun` executor-slice behavior:
 
-- no TUN interface;
-- no route mutation;
-- no DNS mutation;
-- no nftables/firewall mutation;
-- no automatic Xray download/update;
-- no full leak-protection claim.
+- daemon-owned transaction file is written before any TUN mutation;
+- current host networking is captured through the read-only snapshot model;
+- existing TUN full-tunnel planner output is used as desired state;
+- executor creates the TunWarden-owned TUN interface;
+- executor adds, never replaces, planned routes;
+- executor adds, never treats pre-existing rules as owned, planned policy rules;
+- route verify checks the destination plus expected device and gateway where applicable;
+- policy-rule verify checks the expected selector and lookup table;
+- transaction commits only after apply and verify succeed;
+- apply, verify, or transition failure rolls back only the steps actually applied by the transaction;
+- `disconnect` rolls back the active TunWarden-owned TUN transaction and is safe to repeat;
+- status exposes transaction state, rollback availability, cleanup requirement, and redacted transaction path.
+
+Current `connect --mode tun` limitations:
+
+- it is the first privileged executor slice only;
+- it does not start Xray in TUN mode yet;
+- it does not mutate DNS yet;
+- it does not mutate nftables/firewall yet;
+- it does not claim full leak protection yet;
+- it requires daemon process privileges equivalent to `CAP_NET_ADMIN` for TUN, route, and policy-rule mutation.
+
+Privilege model:
+
+- proxy-only lifecycle must remain unprivileged and must not start Xray as root;
+- TUN execution requires a separately documented privileged daemon deployment or future helper with `CAP_NET_ADMIN`-equivalent rights;
+- the CLI must not become a privileged/SUID networking mutator;
+- expanding packaged daemon privileges must update the service/security documentation in the same change.
+
+`connect --json` and `disconnect --json` are deferred. Until implemented, they must fail fast as invalid usage with exit code `2`.
 
 ### Recovery
 
@@ -479,77 +395,40 @@ Purpose: inspect and later clean up stale TunWarden-owned state.
 Mutation level:
 
 - `recover`: read-only dry-run;
-- `recover --execute --yes`: explicit cleanup of TunWarden-owned state only; deferred until safe TUN work.
+- `recover --execute --yes`: explicit cleanup of TunWarden-owned state only; deferred until safe cleanup execution exists.
 
-v0.1 requirement:
+Implemented behavior:
 
-- `recover` must be dry-run only in v0.1;
-- `--execute` must not be implemented in v0.1.
+- `recover` is dry-run only;
+- pending, failed, rolling-back, or stale transaction files under `/run/tunwarden/transactions/` are shown as recovery candidates;
+- transaction candidates include state, rollback availability, cleanup requirement, and redacted transaction path;
+- invalid or unreadable transaction files are reported as inspection warnings, not ignored.
 
 Expected cleanup candidates:
 
 - TunWarden-owned runtime files;
 - TunWarden-owned generated configs;
 - TunWarden-owned core processes;
-- future TunWarden-owned TUN interfaces;
-- future TunWarden-owned routes/rules;
+- TunWarden-owned TUN interfaces;
+- TunWarden-owned routes/rules actually recorded in transaction rollback metadata;
 - future TunWarden-owned nftables state;
 - future TunWarden-owned DNS state where reversible.
 
-## 4. v0.2 command additions: safe TUN preview
+## 4. Milestone boundaries
 
-v0.2 adds privileged networking only through the transaction model.
+The current implementation contains:
 
-```bash
-tunwarden plan --mode tun <profile-id> [--json]
-tunwarden connect --mode tun <profile-id>
-tunwarden reconnect
-tunwarden recover --execute --yes
-tunwarden logs --network
-tunwarden doctor --network
-tunwarden doctor --dns
-tunwarden doctor --routes
-tunwarden doctor --firewall
-```
+- proxy-only lifecycle for Xray;
+- read-only full-tunnel TUN planning;
+- transaction-state persistence and diagnostics;
+- the first daemon-owned privileged TUN executor slice for TUN interface, routes, and policy rules.
 
-The current `plan --mode tun` implementation is the read-only full-tunnel dry-run required before full TUN mutation work. It combines the current host snapshot with intended TUN device, route, policy-rule, VPN server bypass, DNS, nftables/firewall chains/rules, kill-switch, route-loop warning, and rollback output. It still does not apply anything and does not yet provide privileged execution, verified leak protection, or health-check apply/verify behavior.
+Still deferred:
 
-`connect --mode tun` must apply changes only through daemon-owned network transactions.
-
-`reconnect` should become public only when the daemon has a real state machine for core crash, suspend/resume, and network change handling.
-
-`recover --execute --yes` must affect only identifiable TunWarden-owned state and must print what changed and what could not be changed.
-
-## 5. Explicitly deferred commands
-
-These commands are not part of v0.1 unless a later issue explicitly changes the milestone:
-
-```bash
-tunwarden core check --xray
-tunwarden explain routes
-tunwarden explain dns
-tunwarden explain firewall
-tunwarden latency
-tunwarden test-url
-tunwarden auto-select
-```
-
-Notes:
-
-- `core check` is deferred because `doctor --core` is the preferred user-facing workflow.
-- `explain ...` commands are deferred until `doctor` and `plan` output become too large for one command.
-- latency, URL testing, and auto-select are convenience features, not reliability foundations.
-
-## 6. Naming decisions
-
-### `import` as convenience, not replacement
-
-`tunwarden import` exists for first-run convenience and format detection.
-
-It must not replace explicit `profile` and `subscription` command groups, because profiles and subscriptions have different lifecycles.
-
-### `plan` is a safety command
-
-`plan` is required because TunWarden changes Linux networking in later milestones.
-
-It must not become decorative. If a plan cannot explain meaningful changes or non-changes, it should not be exposed for that mode yet.
+- TUN-mode Xray lifecycle integration;
+- DNS mutation and rollback;
+- nftables/firewall mutation and rollback;
+- full leak-protection verification;
+- `recover --execute --yes` cleanup;
+- reconnect/suspend/resume state machine;
+- GUI.

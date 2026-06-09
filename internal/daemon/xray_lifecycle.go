@@ -27,7 +27,7 @@ const (
 	generatedXrayName  = "xray.json"
 )
 
-// XrayManager owns the daemon-side proxy-only Xray process lifecycle.
+// XrayManager owns daemon-side connection lifecycle.
 type XrayManager struct {
 	RuntimeDir  string
 	XrayPath    string
@@ -51,6 +51,7 @@ type xrayState struct {
 	DNS               string
 	Firewall          string
 	RuntimeConfigPath string
+	TransactionID     string
 	Warnings          []string
 }
 
@@ -59,13 +60,21 @@ func NewXrayManager(runtimeDir string) *XrayManager {
 }
 
 func (m *XrayManager) Connect(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
-	_ = ctx
 	if err := api.ValidateConnectRequest(req); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if strings.TrimSpace(req.Mode) != planner.ModeProxyOnly {
+	switch strings.TrimSpace(req.Mode) {
+	case planner.ModeProxyOnly:
+		return m.connectProxyOnly(ctx, req)
+	case planner.ModeTun:
+		return m.connectTun(ctx, req)
+	default:
 		return api.LifecycleResponse{}, fmt.Errorf("unsupported connect mode %q", req.Mode)
 	}
+}
+
+func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+	_ = ctx
 	p := profileFromSnapshot(req.Profile)
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, err
@@ -86,7 +95,7 @@ func (m *XrayManager) Connect(ctx context.Context, req api.ConnectRequest) (api.
 	}
 
 	m.mu.Lock()
-	if m.cmd != nil {
+	if m.cmd != nil || m.state.Connection == "active" {
 		m.mu.Unlock()
 		return api.LifecycleResponse{}, errors.New("connection already active; run tunwarden disconnect before connecting another profile")
 	}
@@ -139,12 +148,19 @@ func (m *XrayManager) Connect(ctx context.Context, req api.ConnectRequest) (api.
 }
 
 func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
-	_ = ctx
 	m.mu.Lock()
 	cmd := m.cmd
 	done := m.done
 	configPath := m.state.RuntimeConfigPath
 	if cmd == nil {
+		if m.state.Connection == "active" && m.state.Mode == planner.ModeTun {
+			transactionID := m.state.TransactionID
+			m.mu.Unlock()
+			if transactionID == "" {
+				return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run tunwarden recover")
+			}
+			return m.disconnectTun(ctx, transactionID)
+		}
 		m.state = inactiveXrayState()
 		m.mu.Unlock()
 		removeGeneratedConfig(configPath)

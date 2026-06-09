@@ -13,9 +13,9 @@ import (
 
 // Run starts the privileged daemon skeleton.
 //
-// The daemon will eventually own all privileged networking mutations. Keeping
-// that responsibility out of the user CLI avoids SUID binaries and makes crash
-// recovery testable through one long-running process.
+// The daemon owns privileged networking mutations. Keeping that responsibility
+// out of the user CLI avoids SUID binaries and makes crash recovery testable
+// through one long-running process.
 func Run(ctx context.Context, args []string) error {
 	return run(ctx, args, os.Stdout)
 }
@@ -29,7 +29,7 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 
 	fmt.Fprintln(stdout, "tunwardend: daemon started")
 	fmt.Fprintln(stdout, "tunwardend: serving local status API over Unix socket")
-	fmt.Fprintln(stdout, "tunwardend: no network changes are applied in this build")
+	fmt.Fprintln(stdout, "tunwardend: network changes are applied only through daemon-owned transactions")
 
 	if err := (daemonapi.Server{}).Run(ctx); err != nil {
 		return err

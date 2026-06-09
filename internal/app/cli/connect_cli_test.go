@@ -67,6 +67,47 @@ func TestRunCLIConnectStartsStoredProfileViaDaemon(t *testing.T) {
 	}
 }
 
+func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	store, err := profile.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	var gotMode string
+	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", p.ID}, &out, options{
+		profileStorePath: storePath,
+		connect: func(_ context.Context, _ profile.Profile, mode string) (api.LifecycleResponse, error) {
+			gotMode = mode
+			return api.LifecycleResponse{
+				Connection: "active",
+				Mode:       mode,
+				Proxy:      "not started in this executor slice",
+				TUN:        "enabled (tunwarden0)",
+				Routes:     "applied 2 route(s) and 2 policy rule(s)",
+				DNS:        "not modified",
+				Firewall:   "not modified",
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("connect --mode tun failed: %v", err)
+	}
+	if gotMode != planner.ModeTun {
+		t.Fatalf("expected tun mode, got %q", gotMode)
+	}
+	for _, text := range []string{"Mode: tun", "TUN: enabled (tunwarden0)", "Routes: applied 2 route(s)"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("expected output to contain %q, got %q", text, out.String())
+		}
+	}
+}
+
 func TestRunCLIDisconnectIsRenderedAsInactive(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"disconnect"}, &out, options{
@@ -91,9 +132,9 @@ func TestRunCLIDisconnectIsRenderedAsInactive(t *testing.T) {
 	}
 }
 
-func TestRunCLIConnectRejectsUnsupportedMode(t *testing.T) {
+func TestRunCLIConnectRejectsUnknownMode(t *testing.T) {
 	var out bytes.Buffer
-	err := run(context.Background(), []string{"connect", "--mode", "tun", "profile-id"}, &out)
+	err := run(context.Background(), []string{"connect", "--mode", "unknown", "profile-id"}, &out)
 	if err == nil {
 		t.Fatal("expected unsupported connect mode to fail")
 	}
