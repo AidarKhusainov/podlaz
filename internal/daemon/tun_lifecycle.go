@@ -63,10 +63,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		TUN:           fmt.Sprintf("enabled (%s)", plan.TunDevice.Name),
 		Routes:        fmt.Sprintf("applied %d route(s) and %d policy rule(s)", len(appliedRoutes(plan)), len(appliedPolicyRules(plan))),
 		DNS:           dnsStatusLine(plan.DNS),
-		Firewall:      "not modified",
+		Firewall:      firewallStatusLine(plan.Firewall),
 		TransactionID: result.TransactionID,
 		Warnings: append([]string{
-			"TUN executor slice requires daemon CAP_NET_ADMIN privileges; nftables/firewall state is still not modified in this slice",
+			"TUN executor slice requires daemon CAP_NET_ADMIN privileges; nftables rollback removes only the TunWarden-owned inet tunwarden table",
 		}, plan.Warnings...),
 	}
 	m.mu.Lock()
@@ -157,7 +157,7 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 		_, _ = store.Save(*tx)
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
 	}
-	return fmt.Errorf("%w; rolled back applied TunWarden-owned TUN, route, policy-rule, and DNS state", cause)
+	return fmt.Errorf("%w; rolled back applied TunWarden-owned TUN, route, policy-rule, DNS, and nftables state", cause)
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
@@ -209,6 +209,10 @@ func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step
 			if step.Target == plan.DNS.TargetLink {
 				rollback.DNS = plan.DNS
 			}
+		case "nftables":
+			if step.Target == firewallTarget(plan.Firewall) {
+				rollback.Firewall = plan.Firewall
+			}
 		}
 	}
 	return rollback
@@ -229,7 +233,7 @@ func snapshotMetadata(s netsnapshot.Snapshot, now time.Time) txstate.SnapshotMet
 
 func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	routes := make([]txstate.RoutePlan, 0, len(plan.Routes))
-	steps := make([]txstate.PlannedStep, 0, len(plan.Steps)+len(plan.PolicyRules)+1)
+	steps := make([]txstate.PlannedStep, 0, len(plan.Steps)+len(plan.PolicyRules)+len(plan.Firewall.Rules)+2)
 	for _, route := range plan.Routes {
 		if route.Action != "add" {
 			continue
@@ -253,6 +257,9 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
 		steps = append(steps, txstate.PlannedStep{Kind: "dns", Target: plan.DNS.TargetLink, Description: plan.DNS.Reason, Owner: netexecutor.OwnerDNS})
 	}
+	if plan.Firewall.TableAction == planner.FirewallTableAction && plan.Firewall.Table != "" {
+		steps = append(steps, txstate.PlannedStep{Kind: "nftables", Target: firewallTarget(plan.Firewall), Description: plan.Firewall.Reason, Owner: netexecutor.OwnerFirewall})
+	}
 	return txstate.DesiredPlan{
 		PlanID: plan.ProfileID + ":" + planner.ModeTun,
 		TUN: txstate.TUNDesiredState{
@@ -271,7 +278,8 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		NFT: txstate.NFTPlan{
 			Family: plan.Firewall.Family,
 			Table:  plan.Firewall.Table,
-			Owner:  txstate.TransactionOwner,
+			Chains: nftChains(plan.Firewall),
+			Owner:  netexecutor.OwnerFirewall,
 		},
 		Steps: steps,
 	}
@@ -298,6 +306,9 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 	}
 	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
 		metadata.DNS = []txstate.DNSRollback{{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, SearchDomains: dnsSearchDomains(plan.DNS), Owner: netexecutor.OwnerDNS}}
+	}
+	if plan.Firewall.TableAction == planner.FirewallTableAction && plan.Firewall.Table != "" {
+		metadata.NFTables = []txstate.NFTablesRollback{{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Owner: netexecutor.OwnerFirewall}}
 	}
 	return metadata
 }
@@ -347,6 +358,12 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 	} else if tx.DesiredPlan.DNS.Link != "" {
 		plan.DNS = planner.TunDNSPlan{Backend: tx.DesiredPlan.DNS.Backend, TargetLink: tx.DesiredPlan.DNS.Link, Servers: append([]string{}, tx.DesiredPlan.DNS.Servers...), Action: planner.DNSActionConfigure}
 	}
+	if len(tx.Rollback.NFTables) > 0 {
+		nft := tx.Rollback.NFTables[0]
+		plan.Firewall = planner.TunFirewallPlan{Backend: planner.FirewallBackendNftables, Family: nft.Family, Table: nft.Table, TableAction: planner.FirewallTableAction}
+	} else if tx.DesiredPlan.NFT.Table != "" {
+		plan.Firewall = planner.TunFirewallPlan{Backend: planner.FirewallBackendNftables, Family: tx.DesiredPlan.NFT.Family, Table: tx.DesiredPlan.NFT.Table, TableAction: planner.FirewallTableAction}
+	}
 	return plan
 }
 
@@ -386,6 +403,51 @@ func dnsStatusLine(plan planner.TunDNSPlan) string {
 		return "blocked: " + plan.Reason
 	}
 	return "not modified"
+}
+
+func firewallStatusLine(plan planner.TunFirewallPlan) string {
+	if plan.TableAction == planner.FirewallTableAction && plan.Table != "" {
+		return fmt.Sprintf("%s; Table: %s %s; Kill-switch: %s; Rollback: %s", plan.Backend, plan.Family, plan.Table, plan.KillSwitch.Policy, plan.Rollback)
+	}
+	if plan.TableAction == planner.FirewallActionBlocked {
+		return "blocked: " + plan.Reason
+	}
+	if plan.TableAction == planner.FirewallActionValidate {
+		return fmt.Sprintf("%s; Table: %s %s requires ownership validation before apply", plan.Backend, plan.Family, plan.Table)
+	}
+	return "not modified"
+}
+
+func nftChains(plan planner.TunFirewallPlan) []txstate.NFTChainPlan {
+	chains := make([]txstate.NFTChainPlan, 0, len(plan.Chains))
+	rules := firewallRuleStrings(plan.Rules)
+	for _, chain := range plan.Chains {
+		chains = append(chains, txstate.NFTChainPlan{
+			Name:     chain.Name,
+			Hook:     chain.Hook,
+			Type:     chain.Type,
+			Priority: chain.Priority,
+			Policy:   chain.Policy,
+			Rules:    append([]string{}, rules...),
+			Owner:    netexecutor.OwnerFirewall,
+		})
+	}
+	return chains
+}
+
+func firewallRuleStrings(rules []planner.TunFirewallRulePlan) []string {
+	out := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Action != planner.FirewallActionAdd {
+			continue
+		}
+		out = append(out, strings.TrimSpace(rule.Expr+" "+rule.Verdict+" owner "+rule.Ownership))
+	}
+	return out
+}
+
+func firewallTarget(plan planner.TunFirewallPlan) string {
+	return strings.TrimSpace(plan.Family + " " + plan.Table)
 }
 
 func dnsSearchDomains(plan planner.TunDNSPlan) []string {
