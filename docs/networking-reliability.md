@@ -257,3 +257,214 @@ It requires every planned DNS server and the route-only domain `~.` to be visibl
 ### DNS-004: Bootstrap DNS must avoid loops
 
 DNS needed to resolve the VPN server must not depend on the VPN tunnel that is not established yet.
+
+### DNS-005: Remote DNS through proxy
+
+When the profile uses remote DNS, remote DNS should go through the proxy/VPN path where supported.
+
+### DNS-006: DNS diagnostics
+
+`tunwarden doctor` must report:
+
+- active DNS backend,
+- DNS servers by link,
+- domains by link,
+- whether `~.` is active,
+- whether DNS resolution works,
+- whether server bootstrap DNS can work without a loop.
+
+## 8. Firewall and kill-switch requirements
+
+### FW-001: nftables first
+
+Initial implementation should use nftables.
+
+iptables fallback is future scope.
+
+The current dry-run plan must show the intended nftables backend before applying anything and must warn clearly when `nft` or nftables table visibility is unavailable. The daemon-owned executor layer may apply, verify, and roll back the TunWarden-owned nftables table from an already-inspected plan, but user-visible leak-protection claims remain blocked until full TUN core runtime config, connectivity verification, and recovery behavior are complete.
+
+### FW-002: TunWarden-owned table
+
+TunWarden must use a clearly named nftables table, for example:
+
+```text
+nft table inet tunwarden
+```
+
+The current `plan --mode tun` implementation reports nftables availability and TunWarden table presence and also shows intended nftables/firewall desired state:
+
+```text
+Firewall plan:
+- create nftables table inet tunwarden
+- allow VPN server bypass outside TUN
+- block non-TUN traffic according to selected kill-switch policy
+- rollback: remove inet tunwarden
+```
+
+Dry-run output still must not mutate nftables or firewall state.
+
+### FW-003: Kill-switch modes
+
+Kill-switch must have explicit modes:
+
+```text
+off
+soft
+strict
+```
+
+Suggested semantics:
+
+- `off`: no kill-switch; rollback restores direct connectivity.
+- `soft`: prevent accidental leaks during transition but restore direct connectivity on failure.
+- `strict`: block non-VPN traffic if VPN fails, except recovery/control traffic.
+
+The current dry-run planner exposes the selected kill-switch policy and its limitations. Strict kill-switch planning must warn that direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules. No user-visible connect/status output may claim active leak protection until apply, verify, rollback, recover, TUN core runtime config, and connectivity verification exist for the full flow.
+
+### FW-004: Recovery must override kill-switch
+
+`recover --execute --yes` must remove TunWarden-owned kill-switch rules even in strict mode.
+
+## 9. Sleep/resume requirements
+
+### SR-001: Resume is a normal lifecycle event
+
+Suspend/resume must not be treated as an edge case.
+
+### SR-002: Before sleep
+
+TunWarden should:
+
+- pause aggressive reconnect loops,
+- mark active profile,
+- optionally stop/release volatile state if needed,
+- avoid leaving half-applied transactions.
+
+### SR-003: After resume
+
+TunWarden must:
+
+- wait for network availability or relevant NetworkManager events,
+- re-detect default route/interface,
+- re-resolve server address,
+- recreate or validate TUN,
+- re-apply DNS/routing/firewall state,
+- restart or reconfigure core,
+- run health checks.
+
+### SR-004: No stale assumptions
+
+After resume, TunWarden must not assume:
+
+- same Wi-Fi network,
+- same gateway,
+- same DNS servers,
+- same DHCP lease,
+- same default interface,
+- same IPv6 state.
+
+## 10. NetworkManager requirements
+
+### NM-001: Listen for relevant network events
+
+TunWarden must react to events equivalent to:
+
+- up,
+- down,
+- DHCPv4 change,
+- DHCPv6 change,
+- DNS change,
+- connectivity change,
+- default route change.
+
+### NM-002: Dispatcher scripts must be lightweight
+
+If NetworkManager dispatcher scripts are used, they must only notify the daemon and exit quickly.
+
+They must not perform heavy networking operations directly.
+
+### NM-003: Connectivity state is diagnostic, not authoritative
+
+NetworkManager connectivity state should be shown in diagnostics but must not be the only criterion for reconnecting or rolling back.
+
+## 11. Health checks
+
+`tunwarden doctor` must include these checks.
+
+### Core checks
+
+- daemon running,
+- core process running,
+- core config generated,
+- core logs available.
+
+### TUN checks
+
+- TUN exists,
+- interface is up,
+- addresses assigned,
+- MTU configured.
+
+### Routing checks
+
+- policy rule exists,
+- routing table exists,
+- default route points as expected,
+- VPN server route bypasses TUN,
+- LAN bypass works if configured.
+
+### DNS checks
+
+- DNS backend detected,
+- per-link DNS configured,
+- resolution works,
+- bootstrap DNS is not looped.
+
+### Firewall checks
+
+- nftables table exists when expected,
+- kill-switch state matches config,
+- no stale TunWarden-owned table exists after disconnect.
+
+### Connectivity checks
+
+- bootstrap server route does not loop,
+- control channel can connect,
+- at least one external endpoint can be reached through the intended path.
+- TCP probe,
+- optional UDP probe,
+- optional HTTP probe,
+- NetworkManager connectivity state shown separately.
+
+### Transaction-state checks
+
+`status`, `doctor`, and `recover` must explain pending or stale transaction state without applying cleanup. At minimum they must show whether the transaction is pending, committed, failed, rolling back, or requires cleanup; whether rollback metadata is available; and the redacted transaction state path.
+
+## 12. Recovery requirements
+
+`recover` must be designed as an emergency recovery command. Plain `tunwarden recover` must remain a read-only recovery plan. `tunwarden recover --execute --yes` is the explicit cleanup path and must remove only TunWarden-owned runtime/process/networking state, including reversible DNS state, while reporting anything it could not change.
+
+The read-only plan must include pending or stale transaction files under `/run/tunwarden/transactions/` as transaction-state recovery candidates when their state requires cleanup. Invalid or unreadable transaction files must be reported as inspection warnings, not ignored.
+
+It must be safe to run recovery when TunWarden is disconnected.
+
+## 13. Reliability tests
+
+Required tests before declaring TUN mode stable:
+
+1. Connect/disconnect 100 times without stale state.
+2. Stop the core process during active connection.
+3. Stop the daemon during connection apply.
+4. Fail DNS apply step and verify rollback.
+5. Fail route apply step and verify rollback.
+6. Suspend/resume while connected.
+7. Change Wi-Fi network while connected.
+8. Renew DHCP while connected.
+9. Enable/disable IPv6 while connected.
+10. Run `recover --execute --yes` after simulated crash.
+
+## 14. Design warning
+
+A VPN client that can connect but cannot reliably disconnect is not acceptable.
+
+Disconnect, rollback, and recovery are core features, not maintenance tasks.
