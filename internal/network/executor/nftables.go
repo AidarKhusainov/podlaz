@@ -11,6 +11,9 @@ import (
 
 const (
 	OwnerFirewall = "tunwarden:nftables"
+
+	ownedNFTFamily = "inet"
+	ownedNFTTable  = "tunwarden"
 )
 
 // FirewallExecutor owns TunWarden-owned nftables apply, verification, and cleanup.
@@ -85,7 +88,7 @@ func (e NftablesExecutor) Verify(ctx context.Context, plan planner.TunFirewallPl
 		if rule.Action != planner.FirewallActionAdd {
 			continue
 		}
-		if !strings.Contains(result.Stdout, rule.Expr) || !strings.Contains(result.Stdout, rule.Verdict) || !strings.Contains(result.Stdout, rule.Ownership) {
+		if !nftOutputContainsRule(result.Stdout, rule) {
 			return fmt.Errorf("verify nftables table %s %s: rule %s not found", family, table, rule.RollbackKey)
 		}
 	}
@@ -96,8 +99,11 @@ func (e NftablesExecutor) Verify(ctx context.Context, plan planner.TunFirewallPl
 // is intentionally idempotent and never touches non-TunWarden tables.
 func (e NftablesExecutor) Rollback(ctx context.Context, plan planner.TunFirewallPlan) error {
 	family, table := firewallFamilyTable(plan)
-	if family == "" || table == "" {
+	if family == "" && table == "" {
 		return nil
+	}
+	if err := validateOwnedFirewallTarget(family, table); err != nil {
+		return err
 	}
 	if err := runCommand(ctx, e.Runner, "nft", "delete", "table", family, table); err != nil && !resourceMissing(err) {
 		return fmt.Errorf("delete nftables table %s %s: %w", family, table, err)
@@ -144,6 +150,9 @@ func validateFirewallPlan(plan planner.TunFirewallPlan) error {
 	if table == "" {
 		return errors.New("missing nftables table")
 	}
+	if err := validateOwnedFirewallTarget(family, table); err != nil {
+		return err
+	}
 	if len(plan.Chains) == 0 {
 		return errors.New("missing nftables chains")
 	}
@@ -169,8 +178,47 @@ func validateFirewallPlan(plan planner.TunFirewallPlan) error {
 	return nil
 }
 
+func validateOwnedFirewallTarget(family, table string) error {
+	if family != ownedNFTFamily || table != ownedNFTTable {
+		return fmt.Errorf("refuse to mutate non-TunWarden nftables target %s %s", family, table)
+	}
+	return nil
+}
+
 func shouldApplyFirewall(plan planner.TunFirewallPlan) bool {
 	return plan.TableAction == planner.FirewallTableAction && strings.TrimSpace(plan.Table) != ""
+}
+
+func nftOutputContainsRule(output string, rule planner.TunFirewallRulePlan) bool {
+	want := nftRuleFields(rule)
+	for _, line := range strings.Split(output, "\n") {
+		if containsOrderedFields(nftExpressionFields(line), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func nftRuleFields(rule planner.TunFirewallRulePlan) []string {
+	fields := nftExpressionFields(rule.Expr)
+	fields = append(fields, "counter", "comment", rule.Ownership, rule.Verdict)
+	return fields
+}
+
+func containsOrderedFields(fields, want []string) bool {
+	if len(want) == 0 {
+		return true
+	}
+	pos := 0
+	for _, field := range fields {
+		if field == want[pos] {
+			pos++
+			if pos == len(want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func nftExpressionFields(expr string) []string {
