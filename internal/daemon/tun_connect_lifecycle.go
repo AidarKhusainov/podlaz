@@ -172,8 +172,8 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string) (tunCoreRun
 		RuntimeConfigPath: runtimeConfigPath,
 		XrayConfig:        xrayConfig,
 		SOCKSEndpoint:     endpoint,
-		Status:            "TUN-mode Xray runtime config with private SOCKS adapter endpoint " + endpoint,
-		Warnings:          []string{"TUN-mode connectivity is verified through the daemon-private Xray SOCKS endpoint before transaction commit"},
+		Status:            "TUN-mode Xray runtime config with private adapter SOCKS endpoint " + endpoint,
+		Warnings:          []string{"TUN-mode connectivity is verified through full-tunnel route lookup and routed TCP probe before transaction commit"},
 	}, nil
 }
 
