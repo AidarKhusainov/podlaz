@@ -91,6 +91,16 @@ func (s Server) Run(ctx context.Context) error {
 		_ = json.NewEncoder(w).Encode(doctorFn(r.Context()))
 		log.Printf("tunwardend: doctor request handled")
 	})
+	mux.HandleFunc(api.RecoverPath, func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("tunwardend: recover request method=%s path=%s", r.Method, r.URL.Path)
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(daemonRecover(r.Context(), runtimeDir))
+		log.Printf("tunwardend: recover request handled")
+	})
 	registerLifecycleHandlers(mux, lifecycle)
 
 	httpServer := http.Server{Handler: mux}
