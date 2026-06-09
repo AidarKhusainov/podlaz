@@ -85,8 +85,9 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 	systemctlPath, _ := commandAvailability(runner, "systemctl", "systemd")
 	checks = append(checks, systemctlPath.check)
 
-	resolvectlPath, _ := commandAvailability(runner, "resolvectl", "resolved")
+	resolvectlPath, resolvectlOK := commandAvailability(runner, "resolvectl", "resolved")
 	checks = append(checks, resolvectlPath.check)
+	checks = append(checks, dnsState(ctx, runner, resolvectlPath.path, resolvectlOK)...)
 
 	nftPath, nftOK := commandAvailability(runner, "nft", "nftables")
 	checks = append(checks, nftPath.check)
