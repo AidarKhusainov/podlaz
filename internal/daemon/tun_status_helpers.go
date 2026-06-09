@@ -10,6 +10,8 @@ import (
 	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
 )
 
+const dnsRouteOnlyDomain = "~."
+
 func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
 	if len(tx.Rollback.TUN) > 0 {
