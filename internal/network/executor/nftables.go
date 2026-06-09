@@ -104,7 +104,7 @@ func (e NftablesExecutor) addChain(ctx context.Context, family, table string, ch
 }
 
 func (e NftablesExecutor) addRule(ctx context.Context, family, table string, rule planner.TunFirewallRulePlan) error {
-	fields := strings.Fields(rule.Expr)
+	fields := nftExpressionFields(rule.Expr)
 	if len(fields) == 0 {
 		return fmt.Errorf("missing nftables rule expression for %s", rule.RollbackKey)
 	}
@@ -161,6 +161,15 @@ func validateFirewallPlan(plan planner.TunFirewallPlan) error {
 
 func shouldApplyFirewall(plan planner.TunFirewallPlan) bool {
 	return plan.TableAction == planner.FirewallTableAction && strings.TrimSpace(plan.Table) != ""
+}
+
+func nftExpressionFields(expr string) []string {
+	raw := strings.Fields(expr)
+	fields := make([]string, 0, len(raw))
+	for _, field := range raw {
+		fields = append(fields, strings.Trim(field, "\""))
+	}
+	return fields
 }
 
 func firewallFamilyTable(plan planner.TunFirewallPlan) (string, string) {
