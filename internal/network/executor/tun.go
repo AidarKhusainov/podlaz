@@ -438,7 +438,7 @@ func containsLookupTable(fields []string, table string) bool {
 
 func containsAdjacentFields(fields []string, first, second string) bool {
 	for i := 0; i < len(fields)-1; i++ {
-		if fields[i] == first && fields[i+1] == second {
+		if fields[i] == first && routeTokenMatches(fields[i+1], second) {
 			return true
 		}
 	}
@@ -447,9 +447,22 @@ func containsAdjacentFields(fields []string, first, second string) bool {
 
 func containsField(fields []string, want string) bool {
 	for _, field := range fields {
-		if field == want {
+		if routeTokenMatches(field, want) {
 			return true
 		}
+	}
+	return false
+}
+
+func routeTokenMatches(got, want string) bool {
+	if got == want {
+		return true
+	}
+	if strings.HasSuffix(want, "/32") && got == strings.TrimSuffix(want, "/32") {
+		return true
+	}
+	if strings.HasSuffix(got, "/32") && strings.TrimSuffix(got, "/32") == want {
+		return true
 	}
 	return false
 }
