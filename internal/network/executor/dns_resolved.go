@@ -21,24 +21,28 @@ type DNSExecutor interface {
 	Rollback(context.Context, planner.TunDNSPlan) error
 }
 
-// DNSAwareTunExecutor composes the existing TUN/route executor with DNS apply
-// without changing the low-level route executor contract. DNS is preflighted
-// before any TUN mutation and rolled back before the TUN link is deleted.
+// DNSAwareTunExecutor composes the existing TUN/route executor with DNS and
+// optional firewall apply without changing the low-level route executor contract.
+// DNS and firewall are applied only from already-inspected desired state and are
+// rolled back before the TUN link is deleted.
 type DNSAwareTunExecutor struct {
-	Base TunExecutor
-	DNS  DNSExecutor
+	Base     TunExecutor
+	DNS      DNSExecutor
+	Firewall FirewallExecutor
 }
 
-// NewOSDNSExecutor returns the Linux iproute2 + systemd-resolved executor.
+// NewOSDNSExecutor returns the Linux iproute2 + systemd-resolved + nftables executor.
 func NewOSDNSExecutor() DNSAwareTunExecutor {
 	runner := OSRunner{}
 	return DNSAwareTunExecutor{
-		Base: NewOSExecutor(),
-		DNS:  ResolvedDNSExecutor{Runner: runner},
+		Base:     NewOSExecutor(),
+		DNS:      ResolvedDNSExecutor{Runner: runner},
+		Firewall: NftablesExecutor{Runner: runner},
 	}
 }
 
-// Apply applies TUN, routes, policy rules, and systemd-resolved per-link DNS.
+// Apply applies TUN, routes, policy rules, systemd-resolved per-link DNS, and
+// TunWarden-owned nftables state from the already-inspected plan.
 func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, error) {
 	if err := e.validate(plan); err != nil {
 		return nil, err
@@ -47,20 +51,31 @@ func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([
 	if err != nil {
 		return steps, err
 	}
-	if !shouldApplyDNS(plan.DNS) {
-		return steps, nil
-	}
-	dnsStep, err := e.DNS.Apply(ctx, plan.DNS)
-	if err != nil {
-		if rollbackErr := e.DNS.Rollback(ctx, plan.DNS); rollbackErr != nil {
-			return steps, errors.Join(err, fmt.Errorf("rollback DNS after failed apply: %w", rollbackErr))
+	if shouldApplyDNS(plan.DNS) {
+		dnsStep, err := e.DNS.Apply(ctx, plan.DNS)
+		if err != nil {
+			if rollbackErr := e.DNS.Rollback(ctx, plan.DNS); rollbackErr != nil {
+				return steps, errors.Join(err, fmt.Errorf("rollback DNS after failed apply: %w", rollbackErr))
+			}
+			return steps, err
 		}
-		return steps, err
+		steps = append(steps, dnsStep)
 	}
-	return append(steps, dnsStep), nil
+	if shouldApplyFirewall(plan.Firewall) {
+		firewallStep, err := e.Firewall.Apply(ctx, plan.Firewall)
+		if err != nil {
+			if rollbackErr := e.Firewall.Rollback(ctx, plan.Firewall); rollbackErr != nil {
+				return steps, errors.Join(err, fmt.Errorf("rollback nftables after failed apply: %w", rollbackErr))
+			}
+			return steps, err
+		}
+		steps = append(steps, firewallStep)
+	}
+	return steps, nil
 }
 
-// Verify checks base TUN state and the systemd-resolved per-link DNS state.
+// Verify checks base TUN state, systemd-resolved per-link DNS state, and
+// TunWarden-owned nftables state.
 func (e DNSAwareTunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.validate(plan); err != nil {
 		return err
@@ -68,15 +83,25 @@ func (e DNSAwareTunExecutor) Verify(ctx context.Context, plan planner.TunPlan) e
 	if err := e.Base.Verify(ctx, plan); err != nil {
 		return err
 	}
-	if !shouldApplyDNS(plan.DNS) {
-		return nil
+	if shouldApplyDNS(plan.DNS) {
+		if err := e.DNS.Verify(ctx, plan.DNS); err != nil {
+			return err
+		}
 	}
-	return e.DNS.Verify(ctx, plan.DNS)
+	if shouldApplyFirewall(plan.Firewall) {
+		return e.Firewall.Verify(ctx, plan.Firewall)
+	}
+	return nil
 }
 
-// Rollback reverts DNS first, then routes, policy rules, and the TUN link.
+// Rollback reverts firewall first, then DNS, routes, policy rules, and the TUN link.
 func (e DNSAwareTunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	var errs []error
+	if e.Firewall != nil && strings.TrimSpace(plan.Firewall.Table) != "" {
+		if err := e.Firewall.Rollback(ctx, plan.Firewall); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if e.DNS != nil && strings.TrimSpace(plan.DNS.TargetLink) != "" {
 		if err := e.DNS.Rollback(ctx, plan.DNS); err != nil {
 			errs = append(errs, err)
@@ -94,6 +119,14 @@ func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
 	}
 	if err := validateDNSPlan(plan.DNS); err != nil {
 		return err
+	}
+	if hasFirewallPlan(plan.Firewall) {
+		if e.Firewall == nil {
+			return errors.New("missing firewall executor")
+		}
+		if err := validateFirewallPlan(plan.Firewall); err != nil {
+			return err
+		}
 	}
 	return e.Base.validate()
 }
@@ -177,4 +210,8 @@ func validateDNSPlan(plan planner.TunDNSPlan) error {
 
 func shouldApplyDNS(plan planner.TunDNSPlan) bool {
 	return plan.Action == planner.DNSActionConfigure && strings.TrimSpace(plan.TargetLink) != ""
+}
+
+func hasFirewallPlan(plan planner.TunFirewallPlan) bool {
+	return strings.TrimSpace(plan.Backend) != "" || strings.TrimSpace(plan.Family) != "" || strings.TrimSpace(plan.Table) != "" || strings.TrimSpace(plan.TableAction) != ""
 }

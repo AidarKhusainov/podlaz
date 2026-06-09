@@ -19,6 +19,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 - Implemented `tunwarden plan --mode tun` full-tunnel route/TUN dry-run behavior is owned by [TUN full-tunnel dry-run plan](./tun-full-tunnel-plan.md).
 - Implemented `tunwarden connect --mode proxy-only` and `tunwarden disconnect` behavior is owned by [Proxy-only lifecycle](./proxy-only-lifecycle.md).
 - The implemented v0.1 daemon transport is owned by [Daemon local API](./daemon-api.md).
+- Implemented daemon-owned nftables firewall execution is owned by [nftables Firewall Executor](./nftables-firewall-executor.md).
 - `tunwarden status`'s implemented daemon-backed and local fallback behavior is owned by [Status command](./status.md).
 - `tunwarden doctor`'s implemented daemon-backed and local fallback diagnostic behavior is owned by [Doctor diagnostics](./doctor-diagnostics.md).
 - `tunwarden logs`'s implemented journald-backed daemon log behavior is owned by [Logs command](./logs.md).
@@ -41,6 +42,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | [TUN full-tunnel dry-run plan](./tun-full-tunnel-plan.md) | Implemented read-only full-tunnel TUN/route planner, policy rules, VPN server bypass, loop-risk warnings, rollback steps, JSON output, and safety boundary. |
 | [Proxy-only lifecycle](./proxy-only-lifecycle.md) | Implemented v0.1 daemon-managed Xray process lifecycle for `connect --mode proxy-only`, `disconnect`, generated runtime config cleanup, and safety boundary. |
 | [Daemon local API](./daemon-api.md) | Implemented v0.1 Unix socket daemon API transport, status and doctor endpoints, lifecycle, and safety boundary. |
+| [nftables Firewall Executor](./nftables-firewall-executor.md) | Implemented nftables apply, verification, rollback, ownership boundary, kill-switch rule mapping, and disconnect cleanup for TUN transactions. |
 | [Status command](./status.md) | Implemented v0.1 read-only `tunwarden status` daemon-backed behavior, local fallback behavior, output shape, and safety boundary. |
 | [Doctor diagnostics](./doctor-diagnostics.md) | Implemented v0.1 read-only `tunwarden doctor` daemon-backed behavior, local fallback checks, severities, and stale resource detection boundaries. |
 | [Logs command](./logs.md) | Implemented v0.1 read-only `tunwarden logs` journald integration, daemon log source, redaction, and failure behavior. |
