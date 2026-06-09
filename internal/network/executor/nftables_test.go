@@ -65,10 +65,29 @@ func TestNftablesExecutorRejectsBlockedOrNonOwnedPlan(t *testing.T) {
 		t.Fatal("expected blocked firewall plan failure")
 	}
 
-	nonOwned := firewallPlanForTest()
-	nonOwned.Rules[0].Ownership = "other-project"
-	if _, err := (NftablesExecutor{Runner: &recordingRunner{}}).Apply(context.Background(), nonOwned); err == nil {
+	nonOwnedRule := firewallPlanForTest()
+	nonOwnedRule.Rules[0].Ownership = "other-project"
+	if _, err := (NftablesExecutor{Runner: &recordingRunner{}}).Apply(context.Background(), nonOwnedRule); err == nil {
 		t.Fatal("expected non-TunWarden rule owner failure")
+	}
+
+	nonOwnedTarget := firewallPlanForTest()
+	nonOwnedTarget.Table = "filter"
+	if _, err := (NftablesExecutor{Runner: &recordingRunner{}}).Apply(context.Background(), nonOwnedTarget); err == nil {
+		t.Fatal("expected non-TunWarden table failure")
+	}
+}
+
+func TestNftablesExecutorRollbackRejectsNonOwnedTarget(t *testing.T) {
+	plan := firewallPlanForTest()
+	plan.Table = "filter"
+	runner := &recordingRunner{}
+	err := (NftablesExecutor{Runner: runner}).Rollback(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected rollback to reject non-owned nftables target")
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("rollback must not execute nft for non-owned target, got %#v", runner.commands)
 	}
 }
 
@@ -90,6 +109,23 @@ func TestNftablesExecutorVerifyRequiresOwnedRules(t *testing.T) {
 	err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected verify failure when owned kill-switch rule is missing")
+	}
+}
+
+func TestNftablesExecutorVerifyMatchesRuleFieldsOnSameLine(t *testing.T) {
+	plan := firewallPlanForTest()
+	output := `table inet tunwarden {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		oifname != "tunwarden0" counter comment "other-project" reject
+		ip daddr 203.0.113.10 counter comment "tunwarden:firewall:server-bypass" accept
+		oifname "tunwarden0" counter comment "tunwarden:firewall:tun-egress" accept
+		meta l4proto tcp counter comment "tunwarden:firewall:kill-switch" reject
+	}
+}`
+	err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected verify failure when expression, verdict, and owner appear on different rules")
 	}
 }
 
