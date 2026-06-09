@@ -47,10 +47,10 @@ func routeDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.Che
 	if state.Mode != planner.ModeTun {
 		return doctor.Check{Name: "routes", Severity: doctor.SeverityOK, Message: "not modified"}
 	}
-	if snapshot.DefaultIPv4.Status == netsnapshot.StatusDetected {
-		return doctor.Check{Name: "routes", Severity: doctor.SeverityOK, Message: emptyAs(state.Routes, "default IPv4 route detected")}
+	if snapshot.DefaultIPv4.Status != netsnapshot.StatusDetected {
+		return doctor.Check{Name: "routes", Severity: doctor.SeverityWarning, Message: "host default route visibility is " + string(snapshot.DefaultIPv4.Status)}
 	}
-	return doctor.Check{Name: "routes", Severity: doctor.SeverityWarning, Message: "route state is " + string(snapshot.DefaultIPv4.Status)}
+	return doctor.Check{Name: "routes", Severity: doctor.SeverityWarning, Message: "TunWarden route table and policy-rule state require transaction/executor verification; host default route alone is not sufficient"}
 }
 
 func dnsDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.Check {
