@@ -84,6 +84,15 @@ func (r ExecuteResult) HasFailures() bool {
 	return false
 }
 
+func (r ExecuteResult) HasIncompleteCleanup() bool {
+	for _, result := range r.Results {
+		if result.Status == "skipped" && (result.Candidate.Kind == "transaction-state" || strings.Contains(result.Message, "transaction state was preserved")) {
+			return true
+		}
+	}
+	return false
+}
+
 type CleanupExecutor interface {
 	Cleanup(ctx context.Context, candidate Candidate) CleanupResult
 }
@@ -118,22 +127,15 @@ func (OSRunner) LookPath(file string) (string, error) {
 
 func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandResult, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
 	err := cmd.Run()
-	result := CommandResult{
-		Stdout:   strings.TrimSpace(stdout.String()),
-		Stderr:   strings.TrimSpace(stderr.String()),
-		ExitCode: 0,
-	}
+	result := CommandResult{Stdout: strings.TrimSpace(stdout.String()), Stderr: strings.TrimSpace(stderr.String())}
 	if err == nil {
 		return result, nil
 	}
-
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.ExitCode = exitErr.ExitCode()
@@ -148,12 +150,8 @@ func Plan(ctx context.Context) PlanResult {
 }
 
 func PlanWithOptions(ctx context.Context, opts Options) PlanResult {
-	scanner := recoveryScanner(opts)
-	scan := scanner.Scan(ctx)
-	return PlanResult{
-		Candidates: append([]Candidate(nil), scan.Candidates...),
-		Warnings:   append([]Warning(nil), scan.Warnings...),
-	}
+	scan := recoveryScanner(opts).Scan(ctx)
+	return PlanResult{Candidates: append([]Candidate(nil), scan.Candidates...), Warnings: append([]Warning(nil), scan.Warnings...)}
 }
 
 func Execute(ctx context.Context) ExecuteResult {
@@ -164,7 +162,6 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 	plan := PlanWithOptions(ctx, opts)
 	ordered := orderCleanupCandidates(plan.Candidates)
 	results := make([]CleanupResult, 0, len(ordered))
-
 	if opts.Executor == nil {
 		for _, candidate := range ordered {
 			results = append(results, failed(candidate, errors.New("missing daemon-owned recovery cleanup executor")))
@@ -282,9 +279,7 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	if runner == nil {
 		runner = OSRunner{}
 	}
-
 	runtimeDir := runtimeDir(s.RuntimeDir)
-
 	var result ScanResult
 	result.scanManagedInterface(ctx, runner)
 	result.scanManagedNFTTable(ctx, runner)
@@ -303,23 +298,11 @@ type commandCandidateScan struct {
 }
 
 func (r *ScanResult) scanManagedInterface(ctx context.Context, runner CommandRunner) {
-	r.scanCommandCandidate(ctx, runner, commandCandidateScan{
-		command:            "ip",
-		commandUnavailable: "ip command is unavailable",
-		args:               []string{"link", "show", "dev", managedInterface},
-		candidate: Candidate{Kind: "tun-interface", Description: "TUN interface", Target: managedInterface},
-		warningTarget:      "TUN interface " + managedInterface,
-	})
+	r.scanCommandCandidate(ctx, runner, commandCandidateScan{command: "ip", commandUnavailable: "ip command is unavailable", args: []string{"link", "show", "dev", managedInterface}, candidate: Candidate{Kind: "tun-interface", Description: "TUN interface", Target: managedInterface}, warningTarget: "TUN interface " + managedInterface})
 }
 
 func (r *ScanResult) scanManagedNFTTable(ctx context.Context, runner CommandRunner) {
-	r.scanCommandCandidate(ctx, runner, commandCandidateScan{
-		command:            "nft",
-		commandUnavailable: "nft command is unavailable",
-		args:               []string{"list", "table", managedNFTFamily, managedNFTTableName},
-		candidate:          Candidate{Kind: "nftables-table", Description: "nftables table", Target: managedNFTTable},
-		warningTarget:      "nftables table " + managedNFTTable,
-	})
+	r.scanCommandCandidate(ctx, runner, commandCandidateScan{command: "nft", commandUnavailable: "nft command is unavailable", args: []string{"list", "table", managedNFTFamily, managedNFTTableName}, candidate: Candidate{Kind: "nftables-table", Description: "nftables table", Target: managedNFTTable}, warningTarget: "nftables table " + managedNFTTable})
 }
 
 func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRunner, scan commandCandidateScan) {
@@ -328,7 +311,6 @@ func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRun
 		r.Warnings = append(r.Warnings, Warning{Target: scan.warningTarget, Message: scan.commandUnavailable})
 		return
 	}
-
 	cmdResult, err := runCommand(ctx, runner, commandPath, scan.args...)
 	switch {
 	case commandSucceeded(cmdResult, err):
@@ -345,19 +327,7 @@ func (r *ScanResult) scanTransactionState(runtimeDir string) {
 		if !summary.RequiresCleanup {
 			continue
 		}
-		r.Candidates = append(r.Candidates, Candidate{
-			Kind:        "transaction-state",
-			Description: "transaction rollback state",
-			Target:      summary.Path,
-			Transaction: &TransactionCandidate{
-				ID:                summary.ID,
-				State:             string(summary.State),
-				Status:            summary.StatusLine(),
-				RollbackAvailable: summary.RollbackAvailable,
-				RequiresCleanup:   summary.RequiresCleanup,
-				Path:              summary.Path,
-			},
-		})
+		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: summary.RequiresCleanup, Path: summary.Path}})
 	}
 	for _, warning := range warnings {
 		r.Warnings = append(r.Warnings, Warning{Target: "transaction state", Message: warning})
@@ -405,14 +375,7 @@ func (e OSCleanupExecutor) Cleanup(ctx context.Context, candidate Candidate) Cle
 	if strings.TrimSpace(candidate.Kind) == "" {
 		return skipped(candidate, "missing recovery candidate kind")
 	}
-	if e.Runner == nil {
-		e.Runner = OSRunner{}
-	}
-	if strings.TrimSpace(e.RuntimeDir) == "" {
-		e.RuntimeDir = defaultRuntimeDir
-	}
-	e.RuntimeDir = filepath.Clean(e.RuntimeDir)
-
+	e = e.withDefaults()
 	switch candidate.Kind {
 	case "tun-interface":
 		return e.cleanupTUNInterface(ctx, candidate)
@@ -427,6 +390,17 @@ func (e OSCleanupExecutor) Cleanup(ctx context.Context, candidate Candidate) Cle
 	default:
 		return skipped(candidate, "unsupported recovery candidate kind")
 	}
+}
+
+func (e OSCleanupExecutor) withDefaults() OSCleanupExecutor {
+	if e.Runner == nil {
+		e.Runner = OSRunner{}
+	}
+	if strings.TrimSpace(e.RuntimeDir) == "" {
+		e.RuntimeDir = defaultRuntimeDir
+	}
+	e.RuntimeDir = filepath.Clean(e.RuntimeDir)
+	return e
 }
 
 func (e OSCleanupExecutor) cleanupTUNInterface(ctx context.Context, candidate Candidate) CleanupResult {
@@ -603,10 +577,7 @@ func resourceMissing(result CommandResult) bool {
 		return false
 	}
 	text := strings.ToLower(result.Stdout + " " + result.Stderr)
-	return strings.Contains(text, "does not exist") ||
-		strings.Contains(text, "cannot find device") ||
-		strings.Contains(text, "no such file or directory") ||
-		strings.Contains(text, "no such table")
+	return strings.Contains(text, "does not exist") || strings.Contains(text, "cannot find device") || strings.Contains(text, "no such file or directory") || strings.Contains(text, "no such table")
 }
 
 func commandFailureMessage(result CommandResult, err error) string {
@@ -698,8 +669,7 @@ func isManagedNFTTarget(family, table string) bool {
 }
 
 func managedTableToken(table string) (string, bool) {
-	table = strings.TrimSpace(table)
-	switch table {
+	switch strings.TrimSpace(table) {
 	case managedRouteTable, managedRouteTableID:
 		return managedRouteTableID, true
 	default:
@@ -709,10 +679,7 @@ func managedTableToken(table string) (string, bool) {
 
 func isTransactionPath(runtimeDir, path string) bool {
 	transactionsDir := filepath.Join(runtimeDir, txstate.TransactionDirName)
-	if !isUnderDir(transactionsDir, path) {
-		return false
-	}
-	return strings.HasSuffix(path, txstate.TransactionFileSuffix)
+	return isUnderDir(transactionsDir, path) && strings.HasSuffix(path, txstate.TransactionFileSuffix)
 }
 
 func isUnderDir(dir, path string) bool {
