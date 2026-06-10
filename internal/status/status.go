@@ -59,6 +59,7 @@ type Report struct {
 	DNS               string
 	Firewall          string
 	Transactions      []txstate.TransactionSummary
+	StartupScan       *api.StartupScanStatus
 	Candidates        []Candidate
 	Warnings          []Warning
 }
@@ -126,7 +127,7 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 
 // FromDaemon converts a daemon API status response into the local status report model.
 func FromDaemon(s api.StatusResponse) Report {
-	return Report{
+	report := Report{
 		Daemon:     s.Daemon,
 		Service:    s.Service,
 		Connection: s.Connection,
@@ -144,6 +145,13 @@ func FromDaemon(s api.StatusResponse) Report {
 		Transactions:      transactionsFromAPI(s.Transactions),
 		Warnings:          warningsFromStrings("daemon", s.Warnings),
 	}
+	if s.StartupScan != nil {
+		scan := *s.StartupScan
+		report.StartupScan = &scan
+		report.Candidates = append(report.Candidates, candidatesFromAPI(scan.Candidates)...)
+		report.Warnings = append(report.Warnings, warningsFromAPI(scan.Warnings)...)
+	}
+	return report
 }
 
 // WithDaemonUnavailable marks a local fallback report with the daemon connection failure.
@@ -155,6 +163,9 @@ func WithDaemonUnavailable(base Report, message string) Report {
 // HasUnhealthyState reports whether status found recovery candidates, warnings, or cleanup state.
 func (r Report) HasUnhealthyState() bool {
 	if len(r.Candidates) > 0 || len(r.Warnings) > 0 {
+		return true
+	}
+	if r.StartupScan != nil && (len(r.StartupScan.Candidates) > 0 || len(r.StartupScan.Warnings) > 0) {
 		return true
 	}
 	for _, tx := range r.Transactions {
@@ -191,6 +202,15 @@ func (r Report) String() string {
 		fmt.Fprintf(&b, "Firewall: %s\n", render.Redact(r.Firewall))
 	}
 	fmt.Fprintf(&b, "Stale state: %s\n", render.Redact(staleStateLine(r.Candidates, r.Warnings)))
+	if r.StartupScan != nil {
+		fmt.Fprintf(&b, "Startup recovery scan: %s\n", render.Redact(startupScanStatusLine(r.StartupScan.Status)))
+		if txID := firstStartupTransactionID(r.StartupScan.Candidates); txID != "" {
+			fmt.Fprintf(&b, "Pending transaction: %s\n", render.Redact(txID))
+		}
+		if strings.TrimSpace(r.StartupScan.SuggestedAction) != "" {
+			fmt.Fprintf(&b, "Suggested action: %s\n", render.Redact(r.StartupScan.SuggestedAction))
+		}
+	}
 	for _, tx := range r.Transactions {
 		fmt.Fprintf(&b, "Transaction: %s\n", render.Redact(tx.StatusLine()))
 		fmt.Fprintf(&b, "Rollback available: %s\n", render.Redact(tx.RollbackLine()))
@@ -308,6 +328,28 @@ func staleStateLine(candidates []Candidate, warnings []Warning) string {
 	}
 }
 
+func startupScanStatusLine(status string) string {
+	switch status {
+	case api.StartupScanStatusStale:
+		return "stale state found"
+	case api.StartupScanStatusIncomplete:
+		return "inspection incomplete"
+	case api.StartupScanStatusStaleIncomplete:
+		return "stale state found (inspection incomplete)"
+	default:
+		return "clean inactive state"
+	}
+}
+
+func firstStartupTransactionID(candidates []api.RecoveryCandidate) string {
+	for _, candidate := range candidates {
+		if candidate.Transaction != nil && strings.TrimSpace(candidate.Transaction.ID) != "" {
+			return candidate.Transaction.ID
+		}
+	}
+	return ""
+}
+
 func candidateNoun(count int) string {
 	if count == 1 {
 		return "candidate"
@@ -319,6 +361,22 @@ func warningsFromStrings(target string, warnings []string) []Warning {
 	out := make([]Warning, 0, len(warnings))
 	for _, warning := range warnings {
 		out = append(out, Warning{Target: target, Message: warning})
+	}
+	return out
+}
+
+func warningsFromAPI(warnings []api.RecoveryWarning) []Warning {
+	out := make([]Warning, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, Warning{Target: warning.Target, Message: warning.Message})
+	}
+	return out
+}
+
+func candidatesFromAPI(candidates []api.RecoveryCandidate) []Candidate {
+	out := make([]Candidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, Candidate{Kind: candidate.Kind, Description: candidate.Description, Target: candidate.Target})
 	}
 	return out
 }
