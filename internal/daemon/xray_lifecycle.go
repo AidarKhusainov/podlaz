@@ -83,7 +83,8 @@ func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectReque
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := ensureCoreNotRoot(planner.ModeProxyOnly); err != nil {
+	coreIdentity, err := proxyOnlyCoreExecutionIdentity()
+	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
 
@@ -103,7 +104,7 @@ func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectReque
 		m.mu.Unlock()
 		return api.LifecycleResponse{}, errors.New("connection already active; run tunwarden disconnect before connecting another profile")
 	}
-	if _, _, err := m.startXrayLocked(p, xrayPath, runtimeConfigPath, proxyPlan.XrayConfig); err != nil {
+	if _, _, err := m.startXrayLocked(p, xrayPath, runtimeConfigPath, proxyPlan.XrayConfig, coreIdentity); err != nil {
 		m.mu.Unlock()
 		return api.LifecycleResponse{}, err
 	}
@@ -323,8 +324,12 @@ func (m *XrayManager) resolveXrayPath() (string, error) {
 	return path, nil
 }
 
-func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfigPath string, xrayConfig []byte) (*exec.Cmd, chan struct{}, error) {
-	if err := writeRuntimeConfig(runtimeConfigPath, xrayConfig); err != nil {
+func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfigPath string, xrayConfig []byte, identities ...coreExecutionIdentity) (*exec.Cmd, chan struct{}, error) {
+	identity := sameUserCoreExecutionIdentity()
+	if len(identities) > 0 {
+		identity = identities[0]
+	}
+	if err := writeRuntimeConfig(runtimeConfigPath, xrayConfig, identity.runtimeConfigPermissions()); err != nil {
 		return nil, nil, err
 	}
 
@@ -333,6 +338,7 @@ func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfig
 	stderrLog := newCoreLogWriter(p.ID, "stderr")
 	cmd.Stdout = stdoutLog
 	cmd.Stderr = stderrLog
+	configureCoreCommandCredential(cmd, identity)
 	if err := cmd.Start(); err != nil {
 		removeGeneratedConfig(runtimeConfigPath)
 		logCoreStartFailed(p.ID, err)
@@ -463,11 +469,11 @@ func processExitMessage(err error) string {
 }
 
 func ensureCoreNotRoot(mode string) error {
-	if os.Geteuid() != 0 {
+	if currentEUID() != 0 {
 		return nil
 	}
 	if mode == planner.ModeProxyOnly {
-		return errors.New("refusing to start proxy-only Xray as root; run tunwardend as the packaged unprivileged tunwarden user or use a user-owned development runtime directory")
+		return errors.New("refusing to start proxy-only Xray as root without the dedicated tunwarden-xray execution identity")
 	}
 	return errors.New("refusing to start TUN-mode Xray as root; run tunwardend as an unprivileged service user with the documented networking capabilities instead of running the core process as root")
 }
@@ -555,12 +561,15 @@ func logCoreExited(pid int, profileID, message string) {
 	log.Printf("tunwardend: core xray exited pid=%d profile=%s error=%s", pid, render.Redact(profileID), render.Redact(message))
 }
 
-func writeRuntimeConfig(path string, content []byte) error {
+func writeRuntimeConfig(path string, content []byte, permissions runtimeConfigPermissions) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, permissions.DirMode); err != nil {
 		return fmt.Errorf("create generated runtime config directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := applyRuntimeConfigOwnership(dir, permissions); err != nil {
+		return fmt.Errorf("own generated runtime config directory: %w", err)
+	}
+	if err := os.Chmod(dir, permissions.DirMode); err != nil {
 		return fmt.Errorf("secure generated runtime config directory: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".xray-*.tmp")
@@ -569,7 +578,11 @@ func writeRuntimeConfig(path string, content []byte) error {
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
+	if err := applyRuntimeConfigOwnership(tmpName, permissions); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("own temporary generated Xray config: %w", err)
+	}
+	if err := tmp.Chmod(permissions.FileMode); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("secure temporary generated Xray config: %w", err)
 	}
@@ -591,6 +604,13 @@ func writeRuntimeConfig(path string, content []byte) error {
 		return fmt.Errorf("sync generated Xray config directory: %w", err)
 	}
 	return nil
+}
+
+func applyRuntimeConfigOwnership(path string, permissions runtimeConfigPermissions) error {
+	if !permissions.Chown {
+		return nil
+	}
+	return os.Chown(path, permissions.UID, permissions.GID)
 }
 
 func removeGeneratedConfig(path string) {

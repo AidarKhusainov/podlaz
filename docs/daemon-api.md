@@ -43,10 +43,13 @@ TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden disconnect
 For the manual systemd service in `packaging/systemd/tunwardend.service`, the packaged access model is:
 
 - systemd creates `/run/tunwarden` with `RuntimeDirectory=tunwarden` and `RuntimeDirectoryMode=0750`;
-- `packaging/sysusers.d/tunwarden.conf` declares the unprivileged `tunwarden` service identity for packaged installs;
-- `tunwardend` runs as `tunwarden:tunwarden` because v0.1 proxy-only lifecycle does not require root;
-- Xray child processes inherit the same unprivileged service identity;
+- `packaging/sysusers.d/tunwarden.conf` declares the unprivileged `tunwarden` daemon service identity and the dedicated `tunwarden-xray` proxy-core child identity for packaged installs;
+- in the default packaged non-root path, `tunwardend` runs as `tunwarden:tunwarden` because v0.1 proxy-only lifecycle does not require root;
+- in the default packaged non-root path, Xray child processes inherit the same unprivileged `tunwarden:tunwarden` service identity;
+- in a UID 0 daemon path, proxy-only Xray must be started as `tunwarden-xray:tunwarden-xray` with supplementary groups disabled instead of inheriting UID 0;
+- in a UID 0 daemon path, generated Xray runtime config remains private by using ownership `root:tunwarden-xray`, generated directory mode `0750`, and generated config file mode `0640`;
 - the current unit grants no ambient or bounding capabilities;
+- proxy-only mode does not grant `CAP_NET_ADMIN`, `CAP_NET_RAW`, broad file capabilities, or ambient capabilities to the daemon or Xray child;
 - the daemon creates `/run/tunwarden/tunwardend.sock` and applies socket mode `0660`;
 - users that should run CLI commands against the daemon need access through the `tunwarden` group.
 
@@ -234,12 +237,15 @@ When started by the repository systemd unit, systemd creates the runtime directo
 
 During proxy-only connect, `tunwardend`:
 
-1. refuses to start Xray if the daemon process is running as root;
-2. validates the requested mode and profile snapshot;
-3. builds the proxy-only plan and generated Xray config using the existing planner/engine config generator;
-4. writes generated runtime config under `/run/tunwarden/generated/` using restrictive permissions and atomic replacement;
-5. starts Xray as a supervised child process under the same unprivileged service identity;
-6. records active state for daemon-backed status.
+1. selects the Xray execution identity before writing generated runtime config;
+2. uses the current daemon identity when the daemon is already non-root, including the packaged default `tunwarden:tunwarden` service path;
+3. resolves the dedicated `tunwarden-xray:tunwarden-xray` identity when the daemon is running as UID 0 and fails clearly if that identity is missing or resolves to UID/GID 0;
+4. validates the requested mode and profile snapshot;
+5. builds the proxy-only plan and generated Xray config using the existing planner/engine config generator;
+6. writes generated runtime config under `/run/tunwarden/generated/` using restrictive permissions and atomic replacement;
+7. uses `0600` config under a `0700` generated directory for same-user execution, or `root:tunwarden-xray` ownership with directory mode `0750` and file mode `0640` for the UID 0 daemon path;
+8. starts Xray as a supervised child process under the selected identity, with supplementary groups disabled when dropping to `tunwarden-xray`;
+9. records active state for daemon-backed status.
 
 On graceful daemon shutdown, `tunwardend`:
 
@@ -285,11 +291,7 @@ journalctl -u tunwardend -n 50 --no-pager
 sudo systemctl stop tunwardend
 ```
 
-If `systemd-sysusers` is unavailable during manual testing, create the system user explicitly before starting the service:
-
-```bash
-sudo useradd --system --home-dir /var/lib/tunwarden --shell /usr/sbin/nologin --user-group tunwarden
-```
+If `systemd-sysusers` is unavailable during manual testing, create the documented `tunwarden` and `tunwarden-xray` system users explicitly before starting the service.
 
 Expected daemon-backed inactive status includes:
 

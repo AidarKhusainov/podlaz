@@ -9,10 +9,13 @@ ExecStart=/usr/local/bin/tunwardend
 Restart=on-failure
 RestartSec=2s
 
-# v0.1 proxy-only lifecycle does not require root. The packaged daemon runs as
-# the dedicated unprivileged tunwarden user, starts Xray as the same user, and
-# intentionally receives no capabilities. TUN devices, routes, DNS settings,
-# nftables rules, and firewall rules remain out of scope for this unit.
+# v0.1 proxy-only lifecycle does not require elevated service privileges. The
+# packaged daemon runs as the dedicated unprivileged tunwarden user, starts Xray
+# as the same user, and intentionally receives no capabilities. A UID 0 daemon
+# deployment must still start proxy-only Xray through the dedicated
+# tunwarden-xray child identity instead of letting the core inherit UID 0.
+# TUN devices, routes, DNS settings, nftables rules, and firewall rules remain
+# out of scope for this unit.
 User=tunwarden
 Group=tunwarden
 UMask=0007

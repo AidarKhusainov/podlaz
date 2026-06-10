@@ -249,10 +249,13 @@ The daemon service must start from least privilege. Every relaxation must be jus
 
 Packaged baseline service behavior:
 
-- `packaging/sysusers.d/tunwarden.conf` creates the dedicated unprivileged `tunwarden` service identity.
+- `packaging/sysusers.d/tunwarden.conf` creates the dedicated unprivileged `tunwarden` daemon service identity and the dedicated `tunwarden-xray` proxy-core child identity.
 - `packaging/systemd/tunwardend.service` starts `tunwardend` as `tunwarden:tunwarden` for the packaged proxy-only baseline.
-- Xray child processes inherit the same unprivileged service identity in packaged proxy-only mode.
+- In the default packaged proxy-only path, Xray child processes inherit the same unprivileged `tunwarden:tunwarden` service identity.
+- If a UID 0 daemon deployment is used for proxy-only mode, `tunwardend` must start Xray under the dedicated `tunwarden-xray:tunwarden-xray` execution identity instead of letting the child inherit UID 0.
+- For the UID 0 daemon path, generated Xray runtime config is owned by `root:tunwarden-xray`, the generated config directory is mode `0750`, and the generated config file is mode `0640`. This is the documented private equivalent to `0600`: only the daemon/root owner and the dedicated Xray child group can read the generated config.
 - The packaged baseline unit grants no ambient or bounding capabilities.
+- Proxy-only mode must not grant `CAP_NET_ADMIN`, `CAP_NET_RAW`, broad file capabilities, or ambient capabilities to the daemon or Xray child.
 - The dedicated `tunwarden` group is the packaged socket access boundary for CLI commands that use the daemon.
 - `RuntimeDirectory=tunwarden` with `RuntimeDirectoryMode=0750` keeps `/run/tunwarden` accessible only to the service identity and the `tunwarden` group.
 - The daemon itself applies socket mode `0660` to `/run/tunwarden/tunwardend.sock`.
@@ -300,8 +303,9 @@ Rules:
 
 - The core process must not inherit broad daemon privileges unless strictly required.
 - In packaged proxy-only mode, `tunwardend` and Xray both run as the unprivileged `tunwarden` service identity.
-- Manual root execution of proxy-only `connect` must fail instead of starting Xray as root.
-- Generated core configs must be mode `0600`.
+- If `tunwardend` is running with UID 0 for proxy-only mode, it must drop the Xray child to the dedicated `tunwarden-xray:tunwarden-xray` identity before starting the process.
+- The proxy-only Xray child must not inherit supplementary groups.
+- Generated core configs must be mode `0600` for same-user execution, or equivalently private as `root:tunwarden-xray` with directory mode `0750` and file mode `0640` for the UID 0 daemon path.
 - Generated core configs must be written atomically.
 - Generated core configs must be treated as runtime output, not persistent source of truth.
 - Generated core configs must not be printed or logged in full by default.
