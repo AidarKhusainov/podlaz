@@ -18,11 +18,8 @@ import (
 )
 
 func TestRunCLIStatusUsesAccessibleDaemonSocket(t *testing.T) {
-	runtimeDir := t.TempDir()
+	runtimeDir := shortRuntimeDir(t)
 	t.Setenv(api.RuntimeDirEnv, runtimeDir)
-	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
 
 	socketPath := api.SocketPath(runtimeDir)
 	listener, err := net.Listen("unix", socketPath)
@@ -99,7 +96,7 @@ func TestRunCLIStatusReportsMissingDaemonSocketWithoutStaleState(t *testing.T) {
 }
 
 func TestRunCLIStatusReportsPermissionDeniedDaemonSocketWithoutStaleRuntimeCandidate(t *testing.T) {
-	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	runtimeDir := shortRuntimeDir(t)
 	if err := os.MkdirAll(filepath.Join(runtimeDir, "generated"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -133,4 +130,14 @@ func TestRunCLIStatusReportsPermissionDeniedDaemonSocketWithoutStaleRuntimeCandi
 	if strings.Contains(got, "Recovery candidates:") || strings.Contains(got, "generated runtime configs") || strings.Contains(got, "runtime directory: "+runtimeDir) {
 		t.Fatalf("permission-denied daemon runtime should not be reported as stale cleanup candidates, got %q", got)
 	}
+}
+
+func shortRuntimeDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "tw-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
