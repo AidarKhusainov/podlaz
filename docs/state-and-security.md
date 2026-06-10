@@ -1,6 +1,6 @@
 # State and Security Requirements
 
-This document owns TunWarden state layout, output redaction, daemon hardening, and core process safety rules.
+This document owns TunWarden state layout, output redaction, daemon hardening, recovery safety boundaries, and core process safety rules.
 
 ## 1. State ownership model
 
@@ -98,6 +98,21 @@ Transaction files may store non-secret rollback metadata for TunWarden-owned TUN
 
 `status`, `doctor`, and `recover` must be able to explain pending, failed, rolling-back, or otherwise stale transaction state using only redacted summaries. They must not apply cleanup as part of read-only inspection.
 
+#### Recovery cleanup boundary
+
+Recovery has two distinct modes:
+
+- `tunwarden recover` is a read-only scanner and must not mutate host state.
+- `tunwarden recover --execute --yes` is an explicit cleanup intent sent by the CLI to `tunwardend`; the CLI must not perform privileged host cleanup directly.
+
+Daemon-owned recovery execution may mutate only clearly TunWarden-owned volatile state. Eligible targets are limited to documented runtime children, generated runtime configs, the managed TUN interface, TunWarden-owned nftables objects, and route, rule, DNS, TUN, and generated-config rollback entries recorded as TunWarden-owned transaction metadata.
+
+Ambiguous rollback metadata must be reported as skipped and left unchanged. A stale PID recorded in transaction metadata is not sufficient process identity; recovery must not signal a process from PID metadata alone unless a future daemon-supervised identity check can prove the process is still the TunWarden-owned child.
+
+The runtime root `/run/tunwarden` must not be removed wholesale. Recovery may remove specific stale owned children only when their paths are proven to be inside the documented TunWarden runtime layout.
+
+Transaction state should be removed only after the cleanup sequence completes safely. If any cleanup action fails or any ambiguous resource is skipped, the transaction file should remain available for later diagnostics or a future safer recovery attempt.
+
 ### 1.3 System networking state
 
 System networking state is not persistent application data.
@@ -157,6 +172,10 @@ plan:
   plan
   steps
   rollback_steps
+
+recover:
+  mode
+  recovery
 ```
 
 Daemon-backed status may include `transactions`. Each item is a redacted summary with stable facts only:
@@ -172,6 +191,8 @@ Daemon-backed status may include `transactions`. Each item is a redacted summary
 ```
 
 Human-readable transaction phrases such as `pending apply` are rendered by clients from `state` and cleanup flags; they are not a separate source of truth in the daemon API.
+
+Recovery execute JSON must use `status: "fail"` when cleanup actions fail. It must use `status: "warn"` when recovery is incomplete, for example when transaction state is preserved because ambiguous resources were skipped. A warning status is not a successful full cleanup for automation.
 
 ## 3. Output redaction
 
@@ -226,19 +247,19 @@ tunwarden recover --execute --yes
 
 The daemon service must start from least privilege. Every relaxation must be justified in documentation or in comments near the unit file.
 
-Implemented v0.1 service behavior:
+Packaged baseline service behavior:
 
 - `packaging/sysusers.d/tunwarden.conf` creates the dedicated unprivileged `tunwarden` service identity.
-- `packaging/systemd/tunwardend.service` starts `tunwardend` as `tunwarden:tunwarden` because v0.1 proxy-only lifecycle does not require root.
-- Xray child processes inherit the same unprivileged service identity.
-- The current v0.1 unit grants no ambient or bounding capabilities.
+- `packaging/systemd/tunwardend.service` starts `tunwardend` as `tunwarden:tunwarden` for the packaged proxy-only baseline.
+- Xray child processes inherit the same unprivileged service identity in packaged proxy-only mode.
+- The packaged baseline unit grants no ambient or bounding capabilities.
 - The dedicated `tunwarden` group is the packaged socket access boundary for CLI commands that use the daemon.
 - `RuntimeDirectory=tunwarden` with `RuntimeDirectoryMode=0750` keeps `/run/tunwarden` accessible only to the service identity and the `tunwarden` group.
 - The daemon itself applies socket mode `0660` to `/run/tunwarden/tunwardend.sock`.
-- `StateDirectory=tunwarden` reserves `/var/lib/tunwarden` for future daemon-owned persistent state, but v0.1 does not write persistent daemon state yet.
+- `StateDirectory=tunwarden` reserves `/var/lib/tunwarden` for future daemon-owned persistent state, but the current baseline does not write persistent daemon state yet.
 - `StandardOutput=journal` and `StandardError=journal` make daemon logs visible through `journalctl -u tunwardend`.
 
-Current v0.1 hardening baseline:
+Current hardening baseline:
 
 ```ini
 User=tunwarden
@@ -259,11 +280,13 @@ StateDirectory=tunwarden
 StateDirectoryMode=0750
 ```
 
-Notes:
+Privilege status for the current milestone:
 
-- v0.1 proxy-only lifecycle may start and stop an Xray child process and mutate only generated runtime config state under the daemon runtime directory.
-- v0.1 must not mutate TUN, route, DNS, nftables, or firewall state.
-- The service intentionally grants no capabilities in v0.1. Add `CAP_NET_ADMIN` only when a later issue implements and documents daemon-owned TUN, route, DNS, or firewall mutations.
+- The packaged baseline unit remains unprivileged and does not grant `CAP_NET_ADMIN`.
+- Packaged proxy-only mode may start and stop an Xray child process and mutate only daemon-owned generated runtime config state under `/run/tunwarden`.
+- Daemon-owned TUN execution and recovery cleanup paths are privileged runtime paths. They require a privileged daemon deployment or future helper with `CAP_NET_ADMIN`-equivalent rights when they mutate TUN devices, routes, policy rules, DNS link state, or nftables/firewall state.
+- The CLI must not become a privileged or SUID networking mutator. It may parse arguments, render output, and send intents through the daemon socket only.
+- Any packaged service privilege expansion must update this document and the unit file in the same change, including the exact capability set and why each capability is required.
 - Add `CAP_NET_RAW` only if a concrete health check or networking feature needs it and the PR documents why.
 - Broad file permission bypass capabilities must not be in the baseline.
 - `PrivateDevices=yes`, restrictive address-family filters, and kernel-tunable protections are deferred because they can conflict with future `/dev/net/tun`, netlink, routing, or nftables work and must be validated together with those features.
@@ -276,7 +299,7 @@ The core engine process is a child process managed by the daemon, not the owner 
 Rules:
 
 - The core process must not inherit broad daemon privileges unless strictly required.
-- In v0.1 proxy-only packaged mode, `tunwardend` and Xray both run as the unprivileged `tunwarden` service identity.
+- In packaged proxy-only mode, `tunwardend` and Xray both run as the unprivileged `tunwarden` service identity.
 - Manual root execution of proxy-only `connect` must fail instead of starting Xray as root.
 - Generated core configs must be mode `0600`.
 - Generated core configs must be written atomically.
