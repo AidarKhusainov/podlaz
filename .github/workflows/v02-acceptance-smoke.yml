@@ -114,6 +114,46 @@ jobs:
             "$@" >> "$raw_log" 2>&1
           }
 
+          fetch_public_ip() {
+            local label="$1"
+            local primary=""
+            local fallback=""
+            local selected=""
+
+            echo >> "$raw_log"
+            echo "== external public IP check: $label ==" >> "$raw_log"
+            primary="$(curl -4 --max-time 20 --fail --silent --show-error https://api.ipify.org 2>>"$raw_log" | tr -d '[:space:]' || true)"
+            fallback="$(curl -4 --max-time 20 --fail --silent --show-error https://ifconfig.co/ip 2>>"$raw_log" | tr -d '[:space:]' || true)"
+            echo "api.ipify.org: ${primary:-unavailable}" >> "$raw_log"
+            echo "ifconfig.co: ${fallback:-unavailable}" >> "$raw_log"
+
+            selected="$primary"
+            if [[ -z "$selected" ]]; then
+              selected="$fallback"
+            fi
+            if [[ -z "$selected" ]]; then
+              echo "external public IP lookup failed for $label" >> "$raw_log"
+              return 1
+            fi
+
+            if ! python3 - "$selected" >> "$raw_log" 2>&1 <<'PY'
+          import ipaddress
+          import sys
+
+          ipaddress.ip_address(sys.argv[1])
+          PY
+            then
+              echo "external public IP lookup returned an invalid IP for $label: $selected" >> "$raw_log"
+              return 1
+            fi
+
+            if [[ -n "$primary" && -n "$fallback" && "$primary" != "$fallback" ]]; then
+              echo "warning: external IP providers disagreed for $label; using api.ipify.org result" >> "$raw_log"
+            fi
+
+            echo "$selected"
+          }
+
           : > "$raw_log"
 
           {
@@ -158,6 +198,9 @@ jobs:
           run_logged "plan-tun" ./bin/tunwarden plan --mode tun "$profile_id"
           run_logged "plan-tun-json" ./bin/tunwarden plan --mode tun "$profile_id" --json
 
+          baseline_public_ip="$(fetch_public_ip "before VPN")"
+          echo "Baseline public IP before VPN: $baseline_public_ip" >> "$raw_log"
+
           echo "== before snapshots ==" >> "$raw_log"
           ip -d link show >> "$raw_log" 2>&1 || true
           ip route show table all >> "$raw_log" 2>&1 || true
@@ -195,10 +238,27 @@ jobs:
 
           run_logged "connectivity-smoke" curl --max-time 15 --fail --silent --show-error https://example.com/
 
+          active_public_ip="$(fetch_public_ip "active VPN")"
+          echo "Active VPN public egress IP: $active_public_ip" >> "$raw_log"
+          if [[ "$active_public_ip" == "$baseline_public_ip" ]]; then
+            echo "::error::external public IP did not change after TUN connect"
+            echo "external public IP did not change after TUN connect: $active_public_ip" >> "$raw_log"
+            redact_log
+            cat "$sanitized_log"
+            exit 1
+          fi
+          echo "External public IP changed after TUN connect: $baseline_public_ip -> $active_public_ip" >> "$raw_log"
+
           run_logged "disconnect" ./bin/tunwarden disconnect
           run_logged "status-final" ./bin/tunwarden status
           run_logged "doctor-final" ./bin/tunwarden doctor
           run_logged "recover-final" ./bin/tunwarden recover
+
+          final_public_ip="$(fetch_public_ip "after disconnect")"
+          echo "Final public IP after disconnect: $final_public_ip" >> "$raw_log"
+          if [[ "$final_public_ip" != "$baseline_public_ip" ]]; then
+            echo "warning: final public IP after disconnect differs from the baseline" >> "$raw_log"
+          fi
 
           echo "== final snapshots ==" >> "$raw_log"
           ip -d link show tunwarden0 >> "$raw_log" 2>&1 || true
