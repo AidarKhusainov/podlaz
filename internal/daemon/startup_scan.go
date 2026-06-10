@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/AidarKhusainov/tunwarden/internal/api"
 	"github.com/AidarKhusainov/tunwarden/internal/doctor"
@@ -14,10 +15,40 @@ import (
 
 type startupScanFunc func(context.Context) recovery.PlanResult
 
+type startupScanState struct {
+	mu     sync.RWMutex
+	scan   recovery.PlanResult
+	scanFn startupScanFunc
+}
+
 func defaultStartupScanFunc(runtimeDir string) startupScanFunc {
 	return func(ctx context.Context) recovery.PlanResult {
 		return recovery.PlanWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir})
 	}
+}
+
+func newStartupScanState(scanFn startupScanFunc) *startupScanState {
+	return &startupScanState{scanFn: scanFn}
+}
+
+func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
+	if s == nil || s.scanFn == nil {
+		return recovery.PlanResult{}
+	}
+	scan := cloneRecoveryPlan(s.scanFn(ctx))
+	s.mu.Lock()
+	s.scan = cloneRecoveryPlan(scan)
+	s.mu.Unlock()
+	return scan
+}
+
+func (s *startupScanState) Snapshot() recovery.PlanResult {
+	if s == nil {
+		return recovery.PlanResult{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cloneRecoveryPlan(s.scan)
 }
 
 func withStartupScanStatus(status api.StatusResponse, scan recovery.PlanResult) api.StatusResponse {
@@ -137,4 +168,20 @@ func firstStartupTransactionID(scan recovery.PlanResult) string {
 		}
 	}
 	return ""
+}
+
+func cloneRecoveryPlan(in recovery.PlanResult) recovery.PlanResult {
+	out := recovery.PlanResult{
+		Candidates: make([]recovery.Candidate, 0, len(in.Candidates)),
+		Warnings:   append([]recovery.Warning(nil), in.Warnings...),
+	}
+	for _, candidate := range in.Candidates {
+		cloned := candidate
+		if candidate.Transaction != nil {
+			tx := *candidate.Transaction
+			cloned.Transaction = &tx
+		}
+		out.Candidates = append(out.Candidates, cloned)
+	}
+	return out
 }
