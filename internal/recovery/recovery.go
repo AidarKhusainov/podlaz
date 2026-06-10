@@ -23,9 +23,10 @@ const (
 	managedInterface      = "tunwarden0"
 	managedNFTFamily      = "inet"
 	managedNFTTableName   = "tunwarden"
-	managedNFTTable      = managedNFTFamily + " " + managedNFTTableName
+	managedNFTTable       = managedNFTFamily + " " + managedNFTTableName
 	managedRouteTable     = "tunwarden"
-	managedRouteTableID   = "51820")
+	managedRouteTableID   = "51820"
+)
 
 type Candidate struct {
 	Kind        string `json:"kind"`
@@ -139,7 +140,6 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 	} else {
 		result.ExitCode = -1
 	}
-
 	return result, err
 }
 
@@ -167,7 +167,7 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 
 	if opts.Executor == nil {
 		for _, candidate := range ordered {
-			results = append(results, failed(candidate, errors.New("missing daemon-owned recovery cleanup executor"))
+			results = append(results, failed(candidate, errors.New("missing daemon-owned recovery cleanup executor")))
 		}
 		return ExecuteResult{Results: results, Warnings: append([]Warning(nil), plan.Warnings...)}
 	}
@@ -307,10 +307,11 @@ func (r *ScanResult) scanManagedInterface(ctx context.Context, runner CommandRun
 		command:            "ip",
 		commandUnavailable: "ip command is unavailable",
 		args:               []string{"link", "show", "dev", managedInterface},
-		candidate:          Candidate{Kind: "tun-interface", Description: "TUN interface", Target: managedInterface},
-		warningTarget:     "TUN interface " + managedInterface,
+		candidate: Candidate{Kind: "tun-interface", Description: "TUN interface", Target: managedInterface},
+		warningTarget:      "TUN interface " + managedInterface,
 	})
 }
+
 func (r *ScanResult) scanManagedNFTTable(ctx context.Context, runner CommandRunner) {
 	r.scanCommandCandidate(ctx, runner, commandCandidateScan{
 		command:            "nft",
@@ -338,13 +339,25 @@ func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRun
 	}
 }
 
-func r *ScanResult) scanTransactionState(runtimeDir string) {
+func (r *ScanResult) scanTransactionState(runtimeDir string) {
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	for _, summary := range summaries {
 		if !summary.RequiresCleanup {
 			continue
 		}
-		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: summary.RequiresCleanup, Path: summary.Path}})
+		r.Candidates = append(r.Candidates, Candidate{
+			Kind:        "transaction-state",
+			Description: "transaction rollback state",
+			Target:      summary.Path,
+			Transaction: &TransactionCandidate{
+				ID:                summary.ID,
+				State:             string(summary.State),
+				Status:            summary.StatusLine(),
+				RollbackAvailable: summary.RollbackAvailable,
+				RequiresCleanup:   summary.RequiresCleanup,
+				Path:              summary.Path,
+			},
+		})
 	}
 	for _, warning := range warnings {
 		r.Warnings = append(r.Warnings, Warning{Target: "transaction state", Message: warning})
@@ -367,7 +380,7 @@ func (r *ScanResult) scanGeneratedRuntimeConfigs(generatedDir string) {
 	}
 }
 
-func r *ScanResult) scanRuntimeDir(runtimeDir string) {
+func (r *ScanResult) scanRuntimeDir(runtimeDir string) {
 	stat, err := os.Stat(runtimeDir)
 	switch {
 	case err == nil:
@@ -381,6 +394,11 @@ func r *ScanResult) scanRuntimeDir(runtimeDir string) {
 	default:
 		r.Warnings = append(r.Warnings, Warning{Target: "runtime directory " + runtimeDir, Message: err.Error()})
 	}
+}
+
+type OSCleanupExecutor struct {
+	Runner     CommandRunner
+	RuntimeDir string
 }
 
 func (e OSCleanupExecutor) Cleanup(ctx context.Context, candidate Candidate) CleanupResult {
@@ -463,7 +481,7 @@ func (e OSCleanupExecutor) rollbackNFTables(ctx context.Context, entries []txsta
 	return errors.Join(errs...)
 }
 
-func (e OSCleanupExecutor) rollbackDNS(ctx context.Context.Context, dns txstate.DNSRollback) error {
+func (e OSCleanupExecutor) rollbackDNS(ctx context.Context, dns txstate.DNSRollback) error {
 	if dns.Owner != txstate.TransactionOwner || dns.Link != managedInterface || (dns.Backend != "" && dns.Backend != "systemd-resolved") {
 		return fmt.Errorf("refuse to rollback ambiguous DNS target link=%s backend=%s", dns.Link, dns.Backend)
 	}
@@ -530,7 +548,7 @@ func (e OSCleanupExecutor) rollbackRoute(ctx context.Context, route txstate.Rout
 	return nil
 }
 
-func (e OSCleanupExecutor) rollbackTUN(ctx context.Context.Context, tun txstate.TUNRollback) error {
+func (e OSCleanupExecutor) rollbackTUN(ctx context.Context, tun txstate.TUNRollback) error {
 	if tun.Owner != txstate.TransactionOwner || tun.InterfaceName != managedInterface {
 		return fmt.Errorf("refuse to rollback non-TunWarden TUN interface %s", tun.InterfaceName)
 	}
@@ -569,7 +587,6 @@ func (e OSCleanupExecutor) run(ctx context.Context, command string, args ...stri
 func runCommand(ctx context.Context, runner CommandRunner, name string, args ...string) (CommandResult, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, defaultCommandTimeout)
 	defer cancel()
-
 	return runner.Run(cmdCtx, name, args...)
 }
 
@@ -643,7 +660,7 @@ func failed(candidate Candidate, err error) CleanupResult {
 }
 
 func orderCleanupCandidates(candidates []Candidate) []Candidate {
-	ordered := appen([]Candidate(nil), candidates...)
+	ordered := append([]Candidate(nil), candidates...)
 	weight := func(kind string) int {
 		switch kind {
 		case "transaction-state":
