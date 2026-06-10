@@ -2,6 +2,7 @@ package profile
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,5 +135,76 @@ func TestStoreWritesRestrictivePermissions(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("expected profile store mode 0600, got %o", got)
+	}
+}
+
+func TestStoreSyncsParentDirectoryAfterAtomicReplace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profiles.json")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	syncCalled := false
+	syncParentDir := func(gotDir string) error {
+		syncCalled = true
+		if gotDir != dir {
+			return fmt.Errorf("sync dir = %q, want %q", gotDir, dir)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("profile store was not renamed before directory sync: %w", err)
+		}
+		return nil
+	}
+
+	if err := store.saveWithDirectorySync([]Profile{NewManual("test", "example.com", 443, "vless")}, syncParentDir); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+	if !syncCalled {
+		t.Fatal("expected profile store parent directory sync after atomic replace")
+	}
+}
+
+func TestStoreKeepsRenamedProfileStoreWhenDirectorySyncFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "profiles.json")
+	store, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+
+	syncParentDir := func(string) error {
+		return errors.New("forced sync failure")
+	}
+
+	err = store.saveWithDirectorySync([]Profile{NewManual("test", "example.com", 443, "vless")}, syncParentDir)
+	if err == nil {
+		t.Fatal("expected save profile to report directory sync failure")
+	}
+	for _, want := range []string{"sync profile store parent directory", "forced sync failure"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in %q", want, err.Error())
+		}
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected renamed profile store to remain after directory sync failure: %v", err)
+	}
+
+	reopened, err := NewStore(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	if _, err := reopened.Get("test"); err != nil {
+		t.Fatalf("expected renamed profile store to remain readable after directory sync failure: %v", err)
+	}
+
+	leftovers, err := filepath.Glob(filepath.Join(dir, ".profiles-*.tmp"))
+	if err != nil {
+		t.Fatalf("glob temporary profile stores: %v", err)
+	}
+	if len(leftovers) != 0 {
+		t.Fatalf("expected temporary profile store cleanup, found %v", leftovers)
 	}
 }
