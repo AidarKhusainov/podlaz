@@ -225,6 +225,10 @@ func (s Store) load() ([]Profile, error) {
 }
 
 func (s Store) save(profiles []Profile) error {
+	return s.saveWithDirectorySync(profiles, syncDir)
+}
+
+func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(string) error) error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create profile store directory: %w", err)
@@ -257,6 +261,24 @@ func (s Store) save(profiles []Profile) error {
 	}
 	if err := os.Rename(tmpName, s.path); err != nil {
 		return fmt.Errorf("replace profile store atomically: %w", err)
+	}
+	if err := syncParentDir(dir); err != nil {
+		return fmt.Errorf("sync profile store parent directory: %w", err)
+	}
+	return nil
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open parent directory %s for sync: %w", path, err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("sync parent directory %s: %w", path, err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close parent directory %s after sync: %w", path, err)
 	}
 	return nil
 }
