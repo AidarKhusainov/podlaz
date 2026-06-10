@@ -60,28 +60,12 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          if [[ -z "${TUNWARDEN_ACCEPTANCE_VLESS_URI:-}" ]]; then
-            echo "::error::repository secret NLD_LINK is required for this smoke run"
-            exit 1
-          fi
-          if [[ -z "${TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL:-}" ]]; then
-            echo "::error::repository secret TEST_USER_SUBSCRIBER_LINK is required for this smoke run"
-            exit 1
-          fi
-
-          echo "::add-mask::$TUNWARDEN_ACCEPTANCE_VLESS_URI"
-          echo "::add-mask::$TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL"
-
-          export TUNWARDEN_XRAY_PATH="$RUNNER_TEMP/tunwarden-tools/xray/xray"
-          export TUNWARDEN_TUN2SOCKS_PATH="$RUNNER_TEMP/tunwarden-tools/bin/tun2socks"
-          export XDG_STATE_HOME="$RUNNER_TEMP/tunwarden-state"
-          export XDG_RUNTIME_DIR="$RUNNER_TEMP/tunwarden-runtime"
-          mkdir -p "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
-          chmod 700 "$XDG_RUNTIME_DIR"
-
           mkdir -p "$RUNNER_TEMP/tunwarden-acceptance"
           raw_log="$RUNNER_TEMP/tunwarden-acceptance/raw.log"
           sanitized_log="$RUNNER_TEMP/tunwarden-acceptance/sanitized.log"
+          : > "$raw_log"
+          current_step="bootstrap"
+          daemon_pid=""
 
           redact_log() {
             python3 - "$raw_log" "$sanitized_log" <<'PY'
@@ -103,15 +87,74 @@ jobs:
           PY
           }
 
+          emit_sanitized_log() {
+            set +e
+            if [[ -f "$raw_log" ]]; then
+              redact_log >/dev/null 2>&1 || true
+            fi
+            if [[ -s "$sanitized_log" ]]; then
+              cat "$sanitized_log"
+            fi
+          }
+
+          cleanup_daemon() {
+            set +e
+            if [[ -n "${daemon_pid:-}" ]]; then
+              ./bin/tunwarden disconnect >/dev/null 2>&1 || true
+              kill "$daemon_pid" >/dev/null 2>&1 || true
+              wait "$daemon_pid" >/dev/null 2>&1 || true
+            fi
+          }
+
+          failure_handler() {
+            local status=$?
+            set +e
+            echo "::error::secret-backed acceptance smoke failed during: ${current_step:-unknown}"
+            {
+              echo
+              echo "== failure =="
+              echo "step: ${current_step:-unknown}"
+              echo "exit_code: $status"
+            } >> "$raw_log"
+            emit_sanitized_log
+            exit "$status"
+          }
+
+          trap failure_handler ERR
+          trap cleanup_daemon EXIT
+
+          if [[ -z "${TUNWARDEN_ACCEPTANCE_VLESS_URI:-}" ]]; then
+            echo "::error::repository secret NLD_LINK is required for this smoke run"
+            echo "missing repository secret: NLD_LINK" >> "$raw_log"
+            emit_sanitized_log
+            exit 1
+          fi
+          if [[ -z "${TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL:-}" ]]; then
+            echo "::error::repository secret TEST_USER_SUBSCRIBER_LINK is required for this smoke run"
+            echo "missing repository secret: TEST_USER_SUBSCRIBER_LINK" >> "$raw_log"
+            emit_sanitized_log
+            exit 1
+          fi
+
+          echo "::add-mask::$TUNWARDEN_ACCEPTANCE_VLESS_URI"
+          echo "::add-mask::$TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL"
+
+          export TUNWARDEN_XRAY_PATH="$RUNNER_TEMP/tunwarden-tools/xray/xray"
+          export TUNWARDEN_TUN2SOCKS_PATH="$RUNNER_TEMP/tunwarden-tools/bin/tun2socks"
+          export XDG_STATE_HOME="$RUNNER_TEMP/tunwarden-state"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/tunwarden-runtime"
+          mkdir -p "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+
           run_logged() {
-            echo >> "$raw_log"
-            printf '$ %q' "$1" >> "$raw_log"
+            current_step="$1"
             shift
-            for arg in "$@"; do
-              printf ' %q' "$arg" >> "$raw_log"
-            done
-            echo >> "$raw_log"
+            {
+              echo
+              echo "== command: $current_step =="
+            } >> "$raw_log"
             "$@" >> "$raw_log" 2>&1
+            current_step=""
           }
 
           fetch_public_ip() {
@@ -154,8 +197,6 @@ jobs:
             echo "$selected"
           }
 
-          : > "$raw_log"
-
           {
             echo "== environment =="
             date -u +'%Y-%m-%dT%H:%M:%SZ'
@@ -176,7 +217,7 @@ jobs:
             sudo chmod 0666 /dev/net/tun || true
           fi
 
-          run_logged "gofmt-check" test -z "$(gofmt -l .)"
+          run_logged "gofmt-check" bash -c 'files="$(gofmt -l .)"; if [[ -n "$files" ]]; then echo "gofmt would change:"; echo "$files"; exit 1; fi'
           run_logged "go-test" go test ./...
           run_logged "build-cli" go build -o ./bin/tunwarden ./cmd/tunwarden
           run_logged "build-daemon" go build -o ./bin/tunwardend ./cmd/tunwardend
@@ -186,20 +227,24 @@ jobs:
           run_logged "import-subscription" ./bin/tunwarden import "$TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL"
           run_logged "profile-list-json" ./bin/tunwarden profile list --json
 
+          current_step="select imported profile"
           profile_id="$(./bin/tunwarden profile list --json | jq -r '.profiles[0].id // empty')"
           if [[ -z "$profile_id" ]]; then
             echo "::error::no imported profile was available after secret-backed imports"
-            redact_log
-            cat "$sanitized_log"
+            echo "no imported profile was available after secret-backed imports" >> "$raw_log"
+            emit_sanitized_log
             exit 1
           fi
           echo "Selected profile ID: $profile_id" >> "$raw_log"
+          current_step=""
 
           run_logged "plan-tun" ./bin/tunwarden plan --mode tun "$profile_id"
           run_logged "plan-tun-json" ./bin/tunwarden plan --mode tun "$profile_id" --json
 
+          current_step="baseline external public IP check"
           baseline_public_ip="$(fetch_public_ip "before VPN")"
           echo "Baseline public IP before VPN: $baseline_public_ip" >> "$raw_log"
+          current_step=""
 
           echo "== before snapshots ==" >> "$raw_log"
           ip -d link show >> "$raw_log" 2>&1 || true
@@ -210,6 +255,7 @@ jobs:
 
           # The daemon must not run as UID 0 for the TUN success path. Give the
           # current runner process ambient CAP_NET_ADMIN before starting the daemon.
+          current_step="start non-root daemon with CAP_NET_ADMIN"
           sudo capsh \
             --keep=1 \
             --user="$USER" \
@@ -218,8 +264,8 @@ jobs:
             -- -c "cd '$PWD' && env XDG_STATE_HOME='$XDG_STATE_HOME' XDG_RUNTIME_DIR='$XDG_RUNTIME_DIR' TUNWARDEN_XRAY_PATH='$TUNWARDEN_XRAY_PATH' TUNWARDEN_TUN2SOCKS_PATH='$TUNWARDEN_TUN2SOCKS_PATH' ./bin/tunwardend" \
             >> "$raw_log" 2>&1 &
           daemon_pid=$!
-          trap 'set +e; ./bin/tunwarden disconnect >/dev/null 2>&1; kill "$daemon_pid" >/dev/null 2>&1; wait "$daemon_pid" >/dev/null 2>&1' EXIT
           sleep 2
+          current_step=""
 
           run_logged "doctor-initial" ./bin/tunwarden doctor
           run_logged "connect-tun" ./bin/tunwarden connect --mode tun "$profile_id"
@@ -238,27 +284,30 @@ jobs:
 
           run_logged "connectivity-smoke" curl --max-time 15 --fail --silent --show-error https://example.com/
 
+          current_step="active VPN external public IP check"
           active_public_ip="$(fetch_public_ip "active VPN")"
           echo "Active VPN public egress IP: $active_public_ip" >> "$raw_log"
           if [[ "$active_public_ip" == "$baseline_public_ip" ]]; then
             echo "::error::external public IP did not change after TUN connect"
             echo "external public IP did not change after TUN connect: $active_public_ip" >> "$raw_log"
-            redact_log
-            cat "$sanitized_log"
+            emit_sanitized_log
             exit 1
           fi
           echo "External public IP changed after TUN connect: $baseline_public_ip -> $active_public_ip" >> "$raw_log"
+          current_step=""
 
           run_logged "disconnect" ./bin/tunwarden disconnect
           run_logged "status-final" ./bin/tunwarden status
           run_logged "doctor-final" ./bin/tunwarden doctor
           run_logged "recover-final" ./bin/tunwarden recover
 
+          current_step="final external public IP check"
           final_public_ip="$(fetch_public_ip "after disconnect")"
           echo "Final public IP after disconnect: $final_public_ip" >> "$raw_log"
           if [[ "$final_public_ip" != "$baseline_public_ip" ]]; then
             echo "warning: final public IP after disconnect differs from the baseline" >> "$raw_log"
           fi
+          current_step=""
 
           echo "== final snapshots ==" >> "$raw_log"
           ip -d link show tunwarden0 >> "$raw_log" 2>&1 || true
@@ -270,8 +319,7 @@ jobs:
           pgrep -a tun2socks >> "$raw_log" 2>&1 || true
           sudo find /run/tunwarden -maxdepth 4 -xdev -print -ls >> "$raw_log" 2>&1 || true
 
-          redact_log
-          cat "$sanitized_log"
+          emit_sanitized_log
 
       - name: Upload sanitized acceptance smoke log
         if: always()
@@ -279,4 +327,4 @@ jobs:
         with:
           name: v02-acceptance-smoke-log
           path: ${{ runner.temp }}/tunwarden-acceptance/sanitized.log
-          if-no-files-found: ignore
+          if-no-files-found: error
