@@ -313,7 +313,7 @@ Implemented TUN full-tunnel dry-run output:
 - VPN server bypass route and policy-rule desired state only when the current read-only snapshot resolved the server route to a concrete IP address;
 - DNS desired state for systemd-resolved per-link DNS on `tunwarden0`, including planned DNS servers, route-only domain `~.`, default-route `yes`, and rollback intent;
 - nftables/firewall desired state for TunWarden-owned `table inet tunwarden`;
-- typed nftables chain/rule desired state for future apply, verify, and recover behavior;
+- typed nftables chain/rule desired state for apply, verify, rollback, and recover behavior;
 - rollback steps for planned nftables, DNS, TUN device, route, and policy-rule desired state;
 - final `No changes were applied.` confirmation.
 
@@ -346,7 +346,7 @@ Implemented proxy-only behavior:
 - idempotent disconnect;
 - Xray crash visible in daemon-backed `status`.
 
-Implemented `connect --mode tun` executor-slice behavior:
+Implemented `connect --mode tun` preview behavior:
 
 - daemon-owned transaction file is written before any TUN mutation;
 - current host networking is captured through the read-only snapshot model;
@@ -355,22 +355,27 @@ Implemented `connect --mode tun` executor-slice behavior:
 - executor adds, never replaces, planned routes;
 - executor adds, never treats pre-existing rules as owned, planned policy rules;
 - executor applies systemd-resolved per-link DNS from `TunDNSPlan.Servers` with `resolvectl dns`, `resolvectl domain '~.'`, and `resolvectl default-route yes`;
+- executor applies, verifies, and rolls back TunWarden-owned nftables state for `table inet tunwarden`;
+- TUN-mode Xray runtime config is generated under the daemon runtime directory;
+- daemon starts Xray with the TUN-mode runtime config and refuses to start it as root;
+- daemon starts the `tun2socks` adapter against the planned TUN device and private SOCKS endpoint;
 - route verify checks the destination plus expected device and gateway where applicable;
 - policy-rule verify checks the expected selector and lookup table;
 - DNS verify checks planned DNS servers and route-only domain `~.`;
-- transaction commits only after apply and verify succeed;
-- apply, verify, or transition failure rolls back only the steps actually applied by the transaction, including DNS via `resolvectl revert` when DNS was applied;
+- nftables verify checks the TunWarden-owned table, chains, and rules;
+- pre-commit connectivity verification checks the full-tunnel route and routed TCP path;
+- transaction commits only after network apply/verify, Xray startup verification, TUN adapter startup verification, and connectivity verification succeed;
+- apply, verify, startup, connectivity, or transition failure rolls back only the steps actually applied by the transaction, including DNS via `resolvectl revert` and nftables table cleanup when those steps were applied;
 - `disconnect` rolls back the active TunWarden-owned TUN transaction and is safe to repeat;
-- status exposes transaction state, rollback availability, cleanup requirement, redacted transaction path, and DNS desired state.
+- status exposes transaction state, rollback availability, cleanup requirement, redacted transaction path, DNS desired state, and firewall state.
 
 Current `connect --mode tun` limitations:
 
-- it is still an executor slice, not complete full VPN mode;
-- it does not start Xray in TUN mode yet;
-- it does not mutate nftables/firewall yet;
-- it does not claim full leak protection yet;
+- it is a safe TUN preview, not a stable laptop VPN release;
+- it does not claim stable full leak protection until the v0.2 manual acceptance gate records conclusive Tier 1 evidence;
 - it supports systemd-resolved DNS only; non-systemd fallback and user DNS configuration are future work;
-- it requires daemon process privileges equivalent to `CAP_NET_ADMIN` for TUN, route, and policy-rule mutation plus permission to call `resolvectl` against systemd-resolved.
+- it requires daemon process privileges equivalent to `CAP_NET_ADMIN` for TUN, route, policy-rule, DNS, and nftables mutation;
+- packaged privileged daemon deployment, suspend/resume handling, Wi-Fi roaming, reconnect loops, and NetworkManager event handling are still deferred.
 
 Privilege model:
 
@@ -434,15 +439,14 @@ The current implementation contains:
 - proxy-only lifecycle for Xray;
 - read-only full-tunnel TUN planning;
 - transaction-state persistence and diagnostics;
-- daemon-owned privileged TUN executor slice for TUN interface, routes, policy rules, and systemd-resolved DNS;
+- daemon-owned privileged TUN preview execution for TUN interface, routes, policy rules, systemd-resolved DNS, TunWarden-owned nftables state, TUN-mode Xray runtime config, Xray startup, TUN adapter startup, and pre-commit route/TCP verification;
 - daemon-owned recovery cleanup execution for clearly TunWarden-owned volatile state;
 - DNS desired-state persistence in transaction state, including planned servers.
 
 Still deferred:
 
-- TUN-mode Xray lifecycle integration;
+- stable leak-protection release claim until v0.2 acceptance evidence is recorded;
 - configurable DNS policy and non-systemd DNS fallback;
-- nftables/firewall mutation and rollback;
-- full leak-protection verification;
+- packaged privileged daemon deployment;
 - reconnect/suspend/resume state machine;
 - GUI.

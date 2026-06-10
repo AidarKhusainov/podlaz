@@ -219,7 +219,7 @@ Exit criteria:
 
 ## 8. Phase 5: Safe TUN MVP
 
-Goal: implement full-tunnel mode with rollback.
+Goal: implement full-tunnel mode with rollback and prove the safe TUN preview through manual acceptance.
 
 Deliverables:
 
@@ -231,7 +231,8 @@ Deliverables:
 - `recover --execute --yes` explicit cleanup mode,
 - `doctor` checks for route/DNS/TUN/firewall/core state,
 - systemd hardening baseline for privileged daemon release,
-- integration tests in Linux network namespaces where possible.
+- integration tests in Linux network namespaces where possible,
+- manual `v0.2.0: safe TUN preview` acceptance checklist for one Tier 1 Linux desktop host.
 
 Exit criteria:
 
@@ -241,6 +242,7 @@ Exit criteria:
 - VPN server route bypasses TUN.
 - Strict kill-switch behavior is explicit and recoverable.
 - The systemd unit documents final hardening choices and justifies deviations from the documented baseline.
+- The v0.2 acceptance checklist is completed with a redacted verification record before the milestone is declared complete.
 
 ## 9. Phase 6: Laptop reliability
 
@@ -347,4 +349,5 @@ Features:
 - nftables foundation,
 - `recover --execute --yes`,
 - systemd hardening baseline,
-- Ubuntu LTS test checklist.
+- Ubuntu LTS test checklist,
+- redacted manual acceptance record for one Tier 1 host.
