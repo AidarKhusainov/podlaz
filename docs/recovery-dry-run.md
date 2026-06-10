@@ -30,7 +30,9 @@ The daemon recovery executor intentionally does not stop a process based only on
 
 ## Daemon startup recovery scan
 
-On startup, `tunwardend` runs the same read-only recovery scanner before it exposes the local daemon API. The startup scan result is captured in memory and exposed through daemon-backed `tunwarden status`, `tunwarden doctor`, and `tunwarden recover` dry-run output.
+On startup, `tunwardend` first establishes the single-owner daemon boundary by acquiring the daemon lock. Only after the lock is acquired does it run the same read-only recovery scanner and expose the local daemon API. A second daemon process that cannot acquire the lock must fail before scanning or logging another daemon's runtime state.
+
+The startup scan result is captured in memory and exposed through daemon-backed `tunwarden status`, `tunwarden doctor`, and `tunwarden recover` dry-run output.
 
 The startup scan is observational only. It must not mutate host networking, generated files, process state, transaction files, TUN devices, routes, policy rules, DNS settings, or nftables state.
 
@@ -44,7 +46,9 @@ Suggested action: tunwarden recover
 
 Daemon doctor includes a `startup-recovery-scan` check. Clean startup is reported as `OK`; stale candidates or incomplete inspection are reported as `WARN` with an actionable suggested command.
 
-Plain `tunwarden recover` merges the daemon startup scan with the current local read-only scan when the daemon is reachable. This preserves restart-time evidence even if the current process can no longer reproduce every startup observation. Duplicate candidates are collapsed by kind, target, and transaction id.
+Plain `tunwarden recover` merges the daemon startup scan with the current local read-only scan when the daemon is reachable. This preserves restart-time evidence while the evidence is still current. Duplicate candidates are collapsed by kind, target, and transaction id.
+
+After `tunwarden recover --execute --yes` completes, `tunwardend` refreshes the cached startup scan from the current read-only recovery plan before serving later status, doctor, or recover dry-run requests. Already recovered resources must not remain user-visible as executable cleanup candidates.
 
 ## Implemented host inspections
 
