@@ -136,6 +136,63 @@ func TestInspectWithOptionsDefersStaleClassificationWhenDaemonSocketInaccessible
 	}
 }
 
+func TestInspectWithOptionsDefersStaleClassificationWhenSocketPathInspectionDenied(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	socketPath := filepath.Join(runtimeDir, "tunwardend.sock")
+	generatedDir := filepath.Join(runtimeDir, generatedDirName)
+	transactionsDir := filepath.Join(runtimeDir, "transactions")
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(transactionsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(transactionsDir, "tx.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if os.Geteuid() != 0 {
+		if err := os.Chmod(runtimeDir, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chmod(runtimeDir, 0o755) }()
+	}
+
+	report := InspectWithOptions(context.Background(), Options{
+		RuntimeDir:         runtimeDir,
+		SocketPath:         socketPath,
+		DaemonSocketAccess: DaemonSocketAccessPermissionDenied,
+	})
+
+	if report.DaemonSocket.State != DaemonSocketInaccessible {
+		t.Fatalf("expected inaccessible daemon socket, got %#v", report.DaemonSocket)
+	}
+	if report.Connection != "unknown (inspection incomplete)" {
+		t.Fatalf("expected incomplete connection state, got %q", report.Connection)
+	}
+	assertNoCandidate(t, report, "runtime-directory")
+	assertNoCandidate(t, report, "generated-runtime-configs")
+	assertNoCandidate(t, report, "transaction-state")
+
+	got := report.String()
+	for _, want := range []string{
+		"Daemon socket:",
+		"permission denied",
+		"Stale state: unknown (inspection incomplete)\n",
+		"local runtime state may belong to a live tunwardend and was not classified as stale\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Recovery candidates:") || strings.Contains(got, "generated runtime configs") || strings.Contains(got, "transaction rollback state") {
+		t.Fatalf("permission-denied socket path inspection must not expose stale candidates, got %q", got)
+	}
+}
+
 func TestInspectWithOptionsReportsUnexpectedDaemonSocketPath(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
 	if err := os.Mkdir(runtimeDir, 0o755); err != nil {
