@@ -2,7 +2,7 @@
 
 This document defines the implemented recovery behavior for `tunwarden recover`.
 
-The command name, arguments, exit codes, stdout/stderr rules, JSON compatibility, and milestone boundaries are owned by [CLI contract](./cli.md). This document owns the implemented recovery candidate detection set and the cleanup safety boundary.
+The command name, arguments, exit codes, stdout/stderr rules, JSON compatibility, and milestone boundaries are owned by [CLI contract](./cli.md). This document owns the implemented recovery candidate detection set, startup recovery scan visibility, and the cleanup safety boundary.
 
 ## Safety boundary
 
@@ -28,6 +28,28 @@ The daemon recovery executor intentionally does not remove the runtime root `/ru
 
 The daemon recovery executor intentionally does not stop a process based only on a stale PID from rollback metadata. PID reuse makes that ambiguous. Such child-process rollback entries are reported as skipped until a future daemon-supervised identity check exists.
 
+## Daemon startup recovery scan
+
+On startup, `tunwardend` first establishes the single-owner daemon boundary by acquiring the daemon lock. Only after the lock is acquired does it run the same read-only recovery scanner and expose the local daemon API. A second daemon process that cannot acquire the lock must fail before scanning or logging another daemon's runtime state.
+
+The startup scan result is captured in memory and exposed through daemon-backed `tunwarden status`, `tunwarden doctor`, and `tunwarden recover` dry-run output.
+
+The startup scan is observational only. It must not mutate host networking, generated files, process state, transaction files, TUN devices, routes, policy rules, DNS settings, or nftables state.
+
+Daemon status includes a redacted `startup_scan` object in JSON API responses. Human status renders it as:
+
+```text
+Startup recovery scan: stale state found
+Pending transaction: tx-startup
+Suggested action: tunwarden recover
+```
+
+Daemon doctor includes a `startup-recovery-scan` check. Clean startup is reported as `OK`; stale candidates or incomplete inspection are reported as `WARN` with an actionable suggested command.
+
+Plain `tunwarden recover` merges the daemon startup scan with the current local read-only scan when the daemon is reachable. This preserves restart-time evidence while the evidence is still current. Duplicate candidates are collapsed by kind, target, and transaction id.
+
+After `tunwarden recover --execute --yes` completes, `tunwardend` refreshes the cached startup scan from the current read-only recovery plan before serving later status, doctor, or recover dry-run requests. Already recovered resources must not remain user-visible as executable cleanup candidates.
+
 ## Implemented host inspections
 
 ```bash
@@ -52,10 +74,18 @@ The default human report starts with:
 TunWarden recovery dry-run
 ```
 
-When recovery candidates are found, each candidate is rendered as:
+When recovery candidates are found, each non-transaction candidate is rendered as:
 
 ```text
 Would recover <resource kind>: <owned target>
+```
+
+Transaction candidates are rendered with structured state details:
+
+```text
+Transaction: pending apply
+Rollback available: yes
+State path: /run/tunwarden/transactions/tx-apply.json
 ```
 
 Example:

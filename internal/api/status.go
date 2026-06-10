@@ -17,6 +17,11 @@ const (
 
 	ServiceManual  = "manual"
 	ServiceSystemd = "systemd"
+
+	StartupScanStatusClean           = "clean"
+	StartupScanStatusStale           = "stale"
+	StartupScanStatusIncomplete      = "incomplete"
+	StartupScanStatusStaleIncomplete = "stale_incomplete"
 )
 
 type StatusResponse struct {
@@ -32,6 +37,7 @@ type StatusResponse struct {
 	DNS               string              `json:"dns,omitempty"`
 	Firewall          string              `json:"firewall,omitempty"`
 	Transactions      []TransactionStatus `json:"transactions,omitempty"`
+	StartupScan       *StartupScanStatus  `json:"startup_scan,omitempty"`
 	Warnings          []string            `json:"warnings,omitempty"`
 }
 
@@ -43,6 +49,15 @@ type TransactionStatus struct {
 	RollbackAvailable bool   `json:"rollback_available"`
 	RequiresCleanup   bool   `json:"requires_cleanup"`
 	Path              string `json:"path"`
+}
+
+// StartupScanStatus is the daemon API's redacted startup recovery scan summary.
+// It is captured once during daemon startup and is not an execution result.
+type StartupScanStatus struct {
+	Status          string              `json:"status"`
+	Candidates      []RecoveryCandidate `json:"candidates,omitempty"`
+	Warnings        []RecoveryWarning   `json:"warnings,omitempty"`
+	SuggestedAction string              `json:"suggested_action,omitempty"`
 }
 
 func ValidateStatusResponse(s StatusResponse) error {
@@ -67,6 +82,11 @@ func ValidateStatusResponse(s StatusResponse) error {
 			return err
 		}
 	}
+	if s.StartupScan != nil {
+		if err := ValidateStartupScanStatus(*s.StartupScan); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -85,9 +105,38 @@ func ValidateTransactionStatus(tx TransactionStatus) error {
 	}
 }
 
+func ValidateStartupScanStatus(scan StartupScanStatus) error {
+	if !validStartupScanStatus(scan.Status) {
+		return fmt.Errorf("invalid startup scan status %q", scan.Status)
+	}
+	for _, candidate := range scan.Candidates {
+		if err := ValidateRecoveryCandidate(candidate); err != nil {
+			return err
+		}
+	}
+	for _, warning := range scan.Warnings {
+		if warning.Target == "" {
+			return errors.New("missing startup scan warning target")
+		}
+		if warning.Message == "" {
+			return errors.New("missing startup scan warning message")
+		}
+	}
+	return nil
+}
+
 func validTransactionState(state string) bool {
 	switch state {
 	case "planned", "applying", "applied", "verifying", "committed", "rolling_back", "rolled_back", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func validStartupScanStatus(status string) bool {
+	switch status {
+	case StartupScanStatusClean, StartupScanStatusStale, StartupScanStatusIncomplete, StartupScanStatusStaleIncomplete:
 		return true
 	default:
 		return false

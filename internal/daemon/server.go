@@ -16,10 +16,11 @@ import (
 )
 
 type Server struct {
-	RuntimeDir string
-	Status     func(context.Context) api.StatusResponse
-	Doctor     func(context.Context) api.DoctorResponse
-	Lifecycle  *XrayManager
+	RuntimeDir  string
+	Status      func(context.Context) api.StatusResponse
+	Doctor      func(context.Context) api.DoctorResponse
+	Lifecycle   *XrayManager
+	startupScan startupScanFunc
 }
 
 func (s Server) Run(ctx context.Context) error {
@@ -48,6 +49,13 @@ func (s Server) Run(ctx context.Context) error {
 	}
 	defer func() { _ = lock.Close(); _ = os.Remove(lockPath) }()
 
+	startupScanFn := s.startupScan
+	if startupScanFn == nil {
+		startupScanFn = defaultStartupScanFunc(runtimeDir)
+	}
+	startupScan := newStartupScanState(startupScanFn)
+	logStartupScan(startupScan.Refresh(ctx))
+
 	socketPath := api.SocketPath(runtimeDir)
 	if err := removeStaleSocket(socketPath); err != nil {
 		return err
@@ -74,7 +82,7 @@ func (s Server) Run(ctx context.Context) error {
 			statusFn = lifecycle.Status
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(statusFn(r.Context()))
+		_ = json.NewEncoder(w).Encode(withStartupScanStatus(statusFn(r.Context()), startupScan.Snapshot()))
 		log.Printf("tunwardend: status request handled")
 	})
 	mux.HandleFunc(api.DoctorPath, func(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +96,7 @@ func (s Server) Run(ctx context.Context) error {
 			doctorFn = lifecycle.Doctor
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(doctorFn(r.Context()))
+		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), startupScan.Snapshot()))
 		log.Printf("tunwardend: doctor request handled")
 	})
 	mux.HandleFunc(api.RecoverPath, func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +106,9 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(daemonRecover(r.Context(), runtimeDir))
+		response := daemonRecover(r.Context(), runtimeDir)
+		startupScan.Refresh(r.Context())
+		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("tunwardend: recover request handled")
 	})
 	registerLifecycleHandlers(mux, lifecycle)

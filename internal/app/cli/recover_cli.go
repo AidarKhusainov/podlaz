@@ -122,7 +122,69 @@ func runRecover(ctx context.Context, opts options) recovery.PlanResult {
 	if opts.recover != nil {
 		return opts.recover(ctx)
 	}
-	return recovery.Plan(ctx)
+	local := recovery.Plan(ctx)
+	startup, ok := daemonStartupRecoverPlan(ctx)
+	if !ok {
+		return local
+	}
+	return mergeRecoveryPlans(startup, local)
+}
+
+func daemonStartupRecoverPlan(ctx context.Context) (recovery.PlanResult, bool) {
+	socketPath := api.SocketPath("")
+	if _, err := os.Stat(socketPath); err != nil {
+		return recovery.PlanResult{}, false
+	}
+	response, err := (client.StatusClient{SocketPath: socketPath}).Status(ctx)
+	if err != nil || response.StartupScan == nil {
+		return recovery.PlanResult{}, false
+	}
+	return recoveryPlanFromStartupScan(*response.StartupScan), true
+}
+
+func recoveryPlanFromStartupScan(scan api.StartupScanStatus) recovery.PlanResult {
+	candidates := make([]recovery.Candidate, 0, len(scan.Candidates))
+	for _, candidate := range scan.Candidates {
+		candidates = append(candidates, recoveryCandidateFromAPI(candidate))
+	}
+	warnings := make([]recovery.Warning, 0, len(scan.Warnings))
+	for _, warning := range scan.Warnings {
+		warnings = append(warnings, recovery.Warning{Target: warning.Target, Message: warning.Message})
+	}
+	return recovery.PlanResult{Candidates: candidates, Warnings: warnings}
+}
+
+func mergeRecoveryPlans(plans ...recovery.PlanResult) recovery.PlanResult {
+	var merged recovery.PlanResult
+	seenCandidates := make(map[string]struct{})
+	seenWarnings := make(map[string]struct{})
+	for _, plan := range plans {
+		for _, candidate := range plan.Candidates {
+			key := recoveryCandidateKey(candidate)
+			if _, ok := seenCandidates[key]; ok {
+				continue
+			}
+			seenCandidates[key] = struct{}{}
+			merged.Candidates = append(merged.Candidates, candidate)
+		}
+		for _, warning := range plan.Warnings {
+			key := warning.Target + "\x00" + warning.Message
+			if _, ok := seenWarnings[key]; ok {
+				continue
+			}
+			seenWarnings[key] = struct{}{}
+			merged.Warnings = append(merged.Warnings, warning)
+		}
+	}
+	return merged
+}
+
+func recoveryCandidateKey(candidate recovery.Candidate) string {
+	txID := ""
+	if candidate.Transaction != nil {
+		txID = candidate.Transaction.ID
+	}
+	return candidate.Kind + "\x00" + candidate.Target + "\x00" + txID
 }
 
 func runRecoverExecute(ctx context.Context, opts options) (recovery.ExecuteResult, error) {
