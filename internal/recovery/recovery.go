@@ -285,7 +285,7 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	result.scanManagedNFTTable(ctx, runner)
 	result.scanTransactionState(runtimeDir)
 	result.scanGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
-	result.scanRuntimeDir(runtimeDir)
+	// Do not scan or report runtimeDir itself as a recovery candidate.
 	return result
 }
 
@@ -347,22 +347,6 @@ func (r *ScanResult) scanGeneratedRuntimeConfigs(generatedDir string) {
 		return
 	default:
 		r.Warnings = append(r.Warnings, Warning{Target: "generated runtime configs " + generatedDir, Message: err.Error()})
-	}
-}
-
-func (r *ScanResult) scanRuntimeDir(runtimeDir string) {
-	stat, err := os.Stat(runtimeDir)
-	switch {
-	case err == nil:
-		description := "runtime directory"
-		if !stat.IsDir() {
-			description = "runtime path"
-		}
-		r.Candidates = append(r.Candidates, Candidate{Kind: "runtime-directory", Description: description, Target: runtimeDir})
-	case errors.Is(err, os.ErrNotExist):
-		return
-	default:
-		r.Warnings = append(r.Warnings, Warning{Target: "runtime directory " + runtimeDir, Message: err.Error()})
 	}
 }
 
