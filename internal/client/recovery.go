@@ -13,9 +13,15 @@ import (
 	"github.com/AidarKhusainov/tunwarden/internal/api"
 )
 
+const (
+	defaultRecoveryDialTimeout      = 750 * time.Millisecond
+	defaultRecoveryOperationTimeout = 60 * time.Second
+)
+
 type RecoveryClient struct {
-	SocketPath string
-	Timeout    time.Duration
+	SocketPath       string
+	DialTimeout      time.Duration
+	OperationTimeout time.Duration
 }
 
 func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, error) {
@@ -23,12 +29,16 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 	if socketPath == "" {
 		socketPath = api.SocketPath("")
 	}
-	timeout := c.Timeout
-	if timeout == 0 {
-		timeout = 750 * time.Millisecond
+	dialTimeout := c.DialTimeout
+	if dialTimeout == 0 {
+		dialTimeout = defaultRecoveryDialTimeout
+	}
+	operationTimeout := c.OperationTimeout
+	if operationTimeout == 0 {
+		operationTimeout = defaultRecoveryOperationTimeout
 	}
 
-	dialer := net.Dialer{Timeout: timeout}
+	dialer := net.Dialer{Timeout: dialTimeout}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return dialer.DialContext(ctx, "unix", socketPath)
@@ -36,7 +46,7 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 	}
 	defer transport.CloseIdleConnections()
 
-	httpClient := http.Client{Transport: transport, Timeout: timeout}
+	httpClient := http.Client{Transport: transport, Timeout: operationTimeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://tunwardend"+api.RecoverPath, nil)
 	if err != nil {
 		return api.RecoveryResponse{}, err
