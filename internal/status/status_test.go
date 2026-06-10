@@ -2,6 +2,7 @@ package status
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,7 @@ func TestInspectWithOptionsReportsCleanInactiveWhenRuntimeMissing(t *testing.T) 
 		"Daemon: not running\n",
 		"Service: none\n",
 		"Connection: inactive\n",
+		"Daemon socket: missing\n",
 		"Runtime directory: missing\n",
 		"Proxy: inactive\n",
 		"TUN: not managed in this build\n",
@@ -71,11 +73,92 @@ func TestInspectWithOptionsReportsStaleRuntimeDirectory(t *testing.T) {
 
 	got := report.String()
 	want := []string{
+		"Daemon socket: missing\n",
 		"Runtime directory: present (stale)\n",
 		"Stale state: found 1 recovery candidate\n",
 		"Recovery candidates:\n",
 		"  - runtime directory: " + runtimeDir + "\n",
 		"Guidance: run `tunwarden recover` for the canonical read-only recovery dry-run.\n",
+	}
+	for _, text := range want {
+		if !strings.Contains(got, text) {
+			t.Fatalf("expected output to contain %q, got %q", text, got)
+		}
+	}
+}
+
+func TestInspectWithOptionsDefersStaleClassificationWhenDaemonSocketInaccessible(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	generatedDir := filepath.Join(runtimeDir, generatedDirName)
+	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(runtimeDir, "tunwardend.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	report := InspectWithOptions(context.Background(), Options{
+		RuntimeDir:         runtimeDir,
+		SocketPath:         socketPath,
+		DaemonSocketAccess: DaemonSocketAccessPermissionDenied,
+	})
+
+	if report.DaemonSocket.State != DaemonSocketInaccessible {
+		t.Fatalf("expected inaccessible daemon socket, got %#v", report.DaemonSocket)
+	}
+	if !report.HasUnhealthyState() {
+		t.Fatal("inaccessible daemon socket should keep status unhealthy")
+	}
+	if report.Connection != "unknown (inspection incomplete)" {
+		t.Fatalf("expected incomplete connection state, got %q", report.Connection)
+	}
+	assertNoCandidate(t, report, "runtime-directory")
+	assertNoCandidate(t, report, "generated-runtime-configs")
+
+	got := report.String()
+	want := []string{
+		"Daemon socket: present but inaccessible (permission denied; check tunwarden group membership)\n",
+		"Runtime directory: present (daemon socket inaccessible; stale status unknown)\n",
+		"Stale state: unknown (inspection incomplete)\n",
+		"permission denied; local runtime state may belong to a live tunwardend and was not classified as stale\n",
+		"Guidance: run `tunwarden doctor` for diagnostic detail.\n",
+	}
+	for _, text := range want {
+		if !strings.Contains(got, text) {
+			t.Fatalf("expected output to contain %q, got %q", text, got)
+		}
+	}
+	if strings.Contains(got, "Recovery candidates:") {
+		t.Fatalf("inaccessible daemon-owned runtime should not be rendered as stale candidates, got %q", got)
+	}
+}
+
+func TestInspectWithOptionsReportsUnexpectedDaemonSocketPath(t *testing.T) {
+	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	if err := os.Mkdir(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(runtimeDir, "tunwardend.sock")
+	if err := os.WriteFile(socketPath, []byte("not a socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report := InspectWithOptions(context.Background(), Options{RuntimeDir: runtimeDir, SocketPath: socketPath})
+
+	if report.DaemonSocket.State != DaemonSocketUnexpected {
+		t.Fatalf("expected unexpected daemon socket path, got %#v", report.DaemonSocket)
+	}
+	assertCandidate(t, report, "daemon-socket", "daemon socket path", socketPath)
+	assertCandidate(t, report, "runtime-directory", "runtime directory", runtimeDir)
+
+	got := report.String()
+	want := []string{
+		"Daemon socket: present as non-socket path (stale)\n",
+		"Stale state: found 2 recovery candidates\n",
+		"  - daemon socket path: " + socketPath + "\n",
 	}
 	for _, text := range want {
 		if !strings.Contains(got, text) {
@@ -196,4 +279,13 @@ func assertCandidate(t *testing.T, report Report, kind string, description strin
 		}
 	}
 	t.Fatalf("candidate %q/%q/%q not found in %#v", kind, description, target, report.Candidates)
+}
+
+func assertNoCandidate(t *testing.T, report Report, kind string) {
+	t.Helper()
+	for _, candidate := range report.Candidates {
+		if candidate.Kind == kind {
+			t.Fatalf("candidate kind %q should not be present in %#v", kind, report.Candidates)
+		}
+	}
 }
