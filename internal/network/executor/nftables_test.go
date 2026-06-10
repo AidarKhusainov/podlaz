@@ -47,7 +47,7 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 func TestNftStringLiteralQuotesAndEscapesForNftCLI(t *testing.T) {
 	tests := map[string]string{
 		`tunwarden:firewall:server-bypass`:      `"tunwarden:firewall:server-bypass"`,
-		`tunwarden:firewall:owner "quoted"`:    `"tunwarden:firewall:owner \"quoted\""`,
+		`tunwarden:firewall:owner "quoted"`:     `"tunwarden:firewall:owner \"quoted\""`,
 		`tunwarden:firewall:owner\with\slashes`: `"tunwarden:firewall:owner\\with\\slashes"`,
 	}
 
