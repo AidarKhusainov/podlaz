@@ -15,6 +15,8 @@ import (
 
 const generatedDirName = "generated"
 
+var lstat = os.Lstat
+
 // RuntimeDirectoryState describes the local TunWarden runtime directory state.
 type RuntimeDirectoryState string
 
@@ -190,10 +192,7 @@ func FromDaemon(s api.StatusResponse) Report {
 		Service:    s.Service,
 		Connection: s.Connection,
 		Mode:       s.Mode,
-		RuntimeDirectory: RuntimeDirectory{
-			State:   RuntimeDirectoryPresent,
-			Message: s.RuntimeDirectory,
-		},
+		RuntimeDirectory: RuntimeDirectory{State: RuntimeDirectoryPresent, Message: s.RuntimeDirectory},
 		RuntimeConfigPath: s.RuntimeConfigPath,
 		Proxy:             s.Proxy,
 		TUN:               s.TUN,
@@ -302,7 +301,7 @@ func (r Report) String() string {
 
 func inspectDaemonSocket(socketPath string, access DaemonSocketAccess) (DaemonSocket, *Warning) {
 	socket := DaemonSocket{Path: socketPath}
-	info, err := os.Lstat(socketPath)
+	info, err := lstat(socketPath)
 	if access == DaemonSocketAccessPermissionDenied {
 		switch {
 		case err == nil && info.Mode()&os.ModeSocket != 0:
