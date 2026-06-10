@@ -33,14 +33,28 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	want := [][]string{
 		{"nft", "add", "table", "inet", "tunwarden"},
 		{"nft", "add", "chain", "inet", "tunwarden", "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", "accept", ";", "}"},
-		{"nft", "add", "rule", "inet", "tunwarden", "output", "ip", "daddr", "203.0.113.10", "counter", "comment", planner.FirewallServerBypassOwner, "accept"},
-		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "tunwarden0", "counter", "comment", planner.FirewallTunEgressOwner, "accept"},
-		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "!=", "tunwarden0", "counter", "comment", planner.FirewallKillSwitchOwner, "reject"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "ip", "daddr", "203.0.113.10", "counter", "comment", `"` + planner.FirewallServerBypassOwner + `"`, "accept"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "tunwarden0", "counter", "comment", `"` + planner.FirewallTunEgressOwner + `"`, "accept"},
+		{"nft", "add", "rule", "inet", "tunwarden", "output", "oifname", "!=", "tunwarden0", "counter", "comment", `"` + planner.FirewallKillSwitchOwner + `"`, "reject"},
 		{"nft", "list", "table", "inet", "tunwarden"},
 		{"nft", "delete", "table", "inet", "tunwarden"},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
+	}
+}
+
+func TestNftStringLiteralQuotesAndEscapesForNftCLI(t *testing.T) {
+	tests := map[string]string{
+		`tunwarden:firewall:server-bypass`:      `"tunwarden:firewall:server-bypass"`,
+		`tunwarden:firewall:owner "quoted"`:    `"tunwarden:firewall:owner \"quoted\""`,
+		`tunwarden:firewall:owner\with\slashes`: `"tunwarden:firewall:owner\\with\\slashes"`,
+	}
+
+	for input, want := range tests {
+		if got := nftStringLiteral(input); got != want {
+			t.Fatalf("nftStringLiteral(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 
