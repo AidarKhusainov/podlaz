@@ -32,6 +32,32 @@ type RuntimeDirectory struct {
 	Message string
 }
 
+// DaemonSocketState describes the local daemon socket path state.
+type DaemonSocketState string
+
+const (
+	DaemonSocketMissing      DaemonSocketState = "missing"
+	DaemonSocketPresent      DaemonSocketState = "present"
+	DaemonSocketInaccessible DaemonSocketState = "inaccessible"
+	DaemonSocketUnexpected   DaemonSocketState = "unexpected"
+	DaemonSocketUnknown      DaemonSocketState = "unknown"
+)
+
+// DaemonSocketAccess describes what the caller learned while attempting the daemon API.
+type DaemonSocketAccess string
+
+const (
+	DaemonSocketAccessUnknown          DaemonSocketAccess = ""
+	DaemonSocketAccessPermissionDenied DaemonSocketAccess = "permission-denied"
+)
+
+// DaemonSocket is the inspected daemon socket summary used by local fallback status.
+type DaemonSocket struct {
+	Path    string
+	State   DaemonSocketState
+	Message string
+}
+
 // Candidate describes a local stale-state recovery candidate shown by status.
 type Candidate struct {
 	Kind        string
@@ -51,6 +77,7 @@ type Report struct {
 	Service           string
 	Connection        string
 	Mode              string
+	DaemonSocket      DaemonSocket
 	RuntimeDirectory  RuntimeDirectory
 	RuntimeConfigPath string
 	Proxy             string
@@ -66,7 +93,9 @@ type Report struct {
 
 // Options controls local status inspection. Zero values use production defaults.
 type Options struct {
-	RuntimeDir string
+	RuntimeDir         string
+	SocketPath         string
+	DaemonSocketAccess DaemonSocketAccess
 }
 
 // Inspect returns the local fallback status report using production defaults.
@@ -80,10 +109,17 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	if runtimeDir == "" {
 		runtimeDir = api.RuntimeDirFromEnv()
 	}
+	socketPath := opts.SocketPath
+	if socketPath == "" {
+		socketPath = api.SocketPath(runtimeDir)
+	}
 
 	report := Report{
 		Daemon:  "not running",
 		Service: "none",
+		DaemonSocket: DaemonSocket{
+			Path: socketPath,
+		},
 		RuntimeDirectory: RuntimeDirectory{
 			Path: runtimeDir,
 		},
@@ -94,6 +130,8 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	select {
 	case <-ctx.Done():
 		report.Connection = "unknown (inspection incomplete)"
+		report.DaemonSocket.State = DaemonSocketUnknown
+		report.DaemonSocket.Message = "unknown (inspection incomplete)"
 		report.RuntimeDirectory.State = RuntimeDirectoryUnknown
 		report.RuntimeDirectory.Message = "unknown (inspection incomplete)"
 		report.Warnings = append(report.Warnings, Warning{
@@ -104,10 +142,29 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	default:
 	}
 
+	socket, socketWarning := inspectDaemonSocket(socketPath, opts.DaemonSocketAccess)
+	report.DaemonSocket = socket
+	if socketWarning != nil {
+		report.Warnings = append(report.Warnings, *socketWarning)
+	}
+	report.Candidates = append(report.Candidates, daemonSocketCandidate(socket)...)
+
 	runtime, runtimeWarning := inspectRuntimeDirectory(runtimeDir)
+	if deferLocalStaleClassification(socket) {
+		runtime = runtimeDirectoryWithInaccessibleDaemon(runtime)
+	}
 	report.RuntimeDirectory = runtime
 	if runtimeWarning != nil {
 		report.Warnings = append(report.Warnings, *runtimeWarning)
+	}
+
+	if deferLocalStaleClassification(socket) {
+		report.Warnings = append(report.Warnings, Warning{
+			Target:  "daemon socket " + socketPath,
+			Message: "permission denied; local runtime state may belong to a live tunwardend and was not classified as stale",
+		})
+		report.Connection = connectionState(report.Candidates, report.Warnings)
+		return report
 	}
 
 	generated, generatedWarning := inspectGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
@@ -186,6 +243,9 @@ func (r Report) String() string {
 	if r.Mode != "" {
 		fmt.Fprintf(&b, "Mode: %s\n", render.Redact(r.Mode))
 	}
+	if r.DaemonSocket.Message != "" {
+		fmt.Fprintf(&b, "Daemon socket: %s\n", render.Redact(r.DaemonSocket.Message))
+	}
 	fmt.Fprintf(&b, "Runtime directory: %s\n", render.Redact(r.RuntimeDirectory.Message))
 	if r.RuntimeConfigPath != "" {
 		fmt.Fprintf(&b, "Runtime config: %s\n", render.Redact(r.RuntimeConfigPath))
@@ -237,6 +297,34 @@ func (r Report) String() string {
 		b.WriteString("Guidance: run `tunwarden doctor` for diagnostic detail.\n")
 	}
 	return b.String()
+}
+
+func inspectDaemonSocket(socketPath string, access DaemonSocketAccess) (DaemonSocket, *Warning) {
+	socket := DaemonSocket{Path: socketPath}
+	info, err := os.Lstat(socketPath)
+	switch {
+	case err == nil && info.Mode()&os.ModeSocket != 0:
+		if access == DaemonSocketAccessPermissionDenied {
+			socket.State = DaemonSocketInaccessible
+			socket.Message = "present but inaccessible (permission denied; check tunwarden group membership)"
+			return socket, nil
+		}
+		socket.State = DaemonSocketPresent
+		socket.Message = "present"
+		return socket, nil
+	case err == nil:
+		socket.State = DaemonSocketUnexpected
+		socket.Message = "present as non-socket path (stale)"
+		return socket, nil
+	case errors.Is(err, os.ErrNotExist):
+		socket.State = DaemonSocketMissing
+		socket.Message = "missing"
+		return socket, nil
+	default:
+		socket.State = DaemonSocketUnknown
+		socket.Message = "unknown (inspection incomplete)"
+		return socket, &Warning{Target: "daemon socket " + socketPath, Message: err.Error()}
+	}
 }
 
 func inspectRuntimeDirectory(runtimeDir string) (RuntimeDirectory, *Warning) {
@@ -296,6 +384,24 @@ func runtimeCandidate(runtime RuntimeDirectory) []Candidate {
 	default:
 		return nil
 	}
+}
+
+func daemonSocketCandidate(socket DaemonSocket) []Candidate {
+	if socket.State != DaemonSocketUnexpected {
+		return nil
+	}
+	return []Candidate{{Kind: "daemon-socket", Description: "daemon socket path", Target: socket.Path}}
+}
+
+func deferLocalStaleClassification(socket DaemonSocket) bool {
+	return socket.State == DaemonSocketInaccessible
+}
+
+func runtimeDirectoryWithInaccessibleDaemon(runtime RuntimeDirectory) RuntimeDirectory {
+	if runtime.State == RuntimeDirectoryPresent {
+		runtime.Message = "present (daemon socket inaccessible; stale status unknown)"
+	}
+	return runtime
 }
 
 func connectionState(candidates []Candidate, warnings []Warning) string {
