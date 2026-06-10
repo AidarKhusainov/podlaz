@@ -104,6 +104,7 @@ jobs:
               kill "$daemon_pid" >/dev/null 2>&1 || true
               wait "$daemon_pid" >/dev/null 2>&1 || true
             fi
+            sudo rm -rf /run/tunwarden >/dev/null 2>&1 || true
           }
 
           failure_handler() {
@@ -227,16 +228,17 @@ jobs:
           run_logged "import-subscription" ./bin/tunwarden import "$TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL"
           run_logged "profile-list-json" ./bin/tunwarden profile list --json
 
-          current_step="select imported profile"
-          profile_id="$(./bin/tunwarden profile list --json | jq -r '.profiles[0].id // empty')"
+          current_step="select imported VLESS profile"
+          profile_id="$(./bin/tunwarden profile list --json | jq -r '[.profiles[] | select(.source == "imported_uri" and .protocol == "vless" and .server != "0.0.0.0")][0].id // empty')"
           if [[ -z "$profile_id" ]]; then
-            echo "::error::no imported profile was available after secret-backed imports"
-            echo "no imported profile was available after secret-backed imports" >> "$raw_log"
+            echo "::error::no usable imported_uri VLESS profile was available after secret-backed imports"
+            echo "no usable imported_uri VLESS profile was available after secret-backed imports" >> "$raw_log"
             emit_sanitized_log
             exit 1
           fi
           echo "Selected profile ID: $profile_id" >> "$raw_log"
           current_step=""
+          run_logged "selected-profile-show" ./bin/tunwarden profile show "$profile_id"
 
           run_logged "plan-tun" ./bin/tunwarden plan --mode tun "$profile_id"
           run_logged "plan-tun-json" ./bin/tunwarden plan --mode tun "$profile_id" --json
@@ -253,6 +255,12 @@ jobs:
           sudo nft -a list ruleset >> "$raw_log" 2>&1 || true
           resolvectl status --no-pager >> "$raw_log" 2>&1 || true
 
+          current_step="prepare daemon runtime directory"
+          sudo rm -rf /run/tunwarden
+          sudo install -d -m 0700 -o "$USER" -g "$(id -gn)" /run/tunwarden
+          echo "Prepared daemon runtime directory: $(stat -c '%U:%G %a %n' /run/tunwarden)" >> "$raw_log"
+          current_step=""
+
           # The daemon must not run as UID 0 for the TUN success path. Give the
           # current runner process ambient CAP_NET_ADMIN before starting the daemon.
           current_step="start non-root daemon with CAP_NET_ADMIN"
@@ -265,6 +273,11 @@ jobs:
             >> "$raw_log" 2>&1 &
           daemon_pid=$!
           sleep 2
+          if ! kill -0 "$daemon_pid" >/dev/null 2>&1; then
+            echo "daemon exited before initial doctor check" >> "$raw_log"
+            wait "$daemon_pid" >> "$raw_log" 2>&1 || true
+            exit 1
+          fi
           current_step=""
 
           run_logged "doctor-initial" ./bin/tunwarden doctor
