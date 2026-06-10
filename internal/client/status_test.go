@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,28 @@ func TestStatusReturnsUnavailableWhenSocketMissing(t *testing.T) {
 	}
 	if got := UnavailableMessage(err); got == "" {
 		t.Fatal("expected actionable unavailable message")
+	}
+}
+
+func TestUnavailableMessagePreservesPermissionDeniedGuidance(t *testing.T) {
+	cause := &os.PathError{Op: "connect", Path: "/run/tunwarden/tunwardend.sock", Err: os.ErrPermission}
+	err := daemonUnavailableError{
+		detail:           unavailableDetail("/run/tunwarden/tunwardend.sock", cause),
+		cause:            cause,
+		permissionDenied: isPermissionDenied(cause),
+	}
+	if !IsDaemonUnavailable(err) {
+		t.Fatalf("expected daemon unavailable classification, got %v", err)
+	}
+	if !IsDaemonPermissionDenied(err) {
+		t.Fatalf("expected permission denied classification, got %v", err)
+	}
+	got := UnavailableMessage(err)
+	if !strings.Contains(got, "permission denied") || !strings.Contains(got, "tunwarden group") {
+		t.Fatalf("expected permission guidance, got %q", got)
+	}
+	if strings.Contains(got, ErrDaemonUnavailable.Error()) {
+		t.Fatalf("user-facing message should not include sentinel error text, got %q", got)
 	}
 }
 
