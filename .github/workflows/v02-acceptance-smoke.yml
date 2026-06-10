@@ -1,0 +1,222 @@
+name: v0.2 acceptance smoke
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-backed-tun-smoke:
+    name: Secret-backed TUN smoke
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 45
+    env:
+      TUNWARDEN_ACCEPTANCE_VLESS_URI: ${{ secrets.NLD_LINK }}
+      TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL: ${{ secrets.TEST_USER_SUBSCRIBER_LINK }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+
+      - name: Install host dependencies
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            iproute2 \
+            jq \
+            libcap2-bin \
+            nftables \
+            unzip
+
+      - name: Install Xray and tun2socks
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/tunwarden-tools"
+          curl -fsSL -o "$RUNNER_TEMP/xray.zip" \
+            https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -q "$RUNNER_TEMP/xray.zip" -d "$RUNNER_TEMP/tunwarden-tools/xray"
+          test -x "$RUNNER_TEMP/tunwarden-tools/xray/xray"
+          echo "$RUNNER_TEMP/tunwarden-tools/xray" >> "$GITHUB_PATH"
+
+          GOBIN="$RUNNER_TEMP/tunwarden-tools/bin" go install github.com/xjasonlyu/tun2socks/v2@latest
+          test -x "$RUNNER_TEMP/tunwarden-tools/bin/tun2socks"
+          echo "$RUNNER_TEMP/tunwarden-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Run secret-backed acceptance smoke
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ -z "${TUNWARDEN_ACCEPTANCE_VLESS_URI:-}" ]]; then
+            echo "::error::repository secret NLD_LINK is required for this smoke run"
+            exit 1
+          fi
+          if [[ -z "${TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL:-}" ]]; then
+            echo "::error::repository secret TEST_USER_SUBSCRIBER_LINK is required for this smoke run"
+            exit 1
+          fi
+
+          echo "::add-mask::$TUNWARDEN_ACCEPTANCE_VLESS_URI"
+          echo "::add-mask::$TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL"
+
+          export TUNWARDEN_XRAY_PATH="$RUNNER_TEMP/tunwarden-tools/xray/xray"
+          export TUNWARDEN_TUN2SOCKS_PATH="$RUNNER_TEMP/tunwarden-tools/bin/tun2socks"
+          export XDG_STATE_HOME="$RUNNER_TEMP/tunwarden-state"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/tunwarden-runtime"
+          mkdir -p "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+
+          mkdir -p "$RUNNER_TEMP/tunwarden-acceptance"
+          raw_log="$RUNNER_TEMP/tunwarden-acceptance/raw.log"
+          sanitized_log="$RUNNER_TEMP/tunwarden-acceptance/sanitized.log"
+
+          redact_log() {
+            python3 - "$raw_log" "$sanitized_log" <<'PY'
+          import os
+          import sys
+
+          raw, sanitized = sys.argv[1], sys.argv[2]
+          secrets = [
+              os.environ.get("TUNWARDEN_ACCEPTANCE_VLESS_URI", ""),
+              os.environ.get("TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL", ""),
+          ]
+          with open(raw, "r", encoding="utf-8", errors="replace") as src:
+              text = src.read()
+          for secret in secrets:
+              if secret:
+                  text = text.replace(secret, "[REDACTED_SECRET]")
+          with open(sanitized, "w", encoding="utf-8") as dst:
+              dst.write(text)
+          PY
+          }
+
+          run_logged() {
+            echo >> "$raw_log"
+            printf '$ %q' "$1" >> "$raw_log"
+            shift
+            for arg in "$@"; do
+              printf ' %q' "$arg" >> "$raw_log"
+            done
+            echo >> "$raw_log"
+            "$@" >> "$raw_log" 2>&1
+          }
+
+          : > "$raw_log"
+
+          {
+            echo "== environment =="
+            date -u +'%Y-%m-%dT%H:%M:%SZ'
+            uname -a
+            go version
+            "$TUNWARDEN_XRAY_PATH" version | head -n 1 || true
+            "$TUNWARDEN_TUN2SOCKS_PATH" -version || true
+            ls -l /dev/net/tun || true
+            ip -V || true
+            nft --version || true
+            resolvectl --version || true
+            systemctl is-system-running || true
+          } >> "$raw_log" 2>&1
+
+          if [[ ! -c /dev/net/tun ]]; then
+            sudo mkdir -p /dev/net
+            sudo mknod /dev/net/tun c 10 200 || true
+            sudo chmod 0666 /dev/net/tun || true
+          fi
+
+          run_logged "gofmt-check" test -z "$(gofmt -l .)"
+          run_logged "go-test" go test ./...
+          run_logged "build-cli" go build -o ./bin/tunwarden ./cmd/tunwarden
+          run_logged "build-daemon" go build -o ./bin/tunwardend ./cmd/tunwardend
+          run_logged "version" ./bin/tunwarden version
+
+          run_logged "import-vless" ./bin/tunwarden import "$TUNWARDEN_ACCEPTANCE_VLESS_URI"
+          run_logged "import-subscription" ./bin/tunwarden import "$TUNWARDEN_ACCEPTANCE_SUBSCRIPTION_URL"
+          run_logged "profile-list-json" ./bin/tunwarden profile list --json
+
+          profile_id="$(./bin/tunwarden profile list --json | jq -r '.profiles[0].id // empty')"
+          if [[ -z "$profile_id" ]]; then
+            echo "::error::no imported profile was available after secret-backed imports"
+            redact_log
+            cat "$sanitized_log"
+            exit 1
+          fi
+          echo "Selected profile ID: $profile_id" >> "$raw_log"
+
+          run_logged "plan-tun" ./bin/tunwarden plan --mode tun "$profile_id"
+          run_logged "plan-tun-json" ./bin/tunwarden plan --mode tun "$profile_id" --json
+
+          echo "== before snapshots ==" >> "$raw_log"
+          ip -d link show >> "$raw_log" 2>&1 || true
+          ip route show table all >> "$raw_log" 2>&1 || true
+          ip rule show >> "$raw_log" 2>&1 || true
+          sudo nft -a list ruleset >> "$raw_log" 2>&1 || true
+          resolvectl status --no-pager >> "$raw_log" 2>&1 || true
+
+          # The daemon must not run as UID 0 for the TUN success path. Give the
+          # current runner process ambient CAP_NET_ADMIN before starting the daemon.
+          sudo capsh \
+            --keep=1 \
+            --user="$USER" \
+            --caps="cap_net_admin+eip" \
+            --addamb="cap_net_admin" \
+            -- -c "cd '$PWD' && env XDG_STATE_HOME='$XDG_STATE_HOME' XDG_RUNTIME_DIR='$XDG_RUNTIME_DIR' TUNWARDEN_XRAY_PATH='$TUNWARDEN_XRAY_PATH' TUNWARDEN_TUN2SOCKS_PATH='$TUNWARDEN_TUN2SOCKS_PATH' ./bin/tunwardend" \
+            >> "$raw_log" 2>&1 &
+          daemon_pid=$!
+          trap 'set +e; ./bin/tunwarden disconnect >/dev/null 2>&1; kill "$daemon_pid" >/dev/null 2>&1; wait "$daemon_pid" >/dev/null 2>&1' EXIT
+          sleep 2
+
+          run_logged "doctor-initial" ./bin/tunwarden doctor
+          run_logged "connect-tun" ./bin/tunwarden connect --mode tun "$profile_id"
+          run_logged "status-active" ./bin/tunwarden status
+          run_logged "doctor-active" ./bin/tunwarden doctor
+
+          echo "== active snapshots ==" >> "$raw_log"
+          ip -d link show tunwarden0 >> "$raw_log" 2>&1
+          ip route show table all >> "$raw_log" 2>&1
+          ip rule show >> "$raw_log" 2>&1
+          sudo nft -a list ruleset >> "$raw_log" 2>&1
+          resolvectl status tunwarden0 --no-pager >> "$raw_log" 2>&1 || true
+          pgrep -a xray >> "$raw_log" 2>&1 || true
+          pgrep -a tun2socks >> "$raw_log" 2>&1 || true
+          sudo find /run/tunwarden -maxdepth 4 -xdev -print -ls >> "$raw_log" 2>&1 || true
+
+          run_logged "connectivity-smoke" curl --max-time 15 --fail --silent --show-error https://example.com/
+
+          run_logged "disconnect" ./bin/tunwarden disconnect
+          run_logged "status-final" ./bin/tunwarden status
+          run_logged "doctor-final" ./bin/tunwarden doctor
+          run_logged "recover-final" ./bin/tunwarden recover
+
+          echo "== final snapshots ==" >> "$raw_log"
+          ip -d link show tunwarden0 >> "$raw_log" 2>&1 || true
+          ip route show table all >> "$raw_log" 2>&1 || true
+          ip rule show >> "$raw_log" 2>&1 || true
+          sudo nft -a list ruleset >> "$raw_log" 2>&1 || true
+          resolvectl status tunwarden0 --no-pager >> "$raw_log" 2>&1 || true
+          pgrep -a xray >> "$raw_log" 2>&1 || true
+          pgrep -a tun2socks >> "$raw_log" 2>&1 || true
+          sudo find /run/tunwarden -maxdepth 4 -xdev -print -ls >> "$raw_log" 2>&1 || true
+
+          redact_log
+          cat "$sanitized_log"
+
+      - name: Upload sanitized acceptance smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v02-acceptance-smoke-log
+          path: ${{ runner.temp }}/tunwarden-acceptance/sanitized.log
+          if-no-files-found: ignore
