@@ -3,6 +3,7 @@ arch: __ARCH__
 platform: linux
 version: __VERSION__
 version_schema: none
+release: __RELEASE__
 section: net
 priority: optional
 maintainer: Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>
