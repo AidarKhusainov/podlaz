@@ -32,20 +32,20 @@ bash scripts/build-deb.sh
 The default build emits:
 
 ```text
-dist/tunwarden_0.0.0~dev_amd64.deb
+dist/tunwarden_0.0.0~dev-1_amd64.deb
 ```
 
-Override the binary version, Debian package version, and architecture with:
+Override the binary version, Debian upstream package version, Debian release, and architecture with:
 
 ```bash
-TUNWARDEN_VERSION=0.1.1 TUNWARDEN_DEB_VERSION=0.1.1 TUNWARDEN_DEB_ARCH=amd64 bash scripts/build-deb.sh
+TUNWARDEN_VERSION=0.1.2 TUNWARDEN_DEB_VERSION=0.1.2 TUNWARDEN_DEB_RELEASE=1 TUNWARDEN_DEB_ARCH=amd64 bash scripts/build-deb.sh
 ```
 
-`TUNWARDEN_VERSION` controls the upstream application version reported by `tunwarden version`. `TUNWARDEN_DEB_VERSION` controls Debian package metadata and the package filename. When `TUNWARDEN_DEB_VERSION` is unset, the package version defaults to `TUNWARDEN_VERSION`.
+`TUNWARDEN_VERSION` controls the upstream application version reported by `tunwarden version`. `TUNWARDEN_DEB_VERSION` controls the Debian upstream version rendered into nFPM's `version` field. `TUNWARDEN_DEB_RELEASE` controls the Debian revision rendered into nFPM's `release` field. When unset, `TUNWARDEN_DEB_VERSION` defaults to `TUNWARDEN_VERSION` and `TUNWARDEN_DEB_RELEASE` defaults to `1`.
 
-Development builds use Debian-compatible `0.0.0~dev`, which sorts before a real `0.0.0` release. Tagged GitHub Release automation maps `vMAJOR.MINOR.PATCH` to binary version `MAJOR.MINOR.PATCH` and Debian package version `MAJOR.MINOR.PATCH`.
+Development builds use Debian-compatible upstream version `0.0.0~dev`, which sorts before a real `0.0.0` release. Tagged GitHub Release automation maps `vMAJOR.MINOR.PATCH` to binary version `MAJOR.MINOR.PATCH`, Debian upstream version `MAJOR.MINOR.PATCH`, and Debian revision `1`.
 
-Public apt repository packaging and Debian revision policy are intentionally deferred to the apt repository work. Do not pass Debian revisions such as `0.1.1-1` as `TUNWARDEN_DEB_VERSION` until the packaging manifest explicitly models Debian revision separately.
+The Debian revision must be modeled through `TUNWARDEN_DEB_RELEASE` and nFPM's `release` field, not embedded into `TUNWARDEN_DEB_VERSION`. Passing a value such as `0.1.2-1` as `TUNWARDEN_DEB_VERSION` is invalid for this package contract because nFPM treats the value as the upstream version and may normalize the resulting package filename unexpectedly.
 
 The build requires:
 
@@ -158,7 +158,7 @@ A same-version reinstall or package upgrade replaces packaged files. Existing da
 The CI package gate validates the practical same-version reinstall path with:
 
 ```bash
-sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 ```
 
 ### Remove
@@ -174,14 +174,14 @@ If purge is requested, maintainer hooks ask Debian systemd helper tools to purge
 Package inspection:
 
 ```bash
-dpkg-deb --info dist/tunwarden_0.0.0~dev_amd64.deb
-dpkg-deb --contents dist/tunwarden_0.0.0~dev_amd64.deb
+dpkg-deb --info dist/tunwarden_0.0.0~dev-1_amd64.deb
+dpkg-deb --contents dist/tunwarden_0.0.0~dev-1_amd64.deb
 ```
 
 Local install validation:
 
 ```bash
-sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 dpkg -L tunwarden
 tunwarden version
 man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
@@ -201,7 +201,7 @@ dpkg -L tunwarden
 Use `lintian` where practical:
 
 ```bash
-lintian dist/tunwarden_0.0.0~dev_amd64.deb
+lintian dist/tunwarden_0.0.0~dev-1_amd64.deb
 ```
 
 A package PR must document whether `lintian` was clean or list every relevant warning with justification.
