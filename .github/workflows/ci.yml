@@ -40,7 +40,7 @@ jobs:
 
   deb-package:
     name: Debian package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
       - name: Install package tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends lintian man-db
+          sudo apt-get install -y --no-install-recommends file lintian man-db
           . packaging/package-toolchain.env
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -80,6 +80,14 @@ jobs:
           grep -F './usr/share/man/man1/tunwarden.1.gz' /tmp/tunwarden-package-contents.txt
           grep -F './usr/share/man/man8/tunwardend.8.gz' /tmp/tunwarden-package-contents.txt
 
+      - name: Validate packaged binary linkage
+        run: |
+          file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
+          ldd dist/package-root/usr/bin/tunwarden
+          ldd dist/package-root/usr/bin/tunwardend
+          ldd dist/package-root/usr/bin/tunwarden | grep -F 'libc.so.6'
+          ldd dist/package-root/usr/bin/tunwardend | grep -F 'libc.so.6'
+
       - name: Lint Debian package
         run: |
           set -o pipefail
@@ -98,7 +106,7 @@ jobs:
           sudo apt install -y ./dist/tunwarden_0.0.0~dev_amd64.deb
           dpkg -L tunwarden
           tunwarden version
-          test "$(tunwarden version)" = "tunwarden 0.0.0-dev"
+          test "$(tunwarden version)" = "tunwarden 0.0.0~dev"
           test -x /usr/bin/tunwarden
           test -x /usr/bin/tunwardend
           test -f /usr/lib/systemd/system/tunwardend.service
@@ -111,7 +119,7 @@ jobs:
       - name: Reinstall package locally
         run: |
           sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
-          test "$(tunwarden version)" = "tunwarden 0.0.0-dev"
+          test "$(tunwarden version)" = "tunwarden 0.0.0~dev"
           man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
           man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
 
