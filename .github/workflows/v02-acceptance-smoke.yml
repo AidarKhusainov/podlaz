@@ -263,7 +263,7 @@ jobs:
               echo "attempt $attempt" >> "$raw_log"
               for provider in "${providers[@]}"; do
                 name="${provider%%|*}"
-                url="${provider#*}"
+                url="${provider#*|}"
                 value="$(curl -4 --connect-timeout 5 --max-time 15 --retry 1 --retry-delay 1 --fail --silent --show-error "$url" 2>>"$raw_log" | tr -d '[:space:]' || true)"
                 if [[ -z "$value" ]]; then
                   echo "$name: unavailable" >> "$raw_log"
