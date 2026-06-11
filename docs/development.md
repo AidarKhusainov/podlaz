@@ -28,7 +28,16 @@ For packaging changes, also run where the required tools are available:
 bash scripts/build-deb.sh
 dpkg-deb --info dist/tunwarden_0.0.0~dev_amd64.deb
 dpkg-deb --contents dist/tunwarden_0.0.0~dev_amd64.deb
-lintian dist/tunwarden_0.0.0~dev_amd64.deb
+file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
+ldd dist/package-root/usr/bin/tunwarden
+ldd dist/package-root/usr/bin/tunwardend
+lintian --fail-on error dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
+tunwarden version
+man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
+man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
+sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt remove -y tunwarden
 ```
 
 CI currently checks:
@@ -40,10 +49,19 @@ go vet ./...
 bash scripts/build-deb.sh
 dpkg-deb --info dist/tunwarden_0.0.0~dev_amd64.deb
 dpkg-deb --contents dist/tunwarden_0.0.0~dev_amd64.deb
+file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
+ldd dist/package-root/usr/bin/tunwarden
+ldd dist/package-root/usr/bin/tunwardend
 lintian --fail-on error dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install -y ./dist/tunwarden_0.0.0~dev_amd64.deb
+tunwarden version
+man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
+man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
+sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt remove -y tunwarden
 ```
 
-CI uses Go 1.26.4. Local development should use the same toolchain unless a PR explicitly updates `go.mod`, CI, and this guide together.
+CI uses Go 1.26.4. The package job intentionally runs on Ubuntu 22.04 to keep the dynamically linked package binary baseline aligned with the declared `libc6 (>= 2.34)` dependency. Local development should use the same Go toolchain unless a PR explicitly updates `go.mod`, CI, and this guide together.
 
 ## 3. Safety rules for contributors
 
@@ -101,9 +119,11 @@ Packaging PR checklist:
 
 - [ ] Local `.deb` artifact builds for `amd64`.
 - [ ] `dpkg-deb --info` and `dpkg-deb --contents` show expected metadata and file layout.
+- [ ] Packaged binaries report the package version through `tunwarden version`.
+- [ ] Packaged binaries have the expected dynamic linkage baseline for the declared package dependencies.
 - [ ] `lintian` is clean of errors, or every relevant warning is documented and justified.
 - [ ] The package does not ship `/usr/local`, `/run`, `/var/run`, user-home, or generated runtime config paths.
-- [ ] Install/remove behavior is validated in a container or VM.
+- [ ] Install, same-version reinstall, man page, and remove behavior are validated in a container or VM.
 - [ ] Full systemd behavior is validated in a VM or systemd-capable host when the PR claims service lifecycle acceptance.
 
 ## 6. Testing strategy
@@ -142,7 +162,10 @@ Use package inspection and local install/remove validation for:
 - installed file layout,
 - package lifecycle behavior,
 - absence of generated runtime files in package contents,
-- binary and man page availability after install.
+- binary and man page availability after install,
+- version consistency between package metadata and `tunwarden version`,
+- same-version reinstall behavior,
+- dynamic linkage compatibility with the declared package dependency baseline.
 
 Use a VM or systemd-capable host for service lifecycle assertions such as `systemctl status tunwardend`, runtime directory creation, journald behavior, and daemon startup under the packaged unit.
 
