@@ -15,8 +15,6 @@ import (
 	"github.com/AidarKhusainov/tunwarden/internal/status"
 )
 
-var version = "0.0.0-dev"
-
 type exitError struct {
 	code int
 	err  error
