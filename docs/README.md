@@ -30,6 +30,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 - The v0.2 safe TUN preview release-gate result is recorded in [v0.2 safe TUN preview acceptance verification record](./v0.2-acceptance-record.md).
 - Filesystem layout, output redaction, JSON compatibility, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
 - Local Debian package layout and lifecycle behavior are owned by [Debian package contract](./debian-package.md).
+- GitHub Release artifact automation is owned by [Release workflow](./release.md).
 - Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 - Local manual pages are concise user/admin references. They must link back to canonical docs instead of becoming a second source of truth for unstable implementation details.
 - Historical uppercase documents are deprecated and must not be used as canonical references.
@@ -59,6 +60,7 @@ TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible confi
 | [Architecture](./architecture.md) | CLI/daemon split, privilege boundary, state model, transaction model, engine abstraction, backend interfaces. |
 | [State and security requirements](./state-and-security.md) | User/daemon/system state separation, XDG/systemd paths, JSON compatibility, redaction, confirmations, service hardening, and core process safety. |
 | [Debian package contract](./debian-package.md) | Local `.deb` artifact layout, install/upgrade/remove lifecycle, service auto-start policy, and package validation gates. |
+| [Release workflow](./release.md) | Tagged GitHub Release automation, artifact naming, version mapping, permissions, validation gates, and safety boundary. |
 | [Package boundaries](./package-boundaries.md) | Dependency direction between CLI, daemon, API, domain, planner, snapshot, executor, and adapter packages. |
 | [Networking and reliability requirements](./networking-reliability.md) | TUN, routing, DNS, firewall, NetworkManager, sleep/resume, health checks, recovery, and reliability test requirements. |
 | [Subscriptions and profiles](./subscriptions-and-profiles.md) | Subscription inputs, format adapters, normalized profile model, validation, update behavior, storage. |
