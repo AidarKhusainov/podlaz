@@ -16,8 +16,6 @@ jobs:
     outputs:
       tag: ${{ steps.release-vars.outputs.tag }}
       version: ${{ steps.release-vars.outputs.version }}
-      deb_version: ${{ steps.release-vars.outputs.deb_version }}
-      deb_release: ${{ steps.release-vars.outputs.deb_release }}
       deb_file_version: ${{ steps.release-vars.outputs.deb_file_version }}
     steps:
       - name: Resolve release version
@@ -30,12 +28,9 @@ jobs:
             echo "release tag must use vMAJOR.MINOR.PATCH, got: $tag" >&2
             exit 1
           fi
-          deb_release="1"
-          deb_file_version="${version}-${deb_release}"
+          deb_file_version="${version}-1"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "deb_version=$version" >> "$GITHUB_OUTPUT"
-          echo "deb_release=$deb_release" >> "$GITHUB_OUTPUT"
           echo "deb_file_version=$deb_file_version" >> "$GITHUB_OUTPUT"
 
   test:
@@ -87,8 +82,6 @@ jobs:
     outputs:
       tag: ${{ needs.resolve.outputs.tag }}
       version: ${{ needs.resolve.outputs.version }}
-      deb_version: ${{ needs.resolve.outputs.deb_version }}
-      deb_release: ${{ needs.resolve.outputs.deb_release }}
       deb_file_version: ${{ needs.resolve.outputs.deb_file_version }}
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
     steps:
@@ -113,7 +106,7 @@ jobs:
       - name: Install package tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends file lintian man-db
+          sudo apt-get install -y --no-install-recommends dpkg file lintian man-db
           . packaging/package-toolchain.env
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
@@ -135,8 +128,7 @@ jobs:
       - name: Build Debian package
         env:
           TUNWARDEN_VERSION: ${{ needs.resolve.outputs.version }}
-          TUNWARDEN_DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
-          TUNWARDEN_DEB_RELEASE: ${{ needs.resolve.outputs.deb_release }}
+          TUNWARDEN_DEB_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
           TUNWARDEN_DEB_ARCH: amd64
         run: bash scripts/build-deb.sh
 
