@@ -1,131 +1,88 @@
 # TunWarden
 
-TunWarden is a Linux-first, CLI-first VPN/proxy client foundation for Xray-compatible configurations.
+TunWarden is a Linux-first CLI VPN/proxy client for Xray-compatible profiles and subscriptions.
 
-The product goal is to provide a safe, lightweight, and predictable Linux VPN client for technical users. TunWarden should make route, DNS, firewall, TUN, and process lifecycle changes explicit, inspectable, reversible, and recoverable across Wi-Fi changes, suspend/resume, daemon crashes, and failed connection attempts.
+It is built for technical users who want networking changes to be explicit, inspectable, reversible, and recoverable. The `tunwarden` CLI owns profile and subscription intent. The `tunwardend` daemon owns runtime lifecycle and daemon state.
 
-## Current status
+## Scope
 
-This repository is at foundation stage.
+TunWarden targets Linux systems with standard networking and service-management tools:
 
-What exists now:
+- systemd and journald;
+- NetworkManager;
+- systemd-resolved;
+- nftables and iproute2;
+- Linux TUN;
+- Xray-compatible profile and subscription inputs.
 
-- Go module and CI skeleton.
-- `tunwarden` CLI skeleton.
-- `tunwardend` daemon skeleton with local Unix socket status, doctor, connect, and disconnect APIs.
-- `packaging/systemd/tunwardend.service` for packaged systemd service startup with journald logging.
-- Local Debian `.deb` package contract and nFPM-based package build script.
-- Tagged GitHub Release workflow for Linux `amd64` binary, local Debian package, and checksums.
-- Top-level `tunwarden import` for VLESS share URIs and Base64 URI-list subscriptions.
-- Manual `profile add`, VLESS `profile import`, `profile list`, `profile show`, and `profile delete --yes` commands backed by local user state.
-- Base64 URI-list `subscription add`, `subscription list`, `subscription show`, and `subscription update` commands backed by local user state.
-- Read-only `plan --mode proxy-only` dry-run for stored VLESS profiles with deterministic generated Xray config validation.
-- Read-only `plan --mode tun` full-tunnel TUN/route/DNS/nftables kill-switch dry-run for stored profiles without route, policy-rule, DNS, nftables, TUN, Xray, or runtime config mutation.
-- Daemon-managed `connect --mode proxy-only` and `disconnect` for starting and stopping Xray without changing system networking.
-- `status` command with daemon-backed active/inactive proxy-only status and local runtime fallback.
-- Read-only `doctor` command with daemon-backed diagnostics, local Linux host fallback, and explicit `doctor --core --xray <path>` local Xray binary validation.
-- Read-only `logs` command for recent `tunwardend` journald logs.
-- Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
-- Local manual pages for `tunwarden(1)` and `tunwardend(8)`.
-- Initial internal models for transactions, profiles, subscriptions, read-only system snapshots, and full-tunnel TUN/route/DNS/nftables kill-switch planning.
-- Product, CLI, architecture, state/security, networking, subscription, package, release, roadmap, development, and v0.1 acceptance documentation.
+The core product path is CLI and daemon first. GUI clients, mobile platforms, router distributions, provider account management, and broad non-Xray protocol expansion are outside the core path until the Linux networking foundation is reliable.
 
-What does not exist yet:
+## Safety model
 
-- No TUN/full-tunnel VPN mode is established yet.
-- No privileged TUN/full-tunnel execution, verified leak protection, or health-check apply/verify behavior exists yet.
-- No route, policy-rule, DNS, nftables, or firewall mutation is applied yet.
-- No automatic Xray download/update is implemented yet.
-- No public apt repository or package signing exists yet.
-- No GUI is planned for the early product.
+TunWarden treats VPN activation as a recoverable transaction:
 
-## Product principles
+```text
+plan -> snapshot -> apply -> verify -> commit
+                             |
+                             v
+                          rollback
+```
 
-1. **Linux-first:** Ubuntu LTS and Debian stable are Tier 1. Fedora and Arch should be supported through explicit platform adapters.
-2. **CLI-first:** the first-class interface is a deterministic command line.
-3. **Daemon-owned privilege:** privileged networking belongs in a supervised daemon.
-4. **Transactional networking:** every privileged network mutation must have a plan, snapshot, verification path, and rollback path.
-5. **Observable behavior:** `status`, `doctor`, `plan`, logs, and scoped diagnostics must make route, DNS, firewall, and core state understandable.
-6. **Recoverability over feature count:** disconnect, rollback, and recovery are core product capabilities, not maintenance helpers.
-7. **Lightweight by default:** avoid unnecessary background components, hidden global mutation, and broad protocol expansion before reliability is proven.
+Safety rules:
 
-## Commands available in the foundation build
+- the CLI must not directly change privileged Linux networking state;
+- proxy-only mode must not change TUN devices, routes, DNS, nftables, or firewall state;
+- TUN/full-tunnel work must be daemon-owned, planned before mutation, verified before commit, and recoverable after failure;
+- generated core configs are runtime output, not profile source of truth;
+- status, diagnostics, logs, plans, and recovery output must redact secrets consistently.
 
-- `go test ./...`
-- `go run ./cmd/tunwarden version`
-- `go run ./cmd/tunwarden import '<vless-share-uri>'`
-- `go run ./cmd/tunwarden import file:///tmp/sub.txt`
-- `go run ./cmd/tunwarden profile add --name test --server example.com --port 443 --protocol vless`
-- `go run ./cmd/tunwarden profile import '<vless-share-uri>'`
-- `go run ./cmd/tunwarden profile list`
-- `go run ./cmd/tunwarden profile show test`
-- `go run ./cmd/tunwarden profile delete test --yes`
-- `go run ./cmd/tunwarden subscription add --name personal --url file:///tmp/sub.txt`
-- `go run ./cmd/tunwarden subscription list`
-- `go run ./cmd/tunwarden subscription show personal`
-- `go run ./cmd/tunwarden subscription update personal`
-- `go run ./cmd/tunwarden plan --mode proxy-only <profile-id>`
-- `go run ./cmd/tunwarden plan --mode tun <profile-id>`
-- `go run ./cmd/tunwarden connect --mode proxy-only <profile-id>`
-- `go run ./cmd/tunwarden status`
-- `go run ./cmd/tunwarden disconnect`
-- `go run ./cmd/tunwarden doctor`
-- `go run ./cmd/tunwarden doctor --core --xray /usr/local/bin/xray`
-- `go run ./cmd/tunwarden logs`
-- `go run ./cmd/tunwarden recover`
-- `go run ./cmd/tunwardend`
-- `man ./docs/man/tunwarden.1`
-- `man ./docs/man/tunwardend.8`
-- `bash scripts/build-deb.sh`
-- `sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb`
-- `sudo systemctl start tunwardend` after package installation or manual installation of the packaged unit and daemon binary.
+## Build
 
-Canonical command names are defined in [CLI contract](docs/cli.md). The implemented top-level import behavior is covered by the CLI contract and [v0.1 acceptance checklist](docs/v0.1-acceptance.md). The implemented manual and VLESS-import profile behavior is defined in [Profile management](docs/profile-management.md). The implemented subscription behavior is defined in [Subscription management](docs/subscription-management.md). The implemented v0.1 proxy-only plan behavior is defined in [Proxy-only plan](docs/proxy-only-plan.md). The implemented TUN snapshot input behavior is defined in [System snapshot model](docs/system-snapshot.md). The implemented TUN full-tunnel dry-run behavior is defined in [TUN full-tunnel dry-run plan](docs/tun-full-tunnel-plan.md). The implemented v0.1 daemon transport and lifecycle API are defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md). The local Debian package layout and lifecycle contract are defined in [Debian package contract](docs/debian-package.md). Tagged GitHub Release artifact automation is defined in [Release workflow](docs/release.md). Local user and administrator reference pages are available as [tunwarden(1)](docs/man/tunwarden.1) and [tunwardend(8)](docs/man/tunwardend.8); after package installation they are available through `man tunwarden` and `man tunwardend`.
+```bash
+go test ./...
+go run ./cmd/tunwarden version
+go run ./cmd/tunwardend
+```
 
-## Intended lifecycle model
+Build a local Debian package:
 
-`plan -> snapshot -> apply -> verify -> commit`, with rollback on failure.
+```bash
+bash scripts/build-deb.sh
+sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
+```
 
-`plan --mode tun` currently performs the read-only snapshot and full-tunnel dry-run portions of that lifecycle. It produces intended TUN device, route, policy-rule, DNS, nftables/firewall chain/rule, kill-switch, server-bypass, route-loop, warning, and rollback output, but it does not mutate the host and does not yet provide privileged execution, verified leak protection, or health-check apply/verify behavior.
+The package installs binaries, systemd/sysusers files, manual pages, and project documentation under packaged filesystem locations. It must not ship runtime state, generated core configs, user state, `/run/tunwarden`, or `/usr/local` files.
 
-`connect --mode proxy-only` currently applies only daemon-owned Xray process lifecycle and generated runtime config state. It must not mutate TUN, routes, DNS, nftables, or firewall state.
+## Basic workflow
 
-`recover` exists as the recovery path. In early builds it is dry-run only and must not change host networking state.
+```bash
+tunwarden import <uri-or-file-or-url>
+tunwarden profile list
+tunwarden plan --mode proxy-only <profile-id>
+tunwarden connect --mode proxy-only <profile-id>
+tunwarden status
+tunwarden logs
+tunwarden disconnect
+tunwarden recover
+```
+
+Use `tunwarden plan --mode tun <profile-id>` to inspect full-tunnel network intent before host networking work. Use `tunwarden doctor` for diagnostics and `tunwarden recover` to inspect TunWarden-owned stale state.
+
+The canonical command contract is [CLI contract](docs/cli.md).
 
 ## Documentation
 
-Start with the documentation index:
+Start with [Documentation](docs/README.md).
 
-- [Documentation map](docs/README.md)
+Primary references:
 
-Primary documents:
-
-- [Product requirements](docs/product-requirements.md)
-- [CLI contract](docs/cli.md)
-- [Profile management](docs/profile-management.md)
-- [Subscription management](docs/subscription-management.md)
-- [Proxy-only plan](docs/proxy-only-plan.md)
-- [System snapshot model](docs/system-snapshot.md)
-- [TUN full-tunnel dry-run plan](docs/tun-full-tunnel-plan.md)
-- [Proxy-only lifecycle](docs/proxy-only-lifecycle.md)
-- [Daemon local API](docs/daemon-api.md)
-- [Status command](docs/status.md)
-- [Doctor diagnostics](docs/doctor-diagnostics.md)
-- [Logs command](docs/logs.md)
-- [Recovery dry-run](docs/recovery-dry-run.md)
-- [v0.1 acceptance checklist](docs/v0.1-acceptance.md)
-- [Architecture](docs/architecture.md)
-- [State and security requirements](docs/state-and-security.md)
-- [Debian package contract](docs/debian-package.md)
-- [Release workflow](docs/release.md)
-- [Package boundaries](docs/package-boundaries.md)
-- [Networking and reliability requirements](docs/networking-reliability.md)
-- [Subscriptions and profiles](docs/subscriptions-and-profiles.md)
-- [Roadmap](docs/roadmap.md)
-- [Development guide](docs/development.md)
-- [References](docs/references.md)
-- [tunwarden(1)](docs/man/tunwarden.1)
-- [tunwardend(8)](docs/man/tunwardend.8)
+- [CLI contract](docs/cli.md) for command names, flags, exit codes, and output contracts;
+- [Architecture](docs/architecture.md) for the CLI/daemon split and transaction model;
+- [State and security requirements](docs/state-and-security.md) for state layout, redaction, confirmation, systemd hardening, and core process safety;
+- [Networking and reliability requirements](docs/networking-reliability.md) for TUN, routing, DNS, firewall, recovery, and reliability invariants;
+- [Debian package contract](docs/debian-package.md) for package layout and lifecycle;
+- [Development guide](docs/development.md) for local checks and contribution rules;
+- [tunwarden(1)](docs/man/tunwarden.1) and [tunwardend(8)](docs/man/tunwardend.8) for local manual pages.
 
 ## License
 
