@@ -88,7 +88,7 @@ jobs:
           sudo apt install -y ./dist/tunwarden_0.0.0~dev_amd64.deb
           dpkg -L tunwarden
           tunwarden version
-          test "$(tunwarden version)" = "tunwarden 0.0.0~dev"
+          test "$(tunwarden version)" = "tunwarden 0.0.0-dev"
           test -x /usr/bin/tunwarden
           test -x /usr/bin/tunwardend
           test -f /usr/lib/systemd/system/tunwardend.service
@@ -101,7 +101,7 @@ jobs:
       - name: Reinstall package locally
         run: |
           sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
-          test "$(tunwarden version)" = "tunwarden 0.0.0~dev"
+          test "$(tunwarden version)" = "tunwarden 0.0.0-dev"
           man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
           man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
 
