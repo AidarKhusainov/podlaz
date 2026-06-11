@@ -15,6 +15,7 @@ What exists now:
 - `tunwardend` daemon skeleton with local Unix socket status, doctor, connect, and disconnect APIs.
 - `packaging/systemd/tunwardend.service` for packaged systemd service startup with journald logging.
 - Local Debian `.deb` package contract and nFPM-based package build script.
+- Tagged GitHub Release workflow for Linux `amd64` binary, local Debian package, and checksums.
 - Top-level `tunwarden import` for VLESS share URIs and Base64 URI-list subscriptions.
 - Manual `profile add`, VLESS `profile import`, `profile list`, `profile show`, and `profile delete --yes` commands backed by local user state.
 - Base64 URI-list `subscription add`, `subscription list`, `subscription show`, and `subscription update` commands backed by local user state.
@@ -27,7 +28,7 @@ What exists now:
 - Read-only `recover` dry-run scan for clearly TunWarden-owned recovery candidates.
 - Local manual pages for `tunwarden(1)` and `tunwardend(8)`.
 - Initial internal models for transactions, profiles, subscriptions, read-only system snapshots, and full-tunnel TUN/route/DNS/nftables kill-switch planning.
-- Product, CLI, architecture, state/security, networking, subscription, package, roadmap, development, and v0.1 acceptance documentation.
+- Product, CLI, architecture, state/security, networking, subscription, package, release, roadmap, development, and v0.1 acceptance documentation.
 
 What does not exist yet:
 
@@ -35,7 +36,7 @@ What does not exist yet:
 - No privileged TUN/full-tunnel execution, verified leak protection, or health-check apply/verify behavior exists yet.
 - No route, policy-rule, DNS, nftables, or firewall mutation is applied yet.
 - No automatic Xray download/update is implemented yet.
-- No public apt repository, package signing, or tagged release automation exists yet.
+- No public apt repository or package signing exists yet.
 - No GUI is planned for the early product.
 
 ## Product principles
@@ -79,7 +80,7 @@ What does not exist yet:
 - `sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb`
 - `sudo systemctl start tunwardend` after package installation or manual installation of the packaged unit and daemon binary.
 
-Canonical command names are defined in [CLI contract](docs/cli.md). The implemented top-level import behavior is covered by the CLI contract and [v0.1 acceptance checklist](docs/v0.1-acceptance.md). The implemented manual and VLESS-import profile behavior is defined in [Profile management](docs/profile-management.md). The implemented subscription behavior is defined in [Subscription management](docs/subscription-management.md). The implemented v0.1 proxy-only plan behavior is defined in [Proxy-only plan](docs/proxy-only-plan.md). The implemented TUN snapshot input behavior is defined in [System snapshot model](docs/system-snapshot.md). The implemented TUN full-tunnel dry-run behavior is defined in [TUN full-tunnel dry-run plan](docs/tun-full-tunnel-plan.md). The implemented v0.1 daemon transport and lifecycle API are defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md). The local Debian package layout and lifecycle contract are defined in [Debian package contract](docs/debian-package.md). Local user and administrator reference pages are available as [tunwarden(1)](docs/man/tunwarden.1) and [tunwardend(8)](docs/man/tunwardend.8); after package installation they are available through `man tunwarden` and `man tunwardend`.
+Canonical command names are defined in [CLI contract](docs/cli.md). The implemented top-level import behavior is covered by the CLI contract and [v0.1 acceptance checklist](docs/v0.1-acceptance.md). The implemented manual and VLESS-import profile behavior is defined in [Profile management](docs/profile-management.md). The implemented subscription behavior is defined in [Subscription management](docs/subscription-management.md). The implemented v0.1 proxy-only plan behavior is defined in [Proxy-only plan](docs/proxy-only-plan.md). The implemented TUN snapshot input behavior is defined in [System snapshot model](docs/system-snapshot.md). The implemented TUN full-tunnel dry-run behavior is defined in [TUN full-tunnel dry-run plan](docs/tun-full-tunnel-plan.md). The implemented v0.1 daemon transport and lifecycle API are defined in [Daemon local API](docs/daemon-api.md). The implemented v0.1 `status` behavior is defined in [Status command](docs/status.md). The implemented v0.1 `doctor` checks are defined in [Doctor diagnostics](docs/doctor-diagnostics.md). The implemented v0.1 `logs` behavior is defined in [Logs command](docs/logs.md). The implemented v0.1 `recover` scan is defined in [Recovery dry-run](docs/recovery-dry-run.md). The local Debian package layout and lifecycle contract are defined in [Debian package contract](docs/debian-package.md). Tagged GitHub Release artifact automation is defined in [Release workflow](docs/release.md). Local user and administrator reference pages are available as [tunwarden(1)](docs/man/tunwarden.1) and [tunwardend(8)](docs/man/tunwardend.8); after package installation they are available through `man tunwarden` and `man tunwardend`.
 
 ## Intended lifecycle model
 
@@ -116,6 +117,7 @@ Primary documents:
 - [Architecture](docs/architecture.md)
 - [State and security requirements](docs/state-and-security.md)
 - [Debian package contract](docs/debian-package.md)
+- [Release workflow](docs/release.md)
 - [Package boundaries](docs/package-boundaries.md)
 - [Networking and reliability requirements](docs/networking-reliability.md)
 - [Subscriptions and profiles](docs/subscriptions-and-profiles.md)
