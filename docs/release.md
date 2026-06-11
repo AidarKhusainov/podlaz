@@ -2,11 +2,13 @@
 
 This document defines TunWarden's GitHub Release automation contract.
 
-The release workflow publishes versioned GitHub Release artifacts only. Public apt repository publication, package repository signing, and `apt update && apt install tunwarden` remain out of scope for this workflow.
+The release workflow publishes versioned GitHub Release artifacts only. Public apt repository publication and package repository signing remain out of scope for this workflow.
 
 ## Trigger
 
-A release is produced from a semantic version tag:
+A release is produced only from a semantic version tag pushed to the repository.
+
+Required tag format:
 
 ```text
 vMAJOR.MINOR.PATCH
@@ -19,7 +21,7 @@ v0.1.0
 v0.2.0
 ```
 
-The workflow also supports manual `workflow_dispatch` for validating and publishing an existing tag.
+The workflow intentionally has no manual tag input. To release a version, create and push the corresponding Git tag.
 
 ## Version mapping
 
@@ -48,22 +50,7 @@ The release workflow publishes:
 
 ## Validation gate
 
-Before publication, the workflow runs:
-
-```bash
-gofmt -l .
-go test ./...
-go vet ./...
-govulncheck ./...
-bash scripts/build-deb.sh
-dpkg-deb --info <package>.deb
-dpkg-deb --contents <package>.deb
-lintian --fail-on error <package>.deb
-sudo apt install ./<package>.deb
-tunwarden version
-man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
-man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
-```
+Before publication, the workflow runs regular Go checks, vulnerability scanning, package build, package metadata inspection, package content inspection, package linting, local package installation, version validation, and manual page rendering validation.
 
 Package install validation also checks that the package does not start `tunwardend` and that the host route table is unchanged by package installation.
 
@@ -71,14 +58,7 @@ Systemd lifecycle assertions that require systemd as PID 1 remain VM or systemd-
 
 ## Workflow permissions
 
-The workflow declares read-only top-level permissions:
-
-```yaml
-permissions:
-  contents: read
-```
-
-Build and validation jobs use read-only repository access. Only the final publication job grants `contents: write`, because GitHub Release creation and asset upload require write access to repository contents.
+The workflow declares read-only top-level permissions. Build and validation jobs use read-only repository access. Only the final publication job grants `contents: write`, because GitHub Release creation and asset upload require write access to repository contents.
 
 ## Action pinning policy
 
@@ -109,7 +89,7 @@ The release workflow must not:
 
 - create a public apt repository;
 - sign repository metadata;
-- add `curl | sudo bash` style installers;
+- add broad installer scripts;
 - enable or start `tunwardend.service` during package installation;
 - start a VPN tunnel;
 - mutate TUN devices, routes, DNS, nftables, firewall rules, or host resolver files.
