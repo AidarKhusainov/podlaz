@@ -17,6 +17,8 @@ jobs:
       tag: ${{ steps.release-vars.outputs.tag }}
       version: ${{ steps.release-vars.outputs.version }}
       deb_version: ${{ steps.release-vars.outputs.deb_version }}
+      deb_release: ${{ steps.release-vars.outputs.deb_release }}
+      deb_file_version: ${{ steps.release-vars.outputs.deb_file_version }}
     steps:
       - name: Resolve release version
         id: release-vars
@@ -28,9 +30,13 @@ jobs:
             echo "release tag must use vMAJOR.MINOR.PATCH, got: $tag" >&2
             exit 1
           fi
+          deb_release="1"
+          deb_file_version="${version}-${deb_release}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "deb_version=$version" >> "$GITHUB_OUTPUT"
+          echo "deb_release=$deb_release" >> "$GITHUB_OUTPUT"
+          echo "deb_file_version=$deb_file_version" >> "$GITHUB_OUTPUT"
 
   test:
     name: Test release commit
@@ -82,6 +88,8 @@ jobs:
       tag: ${{ needs.resolve.outputs.tag }}
       version: ${{ needs.resolve.outputs.version }}
       deb_version: ${{ needs.resolve.outputs.deb_version }}
+      deb_release: ${{ needs.resolve.outputs.deb_release }}
+      deb_file_version: ${{ needs.resolve.outputs.deb_file_version }}
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
     steps:
       - name: Checkout
@@ -128,19 +136,20 @@ jobs:
         env:
           TUNWARDEN_VERSION: ${{ needs.resolve.outputs.version }}
           TUNWARDEN_DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
+          TUNWARDEN_DEB_RELEASE: ${{ needs.resolve.outputs.deb_release }}
           TUNWARDEN_DEB_ARCH: amd64
         run: bash scripts/build-deb.sh
 
       - name: Inspect package metadata
         env:
-          DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
-        run: dpkg-deb --info "dist/tunwarden_${DEB_VERSION}_amd64.deb"
+          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
+        run: dpkg-deb --info "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb"
 
       - name: Inspect package contents
         env:
-          DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
+          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
         run: |
-          dpkg-deb --contents "dist/tunwarden_${DEB_VERSION}_amd64.deb" | tee /tmp/tunwarden-package-contents.txt
+          dpkg-deb --contents "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb" | tee /tmp/tunwarden-package-contents.txt
           ! grep -E '(^| )\./usr/local(/|$)' /tmp/tunwarden-package-contents.txt
           ! grep -E '(^| )\./run(/|$)' /tmp/tunwarden-package-contents.txt
           ! grep -E '(^| )\./var/run(/|$)' /tmp/tunwarden-package-contents.txt
@@ -152,19 +161,19 @@ jobs:
 
       - name: Lint Debian package
         env:
-          DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
+          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
         run: |
           set -o pipefail
-          lintian --fail-on error "dist/tunwarden_${DEB_VERSION}_amd64.deb" 2>&1 | tee /tmp/tunwarden-lintian.txt
+          lintian --fail-on error "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb" 2>&1 | tee /tmp/tunwarden-lintian.txt
 
       - name: Install package locally
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-          DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
+          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
         run: |
           set -euo pipefail
           ip route show > /tmp/tunwarden-routes-before.txt
-          sudo apt install -y "./dist/tunwarden_${DEB_VERSION}_amd64.deb"
+          sudo apt install -y "./dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb"
           ip route show > /tmp/tunwarden-routes-after.txt
           diff -u /tmp/tunwarden-routes-before.txt /tmp/tunwarden-routes-after.txt
           dpkg -L tunwarden
@@ -180,12 +189,12 @@ jobs:
       - name: Create checksums
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-          DEB_VERSION: ${{ needs.resolve.outputs.deb_version }}
+          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
         run: |
           set -euo pipefail
           mkdir -p dist/release
-          cp "dist/tunwarden_${DEB_VERSION}_amd64.deb" dist/release/
-          (cd dist/release && sha256sum "tunwarden_${VERSION}_linux_amd64.tar.gz" "tunwarden_${DEB_VERSION}_amd64.deb" > "tunwarden_${VERSION}_checksums.txt")
+          cp "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb" dist/release/
+          (cd dist/release && sha256sum "tunwarden_${VERSION}_linux_amd64.tar.gz" "tunwarden_${DEB_FILE_VERSION}_amd64.deb" > "tunwarden_${VERSION}_checksums.txt")
           cat "dist/release/tunwarden_${VERSION}_checksums.txt"
 
       - name: Upload release artifacts for review
@@ -194,7 +203,7 @@ jobs:
           name: tunwarden-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |
             dist/release/tunwarden_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz
-            dist/release/tunwarden_${{ needs.resolve.outputs.deb_version }}_amd64.deb
+            dist/release/tunwarden_${{ needs.resolve.outputs.deb_file_version }}_amd64.deb
             dist/release/tunwarden_${{ needs.resolve.outputs.version }}_checksums.txt
           if-no-files-found: error
 
@@ -222,10 +231,10 @@ jobs:
 
           Artifacts:
           - tunwarden_${{ needs.build.outputs.version }}_linux_amd64.tar.gz
-          - tunwarden_${{ needs.build.outputs.deb_version }}_amd64.deb
+          - tunwarden_${{ needs.build.outputs.deb_file_version }}_amd64.deb
           - tunwarden_${{ needs.build.outputs.version }}_checksums.txt
 
-          Install the local Debian package with: sudo apt install ./tunwarden_${{ needs.build.outputs.deb_version }}_amd64.deb
+          Install the local Debian package with: sudo apt install ./tunwarden_${{ needs.build.outputs.deb_file_version }}_amd64.deb
 
           Package installation does not enable or start the daemon automatically.
           EOF
@@ -235,20 +244,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.build.outputs.tag }}
           VERSION: ${{ needs.build.outputs.version }}
-          DEB_VERSION: ${{ needs.build.outputs.deb_version }}
+          DEB_FILE_VERSION: ${{ needs.build.outputs.deb_file_version }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "TunWarden ${TAG}" --notes-file release-notes.md
             gh release upload "$TAG" --clobber \
               "dist/release/tunwarden_${VERSION}_linux_amd64.tar.gz" \
-              "dist/release/tunwarden_${DEB_VERSION}_amd64.deb" \
+              "dist/release/tunwarden_${DEB_FILE_VERSION}_amd64.deb" \
               "dist/release/tunwarden_${VERSION}_checksums.txt"
           else
             gh release create "$TAG" \
               --title "TunWarden ${TAG}" \
               --notes-file release-notes.md \
               "dist/release/tunwarden_${VERSION}_linux_amd64.tar.gz" \
-              "dist/release/tunwarden_${DEB_VERSION}_amd64.deb" \
+              "dist/release/tunwarden_${DEB_FILE_VERSION}_amd64.deb" \
               "dist/release/tunwarden_${VERSION}_checksums.txt"
           fi
