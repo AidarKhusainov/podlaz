@@ -9,7 +9,8 @@ function deb_arch_to_goarch() {
   esac
 }
 
-version="${TUNWARDEN_VERSION:-0.0.0~dev}"
+binary_version="${TUNWARDEN_VERSION:-0.0.0~dev}"
+package_version="${TUNWARDEN_DEB_VERSION:-${binary_version}}"
 arch="${TUNWARDEN_DEB_ARCH:-amd64}"
 out_dir="${TUNWARDEN_DIST_DIR:-dist}"
 root_dir="${out_dir}/package-root"
@@ -52,7 +53,7 @@ mkdir -p \
   "${root_dir}/usr/share/man/man8" \
   "${root_dir}/usr/share/doc/tunwarden"
 
-ldflags="-s -w -X ${version_package}=${version}"
+ldflags="-s -w -X ${version_package}=${binary_version}"
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
 
@@ -62,7 +63,7 @@ gzip -9n -c docs/man/tunwarden.1 > "${root_dir}/usr/share/man/man1/tunwarden.1.g
 gzip -9n -c docs/man/tunwardend.8 > "${root_dir}/usr/share/man/man8/tunwardend.8.gz"
 install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/tunwarden/"
 install -m 0644 LICENSE "${root_dir}/usr/share/doc/tunwarden/copyright"
-printf 'tunwarden (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${version}" | gzip -9n -c > "${root_dir}/usr/share/doc/tunwarden/changelog.gz"
+printf 'tunwarden (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/tunwarden/changelog.gz"
 find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
   target="${root_dir}/usr/share/doc/tunwarden/${file}"
   mkdir -p "$(dirname "${target}")"
@@ -70,14 +71,14 @@ find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
 done
 
 sed \
-  -e "s/__VERSION__/${version}/g" \
+  -e "s/__VERSION__/${package_version}/g" \
   -e "s/__ARCH__/${arch}/g" \
   packaging/nfpm.yaml > "${config}"
 
 nfpm package --config "${config}" --packager deb --target "${out_dir}"
 rm -f "${config}"
 
-package="${out_dir}/tunwarden_${version}_${arch}.deb"
+package="${out_dir}/tunwarden_${package_version}_${arch}.deb"
 if [ ! -f "${package}" ]; then
   echo "expected package was not produced: ${package}" >&2
   exit 1
