@@ -38,6 +38,12 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      - name: Govulncheck
+        run: |
+          . packaging/package-toolchain.env
+          go install golang.org/x/vuln/cmd/govulncheck@"${GOVULNCHECK_VERSION}"
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
   deb-package:
     name: Debian package
     runs-on: ubuntu-22.04
