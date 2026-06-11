@@ -55,9 +55,14 @@ the
 group. Start a new login session after changing group membership.
 .SH FILES
 .TP
-.I /usr/local/bin/tunwardend
-Default daemon path referenced by the repository systemd unit used for manual
-installation and development packaging.
+.I /usr/bin/tunwardend
+Packaged daemon path referenced by
+.BR tunwardend.service .
+.PP
+Local development can run
+.BR "go run ./cmd/tunwardend"
+or manually install a development binary, but those development paths are not
+the default packaged daemon path.
 .TP
 .I /run/tunwarden/
 Daemon runtime directory. Packaged systemd units create it with
