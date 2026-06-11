@@ -69,7 +69,7 @@ gzip -9n -c docs/man/tunwarden.1 > "${root_dir}/usr/share/man/man1/tunwarden.1.g
 gzip -9n -c docs/man/tunwardend.8 > "${root_dir}/usr/share/man/man8/tunwardend.8.gz"
 install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/tunwarden/"
 install -m 0644 LICENSE "${root_dir}/usr/share/doc/tunwarden/copyright"
-printf 'tunwarden (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/tunwarden/changelog.gz"
+printf 'tunwarden (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/tunwarden/changelog.Debian.gz"
 find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
   target="${root_dir}/usr/share/doc/tunwarden/${file}"
   mkdir -p "$(dirname "${target}")"
