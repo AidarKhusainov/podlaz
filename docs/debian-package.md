@@ -38,12 +38,14 @@ dist/tunwarden_0.0.0~dev_amd64.deb
 Override the binary version, Debian package version, and architecture with:
 
 ```bash
-TUNWARDEN_VERSION=0.1.0 TUNWARDEN_DEB_VERSION=0.1.0-1 TUNWARDEN_DEB_ARCH=amd64 bash scripts/build-deb.sh
+TUNWARDEN_VERSION=0.1.1 TUNWARDEN_DEB_VERSION=0.1.1 TUNWARDEN_DEB_ARCH=amd64 bash scripts/build-deb.sh
 ```
 
 `TUNWARDEN_VERSION` controls the upstream application version reported by `tunwarden version`. `TUNWARDEN_DEB_VERSION` controls Debian package metadata and the package filename. When `TUNWARDEN_DEB_VERSION` is unset, the package version defaults to `TUNWARDEN_VERSION`.
 
-Development builds use Debian-compatible `0.0.0~dev`, which sorts before a real `0.0.0` release. Tagged release automation maps `vMAJOR.MINOR.PATCH` to binary version `MAJOR.MINOR.PATCH` and Debian package version `MAJOR.MINOR.PATCH-1`.
+Development builds use Debian-compatible `0.0.0~dev`, which sorts before a real `0.0.0` release. Tagged GitHub Release automation maps `vMAJOR.MINOR.PATCH` to binary version `MAJOR.MINOR.PATCH` and Debian package version `MAJOR.MINOR.PATCH`.
+
+Public apt repository packaging and Debian revision policy are intentionally deferred to the apt repository work. Do not pass Debian revisions such as `0.1.1-1` as `TUNWARDEN_DEB_VERSION` until the packaging manifest explicitly models Debian revision separately.
 
 The build requires:
 
