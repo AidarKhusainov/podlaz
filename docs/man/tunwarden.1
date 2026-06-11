@@ -1,0 +1,371 @@
+.TH TUNWARDEN 1 "June 2026" "TunWarden" "User Commands"
+.SH NAME
+tunwarden \- Linux-first CLI for Xray-compatible VPN and proxy profiles
+.SH SYNOPSIS
+.SY tunwarden
+.OP --help
+.YS
+.SY tunwarden
+.B version
+.YS
+.SY tunwarden
+.B import
+.I uri-or-file-or-url
+.YS
+.SY tunwarden
+.B profile
+.I subcommand
+.RI [ arguments ]
+.YS
+.SY tunwarden
+.B subscription
+.I subcommand
+.RI [ arguments ]
+.YS
+.SY tunwarden
+.B plan
+.B --mode
+.IR proxy-only | tun
+.I profile-id
+.OP --json
+.YS
+.SY tunwarden
+.B connect
+.OP --mode proxy-only|tun
+.I profile-id
+.YS
+.SY tunwarden
+.B disconnect
+.YS
+.SY tunwarden
+.B status
+.YS
+.SY tunwarden
+.B doctor
+.RI [ options ]
+.YS
+.SY tunwarden
+.B logs
+.RI [ options ]
+.YS
+.SY tunwarden
+.B recover
+.OP --execute --yes
+.OP --json
+.YS
+.SH DESCRIPTION
+.B tunwarden
+is the user-facing command line interface for TunWarden, a Linux-first,
+CLI-first VPN/proxy client foundation for Xray-compatible configurations.
+It manages user-owned profile and subscription state, renders plans and
+status, and sends lifecycle intents to the local
+.BR tunwardend (8)
+daemon when daemon-owned runtime behavior is required.
+.PP
+TunWarden is designed around safe defaults. Read-only commands must not
+require root. The CLI must not become a privileged or SUID networking
+mutator. Privileged networking state, when enabled by the documented
+milestone, belongs to the daemon transaction and recovery model.
+.SH COMMANDS
+.TP
+.B version
+Print the TunWarden version.
+.TP
+.B help [command]
+Print general help or command-specific help.
+.TP
+.B import <uri-or-file-or-url>
+Import a supported share URI, subscription URL, or local subscription file.
+The command creates user-owned TunWarden state only; it does not connect or
+start Xray.
+.TP
+.B profile add --name <name> --server <host> --port <port> --protocol <protocol>
+Create a manual profile. Supported protocol names in the current contract
+include
+.BR vless ,
+.BR vmess ,
+.BR trojan ,
+and
+.BR shadowsocks .
+.TP
+.B profile import <share-uri>
+Import a profile from a supported share URI.
+.TP
+.B profile list [--json]
+List stored profiles.
+.TP
+.B profile show <profile-id> [--json]
+Show a stored profile with sensitive fields redacted.
+.TP
+.B profile delete <profile-id> --yes
+Delete a stored profile. Destructive state-removal commands require explicit
+confirmation in non-interactive and JSON contexts.
+.TP
+.B subscription add --name <name> --url <url>
+Add a subscription source and import supported profiles from it.
+.TP
+.B subscription update <subscription-id>
+Refresh a subscription source. Failed updates preserve the last known good
+state according to the canonical documentation.
+.TP
+.B subscription list [--json]
+List subscription sources.
+.TP
+.B subscription show <subscription-id> [--json]
+Show a subscription source with sensitive URL material redacted.
+.TP
+.B subscription delete <subscription-id> [--yes]
+Delete a subscription source when the implemented behavior requires explicit
+confirmation.
+.TP
+.B plan --mode proxy-only <profile-id> [--json]
+Render a read-only proxy-only plan. The plan describes generated Xray config
+paths and local proxy listeners and states that no TUN, route, DNS,
+nftables, or firewall state will be changed.
+.TP
+.B plan --mode tun <profile-id> [--json]
+Render a read-only or preview full-tunnel plan according to the current
+milestone contract. The output is intended for inspection before host
+networking mutation and includes rollback-oriented state where applicable.
+.TP
+.B connect [--mode proxy-only|tun] <profile-id>
+Start a connection through the local daemon API. The default mode is
+.BR proxy-only .
+Proxy-only mode starts and stops daemon-managed Xray runtime state and must
+not mutate routes, DNS, TUN devices, nftables, or firewall state. TUN mode is
+a safe preview path and must follow the documented daemon-owned transaction
+and rollback model.
+.TP
+.B disconnect
+Stop the active daemon-managed connection. The operation is intended to be
+safe to repeat.
+.TP
+.B status
+Print daemon-backed status when the daemon is reachable, otherwise use a
+conservative local read-only fallback. The command is read-only.
+.TP
+.B doctor [--json]
+Print environment and runtime diagnostics. The default command uses the daemon
+when available and otherwise falls back to local read-only diagnostics.
+.TP
+.B doctor --core --xray <path> [--json]
+Validate an explicitly supplied local Xray binary with read-only core
+diagnostics.
+.TP
+.B logs [--follow] [--daemon] [--core] [--since <duration>]
+Read recent
+.BR tunwardend.service
+journal entries through
+.BR journalctl (1) .
+The
+.B --core
+view filters daemon-forwarded Xray lifecycle and stdout/stderr lines.
+.TP
+.B recover
+Inspect clearly TunWarden-owned recovery candidates without mutating host
+state.
+.TP
+.B recover --execute --yes [--json]
+Send explicit cleanup intent to the daemon. The CLI does not perform
+privileged host cleanup directly. Ambiguous resources are skipped and left
+unchanged.
+.SH OPTIONS
+.TP
+.B --help, -h
+Print help where supported.
+.TP
+.B --version
+Print the TunWarden version.
+.TP
+.B --json
+Print machine-readable JSON for commands whose JSON contract is implemented.
+Commands with deferred JSON support fail fast with exit status 2 instead of
+printing unstable JSON.
+.TP
+.B --verbose
+Print additional diagnostic detail where supported.
+.TP
+.B --quiet
+Print only essential output where supported.
+.TP
+.B --yes
+Confirm a command that removes state or executes recovery cleanup. This flag
+is intentionally long-only.
+.TP
+.B --execute
+Execute recovery cleanup through the daemon. This flag is intentionally
+long-only and must be combined with explicit confirmation where required.
+.TP
+.B --mode proxy-only|tun
+Select the connection or planning mode. The default connection mode is
+.BR proxy-only .
+.TP
+.B --follow, -f
+Follow journal output for
+.BR logs .
+.TP
+.B --daemon
+Select daemon log lines for
+.BR logs .
+.TP
+.B --core
+Select core diagnostics or core log lines, depending on the command.
+.TP
+.B --xray <path>
+Provide an explicit Xray binary path for
+.BR "doctor --core" .
+.TP
+.B --since <duration>
+Pass a journalctl-compatible time expression to
+.BR logs .
+.SH EXIT STATUS
+.TP
+.B 0
+Command completed successfully and no unhealthy state was found.
+.TP
+.B 1
+Runtime or operation failed.
+.TP
+.B 2
+Invalid usage, invalid flags, invalid arguments, or explicitly deferred JSON
+output.
+.TP
+.B 3
+A diagnostic command completed but found unhealthy state or incomplete
+visibility.
+.TP
+.B 4
+Permission or authorization failure.
+.TP
+.B 5
+The daemon was unavailable when the command required daemon access.
+.SH OUTPUT
+Default output is human-readable and intended for technical users. Errors are
+printed to standard error. Stable command output is printed to standard output
+where the implementation supports that separation.
+.PP
+JSON output is available only for commands with an implemented JSON contract.
+Implemented JSON output includes a
+.B schema_version
+field. Human and JSON output must apply the same redaction policy.
+.PP
+.B status --json,
+.B logs --json,
+.B connect --json,
+and
+.B disconnect --json
+are deferred in the current contract and fail as invalid usage rather than
+emitting unstable schemas.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/tunwarden/
+User configuration directory. Defaults to
+.IR ~/.config/tunwarden/ .
+.TP
+.I $XDG_STATE_HOME/tunwarden/
+User state directory. Defaults to
+.IR ~/.local/state/tunwarden/ .
+Profiles and subscriptions are user-owned state and must not require root.
+.TP
+.I /run/tunwarden/
+Daemon runtime directory used by packaged systemd deployments.
+.TP
+.I /run/tunwarden/tunwardend.sock
+Local Unix socket for the daemon API.
+.TP
+.I /run/tunwarden/generated/
+Daemon-owned generated runtime configuration directory. Generated core configs
+are runtime output, not persistent source of truth, and must not be logged in
+full.
+.TP
+.I /run/tunwarden/transactions/
+Volatile daemon transaction state used by status, diagnostics, rollback, and
+recovery paths.
+.SH ENVIRONMENT
+.TP
+.B TUNWARDEN_RUNTIME_DIR
+Override the daemon runtime directory for tests and local development.
+.TP
+.B TUNWARDEN_XRAY_PATH
+Provide an explicit Xray executable path for daemon-side proxy-only lifecycle
+testing.
+.TP
+.B XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_CACHE_HOME
+Standard XDG base directory variables used for user-owned TunWarden state.
+.SH SECURITY
+TunWarden keeps user state, daemon runtime state, and system networking state
+separate. The CLI parses user intent, renders output, and sends daemon API
+requests; it must not directly mutate privileged Linux networking state.
+.PP
+Proxy-only mode must not mutate TUN devices, routes, policy rules, DNS,
+nftables, or firewall state. Recovery without
+.B --execute
+is read-only. Recovery execution is explicit and daemon-owned.
+.PP
+Output, JSON, diagnostics, plans, recovery reports, and logs must redact
+subscription URLs, share URIs, generated core config contents, private keys,
+passwords, authorization headers, provider tokens, and secret-looking query
+parameters.
+.SH EXAMPLES
+.TP
+Show local help:
+.EX
+tunwarden help
+tunwarden help connect
+.EE
+.TP
+Import and inspect a profile without connecting:
+.EX
+tunwarden profile import 'vless://...'
+tunwarden profile list
+tunwarden profile show my-profile
+.EE
+.TP
+Inspect a safe proxy-only plan:
+.EX
+tunwarden plan --mode proxy-only my-profile
+.EE
+.TP
+Start and stop proxy-only lifecycle through the daemon:
+.EX
+tunwarden connect --mode proxy-only my-profile
+tunwarden status
+tunwarden disconnect
+.EE
+.TP
+Read daemon logs:
+.EX
+tunwarden logs --daemon --since "1 hour ago"
+tunwarden logs --follow --core
+.EE
+.TP
+Inspect recovery candidates without changing the host:
+.EX
+tunwarden recover
+.EE
+.SH DIAGNOSTICS
+Use
+.B tunwarden status
+to inspect active daemon and runtime state,
+.B tunwarden doctor
+to explain environment and health checks,
+.B tunwarden logs
+to inspect journald output, and
+.B tunwarden recover
+to inspect or explicitly clean up stale TunWarden-owned volatile state.
+.PP
+When daemon socket access fails with permission denied in a packaged install,
+check membership in the
+.B tunwarden
+group and the mode of
+.IR /run/tunwarden/tunwardend.sock .
+.SH SEE ALSO
+.BR tunwardend (8),
+.BR systemctl (1),
+.BR journalctl (1),
+.BR systemd.unit (5)
+.PP
+Canonical project documentation is installed in the repository under
+.I docs/
+and starts with
+.IR docs/README.md .
