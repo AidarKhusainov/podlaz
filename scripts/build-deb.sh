@@ -51,9 +51,8 @@ mkdir -p \
   "${root_dir}/usr/share/man/man8" \
   "${root_dir}/usr/share/doc/tunwarden"
 
-build_flags=(-trimpath -ldflags "-s -w -X github.com/AidarKhusainov/tunwarden/internal/app/cli.version=${version}")
-GOOS=linux GOARCH="${goarch}" go build "${build_flags[@]}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
-GOOS=linux GOARCH="${goarch}" go build "${build_flags[@]}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
+GOOS=linux GOARCH="${goarch}" go build -trimpath -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
+GOOS=linux GOARCH="${goarch}" go build -trimpath -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
 
 install -m 0644 packaging/systemd/tunwardend.service "${root_dir}/usr/lib/systemd/system/tunwardend.service"
 install -m 0644 packaging/sysusers.d/tunwarden.conf "${root_dir}/usr/lib/sysusers.d/tunwarden.conf"
