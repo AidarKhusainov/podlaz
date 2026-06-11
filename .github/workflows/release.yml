@@ -28,10 +28,9 @@ jobs:
             echo "release tag must use vMAJOR.MINOR.PATCH, got: $tag" >&2
             exit 1
           fi
-          deb_version="${version}-1"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "deb_version=$deb_version" >> "$GITHUB_OUTPUT"
+          echo "deb_version=$version" >> "$GITHUB_OUTPUT"
 
   test:
     name: Test release commit
@@ -226,11 +225,7 @@ jobs:
           - tunwarden_${{ needs.build.outputs.deb_version }}_amd64.deb
           - tunwarden_${{ needs.build.outputs.version }}_checksums.txt
 
-          Install the local Debian package with:
-
-          \`\`\`bash
-          sudo apt install ./tunwarden_${{ needs.build.outputs.deb_version }}_amd64.deb
-          \`\`\`
+          Install the local Debian package with: sudo apt install ./tunwarden_${{ needs.build.outputs.deb_version }}_amd64.deb
 
           Package installation does not enable or start the daemon automatically.
           EOF
