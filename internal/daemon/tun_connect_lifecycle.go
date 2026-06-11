@@ -35,10 +35,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 
 	runtimeDir := m.runtimeDir()
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
-	corePlan, err := planTunCoreRuntime(p, runtimeConfigPath)
-	if err != nil {
-		return api.LifecycleResponse{}, err
-	}
 	xrayPath, err := m.resolveXrayPath()
 	if err != nil {
 		return api.LifecycleResponse{}, err
@@ -53,6 +49,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 
 	snapshot := m.collectTunSnapshot(ctx, netsnapshot.Options{Server: p.Server})
 	plan, err := planner.PlanTun(p, snapshot)
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	corePlan, err := planTunCoreRuntime(p, runtimeConfigPath, plan)
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
@@ -158,23 +158,45 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	return lifecycleResponse(active), nil
 }
 
-func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string) (tunCoreRuntimePlan, error) {
+func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planner.TunPlan) (tunCoreRuntimePlan, error) {
 	if runtimeConfigPath == "" {
 		return tunCoreRuntimePlan{}, errors.New("TUN-mode Xray runtime config requires a runtime config path")
 	}
 	opts := engine.DefaultXrayTunConfigOptions()
+	if serverIP := tunRuntimeServerAddress(plan); serverIP != "" {
+		opts.OutboundAddressOverride = serverIP
+	}
 	xrayConfig, err := engine.GenerateXrayTunConfig(p, opts)
 	if err != nil {
 		return tunCoreRuntimePlan{}, err
 	}
 	endpoint := net.JoinHostPort(opts.SOCKSListen, fmt.Sprintf("%d", opts.SOCKSPort))
+	warnings := []string{"TUN-mode connectivity is verified through full-tunnel route lookup, routed TCP probe, and DNS probe before transaction commit"}
+	if opts.OutboundAddressOverride != "" && opts.OutboundAddressOverride != p.Server {
+		warnings = append(warnings, "TUN-mode Xray runtime uses the pre-resolved VPN server IP to avoid recursive DNS through the full-tunnel route")
+	}
 	return tunCoreRuntimePlan{
 		RuntimeConfigPath: runtimeConfigPath,
 		XrayConfig:        xrayConfig,
 		SOCKSEndpoint:     endpoint,
 		Status:            "TUN-mode Xray runtime config with private adapter SOCKS endpoint " + endpoint,
-		Warnings:          []string{"TUN-mode connectivity is verified through full-tunnel route lookup and routed TCP probe before transaction commit"},
+		Warnings:          warnings,
 	}, nil
+}
+
+func tunRuntimeServerAddress(plan planner.TunPlan) string {
+	serverBypass := strings.TrimSpace(plan.ServerBypass.Destination)
+	if serverBypass == "" || serverBypass == "<server-ip>" {
+		return ""
+	}
+	ip, _, err := net.ParseCIDR(serverBypass)
+	if err == nil && ip.To4() != nil {
+		return ip.String()
+	}
+	if parsed := net.ParseIP(serverBypass); parsed != nil && parsed.To4() != nil {
+		return parsed.String()
+	}
+	return ""
 }
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
