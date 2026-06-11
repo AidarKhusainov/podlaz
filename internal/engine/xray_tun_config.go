@@ -17,8 +17,8 @@ const (
 // TUN adapter. Unlike proxy-only listeners, this endpoint is daemon-internal
 // runtime plumbing and must not be advertised as a user proxy service.
 type XrayTunConfigOptions struct {
-	SOCKSListen            string
-	SOCKSPort              uint16
+	SOCKSListen             string
+	SOCKSPort               uint16
 	OutboundAddressOverride string
 }
 
