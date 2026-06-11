@@ -51,8 +51,8 @@ mkdir -p \
   "${root_dir}/usr/share/man/man8" \
   "${root_dir}/usr/share/doc/tunwarden"
 
-CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "-s -w" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
-CGO_ENABLED=0 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "-s -w" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
+CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "-s -w" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
+CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "-s -w" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
 
 install -m 0644 packaging/systemd/tunwardend.service "${root_dir}/usr/lib/systemd/system/tunwardend.service"
 install -m 0644 packaging/sysusers.d/tunwarden.conf "${root_dir}/usr/lib/sysusers.d/tunwarden.conf"
