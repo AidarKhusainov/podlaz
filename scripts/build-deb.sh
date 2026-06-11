@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+function deb_arch_to_goarch() {
+  case "$1" in
+    amd64) echo amd64 ;;
+    arm64) echo arm64 ;;
+    *) return 1 ;;
+  esac
+}
+
 version="${TUNWARDEN_VERSION:-0.0.0~dev}"
 arch="${TUNWARDEN_DEB_ARCH:-amd64}"
 out_dir="${TUNWARDEN_DIST_DIR:-dist}"
@@ -15,6 +23,8 @@ case "${arch}" in
     exit 2
     ;;
 esac
+
+goarch="$(deb_arch_to_goarch "${arch}")"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "go is required to build TunWarden binaries" >&2
@@ -42,8 +52,8 @@ mkdir -p \
   "${root_dir}/usr/share/doc/tunwarden"
 
 build_flags=(-trimpath -ldflags "-s -w -X github.com/AidarKhusainov/tunwarden/internal/app/cli.version=${version}")
-GOOS=linux GOARCH="$(deb_arch_to_goarch "${arch}")" go build "${build_flags[@]}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
-GOOS=linux GOARCH="$(deb_arch_to_goarch "${arch}")" go build "${build_flags[@]}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
+GOOS=linux GOARCH="${goarch}" go build "${build_flags[@]}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
+GOOS=linux GOARCH="${goarch}" go build "${build_flags[@]}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
 
 install -m 0644 packaging/systemd/tunwardend.service "${root_dir}/usr/lib/systemd/system/tunwardend.service"
 install -m 0644 packaging/sysusers.d/tunwarden.conf "${root_dir}/usr/lib/sysusers.d/tunwarden.conf"
@@ -70,11 +80,3 @@ if [ ! -f "${package}" ]; then
 fi
 
 echo "built ${package}"
-
-function deb_arch_to_goarch() {
-  case "$1" in
-    amd64) echo amd64 ;;
-    arm64) echo arm64 ;;
-    *) return 1 ;;
-  esac
-}
