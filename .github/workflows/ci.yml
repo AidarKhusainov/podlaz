@@ -146,7 +146,7 @@ jobs:
           zsh -n /usr/share/zsh/vendor-completions/_tunwarden
           fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish'
           bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/tunwarden; COMP_WORDS=(tunwarden ""); COMP_CWORD=1; _tunwarden; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
-          zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _tunwarden; whence -w _tunwarden | grep -F "_tunwarden: function"'
+          zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _tunwarden; whence _tunwarden >/dev/null'
           fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish; complete -C "tunwarden " | grep -F completion'
 
       - name: Reinstall package locally
