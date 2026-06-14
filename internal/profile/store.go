@@ -97,6 +97,40 @@ func (s Store) Add(p Profile) error {
 	return s.save(profiles)
 }
 
+// AddProfiles atomically appends multiple imported profiles. The profile store is
+// left untouched when validation or duplicate detection fails before the atomic
+// file replacement.
+func (s Store) AddProfiles(next []Profile) error {
+	current, err := s.load()
+	if err != nil {
+		return err
+	}
+	existingByID := make(map[string]struct{}, len(current))
+	for _, p := range current {
+		existingByID[p.ID] = struct{}{}
+	}
+
+	seenNext := make(map[string]struct{}, len(next))
+	for _, p := range next {
+		if err := Validate(p); err != nil {
+			return err
+		}
+		if _, duplicate := seenNext[p.ID]; duplicate {
+			return fmt.Errorf("duplicate profile id %q in import batch", p.ID)
+		}
+		if _, exists := existingByID[p.ID]; exists {
+			return fmt.Errorf("%w: %s", ErrAlreadyExists, p.ID)
+		}
+		seenNext[p.ID] = struct{}{}
+	}
+
+	profiles := make([]Profile, 0, len(current)+len(next))
+	profiles = append(profiles, current...)
+	profiles = append(profiles, next...)
+	SortStable(profiles)
+	return s.save(profiles)
+}
+
 func (s Store) Delete(id string) error {
 	profiles, err := s.load()
 	if err != nil {

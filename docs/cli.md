@@ -167,20 +167,37 @@ Output compatibility: the supported shell names and CLI behavior are stable cont
 ### Import convenience
 
 ```bash
-tunwarden import <uri-or-file-or-url>
+tunwarden import <share-uri>
+tunwarden import <local-path>
+tunwarden import <file-or-http-subscription-url>
 ```
 
-Purpose: user-friendly import entrypoint with format detection.
+Purpose: user-friendly first-run import entrypoint with format detection.
 
 Expected behavior:
 
-- supported share URI creates one profile;
-- subscription URL or file creates a subscription source and imports supported profiles;
+- supported share URI creates one `imported_uri` profile;
+- ordinary local paths are one-shot local imports, not tracked subscriptions;
+- local import detects Xray JSON object files, plain URI-list files, and Base64 URI-list files;
+- supported local entries are normalized into `imported_file` profiles and persisted in user-owned profile state;
+- Xray JSON import initially supports VLESS outbounds that map cleanly to the existing normalized profile model;
+- unsupported local Xray JSON outbounds or URI-list entries are reported clearly when at least one supported profile is imported;
+- malformed JSON object files fail as Xray JSON errors and must not fall back to URI-list parsing;
+- duplicate profile IDs inside one local import batch and existing-profile ID collisions fail before profile-store replacement, leaving existing state unchanged;
+- `file://`, `http://`, and `https://` inputs create subscription sources and import supported subscription profiles;
 - unsupported input fails clearly.
 
 Mutation level: persistent local TunWarden state only.
 
-Non-goal: this command must not connect or start Xray.
+Safety requirements:
+
+- import must not connect, start `tunwardend`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, or mutate firewall state;
+- local Xray JSON must be parsed and normalized into profiles only; raw Xray JSON must not be stored as persistent source of truth or runtime configuration;
+- default output must redact share URIs, identities, passwords, provider tokens, generated core configs, and secret-looking values.
+
+Detailed local file format behavior is documented in [Local import formats](./local-import-formats.md).
+
+`import --json` is deferred. Until implemented, it must fail fast as invalid usage with exit code `2`.
 
 ### Profile management
 
@@ -474,6 +491,7 @@ Expected cleanup candidates:
 The current implementation contains:
 
 - proxy-only lifecycle for Xray;
+- local import for VLESS Xray JSON, plain URI-list, and Base64 URI-list files through `tunwarden import <local-path>`;
 - read-only full-tunnel TUN planning;
 - static shell completion generation for bash, zsh, and fish;
 - transaction-state persistence and diagnostics;
@@ -483,6 +501,7 @@ The current implementation contains:
 
 Still deferred:
 
+- import JSON output and JSON outbound import for VMess/Trojan/Shadowsocks;
 - dynamic shell completion for user-specific values such as profile IDs, subscription IDs, and runtime state;
 - stable leak-protection release claim until v0.2 acceptance evidence is recorded;
 - configurable DNS policy and non-systemd DNS fallback;

@@ -30,7 +30,7 @@ func runImportCommand(ctx context.Context, args []string, stdout io.Writer, opts
 		return usageError("invalid import target: malformed URI or URL")
 	}
 	if u.Scheme == "" {
-		return usageError("import requires a supported share URI or a file/http/https subscription URL")
+		return runLocalFileImport(target, stdout, opts)
 	}
 
 	switch strings.ToLower(u.Scheme) {
@@ -58,15 +58,62 @@ func parseImportArgs(args []string) (string, error) {
 				return "", usageError("unsupported import argument %q", arg)
 			}
 			if target != "" {
-				return "", usageError("import accepts exactly one URI or subscription URL")
+				return "", usageError("import accepts exactly one URI, URL, or local path")
 			}
 			target = arg
 		}
 	}
 	if strings.TrimSpace(target) == "" {
-		return "", usageError("import requires a URI or subscription URL")
+		return "", usageError("import requires a URI, URL, or local path")
 	}
 	return target, nil
+}
+
+func runLocalFileImport(path string, stdout io.Writer, opts options) error {
+	content, err := profile.ReadLocalImportFile(path)
+	if err != nil {
+		return err
+	}
+	result, err := profile.ImportLocalContent(content)
+	if err != nil {
+		return usageError("%s", render.Redact(err.Error()))
+	}
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		return err
+	}
+	if err := store.AddProfiles(result.Profiles); err != nil {
+		return profileCommandError(err)
+	}
+	printLocalImportResult(stdout, result)
+	return nil
+}
+
+func printLocalImportResult(stdout io.Writer, result profile.LocalImportResult) {
+	fmt.Fprintln(stdout, "Local import completed")
+	fmt.Fprintf(stdout, "Format: %s\n", result.Format)
+	fmt.Fprintf(stdout, "Inspected: %d\n", result.Inspected)
+	fmt.Fprintf(stdout, "Imported: %d\n", len(result.Profiles))
+	fmt.Fprintf(stdout, "Skipped: %d\n", len(result.Unsupported))
+	fmt.Fprintf(stdout, "Warnings: %d\n", len(result.Warnings))
+	if len(result.Profiles) > 0 {
+		fmt.Fprintln(stdout, "Imported profiles:")
+		for _, p := range result.Profiles {
+			fmt.Fprintf(stdout, "- %s\n", render.Redact(p.ID))
+		}
+	}
+	if len(result.Unsupported) > 0 {
+		fmt.Fprintln(stdout, "Skipped entries:")
+		for _, issue := range result.Unsupported {
+			fmt.Fprintf(stdout, "- entry %d: %s\n", issue.Entry, render.Redact(issue.Message))
+		}
+	}
+	if len(result.Warnings) > 0 {
+		fmt.Fprintln(stdout, "Warning details:")
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(stdout, "- entry %d: %s\n", warning.Entry, render.Redact(warning.Message))
+		}
+	}
 }
 
 func runSubscriptionImport(ctx context.Context, sourceURL string, stdout io.Writer, opts options) error {
@@ -184,19 +231,29 @@ func printSubscriptionImportResult(stdout io.Writer, result sub.UpdateResult) {
 func printImportHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden import <share-uri>
+  tunwarden import <local-path>
   tunwarden import <file-or-http-subscription-url>
 
-Import one supported profile or subscription through the first-run convenience
-entrypoint. Supported share URIs are stored as imported profiles. file/http/https
-subscription URLs are fetched as Base64 URI-list subscriptions, imported into the
-profile store, and tracked as subscription-owned profiles.
+Import one supported profile, a local import file, or a subscription through the
+first-run convenience entrypoint. Supported share URIs are stored as imported
+profiles. Ordinary local paths are read once, detected as Xray JSON, plain
+URI-list, or Base64 URI-list files, and stored as imported_file profiles.
+file/http/https URLs remain subscription sources and are tracked as
+subscription-owned profiles.
+
+Local import safety:
+  local files are parsed and normalized into TunWarden profiles only; import does
+  not start tunwardend, start Xray, require root, create TUN devices, mutate
+  routes, DNS, nftables, firewall state, or persist raw Xray JSON.
 
 Implemented in v0.1:
-  share URI import, file/http/https Base64 URI-list subscription import,
-  supported subscription entries, unsupported entry reporting, and rollback when
+  share URI import, local VLESS Xray JSON import, local plain/Base64 URI-list
+  import, file/http/https Base64 URI-list subscription import, supported
+  subscription entries, unsupported entry reporting, and rollback when
   subscription metadata persistence fails after profile apply.
 
 Not implemented yet:
-  --json, non-Base64 subscription formats, subscription delete, scheduled updates
+  import --json, JSON outbound import for VMess/Trojan/Shadowsocks, non-Base64
+  subscription formats, subscription delete, scheduled updates
 `)
 }

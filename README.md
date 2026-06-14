@@ -56,7 +56,9 @@ The package installs binaries, systemd/sysusers files, shell completions, manual
 ## Basic workflow
 
 ```bash
-tunwarden import <uri-or-file-or-url>
+# Import one share URI, a local Xray JSON or URI-list file, or a subscription URL.
+tunwarden import <share-uri-or-local-path-or-file-http-url>
+
 tunwarden profile list
 tunwarden plan --mode proxy-only <profile-id>
 tunwarden connect --mode proxy-only <profile-id>
@@ -65,6 +67,8 @@ tunwarden logs
 tunwarden disconnect
 tunwarden recover
 ```
+
+Local import files are parsed into normalized TunWarden profiles only. Import does not start `tunwardend`, start Xray, require root, mutate host networking, or persist raw Xray JSON.
 
 Use `tunwarden plan --mode tun <profile-id>` to inspect full-tunnel network intent before host networking work. Use `tunwarden doctor` for diagnostics and `tunwarden recover` to inspect TunWarden-owned stale state.
 
@@ -78,7 +82,7 @@ tunwarden completion fish
 
 The Debian package installs bash, zsh, and fish completion files under distro completion directories, so normal packaged installs should not require manually editing shell startup files.
 
-The canonical command contract is [CLI contract](docs/cli.md).
+The canonical command contract is [CLI contract](docs/cli.md). Local import formats are documented in [Local import formats](docs/local-import-formats.md).
 
 ## Documentation
 
