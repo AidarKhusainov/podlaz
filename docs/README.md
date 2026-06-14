@@ -18,6 +18,7 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 | Document | Purpose |
 | --- | --- |
 | [CLI contract](./cli.md) | Command names, arguments, flags, exit codes, output expectations, JSON compatibility, and safety semantics. |
+| [Shell completion](./shell-completion.md) | `tunwarden completion` behavior, shell-specific package files, static completion scope, and safety boundary. |
 | [Profile management](./profile-management.md) | `tunwarden profile` behavior, storage, validation, output, and safety boundary. |
 | [Subscription management](./subscription-management.md) | `tunwarden subscription` behavior, update safety, redaction, and local state ownership. |
 | [Proxy-only plan](./proxy-only-plan.md) | Read-only proxy-only planning and generated Xray config inspection contract. |

@@ -24,6 +24,7 @@ Public commands describe user tasks and stable domain objects:
 - `logs`
 - `plan`
 - `recover`
+- `completion`
 
 Avoid exposing implementation concepts as primary workflows unless they become real user-facing objects.
 
@@ -114,6 +115,8 @@ tun
 
 The default connection mode is `proxy-only`.
 
+Shell completion must be generated through the public CLI command and written to stdout only. Completion generation must be static and read-only: it must not contact `tunwardend`, start Xray, inspect profile/subscription state, read secrets, mutate Linux networking, or require root.
+
 ## 3. Implemented command contract
 
 ### Version and help
@@ -126,6 +129,40 @@ tunwarden help
 Mutation level: read-only.
 
 Daemon requirement: none.
+
+### Shell completion
+
+```bash
+tunwarden completion bash
+tunwarden completion zsh
+tunwarden completion fish
+```
+
+Purpose: generate shell completion definitions for supported interactive shells.
+
+Mutation level: read-only.
+
+Daemon requirement: none.
+
+Implemented behavior:
+
+- writes the requested completion script to stdout;
+- supports `bash`, `zsh`, and `fish` as explicit shell names;
+- completes stable top-level command names;
+- completes implemented nested subcommands for `profile`, `subscription`, `completion`, and `help`;
+- completes implemented flags for command scopes that currently define flags;
+- completes static enum values including connection modes `proxy-only` and `tun` and supported profile protocol names;
+- intentionally does not complete dynamic user-specific values such as profile IDs, subscription IDs, file paths, URLs, daemon state, transaction IDs, routes, DNS data, or firewall state.
+
+Safety requirements:
+
+- completion generation must not read profile stores, subscription stores, runtime transaction files, daemon state, logs, generated core configs, or secrets;
+- completion generation must not start `tunwardend`, start Xray, open the local daemon socket, create files, mutate TUN devices, mutate routes, mutate policy rules, mutate DNS, mutate nftables/firewall state, or require elevated privileges;
+- completion scripts may contain shell functions and static metadata only.
+
+Packaging requirement: Debian packages must install generated completion files under conventional distro locations for bash, zsh, and fish. The exact packaged paths are owned by [Debian package contract](./debian-package.md).
+
+Output compatibility: the supported shell names and CLI behavior are stable contract. The exact generated script text is implementation detail except for shell validity and the completion coverage promised above.
 
 ### Import convenience
 
@@ -438,6 +475,7 @@ The current implementation contains:
 
 - proxy-only lifecycle for Xray;
 - read-only full-tunnel TUN planning;
+- static shell completion generation for bash, zsh, and fish;
 - transaction-state persistence and diagnostics;
 - daemon-owned privileged TUN preview execution for TUN interface, routes, policy rules, systemd-resolved DNS, TunWarden-owned nftables state, TUN-mode Xray runtime config, Xray startup, TUN adapter startup, and pre-commit route/TCP verification;
 - daemon-owned recovery cleanup execution for clearly TunWarden-owned volatile state;
@@ -445,6 +483,7 @@ The current implementation contains:
 
 Still deferred:
 
+- dynamic shell completion for user-specific values such as profile IDs, subscription IDs, and runtime state;
 - stable leak-protection release claim until v0.2 acceptance evidence is recorded;
 - configurable DNS policy and non-systemd DNS fallback;
 - packaged privileged daemon deployment;

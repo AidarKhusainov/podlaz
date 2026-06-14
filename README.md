@@ -51,7 +51,7 @@ bash scripts/build-deb.sh
 sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
 ```
 
-The package installs binaries, systemd/sysusers files, manual pages, and project documentation under packaged filesystem locations. It must not ship runtime state, generated core configs, user state, `/run/tunwarden`, or `/usr/local` files.
+The package installs binaries, systemd/sysusers files, shell completions, manual pages, and project documentation under packaged filesystem locations. It must not ship runtime state, generated core configs, user state, `/run/tunwarden`, or `/usr/local` files.
 
 ## Basic workflow
 
@@ -67,6 +67,16 @@ tunwarden recover
 ```
 
 Use `tunwarden plan --mode tun <profile-id>` to inspect full-tunnel network intent before host networking work. Use `tunwarden doctor` for diagnostics and `tunwarden recover` to inspect TunWarden-owned stale state.
+
+Generate shell completion definitions manually when needed:
+
+```bash
+tunwarden completion bash
+tunwarden completion zsh
+tunwarden completion fish
+```
+
+The Debian package installs bash, zsh, and fish completion files under distro completion directories, so normal packaged installs should not require manually editing shell startup files.
 
 The canonical command contract is [CLI contract](docs/cli.md).
 

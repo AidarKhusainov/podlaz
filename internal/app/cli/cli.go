@@ -90,6 +90,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return nil
 	case "version", "--version":
 		return runVersionCommand(commandArgs, stdout)
+	case "completion":
+		return runCompletionCommand(commandArgs, stdout)
 	case "import":
 		return runImportCommand(ctx, commandArgs, stdout, opts)
 	case "profile":
@@ -127,6 +129,8 @@ func runHelp(args []string, stdout io.Writer) error {
 	switch strings.ToLower(args[0]) {
 	case "version":
 		printVersionHelp(stdout)
+	case "completion":
+		printCompletionHelp(stdout)
 	case "import":
 		printImportHelp(stdout)
 	case "profile":

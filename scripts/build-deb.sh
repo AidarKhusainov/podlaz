@@ -55,6 +55,9 @@ mkdir -p \
   "${root_dir}/usr/bin" \
   "${root_dir}/usr/lib/systemd/system" \
   "${root_dir}/usr/lib/sysusers.d" \
+  "${root_dir}/usr/share/bash-completion/completions" \
+  "${root_dir}/usr/share/zsh/vendor-completions" \
+  "${root_dir}/usr/share/fish/vendor_completions.d" \
   "${root_dir}/usr/share/man/man1" \
   "${root_dir}/usr/share/man/man8" \
   "${root_dir}/usr/share/doc/tunwarden"
@@ -62,6 +65,14 @@ mkdir -p \
 ldflags="-s -w -X ${version_package}=${binary_version}"
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
+
+"${root_dir}/usr/bin/tunwarden" completion bash > "${root_dir}/usr/share/bash-completion/completions/tunwarden"
+"${root_dir}/usr/bin/tunwarden" completion zsh > "${root_dir}/usr/share/zsh/vendor-completions/_tunwarden"
+"${root_dir}/usr/bin/tunwarden" completion fish > "${root_dir}/usr/share/fish/vendor_completions.d/tunwarden.fish"
+chmod 0644 \
+  "${root_dir}/usr/share/bash-completion/completions/tunwarden" \
+  "${root_dir}/usr/share/zsh/vendor-completions/_tunwarden" \
+  "${root_dir}/usr/share/fish/vendor_completions.d/tunwarden.fish"
 
 install -m 0644 packaging/systemd/tunwardend.service "${root_dir}/usr/lib/systemd/system/tunwardend.service"
 install -m 0644 packaging/sysusers.d/tunwarden.conf "${root_dir}/usr/lib/sysusers.d/tunwarden.conf"

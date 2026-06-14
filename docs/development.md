@@ -20,6 +20,9 @@ go test ./...
 go run ./cmd/tunwarden version
 go run ./cmd/tunwarden doctor
 go run ./cmd/tunwarden recover
+go run ./cmd/tunwarden completion bash >/dev/null
+go run ./cmd/tunwarden completion zsh >/dev/null
+go run ./cmd/tunwarden completion fish >/dev/null
 ```
 
 For packaging changes, also run where the required tools are available:
@@ -31,9 +34,15 @@ dpkg-deb --contents dist/tunwarden_0.0.0~dev_amd64.deb
 file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
 ldd dist/package-root/usr/bin/tunwarden
 ldd dist/package-root/usr/bin/tunwardend
+test -f dist/package-root/usr/share/bash-completion/completions/tunwarden
+test -f dist/package-root/usr/share/zsh/vendor-completions/_tunwarden
+test -f dist/package-root/usr/share/fish/vendor_completions.d/tunwarden.fish
 lintian --fail-on error dist/tunwarden_0.0.0~dev_amd64.deb
 sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
 tunwarden version
+tunwarden completion bash >/dev/null
+tunwarden completion zsh >/dev/null
+tunwarden completion fish >/dev/null
 man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
 man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
 sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
@@ -56,6 +65,9 @@ ldd dist/package-root/usr/bin/tunwardend
 lintian --fail-on error dist/tunwarden_0.0.0~dev_amd64.deb
 sudo apt install -y ./dist/tunwarden_0.0.0~dev_amd64.deb
 tunwarden version
+tunwarden completion bash >/dev/null
+tunwarden completion zsh >/dev/null
+tunwarden completion fish >/dev/null
 man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
 man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
 sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
@@ -124,10 +136,11 @@ Packaging PR checklist:
 - [ ] Local `.deb` artifact builds for `amd64`.
 - [ ] `dpkg-deb --info` and `dpkg-deb --contents` show expected metadata and file layout.
 - [ ] Packaged binaries report the package version through `tunwarden version`.
+- [ ] Packaged shell completion files exist for bash, zsh, and fish.
 - [ ] Packaged binaries have the expected dynamic linkage baseline for the declared package dependencies.
 - [ ] `lintian` is clean of errors, or every relevant warning is documented and justified.
 - [ ] The package does not ship `/usr/local`, `/run`, `/var/run`, user-home, or generated runtime config paths.
-- [ ] Install, same-version reinstall, man page, and remove behavior are validated in a container or VM.
+- [ ] Install, same-version reinstall, man page, shell completion, and remove behavior are validated in a container or VM.
 - [ ] Full systemd behavior is validated in a VM or systemd-capable host when the PR claims service lifecycle acceptance.
 
 Release PR checklist:
@@ -175,7 +188,7 @@ Use package inspection and local install/remove validation for:
 - installed file layout,
 - package lifecycle behavior,
 - absence of generated runtime files in package contents,
-- binary and man page availability after install,
+- binary, shell completion, and man page availability after install,
 - version consistency between package metadata and `tunwarden version`,
 - same-version reinstall behavior,
 - dynamic linkage compatibility with the declared package dependency baseline.

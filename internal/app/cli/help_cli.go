@@ -14,20 +14,23 @@ Usage:
   tunwarden profile <add|import|list|show|delete>
   tunwarden subscription <add|list|show|update>
   tunwarden plan --mode proxy-only <profile-id>
-  tunwarden connect [--mode proxy-only] <profile-id>
+  tunwarden connect [--mode proxy-only|tun] <profile-id>
   tunwarden disconnect
   tunwarden status
   tunwarden doctor
   tunwarden logs
   tunwarden recover
+  tunwarden completion <bash|zsh|fish>
   tunwarden help [command]
 
 Current status:
-  This is an early foundation build. Commands import VLESS profiles and Base64
-  subscriptions, manage local profiles and subscriptions, print proxy-only plans,
-  start and stop daemon-managed proxy-only Xray, report daemon-backed or local
-  status, diagnostics, daemon/core logs, and recovery plans; they do not mutate
-  TUN, routes, DNS, nftables, or firewall state.
+  This is an early foundation build. It imports VLESS profiles and Base64
+  subscriptions, manages local profiles and subscriptions, prints plans, starts
+  and stops daemon-managed proxy-only Xray, exposes explicit daemon-owned TUN
+  preview execution, reports status, diagnostics, daemon/core logs, recovery
+  plans, and shell completion definitions. Read-only commands such as plan,
+  status fallback, doctor, logs, recover dry-run, and completion do not mutate
+  host networking; privileged TUN changes are daemon-owned and explicit.
 `)
 }
 
