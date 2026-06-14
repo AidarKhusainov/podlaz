@@ -9,12 +9,12 @@ import (
 )
 
 var (
-	completionTopLevelCommands = []string{"version", "import", "profile", "subscription", "plan", "connect", "disconnect", "status", "doctor", "logs", "recover", "completion", "help"}
-	completionProfileCommands  = []string{"add", "import", "list", "show", "delete"}
+	completionTopLevelCommands     = []string{"version", "import", "profile", "subscription", "plan", "connect", "disconnect", "status", "doctor", "logs", "recover", "completion", "help"}
+	completionProfileCommands      = []string{"add", "import", "list", "show", "delete"}
 	completionSubscriptionCommands = []string{"add", "list", "show", "update"}
-	completionShells = []string{"bash", "zsh", "fish"}
-	completionConnectionModes = []string{planner.ModeProxyOnly, planner.ModeTun}
-	completionProfileProtocols = []string{"vless", "vmess", "trojan", "shadowsocks"}
+	completionShells               = []string{"bash", "zsh", "fish"}
+	completionConnectionModes      = []string{planner.ModeProxyOnly, planner.ModeTun}
+	completionProfileProtocols     = []string{"vless", "vmess", "trojan", "shadowsocks"}
 )
 
 func runCompletionCommand(args []string, stdout io.Writer) error {
