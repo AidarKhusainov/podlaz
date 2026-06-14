@@ -53,6 +53,10 @@ tunwarden \- Linux-first CLI for Xray-compatible VPN and proxy profiles
 .OP --execute --yes
 .OP --json
 .YS
+.SY tunwarden
+.B completion
+.IR bash | zsh | fish
+.YS
 .SH DESCRIPTION
 .B tunwarden
 is the user-facing command line interface for TunWarden, a Linux-first,
@@ -73,6 +77,12 @@ Print the TunWarden version.
 .TP
 .B help [command]
 Print general help or command-specific help.
+.TP
+.B completion bash|zsh|fish
+Generate shell completion definitions for standard output. This command prints
+static command, subcommand, flag, and enum-value completion metadata. It does
+not contact the daemon, read user state, start Xray, mutate networking, or
+require root.
 .TP
 .B import <uri-or-file-or-url>
 Import a supported share URI, subscription URL, or local subscription file.
@@ -281,6 +291,15 @@ full.
 .I /run/tunwarden/transactions/
 Volatile daemon transaction state used by status, diagnostics, rollback, and
 recovery paths.
+.TP
+.I /usr/share/bash-completion/completions/tunwarden
+Packaged bash completion file.
+.TP
+.I /usr/share/zsh/vendor-completions/_tunwarden
+Packaged zsh completion file.
+.TP
+.I /usr/share/fish/vendor_completions.d/tunwarden.fish
+Packaged fish completion file.
 .SH ENVIRONMENT
 .TP
 .B TUNWARDEN_RUNTIME_DIR
@@ -302,6 +321,11 @@ nftables, or firewall state. Recovery without
 .B --execute
 is read-only. Recovery execution is explicit and daemon-owned.
 .PP
+The
+.B completion
+command is read-only and static. It must not contact the daemon, read user
+state, print secrets, or require root.
+.PP
 Output, JSON, diagnostics, plans, recovery reports, and logs must redact
 subscription URLs, share URIs, generated core config contents, private keys,
 passwords, authorization headers, provider tokens, and secret-looking query
@@ -312,6 +336,13 @@ Show local help:
 .EX
 tunwarden help
 tunwarden help connect
+.EE
+.TP
+Generate shell completion definitions:
+.EX
+tunwarden completion bash
+tunwarden completion zsh
+tunwarden completion fish
 .EE
 .TP
 Import and inspect a profile without connecting:
