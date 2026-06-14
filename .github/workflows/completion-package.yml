@@ -1,0 +1,62 @@
+name: Completion package gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - foundation
+
+permissions:
+  contents: read
+
+jobs:
+  completion-package:
+    name: Packaged shell completions
+    runs-on: ubuntu-22.04
+    env:
+      DEV_DEB: dist/tunwarden_0.0.0~dev-1_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+
+      - name: Install package tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg file lintian man-db
+          . packaging/package-toolchain.env
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build Debian package
+        run: bash scripts/build-deb.sh
+
+      - name: Validate generated completion commands
+        run: |
+          go run ./cmd/tunwarden completion bash | grep -F '_tunwarden()'
+          go run ./cmd/tunwarden completion zsh | grep -F '#compdef tunwarden'
+          go run ./cmd/tunwarden completion fish | grep -F 'complete -c tunwarden -f'
+          go run ./cmd/tunwarden completion bash | grep -F 'proxy-only tun'
+          go run ./cmd/tunwarden completion fish | grep -F "-a 'proxy-only tun'"
+
+      - name: Validate package completion file layout
+        run: |
+          dpkg-deb --contents "${DEV_DEB}" | tee /tmp/tunwarden-package-contents.txt
+          grep -F './usr/share/bash-completion/completions/tunwarden' /tmp/tunwarden-package-contents.txt
+          grep -F './usr/share/zsh/vendor-completions/_tunwarden' /tmp/tunwarden-package-contents.txt
+          grep -F './usr/share/fish/vendor_completions.d/tunwarden.fish' /tmp/tunwarden-package-contents.txt
+
+      - name: Validate package-root completion files
+        run: |
+          test -f dist/package-root/usr/share/bash-completion/completions/tunwarden
+          test -f dist/package-root/usr/share/zsh/vendor-completions/_tunwarden
+          test -f dist/package-root/usr/share/fish/vendor_completions.d/tunwarden.fish
+          grep -F 'complete -F _tunwarden tunwarden' dist/package-root/usr/share/bash-completion/completions/tunwarden
+          grep -F '#compdef tunwarden' dist/package-root/usr/share/zsh/vendor-completions/_tunwarden
+          grep -F 'complete -c tunwarden -f' dist/package-root/usr/share/fish/vendor_completions.d/tunwarden.fish
