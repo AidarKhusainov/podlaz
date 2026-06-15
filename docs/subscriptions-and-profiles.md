@@ -29,6 +29,8 @@ The v0.1 foundation implementation supports explicit manual `profile add`, `prof
 
 TunWarden must support adding subscription URLs.
 
+HTTP(S) subscription fetches must send an explicit `User-Agent: TunWarden` request header. The value intentionally identifies TunWarden without pretending to be a browser or another VPN/proxy client, and it must not include provider tokens, user identities, operating-system details, device details, or other fine-grained fingerprinting data.
+
 Initial command shape:
 
 ```bash
