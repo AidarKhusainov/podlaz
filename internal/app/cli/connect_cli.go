@@ -195,17 +195,9 @@ func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden connect [--mode proxy-only|tun] <profile-id>
 
-Start the stored profile through the daemon-managed lifecycle.
-
-Implemented:
-  proxy-only Xray lifecycle and the first TUN executor slice for TUN device,
-  route, and policy-rule transaction apply/verify/rollback.
-
-TUN mode requires a daemon process with CAP_NET_ADMIN-equivalent privileges. The
-packaged proxy-only daemon remains unprivileged and must not start Xray as root.
-
-Not implemented yet:
-  --json, TUN DNS mutation, nftables/firewall mutation, automatic Xray download
+Start the stored profile through the daemon-managed lifecycle. The default mode
+is proxy-only. TUN mode requires a daemon process with CAP_NET_ADMIN-equivalent
+privileges.
 `)
 }
 
@@ -215,11 +207,5 @@ func printDisconnectHelp(w io.Writer) {
 
 Stop proxy-only Xray or roll back an active TunWarden-owned TUN transaction.
 Repeated disconnects are safe and leave the connection inactive.
-
-Implemented:
-  graceful Xray stop, generated runtime config cleanup, and TUN executor rollback.
-
-Not implemented yet:
-  --json, DNS/firewall mutation cleanup
 `)
 }

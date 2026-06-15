@@ -29,23 +29,23 @@ For packaging changes, also run where the required tools are available:
 
 ```bash
 bash scripts/build-deb.sh
-dpkg-deb --info dist/tunwarden_0.0.0~dev_amd64.deb
-dpkg-deb --contents dist/tunwarden_0.0.0~dev_amd64.deb
+dpkg-deb --info dist/tunwarden_0.0.0~dev-1_amd64.deb
+dpkg-deb --contents dist/tunwarden_0.0.0~dev-1_amd64.deb
 file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
 ldd dist/package-root/usr/bin/tunwarden
 ldd dist/package-root/usr/bin/tunwardend
 test -f dist/package-root/usr/share/bash-completion/completions/tunwarden
 test -f dist/package-root/usr/share/zsh/vendor-completions/_tunwarden
 test -f dist/package-root/usr/share/fish/vendor_completions.d/tunwarden.fish
-lintian --fail-on error dist/tunwarden_0.0.0~dev_amd64.deb
-sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
+lintian --fail-on error dist/tunwarden_0.0.0~dev-1_amd64.deb
+sudo apt install ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 tunwarden version
 tunwarden completion bash >/dev/null
 tunwarden completion zsh >/dev/null
 tunwarden completion fish >/dev/null
 man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
 man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 sudo apt remove -y tunwarden
 ```
 
@@ -57,20 +57,20 @@ go test ./...
 go vet ./...
 govulncheck ./...
 bash scripts/build-deb.sh
-dpkg-deb --info dist/tunwarden_0.0.0~dev_amd64.deb
-dpkg-deb --contents dist/tunwarden_0.0.0~dev_amd64.deb
+dpkg-deb --info dist/tunwarden_0.0.0~dev-1_amd64.deb
+dpkg-deb --contents dist/tunwarden_0.0.0~dev-1_amd64.deb
 file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
 ldd dist/package-root/usr/bin/tunwarden
 ldd dist/package-root/usr/bin/tunwardend
-lintian --fail-on error dist/tunwarden_0.0.0~dev_amd64.deb
-sudo apt install -y ./dist/tunwarden_0.0.0~dev_amd64.deb
+lintian --fail-on error dist/tunwarden_0.0.0~dev-1_amd64.deb
+sudo apt install -y ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 tunwarden version
 tunwarden completion bash >/dev/null
 tunwarden completion zsh >/dev/null
 tunwarden completion fish >/dev/null
 man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
 man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 sudo apt remove -y tunwarden
 ```
 
@@ -224,6 +224,6 @@ Before declaring TUN mode stable, run manual tests on Ubuntu LTS at minimum:
 - Prefer systemd-resolved per-link DNS over global resolver mutation.
 - Treat NetworkManager connectivity as diagnostic metadata, not the only health source.
 
-## 8. Current implementation limitation
+## 8. Networking safety boundary
 
-The current foundation build is intentionally safe and mostly declarative. Commands print contracts, diagnostic summaries, and recovery plans. They do not yet change host networking state.
+The foundation build is intentionally safe and mostly declarative. Read-only commands print contracts, diagnostic summaries, and recovery plans. Host networking changes require daemon-owned execution paths with explicit planning, verification, and recovery behavior.

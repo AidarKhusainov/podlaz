@@ -232,28 +232,20 @@ func printImportHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden import <share-uri>
   tunwarden import <local-path>
-  tunwarden import <file-or-http-subscription-url>
+  tunwarden import <subscription-url>
 
-Import one supported profile, a local import file, or a subscription through the
-first-run convenience entrypoint. Supported share URIs are stored as imported
-profiles. Ordinary local paths are read once, detected as Xray JSON, plain
-URI-list, or Base64 URI-list files, and stored as imported_file profiles.
-file/http/https URLs remain subscription sources and are tracked as
-subscription-owned profiles.
+Import a supported share URI, local import file, or subscription URL into
+user-owned TunWarden state.
 
-Local import safety:
-  local files are parsed and normalized into TunWarden profiles only; import does
-  not start tunwardend, start Xray, require root, create TUN devices, mutate
-  routes, DNS, nftables, firewall state, or persist raw Xray JSON.
+Supported local files:
+  Xray JSON, plain URI-list, Base64 URI-list
 
-Implemented in v0.1:
-  share URI import, local VLESS Xray JSON import, local plain/Base64 URI-list
-  import, file/http/https Base64 URI-list subscription import, supported
-  subscription entries, unsupported entry reporting, and rollback when
-  subscription metadata persistence fails after profile apply.
+Supported subscription URLs:
+  Base64 URI-list over file/http/https
 
-Not implemented yet:
-  import --json, JSON outbound import for VMess/Trojan/Shadowsocks, non-Base64
-  subscription formats, subscription delete, scheduled updates
+Examples:
+  tunwarden import 'vless://...'
+  tunwarden import ./profiles.json
+  tunwarden import https://example.com/subscription
 `)
 }

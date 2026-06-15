@@ -6,14 +6,14 @@ import (
 )
 
 func printUsage(w io.Writer) {
-	fmt.Fprint(w, `TunWarden - Linux-first safe TUN VPN client foundation
+	fmt.Fprint(w, `TunWarden - Linux-first safe TUN VPN client
 
 Usage:
   tunwarden version
   tunwarden import <uri-or-file-or-url>
   tunwarden profile <add|import|list|show|delete>
   tunwarden subscription <add|list|show|update>
-  tunwarden plan --mode proxy-only <profile-id>
+  tunwarden plan --mode proxy-only|tun <profile-id>
   tunwarden connect [--mode proxy-only|tun] <profile-id>
   tunwarden disconnect
   tunwarden status
@@ -22,15 +22,6 @@ Usage:
   tunwarden recover
   tunwarden completion <bash|zsh|fish>
   tunwarden help [command]
-
-Current status:
-  This is an early foundation build. It imports VLESS profiles and Base64
-  subscriptions, manages local profiles and subscriptions, prints plans, starts
-  and stops daemon-managed proxy-only Xray, exposes explicit daemon-owned TUN
-  preview execution, reports status, diagnostics, daemon/core logs, recovery
-  plans, and shell completion definitions. Read-only commands such as plan,
-  status fallback, doctor, logs, recover dry-run, and completion do not mutate
-  host networking; privileged TUN changes are daemon-owned and explicit.
 `)
 }
 
@@ -50,13 +41,7 @@ Report local TunWarden runtime state. The command uses daemon-backed status
 when the local Unix socket API is reachable and falls back to read-only local
 inspection when it is not.
 
-Implemented in v0.1:
-  daemon-backed inactive and active proxy-only status, conservative local
-  fallback, runtime directory state, stale runtime candidate summary, Xray crash
-  visibility through daemon warnings, and recovery guidance.
-
-Not implemented yet:
-  --json, TUN mode, route/DNS/firewall health status
+Exit code 3 means stale or incomplete local state was detected.
 `)
 }
 
@@ -69,15 +54,6 @@ Run read-only diagnostics for the current Linux host. The command uses
 daemon-backed diagnostics when the local Unix socket API is reachable and falls
 back to local read-only diagnostics when it is not. The core scope validates a
 local Xray binary without starting a long-running process.
-
-Implemented in v0.1:
-  daemon-backed source reporting, local fallback, platform, command
-  availability, default route, default interface, stale TunWarden-owned
-  resource detection, and explicit local Xray binary validation through
-  doctor --core --xray <path>.
-
-Not implemented yet:
-  doctor --json without --core, --network, --dns, --routes, --firewall
 `)
 }
 
@@ -90,21 +66,16 @@ Print recent TunWarden logs from the system journal using journalctl. The defaul
 source is daemon logs. --core filters Xray lifecycle and forwarded stdout/stderr
 lines marked by tunwardend. This command is read-only and applies the standard
 TunWarden output redaction policy before printing log lines.
-
-Implemented in v0.1:
-  recent daemon logs, recent core logs, --follow, -f, --daemon, --core, --since
-
-Not implemented yet:
-  --json
 `)
 }
 
 func printRecoverHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   tunwarden recover
+  tunwarden recover --execute --yes [--json]
 
-Print the read-only recovery dry-run plan for clearly TunWarden-owned resources.
-Cleanup execution is intentionally not implemented in v0.1; recover --execute is
-rejected.
+Inspect clearly TunWarden-owned resources and print the recovery plan. Without
+--execute the command is read-only. Cleanup execution requires daemon access and
+explicit confirmation.
 `)
 }

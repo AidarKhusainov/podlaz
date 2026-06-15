@@ -48,7 +48,7 @@ Build a local Debian package:
 
 ```bash
 bash scripts/build-deb.sh
-sudo apt install ./dist/tunwarden_0.0.0~dev_amd64.deb
+sudo apt install ./dist/tunwarden_0.0.0~dev-1_amd64.deb
 ```
 
 The package installs binaries, systemd/sysusers files, shell completions, manual pages, and project documentation under packaged filesystem locations. It must not ship runtime state, generated core configs, user state, `/run/tunwarden`, or `/usr/local` files.
