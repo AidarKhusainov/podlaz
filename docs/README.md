@@ -22,6 +22,7 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 | [Shell completion](./shell-completion.md) | `tunwarden completion` behavior, shell-specific package files, static completion scope, and safety boundary. |
 | [Profile management](./profile-management.md) | `tunwarden profile` behavior, storage, validation, output, and safety boundary. |
 | [Subscription management](./subscription-management.md) | `tunwarden subscription` behavior, update safety, redaction, and local state ownership. |
+| [Subscription client identity](./subscription-client-identity.md) | Privacy-safe subscription request identity/HWID evidence gate, storage boundary, redaction, and reset requirements. |
 | [Proxy-only plan](./proxy-only-plan.md) | Read-only proxy-only planning and generated Xray config inspection contract. |
 | [TUN full-tunnel plan](./tun-full-tunnel-plan.md) | Full-tunnel plan output, ownership model, DNS/firewall plan, warnings, and rollback model. |
 | [Proxy-only lifecycle](./proxy-only-lifecycle.md) | Daemon-managed proxy-only connect/disconnect and Xray runtime lifecycle. |
