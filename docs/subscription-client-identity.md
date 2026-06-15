@@ -23,8 +23,6 @@ Provider-specific subscription identity support requires confirmed evidence for 
 
 Acceptable evidence includes sanitized Happ request captures, controlled Remnawave server logs, upstream source or documentation, or reproducible sanitized curl transcripts. Real subscription URLs, provider tokens, HWIDs, user identities, generated core configs, and raw logs containing secrets must not be committed.
 
-Follow-up implementation is tracked in #95. That issue is blocked until the evidence above is available.
-
 ## Privacy contract for future identity support
 
 When identity support is implemented, the default TunWarden identity must be privacy-safe.
