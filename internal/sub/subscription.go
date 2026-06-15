@@ -18,7 +18,10 @@ import (
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
 )
 
-const subscriptionsFileName = "subscriptions.json"
+const (
+	subscriptionsFileName = "subscriptions.json"
+	subscriptionUserAgent = "TunWarden"
+)
 
 // Format identifies a supported or planned subscription source format.
 type Format string
@@ -254,6 +257,7 @@ func FetchSource(ctx context.Context, source Source) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fetch subscription %s: %w", source.ID, err)
 		}
+		req.Header.Set("User-Agent", subscriptionUserAgent)
 		res, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("fetch subscription %s: %w", source.ID, err)
