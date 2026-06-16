@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	subscriptionsFileName = "subscriptions.json"
-	subscriptionUserAgent = "TunWarden"
+	subscriptionsFileName    = "subscriptions.json"
+	subscriptionUserAgent    = "TunWarden"
+	subscriptionClientHeader = "x-hwid"
 )
 
 // Format identifies a supported or planned subscription source format.
@@ -260,12 +261,20 @@ func FetchSource(ctx context.Context, source Source) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fetch subscription %s: %w", source.ID, err)
 		}
+		if clientID == "" {
+			clientID, err = LoadOrCreateClientID("")
+			if err != nil {
+				return nil, fmt.Errorf("fetch subscription %s: prepare subscription client identity: %w", source.ID, err)
+			}
+		}
+
 		client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: sameOriginRedirectPolicy}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
 			return nil, fetchSubscriptionError(source.ID, err, clientID)
 		}
 		req.Header.Set("User-Agent", subscriptionUserAgent)
+		req.Header.Set(subscriptionClientHeader, clientID)
 		res, err := client.Do(req)
 		if err != nil {
 			return nil, fetchSubscriptionError(source.ID, err, clientID)
