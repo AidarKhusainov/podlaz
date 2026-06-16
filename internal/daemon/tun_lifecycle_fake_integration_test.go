@@ -177,12 +177,12 @@ func daemonTunIntegrationProfile() profile.Profile {
 
 func fakeTunSnapshot(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
 	return netsnapshot.Snapshot{
-		OS:             "linux",
-		DefaultIPv4:    netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "eth0", Gateway: "192.0.2.1"},
-		DefaultIPv6:    netsnapshot.Route{Status: netsnapshot.StatusMissing, Family: "ipv6"},
-		ServerRoute:    netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "203.0.113.10", Interface: "eth0", Gateway: "192.0.2.1"},
-		DNS:            netsnapshot.DNS{Mode: "systemd-resolved", Resolved: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "systemd-resolved detected"}},
-		Nftables:       netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "nft available"}, TunWardenTable: netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "table missing"}},
+		OS:          "linux",
+		DefaultIPv4: netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "eth0", Gateway: "192.0.2.1"},
+		DefaultIPv6: netsnapshot.Route{Status: netsnapshot.StatusMissing, Family: "ipv6"},
+		ServerRoute: netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "203.0.113.10", Interface: "eth0", Gateway: "192.0.2.1"},
+		DNS:         netsnapshot.DNS{Mode: "systemd-resolved", Resolved: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "systemd-resolved detected"}},
+		Nftables:    netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "nft available"}, TunWardenTable: netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "table missing"}},
 	}
 }
 
@@ -220,11 +220,7 @@ func (f *fakeTunPlanExecutor) Rollback(ctx context.Context, plan planner.TunPlan
 
 func writeDaemonFakeBinary(t *testing.T, path, argsPath string) string {
 	t.Helper()
-	script := fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$@" > %q
-trap 'exit 0' TERM INT
-while :; do sleep 1; done
-`, argsPath)
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\nexec sleep 3600\n", argsPath)
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake binary %s: %v", path, err)
 	}
