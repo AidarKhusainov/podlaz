@@ -34,6 +34,27 @@ Supported entries are normalized through the same importer used by `tunwarden pr
 
 Unsupported entries, malformed URIs, or duplicate imported profile IDs are reported as unsupported entries without failing the whole update when at least one supported profile was imported.
 
+## Client identity placeholder
+
+TunWarden does not guess provider-specific HWID or device-id parameter names.
+
+If a provider requires a stable client identity, place `{tunwarden-client-id}` as the complete value of a subscription URL query parameter:
+
+```bash
+tunwarden subscription add --name personal --url 'https://example.com/sub?hwid={tunwarden-client-id}'
+```
+
+Before fetching the subscription, TunWarden replaces the placeholder with a random stable client ID stored at:
+
+```text
+$XDG_STATE_HOME/tunwarden/client-id
+fallback: ~/.local/state/tunwarden/client-id
+```
+
+The placeholder is allowed only as a complete query parameter value. It is not allowed in the host, userinfo, path, fragment, query parameter name, or as part of a larger query value.
+
+To reset the client identity, remove only the `client-id` file. Resetting it can consume a new provider device slot or break provider-side device binding.
+
 ## Update behavior
 
 `subscription update <subscription-id>` performs this safe apply sequence:
