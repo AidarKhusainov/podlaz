@@ -31,8 +31,6 @@ TunWarden must support adding subscription URLs.
 
 HTTP(S) subscription fetches must send an explicit `User-Agent: TunWarden` request header. The value intentionally identifies TunWarden without pretending to be a browser or another VPN/proxy client, and it must not include provider tokens, user identities, operating-system details, device details, or other fine-grained fingerprinting data.
 
-Subscription client identity behavior is owned by [Subscription client identity](./subscription-client-identity.md). TunWarden only sends a generated client identity when the subscription URL explicitly contains the `{tunwarden-client-id}` placeholder; it never guesses HWID/device query parameters or headers and never sends raw `/etc/machine-id`, MAC addresses, hostnames, DMI serials, disk serials, CPU identifiers, or other raw hardware identifiers.
-
 Initial command shape:
 
 ```bash
