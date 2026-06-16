@@ -27,12 +27,12 @@ func TestRunCLICompletionGeneratesSupportedShells(t *testing.T) {
 		{
 			name: "zsh",
 			args: []string{"completion", "zsh"},
-			want: []string{"#compdef tunwarden", "_tunwarden \"$@\"", "'proxy-only' 'tun'", "--protocol"},
+			want: []string{"#compdef tunwarden", "__complete zsh", "_tunwarden \"$@\"", "proxy-only tun", "vless vmess trojan shadowsocks"},
 		},
 		{
 			name: "fish",
 			args: []string{"completion", "fish"},
-			want: []string{"complete -c tunwarden -f", "__fish_tunwarden_using_command connect", "-a 'proxy-only tun'", "-l protocol"},
+			want: []string{"complete -c tunwarden -f -a", "__complete fish", "proxy-only tun", "vless vmess trojan shadowsocks"},
 		},
 	}
 
@@ -208,7 +208,7 @@ func seedCompletionStores(t *testing.T) options {
 		sub.NewSource("Work", "file:///tmp/work-subscription.txt"),
 	} {
 		if err := subscriptionStore.Add(source); err != nil {
-			t.Fatalf("seed subscription %s: %v", source.ID, err)
+			t.Fatalf("seed subscription %s: %v", source.ID)
 		}
 	}
 
