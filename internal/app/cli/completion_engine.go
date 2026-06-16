@@ -94,9 +94,12 @@ func runCompletionRuntimeCommand(args []string, stdout io.Writer, opts options) 
 }
 
 func completeTunWarden(req completionRequest, opts options) completionResult {
-	if req.Shell != "" && req.Shell != "bash" {
+	switch req.Shell {
+	case "", "bash", "zsh", "fish":
+	default:
 		return noFileCompletion(nil)
 	}
+
 	registry := completionRegistry()
 	if req.Cursor <= 0 {
 		return noFileCompletion(commandCandidates(registry.Children))

@@ -27,12 +27,12 @@ func TestRunCLICompletionGeneratesSupportedShells(t *testing.T) {
 		{
 			name: "zsh",
 			args: []string{"completion", "zsh"},
-			want: []string{"#compdef tunwarden", "_tunwarden \"$@\"", "'proxy-only' 'tun'", "--protocol"},
+			want: []string{"#compdef tunwarden", "__complete zsh", "_tunwarden \"$@\"", "proxy-only tun", "vless vmess trojan shadowsocks"},
 		},
 		{
 			name: "fish",
 			args: []string{"completion", "fish"},
-			want: []string{"complete -c tunwarden -f", "__fish_tunwarden_using_command connect", "-a 'proxy-only tun'", "-l protocol"},
+			want: []string{"complete -c tunwarden -f", "__complete fish", "__fish_tunwarden_using_command plan", "-l mode -x -a 'proxy-only tun'", "-l protocol -x -a 'vless vmess trojan shadowsocks'", "-l follow -s f"},
 		},
 	}
 

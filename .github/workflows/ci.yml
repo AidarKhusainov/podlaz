@@ -99,10 +99,17 @@ jobs:
           bash -n /tmp/tunwarden.bash
           zsh -n /tmp/_tunwarden
           fish --no-config --command 'source /tmp/tunwarden.fish'
-          grep -F 'proxy-only tun' /tmp/tunwarden.bash
+          grep -F '__complete bash' /tmp/tunwarden.bash
           grep -F '#compdef tunwarden' /tmp/_tunwarden
+          grep -F '__complete zsh' /tmp/_tunwarden
           grep -F 'complete -c tunwarden -f' /tmp/tunwarden.fish
-          grep -F -- "-a 'proxy-only tun'" /tmp/tunwarden.fish
+          grep -F '__complete fish' /tmp/tunwarden.fish
+          grep -F -- "-l mode -x -a 'proxy-only tun'" /tmp/tunwarden.fish
+          grep -F -- "-l protocol -x -a 'vless vmess trojan shadowsocks'" /tmp/tunwarden.fish
+          fish --no-config --command 'source /tmp/tunwarden.fish; complete -C "tunwarden plan -" | grep -F -- "--mode"'
+          fish --no-config --command 'source /tmp/tunwarden.fish; complete -C "tunwarden plan --mode " | grep -F "proxy-only"'
+          fish --no-config --command 'source /tmp/tunwarden.fish; complete -C "tunwarden profile add --protocol " | grep -F "vless"'
+          fish --no-config --command 'source /tmp/tunwarden.fish; complete -C "tunwarden logs -" | grep -F -- "--follow"'
 
       - name: Validate packaged binary linkage
         run: |
@@ -148,6 +155,10 @@ jobs:
           bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/tunwarden; COMP_WORDS=(tunwarden ""); COMP_CWORD=1; _tunwarden; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
           zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _tunwarden; whence _tunwarden >/dev/null'
           fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish; complete -C "tunwarden " | grep -F completion'
+          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish; complete -C "tunwarden plan -" | grep -F -- "--mode"'
+          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish; complete -C "tunwarden plan --mode " | grep -F "proxy-only"'
+          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish; complete -C "tunwarden profile add --protocol " | grep -F "vless"'
+          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/tunwarden.fish; complete -C "tunwarden logs -" | grep -F -- "--follow"'
 
       - name: Reinstall package locally
         run: |

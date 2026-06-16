@@ -33,9 +33,11 @@ Generated completions cover:
 - static enum values such as connection mode values `proxy-only` and `tun`;
 - static protocol names accepted by `profile add --protocol`.
 
-Bash completion also calls the hidden runtime command `tunwarden __complete` while the user is completing a command line. The runtime command is internal CLI plumbing, not a public workflow. It uses the shared Go completion registry for command, flag, enum, and argument completion decisions.
+Bash, zsh, and fish completion call the hidden runtime command `tunwarden __complete` while the user is completing a command line. The runtime command is internal CLI plumbing, not a public workflow. It uses the shared Go completion registry for command and argument completion decisions.
 
-Dynamic Bash completion suggests:
+Fish completion must register static flags and static option values with fish-native `complete` options such as `--long-option`, `--short-option`, and `--arguments`. The runtime argument completer remains responsible for dynamic IDs and file-completion directives.
+
+Dynamic shell completion suggests:
 
 - profile IDs for `connect`, `plan`, `profile show`, and `profile delete`;
 - subscription IDs for `subscription show` and `subscription update`.
@@ -45,8 +47,6 @@ Dynamic completion reads only the local user-owned profile and subscription stor
 Dynamic completion must not contact `tunwardend`, open the daemon socket, start Xray, fetch subscription URLs, inspect runtime transaction state, read generated core configs, mutate local state, mutate Linux networking, or require root.
 
 File-path positions keep shell default file completion. This includes local path positions for `tunwarden import`.
-
-zsh and fish completion currently remain static and cover command, subcommand, flag, and enum values only.
 
 ## Packaged install contract
 
@@ -62,4 +62,4 @@ Package-managed completion should work in normal shell sessions where the distri
 
 ## Validation
 
-The package gate must verify that the generated `.deb` contains completion files for bash, zsh, and fish. CI should also check that the generated scripts contain shell-specific entrypoints and at least one static enum completion value such as `proxy-only` and `tun`. Bash validation should also verify that the generated wrapper calls the hidden runtime completion command.
+The package gate must verify that the generated `.deb` contains completion files for bash, zsh, and fish. CI should also check that the generated scripts contain shell-specific entrypoints, call the hidden runtime completion command, include at least one static enum completion value such as `proxy-only` and `tun`, and exercise fish option and option-value contexts.
