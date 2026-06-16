@@ -208,7 +208,7 @@ func seedCompletionStores(t *testing.T) options {
 		sub.NewSource("Work", "file:///tmp/work-subscription.txt"),
 	} {
 		if err := subscriptionStore.Add(source); err != nil {
-			t.Fatalf("seed subscription %s: %v", source.ID)
+			t.Fatalf("seed subscription %s: %v", source.ID, err)
 		}
 	}
 
