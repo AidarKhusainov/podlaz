@@ -48,6 +48,12 @@ func runSubscriptionCommand(ctx context.Context, args []string, stdout io.Writer
 			return err
 		}
 		return runSubscriptionUpdate(ctx, store, profileStore, args[1:], stdout)
+	case "delete":
+		profileStore, err := profile.NewStore(opts.profileStorePath)
+		if err != nil {
+			return err
+		}
+		return runSubscriptionDelete(store, profileStore, args[1:], stdout)
 	default:
 		return usageError("unknown subscription subcommand %q", args[0])
 	}
@@ -373,6 +379,7 @@ func printSubscriptionHelp(w io.Writer) {
   tunwarden subscription update <subscription-id>
   tunwarden subscription list [--json]
   tunwarden subscription show <subscription-id> [--json]
+  tunwarden subscription delete <subscription-id> [--yes] [--keep-profiles]
 
 Manage subscription sources and imported subscription profiles in local
 TunWarden user state.
@@ -382,5 +389,10 @@ Supported subscription sources:
 
 Supported subscription formats:
   Base64 URI-list, Xray JSON
+
+Delete behavior:
+  subscription delete removes subscription metadata and, by default, profiles
+  owned by that subscription. Use --keep-profiles to remove only subscription
+  metadata and leave imported profiles in the profile store.
 `)
 }
