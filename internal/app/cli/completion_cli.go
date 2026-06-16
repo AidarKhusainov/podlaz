@@ -177,19 +177,79 @@ end
 
 function __fish_tunwarden_complete
     for line in (__fish_tunwarden_runtime)
-        if not string match -q ':*' -- "$line"
-            printf '%%s\n' "$line"
+        if string match -q ':*' -- "$line"
+            continue
+        end
+        if string match -q -- '-*' "$line"
+            continue
+        end
+        printf '%%s\n' "$line"
+    end
+end
+
+function __fish_tunwarden_needs_runtime_argument
+    set -l words (commandline -opc)
+    set -l current (commandline -ct)
+
+    if test -n "$current"; and string match -q -- '-*' "$current"
+        return 1
+    end
+
+    if test (count $words) -gt 0
+        switch $words[-1]
+            case --mode --protocol --name --server --port --url --xray --since
+                return 1
         end
     end
+
+    return 0
 end
 
 function __fish_tunwarden_needs_files
     __fish_tunwarden_runtime | string match -q ':default-files'
 end
 
-complete -c tunwarden -f -a '(__fish_tunwarden_complete)'
+function __fish_tunwarden_using_command
+    set -l words (commandline -opc)
+    test (count $words) -ge 2; and test $words[2] = $argv[1]
+end
+
+function __fish_tunwarden_using_subcommand
+    set -l words (commandline -opc)
+    test (count $words) -ge 3; and test $words[2] = $argv[1]; and test $words[3] = $argv[2]
+end
+
+complete -c tunwarden -f
+complete -c tunwarden -n '__fish_tunwarden_needs_runtime_argument' -a '(__fish_tunwarden_complete)'
 complete -c tunwarden -n '__fish_tunwarden_needs_files' -F
-`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()))
+
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l name -x
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l server -x
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l port -x
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l protocol -x -a '%s'
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile list' -l json
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile show' -l json
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile delete' -l yes
+
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription add' -l name -x
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription add' -l url -x
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription list' -l json
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription show' -l json
+
+complete -c tunwarden -n '__fish_tunwarden_using_command plan' -l mode -x -a '%s'
+complete -c tunwarden -n '__fish_tunwarden_using_command plan' -l json
+complete -c tunwarden -n '__fish_tunwarden_using_command connect' -l mode -x -a '%s'
+complete -c tunwarden -n '__fish_tunwarden_using_command doctor' -l core
+complete -c tunwarden -n '__fish_tunwarden_using_command doctor' -l xray -x
+complete -c tunwarden -n '__fish_tunwarden_using_command doctor' -l json
+complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l follow -s f
+complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l daemon
+complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l core
+complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l since -x
+complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l execute
+complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l yes
+complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l json
+`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
 }
 
 func completionWords(values []string) string {
