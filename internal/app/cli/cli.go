@@ -80,6 +80,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 	commandArgs := args[1:]
 
 	switch command {
+	case "__complete":
+		return runCompletionRuntimeCommand(commandArgs, stdout, opts)
 	case "help":
 		return runHelp(commandArgs, stdout)
 	case "-h", "--help":

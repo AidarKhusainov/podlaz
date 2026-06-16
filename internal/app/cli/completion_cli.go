@@ -4,17 +4,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-)
-
-var (
-	completionTopLevelCommands     = []string{"version", "import", "profile", "subscription", "plan", "connect", "disconnect", "status", "doctor", "logs", "recover", "completion", "help"}
-	completionProfileCommands      = []string{"add", "import", "list", "show", "delete"}
-	completionSubscriptionCommands = []string{"add", "list", "show", "update"}
-	completionShells               = []string{"bash", "zsh", "fish"}
-	completionConnectionModes      = []string{planner.ModeProxyOnly, planner.ModeTun}
-	completionProfileProtocols     = []string{"vless", "vmess", "trojan", "shadowsocks"}
 )
 
 func runCompletionCommand(args []string, stdout io.Writer) error {
@@ -46,114 +35,62 @@ func printCompletionHelp(w io.Writer) {
   tunwarden completion fish
 
 Generate shell completion definitions for stdout. The command is read-only: it
-only prints static command, subcommand, flag, and enum-value completion metadata
-and does not contact tunwardend, read secrets, mutate networking, or require root.
+prints completion scripts and does not contact tunwardend, start Xray, mutate
+networking, or require root. Bash completion may read local profile and
+subscription IDs during interactive completion only.
 `)
 }
 
 func printBashCompletion(w io.Writer) {
 	fmt.Fprintf(w, `# bash completion for tunwarden
+# static commands: %s
+# static connection modes: %s
+# static profile protocols: %s
 
 _tunwarden()
 {
-    local cur prev command subcommand
+    local cur line value
+    local -a runtime_lines runtime_values
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    prev=""
-    if (( COMP_CWORD > 0 )); then
-        prev="${COMP_WORDS[COMP_CWORD-1]}"
-    fi
-    command="${COMP_WORDS[1]}"
-    subcommand="${COMP_WORDS[2]}"
 
-    case "$prev" in
-        --mode)
-            COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-            return 0
-            ;;
-        --protocol)
-            COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-            return 0
-            ;;
-    esac
+    compopt +o default 2>/dev/null || true
+    compopt +o nospace 2>/dev/null || true
 
-    if [[ "$cur" == -* ]]; then
-        case "$command $subcommand" in
-            "profile add")
-                COMPREPLY=( $(compgen -W "--name --server --port --protocol" -- "$cur") )
-                return 0
-                ;;
-            "profile list"|"profile show")
-                COMPREPLY=( $(compgen -W "--json" -- "$cur") )
-                return 0
-                ;;
-            "profile delete")
-                COMPREPLY=( $(compgen -W "--yes" -- "$cur") )
-                return 0
-                ;;
-            "subscription add")
-                COMPREPLY=( $(compgen -W "--name --url" -- "$cur") )
-                return 0
-                ;;
-            "subscription list"|"subscription show")
-                COMPREPLY=( $(compgen -W "--json" -- "$cur") )
-                return 0
-                ;;
-        esac
-        case "$command" in
-            plan)
-                COMPREPLY=( $(compgen -W "--mode --json" -- "$cur") )
-                return 0
-                ;;
-            connect)
-                COMPREPLY=( $(compgen -W "--mode" -- "$cur") )
-                return 0
-                ;;
-            doctor)
-                COMPREPLY=( $(compgen -W "--core --xray --json" -- "$cur") )
-                return 0
-                ;;
-            logs)
-                COMPREPLY=( $(compgen -W "--follow -f --daemon --core --since" -- "$cur") )
-                return 0
-                ;;
-            recover)
-                COMPREPLY=( $(compgen -W "--execute --yes --json" -- "$cur") )
-                return 0
-                ;;
-        esac
+    if ! mapfile -t runtime_lines < <("${COMP_WORDS[0]}" __complete bash "$COMP_CWORD" "${COMP_WORDS[@]}" 2>/dev/null); then
+        return 0
     fi
 
-    case "$COMP_CWORD" in
-        1)
-            COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-            return 0
-            ;;
-        2)
-            case "$command" in
-                profile)
-                    COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-                    return 0
-                    ;;
-                subscription)
-                    COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-                    return 0
-                    ;;
-                completion)
-                    COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-                    return 0
-                    ;;
-                help)
-                    COMPREPLY=( $(compgen -W "%s" -- "$cur") )
-                    return 0
-                    ;;
-            esac
-            ;;
-    esac
+    for line in "${runtime_lines[@]}"; do
+        case "$line" in
+            :default-files)
+                compopt -o default 2>/dev/null || true
+                return 0
+                ;;
+            :no-files)
+                compopt +o default 2>/dev/null || true
+                continue
+                ;;
+            :no-space)
+                compopt -o nospace 2>/dev/null || true
+                continue
+                ;;
+            "")
+                continue
+                ;;
+        esac
+        value="${line%%$'\t'*}"
+        runtime_values+=("$value")
+    done
+
+    if ((${#runtime_values[@]} > 0)); then
+        COMPREPLY=( $(compgen -W "${runtime_values[*]}" -- "$cur") )
+    fi
+    return 0
 }
 
-complete -F _tunwarden tunwarden
-`, completionWords(completionConnectionModes), completionWords(completionProfileProtocols), completionWords(completionTopLevelCommands), completionWords(completionProfileCommands), completionWords(completionSubscriptionCommands), completionWords(completionShells), completionWords(completionTopLevelCommands))
+complete -o default -F _tunwarden tunwarden
+`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()))
 }
 
 func printZshCompletion(w io.Writer) {
@@ -243,7 +180,7 @@ _tunwarden() {
 }
 
 _tunwarden "$@"
-`, zshWords(completionTopLevelCommands), zshWords(completionProfileCommands), zshWords(completionSubscriptionCommands), zshWords(completionShells), zshWords(completionTopLevelCommands), zshWords(completionConnectionModes), zshWords(completionProfileProtocols))
+`, zshWords(completionTopLevelCommandNames()), zshWords(completionProfileCommandNames()), zshWords(completionSubscriptionCommandNames()), zshWords(completionShellNames()), zshWords(completionTopLevelCommandNames()), zshWords(completionConnectionModeNames()), zshWords(completionProfileProtocolNames()))
 }
 
 func printFishCompletion(w io.Writer) {
@@ -302,7 +239,7 @@ complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l since -x
 complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l execute
 complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l yes
 complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l json
-`, completionWords(completionTopLevelCommands), completionWords(completionProfileCommands), completionWords(completionSubscriptionCommands), completionWords(completionShells), completionWords(completionTopLevelCommands), completionWords(completionProfileProtocols), completionWords(completionConnectionModes), completionWords(completionConnectionModes))
+`, completionWords(completionTopLevelCommandNames()), completionWords(completionProfileCommandNames()), completionWords(completionSubscriptionCommandNames()), completionWords(completionShellNames()), completionWords(completionTopLevelCommandNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
 }
 
 func completionWords(values []string) string {
