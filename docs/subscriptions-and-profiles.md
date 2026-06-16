@@ -31,7 +31,7 @@ TunWarden must support adding subscription URLs.
 
 HTTP(S) subscription fetches must send an explicit `User-Agent: TunWarden` request header. The value intentionally identifies TunWarden without pretending to be a browser or another VPN/proxy client, and it must not include provider tokens, user identities, operating-system details, device details, or other fine-grained fingerprinting data.
 
-Subscription client identity/HWID behavior is owned by [Subscription client identity](./subscription-client-identity.md). Until a provider-specific Remnawave/Happ wire contract is confirmed with sanitized evidence, HTTP(S) subscription fetches must not add guessed HWID/device query parameters or headers. They must not send raw `/etc/machine-id`, MAC addresses, hostnames, DMI serials, disk serials, CPU identifiers, or other raw hardware identifiers.
+Subscription client identity behavior is owned by [Subscription client identity](./subscription-client-identity.md). TunWarden only sends a generated client identity when the subscription URL explicitly contains the `{tunwarden-client-id}` placeholder; it never guesses HWID/device query parameters or headers and never sends raw `/etc/machine-id`, MAC addresses, hostnames, DMI serials, disk serials, CPU identifiers, or other raw hardware identifiers.
 
 Initial command shape:
 
@@ -181,176 +181,41 @@ Transport
 
 ### VAL-001: Required fields
 
-Each normalized profile must validate required fields:
+A profile must not be considered connectable unless it has at least:
 
 - protocol,
-- server,
+- server address,
 - port,
-- protocol-specific identity/auth fields,
-- transport compatibility,
-- security compatibility.
+- required identity/authentication material for that protocol.
 
-### VAL-002: Unsafe settings warnings
+### VAL-002: Unsupported protocol behavior
 
-TunWarden must warn about risky settings:
+Unsupported protocols from subscriptions must be reported clearly.
 
-- `allowInsecure = true`,
-- missing SNI when TLS requires it,
-- unsupported transport,
-- unsupported UDP behavior,
-- unknown fingerprint,
-- IPv6 enabled without full IPv6 routing support.
+They should not silently disappear unless the UI explicitly says how many entries were skipped.
 
-### VAL-003: Provider errors
+### VAL-003: Invalid entry behavior
 
-Subscription update failures must preserve the last known good profiles unless the user explicitly removes them.
+Invalid entries must not corrupt existing profiles.
 
-### VAL-004: Deterministic IDs
+A bad subscription update should keep the last known good profile set until a safe replacement exists.
 
-Imported profiles should receive deterministic IDs where possible so subscription updates do not duplicate nodes unnecessarily.
+### VAL-004: Secret handling
 
-Candidate inputs:
+Subscription URLs, profile IDs that contain user tokens, private keys, and generated core configs must follow the redaction rules in [State and Security Requirements](./state-and-security.md).
 
-```text
-subscription_id + protocol + server + port + user_identity + transport + security fingerprint
-```
+## 7. Storage expectations
 
-## 7. Subscription update behavior
+Subscription metadata is user intent and should live in user-owned state/config, not daemon-private runtime state.
 
-Subscription update must be safe.
+Local profile state must be readable by the CLI without requiring root.
 
-Required behavior:
+## 8. Non-goals for the foundation phase
 
-1. Fetch subscription.
-2. Detect format.
-3. Parse into candidate nodes.
-4. Normalize.
-5. Validate.
-6. Produce update diff.
-7. Apply only if parsing/validation is good enough.
-8. Keep last good state if update fails.
+The foundation phase should not require:
 
-Diff categories:
-
-- added profiles,
-- removed profiles,
-- changed profiles,
-- unchanged profiles,
-- invalid profiles.
-
-## 8. Profile selection
-
-MVP selection can be manual.
-
-Future selection features:
-
-- latency test,
-- URL test,
-- auto-select fastest node,
-- provider group selection,
-- fallback group,
-- rule-based group selection.
-
-## 9. Runtime profile rendering
-
-The internal profile model must be rendered into generated core config at connection time.
-
-Important rule:
-
-> Generated Xray config is runtime output, not the persistent source of truth.
-
-This allows TunWarden to change routing/DNS/runtime behavior without rewriting imported subscription data.
-
-## 10. Provider compatibility notes
-
-### 10.1 Remnawave
-
-Remnawave can expose subscription templates in multiple client-oriented formats such as Base64 links, Xray JSON, sing-box JSON, and Mihomo-style formats.
-
-TunWarden should not implement Remnawave as a hard-coded special case first. It should support the generic formats and then add provider-specific metadata handling if useful.
-
-### 10.2 3x-ui
-
-3x-ui is an Xray panel and can expose common Xray-related protocols and subscription outputs.
-
-TunWarden should initially treat it as a generic subscription source unless provider-specific behavior is required.
-
-## 11. Storage requirements
-
-Manual profile source of truth is user-owned state and must use the documented user state location from [State and security requirements](./state-and-security.md):
-
-```text
-$XDG_STATE_HOME/tunwarden/profiles.json
-```
-
-When `XDG_STATE_HOME` is unset, the fallback is:
-
-```text
-~/.local/state/tunwarden/profiles.json
-```
-
-User-owned profile and subscription source of truth must not require root and must not be hidden only in daemon-private directories.
-
-Future daemon-owned or package-owned cache/state may use explicit daemon state locations when that behavior is implemented and documented, for example:
-
-```text
-/var/lib/tunwarden/subscriptions.json
-/var/lib/tunwarden/cache/subscriptions/<subscription-id>/last-good.raw
-/var/lib/tunwarden/cache/subscriptions/<subscription-id>/last-good.normalized.json
-```
-
-Sensitive fields must be handled carefully.
-
-Potential future requirement:
-
-- use OS keyring or encrypted storage for secrets.
-
-## 12. CLI examples
-
-```bash
-# Add a manual profile
-tunwarden profile add --name test --server example.com --port 443 --protocol vless
-
-# Add a subscription
-tunwarden subscription add personal https://example.com/sub
-
-# Update all subscriptions
-tunwarden subscription update --all
-
-# Show import diff before applying
-tunwarden subscription update personal --dry-run
-
-# List imported profiles
-tunwarden profile list
-
-# Show normalized profile
-tunwarden profile show personal/us-1
-
-# Connect
-tunwarden connect personal/us-1
-```
-
-## 13. Testing requirements
-
-Required test fixtures:
-
-- valid VLESS URI,
-- valid VLESS Reality URI,
-- valid VMess URI,
-- valid Trojan URI,
-- valid Shadowsocks URI,
-- Base64 list with mixed valid/invalid lines,
-- subscription update with removed nodes,
-- subscription update with changed node names,
-- malformed URI,
-- unsupported URI,
-- duplicate nodes.
-
-## 14. Out of scope for MVP
-
-- Provider account management.
-- Subscription purchase flow.
-- QR scanner.
-- GUI import wizard.
-- Automatic provider API integration beyond subscription URLs.
-- Full rule editor for provider-provided routing.
+- provider account APIs,
+- automatic provider login,
+- dynamic purchase/payment integration,
+- GUI profile editing,
+- router-specific subscription logic.
