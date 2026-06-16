@@ -70,6 +70,8 @@ tunwarden recover
 
 Local import files are parsed into normalized TunWarden profiles only. Import does not start `tunwardend`, start Xray, require root, mutate host networking, or persist raw Xray JSON.
 
+Subscription imports and updates support Base64 URI-list and Xray JSON responses over `file://`, `http://`, and `https://` sources. The detected subscription format is persisted in subscription metadata and shown by `subscription list` and `subscription show` with full URLs redacted.
+
 Use `tunwarden plan --mode tun <profile-id>` to inspect full-tunnel network intent before host networking work. Use `tunwarden doctor` for diagnostics and `tunwarden recover` to inspect TunWarden-owned stale state.
 
 Generate shell completion definitions manually when needed:
@@ -82,7 +84,7 @@ tunwarden completion fish
 
 The Debian package installs bash, zsh, and fish completion files under distro completion directories, so normal packaged installs should not require manually editing shell startup files.
 
-The canonical command contract is [CLI contract](docs/cli.md). Local import formats are documented in [Local import formats](docs/local-import-formats.md).
+The canonical command contract is [CLI contract](docs/cli.md). Local import formats are documented in [Local import formats](docs/local-import-formats.md). Subscription behavior is documented in [Subscriptions and profiles](docs/subscriptions-and-profiles.md).
 
 ## Documentation
 
