@@ -180,11 +180,15 @@ Expected behavior:
 - ordinary local paths are one-shot local imports, not tracked subscriptions;
 - local import detects Xray JSON object files, plain URI-list files, and Base64 URI-list files;
 - supported local entries are normalized into `imported_file` profiles and persisted in user-owned profile state;
-- Xray JSON import initially supports VLESS outbounds that map cleanly to the existing normalized profile model;
+- local Xray JSON import supports VLESS outbounds that map cleanly to the existing normalized profile model;
 - unsupported local Xray JSON outbounds or URI-list entries are reported clearly when at least one supported profile is imported;
 - malformed JSON object files fail as Xray JSON errors and must not fall back to URI-list parsing;
 - duplicate profile IDs inside one local import batch and existing-profile ID collisions fail before profile-store replacement, leaving existing state unchanged;
 - `file://`, `http://`, and `https://` inputs create subscription sources and import supported subscription profiles;
+- subscription responses support Base64 URI-list and Xray JSON object/array formats;
+- subscription Xray JSON import supports VLESS outbounds that map cleanly to the existing normalized profile model;
+- malformed subscription JSON that starts with `{` or `[` fails on the JSON path and must not fall back to Base64 parsing;
+- the detected subscription format is persisted in subscription metadata and shown by `subscription list` and `subscription show`;
 - unsupported input fails clearly.
 
 Mutation level: persistent local TunWarden state only.
@@ -192,7 +196,7 @@ Mutation level: persistent local TunWarden state only.
 Safety requirements:
 
 - import must not connect, start `tunwardend`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, or mutate firewall state;
-- local Xray JSON must be parsed and normalized into profiles only; raw Xray JSON must not be stored as persistent source of truth or runtime configuration;
+- local and subscription Xray JSON must be parsed and normalized into profiles only; raw Xray JSON must not be stored as persistent source of truth or runtime configuration;
 - default output must redact share URIs, identities, passwords, provider tokens, generated core configs, and secret-looking values.
 
 Detailed local file format behavior is documented in [Local import formats](./local-import-formats.md).
@@ -235,21 +239,33 @@ tunwarden subscription add --name <name> --url <url>
 tunwarden subscription update <subscription-id>
 tunwarden subscription list [--json]
 tunwarden subscription show <subscription-id> [--json]
-tunwarden subscription delete <subscription-id> [--yes]
 ```
 
 Purpose: explicit lifecycle management for subscription sources.
 
+Supported source schemes: `file`, `http`, and `https`.
+
+Supported response formats:
+
+- Base64 URI-list;
+- Xray JSON object or array.
+
 Mutation level:
 
 - `list` and `show`: read-only;
-- `add`, `update`, and `delete`: persistent local TunWarden state only.
+- `add` and `update`: persistent local TunWarden state only.
 
 Required behavior:
 
-- failed update preserves last known good imported profiles;
-- unsupported entries are reported clearly;
-- deleting a subscription must have clear behavior for imported profiles before implementation.
+- `add` stores a subscription source without fetching it;
+- `update` fetches the source, detects the response format, normalizes supported profiles, and replaces only profiles owned by that subscription;
+- successful import/update persists the detected format, imported profile IDs, and last update time in subscription metadata;
+- failed update preserves last known good imported profiles and subscription metadata;
+- unsupported entries are reported clearly when at least one supported profile is imported;
+- responses with no supported profiles fail clearly and leave existing state unchanged;
+- `list` and `show` output must redact subscription URLs while showing persisted format, profile count, and last update time.
+
+`subscription update --json` is deferred. Until implemented, it must fail fast as invalid usage with exit code `2`.
 
 ### Status
 
@@ -492,6 +508,7 @@ The current implementation contains:
 
 - proxy-only lifecycle for Xray;
 - local import for VLESS Xray JSON, plain URI-list, and Base64 URI-list files through `tunwarden import <local-path>`;
+- subscription import/update for Base64 URI-list and Xray JSON responses over `file://`, `http://`, and `https://` sources;
 - read-only full-tunnel TUN planning;
 - static shell completion generation for bash, zsh, and fish;
 - transaction-state persistence and diagnostics;
