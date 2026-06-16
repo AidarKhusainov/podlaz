@@ -84,6 +84,68 @@ func TestParseSubscriptionContentMalformedJSONDoesNotFallbackToBase64(t *testing
 	}
 }
 
+func TestParseSubscriptionContentRejectsJSONScalars(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "string", body: `"hello"`, want: "top-level type string"},
+		{name: "number", body: `123`, want: "top-level type number"},
+		{name: "true", body: `true`, want: "top-level type boolean"},
+		{name: "false", body: `false`, want: "top-level type boolean"},
+		{name: "null", body: `null`, want: "top-level type null"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			format, _, err := ParseSubscriptionContent([]byte(tt.body))
+			if err == nil {
+				t.Fatal("expected scalar JSON to fail")
+			}
+			if format != FormatXrayJSON {
+				t.Fatalf("expected format %q, got %q", FormatXrayJSON, format)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestParseSubscriptionContentRejectsUnsupportedClientXrayJSON(t *testing.T) {
+	body := xrayObjectWithTopLevelField(
+		remoteXrayConfigObject("00000000-0000-0000-0000-000000000109", "dummy.example", "dummy", "tcp", "tls"),
+		`"remarks":"App not supported"`,
+	)
+
+	format, _, err := ParseSubscriptionContent([]byte(body))
+	if err == nil {
+		t.Fatal("expected unsupported-client Xray JSON to fail")
+	}
+	if format != FormatXrayJSON {
+		t.Fatalf("expected format %q, got %q", FormatXrayJSON, format)
+	}
+	if !strings.Contains(err.Error(), "unsupported client") {
+		t.Fatalf("expected unsupported-client error, got %v", err)
+	}
+}
+
+func TestParseSubscriptionContentRejectsNestedUnsupportedClientXrayJSONError(t *testing.T) {
+	body := xrayObjectWithTopLevelField(
+		remoteXrayConfigObject("00000000-0000-0000-0000-000000000110", "dummy-nested.example", "dummy-nested", "tcp", "tls"),
+		`"error":{"message":"unsupported client"}`,
+	)
+
+	_, _, err := ParseSubscriptionContent([]byte(body))
+	if err == nil {
+		t.Fatal("expected nested unsupported-client Xray JSON error to fail")
+	}
+	if !strings.Contains(err.Error(), "unsupported client") {
+		t.Fatalf("expected unsupported-client error, got %v", err)
+	}
+}
+
 func TestParseXrayJSONSubscriptionReportsUnsupportedOutboundsClearly(t *testing.T) {
 	tests := []struct {
 		name string
@@ -134,6 +196,10 @@ func TestParseXrayJSONArrayRejectsDuplicateProfileIDs(t *testing.T) {
 	if !strings.Contains(err.Error(), "duplicate subscription profile id") {
 		t.Fatalf("unexpected duplicate error: %v", err)
 	}
+}
+
+func xrayObjectWithTopLevelField(object, field string) string {
+	return strings.Replace(object, "{", "{"+field+",", 1)
 }
 
 func remoteXrayConfigObject(userID, host, tag, network, security string) string {
