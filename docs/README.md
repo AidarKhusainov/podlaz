@@ -22,13 +22,12 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 | [Shell completion](./shell-completion.md) | `tunwarden completion` behavior, shell-specific package files, static completion scope, and safety boundary. |
 | [Profile management](./profile-management.md) | `tunwarden profile` behavior, storage, validation, output, and safety boundary. |
 | [Subscription management](./subscription-management.md) | `tunwarden subscription` behavior, update safety, redaction, and local state ownership. |
-| [Subscription client identity](./subscription-client-identity.md) | Privacy-safe subscription request identity placeholder, storage boundary, redaction, and reset requirements. |
 | [Proxy-only plan](./proxy-only-plan.md) | Read-only proxy-only planning and generated Xray config inspection contract. |
 | [TUN full-tunnel plan](./tun-full-tunnel-plan.md) | Full-tunnel plan output, ownership model, DNS/firewall plan, warnings, and rollback model. |
 | [Proxy-only lifecycle](./proxy-only-lifecycle.md) | Daemon-managed proxy-only connect/disconnect and Xray runtime lifecycle. |
 | [Status command](./status.md) | Read-only daemon-backed and fallback `tunwarden status` behavior. |
 | [Doctor diagnostics](./doctor-diagnostics.md) | Read-only `tunwarden doctor` diagnostics and core binary validation. |
-| [Logs command](./logs.md) | `tunwarden logs` journald integration, log source selection, redaction, and failure behavior. |
+| [Logs command](./logs.md) | `tunwarden logs` journald integration, log source selection, and failure behavior. |
 | [Recovery dry-run and execute](./recovery-dry-run.md) | `tunwarden recover` inspection and explicit daemon-owned cleanup behavior. |
 
 ## Engineering contracts
@@ -69,5 +68,5 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 - CLI behavior is owned by [CLI contract](./cli.md).
 - Filesystem layout, output redaction, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
 - Linux networking invariants are owned by [Networking and reliability requirements](./networking-reliability.md).
-- Package layout and lifecycle are owned by [Debian package contract](./debian-package.md).
+- Package layout and lifecycle is owned by [Debian package contract](./debian-package.md).
 - Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
