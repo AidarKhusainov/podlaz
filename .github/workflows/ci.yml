@@ -99,10 +99,11 @@ jobs:
           bash -n /tmp/tunwarden.bash
           zsh -n /tmp/_tunwarden
           fish --no-config --command 'source /tmp/tunwarden.fish'
-          grep -F 'proxy-only tun' /tmp/tunwarden.bash
+          grep -F '__complete bash' /tmp/tunwarden.bash
           grep -F '#compdef tunwarden' /tmp/_tunwarden
+          grep -F '__complete zsh' /tmp/_tunwarden
           grep -F 'complete -c tunwarden -f' /tmp/tunwarden.fish
-          grep -F -- "-a 'proxy-only tun'" /tmp/tunwarden.fish
+          grep -F '__complete fish' /tmp/tunwarden.fish
 
       - name: Validate packaged binary linkage
         run: |
