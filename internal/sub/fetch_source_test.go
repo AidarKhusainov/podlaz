@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -45,13 +46,16 @@ func TestFetchSourceReplacesClientIDPlaceholder(t *testing.T) {
 		if !validClientID(got) {
 			t.Fatalf("expected generated client-id, got %q", got)
 		}
+		if values, ok := r.URL.Query()["empty"]; !ok || len(values) != 1 || values[0] != "" {
+			t.Fatalf("expected unrelated empty query value to stay empty, got %q", r.URL.RawQuery)
+		}
 		seen = append(seen, got)
 		_, _ = w.Write([]byte("subscription"))
 	}))
 	defer server.Close()
 
-	source := Source{ID: "identity", Name: "identity", URL: server.URL + "/sub?hwid=" + subscriptionClientIDPlaceholder, Format: FormatBase64}
-	for i := 0; i < 2; i++ {
+	source := Source{ID: "identity", Name: "identity", URL: server.URL + "/sub?empty=&hwid=" + subscriptionClientIDPlaceholder, Format: FormatBase64}
+	for range 2 {
 		if _, err := FetchSource(context.Background(), source); err != nil {
 			t.Fatalf("FetchSource failed: %v", err)
 		}
@@ -84,6 +88,68 @@ func TestFetchSourceReplacesClientIDPlaceholder(t *testing.T) {
 	}
 	if got := dirInfo.Mode().Perm(); got != 0o700 {
 		t.Fatalf("expected client-id directory mode 0700, got %04o", got)
+	}
+}
+
+func TestFetchSourceRejectsClientIDPlaceholderOutsideQueryValue(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("request should not be sent")
+	}))
+	defer server.Close()
+
+	tests := map[string]string{
+		"host":                "https://" + subscriptionClientIDPlaceholder + ".example.com/sub?hwid=x",
+		"userinfo":            "https://user:" + subscriptionClientIDPlaceholder + "@example.com/sub?hwid=x",
+		"path":                server.URL + "/" + subscriptionClientIDPlaceholder + "?hwid=x",
+		"fragment":            server.URL + "/sub?hwid=x#" + subscriptionClientIDPlaceholder,
+		"query key":           server.URL + "/sub?" + subscriptionClientIDPlaceholder + "=x",
+		"partial query value": server.URL + "/sub?hwid=prefix-" + subscriptionClientIDPlaceholder,
+	}
+
+	for name, sourceURL := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := FetchSource(context.Background(), Source{ID: name, Name: name, URL: sourceURL, Format: FormatBase64})
+			if !errors.Is(err, errUnsupportedClientIDPlaceholder) {
+				t.Fatalf("expected unsupported placeholder error, got %v", err)
+			}
+			clientIDPath := filepath.Join(stateHome, "tunwarden", clientIDFileName)
+			if _, err := os.Stat(clientIDPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected no client-id file, got err=%v", err)
+			}
+		})
+	}
+}
+
+func TestFetchSourceRedactsClientIDFromFetchErrors(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("subscription"))
+	}))
+	urlWithPlaceholder := server.URL + "/sub?hwid=" + subscriptionClientIDPlaceholder
+	server.Close()
+
+	_, err := FetchSource(context.Background(), Source{ID: "redacted", Name: "redacted", URL: urlWithPlaceholder, Format: FormatBase64})
+	if err == nil {
+		t.Fatal("expected fetch error")
+	}
+	clientIDPath := filepath.Join(stateHome, "tunwarden", clientIDFileName)
+	data, readErr := os.ReadFile(clientIDPath)
+	if readErr != nil {
+		t.Fatalf("expected persisted client-id: %v", readErr)
+	}
+	clientID := strings.TrimSpace(string(data))
+	if !validClientID(clientID) {
+		t.Fatalf("expected generated client-id, got %q", clientID)
+	}
+	errText := err.Error()
+	if strings.Contains(errText, clientID) {
+		t.Fatalf("fetch error leaked client-id %q in %q", clientID, errText)
+	}
+	if strings.Contains(errText, "hwid=") {
+		t.Fatalf("fetch error leaked identity query parameter: %q", errText)
 	}
 }
 
@@ -123,5 +189,55 @@ func TestLoadOrCreateClientIDRejectsInvalidStoredID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid client-id") {
 		t.Fatalf("expected invalid client-id error, got %v", err)
+	}
+}
+
+func TestLoadOrCreateClientIDConcurrentCreateReturnsStableID(t *testing.T) {
+	clientIDPath := filepath.Join(t.TempDir(), clientIDFileName)
+	const workers = 32
+	var wg sync.WaitGroup
+	ids := make(chan string, workers)
+	errs := make(chan error, workers)
+
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, err := LoadOrCreateClientID(clientIDPath)
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- id
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("LoadOrCreateClientID failed: %v", err)
+		}
+	}
+	var first string
+	for id := range ids {
+		if !validClientID(id) {
+			t.Fatalf("expected generated client-id, got %q", id)
+		}
+		if first == "" {
+			first = id
+			continue
+		}
+		if id != first {
+			t.Fatalf("expected stable client-id %q, got %q", first, id)
+		}
+	}
+	data, err := os.ReadFile(clientIDPath)
+	if err != nil {
+		t.Fatalf("read persisted client-id: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != first {
+		t.Fatalf("expected persisted client-id %q, got %q", first, got)
 	}
 }
