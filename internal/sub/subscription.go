@@ -252,19 +252,19 @@ func FetchSource(ctx context.Context, source Source) ([]byte, error) {
 		}
 		return data, nil
 	case "http", "https":
-		requestURL, err := subscriptionRequestURL(source.URL)
+		requestURL, clientID, err := subscriptionRequestURL(source.URL)
 		if err != nil {
 			return nil, fmt.Errorf("fetch subscription %s: %w", source.ID, err)
 		}
 		client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: sameOriginRedirectPolicy}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 		if err != nil {
-			return nil, fmt.Errorf("fetch subscription %s: %w", source.ID, err)
+			return nil, fetchSubscriptionError(source.ID, err, clientID)
 		}
 		req.Header.Set("User-Agent", subscriptionUserAgent)
 		res, err := client.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("fetch subscription %s: %w", source.ID, err)
+			return nil, fetchSubscriptionError(source.ID, err, clientID)
 		}
 		defer res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
@@ -281,6 +281,19 @@ func FetchSource(ctx context.Context, source Source) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported subscription URL scheme %q", u.Scheme)
 	}
+}
+
+func fetchSubscriptionError(sourceID string, err error, clientID string) error {
+	if clientID == "" {
+		return fmt.Errorf("fetch subscription %s: %w", sourceID, err)
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		cause := strings.ReplaceAll(urlErr.Err.Error(), clientID, "REDACTED")
+		return fmt.Errorf("fetch subscription %s: %s redacted subscription URL: %s", sourceID, urlErr.Op, cause)
+	}
+	message := strings.ReplaceAll(err.Error(), clientID, "REDACTED")
+	return fmt.Errorf("fetch subscription %s: %s", sourceID, message)
 }
 
 func sameOriginRedirectPolicy(req *http.Request, via []*http.Request) error {
