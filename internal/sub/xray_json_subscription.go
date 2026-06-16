@@ -86,8 +86,7 @@ func rejectUnsupportedClientXrayJSONObject(content []byte) error {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("malformed Xray JSON subscription object: trailing data")
 	}
-	if message, ok := unsupportedClientProviderMessage(object); ok {
-		_ = message
+	if _, ok := unsupportedClientProviderMessage(object); ok {
 		return fmt.Errorf("unsupported Xray JSON subscription response: provider reports unsupported client")
 	}
 	return nil
