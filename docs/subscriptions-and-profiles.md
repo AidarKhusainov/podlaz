@@ -86,6 +86,23 @@ Unsupported entries are reported clearly when at least one supported profile is 
 
 Provider responses that report an unsupported client or unsupported application are treated as provider rejection responses, not as real profiles. Dummy outbound data in those responses must not be imported.
 
+## Profile validation
+
+`tunwarden profile validate <profile-id> [--mode proxy-only|tun] [--json]` is a read-only preflight for a stored normalized profile.
+
+Validation has two layers:
+
+1. persistent profile-state validation through the normalized profile model;
+2. selected backend/mode renderability validation through the currently supported Xray configuration path.
+
+The default validation mode is `proxy-only`. `--mode tun` checks the same stored profile against the TUN-mode Xray renderability rules.
+
+`profile validate` must not fetch subscriptions, update profile state, start `tunwardend`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, or mutate firewall state. It is intended for diagnostics and automation before `plan` or `connect`.
+
+A validation failure for an existing profile returns exit code `3`, not usage exit code `2`. Missing profile state remains a runtime/profile lookup failure with exit code `1`.
+
+Human and JSON output must redact the same sensitive profile fields and must not print raw identities, credentials, provider tokens, or generated runtime configuration contents.
+
 ## Display names and IDs
 
 Profile IDs and subscription IDs are stable command-facing identifiers. Commands, persisted ownership, and dynamic completion continue to use IDs. Display names are human-facing labels shown in list/show/import/update output.
@@ -145,6 +162,15 @@ Import a subscription through the first-run convenience entrypoint:
 
 ```bash
 tunwarden import https://example.com/subscription
+```
+
+Manage profiles:
+
+```bash
+tunwarden profile list
+tunwarden profile show <profile-id>
+tunwarden profile validate <profile-id>
+tunwarden profile validate <profile-id> --mode tun --json
 ```
 
 Manage an explicit subscription source:
