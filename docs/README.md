@@ -27,7 +27,7 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 | [Proxy-only lifecycle](./proxy-only-lifecycle.md) | Daemon-managed proxy-only connect/disconnect and Xray runtime lifecycle. |
 | [Status command](./status.md) | Read-only daemon-backed and fallback `tunwarden status` behavior. |
 | [Doctor diagnostics](./doctor-diagnostics.md) | Read-only `tunwarden doctor` diagnostics and core binary validation. |
-| [Logs command](./logs.md) | `tunwarden logs` journald integration, log source selection, redaction, and failure behavior. |
+| [Logs command](./logs.md) | journald integration, log source selection, redaction, and failure behavior. |
 | [Recovery dry-run and execute](./recovery-dry-run.md) | `tunwarden recover` inspection and explicit daemon-owned cleanup behavior. |
 
 ## Engineering contracts
@@ -42,6 +42,7 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 | [nftables Firewall Executor](./nftables-firewall-executor.md) | TunWarden-owned nftables apply, verify, rollback, and cleanup boundary. |
 | [Subscriptions and profiles](./subscriptions-and-profiles.md) | Normalized profile/subscription model, adapters, validation, storage, and provider compatibility. |
 | [Daemon local API](./daemon-api.md) | Local daemon transport, access model, lifecycle endpoints, and daemon safety boundary. |
+| [Polkit authorization](./polkit-authorization.md) | Optional daemon-side polkit actions, default policy, socket-group fallback, GUI/TTY behavior, and troubleshooting. |
 | [Status daemon socket classification](./status-daemon-socket.md) | Conservative status fallback behavior when daemon socket access fails. |
 | [Package boundaries](./package-boundaries.md) | Package dependency direction and review rules. |
 

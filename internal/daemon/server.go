@@ -20,6 +20,7 @@ type Server struct {
 	Status      func(context.Context) api.StatusResponse
 	Doctor      func(context.Context) api.DoctorResponse
 	Lifecycle   *XrayManager
+	Authorizer  Authorizer
 	startupScan startupScanFunc
 }
 
@@ -37,6 +38,10 @@ func (s Server) Run(ctx context.Context) error {
 		lifecycle = NewXrayManager(runtimeDir)
 	} else if lifecycle.RuntimeDir == "" {
 		lifecycle.RuntimeDir = runtimeDir
+	}
+	authorizer := s.Authorizer
+	if authorizer == nil {
+		authorizer = authorizerFromEnv()
 	}
 
 	lockPath := api.LockPath(runtimeDir)
@@ -105,15 +110,27 @@ func (s Server) Run(ctx context.Context) error {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if err := authorizeHTTPRequest(r, authorizer, ActionRecoverExecute); err != nil {
+			writeAuthorizationHTTPError(w, err)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		response := daemonRecover(r.Context(), runtimeDir)
 		startupScan.Refresh(r.Context())
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("tunwardend: recover request handled")
 	})
-	registerLifecycleHandlers(mux, lifecycle)
+	registerLifecycleHandlers(mux, lifecycle, authorizer)
 
-	httpServer := http.Server{Handler: mux}
+	httpServer := http.Server{
+		Handler: mux,
+		ConnContext: func(ctx context.Context, conn net.Conn) context.Context {
+			if subject, ok := peerSubjectFromConn(conn); ok {
+				return contextWithPeerSubject(ctx, subject)
+			}
+			return ctx
+		},
+	}
 	errc := make(chan error, 1)
 	go func() {
 		err := httpServer.Serve(listener)

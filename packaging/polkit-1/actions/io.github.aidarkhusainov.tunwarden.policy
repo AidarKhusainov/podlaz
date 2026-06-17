@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+  "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>TunWarden</vendor>
+  <vendor_url>https://github.com/AidarKhusainov/tunwarden</vendor_url>
+  <icon_name>network-vpn</icon_name>
+
+  <action id="io.github.aidarkhusainov.tunwarden.connect-proxy-only">
+    <description>Start a TunWarden proxy-only connection</description>
+    <message>Authentication is required to start a TunWarden proxy-only connection through the daemon.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="io.github.aidarkhusainov.tunwarden.connect-tun">
+    <description>Start a TunWarden full-tunnel connection</description>
+    <message>Authentication is required to apply TunWarden full-tunnel networking changes.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
+  <action id="io.github.aidarkhusainov.tunwarden.disconnect">
+    <description>Disconnect an active TunWarden connection</description>
+    <message>Authentication is required to stop an active TunWarden connection and roll back daemon-owned runtime state.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <action id="io.github.aidarkhusainov.tunwarden.recover-execute">
+    <description>Execute TunWarden recovery cleanup</description>
+    <message>Authentication is required to clean up TunWarden-owned stale runtime and networking state.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+</policyconfig>
