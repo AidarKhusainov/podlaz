@@ -65,13 +65,13 @@ func TestImportVLESSURIWarnsAboutUnsupportedOptions(t *testing.T) {
 	}
 	for i := range want {
 		if warnings[i] != want[i] {
-			t.Fatalf("warning %d mismatch: got %q want %q", i, warnings[i])
+			t.Fatalf("warning %d mismatch: got %q want %q", i, warnings[i], want[i])
 		}
 	}
 }
 
 func TestImportVLESSURIRejectsUnsafeDisplayName(t *testing.T) {
-	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#https%3A//example.com/token/secret"
+	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#00000000-0000-0000-0000-000000000999"
 
 	p, warnings, err := ImportVLESSURI(uri)
 	if err != nil {
@@ -157,7 +157,7 @@ func readFixture(t *testing.T, name string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", name))
 	if err != nil {
-		t.Fatalf("read fixture %s: %v", name)
+		t.Fatalf("read fixture %s: %v", name, err)
 	}
 	return strings.TrimSpace(string(data))
 }
