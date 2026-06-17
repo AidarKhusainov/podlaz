@@ -197,6 +197,11 @@ func TestRunCLISubscriptionDeleteRequiresYesAndReportsMissingID(t *testing.T) {
 		t.Fatalf("expected missing --yes to fail with exit code 2, got %v", err)
 	}
 
+	err = runWithOptions(context.Background(), []string{"subscription", "delete", "usage", "--json", "--yes"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "subscription delete --json is not implemented") {
+		t.Fatalf("expected subscription delete --json to fail with exit code 2, got %v", err)
+	}
+
 	err = runWithOptions(context.Background(), []string{"subscription", "delete", "missing", "--yes"}, &bytes.Buffer{}, opts)
 	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription not found") {
 		t.Fatalf("expected missing subscription to fail clearly with exit code 1, got %v", err)
