@@ -9,19 +9,10 @@ import (
 )
 
 const (
-	// MaxDisplayNameRunes keeps provider-controlled names readable in tables and
-	// bounded in persisted state without rejecting ordinary localized names.
-	MaxDisplayNameRunes = 80
-
-	// DisplayNameRejectedWarning is intentionally generic so rejected provider
-	// names are not echoed back when they may contain secrets.
+	MaxDisplayNameRunes       = 80
 	DisplayNameRejectedWarning = "provider display name was rejected; using safe fallback"
 )
 
-// SanitizeDisplayName normalizes a provider-controlled display name for safe
-// user-facing storage and output. It accepts ordinary Unicode text, removes
-// control/path separators, bounds length, and rejects values that look like
-// tokens, credentials, raw URLs, UUIDs, private keys, or generated configs.
 func SanitizeDisplayName(raw string) (string, bool) {
 	name := strings.TrimSpace(strings.ToValidUTF8(raw, ""))
 	if name == "" {
@@ -63,8 +54,6 @@ func SanitizeDisplayName(raw string) (string, bool) {
 	return name, true
 }
 
-// ProviderProfileDisplayName returns a safe provider name or a deterministic
-// non-secret fallback derived only from non-auth endpoint metadata.
 func ProviderProfileDisplayName(raw, protocol, host string, port uint16) (string, bool) {
 	if name, ok := SanitizeDisplayName(raw); ok {
 		return name, true
@@ -92,9 +81,6 @@ func StableImportedProfileIDBase(protocol, host string, port uint16) string {
 	return strings.Trim(base, "-._")
 }
 
-// DeduplicateDisplayNames keeps duplicate provider display names readable
-// without changing profile IDs. The first occurrence keeps the original name;
-// later duplicates get a stable numeric suffix.
 func DeduplicateDisplayNames(profiles []Profile) {
 	seen := map[string]int{}
 	for i := range profiles {
@@ -143,23 +129,10 @@ func unsafeDisplayName(value string) bool {
 	if strings.Contains(v, "://") || strings.HasPrefix(v, "vless:") || strings.HasPrefix(v, "vmess:") || strings.HasPrefix(v, "trojan:") || strings.HasPrefix(v, "ss:") {
 		return true
 	}
-	if strings.Contains(v, "-----begin") || strings.Contains(v, "private key") {
-		return true
-	}
 	if (strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[")) && (strings.Contains(v, "outbounds") || strings.Contains(v, "inbounds")) {
 		return true
 	}
 	return looksOpaqueTokenLike(value)
-}
-
-func looksSecretLike(value string) bool {
-	v := strings.ToLower(strings.TrimSpace(value))
-	for _, marker := range []string{"token", "password", "passwd", "secret", "private", "authorization", "api_key", "apikey"} {
-		if strings.Contains(v, marker) {
-			return true
-		}
-	}
-	return false
 }
 
 func looksOpaqueTokenLike(value string) bool {
