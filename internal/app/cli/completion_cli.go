@@ -229,6 +229,8 @@ complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l port
 complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l protocol -x -a '%s'
 complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile list' -l json
 complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile show' -l json
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile validate' -l mode -x -a '%s'
+complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile validate' -l json
 complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile delete' -l yes
 
 complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription add' -l name -x
@@ -249,7 +251,7 @@ complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l since -x
 complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l execute
 complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l yes
 complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l json
-`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
+`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
 }
 
 func completionWords(values []string) string {
