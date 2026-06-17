@@ -24,7 +24,7 @@ func TestRunCLISudoGuardRejectsUserStateCommandsBeforeStoreAccess(t *testing.T) 
 	}{
 		{
 			name:      "import redacts target",
-			args:      []string{"import", "https://provider.example/sub?token=supersecret"},
+			args:      []string{"import", "https://provider.example/sub/opaquevalue"},
 			wantShape: "tunwarden import <target>",
 		},
 		{
@@ -34,25 +34,25 @@ func TestRunCLISudoGuardRejectsUserStateCommandsBeforeStoreAccess(t *testing.T) 
 		},
 		{
 			name:      "subscription show redacts id",
-			args:      []string{"subscription", "show", "sub-supersecret"},
+			args:      []string{"subscription", "show", "sub-opaquevalue"},
 			wantShape: "tunwarden subscription show <subscription-id>",
 		},
 		{
 			name:      "plan redacts profile id",
-			args:      []string{"plan", "--mode", "tun", "profile-supersecret"},
+			args:      []string{"plan", "--mode", "tun", "profile-opaquevalue"},
 			wantShape: "tunwarden plan --mode <mode> <profile-id>",
 		},
 		{
-			name:      "connect redacts profile id",
-			args:      []string{"connect", "--mode", "proxy-only", "profile-supersecret"},
-			wantShape: "tunwarden connect [--mode proxy-only|tun] <profile-id>",
+			name:      "connect redacts profile ref",
+			args:      []string{"connect", "--mode", "proxy-only", "profile-opaquevalue"},
+			wantShape: "tunwarden connect [--mode proxy-only|tun] <profile-ref>",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
 			err := runWithOptions(context.Background(), tt.args, &out, opts)
 			assertSudoUserStateError(t, err, out.String(), tt.wantShape)
-			assertDoesNotContain(t, err.Error(), "supersecret")
+			assertDoesNotContain(t, err.Error(), "opaquevalue")
 			assertPathDoesNotExist(t, profileStorePath)
 			assertPathDoesNotExist(t, subscriptionStorePath)
 		})
@@ -91,13 +91,13 @@ func TestRunCLISudoGuardRejectsDynamicCompletionBeforeStoreAccess(t *testing.T) 
 	profileStorePath := filepath.Join(stateDir, "root", "profiles.json")
 	subscriptionStorePath := filepath.Join(stateDir, "root", "subscriptions.json")
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"__complete", "bash", "3", "tunwarden", "profile", "show", "profile-supersecret"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"__complete", "bash", "3", "tunwarden", "profile", "show", "profile-opaquevalue"}, &out, options{
 		profileStorePath:      profileStorePath,
 		subscriptionStorePath: subscriptionStorePath,
 	})
 
 	assertSudoUserStateError(t, err, out.String(), "tunwarden profile show <profile-id>")
-	assertDoesNotContain(t, err.Error(), "profile-supersecret")
+	assertDoesNotContain(t, err.Error(), "profile-opaquevalue")
 	assertPathDoesNotExist(t, profileStorePath)
 	assertPathDoesNotExist(t, subscriptionStorePath)
 }
