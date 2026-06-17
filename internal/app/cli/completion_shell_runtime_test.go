@@ -11,15 +11,15 @@ func TestRunCLICompletionRuntimeSupportsZshAndFish(t *testing.T) {
 	for _, shell := range []string{"zsh", "fish"} {
 		t.Run(shell+" profile ids", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "tunwarden", "profile", "show", "")...)
-			assertContainsLine(t, got, "alpha")
-			assertContainsLine(t, got, "bravo")
-			assertNotContainsLine(t, got, "personal")
+			assertContainsCandidateLine(t, got, "alpha", "Alpha")
+			assertContainsCandidateLine(t, got, "bravo", "Bravo")
+			assertNotContainsCandidateValue(t, got, "personal")
 		})
 		t.Run(shell+" subscription ids", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "tunwarden", "subscription", "show", "")...)
-			assertContainsLine(t, got, "personal")
-			assertContainsLine(t, got, "work")
-			assertNotContainsLine(t, got, "alpha")
+			assertContainsCandidateLine(t, got, "personal", "Personal")
+			assertContainsCandidateLine(t, got, "work", "Work")
+			assertNotContainsCandidateValue(t, got, "alpha")
 		})
 		t.Run(shell+" mode values", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "tunwarden", "plan", "--mode", "")...)
@@ -56,7 +56,7 @@ func TestRunCLICompletionRuntimeZshAndFishMissingStateIsQuiet(t *testing.T) {
 		t.Run(shell, func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 2, "tunwarden", "connect", "")...)
 			assertContainsLine(t, got, ":no-files")
-			assertNotContainsLine(t, got, "alpha")
+			assertNotContainsCandidateValue(t, got, "alpha")
 		})
 	}
 }
