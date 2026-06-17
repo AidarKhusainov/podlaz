@@ -110,13 +110,40 @@ func (s Store) Path() string { return s.path }
 
 // NewSource returns a normalized subscription source with a deterministic local ID.
 func NewSource(name, sourceURL string) Source {
-	name = strings.TrimSpace(name)
+	sourceURL = strings.TrimSpace(sourceURL)
+	displayName := strings.TrimSpace(name)
+	if displayName == "" {
+		displayName = fallbackSubscriptionDisplayName(sourceURL)
+	}
 	return Source{
-		ID:     profile.NormalizeID(name),
-		Name:   name,
-		URL:    strings.TrimSpace(sourceURL),
+		ID:     profile.NormalizeID(displayName),
+		Name:   displayName,
+		URL:    sourceURL,
 		Format: FormatBase64,
 	}
+}
+
+func fallbackSubscriptionDisplayName(sourceURL string) string {
+	candidate := "subscription"
+	if u, err := url.Parse(strings.TrimSpace(sourceURL)); err == nil {
+		host := strings.TrimSpace(u.Hostname())
+		base := strings.TrimSpace(filepath.Base(u.Path))
+		if base == "." || base == string(filepath.Separator) {
+			base = ""
+		}
+		switch {
+		case host != "" && base != "":
+			candidate = host + " " + base
+		case host != "":
+			candidate = host
+		case base != "":
+			candidate = base
+		}
+	}
+	if name, ok := profile.SanitizeDisplayName(candidate); ok {
+		return name
+	}
+	return "subscription"
 }
 
 func ValidateSource(source Source) error {
@@ -361,6 +388,7 @@ func ParseBase64Subscription(content []byte) (Parsed, error) {
 		}
 		return Parsed{}, fmt.Errorf("subscription contains no supported profiles")
 	}
+	profile.DeduplicateDisplayNames(parsed.Profiles)
 	sort.SliceStable(parsed.Profiles, func(i, j int) bool { return parsed.Profiles[i].ID < parsed.Profiles[j].ID })
 	return parsed, nil
 }
