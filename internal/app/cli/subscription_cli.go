@@ -53,7 +53,7 @@ func runSubscriptionCommand(ctx context.Context, args []string, stdout io.Writer
 		if err != nil {
 			return err
 		}
-		return runSubscriptionDelete(store, profileStore, args[1:], stdout)
+		return runSubscriptionDelete(store, profileStore, args[1:], stdout, opts)
 	default:
 		return usageError("unknown subscription subcommand %q", args[0])
 	}
