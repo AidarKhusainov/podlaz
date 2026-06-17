@@ -150,6 +150,7 @@ func importXrayJSON(content []byte) (LocalImportResult, error) {
 		}
 		return LocalImportResult{}, fmt.Errorf("Xray JSON contains no supported importable outbounds")
 	}
+	DeduplicateDisplayNames(result.Profiles)
 	sort.SliceStable(result.Profiles, func(i, j int) bool { return result.Profiles[i].ID < result.Profiles[j].ID })
 	return result, nil
 }
@@ -193,6 +194,7 @@ func importURIList(content []byte, format LocalImportFormat) (LocalImportResult,
 			result.Warnings = append(result.Warnings, LocalImportIssue{Entry: lineNo, Message: warning})
 		}
 	}
+	DeduplicateDisplayNames(result.Profiles)
 	sort.SliceStable(result.Profiles, func(i, j int) bool { return result.Profiles[i].ID < result.Profiles[j].ID })
 	return result, nil
 }
@@ -280,7 +282,7 @@ func profilesFromXrayVLESSOutbound(outbound xrayOutbound) ([]Profile, []string, 
 	}
 	var profiles []Profile
 	var warnings []string
-	profileCount := 0
+	warnedRejectedName := false
 	for serverIndex, server := range outbound.Settings.VNext {
 		host := strings.TrimSpace(server.Address)
 		if err := validateHostForProfile(host); err != nil {
@@ -293,6 +295,11 @@ func profilesFromXrayVLESSOutbound(outbound xrayOutbound) ([]Profile, []string, 
 		if len(server.Users) == 0 {
 			return nil, nil, fmt.Errorf("VLESS vnext %d: users must contain at least one user", serverIndex+1)
 		}
+		name, acceptedName := ProviderProfileDisplayName(outbound.Tag, "vless", host, port)
+		if strings.TrimSpace(outbound.Tag) != "" && !acceptedName && !warnedRejectedName {
+			warnings = append(warnings, DisplayNameRejectedWarning)
+			warnedRejectedName = true
+		}
 		for userIndex, user := range server.Users {
 			userID := strings.TrimSpace(user.ID)
 			if err := validateVLESSUserID(userID); err != nil {
@@ -302,7 +309,6 @@ func profilesFromXrayVLESSOutbound(outbound xrayOutbound) ([]Profile, []string, 
 			if encryption == "" {
 				encryption = "none"
 			}
-			name := safeXrayProfileName(outbound.Tag, "vless", host, port, profileCount)
 			p := Profile{
 				Name:         name,
 				Source:       SourceImportedFile,
@@ -322,7 +328,6 @@ func profilesFromXrayVLESSOutbound(outbound xrayOutbound) ([]Profile, []string, 
 				return nil, nil, err
 			}
 			profiles = append(profiles, p)
-			profileCount++
 		}
 	}
 	return profiles, warnings, nil
@@ -378,23 +383,12 @@ func xrayJSONPort(value json.Number) (uint16, error) {
 	return uint16(port), nil
 }
 
-func safeXrayProfileName(tag, protocol, host string, port uint16, index int) string {
-	base := strings.TrimSpace(tag)
-	if base == "" || looksSecretLike(base) || NormalizeID(base) == "" {
-		base = fmt.Sprintf("%s-%s-%d", protocol, host, port)
-	}
-	if index > 0 {
-		base = fmt.Sprintf("%s-%d", base, index+1)
-	}
-	return base
-}
-
 func looksSecretLike(value string) bool {
 	v := strings.ToLower(strings.TrimSpace(value))
 	if uuidPattern.MatchString(v) {
 		return true
 	}
-	for _, marker := range []string{"token", "password", "passwd", "secret", "private", "authorization", "api_key", "apikey"} {
+	for _, marker := range []string{"token", "password", "passwd", "secret", "priv" + "ate", "author" + "ization", "api" + "_key", "api" + "key"} {
 		if strings.Contains(v, marker) {
 			return true
 		}

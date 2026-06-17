@@ -129,9 +129,9 @@ func importVLESSURI(raw string) (Profile, []string, error) {
 		return Profile{}, nil, err
 	}
 
-	name := strings.TrimSpace(u.Fragment)
-	if name == "" {
-		name = fmt.Sprintf("vless-%s-%d", host, port)
+	name, acceptedName := ProviderProfileDisplayName(u.Fragment, "vless", host, port)
+	if strings.TrimSpace(u.Fragment) != "" && !acceptedName {
+		warnings = append(warnings, DisplayNameRejectedWarning)
 	}
 
 	p := Profile{
@@ -273,10 +273,7 @@ func unsupportedVLESSOptionWarnings(query url.Values) []string {
 }
 
 func importedVLESSProfileID(p Profile) string {
-	base := NormalizeID(p.Name)
-	if base == "" {
-		base = NormalizeID(fmt.Sprintf("vless-%s-%d", p.Server, p.Port))
-	}
+	base := StableImportedProfileIDBase("vless", p.Server, p.Port)
 	if base == "" {
 		base = "vless-profile"
 	}

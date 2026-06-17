@@ -113,9 +113,9 @@ func ImportVMessURI(raw string) (Profile, []string, error) {
 		encryption = "auto"
 	}
 	warnings := vmessWarnings(share)
-	name := strings.TrimSpace(share.Name)
-	if name == "" {
-		name = fmt.Sprintf("vmess-%s-%d", host, port)
+	name, acceptedName := ProviderProfileDisplayName(share.Name, "vmess", host, port)
+	if strings.TrimSpace(share.Name) != "" && !acceptedName {
+		warnings = append(warnings, DisplayNameRejectedWarning)
 	}
 	p := Profile{
 		Name:         name,
@@ -201,9 +201,12 @@ func ImportTrojanURI(raw string) (Profile, []string, error) {
 		return Profile{}, nil, err
 	}
 	warnings = append(warnings, riskyQueryWarnings("Trojan", query)...)
-	p, err := profileFromURIQuery("trojan", u, host, port, password, transport, security, "", query)
+	p, acceptedName, err := profileFromURIQuery("trojan", u, host, port, password, transport, security, "", query)
 	if err != nil {
 		return Profile{}, nil, err
+	}
+	if strings.TrimSpace(u.Fragment) != "" && !acceptedName {
+		warnings = append(warnings, DisplayNameRejectedWarning)
 	}
 	p.ID = importedShareProfileID(p)
 	if err := Validate(p); err != nil {
@@ -244,9 +247,9 @@ func ImportShadowsocksURI(raw string) (Profile, []string, error) {
 	if !supportedShadowsocksMethod(method) {
 		warnings = append(warnings, fmt.Sprintf("Shadowsocks method %q is preserved but may be unsupported by the configured Xray build", method))
 	}
-	name := strings.TrimSpace(u.Fragment)
-	if name == "" {
-		name = fmt.Sprintf("shadowsocks-%s-%d", host, port)
+	name, acceptedName := ProviderProfileDisplayName(u.Fragment, "shadowsocks", host, port)
+	if strings.TrimSpace(u.Fragment) != "" && !acceptedName {
+		warnings = append(warnings, DisplayNameRejectedWarning)
 	}
 	p := Profile{
 		Name:         name,
@@ -350,35 +353,32 @@ func shareQueryValue(protocol string, query url.Values, key string, required boo
 	return value, nil
 }
 
-func profileFromURIQuery(protocol string, u *url.URL, host string, port uint16, identity, transport, security, encryption string, query url.Values) (Profile, error) {
+func profileFromURIQuery(protocol string, u *url.URL, host string, port uint16, identity, transport, security, encryption string, query url.Values) (Profile, bool, error) {
 	serverName, err := shareQueryValue(displayProtocol(protocol), query, "sni", false)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, false, err
 	}
 	alpn, err := shareQueryValue(displayProtocol(protocol), query, "alpn", false)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, false, err
 	}
 	fingerprint, err := shareQueryValue(displayProtocol(protocol), query, "fp", false)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, false, err
 	}
 	path, err := shareQueryValue(displayProtocol(protocol), query, "path", false)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, false, err
 	}
 	hostHeader, err := shareQueryValue(displayProtocol(protocol), query, "host", false)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, false, err
 	}
 	serviceName, err := shareQueryValue(displayProtocol(protocol), query, "serviceName", false)
 	if err != nil {
-		return Profile{}, err
+		return Profile{}, false, err
 	}
-	name := strings.TrimSpace(u.Fragment)
-	if name == "" {
-		name = fmt.Sprintf("%s-%s-%d", protocol, host, port)
-	}
+	name, acceptedName := ProviderProfileDisplayName(u.Fragment, protocol, host, port)
 	return Profile{
 		Name:         name,
 		Source:       SourceImportedURI,
@@ -396,7 +396,7 @@ func profileFromURIQuery(protocol string, u *url.URL, host string, port uint16, 
 		Path:         path,
 		HostHeader:   hostHeader,
 		ServiceName:  serviceName,
-	}, nil
+	}, acceptedName, nil
 }
 
 func displayProtocol(protocol string) string {
@@ -540,10 +540,7 @@ func supportedShadowsocksMethod(method string) bool {
 }
 
 func importedShareProfileID(p Profile) string {
-	base := NormalizeID(p.Name)
-	if base == "" {
-		base = NormalizeID(fmt.Sprintf("%s-%s-%d", p.Protocol, p.Server, p.Port))
-	}
+	base := StableImportedProfileIDBase(p.Protocol, p.Server, p.Port)
 	if base == "" {
 		base = p.Protocol + "-profile"
 	}

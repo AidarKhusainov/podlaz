@@ -11,6 +11,40 @@ import (
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
 )
 
+func TestNewSourceUsesExplicitNameBeforeFallback(t *testing.T) {
+	source := NewSource("My Provider", "https://provider.example/sub?token=secret")
+	if source.ID != "my-provider" || source.Name != "My Provider" {
+		t.Fatalf("expected explicit subscription name to win, got %#v", source)
+	}
+}
+
+func TestNewSourceUsesSafeFallbackWithoutRawURL(t *testing.T) {
+	source := NewSource("", "https://provider.example/servers/personal?token=secret")
+	if source.ID != "provider.example-personal" || source.Name != "provider.example personal" {
+		t.Fatalf("expected safe host/path fallback, got %#v", source)
+	}
+	if strings.Contains(source.Name, "token") || strings.Contains(source.Name, "https://") || strings.Contains(source.Name, "?") {
+		t.Fatalf("fallback subscription name leaked raw URL data: %#v", source)
+	}
+}
+
+func TestNewSourceFallbackRejectsTokenLikeSubscriptionPathBase(t *testing.T) {
+	source := NewSource("", "https://sub.example.com/sub3cr1pt1on3/38gQEgxEZLrRtZJH")
+	if source.Name != "sub.example.com" || source.ID != "sub.example.com" {
+		t.Fatalf("expected host-only fallback for token-like subscription path, got %#v", source)
+	}
+	if strings.Contains(source.ID, "38gQEgxEZLrRtZJH") || strings.Contains(source.Name, "38gQEgxEZLrRtZJH") {
+		t.Fatalf("fallback subscription identity leaked token-like path segment: %#v", source)
+	}
+}
+
+func TestNewSourceFallbackRejectsUUIDPathBase(t *testing.T) {
+	source := NewSource("", "https://provider.example/servers/00000000-0000-4000-8000-000000000001")
+	if source.Name != "provider.example" || source.ID != "provider.example" {
+		t.Fatalf("expected host-only fallback for UUID-like path base, got %#v", source)
+	}
+}
+
 func TestParseBase64SubscriptionImportsSupportedEntries(t *testing.T) {
 	content := encodeLines([]string{
 		entry("00000000-0000-0000-0000-000000000001", "example.com", "443", "?type=tcp&security=tls&foo=bar", "one"),
@@ -32,6 +66,7 @@ func TestParseBase64SubscriptionImportsSupportedEntries(t *testing.T) {
 			t.Fatalf("expected user identity for %s", p.ID)
 		}
 	}
+	assertParsedNames(t, parsed.Profiles, "one", "two")
 	if got := len(parsed.Unsupported); got != 1 {
 		t.Fatalf("expected 1 unsupported entry, got %d", got)
 	}
@@ -75,6 +110,17 @@ func TestParseBase64SubscriptionDeduplicatesProfiles(t *testing.T) {
 	}
 }
 
+func TestParseBase64SubscriptionDeduplicatesDisplayNames(t *testing.T) {
+	parsed, err := ParseBase64Subscription([]byte(encodeLines([]string{
+		entry("00000000-0000-0000-0000-000000000001", "example.com", "443", "?type=tcp&security=tls", "same"),
+		entry("00000000-0000-0000-0000-000000000002", "example.com", "443", "?type=tcp&security=tls", "same"),
+	})))
+	if err != nil {
+		t.Fatalf("ParseBase64Subscription failed: %v", err)
+	}
+	assertParsedNames(t, parsed.Profiles, "same", "same (2)")
+}
+
 func TestFetchSourceRejectsCrossOriginRedirect(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("cross-origin redirect target should not be requested; got %s", r.URL.String())
@@ -105,4 +151,20 @@ func entry(userID, host, port, query, name string) string {
 
 func unsupportedEntry(a, b string) string {
 	return a + b + "://unsupported"
+}
+
+func assertParsedNames(t *testing.T, profiles []profile.Profile, names ...string) {
+	t.Helper()
+	got := make(map[string]int, len(profiles))
+	for _, p := range profiles {
+		got[p.Name]++
+	}
+	for _, name := range names {
+		if got[name] != 1 {
+			t.Fatalf("expected parsed display name %q exactly once, got profiles %#v", name, profiles)
+		}
+	}
+	if len(profiles) != len(names) {
+		t.Fatalf("expected %d profiles, got %#v", len(names), profiles)
+	}
 }

@@ -186,6 +186,7 @@ func parseXrayJSONArraySubscription(content []byte) (Parsed, error) {
 		}
 		return Parsed{}, fmt.Errorf("Xray JSON subscription contains no supported profiles")
 	}
+	profile.DeduplicateDisplayNames(parsed.Profiles)
 	sort.SliceStable(parsed.Profiles, func(i, j int) bool { return parsed.Profiles[i].ID < parsed.Profiles[j].ID })
 	return parsed, nil
 }
@@ -220,6 +221,7 @@ func parsedFromLocalXrayResult(local profile.LocalImportResult) (Parsed, error) 
 		}
 		return Parsed{}, fmt.Errorf("Xray JSON subscription contains no supported profiles")
 	}
+	profile.DeduplicateDisplayNames(parsed.Profiles)
 	sort.SliceStable(parsed.Profiles, func(i, j int) bool { return parsed.Profiles[i].ID < parsed.Profiles[j].ID })
 	return parsed, nil
 }

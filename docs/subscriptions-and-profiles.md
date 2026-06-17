@@ -24,7 +24,7 @@ Subscription metadata is stored alongside user state:
 $XDG_STATE_HOME/tunwarden/subscriptions.json
 ```
 
-Subscription metadata contains the local subscription ID, name, source URL, detected format, imported profile IDs, and last successful update time. User-facing output must redact full subscription URLs and provider tokens.
+Subscription metadata contains the local subscription ID, display name, source URL, detected format, imported profile IDs, and last successful update time. User-facing output must redact full subscription URLs and provider tokens.
 
 HTTP(S) subscription fetches also use a stable client identity stored alongside subscription state:
 
@@ -86,6 +86,27 @@ Unsupported entries are reported clearly when at least one supported profile is 
 
 Provider responses that report an unsupported client or unsupported application are treated as provider rejection responses, not as real profiles. Dummy outbound data in those responses must not be imported.
 
+## Display names and IDs
+
+Profile IDs and subscription IDs are stable command-facing identifiers. Commands, persisted ownership, and dynamic completion continue to use IDs. Display names are human-facing labels shown in list/show/import/update output.
+
+Subscription display names use this precedence:
+
+1. An explicit `subscription add --name <name>` value.
+2. A provider-supplied subscription title/name only for subscription formats with a known, tested safe field.
+3. A concise fallback from the source host and path basename, never the raw URL and never query parameters or tokens.
+
+Imported profile display names use this precedence:
+
+1. Decoded share URI fragments from URI-list and Base64 URI-list entries.
+2. Xray JSON outbound `tag` values.
+3. Known safe provider display fields for supported shapes, such as VMess `ps`.
+4. A fallback built from non-secret protocol, server, and port fields.
+
+All provider-supplied names go through the shared display-name sanitizer. The sanitizer trims whitespace, removes control characters and path separators, keeps safe Unicode text, limits length, and rejects empty, URL-like, share-URI-like, UUID-only, token-like, password-like, private-key-like, or generated-config-like values. Rejected provider names fall back to safe generated names and are reported with concise redacted warnings where the command output includes import/update warnings.
+
+Duplicate display names inside one import or subscription update are resolved deterministically with numeric suffixes such as `Name (2)`. Profile ID duplicate rules remain stricter and preserve atomicity.
+
 ## Update behavior
 
 A subscription update follows this sequence:
@@ -96,6 +117,8 @@ A subscription update follows this sequence:
 4. Validate normalized profiles.
 5. Replace only profiles owned by that subscription.
 6. Persist subscription metadata with the detected format, imported profile IDs, and update time.
+
+Provider-owned profile display names are refreshed from the latest successful subscription payload. Manual profiles and one-off imported URI/file profiles are not owned by a subscription and are not modified by subscription update.
 
 Failed fetch, decode, parse, validation, profile replacement, or metadata update must preserve the last known good profiles and subscription metadata.
 
@@ -128,10 +151,18 @@ Manage an explicit subscription source:
 
 ```bash
 tunwarden subscription add --name personal --url https://example.com/subscription
+tunwarden subscription add --url https://example.com/subscription
 tunwarden subscription update personal
 tunwarden subscription list
 tunwarden subscription show personal
 tunwarden subscription delete personal --yes
+```
+
+Human output for successful subscription add/update includes both the stable ID and display name:
+
+```text
+Subscription added: personal
+Name: My provider
 ```
 
 Human output for successful subscription import/update includes a concise detected format line:

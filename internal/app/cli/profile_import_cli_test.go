@@ -20,7 +20,7 @@ func TestRunCLIProfileImportVLESSListAndShow(t *testing.T) {
 		t.Fatalf("profile import failed: %v", err)
 	}
 	importOutput := importOut.String()
-	if !strings.Contains(importOutput, "Imported profile: my-vless-profile-") {
+	if !strings.Contains(importOutput, "Imported profile: vless-example.com-443-") || !strings.Contains(importOutput, "Name: my-vless-profile") {
 		t.Fatalf("unexpected import output: %q", importOutput)
 	}
 	if strings.Contains(importOutput, "Warnings:") || strings.Contains(importOutput, "flow is preserved") {
@@ -30,16 +30,16 @@ func TestRunCLIProfileImportVLESSListAndShow(t *testing.T) {
 		t.Fatalf("import output leaked VLESS user identity: %q", importOutput)
 	}
 
-	profileID := strings.TrimSpace(strings.TrimPrefix(strings.Split(importOutput, "\n")[0], "Imported profile: "))
-	if !strings.HasPrefix(profileID, "my-vless-profile-") {
-		t.Fatalf("expected imported profile ID with stable prefix, got %q", profileID)
+	profileID := importedProfileIDFromOutput(t, importOutput)
+	if !strings.HasPrefix(profileID, "vless-example.com-443-") {
+		t.Fatalf("expected imported profile ID with stable endpoint prefix, got %q", profileID)
 	}
 
 	var listOut bytes.Buffer
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &listOut, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	if got := listOut.String(); !strings.Contains(got, profileID) || !strings.Contains(got, "vless") || !strings.Contains(got, "example.com") {
+	if got := listOut.String(); !strings.Contains(got, profileID) || !strings.Contains(got, "my-vless-profile") || !strings.Contains(got, "vless") || !strings.Contains(got, "example.com") {
 		t.Fatalf("unexpected list output: %q", got)
 	}
 
@@ -48,7 +48,7 @@ func TestRunCLIProfileImportVLESSListAndShow(t *testing.T) {
 		t.Fatalf("profile show failed: %v", err)
 	}
 	show := showOut.String()
-	for _, want := range []string{"Source: imported_uri", "User identity: 0000…0001", "Security: reality", "Flow: xtls-rprx-vision", "Reality public key: public-key"} {
+	for _, want := range []string{"Name: my-vless-profile", "Source: imported_uri", "User identity: 0000…0001", "Security: reality", "Flow: xtls-rprx-vision", "Reality public key: public-key"} {
 		if !strings.Contains(show, want) {
 			t.Fatalf("expected profile show to contain %q, got %q", want, show)
 		}
@@ -66,6 +66,7 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 		name           string
 		uri            string
 		profilePrefix  string
+		displayName    string
 		protocol       string
 		showContains   []string
 		showNotContain []string
@@ -73,7 +74,8 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 		{
 			name:          "vmess",
 			uri:           vmessURIForCLITest(),
-			profilePrefix: "cli-vmess-",
+			profilePrefix: "vmess-example.com-443-",
+			displayName:   "cli-vmess",
 			protocol:      "vmess",
 			showContains: []string{
 				"Protocol: vmess",
@@ -86,7 +88,8 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 		{
 			name:          "trojan",
 			uri:           "trojan://" + secret + "@example.com:443?type=grpc&security=tls&sni=example.com&serviceName=svc#cli-trojan",
-			profilePrefix: "cli-trojan-",
+			profilePrefix: "trojan-example.com-443-",
+			displayName:   "cli-trojan",
 			protocol:      "trojan",
 			showContains: []string{
 				"Protocol: trojan",
@@ -99,7 +102,8 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 		{
 			name:          "shadowsocks",
 			uri:           "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:"+secret)) + "@example.com:8388#cli-ss",
-			profilePrefix: "cli-ss-",
+			profilePrefix: "shadowsocks-example.com-8388-",
+			displayName:   "cli-ss",
 			protocol:      "shadowsocks",
 			showContains: []string{
 				"Protocol: shadowsocks",
@@ -116,16 +120,16 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 			if err := runWithOptions(context.Background(), []string{"profile", "import", tt.uri}, &importOut, opts); err != nil {
 				t.Fatalf("profile import failed: %v", err)
 			}
-			profileID := strings.TrimSpace(strings.TrimPrefix(strings.Split(importOut.String(), "\n")[0], "Imported profile: "))
-			if !strings.HasPrefix(profileID, tt.profilePrefix) {
-				t.Fatalf("expected imported profile ID with prefix %q, got %q", tt.profilePrefix, profileID)
+			profileID := importedProfileIDFromOutput(t, importOut.String())
+			if !strings.HasPrefix(profileID, tt.profilePrefix) || !strings.Contains(importOut.String(), "Name: "+tt.displayName) {
+				t.Fatalf("expected imported profile ID prefix %q and display name %q, got id=%q output=%q", tt.profilePrefix, tt.displayName, profileID, importOut.String())
 			}
 
 			var listOut bytes.Buffer
 			if err := runWithOptions(context.Background(), []string{"profile", "list"}, &listOut, opts); err != nil {
 				t.Fatalf("profile list failed: %v", err)
 			}
-			if got := listOut.String(); !strings.Contains(got, profileID) || !strings.Contains(got, tt.protocol) || !strings.Contains(got, "example.com") {
+			if got := listOut.String(); !strings.Contains(got, profileID) || !strings.Contains(got, tt.displayName) || !strings.Contains(got, tt.protocol) || !strings.Contains(got, "example.com") {
 				t.Fatalf("unexpected profile list output: %q", got)
 			}
 
@@ -134,7 +138,7 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 				t.Fatalf("profile show failed: %v", err)
 			}
 			show := showOut.String()
-			for _, want := range tt.showContains {
+			for _, want := range append([]string{"Name: " + tt.displayName}, tt.showContains...) {
 				if !strings.Contains(show, want) {
 					t.Fatalf("expected profile show to contain %q, got %q", want, show)
 				}
@@ -205,7 +209,7 @@ func TestRunCLIProfileImportSameDisplayNameCreatesDistinctProfiles(t *testing.T)
 		if err := runWithOptions(context.Background(), []string{"profile", "import", uri}, &out, opts); err != nil {
 			t.Fatalf("profile import failed: %v", err)
 		}
-		ids = append(ids, strings.TrimSpace(strings.TrimPrefix(out.String(), "Imported profile: ")))
+		ids = append(ids, importedProfileIDFromOutput(t, out.String()))
 	}
 	if ids[0] == ids[1] {
 		t.Fatalf("expected distinct imported profile IDs, got %q", ids[0])
@@ -243,7 +247,7 @@ func TestRunCLIProfileShowJSONRedactsImportedUserIdentity(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "import", uri}, &importOut, opts); err != nil {
 		t.Fatalf("profile import failed: %v", err)
 	}
-	profileID := strings.TrimSpace(strings.TrimPrefix(importOut.String(), "Imported profile: "))
+	profileID := importedProfileIDFromOutput(t, importOut.String())
 
 	var out bytes.Buffer
 	if err := runWithOptions(context.Background(), []string{"profile", "show", profileID, "--json"}, &out, opts); err != nil {
@@ -261,4 +265,16 @@ func TestRunCLIProfileShowJSONRedactsImportedUserIdentity(t *testing.T) {
 		t.Fatalf("decode show JSON: %v", err)
 	}
 	assertCommonJSON(t, got)
+}
+
+func importedProfileIDFromOutput(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Imported profile: ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "Imported profile: "))
+		}
+	}
+	t.Fatalf("did not find imported profile ID in output: %q", output)
+	return ""
 }

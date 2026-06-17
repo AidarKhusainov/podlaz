@@ -19,7 +19,7 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	fixturePath := filepath.Join(dir, "sub.txt")
 	writeSubscriptionFixture(t, fixturePath, []string{
 		shareLink(1, "one.example", "443", "?type=tcp&security=tls&encryption=none&ignored=value", "one"),
-		unsupportedLink("hy", "steria"),
+		"unsupported://unsupported",
 		shareLink(2, "two.example", "8443", "?type=grpc&security=tls&serviceName=svc", "two"),
 	})
 	sourceURL := localFileURL(fixturePath)
@@ -29,7 +29,7 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "my sub", "--url", sourceURL}, &addOut, opts); err != nil {
 		t.Fatalf("subscription add failed: %v", err)
 	}
-	if got := addOut.String(); got != "Subscription added: my-sub\n" {
+	if got := addOut.String(); got != "Subscription added: my-sub\nName: my sub\n" {
 		t.Fatalf("unexpected add output: %q", got)
 	}
 
@@ -49,12 +49,15 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	if strings.Contains(showOut.String(), sourceURL) || !strings.Contains(showOut.String(), "URL: REDACTED") {
 		t.Fatalf("subscription show did not redact URL: %q", showOut.String())
 	}
+	if !strings.Contains(showOut.String(), "Name: my sub") {
+		t.Fatalf("subscription show did not include display name: %q", showOut.String())
+	}
 
 	var updateOut bytes.Buffer
 	if err := runWithOptions(context.Background(), []string{"subscription", "update", "my-sub"}, &updateOut, opts); err != nil {
 		t.Fatalf("subscription update failed: %v", err)
 	}
-	for _, want := range []string{"Subscription updated: my-sub", "Imported: 2", "Unsupported: 1", "Warnings: 1", "unsupported profile import URI scheme", "unsupported VLESS option"} {
+	for _, want := range []string{"Subscription updated: my-sub", "Name: my sub", "Imported: 2", "Unsupported: 1", "Warnings: 1", "unsupported profile import URI scheme", "unsupported VLESS option"} {
 		if !strings.Contains(updateOut.String(), want) {
 			t.Fatalf("expected update output to contain %q, got %q", want, updateOut.String())
 		}
@@ -67,10 +70,30 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	for _, want := range []string{"one-", "two-", "one.example", "two.example"} {
+	for _, want := range []string{"one", "two", "one.example", "two.example"} {
 		if !strings.Contains(profiles.String(), want) {
 			t.Fatalf("expected profile list to contain %q, got %q", want, profiles.String())
 		}
+	}
+}
+
+func TestRunCLISubscriptionAddUsesSafeFallbackName(t *testing.T) {
+	dir := t.TempDir()
+	profileStorePath := filepath.Join(dir, "profiles.json")
+	fixturePath := filepath.Join(dir, "fallback-sub.txt")
+	writeSubscriptionFixture(t, fixturePath, []string{shareLink(1, "fallback.example", "443", "?type=tcp&security=tls", "fallback")})
+	sourceURL := localFileURL(fixturePath) + "?token=do-not-print"
+	opts := options{profileStorePath: profileStorePath}
+
+	var addOut bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--url", sourceURL}, &addOut, opts); err != nil {
+		t.Fatalf("subscription add without name failed: %v", err)
+	}
+	if got := addOut.String(); got != "Subscription added: fallback-sub.txt\nName: fallback-sub.txt\n" {
+		t.Fatalf("unexpected fallback add output: %q", got)
+	}
+	if strings.Contains(addOut.String(), sourceURL) || strings.Contains(addOut.String(), "do-not-print") {
+		t.Fatalf("fallback subscription add leaked source URL data: %q", addOut.String())
 	}
 }
 
@@ -133,10 +156,6 @@ func localFileURL(path string) string {
 
 func shareLink(n int, host, port, query, name string) string {
 	return "vl" + "ess" + "://" + uuidForTest(n) + "@" + host + ":" + port + query + "#" + name
-}
-
-func unsupportedLink(a, b string) string {
-	return a + b + "://unsupported"
 }
 
 func uuidForTest(n int) string {

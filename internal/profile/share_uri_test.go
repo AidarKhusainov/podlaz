@@ -14,7 +14,7 @@ func TestImportShareURIValidVMess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import VMess URI: %v", err)
 	}
-	if !strings.HasPrefix(p.ID, "my-vmess-profile-") || p.Protocol != "vmess" || p.Source != SourceImportedURI || p.Engine != EngineXray {
+	if !strings.HasPrefix(p.ID, "vmess-example.com-443-") || p.Name != "my-vmess-profile" || p.Protocol != "vmess" || p.Source != SourceImportedURI || p.Engine != EngineXray {
 		t.Fatalf("unexpected normalized VMess metadata: %#v", p)
 	}
 	if p.Server != "example.com" || p.Port != 443 || p.UserIdentity != "00000000-0000-0000-0000-000000000002" {
@@ -35,7 +35,7 @@ func TestImportShareURIValidTrojan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import Trojan URI: %v", err)
 	}
-	if !strings.HasPrefix(p.ID, "my-trojan-profile-") || p.Protocol != "trojan" {
+	if !strings.HasPrefix(p.ID, "trojan-example.com-443-") || p.Name != "my-trojan-profile" || p.Protocol != "trojan" {
 		t.Fatalf("unexpected normalized Trojan metadata: %#v", p)
 	}
 	if p.Server != "example.com" || p.Port != 443 || p.UserIdentity != "secret" || p.Transport != "grpc" || p.Security != "tls" || p.ServerName != "example.com" || p.ServiceName != "svc" {
@@ -54,7 +54,7 @@ func TestImportShareURIValidShadowsocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import Shadowsocks URI: %v", err)
 	}
-	if !strings.HasPrefix(p.ID, "my-ss-profile-") || p.Protocol != "shadowsocks" {
+	if !strings.HasPrefix(p.ID, "shadowsocks-example.com-8388-") || p.Name != "my-ss-profile" || p.Protocol != "shadowsocks" {
 		t.Fatalf("unexpected normalized Shadowsocks metadata: %#v", p)
 	}
 	if p.Server != "example.com" || p.Port != 8388 || p.Encryption != "aes-256-gcm" || p.UserIdentity != "aes-256-gcm:secret" {
@@ -62,6 +62,48 @@ func TestImportShareURIValidShadowsocks(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Fatalf("expected no Shadowsocks warnings, got %#v", warnings)
+	}
+}
+
+func TestImportShareURIRejectsUnsafeDisplayNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		uri        string
+		wantName   string
+		wantPrefix string
+	}{
+		{
+			name:       "vmess-unsafe-ps",
+			uri:        "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(`{"v":"2","ps":"00000000-0000-0000-0000-000000000999","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","aid":"0","net":"tcp","tls":"tls"}`)),
+			wantName:   "vmess-example.com-443",
+			wantPrefix: "vmess-example.com-443-",
+		},
+		{
+			name:       "trojan-unsafe-fragment",
+			uri:        "trojan://secret@example.com:443?type=tcp&security=tls#00000000-0000-0000-0000-000000000999",
+			wantName:   "trojan-example.com-443",
+			wantPrefix: "trojan-example.com-443-",
+		},
+		{
+			name:       "shadowsocks-unsafe-fragment",
+			uri:        "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:secret")) + "@example.com:8388#00000000-0000-0000-0000-000000000999",
+			wantName:   "shadowsocks-example.com-8388",
+			wantPrefix: "shadowsocks-example.com-8388-",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, warnings, err := ImportShareURI(tt.uri)
+			if err != nil {
+				t.Fatalf("import unsafe display-name URI: %v", err)
+			}
+			if p.Name != tt.wantName || !strings.HasPrefix(p.ID, tt.wantPrefix) {
+				t.Fatalf("expected fallback name %q and id prefix %q, got %#v", tt.wantName, tt.wantPrefix, p)
+			}
+			if len(warnings) != 1 || warnings[0] != DisplayNameRejectedWarning {
+				t.Fatalf("expected display-name rejection warning, got %#v", warnings)
+			}
+		})
 	}
 }
 

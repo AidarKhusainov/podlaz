@@ -40,7 +40,9 @@ Fish completion must register static flags and static option values with fish-na
 Dynamic shell completion suggests:
 
 - profile IDs for `connect`, `plan`, `profile show`, and `profile delete`;
-- subscription IDs for `subscription show` and `subscription update`.
+- subscription IDs for `subscription show`, `subscription update`, and `subscription delete`.
+
+Dynamic completion candidates keep the command argument value as the stable ID. When the shell adapter supports candidate descriptions, the description is the sanitized display name from the local profile or subscription store. Completion must not make display names a second command identity.
 
 Dynamic completion reads only the local user-owned profile and subscription stores needed for those ID suggestions. Missing, unreadable, or invalid local state must produce no dynamic candidates and no completion-time error output.
 

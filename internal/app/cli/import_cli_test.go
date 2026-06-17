@@ -18,7 +18,7 @@ func TestRunCLIImportVLESSShareURI(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", uri}, &out, opts); err != nil {
 		t.Fatalf("top-level VLESS import failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Imported profile: top-level-") {
+	if got := out.String(); !strings.Contains(got, "Imported profile: vless-example.com-443-") {
 		t.Fatalf("unexpected import output: %q", got)
 	}
 	if strings.Contains(out.String(), "00000000-0000-0000-0000-000000000001") {
@@ -29,7 +29,7 @@ func TestRunCLIImportVLESSShareURI(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	if got := profiles.String(); !strings.Contains(got, "top-level-") || !strings.Contains(got, "example.com") {
+	if got := profiles.String(); !strings.Contains(got, "top-level") || !strings.Contains(got, "example.com") {
 		t.Fatalf("imported profile not listed: %q", got)
 	}
 }
@@ -40,7 +40,7 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	fixturePath := filepath.Join(dir, "sub.txt")
 	writeSubscriptionFixture(t, fixturePath, []string{
 		shareLink(1, "one.example", "443", "?type=tcp&security=tls&encryption=none", "one"),
-		unsupportedLink("hy", "steria"),
+		"unsupported://unsupported",
 		shareLink(2, "two.example", "8443", "?type=grpc&security=tls&serviceName=svc", "two"),
 	})
 	sourceURL := localFileURL(fixturePath)
@@ -50,7 +50,7 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", sourceURL}, &out, opts); err != nil {
 		t.Fatalf("top-level subscription import failed: %v", err)
 	}
-	for _, want := range []string{"Subscription imported: imported-subscription-", "Imported: 2", "Unsupported: 1", "Warnings: 0", "unsupported profile import URI scheme"} {
+	for _, want := range []string{"Subscription imported: sub.txt", "Name: sub.txt", "Imported: 2", "Unsupported: 1", "Warnings: 0", "unsupported profile import URI scheme"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected import output to contain %q, got %q", want, out.String())
 		}
@@ -63,7 +63,7 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "list"}, &subscriptions, opts); err != nil {
 		t.Fatalf("subscription list failed: %v", err)
 	}
-	if got := subscriptions.String(); !strings.Contains(got, "imported-subscription-") || !strings.Contains(got, "base64") {
+	if got := subscriptions.String(); !strings.Contains(got, "sub.txt") || !strings.Contains(got, "base64") {
 		t.Fatalf("imported subscription not listed: %q", got)
 	}
 
@@ -71,7 +71,7 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	for _, want := range []string{"one-", "two-", "one.example", "two.example"} {
+	for _, want := range []string{"one", "two", "one.example", "two.example"} {
 		if !strings.Contains(profiles.String(), want) {
 			t.Fatalf("expected profile list to contain %q, got %q", want, profiles.String())
 		}
@@ -108,7 +108,7 @@ func TestRunCLIImportSubscriptionRollbackPreservesState(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "list"}, &subscriptions, opts); err != nil {
 		t.Fatalf("subscription list failed: %v", err)
 	}
-	if strings.Contains(subscriptions.String(), "imported-subscription-") {
+	if strings.Contains(subscriptions.String(), "sub.txt") {
 		t.Fatalf("failed import left subscription behind: %q", subscriptions.String())
 	}
 }

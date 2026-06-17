@@ -92,9 +92,9 @@ func TestRunCLICompletionRuntimeSuggestsProfileIDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, tt.args...)
-			assertContainsLine(t, got, "alpha")
-			assertContainsLine(t, got, "bravo")
-			assertNotContainsLine(t, got, "personal")
+			assertContainsCandidateLine(t, got, "alpha", "Alpha")
+			assertContainsCandidateLine(t, got, "bravo", "Bravo")
+			assertNotContainsCandidateValue(t, got, "personal")
 		})
 	}
 }
@@ -112,9 +112,9 @@ func TestRunCLICompletionRuntimeSuggestsSubscriptionIDs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, tt.args...)
-			assertContainsLine(t, got, "personal")
-			assertContainsLine(t, got, "work")
-			assertNotContainsLine(t, got, "alpha")
+			assertContainsCandidateLine(t, got, "personal", "Personal")
+			assertContainsCandidateLine(t, got, "work", "Work")
+			assertNotContainsCandidateValue(t, got, "alpha")
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestRunCLICompletionRuntimeMissingOrUnreadableStateIsQuiet(t *testing.T) {
 	missing := options{profileStorePath: filepath.Join(dir, "missing-profiles.json"), subscriptionStorePath: filepath.Join(dir, "missing-subscriptions.json")}
 	got := runCompletionRuntime(t, missing, bashCompleteArgs(2, "tunwarden", "connect", "")...)
 	assertContainsLine(t, got, ":no-files")
-	assertNotContainsLine(t, got, "alpha")
+	assertNotContainsCandidateValue(t, got, "alpha")
 
 	unreadableProfileStore := filepath.Join(dir, "unreadable-profiles.json")
 	if err := os.WriteFile(unreadableProfileStore, []byte("not-json"), 0o600); err != nil {
@@ -255,6 +255,25 @@ func assertNotContainsLine(t *testing.T, lines []string, want string) {
 	for _, line := range lines {
 		if line == want {
 			t.Fatalf("expected lines not to contain %q, got %#v", want, lines)
+		}
+	}
+}
+
+func assertContainsCandidateLine(t *testing.T, lines []string, value, description string) {
+	t.Helper()
+	want := value
+	if description != "" {
+		want += "\t" + description
+	}
+	assertContainsLine(t, lines, want)
+}
+
+func assertNotContainsCandidateValue(t *testing.T, lines []string, value string) {
+	t.Helper()
+	for _, line := range lines {
+		candidateValue, _, _ := strings.Cut(line, "\t")
+		if candidateValue == value {
+			t.Fatalf("expected candidate value %q to be absent, got %#v", value, lines)
 		}
 	}
 }

@@ -73,7 +73,9 @@ func runProfileImport(store profile.Store, args []string, stdout io.Writer) erro
 		return profileCommandError(err)
 	}
 
-	fmt.Fprintf(stdout, "Imported profile: %s\n", p.ID)
+	out := profileForOutput(p)
+	fmt.Fprintf(stdout, "Imported profile: %s\n", out.ID)
+	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
 	if len(warnings) > 0 {
 		fmt.Fprintf(stdout, "Warnings: %d\n", len(warnings))
 		for _, warning := range warnings {

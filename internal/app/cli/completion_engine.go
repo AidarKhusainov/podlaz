@@ -8,6 +8,7 @@ import (
 
 	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/tunwarden/internal/render"
 	"github.com/AidarKhusainov/tunwarden/internal/sub"
 )
 
@@ -323,7 +324,7 @@ func profileIDCandidates(opts options) []completionCandidate {
 	}
 	candidates := make([]completionCandidate, 0, len(profiles))
 	for _, p := range profiles {
-		candidates = append(candidates, completionCandidate{Value: p.ID})
+		candidates = append(candidates, completionCandidate{Value: p.ID, Description: render.Redact(p.Name)})
 	}
 	return candidates
 }
@@ -343,7 +344,7 @@ func subscriptionIDCandidates(opts options) []completionCandidate {
 	}
 	candidates := make([]completionCandidate, 0, len(sources))
 	for _, source := range sources {
-		candidates = append(candidates, completionCandidate{Value: source.ID})
+		candidates = append(candidates, completionCandidate{Value: source.ID, Description: render.Redact(source.Name)})
 	}
 	return candidates
 }
