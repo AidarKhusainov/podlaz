@@ -54,6 +54,7 @@ Commands likely to be scripted should support `--json`, especially:
 - `profile show`
 - `subscription list`
 - `subscription show`
+- `subscription delete`
 - `plan`
 
 If a command-specific implementation issue explicitly defers JSON, that command must fail fast for `--json` with exit code `2` until the JSON contract is implemented in a dedicated change.
@@ -239,6 +240,7 @@ tunwarden subscription add --name <name> --url <url>
 tunwarden subscription update <subscription-id>
 tunwarden subscription list [--json]
 tunwarden subscription show <subscription-id> [--json]
+tunwarden subscription delete <subscription-id> [--yes] [--keep-profiles]
 ```
 
 Purpose: explicit lifecycle management for subscription sources.
@@ -253,19 +255,25 @@ Supported response formats:
 Mutation level:
 
 - `list` and `show`: read-only;
-- `add` and `update`: persistent local TunWarden state only.
+- `add`, `update`, and `delete`: persistent local TunWarden state only.
 
 Required behavior:
 
 - `add` stores a subscription source without fetching it;
 - `update` fetches the source, detects the response format, normalizes supported profiles, and replaces only profiles owned by that subscription;
+- `delete` removes subscription metadata and, by default, removes profiles owned by that subscription;
+- `delete --keep-profiles` removes only subscription metadata and leaves imported profiles in the profile store;
+- `delete` must ask for interactive TTY confirmation unless `--yes` is passed;
+- `delete` must fail with exit code `2` in non-interactive mode unless `--yes` is passed;
 - successful import/update persists the detected format, imported profile IDs, and last update time in subscription metadata;
 - failed update preserves last known good imported profiles and subscription metadata;
+- failed delete preserves existing subscription metadata and profile state;
 - unsupported entries are reported clearly when at least one supported profile is imported;
 - responses with no supported profiles fail clearly and leave existing state unchanged;
-- `list` and `show` output must redact subscription URLs while showing persisted format, profile count, and last update time.
+- `list` and `show` output must redact subscription URLs while showing persisted format, profile count, and last update time;
+- `delete` output must redact subscription URLs, profile IDs, credentials, provider tokens, and secret-looking values.
 
-`subscription update --json` is deferred. Until implemented, it must fail fast as invalid usage with exit code `2`.
+`subscription update --json` and `subscription delete --json` are deferred. Until implemented, they must fail fast as invalid usage with exit code `2`.
 
 ### Status
 
@@ -508,7 +516,7 @@ The current implementation contains:
 
 - proxy-only lifecycle for Xray;
 - local import for VLESS Xray JSON, plain URI-list, and Base64 URI-list files through `tunwarden import <local-path>`;
-- subscription import/update for Base64 URI-list and Xray JSON responses over `file://`, `http://`, and `https://` sources;
+- subscription import/update/delete for Base64 URI-list and Xray JSON responses over `file://`, `http://`, and `https://` sources;
 - read-only full-tunnel TUN planning;
 - static shell completion generation for bash, zsh, and fish;
 - transaction-state persistence and diagnostics;
