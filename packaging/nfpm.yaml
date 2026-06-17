@@ -13,8 +13,9 @@ description: |-
   Linux-first CLI and daemon foundation for Xray-compatible VPN/proxy profiles.
   TunWarden makes VPN and proxy lifecycle behavior explicit, inspectable, and
   recoverable. The initial Debian package installs the CLI, daemon, systemd
-  unit, sysusers configuration, shell completions, manual pages, and project
-  documentation without enabling or starting the daemon automatically.
+  unit, sysusers configuration, shell completions, manual pages, AppStream
+  metadata, and project documentation without enabling or starting the daemon
+  automatically.
 
 depends:
   - libc6 (>= 2.34)
@@ -53,6 +54,10 @@ contents:
       mode: 0644
   - src: ./dist/package-root/usr/share/fish/vendor_completions.d/tunwarden.fish
     dst: /usr/share/fish/vendor_completions.d/tunwarden.fish
+    file_info:
+      mode: 0644
+  - src: ./dist/package-root/usr/share/metainfo/io.github.aidarkhusainov.tunwarden.metainfo.xml
+    dst: /usr/share/metainfo/io.github.aidarkhusainov.tunwarden.metainfo.xml
     file_info:
       mode: 0644
   - src: ./dist/package-root/usr/share/man/man1/tunwarden.1.gz
