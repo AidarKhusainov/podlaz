@@ -52,6 +52,7 @@ Commands likely to be scripted should support `--json`, especially:
 - `doctor`
 - `profile list`
 - `profile show`
+- `profile validate`
 - `subscription list`
 - `subscription show`
 - `subscription delete`
@@ -74,7 +75,7 @@ Exit codes:
 
 ### Redaction
 
-`status`, `doctor`, `logs`, `plan`, `recover`, and every `--json` output must follow the redaction rules in [State and security requirements](./state-and-security.md).
+`status`, `doctor`, `logs`, `plan`, `recover`, `profile validate`, and every `--json` output must follow the redaction rules in [State and security requirements](./state-and-security.md).
 
 Default output must not print full subscription URLs, full share URIs, generated core configs containing credentials, private keys, passwords, authorization headers, provider tokens, or transaction content that could contain secret-looking values.
 
@@ -152,7 +153,7 @@ Implemented behavior:
 - completes stable top-level command names;
 - completes implemented nested subcommands for `profile`, `subscription`, `completion`, and `help`;
 - completes implemented flags for command scopes that currently define flags;
-- completes static enum values including connection modes `proxy-only` and `tun` and supported profile protocol names;
+- completes static enum values including connection modes `proxy-only` and `tun`, `profile validate --mode` values `proxy-only` and `tun`, and supported profile protocol names;
 - intentionally does not complete dynamic user-specific values such as profile IDs, subscription IDs, file paths, URLs, daemon state, transaction IDs, routes, DNS data, or firewall state.
 
 Safety requirements:
@@ -211,25 +212,40 @@ tunwarden profile add --name <name> --server <host> --port <port> --protocol <vl
 tunwarden profile import <share-uri>
 tunwarden profile list [--json]
 tunwarden profile show <profile-id> [--json]
+tunwarden profile validate <profile-id> [--mode proxy-only|tun] [--json]
 tunwarden profile delete <profile-id> --yes
 ```
 
 Implemented behavior:
 
-- manual profile add, list, show, and delete;
+- manual profile add, list, show, validate, and delete;
 - VLESS, VMess, Trojan, and Shadowsocks share URI import through `profile import <share-uri>`;
 - deterministic imported profile IDs;
 - persistent local profile storage at the documented XDG user state location;
-- `profile list --json` and `profile show --json` with `schema_version: "v1"`;
+- `profile list --json`, `profile show --json`, and `profile validate --json` with `schema_version: "v1"`;
 - required-field validation and clear failure for malformed payloads;
+- selected-mode backend renderability validation through the supported Xray config generation path;
 - redaction of identity/authentication fields;
 - atomic profile store writes with restrictive file permissions;
 - `profile delete` requires `--yes` in the current non-interactive path.
 
 Mutation level:
 
-- `list` and `show`: read-only;
+- `list`, `show`, and `validate`: read-only;
 - `add`, `import`, and `delete`: persistent local TunWarden state only.
+
+`profile validate` details:
+
+- default mode is `proxy-only`;
+- `--mode tun` validates against the TUN-mode Xray renderability path;
+- success returns exit code `0`;
+- an existing profile that fails mode/backend renderability validation returns exit code `3`;
+- invalid arguments or unsupported modes return exit code `2`;
+- missing profile lookup returns exit code `1`;
+- human and JSON output must apply equivalent redaction;
+- the command must not start `tunwardend`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, mutate firewall state, or write runtime configuration.
+
+`profile validate --json` output uses the common top-level JSON shape with `schema_version`, `status`, `warnings`, and `errors`. It also includes `profile`, `mode`, `backend`, and boolean `valid` fields.
 
 Non-goals: no Xray process start and no networking mutation.
 
@@ -517,6 +533,7 @@ The current implementation contains:
 - proxy-only lifecycle for Xray;
 - local import for VLESS Xray JSON, plain URI-list, and Base64 URI-list files through `tunwarden import <local-path>`;
 - subscription import/update/delete for Base64 URI-list and Xray JSON responses over `file://`, `http://`, and `https://` sources;
+- profile validation for normalized profile state and selected proxy-only/TUN Xray renderability;
 - read-only full-tunnel TUN planning;
 - static shell completion generation for bash, zsh, and fish;
 - transaction-state persistence and diagnostics;
