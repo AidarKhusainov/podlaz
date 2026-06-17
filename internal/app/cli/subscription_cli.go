@@ -141,6 +141,9 @@ func runSubscriptionUpdate(ctx context.Context, store sub.Store, profileStore pr
 	if err != nil {
 		return err
 	}
+	providerName, providerNameWarnings := sub.ProviderSubscriptionDisplayName(format, content)
+	parsed.Warnings = append(parsed.Warnings, providerNameWarnings...)
+	source = sub.RefreshProviderDisplayName(source, providerName)
 	profileSnapshot, profileExisted, err := snapshotFile(profileStore.Path())
 	if err != nil {
 		return err
