@@ -74,7 +74,7 @@ func TestImportShareURIRejectsUnsafeDisplayNames(t *testing.T) {
 	}{
 		{
 			name:       "vmess-unsafe-ps",
-			uri:        "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(`{"v":"2","ps":"00000000-0000-0000-0000-000000000999","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","net":"tcp","tls":"tls"}`)),
+			uri:        "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(`{"v":"2","ps":"00000000-0000-0000-0000-000000000999","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","aid":"0","net":"tcp","tls":"tls"}`)),
 			wantName:   "vmess-example.com-443",
 			wantPrefix: "vmess-example.com-443-",
 		},
