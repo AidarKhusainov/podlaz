@@ -9,12 +9,9 @@
     <p>TunWarden is a Linux-first command-line client foundation for Xray-compatible profiles. It keeps lifecycle behavior explicit, inspectable, and recoverable while separating user-owned profile intent from daemon and system state.</p>
     <p>The local Debian package installs the CLI, daemon, systemd unit, sysusers configuration, shell completions, manual pages, documentation, and AppStream metadata. Package installation does not start or enable the daemon and does not apply runtime configuration.</p>
   </description>
-  <developer id="io.github.aidarkhusainov">
-    <name>Aidar Khusainov</name>
-  </developer>
+  <developer_name>Aidar Khusainov</developer_name>
   <url type="homepage">https://github.com/AidarKhusainov/tunwarden</url>
   <url type="bugtracker">https://github.com/AidarKhusainov/tunwarden/issues</url>
-  <url type="vcs-browser">https://github.com/AidarKhusainov/tunwarden</url>
   <provides>
     <binary>tunwarden</binary>
   </provides>
