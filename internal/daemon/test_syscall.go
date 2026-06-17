@@ -1,3 +1,0 @@
-package daemon
-
-// syscall.GetsockoptUcred
