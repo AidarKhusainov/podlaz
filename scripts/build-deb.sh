@@ -58,6 +58,7 @@ mkdir -p \
   "${root_dir}/usr/share/bash-completion/completions" \
   "${root_dir}/usr/share/zsh/vendor-completions" \
   "${root_dir}/usr/share/fish/vendor_completions.d" \
+  "${root_dir}/usr/share/metainfo" \
   "${root_dir}/usr/share/man/man1" \
   "${root_dir}/usr/share/man/man8" \
   "${root_dir}/usr/share/doc/tunwarden"
@@ -76,6 +77,7 @@ chmod 0644 \
 
 install -m 0644 packaging/systemd/tunwardend.service "${root_dir}/usr/lib/systemd/system/tunwardend.service"
 install -m 0644 packaging/sysusers.d/tunwarden.conf "${root_dir}/usr/lib/sysusers.d/tunwarden.conf"
+install -m 0644 packaging/linux/io.github.aidarkhusainov.tunwarden.metainfo.xml "${root_dir}/usr/share/metainfo/io.github.aidarkhusainov.tunwarden.metainfo.xml"
 gzip -9n -c docs/man/tunwarden.1 > "${root_dir}/usr/share/man/man1/tunwarden.1.gz"
 gzip -9n -c docs/man/tunwardend.8 > "${root_dir}/usr/share/man/man8/tunwardend.8.gz"
 install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/tunwarden/"
