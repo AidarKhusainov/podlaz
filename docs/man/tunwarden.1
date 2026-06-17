@@ -161,6 +161,20 @@ and update time.
 Show one subscription source with sensitive URL material redacted. JSON output
 uses the same persisted format metadata as human output.
 .TP
+.B subscription delete <subscription-id> [--yes] [--keep-profiles]
+Delete a subscription source from user-owned state. By default, this removes the
+subscription metadata and profiles owned by that subscription. With
+.BR --keep-profiles ,
+it removes only subscription metadata and leaves imported profiles in the
+profile store. In an interactive terminal it prompts for
+.B yes
+unless
+.B --yes
+is passed; in non-interactive mode it fails unless
+.B --yes
+is passed. JSON output for this command is deferred and fails fast with exit
+status 2.
+.TP
 .B plan --mode proxy-only <profile-id> [--json]
 Render a read-only proxy-only plan. The plan describes generated Xray config
 paths and local proxy listeners and states that no TUN, route, DNS, nftables, or
@@ -224,6 +238,12 @@ printing unstable JSON.
 Confirm a command that removes state or executes recovery cleanup. This flag is
 intentionally long-only.
 .TP
+.B --keep-profiles
+For
+.BR "subscription delete" ,
+remove subscription metadata while preserving imported profiles in the profile
+store.
+.TP
 .B --execute
 Execute recovery cleanup through the daemon. This flag is intentionally
 long-only and must be combined with explicit confirmation where required.
@@ -280,6 +300,12 @@ Successful subscription import and update output includes a detected
 .B Format:
 line. `subscription list` and `subscription show` read the persisted format from
 subscription metadata.
+.PP
+Successful subscription deletion prints the redacted subscription identifier and
+either the number of removed subscription-owned profiles or the number of
+profiles kept when
+.B --keep-profiles
+is used.
 .PP
 JSON output is available only for commands with an implemented JSON contract.
 Implemented JSON output includes a
@@ -349,6 +375,10 @@ Local and subscription imports parse supported content into normalized profiles
 only. They must not execute or persist raw Xray JSON as source of truth or
 runtime configuration.
 .PP
+Subscription delete mutates only user-owned local TunWarden state. It must not
+start the daemon, start Xray, fetch subscription URLs, require root, or mutate
+Linux networking state.
+.PP
 Output, JSON, diagnostics, plans, recovery reports, and logs must redact
 subscription URLs, share URIs, generated core config contents, private keys,
 passwords, authorization headers, provider tokens, and secret-looking query
@@ -394,6 +424,16 @@ Refresh an explicit subscription source:
 tunwarden subscription add --name personal --url https://example.com/subscription
 tunwarden subscription update personal
 tunwarden subscription show personal
+.EE
+.TP
+Delete a subscription and its owned imported profiles:
+.EX
+tunwarden subscription delete personal --yes
+.EE
+.TP
+Delete only subscription metadata and keep imported profiles:
+.EX
+tunwarden subscription delete personal --yes --keep-profiles
 .EE
 .TP
 Inspect a safe proxy-only plan:

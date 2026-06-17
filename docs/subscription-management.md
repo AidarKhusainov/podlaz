@@ -1,6 +1,6 @@
 # Subscription management
 
-`tunwarden subscription` is the implemented v0.1 command group for managing Base64 URI-list subscription sources in local user-owned TunWarden state.
+`tunwarden subscription` is the implemented v0.1 command group for managing subscription sources in local user-owned TunWarden state.
 
 Canonical command names, flags, exit codes, JSON compatibility, and milestone boundaries remain owned by [CLI contract](./cli.md). This document describes the implemented behavior.
 
@@ -11,9 +11,8 @@ tunwarden subscription add --name <name> --url <file-or-http-url>
 tunwarden subscription update <subscription-id>
 tunwarden subscription list [--json]
 tunwarden subscription show <subscription-id> [--json]
+tunwarden subscription delete <subscription-id> --yes [--keep-profiles]
 ```
-
-`subscription delete` is intentionally not implemented yet because the product contract still needs explicit behavior for whether deleting a subscription also removes profiles previously imported from it.
 
 ## Supported sources and formats
 
@@ -23,16 +22,21 @@ The v0.1 implementation stores subscription metadata under the documented XDG us
 - `http://`
 - `https://`
 
-The source content must be a Base64-encoded URI list. Decoded entries are read line by line. Empty lines are ignored.
+Supported response formats:
 
-Supported entries are normalized through the same importer used by `tunwarden profile import`:
+- Base64 URI-list
+- Xray JSON object or array
 
-- VLESS share URIs.
+URI-list entries are read line by line after decoding or direct format detection. Empty lines are ignored.
+
+Supported entries are normalized through the same profile model used by `tunwarden profile import`:
+
+- VLESS share URIs and supported VLESS Xray JSON outbounds.
 - VMess share URIs.
 - Trojan share URIs.
 - Shadowsocks share URIs.
 
-Unsupported entries, malformed URIs, or duplicate imported profile IDs are reported as unsupported entries without failing the whole update when at least one supported profile was imported.
+Unsupported entries, malformed URIs, unsupported Xray outbounds, or duplicate imported profile IDs are reported as unsupported entries without failing the whole update when at least one supported profile was imported.
 
 ## Client identity placeholder
 
@@ -61,16 +65,17 @@ To reset the client identity, remove only the `client-id` file. Resetting it can
 
 1. read the stored subscription source;
 2. fetch the source content;
-3. decode the Base64 URI list;
-4. normalize and validate supported share URI entries;
+3. detect the response format;
+4. normalize and validate supported entries;
 5. report unsupported entries and warnings;
 6. replace only the profiles previously owned by that subscription;
-7. persist the updated subscription metadata with the latest imported profile IDs and update timestamp.
+7. persist the updated subscription metadata with the latest imported profile IDs, detected format, and update timestamp.
 
 The command prints a stable human-readable update summary:
 
 ```text
 Subscription updated: my-sub
+Format: base64
 Imported: 8
 Updated: 2
 Unchanged: 6
@@ -81,18 +86,38 @@ Warnings: 1
 
 `Removed` counts profiles that were previously imported from the same subscription but no longer appear in the latest successful update.
 
-If fetching, Base64 decoding, parsing, normalization, or validation fails before apply, the existing profile store and subscription metadata are left unchanged, so the last known good imported profile set remains available through `tunwarden profile list`.
+If fetching, decoding, parsing, normalization, validation, profile replacement, or metadata update fails, the existing profile store and subscription metadata are left unchanged, so the last known good imported profile set remains available through `tunwarden profile list`.
+
+## Delete behavior
+
+`subscription delete <subscription-id> --yes` removes the subscription metadata and removes only profiles owned by that subscription. Manual profiles, one-off imported URI/file profiles, and profiles owned by other subscriptions are preserved.
+
+The command prints a concise summary:
+
+```text
+Subscription deleted: personal
+Profiles removed: 8
+```
+
+`subscription delete <subscription-id> --yes --keep-profiles` removes only the subscription metadata and keeps previously imported profiles in the profile store:
+
+```text
+Subscription deleted: personal
+Profiles kept: 8
+```
+
+`subscription delete` follows the destructive command confirmation model: the current non-interactive path requires `--yes`. Missing subscription IDs fail clearly. Profile cleanup is rolled back if subscription metadata removal fails after profile cleanup has been applied.
 
 ## Output and redaction
 
 `subscription list --json` and `subscription show --json` use the common v1 JSON shape with `schema_version`, `status`, `warnings`, and `errors`.
 
-Human and JSON output redact subscription source URLs. Full subscription URLs, full share URIs, and imported profile identities must not be printed by subscription commands.
+Human and JSON output redact subscription source URLs. Full subscription URLs, full share URIs, imported profile identities, provider tokens, generated client identities, passwords, and generated core configs must not be printed by subscription commands.
 
-`subscription add --json` and `subscription update --json` are deferred. They fail fast as invalid usage with exit code `2` until their JSON contract is implemented.
+`subscription add --json`, `subscription update --json`, and `subscription delete --json` are deferred. They fail fast as invalid usage with exit code `2` until their JSON contracts are implemented.
 
 ## Safety boundary
 
 Subscription commands only parse input and mutate persistent local user-owned profile/subscription state. They never start Xray, never start network processes, and never mutate TUN devices, routes, DNS, nftables, or firewall state.
 
-HTTP(S) subscription updates perform a bounded client fetch of the configured source URL. They do not change host networking configuration.
+HTTP(S) subscription updates perform a bounded client fetch of the configured source URL. `subscription delete` never connects to the subscription URL.

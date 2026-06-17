@@ -198,6 +198,7 @@ func completionRegistry() *completionCommand {
 			{Name: "list", Flags: []completionFlag{longBoolFlag("--json")}},
 			{Name: "show", Flags: []completionFlag{longBoolFlag("--json")}, Dynamic: completionDynamicSubscriptionIDs},
 			{Name: "update", Dynamic: completionDynamicSubscriptionIDs},
+			{Name: "delete", Flags: []completionFlag{longBoolFlag("--yes"), longBoolFlag("--keep-profiles")}, Dynamic: completionDynamicSubscriptionIDs},
 		}},
 		{Name: "plan", Flags: []completionFlag{longEnumFlag("--mode", modes), longBoolFlag("--json")}, Dynamic: completionDynamicProfileIDs},
 		{Name: "connect", Flags: []completionFlag{longEnumFlag("--mode", modes)}, Dynamic: completionDynamicProfileIDs},

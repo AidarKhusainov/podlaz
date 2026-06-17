@@ -101,6 +101,14 @@ Failed fetch, decode, parse, validation, profile replacement, or metadata update
 
 Duplicate profile IDs inside one subscription response fail the update. Unsupported protocol, transport, security, or incompatible transport/security combinations are reported as unsupported profile entries rather than silently accepted.
 
+## Delete behavior
+
+A subscription delete with `--yes` removes subscription metadata and, by default, removes only profiles whose IDs are recorded in that subscription metadata and whose profile source is `subscription`.
+
+Manual profiles, one-off imported URI/file profiles, and profiles owned by other subscriptions are preserved. Already-absent profile entries owned by the target subscription are ignored during cleanup, but a missing subscription ID is still an operation failure.
+
+`--keep-profiles` removes only the subscription metadata. Kept profiles remain normalized profile entries and keep their `subscription` source value because that source describes how the profile entered TunWarden; it is not a foreign-key reference to a stored subscription row.
+
 ## CLI behavior
 
 Import a one-off local file:
@@ -123,6 +131,7 @@ tunwarden subscription add --name personal --url https://example.com/subscriptio
 tunwarden subscription update personal
 tunwarden subscription list
 tunwarden subscription show personal
+tunwarden subscription delete personal --yes
 ```
 
 Human output for successful subscription import/update includes a concise detected format line:
@@ -136,6 +145,8 @@ or:
 ```text
 Format: xray-json
 ```
+
+Human output for successful subscription delete includes the deleted subscription ID and either the removed or kept profile count.
 
 `subscription list --json` and `subscription show --json` expose the persisted format and redacted URL metadata with the common JSON envelope.
 
