@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,9 +32,12 @@ func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opt
 	if err != nil {
 		return err
 	}
-	p, err := store.Get(parsed.profileID)
+	p, err := store.Get(parsed.profileRef)
 	if err != nil {
 		return profileCommandError(err)
+	}
+	if err := validateConnectProfile(p, parsed.mode); err != nil {
+		return err
 	}
 
 	response, err := runConnect(ctx, p, parsed.mode, opts)
@@ -65,8 +69,8 @@ func runDisconnectCommand(ctx context.Context, args []string, stdout io.Writer, 
 }
 
 type connectArgs struct {
-	mode      string
-	profileID string
+	mode       string
+	profileRef string
 }
 
 func parseConnectArgs(args []string) (connectArgs, error) {
@@ -88,10 +92,10 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 			if strings.HasPrefix(arg, "-") {
 				return parsed, usageError("unsupported connect argument %q", arg)
 			}
-			if parsed.profileID != "" {
-				return parsed, usageError("connect accepts exactly one profile id")
+			if parsed.profileRef != "" {
+				return parsed, usageError("connect accepts exactly one profile ref")
 			}
-			parsed.profileID = arg
+			parsed.profileRef = arg
 		}
 	}
 	switch parsed.mode {
@@ -99,10 +103,48 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 	default:
 		return parsed, usageError("unsupported connect mode %q", parsed.mode)
 	}
-	if parsed.profileID == "" {
-		return parsed, usageError("connect requires a profile id")
+	if parsed.profileRef == "" {
+		return parsed, usageError("connect requires a profile ref")
 	}
 	return parsed, nil
+}
+
+func validateConnectProfile(p profile.Profile, mode string) error {
+	if err := profile.Validate(p); err != nil {
+		return err
+	}
+	switch mode {
+	case planner.ModeProxyOnly:
+		return validateXrayVLESSConnectProfile(p, "proxy-only")
+	case planner.ModeTun:
+		return validateXrayVLESSConnectProfile(p, "TUN-mode")
+	default:
+		return usageError("unsupported connect mode %q", mode)
+	}
+}
+
+func validateXrayVLESSConnectProfile(p profile.Profile, modeName string) error {
+	if p.Engine != profile.EngineXray {
+		return fmt.Errorf("%s connect requires engine %q, got %q", modeName, profile.EngineXray, p.Engine)
+	}
+	if strings.ToLower(strings.TrimSpace(p.Protocol)) != "vless" {
+		return fmt.Errorf("%s connect supports VLESS profiles only, got %q", modeName, p.Protocol)
+	}
+	if strings.TrimSpace(p.UserIdentity) == "" {
+		return fmt.Errorf("%s connect requires VLESS user_identity", modeName)
+	}
+	if encryption := connectVLESSEncryption(p); encryption != "none" {
+		return fmt.Errorf("unsupported %s VLESS encryption %q", modeName, p.Encryption)
+	}
+	return nil
+}
+
+func connectVLESSEncryption(p profile.Profile) string {
+	encryption := strings.ToLower(strings.TrimSpace(p.Encryption))
+	if encryption == "" {
+		return "none"
+	}
+	return encryption
 }
 
 func runConnect(ctx context.Context, p profile.Profile, mode string, opts options) (api.LifecycleResponse, error) {
@@ -166,38 +208,24 @@ func renderLifecycleFields(stdout io.Writer, response api.LifecycleResponse) {
 }
 
 func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
-	return api.ProfileSnapshot{
-		ID:               p.ID,
-		Name:             p.Name,
-		Source:           string(p.Source),
-		Engine:           string(p.Engine),
-		Server:           p.Server,
-		Port:             p.Port,
-		Protocol:         p.Protocol,
-		UserIdentity:     p.UserIdentity,
-		Transport:        p.Transport,
-		Security:         p.Security,
-		Encryption:       p.Encryption,
-		Flow:             p.Flow,
-		ServerName:       p.ServerName,
-		ALPN:             p.ALPN,
-		Fingerprint:      p.Fingerprint,
-		Path:             p.Path,
-		HostHeader:       p.HostHeader,
-		ServiceName:      p.ServiceName,
-		RealityPublicKey: p.RealityPublicKey,
-		RealityShortID:   p.RealityShortID,
-		RealitySpiderX:   p.RealitySpiderX,
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		return api.ProfileSnapshot{}
 	}
+	var snapshot api.ProfileSnapshot
+	if err := json.Unmarshal(encoded, &snapshot); err != nil {
+		return api.ProfileSnapshot{}
+	}
+	return snapshot
 }
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden connect [--mode proxy-only|tun] <profile-id>
+  tunwarden connect [--mode proxy-only|tun] <profile-ref>
 
 Start the stored profile through the daemon-managed lifecycle. The default mode
 is proxy-only. TUN mode requires a daemon process with CAP_NET_ADMIN-equivalent
-privileges.
+privileges. Profile refs currently resolve stored profile IDs.
 `)
 }
 
