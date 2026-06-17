@@ -31,7 +31,3 @@ func peerSubjectFromConn(conn net.Conn) (PeerSubject, bool) {
 	}
 	return subject, true
 }
-
-func readProcStartTime(pid int) (string, error) {
-	return "0", nil
-}
