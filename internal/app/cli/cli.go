@@ -78,6 +78,9 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 
 	command := strings.ToLower(args[0])
 	commandArgs := args[1:]
+	if err := guardSudoUserStateCommand(command, commandArgs); err != nil {
+		return err
+	}
 
 	switch command {
 	case "__complete":
