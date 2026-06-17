@@ -20,7 +20,7 @@ func TestRunCLIImportLocalXrayJSON(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", fixturePath}, &out, opts); err != nil {
 		t.Fatalf("local Xray JSON import failed: %v", err)
 	}
-	for _, want := range []string{"Local import completed", "Format: xray-json", "Inspected: 1", "Imported: 1", "Skipped: 0", "json-cli-"} {
+	for _, want := range []string{"Local import completed", "Format: xray-json", "Inspected: 1", "Imported: 1", "Skipped: 0", "vless-example.com-443-", "json-cli"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected local import output to contain %q, got %q", want, out.String())
 		}
@@ -34,7 +34,7 @@ func TestRunCLIImportLocalXrayJSON(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "show", profileID}, &show, opts); err != nil {
 		t.Fatalf("profile show failed: %v", err)
 	}
-	for _, want := range []string{"Source: imported_file", "Protocol: vless", "Security: reality", "Reality public key: public-key"} {
+	for _, want := range []string{"Name: json-cli", "Source: imported_file", "Protocol: vless", "Security: reality", "Reality public key: public-key"} {
 		if !strings.Contains(show.String(), want) {
 			t.Fatalf("expected profile show to contain %q, got %q", want, show.String())
 		}
@@ -54,7 +54,7 @@ func TestRunCLIImportLocalPlainURIList(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", fixturePath}, &out, opts); err != nil {
 		t.Fatalf("local URI-list import failed: %v", err)
 	}
-	for _, want := range []string{"Format: uri-list", "Inspected: 2", "Imported: 1", "Skipped: 1", "unsupported profile import URI scheme"} {
+	for _, want := range []string{"Format: uri-list", "Inspected: 2", "Imported: 1", "Skipped: 1", "plain-cli", "unsupported profile import URI scheme"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected local URI-list output to contain %q, got %q", want, out.String())
 		}
@@ -72,7 +72,7 @@ func TestRunCLIImportLocalBase64URIList(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", fixturePath}, &out, opts); err != nil {
 		t.Fatalf("local Base64 URI-list import failed: %v", err)
 	}
-	for _, want := range []string{"Format: base64-uri-list", "Imported: 1", "base64-cli-"} {
+	for _, want := range []string{"Format: base64-uri-list", "Imported: 1", "vless-example.com-443-", "base64-cli"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected local Base64 URI-list output to contain %q, got %q", want, out.String())
 		}
@@ -173,7 +173,10 @@ func firstLocalImportCLIProfileID(t *testing.T, output string) string {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "- ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "- "))
+			fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(line, "- ")))
+			if len(fields) > 0 {
+				return fields[0]
+			}
 		}
 	}
 	t.Fatalf("did not find imported profile id in output: %q", output)
