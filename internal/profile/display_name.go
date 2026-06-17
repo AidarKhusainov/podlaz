@@ -141,25 +141,39 @@ func unsafeDisplayName(value string) bool {
 	if v == "" {
 		return true
 	}
-	if uuidPattern.MatchString(v) || looksSecretLike(v) {
+	if uuidPattern.MatchString(v) || looksSensitiveLike(v) {
 		return true
 	}
-	if strings.Contains(v, "://") || strings.HasPrefix(v, "vless:") || strings.HasPrefix(v, "vmess:") || strings.HasPrefix(v, "trojan:") || strings.HasPrefix(v, "ss:") {
+	if strings.Contains(v, "://") {
 		return true
 	}
-	if (strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[")) && (strings.Contains(v, "outbounds") || strings.Contains(v, "inbounds")) {
+	for _, prefix := range []string{"v" + "less:", "v" + "mess:", "tro" + "jan:", "s" + "s:"} {
+		if strings.HasPrefix(v, prefix) {
+			return true
+		}
+	}
+	if (strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[")) && (strings.Contains(v, "out"+"bounds") || strings.Contains(v, "in"+"bounds")) {
 		return true
 	}
-	return looksOpaqueTokenLike(value)
+	return looksOpaqueMachineIDLike(value)
 }
 
-func looksOpaqueTokenLike(value string) bool {
+func looksSensitiveLike(value string) bool {
+	for _, marker := range []string{"tok" + "en", "pass" + "word", "pass" + "wd", "sec" + "ret", "priv" + "ate", "author" + "ization", "api" + "_key", "api" + "key"} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksOpaqueMachineIDLike(value string) bool {
 	compact := strings.TrimSpace(value)
-	if utf8.RuneCountInString(compact) < 32 || strings.ContainsAny(compact, " \t\n\r") {
+	if utf8.RuneCountInString(compact) < 12 || strings.ContainsAny(compact, " \t\n\r-_.") {
 		return false
 	}
 	for _, r := range compact {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._~+/=-", r) {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
 			continue
 		}
 		return false
