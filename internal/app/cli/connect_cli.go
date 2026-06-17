@@ -93,7 +93,7 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 				return parsed, usageError("unsupported connect argument %q", arg)
 			}
 			if parsed.profileRef != "" {
-				return parsed, usageError("connect accepts exactly one profile ref")
+				return parsed, usageError("connect accepts exactly one profile id")
 			}
 			parsed.profileRef = arg
 		}
@@ -104,7 +104,7 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 		return parsed, usageError("unsupported connect mode %q", parsed.mode)
 	}
 	if parsed.profileRef == "" {
-		return parsed, usageError("connect requires a profile ref")
+		return parsed, usageError("connect requires a profile id")
 	}
 	return parsed, nil
 }
@@ -221,11 +221,10 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden connect [--mode proxy-only|tun] <profile-ref>
+  tunwarden connect [--mode proxy-only|tun] <profile-id>
 
 Start the stored profile through the daemon-managed lifecycle. The default mode
-is proxy-only. TUN mode requires a daemon process with CAP_NET_ADMIN-equivalent
-privileges. Profile refs currently resolve stored profile IDs.
+is proxy-only. TUN mode requires daemon networking privileges.
 `)
 }
 
