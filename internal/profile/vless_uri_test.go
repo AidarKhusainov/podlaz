@@ -14,8 +14,8 @@ func TestImportVLESSURIValidRealityFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import VLESS URI: %v", err)
 	}
-	if !strings.HasPrefix(p.ID, "my-vless-profile-") || p.ID == "my-vless-profile" {
-		t.Fatalf("expected profile id with deterministic hash suffix, got %q", p.ID)
+	if !strings.HasPrefix(p.ID, "vless-example.com-443-") {
+		t.Fatalf("expected stable endpoint-based profile id, got %q", p.ID)
 	}
 	if p.Name != "my-vless-profile" || p.Source != SourceImportedURI || p.Protocol != "vless" {
 		t.Fatalf("unexpected normalized profile metadata: %#v", p)
@@ -56,8 +56,8 @@ func TestImportVLESSURIWarnsAboutUnsupportedOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import VLESS URI: %v", err)
 	}
-	if !strings.HasPrefix(p.ID, "with-warnings-") {
-		t.Fatalf("expected imported profile with display-name prefix, got %#v", p)
+	if !strings.HasPrefix(p.ID, "vless-example.com-443-") || p.Name != "with-warnings" {
+		t.Fatalf("expected endpoint-based ID with provider display name, got %#v", p)
 	}
 	want := []string{`unsupported VLESS option "ed" ignored`, `unsupported VLESS option "foo" ignored`}
 	if len(warnings) != len(want) {
@@ -67,6 +67,21 @@ func TestImportVLESSURIWarnsAboutUnsupportedOptions(t *testing.T) {
 		if warnings[i] != want[i] {
 			t.Fatalf("warning %d mismatch: got %q want %q", i, warnings[i], want[i])
 		}
+	}
+}
+
+func TestImportVLESSURIRejectsUnsafeDisplayName(t *testing.T) {
+	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#https%3A//example.com/token/secret"
+
+	p, warnings, err := ImportVLESSURI(uri)
+	if err != nil {
+		t.Fatalf("import VLESS URI: %v", err)
+	}
+	if p.Name != "vless-example.com-443" {
+		t.Fatalf("expected safe fallback display name, got %q", p.Name)
+	}
+	if len(warnings) != 1 || warnings[0] != DisplayNameRejectedWarning {
+		t.Fatalf("expected display-name rejection warning, got %#v", warnings)
 	}
 }
 
@@ -110,30 +125,31 @@ func TestImportVLESSURIRealityTransportCompatibility(t *testing.T) {
 }
 
 func TestImportVLESSURIDeterministicIDUsesConnectionFingerprint(t *testing.T) {
-	firstURI := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#same-name"
-	secondURI := "vless://00000000-0000-0000-0000-000000000002@example.com:443?type=tcp&security=tls#same-name"
+	firstURI := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#first-name"
+	sameConnectionRenamedURI := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#renamed"
+	secondURI := "vless://00000000-0000-0000-0000-000000000002@example.com:443?type=tcp&security=tls#first-name"
 
 	first, _, err := ImportVLESSURI(firstURI)
 	if err != nil {
 		t.Fatalf("import first VLESS URI: %v", err)
 	}
-	firstAgain, _, err := ImportVLESSURI(firstURI)
+	firstRenamed, _, err := ImportVLESSURI(sameConnectionRenamedURI)
 	if err != nil {
-		t.Fatalf("import first VLESS URI again: %v", err)
+		t.Fatalf("import renamed VLESS URI: %v", err)
 	}
 	second, _, err := ImportVLESSURI(secondURI)
 	if err != nil {
 		t.Fatalf("import second VLESS URI: %v", err)
 	}
 
-	if first.ID != firstAgain.ID {
-		t.Fatalf("expected deterministic ID for same URI, got %q and %q", first.ID, firstAgain.ID)
+	if first.ID != firstRenamed.ID {
+		t.Fatalf("expected stable ID across display-name changes, got %q and %q", first.ID, firstRenamed.ID)
 	}
 	if first.ID == second.ID {
 		t.Fatalf("expected distinct IDs for different VLESS identities, both got %q", first.ID)
 	}
-	if first.Name != "same-name" || second.Name != "same-name" {
-		t.Fatalf("expected fragment to remain display name, got %q and %q", first.Name, second.Name)
+	if first.Name != "first-name" || firstRenamed.Name != "renamed" || second.Name != "first-name" {
+		t.Fatalf("expected fragments to remain display names, got %q, %q, %q", first.Name, firstRenamed.Name, second.Name)
 	}
 }
 
