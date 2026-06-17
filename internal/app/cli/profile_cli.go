@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AidarKhusainov/tunwarden/internal/engine"
+	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
 	"github.com/AidarKhusainov/tunwarden/internal/profile"
 	"github.com/AidarKhusainov/tunwarden/internal/render"
 )
@@ -37,6 +39,8 @@ func runProfileCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		return runProfileList(store, args[1:], stdout)
 	case "show":
 		return runProfileShow(store, args[1:], stdout)
+	case "validate":
+		return runProfileValidate(store, args[1:], stdout)
 	case "delete":
 		return runProfileDelete(store, args[1:], stdout)
 	default:
@@ -148,6 +152,62 @@ func runProfileShow(store profile.Store, args []string, stdout io.Writer) error 
 	return nil
 }
 
+func runProfileValidate(store profile.Store, args []string, stdout io.Writer) error {
+	parsed, err := parseProfileValidateArgs(args)
+	if err != nil {
+		return err
+	}
+
+	p, err := store.Get(parsed.id)
+	if err != nil {
+		return profileCommandError(err)
+	}
+
+	validationErr := validateProfileForMode(p, parsed.mode)
+	out := profileForOutput(p)
+	if parsed.jsonOutput {
+		status := "ok"
+		valid := true
+		errors := []string{}
+		if validationErr != nil {
+			status = "fail"
+			valid = false
+			errors = []string{render.Redact(validationErr.Error())}
+		}
+		if err := writeJSON(stdout, map[string]any{
+			"schema_version": "v1",
+			"status":         status,
+			"warnings":       []string{},
+			"errors":         errors,
+			"profile":        out,
+			"mode":           parsed.mode,
+			"backend":        render.Redact(string(p.Engine)),
+			"valid":          valid,
+		}); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(stdout, "Profile validation")
+		fmt.Fprintf(stdout, "Profile: %s\n", out.Name)
+		fmt.Fprintf(stdout, "Profile ID: %s\n", out.ID)
+		fmt.Fprintf(stdout, "Source: %s\n", out.Source)
+		fmt.Fprintf(stdout, "Mode: %s\n", parsed.mode)
+		fmt.Fprintf(stdout, "Backend: %s\n", render.Redact(string(p.Engine)))
+		fmt.Fprintf(stdout, "Protocol: %s\n", out.Protocol)
+		if validationErr == nil {
+			fmt.Fprintln(stdout, "Status: valid")
+		} else {
+			fmt.Fprintln(stdout, "Status: invalid")
+			fmt.Fprintf(stdout, "Reason: %s\n", render.Redact(validationErr.Error()))
+		}
+	}
+
+	if validationErr != nil {
+		return exitError{code: 3, err: validationErr}
+	}
+	return nil
+}
+
 func runProfileDelete(store profile.Store, args []string, stdout io.Writer) error {
 	id, yes, err := parseProfileDeleteArgs(args)
 	if err != nil {
@@ -168,6 +228,12 @@ type profileAddArgs struct {
 	server   string
 	port     uint16
 	protocol string
+}
+
+type profileValidateArgs struct {
+	id         string
+	mode       string
+	jsonOutput bool
 }
 
 func parseProfileAddArgs(args []string) (profileAddArgs, error) {
@@ -265,6 +331,42 @@ func parseProfileShowArgs(args []string) (string, bool, error) {
 		return "", false, usageError("profile show requires a profile id")
 	}
 	return id, jsonOutput, nil
+}
+
+func parseProfileValidateArgs(args []string) (profileValidateArgs, error) {
+	parsed := profileValidateArgs{mode: planner.ModeProxyOnly}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		value, hasInlineValue := cutFlagValue(arg)
+		switch {
+		case arg == "--mode" || strings.HasPrefix(arg, "--mode="):
+			v, next, err := flagValue("profile validate --mode", args, i, value, hasInlineValue)
+			if err != nil {
+				return parsed, err
+			}
+			parsed.mode = strings.ToLower(strings.TrimSpace(v))
+			i = next
+		case arg == "--json":
+			parsed.jsonOutput = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return parsed, usageError("unsupported profile validate argument %q", arg)
+			}
+			if parsed.id != "" {
+				return parsed, usageError("profile validate accepts exactly one profile id")
+			}
+			parsed.id = arg
+		}
+	}
+	if parsed.id == "" {
+		return parsed, usageError("profile validate requires a profile id")
+	}
+	switch parsed.mode {
+	case planner.ModeProxyOnly, planner.ModeTun:
+	default:
+		return parsed, usageError("unsupported profile validate mode %q", parsed.mode)
+	}
+	return parsed, nil
 }
 
 func parseProfileDeleteArgs(args []string) (string, bool, error) {
@@ -384,6 +486,20 @@ func profileForOutput(p profile.Profile) profile.Profile {
 	return p
 }
 
+func validateProfileForMode(p profile.Profile, mode string) error {
+	if err := profile.Validate(p); err != nil {
+		return err
+	}
+	switch mode {
+	case planner.ModeProxyOnly:
+		return engine.ValidateXrayProxyOnlyProfile(p)
+	case planner.ModeTun:
+		return engine.ValidateXrayTunProfile(p)
+	default:
+		return fmt.Errorf("unsupported profile validation mode %q", mode)
+	}
+}
+
 func redactedProfileUserIdentity(p profile.Profile) string {
 	if strings.TrimSpace(p.UserIdentity) == "" {
 		return ""
@@ -409,18 +525,19 @@ func printProfileHelp(w io.Writer) {
   tunwarden profile import <share-uri>
   tunwarden profile list [--json]
   tunwarden profile show <profile-id> [--json]
+  tunwarden profile validate <profile-id> [--mode proxy-only|tun] [--json]
   tunwarden profile delete <profile-id> --yes
 
 Manage profiles in local TunWarden user state. These commands never start
 network processes and never mutate TUN, routes, DNS, nftables, or firewall state.
 
 Implemented in v0.1:
-  manual profile add/list/show/delete, VLESS/VMess/Trojan/Shadowsocks share URI
-  import, validation, JSON list/show output, and atomic local profile storage
-  under the documented XDG user state location.
+  manual profile add/list/show/validate/delete, VLESS/VMess/Trojan/Shadowsocks
+  share URI import, validation, JSON list/show/validate output, and atomic local
+  profile storage under the documented XDG user state location.
 
 Not implemented yet:
-  profile import --json, Xray config generation for non-VLESS imported profiles,
-  connect/disconnect behavior
+  profile import --json, profile inspect/explain, Xray config generation for
+  non-VLESS imported profiles, connect/disconnect behavior
 `)
 }
