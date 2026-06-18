@@ -33,7 +33,7 @@ func FakeResolvedDesktop() Snapshot {
 		},
 		Nftables: Nftables{
 			Availability: Finding{Status: StatusDetected, Summary: "nftables table listing available"},
-			podlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not found"},
+			PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not found"},
 		},
 		TunDevices: []TunDevice{{Name: DefaultTunName, Status: StatusMissing, Detail: "device not found"}},
 		IPv4:       Finding{Status: StatusDetected, Summary: "IPv4 default route detected"},
@@ -72,7 +72,7 @@ func FakeDesktopWithoutOptionalTools() Snapshot {
 	s.NetworkManager = NetworkManager{Finding: Finding{Status: StatusMissing, Summary: "nmcli not found"}}
 	s.Nftables = Nftables{
 		Availability: Finding{Status: StatusMissing, Summary: "nft not found"},
-		podlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"},
+		PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"},
 	}
 	return s
 }
@@ -82,7 +82,7 @@ func FakeDesktopWithoutOptionalTools() Snapshot {
 func FakeDesktopWithStalepodlazResources() Snapshot {
 	s := FakeResolvedDesktop()
 	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}}
-	s.Nftables.podlazTable = Finding{Status: StatusDetected, Summary: "podlaz nftables table exists"}
+	s.Nftables.PodlazTable = Finding{Status: StatusDetected, Summary: "podlaz nftables table exists"}
 	s.StaleResources = []StaleResource{
 		{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"},
 		{Kind: "nftables-table", Name: DefaultNFTFamily + " " + DefaultNFTTable, Status: StatusDetected},
