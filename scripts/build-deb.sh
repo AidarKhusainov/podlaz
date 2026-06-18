@@ -65,7 +65,7 @@ mkdir -p \
   "${root_dir}/usr/share/doc/tunwarden"
 
 ldflags="-s -w -X ${version_package}=${binary_version}"
-CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
+CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlaz" ./cmd/podlaz
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
 
 "${root_dir}/usr/bin/tunwarden" completion bash > "${root_dir}/usr/share/bash-completion/completions/tunwarden"
