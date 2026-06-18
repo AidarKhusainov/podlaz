@@ -67,7 +67,7 @@ func firewallDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.
 	if state.Mode != planner.ModeTun {
 		return doctor.Check{Name: "firewall", Severity: doctor.SeverityOK, Message: "not modified"}
 	}
-	if snapshot.Nftables.podlazTable.Status == netsnapshot.StatusDetected {
+	if snapshot.Nftables.PodlazTable.Status == netsnapshot.StatusDetected {
 		return doctor.Check{Name: "firewall", Severity: doctor.SeverityOK, Message: "podlaz nftables table detected"}
 	}
 	if snapshot.Nftables.Availability.Status == netsnapshot.StatusDetected {
