@@ -1,5 +1,6 @@
 [Unit]
 Description=podlaz daemon
+Documentation=man:podlazd(8) https://github.com/AidarKhusainov/podlaz/tree/master/docs
 After=network.target
 
 [Service]
@@ -10,3 +11,24 @@ RestartSec=2s
 User=podlaz
 Group=podlaz
 UMask=0077
+Environment=PODLAZ_SERVICE=systemd
+RuntimeDirectory=podlaz
+RuntimeDirectoryMode=0710
+StateDirectory=podlaz
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=podlazd
+
+[Install]
+WantedBy=multi-user.target
