@@ -276,7 +276,7 @@ func firewallPlan(s snapshot.Snapshot, policy string, device TunDevicePlan, serv
 		tableAction = FirewallActionBlocked
 		reason = fmt.Sprintf("nftables availability is %s; firewall mutation is unsafe until nft can be inspected", s.Nftables.Availability.Status)
 	}
-	if s.Nftables.podlazTable.Status == snapshot.StatusDetected {
+	if s.Nftables.PodlazTable.Status == snapshot.StatusDetected {
 		tableAction = FirewallActionValidate
 		reason = "podlaz nftables table already exists; future apply must validate ownership or recover it before replacing rules"
 	}
@@ -419,171 +419,20 @@ func killSwitchPlan(policy string, device TunDevicePlan) TunKillSwitchPlan {
 
 func normalizeKillSwitchPolicy(policy string) string {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
-	case KillSwitchPolicyOff:
-		return KillSwitchPolicyOff
+	case "", KillSwitchPolicySoft:
+		return KillSwitchPolicySoft
 	case KillSwitchPolicyStrict:
 		return KillSwitchPolicyStrict
+	case KillSwitchPolicyOff:
+		return KillSwitchPolicyOff
 	default:
 		return KillSwitchPolicySoft
 	}
 }
 
 func normalizeDNSServers(servers []string) []string {
-	out := make([]string, 0, len(servers))
-	seen := map[string]bool{}
-	for _, server := range servers {
-		server = strings.TrimSpace(server)
-		if server == "" || seen[server] {
-			continue
-		}
-		seen[server] = true
-		out = append(out, server)
-	}
-	if len(out) == 0 {
+	if len(servers) == 0 {
 		return []string{DefaultTunDNSServer}
 	}
-	return out
-}
-
-func tunSnapshotWarnings(s snapshot.Snapshot) []string {
-	var warnings []string
-	if s.DefaultIPv4.Status != snapshot.StatusDetected {
-		warnings = append(warnings, fmt.Sprintf("IPv4 default route is %s; full-tunnel planning cannot select a stable uplink yet", s.DefaultIPv4.Status))
-	}
-	if s.ServerRoute.Status != snapshot.StatusDetected {
-		warnings = append(warnings, fmt.Sprintf("route to VPN server candidate is %s; server bypass route planning is incomplete", s.ServerRoute.Status))
-	}
-	if s.DNS.Resolved.Status != snapshot.StatusDetected {
-		warnings = append(warnings, fmt.Sprintf("systemd-resolved state is %s; DNS planning will need fallback handling", s.DNS.Resolved.Status))
-	}
-	if s.Nftables.Availability.Status != snapshot.StatusDetected {
-		warnings = append(warnings, fmt.Sprintf("nftables availability is %s; firewall and kill-switch planning is incomplete", s.Nftables.Availability.Status))
-	}
-	if len(s.StaleResources) > 0 {
-		warnings = append(warnings, fmt.Sprintf("found %d stale podlaz-owned resource(s); recover should inspect them before applying TUN mode", len(s.StaleResources)))
-	}
-	if s.IPv6.Status != snapshot.StatusDetected {
-		warnings = append(warnings, fmt.Sprintf("IPv6 state is %s; initial TUN planning keeps IPv6 disabled or bypassed", s.IPv6.Status))
-	}
-	return compactWarnings(warnings)
-}
-
-func tunDesiredStateWarnings(s snapshot.Snapshot, serverIP string) []string {
-	var warnings []string
-	for _, device := range s.TunDevices {
-		if device.Name == snapshot.DefaultTunName && device.Status == snapshot.StatusDetected {
-			warnings = append(warnings, fmt.Sprintf("podlaz TUN device %s already exists; recover or validate ownership before applying the planned create step", device.Name))
-		}
-	}
-	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == snapshot.DefaultTunName {
-		warnings = append(warnings, "current default IPv4 route already points at podlaz0; applying another full-tunnel plan could preserve a route loop")
-	}
-	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == "" {
-		warnings = append(warnings, "default IPv4 route did not expose an interface; VPN server bypass cannot be applied safely yet")
-	}
-	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Gateway == "" {
-		warnings = append(warnings, "default IPv4 route did not expose a gateway; VPN server bypass can only pin the uplink interface")
-	}
-	if serverIP == "" {
-		warnings = append(warnings, "VPN server bypass target is unknown; route and policy-rule desired state is blocked until hostname resolution returns a concrete IP address")
-	}
-	return compactWarnings(warnings)
-}
-
-func dnsPlanWarnings(s snapshot.Snapshot, plan TunDNSPlan) []string {
-	if plan.Action != DNSActionBlocked {
-		return nil
-	}
-	return []string{fmt.Sprintf("DNS desired state is blocked: systemd-resolved backend is %s; install/enable systemd-resolved or add a documented fallback before applying TUN DNS", s.DNS.Resolved.Status)}
-}
-
-func firewallPlanWarnings(s snapshot.Snapshot, plan TunFirewallPlan) []string {
-	var warnings []string
-	if plan.TableAction == FirewallActionBlocked {
-		warnings = append(warnings, fmt.Sprintf("firewall desired state is blocked: nftables backend is %s; install/enable nft before applying TUN firewall or kill-switch rules", s.Nftables.Availability.Status))
-	}
-	if plan.KillSwitch.Policy == KillSwitchPolicyStrict {
-		warnings = append(warnings, "strict kill-switch policy selected; direct connectivity may remain blocked after VPN failure until podlaz recovery removes owned nftables rules")
-		warnings = append(warnings, plan.KillSwitch.Limitations...)
-	}
-	return compactWarnings(warnings)
-}
-
-func tunRouteLoopRisks(s snapshot.Snapshot) []string {
-	var risks []string
-	if s.ServerRoute.Status == snapshot.StatusDetected && s.ServerRoute.Interface == snapshot.DefaultTunName {
-		risks = append(risks, "route to VPN server candidate points at podlaz0; this would create a routing loop")
-	}
-	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == snapshot.DefaultTunName {
-		risks = append(risks, "current default IPv4 route points at podlaz0; full-tunnel planning needs a direct uplink snapshot")
-	}
-	return compactWarnings(risks)
-}
-
-func concreteServerBypassIP(s snapshot.Snapshot) string {
-	if s.ServerRoute.Status != snapshot.StatusDetected {
-		return ""
-	}
-	return firstIPFromRoute(s.ServerRoute)
-}
-
-func firstIPFromRoute(route snapshot.Route) string {
-	for _, value := range append(strings.Fields(route.Raw), strings.Fields(route.Detail)...) {
-		value = strings.Trim(value, " ,;()[]")
-		if ip := net.ParseIP(value); ip != nil {
-			return ip.String()
-		}
-	}
-	if ip := net.ParseIP(strings.TrimSpace(route.Destination)); ip != nil {
-		return ip.String()
-	}
-	return ""
-}
-
-func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolicyRulePlan, dns TunDNSPlan, firewall TunFirewallPlan) []string {
-	steps := make([]string, 0, len(routes)+len(rules)+len(dns.RollbackSteps)+len(firewall.RollbackSteps)+1)
-	steps = append(steps, firewall.RollbackSteps...)
-	steps = append(steps, dns.RollbackSteps...)
-	for i := len(rules) - 1; i >= 0; i-- {
-		rule := rules[i]
-		steps = append(steps, fmt.Sprintf("Delete policy rule priority %d %s lookup %s if created by this transaction", rule.Priority, rule.Selector, rule.Table))
-	}
-	for i := len(routes) - 1; i >= 0; i-- {
-		route := routes[i]
-		if route.Action != "add" {
-			continue
-		}
-		steps = append(steps, rollbackRouteStep(route))
-	}
-	steps = append(steps, fmt.Sprintf("Delete TUN interface %s only if this transaction created it and ownership matches podlaz", device.Name))
-	return steps
-}
-
-func rollbackRouteStep(route TunRoutePlan) string {
-	parts := []string{"Delete route", route.Destination}
-	if route.Table != "" {
-		parts = append(parts, "from table", route.Table)
-	}
-	if route.Gateway != "" {
-		parts = append(parts, "via", route.Gateway)
-	}
-	if route.Interface != "" {
-		parts = append(parts, "dev", route.Interface)
-	}
-	parts = append(parts, "if created by this transaction")
-	return strings.Join(parts, " ")
-}
-
-func compactWarnings(values []string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
+	return append([]string{}, servers...)
 }
