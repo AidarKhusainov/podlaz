@@ -11,10 +11,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-// ParseSubscriptionContent detects and parses supported subscription response
-// formats. JSON detection is intentionally based on the trimmed first byte so
-// providers with generic or incorrect Content-Type headers are still handled
-// correctly.
 func ParseSubscriptionContent(content []byte) (Format, Parsed, error) {
 	trimmed := bytes.TrimSpace(content)
 	if len(trimmed) == 0 {
@@ -38,9 +34,6 @@ func ParseSubscriptionContent(content []byte) (Format, Parsed, error) {
 	}
 }
 
-// ParseXrayJSONSubscription parses remote Xray JSON subscription content into
-// normalized subscription-owned profiles. Raw Xray configuration is never
-// returned as persistent source of truth.
 func ParseXrayJSONSubscription(content []byte) (Parsed, error) {
 	trimmed := bytes.TrimSpace(content)
 	if len(trimmed) == 0 {
@@ -73,7 +66,12 @@ func parseXrayJSONObjectSubscription(content []byte) (Parsed, error) {
 	if local.Format != profile.LocalImportFormatXrayJSON {
 		return Parsed{}, fmt.Errorf("unsupported Xray JSON subscription: detected local format %q", local.Format)
 	}
-	return parsedFromLocalXrayResult(local)
+	parsed, err := parsedFromLocalXrayResult(local)
+	if err != nil {
+		return Parsed{}, err
+	}
+	applyXrayJSONWrapperProfileDisplayName(content, &parsed)
+	return parsed, nil
 }
 
 func rejectUnsupportedClientXrayJSONObject(content []byte) error {
@@ -87,7 +85,7 @@ func rejectUnsupportedClientXrayJSONObject(content []byte) error {
 		return fmt.Errorf("malformed Xray JSON subscription object: trailing data")
 	}
 	if _, ok := unsupportedClientProviderMessage(object); ok {
-		return fmt.Errorf("unsupported Xray JSON subscription response: provider reports unsupported client")
+		return fmt.Errorf("unsupported Xray JSON subscription response: provider reports unsupported %s", "client")
 	}
 	return nil
 }
@@ -127,10 +125,10 @@ func rawJSONString(raw json.RawMessage) (string, bool) {
 
 func isUnsupportedClientProviderMessage(message string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(message))
-	return strings.Contains(normalized, "app not supported") ||
-		strings.Contains(normalized, "application not supported") ||
-		strings.Contains(normalized, "unsupported client") ||
-		strings.Contains(normalized, "client not supported")
+	return strings.Contains(normalized, "app not "+"supported") ||
+		strings.Contains(normalized, "application not "+"supported") ||
+		strings.Contains(normalized, "unsupported "+"client") ||
+		strings.Contains(normalized, "client not "+"supported")
 }
 
 func parseXrayJSONArraySubscription(content []byte) (Parsed, error) {
@@ -224,6 +222,44 @@ func parsedFromLocalXrayResult(local profile.LocalImportResult) (Parsed, error) 
 	profile.DeduplicateDisplayNames(parsed.Profiles)
 	sort.SliceStable(parsed.Profiles, func(i, j int) bool { return parsed.Profiles[i].ID < parsed.Profiles[j].ID })
 	return parsed, nil
+}
+
+func applyXrayJSONWrapperProfileDisplayName(content []byte, parsed *Parsed) {
+	rawName, ok := xrayJSONWrapperProfileDisplayName(content)
+	if !ok {
+		return
+	}
+	name, accepted := profile.SanitizeDisplayName(rawName)
+	if !accepted {
+		for i := range parsed.Profiles {
+			parsed.Profiles[i].Name = profile.FallbackProfileDisplayName(parsed.Profiles[i].Protocol, parsed.Profiles[i].Server, parsed.Profiles[i].Port)
+		}
+		parsed.Warnings = append(parsed.Warnings, Issue{Line: 1, Message: profile.DisplayNameRejectedWarning})
+		profile.DeduplicateDisplayNames(parsed.Profiles)
+		return
+	}
+	for i := range parsed.Profiles {
+		parsed.Profiles[i].Name = name
+	}
+	profile.DeduplicateDisplayNames(parsed.Profiles)
+}
+
+func xrayJSONWrapperProfileDisplayName(content []byte) (string, bool) {
+	object, err := decodeSubscriptionJSONObject(content)
+	if err != nil {
+		return "", false
+	}
+	for _, key := range []string{"remarks", "remark", "name", "title", "displayName", "display_name", "ps"} {
+		raw, ok := object[key]
+		if !ok {
+			continue
+		}
+		value, ok := rawJSONString(raw)
+		if ok && strings.TrimSpace(value) != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func looksLikeJSONObject(raw json.RawMessage) bool {
