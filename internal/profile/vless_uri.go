@@ -286,10 +286,16 @@ func importedVLESSProfileID(p Profile) string {
 		strings.ToLower(p.Transport),
 		strings.ToLower(p.Security),
 		strings.ToLower(p.Encryption),
+		strings.ToLower(p.Flow),
 		strings.ToLower(p.Fingerprint),
 		strings.ToLower(p.ServerName),
+		strings.ToLower(p.ALPN),
+		p.Path,
+		strings.ToLower(p.HostHeader),
+		p.ServiceName,
 		p.RealityPublicKey,
 		p.RealityShortID,
+		p.RealitySpiderX,
 	}, "\x00")
 	sum := sha256.Sum256([]byte(fingerprint))
 	return base + "-" + hex.EncodeToString(sum[:])[:10]
