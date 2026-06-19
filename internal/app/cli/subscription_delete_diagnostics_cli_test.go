@@ -33,7 +33,7 @@ func TestRunCLISubscriptionDeleteReportsMatchingManualProfilesLeftUntouched(t *t
 	for _, want := range []string{
 		"Subscription deleted: diag",
 		"Profiles removed: 1",
-		"Profiles with matching servers were left untouched: 1",
+		"Orphan or manual profiles with matching servers were left untouched: 1",
 	} {
 		if !strings.Contains(deleteOut.String(), want) {
 			t.Fatalf("expected delete output to contain %q, got %q", want, deleteOut.String())
