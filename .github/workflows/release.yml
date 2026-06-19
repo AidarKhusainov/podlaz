@@ -16,7 +16,6 @@ jobs:
     outputs:
       tag: ${{ steps.release-vars.outputs.tag }}
       version: ${{ steps.release-vars.outputs.version }}
-      deb_file_version: ${{ steps.release-vars.outputs.deb_file_version }}
     steps:
       - name: Resolve release version
         id: release-vars
@@ -28,10 +27,8 @@ jobs:
             echo "release tag must use vMAJOR.MINOR.PATCH, got: $tag" >&2
             exit 1
           fi
-          deb_file_version="${version}-1"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "deb_file_version=$deb_file_version" >> "$GITHUB_OUTPUT"
 
   test:
     name: Test release commit
@@ -76,14 +73,14 @@ jobs:
       - resolve
       - test
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     outputs:
       tag: ${{ needs.resolve.outputs.tag }}
       version: ${{ needs.resolve.outputs.version }}
-      deb_file_version: ${{ needs.resolve.outputs.deb_file_version }}
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
+      built_date: ${{ steps.release-commit.outputs.built_date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,7 +92,9 @@ jobs:
         run: |
           set -euo pipefail
           commit_sha="$(git rev-parse HEAD)"
+          built_date="$(git show -s --format=%cd --date=format:'%b %-d %Y' HEAD)"
           echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+          echo "built_date=$built_date" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -106,97 +105,183 @@ jobs:
       - name: Install package tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg file lintian man-db
+          sudo apt-get install -y --no-install-recommends dpkg file lintian man-db zsh fish gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           . packaging/package-toolchain.env
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Build Linux binary tarball
+      - name: Build Debian packages
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          COMMIT_SHA: ${{ steps.release-commit.outputs.commit_sha }}
+          BUILT_DATE: ${{ steps.release-commit.outputs.built_date }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            if [ "$arch" = arm64 ]; then
+              export CC=aarch64-linux-gnu-gcc
+            else
+              unset CC
+            fi
+            PODLAZ_VERSION="$VERSION" \
+            PODLAZ_DEB_VERSION="$VERSION" \
+            PODLAZ_DEB_ARCH="$arch" \
+            PODLAZ_COMMIT="$COMMIT_SHA" \
+            PODLAZ_BUILT="$BUILT_DATE" \
+              bash scripts/build-deb.sh
+          done
+
+      - name: Inspect package metadata
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          mkdir -p dist/release/bin
-          version_package="github.com/AidarKhusainov/tunwarden/internal/app/cli.version"
-          ldflags="-s -w -X ${version_package}=${VERSION}"
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$ldflags" -o dist/release/bin/tunwarden ./cmd/tunwarden
-          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$ldflags" -o dist/release/bin/tunwardend ./cmd/tunwardend
-          (cd dist/release/bin && tar -czf "../tunwarden_${VERSION}_linux_amd64.tar.gz" tunwarden tunwardend)
-          ./dist/release/bin/tunwarden version
-          test "$(./dist/release/bin/tunwarden version)" = "tunwarden ${VERSION}"
-
-      - name: Build Debian package
-        env:
-          TUNWARDEN_VERSION: ${{ needs.resolve.outputs.version }}
-          TUNWARDEN_DEB_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
-          TUNWARDEN_DEB_ARCH: amd64
-        run: bash scripts/build-deb.sh
-
-      - name: Inspect package metadata
-        env:
-          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
-        run: dpkg-deb --info "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb"
+          for arch in amd64 arm64; do
+            package="dist/podlaz_${VERSION}_linux_${arch}.deb"
+            test -f "$package"
+            dpkg-deb --info "$package"
+            test "$(dpkg-deb --field "$package" Package)" = podlaz
+            test "$(dpkg-deb --field "$package" Version)" = "$VERSION"
+            test "$(dpkg-deb --field "$package" Architecture)" = "$arch"
+          done
 
       - name: Inspect package contents
         env:
-          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
-          dpkg-deb --contents "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb" | tee /tmp/tunwarden-package-contents.txt
-          ! grep -E '(^| )\./usr/local(/|$)' /tmp/tunwarden-package-contents.txt
-          ! grep -E '(^| )\./run(/|$)' /tmp/tunwarden-package-contents.txt
-          ! grep -E '(^| )\./var/run(/|$)' /tmp/tunwarden-package-contents.txt
-          ! grep -E '(^| )\./home(/|$)' /tmp/tunwarden-package-contents.txt
-          grep -F './usr/bin/tunwarden' /tmp/tunwarden-package-contents.txt
-          grep -F './usr/bin/tunwardend' /tmp/tunwarden-package-contents.txt
-          grep -F './usr/share/man/man1/tunwarden.1.gz' /tmp/tunwarden-package-contents.txt
-          grep -F './usr/share/man/man8/tunwardend.8.gz' /tmp/tunwarden-package-contents.txt
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            package="dist/podlaz_${VERSION}_linux_${arch}.deb"
+            contents="/tmp/podlaz-${arch}-package-contents.txt"
+            dpkg-deb --contents "$package" | tee "$contents"
+            ! grep -E '(^| )\./usr/local(/|$)' "$contents"
+            ! grep -E '(^| )\./run(/|$)' "$contents"
+            ! grep -E '(^| )\./var/run(/|$)' "$contents"
+            ! grep -E '(^| )\./home(/|$)' "$contents"
+            ! grep -E '(^| )\./run/podlaz/generated(/|$)' "$contents"
+            grep -F './usr/bin/podlaz' "$contents"
+            grep -F './usr/bin/podlazd' "$contents"
+            grep -F './usr/lib/systemd/system/podlazd.service' "$contents"
+            grep -F './usr/lib/sysusers.d/podlaz.conf' "$contents"
+            grep -F './usr/share/bash-completion/completions/podlaz' "$contents"
+            grep -F './usr/share/zsh/vendor-completions/_podlaz' "$contents"
+            grep -F './usr/share/fish/vendor_completions.d/podlaz.fish' "$contents"
+            grep -F './usr/share/man/man1/podlaz.1.gz' "$contents"
+            grep -F './usr/share/man/man8/podlazd.8.gz' "$contents"
+            ! grep -F './usr/share/metainfo/' "$contents"
+          done
 
-      - name: Lint Debian package
+      - name: Validate packaged daemon access contract
         env:
-          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            package="dist/podlaz_${VERSION}_linux_${arch}.deb"
+            dpkg-deb --fsys-tarfile "$package" | tar -xOf - ./usr/lib/systemd/system/podlazd.service > "/tmp/podlazd-${arch}.service"
+            dpkg-deb --fsys-tarfile "$package" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > "/tmp/podlaz-${arch}.sysusers"
+            grep -F 'u podlaz ' "/tmp/podlaz-${arch}.sysusers"
+            grep -F 'u podlaz-xray ' "/tmp/podlaz-${arch}.sysusers"
+            grep -F 'User=podlaz' "/tmp/podlazd-${arch}.service"
+            grep -F 'Group=podlaz' "/tmp/podlazd-${arch}.service"
+            grep -F 'UMask=0077' "/tmp/podlazd-${arch}.service"
+            grep -F 'RuntimeDirectory=podlaz' "/tmp/podlazd-${arch}.service"
+            grep -F 'RuntimeDirectoryMode=0710' "/tmp/podlazd-${arch}.service"
+            grep -F 'StateDirectory=podlaz' "/tmp/podlazd-${arch}.service"
+            grep -F 'StateDirectoryMode=0700' "/tmp/podlazd-${arch}.service"
+          done
+          ! grep -R -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd|deb-systemd-invoke[[:space:]]+start[[:space:]]+podlazd' packaging/debian
+
+      - name: Validate generated shell completions
+        run: |
+          go run ./cmd/podlaz completion bash > /tmp/podlaz.bash
+          go run ./cmd/podlaz completion zsh > /tmp/_podlaz
+          go run ./cmd/podlaz completion fish > /tmp/podlaz.fish
+          bash -n /tmp/podlaz.bash
+          zsh -n /tmp/_podlaz
+          fish --no-config --command 'source /tmp/podlaz.fish'
+          grep -F '__complete bash' /tmp/podlaz.bash
+          grep -F '#compdef podlaz' /tmp/_podlaz
+          grep -F '__complete zsh' /tmp/_podlaz
+          grep -F 'complete -c podlaz -f' /tmp/podlaz.fish
+          grep -F '__complete fish' /tmp/podlaz.fish
+
+      - name: Lint Debian packages
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -o pipefail
-          lintian --fail-on error "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb" 2>&1 | tee /tmp/tunwarden-lintian.txt
+          for arch in amd64 arm64; do
+            lintian --fail-on error "dist/podlaz_${VERSION}_linux_${arch}.deb"
+          done 2>&1 | tee /tmp/podlaz-lintian.txt
+
+      - name: Upload lintian diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-lintian-diagnostics-${{ needs.resolve.outputs.version }}
+          path: /tmp/podlaz-lintian.txt
+          if-no-files-found: ignore
 
       - name: Install package locally
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
+          COMMIT_SHA: ${{ steps.release-commit.outputs.commit_sha }}
+          BUILT_DATE: ${{ steps.release-commit.outputs.built_date }}
         run: |
           set -euo pipefail
-          ip route show > /tmp/tunwarden-routes-before.txt
-          sudo apt install -y "./dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb"
-          ip route show > /tmp/tunwarden-routes-after.txt
-          diff -u /tmp/tunwarden-routes-before.txt /tmp/tunwarden-routes-after.txt
-          dpkg -L tunwarden
-          test "$(tunwarden version)" = "tunwarden ${VERSION}"
-          test -x /usr/bin/tunwarden
-          test -x /usr/bin/tunwardend
-          test -f /usr/share/man/man1/tunwarden.1.gz
-          test -f /usr/share/man/man8/tunwardend.8.gz
-          man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
-          man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
-          ! pgrep -x tunwardend
+          ip route show > /tmp/podlaz-routes-before.txt
+          sudo apt install -y "./dist/podlaz_${VERSION}_linux_amd64.deb"
+          ip route show > /tmp/podlaz-routes-after.txt
+          diff -u /tmp/podlaz-routes-before.txt /tmp/podlaz-routes-after.txt
+          dpkg -L podlaz
+          podlaz version | tee /tmp/podlaz-version.txt
+          grep -Fx "podlaz version ${VERSION}" /tmp/podlaz-version.txt
+          grep -Fx "commit: ${COMMIT_SHA}" /tmp/podlaz-version.txt
+          grep -Fx "built: ${BUILT_DATE}" /tmp/podlaz-version.txt
+          test -x /usr/bin/podlaz
+          test -x /usr/bin/podlazd
+          test -f /usr/lib/systemd/system/podlazd.service
+          test -f /usr/lib/sysusers.d/podlaz.conf
+          test -f /usr/share/bash-completion/completions/podlaz
+          test -f /usr/share/zsh/vendor-completions/_podlaz
+          test -f /usr/share/fish/vendor_completions.d/podlaz.fish
+          test -f /usr/share/man/man1/podlaz.1.gz
+          test -f /usr/share/man/man8/podlazd.8.gz
+          test ! -e /usr/share/metainfo/io.github.aidarkhusainov.podlaz.metainfo.xml
+          man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
+          man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
+          ! pgrep -x podlazd
+
+      - name: Remove package locally
+        run: |
+          sudo apt remove -y podlaz
+          ! dpkg -L podlaz
+          test ! -e /usr/bin/podlaz
+          test ! -e /usr/bin/podlazd
+          test ! -e /usr/lib/systemd/system/podlazd.service
+          test ! -e /usr/lib/sysusers.d/podlaz.conf
 
       - name: Create checksums
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-          DEB_FILE_VERSION: ${{ needs.resolve.outputs.deb_file_version }}
         run: |
           set -euo pipefail
           mkdir -p dist/release
-          cp "dist/tunwarden_${DEB_FILE_VERSION}_amd64.deb" dist/release/
-          (cd dist/release && sha256sum "tunwarden_${VERSION}_linux_amd64.tar.gz" "tunwarden_${DEB_FILE_VERSION}_amd64.deb" > "tunwarden_${VERSION}_checksums.txt")
-          cat "dist/release/tunwarden_${VERSION}_checksums.txt"
+          cp "dist/podlaz_${VERSION}_linux_amd64.deb" dist/release/
+          cp "dist/podlaz_${VERSION}_linux_arm64.deb" dist/release/
+          (cd dist/release && sha256sum "podlaz_${VERSION}_linux_amd64.deb" "podlaz_${VERSION}_linux_arm64.deb" > SHA256SUMS)
+          cat dist/release/SHA256SUMS
+          ! grep -E 'tunwarden|tunwardend|TunWarden' dist/release/SHA256SUMS
 
       - name: Upload release artifacts for review
         uses: actions/upload-artifact@v4
         with:
-          name: tunwarden-release-artifacts-${{ needs.resolve.outputs.version }}
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |
-            dist/release/tunwarden_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz
-            dist/release/tunwarden_${{ needs.resolve.outputs.deb_file_version }}_amd64.deb
-            dist/release/tunwarden_${{ needs.resolve.outputs.version }}_checksums.txt
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_arm64.deb
+            dist/release/SHA256SUMS
           if-no-files-found: error
 
   publish:
@@ -210,25 +295,26 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: tunwarden-release-artifacts-${{ needs.build.outputs.version }}
+          name: podlaz-release-artifacts-${{ needs.build.outputs.version }}
           path: dist/release
 
       - name: Write release notes
         run: |
           cat > release-notes.md <<EOF
-          TunWarden ${{ needs.build.outputs.tag }}
+          podlaz ${{ needs.build.outputs.tag }}
 
           Git tag: ${{ needs.build.outputs.tag }}
           Commit SHA: ${{ needs.build.outputs.commit_sha }}
+          Built: ${{ needs.build.outputs.built_date }}
 
           Artifacts:
-          - tunwarden_${{ needs.build.outputs.version }}_linux_amd64.tar.gz
-          - tunwarden_${{ needs.build.outputs.deb_file_version }}_amd64.deb
-          - tunwarden_${{ needs.build.outputs.version }}_checksums.txt
+          - podlaz_${{ needs.build.outputs.version }}_linux_amd64.deb
+          - podlaz_${{ needs.build.outputs.version }}_linux_arm64.deb
+          - SHA256SUMS
 
-          Install the local Debian package with: sudo apt install ./tunwarden_${{ needs.build.outputs.deb_file_version }}_amd64.deb
+          Install the local Debian package with: sudo apt install ./podlaz_${{ needs.build.outputs.version }}_linux_amd64.deb
 
-          Package installation does not enable or start the daemon automatically.
+          Package installation does not enable or start podlazd.service automatically.
           EOF
 
       - name: Publish release
@@ -237,20 +323,19 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.build.outputs.tag }}
           VERSION: ${{ needs.build.outputs.version }}
-          DEB_FILE_VERSION: ${{ needs.build.outputs.deb_file_version }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "TunWarden ${TAG}" --notes-file release-notes.md
+            gh release edit "$TAG" --title "podlaz ${TAG}" --notes-file release-notes.md
             gh release upload "$TAG" --clobber \
-              "dist/release/tunwarden_${VERSION}_linux_amd64.tar.gz" \
-              "dist/release/tunwarden_${DEB_FILE_VERSION}_amd64.deb" \
-              "dist/release/tunwarden_${VERSION}_checksums.txt"
+              "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
+              "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
+              "dist/release/SHA256SUMS"
           else
             gh release create "$TAG" \
-              --title "TunWarden ${TAG}" \
+              --title "podlaz ${TAG}" \
               --notes-file release-notes.md \
-              "dist/release/tunwarden_${VERSION}_linux_amd64.tar.gz" \
-              "dist/release/tunwarden_${DEB_FILE_VERSION}_amd64.deb" \
-              "dist/release/tunwarden_${VERSION}_checksums.txt"
+              "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
+              "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
+              "dist/release/SHA256SUMS"
           fi
