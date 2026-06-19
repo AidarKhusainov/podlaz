@@ -32,23 +32,23 @@ For packaging changes, also run where the required tools are available:
 
 ```bash
 bash scripts/build-deb.sh
-dpkg-deb --info dist/podlaz_0.0.0~dev-1_amd64.deb
-dpkg-deb --contents dist/podlaz_0.0.0~dev-1_amd64.deb
+dpkg-deb --info dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+dpkg-deb --contents dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 file dist/package-root/usr/bin/podlaz dist/package-root/usr/bin/podlazd
 ldd dist/package-root/usr/bin/podlaz
 ldd dist/package-root/usr/bin/podlazd
 test -f dist/package-root/usr/share/bash-completion/completions/podlaz
 test -f dist/package-root/usr/share/zsh/vendor-completions/_podlaz
 test -f dist/package-root/usr/share/fish/vendor_completions.d/podlaz.fish
-lintian --fail-on error dist/podlaz_0.0.0~dev-1_amd64.deb
-sudo apt install ./dist/podlaz_0.0.0~dev-1_amd64.deb
+lintian --fail-on error dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+sudo apt install ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 podlaz version
 podlaz completion bash >/dev/null
 podlaz completion zsh >/dev/null
 podlaz completion fish >/dev/null
 man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
 man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_amd64.deb
+sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 sudo apt remove -y podlaz
 ```
 
@@ -60,20 +60,20 @@ go test ./...
 go vet ./...
 govulncheck ./...
 bash scripts/build-deb.sh
-dpkg-deb --info dist/podlaz_0.0.0~dev-1_amd64.deb
-dpkg-deb --contents dist/podlaz_0.0.0~dev-1_amd64.deb
+dpkg-deb --info dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+dpkg-deb --contents dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 file dist/package-root/usr/bin/podlaz dist/package-root/usr/bin/podlazd
 ldd dist/package-root/usr/bin/podlaz
 ldd dist/package-root/usr/bin/podlazd
-lintian --fail-on error dist/podlaz_0.0.0~dev-1_amd64.deb
-sudo apt install -y ./dist/podlaz_0.0.0~dev-1_amd64.deb
+lintian --fail-on error dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+sudo apt install -y ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 podlaz version
 podlaz completion bash >/dev/null
 podlaz completion zsh >/dev/null
 podlaz completion fish >/dev/null
 man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
 man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_amd64.deb
+sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 sudo apt remove -y podlaz
 ```
 
