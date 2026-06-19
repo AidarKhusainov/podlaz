@@ -110,19 +110,21 @@ Profile IDs and subscription IDs are stable command-facing identifiers. Commands
 Subscription display names use this precedence:
 
 1. An explicit `subscription add --name <name>` value.
-2. A provider-supplied subscription title/name only for subscription formats with a known, tested safe field.
-3. A concise fallback from the source host and path basename, never the raw URL and never query parameters or tokens.
+2. A safe provider-supplied HTTP response title/name, for example `Content-Disposition`, `Subscription-Title`, `Profile-Title`, or equivalent `X-*` title/name headers.
+3. A provider-supplied subscription title/name only for subscription formats with a known, tested safe field.
+4. A concise fallback from the source host and path basename, never the raw URL and never query parameters or tokens.
 
 Imported profile display names use this precedence:
 
 1. Decoded share URI fragments from URI-list and Base64 URI-list entries.
-2. Xray JSON outbound `tag` values.
-3. Known safe provider display fields for supported shapes, such as VMess `ps`.
-4. A fallback built from non-secret protocol, server, and port fields.
+2. Xray JSON wrapper-level user-visible node fields, such as `remarks`, `remark`, `name`, or `title`.
+3. Xray JSON outbound `tag` values as a technical fallback.
+4. Known safe provider display fields for supported shapes, such as VMess `ps`.
+5. A fallback built from non-secret protocol, server, and port fields.
 
 All provider-supplied names go through the shared display-name sanitizer. The sanitizer trims whitespace, removes control characters and path separators, keeps safe Unicode text, limits length, and rejects empty, URL-like, share-URI-like, UUID-only, token-like, password-like, private-key-like, or generated-config-like values. Rejected provider names fall back to safe generated names and are reported with concise redacted warnings where the command output includes import/update warnings.
 
-Duplicate display names inside one import or subscription update are resolved deterministically with numeric suffixes such as `Name (2)`. Profile ID duplicate rules remain stricter and preserve atomicity.
+Duplicate display names inside one import or subscription update are resolved deterministically with numeric suffixes such as `Name (2)`. Profile ID duplicate rules remain stricter and preserve atomicity. Imported VLESS profile IDs are derived from normalized identity-bearing connection fields, including endpoint, user identity, transport, security, SNI, TLS/Reality settings, path/host, flow, and service names, so distinct provider nodes do not collide merely because they share a server and port.
 
 ## Update behavior
 
@@ -146,6 +148,8 @@ Duplicate profile IDs inside one subscription response fail the update. Unsuppor
 A subscription delete with `--yes` removes subscription metadata and, by default, removes only profiles whose IDs are recorded in that subscription metadata and whose profile source is `subscription`.
 
 Manual profiles, one-off imported URI/file profiles, and profiles owned by other subscriptions are preserved. Already-absent profile entries owned by the target subscription are ignored during cleanup, but a missing subscription ID is still an operation failure.
+
+If manual, one-off, or previously orphaned profiles remain with servers matching profiles removed for the deleted subscription, the human delete output reports that matching profiles were left untouched. This diagnostic is informational only and must not broaden deletion to server-match cleanup.
 
 `--keep-profiles` removes only the subscription metadata. Kept profiles remain normalized profile entries and keep their `subscription` source value because that source describes how the profile entered podlaz; it is not a foreign-key reference to a stored subscription row.
 
@@ -209,6 +213,6 @@ Human output for successful subscription delete includes the deleted subscriptio
 
 ## Security requirements
 
-Subscription and profile commands must not print full subscription URLs, full share URIs, raw user identities, passwords, private keys, authorization headers, provider tokens, generated client identities, or generated core configuration contents.
+Subscription and profile commands must not print full subscription URLs, full share URIs, raw user identities, credential-like secret material, generated client identities, or generated core configuration contents.
 
 User-owned profile and subscription state must not require root and must not be hidden only in daemon-private directories.
