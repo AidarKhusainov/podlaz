@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestFromDaemonRendersDaemonBackedStatus(t *testing.T) {
@@ -36,7 +36,7 @@ func TestWithDaemonUnavailableKeepsCleanFallbackHealthy(t *testing.T) {
 		RuntimeDirectory: RuntimeDirectory{Message: "missing"},
 		Proxy:            "inactive",
 		TUN:              "not managed in this build",
-	}, "daemon socket missing; start tunwardend")
+	}, "daemon socket missing; start podlazd")
 
 	if report.HasUnhealthyState() {
 		t.Fatalf("daemon unavailable with clean local fallback should not be unhealthy: %#v", report)

@@ -6,20 +6,20 @@ import (
 	"testing"
 )
 
-func TestRunWithOptionsReportsResolvedTunWardenDNSDiagnosticLine(t *testing.T) {
+func TestRunWithOptionsReportsResolvedpodlazDNSDiagnosticLine(t *testing.T) {
 	report := RunWithOptions(context.Background(), Options{
 		Runner: fakeRunner{
 			paths: map[string]string{
 				"resolvectl": "/usr/bin/resolvectl",
 			},
 			commands: map[string]fakeCommand{
-				"resolvectl status tunwarden0 --no-pager": {
-					stdout: "Link 7 (tunwarden0)\n    DNS Domain: ~.",
+				"resolvectl status podlaz0 --no-pager": {
+					stdout: "Link 7 (podlaz0)\n    DNS Domain: ~.",
 				},
 			},
 		},
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 	})
 
-	assertCheck(t, report, "resolved", SeverityOK, "TunWarden DNS route-only domain ~. active on tunwarden0")
+	assertCheck(t, report, "resolved", SeverityOK, "podlaz DNS route-only domain ~. active on podlaz0")
 }

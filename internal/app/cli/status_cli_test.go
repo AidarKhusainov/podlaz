@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/status"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 func TestRunCLIStatusUsesAccessibleDaemonSocket(t *testing.T) {
@@ -84,7 +84,7 @@ func TestRunCLIStatusReportsMissingDaemonSocketWithoutStaleState(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"Daemon: not reachable (daemon socket " + api.SocketPath(runtimeDir) + " does not exist; start tunwardend); using local fallback\n",
+		"Daemon: not reachable (daemon socket " + api.SocketPath(runtimeDir) + " does not exist; start podlazd); using local fallback\n",
 		"Daemon socket: missing\n",
 		"Runtime directory: missing\n",
 		"Stale state: none\n",
@@ -119,7 +119,7 @@ func TestRunCLIStatusReportsPermissionDeniedDaemonSocketWithoutStaleRuntimeCandi
 	}
 	got := out.String()
 	for _, want := range []string{
-		"Daemon socket: present but inaccessible (permission denied; check tunwarden group membership)\n",
+		"Daemon socket: present but inaccessible (permission denied; check podlaz group membership)\n",
 		"Runtime directory: present (daemon socket inaccessible; stale status unknown)\n",
 		"Stale state: unknown (inspection incomplete)\n",
 	} {

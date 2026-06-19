@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 // DaemonCleanupExecutor is the privileged daemon recovery implementation.
@@ -81,7 +81,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	}
 	path := filepath.Clean(candidate.Transaction.Path)
 	if !sameCleanPath(path, candidate.Target) || !isTransactionPath(e.RuntimeDir, path) {
-		return []CleanupResult{skipped(candidate, "transaction path is outside TunWarden runtime state")}
+		return []CleanupResult{skipped(candidate, "transaction path is outside podlaz runtime state")}
 	}
 	tx, err := txstate.LoadTransactionFile(path)
 	if err != nil {
@@ -121,7 +121,7 @@ func (e DaemonCleanupExecutor) rollbackChildProcessResults(processes []txstate.C
 	for _, proc := range processes {
 		candidate := Candidate{Kind: "child-process", Description: "child process", Target: fmt.Sprintf("%s pid %d", proc.Label, proc.PID)}
 		if proc.Owner != txstate.TransactionOwner {
-			results = append(results, skipped(candidate, "non-TunWarden child process metadata"))
+			results = append(results, skipped(candidate, "non-podlaz child process metadata"))
 			continue
 		}
 		if proc.PID > 1 {
@@ -139,7 +139,7 @@ func (e DaemonCleanupExecutor) rollbackNFTablesResults(ctx context.Context, osEx
 	for _, entry := range entries {
 		candidate := Candidate{Kind: "nftables-table", Description: "nftables table", Target: entry.Family + " " + entry.Table}
 		if entry.Owner != txstate.TransactionOwner || !isManagedNFTTarget(entry.Family, entry.Table) {
-			results = append(results, skipped(candidate, "ambiguous or non-TunWarden nftables target"))
+			results = append(results, skipped(candidate, "ambiguous or non-podlaz nftables target"))
 			continue
 		}
 		key := entry.Family + " " + entry.Table
@@ -161,7 +161,7 @@ func (e DaemonCleanupExecutor) rollbackDNSResults(ctx context.Context, osExec OS
 	for _, dns := range entries {
 		candidate := Candidate{Kind: "dns", Description: "DNS link state", Target: dns.Link}
 		if dns.Owner != txstate.TransactionOwner || dns.Link != managedInterface || (dns.Backend != "" && dns.Backend != "systemd-resolved") {
-			results = append(results, skipped(candidate, "ambiguous or non-TunWarden DNS rollback target"))
+			results = append(results, skipped(candidate, "ambiguous or non-podlaz DNS rollback target"))
 			continue
 		}
 		if err := osExec.rollbackDNS(ctx, dns); err != nil {
@@ -178,11 +178,11 @@ func (e DaemonCleanupExecutor) rollbackPolicyRuleResults(ctx context.Context, os
 	for _, rule := range rules {
 		candidate := Candidate{Kind: "policy-rule", Description: "policy rule", Target: fmt.Sprintf("priority %d table %s", rule.Priority, rule.Table)}
 		if rule.Owner != txstate.TransactionOwner {
-			results = append(results, skipped(candidate, "non-TunWarden policy rule metadata"))
+			results = append(results, skipped(candidate, "non-podlaz policy rule metadata"))
 			continue
 		}
 		if _, ok := managedTableToken(rule.Table); !ok {
-			results = append(results, skipped(candidate, "ambiguous or non-TunWarden policy rule table"))
+			results = append(results, skipped(candidate, "ambiguous or non-podlaz policy rule table"))
 			continue
 		}
 		if err := osExec.rollbackPolicyRule(ctx, rule); err != nil {
@@ -199,15 +199,15 @@ func (e DaemonCleanupExecutor) rollbackRouteResults(ctx context.Context, osExec 
 	for _, route := range routes {
 		candidate := Candidate{Kind: "route", Description: "route", Target: fmt.Sprintf("%s table %s", route.CIDR, route.Table)}
 		if route.Owner != txstate.TransactionOwner {
-			results = append(results, skipped(candidate, "non-TunWarden route metadata"))
+			results = append(results, skipped(candidate, "non-podlaz route metadata"))
 			continue
 		}
 		if _, ok := managedTableToken(route.Table); !ok {
-			results = append(results, skipped(candidate, "ambiguous or non-TunWarden route table"))
+			results = append(results, skipped(candidate, "ambiguous or non-podlaz route table"))
 			continue
 		}
 		if strings.TrimSpace(route.Dev) != "" && route.Dev != managedInterface {
-			results = append(results, skipped(candidate, "ambiguous or non-TunWarden route device"))
+			results = append(results, skipped(candidate, "ambiguous or non-podlaz route device"))
 			continue
 		}
 		if err := osExec.rollbackRoute(ctx, route); err != nil {
@@ -224,7 +224,7 @@ func (e DaemonCleanupExecutor) rollbackTUNResults(ctx context.Context, osExec OS
 	for _, tun := range entries {
 		candidate := Candidate{Kind: "tun-interface", Description: "TUN interface", Target: tun.InterfaceName}
 		if tun.Owner != txstate.TransactionOwner || tun.InterfaceName != managedInterface {
-			results = append(results, skipped(candidate, "ambiguous or non-TunWarden TUN target"))
+			results = append(results, skipped(candidate, "ambiguous or non-podlaz TUN target"))
 			continue
 		}
 		if err := osExec.rollbackTUN(ctx, tun); err != nil {
@@ -241,11 +241,11 @@ func (e DaemonCleanupExecutor) rollbackGeneratedConfigResults(osExec OSCleanupEx
 	for _, config := range configs {
 		candidate := Candidate{Kind: "generated-runtime-config", Description: "generated runtime config", Target: config.Path}
 		if config.Owner != txstate.TransactionOwner {
-			results = append(results, skipped(candidate, "non-TunWarden generated config metadata"))
+			results = append(results, skipped(candidate, "non-podlaz generated config metadata"))
 			continue
 		}
 		if !isUnderDir(filepath.Join(e.RuntimeDir, generatedDirName), filepath.Clean(config.Path)) {
-			results = append(results, skipped(candidate, "generated config path is outside TunWarden runtime state"))
+			results = append(results, skipped(candidate, "generated config path is outside podlaz runtime state"))
 			continue
 		}
 		if err := osExec.removeGeneratedConfig(config); err != nil {

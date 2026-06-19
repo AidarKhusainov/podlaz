@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 func TestVerifyTunConnectivityChecksRouteDialAndDNS(t *testing.T) {
@@ -42,17 +42,17 @@ func TestVerifyTunConnectivityChecksRouteDialAndDNS(t *testing.T) {
 		return "93.184.216.34", nil
 	}
 
-	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "tunwarden0"}}, tunCoreRuntimePlan{})
+	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, tunCoreRuntimePlan{})
 	if err != nil {
 		t.Fatalf("expected connectivity probe to pass, got %v", err)
 	}
 	if len(routeLookups) != 2 {
 		t.Fatalf("expected route lookup for probe IP and DNS result, got %#v", routeLookups)
 	}
-	if routeLookups[0].host != defaultTunProbeHost || routeLookups[0].device != "tunwarden0" {
+	if routeLookups[0].host != defaultTunProbeHost || routeLookups[0].device != "podlaz0" {
 		t.Fatalf("unexpected route lookup target: %#v", routeLookups[0])
 	}
-	if routeLookups[1].host != "93.184.216.34" || routeLookups[1].device != "tunwarden0" {
+	if routeLookups[1].host != "93.184.216.34" || routeLookups[1].device != "podlaz0" {
 		t.Fatalf("unexpected DNS-result route lookup target: %#v", routeLookups[1])
 	}
 	if dialHost != defaultTunProbeHost || dialPort != defaultTunProbePort {
@@ -85,7 +85,7 @@ func TestVerifyTunConnectivityFailsWhenRouteDoesNotUseTun(t *testing.T) {
 		return "", nil
 	}
 
-	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "tunwarden0"}}, tunCoreRuntimePlan{})
+	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, tunCoreRuntimePlan{})
 	if err == nil {
 		t.Fatal("expected connectivity probe to fail")
 	}
@@ -108,7 +108,7 @@ func TestVerifyTunConnectivityFailsWhenDialFails(t *testing.T) {
 		return "", nil
 	}
 
-	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "tunwarden0"}}, tunCoreRuntimePlan{})
+	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, tunCoreRuntimePlan{})
 	if err == nil {
 		t.Fatal("expected connectivity probe to fail")
 	}
@@ -128,7 +128,7 @@ func TestVerifyTunConnectivityFailsWhenDNSFails(t *testing.T) {
 	dialTunProbeTarget = func(context.Context, string, uint16) error { return nil }
 	resolveTunDNSName = func(context.Context, string) (string, error) { return "", errors.New("dns timeout") }
 
-	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "tunwarden0"}}, tunCoreRuntimePlan{})
+	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, tunCoreRuntimePlan{})
 	if err == nil {
 		t.Fatal("expected connectivity probe to fail")
 	}
@@ -155,7 +155,7 @@ func TestVerifyTunConnectivityFailsWhenDNSResultDoesNotRouteThroughTun(t *testin
 	dialTunProbeTarget = func(context.Context, string, uint16) error { return nil }
 	resolveTunDNSName = func(context.Context, string) (string, error) { return "93.184.216.34", nil }
 
-	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "tunwarden0"}}, tunCoreRuntimePlan{})
+	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, tunCoreRuntimePlan{})
 	if err == nil {
 		t.Fatal("expected connectivity probe to fail")
 	}
@@ -172,10 +172,10 @@ func TestSelectTunProbeHostAvoidsServerBypassTarget(t *testing.T) {
 }
 
 func TestContainsAdjacentRouteFields(t *testing.T) {
-	if !containsAdjacentRouteFields([]string{"1.1.1.1", "dev", "tunwarden0", "src", "10.0.0.2"}, "dev", "tunwarden0") {
-		t.Fatal("expected route fields to contain dev tunwarden0")
+	if !containsAdjacentRouteFields([]string{"1.1.1.1", "dev", "podlaz0", "src", "10.0.0.2"}, "dev", "podlaz0") {
+		t.Fatal("expected route fields to contain dev podlaz0")
 	}
-	if containsAdjacentRouteFields([]string{"1.1.1.1", "dev", "eth0"}, "dev", "tunwarden0") {
-		t.Fatal("did not expect route fields to contain dev tunwarden0")
+	if containsAdjacentRouteFields([]string{"1.1.1.1", "dev", "eth0"}, "dev", "podlaz0") {
+		t.Fatal("did not expect route fields to contain dev podlaz0")
 	}
 }

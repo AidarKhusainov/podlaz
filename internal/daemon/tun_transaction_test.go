@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	netexecutor "github.com/AidarKhusainov/tunwarden/internal/network/executor"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestTunTransactionWaitsForExplicitCommitAfterApplyAndVerify(t *testing.T) {
@@ -96,12 +96,12 @@ type recordingTunExecutor struct {
 func (e *recordingTunExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
 	e.calls = append(e.calls, "apply")
 	if e.applyErr != nil {
-		return []netexecutor.Step{{Kind: "tun-device", Target: "tunwarden0", Owner: netexecutor.OwnerTunDevice}}, e.applyErr
+		return []netexecutor.Step{{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice}}, e.applyErr
 	}
 	return []netexecutor.Step{
-		{Kind: "tun-device", Target: "tunwarden0", Owner: netexecutor.OwnerTunDevice},
-		{Kind: "route", Target: "tunwarden default", Owner: netexecutor.OwnerRoute},
-		{Kind: "policy-rule", Target: "priority 51820 from all lookup tunwarden", Owner: netexecutor.OwnerPolicyRule},
+		{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice},
+		{Kind: "route", Target: "podlaz default", Owner: netexecutor.OwnerRoute},
+		{Kind: "policy-rule", Target: "priority 51820 from all lookup podlaz", Owner: netexecutor.OwnerPolicyRule},
 	}, nil
 }
 
@@ -119,12 +119,12 @@ func transactionPlanForTest() planner.TunPlan {
 	return planner.TunPlan{
 		ProfileID: "test-profile",
 		Mode:      planner.ModeTun,
-		TunDevice: planner.TunDevicePlan{Name: "tunwarden0", MTU: 1500, Action: "create"},
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "create"},
 		Routes: []planner.TunRoutePlan{{
 			Family:      "ipv4",
 			Destination: "default",
 			Table:       planner.TunRoutingTable,
-			Interface:   "tunwarden0",
+			Interface:   "podlaz0",
 			Action:      "add",
 		}},
 		PolicyRules: []planner.TunPolicyRulePlan{{
@@ -134,7 +134,7 @@ func transactionPlanForTest() planner.TunPlan {
 			Table:    planner.TunRoutingTable,
 			Action:   "add",
 		}},
-		Steps: []string{"Plan TUN interface tunwarden0"},
+		Steps: []string{"Plan TUN interface podlaz0"},
 	}
 }
 

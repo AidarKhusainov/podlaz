@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	"github.com/AidarKhusainov/tunwarden/internal/sub"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 type subscriptionDeleteArgs struct {

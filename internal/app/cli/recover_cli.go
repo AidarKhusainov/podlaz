@@ -9,10 +9,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/recovery"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 type recoverArgs struct {
@@ -95,7 +95,7 @@ func confirmRecoverExecute(stdout io.Writer, opts options) error {
 	if reader == nil {
 		reader = os.Stdin
 	}
-	fmt.Fprint(stdout, "Recover will ask tunwardend to remove only clearly TunWarden-owned stale state. Type yes to continue: ")
+	fmt.Fprint(stdout, "Recover will ask podlazd to remove only clearly podlaz-owned stale state. Type yes to continue: ")
 	line, err := bufio.NewReader(reader).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read recovery confirmation: %w", err)

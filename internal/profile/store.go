@@ -15,7 +15,7 @@ const profilesFileName = "profiles.json"
 var ErrNotFound = errors.New("profile not found")
 var ErrAlreadyExists = errors.New("profile already exists")
 
-// Store persists user-owned profiles under the documented TunWarden user state location.
+// Store persists user-owned profiles under the documented podlaz user state location.
 type Store struct {
 	path string
 }
@@ -41,18 +41,18 @@ func NewStore(path string) (Store, error) {
 	return Store{path: path}, nil
 }
 
-// DefaultStorePath returns $XDG_STATE_HOME/tunwarden/profiles.json or the
-// documented ~/.local/state/tunwarden/profiles.json fallback.
+// DefaultStorePath returns $XDG_STATE_HOME/podlaz/profiles.json or the
+// documented ~/.local/state/podlaz/profiles.json fallback.
 func DefaultStorePath() (string, error) {
 	stateHome := os.Getenv("XDG_STATE_HOME")
 	if stateHome == "" || !filepath.IsAbs(stateHome) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("resolve TunWarden state directory: %w", err)
+			return "", fmt.Errorf("resolve podlaz state directory: %w", err)
 		}
 		stateHome = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(stateHome, "tunwarden", profilesFileName), nil
+	return filepath.Join(stateHome, "podlaz", profilesFileName), nil
 }
 
 func (s Store) Path() string { return s.path }

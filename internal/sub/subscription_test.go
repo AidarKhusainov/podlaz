@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestNewSourceUsesExplicitNameBeforeFallback(t *testing.T) {

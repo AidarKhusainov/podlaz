@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestXrayManagerConnectStatusAndDisconnect(t *testing.T) {

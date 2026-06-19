@@ -20,7 +20,7 @@ func TestCoreLogWriterFlushesFinalLineWithoutTrailingNewline(t *testing.T) {
 	writer.Flush()
 
 	got := out.String()
-	for _, text := range []string{"tunwardend: core xray stderr", "pid=42", "profile=test-profile", "final crash line without newline"} {
+	for _, text := range []string{"podlazd: core xray stderr", "pid=42", "profile=test-profile", "final crash line without newline"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected core log output to contain %q, got %q", text, got)
 		}
@@ -45,7 +45,7 @@ func TestCoreLogWriterSplitsCompleteLinesAndFlushesTail(t *testing.T) {
 			t.Fatalf("expected core log output to contain %q, got %q", text, got)
 		}
 	}
-	if count := strings.Count(got, "tunwardend: core xray stdout"); count != 2 {
+	if count := strings.Count(got, "podlazd: core xray stdout"); count != 2 {
 		t.Fatalf("expected two core stdout log lines, got %d: %q", count, got)
 	}
 }
@@ -66,7 +66,7 @@ func TestCoreLogWriterDoesNotEmitPIDZeroForOutputBeforePIDIsKnown(t *testing.T) 
 	writer.setPID(44)
 	writer.Flush()
 	got := out.String()
-	for _, text := range []string{"tunwardend: core xray stderr", "pid=44", "profile=test-profile", "early line"} {
+	for _, text := range []string{"podlazd: core xray stderr", "pid=44", "profile=test-profile", "early line"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected core log output to contain %q, got %q", text, got)
 		}

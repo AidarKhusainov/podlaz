@@ -38,7 +38,7 @@ func TestValidateTransactionStatusRequiresKnownState(t *testing.T) {
 		State:             "applying",
 		RollbackAvailable: true,
 		RequiresCleanup:   true,
-		Path:              "/run/tunwarden/transactions/tx-1.json",
+		Path:              "/run/podlaz/transactions/tx-1.json",
 	}
 	if err := ValidateTransactionStatus(valid); err != nil {
 		t.Fatalf("valid transaction status failed validation: %v", err)

@@ -17,12 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 const (
 	subscriptionsFileName    = "subscriptions.json"
-	subscriptionUserAgent    = "TunWarden"
+	subscriptionUserAgent    = "podlaz"
 	subscriptionClientHeader = "x-hwid"
 )
 
@@ -96,18 +96,18 @@ func NewStore(path string) (Store, error) {
 	return Store{path: path}, nil
 }
 
-// DefaultStorePath returns $XDG_STATE_HOME/tunwarden/subscriptions.json or the
-// documented ~/.local/state/tunwarden/subscriptions.json fallback.
+// DefaultStorePath returns $XDG_STATE_HOME/podlaz/subscriptions.json or the
+// documented ~/.local/state/podlaz/subscriptions.json fallback.
 func DefaultStorePath() (string, error) {
 	stateHome := os.Getenv("XDG_STATE_HOME")
 	if stateHome == "" || !filepath.IsAbs(stateHome) {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", fmt.Errorf("resolve TunWarden state directory: %w", err)
+			return "", fmt.Errorf("resolve podlaz state directory: %w", err)
 		}
 		stateHome = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(stateHome, "tunwarden", subscriptionsFileName), nil
+	return filepath.Join(stateHome, "podlaz", subscriptionsFileName), nil
 }
 
 func (s Store) Path() string { return s.path }

@@ -1,12 +1,12 @@
 # Doctor diagnostics
 
-This document defines the implemented v0.1 diagnostics for `tunwarden doctor`.
+This document defines the implemented v0.1 diagnostics for `podlaz doctor`.
 
 The command name, flags, exit codes, stdout/stderr rules, and JSON compatibility are owned by [CLI contract](./cli.md). This document owns the current read-only Linux diagnostic set, explicit local Xray binary validation, and their safety boundaries.
 
 ## Safety boundary
 
-`tunwarden doctor` is strictly read-only.
+`podlaz doctor` is strictly read-only.
 
 It must not:
 
@@ -21,7 +21,7 @@ It must not:
 
 It may inspect host state through read-only commands and filesystem checks. `doctor --core --xray <path>` may run the short-lived `xray version` command for the explicitly provided local binary.
 
-When `tunwardend` is reachable, the CLI requests the default report through the local daemon API. When the daemon is missing, inaccessible, times out, or returns an invalid response, the CLI falls back to the same local read-only diagnostic model and prints a daemon warning.
+When `podlazd` is reachable, the CLI requests the default report through the local daemon API. When the daemon is missing, inaccessible, times out, or returns an invalid response, the CLI falls back to the same local read-only diagnostic model and prints a daemon warning.
 
 `doctor --core --xray <path>` is currently local-only in v0.1. It validates the provided Xray binary before proxy-only connection work starts using it.
 
@@ -30,7 +30,7 @@ When `tunwardend` is reachable, the CLI requests the default report through the 
 The default human report starts with:
 
 ```text
-TunWarden doctor report
+podlaz doctor report
 Source: daemon|local fallback
 ```
 
@@ -43,13 +43,13 @@ Daemon-backed reports include:
 Local fallback reports include a daemon warning before local checks, for example:
 
 ```text
-[WARN] daemon: daemon socket /run/tunwarden/tunwardend.sock does not exist; start tunwardend
+[WARN] daemon: daemon socket /run/podlaz/podlazd.sock does not exist; start podlazd
 ```
 
 The core report starts with:
 
 ```text
-TunWarden core diagnostics
+podlaz core diagnostics
 [OK] xray: /usr/local/bin/xray is executable
 [OK] xray-version: Xray ...
 [WARN] config-test: not checked
@@ -112,7 +112,7 @@ When daemon diagnostics are unavailable, this check is `WARN` and includes an ac
 
 Reports the current Go platform as `GOOS/GOARCH`.
 
-Linux is `OK`. Other platforms are `WARN` because TunWarden is Linux-first.
+Linux is `OK`. Other platforms are `WARN` because podlaz is Linux-first.
 
 ### `iproute2`
 
@@ -160,17 +160,17 @@ The check does not change DNS configuration.
 
 Detects `nft` availability.
 
-The check may inspect TunWarden-owned nftables table presence but must not create, flush, or delete nftables state.
+The check may inspect podlaz-owned nftables table presence but must not create, flush, or delete nftables state.
 
 ### `stale-resources`
 
-Detects known TunWarden-owned resource names:
+Detects known podlaz-owned resource names:
 
-- interface `tunwarden0` through `ip link show dev tunwarden0`;
-- nftables table `inet tunwarden` through `nft list table inet tunwarden`;
-- runtime path `/run/tunwarden` through filesystem metadata.
+- interface `podlaz0` through `ip link show dev podlaz0`;
+- nftables table `inet podlaz` through `nft list table inet podlaz`;
+- runtime path `/run/podlaz` through filesystem metadata.
 
-Absent resources are healthy. Existing TunWarden-owned resources are reported as `WARN` until cleanup behavior is explicitly implemented in a later milestone. When diagnostics run through a live daemon, the daemon-owned runtime directory itself is not treated as stale merely because it exists.
+Absent resources are healthy. Existing podlaz-owned resources are reported as `WARN` until cleanup behavior is explicitly implemented in a later milestone. When diagnostics run through a live daemon, the daemon-owned runtime directory itself is not treated as stale merely because it exists.
 
 ### `xray`
 

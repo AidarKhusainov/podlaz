@@ -1,7 +1,7 @@
 # Go
 /bin/
 /dist/
-/.nfpm.tunwarden.yaml
+/.nfpm.podlaz.yaml
 *.test
 coverage.out
 

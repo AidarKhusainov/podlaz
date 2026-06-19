@@ -26,7 +26,7 @@ func TestBuildJournalctlArgsSupportsFollowAndSince(t *testing.T) {
 }
 
 func TestScanRedactedRedactsSensitiveLogContent(t *testing.T) {
-	input := strings.NewReader("Jun 03 host tunwardend[123]: token=abc password=secret id=123e4567-e89b-12d3-a456-426614174000\n")
+	input := strings.NewReader("Jun 03 host podlazd[123]: token=abc password=secret id=123e4567-e89b-12d3-a456-426614174000\n")
 	var out bytes.Buffer
 
 	if err := scanRedacted(&out, input); err != nil {
@@ -47,7 +47,7 @@ func TestScanRedactedRedactsSensitiveLogContent(t *testing.T) {
 
 func TestScanRedactedHandlesLongLogLines(t *testing.T) {
 	longMessage := strings.Repeat("x", 70*1024)
-	input := strings.NewReader("Jun 03 host tunwardend[123]: " + longMessage + "\n")
+	input := strings.NewReader("Jun 03 host podlazd[123]: " + longMessage + "\n")
 	var out bytes.Buffer
 
 	if err := scanRedacted(&out, input); err != nil {
@@ -60,7 +60,7 @@ func TestScanRedactedHandlesLongLogLines(t *testing.T) {
 
 func TestScanRedactedReturnsWriteErrors(t *testing.T) {
 	wantErr := errors.New("write failed")
-	err := scanRedacted(errorWriter{err: wantErr}, strings.NewReader("Jun 03 host tunwardend[123]: daemon started\n"))
+	err := scanRedacted(errorWriter{err: wantErr}, strings.NewReader("Jun 03 host podlazd[123]: daemon started\n"))
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected write error %v, got %v", wantErr, err)
 	}

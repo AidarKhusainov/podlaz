@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
 )
 
 func TestRunCLIDoctorCoreRendersXrayDiagnostics(t *testing.T) {
@@ -27,7 +27,7 @@ func TestRunCLIDoctorCoreRendersXrayDiagnostics(t *testing.T) {
 		t.Fatalf("expected xray path to be passed through, got %q", gotPath)
 	}
 	got := out.String()
-	for _, text := range []string{"TunWarden core diagnostics", "[OK] xray: /usr/local/bin/xray is executable", "[OK] xray-version: Xray 25.6.1", "[WARN] config-test: not checked"} {
+	for _, text := range []string{"podlaz core diagnostics", "[OK] xray: /usr/local/bin/xray is executable", "[OK] xray-version: Xray 25.6.1", "[WARN] config-test: not checked"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected output to contain %q, got %q", text, got)
 		}

@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	proxyCoreExecutionUser  = "tunwarden-xray"
-	proxyCoreExecutionGroup = "tunwarden-xray"
+	proxyCoreExecutionUser  = "podlaz-xray"
+	proxyCoreExecutionGroup = "podlaz-xray"
 )
 
 var (
@@ -54,11 +54,11 @@ func proxyOnlyCoreExecutionIdentity() (coreExecutionIdentity, error) {
 func dedicatedProxyCoreExecutionIdentity() (coreExecutionIdentity, error) {
 	u, err := lookupUserName(proxyCoreExecutionUser)
 	if err != nil {
-		return coreExecutionIdentity{}, fmt.Errorf("resolve proxy-only Xray execution user %q: %w; install packaging/sysusers.d/tunwarden.conf or create the documented system user", proxyCoreExecutionUser, err)
+		return coreExecutionIdentity{}, fmt.Errorf("resolve proxy-only Xray execution user %q: %w; install packaging/sysusers.d/podlaz.conf or create the documented system user", proxyCoreExecutionUser, err)
 	}
 	g, err := lookupGroupName(proxyCoreExecutionGroup)
 	if err != nil {
-		return coreExecutionIdentity{}, fmt.Errorf("resolve proxy-only Xray execution group %q: %w; install packaging/sysusers.d/tunwarden.conf or create the documented system group", proxyCoreExecutionGroup, err)
+		return coreExecutionIdentity{}, fmt.Errorf("resolve proxy-only Xray execution group %q: %w; install packaging/sysusers.d/podlaz.conf or create the documented system group", proxyCoreExecutionGroup, err)
 	}
 
 	uid, err := parseSystemID("user", proxyCoreExecutionUser, u.Uid)

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/status"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {

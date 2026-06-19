@@ -1,3 +1,3 @@
 // Package api defines shared request and response contracts used between the
-// CLI client and the TunWarden daemon.
+// CLI client and the podlaz daemon.
 package api

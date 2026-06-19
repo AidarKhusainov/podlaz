@@ -20,36 +20,36 @@ test -z "$(gofmt -l .)"
 go test ./...
 go vet ./...
 govulncheck ./...
-go run ./cmd/tunwarden version
-go run ./cmd/tunwarden doctor
-go run ./cmd/tunwarden recover
-go run ./cmd/tunwarden completion bash >/dev/null
-go run ./cmd/tunwarden completion zsh >/dev/null
-go run ./cmd/tunwarden completion fish >/dev/null
+go run ./cmd/podlaz version
+go run ./cmd/podlaz doctor
+go run ./cmd/podlaz recover
+go run ./cmd/podlaz completion bash >/dev/null
+go run ./cmd/podlaz completion zsh >/dev/null
+go run ./cmd/podlaz completion fish >/dev/null
 ```
 
 For packaging changes, also run where the required tools are available:
 
 ```bash
 bash scripts/build-deb.sh
-dpkg-deb --info dist/tunwarden_0.0.0~dev-1_amd64.deb
-dpkg-deb --contents dist/tunwarden_0.0.0~dev-1_amd64.deb
-file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
-ldd dist/package-root/usr/bin/tunwarden
-ldd dist/package-root/usr/bin/tunwardend
-test -f dist/package-root/usr/share/bash-completion/completions/tunwarden
-test -f dist/package-root/usr/share/zsh/vendor-completions/_tunwarden
-test -f dist/package-root/usr/share/fish/vendor_completions.d/tunwarden.fish
-lintian --fail-on error dist/tunwarden_0.0.0~dev-1_amd64.deb
-sudo apt install ./dist/tunwarden_0.0.0~dev-1_amd64.deb
-tunwarden version
-tunwarden completion bash >/dev/null
-tunwarden completion zsh >/dev/null
-tunwarden completion fish >/dev/null
-man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
-man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev-1_amd64.deb
-sudo apt remove -y tunwarden
+dpkg-deb --info dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+dpkg-deb --contents dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+file dist/package-root/usr/bin/podlaz dist/package-root/usr/bin/podlazd
+ldd dist/package-root/usr/bin/podlaz
+ldd dist/package-root/usr/bin/podlazd
+test -f dist/package-root/usr/share/bash-completion/completions/podlaz
+test -f dist/package-root/usr/share/zsh/vendor-completions/_podlaz
+test -f dist/package-root/usr/share/fish/vendor_completions.d/podlaz.fish
+lintian --fail-on error dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+sudo apt install ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+podlaz version
+podlaz completion bash >/dev/null
+podlaz completion zsh >/dev/null
+podlaz completion fish >/dev/null
+man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
+man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
+sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+sudo apt remove -y podlaz
 ```
 
 CI currently checks:
@@ -60,21 +60,21 @@ go test ./...
 go vet ./...
 govulncheck ./...
 bash scripts/build-deb.sh
-dpkg-deb --info dist/tunwarden_0.0.0~dev-1_amd64.deb
-dpkg-deb --contents dist/tunwarden_0.0.0~dev-1_amd64.deb
-file dist/package-root/usr/bin/tunwarden dist/package-root/usr/bin/tunwardend
-ldd dist/package-root/usr/bin/tunwarden
-ldd dist/package-root/usr/bin/tunwardend
-lintian --fail-on error dist/tunwarden_0.0.0~dev-1_amd64.deb
-sudo apt install -y ./dist/tunwarden_0.0.0~dev-1_amd64.deb
-tunwarden version
-tunwarden completion bash >/dev/null
-tunwarden completion zsh >/dev/null
-tunwarden completion fish >/dev/null
-man -l /usr/share/man/man1/tunwarden.1.gz >/dev/null
-man -l /usr/share/man/man8/tunwardend.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/tunwarden_0.0.0~dev-1_amd64.deb
-sudo apt remove -y tunwarden
+dpkg-deb --info dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+dpkg-deb --contents dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+file dist/package-root/usr/bin/podlaz dist/package-root/usr/bin/podlazd
+ldd dist/package-root/usr/bin/podlaz
+ldd dist/package-root/usr/bin/podlazd
+lintian --fail-on error dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+sudo apt install -y ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+podlaz version
+podlaz completion bash >/dev/null
+podlaz completion zsh >/dev/null
+podlaz completion fish >/dev/null
+man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
+man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
+sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+sudo apt remove -y podlaz
 ```
 
 Release workflow checks are defined in [Release workflow](./release.md). The release workflow adds tagged artifact validation, checksum generation, and GitHub Release publication on top of the regular CI and package gates.
@@ -138,7 +138,7 @@ Packaging PR checklist:
 
 - [ ] Local `.deb` artifact builds for `amd64`.
 - [ ] `dpkg-deb --info` and `dpkg-deb --contents` show expected metadata and file layout.
-- [ ] Packaged binaries report the package version through `tunwarden version`.
+- [ ] Packaged binaries report the package version through `podlaz version`.
 - [ ] Packaged shell completion files exist for bash, zsh, and fish.
 - [ ] Packaged binaries have the expected dynamic linkage baseline for the declared package dependencies.
 - [ ] `lintian` is clean of errors, or every relevant warning is documented and justified.
@@ -201,7 +201,7 @@ The `v0.2 acceptance smoke` workflow is the supported real-world VPN smoke. It i
 
 A separate Docker or network-namespace VPN gate must not be added as an always-on PR requirement unless it accurately provides the Linux routing, DNS, nftables, systemd-resolved, process-supervision, and connectivity semantics that TUN mode verifies. Partial container tests that stub those host services belong in the default fake-daemon integration layer instead.
 
-Use a VM or systemd-capable host for service lifecycle assertions such as `systemctl status tunwardend`, runtime directory creation, journald behavior, and daemon startup under the packaged unit.
+Use a VM or systemd-capable host for service lifecycle assertions such as `systemctl status podlazd`, runtime directory creation, journald behavior, and daemon startup under the packaged unit.
 
 ### Package tests
 
@@ -212,7 +212,7 @@ Use package inspection and local install/remove validation for:
 - package lifecycle behavior,
 - absence of generated runtime files in package contents,
 - binary, shell completion, and man page availability after install,
-- version consistency between package metadata and `tunwarden version`,
+- version consistency between package metadata and `podlaz version`,
 - same-version reinstall behavior,
 - dynamic linkage compatibility with the declared package dependency baseline.
 
@@ -235,11 +235,11 @@ Before declaring TUN mode stable, run manual tests on Ubuntu LTS at minimum:
 - Keep planners mostly pure and testable without root.
 - Keep executors narrow, explicit, and auditable.
 - Follow the state ownership model in `docs/state-and-security.md`.
-- Store daemon runtime state under `/run/tunwarden/`.
-- Store daemon persistent state under `/var/lib/tunwarden/`.
+- Store daemon runtime state under `/run/podlaz/`.
+- Store daemon persistent state under `/var/lib/podlaz/`.
 - Store user intent/state through the documented XDG layout.
 - Use journald as the primary log destination for the daemon.
-- Generate core configs under `/run/tunwarden/generated/`; do not treat generated engine config as persistent source of truth.
+- Generate core configs under `/run/podlaz/generated/`; do not treat generated engine config as persistent source of truth.
 - Write generated core configs atomically and avoid logging them in full.
 - Prefer nftables over iptables for initial firewall work.
 - Prefer systemd-resolved per-link DNS over global resolver mutation.

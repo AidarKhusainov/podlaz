@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestGenerateXrayProxyOnlyConfigMatchesFixture(t *testing.T) {
@@ -55,10 +55,10 @@ func TestGenerateXrayTunConfigUsesPrivateSocksInbound(t *testing.T) {
 		t.Fatalf("expected one private TUN adapter inbound, got %#v", cfg.Inbounds)
 	}
 	inbound := cfg.Inbounds[0]
-	if inbound.Tag != "tunwarden-tun-socks" || inbound.Listen != DefaultTunSOCKSListen || inbound.Port != DefaultTunSOCKSPort || inbound.Protocol != "socks" || !inbound.Settings.UDP {
+	if inbound.Tag != "podlaz-tun-socks" || inbound.Listen != DefaultTunSOCKSListen || inbound.Port != DefaultTunSOCKSPort || inbound.Protocol != "socks" || !inbound.Settings.UDP {
 		t.Fatalf("unexpected TUN inbound: %#v", inbound)
 	}
-	if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Tag != "tunwarden-tun-proxy" || cfg.Outbounds[0].Protocol != "vless" {
+	if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Tag != "podlaz-tun-proxy" || cfg.Outbounds[0].Protocol != "vless" {
 		t.Fatalf("unexpected TUN outbound: %#v", cfg.Outbounds)
 	}
 	if cfg.Outbounds[0].Settings.Address != "example.com" {

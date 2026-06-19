@@ -9,12 +9,12 @@ func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolv
 	result, err := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
 	if commandSucceeded(result, err) {
 		if strings.Contains(result.Stdout, "~.") {
-			return "TunWarden DNS route-only domain ~. active on " + managedInterface
+			return "podlaz DNS route-only domain ~. active on " + managedInterface
 		}
-		return "TunWarden DNS link exists without route-only domain ~. on " + managedInterface
+		return "podlaz DNS link exists without route-only domain ~. on " + managedInterface
 	}
 	if resourceMissing(result) {
-		return "no TunWarden-owned DNS state found for " + managedInterface
+		return "no podlaz-owned DNS state found for " + managedInterface
 	}
-	return "TunWarden DNS state unknown for " + managedInterface + ": " + commandFailureMessage(result, err)
+	return "podlaz DNS state unknown for " + managedInterface + ": " + commandFailureMessage(result, err)
 }

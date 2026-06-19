@@ -1,4 +1,4 @@
-name: tunwarden
+name: podlaz
 arch: __ARCH__
 platform: linux
 version: __VERSION__
@@ -7,15 +7,12 @@ section: net
 priority: optional
 maintainer: Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>
 vendor: AidarKhusainov
-homepage: https://github.com/AidarKhusainov/tunwarden
+homepage: https://github.com/AidarKhusainov/podlaz
 license: MIT
 description: |-
-  Linux-first CLI and daemon foundation for Xray-compatible VPN/proxy profiles.
-  TunWarden makes VPN and proxy lifecycle behavior explicit, inspectable, and
-  recoverable. The initial Debian package installs the CLI, daemon, systemd
-  unit, sysusers configuration, shell completions, manual pages, AppStream
-  metadata, and project documentation without enabling or starting the daemon
-  automatically.
+  Linux VPN client for Xray-compatible profiles.
+  podlaz makes VPN and proxy profile lifecycle behavior explicit,
+  inspectable, and recoverable through a CLI and a privileged daemon.
 
 depends:
   - libc6 (>= 2.34)
@@ -28,20 +25,20 @@ scripts:
   postremove: ./packaging/debian/postremove
 
 contents:
-  - src: ./dist/package-root/usr/bin/tunwarden
-    dst: /usr/bin/tunwarden
+  - src: ./dist/package-root/usr/bin/podlaz
+    dst: /usr/bin/podlaz
     file_info:
       mode: 0755
-  - src: ./dist/package-root/usr/bin/tunwardend
-    dst: /usr/bin/tunwardend
+  - src: ./dist/package-root/usr/bin/podlazd
+    dst: /usr/bin/podlazd
     file_info:
       mode: 0755
-  - src: ./dist/package-root/usr/lib/systemd/system/tunwardend.service
-    dst: /usr/lib/systemd/system/tunwardend.service
+  - src: ./dist/package-root/usr/lib/systemd/system/podlazd.service
+    dst: /usr/lib/systemd/system/podlazd.service
     file_info:
       mode: 0644
-  - src: ./dist/package-root/usr/lib/sysusers.d/tunwarden.conf
-    dst: /usr/lib/sysusers.d/tunwarden.conf
+  - src: ./dist/package-root/usr/lib/sysusers.d/podlaz.conf
+    dst: /usr/lib/sysusers.d/podlaz.conf
     file_info:
       mode: 0644
   - src: ./dist/package-root/usr/share

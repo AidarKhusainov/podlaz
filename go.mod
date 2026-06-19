@@ -1,4 +1,4 @@
-module github.com/AidarKhusainov/tunwarden
+module github.com/AidarKhusainov/podlaz
 
 go 1.26
 

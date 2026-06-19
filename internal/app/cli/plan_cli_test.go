@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 func TestRunCLIPlanProxyOnlyRendersDryRun(t *testing.T) {
@@ -26,7 +26,7 @@ func TestRunCLIPlanProxyOnlyRendersDryRun(t *testing.T) {
 		"Proxy-only plan",
 		"Profile: my-vless-profile",
 		"Mode: proxy-only",
-		"Will generate runtime Xray config: /run/tunwarden/generated/xray.json",
+		"Will generate runtime Xray config: /run/podlaz/generated/xray.json",
 		"Will listen on SOCKS: 127.0.0.1:1080",
 		"Will listen on HTTP: 127.0.0.1:8080",
 		"Will not modify TUN, routes, DNS, nftables, or firewall.",
@@ -66,7 +66,7 @@ func TestRunCLIPlanProxyOnlyJSONShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected JSON plan object, got %#v", got["plan"])
 	}
-	if plan["runtime_config_path"] != "/run/tunwarden/generated/xray.json" || plan["starts_xray"] != false || plan["writes_config"] != false || plan["modifies_system_networking"] != false || plan["system_networking"] == nil {
+	if plan["runtime_config_path"] != "/run/podlaz/generated/xray.json" || plan["starts_xray"] != false || plan["writes_config"] != false || plan["modifies_system_networking"] != false || plan["system_networking"] == nil {
 		t.Fatalf("unexpected plan JSON: %#v", plan)
 	}
 	if _, ok := plan["profile"].(map[string]any); !ok {
@@ -102,37 +102,37 @@ func TestRunCLIPlanTunRendersFullTunnelDryRun(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"TunWarden TUN plan",
+		"podlaz TUN plan",
 		"Mode: full-tunnel",
-		"TUN: create tunwarden0",
-		"Default traffic: route through tunwarden table",
+		"TUN: create podlaz0",
+		"Default traffic: route through podlaz table",
 		"VPN server bypass: add main 203.0.113.10/32 via 192.0.2.1 dev wlp0s20f3",
 		"Policy rules:",
 		"Routes:",
 		"DNS plan:",
 		"- backend: systemd-resolved per-link DNS",
-		"- target link: tunwarden0",
+		"- target link: podlaz0",
 		"- rollback: restore previous per-link DNS state where possible",
 		"Firewall plan:",
-		"- create nftables table inet tunwarden",
+		"- create nftables table inet podlaz",
 		"- allow VPN server bypass outside TUN",
-		"- allow traffic through tunwarden0",
+		"- allow traffic through podlaz0",
 		"- kill-switch policy: soft",
 		"- block non-TUN traffic according to selected kill-switch policy",
 		"Firewall chains:",
 		"create chain output type filter hook output priority 0 policy accept",
 		"Firewall rules:",
-		"owner=tunwarden:firewall:server-bypass rollback=inet/tunwarden/output/server-bypass",
-		"owner=tunwarden:firewall:tun-egress rollback=inet/tunwarden/output/tun-egress",
-		"owner=tunwarden:firewall:kill-switch rollback=inet/tunwarden/output/kill-switch",
-		"- rollback: remove inet tunwarden",
+		"owner=podlaz:firewall:server-bypass rollback=inet/podlaz/output/server-bypass",
+		"owner=podlaz:firewall:tun-egress rollback=inet/podlaz/output/tun-egress",
+		"owner=podlaz:firewall:kill-switch rollback=inet/podlaz/output/kill-switch",
+		"- rollback: remove inet podlaz",
 		"Rollback steps:",
-		"Remove nftables table inet tunwarden",
+		"Remove nftables table inet podlaz",
 		"Restore previous systemd-resolved",
 		"No changes were applied.",
 		"Default IPv4 route: detected, dev wlp0s20f3",
 		"DNS mode: systemd-resolved",
-		"Stale TunWarden-owned resources: none detected",
+		"Stale podlaz-owned resources: none detected",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected TUN plan output to contain %q, got %q", want, got)
@@ -148,7 +148,7 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 	opts := options{
 		profileStorePath: storePath,
 		systemSnapshot: func(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
-			return netsnapshot.FakeDesktopWithStaleTunWardenResources()
+			return netsnapshot.FakeDesktopWithStalepodlazResources()
 		},
 	}
 	profileID := importPlanTestProfile(t, opts)
@@ -194,11 +194,11 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 		}
 	}
 	dns, ok := plan["dns"].(map[string]any)
-	if !ok || dns["backend"] != "systemd-resolved per-link DNS" || dns["target_link"] != "tunwarden0" {
+	if !ok || dns["backend"] != "systemd-resolved per-link DNS" || dns["target_link"] != "podlaz0" {
 		t.Fatalf("unexpected TUN DNS plan JSON: %#v", plan["dns"])
 	}
 	firewall, ok := plan["firewall"].(map[string]any)
-	if !ok || firewall["backend"] != "nftables" || firewall["family"] != "inet" || firewall["table"] != "tunwarden" {
+	if !ok || firewall["backend"] != "nftables" || firewall["family"] != "inet" || firewall["table"] != "podlaz" {
 		t.Fatalf("unexpected TUN firewall plan JSON: %#v", plan["firewall"])
 	}
 	chains, ok := firewall["chains"].([]any)
@@ -209,9 +209,9 @@ func TestRunCLIPlanTunJSONShape(t *testing.T) {
 	if !ok || len(rules) < 3 {
 		t.Fatalf("expected structured firewall rules JSON, got %#v", firewall["rules"])
 	}
-	if !containsJSONRule(rules, "tunwarden:firewall:server-bypass", "inet/tunwarden/output/server-bypass") ||
-		!containsJSONRule(rules, "tunwarden:firewall:tun-egress", "inet/tunwarden/output/tun-egress") ||
-		!containsJSONRule(rules, "tunwarden:firewall:kill-switch", "inet/tunwarden/output/kill-switch") {
+	if !containsJSONRule(rules, "podlaz:firewall:server-bypass", "inet/podlaz/output/server-bypass") ||
+		!containsJSONRule(rules, "podlaz:firewall:tun-egress", "inet/podlaz/output/tun-egress") ||
+		!containsJSONRule(rules, "podlaz:firewall:kill-switch", "inet/podlaz/output/kill-switch") {
 		t.Fatalf("expected owned firewall rules with rollback keys, got %#v", rules)
 	}
 	killSwitch, ok := firewall["kill_switch"].(map[string]any)
@@ -299,7 +299,7 @@ func TestRunCLIPlanHelp(t *testing.T) {
 		t.Fatalf("plan --help failed: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"tunwarden plan --mode proxy-only", "tunwarden plan --mode tun", "TUN/route/DNS/nftables kill-switch dry-run plan"} {
+	for _, want := range []string{"podlaz plan --mode proxy-only", "podlaz plan --mode tun", "TUN/route/DNS/nftables kill-switch dry-run plan"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected plan help output to contain %q, got %q", want, got)
 		}

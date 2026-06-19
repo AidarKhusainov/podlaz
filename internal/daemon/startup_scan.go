@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/recovery"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 type startupScanFunc func(context.Context) recovery.PlanResult
@@ -88,7 +88,7 @@ func startupScanToAPI(scan recovery.PlanResult) *api.StartupScanStatus {
 func logStartupScan(scan recovery.PlanResult) {
 	status := startupScanHumanStatus(startupScanStatus(scan))
 	if len(scan.Candidates) == 0 && len(scan.Warnings) == 0 {
-		log.Printf("tunwardend: startup recovery scan: %s", render.Redact(status))
+		log.Printf("podlazd: startup recovery scan: %s", render.Redact(status))
 		return
 	}
 
@@ -105,7 +105,7 @@ func logStartupScan(scan recovery.PlanResult) {
 	if action := startupScanSuggestedAction(scan); action != "" {
 		parts = append(parts, "suggested action: "+action)
 	}
-	log.Printf("tunwardend: %s", render.Redact(strings.Join(parts, "; ")))
+	log.Printf("podlazd: %s", render.Redact(strings.Join(parts, "; ")))
 }
 
 func startupScanDoctorMessage(scan recovery.PlanResult) string {
@@ -153,10 +153,10 @@ func startupScanHumanStatus(status string) string {
 
 func startupScanSuggestedAction(scan recovery.PlanResult) string {
 	if len(scan.Candidates) > 0 {
-		return "tunwarden recover"
+		return "podlaz recover"
 	}
 	if len(scan.Warnings) > 0 {
-		return "tunwarden doctor"
+		return "podlaz doctor"
 	}
 	return ""
 }

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 type fakeScanner struct {
@@ -56,18 +56,18 @@ func (r fakeRunner) Run(_ context.Context, name string, args ...string) (Command
 func TestPlanWithFakeScannerRendersRecoveryCandidates(t *testing.T) {
 	plan := PlanWithOptions(context.Background(), Options{Scanner: fakeScanner{result: ScanResult{
 		Candidates: []Candidate{
-			{Kind: "tun-interface", Description: "TUN interface", Target: "tunwarden0"},
-			{Kind: "nftables-table", Description: "nftables table", Target: "inet tunwarden"},
-			{Kind: "generated-runtime-configs", Description: "generated runtime configs", Target: "/run/tunwarden/generated"},
+			{Kind: "tun-interface", Description: "TUN interface", Target: "podlaz0"},
+			{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"},
+			{Kind: "generated-runtime-configs", Description: "generated runtime configs", Target: "/run/podlaz/generated"},
 		},
 	}}})
 
 	got := plan.String()
 	want := []string{
-		"TunWarden recovery dry-run",
-		"Would recover TUN interface: tunwarden0",
-		"Would recover nftables table: inet tunwarden",
-		"Would recover generated runtime configs: /run/tunwarden/generated",
+		"podlaz recovery dry-run",
+		"Would recover TUN interface: podlaz0",
+		"Would recover nftables table: inet podlaz",
+		"Would recover generated runtime configs: /run/podlaz/generated",
 		"No changes were applied.",
 	}
 	for _, text := range want {
@@ -85,24 +85,24 @@ func TestPlanWithFakeScannerRendersTransactionCandidate(t *testing.T) {
 		Candidates: []Candidate{{
 			Kind:        "transaction-state",
 			Description: "transaction rollback state",
-			Target:      "/run/tunwarden/transactions/tx-apply.json",
+			Target:      "/run/podlaz/transactions/tx-apply.json",
 			Transaction: &TransactionCandidate{
 				ID:                "tx-apply",
 				State:             "applying",
 				Status:            "pending apply",
 				RollbackAvailable: true,
 				RequiresCleanup:   true,
-				Path:              "/run/tunwarden/transactions/tx-apply.json",
+				Path:              "/run/podlaz/transactions/tx-apply.json",
 			},
 		}},
 	}}})
 
 	got := plan.String()
 	want := []string{
-		"TunWarden recovery dry-run",
+		"podlaz recovery dry-run",
 		"Transaction: pending apply",
 		"Rollback available: yes",
-		"State path: /run/tunwarden/transactions/tx-apply.json",
+		"State path: /run/podlaz/transactions/tx-apply.json",
 		"No changes were applied.",
 	}
 	for _, text := range want {
@@ -120,8 +120,8 @@ func TestPlanWithFakeScannerRendersCleanHost(t *testing.T) {
 
 	got := plan.String()
 	want := []string{
-		"TunWarden recovery dry-run",
-		"No TunWarden-owned recovery candidates found.",
+		"podlaz recovery dry-run",
+		"No podlaz-owned recovery candidates found.",
 		"No changes were applied.",
 	}
 	for _, text := range want {
@@ -137,16 +137,16 @@ func TestPlanWithFakeScannerRendersCleanHost(t *testing.T) {
 func TestPlanWithFakeScannerDoesNotRenderCleanHostWhenWarningsExist(t *testing.T) {
 	plan := PlanWithOptions(context.Background(), Options{Scanner: fakeScanner{result: ScanResult{
 		Warnings: []Warning{{
-			Target:  "TUN interface tunwarden0",
+			Target:  "TUN interface podlaz0",
 			Message: "ip command is unavailable",
 		}},
 	}}})
 
 	got := plan.String()
-	if strings.Contains(got, "No TunWarden-owned recovery candidates found.") {
+	if strings.Contains(got, "No podlaz-owned recovery candidates found.") {
 		t.Fatalf("warning-only output must not claim a clean host, got %q", got)
 	}
-	if !strings.Contains(got, "Warning: could not inspect TUN interface tunwarden0: ip command is unavailable") {
+	if !strings.Contains(got, "Warning: could not inspect TUN interface podlaz0: ip command is unavailable") {
 		t.Fatalf("expected warning in output, got %q", got)
 	}
 	if !strings.Contains(got, "No changes were applied.") {
@@ -169,7 +169,7 @@ func TestPlanDoesNotReportRuntimeRootAsCandidate(t *testing.T) {
 	if strings.Contains(got, runtimeDir) || strings.Contains(got, "runtime directory") {
 		t.Fatalf("runtime root must not be rendered as a recovery candidate, got %q", got)
 	}
-	if !strings.Contains(got, "No TunWarden-owned recovery candidates found.") {
+	if !strings.Contains(got, "No podlaz-owned recovery candidates found.") {
 		t.Fatalf("expected clean host message, got %q", got)
 	}
 }
@@ -192,7 +192,7 @@ func TestExecuteDoesNotReportRuntimeRootWhenOnlyRuntimeDirExists(t *testing.T) {
 	if strings.Contains(got, runtimeDir) || strings.Contains(got, "runtime directory") {
 		t.Fatalf("runtime root must not be rendered in execute output, got %q", got)
 	}
-	if !strings.Contains(got, "No TunWarden-owned recovery candidates found.") {
+	if !strings.Contains(got, "No podlaz-owned recovery candidates found.") {
 		t.Fatalf("expected clean execute output, got %q", got)
 	}
 }
@@ -212,18 +212,18 @@ func TestOSScannerDetectsOwnedResources(t *testing.T) {
 				"nft": "/usr/sbin/nft",
 			},
 			commands: map[string]fakeCommand{
-				"ip link show dev tunwarden0": {
-					stdout: "2: tunwarden0: <POINTOPOINT,UP> mtu 1500",
+				"ip link show dev podlaz0": {
+					stdout: "2: podlaz0: <POINTOPOINT,UP> mtu 1500",
 				},
-				"nft list table inet tunwarden": {
-					stdout: "table inet tunwarden {}",
+				"nft list table inet podlaz": {
+					stdout: "table inet podlaz {}",
 				},
 			},
 		},
 	})
 
-	assertCandidate(t, plan, "tun-interface", "tunwarden0")
-	assertCandidate(t, plan, "nftables-table", "inet tunwarden")
+	assertCandidate(t, plan, "tun-interface", "podlaz0")
+	assertCandidate(t, plan, "nftables-table", "inet podlaz")
 	assertCandidate(t, plan, "generated-runtime-configs", generatedDir)
 	assertNoCandidateKind(t, plan, "runtime-directory")
 	if len(plan.Warnings) != 0 {
@@ -238,7 +238,7 @@ func TestOSScannerExplainsPendingTransactionState(t *testing.T) {
 	tx.State = txstate.TransactionApplying
 	tx.Rollback = txstate.RollbackMetadata{
 		TUN: []txstate.TUNRollback{{
-			InterfaceName: "tunwarden0",
+			InterfaceName: "podlaz0",
 			Owner:         txstate.TransactionOwner,
 		}},
 	}
@@ -271,7 +271,7 @@ func TestOSScannerExplainsPendingTransactionState(t *testing.T) {
 
 func TestOSScannerRendersCleanHostFromMissingOwnedResources(t *testing.T) {
 	plan := PlanWithOptions(context.Background(), Options{
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 		Runner:     fakeMissingResourcesRunner(),
 	})
 
@@ -279,26 +279,26 @@ func TestOSScannerRendersCleanHostFromMissingOwnedResources(t *testing.T) {
 		t.Fatalf("expected clean host, got candidates %#v", plan.Candidates)
 	}
 	got := plan.String()
-	if !strings.Contains(got, "No TunWarden-owned recovery candidates found.") {
+	if !strings.Contains(got, "No podlaz-owned recovery candidates found.") {
 		t.Fatalf("expected clean host message, got %q", got)
 	}
 }
 
 func TestOSScannerPreservesInspectionWarnings(t *testing.T) {
 	plan := PlanWithOptions(context.Background(), Options{
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 		Runner: fakeRunner{
 			paths: map[string]string{
 				"ip":  "/usr/sbin/ip",
 				"nft": "/usr/sbin/nft",
 			},
 			commands: map[string]fakeCommand{
-				"ip link show dev tunwarden0": {
+				"ip link show dev podlaz0": {
 					stderr:   "Operation not permitted",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
-				"nft list table inet tunwarden": {
+				"nft list table inet podlaz": {
 					stderr:   "Error: No such file or directory",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
@@ -311,10 +311,10 @@ func TestOSScannerPreservesInspectionWarnings(t *testing.T) {
 		t.Fatalf("expected one warning, got %#v", plan.Warnings)
 	}
 	got := plan.String()
-	if strings.Contains(got, "No TunWarden-owned recovery candidates found.") {
+	if strings.Contains(got, "No podlaz-owned recovery candidates found.") {
 		t.Fatalf("warning-only output must not claim a clean host, got %q", got)
 	}
-	if !strings.Contains(got, "Warning: could not inspect TUN interface tunwarden0") || !strings.Contains(got, "Operation not permitted") {
+	if !strings.Contains(got, "Warning: could not inspect TUN interface podlaz0") || !strings.Contains(got, "Operation not permitted") {
 		t.Fatalf("expected inspection warning in output, got %q", got)
 	}
 }
@@ -326,12 +326,12 @@ func fakeMissingResourcesRunner() fakeRunner {
 			"nft": "/usr/sbin/nft",
 		},
 		commands: map[string]fakeCommand{
-			"ip link show dev tunwarden0": {
-				stderr:   "Device \"tunwarden0\" does not exist.",
+			"ip link show dev podlaz0": {
+				stderr:   "Device \"podlaz0\" does not exist.",
 				exitCode: 1,
 				err:      errors.New("exit status 1"),
 			},
-			"nft list table inet tunwarden": {
+			"nft list table inet podlaz": {
 				stderr:   "Error: No such file or directory",
 				exitCode: 1,
 				err:      errors.New("exit status 1"),

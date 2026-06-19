@@ -2,9 +2,9 @@
 package snapshot
 
 const (
-	DefaultTunName   = "tunwarden0"
+	DefaultTunName   = "podlaz0"
 	DefaultNFTFamily = "inet"
-	DefaultNFTTable  = "tunwarden"
+	DefaultNFTTable  = "podlaz"
 )
 
 // Status describes whether a read-only observation was available.
@@ -47,13 +47,13 @@ type NetworkManager struct {
 	State   string  `json:"state,omitempty"`
 }
 
-// Nftables describes nftables availability and TunWarden-owned table presence.
+// Nftables describes nftables availability and podlaz-owned table presence.
 type Nftables struct {
-	Availability   Finding `json:"availability"`
-	TunWardenTable Finding `json:"tunwarden_table"`
+	Availability Finding `json:"availability"`
+	PodlazTable  Finding `json:"podlaz_table"`
 }
 
-// TunDevice describes a known TunWarden TUN interface name.
+// TunDevice describes a known podlaz TUN interface name.
 type TunDevice struct {
 	Name   string `json:"name"`
 	Status Status `json:"status"`
@@ -61,7 +61,7 @@ type TunDevice struct {
 	Raw    string `json:"raw,omitempty"`
 }
 
-// StaleResource describes detected TunWarden-owned system state from a read-only snapshot.
+// StaleResource describes detected podlaz-owned system state from a read-only snapshot.
 type StaleResource struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`

@@ -8,14 +8,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/logs"
-	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
-	"github.com/AidarKhusainov/tunwarden/internal/recovery"
-	"github.com/AidarKhusainov/tunwarden/internal/status"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/logs"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 var version = "0.0.0-dev"
+var commit = ""
+var built = ""
 
 type exitError struct {
 	code int
@@ -61,7 +63,7 @@ type options struct {
 	stdinIsTerminal       func() bool
 }
 
-// Run executes the user-facing TunWarden command line interface.
+// Run executes the user-facing podlaz command line interface.
 func Run(ctx context.Context, args []string) error {
 	return run(ctx, args, os.Stdout)
 }
@@ -171,8 +173,21 @@ func runVersionCommand(args []string, stdout io.Writer) error {
 		return usageError("version does not accept arguments")
 	}
 
-	fmt.Fprintf(stdout, "tunwarden %s\n", version)
+	fmt.Fprintf(stdout, "podlaz version %s\n", versionValue())
+	fmt.Fprintf(stdout, "commit: %s\n", fallback(commit, "unknown"))
+	fmt.Fprintf(stdout, "built: %s\n", fallback(built, "unknown"))
 	return nil
+}
+
+func versionValue() string {
+	return fallback(version, "dev")
+}
+
+func fallback(value string, defaultValue string) string {
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }
 
 func isHelp(args []string) bool {

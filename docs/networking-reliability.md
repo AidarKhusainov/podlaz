@@ -2,11 +2,11 @@
 
 ## 1. Purpose
 
-This document defines the networking invariants TunWarden must preserve.
+This document defines the networking invariants podlaz must preserve.
 
 The main requirement is simple:
 
-> TunWarden must not leave the user's Linux machine without recoverable networking.
+> podlaz must not leave the user's Linux machine without recoverable networking.
 
 VPN correctness is not enough. Cleanup, rollback, recovery, and diagnostics are part of the product.
 
@@ -45,14 +45,14 @@ TUN mode is the primary VPN-like mode.
 
 Expected behavior:
 
-- create a stable TUN interface, for example `tunwarden0`,
+- create a stable TUN interface, for example `podlaz0`,
 - route general traffic through the TUN interface,
 - route the VPN server itself outside the TUN interface,
 - configure DNS intentionally,
 - prevent traffic loops,
 - clean up on disconnect/crash.
 
-The current preview flow has daemon-owned transaction execution for the TUN interface, routes, policy rules, systemd-resolved per-link DNS, TunWarden-owned nftables state, TUN-mode Xray runtime config generation, Xray process startup, `tun2socks` adapter startup, and pre-commit route/TCP connectivity verification. It must not start proxy-only Xray config and report it as an active TUN connection. It remains a preview until the v0.2 manual acceptance gate records conclusive Tier 1 evidence for connect, rollback, disconnect cleanup, recovery dependency, and known limitations.
+The current preview flow has daemon-owned transaction execution for the TUN interface, routes, policy rules, systemd-resolved per-link DNS, podlaz-owned nftables state, TUN-mode Xray runtime config generation, Xray process startup, `tun2socks` adapter startup, and pre-commit route/TCP connectivity verification. It must not start proxy-only Xray config and report it as an active TUN connection. It remains a preview until the v0.2 manual acceptance gate records conclusive Tier 1 evidence for connect, rollback, disconnect cleanup, recovery dependency, and known limitations.
 
 ### 3.3 Split-tunnel mode
 
@@ -64,7 +64,7 @@ It must be implemented only after full-tunnel mode has strong diagnostics and ro
 
 ### INV-001: Server route must bypass VPN TUN
 
-Traffic to the active proxy/VPN server must not be routed through `tunwarden0`.
+Traffic to the active proxy/VPN server must not be routed through `podlaz0`.
 
 A health check must verify:
 
@@ -72,23 +72,23 @@ A health check must verify:
 ip route get <server-ip>
 ```
 
-The result must use the physical/default uplink, not the TunWarden TUN interface.
+The result must use the physical/default uplink, not the podlaz TUN interface.
 
 For hostname profile servers, read-only snapshot collection must resolve the hostname under a bounded timeout before performing server-route lookup. DNS resolution failure must be reported as incomplete visibility instead of being hidden by planner defaults.
 
-### INV-002: TunWarden-owned state must be identifiable
+### INV-002: podlaz-owned state must be identifiable
 
-Routes, rules, nftables tables/chains, generated config files, transaction files, and runtime state must be identifiable as TunWarden-owned.
+Routes, rules, nftables tables/chains, generated config files, transaction files, and runtime state must be identifiable as podlaz-owned.
 
 Naming examples:
 
 ```text
-tunwarden0
+podlaz0
 fwmark 0x... documented range
-routing table name/id reserved for TunWarden
-nft table inet tunwarden
-/run/tunwarden/transactions/<id>.json
-/run/tunwarden/*
+routing table name/id reserved for podlaz
+nft table inet podlaz
+/run/podlaz/transactions/<id>.json
+/run/podlaz/*
 ```
 
 ### INV-003: Cleanup must be idempotent
@@ -108,13 +108,13 @@ This applies to:
 
 ### INV-004: Failed connection must not damage direct connectivity
 
-If connection setup fails and strict kill-switch is not enabled, TunWarden must attempt to restore direct connectivity.
+If connection setup fails and strict kill-switch is not enabled, podlaz must attempt to restore direct connectivity.
 
 ### INV-005: NetworkManager connectivity state is not the only health signal
 
 NetworkManager or desktop UI may show limited connectivity while application traffic still works through VPN.
 
-TunWarden must run its own health checks and expose both states separately.
+podlaz must run its own health checks and expose both states separately.
 
 ## 5. TUN requirements
 
@@ -125,7 +125,7 @@ Use a stable interface name for diagnostics.
 Initial candidate:
 
 ```text
-tunwarden0
+podlaz0
 ```
 
 The dry-run plan must show the intended stable TUN interface before execution. The daemon-owned executor must create and delete the same stable interface through transaction rollback metadata.
@@ -162,28 +162,28 @@ The current dry-run planner shows intended policy-rule state before applying any
 
 ### RT-002: Dedicated routing table
 
-TunWarden should use a dedicated routing table ID/name.
+podlaz should use a dedicated routing table ID/name.
 
 Initial dry-run values:
 
 ```text
-Table: tunwarden
+Table: podlaz
 ID: 51820
 ```
 
 ### RT-003: Route visibility and route-change planning must be inspectable
 
-`tunwarden plan --mode tun <profile>` must show route visibility inputs before any TUN mutation work:
+`podlaz plan --mode tun <profile>` must show route visibility inputs before any TUN mutation work:
 
 - default IPv4/IPv6 route state;
 - default interface when detected;
 - server route after resolving hostname servers to a concrete IP address;
-- warning when the server route is unknown or would loop through `tunwarden0`.
+- warning when the server route is unknown or would loop through `podlaz0`.
 
 It must also show intended full-tunnel route and policy-rule desired state without applying it:
 
-- default IPv4 route through the TunWarden routing table;
-- policy rule that sends default IPv4 traffic through the TunWarden table;
+- default IPv4 route through the podlaz routing table;
+- policy rule that sends default IPv4 traffic through the podlaz table;
 - VPN server bypass route and policy rule only when the current snapshot provides a concrete server IP;
 - blocked/incomplete server-bypass output and warnings when hostname resolution or route lookup does not produce a concrete server IP;
 - rollback steps for planned routes and policy rules.
@@ -192,7 +192,7 @@ The current dry-run plan must not claim to apply route changes. It is inspectabl
 
 ### RT-004: Default interface must be re-detected
 
-On Wi-Fi reconnect, DHCP change, resume, or default route change, TunWarden must re-detect:
+On Wi-Fi reconnect, DHCP change, resume, or default route change, podlaz must re-detect:
 
 - uplink interface,
 - gateway,
@@ -202,10 +202,10 @@ On Wi-Fi reconnect, DHCP change, resume, or default route change, TunWarden must
 
 ### RT-005: Route loop prevention
 
-TunWarden must detect and reject a plan where:
+podlaz must detect and reject a plan where:
 
 ```text
-VPN server route -> tunwarden0
+VPN server route -> podlaz0
 ```
 
 unless an advanced nested mode is explicitly implemented in the future.
@@ -230,26 +230,26 @@ Fallback handling may be added later, but must be explicit and documented.
 
 ### DNS-003: Full-tunnel DNS must be per-link where possible
 
-For full-tunnel mode, TunWarden uses per-link DNS on `tunwarden0` where possible.
+For full-tunnel mode, podlaz uses per-link DNS on `podlaz0` where possible.
 
 Current executor behavior applies the DNS servers already present in `TunDNSPlan.Servers`; the current planner default is `1.1.1.1` until user DNS configuration exists.
 
 ```bash
-resolvectl dns tunwarden0 <planned-dns-server> [...]
-resolvectl domain tunwarden0 '~.'
-resolvectl default-route tunwarden0 yes
+resolvectl dns podlaz0 <planned-dns-server> [...]
+resolvectl domain podlaz0 '~.'
+resolvectl default-route podlaz0 yes
 ```
 
 Rollback uses:
 
 ```bash
-resolvectl revert tunwarden0
+resolvectl revert podlaz0
 ```
 
 The executor verifies the link with:
 
 ```bash
-resolvectl status tunwarden0 --no-pager
+resolvectl status podlaz0 --no-pager
 ```
 
 It requires every planned DNS server and the route-only domain `~.` to be visible after apply.
@@ -264,7 +264,7 @@ When the profile uses remote DNS, remote DNS should go through the proxy/VPN pat
 
 ### DNS-006: DNS diagnostics
 
-`tunwarden doctor` must report:
+`podlaz doctor` must report:
 
 - active DNS backend,
 - DNS servers by link,
@@ -281,24 +281,24 @@ Initial implementation should use nftables.
 
 iptables fallback is future scope.
 
-The current dry-run plan must show the intended nftables backend before applying anything and must warn clearly when `nft` or nftables table visibility is unavailable. The daemon-owned executor layer may apply, verify, and roll back the TunWarden-owned nftables table from an already-inspected plan. User-visible stable leak-protection claims remain blocked until the manual v0.2 acceptance gate records conclusive full-flow evidence.
+The current dry-run plan must show the intended nftables backend before applying anything and must warn clearly when `nft` or nftables table visibility is unavailable. The daemon-owned executor layer may apply, verify, and roll back the podlaz-owned nftables table from an already-inspected plan. User-visible stable leak-protection claims remain blocked until the manual v0.2 acceptance gate records conclusive full-flow evidence.
 
-### FW-002: TunWarden-owned table
+### FW-002: podlaz-owned table
 
-TunWarden must use a clearly named nftables table, for example:
+podlaz must use a clearly named nftables table, for example:
 
 ```text
-nft table inet tunwarden
+nft table inet podlaz
 ```
 
-The current `plan --mode tun` implementation reports nftables availability and TunWarden table presence and also shows intended nftables/firewall desired state:
+The current `plan --mode tun` implementation reports nftables availability and podlaz table presence and also shows intended nftables/firewall desired state:
 
 ```text
 Firewall plan:
-- create nftables table inet tunwarden
+- create nftables table inet podlaz
 - allow VPN server bypass outside TUN
 - block non-TUN traffic according to selected kill-switch policy
-- rollback: remove inet tunwarden
+- rollback: remove inet podlaz
 ```
 
 Dry-run output still must not mutate nftables or firewall state.
@@ -319,11 +319,11 @@ Suggested semantics:
 - `soft`: prevent accidental leaks during transition but restore direct connectivity on failure.
 - `strict`: block non-VPN traffic if VPN fails, except recovery/control traffic.
 
-The current dry-run planner exposes the selected kill-switch policy and its limitations. Strict kill-switch planning must warn that direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules. No user-visible output may claim stable leak protection until the manual v0.2 acceptance gate verifies apply, pre-commit connectivity, rollback, disconnect cleanup, and recovery behavior for the full flow.
+The current dry-run planner exposes the selected kill-switch policy and its limitations. Strict kill-switch planning must warn that direct connectivity may remain blocked after VPN failure until podlaz recovery removes owned nftables rules. No user-visible output may claim stable leak protection until the manual v0.2 acceptance gate verifies apply, pre-commit connectivity, rollback, disconnect cleanup, and recovery behavior for the full flow.
 
 ### FW-004: Recovery must override kill-switch
 
-`recover --execute --yes` must remove TunWarden-owned kill-switch rules even in strict mode.
+`recover --execute --yes` must remove podlaz-owned kill-switch rules even in strict mode.
 
 ## 9. Sleep/resume requirements
 
@@ -333,7 +333,7 @@ Suspend/resume must not be treated as an edge case.
 
 ### SR-002: Before sleep
 
-TunWarden should:
+podlaz should:
 
 - pause aggressive reconnect loops,
 - mark active profile,
@@ -342,7 +342,7 @@ TunWarden should:
 
 ### SR-003: After resume
 
-TunWarden must:
+podlaz must:
 
 - wait for network availability or relevant NetworkManager events,
 - re-detect default route/interface,
@@ -354,7 +354,7 @@ TunWarden must:
 
 ### SR-004: No stale assumptions
 
-After resume, TunWarden must not assume:
+After resume, podlaz must not assume:
 
 - same Wi-Fi network,
 - same gateway,
@@ -367,7 +367,7 @@ After resume, TunWarden must not assume:
 
 ### NM-001: Listen for relevant network events
 
-TunWarden must react to events equivalent to:
+podlaz must react to events equivalent to:
 
 - up,
 - down,
@@ -389,7 +389,7 @@ NetworkManager connectivity state should be shown in diagnostics but must not be
 
 ## 11. Health checks
 
-`tunwarden doctor` must include these checks.
+`podlaz doctor` must include these checks.
 
 ### Core checks
 
@@ -424,7 +424,7 @@ NetworkManager connectivity state should be shown in diagnostics but must not be
 
 - nftables table exists when expected,
 - kill-switch state matches config,
-- no stale TunWarden-owned table exists after disconnect.
+- no stale podlaz-owned table exists after disconnect.
 
 ### Connectivity checks
 
@@ -442,11 +442,11 @@ NetworkManager connectivity state should be shown in diagnostics but must not be
 
 ## 12. Recovery requirements
 
-`recover` must be designed as an emergency recovery command. Plain `tunwarden recover` must remain a read-only recovery plan. `tunwarden recover --execute --yes` is the explicit cleanup path and must remove only TunWarden-owned runtime/process/networking state, including reversible DNS state, while reporting anything it could not change.
+`recover` must be designed as an emergency recovery command. Plain `podlaz recover` must remain a read-only recovery plan. `podlaz recover --execute --yes` is the explicit cleanup path and must remove only podlaz-owned runtime/process/networking state, including reversible DNS state, while reporting anything it could not change.
 
-The read-only plan must include pending or stale transaction files under `/run/tunwarden/transactions/` as transaction-state recovery candidates when their state requires cleanup. Invalid or unreadable transaction files must be reported as inspection warnings, not ignored.
+The read-only plan must include pending or stale transaction files under `/run/podlaz/transactions/` as transaction-state recovery candidates when their state requires cleanup. Invalid or unreadable transaction files must be reported as inspection warnings, not ignored.
 
-It must be safe to run recovery when TunWarden is disconnected.
+It must be safe to run recovery when podlaz is disconnected.
 
 ## 13. Reliability tests
 

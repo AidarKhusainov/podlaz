@@ -3,13 +3,13 @@ package planner
 import (
 	"fmt"
 
-	"github.com/AidarKhusainov/tunwarden/internal/engine"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/engine"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 const (
 	ModeProxyOnly            = "proxy-only"
-	DefaultRuntimeConfigPath = "/run/tunwarden/generated/xray.json"
+	DefaultRuntimeConfigPath = "/run/podlaz/generated/xray.json"
 	NoSystemNetworkingPlan   = "Will not modify TUN, routes, DNS, nftables, or firewall."
 )
 

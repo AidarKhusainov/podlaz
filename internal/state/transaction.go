@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	TransactionSchemaVersion = "tunwarden.transaction.v1"
-	TransactionOwner         = "tunwarden"
+	TransactionSchemaVersion = "podlaz.transaction.v1"
+	TransactionOwner         = "podlaz"
 	TransactionDirName       = "transactions"
 	TransactionFileSuffix    = ".json"
 )
@@ -257,7 +257,7 @@ func (s TransactionStore) Path(id string) (string, error) {
 	}
 	runtimeDir := s.RuntimeDir
 	if runtimeDir == "" {
-		runtimeDir = "/run/tunwarden"
+		runtimeDir = "/run/podlaz"
 	}
 	return filepath.Join(runtimeDir, TransactionDirName, id+TransactionFileSuffix), nil
 }
@@ -360,7 +360,7 @@ func (s TransactionStore) Transition(id string, next TransactionState) (Transact
 func (s TransactionStore) Scan() ([]TransactionSummary, []string) {
 	runtimeDir := s.RuntimeDir
 	if runtimeDir == "" {
-		runtimeDir = "/run/tunwarden"
+		runtimeDir = "/run/podlaz"
 	}
 	return ScanTransactions(runtimeDir)
 }

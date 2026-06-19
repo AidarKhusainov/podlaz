@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 const SubscriptionDisplayNameRejectedWarning = "provider subscription display name was rejected; using safe fallback"

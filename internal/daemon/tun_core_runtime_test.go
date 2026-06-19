@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
@@ -33,11 +33,11 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 		ServerBypass: planner.TunRoutePlan{Destination: "203.0.113.10/32"},
 	}
 
-	runtime, err := planTunCoreRuntime(p, "/run/tunwarden/generated/xray.json", plan)
+	runtime, err := planTunCoreRuntime(p, "/run/podlaz/generated/xray.json", plan)
 	if err != nil {
 		t.Fatalf("plan TUN core runtime: %v", err)
 	}
-	if runtime.RuntimeConfigPath != "/run/tunwarden/generated/xray.json" {
+	if runtime.RuntimeConfigPath != "/run/podlaz/generated/xray.json" {
 		t.Fatalf("unexpected runtime config path: %q", runtime.RuntimeConfigPath)
 	}
 	if runtime.SOCKSEndpoint == "" || !strings.Contains(runtime.Status, runtime.SOCKSEndpoint) {

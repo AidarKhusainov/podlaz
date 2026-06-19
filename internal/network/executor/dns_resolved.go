@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 const (
-	OwnerDNS                = "tunwarden:dns-link"
+	OwnerDNS                = "podlaz:dns-link"
 	resolvedRouteOnlyDomain = "~."
 )
 
@@ -42,7 +42,7 @@ func NewOSDNSExecutor() DNSAwareTunExecutor {
 }
 
 // Apply applies TUN, routes, policy rules, systemd-resolved per-link DNS, and
-// TunWarden-owned nftables state from the already-inspected plan.
+// podlaz-owned nftables state from the already-inspected plan.
 func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, error) {
 	if err := e.validate(plan); err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([
 }
 
 // Verify checks base TUN state, systemd-resolved per-link DNS state, and
-// TunWarden-owned nftables state.
+// podlaz-owned nftables state.
 func (e DNSAwareTunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.validate(plan); err != nil {
 		return err
@@ -177,7 +177,7 @@ func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan
 	return nil
 }
 
-// Rollback reverts all systemd-resolved per-link state for the TunWarden link.
+// Rollback reverts all systemd-resolved per-link state for the podlaz link.
 func (e ResolvedDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPlan) error {
 	link := strings.TrimSpace(plan.TargetLink)
 	if link == "" {

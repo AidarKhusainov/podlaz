@@ -9,8 +9,8 @@ Test on a disposable Ubuntu LTS or Debian stable VM with:
 - systemd and systemd-resolved enabled,
 - nftables available,
 - iproute2 available,
-- Xray available through `TUNWARDEN_XRAY_PATH` or `PATH`,
-- a tun2socks-compatible adapter available through `TUNWARDEN_TUN2SOCKS_PATH` or `PATH`,
+- Xray available through `PODLAZ_XRAY_PATH` or `PATH`,
+- a tun2socks-compatible adapter available through `PODLAZ_TUN2SOCKS_PATH` or `PATH`,
 - a non-production VLESS/Xray profile.
 
 Do not run this checklist on a primary workstation until rollback and recovery behavior has been validated in a VM.
@@ -18,9 +18,9 @@ Do not run this checklist on a primary workstation until rollback and recovery b
 ## Connect
 
 ```bash
-sudo tunwarden connect --mode tun <profile>
-tunwarden status
-tunwarden doctor
+sudo podlaz connect --mode tun <profile>
+podlaz status
+podlaz doctor
 ```
 
 Expected high-level result:
@@ -32,21 +32,21 @@ Expected high-level result:
 ## Host state verification
 
 ```bash
-ip link show tunwarden0
+ip link show podlaz0
 ip -4 rule show priority 51819
 ip -4 rule show priority 51820
-ip -4 route show table tunwarden
-resolvectl status tunwarden0 --no-pager
-sudo nft list table inet tunwarden
+ip -4 route show table podlaz
+resolvectl status podlaz0 --no-pager
+sudo nft list table inet podlaz
 ```
 
 Expected result:
 
-- `tunwarden0` exists and is up;
-- TunWarden policy rules exist at the planned priorities;
-- routing table `tunwarden` contains the planned default route;
+- `podlaz0` exists and is up;
+- podlaz policy rules exist at the planned priorities;
+- routing table `podlaz` contains the planned default route;
 - systemd-resolved shows the planned per-link DNS server(s) and route-only domain `~.`;
-- nftables table `inet tunwarden` exists with TunWarden-owned rules.
+- nftables table `inet podlaz` exists with podlaz-owned rules.
 
 ## Connectivity smoke check
 
@@ -57,22 +57,22 @@ curl --max-time 10 https://example.com/
 Expected result:
 
 - request succeeds while TUN mode is active;
-- `tunwarden doctor` still reports the connection as healthy enough for the current preview gate.
+- `podlaz doctor` still reports the connection as healthy enough for the current preview gate.
 
 ## Disconnect cleanup
 
 ```bash
-tunwarden disconnect
-tunwarden status
-tunwarden doctor
-ip link show tunwarden0
+podlaz disconnect
+podlaz status
+podlaz doctor
+ip link show podlaz0
 ip -4 rule show priority 51819
 ip -4 rule show priority 51820
-ip -4 route show table tunwarden
-resolvectl status tunwarden0 --no-pager
-sudo nft list table inet tunwarden
-find /run/tunwarden/generated -maxdepth 1 -type f -print
-find /run/tunwarden/transactions -maxdepth 1 -type f -print
+ip -4 route show table podlaz
+resolvectl status podlaz0 --no-pager
+sudo nft list table inet podlaz
+find /run/podlaz/generated -maxdepth 1 -type f -print
+find /run/podlaz/transactions -maxdepth 1 -type f -print
 ```
 
 Expected cleanup result:
@@ -80,19 +80,19 @@ Expected cleanup result:
 - status shows inactive;
 - no supervised Xray process remains;
 - no TUN adapter process remains;
-- `tunwarden0` is absent;
-- TunWarden policy rules are absent;
-- table `tunwarden` has no TunWarden route state;
-- resolved per-link state for `tunwarden0` is absent or reverted;
-- nftables table `inet tunwarden` is absent;
+- `podlaz0` is absent;
+- podlaz policy rules are absent;
+- table `podlaz` has no podlaz route state;
+- resolved per-link state for `podlaz0` is absent or reverted;
+- nftables table `inet podlaz` is absent;
 - generated config and active transaction files are removed.
 
 ## Failure injection notes
 
 Run these in a VM only:
 
-1. Make `TUNWARDEN_XRAY_PATH` point to a binary that exits immediately. Connect must fail and roll back TunWarden-owned networking state.
-2. Make `TUNWARDEN_TUN2SOCKS_PATH` point to a missing binary. Connect must fail after network verification and roll back TunWarden-owned networking state.
-3. Temporarily break outbound connectivity for the probe. Connect must fail before commit and roll back TunWarden-owned networking state.
+1. Make `PODLAZ_XRAY_PATH` point to a binary that exits immediately. Connect must fail and roll back podlaz-owned networking state.
+2. Make `PODLAZ_TUN2SOCKS_PATH` point to a missing binary. Connect must fail after network verification and roll back podlaz-owned networking state.
+3. Temporarily break outbound connectivity for the probe. Connect must fail before commit and roll back podlaz-owned networking state.
 4. Kill Xray while connected. Status/doctor must report the core failure and recovery must remain possible.
-5. Run `tunwarden recover` after simulated daemon interruption. It must remain read-only unless explicitly executed with the documented confirmation flags.
+5. Run `podlaz recover` after simulated daemon interruption. It must remain read-only unless explicitly executed with the documented confirmation flags.

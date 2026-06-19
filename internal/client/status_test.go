@@ -25,9 +25,9 @@ func TestStatusReturnsUnavailableWhenSocketMissing(t *testing.T) {
 }
 
 func TestUnavailableMessagePreservesPermissionDeniedGuidance(t *testing.T) {
-	cause := &os.PathError{Op: "connect", Path: "/run/tunwarden/tunwardend.sock", Err: os.ErrPermission}
+	cause := &os.PathError{Op: "connect", Path: "/run/podlaz/podlazd.sock", Err: os.ErrPermission}
 	err := daemonUnavailableError{
-		detail:           unavailableDetail("/run/tunwarden/tunwardend.sock", cause),
+		detail:           unavailableDetail("/run/podlaz/podlazd.sock", cause),
 		cause:            cause,
 		permissionDenied: isPermissionDenied(cause),
 	}
@@ -38,7 +38,7 @@ func TestUnavailableMessagePreservesPermissionDeniedGuidance(t *testing.T) {
 		t.Fatalf("expected permission denied classification, got %v", err)
 	}
 	got := UnavailableMessage(err)
-	if !strings.Contains(got, "permission denied") || !strings.Contains(got, "tunwarden group") {
+	if !strings.Contains(got, "permission denied") || !strings.Contains(got, "podlaz group") {
 		t.Fatalf("expected permission guidance, got %q", got)
 	}
 	if strings.Contains(got, ErrDaemonUnavailable.Error()) {
@@ -47,7 +47,7 @@ func TestUnavailableMessagePreservesPermissionDeniedGuidance(t *testing.T) {
 }
 
 func TestStatusRejectsIncompleteDaemonResponse(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestStatusRejectsIncompleteDaemonResponse(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected incomplete daemon response to fail")
 	}
-	if strings.Contains(err.Error(), "tunwardend unavailable") {
+	if strings.Contains(err.Error(), "podlazd unavailable") {
 		t.Fatalf("protocol errors must not be classified as daemon unavailable: %v", err)
 	}
 	if !strings.Contains(err.Error(), "missing daemon field") {

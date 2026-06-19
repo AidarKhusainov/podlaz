@@ -2,7 +2,7 @@
 
 ## 1. Architectural goal
 
-TunWarden must separate unprivileged user interaction from daemon-owned Linux networking and runtime operations.
+podlaz must separate unprivileged user interaction from daemon-owned Linux networking and runtime operations.
 
 The architecture must make high-impact operations explicit, observable, reversible, and testable.
 
@@ -11,20 +11,20 @@ The early architecture has two execution modes:
 1. **Proxy-only mode:** starts and supervises Xray without changing system routes, DNS, firewall, or TUN state.
 2. **TUN full-tunnel mode:** applies Linux networking changes only through the daemon-owned transaction model.
 
-The current foundation TUN work implements read-only planning, transaction-state persistence, daemon-owned apply/verify/rollback for TUN interface, route, policy-rule, systemd-resolved DNS, TunWarden-owned nftables mutation, TUN-mode Xray runtime config generation, TUN adapter startup, and pre-commit full-tunnel route/TCP connectivity verification. Starting proxy-only Xray config under TUN mode is forbidden. TUN mode remains a preview until richer doctor verification, recovery execution coverage, sleep/resume handling, and VM/integration validation are complete.
+The current foundation TUN work implements read-only planning, transaction-state persistence, daemon-owned apply/verify/rollback for TUN interface, route, policy-rule, systemd-resolved DNS, podlaz-owned nftables mutation, TUN-mode Xray runtime config generation, TUN adapter startup, and pre-commit full-tunnel route/TCP connectivity verification. Starting proxy-only Xray config under TUN mode is forbidden. TUN mode remains a preview until richer doctor verification, recovery execution coverage, sleep/resume handling, and VM/integration validation are complete.
 
 ## 2. High-level components
 
 ```text
 +-----------------------+
-| tunwarden CLI         |
+| podlaz CLI         |
 | unprivileged user     |
 +-----------+-----------+
             |
             | local Unix socket API
             v
 +-----------------------+
-| tunwardend            |
+| podlazd            |
 | daemon service        |
 +-----------+-----------+
             |
@@ -72,13 +72,13 @@ Responsibilities:
 - handle recovery;
 - expose a restricted local API.
 
-The daemon should be the only long-lived owner of privileged mutable state. Ordinary users reach the packaged daemon through the local Unix socket and the `tunwarden` group access boundary, not by running normal CLI workflows through elevated user-state commands. Runtime state, transaction files, generated configs, and future privileged networking state remain daemon-owned even when a user can access the daemon socket.
+The daemon should be the only long-lived owner of privileged mutable state. Ordinary users reach the packaged daemon through the local Unix socket and the `podlaz` group access boundary, not by running normal CLI workflows through elevated user-state commands. Runtime state, transaction files, generated configs, and future privileged networking state remain daemon-owned even when a user can access the daemon socket.
 
 ### 3.3 Core process
 
 Xray should be treated as a child engine process, not as the application supervisor.
 
-The core must not be the only holder of network state. TunWarden must know what system-level changes were applied.
+The core must not be the only holder of network state. podlaz must know what system-level changes were applied.
 
 Core process safety requirements are owned by [State and security requirements](./state-and-security.md).
 
@@ -87,8 +87,8 @@ Core process safety requirements are owned by [State and security requirements](
 The current foundation build uses this package layout:
 
 ```text
-cmd/tunwarden              user-facing CLI entrypoint
-cmd/tunwardend             daemon entrypoint
+cmd/podlaz              user-facing CLI entrypoint
+cmd/podlazd             daemon entrypoint
 internal/app/cli           CLI command dispatch
 internal/app/daemon        daemon process skeleton
 internal/api               shared API contracts
@@ -115,18 +115,18 @@ Package dependency direction is owned by [Package boundaries](./package-boundari
 
 ## 4. Privilege boundary
 
-TunWarden must not use a SUID GUI/client binary as the primary privilege model.
+podlaz must not use a SUID GUI/client binary as the primary privilege model.
 
 Preferred model:
 
 ```text
-systemd service: tunwardend.service
-user command: tunwarden
+systemd service: podlazd.service
+user command: podlaz
 IPC: Unix socket or D-Bus
 optional authorization: polkit
 ```
 
-The implemented packaged IPC is the local Unix socket `/run/tunwarden/tunwardend.sock`. Packaged ordinary-user access is group-mediated through the dedicated `tunwarden` group. That group is an access boundary for the daemon control socket only; it must not make generated runtime configs, transaction state, daemon locks, persistent daemon state, or host networking state user-owned. Future polkit integration may replace or augment group access, but the normal CLI privilege model must remain daemon-mediated rather than direct elevated CLI mutation.
+The implemented packaged IPC is the local Unix socket `/run/podlaz/podlazd.sock`. Packaged ordinary-user access is group-mediated through the dedicated `podlaz` group. That group is an access boundary for the daemon control socket only; it must not make generated runtime configs, transaction state, daemon locks, persistent daemon state, or host networking state user-owned. Future polkit integration may replace or augment group access, but the normal CLI privilege model must remain daemon-mediated rather than direct elevated CLI mutation.
 
 The daemon API must be intentionally small.
 
@@ -147,7 +147,7 @@ Initial API operations:
 
 ## 5. State model
 
-TunWarden must distinguish three levels of state:
+podlaz must distinguish three levels of state:
 
 1. **User intent/state:** profiles, subscriptions, preferences, selected defaults, and import metadata.
 2. **Daemon runtime/state:** active connection snapshot, locks, generated runtime config, child process state, and transaction state.
@@ -159,7 +159,7 @@ Important constraints:
 
 - User intent must not be hidden only in daemon-private directories.
 - Daemon runtime state must be enough to recover without the original CLI process.
-- System networking state must be identifiable as TunWarden-owned.
+- System networking state must be identifiable as podlaz-owned.
 - Generated core config is runtime output, not persistent source of truth.
 
 ### Logs
@@ -170,11 +170,11 @@ Logs must follow the redaction policy in [State and security requirements](./sta
 
 ## 6. Snapshot model
 
-System snapshots are read-only inputs to planners. The snapshot package may inspect default routes, server route, DNS backend visibility, NetworkManager advisory state, nftables availability, known TunWarden TUN device names, and stale TunWarden-owned resources.
+System snapshots are read-only inputs to planners. The snapshot package may inspect default routes, server route, DNS backend visibility, NetworkManager advisory state, nftables availability, known podlaz TUN device names, and stale podlaz-owned resources.
 
 Snapshot collection must not create TUN devices, mutate routes, mutate DNS, mutate nftables/firewall state, start or stop processes, or write runtime files.
 
-The implemented `plan --mode tun` command consumes this snapshot layer and remains read-only. Actual TUN interface, route, policy-rule, systemd-resolved DNS, and TunWarden-owned nftables mutation is performed only by daemon-owned executor/transaction code; the CLI never mutates host networking directly. User-visible TUN connect is a daemon-owned preview flow with pre-commit runtime and connectivity gates.
+The implemented `plan --mode tun` command consumes this snapshot layer and remains read-only. Actual TUN interface, route, policy-rule, systemd-resolved DNS, and podlaz-owned nftables mutation is performed only by daemon-owned executor/transaction code; the CLI never mutates host networking directly. User-visible TUN connect is a daemon-owned preview flow with pre-commit runtime and connectivity gates.
 
 The canonical snapshot contract is owned by [System snapshot model](./system-snapshot.md).
 
@@ -188,8 +188,8 @@ The implemented transaction persistence schema is:
 
 ```text
 Transaction
-  schema_version: tunwarden.transaction.v1
-  owner: tunwarden
+  schema_version: podlaz.transaction.v1
+  owner: podlaz
   id
   profile_id
   mode
@@ -208,10 +208,10 @@ Transaction
 The implemented runtime path is:
 
 ```text
-/run/tunwarden/transactions/<id>.json
+/run/podlaz/transactions/<id>.json
 ```
 
-The transaction file is volatile daemon runtime state. It stores enough non-secret rollback metadata to plan cleanup after daemon restart for TunWarden-owned TUN devices, routes, policy rules, DNS state, nftables state, generated config files, and child processes. It must not store persistent secrets.
+The transaction file is volatile daemon runtime state. It stores enough non-secret rollback metadata to plan cleanup after daemon restart for podlaz-owned TUN devices, routes, policy rules, DNS state, nftables state, generated config files, and child processes. It must not store persistent secrets.
 
 Required flow:
 
@@ -219,7 +219,7 @@ Required flow:
 1. Build plan
 2. Acquire global network lock
 3. Snapshot relevant state
-4. Write pending transaction to /run/tunwarden/transactions/<id>.json
+4. Write pending transaction to /run/podlaz/transactions/<id>.json
 5. Apply steps in deterministic order
 6. Verify health
 7. Commit transaction
@@ -238,14 +238,14 @@ If verification fails:
 On daemon startup:
 
 ```text
-1. Read /run/tunwarden/transactions/*.json
+1. Read /run/podlaz/transactions/*.json
 2. Detect pending, failed, or rolling-back transaction state
-3. Detect stale TunWarden-owned system state
+3. Detect stale podlaz-owned system state
 4. Expose pending/stale state through status, doctor, and recover
 5. Never assume previous daemon shutdown was clean
 ```
 
-The current implementation adds transaction persistence, transition helpers, startup scan primitives, daemon status summaries, local `status`/`doctor`/`recover` visibility, daemon-owned apply/verify/rollback for TUN devices, routes, policy rules, systemd-resolved DNS, TunWarden-owned nftables state, TUN-mode Xray runtime config generation, TUN adapter startup, and pre-commit route/TCP connectivity verification.
+The current implementation adds transaction persistence, transition helpers, startup scan primitives, daemon status summaries, local `status`/`doctor`/`recover` visibility, daemon-owned apply/verify/rollback for TUN devices, routes, policy rules, systemd-resolved DNS, podlaz-owned nftables state, TUN-mode Xray runtime config generation, TUN adapter startup, and pre-commit route/TCP connectivity verification.
 
 Further hardening is still required before declaring TUN mode stable: richer doctor verification, recovery execution coverage, sleep/resume handling, and VM/integration validation.
 
@@ -268,7 +268,7 @@ Output:
 - current default route/interface observations;
 - route to the VPN server candidate;
 - DNS/NetworkManager/nftables observations;
-- known TunWarden-owned resources;
+- known podlaz-owned resources;
 - visibility warnings.
 
 ### Planner
@@ -291,7 +291,7 @@ Output:
 
 The current TUN planner produces inspectable desired state for TUN, routes, policy rules, systemd-resolved DNS, nftables/firewall, and kill-switch behavior. `TunDNSPlan.Servers` is planner-owned desired state; executors must not choose DNS servers themselves.
 
-Planner output must be inspectable through `tunwarden plan` before mutation.
+Planner output must be inspectable through `podlaz plan` before mutation.
 
 ### Executor
 
@@ -306,11 +306,11 @@ Executors:
 - `CoreExecutor`,
 - `NetworkManagerExecutor`.
 
-Executor implementations must be narrow and auditable. They should not contain hidden planning decisions. The current preview flow applies TUN, routes, policy rules, systemd-resolved DNS, TunWarden-owned nftables state, TUN-mode runtime config, TUN adapter startup, and pre-commit route/TCP connectivity verification from already-inspected state. Stable TUN release remains blocked until richer doctor verification, recovery execution coverage, sleep/resume handling, and VM/integration validation are complete.
+Executor implementations must be narrow and auditable. They should not contain hidden planning decisions. The current preview flow applies TUN, routes, policy rules, systemd-resolved DNS, podlaz-owned nftables state, TUN-mode runtime config, TUN adapter startup, and pre-commit route/TCP connectivity verification from already-inspected state. Stable TUN release remains blocked until richer doctor verification, recovery execution coverage, sleep/resume handling, and VM/integration validation are complete.
 
 ## 9. Engine abstraction
 
-TunWarden starts as Xray-first but should not make networking depend on Xray internals.
+podlaz starts as Xray-first but should not make networking depend on Xray internals.
 
 ```text
 VpnEngine
@@ -334,7 +334,7 @@ Future possible engines must implement the same lifecycle boundary without chang
 
 ## 10. Network backends
 
-TunWarden must support backend interfaces rather than hard-coding one environment.
+podlaz must support backend interfaces rather than hard-coding one environment.
 
 ```text
 RouteBackend
@@ -362,16 +362,16 @@ Generated core config must be treated as runtime output, not as the source of tr
 Source of truth:
 
 ```text
-TunWarden profile model
-TunWarden routing policy
-TunWarden DNS policy
-TunWarden runtime state
+podlaz profile model
+podlaz routing policy
+podlaz DNS policy
+podlaz runtime state
 ```
 
 Generated files may live under:
 
 ```text
-/run/tunwarden/generated/
+/run/podlaz/generated/
 ```
 
 Generated config permissions, atomic writes, and logging rules are owned by [State and security requirements](./state-and-security.md).
@@ -383,7 +383,7 @@ Generated config permissions, atomic writes, and logging rules are owned by [Sta
 - Cleanup must be idempotent.
 - Core crashes must not imply system networking cleanup was completed.
 - NetworkManager limited connectivity must not automatically be treated as connection failure.
-- Proxy-only failure must not trigger full network cleanup unless stale TunWarden-owned network state is detected separately.
+- Proxy-only failure must not trigger full network cleanup unless stale podlaz-owned network state is detected separately.
 
 ## 13. systemd service hardening
 

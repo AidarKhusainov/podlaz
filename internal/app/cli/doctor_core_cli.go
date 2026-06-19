@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 func renderDoctorCoreText(report doctor.Report) string {
 	var b strings.Builder
-	b.WriteString("TunWarden core diagnostics\n")
+	b.WriteString("podlaz core diagnostics\n")
 	for _, check := range report.Checks {
 		fmt.Fprintf(&b, "[%s] %s: %s\n", check.Severity, render.Redact(check.Name), render.Redact(check.Message))
 	}

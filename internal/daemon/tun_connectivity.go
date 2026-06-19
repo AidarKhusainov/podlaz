@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 const (

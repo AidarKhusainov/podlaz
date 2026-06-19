@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 const (
@@ -47,7 +47,7 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: operationTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://tunwardend"+api.RecoverPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://podlazd"+api.RecoverPath, nil)
 	if err != nil {
 		return api.RecoveryResponse{}, err
 	}

@@ -3,7 +3,7 @@
 This document describes the file formats accepted by the first-run convenience command:
 
 ```bash
-tunwarden import <local-path>
+podlaz import <local-path>
 ```
 
 The canonical command shape, exit codes, and CLI safety semantics remain owned by [CLI contract](./cli.md). Profile validation, redaction, and state layout remain owned by [State and security requirements](./state-and-security.md) and [Subscriptions and profiles](./subscriptions-and-profiles.md).
@@ -14,7 +14,7 @@ Local import is user-owned profile state mutation only.
 
 The command must not:
 
-- start `tunwardend`;
+- start `podlazd`;
 - start Xray;
 - require root;
 - create TUN devices;
@@ -26,7 +26,7 @@ Each supported entry is normalized into `profile.Profile`, validated, and writte
 
 ## Detection order
 
-For ordinary local paths without a URI scheme, `tunwarden import` reads the file once with a bounded size limit and applies this detection order:
+For ordinary local paths without a URI scheme, `podlaz import` reads the file once with a bounded size limit and applies this detection order:
 
 1. Xray JSON object when the first non-space byte is `{`.
 2. Plain URI-list when at least one line is a supported share URI.

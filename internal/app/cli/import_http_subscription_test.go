@@ -21,8 +21,8 @@ func TestRunImportSendsClientHeaderForHTTPSubscription(t *testing.T) {
 
 	var seenClientHeader string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.UserAgent(); got != "TunWarden" {
-			t.Fatalf("expected User-Agent %q, got %q", "TunWarden", got)
+		if got := r.UserAgent(); got != "podlaz" {
+			t.Fatalf("expected User-Agent %q, got %q", "podlaz", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		seenClientHeader = r.Header.Get("x-hwid")

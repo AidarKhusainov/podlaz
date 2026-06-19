@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	"github.com/AidarKhusainov/tunwarden/internal/sub"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 func runImportCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
@@ -231,12 +231,12 @@ func printSubscriptionImportResult(stdout io.Writer, result sub.UpdateResult) {
 
 func printImportHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden import <share-uri>
-  tunwarden import <local-path>
-  tunwarden import <subscription-url>
+  podlaz import <share-uri>
+  podlaz import <local-path>
+  podlaz import <subscription-url>
 
 Import a supported share URI, local import file, or subscription URL into
-user-owned TunWarden state.
+user-owned podlaz state.
 
 Supported local files:
   Xray JSON, plain URI-list, Base64 URI-list
@@ -245,8 +245,8 @@ Supported subscription URLs:
   Base64 URI-list and Xray JSON over file/http/https
 
 Examples:
-  tunwarden import 'vless://...'
-  tunwarden import ./profiles.json
-  tunwarden import https://example.com/subscription
+  podlaz import 'vless://...'
+  podlaz import ./profiles.json
+  podlaz import https://example.com/subscription
 `)
 }

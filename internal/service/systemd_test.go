@@ -11,14 +11,14 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	content := readSystemdUnit(t)
 
 	for _, want := range []string{
-		"ExecStart=/usr/bin/tunwardend",
-		"User=tunwarden",
-		"Group=tunwarden",
+		"ExecStart=/usr/bin/podlazd",
+		"User=podlaz",
+		"Group=podlaz",
 		"UMask=0077",
-		"Environment=TUNWARDEN_SERVICE=systemd",
-		"RuntimeDirectory=tunwarden",
+		"Environment=PODLAZ_SERVICE=systemd",
+		"RuntimeDirectory=podlaz",
 		"RuntimeDirectoryMode=0710",
-		"StateDirectory=tunwarden",
+		"StateDirectory=podlaz",
 		"StateDirectoryMode=0700",
 		"CapabilityBoundingSet=",
 		"AmbientCapabilities=",
@@ -47,7 +47,7 @@ func TestSystemdUnitDoesNotBlockFutureTunDeviceWork(t *testing.T) {
 
 func readSystemdUnit(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join("..", "..", "packaging", "systemd", "tunwardend.service")
+	path := filepath.Join("..", "..", "packaging", "systemd", "podlazd.service")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read systemd unit: %v", err)

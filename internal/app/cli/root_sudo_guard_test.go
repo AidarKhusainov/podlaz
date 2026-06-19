@@ -25,27 +25,27 @@ func TestRunCLISudoGuardRejectsUserStateCommandsBeforeStoreAccess(t *testing.T) 
 		{
 			name:      "import redacts target",
 			args:      []string{"import", "https://provider.example/sub/opaquevalue"},
-			wantShape: "tunwarden import <target>",
+			wantShape: "podlaz import <target>",
 		},
 		{
 			name:      "profile list",
 			args:      []string{"profile", "list"},
-			wantShape: "tunwarden profile list",
+			wantShape: "podlaz profile list",
 		},
 		{
 			name:      "subscription show redacts id",
 			args:      []string{"subscription", "show", "sub-opaquevalue"},
-			wantShape: "tunwarden subscription show <subscription-id>",
+			wantShape: "podlaz subscription show <subscription-id>",
 		},
 		{
 			name:      "plan redacts profile id",
 			args:      []string{"plan", "--mode", "tun", "profile-opaquevalue"},
-			wantShape: "tunwarden plan --mode <mode> <profile-id>",
+			wantShape: "podlaz plan --mode <mode> <profile-id>",
 		},
 		{
 			name:      "connect redacts profile id",
 			args:      []string{"connect", "--mode", "proxy-only", "profile-opaquevalue"},
-			wantShape: "tunwarden connect [--mode proxy-only|tun] <profile-id>",
+			wantShape: "podlaz connect [--mode proxy-only|tun] <profile-id>",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -67,10 +67,10 @@ func TestRunCLISudoGuardKeepsStaticCommandsUsable(t *testing.T) {
 		args       []string
 		wantOutput string
 	}{
-		{name: "version", args: []string{"version"}, wantOutput: "tunwarden"},
-		{name: "help topic", args: []string{"help", "profile"}, wantOutput: "Usage:\n  tunwarden profile"},
-		{name: "guarded command help", args: []string{"profile", "--help"}, wantOutput: "Usage:\n  tunwarden profile"},
-		{name: "completion generation", args: []string{"completion", "bash"}, wantOutput: "bash completion for tunwarden"},
+		{name: "version", args: []string{"version"}, wantOutput: "podlaz"},
+		{name: "help topic", args: []string{"help", "profile"}, wantOutput: "Usage:\n  podlaz profile"},
+		{name: "guarded command help", args: []string{"profile", "--help"}, wantOutput: "Usage:\n  podlaz profile"},
+		{name: "completion generation", args: []string{"completion", "bash"}, wantOutput: "bash completion for podlaz"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
@@ -91,12 +91,12 @@ func TestRunCLISudoGuardRejectsDynamicCompletionBeforeStoreAccess(t *testing.T) 
 	profileStorePath := filepath.Join(stateDir, "root", "profiles.json")
 	subscriptionStorePath := filepath.Join(stateDir, "root", "subscriptions.json")
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"__complete", "bash", "3", "tunwarden", "profile", "show", "profile-opaquevalue"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"__complete", "bash", "3", "podlaz", "profile", "show", "profile-opaquevalue"}, &out, options{
 		profileStorePath:      profileStorePath,
 		subscriptionStorePath: subscriptionStorePath,
 	})
 
-	assertSudoUserStateError(t, err, out.String(), "tunwarden profile show <profile-id>")
+	assertSudoUserStateError(t, err, out.String(), "podlaz profile show <profile-id>")
 	assertDoesNotContain(t, err.Error(), "profile-opaquevalue")
 	assertPathDoesNotExist(t, profileStorePath)
 	assertPathDoesNotExist(t, subscriptionStorePath)
@@ -106,7 +106,7 @@ func TestRunCLISudoGuardAllowsStaticCompletionRuntime(t *testing.T) {
 	withSudoRootInvocation(t)
 
 	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"__complete", "bash", "1", "tunwarden", ""}, &out, options{}); err != nil {
+	if err := runWithOptions(context.Background(), []string{"__complete", "bash", "1", "podlaz", ""}, &out, options{}); err != nil {
 		t.Fatalf("expected static completion runtime to work under sudo-like invocation, got %v", err)
 	}
 	if got := out.String(); !strings.Contains(got, "profile") || !strings.Contains(got, ":no-files") {

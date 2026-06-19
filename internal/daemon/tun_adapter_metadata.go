@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func saveTunAdapterRollbackMetadata(store txstate.TransactionStore, transactionID string, pid int, now time.Time) error {

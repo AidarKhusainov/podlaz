@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 type lifecycleService interface {
@@ -25,7 +25,7 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		authorizer = authorizers[0]
 	}
 	mux.HandleFunc(api.ConnectPath, func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("tunwardend: connect request method=%s path=%s", r.Method, r.URL.Path)
+		log.Printf("podlazd: connect request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -55,10 +55,10 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
-		log.Printf("tunwardend: connect request handled")
+		log.Printf("podlazd: connect request handled")
 	})
 	mux.HandleFunc(api.DisconnectPath, func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("tunwardend: disconnect request method=%s path=%s", r.Method, r.URL.Path)
+		log.Printf("podlazd: disconnect request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -74,7 +74,7 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(response)
-		log.Printf("tunwardend: disconnect request handled")
+		log.Printf("podlazd: disconnect request handled")
 	})
 }
 

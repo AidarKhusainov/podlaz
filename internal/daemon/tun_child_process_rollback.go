@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func stopRollbackChildProcesses(tx txstate.Transaction) error {

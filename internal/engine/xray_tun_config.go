@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 const (
@@ -23,7 +23,7 @@ type XrayTunConfigOptions struct {
 }
 
 // DefaultXrayTunConfigOptions returns the daemon-private local endpoint used by
-// the supported TUN adapter design: tunwarden0 -> tun2socks -> Xray SOCKS ->
+// the supported TUN adapter design: podlaz0 -> tun2socks -> Xray SOCKS ->
 // configured Xray outbound.
 func DefaultXrayTunConfigOptions() XrayTunConfigOptions {
 	return XrayTunConfigOptions{SOCKSListen: DefaultTunSOCKSListen, SOCKSPort: DefaultTunSOCKSPort}
@@ -32,7 +32,7 @@ func DefaultXrayTunConfigOptions() XrayTunConfigOptions {
 // GenerateXrayTunConfig builds deterministic Xray JSON for TUN mode.
 //
 // Xray-core is still the protocol engine. The Linux TUN device itself is owned
-// by TunWarden's network transaction, and packet attachment is performed by the
+// by podlaz's network transaction, and packet attachment is performed by the
 // daemon-supervised TUN adapter. Therefore this config exposes only a private
 // SOCKS inbound for the adapter and must not be reused as a user-visible
 // proxy-only config.
@@ -59,14 +59,14 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 	cfg := xrayConfig{
 		Log: xrayLog{LogLevel: "warning"},
 		Inbounds: []xrayInbound{{
-			Tag:      "tunwarden-tun-socks",
+			Tag:      "podlaz-tun-socks",
 			Listen:   opts.SOCKSListen,
 			Port:     opts.SOCKSPort,
 			Protocol: "socks",
 			Settings: xraySOCKSInboundSettings{Auth: "noauth", UDP: true, UserLevel: 0},
 		}},
 		Outbounds: []xrayOutbound{{
-			Tag:      "tunwarden-tun-proxy",
+			Tag:      "podlaz-tun-proxy",
 			Protocol: "vless",
 			Settings: xrayVLESSSettings{
 				Address:    outboundAddress,

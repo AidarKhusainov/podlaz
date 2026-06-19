@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 const defaultLifecycleTimeout = 30 * time.Second
@@ -57,7 +57,7 @@ func (c LifecycleClient) do(ctx context.Context, operation, path string, payload
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://tunwardend"+path, body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://podlazd"+path, body)
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}

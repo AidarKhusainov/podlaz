@@ -3,8 +3,8 @@ package planner
 import (
 	"fmt"
 
-	"github.com/AidarKhusainov/tunwarden/internal/engine"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/engine"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 // ValidateXrayConnectProfile checks whether the profile is supported by the

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/logs"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/logs"
 )
 
 func TestRunCLIHelpStatus(t *testing.T) {
@@ -18,7 +18,7 @@ func TestRunCLIHelpStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"help", "status"}, &out); err != nil {
 		t.Fatalf("help status failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Report local TunWarden runtime state") {
+	if got := out.String(); !strings.Contains(got, "Report local podlaz runtime state") {
 		t.Fatalf("expected status help output, got %q", got)
 	}
 }
@@ -28,7 +28,7 @@ func TestRunCLIDoctorHelp(t *testing.T) {
 	if err := run(context.Background(), []string{"doctor", "--help"}, &out); err != nil {
 		t.Fatalf("doctor --help failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Usage:\n  tunwarden doctor") {
+	if got := out.String(); !strings.Contains(got, "Usage:\n  podlaz doctor") {
 		t.Fatalf("expected doctor help output, got %q", got)
 	}
 }
@@ -47,7 +47,7 @@ func TestRunCLIDoctorFallsBackOnDaemonTimeout(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"doctor"}, &out, options{
 		daemonDoctor: func(context.Context) (doctor.Report, error) {
-			return doctor.Report{}, fmt.Errorf("%w: daemon socket /tmp/tunwardend.sock did not respond before timeout; start or restart tunwardend", client.ErrDaemonUnavailable)
+			return doctor.Report{}, fmt.Errorf("%w: daemon socket /tmp/podlazd.sock did not respond before timeout; start or restart podlazd", client.ErrDaemonUnavailable)
 		},
 		doctor: func(context.Context) doctor.Report { return cleanDoctorReport() },
 	})
@@ -55,7 +55,7 @@ func TestRunCLIDoctorFallsBackOnDaemonTimeout(t *testing.T) {
 		t.Fatalf("doctor timeout fallback failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"Source: local fallback", "[WARN] daemon: daemon socket /tmp/tunwardend.sock did not respond before timeout; start or restart tunwardend"} {
+	for _, text := range []string{"Source: local fallback", "[WARN] daemon: daemon socket /tmp/podlazd.sock did not respond before timeout; start or restart podlazd"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected output to contain %q, got %q", text, got)
 		}
@@ -68,7 +68,7 @@ func TestRunCLILogsHelp(t *testing.T) {
 		t.Fatalf("logs --help failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"Usage:\n  tunwarden logs", "journalctl", "--core", "TunWarden logs"} {
+	for _, text := range []string{"Usage:\n  podlaz logs", "journalctl", "--core", "podlaz logs"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected logs help output to contain %q, got %q", text, got)
 		}
@@ -81,7 +81,7 @@ func TestRunCLIHelpLogs(t *testing.T) {
 		t.Fatalf("help logs failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"TunWarden logs", "--core", "journalctl"} {
+	for _, text := range []string{"podlaz logs", "--core", "journalctl"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected logs help output to contain %q, got %q", text, got)
 		}

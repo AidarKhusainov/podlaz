@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 // ParseSubscriptionContent detects and parses supported subscription response

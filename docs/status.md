@@ -1,27 +1,27 @@
 # Status command
 
-This document defines the implemented behavior for `tunwarden status`.
+This document defines the implemented behavior for `podlaz status`.
 
 The command name, arguments, exit codes, stdout and stderr rules, JSON compatibility, and milestone boundaries are owned by [CLI contract](./cli.md). The daemon transport is owned by [Daemon local API](./daemon-api.md). Daemon socket fallback classification is owned by [Status daemon socket classification](./status-daemon-socket.md). This document owns the current read-only status behavior and its safety boundary.
 
 ## Safety boundary
 
-`tunwarden status` is strictly read-only.
+`podlaz status` is strictly read-only.
 
-It may query the local daemon Unix socket. If the daemon is not reachable, it may inspect local TunWarden runtime path metadata as a conservative fallback.
+It may query the local daemon Unix socket. If the daemon is not reachable, it may inspect local podlaz runtime path metadata as a conservative fallback.
 
 It must not mutate host networking, daemon process lifecycle, core process lifecycle, user profiles, subscriptions, runtime file contents, TUN devices, routes, DNS settings, nftables objects, or firewall rules.
 
 ## Human output contract
 
-The default human report starts with `TunWarden status`.
+The default human report starts with `podlaz status`.
 
 When the daemon is reachable, daemon-backed output reports:
 
 - `Daemon: running` from the daemon process itself;
-- `Service: manual` when `tunwardend` is run directly, or `Service: systemd` when it is started by the repository systemd unit;
+- `Service: manual` when `podlazd` is run directly, or `Service: systemd` when it is started by the repository systemd unit;
 - current connection, active mode, proxy, TUN, route, DNS, firewall, transaction, and startup recovery scan state from the daemon;
-- `Runtime directory: present` because the daemon owns `/run/tunwarden/` while running;
+- `Runtime directory: present` because the daemon owns `/run/podlaz/` while running;
 - `Stale state: none` when the daemon reports no recovery candidates or warnings.
 
 When the daemon is not reachable, the command prints actionable daemon guidance and clearly states that local fallback is being used.
@@ -31,7 +31,7 @@ The local fallback reports:
 - `Daemon: not reachable (...) ; using local fallback` when daemon access failed;
 - `Service: none` because no daemon supervisor is reachable in the fallback snapshot;
 - `Daemon socket: missing` when the socket path does not exist;
-- `Daemon socket: present but inaccessible (permission denied; check tunwarden group membership)` when the socket exists but the daemon API could not be reached because the caller does not have socket access;
+- `Daemon socket: present but inaccessible (permission denied; check podlaz group membership)` when the socket exists but the daemon API could not be reached because the caller does not have socket access;
 - `Daemon socket: present as non-socket path (stale)` when the socket path exists as an unexpected filesystem object;
 - `Connection: inactive` when no stale runtime state is found;
 - `Connection: inactive (stale state detected)` when local runtime recovery candidates exist;
@@ -43,20 +43,20 @@ Daemon unavailability alone is not an unhealthy local status when the fallback c
 
 ## Local runtime inspection
 
-The local fallback inspects only documented TunWarden-owned runtime paths:
+The local fallback inspects only documented podlaz-owned runtime paths:
 
 ```text
-/run/tunwarden/tunwardend.sock
-/run/tunwarden/generated
-/run/tunwarden/transactions
-/run/tunwarden
+/run/podlaz/podlazd.sock
+/run/podlaz/generated
+/run/podlaz/transactions
+/run/podlaz
 ```
 
 The command does not read generated config contents.
 
-When the daemon socket is missing, status treats `/run/tunwarden`, `/run/tunwarden/generated`, and stale transaction state as local recovery candidates where applicable.
+When the daemon socket is missing, status treats `/run/podlaz`, `/run/podlaz/generated`, and stale transaction state as local recovery candidates where applicable.
 
-When the daemon socket exists but daemon API access failed with permission denied, status does not classify `/run/tunwarden`, generated runtime configs, or transaction files as stale fallback candidates. They may belong to a live daemon that the caller cannot inspect. Instead, status reports incomplete visibility and guides the user to fix packaged `tunwarden` group membership or socket ownership/mode.
+When the daemon socket exists but daemon API access failed with permission denied, status does not classify `/run/podlaz`, generated runtime configs, or transaction files as stale fallback candidates. They may belong to a live daemon that the caller cannot inspect. Instead, status reports incomplete visibility and guides the user to fix packaged `podlaz` group membership or socket ownership/mode.
 
 When the daemon socket path exists but is not a Unix socket, status reports that socket path as a stale recovery candidate.
 
@@ -66,19 +66,19 @@ Warnings mean the status snapshot had incomplete visibility. Warning-only output
 
 ## Manual systemd verification
 
-After installing the daemon binary and `packaging/systemd/tunwardend.service` as described by [Daemon local API](./daemon-api.md), verify daemon-backed status with:
+After installing the daemon binary and `packaging/systemd/podlazd.service` as described by [Daemon local API](./daemon-api.md), verify daemon-backed status with:
 
 ```bash
-sudo systemctl start tunwardend
-systemctl status tunwardend --no-pager
-tunwarden status
-journalctl -u tunwardend -n 50 --no-pager
+sudo systemctl start podlazd
+systemctl status podlazd --no-pager
+podlaz status
+journalctl -u podlazd -n 50 --no-pager
 ```
 
 A successful daemon-backed service run should include:
 
 ```text
-TunWarden status
+podlaz status
 Daemon: running
 Service: systemd
 Connection: inactive
@@ -88,11 +88,11 @@ TUN: disabled
 Stale state: none
 ```
 
-The user running `tunwarden status` must have access to `/run/tunwarden/tunwardend.sock`, normally by being a member of the `tunwarden` group. Without socket access, the command must keep the conservative local fallback behavior instead of requiring root, but it must not report potentially live daemon-owned runtime state as stale-only cleanup.
+The user running `podlaz status` must have access to `/run/podlaz/podlazd.sock`, normally by being a member of the `podlaz` group. Without socket access, the command must keep the conservative local fallback behavior instead of requiring root, but it must not report potentially live daemon-owned runtime state as stale-only cleanup.
 
 ## Redaction
 
-Status output must use the shared TunWarden redaction policy from [State and security requirements](./state-and-security.md).
+Status output must use the shared podlaz redaction policy from [State and security requirements](./state-and-security.md).
 
 ## Deferred behavior
 

@@ -2,7 +2,7 @@
 
 This file defines how AI agents and automated coding assistants should work in this repository.
 
-TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations. The project values safe networking behavior, clear architecture, small reliable steps, and reviewable code more than fast feature accumulation.
+podlaz is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations. The project values safe networking behavior, clear architecture, small reliable steps, and reviewable code more than fast feature accumulation.
 
 ## Agent role
 
@@ -90,7 +90,7 @@ Preserve these boundaries:
 - Daemon owns privileged runtime behavior and active connection state.
 - Planners build inspectable plans without requiring root.
 - Executors apply already-validated plans and remain narrow, explicit, and auditable.
-- Core engines are child processes, not owners of TunWarden system state.
+- Core engines are child processes, not owners of podlaz system state.
 
 Package dependency direction must follow `docs/package-boundaries.md`. A PR that changes dependency direction must explain why.
 
@@ -125,9 +125,9 @@ Before proposing a PR, run the relevant checks when possible:
 ```bash
 test -z "$(gofmt -l .)"
 go test ./...
-go run ./cmd/tunwarden version
-go run ./cmd/tunwarden doctor
-go run ./cmd/tunwarden recover
+go run ./cmd/podlaz version
+go run ./cmd/podlaz doctor
+go run ./cmd/podlaz recover
 ```
 
 Use `gofmt -w .` only when fixing formatting, not as the validation command.
@@ -158,7 +158,7 @@ For CLI changes, include tests or fixtures for:
 For Linux networking changes, the PR must state:
 
 - what system state can change;
-- how TunWarden ownership is marked;
+- how podlaz ownership is marked;
 - how the plan can be inspected before execution;
 - how verification works;
 - how rollback works;

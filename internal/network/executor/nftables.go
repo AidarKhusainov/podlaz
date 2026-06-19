@@ -6,29 +6,29 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 const (
-	OwnerFirewall = "tunwarden:nftables"
+	OwnerFirewall = "podlaz:nftables"
 
 	ownedNFTFamily = "inet"
-	ownedNFTTable  = "tunwarden"
+	ownedNFTTable  = "podlaz"
 )
 
-// FirewallExecutor owns TunWarden-owned nftables apply, verification, and cleanup.
+// FirewallExecutor owns podlaz-owned nftables apply, verification, and cleanup.
 type FirewallExecutor interface {
 	Apply(context.Context, planner.TunFirewallPlan) (Step, error)
 	Verify(context.Context, planner.TunFirewallPlan) error
 	Rollback(context.Context, planner.TunFirewallPlan) error
 }
 
-// NftablesExecutor applies only the table/chains/rules owned by TunWarden.
+// NftablesExecutor applies only the table/chains/rules owned by podlaz.
 type NftablesExecutor struct {
 	Runner CommandRunner
 }
 
-// Apply creates a fresh TunWarden-owned nftables table and installs planned chains/rules.
+// Apply creates a fresh podlaz-owned nftables table and installs planned chains/rules.
 func (e NftablesExecutor) Apply(ctx context.Context, plan planner.TunFirewallPlan) (step Step, err error) {
 	if err := validateFirewallPlan(plan); err != nil {
 		return Step{}, err
@@ -66,7 +66,7 @@ func (e NftablesExecutor) Apply(ctx context.Context, plan planner.TunFirewallPla
 	return Step{Kind: "nftables", Target: firewallTarget(plan), Description: plan.Reason, Owner: OwnerFirewall}, nil
 }
 
-// Verify checks that the TunWarden-owned nftables table, chain, and rule state is visible.
+// Verify checks that the podlaz-owned nftables table, chain, and rule state is visible.
 func (e NftablesExecutor) Verify(ctx context.Context, plan planner.TunFirewallPlan) error {
 	if err := validateFirewallPlan(plan); err != nil {
 		return err
@@ -95,8 +95,8 @@ func (e NftablesExecutor) Verify(ctx context.Context, plan planner.TunFirewallPl
 	return nil
 }
 
-// Rollback deletes the whole TunWarden-owned nftables table. Deleting the table
-// is intentionally idempotent and never touches non-TunWarden tables.
+// Rollback deletes the whole podlaz-owned nftables table. Deleting the table
+// is intentionally idempotent and never touches non-podlaz tables.
 func (e NftablesExecutor) Rollback(ctx context.Context, plan planner.TunFirewallPlan) error {
 	family, table := firewallFamilyTable(plan)
 	if family == "" && table == "" {
@@ -171,8 +171,8 @@ func validateFirewallPlan(plan planner.TunFirewallPlan) error {
 		if strings.TrimSpace(rule.Chain) == "" || strings.TrimSpace(rule.Expr) == "" || strings.TrimSpace(rule.Verdict) == "" {
 			return fmt.Errorf("incomplete nftables rule %s", rule.RollbackKey)
 		}
-		if !strings.HasPrefix(rule.Ownership, "tunwarden:firewall:") {
-			return fmt.Errorf("nftables rule %s has non-TunWarden owner %q", rule.RollbackKey, rule.Ownership)
+		if !strings.HasPrefix(rule.Ownership, "podlaz:firewall:") {
+			return fmt.Errorf("nftables rule %s has non-podlaz owner %q", rule.RollbackKey, rule.Ownership)
 		}
 	}
 	return nil
@@ -180,7 +180,7 @@ func validateFirewallPlan(plan planner.TunFirewallPlan) error {
 
 func validateOwnedFirewallTarget(family, table string) error {
 	if family != ownedNFTFamily || table != ownedNFTTable {
-		return fmt.Errorf("refuse to mutate non-TunWarden nftables target %s %s", family, table)
+		return fmt.Errorf("refuse to mutate non-podlaz nftables target %s %s", family, table)
 	}
 	return nil
 }

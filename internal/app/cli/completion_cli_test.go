@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/sub"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 func TestRunCLICompletionGeneratesSupportedShells(t *testing.T) {
@@ -22,17 +22,17 @@ func TestRunCLICompletionGeneratesSupportedShells(t *testing.T) {
 		{
 			name: "bash",
 			args: []string{"completion", "bash"},
-			want: []string{"_tunwarden()", "__complete bash", "complete -o default -F _tunwarden tunwarden", "proxy-only tun", "vless vmess trojan shadowsocks"},
+			want: []string{"_podlaz()", "__complete bash", "complete -o default -F _podlaz podlaz", "proxy-only tun", "vless vmess trojan shadowsocks"},
 		},
 		{
 			name: "zsh",
 			args: []string{"completion", "zsh"},
-			want: []string{"#compdef tunwarden", "__complete zsh", "_tunwarden \"$@\"", "proxy-only tun", "vless vmess trojan shadowsocks"},
+			want: []string{"#compdef podlaz", "__complete zsh", "_podlaz \"$@\"", "proxy-only tun", "vless vmess trojan shadowsocks"},
 		},
 		{
 			name: "fish",
 			args: []string{"completion", "fish"},
-			want: []string{"complete -c tunwarden -f", "__complete fish", "__fish_tunwarden_using_command plan", "-l mode -x -a 'proxy-only tun'", "-l protocol -x -a 'vless vmess trojan shadowsocks'", "-l follow -s f"},
+			want: []string{"complete -c podlaz -f", "__complete fish", "__fish_podlaz_using_command plan", "-l mode -x -a 'proxy-only tun'", "-l protocol -x -a 'vless vmess trojan shadowsocks'", "-l follow -s f"},
 		},
 	}
 
@@ -70,7 +70,7 @@ func TestRunCLICompletionHelp(t *testing.T) {
 		t.Fatalf("completion help failed: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"tunwarden completion bash", "tunwarden completion zsh", "tunwarden completion fish", "does not contact tunwardend"} {
+	for _, want := range []string{"podlaz completion bash", "podlaz completion zsh", "podlaz completion fish", "does not contact podlazd"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected completion help to contain %q, got %q", want, got)
 		}
@@ -83,10 +83,10 @@ func TestRunCLICompletionRuntimeSuggestsProfileIDs(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "connect", args: bashCompleteArgs(2, "tunwarden", "connect", "")},
-		{name: "plan", args: bashCompleteArgs(4, "tunwarden", "plan", "--mode", "tun", "")},
-		{name: "profile show", args: bashCompleteArgs(3, "tunwarden", "profile", "show", "")},
-		{name: "profile delete", args: bashCompleteArgs(3, "tunwarden", "profile", "delete", "")},
+		{name: "connect", args: bashCompleteArgs(2, "podlaz", "connect", "")},
+		{name: "plan", args: bashCompleteArgs(4, "podlaz", "plan", "--mode", "tun", "")},
+		{name: "profile show", args: bashCompleteArgs(3, "podlaz", "profile", "show", "")},
+		{name: "profile delete", args: bashCompleteArgs(3, "podlaz", "profile", "delete", "")},
 	}
 
 	for _, tt := range tests {
@@ -105,8 +105,8 @@ func TestRunCLICompletionRuntimeSuggestsSubscriptionIDs(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "subscription show", args: bashCompleteArgs(3, "tunwarden", "subscription", "show", "")},
-		{name: "subscription update", args: bashCompleteArgs(3, "tunwarden", "subscription", "update", "")},
+		{name: "subscription show", args: bashCompleteArgs(3, "podlaz", "subscription", "show", "")},
+		{name: "subscription update", args: bashCompleteArgs(3, "podlaz", "subscription", "update", "")},
 	}
 
 	for _, tt := range tests {
@@ -128,17 +128,17 @@ func TestRunCLICompletionRuntimeSuggestsStaticValues(t *testing.T) {
 	}{
 		{
 			name: "mode values",
-			args: bashCompleteArgs(3, "tunwarden", "plan", "--mode", ""),
+			args: bashCompleteArgs(3, "podlaz", "plan", "--mode", ""),
 			want: []string{"proxy-only", "tun"},
 		},
 		{
 			name: "protocol values",
-			args: bashCompleteArgs(4, "tunwarden", "profile", "add", "--protocol", ""),
+			args: bashCompleteArgs(4, "podlaz", "profile", "add", "--protocol", ""),
 			want: []string{"vless", "vmess", "trojan", "shadowsocks"},
 		},
 		{
 			name: "top level commands",
-			args: bashCompleteArgs(1, "tunwarden", ""),
+			args: bashCompleteArgs(1, "podlaz", ""),
 			want: []string{"connect", "completion", "profile", "subscription"},
 		},
 	}
@@ -155,13 +155,13 @@ func TestRunCLICompletionRuntimeSuggestsStaticValues(t *testing.T) {
 
 func TestRunCLICompletionRuntimeDoesNotSuggestUsedNonRepeatableFlags(t *testing.T) {
 	opts := seedCompletionStores(t)
-	got := runCompletionRuntime(t, opts, bashCompleteArgs(4, "tunwarden", "plan", "--mode", "tun", "-")...)
+	got := runCompletionRuntime(t, opts, bashCompleteArgs(4, "podlaz", "plan", "--mode", "tun", "-")...)
 	assertContainsLine(t, got, "--json")
 	assertNotContainsLine(t, got, "--mode")
 }
 
 func TestRunCLICompletionRuntimeUsesDefaultFilesForImportPath(t *testing.T) {
-	got := runCompletionRuntime(t, options{}, bashCompleteArgs(2, "tunwarden", "import", "")...)
+	got := runCompletionRuntime(t, options{}, bashCompleteArgs(2, "podlaz", "import", "")...)
 	assertContainsLine(t, got, ":default-files")
 	assertNotContainsLine(t, got, ":no-files")
 }
@@ -169,7 +169,7 @@ func TestRunCLICompletionRuntimeUsesDefaultFilesForImportPath(t *testing.T) {
 func TestRunCLICompletionRuntimeMissingOrUnreadableStateIsQuiet(t *testing.T) {
 	dir := t.TempDir()
 	missing := options{profileStorePath: filepath.Join(dir, "missing-profiles.json"), subscriptionStorePath: filepath.Join(dir, "missing-subscriptions.json")}
-	got := runCompletionRuntime(t, missing, bashCompleteArgs(2, "tunwarden", "connect", "")...)
+	got := runCompletionRuntime(t, missing, bashCompleteArgs(2, "podlaz", "connect", "")...)
 	assertContainsLine(t, got, ":no-files")
 	assertNotContainsCandidateValue(t, got, "alpha")
 
@@ -178,7 +178,7 @@ func TestRunCLICompletionRuntimeMissingOrUnreadableStateIsQuiet(t *testing.T) {
 		t.Fatalf("write unreadable profile store fixture: %v", err)
 	}
 	unreadable := options{profileStorePath: unreadableProfileStore, subscriptionStorePath: filepath.Join(dir, "missing-subscriptions.json")}
-	got = runCompletionRuntime(t, unreadable, bashCompleteArgs(2, "tunwarden", "connect", "")...)
+	got = runCompletionRuntime(t, unreadable, bashCompleteArgs(2, "podlaz", "connect", "")...)
 	assertContainsLine(t, got, ":no-files")
 	assertNotContainsLine(t, got, "not-json")
 }

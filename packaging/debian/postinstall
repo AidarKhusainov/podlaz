@@ -2,12 +2,12 @@
 set -eu
 
 if command -v systemd-sysusers >/dev/null 2>&1; then
-	systemd-sysusers /usr/lib/sysusers.d/tunwarden.conf || true
+	systemd-sysusers /usr/lib/sysusers.d/podlaz.conf || true
 fi
 
 if command -v deb-systemd-helper >/dev/null 2>&1; then
-	deb-systemd-helper unmask tunwardend.service >/dev/null || true
-	deb-systemd-helper update-state tunwardend.service >/dev/null || true
+	deb-systemd-helper unmask podlazd.service >/dev/null || true
+	deb-systemd-helper update-state podlazd.service >/dev/null || true
 fi
 
 exit 0

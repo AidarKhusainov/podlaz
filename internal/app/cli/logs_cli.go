@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/logs"
+	"github.com/AidarKhusainov/podlaz/internal/logs"
 )
 
 func runLogsCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {

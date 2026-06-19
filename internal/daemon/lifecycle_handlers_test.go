@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestLifecycleConnectHandlerRejectsMalformedRequest(t *testing.T) {

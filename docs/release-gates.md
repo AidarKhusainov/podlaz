@@ -1,6 +1,6 @@
 # Release gates
 
-This document defines what must be true before TunWarden publishes a release or marks a major networking mode as stable.
+This document defines what must be true before podlaz publishes a release or marks a major networking mode as stable.
 
 It is a policy document, not a run record. Concrete evidence belongs in issues, pull requests, release notes, or separately reviewed redacted records.
 
@@ -36,9 +36,9 @@ A TUN/full-tunnel release must demonstrate that:
 - apply, verify, commit, rollback, disconnect cleanup, and explicit recovery are daemon-owned;
 - VPN server traffic bypasses the TUN path;
 - route, policy-rule, DNS, TUN, nftables, core, and adapter state are verified while active;
-- a forced post-apply failure rolls back only TunWarden-owned state;
-- clean disconnect leaves no TunWarden-owned stale TUN, route, DNS, nftables, runtime config, process, or transaction state;
-- recovery execution removes only clearly TunWarden-owned volatile state and skips ambiguous resources;
+- a forced post-apply failure rolls back only podlaz-owned state;
+- clean disconnect leaves no podlaz-owned stale TUN, route, DNS, nftables, runtime config, process, or transaction state;
+- recovery execution removes only clearly podlaz-owned volatile state and skips ambiguous resources;
 - stable leak-protection claims are not made before the full flow is verified on a supported Linux host.
 
 ## Storage location

@@ -1,10 +1,10 @@
 # Roadmap
 
-This document defines TunWarden sequencing constraints. It is not a repository status log, changelog, implementation inventory, or release verification record.
+This document defines podlaz sequencing constraints. It is not a repository status log, changelog, implementation inventory, or release verification record.
 
 ## Principles
 
-TunWarden development is ordered around safety before feature breadth.
+podlaz development is ordered around safety before feature breadth.
 
 Rules:
 
@@ -18,7 +18,7 @@ Rules:
 | Order | Area | Gate |
 | ---: | --- | --- |
 | 1 | Documentation and repository foundation | Product, CLI, architecture, state/security, networking, package-boundary, and development contracts exist and have one canonical owner per concern. |
-| 2 | CLI, daemon, local API, and diagnostics foundation | The CLI can communicate with the daemon, diagnostics are read-only, daemon logs are inspectable, and recovery can inspect TunWarden-owned stale state. |
+| 2 | CLI, daemon, local API, and diagnostics foundation | The CLI can communicate with the daemon, diagnostics are read-only, daemon logs are inspectable, and recovery can inspect podlaz-owned stale state. |
 | 3 | Profile and subscription foundation | Profiles and subscriptions can be imported, normalized, validated, listed, shown, updated, and stored as user-owned state without starting network processes. |
 | 4 | Proxy-only lifecycle | Xray can be started and stopped by the daemon without changing routes, DNS, TUN devices, nftables, or firewall state. |
 | 5 | Network planning | Full-tunnel intent can be inspected from a read-only host snapshot before privileged mutation. |
@@ -36,7 +36,7 @@ Full-tunnel behavior must not be presented as stable until the project has concl
 - VPN server route bypass outside the TUN interface;
 - rollback after a forced post-apply failure;
 - clean final state after disconnect and rollback;
-- explicit recovery cleanup for clearly TunWarden-owned stale state;
+- explicit recovery cleanup for clearly podlaz-owned stale state;
 - redacted evidence that does not expose provider secrets, share URIs, tokens, or generated core configs.
 
 Release-gate evidence belongs in issues, pull requests, release notes, or separately reviewed records. It must not be stored as pending placeholder tables in the reference documentation.

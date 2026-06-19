@@ -12,19 +12,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const (
 	defaultCommandTimeout = 3 * time.Second
-	defaultRuntimeDir     = "/run/tunwarden"
+	defaultRuntimeDir     = "/run/podlaz"
 	generatedDirName      = "generated"
-	managedInterface      = "tunwarden0"
+	managedInterface      = "podlaz0"
 	managedNFTFamily      = "inet"
-	managedNFTTableName   = "tunwarden"
+	managedNFTTableName   = "podlaz"
 	managedNFTTable       = managedNFTFamily + " " + managedNFTTableName
-	managedRouteTable     = "tunwarden"
+	managedRouteTable     = "podlaz"
 	managedRouteTableID   = "51820"
 )
 
@@ -182,7 +182,7 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 
 func (p PlanResult) String() string {
 	var b strings.Builder
-	b.WriteString("TunWarden recovery dry-run\n")
+	b.WriteString("podlaz recovery dry-run\n")
 	switch {
 	case len(p.Candidates) > 0:
 		for _, candidate := range p.Candidates {
@@ -193,7 +193,7 @@ func (p PlanResult) String() string {
 			fmt.Fprintf(&b, "Would recover %s: %s\n", safeText(candidate.Description), safeText(candidate.Target))
 		}
 	case len(p.Warnings) == 0:
-		b.WriteString("No TunWarden-owned recovery candidates found.\n")
+		b.WriteString("No podlaz-owned recovery candidates found.\n")
 	}
 	for _, warning := range p.Warnings {
 		fmt.Fprintf(&b, "Warning: could not inspect %s: %s\n", safeText(warning.Target), safeText(warning.Message))
@@ -204,10 +204,10 @@ func (p PlanResult) String() string {
 
 func (r ExecuteResult) String() string {
 	var b strings.Builder
-	b.WriteString("TunWarden recovery\n")
+	b.WriteString("podlaz recovery\n")
 	b.WriteString("Mode: execute\n")
 	if len(r.Results) == 0 && len(r.Warnings) == 0 {
-		b.WriteString("No TunWarden-owned recovery candidates found.\n")
+		b.WriteString("No podlaz-owned recovery candidates found.\n")
 	}
 	for _, result := range r.Results {
 		switch result.Status {
@@ -230,7 +230,7 @@ func (r ExecuteResult) String() string {
 	for _, warning := range r.Warnings {
 		fmt.Fprintf(&b, "Warning: could not inspect %s: %s\n", safeText(warning.Target), safeText(warning.Message))
 	}
-	b.WriteString("No non-TunWarden resources were touched.\n")
+	b.WriteString("No non-podlaz resources were touched.\n")
 	return b.String()
 }
 
@@ -389,7 +389,7 @@ func (e OSCleanupExecutor) withDefaults() OSCleanupExecutor {
 
 func (e OSCleanupExecutor) cleanupTUNInterface(ctx context.Context, candidate Candidate) CleanupResult {
 	if candidate.Target != managedInterface {
-		return skipped(candidate, "non-TunWarden TUN interface target")
+		return skipped(candidate, "non-podlaz TUN interface target")
 	}
 	if err := e.run(ctx, "ip", "link", "del", "dev", managedInterface); err != nil && !commandErrorIsMissing(err) {
 		return failed(candidate, err)
@@ -400,7 +400,7 @@ func (e OSCleanupExecutor) cleanupTUNInterface(ctx context.Context, candidate Ca
 func (e OSCleanupExecutor) cleanupNFTablesTable(ctx context.Context, candidate Candidate) CleanupResult {
 	family, table, ok := parseNFTTarget(candidate.Target)
 	if !ok || !isManagedNFTTarget(family, table) {
-		return skipped(candidate, "non-TunWarden nftables target")
+		return skipped(candidate, "non-podlaz nftables target")
 	}
 	if err := e.run(ctx, "nft", "delete", "table", family, table); err != nil && !commandErrorIsMissing(err) {
 		return failed(candidate, err)
@@ -411,7 +411,7 @@ func (e OSCleanupExecutor) cleanupNFTablesTable(ctx context.Context, candidate C
 func (e OSCleanupExecutor) cleanupGeneratedRuntimeConfigs(candidate Candidate) CleanupResult {
 	generatedDir := filepath.Join(e.RuntimeDir, generatedDirName)
 	if !sameCleanPath(candidate.Target, generatedDir) {
-		return skipped(candidate, "generated runtime config path is outside TunWarden runtime state")
+		return skipped(candidate, "generated runtime config path is outside podlaz runtime state")
 	}
 	if err := os.RemoveAll(generatedDir); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return failed(candidate, fmt.Errorf("remove generated runtime configs %s: %w", generatedDir, err))
@@ -424,7 +424,7 @@ func (e OSCleanupExecutor) rollbackNFTables(ctx context.Context, entries []txsta
 	var errs []error
 	for _, entry := range entries {
 		if entry.Owner != txstate.TransactionOwner || !isManagedNFTTarget(entry.Family, entry.Table) {
-			errs = append(errs, fmt.Errorf("refuse to rollback non-TunWarden nftables target %s %s", entry.Family, entry.Table))
+			errs = append(errs, fmt.Errorf("refuse to rollback non-podlaz nftables target %s %s", entry.Family, entry.Table))
 			continue
 		}
 		key := entry.Family + " " + entry.Table
@@ -451,14 +451,14 @@ func (e OSCleanupExecutor) rollbackDNS(ctx context.Context, dns txstate.DNSRollb
 
 func (e OSCleanupExecutor) rollbackPolicyRule(ctx context.Context, rule txstate.PolicyRuleRollback) error {
 	if rule.Owner != txstate.TransactionOwner {
-		return fmt.Errorf("refuse to rollback non-TunWarden policy rule priority %d", rule.Priority)
+		return fmt.Errorf("refuse to rollback non-podlaz policy rule priority %d", rule.Priority)
 	}
 	if rule.Priority <= 0 {
 		return nil
 	}
 	table, ok := managedTableToken(rule.Table)
 	if !ok {
-		return fmt.Errorf("refuse to rollback policy rule priority %d with non-TunWarden table %s", rule.Priority, rule.Table)
+		return fmt.Errorf("refuse to rollback policy rule priority %d with non-podlaz table %s", rule.Priority, rule.Table)
 	}
 	args := []string{"-4", "rule", "del", "priority", strconv.Itoa(rule.Priority)}
 	if strings.TrimSpace(rule.From) != "" {
@@ -479,11 +479,11 @@ func (e OSCleanupExecutor) rollbackPolicyRule(ctx context.Context, rule txstate.
 
 func (e OSCleanupExecutor) rollbackRoute(ctx context.Context, route txstate.RouteRollback) error {
 	if route.Owner != txstate.TransactionOwner {
-		return fmt.Errorf("refuse to rollback non-TunWarden route %s table %s", route.CIDR, route.Table)
+		return fmt.Errorf("refuse to rollback non-podlaz route %s table %s", route.CIDR, route.Table)
 	}
 	table, ok := managedTableToken(route.Table)
 	if !ok {
-		return fmt.Errorf("refuse to rollback route %s with non-TunWarden table %s", route.CIDR, route.Table)
+		return fmt.Errorf("refuse to rollback route %s with non-podlaz table %s", route.CIDR, route.Table)
 	}
 	cidr := strings.TrimSpace(route.CIDR)
 	if cidr == "" {
@@ -495,7 +495,7 @@ func (e OSCleanupExecutor) rollbackRoute(ctx context.Context, route txstate.Rout
 	}
 	if strings.TrimSpace(route.Dev) != "" {
 		if route.Dev != managedInterface {
-			return fmt.Errorf("refuse to rollback route %s with non-TunWarden device %s", route.CIDR, route.Dev)
+			return fmt.Errorf("refuse to rollback route %s with non-podlaz device %s", route.CIDR, route.Dev)
 		}
 		args = append(args, "dev", route.Dev)
 	}
@@ -508,7 +508,7 @@ func (e OSCleanupExecutor) rollbackRoute(ctx context.Context, route txstate.Rout
 
 func (e OSCleanupExecutor) rollbackTUN(ctx context.Context, tun txstate.TUNRollback) error {
 	if tun.Owner != txstate.TransactionOwner || tun.InterfaceName != managedInterface {
-		return fmt.Errorf("refuse to rollback non-TunWarden TUN interface %s", tun.InterfaceName)
+		return fmt.Errorf("refuse to rollback non-podlaz TUN interface %s", tun.InterfaceName)
 	}
 	if err := e.run(ctx, "ip", "link", "del", "dev", managedInterface); err != nil && !commandErrorIsMissing(err) {
 		return fmt.Errorf("delete TUN device %s: %w", managedInterface, err)
@@ -518,11 +518,11 @@ func (e OSCleanupExecutor) rollbackTUN(ctx context.Context, tun txstate.TUNRollb
 
 func (e OSCleanupExecutor) removeGeneratedConfig(config txstate.GeneratedConfigRollback) error {
 	if config.Owner != txstate.TransactionOwner {
-		return fmt.Errorf("refuse to remove non-TunWarden generated config %s", config.Path)
+		return fmt.Errorf("refuse to remove non-podlaz generated config %s", config.Path)
 	}
 	path := filepath.Clean(config.Path)
 	if !isUnderDir(filepath.Join(e.RuntimeDir, generatedDirName), path) {
-		return fmt.Errorf("refuse to remove generated config outside TunWarden runtime state: %s", config.Path)
+		return fmt.Errorf("refuse to remove generated config outside podlaz runtime state: %s", config.Path)
 	}
 	if err := os.RemoveAll(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove generated config %s: %w", path, err)

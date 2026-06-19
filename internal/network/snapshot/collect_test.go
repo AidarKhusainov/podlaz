@@ -46,7 +46,7 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 			"/usr/sbin/ip -4 route show default":         {Stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp metric 600"},
 			"/usr/sbin/ip -6 route show default":         {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
 			"/usr/sbin/ip route get 203.0.113.10":        {Stdout: "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000"},
-			"/usr/sbin/ip link show dev tunwarden0":      {ExitCode: 1, Stderr: "Device \"tunwarden0\" does not exist."},
+			"/usr/sbin/ip link show dev podlaz0":         {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
 			"/usr/bin/resolvectl status --no-pager":      {Stdout: "Global\n       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported"},
 			"/usr/bin/nmcli -t -f RUNNING,STATE general": {Stdout: "running:connected"},
 			"/usr/sbin/nft list tables":                  {Stdout: "table inet filter"},
@@ -67,7 +67,7 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 	if s.DNS.Mode != "systemd-resolved" || s.NetworkManager.State != "connected" {
 		t.Fatalf("unexpected DNS/NM snapshot: %#v %#v", s.DNS, s.NetworkManager)
 	}
-	if s.Nftables.Availability.Status != StatusDetected || s.Nftables.TunWardenTable.Status != StatusMissing {
+	if s.Nftables.Availability.Status != StatusDetected || s.Nftables.PodlazTable.Status != StatusMissing {
 		t.Fatalf("unexpected nftables snapshot: %#v", s.Nftables)
 	}
 	if len(s.StaleResources) != 0 {
@@ -79,10 +79,10 @@ func TestCollectWithRunnerResolvesHostnameBeforeServerRouteLookup(t *testing.T) 
 	runner := fakeRunner{
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":    {Stdout: "default via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip -6 route show default":    {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
-			"/usr/sbin/ip route get 203.0.113.10":   {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip link show dev tunwarden0": {ExitCode: 1, Stderr: "Device \"tunwarden0\" does not exist."},
+			"/usr/sbin/ip -4 route show default":  {Stdout: "default via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip -6 route show default":  {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
+			"/usr/sbin/ip route get 203.0.113.10": {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip link show dev podlaz0":  {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
 		},
 	}
 	resolved := false
@@ -111,10 +111,10 @@ func TestCollectWithRunnerDoesNotResolveIPLiteralServer(t *testing.T) {
 	runner := fakeRunner{
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":    {Stdout: "default via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip -6 route show default":    {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
-			"/usr/sbin/ip route get 203.0.113.10":   {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip link show dev tunwarden0": {ExitCode: 1, Stderr: "Device \"tunwarden0\" does not exist."},
+			"/usr/sbin/ip -4 route show default":  {Stdout: "default via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip -6 route show default":  {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
+			"/usr/sbin/ip route get 203.0.113.10": {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip link show dev podlaz0":  {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
 		},
 	}
 	resolver := func(ctx context.Context, host string) ([]string, error) {
@@ -133,9 +133,9 @@ func TestCollectWithRunnerReportsHostnameResolutionFailure(t *testing.T) {
 	runner := fakeRunner{
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":    {Stdout: "default via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip -6 route show default":    {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
-			"/usr/sbin/ip link show dev tunwarden0": {ExitCode: 1, Stderr: "Device \"tunwarden0\" does not exist."},
+			"/usr/sbin/ip -4 route show default": {Stdout: "default via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip -6 route show default": {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
+			"/usr/sbin/ip link show dev podlaz0": {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
 		},
 	}
 	resolver := func(ctx context.Context, host string) ([]string, error) {
@@ -156,9 +156,9 @@ func TestCollectWithRunnerReportsHostnameResolutionTimeout(t *testing.T) {
 	runner := fakeRunner{
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":    {Stdout: "default via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip -6 route show default":    {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
-			"/usr/sbin/ip link show dev tunwarden0": {ExitCode: 1, Stderr: "Device \"tunwarden0\" does not exist."},
+			"/usr/sbin/ip -4 route show default": {Stdout: "default via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip -6 route show default": {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
+			"/usr/sbin/ip link show dev podlaz0": {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
 		},
 	}
 	resolver := func(ctx context.Context, host string) ([]string, error) {
@@ -180,10 +180,10 @@ func TestCollectWithRunnerDegradesWhenOptionalToolsAreMissing(t *testing.T) {
 	runner := fakeRunner{
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":    {Stdout: "default via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip -6 route show default":    {},
-			"/usr/sbin/ip route get 203.0.113.10":   {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip link show dev tunwarden0": {ExitCode: 1, Stderr: "Device \"tunwarden0\" does not exist."},
+			"/usr/sbin/ip -4 route show default":  {Stdout: "default via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip -6 route show default":  {},
+			"/usr/sbin/ip route get 203.0.113.10": {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
+			"/usr/sbin/ip link show dev podlaz0":  {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
 		},
 	}
 	resolver := func(ctx context.Context, host string) ([]string, error) {
@@ -204,7 +204,7 @@ func TestFakeSnapshotsCoverCommonTopologies(t *testing.T) {
 	fakes := []Snapshot{
 		FakeResolvedDesktop(),
 		FakeDesktopWithoutOptionalTools(),
-		FakeDesktopWithStaleTunWardenResources(),
+		FakeDesktopWithStalepodlazResources(),
 	}
 	for _, s := range fakes {
 		if s.OS != "linux" {

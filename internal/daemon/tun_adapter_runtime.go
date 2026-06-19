@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	tunAdapterPathEnv        = "TUNWARDEN_TUN2SOCKS_PATH"
+	tunAdapterPathEnv        = "PODLAZ_TUN2SOCKS_PATH"
 	defaultTunAdapterCommand = "tun2socks"
 )
 
@@ -56,7 +56,7 @@ func startTunAdapter(ctx context.Context, plan tunAdapterRuntimePlan) (*exec.Cmd
 	done := make(chan struct{})
 	go func() {
 		if err := cmd.Wait(); err != nil && cmdCtx.Err() == nil {
-			log.Printf("tunwarden: TUN adapter exited: %v", err)
+			log.Printf("podlaz: TUN adapter exited: %v", err)
 		}
 		close(done)
 	}()

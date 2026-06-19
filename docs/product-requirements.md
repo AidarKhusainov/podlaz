@@ -15,11 +15,11 @@ Typical failure modes include:
 - Reconnecting Wi-Fi is required to restore the machine.
 - The VPN server route accidentally goes through the VPN TUN interface, causing a traffic loop.
 
-TunWarden exists to make these failure modes explicit, testable, and recoverable.
+podlaz exists to make these failure modes explicit, testable, and recoverable.
 
 ## 2. Product thesis
 
-TunWarden is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations.
+podlaz is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations.
 
 The project should prioritize:
 
@@ -56,21 +56,21 @@ The project should not initially prioritize:
 
 ### G1. CLI-first operation
 
-TunWarden must be fully usable through CLI commands.
+podlaz must be fully usable through CLI commands.
 
 The canonical command contract is maintained in [CLI contract](./cli.md). Required command families:
 
 ```bash
-tunwarden import <uri-or-file-or-url>
-tunwarden profile ...
-tunwarden subscription ...
-tunwarden status
-tunwarden connect <profile-id>
-tunwarden disconnect
-tunwarden doctor
-tunwarden logs
-tunwarden plan --mode <proxy-only|tun> <profile-id>
-tunwarden recover
+podlaz import <uri-or-file-or-url>
+podlaz profile ...
+podlaz subscription ...
+podlaz status
+podlaz connect <profile-id>
+podlaz disconnect
+podlaz doctor
+podlaz logs
+podlaz plan --mode <proxy-only|tun> <profile-id>
+podlaz recover
 ```
 
 ### G2. Safe privileged networking
@@ -96,11 +96,11 @@ plan -> snapshot -> apply -> verify -> commit
                           rollback
 ```
 
-TunWarden must keep enough state to recover after failed attempts and crashes.
+podlaz must keep enough state to recover after failed attempts and crashes.
 
 ### G4. Reliable laptop behavior
 
-TunWarden must handle:
+podlaz must handle:
 
 - suspend/resume,
 - Wi-Fi reconnect,
@@ -112,16 +112,16 @@ TunWarden must handle:
 
 ### G5. Observable diagnostics
 
-TunWarden must explain its decisions.
+podlaz must explain its decisions.
 
 Examples:
 
 ```bash
-tunwarden plan --mode tun my-profile
-tunwarden doctor
-tunwarden doctor --routes
-tunwarden doctor --dns
-tunwarden doctor --firewall
+podlaz plan --mode tun my-profile
+podlaz doctor
+podlaz doctor --routes
+podlaz doctor --dns
+podlaz doctor --firewall
 ```
 
 ## 5. Scope and sequencing
@@ -158,11 +158,11 @@ Included:
 - Transaction apply/verify/commit/rollback.
 - `plan --mode tun` dry-run output.
 - `doctor` diagnostics for route/DNS/TUN/firewall/core state.
-- `recover --execute --yes` cleanup of TunWarden-owned state.
+- `recover --execute --yes` cleanup of podlaz-owned state.
 
 Exit expectation:
 
-- Failed connection attempts roll back, disconnect leaves no TunWarden-owned networking state, and `recover --execute --yes` can recover from common broken states.
+- Failed connection attempts roll back, disconnect leaves no podlaz-owned networking state, and `recover --execute --yes` can recover from common broken states.
 
 ### Excluded from early milestones
 
@@ -179,23 +179,23 @@ Exit expectation:
 
 ### FR-001: Profile management
 
-TunWarden must support storing, listing, showing, validating, and deleting profiles.
+podlaz must support storing, listing, showing, validating, and deleting profiles.
 
 A profile must include profile ID, display name, source type, protocol, server address, server port, security settings, transport settings, DNS policy, routing policy, and metadata.
 
 ### FR-002: Subscription management
 
-TunWarden must support adding and updating subscription sources.
+podlaz must support adding and updating subscription sources.
 
 A subscription source must include source ID, URL, format detection mode, update interval, last update status, imported profiles/nodes, and optional provider metadata.
 
 ### FR-003: Connection lifecycle
 
-TunWarden must support connect, disconnect, reconnect, status, graceful shutdown, and forced cleanup.
+podlaz must support connect, disconnect, reconnect, status, graceful shutdown, and forced cleanup.
 
 ### FR-004: Dry-run planning
 
-TunWarden must support a planning mode that prints intended changes without applying them.
+podlaz must support a planning mode that prints intended changes without applying them.
 
 Example output categories:
 
@@ -209,15 +209,15 @@ Example output categories:
 
 ### FR-005: Diagnostics
 
-`tunwarden doctor` must check daemon status, core process status, TUN interface status, default route, policy rules, route to VPN server, DNS configuration, DNS resolution, nftables state, NetworkManager state, external TCP connectivity, optional UDP connectivity, and stale TunWarden-owned state.
+`podlaz doctor` must check daemon status, core process status, TUN interface status, default route, policy rules, route to VPN server, DNS configuration, DNS resolution, nftables state, NetworkManager state, external TCP connectivity, optional UDP connectivity, and stale podlaz-owned state.
 
 Facet flags such as `doctor --core`, `doctor --routes`, `doctor --dns`, and `doctor --firewall` should be preferred over separate low-level check command families.
 
 ### FR-006: Recovery
 
-`tunwarden recover` must inspect TunWarden-owned stale state even if the daemon has crashed.
+`podlaz recover` must inspect podlaz-owned stale state even if the daemon has crashed.
 
-`tunwarden recover --execute --yes`, introduced only after safe TUN work is ready, must clean TunWarden-owned TUN interfaces, policy rules, routing tables, nftables state, DNS settings where possible, core processes, and pending transaction state.
+`podlaz recover --execute --yes`, introduced only after safe TUN work is ready, must clean podlaz-owned TUN interfaces, policy rules, routing tables, nftables state, DNS settings where possible, core processes, and pending transaction state.
 
 The default `recover` command must be read-only. Cleanup requires explicit `--execute --yes`.
 
@@ -249,7 +249,7 @@ Cleanup operations must be safe to run multiple times.
 
 ### NFR-004: Minimal assumptions
 
-TunWarden must not assume interface names are stable, Wi-Fi is the only uplink, IPv6 is available, systemd-resolved is always configured the same way, NetworkManager connectivity state is always accurate, or subscription format is always correctly declared.
+podlaz must not assume interface names are stable, Wi-Fi is the only uplink, IPv6 is available, systemd-resolved is always configured the same way, NetworkManager connectivity state is always accurate, or subscription format is always correctly declared.
 
 ### NFR-005: Testability
 
@@ -257,11 +257,11 @@ Core planners must be testable without root privileges by producing desired stat
 
 ### NFR-006: Lightweight operation
 
-TunWarden should avoid unnecessary resident components, polling loops, broad dependency chains, and hidden global mutation. Background work should be justified by reliability or observability.
+podlaz should avoid unnecessary resident components, polling loops, broad dependency chains, and hidden global mutation. Background work should be justified by reliability or observability.
 
 ### NFR-007: Secure defaults
 
-TunWarden must not silently accept unsafe profile settings. Risky settings such as insecure TLS, unsupported transports, ambiguous DNS behavior, and incomplete IPv6 handling must be visible to the user.
+podlaz must not silently accept unsafe profile settings. Risky settings such as insecure TLS, unsupported transports, ambiguous DNS behavior, and incomplete IPv6 handling must be visible to the user.
 
 Output redaction, JSON compatibility, filesystem layout, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
 
@@ -272,7 +272,7 @@ Early success should be measured by reliability, not feature count.
 Examples:
 
 - Proxy-only mode starts and stops Xray cleanly without touching system networking.
-- Connection/disconnection leaves no stale TunWarden routes/rules/firewall state.
+- Connection/disconnection leaves no stale podlaz routes/rules/firewall state.
 - Suspend/resume reconnects automatically on Ubuntu LTS.
 - `recover --execute --yes` restores direct internet connectivity in common failure cases once safe TUN work is implemented.
 - `doctor` reports actionable causes for DNS/routing failures.

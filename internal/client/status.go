@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-var ErrDaemonUnavailable = errors.New("tunwardend unavailable")
+var ErrDaemonUnavailable = errors.New("podlazd unavailable")
 var ErrDaemonPermissionDenied = errors.New("daemon socket permission denied")
 
 type daemonUnavailableError struct {
@@ -66,7 +66,7 @@ func (c StatusClient) Status(ctx context.Context) (api.StatusResponse, error) {
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://tunwardend"+api.StatusPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://podlazd"+api.StatusPath, nil)
 	if err != nil {
 		return api.StatusResponse{}, err
 	}
@@ -101,7 +101,7 @@ func IsDaemonPermissionDenied(err error) bool { return errors.Is(err, ErrDaemonP
 
 func UnavailableMessage(err error) string {
 	if err == nil {
-		return "daemon is not reachable; start tunwardend"
+		return "daemon is not reachable; start podlazd"
 	}
 	var unavailable daemonUnavailableError
 	if errors.As(err, &unavailable) && unavailable.detail != "" {
@@ -109,25 +109,25 @@ func UnavailableMessage(err error) string {
 	}
 	message := stringsAfterWrapped(err.Error())
 	if message == ErrDaemonUnavailable.Error() {
-		return "daemon is not reachable; start tunwardend"
+		return "daemon is not reachable; start podlazd"
 	}
 	return message
 }
 
 func unavailableDetail(socketPath string, err error) string {
 	if isPermissionDenied(err) {
-		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); add the user to the tunwarden group and start a new login session, or fix packaged socket ownership/mode", socketPath)
+		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); add the user to the podlaz group and start a new login session, or fix packaged socket ownership/mode", socketPath)
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Sprintf("daemon socket %s does not exist; start tunwardend", socketPath)
+		return fmt.Sprintf("daemon socket %s does not exist; start podlazd", socketPath)
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return fmt.Sprintf("daemon socket %s refused the connection; remove a stale socket or restart tunwardend", socketPath)
+		return fmt.Sprintf("daemon socket %s refused the connection; remove a stale socket or restart podlazd", socketPath)
 	}
 	if isTimeout(err) {
-		return fmt.Sprintf("daemon socket %s did not respond before timeout; start or restart tunwardend", socketPath)
+		return fmt.Sprintf("daemon socket %s did not respond before timeout; start or restart podlazd", socketPath)
 	}
-	return fmt.Sprintf("daemon socket %s is not reachable; start or restart tunwardend", socketPath)
+	return fmt.Sprintf("daemon socket %s is not reachable; start or restart podlazd", socketPath)
 }
 
 func isPermissionDenied(err error) bool {
@@ -143,7 +143,7 @@ func isTimeout(err error) bool {
 }
 
 func stringsAfterWrapped(s string) string {
-	const prefix = "tunwardend unavailable: "
+	const prefix = "podlazd unavailable: "
 	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
 		return s[len(prefix):]
 	}

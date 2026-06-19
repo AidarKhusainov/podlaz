@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 type DoctorClient struct {
@@ -35,7 +35,7 @@ func (c DoctorClient) Doctor(ctx context.Context) (api.DoctorResponse, error) {
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: timeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://tunwardend"+api.DoctorPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://podlazd"+api.DoctorPath, nil)
 	if err != nil {
 		return api.DoctorResponse{}, err
 	}

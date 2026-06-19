@@ -14,12 +14,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const (
@@ -102,7 +102,7 @@ func (m *XrayManager) connectProxyOnly(ctx context.Context, req api.ConnectReque
 	m.mu.Lock()
 	if m.cmd != nil || m.state.Connection == "active" {
 		m.mu.Unlock()
-		return api.LifecycleResponse{}, errors.New("connection already active; run tunwarden disconnect before connecting another profile")
+		return api.LifecycleResponse{}, errors.New("connection already active; run podlaz disconnect before connecting another profile")
 	}
 	if _, _, err := m.startXrayLocked(p, xrayPath, runtimeConfigPath, proxyPlan.XrayConfig, coreIdentity); err != nil {
 		m.mu.Unlock()
@@ -139,7 +139,7 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 		if m.state.Connection == "active" && m.state.Mode == planner.ModeTun {
 			m.mu.Unlock()
 			if transactionID == "" {
-				return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run tunwarden recover")
+				return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz recover")
 			}
 			return m.disconnectTun(ctx, transactionID)
 		}
@@ -157,7 +157,7 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 	removeGeneratedConfig(configPath)
 	if mode == planner.ModeTun {
 		if transactionID == "" {
-			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run tunwarden recover")
+			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz recover")
 		}
 		return m.disconnectTun(ctx, transactionID)
 	}
@@ -215,7 +215,7 @@ func (m *XrayManager) lifecycleDoctorChecks(ctx context.Context) []doctor.Check 
 	switch {
 	case state.Connection == "error (core exited)":
 		coreSeverity = doctor.SeverityFail
-		coreMessage = "core exited unexpectedly; inspect tunwarden logs --core"
+		coreMessage = "core exited unexpectedly; inspect podlaz logs --core"
 	case coreRunning:
 		coreMessage = emptyAs(state.Proxy, "core process is running")
 	case state.Connection == "active":
@@ -473,9 +473,9 @@ func ensureCoreNotRoot(mode string) error {
 		return nil
 	}
 	if mode == planner.ModeProxyOnly {
-		return errors.New("refusing to start proxy-only Xray as root without the dedicated tunwarden-xray execution identity")
+		return errors.New("refusing to start proxy-only Xray as root without the dedicated podlaz-xray execution identity")
 	}
-	return errors.New("refusing to start TUN-mode Xray as root; run tunwardend as an unprivileged service user with the documented networking capabilities instead of running the core process as root")
+	return errors.New("refusing to start TUN-mode Xray as root; run podlazd as an unprivileged service user with the documented networking capabilities instead of running the core process as root")
 }
 
 func emptyAs(value, fallback string) string {
@@ -542,23 +542,23 @@ func (w *coreLogWriter) flushCompleteLinesLocked() {
 
 func (w *coreLogWriter) logLineLocked(line []byte) {
 	cleanLine := strings.TrimRight(string(line), "\r")
-	log.Printf("tunwardend: core xray %s pid=%d profile=%s: %s", w.streamName, w.pid, render.Redact(w.profileID), render.Redact(cleanLine))
+	log.Printf("podlazd: core xray %s pid=%d profile=%s: %s", w.streamName, w.pid, render.Redact(w.profileID), render.Redact(cleanLine))
 }
 
 func logCoreStarted(pid int, profileID string) {
-	log.Printf("tunwardend: core xray started pid=%d profile=%s", pid, render.Redact(profileID))
+	log.Printf("podlazd: core xray started pid=%d profile=%s", pid, render.Redact(profileID))
 }
 
 func logCoreStartFailed(profileID string, err error) {
-	log.Printf("tunwardend: core xray start failed profile=%s error=%s", render.Redact(profileID), render.Redact(err.Error()))
+	log.Printf("podlazd: core xray start failed profile=%s error=%s", render.Redact(profileID), render.Redact(err.Error()))
 }
 
 func logCoreStopped(pid int, profileID string) {
-	log.Printf("tunwardend: core xray stopped pid=%d profile=%s", pid, render.Redact(profileID))
+	log.Printf("podlazd: core xray stopped pid=%d profile=%s", pid, render.Redact(profileID))
 }
 
 func logCoreExited(pid int, profileID, message string) {
-	log.Printf("tunwardend: core xray exited pid=%d profile=%s error=%s", pid, render.Redact(profileID), render.Redact(message))
+	log.Printf("podlazd: core xray exited pid=%d profile=%s error=%s", pid, render.Redact(profileID), render.Redact(message))
 }
 
 func writeRuntimeConfig(path string, content []byte, permissions runtimeConfigPermissions) error {

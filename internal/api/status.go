@@ -8,11 +8,11 @@ import (
 )
 
 const (
-	DefaultRuntimeDir = "/run/tunwarden"
-	RuntimeDirEnv     = "TUNWARDEN_RUNTIME_DIR"
-	ServiceEnv        = "TUNWARDEN_SERVICE"
-	SocketName        = "tunwardend.sock"
-	LockName          = "tunwardend.lock"
+	DefaultRuntimeDir = "/run/podlaz"
+	RuntimeDirEnv     = "PODLAZ_RUNTIME_DIR"
+	ServiceEnv        = "PODLAZ_SERVICE"
+	SocketName        = "podlazd.sock"
+	LockName          = "podlazd.lock"
 	StatusPath        = "/v1/status"
 
 	ServiceManual  = "manual"

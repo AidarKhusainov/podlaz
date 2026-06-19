@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestRunCLIConnectStartsStoredProfileViaDaemon(t *testing.T) {
@@ -38,7 +38,7 @@ func TestRunCLIConnectStartsStoredProfileViaDaemon(t *testing.T) {
 				Routes:            "not modified",
 				DNS:               "not modified",
 				Firewall:          "not modified",
-				RuntimeConfigPath: "/run/tunwarden/generated/xray.json",
+				RuntimeConfigPath: "/run/podlaz/generated/xray.json",
 			}, nil
 		},
 	})
@@ -52,7 +52,7 @@ func TestRunCLIConnectStartsStoredProfileViaDaemon(t *testing.T) {
 		t.Fatalf("expected profile %q, got %q", p.ID, gotProfile.ID)
 	}
 	for _, text := range []string{
-		"TunWarden connection started",
+		"podlaz connection started",
 		"Connection: active",
 		"Mode: proxy-only",
 		"Proxy: listening on 127.0.0.1:1080",
@@ -88,7 +88,7 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 				Connection: "active",
 				Mode:       mode,
 				Proxy:      "not started in this executor slice",
-				TUN:        "enabled (tunwarden0)",
+				TUN:        "enabled (podlaz0)",
 				Routes:     "applied 2 route(s) and 2 policy rule(s)",
 				DNS:        "not modified",
 				Firewall:   "not modified",
@@ -101,7 +101,7 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 	if gotMode != planner.ModeTun {
 		t.Fatalf("expected tun mode, got %q", gotMode)
 	}
-	for _, text := range []string{"Mode: tun", "TUN: enabled (tunwarden0)", "Routes: applied 2 route(s)"} {
+	for _, text := range []string{"Mode: tun", "TUN: enabled (podlaz0)", "Routes: applied 2 route(s)"} {
 		if !strings.Contains(out.String(), text) {
 			t.Fatalf("expected output to contain %q, got %q", text, out.String())
 		}
@@ -125,7 +125,7 @@ func TestRunCLIDisconnectIsRenderedAsInactive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disconnect failed: %v", err)
 	}
-	for _, text := range []string{"TunWarden disconnected", "Connection: inactive", "Proxy: inactive"} {
+	for _, text := range []string{"podlaz disconnected", "Connection: inactive", "Proxy: inactive"} {
 		if !strings.Contains(out.String(), text) {
 			t.Fatalf("expected output to contain %q, got %q", text, out.String())
 		}

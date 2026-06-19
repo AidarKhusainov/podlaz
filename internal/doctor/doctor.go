@@ -6,14 +6,14 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 const (
-	defaultRuntimeDir = "/run/tunwarden"
-	managedInterface  = "tunwarden0"
-	managedNFTTable   = "inet tunwarden"
+	defaultRuntimeDir = "/run/podlaz"
+	managedInterface  = "podlaz0"
+	managedNFTTable   = "inet podlaz"
 )
 
 const (
@@ -160,7 +160,7 @@ func (r Report) HasFailures() bool {
 // String renders the report in a stable, CLI-friendly format.
 func (r Report) String() string {
 	var b strings.Builder
-	b.WriteString("TunWarden doctor report\n")
+	b.WriteString("podlaz doctor report\n")
 	fmt.Fprintf(&b, "Source: %s\n", render.Redact(r.normalizedSource()))
 	for _, check := range r.Checks {
 		fmt.Fprintf(&b, "[%s] %s: %s\n", check.Severity, render.Redact(check.Name), render.Redact(check.Message))

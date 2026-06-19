@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestPlanProxyOnlyBuildsInspectableDryRun(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPlanProxyOnlyBuildsInspectableDryRun(t *testing.T) {
 	if len(plan.RollbackSteps) != 0 {
 		t.Fatalf("proxy-only dry-run should not need rollback steps, got %#v", plan.RollbackSteps)
 	}
-	if !strings.Contains(string(plan.XrayConfig), "tunwarden-socks") || !strings.Contains(string(plan.XrayConfig), "tunwarden-proxy") {
+	if !strings.Contains(string(plan.XrayConfig), "podlaz-socks") || !strings.Contains(string(plan.XrayConfig), "podlaz-proxy") {
 		t.Fatalf("expected generated Xray config in plan, got %s", plan.XrayConfig)
 	}
 	for _, step := range plan.Steps {

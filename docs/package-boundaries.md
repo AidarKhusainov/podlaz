@@ -1,6 +1,6 @@
 # Package Boundaries
 
-This document defines dependency direction for TunWarden packages.
+This document defines dependency direction for podlaz packages.
 
 ## 1. Goal
 
@@ -19,7 +19,7 @@ This separation keeps behavior easier to review and test.
 ## 2. Preferred dependency direction
 
 ```text
-cmd/tunwarden
+cmd/podlaz
   -> internal/app/cli
   -> internal/client       # daemon-backed operations once IPC exists
   -> internal/api          # shared request/response contracts
@@ -32,7 +32,7 @@ cmd/tunwarden
   -> internal/logs         # local read-only journald/system-log inspection in foundation builds
   -> internal/recovery     # local read-only recovery planning in foundation builds
 
-cmd/tunwardend
+cmd/podlazd
   -> internal/app/daemon
   -> internal/api
   -> internal/daemon

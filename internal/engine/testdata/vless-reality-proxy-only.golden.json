@@ -4,7 +4,7 @@
   },
   "inbounds": [
     {
-      "tag": "tunwarden-socks",
+      "tag": "podlaz-socks",
       "listen": "127.0.0.1",
       "port": 1080,
       "protocol": "socks",
@@ -15,7 +15,7 @@
       }
     },
     {
-      "tag": "tunwarden-http",
+      "tag": "podlaz-http",
       "listen": "127.0.0.1",
       "port": 8080,
       "protocol": "http",
@@ -27,7 +27,7 @@
   ],
   "outbounds": [
     {
-      "tag": "tunwarden-proxy",
+      "tag": "podlaz-proxy",
       "protocol": "vless",
       "settings": {
         "address": "example.com",

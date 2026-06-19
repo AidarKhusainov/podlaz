@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
 )
 
 func runDoctorCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {

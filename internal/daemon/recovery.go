@@ -3,8 +3,8 @@ package daemon
 import (
 	"context"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/recovery"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 func daemonRecover(ctx context.Context, runtimeDir string) api.RecoveryResponse {

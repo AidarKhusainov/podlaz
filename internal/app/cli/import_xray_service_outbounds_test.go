@@ -19,8 +19,8 @@ func TestRunImportHTTPXraySubscriptionIgnoresServiceOutbounds(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.UserAgent(); got != "TunWarden" {
-			t.Fatalf("expected User-Agent %q, got %q", "TunWarden", got)
+		if got := r.UserAgent(); got != "podlaz" {
+			t.Fatalf("expected User-Agent %q, got %q", "podlaz", got)
 		}
 		if got := r.Header.Get("x-hwid"); got == "" {
 			t.Fatal("expected x-hwid header")

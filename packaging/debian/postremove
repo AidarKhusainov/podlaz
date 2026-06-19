@@ -2,7 +2,7 @@
 set -eu
 
 if [ "${1:-}" = "purge" ] && command -v deb-systemd-helper >/dev/null 2>&1; then
-	deb-systemd-helper purge tunwardend.service >/dev/null || true
+	deb-systemd-helper purge podlazd.service >/dev/null || true
 fi
 
 exit 0

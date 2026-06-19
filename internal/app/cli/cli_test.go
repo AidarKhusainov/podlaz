@@ -9,20 +9,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	"github.com/AidarKhusainov/tunwarden/internal/logs"
-	"github.com/AidarKhusainov/tunwarden/internal/recovery"
-	"github.com/AidarKhusainov/tunwarden/internal/status"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/logs"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 func TestRunCLIVersion(t *testing.T) {
+	oldVersion, oldCommit, oldBuilt := version, commit, built
+	t.Cleanup(func() { version, commit, built = oldVersion, oldCommit, oldBuilt })
+	version, commit, built = "", "", ""
+
 	var out bytes.Buffer
 	if err := run(context.Background(), []string{"version"}, &out); err != nil {
 		t.Fatalf("version failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "tunwarden") {
-		t.Fatalf("expected version output to contain binary name, got %q", got)
+	want := "podlaz version dev\ncommit: unknown\nbuilt: unknown\n"
+	if got := out.String(); got != want {
+		t.Fatalf("expected version output %q, got %q", want, got)
 	}
 }
 
@@ -43,7 +48,7 @@ func TestRunCLIStatusHelp(t *testing.T) {
 	if err := run(context.Background(), []string{"status", "--help"}, &out); err != nil {
 		t.Fatalf("status --help failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Usage:\n  tunwarden status") {
+	if got := out.String(); !strings.Contains(got, "Usage:\n  podlaz status") {
 		t.Fatalf("expected status help output, got %q", got)
 	}
 }
@@ -57,7 +62,7 @@ func TestRunCLIStatusRendersCleanLocalStatus(t *testing.T) {
 		t.Fatalf("status failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"TunWarden status", "Daemon: not running", "Connection: inactive", "Runtime directory: missing", "Proxy: inactive", "TUN: not managed in this build", "Stale state: none"} {
+	for _, text := range []string{"podlaz status", "Daemon: not running", "Connection: inactive", "Runtime directory: missing", "Proxy: inactive", "TUN: not managed in this build", "Stale state: none"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected output to contain %q, got %q", text, got)
 		}
@@ -71,7 +76,7 @@ func TestRunCLIStatusReturnsDiagnosticExitCodeForStaleState(t *testing.T) {
 			report := cleanStatusReport()
 			report.Connection = "inactive (stale state detected)"
 			report.RuntimeDirectory = status.RuntimeDirectory{Message: "present (stale)"}
-			report.Candidates = []status.Candidate{{Kind: "runtime-directory", Description: "runtime directory", Target: "/run/tunwarden"}}
+			report.Candidates = []status.Candidate{{Kind: "runtime-directory", Description: "runtime directory", Target: "/run/podlaz"}}
 			return report
 		},
 	})
@@ -81,7 +86,7 @@ func TestRunCLIStatusReturnsDiagnosticExitCodeForStaleState(t *testing.T) {
 	if got := ExitCode(err); got != 3 {
 		t.Fatalf("expected status diagnostic exit code 3, got %d", got)
 	}
-	if got := out.String(); !strings.Contains(got, "Guidance: run `tunwarden recover`") {
+	if got := out.String(); !strings.Contains(got, "Guidance: run `podlaz recover`") {
 		t.Fatalf("expected recovery guidance in status output, got %q", got)
 	}
 }
@@ -114,7 +119,7 @@ func TestRunCLIDoctorUsesDaemonWhenAvailable(t *testing.T) {
 		t.Fatalf("doctor failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"TunWarden doctor report", "Source: daemon", "[OK] daemon: running"} {
+	for _, text := range []string{"podlaz doctor report", "Source: daemon", "[OK] daemon: running"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected output to contain %q, got %q", text, got)
 		}
@@ -125,7 +130,7 @@ func TestRunCLIDoctorFallsBackWhenDaemonUnavailable(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"doctor"}, &out, options{
 		daemonDoctor: func(context.Context) (doctor.Report, error) {
-			return doctor.Report{}, fmt.Errorf("%w: daemon socket /tmp/tunwardend.sock does not exist; start tunwardend", client.ErrDaemonUnavailable)
+			return doctor.Report{}, fmt.Errorf("%w: daemon socket /tmp/podlazd.sock does not exist; start podlazd", client.ErrDaemonUnavailable)
 		},
 		doctor: func(context.Context) doctor.Report { return cleanDoctorReport() },
 	})
@@ -133,7 +138,7 @@ func TestRunCLIDoctorFallsBackWhenDaemonUnavailable(t *testing.T) {
 		t.Fatalf("doctor fallback failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"Source: local fallback", "[WARN] daemon: daemon socket /tmp/tunwardend.sock does not exist; start tunwardend", "[OK] platform: linux/amd64"} {
+	for _, text := range []string{"Source: local fallback", "[WARN] daemon: daemon socket /tmp/podlazd.sock does not exist; start podlazd", "[OK] platform: linux/amd64"} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected output to contain %q, got %q", text, got)
 		}
@@ -164,8 +169,8 @@ func TestRunCLILogsRunsDefaultDaemonLogs(t *testing.T) {
 	err := runWithOptions(context.Background(), []string{"logs"}, &out, options{
 		logs: func(_ context.Context, w io.Writer, opts logs.Options) error {
 			gotOptions = opts
-			_, _ = fmt.Fprintln(w, "TunWarden daemon logs")
-			_, _ = fmt.Fprintln(w, "Jun 03 host tunwardend[123]: daemon started")
+			_, _ = fmt.Fprintln(w, "podlaz daemon logs")
+			_, _ = fmt.Fprintln(w, "Jun 03 host podlazd[123]: daemon started")
 			return nil
 		},
 	})
@@ -175,7 +180,7 @@ func TestRunCLILogsRunsDefaultDaemonLogs(t *testing.T) {
 	if gotOptions != (logs.Options{}) {
 		t.Fatalf("expected default logs options, got %#v", gotOptions)
 	}
-	if got := out.String(); !strings.Contains(got, "TunWarden daemon logs") || !strings.Contains(got, "daemon started") {
+	if got := out.String(); !strings.Contains(got, "podlaz daemon logs") || !strings.Contains(got, "daemon started") {
 		t.Fatalf("expected daemon logs output, got %q", got)
 	}
 }
@@ -224,14 +229,14 @@ func TestRunCLIRecoverRendersDryRunPlan(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"recover"}, &out, options{
 		recover: func(context.Context) recovery.PlanResult {
-			return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Description: "TUN interface", Target: "tunwarden0"}}}
+			return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Description: "TUN interface", Target: "podlaz0"}}}
 		},
 	})
 	if err != nil {
 		t.Fatalf("recover failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"TunWarden recovery dry-run", "Would recover TUN interface: tunwarden0", "No changes were applied."} {
+	for _, text := range []string{"podlaz recovery dry-run", "Would recover TUN interface: podlaz0", "No changes were applied."} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected output to contain %q, got %q", text, got)
 		}
@@ -245,7 +250,7 @@ func TestRunCLIRecoverExecuteYesUsesInjectedExecutor(t *testing.T) {
 		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
 			called = true
 			return recovery.ExecuteResult{Results: []recovery.CleanupResult{{
-				Candidate: recovery.Candidate{Kind: "tun-interface", Description: "TUN interface", Target: "tunwarden0"},
+				Candidate: recovery.Candidate{Kind: "tun-interface", Description: "TUN interface", Target: "podlaz0"},
 				Status:    "recovered",
 			}}}, nil
 		},
@@ -256,7 +261,7 @@ func TestRunCLIRecoverExecuteYesUsesInjectedExecutor(t *testing.T) {
 	if !called {
 		t.Fatal("expected injected recover executor to be called")
 	}
-	if got := out.String(); !strings.Contains(got, "Mode: execute") || !strings.Contains(got, "Recovered TUN interface: tunwarden0") {
+	if got := out.String(); !strings.Contains(got, "Mode: execute") || !strings.Contains(got, "Recovered TUN interface: podlaz0") {
 		t.Fatalf("expected execute recovery output, got %q", got)
 	}
 }
@@ -307,7 +312,7 @@ func TestRunCLIRecoverExecuteJSONRendersResult(t *testing.T) {
 	err := runWithOptions(context.Background(), []string{"recover", "--execute", "--yes", "--json"}, &out, options{
 		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
 			return recovery.ExecuteResult{Results: []recovery.CleanupResult{{
-				Candidate: recovery.Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet tunwarden"},
+				Candidate: recovery.Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"},
 				Status:    "skipped",
 				Message:   "already absent",
 			}}}, nil
@@ -317,7 +322,7 @@ func TestRunCLIRecoverExecuteJSONRendersResult(t *testing.T) {
 		t.Fatalf("recover --execute --yes --json failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{`"mode": "execute"`, `"status": "skipped"`, `"target": "inet tunwarden"`} {
+	for _, text := range []string{`"mode": "execute"`, `"status": "skipped"`, `"target": "inet podlaz"`} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected JSON output to contain %q, got %q", text, got)
 		}
@@ -328,7 +333,7 @@ func TestRunCLIRecoverExecuteReturnsDaemonUnavailableExitCode(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"recover", "--execute", "--yes"}, &out, options{
 		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
-			return recovery.ExecuteResult{}, fmt.Errorf("%w: daemon socket /tmp/tunwardend.sock does not exist; start tunwardend", client.ErrDaemonUnavailable)
+			return recovery.ExecuteResult{}, fmt.Errorf("%w: daemon socket /tmp/podlazd.sock does not exist; start podlazd", client.ErrDaemonUnavailable)
 		},
 	})
 	if err == nil {
@@ -337,7 +342,7 @@ func TestRunCLIRecoverExecuteReturnsDaemonUnavailableExitCode(t *testing.T) {
 	if got := ExitCode(err); got != 5 {
 		t.Fatalf("expected daemon unavailable exit code 5, got %d", got)
 	}
-	if !strings.Contains(err.Error(), "daemon socket /tmp/tunwardend.sock does not exist") {
+	if !strings.Contains(err.Error(), "daemon socket /tmp/podlazd.sock does not exist") {
 		t.Fatalf("expected daemon unavailable detail, got %v", err)
 	}
 }

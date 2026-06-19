@@ -8,9 +8,9 @@ The v0.1 lifecycle implementation is intentionally limited to daemon-owned Xray 
 
 Implemented behavior:
 
-- `tunwarden connect [--mode proxy-only] <profile-id>` starts a stored profile through `tunwardend`.
-- `tunwarden disconnect` stops the daemon-managed Xray process.
-- The daemon writes generated Xray config under `/run/tunwarden/generated/xray.json` or the configured runtime directory equivalent.
+- `podlaz connect [--mode proxy-only] <profile-id>` starts a stored profile through `podlazd`.
+- `podlaz disconnect` stops the daemon-managed Xray process.
+- The daemon writes generated Xray config under `/run/podlaz/generated/xray.json` or the configured runtime directory equivalent.
 - Generated config is runtime output, not persistent source of truth.
 - Xray is started with local SOCKS and HTTP listeners from the proxy-only plan defaults.
 - Disconnect first asks Xray to stop gracefully and then uses a forced-stop fallback.
@@ -39,16 +39,16 @@ Firewall: not modified
 
 ## Daemon requirement
 
-`connect` and `disconnect` require the local daemon API. If `tunwardend` is unavailable, the CLI must fail clearly with exit code `5`.
+`connect` and `disconnect` require the local daemon API. If `podlazd` is unavailable, the CLI must fail clearly with exit code `5`.
 
 ## Xray binary resolution
 
 The daemon resolves Xray in this order:
 
-1. explicit `TUNWARDEN_XRAY_PATH` environment variable;
+1. explicit `PODLAZ_XRAY_PATH` environment variable;
 2. `xray` from `PATH`.
 
-TunWarden does not download or update Xray automatically in v0.1.
+podlaz does not download or update Xray automatically in v0.1.
 
 ## Runtime config handling
 
@@ -56,14 +56,14 @@ The daemon writes generated Xray config with restrictive permissions and an atom
 
 The generated config must not be logged in full by default because it can contain credentials or connection metadata.
 
-On normal disconnect, the generated config is removed. If the daemon or host crashes, stale generated runtime files are recovery candidates for `tunwarden recover`.
+On normal disconnect, the generated config is removed. If the daemon or host crashes, stale generated runtime files are recovery candidates for `podlaz recover`.
 
 ## Status behavior
 
-During an active proxy-only connection, daemon-backed `tunwarden status` reports active process state and local proxy listeners, for example:
+During an active proxy-only connection, daemon-backed `podlaz status` reports active process state and local proxy listeners, for example:
 
 ```text
-TunWarden status
+podlaz status
 Daemon: running
 Connection: active
 Mode: proxy-only

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestInspectWithOptionsReportsCleanInactiveWhenRuntimeMissing(t *testing.T) {
@@ -32,7 +32,7 @@ func TestInspectWithOptionsReportsCleanInactiveWhenRuntimeMissing(t *testing.T) 
 
 	got := report.String()
 	want := []string{
-		"TunWarden status\n",
+		"podlaz status\n",
 		"Daemon: not running\n",
 		"Service: none\n",
 		"Connection: inactive\n",
@@ -53,7 +53,7 @@ func TestInspectWithOptionsReportsCleanInactiveWhenRuntimeMissing(t *testing.T) 
 }
 
 func TestInspectWithOptionsReportsStaleRuntimeDirectory(t *testing.T) {
-	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	runtimeDir := filepath.Join(t.TempDir(), "podlaz")
 	if err := os.Mkdir(runtimeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestInspectWithOptionsReportsStaleRuntimeDirectory(t *testing.T) {
 		"Stale state: found 1 recovery candidate\n",
 		"Recovery candidates:\n",
 		"  - runtime directory: " + runtimeDir + "\n",
-		"Guidance: run `tunwarden recover` for the canonical read-only recovery dry-run.\n",
+		"Guidance: run `podlaz recover` for the canonical read-only recovery dry-run.\n",
 	}
 	for _, text := range want {
 		if !strings.Contains(got, text) {
@@ -93,7 +93,7 @@ func TestInspectWithOptionsDefersStaleClassificationWhenDaemonSocketInaccessible
 	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	socketPath := filepath.Join(runtimeDir, "tunwardend.sock")
+	socketPath := filepath.Join(runtimeDir, "podlazd.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
@@ -120,11 +120,11 @@ func TestInspectWithOptionsDefersStaleClassificationWhenDaemonSocketInaccessible
 
 	got := report.String()
 	want := []string{
-		"Daemon socket: present but inaccessible (permission denied; check tunwarden group membership)\n",
+		"Daemon socket: present but inaccessible (permission denied; check podlaz group membership)\n",
 		"Runtime directory: present (daemon socket inaccessible; stale status unknown)\n",
 		"Stale state: unknown (inspection incomplete)\n",
-		"permission denied; local runtime state may belong to a live tunwardend and was not classified as stale\n",
-		"Guidance: run `tunwarden doctor` for diagnostic detail.\n",
+		"permission denied; local runtime state may belong to a live podlazd and was not classified as stale\n",
+		"Guidance: run `podlaz doctor` for diagnostic detail.\n",
 	}
 	for _, text := range want {
 		if !strings.Contains(got, text) {
@@ -137,8 +137,8 @@ func TestInspectWithOptionsDefersStaleClassificationWhenDaemonSocketInaccessible
 }
 
 func TestInspectWithOptionsDefersStaleClassificationWhenSocketPathInspectionDenied(t *testing.T) {
-	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
-	socketPath := filepath.Join(runtimeDir, "tunwardend.sock")
+	runtimeDir := filepath.Join(t.TempDir(), "podlaz")
+	socketPath := filepath.Join(runtimeDir, "podlazd.sock")
 	generatedDir := filepath.Join(runtimeDir, generatedDirName)
 	transactionsDir := filepath.Join(runtimeDir, "transactions")
 	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
@@ -178,10 +178,10 @@ func TestInspectWithOptionsDefersStaleClassificationWhenSocketPathInspectionDeni
 
 	got := report.String()
 	for _, want := range []string{
-		"Daemon socket: inaccessible (permission denied; check tunwarden group membership)\n",
+		"Daemon socket: inaccessible (permission denied; check podlaz group membership)\n",
 		"permission denied while inspecting daemon socket path\n",
 		"Stale state: unknown (inspection incomplete)\n",
-		"local runtime state may belong to a live tunwardend and was not classified as stale\n",
+		"local runtime state may belong to a live podlazd and was not classified as stale\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected output to contain %q, got %q", want, got)
@@ -193,11 +193,11 @@ func TestInspectWithOptionsDefersStaleClassificationWhenSocketPathInspectionDeni
 }
 
 func TestInspectWithOptionsReportsUnexpectedDaemonSocketPath(t *testing.T) {
-	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	runtimeDir := filepath.Join(t.TempDir(), "podlaz")
 	if err := os.Mkdir(runtimeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	socketPath := filepath.Join(runtimeDir, "tunwardend.sock")
+	socketPath := filepath.Join(runtimeDir, "podlazd.sock")
 	if err := os.WriteFile(socketPath, []byte("not a socket"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestInspectWithOptionsReportsUnexpectedDaemonSocketPath(t *testing.T) {
 }
 
 func TestInspectWithOptionsReportsGeneratedRuntimeConfigs(t *testing.T) {
-	runtimeDir := filepath.Join(t.TempDir(), "tunwarden")
+	runtimeDir := filepath.Join(t.TempDir(), "podlaz")
 	generatedDir := filepath.Join(runtimeDir, generatedDirName)
 	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func TestInspectWithOptionsReportsTransactionState(t *testing.T) {
 	tx.State = txstate.TransactionApplying
 	tx.Rollback = txstate.RollbackMetadata{
 		TUN: []txstate.TUNRollback{{
-			InterfaceName: "tunwarden0",
+			InterfaceName: "podlaz0",
 			Owner:         txstate.TransactionOwner,
 		}},
 	}
@@ -280,7 +280,7 @@ func TestInspectWithOptionsReportsTransactionState(t *testing.T) {
 }
 
 func TestInspectWithOptionsReportsRuntimePath(t *testing.T) {
-	runtimePath := filepath.Join(t.TempDir(), "tunwarden")
+	runtimePath := filepath.Join(t.TempDir(), "podlaz")
 	if err := os.WriteFile(runtimePath, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}

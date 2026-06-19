@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	daemonapi "github.com/AidarKhusainov/tunwarden/internal/daemon"
+	daemonapi "github.com/AidarKhusainov/podlaz/internal/daemon"
 )
 
 // Run starts the privileged daemon skeleton.
@@ -22,18 +22,18 @@ func Run(ctx context.Context, args []string) error {
 
 func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if len(args) > 0 {
-		return fmt.Errorf("tunwardend does not accept arguments yet")
+		return fmt.Errorf("podlazd does not accept arguments yet")
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fmt.Fprintln(stdout, "tunwardend: daemon started")
-	fmt.Fprintln(stdout, "tunwardend: serving local status API over Unix socket")
-	fmt.Fprintln(stdout, "tunwardend: network changes are applied only through daemon-owned transactions")
+	fmt.Fprintln(stdout, "podlazd: daemon started")
+	fmt.Fprintln(stdout, "podlazd: serving local status API over Unix socket")
+	fmt.Fprintln(stdout, "podlazd: network changes are applied only through daemon-owned transactions")
 
 	if err := (daemonapi.Server{}).Run(ctx); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "tunwardend: shutdown complete")
+	fmt.Fprintln(stdout, "podlazd: shutdown complete")
 	return nil
 }

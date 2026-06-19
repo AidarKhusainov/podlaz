@@ -9,37 +9,37 @@ The command names, user-visible output, and exit codes are owned by [CLI contrac
 The daemon API uses HTTP/JSON over a Unix domain socket:
 
 ```text
-/run/tunwarden/tunwardend.sock
+/run/podlaz/podlazd.sock
 ```
 
 The runtime directory can be overridden for tests and local development with:
 
 ```bash
-TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev
 ```
 
 The API remains local-only and intentionally small.
 
 ## Access model
 
-The daemon socket is created with mode `0660`. Packaged deployments expose only `/run/tunwarden/tunwardend.sock` through the dedicated `tunwarden` group. Generated configs, transaction files, locks, and daemon persistent state remain daemon-private.
+The daemon socket is created with mode `0660`. Packaged deployments expose only `/run/podlaz/podlazd.sock` through the dedicated `podlaz` group. Generated configs, transaction files, locks, and daemon persistent state remain daemon-private.
 
-Packaged systemd deployments create `/run/tunwarden` with `RuntimeDirectory=tunwarden` and `RuntimeDirectoryMode=0710`, reserve `/var/lib/tunwarden` with `StateDirectory=tunwarden` and `StateDirectoryMode=0700`, and run the default service as `tunwarden:tunwarden`.
+Packaged systemd deployments create `/run/podlaz` with `RuntimeDirectory=podlaz` and `RuntimeDirectoryMode=0710`, reserve `/var/lib/podlaz` with `StateDirectory=podlaz` and `StateDirectoryMode=0700`, and run the default service as `podlaz:podlaz`.
 
 This keeps normal CLI commands non-root while avoiding a world-writable daemon socket. If the user does not have socket access, daemon-backed `status` and `doctor` may be unavailable and the CLI keeps the documented conservative local fallback behavior. Daemon-required lifecycle commands such as `connect`, `disconnect`, and recovery execution fail clearly when the daemon is unavailable or inaccessible.
 
 ## Optional polkit authorization
 
-Polkit support is optional and daemon-side. Socket access remains the non-polkit fallback unless `TUNWARDEN_POLKIT_AUTHORIZATION` explicitly enables checks.
+Polkit support is optional and daemon-side. Socket access remains the non-polkit fallback unless `PODLAZ_POLKIT_AUTHORIZATION` explicitly enables checks.
 
-When enabled, `tunwardend` authorizes the local Unix peer process before executing operation-specific privileged operations:
+When enabled, `podlazd` authorizes the local Unix peer process before executing operation-specific privileged operations:
 
 | Operation | Polkit action |
 | --- | --- |
-| `connect --mode proxy-only` | `io.github.aidarkhusainov.tunwarden.connect-proxy-only` |
-| `connect --mode tun` | `io.github.aidarkhusainov.tunwarden.connect-tun` |
-| `disconnect` | `io.github.aidarkhusainov.tunwarden.disconnect` |
-| `recover --execute --yes` | `io.github.aidarkhusainov.tunwarden.recover-execute` |
+| `connect --mode proxy-only` | `io.github.aidarkhusainov.podlaz.connect-proxy-only` |
+| `connect --mode tun` | `io.github.aidarkhusainov.podlaz.connect-tun` |
+| `disconnect` | `io.github.aidarkhusainov.podlaz.disconnect` |
+| `recover --execute --yes` | `io.github.aidarkhusainov.podlaz.recover-execute` |
 
 Read-only daemon-backed status and doctor requests are not polkit-gated after socket access is already available.
 
@@ -84,10 +84,10 @@ Stops daemon-managed runtime if it is running. The operation is idempotent. When
 
 ### `POST /v1/recover`
 
-Executes explicit daemon-owned recovery cleanup for `tunwarden recover --execute --yes`. Recovery dry-run inspection is a CLI/local read-only flow and is not this endpoint. When polkit is enabled, authorization happens before scanning and executing cleanup.
+Executes explicit daemon-owned recovery cleanup for `podlaz recover --execute --yes`. Recovery dry-run inspection is a CLI/local read-only flow and is not this endpoint. When polkit is enabled, authorization happens before scanning and executing cleanup.
 
 ## Runtime lifecycle
 
-On startup, `tunwardend` creates or uses the runtime directory, creates a lock file, removes only a stale Unix socket at the socket path, fails when the socket path exists but is not a Unix socket, listens on the Unix socket, applies socket mode, records local Unix peer credentials where supported, and serves the local endpoints.
+On startup, `podlazd` creates or uses the runtime directory, creates a lock file, removes only a stale Unix socket at the socket path, fails when the socket path exists but is not a Unix socket, listens on the Unix socket, applies socket mode, records local Unix peer credentials where supported, and serves the local endpoints.
 
-On graceful shutdown, `tunwardend` stops any active Xray child process, shuts down the HTTP server, closes the Unix socket listener, removes the socket path, and removes the lock file.
+On graceful shutdown, `podlazd` stops any active Xray child process, shuts down the HTTP server, closes the Unix socket listener, removes the socket path, and removes the lock file.

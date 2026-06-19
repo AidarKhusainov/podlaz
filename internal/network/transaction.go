@@ -21,7 +21,7 @@ type Snapshot struct {
 	Notes     []string
 }
 
-// Plan is a dry-run representation of changes TunWarden intends to apply.
+// Plan is a dry-run representation of changes podlaz intends to apply.
 type Plan struct {
 	InterfaceName string
 	Routes        []string

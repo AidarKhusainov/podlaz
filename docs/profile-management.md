@@ -1,19 +1,19 @@
 # Profile management
 
-`tunwarden profile` is the implemented v0.1 command group for managing profiles before any connection is attempted.
+`podlaz profile` is the implemented v0.1 command group for managing profiles before any connection is attempted.
 
 Canonical CLI shape is owned by [CLI contract](./cli.md). Broader profile and subscription normalization requirements are owned by [Subscriptions and profiles](./subscriptions-and-profiles.md). This document describes the implemented profile behavior.
 
 ## Command shape
 
 ```bash
-tunwarden profile add --name test --server example.com --port 443 --protocol vless
-tunwarden profile import '<share-uri>'
-tunwarden profile list
-tunwarden profile list --json
-tunwarden profile show test
-tunwarden profile show test --json
-tunwarden profile delete test --yes
+podlaz profile add --name test --server example.com --port 443 --protocol vless
+podlaz profile import '<share-uri>'
+podlaz profile list
+podlaz profile list --json
+podlaz profile show test
+podlaz profile show test --json
+podlaz profile delete test --yes
 ```
 
 Supported share URI schemes for `profile import` are:
@@ -98,16 +98,16 @@ test-a1b2c3d4e5  test   vless     example.com  443
 Profiles are stored in the documented user state location:
 
 ```text
-$XDG_STATE_HOME/tunwarden/profiles.json
+$XDG_STATE_HOME/podlaz/profiles.json
 ```
 
 When `XDG_STATE_HOME` is unset or relative, the fallback is:
 
 ```text
-~/.local/state/tunwarden/profiles.json
+~/.local/state/podlaz/profiles.json
 ```
 
-The profile store is user-owned state and must not require root. Writes use an atomic temporary-file-and-rename flow and store files with restrictive permissions. After the temporary profile store is synced and renamed into place, TunWarden syncs the containing directory on supported Linux filesystems so the replacement directory entry has stronger crash durability; directory sync failures are reported clearly.
+The profile store is user-owned state and must not require root. Writes use an atomic temporary-file-and-rename flow and store files with restrictive permissions. After the temporary profile store is synced and renamed into place, podlaz syncs the containing directory on supported Linux filesystems so the replacement directory entry has stronger crash durability; directory sync failures are reported clearly.
 
 ## Validation and failure behavior
 
@@ -121,7 +121,7 @@ Corrupt, unreadable, unsupported, or internally invalid profile storage fails sa
 
 ## Safety boundary
 
-Profile management mutates persistent local TunWarden user state only. It must not start Xray, contact a server, start network processes, or mutate TUN, routes, DNS, nftables, firewall, daemon runtime state, or system networking state.
+Profile management mutates persistent local podlaz user state only. It must not start Xray, contact a server, start network processes, or mutate TUN, routes, DNS, nftables, firewall, daemon runtime state, or system networking state.
 
 ## Deferred behavior
 

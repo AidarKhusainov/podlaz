@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	netexecutor "github.com/AidarKhusainov/tunwarden/internal/network/executor"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const dnsRouteOnlyDomain = "~."

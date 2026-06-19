@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 type staleResourceOptions struct {
@@ -37,7 +37,7 @@ func staleResources(ctx context.Context, runner CommandRunner, opts staleResourc
 	}
 
 	if opts.nftOK {
-		result, err := runCommand(ctx, runner, opts.nftPath, "list", "table", "inet", "tunwarden")
+		result, err := runCommand(ctx, runner, opts.nftPath, "list", "table", "inet", "podlaz")
 		switch {
 		case commandSucceeded(result, err):
 			stale = append(stale, fmt.Sprintf("nft table %s exists", managedNFTTable))
@@ -106,7 +106,7 @@ func staleResourceMessage(stale []string, warnings []string) string {
 		parts = append(parts, "incomplete checks: "+strings.Join(warnings, "; "))
 	}
 	if len(parts) == 0 {
-		return "no TunWarden-owned resources found"
+		return "no podlaz-owned resources found"
 	}
 	return strings.Join(parts, "; ")
 }

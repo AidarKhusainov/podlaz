@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/engine"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/engine"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 type tunCoreRuntimePlan struct {
@@ -44,7 +44,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	m.mu.Lock()
 	if m.cmd != nil || m.state.Connection == "active" {
 		m.mu.Unlock()
-		return api.LifecycleResponse{}, errors.New("connection already active; run tunwarden disconnect before connecting another profile")
+		return api.LifecycleResponse{}, errors.New("connection already active; run podlaz disconnect before connecting another profile")
 	}
 	m.mu.Unlock()
 
@@ -94,7 +94,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
 			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray startup verification failure: %w", rollbackErr))
 		}
-		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied TunWarden-owned networking state", err)
+		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
 	}
 	adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, tunAdapterRuntimePlan{TunDevice: plan.TunDevice.Name, SOCKSEndpoint: corePlan.SOCKSEndpoint})
 	if err != nil {
@@ -119,7 +119,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
 			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr))
 		}
-		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied TunWarden-owned networking state", err)
+		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
 	}
 
 	active := xrayState{
@@ -143,7 +143,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
 			return api.LifecycleResponse{}, errors.Join(errors.New("Xray exited before TUN transaction commit"), rollbackErr)
 		}
-		return api.LifecycleResponse{}, errors.New("Xray exited before TUN transaction commit; rolled back applied TunWarden-owned networking state")
+		return api.LifecycleResponse{}, errors.New("Xray exited before TUN transaction commit; rolled back applied podlaz-owned networking state")
 	}
 	if err := commitTunTransaction(result.Store, result.TransactionID); err != nil {
 		m.mu.Unlock()

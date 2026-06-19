@@ -6,10 +6,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const resolvedStatusForTest = "Link 7 (tunwarden0)\n    DNS Servers: 1.1.1.1\n    DNS Domain: ~."
+const resolvedStatusForTest = "Link 7 (podlaz0)\n    DNS Servers: 1.1.1.1\n    DNS Domain: ~."
 
 func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	runner := &recordingRunner{stdout: resolvedStatusForTest}
@@ -20,7 +20,7 @@ func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply DNS: %v", err)
 	}
-	if step.Kind != "dns" || step.Target != "tunwarden0" || step.Owner != OwnerDNS {
+	if step.Kind != "dns" || step.Target != "podlaz0" || step.Owner != OwnerDNS {
 		t.Fatalf("unexpected DNS step: %#v", step)
 	}
 	if err := exec.Verify(context.Background(), plan); err != nil {
@@ -31,11 +31,11 @@ func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"resolvectl", "dns", "tunwarden0", "1.1.1.1"},
-		{"resolvectl", "domain", "tunwarden0", "~."},
-		{"resolvectl", "default-route", "tunwarden0", "yes"},
-		{"resolvectl", "status", "tunwarden0", "--no-pager"},
-		{"resolvectl", "revert", "tunwarden0"},
+		{"resolvectl", "dns", "podlaz0", "1.1.1.1"},
+		{"resolvectl", "domain", "podlaz0", "~."},
+		{"resolvectl", "default-route", "podlaz0", "yes"},
+		{"resolvectl", "status", "podlaz0", "--no-pager"},
+		{"resolvectl", "revert", "podlaz0"},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
@@ -55,7 +55,7 @@ func TestResolvedDNSExecutorFailsClearlyWhenPlanIsBlocked(t *testing.T) {
 
 func TestResolvedDNSExecutorVerifyRequiresRouteOnlyDomain(t *testing.T) {
 	plan := dnsPlanForTest()
-	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: "Link 7 (tunwarden0)"}}).Verify(context.Background(), plan)
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: "Link 7 (podlaz0)"}}).Verify(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected verify failure when route-only domain is missing")
 	}
@@ -115,38 +115,38 @@ func TestDNSAwareTunExecutorRollsBackDNSWhenApplyFailsAfterDNSMutation(t *testin
 	if len(steps) != 5 {
 		t.Fatalf("expected base networking steps to remain rollbackable, got %#v", steps)
 	}
-	if recorder.calls[len(recorder.calls)-1] != "dns:rollback:tunwarden0" {
+	if recorder.calls[len(recorder.calls)-1] != "dns:rollback:podlaz0" {
 		t.Fatalf("expected immediate DNS rollback after DNS apply failure, got %#v", recorder.calls)
 	}
 }
 
 func dnsAwareCallOrderForTest() []string {
 	return []string{
-		"tun:create:tunwarden0",
-		"route:add:tunwarden:default",
+		"tun:create:podlaz0",
+		"route:add:podlaz:default",
 		"route:add:main:203.0.113.10/32",
 		"rule:add:9999:to 203.0.113.10/32",
 		"rule:add:10000:from all",
-		"dns:apply:tunwarden0",
-		"tun:verify:tunwarden0",
-		"route:verify:tunwarden:default",
+		"dns:apply:podlaz0",
+		"tun:verify:podlaz0",
+		"route:verify:podlaz:default",
 		"route:verify:main:203.0.113.10/32",
 		"rule:verify:9999:to 203.0.113.10/32",
 		"rule:verify:10000:from all",
-		"dns:verify:tunwarden0",
-		"dns:rollback:tunwarden0",
+		"dns:verify:podlaz0",
+		"dns:rollback:podlaz0",
 		"rule:rollback:10000:from all",
 		"rule:rollback:9999:to 203.0.113.10/32",
 		"route:rollback:main:203.0.113.10/32",
-		"route:rollback:tunwarden:default",
-		"tun:rollback:tunwarden0",
+		"route:rollback:podlaz:default",
+		"tun:rollback:podlaz0",
 	}
 }
 
 func dnsPlanForTest() planner.TunDNSPlan {
 	return planner.TunDNSPlan{
 		Backend:    planner.DNSBackendSystemdResolved,
-		TargetLink: "tunwarden0",
+		TargetLink: "podlaz0",
 		Servers:    []string{planner.DefaultTunDNSServer},
 		Action:     planner.DNSActionConfigure,
 		Reason:     "use systemd-resolved per-link DNS",

@@ -1,19 +1,19 @@
 # Proxy-only plan
 
-`tunwarden plan --mode proxy-only <profile-id>` is the implemented v0.1 dry-run command for inspecting what a proxy-only Xray runtime setup would create for a stored profile.
+`podlaz plan --mode proxy-only <profile-id>` is the implemented v0.1 dry-run command for inspecting what a proxy-only Xray runtime setup would create for a stored profile.
 
 Canonical CLI shape is owned by [CLI contract](./cli.md). Generated runtime config safety rules are owned by [State and security requirements](./state-and-security.md). This document describes the implemented proxy-only planning behavior.
 
 ## Command shape
 
 ```bash
-tunwarden plan --mode proxy-only <profile-id>
-tunwarden plan --mode proxy-only <profile-id> --json
+podlaz plan --mode proxy-only <profile-id>
+podlaz plan --mode proxy-only <profile-id> --json
 ```
 
 ## Behavior
 
-The command reads a stored profile from user-owned TunWarden profile state and builds an inspectable plan without writing files, starting Xray, or mutating host networking.
+The command reads a stored profile from user-owned podlaz profile state and builds an inspectable plan without writing files, starting Xray, or mutating host networking.
 
 A successful human-readable plan prints:
 
@@ -22,7 +22,7 @@ Proxy-only plan
 Profile: my-vless-profile
 Profile ID: my-vless-profile-a1b2c3d4e5
 Mode: proxy-only
-Will generate runtime Xray config: /run/tunwarden/generated/xray.json
+Will generate runtime Xray config: /run/podlaz/generated/xray.json
 Will listen on SOCKS: 127.0.0.1:1080
 Will listen on HTTP: 127.0.0.1:8080
 Will not modify TUN, routes, DNS, nftables, or firewall.
@@ -40,7 +40,7 @@ The implemented planner generates deterministic proxy-only Xray JSON with:
 - one VLESS outbound derived from the normalized profile;
 - stream settings for supported VLESS transport/security combinations.
 
-The runtime path shown in the plan is `/run/tunwarden/generated/xray.json`, but v0.1 planning keeps the config as dry-run output and does not write that path. A later explicit execution command must own atomic writes, permissions, process start, and cleanup.
+The runtime path shown in the plan is `/run/podlaz/generated/xray.json`, but v0.1 planning keeps the config as dry-run output and does not write that path. A later explicit execution command must own atomic writes, permissions, process start, and cleanup.
 
 ## Supported profile settings
 

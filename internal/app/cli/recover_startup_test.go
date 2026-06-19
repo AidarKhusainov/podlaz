@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestRunCLIRecoverIncludesDaemonStartupScan(t *testing.T) {
@@ -54,7 +54,7 @@ func TestRunCLIRecoverIncludesDaemonStartupScan(t *testing.T) {
 						Path:              filepath.Join(runtimeDir, "transactions", "tx-startup.json"),
 					},
 				}},
-				SuggestedAction: "tunwarden recover",
+				SuggestedAction: "podlaz recover",
 			},
 		})
 	})}
@@ -73,7 +73,7 @@ func TestRunCLIRecoverIncludesDaemonStartupScan(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"TunWarden recovery dry-run",
+		"podlaz recovery dry-run",
 		"Transaction: pending apply",
 		"Rollback available: yes",
 		"State path: " + filepath.Join(runtimeDir, "transactions", "tx-startup.json"),

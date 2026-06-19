@@ -40,7 +40,7 @@ func TestDefaultStorePathIgnoresRelativeXDGStateHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default store path: %v", err)
 	}
-	want := filepath.Join(home, ".local", "state", "tunwarden", "profiles.json")
+	want := filepath.Join(home, ".local", "state", "podlaz", "profiles.json")
 	if got != want {
 		t.Fatalf("expected fallback path %q, got %q", want, got)
 	}

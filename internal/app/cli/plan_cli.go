@@ -6,10 +6,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 func runPlanCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
@@ -112,13 +112,13 @@ func renderProxyOnlyPlan(w io.Writer, p planner.ProxyOnlyPlan) {
 
 func renderTunPlan(w io.Writer, p planner.TunPlan) {
 	s := p.Snapshot
-	fmt.Fprintln(w, "TunWarden TUN plan")
+	fmt.Fprintln(w, "podlaz TUN plan")
 	fmt.Fprintln(w, "TUN planning snapshot")
 	fmt.Fprintf(w, "Profile: %s\nProfile ID: %s\nMode: %s\n", render.Redact(p.ProfileName), render.Redact(p.ProfileID), p.TunnelMode)
 	fmt.Fprintln(w, "Read-only: will not create TUN devices, change routes, change policy rules, change DNS, change nftables, start Xray, or write runtime config.")
 	fmt.Fprintf(w, "TUN: %s %s (MTU %d)\n", render.Redact(p.TunDevice.Action), render.Redact(p.TunDevice.Name), p.TunDevice.MTU)
 	fmt.Fprintf(w, "Routing table: %s (%d)\n", planner.TunRoutingTable, planner.TunRoutingTableID)
-	fmt.Fprintln(w, "Default traffic: route through tunwarden table")
+	fmt.Fprintln(w, "Default traffic: route through podlaz table")
 	fmt.Fprintf(w, "VPN server bypass: %s\n", routePlanLine(p.ServerBypass))
 	fmt.Fprintln(w, "Policy rules:")
 	for _, r := range p.PolicyRules {
@@ -137,16 +137,16 @@ func renderTunPlan(w io.Writer, p planner.TunPlan) {
 	fmt.Fprintf(w, "DNS mode: %s (%s)\n", render.Redact(s.DNS.Mode), renderFinding(s.DNS.Resolved))
 	fmt.Fprintf(w, "NetworkManager: %s\n", renderNetworkManager(s.NetworkManager))
 	fmt.Fprintf(w, "nftables: %s\n", renderFinding(s.Nftables.Availability))
-	fmt.Fprintf(w, "TunWarden nftables table: %s\n", renderFinding(s.Nftables.TunWardenTable))
+	fmt.Fprintf(w, "podlaz nftables table: %s\n", renderFinding(s.Nftables.PodlazTable))
 	fmt.Fprintf(w, "IPv4 assumption: %s\nIPv6 assumption: %s\n", renderFinding(s.IPv4), renderFinding(s.IPv6))
-	fmt.Fprintln(w, "TunWarden TUN devices:")
+	fmt.Fprintln(w, "podlaz TUN devices:")
 	for _, d := range s.TunDevices {
 		fmt.Fprintf(w, "- %s: %s\n", render.Redact(d.Name), renderStatusDetail(d.Status, d.Detail, d.Raw))
 	}
 	if len(s.StaleResources) == 0 {
-		fmt.Fprintln(w, "Stale TunWarden-owned resources: none detected")
+		fmt.Fprintln(w, "Stale podlaz-owned resources: none detected")
 	} else {
-		fmt.Fprintf(w, "Stale TunWarden-owned resources: %d detected\n", len(s.StaleResources))
+		fmt.Fprintf(w, "Stale podlaz-owned resources: %d detected\n", len(s.StaleResources))
 		for _, r := range s.StaleResources {
 			fmt.Fprintf(w, "- %s %s: %s\n", render.Redact(r.Kind), render.Redact(r.Name), renderStatusDetail(r.Status, r.Detail, ""))
 		}
@@ -297,7 +297,7 @@ func killSwitchPlanJSON(p planner.TunKillSwitchPlan) map[string]any {
 }
 
 func snapshotForJSON(s netsnapshot.Snapshot) map[string]any {
-	return map[string]any{"os": render.Redact(s.OS), "default_ipv4_route": routeForJSON(s.DefaultIPv4), "default_ipv6_route": routeForJSON(s.DefaultIPv6), "server_route": routeForJSON(s.ServerRoute), "dns": map[string]any{"mode": render.Redact(s.DNS.Mode), "systemd_resolved": findingForJSON(s.DNS.Resolved)}, "network_manager": map[string]any{"finding": findingForJSON(s.NetworkManager.Finding), "state": render.Redact(s.NetworkManager.State)}, "nftables": map[string]any{"availability": findingForJSON(s.Nftables.Availability), "tunwarden_table": findingForJSON(s.Nftables.TunWardenTable)}, "tun_devices": tunDevicesForJSON(s.TunDevices), "ipv4": findingForJSON(s.IPv4), "ipv6": findingForJSON(s.IPv6), "stale_resources": staleResourcesForJSON(s.StaleResources)}
+	return map[string]any{"os": render.Redact(s.OS), "default_ipv4_route": routeForJSON(s.DefaultIPv4), "default_ipv6_route": routeForJSON(s.DefaultIPv6), "server_route": routeForJSON(s.ServerRoute), "dns": map[string]any{"mode": render.Redact(s.DNS.Mode), "systemd_resolved": findingForJSON(s.DNS.Resolved)}, "network_manager": map[string]any{"finding": findingForJSON(s.NetworkManager.Finding), "state": render.Redact(s.NetworkManager.State)}, "nftables": map[string]any{"availability": findingForJSON(s.Nftables.Availability), "podlaz_table": findingForJSON(s.Nftables.PodlazTable)}, "tun_devices": tunDevicesForJSON(s.TunDevices), "ipv4": findingForJSON(s.IPv4), "ipv6": findingForJSON(s.IPv6), "stale_resources": staleResourcesForJSON(s.StaleResources)}
 }
 func routeForJSON(r netsnapshot.Route) map[string]any {
 	return map[string]any{"status": string(r.Status), "family": render.Redact(r.Family), "destination": render.Redact(r.Destination), "interface": render.Redact(r.Interface), "gateway": render.Redact(r.Gateway), "raw": render.Redact(r.Raw), "detail": render.Redact(r.Detail)}
@@ -385,8 +385,8 @@ func redactedStrings(values []string) []string {
 
 func printPlanHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden plan --mode proxy-only <profile-id> [--json]
-  tunwarden plan --mode tun <profile-id> [--json]
+  podlaz plan --mode proxy-only <profile-id> [--json]
+  podlaz plan --mode tun <profile-id> [--json]
 
 Print a read-only connection plan. TUN planning snapshots feed a full-tunnel TUN/route/DNS/nftables kill-switch dry-run plan with server bypass, route-loop risk, warnings, and rollback steps.
 `)

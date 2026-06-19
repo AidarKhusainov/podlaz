@@ -1,10 +1,10 @@
 # State and Security Requirements
 
-This document owns TunWarden state layout, output redaction, daemon hardening, recovery safety boundaries, and core process safety rules.
+This document owns podlaz state layout, output redaction, daemon hardening, recovery safety boundaries, and core process safety rules.
 
 ## 1. State ownership model
 
-TunWarden must keep three levels of state separate.
+podlaz must keep three levels of state separate.
 
 ### 1.1 User intent and user state
 
@@ -22,16 +22,16 @@ Preferred locations:
 
 ```text
 User config:
-  $XDG_CONFIG_HOME/tunwarden/
-  default: ~/.config/tunwarden/
+  $XDG_CONFIG_HOME/podlaz/
+  default: ~/.config/podlaz/
 
 User state:
-  $XDG_STATE_HOME/tunwarden/
-  default: ~/.local/state/tunwarden/
+  $XDG_STATE_HOME/podlaz/
+  default: ~/.local/state/podlaz/
 
 User cache:
-  $XDG_CACHE_HOME/tunwarden/
-  default: ~/.cache/tunwarden/
+  $XDG_CACHE_HOME/podlaz/
+  default: ~/.cache/podlaz/
 ```
 
 Rules:
@@ -43,7 +43,7 @@ Rules:
 
 ### 1.2 Daemon runtime and daemon state
 
-Daemon state is owned by `tunwardend`.
+Daemon state is owned by `podlazd`.
 
 Examples:
 
@@ -59,10 +59,10 @@ Preferred locations:
 
 ```text
 Runtime:
-  /run/tunwarden/
+  /run/podlaz/
 
 Persistent daemon state:
-  /var/lib/tunwarden/
+  /var/lib/podlaz/
 
 Daemon logs:
   journald first, package logs only if needed later
@@ -71,30 +71,30 @@ Daemon logs:
 For packaged systemd units, prefer:
 
 ```ini
-RuntimeDirectory=tunwarden
-StateDirectory=tunwarden
+RuntimeDirectory=podlaz
+StateDirectory=podlaz
 ```
 
-`LogsDirectory=tunwarden` is intentionally not required while the daemon logs to stdout/stderr and the unit sends those streams to journald. Add a logs directory only when file-based package logs become a real product requirement.
+`LogsDirectory=podlaz` is intentionally not required while the daemon logs to stdout/stderr and the unit sends those streams to journald. Add a logs directory only when file-based package logs become a real product requirement.
 
 #### Transaction runtime state
 
 The implemented transaction state schema is volatile daemon runtime state and is stored under:
 
 ```text
-/run/tunwarden/transactions/<id>.json
+/run/podlaz/transactions/<id>.json
 ```
 
 Transaction files must be:
 
-- owned by TunWarden and include `owner: "tunwarden"`;
-- versioned with `schema_version: "tunwarden.transaction.v1"`;
+- owned by podlaz and include `owner: "podlaz"`;
+- versioned with `schema_version: "podlaz.transaction.v1"`;
 - written with file mode `0600` under a daemon-owned runtime directory;
 - written atomically with temp-file fsync, rename, and directory fsync;
 - safe to scan repeatedly after daemon restart;
 - free of persistent secrets.
 
-Transaction files may store non-secret rollback metadata for TunWarden-owned TUN devices, routes, policy rules, DNS state, nftables tables/chains, generated runtime config paths, and child-process labels or PIDs. They must not store share URIs, subscription URLs with provider tokens, passwords, authorization headers, private keys, or provider API tokens.
+Transaction files may store non-secret rollback metadata for podlaz-owned TUN devices, routes, policy rules, DNS state, nftables tables/chains, generated runtime config paths, and child-process labels or PIDs. They must not store share URIs, subscription URLs with provider tokens, passwords, authorization headers, private keys, or provider API tokens.
 
 `status`, `doctor`, and `recover` must be able to explain pending, failed, rolling-back, or otherwise stale transaction state using only redacted summaries. They must not apply cleanup as part of read-only inspection.
 
@@ -102,14 +102,14 @@ Transaction files may store non-secret rollback metadata for TunWarden-owned TUN
 
 Recovery has two distinct modes:
 
-- `tunwarden recover` is a read-only scanner and must not mutate host state.
-- `tunwarden recover --execute --yes` is an explicit cleanup intent sent by the CLI to `tunwardend`; the CLI must not perform privileged host cleanup directly.
+- `podlaz recover` is a read-only scanner and must not mutate host state.
+- `podlaz recover --execute --yes` is an explicit cleanup intent sent by the CLI to `podlazd`; the CLI must not perform privileged host cleanup directly.
 
-Daemon-owned recovery execution may mutate only clearly TunWarden-owned volatile state. Eligible targets are limited to documented runtime children, generated runtime configs, the managed TUN interface, TunWarden-owned nftables objects, and route, rule, DNS, TUN, and generated-config rollback entries recorded as TunWarden-owned transaction metadata.
+Daemon-owned recovery execution may mutate only clearly podlaz-owned volatile state. Eligible targets are limited to documented runtime children, generated runtime configs, the managed TUN interface, podlaz-owned nftables objects, and route, rule, DNS, TUN, and generated-config rollback entries recorded as podlaz-owned transaction metadata.
 
-Ambiguous rollback metadata must be reported as skipped and left unchanged. A stale PID recorded in transaction metadata is not sufficient process identity; recovery must not signal a process from PID metadata alone unless a future daemon-supervised identity check can prove the process is still the TunWarden-owned child.
+Ambiguous rollback metadata must be reported as skipped and left unchanged. A stale PID recorded in transaction metadata is not sufficient process identity; recovery must not signal a process from PID metadata alone unless a future daemon-supervised identity check can prove the process is still the podlaz-owned child.
 
-The runtime root `/run/tunwarden` must not be removed wholesale. Recovery may remove specific stale owned children only when their paths are proven to be inside the documented TunWarden runtime layout.
+The runtime root `/run/podlaz` must not be removed wholesale. Recovery may remove specific stale owned children only when their paths are proven to be inside the documented podlaz runtime layout.
 
 Transaction state should be removed only after the cleanup sequence completes safely. If any cleanup action fails or any ambiguous resource is skipped, the transaction file should remain available for later diagnostics or a future safer recovery attempt.
 
@@ -128,7 +128,7 @@ Examples:
 Rules:
 
 - It must be applied only through daemon-owned transactions.
-- It must be identifiable as TunWarden-owned.
+- It must be identifiable as podlaz-owned.
 - It must be inspectable through `plan`, `status`, `doctor`, and `recover`.
 - It must be recoverable without relying on the original CLI process.
 
@@ -186,7 +186,7 @@ Daemon-backed status may include `transactions`. Each item is a redacted summary
   "state": "applying",
   "rollback_available": true,
   "requires_cleanup": true,
-  "path": "/run/tunwarden/transactions/tx-1.json"
+  "path": "/run/podlaz/transactions/tx-1.json"
 }
 ```
 
@@ -196,7 +196,7 @@ Recovery execute JSON must use `status: "fail"` when cleanup actions fail. It mu
 
 ## 3. Output redaction
 
-TunWarden must be observable without leaking sensitive material.
+podlaz must be observable without leaking sensitive material.
 
 Default human output and `--json` output must redact:
 
@@ -236,9 +236,9 @@ Rules:
 Examples:
 
 ```bash
-tunwarden profile delete <profile-id> --yes
-tunwarden subscription delete <subscription-id> --yes
-tunwarden recover --execute --yes
+podlaz profile delete <profile-id> --yes
+podlaz subscription delete <subscription-id> --yes
+podlaz recover --execute --yes
 ```
 
 `disconnect` is a normal lifecycle command and should not require confirmation unless a future flag changes its meaning beyond stopping the active connection.
@@ -249,27 +249,27 @@ The daemon service must start from least privilege. Every relaxation must be jus
 
 Packaged baseline service behavior:
 
-- `packaging/sysusers.d/tunwarden.conf` creates the dedicated unprivileged `tunwarden` daemon service identity and the dedicated `tunwarden-xray` proxy-core child identity.
-- `packaging/systemd/tunwardend.service` starts `tunwardend` as `tunwarden:tunwarden` for the packaged proxy-only baseline.
+- `packaging/sysusers.d/podlaz.conf` creates the dedicated unprivileged `podlaz` daemon service identity and the dedicated `podlaz-xray` proxy-core child identity.
+- `packaging/systemd/podlazd.service` starts `podlazd` as `podlaz:podlaz` for the packaged proxy-only baseline.
 - The packaged unit sets `UMask=0077`; daemon runtime files are private by default, and the daemon-created control socket is explicitly opened to mode `0660`.
-- In the default packaged proxy-only path, Xray child processes inherit the same unprivileged `tunwarden:tunwarden` service identity.
-- If a UID 0 daemon deployment is used for proxy-only mode, `tunwardend` must start Xray under the dedicated `tunwarden-xray:tunwarden-xray` execution identity instead of letting the child inherit UID 0.
-- For the UID 0 daemon path, generated Xray runtime config is owned by `root:tunwarden-xray`, the generated config directory is mode `0750`, and the generated config file is mode `0640`. This is the documented private equivalent to `0600`: only the daemon/root owner and the dedicated Xray child group can read the generated config.
+- In the default packaged proxy-only path, Xray child processes inherit the same unprivileged `podlaz:podlaz` service identity.
+- If a UID 0 daemon deployment is used for proxy-only mode, `podlazd` must start Xray under the dedicated `podlaz-xray:podlaz-xray` execution identity instead of letting the child inherit UID 0.
+- For the UID 0 daemon path, generated Xray runtime config is owned by `root:podlaz-xray`, the generated config directory is mode `0750`, and the generated config file is mode `0640`. This is the documented private equivalent to `0600`: only the daemon/root owner and the dedicated Xray child group can read the generated config.
 - The packaged baseline unit grants no ambient or bounding capabilities.
 - Proxy-only mode must not grant `CAP_NET_ADMIN`, `CAP_NET_RAW`, broad file capabilities, or ambient capabilities to the daemon or Xray child.
-- The dedicated `tunwarden` group is the packaged socket access boundary for CLI commands that use the daemon.
-- `RuntimeDirectory=tunwarden` with `RuntimeDirectoryMode=0710` lets the `tunwarden` group traverse `/run/tunwarden` to reach the daemon socket, but does not let group members list daemon-private runtime state.
-- Only `/run/tunwarden/tunwardend.sock` is intentionally exposed to `tunwarden` group members for packaged CLI access.
-- Generated configs under `/run/tunwarden/generated`, transaction files under `/run/tunwarden/transactions`, lock files, and other daemon runtime children remain daemon-private unless a later contract explicitly changes them.
-- The daemon itself applies socket mode `0660` to `/run/tunwarden/tunwardend.sock`.
-- `StateDirectory=tunwarden` with `StateDirectoryMode=0700` reserves `/var/lib/tunwarden` for daemon-owned persistent state without exposing it to the CLI access group.
-- `StandardOutput=journal` and `StandardError=journal` make daemon logs visible through `journalctl -u tunwardend`.
+- The dedicated `podlaz` group is the packaged socket access boundary for CLI commands that use the daemon.
+- `RuntimeDirectory=podlaz` with `RuntimeDirectoryMode=0710` lets the `podlaz` group traverse `/run/podlaz` to reach the daemon socket, but does not let group members list daemon-private runtime state.
+- Only `/run/podlaz/podlazd.sock` is intentionally exposed to `podlaz` group members for packaged CLI access.
+- Generated configs under `/run/podlaz/generated`, transaction files under `/run/podlaz/transactions`, lock files, and other daemon runtime children remain daemon-private unless a later contract explicitly changes them.
+- The daemon itself applies socket mode `0660` to `/run/podlaz/podlazd.sock`.
+- `StateDirectory=podlaz` with `StateDirectoryMode=0700` reserves `/var/lib/podlaz` for daemon-owned persistent state without exposing it to the CLI access group.
+- `StandardOutput=journal` and `StandardError=journal` make daemon logs visible through `journalctl -u podlazd`.
 
 Current hardening baseline:
 
 ```ini
-User=tunwarden
-Group=tunwarden
+User=podlaz
+Group=podlaz
 UMask=0077
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -281,16 +281,16 @@ ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-RuntimeDirectory=tunwarden
+RuntimeDirectory=podlaz
 RuntimeDirectoryMode=0710
-StateDirectory=tunwarden
+StateDirectory=podlaz
 StateDirectoryMode=0700
 ```
 
 Privilege status for the current milestone:
 
 - The packaged baseline unit remains unprivileged and does not grant `CAP_NET_ADMIN`.
-- Packaged proxy-only mode may start and stop an Xray child process and mutate only daemon-owned generated runtime config state under `/run/tunwarden`.
+- Packaged proxy-only mode may start and stop an Xray child process and mutate only daemon-owned generated runtime config state under `/run/podlaz`.
 - Daemon-owned TUN execution and recovery cleanup paths are privileged runtime paths. They require a privileged daemon deployment or future helper with `CAP_NET_ADMIN`-equivalent rights when they mutate TUN devices, routes, policy rules, DNS link state, or nftables/firewall state.
 - The CLI must not become a privileged or SUID networking mutator. It may parse arguments, render output, and send intents through the daemon socket only.
 - Any packaged service privilege expansion must update this document and the unit file in the same change, including the exact capability set and why each capability is required.
@@ -301,15 +301,15 @@ Privilege status for the current milestone:
 
 ## 6. Core engine process safety
 
-The core engine process is a child process managed by the daemon, not the owner of TunWarden system state.
+The core engine process is a child process managed by the daemon, not the owner of podlaz system state.
 
 Rules:
 
 - The core process must not inherit broad daemon privileges unless strictly required.
-- In packaged proxy-only mode, `tunwardend` and Xray both run as the unprivileged `tunwarden` service identity.
-- If `tunwardend` is running with UID 0 for proxy-only mode, it must drop the Xray child to the dedicated `tunwarden-xray:tunwarden-xray` identity before starting the process.
+- In packaged proxy-only mode, `podlazd` and Xray both run as the unprivileged `podlaz` service identity.
+- If `podlazd` is running with UID 0 for proxy-only mode, it must drop the Xray child to the dedicated `podlaz-xray:podlaz-xray` identity before starting the process.
 - The proxy-only Xray child must not inherit supplementary groups.
-- Generated core configs must be mode `0600` for same-user execution, or equivalently private as `root:tunwarden-xray` with directory mode `0750` and file mode `0640` for the UID 0 daemon path.
+- Generated core configs must be mode `0600` for same-user execution, or equivalently private as `root:podlaz-xray` with directory mode `0750` and file mode `0640` for the UID 0 daemon path.
 - Generated core configs must be written atomically.
 - Generated core configs must be treated as runtime output, not persistent source of truth.
 - Generated core configs must not be printed or logged in full by default.

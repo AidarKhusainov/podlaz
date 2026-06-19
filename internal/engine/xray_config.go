@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 const (
@@ -134,14 +134,14 @@ func GenerateXrayProxyOnlyConfig(p profile.Profile, opts XrayProxyOnlyConfigOpti
 		Log: xrayLog{LogLevel: "warning"},
 		Inbounds: []xrayInbound{
 			{
-				Tag:      "tunwarden-socks",
+				Tag:      "podlaz-socks",
 				Listen:   opts.SOCKSListen,
 				Port:     opts.SOCKSPort,
 				Protocol: "socks",
 				Settings: xraySOCKSInboundSettings{Auth: "noauth", UDP: false, UserLevel: 0},
 			},
 			{
-				Tag:      "tunwarden-http",
+				Tag:      "podlaz-http",
 				Listen:   opts.HTTPListen,
 				Port:     opts.HTTPPort,
 				Protocol: "http",
@@ -150,7 +150,7 @@ func GenerateXrayProxyOnlyConfig(p profile.Profile, opts XrayProxyOnlyConfigOpti
 		},
 		Outbounds: []xrayOutbound{
 			{
-				Tag:      "tunwarden-proxy",
+				Tag:      "podlaz-proxy",
 				Protocol: "vless",
 				Settings: xrayVLESSSettings{
 					Address:    p.Server,

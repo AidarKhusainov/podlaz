@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/recovery"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestServerExposesStatusOverUnixSocket(t *testing.T) {
@@ -20,7 +20,7 @@ func TestServerExposesStatusOverUnixSocket(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- (Server{RuntimeDir: runtimeDir}).Run(ctx) }()
 
-	statusClient := client.StatusClient{SocketPath: runtimeDir + "/tunwardend.sock", Timeout: time.Second}
+	statusClient := client.StatusClient{SocketPath: runtimeDir + "/podlazd.sock", Timeout: time.Second}
 	var daemon string
 	var service string
 	for i := 0; i < 50; i++ {
@@ -60,7 +60,7 @@ func TestServerExposesDoctorOverUnixSocket(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- (Server{RuntimeDir: runtimeDir}).Run(ctx) }()
 
-	doctorClient := client.DoctorClient{SocketPath: runtimeDir + "/tunwardend.sock", Timeout: time.Second}
+	doctorClient := client.DoctorClient{SocketPath: runtimeDir + "/podlazd.sock", Timeout: time.Second}
 	var source string
 	var sawDaemonCheck bool
 	for i := 0; i < 50; i++ {
@@ -173,7 +173,7 @@ func TestServerStartupScanReportsStaleOwnedResource(t *testing.T) {
 		t.Fatalf("expected generated runtime startup candidate, got %#v", status.StartupScan.Candidates)
 	}
 	check := findDoctorCheck(report.Checks, "startup-recovery-scan")
-	if check == nil || check.Severity != "WARN" || !strings.Contains(check.Message, "suggested action: tunwarden recover") {
+	if check == nil || check.Severity != "WARN" || !strings.Contains(check.Message, "suggested action: podlaz recover") {
 		t.Fatalf("expected warning startup doctor check with recovery guidance, got %#v", check)
 	}
 }
@@ -183,7 +183,7 @@ func TestServerStartupScanReportsPendingTransaction(t *testing.T) {
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	tx := txstate.NewTransaction("tx-startup", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
-	tx.Rollback = txstate.RollbackMetadata{TUN: []txstate.TUNRollback{{InterfaceName: "tunwarden0", Owner: txstate.TransactionOwner}}}
+	tx.Rollback = txstate.RollbackMetadata{TUN: []txstate.TUNRollback{{InterfaceName: "podlaz0", Owner: txstate.TransactionOwner}}}
 	path, err := store.Save(tx)
 	if err != nil {
 		t.Fatalf("save transaction: %v", err)
@@ -267,7 +267,7 @@ func TestServerRefreshesStartupScanAfterRecoveryExecute(t *testing.T) {
 			t.Fatalf("startup scan still reports recovered generated runtime state: %#v", after.StartupScan)
 		}
 	}
-	if after.StartupScan.SuggestedAction == "tunwarden recover" {
+	if after.StartupScan.SuggestedAction == "podlaz recover" {
 		t.Fatalf("startup scan should not suggest recover after successful cleanup: %#v", after.StartupScan)
 	}
 }

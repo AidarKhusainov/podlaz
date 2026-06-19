@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	PolkitAuthorizationEnv = "TUNWARDEN_POLKIT_AUTHORIZATION"
-	polkitActionPrefix     = "io.github.aidarkhusainov.tunwarden."
+	PolkitAuthorizationEnv = "PODLAZ_POLKIT_AUTHORIZATION"
+	polkitActionPrefix     = "io.github.aidarkhusainov.podlaz."
 )
 
 const (

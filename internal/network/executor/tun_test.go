@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 func TestTunExecutorApplyVerifyAndRollbackOrder(t *testing.T) {
@@ -30,21 +30,21 @@ func TestTunExecutorApplyVerifyAndRollbackOrder(t *testing.T) {
 	}
 
 	want := []string{
-		"tun:create:tunwarden0",
-		"route:add:tunwarden:default",
+		"tun:create:podlaz0",
+		"route:add:podlaz:default",
 		"route:add:main:203.0.113.10/32",
 		"rule:add:9999:to 203.0.113.10/32",
 		"rule:add:10000:from all",
-		"tun:verify:tunwarden0",
-		"route:verify:tunwarden:default",
+		"tun:verify:podlaz0",
+		"route:verify:podlaz:default",
 		"route:verify:main:203.0.113.10/32",
 		"rule:verify:9999:to 203.0.113.10/32",
 		"rule:verify:10000:from all",
 		"rule:rollback:10000:from all",
 		"rule:rollback:9999:to 203.0.113.10/32",
 		"route:rollback:main:203.0.113.10/32",
-		"route:rollback:tunwarden:default",
-		"tun:rollback:tunwarden0",
+		"route:rollback:podlaz:default",
+		"tun:rollback:podlaz0",
 	}
 	if !reflect.DeepEqual(recorder.calls, want) {
 		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
@@ -69,7 +69,7 @@ func TestTunExecutorApplyFailureLeavesRollbackablePartialState(t *testing.T) {
 	}
 }
 
-func TestIPRouteAndRuleMappingUsesAddAndTunWardenTableID(t *testing.T) {
+func TestIPRouteAndRuleMappingUsesAddAndpodlazTableID(t *testing.T) {
 	runner := &recordingRunner{}
 	routes := IPRouteExecutor{Runner: runner}
 	rules := IPPolicyRuleExecutor{Runner: runner}
@@ -89,7 +89,7 @@ func TestIPRouteAndRuleMappingUsesAddAndTunWardenTableID(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"ip", "-4", "route", "add", "default", "dev", "tunwarden0", "table", "51820"},
+		{"ip", "-4", "route", "add", "default", "dev", "podlaz0", "table", "51820"},
 		{"ip", "-4", "route", "flush", "cache"},
 		{"ip", "-4", "route", "add", "203.0.113.10/32", "via", "192.0.2.1", "dev", "eth0", "table", "main"},
 		{"ip", "-4", "route", "flush", "cache"},
@@ -119,7 +119,7 @@ func TestIPRouteAndRuleRollbackFlushesRouteCache(t *testing.T) {
 	want := [][]string{
 		{"ip", "-4", "rule", "del", "priority", "10000", "from", "all", "lookup", "51820"},
 		{"ip", "-4", "route", "flush", "cache"},
-		{"ip", "-4", "route", "del", "default", "dev", "tunwarden0", "table", "51820"},
+		{"ip", "-4", "route", "del", "default", "dev", "podlaz0", "table", "51820"},
 		{"ip", "-4", "route", "flush", "cache"},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
@@ -246,9 +246,9 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) (C
 
 func executorPlanForTest() planner.TunPlan {
 	return planner.TunPlan{
-		TunDevice: planner.TunDevicePlan{Name: "tunwarden0", MTU: 1500, Action: "create"},
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "create"},
 		Routes: []planner.TunRoutePlan{
-			{Family: "ipv4", Destination: "default", Table: planner.TunRoutingTable, Interface: "tunwarden0", Action: "add"},
+			{Family: "ipv4", Destination: "default", Table: planner.TunRoutingTable, Interface: "podlaz0", Action: "add"},
 			{Family: "ipv4", Destination: "203.0.113.10/32", Table: planner.MainRoutingTable, Interface: "eth0", Gateway: "192.0.2.1", Action: "add"},
 		},
 		PolicyRules: []planner.TunPolicyRulePlan{

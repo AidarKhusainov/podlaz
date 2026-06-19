@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
-	netexecutor "github.com/AidarKhusainov/tunwarden/internal/network/executor"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 type tunSnapshotCollector func(context.Context, netsnapshot.Options) netsnapshot.Snapshot
@@ -37,7 +37,7 @@ func tunDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.Check
 	}
 	for _, dev := range snapshot.TunDevices {
 		if dev.Name == netsnapshot.DefaultTunName && dev.Status == netsnapshot.StatusDetected {
-			return doctor.Check{Name: "tun", Severity: doctor.SeverityOK, Message: "tunwarden0 detected"}
+			return doctor.Check{Name: "tun", Severity: doctor.SeverityOK, Message: "podlaz0 detected"}
 		}
 	}
 	return doctor.Check{Name: "tun", Severity: doctor.SeverityWarning, Message: emptyAs(state.TUN, "TUN state is not confirmed by snapshot")}
@@ -50,7 +50,7 @@ func routeDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.Che
 	if snapshot.DefaultIPv4.Status != netsnapshot.StatusDetected {
 		return doctor.Check{Name: "routes", Severity: doctor.SeverityWarning, Message: "host default route visibility is " + string(snapshot.DefaultIPv4.Status)}
 	}
-	return doctor.Check{Name: "routes", Severity: doctor.SeverityWarning, Message: "TunWarden route table and policy-rule state require transaction/executor verification; host default route alone is not sufficient"}
+	return doctor.Check{Name: "routes", Severity: doctor.SeverityWarning, Message: "podlaz route table and policy-rule state require transaction/executor verification; host default route alone is not sufficient"}
 }
 
 func dnsDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.Check {
@@ -67,11 +67,11 @@ func firewallDoctorCheck(state xrayState, snapshot netsnapshot.Snapshot) doctor.
 	if state.Mode != planner.ModeTun {
 		return doctor.Check{Name: "firewall", Severity: doctor.SeverityOK, Message: "not modified"}
 	}
-	if snapshot.Nftables.TunWardenTable.Status == netsnapshot.StatusDetected {
-		return doctor.Check{Name: "firewall", Severity: doctor.SeverityOK, Message: "TunWarden nftables table detected"}
+	if snapshot.Nftables.PodlazTable.Status == netsnapshot.StatusDetected {
+		return doctor.Check{Name: "firewall", Severity: doctor.SeverityOK, Message: "podlaz nftables table detected"}
 	}
 	if snapshot.Nftables.Availability.Status == netsnapshot.StatusDetected {
-		return doctor.Check{Name: "firewall", Severity: doctor.SeverityWarning, Message: emptyAs(state.Firewall, "nftables available; TunWarden table not detected in snapshot")}
+		return doctor.Check{Name: "firewall", Severity: doctor.SeverityWarning, Message: emptyAs(state.Firewall, "nftables available; podlaz table not detected in snapshot")}
 	}
 	return doctor.Check{Name: "firewall", Severity: doctor.SeverityWarning, Message: "nftables state is " + string(snapshot.Nftables.Availability.Status)}
 }

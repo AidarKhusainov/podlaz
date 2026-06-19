@@ -25,7 +25,7 @@ func TestFetchSourceSendsStableClientHeaderWithoutPlaceholder(t *testing.T) {
 		if !validClientID(id) {
 			t.Fatalf("expected generated %s header, got %q", subscriptionClientHeader, id)
 		}
-		if strings.Contains(r.URL.RawQuery, id) || strings.Contains(r.URL.RawQuery, "tunwarden-client-id") {
+		if strings.Contains(r.URL.RawQuery, id) || strings.Contains(r.URL.RawQuery, "podlaz-client-id") {
 			t.Fatalf("generated identity leaked into URL query: %q", r.URL.RawQuery)
 		}
 		seen = append(seen, id)
@@ -46,7 +46,7 @@ func TestFetchSourceSendsStableClientHeaderWithoutPlaceholder(t *testing.T) {
 	if len(seen) != 2 || seen[0] != seen[1] {
 		t.Fatalf("expected stable client identity across requests, got %#v", seen)
 	}
-	clientIDPath := filepath.Join(stateHome, "tunwarden", clientIDFileName)
+	clientIDPath := filepath.Join(stateHome, "podlaz", clientIDFileName)
 	data, err := os.ReadFile(clientIDPath)
 	if err != nil {
 		t.Fatalf("expected persisted client-id: %v", err)
@@ -79,7 +79,7 @@ func TestFetchSourceReplacesClientIDPlaceholderAndUsesSameHeader(t *testing.T) {
 	if _, err := FetchSource(context.Background(), source); err != nil {
 		t.Fatalf("FetchSource failed: %v", err)
 	}
-	clientIDPath := filepath.Join(stateHome, "tunwarden", clientIDFileName)
+	clientIDPath := filepath.Join(stateHome, "podlaz", clientIDFileName)
 	info, err := os.Stat(clientIDPath)
 	if err != nil {
 		t.Fatalf("expected persisted client-id: %v", err)
@@ -125,7 +125,7 @@ func TestFetchSourceRejectsInvalidClientIDPlaceholderURLsBeforeCreatingIdentity(
 			if tc.wantPlaceholderErr && !errors.Is(err, errUnsupportedClientIDPlaceholder) {
 				t.Fatalf("expected unsupported placeholder error, got %v", err)
 			}
-			clientIDPath := filepath.Join(stateHome, "tunwarden", clientIDFileName)
+			clientIDPath := filepath.Join(stateHome, "podlaz", clientIDFileName)
 			if _, err := os.Stat(clientIDPath); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("expected no client-id file, got err=%v", err)
 			}
@@ -154,7 +154,7 @@ func TestFetchSourceRedactsClientIdentityAndSubscriptionURLFromFetchErrors(t *te
 			if err == nil {
 				t.Fatal("expected fetch error")
 			}
-			data, readErr := os.ReadFile(filepath.Join(stateHome, "tunwarden", clientIDFileName))
+			data, readErr := os.ReadFile(filepath.Join(stateHome, "podlaz", clientIDFileName))
 			if readErr != nil {
 				t.Fatalf("expected persisted client-id: %v", readErr)
 			}

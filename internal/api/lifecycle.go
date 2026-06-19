@@ -8,7 +8,7 @@ import (
 const (
 	ConnectPath        = "/v1/connect"
 	DisconnectPath     = "/v1/disconnect"
-	XrayPathEnv        = "TUNWARDEN_XRAY_PATH"
+	XrayPathEnv        = "PODLAZ_XRAY_PATH"
 	DefaultXrayCommand = "xray"
 )
 

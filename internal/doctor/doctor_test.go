@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 type fakeRunner struct {
@@ -69,7 +69,7 @@ func TestRunWithOptionsReportsSuccessfulLinuxDiagnostics(t *testing.T) {
 	assertCheck(t, report, "systemd", SeverityOK, "systemctl found at /usr/bin/systemctl")
 	assertCheck(t, report, "resolved", SeverityOK, "resolvectl found at /usr/bin/resolvectl")
 	assertCheck(t, report, "nftables", SeverityOK, "nft found at /usr/sbin/nft")
-	assertCheck(t, report, "stale-resources", SeverityOK, "no TunWarden-owned resources found")
+	assertCheck(t, report, "stale-resources", SeverityOK, "no podlaz-owned resources found")
 
 	if report.HasFailures() {
 		t.Fatal("successful diagnostics must not report failures")
@@ -82,7 +82,7 @@ func TestRunWithOptionsWarnsWhenCommandsAreMissing(t *testing.T) {
 			paths:    map[string]string{},
 			commands: map[string]fakeCommand{},
 		},
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 	})
 
 	assertCheck(t, report, "iproute2", SeverityWarning, "ip not found")
@@ -92,7 +92,7 @@ func TestRunWithOptionsWarnsWhenCommandsAreMissing(t *testing.T) {
 	assertCheck(t, report, "systemd", SeverityWarning, "systemctl not found")
 	assertCheck(t, report, "resolved", SeverityWarning, "resolvectl not found")
 	assertCheck(t, report, "nftables", SeverityWarning, "nft not found")
-	assertCheck(t, report, "stale-resources", SeverityWarning, "cannot inspect interface tunwarden0 because ip is unavailable")
+	assertCheck(t, report, "stale-resources", SeverityWarning, "cannot inspect interface podlaz0 because ip is unavailable")
 
 	if report.HasFailures() {
 		t.Fatal("missing optional commands should warn, not fail")
@@ -114,19 +114,19 @@ func TestRunWithOptionsReportsCommandFailures(t *testing.T) {
 					exitCode: 2,
 					err:      errors.New("exit status 2"),
 				},
-				"ip link show dev tunwarden0": {
-					stderr:   "Device \"tunwarden0\" does not exist.",
+				"ip link show dev podlaz0": {
+					stderr:   "Device \"podlaz0\" does not exist.",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
-				"nft list table inet tunwarden": {
+				"nft list table inet podlaz": {
 					stderr:   "Error: No such file or directory",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
 			},
 		},
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 	})
 
 	assertCheck(t, report, "default-route", SeverityFail, "ip route show default failed")
@@ -149,21 +149,21 @@ func TestRunWithOptionsPreservesStaleResourceWarnings(t *testing.T) {
 				"ip route show default": {
 					stdout: "default via 192.0.2.1 dev wlp0s20f3",
 				},
-				"ip link show dev tunwarden0": {
-					stdout: "2: tunwarden0: <POINTOPOINT,UP> mtu 1500",
+				"ip link show dev podlaz0": {
+					stdout: "2: podlaz0: <POINTOPOINT,UP> mtu 1500",
 				},
-				"nft list table inet tunwarden": {
+				"nft list table inet podlaz": {
 					stderr:   "Operation not permitted",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
 			},
 		},
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 	})
 
-	assertCheck(t, report, "stale-resources", SeverityWarning, "found interface tunwarden0 exists")
-	assertCheck(t, report, "stale-resources", SeverityWarning, "incomplete checks: cannot inspect nft table inet tunwarden")
+	assertCheck(t, report, "stale-resources", SeverityWarning, "found interface podlaz0 exists")
+	assertCheck(t, report, "stale-resources", SeverityWarning, "incomplete checks: cannot inspect nft table inet podlaz")
 	assertCheck(t, report, "stale-resources", SeverityWarning, "Operation not permitted")
 }
 
@@ -174,7 +174,7 @@ func TestRunWithOptionsReportsTransactionStateInStaleResources(t *testing.T) {
 	tx.State = txstate.TransactionApplying
 	tx.Rollback = txstate.RollbackMetadata{
 		TUN: []txstate.TUNRollback{{
-			InterfaceName: "tunwarden0",
+			InterfaceName: "podlaz0",
 			Owner:         txstate.TransactionOwner,
 		}},
 	}
@@ -201,7 +201,7 @@ func TestRunWithOptionsDoesNotTreatLiveDaemonRuntimeDirAsStale(t *testing.T) {
 		RuntimeDirOwnedByDaemon: true,
 	})
 
-	assertCheck(t, report, "stale-resources", SeverityOK, "no TunWarden-owned resources found")
+	assertCheck(t, report, "stale-resources", SeverityOK, "no podlaz-owned resources found")
 }
 
 func TestReportStringIncludesSource(t *testing.T) {
@@ -265,19 +265,19 @@ func successfulReport(t *testing.T) Report {
 				"ip route show default": {
 					stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp src 192.0.2.10 metric 600",
 				},
-				"ip link show dev tunwarden0": {
-					stderr:   "Device \"tunwarden0\" does not exist.",
+				"ip link show dev podlaz0": {
+					stderr:   "Device \"podlaz0\" does not exist.",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
-				"nft list table inet tunwarden": {
+				"nft list table inet podlaz": {
 					stderr:   "Error: No such file or directory",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
 			},
 		},
-		RuntimeDir: filepath.Join(t.TempDir(), "tunwarden"),
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 	})
 }
 
@@ -294,12 +294,12 @@ func missingResourcesRunner() fakeRunner {
 			"ip route show default": {
 				stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp src 192.0.2.10 metric 600",
 			},
-			"ip link show dev tunwarden0": {
-				stderr:   "Device \"tunwarden0\" does not exist.",
+			"ip link show dev podlaz0": {
+				stderr:   "Device \"podlaz0\" does not exist.",
 				exitCode: 1,
 				err:      errors.New("exit status 1"),
 			},
-			"nft list table inet tunwarden": {
+			"nft list table inet podlaz": {
 				stderr:   "Error: No such file or directory",
 				exitCode: 1,
 				err:      errors.New("exit status 1"),

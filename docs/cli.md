@@ -1,10 +1,10 @@
 # CLI Contract
 
-This document is the canonical command-line interface contract for TunWarden.
+This document is the canonical command-line interface contract for podlaz.
 
 Other documents may show examples, but this file owns command names, argument shape, safety semantics, output expectations, and milestone boundaries.
 
-TunWarden is a Linux-first, CLI-first networking tool. The CLI must optimize for clarity, safe defaults, recoverability, and observability instead of command count.
+podlaz is a Linux-first, CLI-first networking tool. The CLI must optimize for clarity, safe defaults, recoverability, and observability instead of command count.
 
 State layout, JSON compatibility, redaction, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md). Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
 
@@ -84,11 +84,11 @@ Default output must not print full subscription URLs, full share URIs, generated
 Every command and subcommand must support help:
 
 ```bash
-tunwarden --help
-tunwarden help
-tunwarden help <command>
-tunwarden <command> --help
-tunwarden <command> -h
+podlaz --help
+podlaz help
+podlaz help <command>
+podlaz <command> --help
+podlaz <command> -h
 ```
 
 Common flags, where relevant:
@@ -117,15 +117,15 @@ tun
 
 The default connection mode is `proxy-only`.
 
-Shell completion must be generated through the public CLI command and written to stdout only. Completion generation must be static and read-only: it must not contact `tunwardend`, start Xray, inspect profile/subscription state, read secrets, mutate Linux networking, or require root.
+Shell completion must be generated through the public CLI command and written to stdout only. Completion generation must be static and read-only: it must not contact `podlazd`, start Xray, inspect profile/subscription state, read secrets, mutate Linux networking, or require root.
 
 ## 3. Implemented command contract
 
 ### Version and help
 
 ```bash
-tunwarden version
-tunwarden help
+podlaz version
+podlaz help
 ```
 
 Mutation level: read-only.
@@ -135,9 +135,9 @@ Daemon requirement: none.
 ### Shell completion
 
 ```bash
-tunwarden completion bash
-tunwarden completion zsh
-tunwarden completion fish
+podlaz completion bash
+podlaz completion zsh
+podlaz completion fish
 ```
 
 Purpose: generate shell completion definitions for supported interactive shells.
@@ -159,7 +159,7 @@ Implemented behavior:
 Safety requirements:
 
 - completion generation must not read profile stores, subscription stores, runtime transaction files, daemon state, logs, generated core configs, or secrets;
-- completion generation must not start `tunwardend`, start Xray, open the local daemon socket, create files, mutate TUN devices, mutate routes, mutate policy rules, mutate DNS, mutate nftables/firewall state, or require elevated privileges;
+- completion generation must not start `podlazd`, start Xray, open the local daemon socket, create files, mutate TUN devices, mutate routes, mutate policy rules, mutate DNS, mutate nftables/firewall state, or require elevated privileges;
 - completion scripts may contain shell functions and static metadata only.
 
 Packaging requirement: Debian packages must install generated completion files under conventional distro locations for bash, zsh, and fish. The exact packaged paths are owned by [Debian package contract](./debian-package.md).
@@ -169,9 +169,9 @@ Output compatibility: the supported shell names and CLI behavior are stable cont
 ### Import convenience
 
 ```bash
-tunwarden import <share-uri>
-tunwarden import <local-path>
-tunwarden import <file-or-http-subscription-url>
+podlaz import <share-uri>
+podlaz import <local-path>
+podlaz import <file-or-http-subscription-url>
 ```
 
 Purpose: user-friendly first-run import entrypoint with format detection.
@@ -193,11 +193,11 @@ Expected behavior:
 - the detected subscription format is persisted in subscription metadata and shown by `subscription list` and `subscription show`;
 - unsupported input fails clearly.
 
-Mutation level: persistent local TunWarden state only.
+Mutation level: persistent local podlaz state only.
 
 Safety requirements:
 
-- import must not connect, start `tunwardend`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, or mutate firewall state;
+- import must not connect, start `podlazd`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, or mutate firewall state;
 - local and subscription Xray JSON must be parsed and normalized into profiles only; raw Xray JSON must not be stored as persistent source of truth or runtime configuration;
 - default output must redact share URIs, identities, passwords, provider tokens, generated core configs, and secret-looking values.
 
@@ -208,12 +208,12 @@ Detailed local file format behavior is documented in [Local import formats](./lo
 ### Profile management
 
 ```bash
-tunwarden profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
-tunwarden profile import <share-uri>
-tunwarden profile list [--json]
-tunwarden profile show <profile-id> [--json]
-tunwarden profile validate <profile-id> [--mode proxy-only|tun] [--json]
-tunwarden profile delete <profile-id> --yes
+podlaz profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
+podlaz profile import <share-uri>
+podlaz profile list [--json]
+podlaz profile show <profile-id> [--json]
+podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json]
+podlaz profile delete <profile-id> --yes
 ```
 
 Implemented behavior:
@@ -232,7 +232,7 @@ Implemented behavior:
 Mutation level:
 
 - `list`, `show`, and `validate`: read-only;
-- `add`, `import`, and `delete`: persistent local TunWarden state only.
+- `add`, `import`, and `delete`: persistent local podlaz state only.
 
 `profile validate` details:
 
@@ -243,7 +243,7 @@ Mutation level:
 - invalid arguments or unsupported modes return exit code `2`;
 - missing profile lookup returns exit code `1`;
 - human and JSON output must apply equivalent redaction;
-- the command must not start `tunwardend`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, mutate firewall state, or write runtime configuration.
+- the command must not start `podlazd`, start Xray, require root, create TUN devices, mutate routes, mutate DNS, mutate nftables, mutate firewall state, or write runtime configuration.
 
 `profile validate --json` output uses the common top-level JSON shape with `schema_version`, `status`, `warnings`, and `errors`. It also includes `profile`, `mode`, `backend`, and boolean `valid` fields.
 
@@ -252,11 +252,11 @@ Non-goals: no Xray process start and no networking mutation.
 ### Subscription management
 
 ```bash
-tunwarden subscription add --name <name> --url <url>
-tunwarden subscription update <subscription-id>
-tunwarden subscription list [--json]
-tunwarden subscription show <subscription-id> [--json]
-tunwarden subscription delete <subscription-id> [--yes] [--keep-profiles]
+podlaz subscription add --name <name> --url <url>
+podlaz subscription update <subscription-id>
+podlaz subscription list [--json]
+podlaz subscription show <subscription-id> [--json]
+podlaz subscription delete <subscription-id> [--yes] [--keep-profiles]
 ```
 
 Purpose: explicit lifecycle management for subscription sources.
@@ -271,7 +271,7 @@ Supported response formats:
 Mutation level:
 
 - `list` and `show`: read-only;
-- `add`, `update`, and `delete`: persistent local TunWarden state only.
+- `add`, `update`, and `delete`: persistent local podlaz state only.
 
 Required behavior:
 
@@ -294,10 +294,10 @@ Required behavior:
 ### Status
 
 ```bash
-tunwarden status
+podlaz status
 ```
 
-Purpose: report local and daemon-backed TunWarden state.
+Purpose: report local and daemon-backed podlaz state.
 
 Mutation level: read-only.
 
@@ -315,19 +315,19 @@ Implemented behavior:
 - conservative local fallback when daemon is unavailable;
 - runtime directory state;
 - stale runtime state summary;
-- guidance to `tunwarden recover` when recovery candidates exist.
+- guidance to `podlaz recover` when recovery candidates exist.
 
 `status --json` is deferred to a separate issue. Until implemented, `status --json` must fail fast as invalid usage with exit code `2`.
 
 ### Doctor
 
 ```bash
-tunwarden doctor [--json]
-tunwarden doctor --core --xray <path> [--json]
-tunwarden doctor --network [--json]
-tunwarden doctor --dns [--json]
-tunwarden doctor --routes [--json]
-tunwarden doctor --firewall [--json]
+podlaz doctor [--json]
+podlaz doctor --core --xray <path> [--json]
+podlaz doctor --network [--json]
+podlaz doctor --dns [--json]
+podlaz doctor --routes [--json]
+podlaz doctor --firewall [--json]
 ```
 
 Purpose: explain environment and runtime health.
@@ -339,7 +339,7 @@ Daemon requirement: optional. The default command must use daemon-backed diagnos
 Implemented behavior:
 
 - default human output with daemon-backed diagnostics or local fallback;
-- local host diagnostics for platform, command availability, default route, default interface, resolved/TunWarden DNS visibility, and stale TunWarden-owned resources;
+- local host diagnostics for platform, command availability, default route, default interface, resolved/podlaz DNS visibility, and stale podlaz-owned resources;
 - local-only `doctor --core --xray <path>` validation of an explicitly provided Xray binary;
 - `doctor --core --xray <path> --json` with the common top-level JSON shape and `checks`;
 - transaction-state diagnostics through stale resource checks;
@@ -352,18 +352,18 @@ Implemented behavior:
 ### Logs
 
 ```bash
-tunwarden logs [--follow] [--daemon] [--core] [--since <duration>]
-tunwarden logs -f
+podlaz logs [--follow] [--daemon] [--core] [--since <duration>]
+podlaz logs -f
 ```
 
-Purpose: inspect TunWarden daemon and core logs.
+Purpose: inspect podlaz daemon and core logs.
 
 Mutation level: read-only.
 
 Implemented behavior:
 
 - human output only;
-- recent `tunwardend.service` logs through the system journal with `journalctl --system`;
+- recent `podlazd.service` logs through the system journal with `journalctl --system`;
 - `--follow` and `-f` for live log following;
 - `--daemon` as the explicit daemon log source;
 - `--core` for Xray lifecycle lines and daemon-forwarded Xray stdout/stderr;
@@ -378,8 +378,8 @@ If `journalctl` is unavailable, the command must fail clearly with an actionable
 ### Plan
 
 ```bash
-tunwarden plan --mode proxy-only <profile-id> [--json]
-tunwarden plan --mode tun <profile-id> [--json]
+podlaz plan --mode proxy-only <profile-id> [--json]
+podlaz plan --mode tun <profile-id> [--json]
 ```
 
 Purpose: show what a connection setup can inspect or create before starting Xray or changing host networking.
@@ -400,13 +400,13 @@ Implemented TUN full-tunnel dry-run output:
 - selected profile;
 - user-visible `Mode: full-tunnel`;
 - explicit dry-run guarantee that no TUN, route, policy-rule, DNS, nftables/firewall, Xray, or runtime config state is changed;
-- planned TUN device desired state, initially `create tunwarden0`;
-- dedicated TunWarden routing table, initially `tunwarden` with ID `51820`;
-- default IPv4 route desired state through the TunWarden table;
-- policy-rule desired state for default IPv4 traffic through the TunWarden table;
+- planned TUN device desired state, initially `create podlaz0`;
+- dedicated podlaz routing table, initially `podlaz` with ID `51820`;
+- default IPv4 route desired state through the podlaz table;
+- policy-rule desired state for default IPv4 traffic through the podlaz table;
 - VPN server bypass route and policy-rule desired state only when the current read-only snapshot resolved the server route to a concrete IP address;
-- DNS desired state for systemd-resolved per-link DNS on `tunwarden0`, including planned DNS servers, route-only domain `~.`, default-route `yes`, and rollback intent;
-- nftables/firewall desired state for TunWarden-owned `table inet tunwarden`;
+- DNS desired state for systemd-resolved per-link DNS on `podlaz0`, including planned DNS servers, route-only domain `~.`, default-route `yes`, and rollback intent;
+- nftables/firewall desired state for podlaz-owned `table inet podlaz`;
 - typed nftables chain/rule desired state for apply, verify, rollback, and recover behavior;
 - rollback steps for planned nftables, DNS, TUN device, route, and policy-rule desired state;
 - final `No changes were applied.` confirmation.
@@ -418,8 +418,8 @@ Implemented TUN JSON output keeps the common `schema_version`, `status`, `warnin
 ### Connect and disconnect
 
 ```bash
-tunwarden connect [--mode proxy-only|tun] <profile-id>
-tunwarden disconnect
+podlaz connect [--mode proxy-only|tun] <profile-id>
+podlaz disconnect
 ```
 
 Purpose: start and stop daemon-managed connection lifecycle.
@@ -434,7 +434,7 @@ Implemented proxy-only behavior:
 - daemon-side profile validation before process start;
 - generated runtime Xray config under the daemon runtime directory;
 - daemon-managed Xray start and stop;
-- packaged proxy-only `tunwardend` and Xray run as the unprivileged `tunwarden:tunwarden` service identity;
+- packaged proxy-only `podlazd` and Xray run as the unprivileged `podlaz:podlaz` service identity;
 - manual root proxy-only connect is rejected instead of starting Xray as root;
 - graceful stop and forced-stop fallback;
 - idempotent disconnect;
@@ -445,22 +445,22 @@ Implemented `connect --mode tun` preview behavior:
 - daemon-owned transaction file is written before any TUN mutation;
 - current host networking is captured through the read-only snapshot model;
 - existing TUN full-tunnel planner output is used as desired state;
-- executor creates the TunWarden-owned TUN interface;
+- executor creates the podlaz-owned TUN interface;
 - executor adds, never replaces, planned routes;
 - executor adds, never treats pre-existing rules as owned, planned policy rules;
 - executor applies systemd-resolved per-link DNS from `TunDNSPlan.Servers` with `resolvectl dns`, `resolvectl domain '~.'`, and `resolvectl default-route yes`;
-- executor applies, verifies, and rolls back TunWarden-owned nftables state for `table inet tunwarden`;
+- executor applies, verifies, and rolls back podlaz-owned nftables state for `table inet podlaz`;
 - TUN-mode Xray runtime config is generated under the daemon runtime directory;
 - daemon starts Xray with the TUN-mode runtime config and refuses to start it as root;
 - daemon starts the `tun2socks` adapter against the planned TUN device and private SOCKS endpoint;
 - route verify checks the destination plus expected device and gateway where applicable;
 - policy-rule verify checks the expected selector and lookup table;
 - DNS verify checks planned DNS servers and route-only domain `~.`;
-- nftables verify checks the TunWarden-owned table, chains, and rules;
+- nftables verify checks the podlaz-owned table, chains, and rules;
 - pre-commit connectivity verification checks the full-tunnel route and routed TCP path;
 - transaction commits only after network apply/verify, Xray startup verification, TUN adapter startup verification, and connectivity verification succeed;
 - apply, verify, startup, connectivity, or transition failure rolls back only the steps actually applied by the transaction, including DNS via `resolvectl revert` and nftables table cleanup when those steps were applied;
-- `disconnect` rolls back the active TunWarden-owned TUN transaction and is safe to repeat;
+- `disconnect` rolls back the active podlaz-owned TUN transaction and is safe to repeat;
 - status exposes transaction state, rollback availability, cleanup requirement, redacted transaction path, DNS desired state, and firewall state.
 
 Current `connect --mode tun` limitations:
@@ -483,27 +483,27 @@ Privilege model:
 ### Recovery
 
 ```bash
-tunwarden recover
-tunwarden recover --execute --yes
-tunwarden recover --execute --yes --json
+podlaz recover
+podlaz recover --execute --yes
+podlaz recover --execute --yes --json
 ```
 
-Purpose: inspect and explicitly clean up stale TunWarden-owned volatile state.
+Purpose: inspect and explicitly clean up stale podlaz-owned volatile state.
 
 Daemon requirement:
 
 - `recover`: none; local read-only scanner only;
-- `recover --execute --yes`: required through `tunwardend` local Unix socket API.
+- `recover --execute --yes`: required through `podlazd` local Unix socket API.
 
 Mutation level:
 
 - `recover`: read-only dry-run;
-- `recover --execute --yes`: daemon-owned explicit cleanup of clearly TunWarden-owned volatile state only.
+- `recover --execute --yes`: daemon-owned explicit cleanup of clearly podlaz-owned volatile state only.
 
 Implemented behavior:
 
 - `recover` remains dry-run and never mutates state;
-- `recover --execute --yes` sends cleanup intent to `tunwardend`; the CLI does not perform privileged host cleanup;
+- `recover --execute --yes` sends cleanup intent to `podlazd`; the CLI does not perform privileged host cleanup;
 - interactive execute prompts for `yes` unless `--yes` is passed;
 - non-interactive execute requires `--yes`;
 - JSON execute requires `--yes`;
@@ -511,19 +511,19 @@ Implemented behavior:
 - failed cleanup returns exit code `1` and JSON `status: "fail"`;
 - incomplete cleanup where transaction state is preserved returns exit code `1` and JSON `status: "warn"`;
 - ambiguous resources are reported as `skipped` and left unchanged;
-- runtime root cleanup is intentionally unsupported; `/run/tunwarden` is not deleted wholesale;
+- runtime root cleanup is intentionally unsupported; `/run/podlaz` is not deleted wholesale;
 - stale PID metadata is not sufficient process identity and is not signalled by recovery;
-- pending, failed, rolling-back, or stale transaction files under `/run/tunwarden/transactions/` are shown as recovery candidates;
+- pending, failed, rolling-back, or stale transaction files under `/run/podlaz/transactions/` are shown as recovery candidates;
 - transaction candidates include state, rollback availability, cleanup requirement, and redacted transaction path;
 - invalid or unreadable transaction files are reported as inspection warnings, not ignored.
 
 Expected cleanup candidates:
 
-- clearly TunWarden-owned generated runtime configs;
-- clearly TunWarden-owned TUN interfaces;
-- clearly TunWarden-owned nftables state;
-- TunWarden-owned routes/rules actually recorded in transaction rollback metadata;
-- TunWarden-owned DNS state recorded in transaction rollback metadata where reversible;
+- clearly podlaz-owned generated runtime configs;
+- clearly podlaz-owned TUN interfaces;
+- clearly podlaz-owned nftables state;
+- podlaz-owned routes/rules actually recorded in transaction rollback metadata;
+- podlaz-owned DNS state recorded in transaction rollback metadata where reversible;
 - transaction state files only after the cleanup sequence completes safely.
 
 ## 4. Milestone boundaries
@@ -531,14 +531,14 @@ Expected cleanup candidates:
 The current implementation contains:
 
 - proxy-only lifecycle for Xray;
-- local import for VLESS Xray JSON, plain URI-list, and Base64 URI-list files through `tunwarden import <local-path>`;
+- local import for VLESS Xray JSON, plain URI-list, and Base64 URI-list files through `podlaz import <local-path>`;
 - subscription import/update/delete for Base64 URI-list and Xray JSON responses over `file://`, `http://`, and `https://` sources;
 - profile validation for normalized profile state and selected proxy-only/TUN Xray renderability;
 - read-only full-tunnel TUN planning;
 - static shell completion generation for bash, zsh, and fish;
 - transaction-state persistence and diagnostics;
-- daemon-owned privileged TUN preview execution for TUN interface, routes, policy rules, systemd-resolved DNS, TunWarden-owned nftables state, TUN-mode Xray runtime config, Xray startup, TUN adapter startup, and pre-commit route/TCP verification;
-- daemon-owned recovery cleanup execution for clearly TunWarden-owned volatile state;
+- daemon-owned privileged TUN preview execution for TUN interface, routes, policy rules, systemd-resolved DNS, podlaz-owned nftables state, TUN-mode Xray runtime config, Xray startup, TUN adapter startup, and pre-commit route/TCP verification;
+- daemon-owned recovery cleanup execution for clearly podlaz-owned volatile state;
 - DNS desired-state persistence in transaction state, including planned servers.
 
 Still deferred:

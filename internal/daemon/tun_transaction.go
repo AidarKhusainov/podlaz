@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	netexecutor "github.com/AidarKhusainov/tunwarden/internal/network/executor"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	netsnapshot "github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 type tunPlanExecutor interface {
@@ -116,7 +116,7 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 		_, _ = store.Save(*tx)
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
 	}
-	return fmt.Errorf("%w; rolled back applied TunWarden-owned TUN, route, policy-rule, DNS, and nftables state", cause)
+	return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state", cause)
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {

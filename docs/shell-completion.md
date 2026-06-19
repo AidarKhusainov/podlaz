@@ -1,22 +1,22 @@
 # Shell completion
 
-This document defines the user-visible shell completion contract for the `tunwarden` CLI.
+This document defines the user-visible shell completion contract for the `podlaz` CLI.
 
 ## CLI contract
 
-TunWarden exposes completion generation commands:
+podlaz exposes completion generation commands:
 
 ```bash
-tunwarden completion bash
-tunwarden completion zsh
-tunwarden completion fish
+podlaz completion bash
+podlaz completion zsh
+podlaz completion fish
 ```
 
 Each command writes the generated completion definition to stdout.
 
 Completion script generation is read-only. It must not:
 
-- contact `tunwardend`;
+- contact `podlazd`;
 - start Xray;
 - read profile, subscription, runtime, or transaction state;
 - read or print secrets;
@@ -33,7 +33,7 @@ Generated completions cover:
 - static enum values such as connection mode values `proxy-only` and `tun`;
 - static protocol names accepted by `profile add --protocol`.
 
-Bash, zsh, and fish completion call the hidden runtime command `tunwarden __complete` while the user is completing a command line. The runtime command is internal CLI plumbing, not a public workflow. It uses the shared Go completion registry for command and argument completion decisions.
+Bash, zsh, and fish completion call the hidden runtime command `podlaz __complete` while the user is completing a command line. The runtime command is internal CLI plumbing, not a public workflow. It uses the shared Go completion registry for command and argument completion decisions.
 
 Fish completion must register static flags and static option values with fish-native `complete` options such as `--long-option`, `--short-option`, and `--arguments`. The runtime argument completer remains responsible for dynamic IDs and file-completion directives.
 
@@ -48,18 +48,18 @@ Dynamic completion reads only the local user-owned profile and subscription stor
 
 If the hidden runtime completion command is executed with effective UID `0` and `SUDO_USER` set, dynamic profile/subscription ID completion must fail before opening local stores. Shell adapters redirect runtime completion errors away from the interactive prompt, so users should see no dynamic ID candidates from accidental `sudo` completion paths. Running the hidden command directly must produce the same actionable non-sudo guidance as other user-state commands.
 
-Dynamic completion must not contact `tunwardend`, open the daemon socket, start Xray, fetch subscription URLs, inspect runtime transaction state, read generated core configs, mutate local state, mutate Linux networking, or require root.
+Dynamic completion must not contact `podlazd`, open the daemon socket, start Xray, fetch subscription URLs, inspect runtime transaction state, read generated core configs, mutate local state, mutate Linux networking, or require root.
 
-File-path positions keep shell default file completion. This includes local path positions for `tunwarden import`.
+File-path positions keep shell default file completion. This includes local path positions for `podlaz import`.
 
 ## Packaged install contract
 
 The Debian package installs completion files under conventional distro completion directories:
 
 ```text
-/usr/share/bash-completion/completions/tunwarden
-/usr/share/zsh/vendor-completions/_tunwarden
-/usr/share/fish/vendor_completions.d/tunwarden.fish
+/usr/share/bash-completion/completions/podlaz
+/usr/share/zsh/vendor-completions/_podlaz
+/usr/share/fish/vendor_completions.d/podlaz.fish
 ```
 
 Package-managed completion should work in normal shell sessions where the distribution shell completion support is enabled. Users should not need to edit shell startup files for a standard packaged install.

@@ -1,6 +1,6 @@
 # System Snapshot Model
 
-TunWarden TUN planning starts from a read-only snapshot of the host networking state. The snapshot is an input to planners, not an executor and not a transaction.
+podlaz TUN planning starts from a read-only snapshot of the host networking state. The snapshot is an input to planners, not an executor and not a transaction.
 
 ## Scope
 
@@ -11,9 +11,9 @@ The snapshot layer may inspect:
 - the route to the VPN server candidate;
 - systemd-resolved availability and status;
 - NetworkManager availability and advisory state;
-- nftables availability and the `inet tunwarden` table presence;
-- known TunWarden TUN device names such as `tunwarden0`;
-- TunWarden-owned resources that would be stale before a future TUN apply step.
+- nftables availability and the `inet podlaz` table presence;
+- known podlaz TUN device names such as `podlaz0`;
+- podlaz-owned resources that would be stale before a future TUN apply step.
 
 The snapshot layer must not create, update, or delete TUN devices, routes, DNS configuration, nftables tables, firewall rules, processes, or runtime files.
 
@@ -38,7 +38,7 @@ This vocabulary lets planners distinguish host limitations from stale state and 
 
 ## Planner contract
 
-`tunwarden plan --mode tun <profile-id>` consumes a snapshot and produces an inspectable read-only full-tunnel TUN/route plan. The plan includes desired TUN device state, route desired state, policy-rule desired state, explicit VPN server bypass, route-loop risks, warnings, and rollback steps.
+`podlaz plan --mode tun <profile-id>` consumes a snapshot and produces an inspectable read-only full-tunnel TUN/route plan. The plan includes desired TUN device state, route desired state, policy-rule desired state, explicit VPN server bypass, route-loop risks, warnings, and rollback steps.
 
 The TUN dry-run plan still does not mutate state. Future TUN execution work must turn the planned state and rollback steps into a real daemon-owned transaction with before snapshot, apply steps, verification, commit, rollback execution, and recovery ownership.
 
@@ -46,8 +46,8 @@ The TUN dry-run plan still does not mutate state. Future TUN execution work must
 
 Planner tests should use fake snapshots for common desktop topologies. Fake snapshots must cover at least:
 
-- a systemd-resolved + NetworkManager + nftables desktop with no stale TunWarden resources;
+- a systemd-resolved + NetworkManager + nftables desktop with no stale podlaz resources;
 - a desktop with a missing default IPv4 route;
 - a desktop where optional tools such as `resolvectl`, `nmcli`, or `nft` are missing;
-- a desktop with stale TunWarden-owned resources such as `tunwarden0` and `table inet tunwarden`;
-- a route-loop topology where the VPN server route points at `tunwarden0`.
+- a desktop with stale podlaz-owned resources such as `podlaz0` and `table inet podlaz`;
+- a route-loop topology where the VPN server route points at `podlaz0`.

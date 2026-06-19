@@ -83,7 +83,7 @@ func sudoGuardCompletionRequest(args []string) (completionRequest, bool) {
 	}
 	words := args[2:]
 	if len(words) == 0 {
-		words = []string{"tunwarden"}
+		words = []string{"podlaz"}
 	}
 	return completionRequest{Shell: shell, Cursor: cursor, Words: words}, true
 }
@@ -98,19 +98,19 @@ func sudoGuardCommandShape(command string, args []string) string {
 		if req, ok := sudoGuardCompletionRequest(args); ok && len(req.Words) > 1 {
 			return sudoGuardCommandShape(req.Words[1], completionCommandArgs(req.Words))
 		}
-		return "tunwarden <command>"
+		return "podlaz <command>"
 	case "import":
-		return "tunwarden import <target>"
+		return "podlaz import <target>"
 	case "profile":
 		return sudoGuardProfileCommandShape(args)
 	case "subscription":
 		return sudoGuardSubscriptionCommandShape(args)
 	case "plan":
-		return "tunwarden plan --mode <mode> <profile-id>"
+		return "podlaz plan --mode <mode> <profile-id>"
 	case "connect":
-		return "tunwarden connect [--mode proxy-only|tun] <profile-id>"
+		return "podlaz connect [--mode proxy-only|tun] <profile-id>"
 	default:
-		return "tunwarden <command>"
+		return "podlaz <command>"
 	}
 }
 
@@ -123,40 +123,40 @@ func completionCommandArgs(words []string) []string {
 
 func sudoGuardProfileCommandShape(args []string) string {
 	if len(args) == 0 {
-		return "tunwarden profile <subcommand>"
+		return "podlaz profile <subcommand>"
 	}
 	switch strings.ToLower(args[0]) {
 	case "add":
-		return "tunwarden profile add --name <name> --server <host> --port <port> --protocol <protocol>"
+		return "podlaz profile add --name <name> --server <host> --port <port> --protocol <protocol>"
 	case "import":
-		return "tunwarden profile import <share-uri>"
+		return "podlaz profile import <share-uri>"
 	case "list":
-		return "tunwarden profile list"
+		return "podlaz profile list"
 	case "show":
-		return "tunwarden profile show <profile-id>"
+		return "podlaz profile show <profile-id>"
 	case "delete":
-		return "tunwarden profile delete <profile-id> --yes"
+		return "podlaz profile delete <profile-id> --yes"
 	default:
-		return "tunwarden profile <subcommand>"
+		return "podlaz profile <subcommand>"
 	}
 }
 
 func sudoGuardSubscriptionCommandShape(args []string) string {
 	if len(args) == 0 {
-		return "tunwarden subscription <subcommand>"
+		return "podlaz subscription <subcommand>"
 	}
 	switch strings.ToLower(args[0]) {
 	case "add":
-		return "tunwarden subscription add --name <name> --url <url>"
+		return "podlaz subscription add --name <name> --url <url>"
 	case "list":
-		return "tunwarden subscription list"
+		return "podlaz subscription list"
 	case "show":
-		return "tunwarden subscription show <subscription-id>"
+		return "podlaz subscription show <subscription-id>"
 	case "update":
-		return "tunwarden subscription update <subscription-id>"
+		return "podlaz subscription update <subscription-id>"
 	case "delete":
-		return "tunwarden subscription delete <subscription-id> --yes"
+		return "podlaz subscription delete <subscription-id> --yes"
 	default:
-		return "tunwarden subscription <subcommand>"
+		return "podlaz subscription <subcommand>"
 	}
 }

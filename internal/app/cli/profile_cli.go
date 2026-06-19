@@ -9,10 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/engine"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/engine"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 func runProfileCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
@@ -521,14 +521,14 @@ func printOptionalProfileField(w io.Writer, label, value string) {
 
 func printProfileHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
-  tunwarden profile import <share-uri>
-  tunwarden profile list [--json]
-  tunwarden profile show <profile-id> [--json]
-  tunwarden profile validate <profile-id> [--mode proxy-only|tun] [--json]
-  tunwarden profile delete <profile-id> --yes
+  podlaz profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
+  podlaz profile import <share-uri>
+  podlaz profile list [--json]
+  podlaz profile show <profile-id> [--json]
+  podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json]
+  podlaz profile delete <profile-id> --yes
 
-Manage profiles in local TunWarden user state. These commands never start
+Manage profiles in local podlaz user state. These commands never start
 network processes and never mutate TUN, routes, DNS, nftables, or firewall state.
 
 Implemented in v0.1:

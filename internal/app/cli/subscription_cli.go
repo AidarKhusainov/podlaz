@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	"github.com/AidarKhusainov/tunwarden/internal/sub"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 var subscriptionAfterProfileApplyHook func() error
@@ -382,14 +382,14 @@ func resolvedSubscriptionStorePath(opts options) (string, error) {
 
 func printSubscriptionHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden subscription add [--name <name>] --url <file-or-http-url>
-  tunwarden subscription update <subscription-id>
-  tunwarden subscription list [--json]
-  tunwarden subscription show <subscription-id> [--json]
-  tunwarden subscription delete <subscription-id> [--yes] [--keep-profiles]
+  podlaz subscription add [--name <name>] --url <file-or-http-url>
+  podlaz subscription update <subscription-id>
+  podlaz subscription list [--json]
+  podlaz subscription show <subscription-id> [--json]
+  podlaz subscription delete <subscription-id> [--yes] [--keep-profiles]
 
 Manage subscription sources and imported subscription profiles in local
-TunWarden user state.
+podlaz user state.
 
 Supported subscription sources:
   file/http/https

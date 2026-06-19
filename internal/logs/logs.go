@@ -10,11 +10,11 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 const (
-	DaemonUnit   = "tunwardend.service"
+	DaemonUnit   = "podlazd.service"
 	DefaultLines = "200"
 )
 
@@ -25,15 +25,15 @@ type Options struct {
 	Core   bool
 }
 
-// Run prints recent TunWarden logs from journald.
+// Run prints recent podlaz logs from journald.
 func Run(ctx context.Context, stdout io.Writer, opts Options) error {
 	if _, err := exec.LookPath("journalctl"); err != nil {
 		return errors.New("journalctl is not available; install systemd journal tools or run on a systemd/journald host")
 	}
 
-	header := "TunWarden daemon logs"
+	header := "podlaz daemon logs"
 	if opts.Core {
-		header = "TunWarden core logs"
+		header = "podlaz core logs"
 	}
 	if _, err := fmt.Fprintln(stdout, header); err != nil {
 		return fmt.Errorf("write logs header: %w", err)
@@ -43,7 +43,7 @@ func Run(ctx context.Context, stdout io.Writer, opts Options) error {
 		return err
 	}
 	if opts.Core && !opts.Follow && count == 0 {
-		_, err := fmt.Fprintln(stdout, "No recent TunWarden core logs found. Xray may be inactive, may have crashed before logging was configured, or the current user may not have access to the system journal. Run `tunwarden status` for daemon state and `tunwarden logs --daemon` for daemon lifecycle logs.")
+		_, err := fmt.Fprintln(stdout, "No recent podlaz core logs found. Xray may be inactive, may have crashed before logging was configured, or the current user may not have access to the system journal. Run `podlaz status` for daemon state and `podlaz logs --daemon` for daemon lifecycle logs.")
 		if err != nil {
 			return fmt.Errorf("write missing core logs guidance: %w", err)
 		}
@@ -165,7 +165,7 @@ func scanRedactedFiltered(dst io.Writer, src io.Reader, include func(string) boo
 }
 
 func isCoreLogLine(line string) bool {
-	return strings.Contains(line, "tunwardend: core xray ") ||
+	return strings.Contains(line, "podlazd: core xray ") ||
 		strings.Contains(line, " xray[") ||
 		strings.Contains(line, ": xray[")
 }

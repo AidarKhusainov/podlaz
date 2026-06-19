@@ -1,28 +1,28 @@
-.TH TUNWARDEND 8 "June 2026" "TunWarden" "System Administration"
+.TH PODLAZD 8 "June 2026" "podlaz" "System Administration"
 .SH NAME
-tunwardend \- local TunWarden daemon for proxy and VPN lifecycle state
+podlazd \- local podlaz daemon for proxy and VPN lifecycle state
 .SH SYNOPSIS
-.SY tunwardend
+.SY podlazd
 .YS
 .PP
 Packaged systemd deployments normally use:
 .EX
-systemctl start tunwardend
-systemctl status tunwardend --no-pager
-journalctl -u tunwardend -n 50 --no-pager
+systemctl start podlazd
+systemctl status podlazd --no-pager
+journalctl -u podlazd -n 50 --no-pager
 .EE
 .SH DESCRIPTION
-.B tunwardend
-is the local daemon for TunWarden. It owns daemon runtime state, the local
+.B podlazd
+is the local daemon for podlaz. It owns daemon runtime state, the local
 Unix socket API, generated runtime configuration, supervised Xray child
 processes, startup recovery scan visibility, and daemon-owned cleanup or
 networking transactions where the current milestone enables them.
 .PP
 The daemon API is local-only and uses HTTP/JSON over a Unix domain socket at
-.IR /run/tunwarden/tunwardend.sock
+.IR /run/podlaz/podlazd.sock
 for packaged deployments. User-facing command names, output, exit codes, and
 JSON shape belong to
-.BR tunwarden (1)
+.BR podlaz (1)
 and the canonical project documentation.
 .PP
 The foundation packaged service is intentionally least-privilege. The default
@@ -30,100 +30,100 @@ packaged proxy-only path runs the daemon as an unprivileged service identity
 and does not grant ambient or bounding capabilities.
 .SH SERVICE MANAGEMENT
 The packaged service unit is
-.BR tunwardend.service .
+.BR podlazd.service .
 Typical administrator commands are:
 .EX
-sudo systemctl start tunwardend
-systemctl status tunwardend --no-pager
-journalctl -u tunwardend -n 50 --no-pager
-sudo systemctl stop tunwardend
+sudo systemctl start podlazd
+systemctl status podlazd --no-pager
+journalctl -u podlazd -n 50 --no-pager
+sudo systemctl stop podlazd
 .EE
 .PP
 After manually installing the repository unit for development, reload systemd
 before starting the service:
 .EX
 sudo systemctl daemon-reload
-sudo systemd-analyze verify /etc/systemd/system/tunwardend.service
-sudo systemctl start tunwardend
+sudo systemd-analyze verify /etc/systemd/system/podlazd.service
+sudo systemctl start podlazd
 .EE
 .PP
 Users that run
-.BR tunwarden (1)
+.BR podlaz (1)
 against the packaged daemon need access to the daemon socket, normally through
 the
-.B tunwarden
+.B podlaz
 group. Apply the one-time group membership and refresh the current shell or
 start a new login session before verifying access:
 .EX
-sudo usermod -aG tunwarden "$USER"
-newgrp tunwarden
-tunwarden status
-tunwarden doctor
+sudo usermod -aG podlaz "$USER"
+newgrp podlaz
+podlaz status
+podlaz doctor
 .EE
 .SH FILES
 .TP
-.I /usr/bin/tunwardend
+.I /usr/bin/podlazd
 Packaged daemon path referenced by
-.BR tunwardend.service .
+.BR podlazd.service .
 .PP
 Local development can run
-.BR "go run ./cmd/tunwardend"
+.BR "go run ./cmd/podlazd"
 or manually install a development binary, but those development paths are not
 the default packaged daemon path.
 .TP
-.I /run/tunwarden/
+.I /run/podlaz/
 Daemon runtime directory. Packaged systemd units create it with
-.B RuntimeDirectory=tunwarden
+.B RuntimeDirectory=podlaz
 and mode
 .BR 0710 .
 The group execute bit lets members of the
-.B tunwarden
+.B podlaz
 group traverse to the control socket without listing daemon-private runtime
 state.
 .TP
-.I /run/tunwarden/tunwardend.sock
+.I /run/podlaz/podlazd.sock
 Local daemon API socket. The daemon applies socket mode
 .BR 0660 .
 Only this control socket is exposed to the
-.B tunwarden
+.B podlaz
 group by the package/runtime contract.
 .TP
-.I /run/tunwarden/generated/
+.I /run/podlaz/generated/
 Daemon-owned generated runtime configuration directory. Generated Xray config
 files are volatile runtime output, not persistent source of truth, and are not
 made group-readable through the daemon socket access group.
 .TP
-.I /run/tunwarden/transactions/
+.I /run/podlaz/transactions/
 Volatile transaction state used by status, diagnostics, rollback, disconnect,
 and recovery paths. Transaction files remain daemon-private state.
 .TP
-.I /var/lib/tunwarden/
+.I /var/lib/podlaz/
 Reserved daemon state directory created by
-.BR StateDirectory=tunwarden
+.BR StateDirectory=podlaz
 with mode
 .BR 0700 .
 The current packaged baseline does not use it as profile or subscription
 source of truth.
 .TP
-.I packaging/systemd/tunwardend.service
+.I packaging/systemd/podlazd.service
 Repository systemd unit source.
 .TP
-.I packaging/sysusers.d/tunwarden.conf
+.I packaging/sysusers.d/podlaz.conf
 Repository sysusers definition for packaged service identities.
 .SH SECURITY MODEL
 The packaged proxy-only baseline runs
-.B tunwardend
+.B podlazd
 as
-.BR tunwarden:tunwarden .
+.BR podlaz:podlaz .
 For that default non-root service path, proxy-only Xray child processes inherit
 the same unprivileged service identity.
 .PP
 If a UID 0 daemon deployment is used for proxy-only mode, Xray must not inherit
 UID 0. The daemon must start proxy-only Xray as the dedicated
-.BR tunwarden-xray:tunwarden-xray
+.BR podlaz-xray:podlaz-xray
 identity with supplementary groups disabled. In that UID 0 path, generated
 Xray runtime configuration remains private by using ownership
-.BR root:tunwarden-xray ,
+.BR root:podlaz-xray ,
 generated directory mode
 .BR 0750 ,
 and generated config file mode
@@ -150,7 +150,7 @@ endpoints according to the current implementation.
 During proxy-only connect, the daemon selects the Xray execution identity,
 validates the mode and profile snapshot received from the CLI, builds a
 generated Xray config, writes it under
-.IR /run/tunwarden/generated/ ,
+.IR /run/podlaz/generated/ ,
 starts Xray as a supervised child process, and records active state for
 status. Proxy-only lifecycle must not mutate TUN devices, routes, policy
 rules, DNS settings, nftables, or firewall state.
@@ -165,48 +165,48 @@ unexpectedly, the daemon keeps the generated config for inspection or recovery
 and reports the core failure through status warnings.
 .PP
 Recovery dry-run inspection is read-only. Explicit recovery execution is scoped
-to clearly TunWarden-owned volatile resources and must skip ambiguous targets.
+to clearly podlaz-owned volatile resources and must skip ambiguous targets.
 The runtime root
-.I /run/tunwarden
+.I /run/podlaz
 is not removed wholesale.
 .SH LOGS
 The packaged service writes stdout and stderr to journald:
 .EX
-journalctl -u tunwardend -n 50 --no-pager
-journalctl -u tunwardend -f
+journalctl -u podlazd -n 50 --no-pager
+journalctl -u podlazd -f
 .EE
 .PP
 The user-facing command
-.BR "tunwarden logs"
+.BR "podlaz logs"
 uses
 .BR journalctl (1)
 to read recent daemon logs, and
-.BR "tunwarden logs --core"
+.BR "podlaz logs --core"
 filters daemon-forwarded Xray lifecycle and stdout/stderr lines.
 .SH TROUBLESHOOTING
 .TP
 .B Daemon is not reachable
 Check service state and recent logs:
 .EX
-systemctl status tunwardend --no-pager
-journalctl -u tunwardend -n 50 --no-pager
+systemctl status podlazd --no-pager
+journalctl -u podlazd -n 50 --no-pager
 .EE
 .TP
-.B Permission denied when using tunwarden status or doctor
+.B Permission denied when using podlaz status or doctor
 Check that the user belongs to the
-.B tunwarden
+.B podlaz
 group and that the socket exists with restrictive group access. Normal CLI
 workflows use this group access model now, or a future polkit authorization
 flow when that contract exists.
 .EX
 id
-getent group tunwarden
-ls -ld /run/tunwarden
-ls -l /run/tunwarden/tunwardend.sock
-sudo usermod -aG tunwarden "$USER"
-newgrp tunwarden
-tunwarden status
-tunwarden doctor
+getent group podlaz
+ls -ld /run/podlaz
+ls -l /run/podlaz/podlazd.sock
+sudo usermod -aG podlaz "$USER"
+newgrp podlaz
+podlaz status
+podlaz doctor
 .EE
 .TP
 .B Socket path exists but daemon cannot start
@@ -216,58 +216,58 @@ non-socket filesystem object. Inspect the path before deleting anything.
 .B Xray exited unexpectedly
 Use:
 .EX
-tunwarden status
-tunwarden logs --core
-journalctl -u tunwardend -n 100 --no-pager
+podlaz status
+podlaz logs --core
+journalctl -u podlazd -n 100 --no-pager
 .EE
 .TP
-.B Stale TunWarden-owned runtime state
+.B Stale podlaz-owned runtime state
 Inspect first:
 .EX
-tunwarden recover
+podlaz recover
 .EE
 Then use explicit daemon-owned cleanup only when the output is understood:
 .EX
-tunwarden recover --execute --yes
+podlaz recover --execute --yes
 .EE
 .SH EXAMPLES
 .TP
 Manual development install of service identities and the systemd unit:
 .EX
-sudo install -m 0644 packaging/sysusers.d/tunwarden.conf \
-  /usr/lib/sysusers.d/tunwarden.conf
-sudo systemd-sysusers /usr/lib/sysusers.d/tunwarden.conf
-sudo usermod -aG tunwarden "$USER"
-newgrp tunwarden
-sudo install -m 0644 packaging/systemd/tunwardend.service \
-  /etc/systemd/system/tunwardend.service
-sudo systemd-analyze verify /etc/systemd/system/tunwardend.service
+sudo install -m 0644 packaging/sysusers.d/podlaz.conf \
+  /usr/lib/sysusers.d/podlaz.conf
+sudo systemd-sysusers /usr/lib/sysusers.d/podlaz.conf
+sudo usermod -aG podlaz "$USER"
+newgrp podlaz
+sudo install -m 0644 packaging/systemd/podlazd.service \
+  /etc/systemd/system/podlazd.service
+sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl daemon-reload
-sudo systemctl start tunwardend
+sudo systemctl start podlazd
 .EE
 .TP
 Verify daemon-backed inactive state:
 .EX
-systemctl status tunwardend --no-pager
-tunwarden status
-tunwarden doctor
-journalctl -u tunwardend -n 50 --no-pager
+systemctl status podlazd --no-pager
+podlaz status
+podlaz doctor
+journalctl -u podlazd -n 50 --no-pager
 .EE
 .TP
 Run a local non-root development daemon with a temporary runtime directory:
 .EX
-TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwardend
-TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev go run ./cmd/tunwarden status
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlazd
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlaz status
 .EE
 .TP
 Run proxy-only lifecycle with an explicit Xray path in local development:
 .EX
-TUNWARDEN_RUNTIME_DIR=/tmp/tunwarden-dev \
-TUNWARDEN_XRAY_PATH=/usr/local/bin/xray \
-go run ./cmd/tunwardend
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev \
+PODLAZ_XRAY_PATH=/usr/local/bin/xray \
+go run ./cmd/podlazd
 .EE
 .SH SEE ALSO
-.BR tunwarden (1),
+.BR podlaz (1),
 .BR systemctl (1),
 .BR journalctl (1),
 .BR systemd.unit (5),

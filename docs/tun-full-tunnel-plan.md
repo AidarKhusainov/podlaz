@@ -1,21 +1,21 @@
 # TUN Full-Tunnel Dry-Run Plan
 
-`tunwarden plan --mode tun <profile-id>` builds a read-only full-tunnel plan. It is planner output, not an executor transaction, and it must not mutate host networking.
+`podlaz plan --mode tun <profile-id>` builds a read-only full-tunnel plan. It is planner output, not an executor transaction, and it must not mutate host networking.
 
 ## User-visible contract
 
-The human output starts with `TunWarden TUN plan` and includes:
+The human output starts with `podlaz TUN plan` and includes:
 
 - selected profile and `Mode: full-tunnel`;
-- planned TUN device desired state, initially `create tunwarden0`;
-- the dedicated TunWarden routing table, initially `tunwarden` with ID `51820`;
-- a default IPv4 traffic route through the TunWarden table;
+- planned TUN device desired state, initially `create podlaz0`;
+- the dedicated podlaz routing table, initially `podlaz` with ID `51820`;
+- a default IPv4 traffic route through the podlaz table;
 - a policy rule that keeps the VPN server bypass on the main uplink path;
-- a policy rule that sends default IPv4 traffic to the TunWarden table;
+- a policy rule that sends default IPv4 traffic to the podlaz table;
 - an explicit VPN server bypass route through the current default gateway/interface when the server route resolves to a concrete IP address;
-- a DNS plan for systemd-resolved per-link DNS on `tunwarden0`, including rollback to the previous per-link DNS state where possible;
-- a firewall plan for a TunWarden-owned `inet tunwarden` nftables table, typed chain/rule desired state, VPN server bypass, kill-switch policy behavior, recovery warning, ownership markers, rollback keys, and rollback by removing the owned table;
-- current snapshot inputs for default route, server route, DNS, NetworkManager, nftables, IPv4/IPv6, TUN devices, and stale TunWarden-owned resources;
+- a DNS plan for systemd-resolved per-link DNS on `podlaz0`, including rollback to the previous per-link DNS state where possible;
+- a firewall plan for a podlaz-owned `inet podlaz` nftables table, typed chain/rule desired state, VPN server bypass, kill-switch policy behavior, recovery warning, ownership markers, rollback keys, and rollback by removing the owned table;
+- current snapshot inputs for default route, server route, DNS, NetworkManager, nftables, IPv4/IPv6, TUN devices, and stale podlaz-owned resources;
 - route-loop risks, unsupported backend warnings, kill-switch limitations, and stale-resource warnings;
 - rollback steps corresponding to the planned nftables, DNS, policy-rule, route, and TUN desired state;
 - `No changes were applied.`
@@ -30,16 +30,16 @@ The CLI may collect local read-only snapshots and render the plan in the foundat
 
 ## Planned ownership
 
-The planned system state is TunWarden-owned and must remain identifiable before it can be applied in a future executor:
+The planned system state is podlaz-owned and must remain identifiable before it can be applied in a future executor:
 
-- TUN interface: `tunwarden0`;
-- routing table: `tunwarden` / `51820`;
-- policy rule priorities: `51819` for VPN server bypass and `51820` for default TunWarden traffic;
-- DNS backend: systemd-resolved per-link DNS on `tunwarden0`;
-- nftables table: `table inet tunwarden`;
+- TUN interface: `podlaz0`;
+- routing table: `podlaz` / `51820`;
+- policy rule priorities: `51819` for VPN server bypass and `51820` for default podlaz traffic;
+- DNS backend: systemd-resolved per-link DNS on `podlaz0`;
+- nftables table: `table inet podlaz`;
 - nftables chain: `output` with `type filter`, `hook output`, `priority 0`, and `policy accept`;
-- nftables rule ownership markers such as `tunwarden:firewall:server-bypass`, `tunwarden:firewall:tun-egress`, and `tunwarden:firewall:kill-switch`;
-- nftables rollback keys such as `inet/tunwarden/output/server-bypass`, `inet/tunwarden/output/tun-egress`, and `inet/tunwarden/output/kill-switch`.
+- nftables rule ownership markers such as `podlaz:firewall:server-bypass`, `podlaz:firewall:tun-egress`, and `podlaz:firewall:kill-switch`;
+- nftables rollback keys such as `inet/podlaz/output/server-bypass`, `inet/podlaz/output/tun-egress`, and `inet/podlaz/output/kill-switch`.
 
 ## DNS plan
 
@@ -48,7 +48,7 @@ The current dry-run DNS desired state is:
 ```text
 DNS plan:
 - backend: systemd-resolved per-link DNS
-- target link: tunwarden0
+- target link: podlaz0
 - rollback: restore previous per-link DNS state where possible
 ```
 
@@ -63,25 +63,25 @@ The current dry-run firewall desired state is:
 ```text
 Firewall plan:
 - backend: nftables
-- create nftables table inet tunwarden
+- create nftables table inet podlaz
 - allow VPN server bypass outside TUN
-- allow traffic through tunwarden0
+- allow traffic through podlaz0
 - kill-switch policy: soft
 - block non-TUN traffic according to selected kill-switch policy
 Firewall chains:
 - create chain output type filter hook output priority 0 policy accept
 Firewall rules:
-- add output ip daddr <server-ip> -> accept owner=tunwarden:firewall:server-bypass rollback=inet/tunwarden/output/server-bypass
-- add output oifname "tunwarden0" -> accept owner=tunwarden:firewall:tun-egress rollback=inet/tunwarden/output/tun-egress
-- add output oifname != "tunwarden0" -> reject owner=tunwarden:firewall:kill-switch rollback=inet/tunwarden/output/kill-switch
-- rollback: remove inet tunwarden
+- add output ip daddr <server-ip> -> accept owner=podlaz:firewall:server-bypass rollback=inet/podlaz/output/server-bypass
+- add output oifname "podlaz0" -> accept owner=podlaz:firewall:tun-egress rollback=inet/podlaz/output/tun-egress
+- add output oifname != "podlaz0" -> reject owner=podlaz:firewall:kill-switch rollback=inet/podlaz/output/kill-switch
+- rollback: remove inet podlaz
 ```
 
 The planner models nftables desired state as typed chains and rules, not free-form renderer strings. This keeps the dry-run output useful for users while preserving a future executor/verify/recover path that can reason about chain name, hook, priority, expression, verdict, ownership, and rollback key.
 
-If nftables cannot be inspected, the firewall desired state is blocked and the plan emits an actionable warning. If a TunWarden-owned nftables table already exists, future apply must validate ownership or recover it before replacing rules.
+If nftables cannot be inspected, the firewall desired state is blocked and the plan emits an actionable warning. If a podlaz-owned nftables table already exists, future apply must validate ownership or recover it before replacing rules.
 
-The initial selected kill-switch policy is `soft` until user configuration exists. Strict kill-switch planning is supported internally and must warn that direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules. No dry-run output may claim leak protection until apply, verify, rollback, and recover execution exist.
+The initial selected kill-switch policy is `soft` until user configuration exists. Strict kill-switch planning is supported internally and must warn that direct connectivity may remain blocked after VPN failure until podlaz recovery removes owned nftables rules. No dry-run output may claim leak protection until apply, verify, rollback, and recover execution exist.
 
 ## IPv4 and IPv6 assumptions
 
@@ -89,16 +89,16 @@ The implemented dry-run is IPv4-first. IPv6 state is still shown from the snapsh
 
 ## Loop-risk handling
 
-The planner must warn when the current route to the VPN server candidate points at `tunwarden0`. That plan is unsafe because it would route control traffic back into the tunnel. The planner also warns when the current default IPv4 route already points at `tunwarden0`, because a direct uplink snapshot is required before safe full-tunnel apply work.
+The planner must warn when the current route to the VPN server candidate points at `podlaz0`. That plan is unsafe because it would route control traffic back into the tunnel. The planner also warns when the current default IPv4 route already points at `podlaz0`, because a direct uplink snapshot is required before safe full-tunnel apply work.
 
 ## Rollback model
 
 Rollback steps are generated in reverse apply order:
 
-1. remove the TunWarden-owned nftables table if it was created by the transaction;
+1. remove the podlaz-owned nftables table if it was created by the transaction;
 2. restore previous systemd-resolved per-link DNS state where possible;
 3. remove planned policy rules if they were created by the transaction;
 4. remove planned routes if they were created by the transaction;
-5. delete `tunwarden0` only if the transaction created it and ownership matches TunWarden.
+5. delete `podlaz0` only if the transaction created it and ownership matches podlaz.
 
 These rollback steps are descriptive only in the dry-run. Future execution work must turn them into daemon-owned, audited, idempotent rollback operations.

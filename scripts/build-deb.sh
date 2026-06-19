@@ -9,14 +9,16 @@ function deb_arch_to_goarch() {
   esac
 }
 
-binary_version="${TUNWARDEN_VERSION:-0.0.0~dev}"
-package_version="${TUNWARDEN_DEB_VERSION:-${binary_version}-1}"
-arch="${TUNWARDEN_DEB_ARCH:-amd64}"
-out_dir="${TUNWARDEN_DIST_DIR:-dist}"
+binary_version="${PODLAZ_VERSION:-0.0.0~dev}"
+package_version="${PODLAZ_DEB_VERSION:-${binary_version}-1}"
+arch="${PODLAZ_DEB_ARCH:-amd64}"
+out_dir="${PODLAZ_DIST_DIR:-dist}"
 root_dir="${out_dir}/package-root"
-config=".nfpm.tunwarden.yaml"
-version_package="github.com/AidarKhusainov/tunwarden/internal/app/cli.version"
-package="${out_dir}/tunwarden_${package_version}_${arch}.deb"
+config=".nfpm.podlaz.yaml"
+version_package="github.com/AidarKhusainov/podlaz/internal/app/cli.version"
+commit_package="github.com/AidarKhusainov/podlaz/internal/app/cli.commit"
+built_package="github.com/AidarKhusainov/podlaz/internal/app/cli.built"
+package="${out_dir}/podlaz_${package_version}_linux_${arch}.deb"
 
 case "${arch}" in
   amd64|arm64) ;;
@@ -30,7 +32,7 @@ esac
 goarch="$(deb_arch_to_goarch "${arch}")"
 
 if ! command -v go >/dev/null 2>&1; then
-  echo "go is required to build TunWarden binaries" >&2
+  echo "go is required to build podlaz binaries" >&2
   exit 2
 fi
 
@@ -58,35 +60,35 @@ mkdir -p \
   "${root_dir}/usr/share/bash-completion/completions" \
   "${root_dir}/usr/share/zsh/vendor-completions" \
   "${root_dir}/usr/share/fish/vendor_completions.d" \
-  "${root_dir}/usr/share/metainfo" \
   "${root_dir}/usr/share/polkit-1/actions" \
   "${root_dir}/usr/share/man/man1" \
   "${root_dir}/usr/share/man/man8" \
-  "${root_dir}/usr/share/doc/tunwarden"
+  "${root_dir}/usr/share/doc/podlaz"
 
-ldflags="-s -w -X ${version_package}=${binary_version}"
-CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwarden" ./cmd/tunwarden
-CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/tunwardend" ./cmd/tunwardend
+commit="${PODLAZ_COMMIT:-unknown}"
+built="${PODLAZ_BUILT:-unknown}"
+ldflags="-s -w -X ${version_package}=${binary_version} -X ${commit_package}=${commit} -X ${built_package}=${built}"
+CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlaz" ./cmd/podlaz
+CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlazd" ./cmd/podlazd
 
-"${root_dir}/usr/bin/tunwarden" completion bash > "${root_dir}/usr/share/bash-completion/completions/tunwarden"
-"${root_dir}/usr/bin/tunwarden" completion zsh > "${root_dir}/usr/share/zsh/vendor-completions/_tunwarden"
-"${root_dir}/usr/bin/tunwarden" completion fish > "${root_dir}/usr/share/fish/vendor_completions.d/tunwarden.fish"
+"${root_dir}/usr/bin/podlaz" completion bash > "${root_dir}/usr/share/bash-completion/completions/podlaz"
+"${root_dir}/usr/bin/podlaz" completion zsh > "${root_dir}/usr/share/zsh/vendor-completions/_podlaz"
+"${root_dir}/usr/bin/podlaz" completion fish > "${root_dir}/usr/share/fish/vendor_completions.d/podlaz.fish"
 chmod 0644 \
-  "${root_dir}/usr/share/bash-completion/completions/tunwarden" \
-  "${root_dir}/usr/share/zsh/vendor-completions/_tunwarden" \
-  "${root_dir}/usr/share/fish/vendor_completions.d/tunwarden.fish"
+  "${root_dir}/usr/share/bash-completion/completions/podlaz" \
+  "${root_dir}/usr/share/zsh/vendor-completions/_podlaz" \
+  "${root_dir}/usr/share/fish/vendor_completions.d/podlaz.fish"
 
-install -m 0644 packaging/systemd/tunwardend.service "${root_dir}/usr/lib/systemd/system/tunwardend.service"
-install -m 0644 packaging/sysusers.d/tunwarden.conf "${root_dir}/usr/lib/sysusers.d/tunwarden.conf"
-install -m 0644 packaging/linux/io.github.aidarkhusainov.tunwarden.metainfo.xml "${root_dir}/usr/share/metainfo/io.github.aidarkhusainov.tunwarden.metainfo.xml"
-install -m 0644 packaging/polkit-1/actions/io.github.aidarkhusainov.tunwarden.policy "${root_dir}/usr/share/polkit-1/actions/io.github.aidarkhusainov.tunwarden.policy"
-gzip -9n -c docs/man/tunwarden.1 > "${root_dir}/usr/share/man/man1/tunwarden.1.gz"
-gzip -9n -c docs/man/tunwardend.8 > "${root_dir}/usr/share/man/man8/tunwardend.8.gz"
-install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/tunwarden/"
-install -m 0644 LICENSE "${root_dir}/usr/share/doc/tunwarden/copyright"
-printf 'tunwarden (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/tunwarden/changelog.Debian.gz"
+install -m 0644 packaging/systemd/podlazd.service "${root_dir}/usr/lib/systemd/system/podlazd.service"
+install -m 0644 packaging/sysusers.d/podlaz.conf "${root_dir}/usr/lib/sysusers.d/podlaz.conf"
+install -m 0644 packaging/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy "${root_dir}/usr/share/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy"
+gzip -9n -c docs/man/podlaz.1 > "${root_dir}/usr/share/man/man1/podlaz.1.gz"
+gzip -9n -c docs/man/podlazd.8 > "${root_dir}/usr/share/man/man8/podlazd.8.gz"
+install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/podlaz/"
+install -m 0644 LICENSE "${root_dir}/usr/share/doc/podlaz/copyright"
+printf 'podlaz (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/podlaz/changelog.Debian.gz"
 find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
-  target="${root_dir}/usr/share/doc/tunwarden/${file}"
+  target="${root_dir}/usr/share/doc/podlaz/${file}"
   mkdir -p "$(dirname "${target}")"
   install -m 0644 "${file}" "${target}"
 done
@@ -99,7 +101,7 @@ sed \
 nfpm package --config "${config}" --packager deb --target "${out_dir}"
 rm -f "${config}"
 
-mapfile -t packages < <(find "${out_dir}" -maxdepth 1 -type f -name "tunwarden_*_${arch}.deb" -print | sort)
+mapfile -t packages < <(find "${out_dir}" -maxdepth 1 -type f -name "podlaz_*_${arch}.deb" -print | sort)
 if [ "${#packages[@]}" -ne 1 ]; then
   echo "expected exactly one generated Debian package, found ${#packages[@]}" >&2
   printf '%s\n' "${packages[@]}" >&2

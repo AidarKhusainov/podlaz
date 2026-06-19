@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/status"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 func TestRunCLIStatusUsesDaemonWhenReachable(t *testing.T) {

@@ -8,16 +8,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	txstate "github.com/AidarKhusainov/tunwarden/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const generatedDirName = "generated"
 
 var lstat = os.Lstat
 
-// RuntimeDirectoryState describes the local TunWarden runtime directory state.
+// RuntimeDirectoryState describes the local podlaz runtime directory state.
 type RuntimeDirectoryState string
 
 const (
@@ -73,7 +73,7 @@ type Warning struct {
 	Message string
 }
 
-// Report is the user-visible TunWarden status model.
+// Report is the user-visible podlaz status model.
 type Report struct {
 	Daemon            string
 	Service           string
@@ -164,7 +164,7 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	if deferStaleClassification {
 		report.Warnings = append(report.Warnings, Warning{
 			Target:  "daemon socket " + socketPath,
-			Message: "permission denied; local runtime state may belong to a live tunwardend and was not classified as stale",
+			Message: "permission denied; local runtime state may belong to a live podlazd and was not classified as stale",
 		})
 		report.Connection = connectionState(report.Candidates, report.Warnings)
 		return report
@@ -239,7 +239,7 @@ func (r Report) HasUnhealthyState() bool {
 // String renders the status report in a stable human-readable format.
 func (r Report) String() string {
 	var b strings.Builder
-	b.WriteString("TunWarden status\n")
+	b.WriteString("podlaz status\n")
 	fmt.Fprintf(&b, "Daemon: %s\n", render.Redact(r.Daemon))
 	fmt.Fprintf(&b, "Service: %s\n", render.Redact(serviceLine(r.Service)))
 	fmt.Fprintf(&b, "Connection: %s\n", render.Redact(r.Connection))
@@ -293,11 +293,11 @@ func (r Report) String() string {
 	}
 	switch {
 	case len(r.Candidates) > 0 && len(r.Warnings) > 0:
-		b.WriteString("Guidance: run `tunwarden recover` for the canonical read-only recovery dry-run and `tunwarden doctor` for diagnostic detail.\n")
+		b.WriteString("Guidance: run `podlaz recover` for the canonical read-only recovery dry-run and `podlaz doctor` for diagnostic detail.\n")
 	case len(r.Candidates) > 0:
-		b.WriteString("Guidance: run `tunwarden recover` for the canonical read-only recovery dry-run.\n")
+		b.WriteString("Guidance: run `podlaz recover` for the canonical read-only recovery dry-run.\n")
 	case len(r.Warnings) > 0:
-		b.WriteString("Guidance: run `tunwarden doctor` for diagnostic detail.\n")
+		b.WriteString("Guidance: run `podlaz doctor` for diagnostic detail.\n")
 	}
 	return b.String()
 }
@@ -309,11 +309,11 @@ func inspectDaemonSocket(socketPath string, access DaemonSocketAccess) (DaemonSo
 		switch {
 		case err == nil && info.Mode()&os.ModeSocket != 0:
 			socket.State = DaemonSocketInaccessible
-			socket.Message = "present but inaccessible (permission denied; check tunwarden group membership)"
+			socket.Message = "present but inaccessible (permission denied; check podlaz group membership)"
 			return socket, nil
 		case err != nil && errors.Is(err, os.ErrPermission):
 			socket.State = DaemonSocketInaccessible
-			socket.Message = "inaccessible (permission denied; check tunwarden group membership)"
+			socket.Message = "inaccessible (permission denied; check podlaz group membership)"
 			return socket, &Warning{
 				Target:  "daemon socket " + socketPath,
 				Message: "permission denied while inspecting daemon socket path",

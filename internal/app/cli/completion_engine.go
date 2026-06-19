@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
-	"github.com/AidarKhusainov/tunwarden/internal/sub"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 type completionDirective string
@@ -77,10 +77,10 @@ func runCompletionRuntimeCommand(args []string, stdout io.Writer, opts options) 
 	}
 	words := args[2:]
 	if len(words) == 0 {
-		words = []string{"tunwarden"}
+		words = []string{"podlaz"}
 	}
 
-	result := completeTunWarden(completionRequest{Shell: strings.ToLower(args[0]), Cursor: cursor, Words: words}, opts)
+	result := completepodlaz(completionRequest{Shell: strings.ToLower(args[0]), Cursor: cursor, Words: words}, opts)
 	for _, directive := range result.Directives {
 		fmt.Fprintf(stdout, ":%s\n", directive)
 	}
@@ -94,7 +94,7 @@ func runCompletionRuntimeCommand(args []string, stdout io.Writer, opts options) 
 	return nil
 }
 
-func completeTunWarden(req completionRequest, opts options) completionResult {
+func completepodlaz(req completionRequest, opts options) completionResult {
 	switch req.Shell {
 	case "", "bash", "zsh", "fish":
 	default:

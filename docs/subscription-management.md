@@ -1,17 +1,17 @@
 # Subscription management
 
-`tunwarden subscription` is the implemented v0.1 command group for managing subscription sources in local user-owned TunWarden state.
+`podlaz subscription` is the implemented v0.1 command group for managing subscription sources in local user-owned podlaz state.
 
 Canonical command names, flags, exit codes, JSON compatibility, and milestone boundaries remain owned by [CLI contract](./cli.md). This document describes the implemented behavior.
 
 ## Commands
 
 ```bash
-tunwarden subscription add --name <name> --url <file-or-http-url>
-tunwarden subscription update <subscription-id>
-tunwarden subscription list [--json]
-tunwarden subscription show <subscription-id> [--json]
-tunwarden subscription delete <subscription-id> --yes [--keep-profiles]
+podlaz subscription add --name <name> --url <file-or-http-url>
+podlaz subscription update <subscription-id>
+podlaz subscription list [--json]
+podlaz subscription show <subscription-id> [--json]
+podlaz subscription delete <subscription-id> --yes [--keep-profiles]
 ```
 
 ## Supported sources and formats
@@ -29,7 +29,7 @@ Supported response formats:
 
 URI-list entries are read line by line after decoding or direct format detection. Empty lines are ignored.
 
-Supported entries are normalized through the same profile model used by `tunwarden profile import`:
+Supported entries are normalized through the same profile model used by `podlaz profile import`:
 
 - VLESS share URIs and supported VLESS Xray JSON outbounds.
 - VMess share URIs.
@@ -40,19 +40,19 @@ Unsupported entries, malformed URIs, unsupported Xray outbounds, or duplicate im
 
 ## Client identity placeholder
 
-TunWarden does not guess provider-specific HWID or device-id parameter names.
+podlaz does not guess provider-specific HWID or device-id parameter names.
 
-If a provider requires a stable client identity, place `{tunwarden-client-id}` as the complete value of a subscription URL query parameter:
+If a provider requires a stable client identity, place `{podlaz-client-id}` as the complete value of a subscription URL query parameter:
 
 ```bash
-tunwarden subscription add --name personal --url 'https://example.com/sub?hwid={tunwarden-client-id}'
+podlaz subscription add --name personal --url 'https://example.com/sub?hwid={podlaz-client-id}'
 ```
 
-Before fetching the subscription, TunWarden replaces the placeholder with a random stable client ID stored at:
+Before fetching the subscription, podlaz replaces the placeholder with a random stable client ID stored at:
 
 ```text
-$XDG_STATE_HOME/tunwarden/client-id
-fallback: ~/.local/state/tunwarden/client-id
+$XDG_STATE_HOME/podlaz/client-id
+fallback: ~/.local/state/podlaz/client-id
 ```
 
 The placeholder is allowed only as a complete query parameter value. It is not allowed in the host, userinfo, path, fragment, query parameter name, or as part of a larger query value.
@@ -86,7 +86,7 @@ Warnings: 1
 
 `Removed` counts profiles that were previously imported from the same subscription but no longer appear in the latest successful update.
 
-If fetching, decoding, parsing, normalization, validation, profile replacement, or metadata update fails, the existing profile store and subscription metadata are left unchanged, so the last known good imported profile set remains available through `tunwarden profile list`.
+If fetching, decoding, parsing, normalization, validation, profile replacement, or metadata update fails, the existing profile store and subscription metadata are left unchanged, so the last known good imported profile set remains available through `podlaz profile list`.
 
 ## Delete behavior
 

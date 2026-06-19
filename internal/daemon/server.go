@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
 )
 
 type Server struct {
@@ -48,7 +48,7 @@ func (s Server) Run(ctx context.Context) error {
 	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("daemon lock %s already exists; another tunwardend may be running or previous shutdown was unclean", lockPath)
+			return fmt.Errorf("daemon lock %s already exists; another podlazd may be running or previous shutdown was unclean", lockPath)
 		}
 		return fmt.Errorf("create daemon lock %s: %w", lockPath, err)
 	}
@@ -73,11 +73,11 @@ func (s Server) Run(ctx context.Context) error {
 	if err := os.Chmod(socketPath, 0o660); err != nil {
 		return fmt.Errorf("set daemon socket permissions %s: %w", socketPath, err)
 	}
-	log.Printf("tunwardend: daemon API listening on Unix socket")
+	log.Printf("podlazd: daemon API listening on Unix socket")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("tunwardend: status request method=%s path=%s", r.Method, r.URL.Path)
+		log.Printf("podlazd: status request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -88,10 +88,10 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(withStartupScanStatus(statusFn(r.Context()), startupScan.Snapshot()))
-		log.Printf("tunwardend: status request handled")
+		log.Printf("podlazd: status request handled")
 	})
 	mux.HandleFunc(api.DoctorPath, func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("tunwardend: doctor request method=%s path=%s", r.Method, r.URL.Path)
+		log.Printf("podlazd: doctor request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -102,10 +102,10 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), startupScan.Snapshot()))
-		log.Printf("tunwardend: doctor request handled")
+		log.Printf("podlazd: doctor request handled")
 	})
 	mux.HandleFunc(api.RecoverPath, func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("tunwardend: recover request method=%s path=%s", r.Method, r.URL.Path)
+		log.Printf("podlazd: recover request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -118,7 +118,7 @@ func (s Server) Run(ctx context.Context) error {
 		response := daemonRecover(r.Context(), runtimeDir)
 		startupScan.Refresh(r.Context())
 		_ = json.NewEncoder(w).Encode(response)
-		log.Printf("tunwardend: recover request handled")
+		log.Printf("podlazd: recover request handled")
 	})
 	registerLifecycleHandlers(mux, lifecycle, authorizer)
 

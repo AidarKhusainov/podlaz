@@ -5,8 +5,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 const (
@@ -14,7 +14,7 @@ const (
 
 	TunTunnelMode       = "full-tunnel"
 	DefaultTunMTU       = 1500
-	TunRoutingTable     = "tunwarden"
+	TunRoutingTable     = "podlaz"
 	TunRoutingTableID   = 51820
 	TunRulePriority     = 10000
 	ServerRulePriority  = 9999
@@ -34,7 +34,7 @@ const (
 	FirewallActionBlocked      = "blocked"
 	FirewallActionSkip         = "skip"
 	FirewallActionValidate     = "validate-or-replace"
-	FirewallRollbackRemove     = "remove inet tunwarden"
+	FirewallRollbackRemove     = "remove inet podlaz"
 	FirewallOutputChain        = "output"
 	FirewallChainTypeFilter    = "filter"
 	FirewallOutputHook         = "output"
@@ -43,14 +43,14 @@ const (
 	FirewallVerdictAccept      = "accept"
 	FirewallVerdictReject      = "reject"
 	FirewallVerdictDrop        = "drop"
-	FirewallServerBypassOwner  = "tunwarden:firewall:server-bypass"
-	FirewallLoopbackOwner      = "tunwarden:firewall:loopback"
-	FirewallTunEgressOwner     = "tunwarden:firewall:tun-egress"
-	FirewallKillSwitchOwner    = "tunwarden:firewall:kill-switch"
-	FirewallServerBypassKey    = "inet/tunwarden/output/server-bypass"
-	FirewallLoopbackKey        = "inet/tunwarden/output/loopback"
-	FirewallTunEgressKey       = "inet/tunwarden/output/tun-egress"
-	FirewallKillSwitchKey      = "inet/tunwarden/output/kill-switch"
+	FirewallServerBypassOwner  = "podlaz:firewall:server-bypass"
+	FirewallLoopbackOwner      = "podlaz:firewall:loopback"
+	FirewallTunEgressOwner     = "podlaz:firewall:tun-egress"
+	FirewallKillSwitchOwner    = "podlaz:firewall:kill-switch"
+	FirewallServerBypassKey    = "inet/podlaz/output/server-bypass"
+	FirewallLoopbackKey        = "inet/podlaz/output/loopback"
+	FirewallTunEgressKey       = "inet/podlaz/output/tun-egress"
+	FirewallKillSwitchKey      = "inet/podlaz/output/kill-switch"
 
 	KillSwitchPolicyOff    = "off"
 	KillSwitchPolicySoft   = "soft"
@@ -166,7 +166,7 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 		return TunPlan{}, err
 	}
 
-	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "create", Reason: "stable TunWarden full-tunnel interface"}
+	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "create", Reason: "stable podlaz full-tunnel interface"}
 	serverIP := concreteServerBypassIP(s)
 	serverBypass := serverBypassRoute(s, serverIP)
 	routes := []TunRoutePlan{{
@@ -175,7 +175,7 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 		Table:       TunRoutingTable,
 		Interface:   snapshot.DefaultTunName,
 		Action:      "add",
-		Reason:      "route default IPv4 traffic through the TunWarden TUN interface",
+		Reason:      "route default IPv4 traffic through the podlaz TUN interface",
 	}}
 	policyRules := []TunPolicyRulePlan{{
 		Family:   "ipv4",
@@ -183,7 +183,7 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 		Selector: IPv4DefaultSelector,
 		Table:    TunRoutingTable,
 		Action:   "add",
-		Reason:   "send default IPv4 traffic through the TunWarden routing table before the kernel main table rule",
+		Reason:   "send default IPv4 traffic through the podlaz routing table before the kernel main table rule",
 	}}
 	if serverIP != "" {
 		routes = append(routes, serverBypass)
@@ -259,7 +259,7 @@ func dnsPlan(s snapshot.Snapshot, device TunDevicePlan, servers []string) TunDNS
 		Rollback:   DNSRollbackRestore,
 		RollbackSteps: []string{
 			fmt.Sprintf("Restore previous systemd-resolved per-link DNS state for %s where possible", device.Name),
-			fmt.Sprintf("Flush TunWarden-owned DNS server/default-route/domain settings from %s if created by this transaction", device.Name),
+			fmt.Sprintf("Flush podlaz-owned DNS server/default-route/domain settings from %s if created by this transaction", device.Name),
 		},
 	}
 	if s.DNS.Resolved.Status != snapshot.StatusDetected {
@@ -271,14 +271,14 @@ func dnsPlan(s snapshot.Snapshot, device TunDevicePlan, servers []string) TunDNS
 
 func firewallPlan(s snapshot.Snapshot, policy string, device TunDevicePlan, serverIP string) TunFirewallPlan {
 	tableAction := FirewallTableAction
-	reason := "create a TunWarden-owned nftables table for full-tunnel leak prevention dry-run state"
+	reason := "create a podlaz-owned nftables table for full-tunnel leak prevention dry-run state"
 	if s.Nftables.Availability.Status != snapshot.StatusDetected {
 		tableAction = FirewallActionBlocked
 		reason = fmt.Sprintf("nftables availability is %s; firewall mutation is unsafe until nft can be inspected", s.Nftables.Availability.Status)
 	}
-	if s.Nftables.TunWardenTable.Status == snapshot.StatusDetected {
+	if s.Nftables.PodlazTable.Status == snapshot.StatusDetected {
 		tableAction = FirewallActionValidate
-		reason = "TunWarden nftables table already exists; future apply must validate ownership or recover it before replacing rules"
+		reason = "podlaz nftables table already exists; future apply must validate ownership or recover it before replacing rules"
 	}
 
 	ruleAction := firewallRuleAction(tableAction)
@@ -294,7 +294,7 @@ func firewallPlan(s snapshot.Snapshot, policy string, device TunDevicePlan, serv
 			Priority: FirewallOutputPriority,
 			Policy:   FirewallDefaultChainPolicy,
 			Action:   tableAction,
-			Reason:   "own outbound full-tunnel filtering inside the TunWarden nftables table",
+			Reason:   "own outbound full-tunnel filtering inside the podlaz nftables table",
 		}},
 		Rules:      firewallRules(policy, device, serverIP, ruleAction),
 		KillSwitch: killSwitchPlan(policy, device),
@@ -361,7 +361,7 @@ func tunEgressFirewallRule(device TunDevicePlan, action string) TunFirewallRuleP
 		Expr:        fmt.Sprintf("oifname %q", device.Name),
 		Verdict:     FirewallVerdictAccept,
 		Action:      action,
-		Reason:      "allow traffic that egresses through the TunWarden TUN interface",
+		Reason:      "allow traffic that egresses through the podlaz TUN interface",
 		Ownership:   FirewallTunEgressOwner,
 		RollbackKey: FirewallTunEgressKey,
 	}
@@ -383,7 +383,7 @@ func killSwitchFirewallRule(policy string, device TunDevicePlan, action string) 
 		rule.Reason = "kill-switch policy is off; do not install a non-TUN blocking rule"
 	case KillSwitchPolicyStrict:
 		rule.Verdict = FirewallVerdictDrop
-		rule.Reason = "strict kill-switch drops non-TUN traffic until recovery removes TunWarden-owned rules"
+		rule.Reason = "strict kill-switch drops non-TUN traffic until recovery removes podlaz-owned rules"
 	default:
 		rule.Verdict = FirewallVerdictReject
 		rule.Reason = "soft kill-switch rejects non-TUN traffic during transition and must restore direct connectivity on failure"
@@ -399,7 +399,7 @@ func killSwitchPlan(policy string, device TunDevicePlan) TunKillSwitchPlan {
 		Policy:   policy,
 		Action:   "block non-TUN traffic according to selected kill-switch policy",
 		Scope:    fmt.Sprintf("allow traffic through %s, local loopback, and the explicit VPN server bypass; block other non-TUN traffic according to policy", device.Name),
-		Recovery: "recover --execute --yes must be able to remove TunWarden-owned nftables state",
+		Recovery: "recover --execute --yes must be able to remove podlaz-owned nftables state",
 	}
 	switch policy {
 	case KillSwitchPolicyOff:
@@ -408,7 +408,7 @@ func killSwitchPlan(policy string, device TunDevicePlan) TunKillSwitchPlan {
 		plan.Limitations = []string{"off policy does not claim leak protection"}
 	case KillSwitchPolicyStrict:
 		plan.Limitations = []string{
-			"strict kill-switch may intentionally keep direct connectivity blocked after VPN failure until recovery removes TunWarden-owned rules",
+			"strict kill-switch may intentionally keep direct connectivity blocked after VPN failure until recovery removes podlaz-owned rules",
 			"strict kill-switch cannot be claimed as leak protection until apply, verify, rollback, and recover execution exist",
 		}
 	default:
@@ -419,10 +419,12 @@ func killSwitchPlan(policy string, device TunDevicePlan) TunKillSwitchPlan {
 
 func normalizeKillSwitchPolicy(policy string) string {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
-	case KillSwitchPolicyOff:
-		return KillSwitchPolicyOff
+	case "", KillSwitchPolicySoft:
+		return KillSwitchPolicySoft
 	case KillSwitchPolicyStrict:
 		return KillSwitchPolicyStrict
+	case KillSwitchPolicyOff:
+		return KillSwitchPolicyOff
 	default:
 		return KillSwitchPolicySoft
 	}
@@ -460,7 +462,7 @@ func tunSnapshotWarnings(s snapshot.Snapshot) []string {
 		warnings = append(warnings, fmt.Sprintf("nftables availability is %s; firewall and kill-switch planning is incomplete", s.Nftables.Availability.Status))
 	}
 	if len(s.StaleResources) > 0 {
-		warnings = append(warnings, fmt.Sprintf("found %d stale TunWarden-owned resource(s); recover should inspect them before applying TUN mode", len(s.StaleResources)))
+		warnings = append(warnings, fmt.Sprintf("found %d stale podlaz-owned resource(s); recover should inspect them before applying TUN mode", len(s.StaleResources)))
 	}
 	if s.IPv6.Status != snapshot.StatusDetected {
 		warnings = append(warnings, fmt.Sprintf("IPv6 state is %s; initial TUN planning keeps IPv6 disabled or bypassed", s.IPv6.Status))
@@ -472,11 +474,11 @@ func tunDesiredStateWarnings(s snapshot.Snapshot, serverIP string) []string {
 	var warnings []string
 	for _, device := range s.TunDevices {
 		if device.Name == snapshot.DefaultTunName && device.Status == snapshot.StatusDetected {
-			warnings = append(warnings, fmt.Sprintf("TunWarden TUN device %s already exists; recover or validate ownership before applying the planned create step", device.Name))
+			warnings = append(warnings, fmt.Sprintf("podlaz TUN device %s already exists; recover or validate ownership before applying the planned create step", device.Name))
 		}
 	}
 	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == snapshot.DefaultTunName {
-		warnings = append(warnings, "current default IPv4 route already points at tunwarden0; applying another full-tunnel plan could preserve a route loop")
+		warnings = append(warnings, "current default IPv4 route already points at podlaz0; applying another full-tunnel plan could preserve a route loop")
 	}
 	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == "" {
 		warnings = append(warnings, "default IPv4 route did not expose an interface; VPN server bypass cannot be applied safely yet")
@@ -503,7 +505,7 @@ func firewallPlanWarnings(s snapshot.Snapshot, plan TunFirewallPlan) []string {
 		warnings = append(warnings, fmt.Sprintf("firewall desired state is blocked: nftables backend is %s; install/enable nft before applying TUN firewall or kill-switch rules", s.Nftables.Availability.Status))
 	}
 	if plan.KillSwitch.Policy == KillSwitchPolicyStrict {
-		warnings = append(warnings, "strict kill-switch policy selected; direct connectivity may remain blocked after VPN failure until TunWarden recovery removes owned nftables rules")
+		warnings = append(warnings, "strict kill-switch policy selected; direct connectivity may remain blocked after VPN failure until podlaz recovery removes owned nftables rules")
 		warnings = append(warnings, plan.KillSwitch.Limitations...)
 	}
 	return compactWarnings(warnings)
@@ -512,10 +514,10 @@ func firewallPlanWarnings(s snapshot.Snapshot, plan TunFirewallPlan) []string {
 func tunRouteLoopRisks(s snapshot.Snapshot) []string {
 	var risks []string
 	if s.ServerRoute.Status == snapshot.StatusDetected && s.ServerRoute.Interface == snapshot.DefaultTunName {
-		risks = append(risks, "route to VPN server candidate points at tunwarden0; this would create a routing loop")
+		risks = append(risks, "route to VPN server candidate points at podlaz0; this would create a routing loop")
 	}
 	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == snapshot.DefaultTunName {
-		risks = append(risks, "current default IPv4 route points at tunwarden0; full-tunnel planning needs a direct uplink snapshot")
+		risks = append(risks, "current default IPv4 route points at podlaz0; full-tunnel planning needs a direct uplink snapshot")
 	}
 	return compactWarnings(risks)
 }
@@ -555,7 +557,7 @@ func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolic
 		}
 		steps = append(steps, rollbackRouteStep(route))
 	}
-	steps = append(steps, fmt.Sprintf("Delete TUN interface %s only if this transaction created it and ownership matches TunWarden", device.Name))
+	steps = append(steps, fmt.Sprintf("Delete TUN interface %s only if this transaction created it and ownership matches podlaz", device.Name))
 	return steps
 }
 

@@ -24,7 +24,7 @@ func TestDoctorReturnsUnavailableWhenSocketMissing(t *testing.T) {
 }
 
 func TestDoctorRejectsIncompleteDaemonResponse(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func TestDoctorRejectsIncompleteDaemonResponse(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected incomplete daemon response to fail")
 	}
-	if strings.Contains(err.Error(), "tunwardend unavailable") {
+	if strings.Contains(err.Error(), "podlazd unavailable") {
 		t.Fatalf("protocol errors must not be classified as daemon unavailable: %v", err)
 	}
 	if !strings.Contains(err.Error(), "missing source field") {
@@ -55,7 +55,7 @@ func TestDoctorRejectsIncompleteDaemonResponse(t *testing.T) {
 }
 
 func TestDoctorRejectsInvalidDaemonSource(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestDoctorRejectsInvalidDaemonSource(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid daemon source to fail")
 	}
-	if strings.Contains(err.Error(), "tunwardend unavailable") {
+	if strings.Contains(err.Error(), "podlazd unavailable") {
 		t.Fatalf("protocol errors must not be classified as daemon unavailable: %v", err)
 	}
 	if !strings.Contains(err.Error(), "invalid source field") {
@@ -86,7 +86,7 @@ func TestDoctorRejectsInvalidDaemonSource(t *testing.T) {
 }
 
 func TestDoctorReadsDaemonResponse(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)

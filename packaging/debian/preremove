@@ -3,7 +3,7 @@ set -eu
 
 if [ "${1:-}" = "remove" ] || [ "${1:-}" = "deconfigure" ]; then
 	if command -v deb-systemd-invoke >/dev/null 2>&1; then
-		deb-systemd-invoke stop tunwardend.service >/dev/null || true
+		deb-systemd-invoke stop podlazd.service >/dev/null || true
 	fi
 fi
 

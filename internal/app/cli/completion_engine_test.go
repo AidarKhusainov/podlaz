@@ -15,13 +15,13 @@ func TestCompletionSubscriptionDeleteCompletesCommandIDAndFlags(t *testing.T) {
 		t.Fatalf("subscription add failed: %v", err)
 	}
 
-	commands := completeTunWarden(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"tunwarden", "subscription", ""}}, opts)
+	commands := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "subscription", ""}}, opts)
 	assertCompletionCandidate(t, commands, "delete")
 
-	ids := completeTunWarden(completionRequest{Shell: "zsh", Cursor: 3, Words: []string{"tunwarden", "subscription", "delete", ""}}, opts)
+	ids := completepodlaz(completionRequest{Shell: "zsh", Cursor: 3, Words: []string{"podlaz", "subscription", "delete", ""}}, opts)
 	assertCompletionCandidateDescription(t, ids, "personal", "personal")
 
-	flags := completeTunWarden(completionRequest{Shell: "fish", Cursor: 4, Words: []string{"tunwarden", "subscription", "delete", "personal", "--"}}, opts)
+	flags := completepodlaz(completionRequest{Shell: "fish", Cursor: 4, Words: []string{"podlaz", "subscription", "delete", "personal", "--"}}, opts)
 	assertCompletionCandidate(t, flags, "--yes")
 	assertCompletionCandidate(t, flags, "--keep-profiles")
 }
@@ -36,21 +36,21 @@ func TestCompletionProfileValidateCompletesProfileIDsFlagsAndModeValues(t *testi
 	}
 	profileID := importedProfileIDFromOutput(t, importOut.String())
 
-	commands := completeTunWarden(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"tunwarden", "profile", ""}}, opts)
+	commands := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "profile", ""}}, opts)
 	assertCompletionCandidate(t, commands, "validate")
 
-	ids := completeTunWarden(completionRequest{Shell: "zsh", Cursor: 3, Words: []string{"tunwarden", "profile", "validate", ""}}, opts)
+	ids := completepodlaz(completionRequest{Shell: "zsh", Cursor: 3, Words: []string{"podlaz", "profile", "validate", ""}}, opts)
 	assertCompletionCandidateDescription(t, ids, profileID, "Russia 1")
 
-	flags := completeTunWarden(completionRequest{Shell: "fish", Cursor: 4, Words: []string{"tunwarden", "profile", "validate", profileID, "--"}}, opts)
+	flags := completepodlaz(completionRequest{Shell: "fish", Cursor: 4, Words: []string{"podlaz", "profile", "validate", profileID, "--"}}, opts)
 	assertCompletionCandidate(t, flags, "--mode")
 	assertCompletionCandidate(t, flags, "--json")
 
-	modeValues := completeTunWarden(completionRequest{Shell: "bash", Cursor: 5, Words: []string{"tunwarden", "profile", "validate", profileID, "--mode", ""}}, opts)
+	modeValues := completepodlaz(completionRequest{Shell: "bash", Cursor: 5, Words: []string{"podlaz", "profile", "validate", profileID, "--mode", ""}}, opts)
 	assertCompletionCandidate(t, modeValues, "proxy-only")
 	assertCompletionCandidate(t, modeValues, "tun")
 
-	inlineModeValues := completeTunWarden(completionRequest{Shell: "zsh", Cursor: 4, Words: []string{"tunwarden", "profile", "validate", profileID, "--mode="}}, opts)
+	inlineModeValues := completepodlaz(completionRequest{Shell: "zsh", Cursor: 4, Words: []string{"podlaz", "profile", "validate", profileID, "--mode="}}, opts)
 	assertCompletionCandidate(t, inlineModeValues, "--mode=proxy-only")
 	assertCompletionCandidate(t, inlineModeValues, "--mode=tun")
 }
@@ -60,8 +60,8 @@ func TestCompletionFishScriptIncludesProfileValidateStaticFlags(t *testing.T) {
 	printFishCompletion(&out)
 	got := out.String()
 	for _, want := range []string{
-		"__fish_tunwarden_using_subcommand profile validate' -l mode -x -a 'proxy-only tun'",
-		"__fish_tunwarden_using_subcommand profile validate' -l json",
+		"__fish_podlaz_using_subcommand profile validate' -l mode -x -a 'proxy-only tun'",
+		"__fish_podlaz_using_subcommand profile validate' -l json",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected fish completion script to contain %q, got %q", want, got)
@@ -79,7 +79,7 @@ func TestCompletionProfileIDsUseDisplayNamesAsDescriptions(t *testing.T) {
 	}
 	profileID := importedProfileIDFromOutput(t, importOut.String())
 
-	ids := completeTunWarden(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"tunwarden", "connect", ""}}, opts)
+	ids := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "connect", ""}}, opts)
 	assertCompletionCandidateDescription(t, ids, profileID, "Russia 1")
 }
 

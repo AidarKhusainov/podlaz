@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 const (
-	OwnerTunDevice  = "tunwarden:tun-device"
-	OwnerRoute      = "tunwarden:route"
-	OwnerPolicyRule = "tunwarden:policy-rule"
+	OwnerTunDevice  = "podlaz:tun-device"
+	OwnerRoute      = "podlaz:route"
+	OwnerPolicyRule = "podlaz:policy-rule"
 )
 
 const defaultCommandTimeout = 5 * time.Second
@@ -83,7 +83,7 @@ type PolicyRuleExecutor interface {
 	Rollback(ctx context.Context, plan planner.TunPolicyRulePlan) error
 }
 
-// Step records one applied TunWarden-owned networking mutation.
+// Step records one applied podlaz-owned networking mutation.
 type Step struct {
 	Kind        string
 	Target      string

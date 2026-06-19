@@ -30,24 +30,24 @@ func runCompletionCommand(args []string, stdout io.Writer) error {
 
 func printCompletionHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden completion bash
-  tunwarden completion zsh
-  tunwarden completion fish
+  podlaz completion bash
+  podlaz completion zsh
+  podlaz completion fish
 
 Generate shell completion definitions for stdout. The command is read-only: it
-prints completion scripts and does not contact tunwardend, start Xray, mutate
+prints completion scripts and does not contact podlazd, start Xray, mutate
 networking, or require root. Bash, zsh, and fish completion may read local
 profile and subscription IDs during interactive completion only.
 `)
 }
 
 func printBashCompletion(w io.Writer) {
-	fmt.Fprintf(w, `# bash completion for tunwarden
+	fmt.Fprintf(w, `# bash completion for podlaz
 # static commands: %s
 # static connection modes: %s
 # static profile protocols: %s
 
-_tunwarden()
+_podlaz()
 {
     local cur line value
     local -a runtime_lines runtime_values
@@ -89,18 +89,18 @@ _tunwarden()
     return 0
 }
 
-complete -o default -F _tunwarden tunwarden
+complete -o default -F _podlaz podlaz
 `, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()))
 }
 
 func printZshCompletion(w io.Writer) {
-	fmt.Fprintf(w, `#compdef tunwarden
-# zsh completion for tunwarden
+	fmt.Fprintf(w, `#compdef podlaz
+# zsh completion for podlaz
 # static commands: %s
 # static connection modes: %s
 # static profile protocols: %s
 
-_tunwarden() {
+_podlaz() {
   local runtime_output line value description plain
   local -a runtime_lines plain_values described_values
   local cursor=$((CURRENT - 1))
@@ -138,7 +138,7 @@ _tunwarden() {
     for plain in "${plain_values[@]}"; do
       described_values+=("$plain")
     done
-    _describe -t tunwarden-completions 'tunwarden completion' described_values
+    _describe -t podlaz-completions 'podlaz completion' described_values
     return
   fi
 
@@ -147,22 +147,22 @@ _tunwarden() {
   fi
 }
 
-_tunwarden "$@"
+_podlaz "$@"
 `, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()))
 }
 
 func printFishCompletion(w io.Writer) {
-	fmt.Fprintf(w, `# fish completion for tunwarden
+	fmt.Fprintf(w, `# fish completion for podlaz
 # static commands: %s
 # static connection modes: %s
 # static profile protocols: %s
 
-function __fish_tunwarden_runtime
+function __fish_podlaz_runtime
     set -l words (commandline -opc)
     set -l current (commandline -ct)
 
     if test (count $words) -eq 0
-        set words tunwarden
+        set words podlaz
     else if test -n "$current"
         if test "$words[-1]" != "$current"
             set -a words "$current"
@@ -175,8 +175,8 @@ function __fish_tunwarden_runtime
     command $words[1] __complete fish "$cursor" $words 2>/dev/null
 end
 
-function __fish_tunwarden_complete
-    for line in (__fish_tunwarden_runtime)
+function __fish_podlaz_complete
+    for line in (__fish_podlaz_runtime)
         if string match -q ':*' -- "$line"
             continue
         end
@@ -187,7 +187,7 @@ function __fish_tunwarden_complete
     end
 end
 
-function __fish_tunwarden_needs_runtime_argument
+function __fish_podlaz_needs_runtime_argument
     set -l words (commandline -opc)
     set -l current (commandline -ct)
 
@@ -205,52 +205,52 @@ function __fish_tunwarden_needs_runtime_argument
     return 0
 end
 
-function __fish_tunwarden_needs_files
-    __fish_tunwarden_runtime | string match -q ':default-files'
+function __fish_podlaz_needs_files
+    __fish_podlaz_runtime | string match -q ':default-files'
 end
 
-function __fish_tunwarden_using_command
+function __fish_podlaz_using_command
     set -l words (commandline -opc)
     test (count $words) -ge 2; and test $words[2] = $argv[1]
 end
 
-function __fish_tunwarden_using_subcommand
+function __fish_podlaz_using_subcommand
     set -l words (commandline -opc)
     test (count $words) -ge 3; and test $words[2] = $argv[1]; and test $words[3] = $argv[2]
 end
 
-complete -c tunwarden -f
-complete -c tunwarden -n '__fish_tunwarden_needs_runtime_argument' -a '(__fish_tunwarden_complete)'
-complete -c tunwarden -n '__fish_tunwarden_needs_files' -F
+complete -c podlaz -f
+complete -c podlaz -n '__fish_podlaz_needs_runtime_argument' -a '(__fish_podlaz_complete)'
+complete -c podlaz -n '__fish_podlaz_needs_files' -F
 
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l name -x
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l server -x
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l port -x
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile add' -l protocol -x -a '%s'
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile list' -l json
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile show' -l json
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile validate' -l mode -x -a '%s'
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile validate' -l json
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand profile delete' -l yes
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile add' -l name -x
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile add' -l server -x
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile add' -l port -x
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile add' -l protocol -x -a '%s'
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile list' -l json
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile show' -l json
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile validate' -l mode -x -a '%s'
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile validate' -l json
+complete -c podlaz -n '__fish_podlaz_using_subcommand profile delete' -l yes
 
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription add' -l name -x
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription add' -l url -x
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription list' -l json
-complete -c tunwarden -n '__fish_tunwarden_using_subcommand subscription show' -l json
+complete -c podlaz -n '__fish_podlaz_using_subcommand subscription add' -l name -x
+complete -c podlaz -n '__fish_podlaz_using_subcommand subscription add' -l url -x
+complete -c podlaz -n '__fish_podlaz_using_subcommand subscription list' -l json
+complete -c podlaz -n '__fish_podlaz_using_subcommand subscription show' -l json
 
-complete -c tunwarden -n '__fish_tunwarden_using_command plan' -l mode -x -a '%s'
-complete -c tunwarden -n '__fish_tunwarden_using_command plan' -l json
-complete -c tunwarden -n '__fish_tunwarden_using_command connect' -l mode -x -a '%s'
-complete -c tunwarden -n '__fish_tunwarden_using_command doctor' -l core
-complete -c tunwarden -n '__fish_tunwarden_using_command doctor' -l xray -x
-complete -c tunwarden -n '__fish_tunwarden_using_command doctor' -l json
-complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l follow -s f
-complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l daemon
-complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l core
-complete -c tunwarden -n '__fish_tunwarden_using_command logs' -l since -x
-complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l execute
-complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l yes
-complete -c tunwarden -n '__fish_tunwarden_using_command recover' -l json
+complete -c podlaz -n '__fish_podlaz_using_command plan' -l mode -x -a '%s'
+complete -c podlaz -n '__fish_podlaz_using_command plan' -l json
+complete -c podlaz -n '__fish_podlaz_using_command connect' -l mode -x -a '%s'
+complete -c podlaz -n '__fish_podlaz_using_command doctor' -l core
+complete -c podlaz -n '__fish_podlaz_using_command doctor' -l xray -x
+complete -c podlaz -n '__fish_podlaz_using_command doctor' -l json
+complete -c podlaz -n '__fish_podlaz_using_command logs' -l follow -s f
+complete -c podlaz -n '__fish_podlaz_using_command logs' -l daemon
+complete -c podlaz -n '__fish_podlaz_using_command logs' -l core
+complete -c podlaz -n '__fish_podlaz_using_command logs' -l since -x
+complete -c podlaz -n '__fish_podlaz_using_command recover' -l execute
+complete -c podlaz -n '__fish_podlaz_using_command recover' -l yes
+complete -c podlaz -n '__fish_podlaz_using_command recover' -l json
 `, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
 }
 

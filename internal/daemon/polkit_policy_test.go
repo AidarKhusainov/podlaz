@@ -23,7 +23,7 @@ type testPolkitDefaults struct {
 }
 
 func TestPackagedPolkitPolicyDefinesConservativeOperationActions(t *testing.T) {
-	policyPath := filepath.Join("..", "..", "packaging", "polkit-1", "actions", "io.github.aidarkhusainov.tunwarden.policy")
+	policyPath := filepath.Join("..", "..", "packaging", "polkit-1", "actions", "io.github.aidarkhusainov.podlaz.policy")
 	content, err := os.ReadFile(policyPath)
 	if err != nil {
 		t.Fatalf("read polkit policy: %v", err)

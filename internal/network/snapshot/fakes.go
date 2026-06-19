@@ -1,7 +1,7 @@
 package snapshot
 
 // FakeResolvedDesktop returns a common Linux desktop topology with systemd-resolved,
-// NetworkManager, nftables, and no stale TunWarden-owned resources.
+// NetworkManager, nftables, and no stale podlaz-owned resources.
 func FakeResolvedDesktop() Snapshot {
 	return Snapshot{
 		OS: "linux",
@@ -32,8 +32,8 @@ func FakeResolvedDesktop() Snapshot {
 			State:   "connected",
 		},
 		Nftables: Nftables{
-			Availability:   Finding{Status: StatusDetected, Summary: "nftables table listing available"},
-			TunWardenTable: Finding{Status: StatusMissing, Summary: "TunWarden nftables table not found"},
+			Availability: Finding{Status: StatusDetected, Summary: "nftables table listing available"},
+			PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not found"},
 		},
 		TunDevices: []TunDevice{{Name: DefaultTunName, Status: StatusMissing, Detail: "device not found"}},
 		IPv4:       Finding{Status: StatusDetected, Summary: "IPv4 default route detected"},
@@ -52,14 +52,14 @@ func FakeDesktopMissingDefaultRoute() Snapshot {
 }
 
 // FakeDesktopWithServerRouteLoop returns a topology where the VPN server route
-// already points at TunWarden's TUN interface and would loop.
+// already points at podlaz's TUN interface and would loop.
 func FakeDesktopWithServerRouteLoop() Snapshot {
 	s := FakeResolvedDesktop()
 	s.ServerRoute = Route{
 		Status:      StatusDetected,
 		Destination: "example.com",
 		Interface:   DefaultTunName,
-		Raw:         "203.0.113.10 dev tunwarden0 src 10.0.0.2 uid 1000",
+		Raw:         "203.0.113.10 dev podlaz0 src 10.0.0.2 uid 1000",
 	}
 	return s
 }
@@ -71,20 +71,20 @@ func FakeDesktopWithoutOptionalTools() Snapshot {
 	s.DNS = DNS{Mode: "unknown", Resolved: Finding{Status: StatusMissing, Summary: "resolvectl not found"}}
 	s.NetworkManager = NetworkManager{Finding: Finding{Status: StatusMissing, Summary: "nmcli not found"}}
 	s.Nftables = Nftables{
-		Availability:   Finding{Status: StatusMissing, Summary: "nft not found"},
-		TunWardenTable: Finding{Status: StatusMissing, Summary: "TunWarden nftables table not inspected because nft is unavailable"},
+		Availability: Finding{Status: StatusMissing, Summary: "nft not found"},
+		PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"},
 	}
 	return s
 }
 
-// FakeDesktopWithStaleTunWardenResources returns a topology with old TunWarden-owned
+// FakeDesktopWithStalepodlazResources returns a topology with old podlaz-owned
 // resources that future recover/connect flows must handle before mutation.
-func FakeDesktopWithStaleTunWardenResources() Snapshot {
+func FakeDesktopWithStalepodlazResources() Snapshot {
 	s := FakeResolvedDesktop()
-	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: tunwarden0: <POINTOPOINT,UP> mtu 1500"}}
-	s.Nftables.TunWardenTable = Finding{Status: StatusDetected, Summary: "TunWarden nftables table exists"}
+	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}}
+	s.Nftables.PodlazTable = Finding{Status: StatusDetected, Summary: "podlaz nftables table exists"}
 	s.StaleResources = []StaleResource{
-		{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: tunwarden0: <POINTOPOINT,UP> mtu 1500"},
+		{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"},
 		{Kind: "nftables-table", Name: DefaultNFTFamily + " " + DefaultNFTTable, Status: StatusDetected},
 	}
 	return s

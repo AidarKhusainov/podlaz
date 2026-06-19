@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *testing.T) {
@@ -35,27 +35,27 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *te
 	}
 
 	want := []string{
-		"tun:create:tunwarden0",
-		"route:add:tunwarden:default",
+		"tun:create:podlaz0",
+		"route:add:podlaz:default",
 		"route:add:main:203.0.113.10/32",
 		"rule:add:9999:to 203.0.113.10/32",
 		"rule:add:10000:from all",
-		"dns:apply:tunwarden0",
-		"firewall:apply:inet tunwarden",
-		"tun:verify:tunwarden0",
-		"route:verify:tunwarden:default",
+		"dns:apply:podlaz0",
+		"firewall:apply:inet podlaz",
+		"tun:verify:podlaz0",
+		"route:verify:podlaz:default",
 		"route:verify:main:203.0.113.10/32",
 		"rule:verify:9999:to 203.0.113.10/32",
 		"rule:verify:10000:from all",
-		"dns:verify:tunwarden0",
-		"firewall:verify:inet tunwarden",
-		"firewall:rollback:inet tunwarden",
-		"dns:rollback:tunwarden0",
+		"dns:verify:podlaz0",
+		"firewall:verify:inet podlaz",
+		"firewall:rollback:inet podlaz",
+		"dns:rollback:podlaz0",
 		"rule:rollback:10000:from all",
 		"rule:rollback:9999:to 203.0.113.10/32",
 		"route:rollback:main:203.0.113.10/32",
-		"route:rollback:tunwarden:default",
-		"tun:rollback:tunwarden0",
+		"route:rollback:podlaz:default",
+		"tun:rollback:podlaz0",
 	}
 	if !reflect.DeepEqual(recorder.calls, want) {
 		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
@@ -80,7 +80,7 @@ func TestDNSAwareTunExecutorRollsBackFirewallWhenFirewallApplyFails(t *testing.T
 	if len(steps) != 6 {
 		t.Fatalf("expected base networking and DNS steps to remain rollbackable, got %#v", steps)
 	}
-	if got := recorder.calls[len(recorder.calls)-1]; got != "firewall:rollback:inet tunwarden" {
+	if got := recorder.calls[len(recorder.calls)-1]; got != "firewall:rollback:inet podlaz" {
 		t.Fatalf("expected immediate firewall rollback after apply failure, got %q", got)
 	}
 }

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestRecoveryClientAllowsOperationLongerThanDialTimeout(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "tunwardend.sock")
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen on unix socket: %v", err)
@@ -32,7 +32,7 @@ func TestRecoveryClientAllowsOperationLongerThanDialTimeout(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.RecoveryResponse{
 			Mode: "execute",
 			Results: []api.RecoveryCleanupResult{{
-				Candidate: api.RecoveryCandidate{Kind: "generated-runtime-configs", Description: "generated runtime configs", Target: "/run/tunwarden/generated"},
+				Candidate: api.RecoveryCandidate{Kind: "generated-runtime-configs", Description: "generated runtime configs", Target: "/run/podlaz/generated"},
 				Status:    "recovered",
 			}},
 		})

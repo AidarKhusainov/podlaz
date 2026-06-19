@@ -8,10 +8,10 @@ import (
 
 func TestScanRedactedFilteredShowsOnlyCoreLines(t *testing.T) {
 	input := strings.NewReader(strings.Join([]string{
-		"Jun 03 host tunwardend[123]: tunwardend: daemon started",
-		"Jun 03 host tunwardend[123]: tunwardend: core xray started pid=42 profile=test",
-		"Jun 03 host tunwardend[123]: tunwardend: core xray stderr pid=42 profile=test: token=secret",
-		"Jun 03 host tunwardend[123]: tunwardend: status request handled",
+		"Jun 03 host podlazd[123]: podlazd: daemon started",
+		"Jun 03 host podlazd[123]: podlazd: core xray started pid=42 profile=test",
+		"Jun 03 host podlazd[123]: podlazd: core xray stderr pid=42 profile=test: token=secret",
+		"Jun 03 host podlazd[123]: podlazd: status request handled",
 	}, "\n") + "\n")
 	var out bytes.Buffer
 
@@ -39,7 +39,7 @@ func TestIsCoreLogLineAcceptsSystemdChildProcessPrefix(t *testing.T) {
 	if !isCoreLogLine("Jun 03 host xray[5678]: started") {
 		t.Fatal("expected xray process journal line to be treated as a core log")
 	}
-	if isCoreLogLine("Jun 03 host tunwardend[123]: tunwardend: status request handled") {
+	if isCoreLogLine("Jun 03 host podlazd[123]: podlazd: status request handled") {
 		t.Fatal("expected daemon status line not to be treated as a core log")
 	}
 }

@@ -39,7 +39,7 @@ func (a PolkitAuthorizer) Authorize(ctx context.Context, action AuthorizationAct
 	}
 	if err := a.runCommand(ctx, command, args); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return fmt.Errorf("%w: polkit denied %s; keep using the non-root tunwarden CLI and authenticate through a desktop or TTY polkit agent when available", ErrAuthorizationDenied, action)
+			return fmt.Errorf("%w: polkit denied %s; keep using the non-root podlaz CLI and authenticate through a desktop or TTY polkit agent when available", ErrAuthorizationDenied, action)
 		}
 		return fmt.Errorf("%w: polkit could not authorize %s; ensure a polkit authentication agent is available or disable %s to use socket-group fallback", ErrAuthorizationUnavailable, action, PolkitAuthorizationEnv)
 	}

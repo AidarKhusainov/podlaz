@@ -7,11 +7,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/tunwarden/internal/api"
-	"github.com/AidarKhusainov/tunwarden/internal/client"
-	"github.com/AidarKhusainov/tunwarden/internal/network/planner"
-	"github.com/AidarKhusainov/tunwarden/internal/profile"
-	"github.com/AidarKhusainov/tunwarden/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 type connectRunner func(context.Context, profile.Profile, string) (api.LifecycleResponse, error)
@@ -140,14 +140,14 @@ func lifecycleCommandError(err error) error {
 }
 
 func renderConnectResponse(stdout io.Writer, p profile.Profile, response api.LifecycleResponse) {
-	fmt.Fprintln(stdout, "TunWarden connection started")
+	fmt.Fprintln(stdout, "podlaz connection started")
 	fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(p.Name))
 	fmt.Fprintf(stdout, "Profile ID: %s\n", render.Redact(p.ID))
 	renderLifecycleFields(stdout, response)
 }
 
 func renderDisconnectResponse(stdout io.Writer, response api.LifecycleResponse) {
-	fmt.Fprintln(stdout, "TunWarden disconnected")
+	fmt.Fprintln(stdout, "podlaz disconnected")
 	renderLifecycleFields(stdout, response)
 }
 
@@ -206,7 +206,7 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden connect [--mode proxy-only|tun] <profile-id>
+  podlaz connect [--mode proxy-only|tun] <profile-id>
 
 Start the stored profile through the daemon-managed lifecycle. The default mode
 is proxy-only. TUN mode requires daemon networking privileges.
@@ -215,9 +215,9 @@ is proxy-only. TUN mode requires daemon networking privileges.
 
 func printDisconnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  tunwarden disconnect
+  podlaz disconnect
 
-Stop proxy-only Xray or roll back an active TunWarden-owned TUN transaction.
+Stop proxy-only Xray or roll back an active podlaz-owned TUN transaction.
 Repeated disconnects are safe and leave the connection inactive.
 `)
 }

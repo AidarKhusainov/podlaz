@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/tunwarden/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 func TestPlanTunBuildsFullTunnelPlanFromFakeSnapshot(t *testing.T) {
@@ -38,7 +38,7 @@ func TestPlanTunBuildsFullTunnelPlanFromFakeSnapshot(t *testing.T) {
 	if len(plan.RollbackSteps) == 0 {
 		t.Fatalf("expected rollback steps for planned route/TUN changes")
 	}
-	if !containsString(plan.RollbackSteps, "Restore previous systemd-resolved") || !containsString(plan.RollbackSteps, "Remove nftables table inet tunwarden") {
+	if !containsString(plan.RollbackSteps, "Restore previous systemd-resolved") || !containsString(plan.RollbackSteps, "Remove nftables table inet podlaz") {
 		t.Fatalf("expected DNS and nftables rollback steps, got %#v", plan.RollbackSteps)
 	}
 	if len(plan.LoopRisks) != 0 {
@@ -62,15 +62,15 @@ func TestPlanTunWarnsWhenDefaultRouteIsMissing(t *testing.T) {
 	}
 }
 
-func TestPlanTunWarnsAboutExistingTunWardenTun(t *testing.T) {
-	plan, err := PlanTun(testVLESSProfile(), snapshot.FakeDesktopWithStaleTunWardenResources())
+func TestPlanTunWarnsAboutExistingpodlazTun(t *testing.T) {
+	plan, err := PlanTun(testVLESSProfile(), snapshot.FakeDesktopWithStalepodlazResources())
 	if err != nil {
-		t.Fatalf("plan tun with existing TunWarden resources: %v", err)
+		t.Fatalf("plan tun with existing podlaz resources: %v", err)
 	}
-	if !containsWarning(plan.Warnings, "TunWarden TUN device tunwarden0 already exists") {
+	if !containsWarning(plan.Warnings, "podlaz TUN device podlaz0 already exists") {
 		t.Fatalf("expected existing TUN warning, got %#v", plan.Warnings)
 	}
-	if !containsWarning(plan.Warnings, "stale TunWarden-owned") {
+	if !containsWarning(plan.Warnings, "stale podlaz-owned") {
 		t.Fatalf("expected stale-resource warning, got %#v", plan.Warnings)
 	}
 	if plan.Firewall.TableAction != FirewallActionValidate {
@@ -89,7 +89,7 @@ func TestPlanTunDetectsServerRouteLoopRisk(t *testing.T) {
 	if len(plan.LoopRisks) == 0 {
 		t.Fatalf("expected route loop risks")
 	}
-	if !containsWarning(plan.Warnings, "route to VPN server candidate points at tunwarden0") {
+	if !containsWarning(plan.Warnings, "route to VPN server candidate points at podlaz0") {
 		t.Fatalf("expected route loop warning, got %#v", plan.Warnings)
 	}
 }
@@ -136,7 +136,7 @@ func TestPlanTunBlocksFirewallPlanWhenNftablesMissing(t *testing.T) {
 	if !containsFirewallChain(plan.Firewall.Chains, FirewallOutputChain, FirewallOutputHook, FirewallActionBlocked) {
 		t.Fatalf("expected blocked output chain, got %#v", plan.Firewall.Chains)
 	}
-	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionBlocked, FirewallVerdictReject, `oifname != "tunwarden0"`) {
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionBlocked, FirewallVerdictReject, `oifname != "podlaz0"`) {
 		t.Fatalf("expected blocked kill-switch rule, got %#v", plan.Firewall.Rules)
 	}
 	if !containsWarning(plan.Warnings, "firewall desired state is blocked") {
@@ -152,7 +152,7 @@ func TestPlanTunWarnsAboutStrictKillSwitchPolicy(t *testing.T) {
 	if plan.Firewall.KillSwitch.Policy != KillSwitchPolicyStrict {
 		t.Fatalf("expected strict kill-switch policy, got %#v", plan.Firewall.KillSwitch)
 	}
-	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionAdd, FirewallVerdictDrop, `oifname != "tunwarden0"`) {
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionAdd, FirewallVerdictDrop, `oifname != "podlaz0"`) {
 		t.Fatalf("expected strict drop kill-switch rule, got %#v", plan.Firewall.Rules)
 	}
 	if !containsWarning(plan.Warnings, "strict kill-switch") || !containsWarning(plan.Warnings, "recover") {
@@ -165,7 +165,7 @@ func TestPlanTunPlansOffKillSwitchWithoutBlockingRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan tun with off kill-switch: %v", err)
 	}
-	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionSkip, "", `oifname != "tunwarden0"`) {
+	if !containsFirewallRule(plan.Firewall.Rules, FirewallKillSwitchOwner, FirewallActionSkip, "", `oifname != "podlaz0"`) {
 		t.Fatalf("expected skipped kill-switch rule, got %#v", plan.Firewall.Rules)
 	}
 }
@@ -196,10 +196,10 @@ func assertDefaultFirewallPlan(t *testing.T, plan TunFirewallPlan, ruleAction, k
 	if !containsFirewallRule(plan.Rules, FirewallServerBypassOwner, ruleAction, FirewallVerdictAccept, "ip daddr 203.0.113.10") {
 		t.Fatalf("expected server bypass firewall rule, got %#v", plan.Rules)
 	}
-	if !containsFirewallRule(plan.Rules, FirewallTunEgressOwner, ruleAction, FirewallVerdictAccept, `oifname "tunwarden0"`) {
+	if !containsFirewallRule(plan.Rules, FirewallTunEgressOwner, ruleAction, FirewallVerdictAccept, `oifname "podlaz0"`) {
 		t.Fatalf("expected TUN egress firewall rule, got %#v", plan.Rules)
 	}
-	if !containsFirewallRule(plan.Rules, FirewallKillSwitchOwner, ruleAction, killSwitchVerdict, `oifname != "tunwarden0"`) {
+	if !containsFirewallRule(plan.Rules, FirewallKillSwitchOwner, ruleAction, killSwitchVerdict, `oifname != "podlaz0"`) {
 		t.Fatalf("expected kill-switch firewall rule, got %#v", plan.Rules)
 	}
 }
@@ -262,8 +262,8 @@ func fakeDesktopWithoutResolved() snapshot.Snapshot {
 func fakeDesktopWithoutNftables() snapshot.Snapshot {
 	s := snapshot.FakeResolvedDesktop()
 	s.Nftables = snapshot.Nftables{
-		Availability:   snapshot.Finding{Status: snapshot.StatusMissing, Summary: "nft not found"},
-		TunWardenTable: snapshot.Finding{Status: snapshot.StatusMissing, Summary: "TunWarden nftables table not inspected because nft is unavailable"},
+		Availability: snapshot.Finding{Status: snapshot.StatusMissing, Summary: "nft not found"},
+		PodlazTable:  snapshot.Finding{Status: snapshot.StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"},
 	}
 	return s
 }

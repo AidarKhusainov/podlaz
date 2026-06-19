@@ -90,7 +90,7 @@ func TestScanTransactionsReportsPendingAndInvalidState(t *testing.T) {
 	tx.State = TransactionApplying
 	tx.Rollback = RollbackMetadata{
 		TUN: []TUNRollback{{
-			InterfaceName: "tunwarden0",
+			InterfaceName: "podlaz0",
 			Owner:         TransactionOwner,
 		}},
 	}
@@ -163,39 +163,39 @@ func TestRepeatedRollbackPlanningIsStable(t *testing.T) {
 func fullRollbackMetadata() RollbackMetadata {
 	return RollbackMetadata{
 		TUN: []TUNRollback{{
-			InterfaceName: "tunwarden0",
+			InterfaceName: "podlaz0",
 			Owner:         TransactionOwner,
 		}},
 		Routes: []RouteRollback{{
-			Table: "tunwarden",
+			Table: "podlaz",
 			CIDR:  "0.0.0.0/0",
-			Dev:   "tunwarden0",
+			Dev:   "podlaz0",
 			Owner: TransactionOwner,
 		}},
 		PolicyRules: []PolicyRuleRollback{{
 			Priority: 51820,
-			Table:    "tunwarden",
+			Table:    "podlaz",
 			Owner:    TransactionOwner,
 		}},
 		DNS: []DNSRollback{{
 			Backend:  "systemd-resolved",
-			Link:     "tunwarden0",
+			Link:     "podlaz0",
 			Previous: []string{"1.1.1.1"},
 			Owner:    TransactionOwner,
 		}},
 		NFTables: []NFTablesRollback{{
 			Family: "inet",
-			Table:  "tunwarden",
+			Table:  "podlaz",
 			Owner:  TransactionOwner,
 		}},
 		GeneratedConfigs: []GeneratedConfigRollback{{
-			Path:  "/run/tunwarden/generated/xray.json",
+			Path:  "/run/podlaz/generated/xray.json",
 			Owner: TransactionOwner,
 		}},
 		ChildProcesses: []ChildProcessRollback{{
 			PID:       1234,
 			Label:     "xray",
-			ConfigRef: "/run/tunwarden/generated/xray.json",
+			ConfigRef: "/run/podlaz/generated/xray.json",
 			Owner:     TransactionOwner,
 		}},
 	}

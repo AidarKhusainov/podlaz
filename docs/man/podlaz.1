@@ -1,79 +1,79 @@
-.TH TUNWARDEN 1 "June 2026" "TunWarden" "User Commands"
+.TH PODLAZ 1 "June 2026" "podlaz" "User Commands"
 .SH NAME
-tunwarden \- Linux-first CLI for Xray-compatible VPN and proxy profiles
+podlaz \- Linux-first CLI for Xray-compatible VPN and proxy profiles
 .SH SYNOPSIS
-.SY tunwarden
+.SY podlaz
 .OP --help
 .YS
-.SY tunwarden
+.SY podlaz
 .B version
 .YS
-.SY tunwarden
+.SY podlaz
 .B import
 .I share-uri|local-path|file-or-http-url
 .YS
-.SY tunwarden
+.SY podlaz
 .B profile
 .I subcommand
 .RI [ arguments ]
 .YS
-.SY tunwarden
+.SY podlaz
 .B subscription
 .I subcommand
 .RI [ arguments ]
 .YS
-.SY tunwarden
+.SY podlaz
 .B plan
 .B --mode
 .IR proxy-only | tun
 .I profile-id
 .OP --json
 .YS
-.SY tunwarden
+.SY podlaz
 .B connect
 .OP --mode proxy-only|tun
 .I profile-id
 .YS
-.SY tunwarden
+.SY podlaz
 .B disconnect
 .YS
-.SY tunwarden
+.SY podlaz
 .B status
 .YS
-.SY tunwarden
+.SY podlaz
 .B doctor
 .RI [ options ]
 .YS
-.SY tunwarden
+.SY podlaz
 .B logs
 .RI [ options ]
 .YS
-.SY tunwarden
+.SY podlaz
 .B recover
 .OP --execute --yes
 .OP --json
 .YS
-.SY tunwarden
+.SY podlaz
 .B completion
 .IR bash | zsh | fish
 .YS
 .SH DESCRIPTION
-.B tunwarden
-is the user-facing command line interface for TunWarden, a Linux-first,
+.B podlaz
+is the user-facing command line interface for podlaz, a Linux-first,
 CLI-first VPN/proxy client foundation for Xray-compatible configurations.
 It manages user-owned profile and subscription state, renders plans and
 status, and sends lifecycle intents to the local
-.BR tunwardend (8)
+.BR podlazd (8)
 daemon when daemon-owned runtime behavior is required.
 .PP
-TunWarden is designed around safe defaults. Read-only commands must not
+podlaz is designed around safe defaults. Read-only commands must not
 require root. The CLI must not become a privileged or SUID networking
 mutator. Privileged networking state belongs to the daemon transaction and
 recovery model.
 .SH COMMANDS
 .TP
 .B version
-Print the TunWarden version.
+Print the podlaz version.
 .TP
 .B help [command]
 Print general help or command-specific help.
@@ -117,8 +117,8 @@ fails as JSON and does not fall back to Base64 parsing.
 .RE
 .PP
 .RS
-The command creates user-owned TunWarden state only; it does not connect, start
-.BR tunwardend (8),
+The command creates user-owned podlaz state only; it does not connect, start
+.BR podlazd (8),
 start Xray, require root, create TUN devices, mutate routes, DNS, nftables, or
 firewall state. Raw Xray JSON is not stored as persistent source of truth or
 runtime configuration.
@@ -223,7 +223,7 @@ diagnostics.
 .TP
 .B logs [--follow] [--daemon] [--core] [--since <duration>]
 Read recent
-.BR tunwardend.service
+.BR podlazd.service
 journal entries through
 .BR journalctl (1).
 The
@@ -231,7 +231,7 @@ The
 view filters daemon-forwarded Xray lifecycle and stdout/stderr lines.
 .TP
 .B recover
-Inspect clearly TunWarden-owned recovery candidates without mutating host state.
+Inspect clearly podlaz-owned recovery candidates without mutating host state.
 .TP
 .B recover --execute --yes [--json]
 Send explicit cleanup intent to the daemon. The CLI does not perform privileged
@@ -242,7 +242,7 @@ host cleanup directly. Ambiguous resources are skipped and left unchanged.
 Print help where supported.
 .TP
 .B --version
-Print the TunWarden version.
+Print the podlaz version.
 .TP
 .B --json
 Print machine-readable JSON for commands whose JSON contract is implemented.
@@ -336,51 +336,51 @@ prints the common JSON envelope plus the redacted profile, selected mode,
 selected backend, and a boolean validation result.
 .SH FILES
 .TP
-.I $XDG_CONFIG_HOME/tunwarden/
+.I $XDG_CONFIG_HOME/podlaz/
 User configuration directory. Defaults to
-.IR ~/.config/tunwarden/ .
+.IR ~/.config/podlaz/ .
 .TP
-.I $XDG_STATE_HOME/tunwarden/
+.I $XDG_STATE_HOME/podlaz/
 User state directory. Defaults to
-.IR ~/.local/state/tunwarden/ .
+.IR ~/.local/state/podlaz/ .
 Profiles and subscriptions are user-owned state and must not require root.
 .TP
-.I /run/tunwarden/
+.I /run/podlaz/
 Daemon runtime directory used by packaged systemd deployments.
 .TP
-.I /run/tunwarden/tunwardend.sock
+.I /run/podlaz/podlazd.sock
 Local Unix socket for the daemon API.
 .TP
-.I /run/tunwarden/generated/
+.I /run/podlaz/generated/
 Daemon-owned generated runtime configuration directory. Generated core configs
 are runtime output, not persistent source of truth, and must not be logged in
 full.
 .TP
-.I /run/tunwarden/transactions/
+.I /run/podlaz/transactions/
 Volatile daemon transaction state used by status, diagnostics, rollback, and
 recovery paths.
 .TP
-.I /usr/share/bash-completion/completions/tunwarden
+.I /usr/share/bash-completion/completions/podlaz
 Packaged bash completion file.
 .TP
-.I /usr/share/zsh/vendor-completions/_tunwarden
+.I /usr/share/zsh/vendor-completions/_podlaz
 Packaged zsh completion file.
 .TP
-.I /usr/share/fish/vendor_completions.d/tunwarden.fish
+.I /usr/share/fish/vendor_completions.d/podlaz.fish
 Packaged fish completion file.
 .SH ENVIRONMENT
 .TP
-.B TUNWARDEN_RUNTIME_DIR
+.B PODLAZ_RUNTIME_DIR
 Override the daemon runtime directory for tests and local development.
 .TP
-.B TUNWARDEN_XRAY_PATH
+.B PODLAZ_XRAY_PATH
 Provide an explicit Xray executable path for daemon-side proxy-only lifecycle
 testing.
 .TP
 .B XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_CACHE_HOME
-Standard XDG base directory variables used for user-owned TunWarden state.
+Standard XDG base directory variables used for user-owned podlaz state.
 .SH SECURITY
-TunWarden keeps user state, daemon runtime state, and system networking state
+podlaz keeps user state, daemon runtime state, and system networking state
 separate. The CLI parses user intent, renders output, and sends daemon API
 requests; it must not directly mutate privileged Linux networking state.
 .PP
@@ -401,7 +401,7 @@ Local and subscription imports parse supported content into normalized profiles
 only. They must not execute or persist raw Xray JSON as source of truth or
 runtime configuration.
 .PP
-Subscription delete mutates only user-owned local TunWarden state. It must not
+Subscription delete mutates only user-owned local podlaz state. It must not
 start the daemon, start Xray, fetch subscription URLs, require root, or mutate
 Linux networking state.
 .PP
@@ -413,101 +413,101 @@ parameters.
 .TP
 Show local help:
 .EX
-tunwarden help
-tunwarden help connect
+podlaz help
+podlaz help connect
 .EE
 .TP
 Generate shell completion definitions:
 .EX
-tunwarden completion bash
-tunwarden completion zsh
-tunwarden completion fish
+podlaz completion bash
+podlaz completion zsh
+podlaz completion fish
 .EE
 .TP
 Import and inspect a profile without connecting:
 .EX
-tunwarden profile import 'vless://...'
-tunwarden profile list
-tunwarden profile show my-profile
+podlaz profile import 'vless://...'
+podlaz profile list
+podlaz profile show my-profile
 .EE
 .TP
 Validate a stored profile before planning or connecting:
 .EX
-tunwarden profile validate my-profile
-tunwarden profile validate my-profile --mode tun --json
+podlaz profile validate my-profile
+podlaz profile validate my-profile --mode tun --json
 .EE
 .TP
 Import a local Xray JSON or URI-list file without connecting:
 .EX
-tunwarden import ./profiles.json
-tunwarden import ./profiles.txt
-tunwarden profile list
+podlaz import ./profiles.json
+podlaz import ./profiles.txt
+podlaz profile list
 .EE
 .TP
 Import and inspect a subscription without connecting:
 .EX
-tunwarden import https://example.com/subscription
-tunwarden subscription list
-tunwarden profile list
+podlaz import https://example.com/subscription
+podlaz subscription list
+podlaz profile list
 .EE
 .TP
 Refresh an explicit subscription source:
 .EX
-tunwarden subscription add --name personal --url https://example.com/subscription
-tunwarden subscription update personal
-tunwarden subscription show personal
+podlaz subscription add --name personal --url https://example.com/subscription
+podlaz subscription update personal
+podlaz subscription show personal
 .EE
 .TP
 Delete a subscription and its owned imported profiles:
 .EX
-tunwarden subscription delete personal --yes
+podlaz subscription delete personal --yes
 .EE
 .TP
 Delete only subscription metadata and keep imported profiles:
 .EX
-tunwarden subscription delete personal --yes --keep-profiles
+podlaz subscription delete personal --yes --keep-profiles
 .EE
 .TP
 Inspect a safe proxy-only plan:
 .EX
-tunwarden plan --mode proxy-only my-profile
+podlaz plan --mode proxy-only my-profile
 .EE
 .TP
 Start and stop proxy-only lifecycle through the daemon:
 .EX
-tunwarden connect --mode proxy-only my-profile
-tunwarden status
-tunwarden disconnect
+podlaz connect --mode proxy-only my-profile
+podlaz status
+podlaz disconnect
 .EE
 .TP
 Read daemon logs:
 .EX
-tunwarden logs --daemon --since "1 hour ago"
-tunwarden logs --follow --core
+podlaz logs --daemon --since "1 hour ago"
+podlaz logs --follow --core
 .EE
 .TP
 Inspect recovery candidates without changing the host:
 .EX
-tunwarden recover
+podlaz recover
 .EE
 .SH DIAGNOSTICS
 Use
-.B tunwarden status
+.B podlaz status
 to inspect active daemon and runtime state,
-.B tunwarden doctor
+.B podlaz doctor
 to explain environment and health checks,
-.B tunwarden logs
+.B podlaz logs
 to inspect journald output, and
-.B tunwarden recover
-to inspect or explicitly clean up stale TunWarden-owned volatile state.
+.B podlaz recover
+to inspect or explicitly clean up stale podlaz-owned volatile state.
 .PP
 When daemon socket access fails with permission denied in a packaged install,
 check membership in the
-.B tunwarden
+.B podlaz
 group and the mode of
-.IR /run/tunwarden/tunwardend.sock .
+.IR /run/podlaz/podlazd.sock .
 .SH SEE ALSO
-.BR tunwardend (8),
+.BR podlazd (8),
 .BR systemctl (1),
 .BR journalctl (1),
 .BR systemd.unit (5)
