@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"net/http"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
@@ -16,34 +18,86 @@ const SubscriptionDisplayNameRejectedWarning = "provider subscription display na
 // known, tested provider metadata fields. It intentionally ignores entry-level
 // profile names and provider error/unsupported-client messages.
 func ProviderSubscriptionDisplayName(format Format, content []byte) (string, []Issue) {
-	if format != FormatXrayJSON {
-		return "", nil
+	return ProviderSubscriptionDisplayNameFromMetadata(format, content, nil)
+}
+
+// ProviderSubscriptionDisplayNameFromMetadata extracts a subscription-level
+// display name from safe HTTP response metadata first, then from wrapper-level
+// JSON metadata.
+func ProviderSubscriptionDisplayNameFromMetadata(format Format, content []byte, header http.Header) (string, []Issue) {
+	candidates := subscriptionHeaderDisplayNameCandidates(header)
+	if format == FormatXrayJSON {
+		candidates = append(candidates, subscriptionJSONDisplayNameCandidates(content)...)
 	}
+	return firstSafeSubscriptionDisplayName(candidates)
+}
+
+func subscriptionHeaderDisplayNameCandidates(header http.Header) []string {
+	if len(header) == 0 {
+		return nil
+	}
+	var candidates []string
+	if value := strings.TrimSpace(header.Get("Content-Disposition")); value != "" {
+		_, params, err := mime.ParseMediaType(value)
+		if err == nil {
+			candidates = append(candidates, params["filename"], params["name"])
+		}
+	}
+	for _, key := range []string{
+		"Subscription-Title",
+		"Profile-Title",
+		"X-Subscription-Title",
+		"X-Profile-Title",
+		"Subscription-Name",
+		"Profile-Name",
+		"X-Subscription-Name",
+		"X-Profile-Name",
+	} {
+		candidates = append(candidates, header.Get(key))
+	}
+	return candidates
+}
+
+func subscriptionJSONDisplayNameCandidates(content []byte) []string {
 	trimmed := bytes.TrimSpace(content)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return "", nil
+		return nil
 	}
-
 	object, err := decodeSubscriptionJSONObject(trimmed)
 	if err != nil {
-		return "", nil
+		return nil
 	}
 	if _, unsupported := unsupportedClientProviderMessage(object); unsupported {
-		return "", nil
+		return nil
 	}
 
-	for _, key := range []string{"title", "name", "remarks"} {
+	var candidates []string
+	for _, key := range []string{"title", "name", "remarks", "remark", "displayName", "display_name", "ps"} {
 		raw, ok := object[key]
 		if !ok {
 			continue
 		}
 		value, ok := rawJSONString(raw)
-		if !ok || strings.TrimSpace(value) == "" {
+		if ok {
+			candidates = append(candidates, value)
+		}
+	}
+	return candidates
+}
+
+func firstSafeSubscriptionDisplayName(candidates []string) (string, []Issue) {
+	rejected := false
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
 			continue
 		}
-		if name, ok := profile.SanitizeDisplayName(value); ok {
+		if name, ok := profile.SanitizeDisplayName(candidate); ok {
 			return name, nil
 		}
+		rejected = true
+	}
+	if rejected {
 		return "", []Issue{{Line: 1, Message: SubscriptionDisplayNameRejectedWarning}}
 	}
 	return "", nil
