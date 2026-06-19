@@ -46,6 +46,15 @@ func runSubscriptionDelete(store sub.Store, profileStore profile.Store, args []s
 		return nil
 	}
 
+	linkedProfileIDs, err := subscriptionProfileIDsReferencedByOtherSources(store, source.ID)
+	if err != nil {
+		return err
+	}
+	matchingProfiles, err := profileStore.CountUnlinkedProfilesMatchingSubscriptionServers(source.ProfileIDs, linkedProfileIDs)
+	if err != nil {
+		return err
+	}
+
 	profileSnapshot, profileExisted, err := snapshotFile(profileStore.Path())
 	if err != nil {
 		return err
@@ -71,7 +80,25 @@ func runSubscriptionDelete(store sub.Store, profileStore profile.Store, args []s
 
 	fmt.Fprintf(stdout, "Subscription deleted: %s\n", render.Redact(source.ID))
 	fmt.Fprintf(stdout, "Profiles removed: %d\n", removedProfiles)
+	if matchingProfiles > 0 {
+		fmt.Fprintf(stdout, "Profiles with matching servers were left untouched: %d\n", matchingProfiles)
+	}
 	return nil
+}
+
+func subscriptionProfileIDsReferencedByOtherSources(store sub.Store, deletedSourceID string) ([]string, error) {
+	sources, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, source := range sources {
+		if source.ID == deletedSourceID {
+			continue
+		}
+		ids = append(ids, source.ProfileIDs...)
+	}
+	return ids, nil
 }
 
 func confirmSubscriptionDelete(stdout io.Writer, opts options, source sub.Source, keepProfiles bool) error {
