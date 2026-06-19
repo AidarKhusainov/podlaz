@@ -9,11 +9,13 @@ function deb_arch_to_goarch() {
   esac
 }
 
-function quote_go_ldflag_value() {
-  local value="$1"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  printf '"%s"' "${value}"
+function quote_go_ldflag_assignment() {
+  local assignment="$1"
+  if [[ "${assignment}" == *"'"* ]]; then
+    echo "Go ldflag assignment contains an unsupported single quote: ${assignment}" >&2
+    exit 2
+  fi
+  printf "'%s'" "${assignment}"
 }
 
 binary_version="${PODLAZ_VERSION:-0.0.0~dev}"
@@ -74,7 +76,10 @@ mkdir -p \
 
 commit="${PODLAZ_COMMIT:-unknown}"
 built="${PODLAZ_BUILT:-unknown}"
-ldflags="-s -w -X ${version_package}=$(quote_go_ldflag_value "${binary_version}") -X ${commit_package}=$(quote_go_ldflag_value "${commit}") -X ${built_package}=$(quote_go_ldflag_value "${built}")"
+version_assignment="$(quote_go_ldflag_assignment "${version_package}=${binary_version}")"
+commit_assignment="$(quote_go_ldflag_assignment "${commit_package}=${commit}")"
+built_assignment="$(quote_go_ldflag_assignment "${built_package}=${built}")"
+ldflags="-s -w -X ${version_assignment} -X ${commit_assignment} -X ${built_assignment}"
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlaz" ./cmd/podlaz
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlazd" ./cmd/podlazd
 
