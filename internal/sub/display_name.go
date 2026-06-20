@@ -15,7 +15,10 @@ import (
 
 const SubscriptionDisplayNameRejectedWarning = "provider subscription display name was rejected; using safe fallback"
 
-const encodedHeaderValuePrefix = "base" + "64:"
+const (
+	encodedHeaderValuePrefix = "base" + "64:"
+	urlSchemeSeparator       = ":" + "//"
+)
 
 // ProviderSubscriptionDisplayName extracts a subscription-level display name from
 // known, tested provider metadata fields. It intentionally ignores entry-level
@@ -110,6 +113,10 @@ func firstSafeSubscriptionDisplayName(candidates []string) (string, []Issue) {
 		if candidate == "" {
 			continue
 		}
+		if unsafeSubscriptionDisplayNameCandidate(candidate) {
+			rejected = true
+			continue
+		}
 		if name, ok := profile.SanitizeDisplayName(candidate); ok {
 			return name, nil
 		}
@@ -119,6 +126,22 @@ func firstSafeSubscriptionDisplayName(candidates []string) (string, []Issue) {
 		return "", []Issue{{Line: 1, Message: SubscriptionDisplayNameRejectedWarning}}
 	}
 	return "", nil
+}
+
+func unsafeSubscriptionDisplayNameCandidate(candidate string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(candidate))
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(normalized, urlSchemeSeparator) {
+		return true
+	}
+	for _, prefix := range []string{"vl" + "ess:", "vm" + "ess:", "tro" + "jan:", "s" + "s:"} {
+		if strings.HasPrefix(normalized, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeSubscriptionJSONObject(content []byte) (map[string]json.RawMessage, error) {
