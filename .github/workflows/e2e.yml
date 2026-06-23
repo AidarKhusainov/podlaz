@@ -12,6 +12,7 @@ on:
           - cli-contract
           - package-service
           - real-vpn
+          - real-vpn-extended
           - all
       lifecycle:
         description: Allow real-vpn to run daemon connect/disconnect lifecycle checks
@@ -23,6 +24,16 @@ on:
         required: true
         type: boolean
         default: false
+      crash_tests:
+        description: Allow extended real-vpn suite to kill supervised core/daemon processes
+        required: true
+        type: boolean
+        default: false
+      stability_minutes:
+        description: Long-running stability probe duration for extended real-vpn suite
+        required: true
+        type: string
+        default: '0'
 
 permissions:
   contents: read
@@ -128,5 +139,51 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: podlaz-real-vpn-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  real-vpn-extended:
+    name: Extended real VPN e2e
+    if: ${{ inputs.suite == 'real-vpn-extended' }}
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    environment: vpn-e2e
+    timeout-minutes: 240
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_2: ${{ secrets.PODLAZ_E2E_PROFILE_URI_2 }}
+      PODLAZ_E2E_PROFILE_URI_3: ${{ secrets.PODLAZ_E2E_PROFILE_URI_3 }}
+      PODLAZ_E2E_PROFILE_URI_4: ${{ secrets.PODLAZ_E2E_PROFILE_URI_4 }}
+      PODLAZ_E2E_SUBSCRIPTION_URL: ${{ secrets.PODLAZ_E2E_SUBSCRIPTION_URL }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IPV6: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IPV6 }}
+      PODLAZ_E2E_EXPECT_IPV6: ${{ vars.PODLAZ_E2E_EXPECT_IPV6 }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_PUBLIC_IPV6_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IPV6_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+      PODLAZ_E2E_ENABLE_TUN: ${{ inputs.tun }}
+      PODLAZ_E2E_ENABLE_CRASH_TESTS: ${{ inputs.crash_tests }}
+      PODLAZ_E2E_STABILITY_MINUTES: ${{ inputs.stability_minutes }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+
+      - name: Run extended real VPN e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/real-vpn-extended.sh
+
+      - name: Upload extended real VPN diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-real-vpn-extended-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
