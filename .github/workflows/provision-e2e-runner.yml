@@ -201,6 +201,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          remote_bootstrap_path="/tmp/podlaz-bootstrap-e2e-runner-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
+          echo "REMOTE_BOOTSTRAP_PATH=${remote_bootstrap_path}" >> "${GITHUB_ENV}"
           scp -P "${SSH_PORT}" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
@@ -208,7 +210,7 @@ jobs:
             -o PreferredAuthentications=publickey \
             -o StrictHostKeyChecking=yes \
             scripts/ops/bootstrap-e2e-runner.sh \
-            "${SSH_USER}@${SSH_HOST}:/tmp/podlaz-bootstrap-e2e-runner.sh"
+            "${SSH_USER}@${SSH_HOST}:${remote_bootstrap_path}"
 
       - name: Run remote bootstrap
         shell: bash
@@ -233,7 +235,8 @@ jobs:
             "RESET_RUNNER=$(shell_quote "${RESET_RUNNER}")"
           )
 
-          remote_command="env ${remote_env[*]} bash /tmp/podlaz-bootstrap-e2e-runner.sh"
+          remote_bootstrap_path="$(shell_quote "${REMOTE_BOOTSTRAP_PATH}")"
+          remote_command="env ${remote_env[*]} bash ${remote_bootstrap_path}"
           if [[ "${SSH_USER}" != "root" ]]; then
             remote_command="sudo ${remote_command}"
           fi
