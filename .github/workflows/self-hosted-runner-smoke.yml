@@ -1,0 +1,75 @@
+name: Self-hosted runner smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-runner-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    name: Runner and host smoke
+    runs-on: [self-hosted, linux, x64, vpn-e2e]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Runner identity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "RUNNER_NAME=${RUNNER_NAME:-}"
+          echo "RUNNER_OS=${RUNNER_OS:-}"
+          echo "RUNNER_ARCH=${RUNNER_ARCH:-}"
+          hostname
+          whoami
+          id
+          uname -a
+          lsb_release -a || true
+          pwd
+
+      - name: Host prerequisites
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test "$(uname -s)" = Linux
+          test -c /dev/net/tun
+
+          for bin in ip nft resolvectl systemctl journalctl sudo; do
+            command -v "$bin"
+          done
+
+          ip -V
+          nft --version
+          resolvectl --version
+          systemctl --version | head -n 1
+          journalctl --version | head -n 1
+
+          systemctl is-active systemd-resolved
+          systemctl is-active NetworkManager || true
+          systemctl is-system-running || true
+
+          sudo -n true
+          sudo -n ip link show >/dev/null
+          sudo -n nft list ruleset >/dev/null || true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+
+      - name: Podlaz CLI smoke
+        shell: bash
+        run: |
+          set -euxo pipefail
+          go run ./cmd/podlaz version
+          go run ./cmd/podlaz completion bash >/dev/null
+          go run ./cmd/podlaz completion zsh >/dev/null
+          go run ./cmd/podlaz completion fish >/dev/null
