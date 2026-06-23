@@ -1,0 +1,132 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: E2E suite to run
+        required: true
+        type: choice
+        default: cli-contract
+        options:
+          - cli-contract
+          - package-service
+          - real-vpn
+          - all
+      lifecycle:
+        description: Allow real-vpn to run daemon connect/disconnect lifecycle checks
+        required: true
+        type: boolean
+        default: false
+      tun:
+        description: Allow real-vpn lifecycle to apply TUN-mode networking mutations
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podlaz-e2e-${{ inputs.suite }}
+  cancel-in-progress: false
+
+jobs:
+  cli-contract:
+    name: CLI contract e2e
+    if: ${{ inputs.suite == 'cli-contract' || inputs.suite == 'all' }}
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+
+      - name: Run CLI contract e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/cli-contract.sh
+
+      - name: Upload CLI contract diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-cli-contract-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  package-service:
+    name: Package and service e2e
+    if: ${{ inputs.suite == 'package-service' || inputs.suite == 'all' }}
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+
+      - name: Run package/service e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/package-service.sh
+
+      - name: Upload package/service diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-package-service-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  real-vpn:
+    name: Real VPN e2e
+    if: ${{ inputs.suite == 'real-vpn' || inputs.suite == 'all' }}
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    environment: vpn-e2e
+    timeout-minutes: 60
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_SUBSCRIPTION_URL: ${{ secrets.PODLAZ_E2E_SUBSCRIPTION_URL }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+      PODLAZ_E2E_ENABLE_LIFECYCLE: ${{ inputs.lifecycle }}
+      PODLAZ_E2E_ENABLE_TUN: ${{ inputs.tun }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+
+      - name: Run real VPN e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/real-vpn.sh
+
+      - name: Upload real VPN diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-real-vpn-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore

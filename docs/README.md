@@ -51,6 +51,7 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 | Document | Purpose |
 | --- | --- |
 | [Debian package contract](./debian-package.md) | Local `.deb` layout, package metadata, install/remove behavior, access contract, and validation gates. |
+| [Self-hosted E2E validation](./e2e.md) | Manual self-hosted E2E tiers, runner contract, secrets, sudo scope, diagnostics, and safety gates. |
 | [Release workflow](./release.md) | GitHub Release automation, artifacts, version mapping, permissions, and safety boundary. |
 | [Release gates](./release-gates.md) | Reusable release-gate policy and evidence rules. |
 | [Roadmap](./roadmap.md) | Sequencing constraints and deferrals. It is not a repository status log. |
@@ -68,7 +69,7 @@ Documentation describes user-visible behavior, safety invariants, filesystem lay
 
 - CLI behavior is owned by [CLI contract](./cli.md).
 - CLI/daemon separation and daemon-mediated access are owned by [Architecture](./architecture.md).
-- Filesystem layout, output redaction, confirmation behavior, systemd hardening, packaged daemon socket access, and core process safety are owned by [State and security requirements](./state-and-security.md).
+- Filesystem layout, output redaction, confirmation behavior, systemd hardening, and core process safety are owned by [State and security requirements](./state-and-security.md).
 - Linux networking invariants are owned by [Networking and reliability requirements](./networking-reliability.md).
 - Package layout, package lifecycle, and package validation boundaries are owned by [Debian package contract](./debian-package.md).
 - Package dependency direction is owned by [Package boundaries](./package-boundaries.md).
