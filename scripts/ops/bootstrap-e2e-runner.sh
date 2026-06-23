@@ -227,7 +227,7 @@ main() {
   : "${RUNNER_ARCH_LABEL:=x64}"
   : "${RUNNER_LABELS:=self-hosted,linux,${RUNNER_ARCH_LABEL},vpn-e2e,${RUNNER_PLATFORM_LABEL}}"
   : "${RESET_RUNNER:=true}"
-  : "${RUNNER_HOME:=/opt/actions-runner}"
+  : "${RUNNER_HOME:=/opt/actions-runner/actions-runner}"
   : "${RUNNER_NAME:=}"
   : "${HOST_WRAPPER_DIR:=/usr/local/libexec/podlaz-e2e}"
 
