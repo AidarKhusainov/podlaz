@@ -39,11 +39,13 @@ Inputs:
 
 | Input | Values | Purpose |
 | --- | --- | --- |
-| `suite` | `cli-contract`, `package-service`, `real-vpn`, `all` | Selects the E2E tier. |
+| `suite` | `cli-contract`, `package-service`, `real-vpn`, `real-vpn-extended`, `all` | Selects the E2E tier. |
 | `lifecycle` | boolean | Allows `real-vpn` to run daemon connect/disconnect checks. |
-| `tun` | boolean | Allows `real-vpn` lifecycle to apply TUN-mode networking mutations. |
+| `tun` | boolean | Allows real VPN suites to apply TUN-mode networking mutations. |
+| `crash_tests` | boolean | Allows `real-vpn-extended` to kill supervised core and daemon processes. |
+| `stability_minutes` | integer string | Long-running stability probe duration for `real-vpn-extended`. |
 
-The default suite is `cli-contract`. The lifecycle flags default to `false` so a manual dispatch cannot accidentally change host routes, DNS, nftables, or TUN state.
+The default suite is `cli-contract`. The lifecycle, TUN, crash, and long-running flags default to disabled values so a manual dispatch cannot accidentally change host routes, DNS, nftables, TUN state, or daemon/core process state.
 
 ## Tier 1: CLI contract
 
@@ -135,6 +137,77 @@ TUN behavior with both `lifecycle=true` and `tun=true`:
 
 Only enable `tun=true` on a disposable or dedicated test host. TUN mode is expected to mutate host networking while the transaction is active.
 
+## Tier 4: Extended real VPN
+
+Script:
+
+```bash
+bash scripts/e2e/real-vpn-extended.sh
+```
+
+Required environment secret:
+
+```text
+PODLAZ_E2E_PROFILE_URI
+```
+
+Optional environment secrets for broader provider/protocol coverage:
+
+```text
+PODLAZ_E2E_PROFILE_URI_2
+PODLAZ_E2E_PROFILE_URI_3
+PODLAZ_E2E_PROFILE_URI_4
+PODLAZ_E2E_SUBSCRIPTION_URL
+PODLAZ_E2E_EXPECTED_EGRESS_IP
+PODLAZ_E2E_EXPECTED_EGRESS_IPV6
+```
+
+Optional environment variables:
+
+```text
+PODLAZ_E2E_EXPECT_IPV6=observe|blocked|egress
+PODLAZ_E2E_PUBLIC_IP_CHECK_URL
+PODLAZ_E2E_PUBLIC_IPV6_CHECK_URL
+PODLAZ_E2E_DNS_CHECK_HOST
+```
+
+Scope:
+
+- imports up to four real profile secrets into isolated user state;
+- validates and plans every imported profile for proxy-only and TUN modes;
+- builds and installs the local Debian package;
+- starts `podlazd.service`;
+- optionally exercises a real subscription URL;
+- runs proxy-only connect/status/disconnect for every imported profile;
+- runs concurrent `status` probes while a connection is active;
+- verifies that a second connect is rejected while a connection is active;
+- runs idempotent disconnect checks;
+- with `tun=true`, runs TUN connect/status/DNS/public-egress/disconnect/recover for every imported profile;
+- with `crash_tests=true`, kills the supervised Xray core process and validates status/doctor/disconnect/recover behavior;
+- with `crash_tests=true`, kills `podlazd.service`, restarts it, and validates status/recover/disconnect behavior;
+- with `stability_minutes > 0`, keeps one profile connected and polls status, DNS, and public egress repeatedly;
+- records host snapshots before, during, and after lifecycle operations.
+
+This tier intentionally does not execute destructive host-disruption actions such as `systemctl suspend`, NetworkManager reconnect, or DHCP renew. Those actions can strand a remote CI runner and need a provider-specific host with out-of-band recovery. The extended tier records NetworkManager/systemd/networking diagnostics instead.
+
+## Coverage boundaries
+
+The self-hosted server can cover real package/service, daemon, proxy-only, TUN, DNS, egress, crash, concurrency, multiple-profile, and long-running behavior.
+
+The following items need additional infrastructure or manual orchestration beyond the current single remote host:
+
+| Area | Status |
+| --- | --- |
+| Suspend/resume | Not automated on the remote runner because `systemctl suspend` can make the runner unreachable without out-of-band wake support. |
+| Wi-Fi/network reconnect | Not automated on the current server unless the host actually uses NetworkManager-managed Wi-Fi and has out-of-band recovery. |
+| DHCP renewal | Not automated because DHCP renew can change the runner's route/address and strand the job. |
+| DNS change while connected | Covered by diagnostics and repeated resolution checks; active resolver mutation is deferred until a safe host wrapper exists. |
+| NetworkManager behavior | Diagnostics are captured when `nmcli` is available; destructive reconnect is not automatic. |
+| Debian/Ubuntu matrix beyond this host | Requires additional labeled runners, VMs, or a provider image matrix. |
+| arm64 package/service install | Requires an arm64 runner or VM. Cross-package build can be added separately, but service install must run on arm64. |
+| Polkit GUI/TTY authorization flows | Requires a desktop/TTY test host with an interactive polkit agent. |
+| All protocols | Requires secrets for representative profiles; use `PODLAZ_E2E_PROFILE_URI_2` through `_4` for additional providers/protocols. |
+
 ## Suggested sudoers progression
 
 Start with the smallest policy needed for the selected tier.
@@ -151,6 +224,12 @@ Package/service tier:
 gha-runner ALL=(root) NOPASSWD: /usr/bin/apt, /usr/bin/systemctl, /usr/bin/journalctl, /usr/bin/env
 ```
 
+Extended crash tier, only when `crash_tests=true`:
+
+```text
+gha-runner ALL=(root) NOPASSWD: /usr/bin/kill
+```
+
 Real VPN lifecycle and TUN tiers need a narrower project-owned sudo wrapper before they become routine gates. Until then, run them manually and review the diagnostics after every run.
 
 ## Diagnostics
@@ -163,5 +242,5 @@ Diagnostics must stay sanitized. Do not upload full share URIs, subscription URL
 
 - The E2E workflow is not a required PR gate.
 - The real VPN suite is not safe for forked pull-request code.
-- The lifecycle/TUN tier is not enabled by default.
+- The lifecycle/TUN/crash tiers are not enabled by default.
 - E2E diagnostics are not permanent release evidence; release evidence belongs in the relevant release issue, pull request, or release notes.
