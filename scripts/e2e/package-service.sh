@@ -5,9 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd bash go sudo dpkg-deb file tar systemctl journalctl apt
+require_cmd bash go sudo dpkg dpkg-deb file tar systemctl journalctl apt
 
-DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_amd64.deb"
+: "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
+HOST_DEB_ARCH="$(dpkg --print-architecture)"
+if [[ "${PODLAZ_DEB_ARCH}" != "${HOST_DEB_ARCH}" ]]; then
+  fail "package/service e2e must install a native package: PODLAZ_DEB_ARCH=${PODLAZ_DEB_ARCH}, host=${HOST_DEB_ARCH}"
+fi
+DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 
@@ -48,6 +53,7 @@ require_cmd nfpm
 log "build Debian package"
 PODLAZ_COMMIT="${GITHUB_SHA:-e2e-package-service}" \
 PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
+PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
   bash scripts/build-deb.sh 2>&1 | tee "${E2E_ARTIFACT_DIR}/build-deb.log"
 
 test -f "${DEV_DEB}" || fail "expected package not found: ${DEV_DEB}"
