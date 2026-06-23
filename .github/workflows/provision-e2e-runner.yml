@@ -154,7 +154,7 @@ jobs:
           fi
           chmod 0644 ~/.ssh/known_hosts
 
-      - name: SSH and sudo preflight
+      - name: SSH and privilege preflight
         shell: bash
         run: |
           set -euo pipefail
@@ -166,7 +166,7 @@ jobs:
             -o PreferredAuthentications=publickey \
             -o StrictHostKeyChecking=yes \
             "${SSH_USER}@${SSH_HOST}" \
-            'printf "connected as %s on %s\n" "$(id -un)" "$(hostname)"; sudo -n true'
+            'printf "connected as %s on %s\n" "$(id -un)" "$(hostname)"; if [ "$(id -u)" = 0 ]; then exit 0; fi; sudo -n true || { printf "ERROR: SSH user must be root or have passwordless sudo.\n" >&2; exit 1; }'
 
       - name: Resolve latest actions runner version
         shell: bash
@@ -232,6 +232,7 @@ jobs:
             "RUNNER_ARCH_LABEL=$(shell_quote "${RUNNER_ARCH_LABEL}")"
             "RESET_RUNNER=$(shell_quote "${RESET_RUNNER}")"
           )
+          bootstrap_command="env ${remote_env[*]} bash /tmp/podlaz-bootstrap-e2e-runner.sh"
 
           ssh -p "${SSH_PORT}" \
             -o BatchMode=yes \
@@ -240,4 +241,4 @@ jobs:
             -o PreferredAuthentications=publickey \
             -o StrictHostKeyChecking=yes \
             "${SSH_USER}@${SSH_HOST}" \
-            "sudo env ${remote_env[*]} bash /tmp/podlaz-bootstrap-e2e-runner.sh"
+            "if [ \"\$(id -u)\" = 0 ]; then ${bootstrap_command}; else sudo ${bootstrap_command}; fi"
