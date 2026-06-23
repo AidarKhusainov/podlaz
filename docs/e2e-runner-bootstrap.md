@@ -17,13 +17,14 @@ Inputs can be provided manually, or left empty when the corresponding `vpn-e2e` 
 | Input | Fallback | Purpose |
 | --- | --- | --- |
 | `host` | `E2E_BOOTSTRAP_SSH_HOST` | SSH host or IP address of the clean server. |
-| `ssh_user` | `E2E_BOOTSTRAP_SSH_USER`, then `ubuntu` | SSH user. The user must be `root` or have passwordless sudo. |
+| `ssh_user` | `E2E_BOOTSTRAP_SSH_USER`, then `root` | SSH user. The user must be `root` or have passwordless sudo. |
 | `ssh_port` | `E2E_BOOTSTRAP_SSH_PORT`, then `22` | SSH port. |
+| `allow_insecure_ssh_keyscan` | `false` | Explicit first-use escape hatch when pinned SSH host keys are not configured. |
 | `platform_label` | `E2E_RUNNER_PLATFORM_LABEL`, then `ubuntu-24.04` | OS label to validate and attach to the runner. |
 | `arch_label` | `E2E_RUNNER_ARCH_LABEL`, then `x64` | CPU architecture label to validate and attach to the runner. |
 | `runner_name` | `E2E_RUNNER_NAME`, then `podlaz-<hostname>-vpn-e2e` | GitHub runner name. |
 | `runner_user` | `E2E_RUNNER_USER`, then `gha-runner` | Local Linux user that owns the runner service. |
-| `runner_home` | `E2E_RUNNER_HOME`, then `/opt/actions-runner` | Runner installation directory. |
+| `runner_home` | `E2E_RUNNER_HOME`, then `/opt/actions-runner/actions-runner` | Runner installation directory. |
 | `runner_labels` | `E2E_RUNNER_LABELS`, then derived labels | Comma-separated labels. Empty derives `self-hosted,linux,<arch>,vpn-e2e,<platform>`. |
 | `reset_runner` | `true` | Stop and replace an existing runner installation in `runner_home`. |
 
@@ -38,8 +39,9 @@ Minimum values for a no-input workflow run:
 | Name | Recommended storage | Purpose |
 | --- | --- | --- |
 | `E2E_BOOTSTRAP_SSH_HOST` | environment variable or secret | SSH host or IP address. |
-| `E2E_BOOTSTRAP_SSH_USER` | environment variable or secret | SSH login user. |
-| `E2E_BOOTSTRAP_SSH_PRIVATE_KEY` | environment secret | Private SSH key used by the GitHub-hosted provisioning job to connect to the server. |
+| `E2E_BOOTSTRAP_SSH_USER` | environment variable or secret | SSH login user. Defaults to `root` when omitted. |
+| `E2E_BOOTSTRAP_SSH_PRIVATE_KEY` | environment secret | SSH credential used by the provisioning job to connect to the server. |
+| `E2E_BOOTSTRAP_SSH_KNOWN_HOSTS` | environment secret | Pinned SSH known-hosts entry for the target server. |
 | `E2E_RUNNER_ADMIN_TOKEN` | environment secret | GitHub token that can create repository self-hosted runner registration tokens. |
 
 Optional values:
@@ -47,7 +49,6 @@ Optional values:
 | Name | Recommended storage | Purpose |
 | --- | --- | --- |
 | `E2E_BOOTSTRAP_SSH_PORT` | environment variable or secret | SSH port. Defaults to `22`. |
-| `E2E_BOOTSTRAP_SSH_KNOWN_HOSTS` | environment secret | Pinned SSH known-hosts entry for the target server. If omitted, the workflow uses `ssh-keyscan` for first-time bootstrap convenience. |
 | `E2E_RUNNER_PLATFORM_LABEL` | environment variable | Default platform label. |
 | `E2E_RUNNER_ARCH_LABEL` | environment variable | Default architecture label. |
 | `E2E_RUNNER_HOME` | environment variable | Existing or desired runner installation directory. |
@@ -61,7 +62,7 @@ Use a token scoped to this repository with the minimum administration permission
 
 The workflow connects to `${ssh_user}@${host}` with `E2E_BOOTSTRAP_SSH_PRIVATE_KEY` before it can install anything.
 
-That means the server must already accept the public key for the selected SSH user. For a clean server, add the public key through the provider's cloud-init, SSH-key, rescue console, or image-init mechanism before running the workflow.
+That means the server must already accept the matching public key for the selected SSH user. For a clean server, add the public key through the provider's cloud-init, SSH-key, rescue console, or image-init mechanism before running the workflow.
 
 The selected SSH user must be able to run:
 
@@ -78,12 +79,18 @@ scp: Connection closed
 
 Common causes:
 
-- the private key in `E2E_BOOTSTRAP_SSH_PRIVATE_KEY` does not match the public key installed on the server;
+- the SSH credential in `E2E_BOOTSTRAP_SSH_PRIVATE_KEY` does not match the public key installed on the server;
 - the public key is installed for a different user than `ssh_user`;
 - the provider image disables SSH key authentication for that user;
 - the server requires an interactive sudo password.
 
 The workflow prints the bootstrap SSH public key fingerprint before the SSH preflight so the key can be compared with the provider-side key.
+
+## SSH host-key verification
+
+Configure `E2E_BOOTSTRAP_SSH_KNOWN_HOSTS` with the server's pinned SSH host key before provisioning. This prevents the bootstrap job from trusting a host key learned over the same network path that receives the runner registration token.
+
+For a one-off first-use bootstrap on a trusted network, the workflow has an explicit `allow_insecure_ssh_keyscan=true` input. This is intentionally opt-in and should not be used as the routine path.
 
 ## Server contract
 

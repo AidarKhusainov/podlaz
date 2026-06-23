@@ -18,6 +18,11 @@ on:
         required: false
         type: string
         default: ''
+      allow_insecure_ssh_keyscan:
+        description: Allow first-use ssh-keyscan instead of pinned E2E_BOOTSTRAP_SSH_KNOWN_HOSTS.
+        required: true
+        type: boolean
+        default: false
       platform_label:
         description: OS label to provision and attach to the runner
         required: true
@@ -79,6 +84,7 @@ jobs:
       SSH_HOST: ${{ inputs.host || vars.E2E_BOOTSTRAP_SSH_HOST || secrets.E2E_BOOTSTRAP_SSH_HOST }}
       SSH_PORT: ${{ inputs.ssh_port || vars.E2E_BOOTSTRAP_SSH_PORT || secrets.E2E_BOOTSTRAP_SSH_PORT || '22' }}
       SSH_USER: ${{ inputs.ssh_user || vars.E2E_BOOTSTRAP_SSH_USER || secrets.E2E_BOOTSTRAP_SSH_USER || 'root' }}
+      ALLOW_INSECURE_SSH_KEYSCAN: ${{ inputs.allow_insecure_ssh_keyscan }}
       RUNNER_PLATFORM_LABEL: ${{ inputs.platform_label || vars.E2E_RUNNER_PLATFORM_LABEL || secrets.E2E_RUNNER_PLATFORM_LABEL || 'ubuntu-24.04' }}
       RUNNER_ARCH_LABEL: ${{ inputs.arch_label || vars.E2E_RUNNER_ARCH_LABEL || secrets.E2E_RUNNER_ARCH_LABEL || 'x64' }}
       RUNNER_NAME: ${{ inputs.runner_name || vars.E2E_RUNNER_NAME || secrets.E2E_RUNNER_NAME }}
@@ -108,6 +114,11 @@ jobs:
           [[ "${SSH_PORT}" =~ ^[0-9]+$ ]] || { echo "::error::SSH port must be numeric"; exit 2; }
           [[ -n "${E2E_BOOTSTRAP_SSH_PRIVATE_KEY}" ]] || { echo "::error::E2E_BOOTSTRAP_SSH_PRIVATE_KEY is required"; exit 2; }
           [[ -n "${E2E_RUNNER_ADMIN_TOKEN}" ]] || { echo "::error::E2E_RUNNER_ADMIN_TOKEN is required"; exit 2; }
+
+          case "${ALLOW_INSECURE_SSH_KEYSCAN}" in
+            true|false) ;;
+            *) echo "::error::allow_insecure_ssh_keyscan must resolve to true or false"; exit 2 ;;
+          esac
 
           case "${RUNNER_PLATFORM_LABEL}" in
             ubuntu-24.04|ubuntu-22.04|debian-12|debian-13) ;;
@@ -149,8 +160,12 @@ jobs:
 
           if [[ -n "${E2E_BOOTSTRAP_SSH_KNOWN_HOSTS}" ]]; then
             printf '%s\n' "${E2E_BOOTSTRAP_SSH_KNOWN_HOSTS}" > ~/.ssh/known_hosts
-          else
+          elif [[ "${ALLOW_INSECURE_SSH_KEYSCAN}" == "true" ]]; then
+            echo "::warning::Using ssh-keyscan without pinned known_hosts. Only use this for first-time bootstrap on a trusted network."
             ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+          else
+            echo "::error::E2E_BOOTSTRAP_SSH_KNOWN_HOSTS is required. Set allow_insecure_ssh_keyscan=true only for explicit first-use bootstrap."
+            exit 2
           fi
           chmod 0644 ~/.ssh/known_hosts
 
