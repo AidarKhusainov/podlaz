@@ -61,8 +61,11 @@ run_capture() {
 expect_success() {
   local name="$1"
   shift
-  if ! run_capture "${name}" "$@"; then
-    local code=$?
+  set +e
+  run_capture "${name}" "$@"
+  local code=$?
+  set -e
+  if [[ "${code}" != "0" ]]; then
     fail "${name} failed with exit code ${code}"
   fi
 }
