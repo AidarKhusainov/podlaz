@@ -9,7 +9,7 @@ on:
         type: string
         default: ''
       ssh_user:
-        description: SSH user. Empty uses E2E_BOOTSTRAP_SSH_USER, then ubuntu.
+        description: SSH user. Empty uses E2E_BOOTSTRAP_SSH_USER, then root.
         required: false
         type: string
         default: ''
@@ -47,7 +47,7 @@ on:
         type: string
         default: ''
       runner_home:
-        description: Runner installation directory. Empty uses E2E_RUNNER_HOME, then /opt/actions-runner.
+        description: Runner installation directory. Empty uses E2E_RUNNER_HOME, then /opt/actions-runner/actions-runner.
         required: false
         type: string
         default: ''
@@ -78,12 +78,12 @@ jobs:
     env:
       SSH_HOST: ${{ inputs.host || vars.E2E_BOOTSTRAP_SSH_HOST || secrets.E2E_BOOTSTRAP_SSH_HOST }}
       SSH_PORT: ${{ inputs.ssh_port || vars.E2E_BOOTSTRAP_SSH_PORT || secrets.E2E_BOOTSTRAP_SSH_PORT || '22' }}
-      SSH_USER: ${{ inputs.ssh_user || vars.E2E_BOOTSTRAP_SSH_USER || secrets.E2E_BOOTSTRAP_SSH_USER || 'ubuntu' }}
+      SSH_USER: ${{ inputs.ssh_user || vars.E2E_BOOTSTRAP_SSH_USER || secrets.E2E_BOOTSTRAP_SSH_USER || 'root' }}
       RUNNER_PLATFORM_LABEL: ${{ inputs.platform_label || vars.E2E_RUNNER_PLATFORM_LABEL || secrets.E2E_RUNNER_PLATFORM_LABEL || 'ubuntu-24.04' }}
       RUNNER_ARCH_LABEL: ${{ inputs.arch_label || vars.E2E_RUNNER_ARCH_LABEL || secrets.E2E_RUNNER_ARCH_LABEL || 'x64' }}
       RUNNER_NAME: ${{ inputs.runner_name || vars.E2E_RUNNER_NAME || secrets.E2E_RUNNER_NAME }}
       RUNNER_USER: ${{ inputs.runner_user || vars.E2E_RUNNER_USER || secrets.E2E_RUNNER_USER || 'gha-runner' }}
-      RUNNER_HOME: ${{ inputs.runner_home || vars.E2E_RUNNER_HOME || secrets.E2E_RUNNER_HOME || '/opt/actions-runner' }}
+      RUNNER_HOME: ${{ inputs.runner_home || vars.E2E_RUNNER_HOME || secrets.E2E_RUNNER_HOME || '/opt/actions-runner/actions-runner' }}
       RUNNER_LABELS: ${{ inputs.runner_labels || vars.E2E_RUNNER_LABELS || secrets.E2E_RUNNER_LABELS }}
       RESET_RUNNER: ${{ inputs.reset_runner }}
       E2E_BOOTSTRAP_SSH_PRIVATE_KEY: ${{ secrets.E2E_BOOTSTRAP_SSH_PRIVATE_KEY }}
@@ -154,7 +154,7 @@ jobs:
           fi
           chmod 0644 ~/.ssh/known_hosts
 
-      - name: SSH and sudo preflight
+      - name: SSH and privilege preflight
         shell: bash
         run: |
           set -euo pipefail
@@ -166,7 +166,7 @@ jobs:
             -o PreferredAuthentications=publickey \
             -o StrictHostKeyChecking=yes \
             "${SSH_USER}@${SSH_HOST}" \
-            'printf "connected as %s on %s\n" "$(id -un)" "$(hostname)"; sudo -n true'
+            'printf "connected as %s on %s\n" "$(id -un)" "$(hostname)"; if [ "$(id -u)" -eq 0 ]; then exit 0; fi; sudo -n true'
 
       - name: Resolve latest actions runner version
         shell: bash
@@ -233,6 +233,11 @@ jobs:
             "RESET_RUNNER=$(shell_quote "${RESET_RUNNER}")"
           )
 
+          remote_command="env ${remote_env[*]} bash /tmp/podlaz-bootstrap-e2e-runner.sh"
+          if [[ "${SSH_USER}" != "root" ]]; then
+            remote_command="sudo ${remote_command}"
+          fi
+
           ssh -p "${SSH_PORT}" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
@@ -240,4 +245,4 @@ jobs:
             -o PreferredAuthentications=publickey \
             -o StrictHostKeyChecking=yes \
             "${SSH_USER}@${SSH_HOST}" \
-            "sudo env ${remote_env[*]} bash /tmp/podlaz-bootstrap-e2e-runner.sh"
+            "${remote_command}"
