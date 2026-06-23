@@ -77,6 +77,16 @@ run_podlaz_as_socket_user() {
     /usr/bin/podlaz "$@"
 }
 
+run_podlaz_with_xdg_root() {
+  local xdg_root="$1"
+  shift
+  sudo -n -u "$(id -un)" -g podlaz env \
+    XDG_CONFIG_HOME="${xdg_root}/config" \
+    XDG_STATE_HOME="${xdg_root}/state" \
+    XDG_CACHE_HOME="${xdg_root}/cache" \
+    /usr/bin/podlaz "$@"
+}
+
 capture_secret_command() {
   local name="$1"
   shift
@@ -432,13 +442,15 @@ collect_host_snapshot after-service-start
 
 if [[ -n "${PODLAZ_E2E_SUBSCRIPTION_URL}" ]]; then
   log "real subscription source exercise"
-  expect_secret_success subscription-add-secret run_podlaz_as_socket_user subscription add --name e2e-real-sub --url "${PODLAZ_E2E_SUBSCRIPTION_URL}"
+  SUBSCRIPTION_E2E_HOME="$(mktemp -d "${E2E_TMP_ROOT}/server-coverage-subscription.XXXXXX")"
+  mkdir -p "${SUBSCRIPTION_E2E_HOME}/config" "${SUBSCRIPTION_E2E_HOME}/state" "${SUBSCRIPTION_E2E_HOME}/cache"
+  expect_secret_success subscription-add-secret run_podlaz_with_xdg_root "${SUBSCRIPTION_E2E_HOME}" subscription add --name e2e-real-sub --url "${PODLAZ_E2E_SUBSCRIPTION_URL}"
   SUB_ID="$(awk '/^Subscription added:/ {print $3}' "${LAST_STDOUT}")"
   assert_nonempty "${SUB_ID}" "real subscription id"
-  expect_secret_success subscription-update-secret run_podlaz_as_socket_user subscription update "${SUB_ID}"
-  expect_secret_success subscription-list-secret run_podlaz_as_socket_user subscription list
-  expect_secret_success subscription-show-secret run_podlaz_as_socket_user subscription show "${SUB_ID}"
-  expect_secret_success subscription-delete-secret run_podlaz_as_socket_user subscription delete "${SUB_ID}" --yes --keep-profiles
+  expect_secret_success subscription-update-secret run_podlaz_with_xdg_root "${SUBSCRIPTION_E2E_HOME}" subscription update "${SUB_ID}"
+  expect_secret_success subscription-list-secret run_podlaz_with_xdg_root "${SUBSCRIPTION_E2E_HOME}" subscription list
+  expect_secret_success subscription-show-secret run_podlaz_with_xdg_root "${SUBSCRIPTION_E2E_HOME}" subscription show "${SUB_ID}"
+  expect_secret_success subscription-delete-secret run_podlaz_with_xdg_root "${SUBSCRIPTION_E2E_HOME}" subscription delete "${SUB_ID}" --yes --keep-profiles
 fi
 
 log "proxy-only lifecycle across real profile set"
