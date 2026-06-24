@@ -21,6 +21,7 @@ type tunAdapterRuntimePlan struct {
 	Binary        string
 	TunDevice     string
 	SOCKSEndpoint string
+	Identity      coreExecutionIdentity
 }
 
 type tunAdapterHandle struct {
@@ -49,6 +50,7 @@ func startTunAdapter(ctx context.Context, plan tunAdapterRuntimePlan) (*exec.Cmd
 	cmd := exec.CommandContext(cmdCtx, path, "-device", deviceArg, "-proxy", proxyArg)
 	cmd.Stdout = log.Writer()
 	cmd.Stderr = log.Writer()
+	configureTunAdapterCommandCredential(cmd, plan.Identity)
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return nil, nil, nil, fmt.Errorf("start TUN adapter: %w", err)
