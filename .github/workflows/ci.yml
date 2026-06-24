@@ -162,6 +162,7 @@ jobs:
           grep -F 'CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN' /tmp/podlazd.service
           grep -Fx 'AmbientCapabilities=' /tmp/podlazd.service
           ! grep -F 'AmbientCapabilities=CAP_' /tmp/podlazd.service
+          ! grep -F 'RestrictSUIDSGID=yes' /tmp/podlazd.service
           ! grep -R -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd|deb-systemd-invoke[[:space:]]+start[[:space:]]+podlazd' packaging/debian
 
       - name: Validate generated shell completions
