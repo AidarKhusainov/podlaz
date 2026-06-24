@@ -152,13 +152,16 @@ jobs:
           dpkg-deb --fsys-tarfile "${DEV_DEB}" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > /tmp/podlaz.sysusers
           grep -F 'u podlaz ' /tmp/podlaz.sysusers
           grep -F 'u podlaz-xray ' /tmp/podlaz.sysusers
-          grep -F 'User=podlaz' /tmp/podlazd.service
+          grep -F 'User=root' /tmp/podlazd.service
           grep -F 'Group=podlaz' /tmp/podlazd.service
           grep -F 'UMask=0077' /tmp/podlazd.service
           grep -F 'RuntimeDirectory=podlaz' /tmp/podlazd.service
-          grep -F 'RuntimeDirectoryMode=0710' /tmp/podlazd.service
+          grep -F 'RuntimeDirectoryMode=0711' /tmp/podlazd.service
           grep -F 'StateDirectory=podlaz' /tmp/podlazd.service
           grep -F 'StateDirectoryMode=0700' /tmp/podlazd.service
+          grep -F 'CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN' /tmp/podlazd.service
+          grep -Fx 'AmbientCapabilities=' /tmp/podlazd.service
+          ! grep -F 'AmbientCapabilities=CAP_' /tmp/podlazd.service
           ! grep -R -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd|deb-systemd-invoke[[:space:]]+start[[:space:]]+podlazd' packaging/debian
 
       - name: Validate generated shell completions

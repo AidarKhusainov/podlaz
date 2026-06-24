@@ -69,6 +69,24 @@ func TestTunExecutorApplyFailureLeavesRollbackablePartialState(t *testing.T) {
 	}
 }
 
+func TestIPTunDeviceCreateAssignsAdapterOwner(t *testing.T) {
+	runner := &recordingRunner{}
+	tun := IPTunDeviceExecutor{Runner: runner, DeviceUser: "podlaz-xray", DeviceGroup: "podlaz-xray"}
+
+	if _, err := tun.Create(context.Background(), planner.TunDevicePlan{Name: "podlaz0", MTU: 1500}); err != nil {
+		t.Fatalf("create TUN device: %v", err)
+	}
+
+	want := [][]string{
+		{"ip", "tuntap", "add", "dev", "podlaz0", "mode", "tun", "user", "podlaz-xray", "group", "podlaz-xray"},
+		{"ip", "link", "set", "dev", "podlaz0", "mtu", "1500"},
+		{"ip", "link", "set", "dev", "podlaz0", "up"},
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
+	}
+}
+
 func TestIPRouteAndRuleMappingUsesAddAndpodlazTableID(t *testing.T) {
 	runner := &recordingRunner{}
 	routes := IPRouteExecutor{Runner: runner}

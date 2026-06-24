@@ -468,16 +468,6 @@ func processExitMessage(err error) string {
 	return "Xray process exited unexpectedly: " + err.Error()
 }
 
-func ensureCoreNotRoot(mode string) error {
-	if currentEUID() != 0 {
-		return nil
-	}
-	if mode == planner.ModeProxyOnly {
-		return errors.New("refusing to start proxy-only Xray as root without the dedicated podlaz-xray execution identity")
-	}
-	return errors.New("refusing to start TUN-mode Xray as root; run podlazd as an unprivileged service user with the documented networking capabilities instead of running the core process as root")
-}
-
 func emptyAs(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

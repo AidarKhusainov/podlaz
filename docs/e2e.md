@@ -86,7 +86,7 @@ PODLAZ_E2E_HOST_WRAPPER_TIMEOUT_SECONDS
 PODLAZ_E2E_HOST_DISRUPTION_MODE=proxy-only|tun
 ```
 
-The default is intentionally production-like: TUN checks, crash probes, and a short stability probe are enabled. Host-disruption probes are `auto`: the suite runs safe host-owned wrappers when they exist and records missing wrappers without failing the run.
+The default is intentionally production-like: TUN checks, crash probes, and a short stability probe are enabled. Host-disruption probes are `auto`: the suite runs safe host-owned wrappers when they exist and records missing wrappers without failing the run. The packaged daemon owns the privileged TUN, route, DNS, and nftables mutations, while Xray and the TUN adapter run under the dedicated `podlaz-xray` child identity.
 
 ## Job 1: CLI contract
 

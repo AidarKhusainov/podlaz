@@ -30,7 +30,8 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := ensureCoreNotRoot(planner.ModeTun); err != nil {
+	coreIdentity, err := tunCoreExecutionIdentity()
+	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
 
@@ -72,7 +73,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		}
 		return api.LifecycleResponse{}, errors.New("connection already active; rolled back newly applied TUN transaction")
 	}
-	cmd, done, err := m.startXrayLocked(p, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig)
+	cmd, done, err := m.startXrayLocked(p, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
 	if err != nil {
 		m.mu.Unlock()
 		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
@@ -96,7 +97,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		}
 		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
 	}
-	adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, tunAdapterRuntimePlan{TunDevice: plan.TunDevice.Name, SOCKSEndpoint: corePlan.SOCKSEndpoint})
+	adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, tunAdapterRuntimePlan{TunDevice: plan.TunDevice.Name, SOCKSEndpoint: corePlan.SOCKSEndpoint, Identity: coreIdentity})
 	if err != nil {
 		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
 		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {

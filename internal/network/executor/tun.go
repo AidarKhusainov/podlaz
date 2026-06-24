@@ -22,6 +22,11 @@ const (
 
 const defaultCommandTimeout = 5 * time.Second
 
+const (
+	defaultTunDeviceUser  = "podlaz-xray"
+	defaultTunDeviceGroup = "podlaz-xray"
+)
+
 // CommandResult is a low-level command execution result.
 type CommandResult struct {
 	Stdout   string
@@ -102,7 +107,7 @@ type TunExecutor struct {
 func NewOSExecutor() TunExecutor {
 	runner := OSRunner{}
 	return TunExecutor{
-		TunDevice:   IPTunDeviceExecutor{Runner: runner},
+		TunDevice:   IPTunDeviceExecutor{Runner: runner, DeviceUser: defaultTunDeviceUser, DeviceGroup: defaultTunDeviceGroup},
 		Routes:      IPRouteExecutor{Runner: runner},
 		PolicyRules: IPPolicyRuleExecutor{Runner: runner},
 	}
@@ -216,14 +221,23 @@ func (e TunExecutor) validate() error {
 
 // IPTunDeviceExecutor applies TUN device operations through iproute2.
 type IPTunDeviceExecutor struct {
-	Runner CommandRunner
+	Runner      CommandRunner
+	DeviceUser  string
+	DeviceGroup string
 }
 
 func (e IPTunDeviceExecutor) Create(ctx context.Context, plan planner.TunDevicePlan) (Step, error) {
 	if plan.Name == "" {
 		return Step{}, errors.New("missing TUN device name")
 	}
-	if err := e.run(ctx, "ip", "tuntap", "add", "dev", plan.Name, "mode", "tun"); err != nil {
+	args := []string{"tuntap", "add", "dev", plan.Name, "mode", "tun"}
+	if user := strings.TrimSpace(e.DeviceUser); user != "" {
+		args = append(args, "user", user)
+	}
+	if group := strings.TrimSpace(e.DeviceGroup); group != "" {
+		args = append(args, "group", group)
+	}
+	if err := e.run(ctx, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("create TUN device %s: %w", plan.Name, err)
 	}
 	if plan.MTU > 0 {

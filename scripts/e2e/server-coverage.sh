@@ -301,7 +301,7 @@ concurrent_lifecycle_probe() {
   capture_secret_command "disconnect-idempotent-concurrent-${mode}" run_podlaz_as_socket_user disconnect || true
 }
 
-find_xray_pids() { pgrep -u podlaz -f 'xray.*run.*-config' || true; }
+find_xray_pids() { { pgrep -u podlaz-xray -f 'xray.*run.*-config' || true; pgrep -u podlaz -f 'xray.*run.*-config' || true; } | awk 'NF && !seen[$0]++'; }
 kill_supervised_core() { local pids; pids="$(find_xray_pids)"; [[ -n "${pids}" ]] || fail "no supervised xray process found to kill"; printf '%s\n' "${pids}" >"${E2E_ARTIFACT_DIR}/killed-xray-pids.txt"; sudo -n kill -KILL ${pids}; sleep 3; }
 restart_daemon_after_crash() { sudo -n systemctl reset-failed podlazd.service || true; sudo -n systemctl start podlazd.service || sudo -n systemctl restart podlazd.service; for _ in $(seq 1 20); do if sudo -n systemctl is-active --quiet podlazd.service; then return 0; fi; sleep 1; done; sudo -n systemctl status podlazd.service --no-pager || true; fail "podlazd.service did not become active after crash/restart"; }
 

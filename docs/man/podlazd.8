@@ -25,9 +25,13 @@ JSON shape belong to
 .BR podlaz (1)
 and the canonical project documentation.
 .PP
-The foundation packaged service is intentionally least-privilege. The default
-packaged proxy-only path runs the daemon as an unprivileged service identity
-and does not grant ambient or bounding capabilities.
+The packaged service is the privileged host-networking boundary for TUN mode.
+It runs the daemon as UID 0 with a restricted capability bounding set for
+TUN, route, nftables, ownership, and child-identity transitions. It does not
+grant ambient capabilities, and supervised Xray/TUN adapter children run as
+the dedicated unprivileged
+.BR podlaz-xray:podlaz-xray
+identity.
 .SH SERVICE MANAGEMENT
 The packaged service unit is
 .BR podlazd.service .
@@ -75,11 +79,14 @@ the default packaged daemon path.
 Daemon runtime directory. Packaged systemd units create it with
 .B RuntimeDirectory=podlaz
 and mode
-.BR 0710 .
+.BR 0711 .
 The group execute bit lets members of the
 .B podlaz
 group traverse to the control socket without listing daemon-private runtime
-state.
+state. The other execute bit lets the unprivileged
+.B podlaz-xray
+child identity traverse to its generated runtime config without granting read
+or write access to daemon-private directories.
 .TP
 .I /run/podlaz/podlazd.sock
 Local daemon API socket. The daemon applies socket mode
@@ -90,8 +97,9 @@ group by the package/runtime contract.
 .TP
 .I /run/podlaz/generated/
 Daemon-owned generated runtime configuration directory. Generated Xray config
-files are volatile runtime output, not persistent source of truth, and are not
-made group-readable through the daemon socket access group.
+files are volatile runtime output, not persistent source of truth, and are
+made readable only to the dedicated child group when the daemon must drop
+child process credentials.
 .TP
 .I /run/podlaz/transactions/
 Volatile transaction state used by status, diagnostics, rollback, disconnect,
@@ -111,35 +119,31 @@ Repository systemd unit source.
 .I packaging/sysusers.d/podlaz.conf
 Repository sysusers definition for packaged service identities.
 .SH SECURITY MODEL
-The packaged proxy-only baseline runs
-.B podlazd
-as
-.BR podlaz:podlaz .
-For that default non-root service path, proxy-only Xray child processes inherit
-the same unprivileged service identity.
+The packaged daemon runs as
+.BR root:podlaz
+because TUN mode must inspect and mutate host TUN devices, routes, DNS, and
+nftables state inside daemon-owned transactions. The unit restricts the daemon
+with
+.BR CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN
+and keeps
+.B AmbientCapabilities=
+empty so capabilities are not placed in the ambient set for child processes.
 .PP
-If a UID 0 daemon deployment is used for proxy-only mode, Xray must not inherit
-UID 0. The daemon must start proxy-only Xray as the dedicated
+The daemon must not run Xray or the TUN adapter as UID 0. When the packaged
+daemon is UID 0, it starts child processes as the dedicated
 .BR podlaz-xray:podlaz-xray
-identity with supplementary groups disabled. In that UID 0 path, generated
-Xray runtime configuration remains private by using ownership
+identity with supplementary groups disabled. Generated Xray runtime
+configuration remains private by using ownership
 .BR root:podlaz-xray ,
 generated directory mode
 .BR 0750 ,
 and generated config file mode
 .BR 0640 .
 .PP
-The current packaged unit grants no ambient capabilities and has an empty
-capability bounding set. Proxy-only mode must not grant
-.BR CAP_NET_ADMIN ,
-.BR CAP_NET_RAW ,
-broad file capabilities, or ambient capabilities to the daemon or the Xray
-child.
-.PP
-The daemon service starts from least privilege and every future packaged
-privilege expansion must be documented with the exact capability set and the
-reason each capability is required. The CLI must not become a privileged or
-SUID networking mutator.
+Proxy-only lifecycle must not mutate TUN devices, routes, policy rules, DNS
+settings, nftables, or firewall state. TUN lifecycle may mutate only the
+podlaz-owned resources represented in its transaction state and rollback plan.
+The CLI must not become a privileged or SUID networking mutator.
 .SH RUNTIME STATE
 On startup, the daemon creates or uses the runtime directory, creates a lock
 file, removes only a stale Unix socket at the socket path, fails if the socket
