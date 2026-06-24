@@ -12,15 +12,15 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 
 	for _, want := range []string{
 		"ExecStart=/usr/bin/podlazd",
-		"User=podlaz",
+		"User=root",
 		"Group=podlaz",
 		"UMask=0077",
 		"Environment=PODLAZ_SERVICE=systemd",
 		"RuntimeDirectory=podlaz",
-		"RuntimeDirectoryMode=0710",
+		"RuntimeDirectoryMode=0711",
 		"StateDirectory=podlaz",
 		"StateDirectoryMode=0700",
-		"CapabilityBoundingSet=",
+		"CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN",
 		"AmbientCapabilities=",
 		"StandardOutput=journal",
 		"StandardError=journal",
@@ -31,7 +31,15 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitDoesNotBlockFutureTunDeviceWork(t *testing.T) {
+func TestSystemdUnitDoesNotLeakAmbientNetworkingCapabilities(t *testing.T) {
+	content := readSystemdUnit(t)
+
+	if strings.Contains(content, "AmbientCapabilities=CAP_") {
+		t.Fatalf("systemd unit must not grant ambient capabilities that child processes could inherit:\n%s", content)
+	}
+}
+
+func TestSystemdUnitDoesNotBlockTunDeviceWork(t *testing.T) {
 	content := readSystemdUnit(t)
 
 	for _, forbidden := range []string{
@@ -40,7 +48,7 @@ func TestSystemdUnitDoesNotBlockFutureTunDeviceWork(t *testing.T) {
 		"Restrict" + "AddressFamilies=",
 	} {
 		if strings.Contains(content, forbidden) {
-			t.Fatalf("systemd unit contains %q, which would need explicit validation before future TUN/nftables work:\n%s", forbidden, content)
+			t.Fatalf("systemd unit contains %q, which would need explicit validation before TUN/nftables work:\n%s", forbidden, content)
 		}
 	}
 }
