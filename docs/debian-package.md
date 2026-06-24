@@ -137,7 +137,7 @@ podlaz status
 podlaz doctor
 ```
 
-This group-mediated access applies to the daemon socket only. If an administrator enables polkit authorization, socket access is still required to reach the daemon and polkit authorizes the operation after the daemon identifies the local peer process.
+This group-mediated access applies to the daemon socket only. The packaged daemon itself runs as `root:podlaz` with `CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN` so it can own TUN, route, DNS, and nftables transactions. `AmbientCapabilities` must stay empty; Xray and the TUN adapter are launched as the dedicated `podlaz-xray:podlaz-xray` child identity rather than inheriting daemon privileges.
 
 ## State ownership and lifecycle
 
@@ -157,7 +157,7 @@ dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 dist/podlaz_0.0.0~dev-1_linux_arm64.deb
 ```
 
-The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, `RuntimeDirectoryMode=`, `StateDirectoryMode=`, static polkit action IDs, absence of broad polkit `yes` defaults, absence of AppStream/metainfo files, and absence of package maintainer hooks that automatically start or enable `podlazd.service`.
+The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, `RuntimeDirectoryMode=`, `StateDirectoryMode=`, bounded daemon capabilities, empty ambient capabilities, static polkit action IDs, absence of broad polkit `yes` defaults, absence of AppStream/metainfo files, and absence of package maintainer hooks that automatically start or enable `podlazd.service`.
 
 Container validation can check package metadata, package contents, static polkit policy metadata, declarative systemd/sysusers access contract, local install/remove mechanics, and absence of `/usr/local`, `/run`, `/var/run`, user home, generated runtime config, AppStream, desktop, and icon packaged paths.
 
