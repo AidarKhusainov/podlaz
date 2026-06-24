@@ -40,25 +40,28 @@ func sameUserCoreExecutionIdentity() coreExecutionIdentity {
 }
 
 func proxyOnlyCoreExecutionIdentity() (coreExecutionIdentity, error) {
+	return coreChildExecutionIdentity()
+}
+
+func tunCoreExecutionIdentity() (coreExecutionIdentity, error) {
+	return coreChildExecutionIdentity()
+}
+
+func coreChildExecutionIdentity() (coreExecutionIdentity, error) {
 	if currentEUID() != 0 {
 		return sameUserCoreExecutionIdentity(), nil
 	}
-
-	identity, err := dedicatedProxyCoreExecutionIdentity()
-	if err != nil {
-		return coreExecutionIdentity{}, err
-	}
-	return identity, nil
+	return dedicatedProxyCoreExecutionIdentity()
 }
 
 func dedicatedProxyCoreExecutionIdentity() (coreExecutionIdentity, error) {
 	u, err := lookupUserName(proxyCoreExecutionUser)
 	if err != nil {
-		return coreExecutionIdentity{}, fmt.Errorf("resolve proxy-only Xray execution user %q: %w; install packaging/sysusers.d/podlaz.conf or create the documented system user", proxyCoreExecutionUser, err)
+		return coreExecutionIdentity{}, fmt.Errorf("resolve Xray execution user %q: %w", proxyCoreExecutionUser, err)
 	}
 	g, err := lookupGroupName(proxyCoreExecutionGroup)
 	if err != nil {
-		return coreExecutionIdentity{}, fmt.Errorf("resolve proxy-only Xray execution group %q: %w; install packaging/sysusers.d/podlaz.conf or create the documented system group", proxyCoreExecutionGroup, err)
+		return coreExecutionIdentity{}, fmt.Errorf("resolve Xray execution group %q: %w", proxyCoreExecutionGroup, err)
 	}
 
 	uid, err := parseSystemID("user", proxyCoreExecutionUser, u.Uid)
@@ -74,10 +77,10 @@ func dedicatedProxyCoreExecutionIdentity() (coreExecutionIdentity, error) {
 		return coreExecutionIdentity{}, err
 	}
 	if uid == 0 || gid == 0 {
-		return coreExecutionIdentity{}, fmt.Errorf("proxy-only Xray execution identity %q must not resolve to uid=%d gid=%d", proxyCoreExecutionUser, uid, gid)
+		return coreExecutionIdentity{}, fmt.Errorf("Xray execution identity %q must not resolve to uid=%d gid=%d", proxyCoreExecutionUser, uid, gid)
 	}
 	if userGID != gid {
-		return coreExecutionIdentity{}, fmt.Errorf("proxy-only Xray execution user %q must use dedicated primary group %q", proxyCoreExecutionUser, proxyCoreExecutionGroup)
+		return coreExecutionIdentity{}, fmt.Errorf("Xray execution user %q must use dedicated primary group %q", proxyCoreExecutionUser, proxyCoreExecutionGroup)
 	}
 
 	return coreExecutionIdentity{
@@ -97,6 +100,14 @@ func parseSystemID(kind, name, value string) (int, error) {
 }
 
 func configureCoreCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentity) {
+	configureChildCommandCredential(cmd, identity)
+}
+
+func configureTunAdapterCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentity) {
+	configureChildCommandCredential(cmd, identity)
+}
+
+func configureChildCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentity) {
 	if !identity.DropCredentials {
 		return
 	}
