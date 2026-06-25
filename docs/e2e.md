@@ -154,6 +154,8 @@ Scope:
 - keeps one profile connected and polls status, DNS, and public egress repeatedly when `PODLAZ_E2E_STABILITY_MINUTES > 0`;
 - records host snapshots before, during, and after lifecycle, crash, host-disruption, and cleanup operations.
 
+When maximum server coverage fails, the workflow also runs `scripts/e2e/lib/xray-exec-diagnostics.sh` before uploading artifacts. That helper records redaction-safe `xray-exec-*` diagnostics for the packaged daemon/Xray exec boundary, including service hardening properties, `podlaz-xray` identity records, Xray path permissions, file capabilities, mount options, a direct `podlaz-xray:podlaz-xray` `xray version` preflight, AppArmor/kernel denial excerpts when available, and `/proc/<podlazd-pid>/status` when available.
+
 ## Host-disruption wrappers
 
 The workflow never runs raw `systemctl suspend`, NetworkManager reconnect, DHCP renew, resolver mutation, or interactive polkit commands directly. `server-coverage.sh` only runs root-owned host wrappers from `PODLAZ_E2E_HOST_WRAPPER_DIR`, defaulting to:
@@ -205,6 +207,8 @@ The following items require explicit host support beyond the default single remo
 Each job writes command stdout/stderr and host diagnostics to `${RUNNER_TEMP}/podlaz-e2e-artifacts`, which the workflow uploads as artifacts.
 
 Diagnostics must stay sanitized. Do not upload full share URIs, subscription URLs, generated Xray configs, private keys, provider tokens, authorization headers, or unredacted credentials.
+
+Maximum server coverage may also upload `xray-exec-*` directories when packaged Xray exec diagnostics are collected. These artifacts are for root-cause evidence around `fork/exec ... operation not permitted` failures and must remain limited to host/service/path/capability/mount/LSM/proc metadata.
 
 ## Non-goals
 
