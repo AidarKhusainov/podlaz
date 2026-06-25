@@ -21,7 +21,7 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"StateDirectory=podlaz",
 		"StateDirectoryMode=0700",
 		"CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN",
-		"AmbientCapabilities=",
+		"AmbientCapabilities=CAP_SETUID",
 		"StandardOutput=journal",
 		"StandardError=journal",
 	} {
@@ -31,11 +31,21 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitDoesNotLeakAmbientNetworkingCapabilities(t *testing.T) {
+func TestSystemdUnitOnlyKeepsSetUIDAmbientForChildIdentityDrop(t *testing.T) {
 	content := readSystemdUnit(t)
 
-	if strings.Contains(content, "AmbientCapabilities=CAP_") {
-		t.Fatalf("systemd unit must not grant ambient capabilities that child processes could inherit:\n%s", content)
+	if !strings.Contains(content, "AmbientCapabilities=CAP_SETUID") {
+		t.Fatalf("systemd unit must keep CAP_SETUID effective for daemon-owned Xray child identity drop:\n%s", content)
+	}
+	for _, forbidden := range []string{
+		"AmbientCapabilities=CAP_CHOWN",
+		"AmbientCapabilities=CAP_SETGID",
+		"AmbientCapabilities=CAP_NET_ADMIN",
+		"AmbientCapabilities=CAP_SYS_ADMIN",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("systemd unit must not grant broad ambient capabilities via %q:\n%s", forbidden, content)
+		}
 	}
 }
 
