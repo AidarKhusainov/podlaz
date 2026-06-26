@@ -140,7 +140,8 @@ curl_proxy_ip() {
 }
 
 assert_proxy_egress() {
-  local proxy_kind="$1" phase="$2" dir="${E2E_ARTIFACT_DIR}/data-plane-${phase}-${proxy_kind}"
+  local proxy_kind="$1" phase="$2"
+  local dir="${E2E_ARTIFACT_DIR}/data-plane-${phase}-${proxy_kind}"
   mkdir -p "${dir}"
   curl_proxy_ip "${proxy_kind}" "${dir}/public-ipv4.txt" "${dir}/public-ipv4.stderr"
   local ip4
@@ -149,7 +150,8 @@ assert_proxy_egress() {
 }
 
 assert_proxy_cleanup() {
-  local phase="$1" dir="${E2E_ARTIFACT_DIR}/data-plane-${phase}-cleanup"
+  local phase="$1"
+  local dir="${E2E_ARTIFACT_DIR}/data-plane-${phase}-cleanup"
   mkdir -p "${dir}"
   if curl_proxy_ip socks "${dir}/socks.stdout" "${dir}/socks.stderr"; then
     fail "${phase}: SOCKS proxy still accepted traffic after disconnect"
@@ -160,7 +162,8 @@ assert_proxy_cleanup() {
 }
 
 assert_loopback_listeners() {
-  local phase="$1" listeners="${E2E_ARTIFACT_DIR}/data-plane-${phase}-listeners.txt"
+  local phase="$1"
+  local listeners="${E2E_ARTIFACT_DIR}/data-plane-${phase}-listeners.txt"
   ss -ltnp >"${listeners}" 2>&1 || fail "${phase}: failed to inspect TCP listeners"
   grep -E '127\.0\.0\.1:1080\b' "${listeners}" >/dev/null || fail "${phase}: SOCKS listener is not bound on 127.0.0.1:1080"
   grep -E '127\.0\.0\.1:8080\b' "${listeners}" >/dev/null || fail "${phase}: HTTP listener is not bound on 127.0.0.1:8080"
