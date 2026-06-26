@@ -36,7 +36,6 @@ func runTunTransaction(ctx context.Context, runtimeDir string, p profile.Profile
 	tx := txstate.NewTransaction(newTunTransactionID(now), p.ID, planner.ModeTun, now())
 	tx.BeforeSnapshot = snapshotMetadata(plan.Snapshot, now())
 	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
-	tx.Rollback = rollbackMetadataFromTunPlan(plan)
 	path, err := store.Save(tx)
 	if err != nil {
 		return tunTransactionResult{}, err
