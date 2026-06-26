@@ -2,6 +2,7 @@ package sub
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,7 +40,7 @@ func TestFetchSourceRejectsUnexpectedHTTPStatus(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected status error")
 			}
-			if !strings.Contains(err.Error(), "unexpected HTTP status") || !strings.Contains(err.Error(), http.StatusText(status)[:3]) {
+			if !strings.Contains(err.Error(), "unexpected HTTP status") || !strings.Contains(err.Error(), fmt.Sprint(status)) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
