@@ -118,9 +118,9 @@ func configureChildCommandCredential(cmd *exec.Cmd, identity coreExecutionIdenti
 		attr = &syscall.SysProcAttr{}
 	}
 	attr.Credential = &syscall.Credential{
-		Uid:         uint32(identity.UID),
-		Gid:         uint32(identity.GID),
-		NoSetGroups: true,
+		Uid:    uint32(identity.UID),
+		Gid:    uint32(identity.GID),
+		Groups: []uint32{},
 	}
 	cmd.SysProcAttr = attr
 }
