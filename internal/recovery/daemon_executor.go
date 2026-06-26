@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -111,7 +112,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 		return results
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		results = append(results, failed(candidate, fmt.Errorf("remove transaction state %s: %w", path, err)))
+		results = append(results, failed(candidate, fmt.Errorf("remove transaction state %s: %w", path)))
 		return results
 	}
 	results = append(results, recovered(candidate))
@@ -185,6 +186,14 @@ func (e DaemonCleanupExecutor) rollbackPolicyRuleResults(ctx context.Context, os
 		candidate := Candidate{Kind: "policy-rule", Description: "policy rule", Target: fmt.Sprintf("priority %d table %s", rule.Priority, rule.Table)}
 		if !ownedRollbackMetadata(rule.Owner, netexecutor.OwnerPolicyRule) {
 			results = append(results, skipped(candidate, "non-podlaz policy rule metadata"))
+			continue
+		}
+		if safeMainServerBypassPolicyRule(rule) {
+			if err := rollbackMainServerBypassPolicyRule(ctx, osExec, rule); err != nil {
+				results = append(results, failed(candidate, err))
+				continue
+			}
+			results = append(results, recovered(candidate))
 			continue
 		}
 		if _, ok := managedTableToken(rule.Table); !ok {
@@ -287,8 +296,33 @@ func ownedRollbackMetadata(owner, expected string) bool {
 	return expected != "" && (owner == expected || owner == txstate.TransactionOwner)
 }
 
+func safeMainServerBypassPolicyRule(rule txstate.PolicyRuleRollback) bool {
+	if rule.Priority != planner.ServerRulePriority || strings.TrimSpace(rule.Table) != planner.MainRoutingTable {
+		return false
+	}
+	if strings.TrimSpace(rule.From) != "" || strings.TrimSpace(rule.Mark) != "" {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.To))
+	if err != nil {
+		return false
+	}
+	return prefix.Addr().Is4() && prefix.Bits() == 32
+}
+
+func rollbackMainServerBypassPolicyRule(ctx context.Context, osExec OSCleanupExecutor, rule txstate.PolicyRuleRollback) error {
+	if !ownedRollbackMetadata(rule.Owner, netexecutor.OwnerPolicyRule) || !safeMainServerBypassPolicyRule(rule) {
+		return fmt.Errorf("refuse to rollback ambiguous main-table policy rule priority %d", rule.Priority)
+	}
+	to := strings.TrimSpace(rule.To)
+	if err := osExec.run(ctx, "ip", "-4", "rule", "del", "priority", fmt.Sprint(rule.Priority), "to", to, "lookup", planner.MainRoutingTable); err != nil && !commandErrorIsMissing(err) {
+		return fmt.Errorf("delete main-table server bypass policy rule priority %d to %s: %w", rule.Priority, to, err)
+	}
+	return nil
+}
+
 func safeMainServerBypassRoute(route txstate.RouteRollback) bool {
-	if strings.TrimSpace(route.Table) != "main" {
+	if strings.TrimSpace(route.Table) != planner.MainRoutingTable {
 		return false
 	}
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(route.CIDR))
@@ -305,7 +339,7 @@ func rollbackMainServerBypassRoute(ctx context.Context, osExec OSCleanupExecutor
 	cidr := strings.TrimSpace(route.CIDR)
 	via := strings.TrimSpace(route.Via)
 	dev := strings.TrimSpace(route.Dev)
-	if err := osExec.run(ctx, "ip", "-4", "route", "del", cidr, "via", via, "dev", dev, "table", "main"); err != nil && !commandErrorIsMissing(err) {
+	if err := osExec.run(ctx, "ip", "-4", "route", "del", cidr, "via", via, "dev", dev, "table", planner.MainRoutingTable); err != nil && !commandErrorIsMissing(err) {
 		return fmt.Errorf("delete main-table server bypass route %s via %s dev %s: %w", cidr, via, dev, err)
 	}
 	return nil
