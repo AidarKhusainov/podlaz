@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-func TestRunCLIDoctorRejectsNetworkDNSAndRoutesScopes(t *testing.T) {
-	for _, scope := range []string{"--network", "--dns", "--routes"} {
+func TestRunCLIDoctorRejectsDeferredScopes(t *testing.T) {
+	for _, scope := range []string{"--network", "--dns", "--routes", "--firewall"} {
 		t.Run(scope, func(t *testing.T) {
 			var out bytes.Buffer
 			err := run(context.Background(), []string{"doctor", scope}, &out)
