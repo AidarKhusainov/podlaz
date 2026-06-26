@@ -22,6 +22,7 @@ if [[ "${PODLAZ_DEB_ARCH}" != "${HOST_DEB_ARCH}" ]]; then
   fail "data-plane e2e must install a native package: PODLAZ_DEB_ARCH=${PODLAZ_DEB_ARCH}, host=${HOST_DEB_ARCH}"
 fi
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
+DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 ACTIVE_CONNECTION=0
@@ -81,6 +82,29 @@ expect_secret_success() {
   local code=$?
   set -e
   [[ "${code}" == "0" ]] || fail "${name} failed with exit code ${code}"
+}
+
+collect_daemon_startup_diagnostics() {
+  sudo -n systemctl status podlazd.service --no-pager >"${E2E_ARTIFACT_DIR}/data-plane-podlazd.service.status" 2>&1 || true
+  sudo -n systemctl cat podlazd.service >"${E2E_ARTIFACT_DIR}/data-plane-podlazd.service.cat" 2>&1 || true
+  sudo -n journalctl -u podlazd.service -n 200 --no-pager >"${E2E_ARTIFACT_DIR}/data-plane-podlazd.service.journal" 2>&1 || true
+  sudo -n ls -la /run/podlaz >"${E2E_ARTIFACT_DIR}/data-plane-run-podlaz.ls" 2>&1 || true
+}
+
+wait_for_daemon_socket() {
+  local attempt
+  for attempt in $(seq 1 100); do
+    if [[ -S "${DAEMON_SOCKET}" ]]; then
+      return 0
+    fi
+    if ! sudo -n systemctl is-active --quiet podlazd.service; then
+      collect_daemon_startup_diagnostics
+      fail "podlazd.service stopped before daemon socket became ready: ${DAEMON_SOCKET}"
+    fi
+    sleep 0.1
+  done
+  collect_daemon_startup_diagnostics
+  fail "podlazd.service did not create daemon socket within readiness timeout: ${DAEMON_SOCKET}"
 }
 
 cleanup_data_plane() {
@@ -218,7 +242,7 @@ sudo -n systemctl daemon-reload
 sudo -n systemctl reset-failed podlazd.service || true
 sudo -n systemctl start podlazd.service
 SERVICE_TOUCHED=1
-sudo -n systemctl is-active --quiet podlazd.service
+wait_for_daemon_socket
 
 log "proxy-only explicit data-plane lifecycle"
 connect_profile "proxy-only-explicit" "${PROFILE_ID}" --mode proxy-only
