@@ -179,15 +179,17 @@ expect_success doctor-help "${PODLAZ[@]}" doctor --help
 expect_exit_in "0 3" doctor-human "${PODLAZ[@]}" doctor
 expect_exit 2 doctor-json-deferred "${PODLAZ[@]}" doctor --json
 expect_exit 2 doctor-core-without-xray "${PODLAZ[@]}" doctor --core
-expect_exit 2 doctor-scope-deferred "${PODLAZ[@]}" doctor --network
-doctor_scope_extra="$(printf -- '--%s%s' fire wall)"
-expect_exit 2 doctor-scope-extra "${PODLAZ[@]}" doctor "${doctor_scope_extra}"
+expect_exit 2 doctor-scope-network "${PODLAZ[@]}" doctor --network
+expect_exit 2 doctor-scope-dns "${PODLAZ[@]}" doctor --dns
+expect_exit 2 doctor-scope-routes "${PODLAZ[@]}" doctor --routes
+expect_exit 2 doctor-scope-firewall "${PODLAZ[@]}" doctor --firewall
 expect_exit_in "0 3" doctor-core-xray-json-shape "${PODLAZ[@]}" doctor --core --xray "${PODLAZ_BIN}" --json
 assert_json_file "${LAST_STDOUT}"
 expect_success logs-help "${PODLAZ[@]}" logs --help
 expect_exit 2 logs-json-deferred "${PODLAZ[@]}" logs --json
 expect_exit 2 logs-invalid-since "${PODLAZ[@]}" logs --since
-expect_exit_in "0 1 124" logs-follow-bounded timeout 3 "${PODLAZ[@]}" logs --follow
+expect_exit 124 logs-follow-short-bounded timeout 3 "${PODLAZ[@]}" logs -f
+expect_exit 124 logs-follow-long-bounded timeout 3 "${PODLAZ[@]}" logs --follow
 expect_success recover-help "${PODLAZ[@]}" recover --help
 expect_exit_in "0 3" recover-dry-run "${PODLAZ[@]}" recover
 expect_exit 2 recover-execute-without-yes "${PODLAZ[@]}" recover --execute
