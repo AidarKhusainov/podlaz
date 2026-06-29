@@ -82,8 +82,74 @@ assert_artifacts_do_not_contain_sensitive_values "multiline-leak" "${SECRET_LINE
 	}
 }
 
+func TestE2ERedactionScanChecksDerivedUUIDAndAuthorizationToken(t *testing.T) {
+	artifactDir := t.TempDir()
+	const uuidSecret = "123e4567-e89b-12d3-a456-426614174000"
+	const authToken = "provider-token-123456789"
+	result := runBash(t, artifactDir, `
+set -Eeuo pipefail
+source ./lib/e2e.sh
+PROFILE_URI="vless://${UUID_SECRET}@vpn.example.test:443?type=tcp&security=reality&encryption=none#private"
+AUTH_HEADER="Authorization: Bearer ${AUTH_TOKEN}"
+printf 'runtime uuid: %s\nheader token: %s\n' "${UUID_SECRET}" "${AUTH_TOKEN}" >"${E2E_ARTIFACT_DIR}/derived-fragment-leak.txt"
+assert_artifacts_do_not_contain_sensitive_values "derived-fragment-leak" "${PROFILE_URI}" "${AUTH_HEADER}"
+`)
+
+	if result.err == nil {
+		t.Fatalf("redaction scan should fail when artifacts contain derived UUID/token fragments")
+	}
+	assertNoSecretLeak(t, result.stdout, uuidSecret, "stdout")
+	assertNoSecretLeak(t, result.stdout, authToken, "stdout")
+	assertNoSecretLeak(t, result.stderr, uuidSecret, "stderr")
+	assertNoSecretLeak(t, result.stderr, authToken, "stderr")
+
+	reportPath := filepath.Join(artifactDir, "derived-fragment-leak-redaction-scan.txt")
+	report, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("read redaction report: %v", err)
+	}
+	assertNoSecretLeak(t, string(report), uuidSecret, "redaction report")
+	assertNoSecretLeak(t, string(report), authToken, "redaction report")
+	if !strings.Contains(string(report), "derived-fragment-leak.txt") {
+		t.Fatalf("expected report to identify leaking artifact path, got %q", string(report))
+	}
+}
+
+func TestE2EGeneratedContentScanDetectsFullRuntimeConfigLeak(t *testing.T) {
+	artifactDir := t.TempDir()
+	const runtimeSecret = "123e4567-e89b-12d3-a456-426614174001"
+	result := runBash(t, artifactDir, `
+set -Eeuo pipefail
+source ./lib/e2e.sh
+runtime_config="${E2E_TMP_ROOT}/xray-runtime.json"
+cat >"${runtime_config}" <<JSON
+{"log":{"loglevel":"warning"},"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"vpn.example.test","port":443,"users":[{"id":"${RUNTIME_SECRET}","encryption":"none"}]}]}}]}
+JSON
+printf '{\n}\n' >"${E2E_ARTIFACT_DIR}/common-json-shape.txt"
+assert_artifacts_do_not_contain_file_contents "runtime-safe" "${runtime_config}"
+cat "${runtime_config}" >"${E2E_ARTIFACT_DIR}/runtime-leak.txt"
+assert_artifacts_do_not_contain_file_contents "runtime-leak" "${runtime_config}"
+`)
+
+	if result.err == nil {
+		t.Fatalf("generated-content scan should fail when an artifact contains the full runtime config")
+	}
+	assertNoSecretLeak(t, result.stdout, runtimeSecret, "stdout")
+	assertNoSecretLeak(t, result.stderr, runtimeSecret, "stderr")
+
+	reportPath := filepath.Join(artifactDir, "runtime-leak-content-redaction-scan.txt")
+	report, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("read generated-content report: %v", err)
+	}
+	assertNoSecretLeak(t, string(report), runtimeSecret, "generated-content report")
+	if !strings.Contains(string(report), "runtime-leak.txt") {
+		t.Fatalf("expected report to identify leaking artifact path, got %q", string(report))
+	}
+}
+
 func TestE2EScriptsHaveValidBashSyntax(t *testing.T) {
-	for _, path := range []string{"lib/e2e.sh", "data-plane.sh", "coverage-evidence.sh"} {
+	for _, path := range []string{"lib/e2e.sh", "data-plane.sh", "server-coverage.sh", "coverage-evidence.sh"} {
 		t.Run(path, func(t *testing.T) {
 			cmd := exec.Command("bash", "-n", path)
 			cmd.Dir = "."
@@ -111,6 +177,9 @@ func runBash(t *testing.T, artifactDir, script string) bashResult {
 		"SECRET_VALUE=vless://real-secret@example.test:443#private",
 		"FIRST_SECRET=trojan://first-secret@example.test:443#private",
 		"SECOND_SECRET=ss://second-secret@example.test:443#private",
+		"UUID_SECRET=123e4567-e89b-12d3-a456-426614174000",
+		"AUTH_TOKEN=provider-token-123456789",
+		"RUNTIME_SECRET=123e4567-e89b-12d3-a456-426614174001",
 	)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
