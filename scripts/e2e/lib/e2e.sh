@@ -185,6 +185,55 @@ assert_artifacts_do_not_contain_file_contents() {
   fi
 }
 
+runtime_config_paths_from_status_json() {
+  local status_json="$1"
+  require_cmd python3
+  python3 - "${status_json}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+value = payload.get("runtime_config_path")
+if isinstance(value, str) and value.strip():
+    print(value.strip())
+PY
+}
+
+assert_active_runtime_config_artifacts_safe() {
+  local label="$1"
+  local status_json="$2"
+  local paths=()
+  local source_copies=()
+  local path copy report scan_code=0
+
+  mapfile -t paths < <(runtime_config_paths_from_status_json "${status_json}")
+  if [[ "${#paths[@]}" -eq 0 ]]; then
+    fail "${label}: active status JSON did not expose runtime_config_path for generated-content redaction scan"
+  fi
+
+  for path in "${paths[@]}"; do
+    [[ "${path}" == /* ]] || fail "${label}: runtime_config_path is not absolute"
+    copy="$(mktemp "${E2E_TMP_ROOT}/$(safe_name "${label}").runtime-config.XXXXXX")"
+    chmod 600 "${copy}"
+    if [[ -r "${path}" ]]; then
+      cat -- "${path}" >"${copy}" || fail "${label}: failed to copy runtime_config_path for redaction scan"
+    else
+      require_cmd sudo
+      sudo -n cat -- "${path}" >"${copy}" || fail "${label}: failed to copy runtime_config_path for redaction scan"
+    fi
+    source_copies+=("${copy}")
+  done
+
+  report="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-content-redaction-scan.txt"
+  require_cmd python3
+  python3 "${E2E_REDACTION_SCAN}" file-contents "${E2E_ARTIFACT_DIR}" "${report}" "${source_copies[@]}" || scan_code=$?
+  rm -f -- "${source_copies[@]}"
+  if [[ "${scan_code}" != "0" ]]; then
+    fail "${label}: generated runtime config appeared in e2e artifacts"
+  fi
+}
+
 write_vless_fixtures() {
   local dir="$1"
   mkdir -p "${dir}"
