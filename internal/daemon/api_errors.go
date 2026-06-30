@@ -17,6 +17,8 @@ const (
 	daemonAPIErrorInternal           daemonAPIErrorCategory = "internal"
 )
 
+var errConnectionAlreadyActive = errors.New("connection already active; run podlaz disconnect before connecting another profile")
+
 type daemonAPIError struct {
 	category daemonAPIErrorCategory
 	err      error
@@ -66,6 +68,9 @@ func daemonAPIInternal(err error) error {
 func daemonAPIHTTPStatusCode(err error) int {
 	if profile.IsValidationError(err) {
 		return http.StatusBadRequest
+	}
+	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) {
+		return http.StatusConflict
 	}
 	var apiErr *daemonAPIError
 	if !errors.As(err, &apiErr) {
