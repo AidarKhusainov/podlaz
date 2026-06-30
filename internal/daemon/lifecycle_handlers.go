@@ -54,10 +54,6 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		}
 		response, err := lifecycle.Connect(r.Context(), req)
 		if err != nil {
-			if req.Mode == planner.ModeProxyOnly && lifecycleConnectionStarted(r.Context(), lifecycle) {
-				writeDaemonAPIHTTPError(w, daemonAPIConflict(err))
-				return
-			}
 			writeDaemonAPIHTTPError(w, err)
 			return
 		}
@@ -119,19 +115,6 @@ func lifecycleConnectionActive(ctx context.Context, lifecycle lifecycleService) 
 		return false
 	}
 	return reporter.Status(ctx).Connection == "active"
-}
-
-func lifecycleConnectionStarted(ctx context.Context, lifecycle lifecycleService) bool {
-	if lifecycleConnectionActive(ctx, lifecycle) {
-		return true
-	}
-	manager, ok := lifecycle.(*XrayManager)
-	if !ok {
-		return false
-	}
-	manager.mu.Lock()
-	defer manager.mu.Unlock()
-	return manager.cmd != nil || manager.state.Connection == "active"
 }
 
 func activeConnectionError() error {
