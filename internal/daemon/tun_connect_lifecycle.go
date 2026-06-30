@@ -60,103 +60,65 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	}
 
 	executor := m.tunPlanExecutor()
-	result, err := runTunTransaction(ctx, runtimeDir, p, plan, executor, time.Now)
+	runner := fullTunnelTransactionRunner{
+		runtimeDir: runtimeDir,
+		profile:    p,
+		plan:       plan,
+		corePlan:   corePlan,
+		executor:   executor,
+		now:        time.Now,
+		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.cmd != nil || m.state.Connection == "active" {
+				return fullTunnelCoreHandle{}, errFullTunnelConnectionBecameActive
+			}
+			cmd, done, err := m.startXrayLocked(p, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
+			if err != nil {
+				return fullTunnelCoreHandle{}, err
+			}
+			pid := 0
+			if cmd.Process != nil {
+				pid = cmd.Process.Pid
+			}
+			return fullTunnelCoreHandle{cmd: cmd, done: done, pid: pid}, nil
+		},
+		stopCore: func(core fullTunnelCoreHandle) error {
+			return m.stopStartedCore(core.cmd, core.done, corePlan.RuntimeConfigPath)
+		},
+		startAdapter: func(ctx context.Context, plan tunAdapterRuntimePlan) (fullTunnelAdapterHandle, error) {
+			plan.Identity = coreIdentity
+			adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, plan)
+			if err != nil {
+				return fullTunnelAdapterHandle{}, err
+			}
+			registerTunAdapter(m, adapterCancel, adapterDone)
+			pid := 0
+			if adapterCmd.Process != nil {
+				pid = adapterCmd.Process.Pid
+			}
+			return fullTunnelAdapterHandle{pid: pid}, nil
+		},
+		stopAdapter: func() error {
+			return stopRegisteredTunAdapter(m)
+		},
+		commitActiveState: func(store txstate.TransactionStore, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.cmd != core.cmd || m.done != core.done {
+				return errFullTunnelCoreExitedBeforeCommit
+			}
+			if err := commitTunTransaction(store, transactionID); err != nil {
+				return err
+			}
+			m.state = active
+			return nil
+		},
+	}
+	active, err := runner.run(ctx)
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
-
-	m.mu.Lock()
-	if m.cmd != nil || m.state.Connection == "active" {
-		m.mu.Unlock()
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(errors.New("connection became active while TUN transaction was applying"), rollbackErr)
-		}
-		return api.LifecycleResponse{}, errors.New("connection already active; rolled back newly applied TUN transaction")
-	}
-	cmd, done, err := m.startXrayLocked(p, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
-	if err != nil {
-		m.mu.Unlock()
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray start failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, err
-	}
-	m.mu.Unlock()
-
-	if err := saveCoreRollbackMetadata(result.Store, result.TransactionID, corePlan.RuntimeConfigPath, cmd.Process.Pid, transactionNow(result.Store)); err != nil {
-		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after core metadata failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, err
-	}
-	if err := verifyCoreStarted(done); err != nil {
-		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray startup verification failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
-	}
-	adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, tunAdapterRuntimePlan{TunDevice: plan.TunDevice.Name, SOCKSEndpoint: corePlan.SOCKSEndpoint, Identity: coreIdentity})
-	if err != nil {
-		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after TUN adapter startup failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, err
-	}
-	registerTunAdapter(m, adapterCancel, adapterDone)
-	if err := saveTunAdapterRollbackMetadata(result.Store, result.TransactionID, adapterCmd.Process.Pid, transactionNow(result.Store)); err != nil {
-		_ = stopRegisteredTunAdapter(m)
-		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after TUN adapter metadata failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, err
-	}
-	if err := verifyTunConnectivity(ctx, plan, corePlan); err != nil {
-		_ = stopRegisteredTunAdapter(m)
-		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
-	}
-
-	active := xrayState{
-		Connection:        "active",
-		Mode:              planner.ModeTun,
-		ProfileID:         p.ID,
-		ProfileName:       p.Name,
-		Proxy:             corePlan.Status,
-		TUN:               fmt.Sprintf("enabled (%s)", plan.TunDevice.Name),
-		Routes:            fmt.Sprintf("applied %d route(s) and %d policy rule(s)", len(appliedRoutes(plan)), len(appliedPolicyRules(plan))),
-		DNS:               dnsStatusLine(plan.DNS),
-		Firewall:          firewallStatusLine(plan.Firewall),
-		RuntimeConfigPath: corePlan.RuntimeConfigPath,
-		TransactionID:     result.TransactionID,
-		Warnings:          append(append([]string{}, corePlan.Warnings...), plan.Warnings...),
-	}
-	m.mu.Lock()
-	if m.cmd != cmd || m.done != done {
-		m.mu.Unlock()
-		_ = stopRegisteredTunAdapter(m)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(errors.New("Xray exited before TUN transaction commit"), rollbackErr)
-		}
-		return api.LifecycleResponse{}, errors.New("Xray exited before TUN transaction commit; rolled back applied podlaz-owned networking state")
-	}
-	if err := commitTunTransaction(result.Store, result.TransactionID); err != nil {
-		m.mu.Unlock()
-		_ = stopRegisteredTunAdapter(m)
-		_ = m.stopStartedCore(cmd, done, corePlan.RuntimeConfigPath)
-		if rollbackErr := m.rollbackVerifiedTun(ctx, result.TransactionID, plan, executor); rollbackErr != nil {
-			return api.LifecycleResponse{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after commit failure: %w", rollbackErr))
-		}
-		return api.LifecycleResponse{}, err
-	}
-	m.state = active
-	m.mu.Unlock()
 	return lifecycleResponse(active), nil
 }
 
@@ -224,12 +186,7 @@ func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (
 }
 
 func (m *XrayManager) rollbackVerifiedTun(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error {
-	store := txstate.TransactionStore{RuntimeDir: m.runtimeDir()}
-	tx, _, err := store.Load(transactionID)
-	if err != nil {
-		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
-	}
-	return rollbackTunTransaction(ctx, store, &tx, plan, executor)
+	return rollbackVerifiedTunTransaction(ctx, m.runtimeDir(), transactionID, plan, executor)
 }
 
 func verifyCoreStarted(done <-chan struct{}) error {
