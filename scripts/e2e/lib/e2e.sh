@@ -7,6 +7,9 @@ E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-${RUNNER_TEMP:-/tmp}/podlaz-e2e-artifacts}
 E2E_TMP_ROOT="${E2E_TMP_ROOT:-${RUNNER_TEMP:-/tmp}/podlaz-e2e-tmp}"
 mkdir -p "${E2E_ARTIFACT_DIR}" "${E2E_TMP_ROOT}"
 
+E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+E2E_REDACTION_SCAN="${E2E_LIB_DIR}/redaction_scan.py"
+
 E2E_STEP=0
 LAST_STDOUT=""
 LAST_STDERR=""
@@ -167,179 +170,9 @@ assert_artifacts_do_not_contain_sensitive_values() {
   shift
   local report="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-redaction-scan.txt"
   require_cmd python3
-  python3 - "${E2E_ARTIFACT_DIR}" "${report}" "$@" <<'PY'
-import base64
-import os
-import re
-import sys
-import urllib.parse
-
-artifact_dir, report = sys.argv[1], sys.argv[2]
-values = sys.argv[3:]
-
-uuid_re = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b")
-secret_query_keys = {
-    "id",
-    "uuid",
-    "password",
-    "passwd",
-    "pass",
-    "token",
-    "access_token",
-    "auth",
-    "authorization",
-    "secret",
-}
-common_derived_values = {
-    "tcp",
-    "udp",
-    "tls",
-    "none",
-    "auto",
-    "http",
-    "socks",
-    "chrome",
-    "firefox",
-    "reality",
-    "grpc",
-    "ws",
-    "httpupgrade",
-}
-
-needles: list[bytes] = []
-seen: set[bytes] = set()
-
-
-def add_needle(value: str | bytes, *, derived: bool = False) -> None:
-    if isinstance(value, bytes):
-        raw = value.strip()
-        text = raw.decode("utf-8", "ignore")
-    else:
-        text = str(value).strip()
-        raw = text.encode("utf-8")
-    if not raw:
-        return
-    if derived:
-        lowered = text.lower()
-        if lowered in common_derived_values:
-            return
-        if len(text) < 8 and not uuid_re.fullmatch(text):
-            return
-    if raw in seen:
-        return
-    seen.add(raw)
-    needles.append(raw)
-
-
-def maybe_base64_decode(token: str) -> list[str]:
-    token = urllib.parse.unquote(token).strip()
-    if len(token) < 8 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", token):
-        return []
-    normalized = token.replace("-", "+").replace("_", "/")
-    normalized += "=" * ((4 - len(normalized) % 4) % 4)
-    try:
-        decoded = base64.b64decode(normalized, validate=False)
-    except Exception:
-        return []
-    try:
-        return [decoded.decode("utf-8")]
-    except UnicodeDecodeError:
-        return []
-
-
-def add_decoded_sensitive_parts(text: str) -> None:
-    add_needle(text, derived=True)
-    for match in uuid_re.finditer(text):
-        add_needle(match.group(0), derived=True)
-    if ":" in text:
-        add_needle(text.rsplit(":", 1)[1], derived=True)
-
-
-def extract_sensitive_fragments(line: str) -> None:
-    stripped = line.strip()
-    if not stripped:
-        return
-
-    for match in uuid_re.finditer(stripped):
-        add_needle(match.group(0), derived=True)
-
-    if stripped.lower().startswith("authorization:"):
-        token = stripped.split(":", 1)[1].strip()
-        add_needle(token, derived=True)
-        parts = token.split(None, 1)
-        if len(parts) == 2:
-            add_needle(parts[1], derived=True)
-
-    try:
-        parsed = urllib.parse.urlsplit(stripped)
-    except ValueError:
-        return
-    if not parsed.scheme:
-        return
-
-    if "@" in parsed.netloc:
-        raw_userinfo = parsed.netloc.rsplit("@", 1)[0]
-        decoded_userinfo = urllib.parse.unquote(raw_userinfo)
-        add_decoded_sensitive_parts(decoded_userinfo)
-        for decoded in maybe_base64_decode(raw_userinfo):
-            add_decoded_sensitive_parts(decoded)
-        for decoded in maybe_base64_decode(decoded_userinfo):
-            add_decoded_sensitive_parts(decoded)
-
-    if parsed.scheme.lower() in {"vmess", "ss"}:
-        opaque = stripped.split("://", 1)[1].split("#", 1)[0].split("?", 1)[0]
-        userinfo = opaque.split("@", 1)[0].strip("/")
-        for decoded in maybe_base64_decode(userinfo):
-            add_decoded_sensitive_parts(decoded)
-
-    for key, vals in urllib.parse.parse_qs(parsed.query, keep_blank_values=False).items():
-        if key.lower() not in secret_query_keys:
-            continue
-        for value in vals:
-            add_decoded_sensitive_parts(urllib.parse.unquote(value))
-
-
-for value in values:
-    if not value:
-        continue
-    if "\n" not in value:
-        add_needle(value)
-    for line in value.splitlines():
-        if not line:
-            continue
-        add_needle(line)
-        extract_sensitive_fragments(line)
-
-report_abs = os.path.abspath(report)
-leaks: set[str] = set()
-if needles:
-    for root, _, files in os.walk(artifact_dir):
-        for name in files:
-            path = os.path.join(root, name)
-            if os.path.abspath(path) == report_abs:
-                continue
-            try:
-                with open(path, "rb") as handle:
-                    data = handle.read()
-            except OSError:
-                continue
-            if any(needle in data for needle in needles):
-                leaks.add(path)
-
-with open(report, "w", encoding="utf-8") as handle:
-    if leaks:
-        for path in sorted(leaks):
-            handle.write(f"{path}\n")
-    else:
-        handle.write(f"No configured sensitive values were found in {artifact_dir}\n")
-
-if leaks:
-    for path in sorted(leaks):
-        print(f"redaction leak file: {path}", file=sys.stderr)
-    sys.exit(1)
-PY
-  local code=$?
-  [[ "${code}" == "0" ]] || fail "${label}: sensitive value appeared in e2e artifacts"
+  if ! python3 "${E2E_REDACTION_SCAN}" sensitive-values "${E2E_ARTIFACT_DIR}" "${report}" "$@"; then
+    fail "${label}: sensitive value appeared in e2e artifacts"
+  fi
 }
 
 assert_artifacts_do_not_contain_file_contents() {
@@ -347,70 +180,9 @@ assert_artifacts_do_not_contain_file_contents() {
   shift
   local report="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-content-redaction-scan.txt"
   require_cmd python3
-  python3 - "${E2E_ARTIFACT_DIR}" "${report}" "$@" <<'PY'
-import os
-import sys
-
-artifact_dir, report = sys.argv[1], sys.argv[2]
-sources = sys.argv[3:]
-report_abs = os.path.abspath(report)
-errors: list[str] = []
-leaks: set[str] = set()
-
-
-def artifact_paths() -> list[str]:
-    paths: list[str] = []
-    for root, _, files in os.walk(artifact_dir):
-        for name in files:
-            path = os.path.join(root, name)
-            if os.path.abspath(path) == report_abs:
-                continue
-            paths.append(path)
-    return paths
-
-artifacts = artifact_paths()
-for source in sources:
-    source_abs = os.path.abspath(source)
-    if not os.path.isfile(source_abs):
-        errors.append(f"missing generated-content source: {source}")
-        continue
-    try:
-        with open(source_abs, "rb") as handle:
-            needle = handle.read()
-    except OSError as exc:
-        errors.append(f"unreadable generated-content source: {source}: {exc}")
-        continue
-    if len(needle) < 64:
-        errors.append(f"generated-content source too small to scan safely: {source}")
-        continue
-    for path in artifacts:
-        if os.path.abspath(path) == source_abs:
-            continue
-        try:
-            with open(path, "rb") as handle:
-                data = handle.read()
-        except OSError:
-            continue
-        if needle in data:
-            leaks.add(path)
-
-with open(report, "w", encoding="utf-8") as handle:
-    for error in errors:
-        handle.write(f"{error}\n")
-    for path in sorted(leaks):
-        handle.write(f"generated-content leak file: {path}\n")
-    if not errors and not leaks:
-        handle.write(f"No generated content sources were found in {artifact_dir}\n")
-
-if errors or leaks:
-    for error in errors:
-        print(f"redaction scan error: {error}", file=sys.stderr)
-    for path in sorted(leaks):
-        print(f"generated-content leak file: {path}", file=sys.stderr)
-    sys.exit(1)
-PY
-  local code=$?
-  [[ "${code}" == "0" ]] || fail "${label}: generated content appeared in e2e artifacts"
+  if ! python3 "${E2E_REDACTION_SCAN}" file-contents "${E2E_ARTIFACT_DIR}" "${report}" "$@"; then
+    fail "${label}: generated content appeared in e2e artifacts"
+  fi
 }
 
 write_vless_fixtures() {
