@@ -51,7 +51,7 @@ check_pattern scripts/e2e/redaction_scan_test.go "TestE2ERedactionScanFailsWitho
 check_pattern scripts/e2e/redaction_scan_test.go "TestE2ERedactionScanChecksEachLineOfMultilineSecrets" "redaction scan multiline secret test"
 check_pattern scripts/e2e/redaction_scan_test.go "TestE2ERedactionScanChecksDerivedUUIDAndAuthorizationToken" "redaction scan UUID/token fragment test"
 check_pattern scripts/e2e/redaction_scan_test.go "TestE2EGeneratedContentScanDetectsFullRuntimeConfigLeak" "generated runtime config helper test"
-check_pattern scripts/e2e/redaction_scan_test.go "TestE2EActiveRuntimeConfigScanUsesStatusRuntimeConfigPath" "active runtime config artifact scan test"
+check_pattern scripts/e2e/runtime_config_redaction_test.go "TestE2EActiveRuntimeConfigScanUsesStatusRuntimeConfigPath" "active runtime config artifact scan test"
 check_pattern scripts/e2e/redaction_path_segment_test.go "TestE2ERedactionScanChecksURLPathSegment" "redaction scan URL path segment test"
 check_pattern scripts/e2e/redaction_scan_test.go "TestE2EScriptsHaveValidBashSyntax" "E2E shell syntax test"
 check_pattern internal/logs/build_args_test.go "TestBuildJournalctlArgsIssue160FlagMatrix" "journalctl argument coverage"
