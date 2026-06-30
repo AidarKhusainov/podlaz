@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
@@ -281,7 +282,7 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 			h.coreStopped++
 			return nil
 		},
-		saveCoreMetadata: func(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, now txTime) error {
+		saveCoreMetadata: func(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, now time.Time) error {
 			if h.saveCoreMetadataErr != nil {
 				return h.saveCoreMetadataErr
 			}
@@ -301,7 +302,7 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 			h.adapterStopped++
 			return nil
 		},
-		saveAdapterMetadata: func(store txstate.TransactionStore, transactionID string, pid int, now txTime) error {
+		saveAdapterMetadata: func(store txstate.TransactionStore, transactionID string, pid int, now time.Time) error {
 			if h.saveAdapterMetadataErr != nil {
 				return h.saveAdapterMetadataErr
 			}
