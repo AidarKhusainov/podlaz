@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
+
+	"github.com/AidarKhusainov/podlaz/internal/storejson"
 )
 
 func (s Store) Add(source Source) error {
@@ -114,40 +115,47 @@ func (s Store) load() ([]Source, error) {
 }
 
 func (s Store) save(sources []Source) error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create subscription store directory: %w", err)
-	}
+	return s.saveWithDirectorySync(sources, storejson.SyncDir)
+}
 
-	tmp, err := os.CreateTemp(dir, ".subscriptions-*.tmp")
+func (s Store) saveWithDirectorySync(sources []Source, syncParentDir func(string) error) error {
+	err := storejson.WriteFile(s.path, storeFile{SchemaVersion: "v1", Sources: sources}, storejson.Options{
+		TempPattern:   ".subscriptions-*.tmp",
+		DirectoryMode: storejson.DefaultDirectoryMode,
+		FileMode:      storejson.DefaultFileMode,
+		SyncParentDir: syncParentDir,
+	})
 	if err != nil {
-		return fmt.Errorf("create temporary subscription store: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("secure temporary subscription store: %w", err)
-	}
-
-	encoder := json.NewEncoder(tmp)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(storeFile{SchemaVersion: "v1", Sources: sources}); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temporary subscription store: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync temporary subscription store: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temporary subscription store: %w", err)
-	}
-	if err := os.Rename(tmpName, s.path); err != nil {
-		return fmt.Errorf("replace subscription store atomically: %w", err)
+		return subscriptionStoreWriteError(err)
 	}
 	return nil
+}
+
+func subscriptionStoreWriteError(err error) error {
+	var writeErr *storejson.WriteError
+	if !errors.As(err, &writeErr) {
+		return fmt.Errorf("write subscription store: %w", err)
+	}
+	switch writeErr.Operation {
+	case storejson.OperationEncodeJSON, storejson.OperationWriteTempFile:
+		return fmt.Errorf("write temporary subscription store: %w", writeErr.Err)
+	case storejson.OperationCreateDirectory:
+		return fmt.Errorf("create subscription store directory: %w", writeErr.Err)
+	case storejson.OperationCreateTempFile:
+		return fmt.Errorf("create temporary subscription store: %w", writeErr.Err)
+	case storejson.OperationSetTempPermissions:
+		return fmt.Errorf("secure temporary subscription store: %w", writeErr.Err)
+	case storejson.OperationSyncTempFile:
+		return fmt.Errorf("sync temporary subscription store: %w", writeErr.Err)
+	case storejson.OperationCloseTempFile:
+		return fmt.Errorf("close temporary subscription store: %w", writeErr.Err)
+	case storejson.OperationRenameTempFile:
+		return fmt.Errorf("replace subscription store atomically: %w", writeErr.Err)
+	case storejson.OperationSyncParentDirectory:
+		return fmt.Errorf("sync subscription store parent directory: %w", writeErr.Err)
+	default:
+		return fmt.Errorf("write subscription store: %w", writeErr.Err)
+	}
 }
 
 func sortSources(sources []Source) {
