@@ -17,6 +17,19 @@ var (
 	errFullTunnelCoreExitedBeforeCommit = errors.New("Xray exited before TUN transaction commit")
 )
 
+type fullTunnelSemanticError struct {
+	msg string
+	err error
+}
+
+func (e fullTunnelSemanticError) Error() string {
+	return e.msg
+}
+
+func (e fullTunnelSemanticError) Unwrap() error {
+	return e.err
+}
+
 type fullTunnelCoreHandle struct {
 	cmd  *exec.Cmd
 	done <-chan struct{}
@@ -65,7 +78,10 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray start failure: %w", rollbackErr))
 		}
 		if errors.Is(err, errFullTunnelConnectionBecameActive) {
-			return xrayState{}, errors.New("connection already active; rolled back newly applied TUN transaction")
+			return xrayState{}, fullTunnelSemanticError{
+				msg: "connection already active; rolled back newly applied TUN transaction",
+				err: errFullTunnelConnectionBecameActive,
+			}
 		}
 		return xrayState{}, err
 	}
@@ -117,7 +133,10 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 			if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil {
 				return xrayState{}, errors.Join(err, rollbackErr)
 			}
-			return xrayState{}, errors.New("Xray exited before TUN transaction commit; rolled back applied podlaz-owned networking state")
+			return xrayState{}, fullTunnelSemanticError{
+				msg: "Xray exited before TUN transaction commit; rolled back applied podlaz-owned networking state",
+				err: errFullTunnelCoreExitedBeforeCommit,
+			}
 		}
 		_ = r.stopAdapter()
 		_ = r.stopCore(core)
