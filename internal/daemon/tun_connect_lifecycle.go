@@ -45,7 +45,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	m.mu.Lock()
 	if m.cmd != nil || m.state.Connection == "active" {
 		m.mu.Unlock()
-		return api.LifecycleResponse{}, errors.New("connection already active; run podlaz disconnect before connecting another profile")
+		return api.LifecycleResponse{}, errConnectionAlreadyActive
 	}
 	m.mu.Unlock()
 
