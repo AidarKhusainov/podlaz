@@ -150,6 +150,9 @@ jobs:
           set -eu
           dpkg-deb --fsys-tarfile "${DEV_DEB}" | tar -xOf - ./usr/lib/systemd/system/podlazd.service > /tmp/podlazd.service
           dpkg-deb --fsys-tarfile "${DEV_DEB}" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > /tmp/podlaz.sysusers
+          rm -rf /tmp/podlaz-control
+          dpkg-deb --control "${DEV_DEB}" /tmp/podlaz-control
+          test -f /tmp/podlaz-control/postinst
           grep -F 'u podlaz ' /tmp/podlaz.sysusers
           grep -F 'u podlaz-xray ' /tmp/podlaz.sysusers
           grep -Fx 'User=root' /tmp/podlazd.service
@@ -165,7 +168,13 @@ jobs:
           grep -Fx 'RestrictSUIDSGID=yes' /tmp/podlazd.service
           grep -Fx 'MemoryDenyWriteExecute=yes' /tmp/podlazd.service
           ! grep -E '^AmbientCapabilities=.*CAP_(NET_ADMIN|SETGID|SYS_ADMIN)' /tmp/podlazd.service
-          ! grep -R -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd|deb-systemd-invoke[[:space:]]+start[[:space:]]+podlazd' packaging/debian
+          grep -F 'unit=podlazd.service' /tmp/podlaz-control/postinst
+          grep -F 'deb-systemd-helper enable "$unit"' /tmp/podlaz-control/postinst
+          grep -F 'deb-systemd-helper update-state "$unit"' /tmp/podlaz-control/postinst
+          grep -F 'deb-systemd-invoke start "$1"' /tmp/podlaz-control/postinst
+          grep -F 'start_service "$unit"' /tmp/podlaz-control/postinst
+          ! grep -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd' /tmp/podlaz-control/postinst
+          ! grep -R -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd' packaging/debian
 
       - name: Validate generated shell completions
         run: |
