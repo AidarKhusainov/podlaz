@@ -136,7 +136,7 @@ func TestRunCLISubscriptionDeleteInteractiveConfirmationDeletes(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "delete", "interactive"}, &deleteOut, opts); err != nil {
 		t.Fatalf("interactive subscription delete failed: %v", err)
 	}
-	for _, want := range []string{"Delete subscription interactive and remove 1 imported profiles? Type yes to continue:", "Subscription deleted: interactive", "Profiles removed: 1"} {
+	for _, want := range []string{"Delete subscription interactive and remove 1 imported profiles? [Y/n]:", "Subscription deleted: interactive", "Profiles removed: 1"} {
 		if !strings.Contains(deleteOut.String(), want) {
 			t.Fatalf("expected interactive output to contain %q, got %q", want, deleteOut.String())
 		}
@@ -165,7 +165,7 @@ func TestRunCLISubscriptionDeleteInteractiveConfirmationCancelPreservesState(t *
 	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription delete canceled") {
 		t.Fatalf("expected interactive cancel with exit code 1, got %v", err)
 	}
-	if !strings.Contains(deleteOut.String(), "Type yes to continue") {
+	if !strings.Contains(deleteOut.String(), "Delete subscription cancel and remove 1 imported profiles? [Y/n]:") {
 		t.Fatalf("expected cancellation path to prompt, got %q", deleteOut.String())
 	}
 	if err := runWithOptions(context.Background(), []string{"subscription", "show", "cancel"}, &bytes.Buffer{}, opts); err != nil {
@@ -177,6 +177,46 @@ func TestRunCLISubscriptionDeleteInteractiveConfirmationCancelPreservesState(t *
 	}
 	if !strings.Contains(profiles.String(), "cancel.example") {
 		t.Fatalf("profile was not preserved after cancel: %q", profiles.String())
+	}
+}
+
+func TestRunCLISubscriptionDeleteInteractiveEOFCancelsAndPreservesState(t *testing.T) {
+	dir := t.TempDir()
+	opts := options{
+		profileStorePath: filepath.Join(dir, "profiles.json"),
+		stdin:            strings.NewReader(""),
+		stdinIsTerminal:  func() bool { return true },
+	}
+	fixturePath := filepath.Join(dir, "eof.txt")
+	writeSubscriptionFixture(t, fixturePath, []string{shareLink(481, "eof.example", "443", "?type=tcp&security=tls", "eof")})
+
+	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "eof", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("subscription add failed: %v", err)
+	}
+	if err := runWithOptions(context.Background(), []string{"subscription", "update", "eof"}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("subscription update failed: %v", err)
+	}
+
+	var deleteOut bytes.Buffer
+	err := runWithOptions(context.Background(), []string{"subscription", "delete", "eof"}, &deleteOut, opts)
+	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription delete canceled") {
+		t.Fatalf("expected empty EOF to cancel with exit code 1, got %v", err)
+	}
+	if !strings.Contains(deleteOut.String(), "Delete subscription eof and remove 1 imported profiles? [Y/n]:") {
+		t.Fatalf("expected EOF path to prompt, got %q", deleteOut.String())
+	}
+	if strings.Contains(deleteOut.String(), "Subscription deleted") {
+		t.Fatalf("EOF path unexpectedly deleted subscription: %q", deleteOut.String())
+	}
+	if err := runWithOptions(context.Background(), []string{"subscription", "show", "eof"}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("subscription metadata was not preserved after EOF cancel: %v", err)
+	}
+	var profiles bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
+		t.Fatalf("profile list failed: %v", err)
+	}
+	if !strings.Contains(profiles.String(), "eof.example") {
+		t.Fatalf("profile was not preserved after EOF cancel: %q", profiles.String())
 	}
 }
 
