@@ -49,7 +49,7 @@ podlaz completion fish >/dev/null
 man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
 man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
 sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-sudo apt remove -y podlaz
+sudo apt purge -y podlaz
 ```
 
 CI currently checks:
@@ -74,7 +74,7 @@ podlaz completion fish >/dev/null
 man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
 man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
 sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-sudo apt remove -y podlaz
+sudo apt purge -y podlaz
 ```
 
 Release workflow checks are defined in [Release workflow](./release.md). The release workflow adds tagged artifact validation, checksum generation, and GitHub Release publication on top of the regular CI and package gates.
@@ -143,7 +143,7 @@ Packaging PR checklist:
 - [ ] Packaged binaries have the expected dynamic linkage baseline for the declared package dependencies.
 - [ ] `lintian` is clean of errors, or every relevant warning is documented and justified.
 - [ ] The package does not ship `/usr/local`, `/run`, `/var/run`, user-home, or generated runtime config paths.
-- [ ] Install, same-version reinstall, man page, shell completion, and remove behavior are validated in a container or VM.
+- [ ] Install, same-version reinstall, man page, shell completion, and purge cleanup behavior are validated in a container or VM.
 - [ ] Full systemd behavior is validated in a VM or systemd-capable host when the PR claims service lifecycle acceptance.
 
 Release PR checklist:
@@ -205,7 +205,7 @@ Use a VM or systemd-capable host for service lifecycle assertions such as `syste
 
 ### Package tests
 
-Use package inspection and local install/remove validation for:
+Use package inspection and local install/purge validation for:
 
 - Debian metadata,
 - installed file layout,
@@ -217,34 +217,3 @@ Use package inspection and local install/remove validation for:
 - dynamic linkage compatibility with the declared package dependency baseline.
 
 ### Manual tests
-
-Before declaring TUN mode stable, run manual tests on Ubuntu LTS at minimum:
-
-- connect/disconnect loop,
-- failed connection rollback,
-- core crash during active connection,
-- daemon crash during apply,
-- suspend/resume,
-- Wi-Fi reconnect,
-- DHCP renewal,
-- DNS change,
-- `recover --execute --yes` after simulated failure.
-
-## 7. Implementation preferences
-
-- Keep planners mostly pure and testable without root.
-- Keep executors narrow, explicit, and auditable.
-- Follow the state ownership model in `docs/state-and-security.md`.
-- Store daemon runtime state under `/run/podlaz/`.
-- Store daemon persistent state under `/var/lib/podlaz/`.
-- Store user intent/state through the documented XDG layout.
-- Use journald as the primary log destination for the daemon.
-- Generate core configs under `/run/podlaz/generated/`; do not treat generated engine config as persistent source of truth.
-- Write generated core configs atomically and avoid logging them in full.
-- Prefer nftables over iptables for initial firewall work.
-- Prefer systemd-resolved per-link DNS over global resolver mutation.
-- Treat NetworkManager connectivity as diagnostic metadata, not the only health source.
-
-## 8. Networking safety boundary
-
-The foundation build is intentionally safe and mostly declarative. Read-only commands print contracts, diagnostic summaries, and recovery plans. Host networking changes require daemon-owned execution paths with explicit planning, verification, and recovery behavior.
