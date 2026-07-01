@@ -2,7 +2,7 @@
 
 This file defines how AI agents and automated coding assistants should work in this repository.
 
-podlaz is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations. The project values safe networking behavior, clear architecture, small reliable steps, and reviewable code more than fast feature accumulation.
+podlaz is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations. The project values safe networking behavior, small reliable steps, and reviewable code more than fast feature accumulation.
 
 ## Agent role
 
@@ -24,35 +24,42 @@ Do not treat generated code as final until it is reviewed against the repository
 
 Product behavior is owned by:
 
-- `docs/*` for product, CLI, architecture, state, security, networking, and roadmap contracts;
+- `README.md` for current product status and quick-start guidance;
+- `docs/README.md` for the documentation map;
+- `docs/cli.md` for command names, flags, exit codes, modes, JSON behavior, alias behavior, completion behavior, and CLI safety semantics;
+- `docs/state-and-security.md` for state ownership, redaction, daemon boundary, privileged networking safety, systemd hardening, and recovery rules;
+- `docs/debian-package.md` for package layout, install behavior, service behavior, and package validation gates;
+- `docs/development.md` for local checks and contribution rules;
+- `docs/release.md` for tagged release workflow and published artifacts;
+- `docs/e2e.md` for self-hosted E2E runner requirements and manual validation;
+- `docs/man/podlaz.1` and `docs/man/podlazd.8` for installed reference pages;
 - code and tests for implemented behavior.
 
 If `AGENTS.md` conflicts with documentation or code, stop and report the mismatch instead of silently choosing one.
 
-Update `AGENTS.md` only when agent workflow rules change. Update `docs/*` when product behavior changes.
+Update `AGENTS.md` only when agent workflow rules change. Update the owning canonical doc when product behavior changes.
 
 ## Current milestone boundary
 
-The current foundation build is intentionally safe and mostly declarative.
+The current foundation build is intentionally safe.
 
-Do not implement TUN, route, DNS, nftables, firewall, kill-switch, or privileged daemon behavior unless the task explicitly targets that milestone and updates the matching docs and tests.
+Do not implement TUN, route, DNS, nftables, firewall, kill-switch, or privileged daemon behavior unless the task explicitly targets that area and updates the matching docs and tests.
 
-Prefer proxy-only behavior, read-only diagnostics, planning, and recoverability foundations until the roadmap says otherwise.
+Prefer proxy-only behavior, read-only diagnostics, planning, and recoverability foundations unless the task explicitly requests a broader runtime behavior change.
 
 ## Canonical project context
 
 Read these documents before changing behavior:
 
-- `README.md` for current project status and product principles;
+- `README.md` for current product status and product principles;
 - `docs/README.md` for the documentation map;
-- `docs/cli.md` for command names, flags, exit codes, JSON behavior, and CLI safety semantics;
-- `docs/architecture.md` for CLI/daemon boundaries and transaction model;
-- `docs/state-and-security.md` for state ownership, redaction, confirmation behavior, systemd hardening, and core process safety;
-- `docs/package-boundaries.md` for package dependency direction;
-- `docs/networking-reliability.md` for TUN, routing, DNS, firewall, sleep/resume, and recovery requirements;
-- `docs/subscriptions-and-profiles.md` for profile and subscription behavior;
+- `docs/cli.md` for command names, flags, exit codes, JSON behavior, alias/completion behavior, and CLI safety semantics;
+- `docs/state-and-security.md` for state ownership, redaction, confirmation behavior, daemon boundaries, systemd hardening, privileged networking safety, and recovery rules;
+- `docs/debian-package.md` for package layout, service install behavior, and package validation gates;
 - `docs/development.md` for local checks and contribution rules;
-- `docs/roadmap.md` for sequencing.
+- `docs/release.md` for release workflow and artifact expectations;
+- `docs/e2e.md` for self-hosted E2E validation when touching real-host behavior;
+- `docs/man/podlaz.1` and `docs/man/podlazd.8` when changing installed CLI or daemon reference behavior.
 
 If a document conflicts with code, do not silently choose one. Explain the mismatch in the PR and either update the code or update the documentation in the same change.
 
@@ -76,7 +83,7 @@ Public CLI behavior must follow `docs/cli.md`:
 
 - command names and flags must match the contract;
 - high-impact flags such as `--execute` and `--yes` must stay long-only;
-- default recovery behavior must be read-only until the documented milestone enables explicit cleanup;
+- default recovery behavior must be read-only until explicit cleanup is requested;
 - `--json` output must include `schema_version` once JSON output is implemented;
 - errors must go to stderr and stable output must go to stdout when the implementation supports that separation.
 
@@ -92,7 +99,7 @@ Preserve these boundaries:
 - Executors apply already-validated plans and remain narrow, explicit, and auditable.
 - Core engines are child processes, not owners of podlaz system state.
 
-Package dependency direction must follow `docs/package-boundaries.md`. A PR that changes dependency direction must explain why.
+Keep package dependencies narrow and explain any dependency-direction change in the PR.
 
 ## State and security rules
 
