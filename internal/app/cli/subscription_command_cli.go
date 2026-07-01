@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,16 +83,16 @@ func runSubscriptionList(store sub.Store, args []string, stdout io.Writer) error
 	if jsonOutput {
 		return writeJSON(stdout, okJSON(map[string]any{"subscriptions": subscriptionsForOutput(sources)}))
 	}
-	fmt.Fprintln(stdout, "ID        NAME   FORMAT  PROFILES  UPDATED")
+	rows := make([][]string, 0, len(sources))
 	for _, source := range sources {
 		out := subscriptionForOutput(source)
 		updated := "never"
 		if !source.LastUpdatedAt.IsZero() {
 			updated = source.LastUpdatedAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Fprintf(stdout, "%-9s %-6s %-7s %-8d %s\n", out.ID, out.Name, out.Format, len(source.ProfileIDs), updated)
+		rows = append(rows, []string{out.ID, out.Name, out.Format, strconv.Itoa(len(source.ProfileIDs)), updated})
 	}
-	return nil
+	return writeTable(stdout, []string{"ID", "NAME", "FORMAT", "PROFILES", "UPDATED"}, rows)
 }
 
 func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error {
