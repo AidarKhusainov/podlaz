@@ -1,18 +1,14 @@
 # Development guide
 
-## 1. Requirements
+## Requirements
 
-- Go 1.26.4, the current pinned project toolchain.
-- Linux for networking implementation work.
-- Ubuntu LTS or Debian stable for Tier 1 manual testing.
-- `iproute2`, `nftables`, `systemd`, `systemd-resolved`, and NetworkManager for full networking work.
-- `nfpm`, `dpkg-deb`, and optionally `lintian` for local Debian package work.
+- Go 1.26.4, as pinned in `go.mod`.
+- Linux for networking work.
+- Debian/Ubuntu for package checks.
+- `iproute2`, `nftables`, `systemd`, `systemd-resolved`, and NetworkManager for full TUN testing.
+- `nfpm`, `dpkg-deb`, and optionally `lintian` for package work.
 
-The module language version is declared as `go 1.26` in `go.mod`; the exact stable toolchain is pinned with `toolchain go1.26.4` and mirrored in CI.
-
-## 2. Local checks
-
-Run before opening a pull request:
+## Before opening a PR
 
 ```bash
 gofmt -w .
@@ -28,7 +24,7 @@ go run ./cmd/podlaz completion zsh >/dev/null
 go run ./cmd/podlaz completion fish >/dev/null
 ```
 
-For packaging changes, also run where the required tools are available:
+For package changes:
 
 ```bash
 bash scripts/build-deb.sh
@@ -37,12 +33,10 @@ dpkg-deb --contents dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 file dist/package-root/usr/bin/podlaz dist/package-root/usr/bin/podlazd
 ldd dist/package-root/usr/bin/podlaz
 ldd dist/package-root/usr/bin/podlazd
-test -f dist/package-root/usr/share/bash-completion/completions/podlaz
-test -f dist/package-root/usr/share/zsh/vendor-completions/_podlaz
-test -f dist/package-root/usr/share/fish/vendor_completions.d/podlaz.fish
 lintian --fail-on error dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 sudo apt install ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 podlaz version
+plz version
 podlaz completion bash >/dev/null
 podlaz completion zsh >/dev/null
 podlaz completion fish >/dev/null
@@ -52,177 +46,27 @@ sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 sudo apt purge -y podlaz
 ```
 
-CI currently checks:
+## Rules
 
-```bash
-test -z "$(gofmt -l .)"
-go test ./...
-go vet ./...
-govulncheck ./...
-bash scripts/build-deb.sh
-dpkg-deb --info dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-dpkg-deb --contents dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-file dist/package-root/usr/bin/podlaz dist/package-root/usr/bin/podlazd
-ldd dist/package-root/usr/bin/podlaz
-ldd dist/package-root/usr/bin/podlazd
-lintian --fail-on error dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-sudo apt install -y ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-podlaz version
-podlaz completion bash >/dev/null
-podlaz completion zsh >/dev/null
-podlaz completion fish >/dev/null
-man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
-man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
-sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-sudo apt purge -y podlaz
-```
+- Work through pull requests.
+- Keep PRs small.
+- Add tests for behavior changes.
+- Update only the canonical doc that owns the changed behavior.
+- Do not add new permanent docs for temporary milestones, acceptance evidence, or implementation inventory.
+- Keep the CLI unprivileged; privileged networking belongs to the daemon.
+- Add rollback before adding route, DNS, nftables, TUN, or process-state mutation.
+- Keep cleanup idempotent and limited to podlaz-owned state.
+- Do not print secrets in output, JSON, logs, diagnostics, or artifacts.
 
-Release workflow checks are defined in [Release workflow](./release.md). The release workflow adds tagged artifact validation, checksum generation, and GitHub Release publication on top of the regular CI and package gates.
+## Documentation ownership
 
-CI uses Go 1.26.4. The package job intentionally runs on Ubuntu 22.04 to keep the dynamically linked package binary baseline aligned with the declared `libc6 (>= 2.34)` dependency. Local development should use the same Go toolchain unless a PR explicitly updates `go.mod`, CI, and this guide together.
-
-## 3. Safety rules for contributors
-
-These rules are mandatory for any code touching privileged Linux networking:
-
-1. Add a rollback path before adding route, rule, DNS, nftables, TUN, or process-state changes.
-2. Do not add SUID binaries.
-3. Do not write directly to `/etc/resolv.conf` in normal operation.
-4. Keep route, DNS, and firewall behavior explicit and reviewable.
-5. Prefer dry-run output before execution.
-6. Keep cleanup idempotent.
-7. Keep daemon-owned resources identifiable by name, marker, table ID, or state file.
-8. Treat `recover` as a product feature, not a debug script.
-9. Do not print secrets in human output, JSON output, or logs.
-10. Do not broaden daemon privileges without documenting the reason.
-
-## 4. Documentation update rules
-
-When changing behavior, update documentation in the same pull request.
-
-Required mapping:
-
-| Change type | Documentation to update |
+| Change | Update |
 | --- | --- |
-| User-visible command | `docs/cli.md`, `README.md`, `docs/README.md` |
-| CLI exit code or JSON output | `docs/cli.md`, `docs/state-and-security.md` |
-| CLI/daemon boundary | `docs/architecture.md`, `docs/package-boundaries.md` |
-| State path, runtime file, or ownership model | `docs/state-and-security.md`, `docs/architecture.md` |
-| Output redaction or secret handling | `docs/state-and-security.md` |
-| systemd unit or daemon privilege behavior | `docs/state-and-security.md`, `docs/architecture.md` |
-| Debian package layout or lifecycle | `docs/debian-package.md`, `README.md`, `docs/README.md` |
-| Release workflow, release artifact naming, or release validation | `docs/release.md`, `docs/README.md`, `docs/development.md` |
-| TUN, route, DNS, firewall, NetworkManager, suspend/resume behavior | `docs/networking-reliability.md` |
-| Profile, subscription, parser, validation behavior | `docs/subscriptions-and-profiles.md` |
-| Development phase or milestone change | `docs/roadmap.md` |
-| External assumption or design reference | `docs/references.md` |
+| CLI command, flag, mode, exit code, JSON behavior | `docs/cli.md` |
+| State, redaction, daemon boundary, networking safety | `docs/state-and-security.md` |
+| Debian package layout or service install behavior | `docs/debian-package.md` |
+| Release workflow or artifact naming | `docs/release.md` |
+| Self-hosted E2E runner behavior | `docs/e2e.md` |
+| Local developer workflow | `docs/development.md` |
 
-## 5. Branching and pull requests
-
-Work should go through pull requests.
-
-Pull requests should be small enough that networking behavior can be reviewed precisely.
-
-Recommended PR checklist:
-
-- [ ] Code is formatted with `gofmt`.
-- [ ] Tests pass with `go test ./...`.
-- [ ] New privileged behavior has explicit rollback or a documented reason why it is read-only.
-- [ ] `doctor`/diagnostics behavior is updated when system behavior changes.
-- [ ] JSON output and exit codes follow `docs/cli.md`.
-- [ ] Output follows the redaction policy.
-- [ ] Documentation is updated with code changes.
-- [ ] Failure modes are described in the PR body.
-
-Packaging PR checklist:
-
-- [ ] Local `.deb` artifact builds for `amd64`.
-- [ ] `dpkg-deb --info` and `dpkg-deb --contents` show expected metadata and file layout.
-- [ ] Packaged binaries report the package version through `podlaz version`.
-- [ ] Packaged shell completion files exist for bash, zsh, and fish.
-- [ ] Packaged binaries have the expected dynamic linkage baseline for the declared package dependencies.
-- [ ] `lintian` is clean of errors, or every relevant warning is documented and justified.
-- [ ] The package does not ship `/usr/local`, `/run`, `/var/run`, user-home, or generated runtime config paths.
-- [ ] Install, same-version reinstall, man page, shell completion, and purge cleanup behavior are validated in a container or VM.
-- [ ] Full systemd behavior is validated in a VM or systemd-capable host when the PR claims service lifecycle acceptance.
-
-Release PR checklist:
-
-- [ ] Version tag mapping is documented.
-- [ ] Release artifacts include binary, Debian package, and checksums.
-- [ ] Release notes include tag and commit SHA.
-- [ ] Build/test jobs use read-only permissions.
-- [ ] Release publication grants only the write permission needed for GitHub Release assets.
-- [ ] Third-party Actions are pinned to a full-length commit SHA, or tag pinning is explicitly justified in `docs/release.md`.
-
-## 6. Testing strategy
-
-### Unit tests
-
-Use unit tests for:
-
-- profile parsing,
-- subscription parsing,
-- profile normalization,
-- route planning,
-- DNS planning,
-- firewall planning,
-- transaction state transitions,
-- idempotent cleanup planning,
-- redaction helpers,
-- exit code mapping,
-- JSON output shape.
-
-### Default integration tests
-
-The default `go test ./...` suite must stay deterministic and must not require repository secrets, root privileges, public internet access, a real VPN provider, or mutation of the developer or CI host network.
-
-Use `httptest.Server` integration tests for provider and subscription behavior:
-
-- HTTP subscription headers and generated client identity metadata,
-- provider-like Xray JSON responses,
-- unsupported-client provider responses,
-- redirect and error redaction behavior,
-- no mutation of profile/subscription state on failed fetch or parse.
-
-Use fixture-backed parser tests for subscription formats whose structure must remain stable. Xray JSON fixtures may include `log`, `dns`, `routing`, importable proxy outbounds, and non-profile service/routing outbounds.
-
-Use fake executors and deterministic daemon-package tests for non-root daemon lifecycle coverage:
-
-- generated runtime config creation and cleanup,
-- active and inactive lifecycle state through daemon-owned state,
-- TUN transaction apply, verify, rollback, and commit behavior,
-- TUN runtime config generation,
-- TUN route/TCP/DNS connectivity probes with fake probe functions.
-
-### Privileged and real-world tests
-
-The `v0.2 acceptance smoke` workflow is the supported real-world VPN smoke. It is gated by manual dispatch or an explicit pull-request label, uses repository secrets, starts the real Xray and tun2socks binaries, connects in TUN mode, verifies DNS/connectivity and public egress behavior, disconnects, and uploads sanitized diagnostics.
-
-A separate Docker or network-namespace VPN gate must not be added as an always-on PR requirement unless it accurately provides the Linux routing, DNS, nftables, systemd-resolved, process-supervision, and connectivity semantics that TUN mode verifies. Partial container tests that stub those host services belong in the default fake-daemon integration layer instead.
-
-Use a VM or systemd-capable host for service lifecycle assertions such as `systemctl status podlazd`, runtime directory creation, journald behavior, and daemon startup under the packaged unit.
-
-### Package tests
-
-Use package inspection and local install/purge validation for:
-
-- Debian metadata,
-- installed file layout,
-- package lifecycle behavior,
-- absence of generated runtime files in package contents,
-- binary, shell completion, and man page availability after install,
-- version consistency between package metadata and `podlaz version`,
-- same-version reinstall behavior,
-- dynamic linkage compatibility with the declared package dependency baseline.
-
-### Manual tests
-
-Before declaring TUN mode stable, run manual tests on Ubuntu LTS at minimum:
-
-- `podlaz connect --mode tun <profile>`
-- `ip route`, `ip rule`, DNS, nftables, and public egress checks while active
-- `podlaz disconnect`
-- route/DNS/firewall cleanup checks after disconnect
-- daemon crash and core crash recovery drills
-- `podlaz recover` dry-run and execute confirmation path
+Everything else belongs in issues, PRs, release notes, or code comments near the implementation.
