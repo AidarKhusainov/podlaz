@@ -17,22 +17,61 @@ PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 
 collect_service_diagnostics() {
+  local label="${1:-podlazd}"
+  local dir="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")"
+  mkdir -p "${dir}"
   if command -v systemctl >/dev/null 2>&1; then
-    sudo -n systemctl status podlazd.service --no-pager >"${E2E_ARTIFACT_DIR}/podlazd.service.status" 2>&1 || true
+    sudo -n systemctl status podlazd.service --no-pager >"${dir}/podlazd.service.status" 2>&1 || true
+    sudo -n systemctl cat podlazd.service >"${dir}/podlazd.service.cat" 2>&1 || true
+    sudo -n systemctl is-enabled podlazd.service >"${dir}/podlazd.service.is-enabled" 2>&1 || true
+    sudo -n systemctl is-active podlazd.service >"${dir}/podlazd.service.is-active" 2>&1 || true
+    sudo -n systemctl list-unit-files 'podlazd.service' >"${dir}/podlazd.service.unit-files" 2>&1 || true
+  fi
+  if command -v deb-systemd-helper >/dev/null 2>&1; then
+    sudo -n deb-systemd-helper was-enabled podlazd.service >"${dir}/podlazd.service.was-enabled" 2>&1 || true
+    sudo -n deb-systemd-helper debian-installed podlazd.service >"${dir}/podlazd.service.debian-installed" 2>&1 || true
   fi
   if command -v journalctl >/dev/null 2>&1; then
-    sudo -n journalctl -u podlazd.service -n 200 --no-pager >"${E2E_ARTIFACT_DIR}/podlazd.service.journal" 2>&1 || true
+    sudo -n journalctl -u podlazd.service -n 200 --no-pager >"${dir}/podlazd.service.journal" 2>&1 || true
   fi
+}
+
+purge_existing_package_state() {
+  log "clean existing podlaz package state"
+  sudo -n systemctl stop podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-stop.log" 2>&1 || true
+  sudo -n apt purge -y podlaz >"${E2E_ARTIFACT_DIR}/preinstall-apt-purge.log" 2>&1 || true
+  if command -v deb-systemd-helper >/dev/null 2>&1; then
+    sudo -n deb-systemd-helper purge podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-deb-systemd-helper-purge.log" 2>&1 || true
+  fi
+  sudo -n systemctl daemon-reload >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-daemon-reload.log" 2>&1 || true
+  sudo -n systemctl reset-failed podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-reset-failed.log" 2>&1 || true
+}
+
+wait_for_installed_service_active() {
+  local attempt
+  for attempt in $(seq 1 50); do
+    if sudo -n systemctl is-active --quiet podlazd.service; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  collect_service_diagnostics installed-service-active-failure
+  fail "installed-service-active failed: podlazd.service did not become active after package install"
 }
 
 cleanup_package_service() {
   local code=$?
   if [[ "${SERVICE_TOUCHED}" == "1" ]]; then
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-    collect_service_diagnostics
+    collect_service_diagnostics cleanup
   fi
   if [[ "${PACKAGE_INSTALLED}" == "1" && "${PODLAZ_E2E_KEEP_PACKAGE:-false}" != "true" ]]; then
-    sudo -n apt remove -y podlaz >/dev/null 2>&1 || true
+    sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+      sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+    fi
+    sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+    sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
   fi
   exit "${code}"
 }
@@ -42,6 +81,7 @@ log "package/service sudo preflight"
 expect_success sudo-true sudo -n true
 expect_success sudo-systemctl-version sudo -n systemctl --version
 expect_success sudo-apt-version sudo -n apt --version
+purge_existing_package_state
 
 log "install pinned packaging tools"
 # shellcheck disable=SC1091
@@ -95,20 +135,28 @@ test -f /usr/lib/sysusers.d/podlaz.conf || fail "missing sysusers contract"
 
 log "package first-run service availability"
 sudo -n systemctl daemon-reload
-expect_success installed-service-enabled sudo -n systemctl is-enabled --quiet podlazd.service
+if ! sudo -n systemctl is-enabled --quiet podlazd.service; then
+  collect_service_diagnostics installed-service-enabled-failure
+  fail "installed-service-enabled failed: podlazd.service is not enabled after clean package install"
+fi
 SERVICE_TOUCHED=1
-expect_success installed-service-active sudo -n systemctl is-active --quiet podlazd.service
-collect_service_diagnostics
+wait_for_installed_service_active
+collect_service_diagnostics installed-service-active
 sudo -n systemctl stop podlazd.service
 SERVICE_TOUCHED=0
 
-log "same-version reinstall and remove"
+log "same-version reinstall and purge"
 sudo -n apt install -y --reinstall "./${DEV_DEB}" 2>&1 | tee "${E2E_ARTIFACT_DIR}/apt-reinstall.log"
 expect_success reinstalled-version podlaz version
 expect_success reinstalled-alias-version plz version
 if [[ "${PODLAZ_E2E_KEEP_PACKAGE:-false}" != "true" ]]; then
-  sudo -n apt remove -y podlaz 2>&1 | tee "${E2E_ARTIFACT_DIR}/apt-remove.log"
+  sudo -n apt purge -y podlaz 2>&1 | tee "${E2E_ARTIFACT_DIR}/apt-purge.log"
   PACKAGE_INSTALLED=0
+  if command -v deb-systemd-helper >/dev/null 2>&1; then
+    sudo -n deb-systemd-helper purge podlazd.service >"${E2E_ARTIFACT_DIR}/posttest-deb-systemd-helper-purge.log" 2>&1 || true
+  fi
+  sudo -n systemctl daemon-reload >"${E2E_ARTIFACT_DIR}/posttest-systemctl-daemon-reload.log" 2>&1 || true
+  sudo -n systemctl reset-failed podlazd.service >"${E2E_ARTIFACT_DIR}/posttest-systemctl-reset-failed.log" 2>&1 || true
 fi
 
 log "package/service e2e completed"
