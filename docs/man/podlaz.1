@@ -1,6 +1,6 @@
-.TH PODLAZ 1 "June 2026" "podlaz" "User Commands"
+.TH PODLAZ 1 "July 2026" "podlaz" "User Commands"
 .SH NAME
-podlaz \- Linux-first CLI for Xray-compatible VPN and proxy profiles
+podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .SH SYNOPSIS
 .SY podlaz
 .OP --help
@@ -10,7 +10,7 @@ podlaz \- Linux-first CLI for Xray-compatible VPN and proxy profiles
 .YS
 .SY podlaz
 .B import
-.I share-uri|local-path|file-or-http-url
+.I input
 .YS
 .SY podlaz
 .B profile
@@ -59,73 +59,37 @@ podlaz \- Linux-first CLI for Xray-compatible VPN and proxy profiles
 .YS
 .SH DESCRIPTION
 .B podlaz
-is the user-facing command line interface for podlaz, a Linux-first,
-CLI-first VPN/proxy client foundation for Xray-compatible configurations.
-It manages user-owned profile and subscription state, renders plans and
-status, and sends lifecycle intents to the local
+manages user-owned profiles and subscriptions, renders plans and diagnostics,
+and sends connection or cleanup intents to the local
 .BR podlazd (8)
-daemon when daemon-owned runtime behavior is required.
+daemon when runtime behavior is required.
 .PP
-podlaz is designed around safe defaults. Read-only commands must not
-require root. The CLI must not become a privileged or SUID networking
-mutator. Privileged networking state belongs to the daemon transaction and
-recovery model.
+The CLI is intentionally conservative: read-only commands do not require root,
+proxy-only mode does not mutate host networking, and privileged TUN/recovery
+work belongs to daemon-owned transaction state.
+.PP
+Packaged installs may also provide
+.B plz
+as a short alias for
+.BR podlaz .
 .SH COMMANDS
 .TP
 .B version
-Print the podlaz version.
+Print version, commit, and build date.
 .TP
 .B help [command]
-Print general help or command-specific help.
+Print general or command-specific help.
 .TP
 .B completion bash|zsh|fish
-Generate shell completion definitions for standard output. This command prints
-static command, subcommand, flag, and enum-value completion metadata. It does
-not contact the daemon, read user state, start Xray, mutate networking, or
-require root.
+Write static shell completion definitions to stdout.
 .TP
-.B import <share-uri|local-path|file-or-http-url>
-Import a supported share URI, one-shot local import file, or subscription
-source.
-.PP
-.RS
-Ordinary local paths are detected as Xray JSON, plain URI-list, or Base64
-URI-list inputs and are normalized into user-owned profiles with source
-.BR imported_file .
-Supported local Xray JSON import covers VLESS outbounds that map to the
-normalized profile model. Unsupported local entries are reported clearly when at
-least one supported profile is imported. Malformed Xray JSON object files fail
-as JSON errors and do not fall back to URI-list parsing.
-.RE
-.PP
-.RS
-.B file://,
-.B http://,
-and
-.B https://
-inputs are subscription sources. Supported subscription response formats are
-Base64 URI-list and Xray JSON object or array. The detected subscription format
-is persisted in subscription metadata and is shown by
-.B subscription list
-and
-.BR "subscription show" .
-Malformed subscription JSON that starts with
-.B {
-or
-.B [
-fails as JSON and does not fall back to Base64 parsing.
-.RE
-.PP
-.RS
-The command creates user-owned podlaz state only; it does not connect, start
-.BR podlazd (8),
-start Xray, require root, create TUN devices, mutate routes, DNS, nftables, or
-firewall state. Raw Xray JSON is not stored as persistent source of truth or
-runtime configuration.
-.RE
+.B import <input>
+Import a share URI, local profile file, or subscription URL.
+The command does not connect or mutate host networking.
 .TP
 .B profile add --name <name> --server <host> --port <port> --protocol <protocol>
-Create a manual profile. Supported protocol names include
+Create a manual profile.
+Supported protocols are
 .BR vless ,
 .BR vmess ,
 .BR trojan ,
@@ -133,140 +97,94 @@ and
 .BR shadowsocks .
 .TP
 .B profile import <share-uri>
-Import a profile from a supported share URI.
+Import one profile from a supported share URI.
 .TP
 .B profile list [--json]
 List stored profiles.
 .TP
 .B profile show <profile-id> [--json]
-Show a stored profile with sensitive fields redacted.
+Show one stored profile with sensitive fields redacted.
 .TP
 .B profile validate <profile-id> [--mode proxy-only|tun] [--json]
-Validate a stored profile without starting Xray, contacting the daemon,
-requiring root, writing runtime config, or mutating TUN, routes, DNS, nftables,
-or firewall state. The default validation mode is
-.BR proxy-only .
-With
-.BR "--mode tun" ,
-the same stored profile is checked against the TUN-mode Xray renderability
-rules. A stored profile that cannot be rendered for the selected mode/backend
-returns exit status 3. JSON output uses
-.B schema_version
-and includes the redacted profile, selected mode, backend, and
-.B valid
-boolean.
+Validate a profile without starting Xray, contacting the daemon, requiring root,
+writing runtime config, or mutating networking.
 .TP
-.B profile delete <profile-id> --yes
-Delete a stored profile. Destructive state-removal commands require explicit
-confirmation in non-interactive and JSON contexts.
+.B profile delete <profile-id> [--yes]
+Delete a profile. Non-interactive deletion requires
+.BR --yes .
 .TP
 .B subscription add --name <name> --url <url>
-Add a subscription source. The source is persisted without fetching it.
+Store a subscription source without fetching it.
 .TP
 .B subscription update <subscription-id>
-Fetch a subscription source, detect Base64 URI-list or Xray JSON, normalize
-supported profiles, and replace only profiles owned by that subscription. Failed
-updates preserve last known good profile and subscription metadata state.
+Fetch a subscription and replace only profiles owned by that subscription.
+Failed updates preserve last known good state.
 .TP
 .B subscription list [--json]
-List subscription sources with redacted URLs, persisted format, profile count,
-and update time.
+List subscription sources with redacted URLs.
 .TP
 .B subscription show <subscription-id> [--json]
-Show one subscription source with sensitive URL material redacted. JSON output
-uses the same persisted format metadata as human output.
+Show one subscription source with redacted URL material.
 .TP
 .B subscription delete <subscription-id> [--yes] [--keep-profiles]
-Delete a subscription source from user-owned state. By default, this removes the
-subscription metadata and profiles owned by that subscription. With
-.BR --keep-profiles ,
-it removes only subscription metadata and leaves imported profiles in the
-profile store. In an interactive terminal it prompts for
-.B yes
-unless
-.B --yes
-is passed; in non-interactive mode it fails unless
-.B --yes
-is passed. JSON output for this command is deferred and fails fast with exit
-status 2.
+Delete subscription metadata and, by default, its owned profiles.
+Use
+.B --keep-profiles
+to leave imported profiles in place.
 .TP
 .B plan --mode proxy-only <profile-id> [--json]
-Render a read-only proxy-only plan. The plan describes generated Xray config
-paths and local proxy listeners and states that no TUN, route, DNS, nftables, or
-firewall state will be changed.
+Show a read-only proxy-only plan.
 .TP
 .B plan --mode tun <profile-id> [--json]
-Render a read-only full-tunnel plan for inspection before host networking
-mutation.
+Show a read-only full-tunnel plan before host networking changes.
 .TP
 .B connect [--mode proxy-only|tun] <profile-id>
-Start a connection through the local daemon API. The default mode is
+Start a daemon-managed connection. The default mode is
 .BR proxy-only .
-Proxy-only mode starts and stops daemon-managed Xray runtime state and must not
-mutate routes, DNS, TUN devices, nftables, or firewall state.
 .TP
 .B disconnect
-Stop the active daemon-managed connection. The operation is intended to be safe
-to repeat.
+Stop the active daemon-managed connection. Safe to repeat.
 .TP
 .B status
-Print daemon-backed status when the daemon is reachable, otherwise use a
-conservative local read-only fallback. The command is read-only.
+Print daemon-backed status when available, otherwise local read-only status.
 .TP
 .B doctor [--json]
-Print environment and runtime diagnostics. The default command uses the daemon
-when available and otherwise falls back to local read-only diagnostics.
+Print environment and runtime diagnostics.
 .TP
 .B doctor --core --xray <path> [--json]
-Validate an explicitly supplied local Xray binary with read-only core
-diagnostics.
+Validate an explicitly supplied Xray-compatible core binary.
 .TP
-.B logs [--follow] [--daemon] [--core] [--since <duration>]
-Read recent
-.BR podlazd.service
-journal entries through
-.BR journalctl (1).
-The
-.B --core
-view filters daemon-forwarded Xray lifecycle and stdout/stderr lines.
+.B logs [--follow|-f] [--daemon] [--core] [--since <duration>]
+Read recent podlaz journal entries.
 .TP
 .B recover
-Inspect clearly podlaz-owned recovery candidates without mutating host state.
+Inspect stale podlaz-owned recovery candidates without changing the host.
 .TP
 .B recover --execute --yes [--json]
-Send explicit cleanup intent to the daemon. The CLI does not perform privileged
-host cleanup directly. Ambiguous resources are skipped and left unchanged.
+Ask the daemon to clean clearly podlaz-owned stale state.
+Ambiguous resources are skipped.
 .SH OPTIONS
 .TP
 .B --help, -h
 Print help where supported.
 .TP
-.B --version
-Print the podlaz version.
-.TP
 .B --json
-Print machine-readable JSON for commands whose JSON contract is implemented.
-Commands with deferred JSON support fail fast with exit status 2 instead of
-printing unstable JSON.
+Print stable JSON for commands whose JSON contract is implemented.
+Deferred JSON support fails with exit status 2.
 .TP
 .B --yes
-Confirm a command that removes state or executes recovery cleanup. This flag is
-intentionally long-only.
+Confirm destructive state removal or recovery execution. Long-only.
 .TP
 .B --keep-profiles
 For
 .BR "subscription delete" ,
-remove subscription metadata while preserving imported profiles in the profile
-store.
+keep imported profiles while removing subscription metadata.
 .TP
 .B --execute
-Execute recovery cleanup through the daemon. This flag is intentionally
-long-only and must be combined with explicit confirmation where required.
+Execute recovery cleanup through the daemon. Long-only.
 .TP
 .B --mode proxy-only|tun
-Select the connection, planning, or profile-validation mode. The default
-connection and validation mode is
-.BR proxy-only .
+Select connection, planning, or validation mode.
 .TP
 .B --follow, -f
 Follow journal output for
@@ -280,7 +198,7 @@ Select daemon log lines for
 Select core diagnostics or core log lines, depending on the command.
 .TP
 .B --xray <path>
-Provide an explicit Xray binary path for
+Provide the core binary path for
 .BR "doctor --core" .
 .TP
 .B --since <duration>
@@ -289,51 +207,25 @@ Pass a journalctl-compatible time expression to
 .SH EXIT STATUS
 .TP
 .B 0
-Command completed successfully and no unhealthy state was found.
+Success.
 .TP
 .B 1
-Runtime or operation failed.
+Runtime or operation failure.
 .TP
 .B 2
-Invalid usage, invalid flags, invalid arguments, or explicitly deferred JSON
-output.
+Invalid usage, flags, arguments, or deferred JSON output.
 .TP
 .B 3
-A diagnostic command completed but found unhealthy state or incomplete
-visibility. For
+Diagnostic command found unhealthy state.
+For
 .BR "profile validate" ,
-this means the stored profile was found but cannot be rendered for the selected
-mode/backend.
+the profile exists but cannot be rendered for the selected mode/backend.
 .TP
 .B 4
 Permission or authorization failure.
 .TP
 .B 5
-The daemon was unavailable when the command required daemon access.
-.SH OUTPUT
-Default output is human-readable and intended for technical users. Errors are
-printed to standard error. Stable command output is printed to standard output
-where the implementation supports that separation.
-.PP
-Successful subscription import and update output includes a detected
-.B Format:
-line. `subscription list` and `subscription show` read the persisted format from
-subscription metadata.
-.PP
-Successful subscription deletion prints the redacted subscription identifier and
-either the number of removed subscription-owned profiles or the number of
-profiles kept when
-.B --keep-profiles
-is used.
-.PP
-JSON output is available only for commands with an implemented JSON contract.
-Implemented JSON output includes a
-.B schema_version
-field. Human and JSON output must apply the same redaction policy.
-.PP
-.B profile validate --json
-prints the common JSON envelope plus the redacted profile, selected mode,
-selected backend, and a boolean validation result.
+Required daemon access was unavailable.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/podlaz/
@@ -343,176 +235,46 @@ User configuration directory. Defaults to
 .I $XDG_STATE_HOME/podlaz/
 User state directory. Defaults to
 .IR ~/.local/state/podlaz/ .
-Profiles and subscriptions are user-owned state and must not require root.
 .TP
 .I /run/podlaz/
-Daemon runtime directory used by packaged systemd deployments.
+Daemon runtime directory.
 .TP
 .I /run/podlaz/podlazd.sock
 Local Unix socket for the daemon API.
 .TP
 .I /run/podlaz/generated/
-Daemon-owned generated runtime configuration directory. Generated core configs
-are runtime output, not persistent source of truth, and must not be logged in
-full.
+Daemon-owned generated runtime configuration.
 .TP
 .I /run/podlaz/transactions/
-Volatile daemon transaction state used by status, diagnostics, rollback, and
-recovery paths.
-.TP
-.I /usr/share/bash-completion/completions/podlaz
-Packaged bash completion file.
-.TP
-.I /usr/share/zsh/vendor-completions/_podlaz
-Packaged zsh completion file.
-.TP
-.I /usr/share/fish/vendor_completions.d/podlaz.fish
-Packaged fish completion file.
+Volatile daemon transaction state.
 .SH ENVIRONMENT
 .TP
 .B PODLAZ_RUNTIME_DIR
-Override the daemon runtime directory for tests and local development.
+Override the daemon runtime directory for tests and development.
 .TP
 .B PODLAZ_XRAY_PATH
-Provide an explicit Xray executable path for daemon-side proxy-only lifecycle
-testing.
+Override the Xray-compatible core path for daemon lifecycle tests.
 .TP
 .B XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_CACHE_HOME
-Standard XDG base directory variables used for user-owned podlaz state.
-.SH SECURITY
-podlaz keeps user state, daemon runtime state, and system networking state
-separate. The CLI parses user intent, renders output, and sends daemon API
-requests; it must not directly mutate privileged Linux networking state.
-.PP
-Proxy-only mode must not mutate TUN devices, routes, policy rules, DNS,
-nftables, or firewall state. Recovery without
-.B --execute
-is read-only. Recovery execution is explicit and daemon-owned.
-.PP
-The
-.B completion
-command is read-only and static. It must not contact the daemon, read user
-state, print secrets, or require root.
-.PP
-Profile validation is read-only. It must not contact the daemon, start Xray,
-write runtime config, require root, or mutate Linux networking state.
-.PP
-Local and subscription imports parse supported content into normalized profiles
-only. They must not execute or persist raw Xray JSON as source of truth or
-runtime configuration.
-.PP
-Subscription delete mutates only user-owned local podlaz state. It must not
-start the daemon, start Xray, fetch subscription URLs, require root, or mutate
-Linux networking state.
-.PP
-Output, JSON, diagnostics, plans, recovery reports, and logs must redact
-subscription URLs, share URIs, generated core config contents, private keys,
-passwords, authorization headers, provider tokens, and secret-looking query
-parameters.
+Standard XDG base directory variables used for user-owned state.
 .SH EXAMPLES
-.TP
-Show local help:
-.EX
-podlaz help
-podlaz help connect
-.EE
-.TP
-Generate shell completion definitions:
-.EX
-podlaz completion bash
-podlaz completion zsh
-podlaz completion fish
-.EE
-.TP
-Import and inspect a profile without connecting:
 .EX
 podlaz profile import 'vless://...'
 podlaz profile list
-podlaz profile show my-profile
-.EE
-.TP
-Validate a stored profile before planning or connecting:
-.EX
-podlaz profile validate my-profile
-podlaz profile validate my-profile --mode tun --json
-.EE
-.TP
-Import a local Xray JSON or URI-list file without connecting:
-.EX
-podlaz import ./profiles.json
-podlaz import ./profiles.txt
-podlaz profile list
-.EE
-.TP
-Import and inspect a subscription without connecting:
-.EX
-podlaz import https://example.com/subscription
-podlaz subscription list
-podlaz profile list
-.EE
-.TP
-Refresh an explicit subscription source:
-.EX
-podlaz subscription add --name personal --url https://example.com/subscription
-podlaz subscription update personal
-podlaz subscription show personal
-.EE
-.TP
-Delete a subscription and its owned imported profiles:
-.EX
-podlaz subscription delete personal --yes
-.EE
-.TP
-Delete only subscription metadata and keep imported profiles:
-.EX
-podlaz subscription delete personal --yes --keep-profiles
-.EE
-.TP
-Inspect a safe proxy-only plan:
-.EX
 podlaz plan --mode proxy-only my-profile
-.EE
-.TP
-Start and stop proxy-only lifecycle through the daemon:
-.EX
-podlaz connect --mode proxy-only my-profile
+podlaz connect my-profile
 podlaz status
 podlaz disconnect
 .EE
-.TP
-Read daemon logs:
+.PP
 .EX
+podlaz import https://example.com/subscription
+podlaz subscription update personal
 podlaz logs --daemon --since "1 hour ago"
-podlaz logs --follow --core
-.EE
-.TP
-Inspect recovery candidates without changing the host:
-.EX
 podlaz recover
 .EE
-.SH DIAGNOSTICS
-Use
-.B podlaz status
-to inspect active daemon and runtime state,
-.B podlaz doctor
-to explain environment and health checks,
-.B podlaz logs
-to inspect journald output, and
-.B podlaz recover
-to inspect or explicitly clean up stale podlaz-owned volatile state.
-.PP
-When daemon socket access fails with permission denied in a packaged install,
-check membership in the
-.B podlaz
-group and the mode of
-.IR /run/podlaz/podlazd.sock .
 .SH SEE ALSO
 .BR podlazd (8),
-.BR systemctl (1),
 .BR journalctl (1),
+.BR systemctl (1),
 .BR systemd.unit (5)
-.PP
-Canonical project documentation is installed in the repository under
-.I docs/
-and starts with
-.IR docs/README.md .
