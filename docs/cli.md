@@ -44,7 +44,7 @@ Rules:
 
 ### Human-readable first, automation-friendly when useful
 
-Default output should be stable, concise, and readable by technical users.
+Default output should be stable, concise, and readable by technical users. Human table output should align columns with the shared table renderer instead of hand-rolled per-command spacing.
 
 Commands likely to be scripted should support `--json`, especially:
 
@@ -81,6 +81,8 @@ Default output must not print full subscription URLs, full share URIs, generated
 
 ## 2. Global behavior
 
+`podlaz` is the canonical command. Packaged installs may also expose `plz` as a short convenience alias implemented as a symlink to the canonical command; alias behavior must not diverge from `podlaz`.
+
 Every command and subcommand must support help:
 
 ```bash
@@ -89,6 +91,7 @@ podlaz help
 podlaz help <command>
 podlaz <command> --help
 podlaz <command> -h
+plz --help
 ```
 
 Common flags, where relevant:
@@ -100,11 +103,15 @@ Common flags, where relevant:
 --yes        Confirm a command that removes state or executes recovery cleanup.
 ```
 
-Short flags should be added only for frequent operations. Rare or high-impact flags such as `--execute` and `--yes` must stay long-only.
+Short flags should be added only for frequent operations. Rare or high-impact flags such as `--execute` and `--yes` must stay long-only; `-y` is intentionally unsupported.
 
 Commands that remove user state or execute recovery cleanup must follow this model:
 
 - interactive TTY: ask for confirmation unless `--yes` is passed;
+- default-yes confirmation prompts must show `[Y/n]`;
+- Enter, `y`, and `yes` confirm case-insensitively;
+- `n` and `no` cancel case-insensitively;
+- invalid confirmation input must not confirm accidentally and must ask again in interactive mode;
 - non-interactive mode: fail unless `--yes` is passed;
 - `--json` mode: fail unless `--yes` is passed.
 
@@ -117,7 +124,7 @@ tun
 
 The default connection mode is `proxy-only`.
 
-Shell completion must be generated through the public CLI command and written to stdout only. Completion generation must be static and read-only: it must not contact `podlazd`, start Xray, inspect profile/subscription state, read secrets, mutate Linux networking, or require root.
+Shell completion must be generated through the public CLI command and written to stdout only. Completion generation must be static and read-only: it must not contact `podlazd`, start Xray, inspect profile/subscription state, read secrets, mutate Linux networking, or require root. Generated scripts must support both `podlaz` and the packaged `plz` alias.
 
 ## 3. Implemented command contract
 
@@ -126,6 +133,7 @@ Shell completion must be generated through the public CLI command and written to
 ```bash
 podlaz version
 podlaz help
+plz version
 ```
 
 Mutation level: read-only.
@@ -138,6 +146,9 @@ Daemon requirement: none.
 podlaz completion bash
 podlaz completion zsh
 podlaz completion fish
+plz completion bash
+plz completion zsh
+plz completion fish
 ```
 
 Purpose: generate shell completion definitions for supported interactive shells.
@@ -150,6 +161,7 @@ Implemented behavior:
 
 - writes the requested completion script to stdout;
 - supports `bash`, `zsh`, and `fish` as explicit shell names;
+- registers completion for both `podlaz` and `plz`;
 - completes stable top-level command names;
 - completes implemented nested subcommands for `profile`, `subscription`, `completion`, and `help`;
 - completes implemented flags for command scopes that currently define flags;
@@ -213,7 +225,7 @@ podlaz profile import <share-uri>
 podlaz profile list [--json]
 podlaz profile show <profile-id> [--json]
 podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json]
-podlaz profile delete <profile-id> --yes
+podlaz profile delete <profile-id> [--yes]
 ```
 
 Implemented behavior:
@@ -223,11 +235,13 @@ Implemented behavior:
 - deterministic imported profile IDs;
 - persistent local profile storage at the documented XDG user state location;
 - `profile list --json`, `profile show --json`, and `profile validate --json` with `schema_version: "v1"`;
+- human `profile list` output is aligned as a table;
 - required-field validation and clear failure for malformed payloads;
 - selected-mode backend renderability validation through the supported Xray config generation path;
 - redaction of identity/authentication fields;
 - atomic profile store writes with restrictive file permissions;
-- `profile delete` requires `--yes` in the current non-interactive path.
+- `profile delete` asks for interactive TTY confirmation unless `--yes` is passed;
+- `profile delete` fails with exit code `2` in non-interactive mode unless `--yes` is passed.
 
 Mutation level:
 
@@ -286,6 +300,7 @@ Required behavior:
 - failed delete preserves existing subscription metadata and profile state;
 - unsupported entries are reported clearly when at least one supported profile is imported;
 - responses with no supported profiles fail clearly and leave existing state unchanged;
+- `list` human output is aligned as a table;
 - `list` and `show` output must redact subscription URLs while showing persisted format, profile count, and last update time;
 - `delete` output must redact subscription URLs, profile IDs, credentials, provider tokens, and secret-looking values.
 
@@ -295,6 +310,7 @@ Required behavior:
 
 ```bash
 podlaz status
+plz status
 ```
 
 Purpose: report local and daemon-backed podlaz state.
@@ -504,7 +520,7 @@ Implemented behavior:
 
 - `recover` remains dry-run and never mutates state;
 - `recover --execute --yes` sends cleanup intent to `podlazd`; the CLI does not perform privileged host cleanup;
-- interactive execute prompts for `yes` unless `--yes` is passed;
+- interactive execute prompts with `[Y/n]` unless `--yes` is passed;
 - non-interactive execute requires `--yes`;
 - JSON execute requires `--yes`;
 - execute reports `recovered`, `skipped`, and `failed` cleanup results;
@@ -536,6 +552,7 @@ The current implementation contains:
 - profile validation for normalized profile state and selected proxy-only/TUN Xray renderability;
 - read-only full-tunnel TUN planning;
 - static shell completion generation for bash, zsh, and fish;
+- package-installed `plz` alias for the canonical CLI command;
 - transaction-state persistence and diagnostics;
 - daemon-owned privileged TUN preview execution for TUN interface, routes, policy rules, systemd-resolved DNS, podlaz-owned nftables state, TUN-mode Xray runtime config, Xray startup, TUN adapter startup, and pre-commit route/TCP verification;
 - daemon-owned recovery cleanup execution for clearly podlaz-owned volatile state;
