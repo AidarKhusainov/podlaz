@@ -36,13 +36,15 @@ func printCompletionHelp(w io.Writer) {
 
 Generate shell completion definitions for stdout. The command is read-only: it
 prints completion scripts and does not contact podlazd, start Xray, mutate
-networking, or require root. Bash, zsh, and fish completion may read local
-profile and subscription IDs during interactive completion only.
+networking, or require root. Generated completion scripts support both the
+canonical podlaz command and the packaged plz alias. Bash, zsh, and fish
+completion may read local profile and subscription IDs during interactive
+completion only.
 `)
 }
 
 func printBashCompletion(w io.Writer) {
-	fmt.Fprintf(w, `# bash completion for podlaz
+	fmt.Fprintf(w, `# bash completion for podlaz and plz
 # static commands: %s
 # static connection modes: %s
 # static profile protocols: %s
@@ -89,13 +91,13 @@ _podlaz()
     return 0
 }
 
-complete -o default -F _podlaz podlaz
+complete -o default -F _podlaz podlaz plz
 `, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()))
 }
 
 func printZshCompletion(w io.Writer) {
-	fmt.Fprintf(w, `#compdef podlaz
-# zsh completion for podlaz
+	fmt.Fprintf(w, `#compdef podlaz plz
+# zsh completion for podlaz and plz
 # static commands: %s
 # static connection modes: %s
 # static profile protocols: %s
@@ -152,7 +154,7 @@ _podlaz "$@"
 }
 
 func printFishCompletion(w io.Writer) {
-	fmt.Fprintf(w, `# fish completion for podlaz
+	fmt.Fprintf(w, `# fish completion for podlaz and plz
 # static commands: %s
 # static connection modes: %s
 # static profile protocols: %s
@@ -222,6 +224,9 @@ end
 complete -c podlaz -f
 complete -c podlaz -n '__fish_podlaz_needs_runtime_argument' -a '(__fish_podlaz_complete)'
 complete -c podlaz -n '__fish_podlaz_needs_files' -F
+complete -c plz -f
+complete -c plz -n '__fish_podlaz_needs_runtime_argument' -a '(__fish_podlaz_complete)'
+complete -c plz -n '__fish_podlaz_needs_files' -F
 
 complete -c podlaz -n '__fish_podlaz_using_subcommand profile add' -l name -x
 complete -c podlaz -n '__fish_podlaz_using_subcommand profile add' -l server -x
@@ -251,7 +256,36 @@ complete -c podlaz -n '__fish_podlaz_using_command logs' -l since -x
 complete -c podlaz -n '__fish_podlaz_using_command recover' -l execute
 complete -c podlaz -n '__fish_podlaz_using_command recover' -l yes
 complete -c podlaz -n '__fish_podlaz_using_command recover' -l json
-`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
+
+complete -c plz -n '__fish_podlaz_using_subcommand profile add' -l name -x
+complete -c plz -n '__fish_podlaz_using_subcommand profile add' -l server -x
+complete -c plz -n '__fish_podlaz_using_subcommand profile add' -l port -x
+complete -c plz -n '__fish_podlaz_using_subcommand profile add' -l protocol -x -a '%s'
+complete -c plz -n '__fish_podlaz_using_subcommand profile list' -l json
+complete -c plz -n '__fish_podlaz_using_subcommand profile show' -l json
+complete -c plz -n '__fish_podlaz_using_subcommand profile validate' -l mode -x -a '%s'
+complete -c plz -n '__fish_podlaz_using_subcommand profile validate' -l json
+complete -c plz -n '__fish_podlaz_using_subcommand profile delete' -l yes
+
+complete -c plz -n '__fish_podlaz_using_subcommand subscription add' -l name -x
+complete -c plz -n '__fish_podlaz_using_subcommand subscription add' -l url -x
+complete -c plz -n '__fish_podlaz_using_subcommand subscription list' -l json
+complete -c plz -n '__fish_podlaz_using_subcommand subscription show' -l json
+
+complete -c plz -n '__fish_podlaz_using_command plan' -l mode -x -a '%s'
+complete -c plz -n '__fish_podlaz_using_command plan' -l json
+complete -c plz -n '__fish_podlaz_using_command connect' -l mode -x -a '%s'
+complete -c plz -n '__fish_podlaz_using_command doctor' -l core
+complete -c plz -n '__fish_podlaz_using_command doctor' -l xray -x
+complete -c plz -n '__fish_podlaz_using_command doctor' -l json
+complete -c plz -n '__fish_podlaz_using_command logs' -l follow -s f
+complete -c plz -n '__fish_podlaz_using_command logs' -l daemon
+complete -c plz -n '__fish_podlaz_using_command logs' -l core
+complete -c plz -n '__fish_podlaz_using_command logs' -l since -x
+complete -c plz -n '__fish_podlaz_using_command recover' -l execute
+complete -c plz -n '__fish_podlaz_using_command recover' -l yes
+complete -c plz -n '__fish_podlaz_using_command recover' -l json
+`, completionWords(completionTopLevelCommandNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()), completionWords(completionProfileProtocolNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()), completionWords(completionConnectionModeNames()))
 }
 
 func completionWords(values []string) string {
