@@ -35,8 +35,8 @@ func TestRunCLICompletionRuntimeSupportsZshAndFish(t *testing.T) {
 		})
 		t.Run(shell+" filters used flags", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 4, "podlaz", "plan", "--mode", "tun", "-")...)
-			assertContainsLine(t, got, "--json")
-			assertNotContainsLine(t, got, "--mode")
+			assertContainsCandidateLine(t, got, "--json", "Print JSON output")
+			assertNotContainsCandidateValue(t, got, "--mode")
 		})
 		t.Run(shell+" import keeps file completion", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 2, "podlaz", "import", "")...)
