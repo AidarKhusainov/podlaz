@@ -106,7 +106,7 @@ func confirmSubscriptionDelete(stdout io.Writer, opts options, source sub.Source
 	if keepProfiles {
 		action = "keep"
 	}
-	prompt := fmt.Sprintf("Delete subscription %s and %s %d imported profiles? Type yes to continue", render.Redact(source.ID), action, len(source.ProfileIDs))
+	prompt := fmt.Sprintf("Delete subscription %s and %s %d imported profiles?", render.Redact(source.ID), action, len(source.ProfileIDs))
 	return confirmDefaultYes(stdout, confirmationReader(opts), prompt, "subscription delete", "subscription delete canceled")
 }
 
