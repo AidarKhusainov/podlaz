@@ -90,7 +90,7 @@ func runSubscriptionList(store sub.Store, args []string, stdout io.Writer) error
 		if !source.LastUpdatedAt.IsZero() {
 			updated = source.LastUpdatedAt.UTC().Format(time.RFC3339)
 		}
-		rows = append(rows, []string{out.ID, out.Name, out.Format, strconv.Itoa(len(source.ProfileIDs)), updated})
+		rows = append(rows, []string{out.ID, out.Name, string(out.Format), strconv.Itoa(len(source.ProfileIDs)), updated})
 	}
 	return writeTable(stdout, []string{"ID", "NAME", "FORMAT", "PROFILES", "UPDATED"}, rows)
 }
