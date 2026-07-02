@@ -50,6 +50,8 @@ type ConnectRequest struct {
 type LifecycleResponse struct {
 	Connection        string   `json:"connection"`
 	Mode              string   `json:"mode,omitempty"`
+	ProfileID         string   `json:"profile_id,omitempty"`
+	ProfileName       string   `json:"profile_name,omitempty"`
 	Proxy             string   `json:"proxy"`
 	TUN               string   `json:"tun"`
 	Routes            string   `json:"routes,omitempty"`
