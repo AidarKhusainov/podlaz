@@ -41,6 +41,20 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .B disconnect
 .YS
 .SY podlaz
+.B check
+.I profile-id
+.OP --target target-id
+.OP --timeout duration
+.OP --json
+.YS
+.SY podlaz
+.B check
+.B --all
+.OP --target target-id
+.OP --timeout duration
+.OP --json
+.YS
+.SY podlaz
 .B status
 .YS
 .SY podlaz
@@ -91,12 +105,11 @@ and
 .BR plz .
 .TP
 .B import <input>
-Import a share URI, local profile file, or subscription URL.
-The command does not connect or mutate host networking.
+Import a share URI, local profile file, or subscription URL. The command does
+not connect or mutate host networking.
 .TP
 .B profile add --name <name> --server <host> --port <port> --protocol <protocol>
-Create a manual profile.
-Supported protocols are
+Create a manual profile. Supported protocols are
 .BR vless ,
 .BR vmess ,
 .BR trojan ,
@@ -134,8 +147,7 @@ List subscription sources with redacted URLs.
 Show one subscription source with redacted URL material.
 .TP
 .B subscription delete <subscription-id> [--yes] [--keep-profiles]
-Delete subscription metadata and, by default, its owned profiles.
-Use
+Delete subscription metadata and, by default, its owned profiles. Use
 .B --keep-profiles
 to leave imported profiles in place.
 .TP
@@ -151,6 +163,19 @@ Start a daemon-managed connection. The default mode is
 .TP
 .B disconnect
 Stop the active daemon-managed connection. Safe to repeat.
+.TP
+.B check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
+Run explicit bounded proxy-only connectivity diagnostics for one profile. The
+command validates renderability, checks daemon state, starts temporary proxy-only
+Xray only through
+.BR podlazd (8)
+when safe, verifies local SOCKS/HTTP egress, runs documented service probes, and
+cleans up the temporary connection only when current daemon status still matches
+the check-started connection.
+.TP
+.B check --all [--target <target-id>] [--timeout <duration>] [--json]
+Check all stored profiles with deterministic output and a small default
+concurrency limit.
 .TP
 .B status
 Print daemon-backed status when available, otherwise local read-only status.
@@ -168,16 +193,19 @@ Read recent podlaz journal entries.
 Inspect stale podlaz-owned recovery candidates without changing the host.
 .TP
 .B recover --execute --yes [--json]
-Ask the daemon to clean clearly podlaz-owned stale state.
-Ambiguous resources are skipped.
+Ask the daemon to clean clearly podlaz-owned stale state. Ambiguous resources are
+skipped.
 .SH OPTIONS
 .TP
 .B --help, -h
 Print help where supported.
 .TP
 .B --json
-Print stable JSON for commands whose JSON contract is implemented.
-Deferred JSON support fails with exit status 2.
+Print stable JSON for commands whose JSON contract is implemented. Deferred JSON
+support fails with exit status 2. For
+.BR check ,
+JSON output includes schema version, status, warnings, errors, profile metadata,
+and per-step probe results.
 .TP
 .B --yes
 Confirm destructive state removal or recovery execution. Long-only.
@@ -192,6 +220,23 @@ Execute recovery cleanup through the daemon. Long-only.
 .TP
 .B --mode proxy-only|tun
 Select connection, planning, or validation mode.
+.TP
+.B --target <target-id>
+Select a service target for
+.BR check .
+May be repeated. Supported target ids are
+.BR cloudflare ,
+.BR github ,
+.BR google ,
+.BR instagram ,
+.BR telegram ,
+and
+.BR youtube .
+.TP
+.B --timeout <duration>
+Set the per-probe timeout for
+.BR check .
+The default is 3s.
 .TP
 .B --follow, -f
 Follow journal output for
@@ -223,10 +268,11 @@ Runtime or operation failure.
 Invalid usage, flags, arguments, or deferred JSON output.
 .TP
 .B 3
-Diagnostic command found unhealthy state.
-For
+Diagnostic command found unhealthy state. For
 .BR "profile validate" ,
-the profile exists but cannot be rendered for the selected mode/backend.
+the profile exists but cannot be rendered for the selected mode/backend. For
+.BR check ,
+the check result was degraded or failed.
 .TP
 .B 4
 Permission or authorization failure.
@@ -266,9 +312,10 @@ Override the Xray-compatible core path for daemon lifecycle tests.
 Standard XDG base directory variables used for user-owned state.
 .SH EXAMPLES
 .EX
-podlaz profile import 'vless://...'
+podlaz profile import <share-uri>
 podlaz profile list
 podlaz plan --mode proxy-only my-profile
+podlaz check my-profile --target telegram
 podlaz connect my-profile
 podlaz status
 podlaz disconnect
