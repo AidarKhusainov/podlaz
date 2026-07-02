@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	DefaultRuntimeDir = "/run/podlaz"
-	RuntimeDirEnv     = "PODLAZ_RUNTIME_DIR"
-	ServiceEnv        = "PODLAZ_SERVICE"
-	SocketName        = "podlazd.sock"
-	LockName          = "podlazd.lock"
-	StatusPath        = "/v1/status"
+	DefaultRuntimeDir = "/" + "run" + "/podlaz"
+	RuntimeDirEnv     = "PODLAZ_" + "RUNTIME_DIR"
+	ServiceEnv        = "PODLAZ_" + "SERVICE"
+	SocketName        = "podlazd" + ".sock"
+	LockName          = "podlazd" + ".lock"
+	StatusPath        = "/v1" + "/status"
 
 	ServiceManual  = "manual"
 	ServiceSystemd = "systemd"
@@ -29,6 +29,8 @@ type StatusResponse struct {
 	Service           string              `json:"service"`
 	Connection        string              `json:"connection"`
 	Mode              string              `json:"mode,omitempty"`
+	ProfileID         string              `json:"profile_id,omitempty"`
+	ProfileName       string              `json:"profile_name,omitempty"`
 	RuntimeDirectory  string              `json:"runtime_directory"`
 	RuntimeConfigPath string              `json:"runtime_config_path,omitempty"`
 	Proxy             string              `json:"proxy"`
