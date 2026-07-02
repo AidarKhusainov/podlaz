@@ -108,7 +108,7 @@ func writeStub(t *testing.T, dir, name, content string) {
 func assertLogContains(t *testing.T, log string, expected ...string) {
 	t.Helper()
 	for _, want := range expected {
-		if ! strings.Contains(log, want) {
+		if !strings.Contains(log, want) {
 			t.Fatalf("stub log missing %q; log:\n%s", want, log)
 		}
 	}
