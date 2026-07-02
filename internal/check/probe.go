@@ -57,6 +57,8 @@ func Skipped(id, name, detail string) ProbeResult {
 }
 
 // MeasureTCP measures a bounded direct TCP handshake to the profile server.
+// It intentionally does not copy the endpoint or net.OpError text into Detail or
+// Error because profile endpoints are sensitive provider material in CLI output.
 func MeasureTCP(ctx context.Context, address string, timeout time.Duration) ProbeResult {
 	name := "Server TCP handshake"
 	if strings.TrimSpace(address) == "" {
@@ -70,10 +72,10 @@ func MeasureTCP(ctx context.Context, address string, timeout time.Duration) Prob
 	conn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", address)
 	latency := time.Since(start)
 	if err != nil {
-		return Fail("server_tcp", name, latency, err)
+		return Fail("server_tcp", name, latency, errors.New("tcp connect to profile server failed"))
 	}
 	_ = conn.Close()
-	return OK("server_tcp", name, latency, "tcp connect to "+address)
+	return OK("server_tcp", name, latency, "tcp connect to profile server")
 }
 
 // ProbeHTTPSOverHTTPProxy performs one low-impact HTTPS probe through an HTTP proxy listener.
