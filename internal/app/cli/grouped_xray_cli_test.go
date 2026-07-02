@@ -9,14 +9,10 @@ import (
 
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/testfixtures"
 )
 
-const (
-	groupedCLIProfileID       = "xray-json-redaction"
-	groupedCLIUserIdentity    = "00000000-0000-4000-8000-000000000180"
-	groupedCLISensitiveToken  = "provider-secret-token"
-	groupedCLIRuntimeSentinel = "runtime-config-sentinel"
-)
+const groupedCLIProfileID = "xray-json-redaction"
 
 func TestRunCLIPlanTunRejectsGroupedProviderBeforeSnapshot(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
@@ -103,16 +99,12 @@ func addGroupedCLIProfile(t *testing.T, opts options) {
 		t.Fatalf("create profile store: %v", err)
 	}
 	p := profile.Profile{
-		ID:       groupedCLIProfileID,
-		Name:     "Grouped provider",
-		Source:   profile.SourceSubscription,
-		Engine:   profile.EngineXray,
-		Protocol: profile.ProtocolXrayJSON,
-		RealitySpiderX: `{
-			"outbounds": [{"tag": "primary", "settings": {"users": [{"id": "00000000-0000-4000-8000-000000000180"}], "credential": "provider-secret-token"}}],
-			"routing": {"rules": [{"type": "field", "outboundTag": "primary"}]},
-			"generated": "runtime-config-sentinel"
-		}`,
+		ID:             groupedCLIProfileID,
+		Name:           "Grouped provider",
+		Source:         profile.SourceSubscription,
+		Engine:         profile.EngineXray,
+		Protocol:       profile.ProtocolXrayJSON,
+		RealitySpiderX: testfixtures.GroupedProviderXrayJSON(),
 	}
 	if err := store.Add(p); err != nil {
 		t.Fatalf("add grouped profile: %v", err)
@@ -121,7 +113,17 @@ func addGroupedCLIProfile(t *testing.T, opts options) {
 
 func assertGroupedCLINoSensitiveMaterial(t *testing.T, got string) {
 	t.Helper()
-	for _, secret := range []string{groupedCLIUserIdentity, groupedCLISensitiveToken, groupedCLIRuntimeSentinel, `"outbounds"`, `"routing"`} {
+	for _, secret := range []string{
+		testfixtures.GroupedXrayUserID,
+		testfixtures.GroupedXraySecretToken,
+		testfixtures.GroupedXrayRuntimeSentinel,
+		`"outbounds"`,
+		`"routing"`,
+		`"vnext"`,
+		"auto.edge.invalid",
+		"ai.edge.invalid",
+		"tg.edge.invalid",
+	} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("CLI output leaked grouped provider material %q in %q", secret, got)
 		}
