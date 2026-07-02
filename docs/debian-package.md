@@ -128,6 +128,7 @@ Package installation:
 - installs the sysusers configuration;
 - creates or declares packaged service identities through `systemd-sysusers` when that command is available;
 - unmasks, enables, and records `podlazd.service` state through Debian systemd helper tools when available;
+- repairs stale Debian helper-state-only enablement through `deb-systemd-helper reenable` when helper state exists but systemd reports the unit as disabled;
 - requests `podlazd.service` startup through Debian systemd invocation helper tools when available;
 - does not start Xray because of package installation alone;
 - does not create TUN devices;
@@ -164,4 +165,4 @@ dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 dist/podlaz_0.0.0~dev-1_linux_arm64.deb
 ```
 
-The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, bounded daemon capabilities, the narrow ambient capabilities required for daemon-owned child lifecycle, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls.
+The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, bounded daemon capabilities, the narrow ambient capabilities required for daemon-owned child lifecycle, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability and stale helper-state repair hooks, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls.
