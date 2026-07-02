@@ -190,11 +190,11 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 // FromDaemon converts a daemon API status response into the local status report model.
 func FromDaemon(s api.StatusResponse) Report {
 	report := Report{
-		Daemon:     s.Daemon,
-		Service:    s.Service,
-		Connection: s.Connection,
-		Mode:       s.Mode,
-		ProfileID:  s.ProfileID,
+		Daemon:      s.Daemon,
+		Service:     s.Service,
+		Connection:  s.Connection,
+		Mode:        s.Mode,
+		ProfileID:   s.ProfileID,
 		ProfileName: s.ProfileName,
 		RuntimeDirectory: RuntimeDirectory{
 			State:   RuntimeDirectoryPresent,
