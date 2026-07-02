@@ -209,7 +209,7 @@ func removeStaleSocket(path string) error {
 		return fmt.Errorf("daemon socket path %s exists and is not a Unix socket", path)
 	}
 	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale daemon socket %s: %w", path)
+		return fmt.Errorf("remove stale daemon socket %s: %w", path, err)
 	}
 	return nil
 }
