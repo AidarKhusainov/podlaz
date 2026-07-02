@@ -128,8 +128,8 @@ Package installation:
 - installs the sysusers configuration;
 - creates or declares packaged service identities through `systemd-sysusers` when that command is available;
 - unmasks, enables, and records `podlazd.service` state through Debian systemd helper tools when available;
-- repairs stale Debian helper-state-only enablement through `deb-systemd-helper reenable` when helper state exists but systemd reports the unit as disabled;
-- requests `podlazd.service` startup through Debian systemd invocation helper tools when available;
+- repairs stale Debian helper-state-only enablement only for install-from-Config-Files package state marked by `preinstall` and confirmed by Debian helper state;
+- requests `podlazd.service` startup through Debian systemd invocation helper tools when the unit is enabled after helper processing;
 - does not start Xray because of package installation alone;
 - does not create TUN devices;
 - does not change routes, DNS, nftables, firewall rules, or host resolver files;
