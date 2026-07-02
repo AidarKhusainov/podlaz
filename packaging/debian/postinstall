@@ -2,18 +2,39 @@
 set -eu
 
 unit=podlazd.service
+marker_dir="${PODLAZ_MAINTSCRIPT_RUN_DIR:-/run/podlaz-maintscript}"
+marker="$marker_dir/repair-helper-enable"
 
 start_service() {
 	deb-systemd-invoke start "$1" >/dev/null || true
 }
 
+is_enabled() {
+	if ! command -v systemctl >/dev/null 2>&1; then
+		return 0
+	fi
+	systemctl is-enabled --quiet "$1" >/dev/null 2>&1
+}
+
 repair_stale_enablement() {
+	if [ ! -e "$marker" ]; then
+		return 0
+	fi
+	rm -f "$marker" >/dev/null 2>&1 || true
+
 	if ! command -v systemctl >/dev/null 2>&1; then
 		return 0
 	fi
 	if systemctl is-enabled --quiet "$1" >/dev/null 2>&1; then
 		return 0
 	fi
+	if ! deb-systemd-helper debian-installed "$1" >/dev/null 2>&1; then
+		return 0
+	fi
+	if ! deb-systemd-helper was-enabled "$1" >/dev/null 2>&1; then
+		return 0
+	fi
+
 	deb-systemd-helper reenable "$1" >/dev/null || true
 	deb-systemd-helper update-state "$1" >/dev/null || true
 }
@@ -31,9 +52,11 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
 	deb-systemd-helper enable "$unit" >/dev/null || true
 	deb-systemd-helper update-state "$unit" >/dev/null || true
 	repair_stale_enablement "$unit"
+else
+	rm -f "$marker" >/dev/null 2>&1 || true
 fi
 
-if command -v deb-systemd-invoke >/dev/null 2>&1; then
+if command -v deb-systemd-invoke >/dev/null 2>&1 && is_enabled "$unit"; then
 	start_service "$unit"
 fi
 
