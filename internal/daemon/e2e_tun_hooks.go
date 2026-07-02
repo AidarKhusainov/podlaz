@@ -111,7 +111,7 @@ func (e e2eHookRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan
 	if err != nil {
 		return step, err
 	}
-	return step, errors.New("E2E hook: route apply failed after a podlaz-owned route step was applied")
+	return step, errors.New("E2E hook: route apply failed after earlier podlaz-owned TUN state was applied")
 }
 
 func (e e2eHookRouteExecutor) Verify(ctx context.Context, plan planner.TunRoutePlan) error {
