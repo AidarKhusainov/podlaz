@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AidarKhusainov/podlaz/internal/api"
 	profilecheck "github.com/AidarKhusainov/podlaz/internal/check"
 	"github.com/AidarKhusainov/podlaz/internal/client"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -188,7 +189,7 @@ func runDefaultProfileCheck(ctx context.Context, p profile.Profile, execOpts che
 	}
 	r.Validation = profilecheck.OK("profile_validation", "Profile validation", 0, "renderable for proxy-only")
 	if p.Server != "" && p.Port != 0 {
-		r.ServerTCP = profilecheck.MeasureTCP(ctx, net.JoinHostPort(p.Server, strconv.Itoa(int(p.Port))), execOpts.Timeout)
+		r.ServerTCP = runServerTCPProbe(ctx, opts.checkProbes, net.JoinHostPort(p.Server, strconv.Itoa(int(p.Port))), execOpts.Timeout)
 	}
 	statusReport, err := runDaemonStatus(ctx, opts)
 	if err != nil {
@@ -232,11 +233,11 @@ func runDefaultProfileCheck(ctx context.Context, p profile.Profile, execOpts che
 	endpoints := proxyEndpointsByProtocol(plan.Listeners)
 	egressTarget := profilecheck.GenericEgressTarget()
 	if ep, ok := endpoints["socks"]; ok {
-		r.SOCKSEgress = renameProbe(profilecheck.ProbeHTTPSOverSOCKS(ctx, ep, egressTarget, execOpts.Timeout), "socks_egress", "SOCKS egress")
+		r.SOCKSEgress = renameProbe(runSOCKSEgressProbe(ctx, opts.checkProbes, ep, egressTarget, execOpts.Timeout), "socks_egress", "SOCKS egress")
 	}
 	if ep, ok := endpoints["http"]; ok {
-		r.HTTPEgress = renameProbe(profilecheck.ProbeHTTPSOverHTTPProxy(ctx, ep, egressTarget, execOpts.Timeout), "http_proxy_egress", "HTTP proxy egress")
-		r.Services = probeTargets(ctx, ep, execOpts.Targets, execOpts.Timeout)
+		r.HTTPEgress = renameProbe(runHTTPProxyProbe(ctx, opts.checkProbes, ep, egressTarget, execOpts.Timeout), "http_proxy_egress", "HTTP proxy egress")
+		r.Services = probeTargets(ctx, opts.checkProbes, ep, execOpts.Targets, execOpts.Timeout)
 	} else {
 		markEgressSkipped(&r, "HTTP proxy listener is not available")
 	}
@@ -263,6 +264,27 @@ func cleanupMatchingTemporaryProxy(ctx context.Context, opts options, started ap
 	return nil
 }
 
+func runServerTCPProbe(ctx context.Context, probes checkProbeRunner, address string, timeout time.Duration) profilecheck.ProbeResult {
+	if probes.serverTCP != nil {
+		return probes.serverTCP(ctx, address, timeout)
+	}
+	return profilecheck.MeasureTCP(ctx, address, timeout)
+}
+
+func runSOCKSEgressProbe(ctx context.Context, probes checkProbeRunner, endpoint profilecheck.Endpoint, target profilecheck.Target, timeout time.Duration) profilecheck.ProbeResult {
+	if probes.socks != nil {
+		return probes.socks(ctx, endpoint, target, timeout)
+	}
+	return profilecheck.ProbeHTTPSOverSOCKS(ctx, endpoint, target, timeout)
+}
+
+func runHTTPProxyProbe(ctx context.Context, probes checkProbeRunner, endpoint profilecheck.Endpoint, target profilecheck.Target, timeout time.Duration) profilecheck.ProbeResult {
+	if probes.httpProxy != nil {
+		return probes.httpProxy(ctx, endpoint, target, timeout)
+	}
+	return profilecheck.ProbeHTTPSOverHTTPProxy(ctx, endpoint, target, timeout)
+}
+
 func newProfileCheckReport(p profile.Profile, targets []profilecheck.Target) profileCheckReport {
 	return profileCheckReport{SchemaVersion: profilecheck.SchemaVersion, Status: "ok", Warnings: []string{}, Errors: []string{}, Profile: profileForOutput(p), Mode: planner.ModeProxyOnly, Validation: profilecheck.Skipped("profile_validation", "Profile validation", "not run"), Daemon: profilecheck.Skipped("daemon", "Daemon", "not run"), ProxyStartup: profilecheck.Skipped("proxy_startup", "Proxy startup", "not run"), ServerTCP: profilecheck.Skipped("server_tcp", "Server TCP handshake", "not run"), SOCKSEgress: profilecheck.Skipped("socks_egress", "SOCKS egress", "not run"), HTTPEgress: profilecheck.Skipped("http_proxy_egress", "HTTP proxy egress", "not run"), Services: skippedServices(targets, "not run")}
 }
@@ -282,10 +304,10 @@ func markEgressSkipped(r *profileCheckReport, detail string) {
 	r.Services = skippedServicesFromResults(r.Services, detail)
 }
 
-func probeTargets(ctx context.Context, endpoint profilecheck.Endpoint, targets []profilecheck.Target, timeout time.Duration) []profilecheck.ProbeResult {
+func probeTargets(ctx context.Context, probes checkProbeRunner, endpoint profilecheck.Endpoint, targets []profilecheck.Target, timeout time.Duration) []profilecheck.ProbeResult {
 	out := make([]profilecheck.ProbeResult, 0, len(targets))
 	for _, target := range targets {
-		out = append(out, profilecheck.ProbeHTTPSOverHTTPProxy(ctx, endpoint, target, timeout))
+		out = append(out, runHTTPProxyProbe(ctx, probes, endpoint, target, timeout))
 	}
 	return out
 }
