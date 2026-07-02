@@ -32,7 +32,7 @@ func commandUsesUserOwnedState(command string, args []string) bool {
 		return false
 	}
 	switch command {
-	case "import", "profile", "subscription", "plan", "connect":
+	case "import", "profile", "subscription", "plan", "connect", "check":
 		return true
 	default:
 		return false
@@ -109,6 +109,8 @@ func sudoGuardCommandShape(command string, args []string) string {
 		return "podlaz plan --mode <mode> <profile-id>"
 	case "connect":
 		return "podlaz connect [--mode proxy-only|tun] <profile-id>"
+	case "check":
+		return "podlaz check <profile-id>"
 	default:
 		return "podlaz <command>"
 	}
