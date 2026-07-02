@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	profilecheck "github.com/AidarKhusainov/podlaz/internal/check"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/render"
@@ -181,9 +182,11 @@ func analyzeCompletion(root *completionCommand, words []string, cursor int) comp
 func completionRegistry() *completionCommand {
 	modes := []string{planner.ModeProxyOnly, planner.ModeTun}
 	protocols := []string{"vless", "vmess", "trojan", "shadowsocks"}
+	targetIDs := profilecheck.SupportedTargetIDs()
 	jsonFlag := longBoolFlag("--json", "Print JSON output")
 	yesFlag := longBoolFlag("--yes", "Confirm without prompting")
 	modeFlag := longEnumFlag("--mode", modes, "Select connection mode")
+	targetFlag := completionFlag{Name: "--target", Description: "Select service target", TakesValue: true, Values: targetIDs}
 	return &completionCommand{Children: []*completionCommand{
 		{Name: "version", Description: "Show version"},
 		{Name: "import", Description: "Import profile or subscription", DefaultFiles: true},
@@ -210,6 +213,7 @@ func completionRegistry() *completionCommand {
 		{Name: "plan", Description: "Preview connection plan", Flags: []completionFlag{modeFlag, jsonFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "connect", Description: "Start connection", Flags: []completionFlag{modeFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "disconnect", Description: "Stop connection"},
+		{Name: "check", Description: "Check profile connectivity", Flags: []completionFlag{longBoolFlag("--all", "Check all profiles"), targetFlag, longValueFlag("--timeout", "Per-probe timeout"), jsonFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "status", Description: "Show status"},
 		{Name: "doctor", Description: "Run diagnostics", Flags: []completionFlag{longBoolFlag("--core", "Check core binary"), longValueFlag("--xray", "Core binary path"), jsonFlag}},
 		{Name: "logs", Description: "Show logs", Flags: []completionFlag{
@@ -221,7 +225,7 @@ func completionRegistry() *completionCommand {
 		{Name: "recover", Description: "Inspect recovery", Flags: []completionFlag{longBoolFlag("--execute", "Execute cleanup"), yesFlag, jsonFlag}},
 		{Name: "completion", Description: "Generate completion", Children: []*completionCommand{{Name: "bash", Description: "Bash script"}, {Name: "zsh", Description: "Zsh script"}, {Name: "fish", Description: "Fish script"}}},
 		{Name: "help", Description: "Show help", Children: []*completionCommand{
-			{Name: "version", Description: "Version help"}, {Name: "import", Description: "Import help"}, {Name: "profile", Description: "Profile help"}, {Name: "subscription", Description: "Subscription help"}, {Name: "plan", Description: "Plan help"}, {Name: "connect", Description: "Connect help"}, {Name: "disconnect", Description: "Disconnect help"}, {Name: "status", Description: "Status help"}, {Name: "doctor", Description: "Doctor help"}, {Name: "logs", Description: "Logs help"}, {Name: "recover", Description: "Recover help"}, {Name: "completion", Description: "Completion help"}, {Name: "help", Description: "Help help"},
+			{Name: "version", Description: "Version help"}, {Name: "import", Description: "Import help"}, {Name: "profile", Description: "Profile help"}, {Name: "subscription", Description: "Subscription help"}, {Name: "plan", Description: "Plan help"}, {Name: "connect", Description: "Connect help"}, {Name: "disconnect", Description: "Disconnect help"}, {Name: "check", Description: "Check help"}, {Name: "status", Description: "Status help"}, {Name: "doctor", Description: "Doctor help"}, {Name: "logs", Description: "Logs help"}, {Name: "recover", Description: "Recover help"}, {Name: "completion", Description: "Completion help"}, {Name: "help", Description: "Help help"},
 		}},
 	}}
 }
@@ -257,146 +261,4 @@ func completionShellNames() []string {
 func completionConnectionModeNames() []string {
 	flag, _ := mustCompletionCommand("plan").findFlag("--mode")
 	return append([]string(nil), flag.Values...)
-}
-
-func completionProfileProtocolNames() []string {
-	flag, _ := mustCompletionCommand("profile", "add").findFlag("--protocol")
-	return append([]string(nil), flag.Values...)
-}
-
-func mustCompletionCommand(path ...string) *completionCommand {
-	node := completionRegistry()
-	for _, name := range path {
-		node = node.child(name)
-		if node == nil {
-			panic("missing completion command metadata: " + strings.Join(path, " "))
-		}
-	}
-	return node
-}
-
-func childNames(command *completionCommand) []string {
-	names := make([]string, 0, len(command.Children))
-	for _, child := range command.Children {
-		names = append(names, child.Name)
-	}
-	return names
-}
-
-func (c *completionCommand) child(name string) *completionCommand {
-	for _, child := range c.Children {
-		if child.Name == name {
-			return child
-		}
-	}
-	return nil
-}
-
-func (c *completionCommand) findFlag(name string) (completionFlag, bool) {
-	for _, flag := range c.Flags {
-		if flag.Name == name || flag.Shorthand == name {
-			return flag, true
-		}
-	}
-	return completionFlag{}, false
-}
-
-func (f completionFlag) canonicalName() string {
-	if f.Name != "" {
-		return f.Name
-	}
-	return f.Shorthand
-}
-
-func completionWordAt(words []string, cursor int) string {
-	if cursor < len(words) {
-		return words[cursor]
-	}
-	return ""
-}
-
-func noFileCompletion(candidates []completionCandidate) completionResult {
-	return completionResult{Candidates: candidates, Directives: []completionDirective{completionDirectiveNoFiles}}
-}
-
-func commandCandidates(commands []*completionCommand) []completionCandidate {
-	candidates := make([]completionCandidate, 0, len(commands))
-	for _, command := range commands {
-		candidates = append(candidates, completionCandidate{Value: command.Name, Description: command.Description})
-	}
-	return candidates
-}
-
-func flagCandidates(flags []completionFlag, used map[string]struct{}) []completionCandidate {
-	var candidates []completionCandidate
-	for _, flag := range flags {
-		if flag.NonRepeatable {
-			if _, ok := used[flag.canonicalName()]; ok {
-				continue
-			}
-		}
-		if flag.Name != "" {
-			candidates = append(candidates, completionCandidate{Value: flag.Name, Description: flag.Description})
-		}
-		if flag.Shorthand != "" {
-			candidates = append(candidates, completionCandidate{Value: flag.Shorthand, Description: flag.Description})
-		}
-	}
-	return candidates
-}
-
-func valueCandidates(values []string, prefix string) []completionCandidate {
-	candidates := make([]completionCandidate, 0, len(values))
-	for _, value := range values {
-		candidates = append(candidates, completionCandidate{Value: prefix + value})
-	}
-	return candidates
-}
-
-func profileIDCandidates(opts options) []completionCandidate {
-	store, err := profile.NewStore(opts.profileStorePath)
-	if err != nil {
-		return nil
-	}
-	profiles, err := store.List()
-	if err != nil {
-		return nil
-	}
-	candidates := make([]completionCandidate, 0, len(profiles))
-	for _, p := range profiles {
-		candidates = append(candidates, completionCandidate{Value: render.Redact(p.ID), Description: render.Redact(p.Name)})
-	}
-	return candidates
-}
-
-func subscriptionIDCandidates(opts options) []completionCandidate {
-	storePath, err := resolvedSubscriptionStorePath(opts)
-	if err != nil {
-		return nil
-	}
-	store, err := sub.NewStore(storePath)
-	if err != nil {
-		return nil
-	}
-	sources, err := store.List()
-	if err != nil {
-		return nil
-	}
-	candidates := make([]completionCandidate, 0, len(sources))
-	for _, source := range sources {
-		candidates = append(candidates, completionCandidate{Value: render.Redact(source.ID), Description: render.Redact(source.Name)})
-	}
-	return candidates
-}
-
-func splitFlagToken(word string) (string, string, bool) {
-	name, value, ok := strings.Cut(word, "=")
-	return name, value, ok
-}
-
-func inlineFlagValue(word string) (string, string, bool) {
-	if !strings.HasPrefix(word, "--") {
-		return "", "", false
-	}
-	return splitFlagToken(word)
 }
