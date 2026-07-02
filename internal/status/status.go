@@ -79,6 +79,8 @@ type Report struct {
 	Service           string
 	Connection        string
 	Mode              string
+	ProfileID         string
+	ProfileName       string
 	DaemonSocket      DaemonSocket
 	RuntimeDirectory  RuntimeDirectory
 	RuntimeConfigPath string
@@ -192,6 +194,8 @@ func FromDaemon(s api.StatusResponse) Report {
 		Service:    s.Service,
 		Connection: s.Connection,
 		Mode:       s.Mode,
+		ProfileID:  s.ProfileID,
+		ProfileName: s.ProfileName,
 		RuntimeDirectory: RuntimeDirectory{
 			State:   RuntimeDirectoryPresent,
 			Message: s.RuntimeDirectory,
