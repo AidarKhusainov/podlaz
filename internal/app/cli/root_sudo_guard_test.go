@@ -47,6 +47,11 @@ func TestRunCLISudoGuardRejectsUserStateCommandsBeforeStoreAccess(t *testing.T) 
 			args:      []string{"connect", "--mode", "proxy-only", "profile-opaquevalue"},
 			wantShape: "podlaz connect [--mode proxy-only|tun] <profile-id>",
 		},
+		{
+			name:      "check redacts profile id",
+			args:      []string{"check", "profile-opaquevalue"},
+			wantShape: "podlaz check <profile-id>",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
