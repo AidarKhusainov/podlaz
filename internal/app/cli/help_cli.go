@@ -19,6 +19,7 @@ Usage:
   podlaz plan --mode proxy-only|tun <profile-id>
   podlaz connect [--mode proxy-only|tun] <profile-id>
   podlaz disconnect
+  podlaz check <profile-id>|--all [--target <target-id>]
   podlaz status
   podlaz doctor
   podlaz logs
