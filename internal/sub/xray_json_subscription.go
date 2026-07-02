@@ -64,6 +64,9 @@ func parseXrayJSONObjectSubscription(content []byte) (Parsed, error) {
 	}
 	local, err := profile.ImportLocalContent(content)
 	if err != nil {
+		if looksLikeProviderXrayObject(content) {
+			return parseGroupedProviderXrayProfile(content)
+		}
 		return Parsed{}, fmt.Errorf("parse Xray JSON subscription: %w", err)
 	}
 	if local.Format != profile.LocalImportFormatXrayJSON {
@@ -71,6 +74,9 @@ func parseXrayJSONObjectSubscription(content []byte) (Parsed, error) {
 	}
 	parsed, err := parsedFromLocalXrayResult(local)
 	if err != nil {
+		if looksLikeProviderXrayObject(content) {
+			return parseGroupedProviderXrayProfile(content)
+		}
 		return Parsed{}, err
 	}
 	applyXrayJSONWrapperProfileDisplayName(content, &parsed)
@@ -258,28 +264,4 @@ func xrayJSONWrapperProfileDisplayName(content []byte) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func looksLikeJSONObject(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	return len(trimmed) > 0 && trimmed[0] == '{'
-}
-
-func subscriptionJSONTopLevelType(value any) string {
-	switch value.(type) {
-	case map[string]any:
-		return "object"
-	case []any:
-		return "array"
-	case string:
-		return "string"
-	case json.Number, float64:
-		return "number"
-	case bool:
-		return "boolean"
-	case nil:
-		return "null"
-	default:
-		return "value"
-	}
 }

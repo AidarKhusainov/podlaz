@@ -78,3 +78,23 @@ func TestParseXrayJSONArrayImportsGroupedProviderProfileBesideDuplicateLocationE
 		t.Fatalf("unexpected xhttp ordinary profile: %#v", *xhttpOrdinary)
 	}
 }
+
+func TestParseXrayJSONObjectFallsBackToProviderProfileForUnknownTransport(t *testing.T) {
+	parsed, err := ParseXrayJSONSubscription([]byte(testfixtures.SingleVLESSXrayJSON("quic-provider", "quic.edge.invalid", "quic", "tls")))
+	if err != nil {
+		t.Fatalf("ParseXrayJSONSubscription failed: %v", err)
+	}
+	if got, want := len(parsed.Profiles), 1; got != want {
+		t.Fatalf("expected %d provider-backed profile, got %d: %#v", want, got, parsed.Profiles)
+	}
+	p := parsed.Profiles[0]
+	if p.Protocol != profile.ProtocolXrayJSON {
+		t.Fatalf("expected provider-backed xray-json profile, got %#v", p)
+	}
+	stored := profile.ProviderXrayConfigJSON(p)
+	for _, want := range []string{`"network":"quic"`, `"tag":"quic-provider"`, `"address":"quic.edge.invalid"`} {
+		if !strings.Contains(stored, want) {
+			t.Fatalf("expected stored provider config to preserve %s, got %s", want, stored)
+		}
+	}
+}
