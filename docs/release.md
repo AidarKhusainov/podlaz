@@ -4,13 +4,15 @@ Reference for tagged GitHub Release automation.
 
 ## Trigger
 
-A release is produced only from a pushed semantic version tag:
+A release is produced from a pushed semantic version tag:
 
 ```text
 vMAJOR.MINOR.PATCH
 ```
 
 Examples: `v0.1.3`, `v0.2.0`.
+
+Creating a GitHub Release manually for a new tag is supported only when the workflow-created assets are not already attached to that release. The workflow still runs from the tag push event and completes the GitHub Release publication.
 
 ## Artifacts
 
@@ -49,9 +51,17 @@ Package install validation must confirm that install does not start Xray and doe
 
 ## Publication
 
-The workflow treats published release assets as immutable. If a GitHub Release already exists for the tag, publication fails instead of replacing assets. Re-run a failed release before publication, or cut a new tag for a corrected published release.
+The workflow treats published release assets as immutable. It never uploads with `--clobber` and never replaces an already attached expected artifact.
 
-The attestation job downloads the already validated release artifacts and records artifact provenance through GitHub artifact attestations. The publication job then downloads the same artifacts and creates the GitHub Release for the tag.
+If no GitHub Release exists for the tag, the publication job creates it and uploads the expected assets.
+
+If a GitHub Release already exists for the tag without any expected workflow assets, the publication job updates the title and notes, then uploads the expected assets. This supports the GitHub UI flow where creating a release for a new tag also pushes the tag that starts the workflow.
+
+If all expected workflow assets already exist, the publication job downloads them, verifies their `SHA256SUMS`, compares the existing `SHA256SUMS` with the newly built checksum file, updates title and notes, and exits successfully only when they match.
+
+If only some expected workflow assets exist, or if the existing checksum differs from the newly built checksum file, publication fails. Remove the incomplete assets manually before retrying or cut a new tag for a corrected published release.
+
+The attestation job downloads the already validated release artifacts and records artifact provenance through GitHub artifact attestations. The publication job then downloads the same artifacts and creates or completes the GitHub Release for the tag.
 
 The publication job sets `GH_REPO` explicitly so GitHub CLI release commands do not depend on a local checkout or git remote context.
 
@@ -59,7 +69,7 @@ The release workflow does not publish an apt repository and does not sign reposi
 
 ## Permissions
 
-Use read-only permissions by default. The artifact attestation job requests only `contents: read`, `attestations: write`, and `id-token: write`. The publication job requests only `contents: write`, because GitHub Release creation and asset upload require it.
+Use read-only permissions by default. The artifact attestation job requests only `contents: read`, `attestations: write`, and `id-token: write`. The publication job requests only `contents: write`, because GitHub Release creation, release editing, and asset upload require it.
 
 ## Out of scope
 
