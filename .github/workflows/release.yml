@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   resolve:
     name: Resolve release version
@@ -23,18 +27,18 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           version="${tag#v}"
-          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
-            echo "release tag must use vMAJOR.MINOR.PATCH, got: $tag" >&2
+          if ! printf '%s' "${tag}" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
+            echo "release tag must use vMAJOR.MINOR.PATCH, got: ${tag}" >&2
             exit 1
           fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
   test:
     name: Test release commit
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -46,26 +50,17 @@ jobs:
         with:
           go-version: '1.26.4'
           cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
 
-      - name: Go fmt check
-        run: |
-          files="$(gofmt -l .)"
-          if [ -n "$files" ]; then
-            echo "$files"
-            exit 1
-          fi
-
-      - name: Go test
-        run: go test ./...
-
-      - name: Go vet
-        run: go vet ./...
+      - name: Go fmt, test, and vet
+        run: bash scripts/ci/go-core.sh
 
       - name: Govulncheck
         run: |
-          . packaging/package-toolchain.env
-          go install golang.org/x/vuln/cmd/govulncheck@"${GOVULNCHECK_VERSION}"
-          "$(go env GOPATH)/bin/govulncheck" ./...
+          bash scripts/ci/install-go-tool.sh govulncheck
+          govulncheck ./...
 
   build:
     name: Build and validate release artifacts
@@ -73,9 +68,7 @@ jobs:
       - resolve
       - test
     runs-on: ubuntu-22.04
-    timeout-minutes: 40
-    permissions:
-      contents: read
+    timeout-minutes: 50
     outputs:
       tag: ${{ needs.resolve.outputs.tag }}
       version: ${{ needs.resolve.outputs.version }}
@@ -93,280 +86,76 @@ jobs:
           set -euo pipefail
           commit_sha="$(git rev-parse HEAD)"
           built_date="$(git show -s --format=%cd --date=format:'%Y-%m-%d' HEAD)"
-          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
-          echo "built_date=$built_date" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=${commit_sha}" >> "${GITHUB_OUTPUT}"
+          echo "built_date=${built_date}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.4'
           cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
 
       - name: Install package tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends dpkg file lintian man-db zsh fish gcc-aarch64-linux-gnu libc6-dev-arm64-cross
-          . packaging/package-toolchain.env
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          bash scripts/ci/install-go-tool.sh nfpm
 
       - name: Build Debian packages
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
           COMMIT_SHA: ${{ steps.release-commit.outputs.commit_sha }}
           BUILT_DATE: ${{ steps.release-commit.outputs.built_date }}
-        run: |
-          set -euo pipefail
-          for arch in amd64 arm64; do
-            if [ "$arch" = arm64 ]; then
-              export CC=aarch64-linux-gnu-gcc
-            else
-              unset CC
-            fi
-            PODLAZ_VERSION="$VERSION" \
-            PODLAZ_DEB_VERSION="$VERSION" \
-            PODLAZ_DEB_ARCH="$arch" \
-            PODLAZ_COMMIT="$COMMIT_SHA" \
-            PODLAZ_BUILT="$BUILT_DATE" \
-              bash scripts/build-deb.sh
-          done
+        run: bash scripts/ci/build-release-packages.sh
 
-      - name: Inspect package metadata
+      - name: Validate package metadata and contents
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
+          PODLAZ_LINKAGE_ROOT: dist/package-root
         run: |
-          set -euo pipefail
-          for arch in amd64 arm64; do
-            package="dist/podlaz_${VERSION}_linux_${arch}.deb"
-            test -f "$package"
-            dpkg-deb --info "$package"
-            test "$(dpkg-deb --field "$package" Package)" = podlaz
-            test "$(dpkg-deb --field "$package" Version)" = "$VERSION"
-            test "$(dpkg-deb --field "$package" Architecture)" = "$arch"
-          done
+          bash scripts/ci/validate-packages.sh \
+            "dist/podlaz_${VERSION}_linux_amd64.deb" \
+            "dist-arm64/podlaz_${VERSION}_linux_arm64.deb"
 
-      - name: Inspect package contents
+      - name: Install, reinstall, and purge package locally
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          for arch in amd64 arm64; do
-            package="dist/podlaz_${VERSION}_linux_${arch}.deb"
-            contents="/tmp/podlaz-${arch}-package-contents.txt"
-            dpkg-deb --contents "$package" | tee "$contents"
-            ! grep -E '(^| )\./usr/local(/|$)' "$contents"
-            ! grep -E '(^| )\./run(/|$)' "$contents"
-            ! grep -E '(^| )\./var/run(/|$)' "$contents"
-            ! grep -E '(^| )\./home(/|$)' "$contents"
-            ! grep -E '(^| )\./run/podlaz/generated(/|$)' "$contents"
-            grep -F './usr/bin/podlaz' "$contents"
-            grep -F './usr/bin/plz' "$contents"
-            grep -F './usr/bin/podlazd' "$contents"
-            grep -F './usr/lib/systemd/system/podlazd.service' "$contents"
-            grep -F './usr/lib/sysusers.d/podlaz.conf' "$contents"
-            grep -F './usr/share/bash-completion/completions/podlaz' "$contents"
-            grep -F './usr/share/bash-completion/completions/plz' "$contents"
-            grep -F './usr/share/zsh/vendor-completions/_podlaz' "$contents"
-            grep -F './usr/share/zsh/vendor-completions/_plz' "$contents"
-            grep -F './usr/share/fish/vendor_completions.d/podlaz.fish' "$contents"
-            grep -F './usr/share/fish/vendor_completions.d/plz.fish' "$contents"
-            grep -F './usr/share/man/man1/podlaz.1.gz' "$contents"
-            grep -F './usr/share/man/man8/podlazd.8.gz' "$contents"
-            ! grep -F './usr/share/metainfo/' "$contents"
-          done
+          PODLAZ_EXPECT_VERSION: ${{ needs.resolve.outputs.version }}
+          PODLAZ_EXPECT_COMMIT: ${{ steps.release-commit.outputs.commit_sha }}
+          PODLAZ_EXPECT_BUILT: ${{ steps.release-commit.outputs.built_date }}
+          PODLAZ_VALIDATE_SERVICE: '1'
+        run: bash scripts/ci/validate-package-install.sh "dist/podlaz_${VERSION}_linux_amd64.deb"
 
-      - name: Validate packaged daemon access contract
+      - name: Create release artifacts
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          for arch in amd64 arm64; do
-            package="dist/podlaz_${VERSION}_linux_${arch}.deb"
-            service="/tmp/podlazd-${arch}.service"
-            sysusers="/tmp/podlaz-${arch}.sysusers"
-            control="/tmp/podlaz-${arch}-control"
-            rm -rf "$control"
-            dpkg-deb --fsys-tarfile "$package" | tar -xOf - ./usr/lib/systemd/system/podlazd.service > "$service"
-            dpkg-deb --fsys-tarfile "$package" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > "$sysusers"
-            dpkg-deb --control "$package" "$control"
-            test -f "$control/postinst"
-            grep -F 'u podlaz ' "$sysusers"
-            grep -F 'u podlaz-xray ' "$sysusers"
-            grep -Fx 'User=root' "$service"
-            grep -Fx 'Group=podlaz' "$service"
-            grep -Fx 'UMask=0077' "$service"
-            grep -Fx 'RuntimeDirectory=podlaz' "$service"
-            grep -Fx 'RuntimeDirectoryMode=0711' "$service"
-            grep -Fx 'StateDirectory=podlaz' "$service"
-            grep -Fx 'StateDirectoryMode=0700' "$service"
-            grep -Fx 'NoNewPrivileges=yes' "$service"
-            grep -Fx 'CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN' "$service"
-            grep -Fx 'AmbientCapabilities=CAP_SETUID CAP_KILL' "$service"
-            grep -Fx 'RestrictSUIDSGID=yes' "$service"
-            grep -Fx 'MemoryDenyWriteExecute=yes' "$service"
-            ! grep -E '^AmbientCapabilities=.*CAP_(NET_ADMIN|SETGID|SYS_ADMIN)' "$service"
-            grep -F 'unit=podlazd.service' "$control/postinst"
-            grep -F 'deb-systemd-helper enable "$unit"' "$control/postinst"
-            grep -F 'deb-systemd-helper update-state "$unit"' "$control/postinst"
-            grep -F 'deb-systemd-invoke start "$1"' "$control/postinst"
-            grep -F 'start_service "$unit"' "$control/postinst"
-            ! grep -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd' "$control/postinst"
-          done
-          ! grep -R -E 'systemctl[[:space:]]+(start|enable)[[:space:]]+podlazd' packaging/debian
-
-      - name: Validate generated shell completions
-        run: |
-          go run ./cmd/podlaz completion bash > /tmp/podlaz.bash
-          go run ./cmd/podlaz completion zsh > /tmp/_podlaz
-          go run ./cmd/podlaz completion fish > /tmp/podlaz.fish
-          bash -n /tmp/podlaz.bash
-          zsh -n /tmp/_podlaz
-          fish --no-config --command 'source /tmp/podlaz.fish'
-          grep -F '__complete bash' /tmp/podlaz.bash
-          grep -F '#compdef podlaz' /tmp/_podlaz
-          grep -F '__complete zsh' /tmp/_podlaz
-          grep -F 'complete -c podlaz -f' /tmp/podlaz.fish
-          grep -F 'complete -c plz -f' /tmp/podlaz.fish
-          grep -F '__complete fish' /tmp/podlaz.fish
-          grep -F -- "-l mode -x -a 'proxy-only tun'" /tmp/podlaz.fish
-          grep -F -- "-l protocol -x -a 'vless vmess trojan shadowsocks'" /tmp/podlaz.fish
-          fish --no-config --command 'source /tmp/podlaz.fish; complete -C "podlaz plan -" | grep -F -- "--mode"'
-          fish --no-config --command 'source /tmp/podlaz.fish; complete -C "podlaz plan --mode " | grep -F "proxy-only"'
-          fish --no-config --command 'source /tmp/podlaz.fish; complete -C "podlaz profile add --protocol " | grep -F "vless"'
-          fish --no-config --command 'source /tmp/podlaz.fish; complete -C "podlaz logs -" | grep -F -- "--follow"'
-          fish --no-config --command 'source /tmp/podlaz.fish; complete -C "plz plan -" | grep -F -- "--mode"'
-
-      - name: Lint Debian packages
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -o pipefail
-          for arch in amd64 arm64; do
-            lintian --fail-on error "dist/podlaz_${VERSION}_linux_${arch}.deb"
-          done 2>&1 | tee /tmp/podlaz-lintian.txt
-
-      - name: Upload lintian diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: podlaz-lintian-diagnostics-${{ needs.resolve.outputs.version }}
-          path: /tmp/podlaz-lintian.txt
-          if-no-files-found: ignore
-
-      - name: Install package locally
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-          COMMIT_SHA: ${{ steps.release-commit.outputs.commit_sha }}
-          BUILT_DATE: ${{ steps.release-commit.outputs.built_date }}
-        run: |
-          set -euo pipefail
-          ip route show > /tmp/podlaz-routes-before.txt
-          sudo apt install -y "./dist/podlaz_${VERSION}_linux_amd64.deb"
-          ip route show > /tmp/podlaz-routes-after.txt
-          diff -u /tmp/podlaz-routes-before.txt /tmp/podlaz-routes-after.txt
-          dpkg -L podlaz
-          podlaz version | tee /tmp/podlaz-version.txt
-          grep -Fx "podlaz version ${VERSION}" /tmp/podlaz-version.txt
-          grep -Fx "commit: ${COMMIT_SHA}" /tmp/podlaz-version.txt
-          grep -Fx "built: ${BUILT_DATE}" /tmp/podlaz-version.txt
-          plz version | tee /tmp/plz-version.txt
-          grep -Fx "podlaz version ${VERSION}" /tmp/plz-version.txt
-          grep -Fx "commit: ${COMMIT_SHA}" /tmp/plz-version.txt
-          grep -Fx "built: ${BUILT_DATE}" /tmp/plz-version.txt
-          test -x /usr/bin/podlaz
-          test -x /usr/bin/plz
-          test -x /usr/bin/podlazd
-          test -f /usr/lib/systemd/system/podlazd.service
-          test -f /usr/lib/sysusers.d/podlaz.conf
-          test -f /usr/share/bash-completion/completions/podlaz
-          test -f /usr/share/bash-completion/completions/plz
-          test -f /usr/share/zsh/vendor-completions/_podlaz
-          test -f /usr/share/zsh/vendor-completions/_plz
-          test -f /usr/share/fish/vendor_completions.d/podlaz.fish
-          test -f /usr/share/fish/vendor_completions.d/plz.fish
-          test -f /usr/share/man/man1/podlaz.1.gz
-          test -f /usr/share/man/man8/podlazd.8.gz
-          test ! -e /usr/share/metainfo/io.github.aidarkhusainov.podlaz.metainfo.xml
-          man -l /usr/share/man/man1/podlaz.1.gz >/dev/null
-          man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
-          bash -n /usr/share/bash-completion/completions/podlaz
-          bash -n /usr/share/bash-completion/completions/plz
-          zsh -n /usr/share/zsh/vendor-completions/_podlaz
-          zsh -n /usr/share/zsh/vendor-completions/_plz
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish'
-          bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz; COMP_WORDS=(podlaz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
-          bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
-          zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _podlaz; whence _podlaz >/dev/null'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F completion'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan -" | grep -F -- "--mode"'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan --mode " | grep -F "proxy-only"'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz profile add --protocol " | grep -F "vless"'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz logs -" | grep -F -- "--follow"'
-          fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz plan -" | grep -F -- "--mode"'
-          sudo systemctl daemon-reload
-          sudo systemctl is-enabled --quiet podlazd.service
-          for attempt in $(seq 1 50); do
-            if sudo systemctl is-active --quiet podlazd.service; then
-              break
-            fi
-            sleep 0.2
-          done
-          sudo systemctl is-active --quiet podlazd.service
-          for attempt in $(seq 1 50); do
-            if [ -S /run/podlaz/podlazd.sock ]; then
-              break
-            fi
-            sleep 0.2
-          done
-          test -S /run/podlaz/podlazd.sock
-
-      - name: Remove package locally
-        if: always()
-        run: |
-          sudo systemctl stop podlazd.service >/dev/null 2>&1 || true
-          sudo apt purge -y podlaz >/dev/null 2>&1 || true
-          if command -v deb-systemd-helper >/dev/null 2>&1; then
-            sudo deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
-          fi
-          sudo systemctl daemon-reload >/dev/null 2>&1 || true
-          sudo systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
-          ! dpkg -L podlaz
-          test ! -e /usr/bin/podlaz
-          test ! -e /usr/bin/plz
-          test ! -e /usr/bin/podlazd
-          test ! -e /usr/lib/systemd/system/podlazd.service
-          test ! -e /usr/lib/sysusers.d/podlaz.conf
-
-      - name: Create checksums
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist/release
-          cp "dist/podlaz_${VERSION}_linux_amd64.deb" dist/release/
-          cp "dist/podlaz_${VERSION}_linux_arm64.deb" dist/release/
-          (cd dist/release && sha256sum "podlaz_${VERSION}_linux_amd64.deb" "podlaz_${VERSION}_linux_arm64.deb" > SHA256SUMS)
-          cat dist/release/SHA256SUMS
-          ! grep -E 'tunwarden|tunwardend|TunWarden' dist/release/SHA256SUMS
+        run: bash scripts/ci/create-release-artifacts.sh
 
       - name: Upload release artifacts for review
         uses: actions/upload-artifact@v4
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_arm64.tar.gz
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_arm64.deb
             dist/release/SHA256SUMS
           if-no-files-found: error
+          retention-days: 30
 
   publish:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
+      attestations: write
+      id-token: write
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -374,44 +163,43 @@ jobs:
           name: podlaz-release-artifacts-${{ needs.build.outputs.version }}
           path: dist/release
 
-      - name: Write release notes
-        run: |
-          cat > release-notes.md <<EOF
-          podlaz ${{ needs.build.outputs.tag }}
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_amd64.tar.gz
+            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_arm64.tar.gz
+            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_amd64.deb
+            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_arm64.deb
+            dist/release/SHA256SUMS
 
-          Git tag: ${{ needs.build.outputs.tag }}
-          Commit SHA: ${{ needs.build.outputs.commit_sha }}
-          Built: ${{ needs.build.outputs.built_date }}
-
-          Artifacts:
-          - podlaz_${{ needs.build.outputs.version }}_linux_amd64.deb
-          - podlaz_${{ needs.build.outputs.version }}_linux_arm64.deb
-          - SHA256SUMS
-
-          Install the local Debian package with: sudo apt install ./podlaz_${{ needs.build.outputs.version }}_linux_amd64.deb
-
-          Package installation enables and starts podlazd.service through Debian helper tools without starting Xray or changing host routes.
-          EOF
-
-      - name: Publish release
+      - name: Publish GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.build.outputs.tag }}
           VERSION: ${{ needs.build.outputs.version }}
+          COMMIT_SHA: ${{ needs.build.outputs.commit_sha }}
+          BUILT_DATE: ${{ needs.build.outputs.built_date }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "podlaz ${TAG}" --notes-file release-notes.md
-            gh release upload "$TAG" --clobber \
+          printf -v notes 'podlaz %s\n\nTag: %s\nCommit: %s\nBuilt: %s' "${VERSION}" "${TAG}" "${COMMIT_SHA}" "${BUILT_DATE}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" \
+              "dist/release/podlaz_${VERSION}_linux_amd64.tar.gz" \
+              "dist/release/podlaz_${VERSION}_linux_arm64.tar.gz" \
               "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
               "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
-              "dist/release/SHA256SUMS"
+              "dist/release/SHA256SUMS" \
+              --clobber
           else
-            gh release create "$TAG" \
-              --title "podlaz ${TAG}" \
-              --notes-file release-notes.md \
+            gh release create "${TAG}" \
+              "dist/release/podlaz_${VERSION}_linux_amd64.tar.gz" \
+              "dist/release/podlaz_${VERSION}_linux_arm64.tar.gz" \
               "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
               "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
-              "dist/release/SHA256SUMS"
+              "dist/release/SHA256SUMS" \
+              --verify-tag \
+              --title "${TAG}" \
+              --notes "${notes}"
           fi
