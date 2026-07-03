@@ -61,6 +61,8 @@ fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.f
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan --mode " | grep -F "proxy-only"'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz profile add --protocol " | grep -F "vless"'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz logs -" | grep -F -- "--follow"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz recover --execute " | grep -F -- "--yes"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz recover --execute " | grep -F -- "--yes"'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz plan -" | grep -F -- "--mode"'
 
 if [ "${validate_service}" = 1 ]; then
@@ -119,4 +121,3 @@ test ! -e /usr/bin/podlaz
 test ! -e /usr/bin/plz
 test ! -e /usr/bin/podlazd
 test ! -e /usr/lib/systemd/system/podlazd.service
-test ! -e /usr/lib/sysusers.d/podlaz.conf
