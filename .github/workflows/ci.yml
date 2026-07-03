@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -149,6 +149,6 @@ jobs:
       - name: Install, reinstall, and purge package locally
         env:
           PODLAZ_EXPECT_VERSION: 0.0.0~dev
-          PODLAZ_EXPECT_COMMIT: ${{ env.CI_PODLAZ_COMMIT }}
-          PODLAZ_EXPECT_BUILT: ${{ env.CI_PODLAZ_BUILT }}
+          PODLAZ_EXPECT_COMMIT: ci-test
+          PODLAZ_EXPECT_BUILT: Jun 19 2026
         run: bash scripts/ci/validate-package-install.sh "${DEV_DEB}"
