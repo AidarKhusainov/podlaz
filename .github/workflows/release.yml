@@ -70,8 +70,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 50
     outputs:
-      tag: ${{ needs.resolve.outputs.tag }}
-      version: ${{ needs.resolve.outputs.version }}
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
       built_date: ${{ steps.release-commit.outputs.built_date }}
     steps:
@@ -147,59 +145,72 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  publish:
-    name: Publish GitHub Release
-    needs: build
+  attest:
+    name: Attest release artifacts
+    needs:
+      - resolve
+      - build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     permissions:
-      contents: write
+      contents: read
       attestations: write
       id-token: write
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: podlaz-release-artifacts-${{ needs.build.outputs.version }}
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
 
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
-            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_amd64.tar.gz
-            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_arm64.tar.gz
-            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_amd64.deb
-            dist/release/podlaz_${{ needs.build.outputs.version }}_linux_arm64.deb
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_arm64.tar.gz
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+            dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_arm64.deb
             dist/release/SHA256SUMS
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - resolve
+      - build
+      - attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
 
       - name: Publish GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.build.outputs.tag }}
-          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
           COMMIT_SHA: ${{ needs.build.outputs.commit_sha }}
           BUILT_DATE: ${{ needs.build.outputs.built_date }}
         run: |
           set -euo pipefail
           printf -v notes 'podlaz %s\n\nTag: %s\nCommit: %s\nBuilt: %s' "${VERSION}" "${TAG}" "${COMMIT_SHA}" "${BUILT_DATE}"
           if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" \
-              "dist/release/podlaz_${VERSION}_linux_amd64.tar.gz" \
-              "dist/release/podlaz_${VERSION}_linux_arm64.tar.gz" \
-              "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
-              "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
-              "dist/release/SHA256SUMS" \
-              --clobber
-          else
-            gh release create "${TAG}" \
-              "dist/release/podlaz_${VERSION}_linux_amd64.tar.gz" \
-              "dist/release/podlaz_${VERSION}_linux_arm64.tar.gz" \
-              "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
-              "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
-              "dist/release/SHA256SUMS" \
-              --verify-tag \
-              --title "${TAG}" \
-              --notes "${notes}"
+            echo "release ${TAG} already exists; release assets are treated as immutable" >&2
+            exit 1
           fi
+          gh release create "${TAG}" \
+            "dist/release/podlaz_${VERSION}_linux_amd64.tar.gz" \
+            "dist/release/podlaz_${VERSION}_linux_arm64.tar.gz" \
+            "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
+            "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
+            "dist/release/SHA256SUMS" \
+            --verify-tag \
+            --title "${TAG}" \
+            --notes "${notes}"
