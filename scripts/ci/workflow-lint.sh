@@ -14,4 +14,4 @@ mapfile -t shell_scripts < <(
     -print | sort
 )
 
-shellcheck "${shell_scripts[@]}"
+shellcheck -x -s bash -P scripts/e2e "${shell_scripts[@]}"
