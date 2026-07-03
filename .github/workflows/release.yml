@@ -46,7 +46,7 @@ jobs:
           ref: ${{ needs.resolve.outputs.tag }}
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.4'
           cache: true
@@ -88,7 +88,7 @@ jobs:
           echo "built_date=${built_date}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.26.4'
           cache: true
