@@ -201,16 +201,65 @@ jobs:
         run: |
           set -euo pipefail
           printf -v notes 'podlaz %s\n\nTag: %s\nCommit: %s\nBuilt: %s' "${VERSION}" "${TAG}" "${COMMIT_SHA}" "${BUILT_DATE}"
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "release ${TAG} already exists; release assets are treated as immutable" >&2
+          expected_assets=(
+            "podlaz_${VERSION}_linux_amd64.tar.gz"
+            "podlaz_${VERSION}_linux_arm64.tar.gz"
+            "podlaz_${VERSION}_linux_amd64.deb"
+            "podlaz_${VERSION}_linux_arm64.deb"
+            "SHA256SUMS"
+          )
+          release_asset_paths=()
+          for asset in "${expected_assets[@]}"; do
+            release_asset_paths+=("dist/release/${asset}")
+          done
+
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" \
+              "${release_asset_paths[@]}" \
+              --verify-tag \
+              --title "${TAG}" \
+              --notes "${notes}"
+            exit 0
+          fi
+
+          mapfile -t existing_assets < <(gh release view "${TAG}" --json assets --jq '.assets[].name')
+          matching_expected_asset_count=0
+          for expected_asset in "${expected_assets[@]}"; do
+            for existing_asset in "${existing_assets[@]}"; do
+              if [ "${existing_asset}" = "${expected_asset}" ]; then
+                matching_expected_asset_count=$((matching_expected_asset_count + 1))
+                break
+              fi
+            done
+          done
+
+          if [ "${matching_expected_asset_count}" -eq 0 ]; then
+            gh release edit "${TAG}" --title "${TAG}" --notes "${notes}"
+            gh release upload "${TAG}" "${release_asset_paths[@]}"
+            exit 0
+          fi
+
+          if [ "${matching_expected_asset_count}" -ne "${#expected_assets[@]}" ]; then
+            echo "release ${TAG} already has a partial set of expected immutable assets" >&2
+            echo "remove the incomplete release assets manually or publish a new tag" >&2
             exit 1
           fi
-          gh release create "${TAG}" \
-            "dist/release/podlaz_${VERSION}_linux_amd64.tar.gz" \
-            "dist/release/podlaz_${VERSION}_linux_arm64.tar.gz" \
-            "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
-            "dist/release/podlaz_${VERSION}_linux_arm64.deb" \
-            "dist/release/SHA256SUMS" \
-            --verify-tag \
-            --title "${TAG}" \
-            --notes "${notes}"
+
+          download_dir="$(mktemp -d)"
+          trap 'rm -rf "${download_dir}"' EXIT
+          for expected_asset in "${expected_assets[@]}"; do
+            gh release download "${TAG}" --pattern "${expected_asset}" --dir "${download_dir}"
+          done
+          (
+            cd "${download_dir}"
+            sha256sum -c SHA256SUMS
+          )
+          if cmp -s "dist/release/SHA256SUMS" "${download_dir}/SHA256SUMS"; then
+            gh release edit "${TAG}" --title "${TAG}" --notes "${notes}"
+            echo "release ${TAG} already has matching immutable assets"
+            exit 0
+          fi
+
+          echo "release ${TAG} already has expected assets, but SHA256SUMS differs" >&2
+          echo "release assets are immutable; publish a new tag instead of replacing them" >&2
+          exit 1
