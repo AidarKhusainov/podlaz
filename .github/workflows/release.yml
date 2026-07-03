@@ -133,7 +133,7 @@ jobs:
         run: bash scripts/ci/create-release-artifacts.sh
 
       - name: Upload release artifacts for review
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |

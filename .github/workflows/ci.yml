@@ -45,7 +45,7 @@ jobs:
 
       - name: Upload workflow lint diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: podlaz-workflow-lint-diagnostics
           path: /tmp/podlaz-workflow-lint.txt
@@ -76,7 +76,7 @@ jobs:
 
       - name: Upload Go diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: podlaz-go-diagnostics
           path: /tmp/podlaz-go-core.txt
@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload package build diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: podlaz-build-deb-diagnostics
           path: |
@@ -146,7 +146,7 @@ jobs:
 
       - name: Upload package validation diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: podlaz-package-validation-diagnostics
           path: |
