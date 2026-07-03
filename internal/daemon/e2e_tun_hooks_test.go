@@ -87,7 +87,7 @@ func (recordingRouteExecutor) Add(context.Context, planner.TunRoutePlan) (netexe
 	return netexecutor.Step{Kind: "route", Target: "default", Owner: netexecutor.OwnerRoute}, nil
 }
 
-func (recordingRouteExecutor) Verify(context.Context, planner.TunRoutePlan) error { return nil }
+func (recordingRouteExecutor) Verify(context.Context, planner.TunRoutePlan) error   { return nil }
 func (recordingRouteExecutor) Rollback(context.Context, planner.TunRoutePlan) error { return nil }
 
 type recordingDNSExecutor struct{}
@@ -96,7 +96,7 @@ func (recordingDNSExecutor) Apply(context.Context, planner.TunDNSPlan) (netexecu
 	return netexecutor.Step{Kind: "dns", Target: "podlaz0", Owner: netexecutor.OwnerDNS}, nil
 }
 
-func (recordingDNSExecutor) Verify(context.Context, planner.TunDNSPlan) error { return nil }
+func (recordingDNSExecutor) Verify(context.Context, planner.TunDNSPlan) error   { return nil }
 func (recordingDNSExecutor) Rollback(context.Context, planner.TunDNSPlan) error { return nil }
 
 type e2eHookApplyStaticTunDeviceExecutor struct {
