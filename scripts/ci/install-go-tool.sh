@@ -24,4 +24,6 @@ case "$1" in
     ;;
 esac
 
-echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH:-/dev/null}"
+if [ -n "${GITHUB_PATH:-}" ]; then
+  echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
+fi
