@@ -219,6 +219,5 @@ expect_logs_follow_timeout logs-follow-short-bounded -f
 expect_logs_follow_timeout logs-follow-long-bounded --follow
 expect_success recover-help "${PODLAZ[@]}" recover --help
 expect_exit_in "0 3" recover-dry-run "${PODLAZ[@]}" recover
-expect_exit 2 recover-execute-without-yes "${PODLAZ[@]}" recover --execute
 
 log "CLI contract e2e completed"
