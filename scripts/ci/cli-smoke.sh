@@ -27,4 +27,6 @@ fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'podlaz plan 
 fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'podlaz plan --mode ' | grep -F 'proxy-only'"
 fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'podlaz profile add --protocol ' | grep -F 'vless'"
 fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'podlaz logs -' | grep -F -- '--follow'"
+fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'podlaz recover --execute ' | grep -F -- '--yes'"
+fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'plz recover --execute ' | grep -F -- '--yes'"
 fish --no-config --command "source ${tmp}/podlaz.fish; complete -C 'plz plan -' | grep -F -- '--mode'"
