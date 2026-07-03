@@ -88,7 +88,7 @@ func TestParseXrayJSONObjectKeepsNormalizedQuicProfile(t *testing.T) {
 		t.Fatalf("expected %d normalized profile, got %d: %#v", want, got, parsed.Profiles)
 	}
 	p := parsed.Profiles[0]
-	if p.Protocol != profile.ProtocolVLESS {
+	if p.Protocol != "vless" {
 		t.Fatalf("expected normalized VLESS profile, got %#v", p)
 	}
 	if p.Server != "quic.edge.invalid" || p.Transport != "quic" || p.Security != "tls" || p.Name != "quic-provider" {
