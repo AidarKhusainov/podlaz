@@ -111,7 +111,10 @@ fi
 sudo systemctl daemon-reload >/dev/null 2>&1 || true
 sudo systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
 
-! dpkg -L podlaz
+if dpkg -L podlaz; then
+  echo "podlaz package still has installed files after purge" >&2
+  exit 1
+fi
 test ! -e /usr/bin/podlaz
 test ! -e /usr/bin/plz
 test ! -e /usr/bin/podlazd
