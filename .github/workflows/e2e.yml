@@ -43,6 +43,7 @@ jobs:
           name: podlaz-cli-contract-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   package-service:
     name: Package and service e2e
@@ -88,6 +89,7 @@ jobs:
           name: podlaz-package-service-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   data-plane:
     name: Proxy data-plane e2e
@@ -140,6 +142,7 @@ jobs:
           name: podlaz-proxy-data-plane-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   server-coverage:
     name: Maximum server coverage e2e
@@ -213,6 +216,7 @@ jobs:
           name: podlaz-server-coverage-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   tun-fault-injection:
     name: TUN fault-injection e2e
@@ -267,3 +271,4 @@ jobs:
           name: podlaz-tun-fault-injection-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
