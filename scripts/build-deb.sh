@@ -46,6 +46,11 @@ esac
 
 goarch="$(deb_arch_to_goarch "${arch}")"
 
+if [[ "${root_dir}" == *"#"* ]]; then
+  echo "package root path contains an unsupported #: ${root_dir}" >&2
+  exit 2
+fi
+
 if ! command -v go >/dev/null 2>&1; then
   echo "go is required to build podlaz binaries" >&2
   exit 2
@@ -116,6 +121,7 @@ find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
 done
 
 sed \
+  -e "s#__PACKAGE_ROOT__#${root_dir}#g" \
   -e "s/__VERSION__/${package_version}/g" \
   -e "s/__ARCH__/${arch}/g" \
   packaging/nfpm.yaml > "${config}"
