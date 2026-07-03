@@ -17,12 +17,12 @@ go test ./...
 go vet ./...
 govulncheck ./...
 go run ./cmd/podlaz version
-go run ./cmd/podlaz doctor
-go run ./cmd/podlaz recover
 go run ./cmd/podlaz completion bash >/dev/null
 go run ./cmd/podlaz completion zsh >/dev/null
 go run ./cmd/podlaz completion fish >/dev/null
 ```
+
+`podlaz doctor` and `podlaz recover` are still useful local checks when the host has the expected daemon/systemd context. They are not part of the default hosted PR gate because the default gate must stay deterministic and must not depend on privileged host state.
 
 For package changes:
 
@@ -45,6 +45,21 @@ man -l /usr/share/man/man8/podlazd.8.gz >/dev/null
 sudo apt install -y --reinstall ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 sudo apt purge -y podlaz
 ```
+
+The CI helper scripts under `scripts/ci/` are the executable source of truth for hosted package validation. Prefer updating those scripts instead of adding large inline shell blocks to workflow YAML.
+
+## CI/CD gates
+
+The default PR and `master` push gate is intentionally limited to checks that are deterministic on GitHub-hosted Linux runners:
+
+- workflow and shell lint for workflow/package-maintenance scripts;
+- Go formatting, tests, vet, vulnerability scan, and CLI smoke checks;
+- Debian package build and static validation for `amd64` and `arm64`;
+- local install, same-version reinstall, route-diff check, and purge cleanup for the `amd64` package.
+
+The self-hosted E2E workflow remains manual. Run it and link the run in the PR when a change touches TUN devices, routes, DNS, nftables, firewall behavior, daemon privilege boundaries, systemd service behavior, packaged service lifecycle, provider-backed data-plane behavior, or crash/recovery behavior.
+
+The tagged release workflow reuses the same validation scripts, creates release checksums, uploads workflow artifacts for review, attests the release artifacts, and publishes the `.deb` files plus `SHA256SUMS` to GitHub Releases.
 
 ## Rules
 
