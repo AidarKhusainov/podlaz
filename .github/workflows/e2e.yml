@@ -1,0 +1,179 @@
+name: E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: podlaz-e2e-full-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  cli-contract:
+    name: CLI contract e2e
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Run CLI contract e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/cli-contract.sh
+          bash scripts/e2e/coverage-evidence.sh
+      - name: Upload CLI contract diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-cli-contract-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  package-service:
+    name: Package and service e2e
+    needs: cli-contract
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Run package/service e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/package-service.sh
+      - name: Purge package state
+        if: always()
+        shell: bash
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+      - name: Upload package/service diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-package-service-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  data-plane:
+    name: Proxy data-plane e2e
+    needs: package-service
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    environment: vpn-e2e
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Run proxy data-plane e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/data-plane.sh
+      - name: Purge package state
+        if: always()
+        shell: bash
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+      - name: Upload proxy data-plane diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-proxy-data-plane-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  server-coverage:
+    name: Maximum server coverage e2e
+    needs: data-plane
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    environment: vpn-e2e
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Run maximum server coverage e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/server-coverage.sh
+      - name: Upload maximum server coverage diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-server-coverage-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+
+  tun-fault-injection:
+    name: TUN fault-injection e2e
+    needs: server-coverage
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    environment: vpn-e2e
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Run gated TUN fault-injection e2e
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/tun-fault-injection.sh
+      - name: Upload TUN fault-injection diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-tun-fault-injection-e2e-diagnostics
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
