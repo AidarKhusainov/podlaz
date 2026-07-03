@@ -107,11 +107,7 @@ func (e e2eHookRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan
 	if e.delegate == nil {
 		return netexecutor.Step{}, errors.New("missing route executor")
 	}
-	step, err := e.delegate.Add(ctx, plan)
-	if err != nil {
-		return step, err
-	}
-	return step, errors.New("E2E hook: route apply failed after earlier podlaz-owned TUN state was applied")
+	return netexecutor.Step{}, errors.New("E2E hook: route apply failed before adding podlaz-owned route")
 }
 
 func (e e2eHookRouteExecutor) Verify(ctx context.Context, plan planner.TunRoutePlan) error {
