@@ -49,7 +49,9 @@ Package install validation must confirm that install does not start Xray and doe
 
 ## Publication
 
-Only the publication job requests release-writing permissions. It downloads the already validated release artifacts, records artifact provenance through GitHub artifact attestations, and creates or updates the GitHub Release assets for the tag.
+The workflow treats published release assets as immutable. If a GitHub Release already exists for the tag, publication fails instead of replacing assets. Re-run a failed release before publication, or cut a new tag for a corrected published release.
+
+The attestation job downloads the already validated release artifacts and records artifact provenance through GitHub artifact attestations. The publication job then downloads the same artifacts and creates the GitHub Release for the tag.
 
 The publication job sets `GH_REPO` explicitly so GitHub CLI release commands do not depend on a local checkout or git remote context.
 
@@ -57,7 +59,7 @@ The release workflow does not publish an apt repository and does not sign reposi
 
 ## Permissions
 
-Use read-only permissions by default. Only the publication job may request `contents: write`, because GitHub Release creation and asset upload require it. The publication job may also request `attestations: write` and `id-token: write` for artifact provenance.
+Use read-only permissions by default. The artifact attestation job requests only `contents: read`, `attestations: write`, and `id-token: write`. The publication job requests only `contents: write`, because GitHub Release creation and asset upload require it.
 
 ## Out of scope
 
