@@ -98,3 +98,30 @@ func TestParseXrayJSONObjectFallsBackToProviderProfileForUnknownTransport(t *tes
 		}
 	}
 }
+
+func TestParseXrayJSONSubscriptionPreservesArrayEntryTypeDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseXrayJSONSubscription([]byte(`["not-an-object"]`))
+	if err == nil {
+		t.Fatal("expected unsupported array entry error")
+	}
+	if !strings.Contains(err.Error(), "unsupported Xray JSON array entry type string; expected object") {
+		t.Fatalf("expected preserved array entry diagnostic, got %v", err)
+	}
+}
+
+func TestParseSubscriptionContentPreservesTopLevelDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	format, _, err := ParseSubscriptionContent([]byte(`42`))
+	if format != FormatXrayJSON {
+		t.Fatalf("format = %q, want %q", format, FormatXrayJSON)
+	}
+	if err == nil {
+		t.Fatal("expected unsupported top-level type error")
+	}
+	if !strings.Contains(err.Error(), "unsupported subscription JSON top-level type number; expected Xray JSON object or array") {
+		t.Fatalf("expected preserved top-level diagnostic, got %v", err)
+	}
+}
