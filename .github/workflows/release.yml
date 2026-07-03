@@ -178,7 +178,7 @@ jobs:
           BUILT_DATE: ${{ needs.build.outputs.built_date }}
         run: |
           set -euo pipefail
-          notes="podlaz ${VERSION}\n\nCommit: ${COMMIT_SHA}\nBuilt: ${BUILT_DATE}"
+          printf -v notes 'podlaz %s\n\nCommit: %s\nBuilt: %s' "${VERSION}" "${COMMIT_SHA}" "${BUILT_DATE}"
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" \
               "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
