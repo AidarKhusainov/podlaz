@@ -66,15 +66,21 @@ fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish
 if [ "${validate_service}" = 1 ]; then
   sudo systemctl daemon-reload
   sudo systemctl is-enabled --quiet podlazd.service
-  for _ in $(seq 1 50); do
-    if sudo systemctl is-active --quiet podlazd.service; then
+
+  active_attempts=0
+  while ! sudo systemctl is-active --quiet podlazd.service; do
+    active_attempts=$((active_attempts + 1))
+    if [ "${active_attempts}" -ge 50 ]; then
       break
     fi
     sleep 0.2
   done
   sudo systemctl is-active --quiet podlazd.service
-  for _ in $(seq 1 50); do
-    if [ -S /run/podlaz/podlazd.sock ]; then
+
+  socket_attempts=0
+  while [ ! -S /run/podlaz/podlazd.sock ]; do
+    socket_attempts=$((socket_attempts + 1))
+    if [ "${socket_attempts}" -ge 50 ]; then
       break
     fi
     sleep 0.2
