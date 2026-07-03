@@ -44,15 +44,13 @@ func (c LifecycleClient) do(ctx context.Context, operation, path string, payload
 		return lifecycle, nil
 	}
 	if shouldTryAbstractSocket(socketPath, err) {
-		if lifecycle, fallbackErr := c.doViaSocket(ctx, api.AbstractSocketAddress(), timeout, operation, path, payload); fallbackErr == nil {
-			return lifecycle, nil
+		fallbackLifecycle, fallbackErr := c.doViaSocket(ctx, api.AbstractSocketAddress(), timeout, operation, path, payload)
+		if fallbackErr == nil {
+			return fallbackLifecycle, nil
 		}
+		return api.LifecycleResponse{}, fallbackErr
 	}
-	return api.LifecycleResponse{}, daemonUnavailableError{
-		detail:           unavailableDetail(socketPath, err),
-		cause:            err,
-		permissionDenied: isPermissionDenied(err),
-	}
+	return api.LifecycleResponse{}, err
 }
 
 func (c LifecycleClient) doViaSocket(ctx context.Context, socketPath string, timeout time.Duration, operation, path string, payload any) (api.LifecycleResponse, error) {
@@ -84,7 +82,11 @@ func (c LifecycleClient) doViaSocket(ctx context.Context, socketPath string, tim
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, daemonUnavailableError{
+			detail:           unavailableDetail(socketPath, err),
+			cause:            err,
+			permissionDenied: isPermissionDenied(err),
+		}
 	}
 	defer resp.Body.Close()
 
