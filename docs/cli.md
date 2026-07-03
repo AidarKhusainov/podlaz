@@ -40,6 +40,8 @@ plz --help
 | `4` | Permission or authorization failure. |
 | `5` | Required daemon access was unavailable. |
 
+Packaged daemon commands may retry through the packaged abstract socket when the regular filesystem socket fails with a transport-level permission error. Errors returned by a reachable daemon keep their daemon/protocol classification: an authorization denial remains exit code `4`, while an unreachable daemon remains exit code `5`.
+
 ## Completion
 
 ```bash

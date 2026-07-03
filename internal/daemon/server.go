@@ -69,11 +69,22 @@ func (s Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on daemon socket %s: %w", socketPath, err)
 	}
+	listeners := []net.Listener{listener}
 	defer func() { _ = listener.Close(); _ = os.Remove(socketPath) }()
 	if err := os.Chmod(socketPath, 0o660); err != nil {
 		return fmt.Errorf("set daemon socket permissions %s: %w", socketPath, err)
 	}
 	log.Printf("podlazd: daemon API listening on Unix socket")
+
+	if shouldListenOnAbstractSocket(authorizer) {
+		abstractListener, err := net.Listen("unix", api.AbstractSocketAddress())
+		if err != nil {
+			return fmt.Errorf("listen on packaged daemon abstract socket: %w", err)
+		}
+		listeners = append(listeners, abstractListener)
+		defer abstractListener.Close()
+		log.Printf("podlazd: packaged daemon API listening on abstract Unix socket")
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
@@ -131,15 +142,17 @@ func (s Server) Run(ctx context.Context) error {
 			return ctx
 		},
 	}
-	errc := make(chan error, 1)
-	go func() {
-		err := httpServer.Serve(listener)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
-			return
-		}
-		errc <- nil
-	}()
+	errc := make(chan error, len(listeners))
+	for _, ln := range listeners {
+		go func(ln net.Listener) {
+			err := httpServer.Serve(ln)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+				return
+			}
+			errc <- nil
+		}(ln)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -149,11 +162,28 @@ func (s Server) Run(ctx context.Context) error {
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown daemon API: %w", err)
 		}
-		return <-errc
+		return collectServeErrors(errc, len(listeners))
 	case err := <-errc:
 		_, _ = lifecycle.Disconnect(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
 		return err
 	}
+}
+
+func shouldListenOnAbstractSocket(authorizer Authorizer) bool {
+	return api.ServiceFromEnv() == api.ServiceSystemd && requiresPeerCredentials(authorizer)
+}
+
+func collectServeErrors(errc <-chan error, count int) error {
+	var errs []error
+	for i := 0; i < count; i++ {
+		if err := <-errc; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func DefaultStatus(context.Context) api.StatusResponse {
