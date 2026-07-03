@@ -6,6 +6,31 @@ if [ "$#" -lt 1 ]; then
   exit 2
 fi
 
+validate_binary_architecture() {
+  local package="$1"
+  local arch="$2"
+  local binary="$3"
+  local extracted="/tmp/podlaz-${arch}-${binary}"
+  local file_output="/tmp/podlaz-${arch}-${binary}.file.txt"
+
+  dpkg-deb --fsys-tarfile "${package}" | tar -xOf - "./usr/bin/${binary}" > "${extracted}"
+  chmod 0755 "${extracted}"
+  file "${extracted}" | tee "${file_output}"
+
+  case "${arch}" in
+    amd64)
+      grep -E 'ELF 64-bit.*x86-64' "${file_output}"
+      ;;
+    arm64)
+      grep -E 'ELF 64-bit.*(ARM aarch64|aarch64)' "${file_output}"
+      ;;
+    *)
+      echo "unsupported package architecture: ${arch}" >&2
+      exit 1
+      ;;
+  esac
+}
+
 for package in "$@"; do
   test -f "${package}"
 
@@ -48,6 +73,9 @@ for package in "$@"; do
   ! grep -F './usr/share/metainfo/' "${contents}"
   ! grep -F './usr/share/applications/' "${contents}"
   ! grep -F './usr/share/icons/' "${contents}"
+
+  validate_binary_architecture "${package}" "${arch}" podlaz
+  validate_binary_architecture "${package}" "${arch}" podlazd
 
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/systemd/system/podlazd.service > "${service}"
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > "${sysusers}"
