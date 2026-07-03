@@ -265,3 +265,32 @@ func xrayJSONWrapperProfileDisplayName(content []byte) (string, bool) {
 	}
 	return "", false
 }
+
+func subscriptionJSONTopLevelType(value any) string {
+	switch value.(type) {
+	case map[string]any:
+		return "object"
+	case []any:
+		return "array"
+	case string:
+		return "string"
+	case json.Number, float64:
+		return "number"
+	case bool:
+		return "boolean"
+	case nil:
+		return "null"
+	default:
+		return fmt.Sprintf("%T", value)
+	}
+}
+
+func looksLikeJSONObject(content []byte) bool {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+
+	var object map[string]json.RawMessage
+	return json.Unmarshal(trimmed, &object) == nil
+}
