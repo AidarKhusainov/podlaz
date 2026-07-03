@@ -59,7 +59,7 @@ The default PR and `master` push gate is intentionally limited to checks that ar
 
 The self-hosted E2E workflow remains manual. Run it and link the run in the PR when a change touches TUN devices, routes, DNS, nftables, firewall behavior, daemon privilege boundaries, systemd service behavior, packaged service lifecycle, provider-backed data-plane behavior, or crash/recovery behavior.
 
-The tagged release workflow reuses the same validation scripts, creates release checksums, uploads workflow artifacts for review, attests the release artifacts, and publishes the `.deb` files plus `SHA256SUMS` to GitHub Releases.
+The tagged release workflow reuses the same validation scripts, creates release checksums, uploads workflow artifacts for review, attests the release artifacts, and publishes standalone Linux binary archives, `.deb` files, and `SHA256SUMS` to GitHub Releases.
 
 ## Rules
 
