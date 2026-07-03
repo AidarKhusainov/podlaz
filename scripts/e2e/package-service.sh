@@ -15,6 +15,10 @@ fi
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
+PACKAGE_SERVICE_DROPIN_TOUCHED=0
+PACKAGE_SERVICE_DROPIN_DIR="/etc/systemd/system/podlazd.service.d"
+PACKAGE_SERVICE_E2E_DROPIN="${PACKAGE_SERVICE_DROPIN_DIR}/20-podlaz-e2e-package-service.conf"
+PACKAGE_SERVICE_PKCHECK_MODE_FILE=""
 
 collect_service_diagnostics() {
   local label="${1:-podlazd}"
@@ -39,6 +43,8 @@ collect_service_diagnostics() {
 purge_existing_package_state() {
   log "clean existing podlaz package state"
   sudo -n systemctl stop podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-stop.log" 2>&1 || true
+  sudo -n rm -f -- "${PACKAGE_SERVICE_E2E_DROPIN}" >/dev/null 2>&1 || true
+  sudo -n systemctl daemon-reload >"${E2E_ARTIFACT_DIR}/preinstall-dropin-daemon-reload.log" 2>&1 || true
   sudo -n apt purge -y podlaz >"${E2E_ARTIFACT_DIR}/preinstall-apt-purge.log" 2>&1 || true
   if command -v deb-systemd-helper >/dev/null 2>&1; then
     sudo -n deb-systemd-helper purge podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-deb-systemd-helper-purge.log" 2>&1 || true
@@ -59,11 +65,76 @@ wait_for_installed_service_active() {
   fail "installed-service-active failed: podlazd.service did not become active after package install"
 }
 
+install_package_service_e2e_authorization_fixture() {
+  local fixture_dir="${E2E_TMP_ROOT}/package-service-fixture"
+  mkdir -p "${fixture_dir}"
+  chmod 755 "${fixture_dir}"
+  PACKAGE_SERVICE_PKCHECK_MODE_FILE="${fixture_dir}/pkcheck-mode"
+  printf 'unavailable\n' >"${PACKAGE_SERVICE_PKCHECK_MODE_FILE}"
+  chmod 644 "${PACKAGE_SERVICE_PKCHECK_MODE_FILE}"
+
+  local fake_pkcheck="${fixture_dir}/pkcheck"
+  cat >"${fake_pkcheck}" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+mode_file="${PODLAZ_E2E_PKCHECK_MODE_FILE:?}"
+mode="$(tr -d '[:space:]' <"${mode_file}")"
+case "${mode}" in
+  allow)
+    exit 0
+    ;;
+  deny)
+    exit 1
+    ;;
+  unavailable|*)
+    exit 2
+    ;;
+esac
+SH
+  chmod 755 "${fake_pkcheck}"
+
+  local fake_xray="${fixture_dir}/xray"
+  cat >"${fake_xray}" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" != "run" || "${2:-}" != "-config" || -z "${3:-}" ]]; then
+  printf 'fake xray expected: run -config <path>\n' >&2
+  exit 2
+fi
+config="${3}"
+if [[ ! -r "${config}" ]]; then
+  printf 'fake xray cannot read config: %s\n' "${config}" >&2
+  exit 3
+fi
+trap 'exit 0' TERM INT
+while :; do
+  sleep 1 &
+  wait $!
+done
+SH
+  chmod 755 "${fake_xray}"
+
+  sudo -n mkdir -p "${PACKAGE_SERVICE_DROPIN_DIR}"
+  cat >"${E2E_ARTIFACT_DIR}/package-service-e2e-dropin.conf" <<EOF
+[Service]
+Environment=PODLAZ_XRAY_PATH=${fake_xray}
+Environment=PATH=${fixture_dir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PODLAZ_E2E_PKCHECK_MODE_FILE=${PACKAGE_SERVICE_PKCHECK_MODE_FILE}
+EOF
+  sudo -n install -m 0644 "${E2E_ARTIFACT_DIR}/package-service-e2e-dropin.conf" "${PACKAGE_SERVICE_E2E_DROPIN}"
+  PACKAGE_SERVICE_DROPIN_TOUCHED=1
+  sudo -n systemctl daemon-reload
+}
+
 cleanup_package_service() {
   local code=$?
   if [[ "${SERVICE_TOUCHED}" == "1" ]]; then
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
     collect_service_diagnostics cleanup
+  fi
+  if [[ "${PACKAGE_SERVICE_DROPIN_TOUCHED}" == "1" ]]; then
+    sudo -n rm -f -- "${PACKAGE_SERVICE_E2E_DROPIN}" >/dev/null 2>&1 || true
+    sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
   fi
   if [[ "${PACKAGE_INSTALLED}" == "1" && "${PODLAZ_E2E_KEEP_PACKAGE:-false}" != "true" ]]; then
     sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
@@ -133,6 +204,7 @@ test -x /usr/bin/podlazd || fail "missing /usr/bin/podlazd"
 test -f /usr/lib/systemd/system/podlazd.service || fail "missing podlazd.service"
 test -f /usr/lib/sysusers.d/podlaz.conf || fail "missing sysusers contract"
 assert_contains /usr/lib/systemd/system/podlazd.service "Environment=PODLAZ_POLKIT_AUTHORIZATION=required"
+install_package_service_e2e_authorization_fixture
 
 log "package first-run service availability"
 sudo -n systemctl daemon-reload
@@ -144,6 +216,31 @@ SERVICE_TOUCHED=1
 wait_for_installed_service_active
 collect_service_diagnostics installed-service-active
 expect_success installed-status-access podlaz status
+
+setup_isolated_xdg "package-service-normal-user"
+PACKAGE_PROFILE_URI='vless://00000000-0000-0000-0000-000000000042@package-service.example.net:443?type=tcp&security=tls&encryption=none#package-service-connect'
+expect_success packaged-profile-import plz profile import "${PACKAGE_PROFILE_URI}"
+PACKAGE_PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
+assert_nonempty "${PACKAGE_PROFILE_ID}" "packaged imported profile id"
+
+printf 'unavailable\n' >"${PACKAGE_SERVICE_PKCHECK_MODE_FILE}"
+expect_exit 1 packaged-connect-authorization-unavailable plz connect "${PACKAGE_PROFILE_ID}"
+assert_contains "${LAST_STDERR}" "authorization unavailable"
+assert_contains "${LAST_STDERR}" "polkit could not authorize"
+assert_not_contains "${LAST_STDERR}" "add the user to the podlaz group"
+assert_not_contains "${LAST_STDERR}" "start a new login session"
+
+printf 'allow\n' >"${PACKAGE_SERVICE_PKCHECK_MODE_FILE}"
+expect_success packaged-connect-authorized plz connect "${PACKAGE_PROFILE_ID}"
+assert_contains "${LAST_STDOUT}" "podlaz connection started"
+assert_contains "${LAST_STDOUT}" "Connection: active"
+assert_contains "${LAST_STDOUT}" "Mode: proxy-only"
+expect_success packaged-status-active plz status
+expect_success packaged-disconnect-authorized plz disconnect
+assert_contains "${LAST_STDOUT}" "podlaz disconnected"
+assert_contains "${LAST_STDOUT}" "Connection: inactive"
+expect_success packaged-status-inactive plz status
+
 sudo -n systemctl stop podlazd.service
 SERVICE_TOUCHED=0
 
