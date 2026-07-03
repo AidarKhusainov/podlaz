@@ -30,6 +30,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, err
 	}
+	if err := validateE2ETunHookConfig(); err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	coreIdentity, err := tunCoreExecutionIdentity()
 	if err != nil {
 		return api.LifecycleResponse{}, err
