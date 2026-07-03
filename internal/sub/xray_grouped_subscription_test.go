@@ -78,3 +78,47 @@ func TestParseXrayJSONArrayImportsGroupedProviderProfileBesideDuplicateLocationE
 		t.Fatalf("unexpected xhttp ordinary profile: %#v", *xhttpOrdinary)
 	}
 }
+
+func TestParseXrayJSONObjectKeepsNormalizedQuicProfile(t *testing.T) {
+	parsed, err := ParseXrayJSONSubscription([]byte(testfixtures.SingleVLESSXrayJSON("quic-provider", "quic.edge.invalid", "quic", "tls")))
+	if err != nil {
+		t.Fatalf("ParseXrayJSONSubscription failed: %v", err)
+	}
+	if got, want := len(parsed.Profiles), 1; got != want {
+		t.Fatalf("expected %d normalized profile, got %d: %#v", want, got, parsed.Profiles)
+	}
+	p := parsed.Profiles[0]
+	if p.Protocol != "vless" {
+		t.Fatalf("expected normalized VLESS profile, got %#v", p)
+	}
+	if p.Server != "quic.edge.invalid" || p.Transport != "quic" || p.Security != "tls" || p.Name != "quic-provider" {
+		t.Fatalf("unexpected normalized quic profile: %#v", p)
+	}
+}
+
+func TestParseXrayJSONSubscriptionPreservesArrayEntryTypeDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	_, err := ParseXrayJSONSubscription([]byte(`["not-an-object"]`))
+	if err == nil {
+		t.Fatal("expected unsupported array entry error")
+	}
+	if !strings.Contains(err.Error(), "unsupported Xray JSON array entry type string; expected object") {
+		t.Fatalf("expected preserved array entry diagnostic, got %v", err)
+	}
+}
+
+func TestParseSubscriptionContentPreservesTopLevelDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	format, _, err := ParseSubscriptionContent([]byte(`42`))
+	if format != FormatXrayJSON {
+		t.Fatalf("format = %q, want %q", format, FormatXrayJSON)
+	}
+	if err == nil {
+		t.Fatal("expected unsupported top-level type error")
+	}
+	if !strings.Contains(err.Error(), "unsupported subscription JSON top-level type number; expected Xray JSON object or array") {
+		t.Fatalf("expected preserved top-level diagnostic, got %v", err)
+	}
+}

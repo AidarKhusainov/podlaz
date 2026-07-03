@@ -15,14 +15,8 @@ func looksLikeGroupedProviderXrayObject(content []byte) bool {
 	if _, hasRouting := object["routing"]; !hasRouting {
 		return false
 	}
-	rawOutbounds, ok := object["outbounds"]
+	outbounds, ok := providerXrayOutbounds(object)
 	if !ok {
-		return false
-	}
-	var outbounds []struct {
-		Protocol string `json:"protocol"`
-	}
-	if err := json.Unmarshal(rawOutbounds, &outbounds); err != nil {
 		return false
 	}
 	vlessOutbounds := 0
@@ -34,10 +28,35 @@ func looksLikeGroupedProviderXrayObject(content []byte) bool {
 	return vlessOutbounds >= 2
 }
 
+func looksLikeProviderXrayObject(content []byte) bool {
+	object, err := decodeSubscriptionJSONObject(content)
+	if err != nil {
+		return false
+	}
+	outbounds, ok := providerXrayOutbounds(object)
+	return ok && len(outbounds) > 0
+}
+
+type providerXrayOutboundSummary struct {
+	Protocol string `json:"protocol"`
+}
+
+func providerXrayOutbounds(object map[string]json.RawMessage) ([]providerXrayOutboundSummary, bool) {
+	rawOutbounds, ok := object["outbounds"]
+	if !ok {
+		return nil, false
+	}
+	var outbounds []providerXrayOutboundSummary
+	if err := json.Unmarshal(rawOutbounds, &outbounds); err != nil {
+		return nil, false
+	}
+	return outbounds, len(outbounds) > 0
+}
+
 func parseGroupedProviderXrayProfile(content []byte) (Parsed, error) {
 	name, ok := xrayJSONWrapperProfileDisplayName(content)
 	if !ok {
-		name = "Xray JSON grouped profile"
+		name = "Xray JSON provider profile"
 	}
 	p, acceptedName, err := profile.NewSubscriptionProviderXrayConfig(name, content)
 	if err != nil {
