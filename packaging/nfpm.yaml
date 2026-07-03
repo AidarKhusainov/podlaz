@@ -26,25 +26,25 @@ scripts:
   postremove: ./packaging/debian/postremove
 
 contents:
-  - src: ./dist/package-root/usr/bin/podlaz
+  - src: __PACKAGE_ROOT__/usr/bin/podlaz
     dst: /usr/bin/podlaz
     file_info:
       mode: 0755
   - src: /usr/bin/podlaz
     dst: /usr/bin/plz
     type: symlink
-  - src: ./dist/package-root/usr/bin/podlazd
+  - src: __PACKAGE_ROOT__/usr/bin/podlazd
     dst: /usr/bin/podlazd
     file_info:
       mode: 0755
-  - src: ./dist/package-root/usr/lib/systemd/system/podlazd.service
+  - src: __PACKAGE_ROOT__/usr/lib/systemd/system/podlazd.service
     dst: /usr/lib/systemd/system/podlazd.service
     file_info:
       mode: 0644
-  - src: ./dist/package-root/usr/lib/sysusers.d/podlaz.conf
+  - src: __PACKAGE_ROOT__/usr/lib/sysusers.d/podlaz.conf
     dst: /usr/lib/sysusers.d/podlaz.conf
     file_info:
       mode: 0644
-  - src: ./dist/package-root/usr/share
+  - src: __PACKAGE_ROOT__/usr/share
     dst: /usr/share
     type: tree
