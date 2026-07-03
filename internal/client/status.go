@@ -62,15 +62,13 @@ func (c StatusClient) Status(ctx context.Context) (api.StatusResponse, error) {
 		return status, nil
 	}
 	if shouldTryAbstractSocket(socketPath, err) {
-		if status, fallbackErr := c.statusViaSocket(ctx, api.AbstractSocketAddress(), timeout); fallbackErr == nil {
-			return status, nil
+		fallbackStatus, fallbackErr := c.statusViaSocket(ctx, api.AbstractSocketAddress(), timeout)
+		if fallbackErr == nil {
+			return fallbackStatus, nil
 		}
+		return api.StatusResponse{}, fallbackErr
 	}
-	return api.StatusResponse{}, daemonUnavailableError{
-		detail:           unavailableDetail(socketPath, err),
-		cause:            err,
-		permissionDenied: isPermissionDenied(err),
-	}
+	return api.StatusResponse{}, err
 }
 
 func (c StatusClient) statusViaSocket(ctx context.Context, socketPath string, timeout time.Duration) (api.StatusResponse, error) {
@@ -90,7 +88,11 @@ func (c StatusClient) statusViaSocket(ctx context.Context, socketPath string, ti
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.StatusResponse{}, err
+		return api.StatusResponse{}, daemonUnavailableError{
+			detail:           unavailableDetail(socketPath, err),
+			cause:            err,
+			permissionDenied: isPermissionDenied(err),
+		}
 	}
 	defer resp.Body.Close()
 
@@ -129,7 +131,7 @@ func UnavailableMessage(err error) string {
 
 func unavailableDetail(socketPath string, err error) string {
 	if isPermissionDenied(err) {
-		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); packaged installs use a polkit-gated abstract socket fallback when podlazd.service is running with PODLAZ_POLKIT_AUTHORIZATION=required", socketPath)
+		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); packaged installs retry a polkit-gated abstract socket when podlazd.service runs with PODLAZ_POLKIT_AUTHORIZATION=required, or an administrator may use the explicit podlaz group fallback", socketPath)
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Sprintf("daemon socket %s does not exist; start podlazd", socketPath)
