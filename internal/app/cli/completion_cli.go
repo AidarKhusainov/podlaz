@@ -212,6 +212,39 @@ function __fish_podlaz_complete
     end
 end
 
+function __fish_podlaz_uses_runtime_arguments
+    set -l words (commandline -opc)
+
+    if test (count $words) -lt 2
+        return 0
+    end
+
+    switch $words[2]
+        case import plan connect check
+            return 0
+        case profile
+            if test (count $words) -lt 3
+                return 0
+            end
+            switch $words[3]
+                case show validate delete
+                    return 0
+            end
+            return 1
+        case subscription
+            if test (count $words) -lt 3
+                return 0
+            end
+            switch $words[3]
+                case show update delete
+                    return 0
+            end
+            return 1
+    end
+
+    return 1
+end
+
 function __fish_podlaz_needs_runtime_argument
     set -l words (commandline -opc)
     set -l current (commandline -ct)
@@ -227,10 +260,11 @@ function __fish_podlaz_needs_runtime_argument
         end
     end
 
-    return 0
+    __fish_podlaz_uses_runtime_arguments
 end
 
 function __fish_podlaz_needs_files
+    __fish_podlaz_uses_runtime_arguments; or return 1
     __fish_podlaz_runtime | string match -q ':default-files'
 end
 
