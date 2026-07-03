@@ -1,57 +1,66 @@
-# Self-hosted E2E
+# Manual E2E validation
 
 Manual host validation for behavior that is not suitable for the default pull-request gate.
 
-## Run
+The repository does not keep a GitHub Actions self-hosted E2E workflow. Privileged networking checks require a Linux host that the maintainer controls, so these checks are run manually when needed and the evidence belongs in the related pull request, issue, or release notes.
 
-```text
-Actions -> E2E -> Run workflow
-```
+## When to run
 
-Default job order:
+Run manual E2E validation when a change touches:
 
-1. CLI contract
-2. Package and service
-3. Proxy data-plane
-4. Maximum server coverage
+- TUN devices;
+- route, DNS, nftables, firewall, or resolver behavior;
+- daemon privilege boundaries;
+- systemd service behavior;
+- package install, reinstall, purge, or service lifecycle;
+- provider-backed proxy/TUN data-plane behavior;
+- crash, rollback, or recovery behavior.
 
-## Runner
+## Host requirements
 
-Required labels:
-
-```text
-self-hosted
-linux
-x64
-vpn-e2e
-ubuntu-24.04
-```
-
-Required host tools:
+Use a disposable or recoverable Linux host. Full coverage expects:
 
 - systemd;
 - `/dev/net/tun`;
 - `iproute2`, `nftables`, `resolvectl`, `journalctl`;
-- Go from the workflow setup step.
-
-Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
-
-## Configuration
-
-Workflow inputs are owned by `.github/workflows/e2e.yml` and the `scripts/e2e/*.sh` entrypoints.
-Do not duplicate the full input inventory here.
+- Go 1.26.4;
+- package build tools from `docs/development.md`;
+- provider/profile secrets supplied through the shell environment, not committed to the repository.
 
 ## Scripts
 
-| Job | Script | Scope |
-| --- | --- | --- |
-| CLI contract | `scripts/e2e/cli-contract.sh` | CLI command and error checks. |
-| Package and service | `scripts/e2e/package-service.sh` | Package install, reinstall, service, cleanup. |
-| Proxy data-plane | `scripts/e2e/data-plane.sh` | Proxy connect, egress, listener scope, cleanup. |
-| Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
+| Script | Scope |
+| --- | --- |
+| `scripts/e2e/cli-contract.sh` | CLI command and error checks. |
+| `scripts/e2e/package-service.sh` | Package install, reinstall, service, cleanup. |
+| `scripts/e2e/data-plane.sh` | Proxy connect, egress, listener scope, cleanup. |
+| `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
+
+## Suggested order
+
+```bash
+bash scripts/e2e/cli-contract.sh
+bash scripts/e2e/package-service.sh
+bash scripts/e2e/data-plane.sh
+bash scripts/e2e/server-coverage.sh
+```
+
+Run only the subset that matches the risk of the change. For example, a CLI-only change normally does not need provider-backed data-plane coverage.
+
+## Evidence
+
+Record only non-secret evidence in the PR or issue:
+
+- host OS and architecture;
+- commit SHA;
+- commands run;
+- pass/fail result;
+- redacted diagnostics or artifacts when useful.
+
+Do not paste provider URLs, subscription links, private keys, tokens, raw generated configs, or unredacted logs.
 
 ## Non-goals
 
-- Not a fork PR gate.
-- Not a replacement for unit tests.
+- Not a default PR gate.
+- Not a GitHub-hosted CI replacement.
 - Not permanent release evidence; keep evidence in issues, PRs, or release notes.
