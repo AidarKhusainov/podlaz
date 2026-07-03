@@ -16,6 +16,7 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"Group=podlaz",
 		"UMask=0077",
 		"Environment=PODLAZ_SERVICE=systemd",
+		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
 		"RuntimeDirectory=podlaz",
 		"RuntimeDirectoryMode=0711",
 		"StateDirectory=podlaz",

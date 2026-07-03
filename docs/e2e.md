@@ -16,7 +16,7 @@ Default job order:
 2. Package and service
 3. Proxy data-plane
 4. Maximum server coverage
-5. TUN fault-injection
+5. Gated TUN fault-injection coverage
 
 ## When to run
 
@@ -53,13 +53,13 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 
 ## Scripts
 
-| Script | Scope |
-| --- | --- |
-| `scripts/e2e/cli-contract.sh` | CLI command and error checks. |
-| `scripts/e2e/package-service.sh` | Package install, reinstall, service, cleanup. |
-| `scripts/e2e/data-plane.sh` | Proxy connect, egress, listener scope, cleanup. |
-| `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
-| `scripts/e2e/tun-fault-injection.sh` | TUN fault-injection and rollback behavior. |
+| Job | Script | Scope |
+| --- | --- | --- |
+| CLI contract | `scripts/e2e/cli-contract.sh` | CLI command and error checks. |
+| Package and service | `scripts/e2e/package-service.sh` | Package install, reinstall, service, cleanup. |
+| Proxy data-plane | `scripts/e2e/data-plane.sh` | Proxy connect, egress, listener scope, cleanup. |
+| Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
+| TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Explicitly gated DNS/route rollback and pre-commit daemon interruption probes. |
 
 ## Manual script order
 
@@ -72,6 +72,21 @@ bash scripts/e2e/tun-fault-injection.sh
 ```
 
 Run only the subset that matches the risk of the change. For example, a CLI-only change normally does not need provider-backed data-plane coverage.
+
+## TUN fault-injection coverage
+
+TUN fault-injection coverage is opt-in. The workflow job is safe by default and exits without host disruption unless `PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION=true` is set for the self-hosted runner environment.
+
+When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` that enables daemon-owned E2E hooks, runs deterministic DNS apply, route apply, and pre-commit interruption probes, scans its artifacts for configured secrets, then removes the drop-in during cleanup.
+
+The hook environment variables are E2E-only implementation details:
+
+- `PODLAZ_E2E_TUN_HOOKS` enables daemon-side E2E hooks;
+- `PODLAZ_E2E_TUN_HOOK_PHASE` selects the precise phase under test;
+- `PODLAZ_E2E_TUN_HOOK_DIR` stores temporary marker files for runner coordination;
+- `PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS` bounds the pre-commit pause probe.
+
+Do not set these variables in packaged or production service operation.
 
 ## Evidence
 
@@ -90,3 +105,4 @@ Do not paste provider URLs, subscription links, private keys, tokens, raw genera
 - Not a default PR gate.
 - Not a GitHub-hosted CI replacement.
 - Not permanent release evidence; keep evidence in issues, PRs, or release notes.
+- Not a production fault-injection interface; daemon hooks are for dedicated self-hosted E2E only.

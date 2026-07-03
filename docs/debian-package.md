@@ -147,6 +147,12 @@ podlaz doctor
 
 This group-mediated access applies to the daemon socket only. The packaged daemon itself runs as `root:podlaz` with a bounded capability set for networking, child identity transitions, and child process signaling. The unit keeps only `CAP_SETUID` and `CAP_KILL` ambient so the daemon can start and stop dedicated `podlaz-xray:podlaz-xray` children while `NoNewPrivileges=yes` remains enabled. Network administration capabilities must not be ambient, and child processes must not inherit daemon networking privileges.
 
+## Packaged daemon socket boundary
+
+Packaged installs keep the filesystem daemon socket narrow and may expose an abstract Unix socket for the polkit-gated daemon boundary. CLI clients first try the filesystem socket. If that attempt fails with a transport-level permission error, the client retries the packaged abstract socket.
+
+The fallback is not a generic error-masking layer. Daemon responses from the abstract socket are surfaced as-is: authorization denied, authorization unavailable on headless/server systems, malformed JSON, and invalid daemon responses remain distinct from a stopped or unreachable daemon.
+
 ## State ownership and lifecycle
 
 | Category | Location | Owner | Package behavior |

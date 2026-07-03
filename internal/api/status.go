@@ -12,8 +12,12 @@ const (
 	RuntimeDirEnv     = "PODLAZ_" + "RUNTIME_DIR"
 	ServiceEnv        = "PODLAZ_" + "SERVICE"
 	SocketName        = "podlazd" + ".sock"
-	LockName          = "podlazd" + ".lock"
-	StatusPath        = "/v1" + "/status"
+	// AbstractSocketName is the Linux abstract namespace fallback used by the
+	// packaged daemon so ordinary local users can reach the polkit authorization
+	// boundary without broadening filesystem socket permissions.
+	AbstractSocketName = "podlazd"
+	LockName           = "podlazd" + ".lock"
+	StatusPath         = "/v1" + "/status"
 
 	ServiceManual  = "manual"
 	ServiceSystemd = "systemd"
@@ -173,6 +177,10 @@ func SocketPath(runtimeDir string) string {
 		runtimeDir = RuntimeDirFromEnv()
 	}
 	return filepath.Join(runtimeDir, SocketName)
+}
+
+func AbstractSocketAddress() string {
+	return "\x00" + AbstractSocketName
 }
 
 func LockPath(runtimeDir string) string {

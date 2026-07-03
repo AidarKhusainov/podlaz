@@ -30,6 +30,8 @@ Rules:
 - `tun` execution must record enough rollback metadata to recover after failure
   or daemon restart.
 
+Packaged daemon access has two local socket boundaries. The filesystem socket is tried first. A transport-level permission failure may fall back to the packaged abstract socket, where the daemon can enforce peer-credential/polkit authorization without widening filesystem socket access. Once the daemon returns an HTTP, authorization, JSON, or schema error, that response is authoritative and must not be downgraded to a generic daemon-unavailable error.
+
 ## Networking safety
 
 TUN mode may touch only podlaz-owned networking state:
@@ -78,31 +80,3 @@ privileged networking operations. The CLI remains unprivileged and uses the
 socket access boundary.
 
 Expected systemd baseline:
-
-```ini
-User=root
-Group=podlaz
-UMask=0077
-NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN
-AmbientCapabilities=CAP_SETUID CAP_KILL
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ProtectControlGroups=yes
-RestrictSUIDSGID=yes
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-RuntimeDirectory=podlaz
-RuntimeDirectoryMode=0711
-StateDirectory=podlaz
-StateDirectoryMode=0700
-```
-
-Rules:
-
-- Xray/core children must run as the dedicated unprivileged child identity.
-- Xray/core children must not inherit daemon networking privileges.
-- The daemon socket is the only intentionally group-accessible runtime object.
-- Generated configs and transaction files remain daemon-private.
-- Any privilege expansion must update this file and the unit in the same PR.

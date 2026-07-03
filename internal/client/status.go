@@ -57,6 +57,21 @@ func (c StatusClient) Status(ctx context.Context) (api.StatusResponse, error) {
 		timeout = 750 * time.Millisecond
 	}
 
+	status, err := c.statusViaSocket(ctx, socketPath, timeout)
+	if err == nil {
+		return status, nil
+	}
+	if shouldTryAbstractSocket(socketPath, err) {
+		fallbackStatus, fallbackErr := c.statusViaSocket(ctx, api.AbstractSocketAddress(), timeout)
+		if fallbackErr == nil {
+			return fallbackStatus, nil
+		}
+		return api.StatusResponse{}, fallbackErr
+	}
+	return api.StatusResponse{}, err
+}
+
+func (c StatusClient) statusViaSocket(ctx context.Context, socketPath string, timeout time.Duration) (api.StatusResponse, error) {
 	dialer := net.Dialer{Timeout: timeout}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -116,7 +131,7 @@ func UnavailableMessage(err error) string {
 
 func unavailableDetail(socketPath string, err error) string {
 	if isPermissionDenied(err) {
-		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); add the user to the podlaz group and start a new login session, or fix packaged socket ownership/mode", socketPath)
+		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); packaged installs retry a polkit-gated abstract socket when podlazd.service runs with PODLAZ_POLKIT_AUTHORIZATION=required, or an administrator may use the explicit podlaz group fallback", socketPath)
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Sprintf("daemon socket %s does not exist; start podlazd", socketPath)
@@ -128,6 +143,10 @@ func unavailableDetail(socketPath string, err error) string {
 		return fmt.Sprintf("daemon socket %s did not respond before timeout; start or restart podlazd", socketPath)
 	}
 	return fmt.Sprintf("daemon socket %s is not reachable; start or restart podlazd", socketPath)
+}
+
+func shouldTryAbstractSocket(socketPath string, err error) bool {
+	return socketPath == api.SocketPath("") && isPermissionDenied(err)
 }
 
 func isPermissionDenied(err error) bool {

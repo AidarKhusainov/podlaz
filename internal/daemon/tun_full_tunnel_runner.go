@@ -68,6 +68,12 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	if err != nil {
 		return xrayState{}, err
 	}
+	if err := maybePauseForE2ETunHook(ctx, result.TransactionID); err != nil {
+		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil {
+			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after E2E hook failure: %w", rollbackErr))
+		}
+		return xrayState{}, err
+	}
 
 	core, err := r.startCore(ctx)
 	if err != nil {

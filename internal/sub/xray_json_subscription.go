@@ -260,11 +260,6 @@ func xrayJSONWrapperProfileDisplayName(content []byte) (string, bool) {
 	return "", false
 }
 
-func looksLikeJSONObject(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	return len(trimmed) > 0 && trimmed[0] == '{'
-}
-
 func subscriptionJSONTopLevelType(value any) string {
 	switch value.(type) {
 	case map[string]any:
@@ -280,6 +275,16 @@ func subscriptionJSONTopLevelType(value any) string {
 	case nil:
 		return "null"
 	default:
-		return "value"
+		return fmt.Sprintf("%T", value)
 	}
+}
+
+func looksLikeJSONObject(content []byte) bool {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+
+	var object map[string]json.RawMessage
+	return json.Unmarshal(trimmed, &object) == nil
 }
