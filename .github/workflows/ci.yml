@@ -39,7 +39,18 @@ jobs:
           bash scripts/ci/install-go-tool.sh actionlint
 
       - name: Lint workflows and shell scripts
-        run: bash scripts/ci/workflow-lint.sh
+        run: |
+          set -o pipefail
+          bash scripts/ci/workflow-lint.sh 2>&1 | tee /tmp/podlaz-workflow-lint.txt
+
+      - name: Upload workflow lint diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-workflow-lint-diagnostics
+          path: /tmp/podlaz-workflow-lint.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     name: Go and CLI contract
