@@ -15,9 +15,11 @@ jobs:
     name: CLI contract e2e
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     timeout-minutes: 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -26,12 +28,14 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+
       - name: Run CLI contract e2e
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/cli-contract.sh
           bash scripts/e2e/coverage-evidence.sh
+
       - name: Upload CLI contract diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,9 +49,11 @@ jobs:
     needs: cli-contract
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     timeout-minutes: 45
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -56,11 +62,13 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+
       - name: Run package/service e2e
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/package-service.sh
+
       - name: Purge package state
         if: always()
         shell: bash
@@ -72,6 +80,7 @@ jobs:
           fi
           sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
           sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
       - name: Upload package/service diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -86,9 +95,17 @@ jobs:
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
     timeout-minutes: 90
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELIABILITY_CYCLES || '0' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -97,19 +114,25 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+
       - name: Run proxy data-plane e2e
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/data-plane.sh
+
       - name: Purge package state
         if: always()
         shell: bash
         run: |
           sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
           sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
           sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
           sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
       - name: Upload proxy data-plane diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -124,9 +147,32 @@ jobs:
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
     timeout-minutes: 360
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_2: ${{ secrets.PODLAZ_E2E_PROFILE_URI_2 }}
+      PODLAZ_E2E_PROFILE_URI_3: ${{ secrets.PODLAZ_E2E_PROFILE_URI_3 }}
+      PODLAZ_E2E_PROFILE_URI_4: ${{ secrets.PODLAZ_E2E_PROFILE_URI_4 }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_SUBSCRIPTION_URL: ${{ secrets.PODLAZ_E2E_SUBSCRIPTION_URL }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IPV6: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IPV6 }}
+      PODLAZ_E2E_EXPECT_IPV6: ${{ vars.PODLAZ_E2E_EXPECT_IPV6 || 'observe' }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_PUBLIC_IPV6_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IPV6_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+      PODLAZ_E2E_STATUS_CONCURRENCY: ${{ vars.PODLAZ_E2E_STATUS_CONCURRENCY }}
+      PODLAZ_E2E_HOST_WRAPPER_DIR: ${{ vars.PODLAZ_E2E_HOST_WRAPPER_DIR }}
+      PODLAZ_E2E_HOST_WRAPPER_TIMEOUT_SECONDS: ${{ vars.PODLAZ_E2E_HOST_WRAPPER_TIMEOUT_SECONDS }}
+      PODLAZ_E2E_HOST_DISRUPTION_MODE: ${{ vars.PODLAZ_E2E_HOST_DISRUPTION_MODE }}
+      PODLAZ_E2E_ENABLE_TUN: ${{ vars.PODLAZ_E2E_ENABLE_TUN || 'true' }}
+      PODLAZ_E2E_ENABLE_CRASH_TESTS: ${{ vars.PODLAZ_E2E_ENABLE_CRASH_TESTS || 'true' }}
+      PODLAZ_E2E_ENABLE_HOST_DISRUPTION: ${{ vars.PODLAZ_E2E_ENABLE_HOST_DISRUPTION || 'auto' }}
+      PODLAZ_E2E_STABILITY_MINUTES: ${{ vars.PODLAZ_E2E_STABILITY_MINUTES || '5' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -135,11 +181,31 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+
       - name: Run maximum server coverage e2e
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/server-coverage.sh
+
+      - name: Collect packaged Xray exec diagnostics after server coverage failure
+        if: failure()
+        shell: bash
+        run: |
+          bash scripts/e2e/lib/xray-exec-diagnostics.sh server-coverage-failure
+
+      - name: Purge package state
+        if: always()
+        shell: bash
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
       - name: Upload maximum server coverage diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -154,9 +220,17 @@ jobs:
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
     timeout-minutes: 120
+    env:
+      PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION: ${{ vars.PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION || 'false' }}
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
@@ -165,11 +239,27 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+
       - name: Run gated TUN fault-injection e2e
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/tun-fault-injection.sh
+
+      - name: Purge package state
+        if: always()
+        shell: bash
+        run: |
+          sudo -n rm -f /run/systemd/system/podlazd.service.d/e2e-tun-hooks.conf >/dev/null 2>&1 || true
+          sudo -n rm -rf /run/podlaz/e2e-tun-hooks >/dev/null 2>&1 || true
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
       - name: Upload TUN fault-injection diagnostics
         if: always()
         uses: actions/upload-artifact@v4
