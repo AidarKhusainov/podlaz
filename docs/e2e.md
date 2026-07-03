@@ -49,7 +49,9 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 - `iproute2`, `nftables`, `resolvectl`, `journalctl`;
 - Go from the workflow setup step, or Go 1.26.4 for manual script runs;
 - package build tools from `docs/development.md`;
-- provider/profile secrets supplied through GitHub environment secrets or the shell environment, not committed to the repository.
+- provider/profile configuration supplied through the runner environment, not committed to the repository.
+
+Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
 
 ## Scripts
 
@@ -77,7 +79,7 @@ Run only the subset that matches the risk of the change. For example, a CLI-only
 
 TUN fault-injection coverage is opt-in. The workflow job is safe by default and exits without host disruption unless `PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION=true` is set for the self-hosted runner environment.
 
-When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` that enables daemon-owned E2E hooks, runs deterministic DNS apply, route apply, and pre-commit interruption probes, scans its artifacts for configured secrets, then removes the drop-in during cleanup.
+When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` that enables daemon-owned E2E hooks, runs deterministic DNS apply, route apply, and pre-commit interruption probes, scans its artifacts for configured sensitive values, then removes the drop-in during cleanup.
 
 The hook environment variables are E2E-only implementation details:
 
@@ -90,7 +92,7 @@ Do not set these variables in packaged or production service operation.
 
 ## Evidence
 
-Record only non-secret evidence in the PR or issue:
+Record only non-sensitive evidence in the PR or issue:
 
 - host OS and architecture;
 - commit SHA;
@@ -98,7 +100,7 @@ Record only non-secret evidence in the PR or issue:
 - pass/fail result;
 - redacted diagnostics or artifacts when useful.
 
-Do not paste provider URLs, subscription links, private keys, tokens, raw generated configs, or unredacted logs.
+Do not paste provider URLs, subscription links, credentials, raw generated configs, or unredacted logs.
 
 ## Non-goals
 
