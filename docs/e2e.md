@@ -51,6 +51,8 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 - package build tools from `docs/development.md`;
 - provider/profile secrets supplied through GitHub environment secrets or the shell environment, not committed to the repository.
 
+Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
+
 ## Scripts
 
 | Job | Script | Scope |
