@@ -24,7 +24,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.4'
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
 
       - name: Run CLI contract e2e
         shell: bash
@@ -40,6 +43,7 @@ jobs:
           name: podlaz-cli-contract-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   package-service:
     name: Package and service e2e
@@ -55,7 +59,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.4'
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
 
       - name: Run package/service e2e
         shell: bash
@@ -82,6 +89,7 @@ jobs:
           name: podlaz-package-service-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   data-plane:
     name: Proxy data-plane e2e
@@ -104,7 +112,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.4'
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
 
       - name: Run proxy data-plane e2e
         shell: bash
@@ -131,6 +142,7 @@ jobs:
           name: podlaz-proxy-data-plane-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
 
   server-coverage:
     name: Maximum server coverage e2e
@@ -168,7 +180,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26.4'
-          cache: false
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
 
       - name: Run maximum server coverage e2e
         shell: bash
@@ -201,3 +216,4 @@ jobs:
           name: podlaz-server-coverage-e2e-diagnostics
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
