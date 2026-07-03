@@ -64,9 +64,6 @@ func parseXrayJSONObjectSubscription(content []byte) (Parsed, error) {
 	}
 	local, err := profile.ImportLocalContent(content)
 	if err != nil {
-		if looksLikeProviderXrayObject(content) {
-			return parseGroupedProviderXrayProfile(content)
-		}
 		return Parsed{}, fmt.Errorf("parse Xray JSON subscription: %w", err)
 	}
 	if local.Format != profile.LocalImportFormatXrayJSON {
@@ -74,9 +71,6 @@ func parseXrayJSONObjectSubscription(content []byte) (Parsed, error) {
 	}
 	parsed, err := parsedFromLocalXrayResult(local)
 	if err != nil {
-		if looksLikeProviderXrayObject(content) {
-			return parseGroupedProviderXrayProfile(content)
-		}
 		return Parsed{}, err
 	}
 	applyXrayJSONWrapperProfileDisplayName(content, &parsed)
