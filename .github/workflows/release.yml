@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
@@ -74,7 +74,7 @@ jobs:
       built_date: ${{ steps.release-commit.outputs.built_date }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
 
