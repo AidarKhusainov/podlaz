@@ -11,6 +11,7 @@ mapfile -t shell_scripts < <(
     packaging/debian \
     -type f \
     \( -name '*.sh' -o -name postinstall -o -name preremove -o -name postremove \) \
+    ! -path 'scripts/e2e/lib/*' \
     -print | sort
 )
 
