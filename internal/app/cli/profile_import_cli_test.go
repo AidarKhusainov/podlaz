@@ -79,7 +79,7 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 			protocol:      "vmess",
 			showContains: []string{
 				"Protocol: vmess",
-				"User identity: REDACTED",
+				"User identity: 0000…0002",
 				"Transport: ws",
 				"Security: tls",
 			},
