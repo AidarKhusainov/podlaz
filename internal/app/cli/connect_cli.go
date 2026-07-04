@@ -14,7 +14,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
-type connectRunner func(context.Context, profile.Profile, string) (api.LifecycleResponse, error)
+type connectRunner func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error)
 type disconnectRunner func(context.Context) (api.LifecycleResponse, error)
 
 func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
@@ -39,7 +39,7 @@ func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		return err
 	}
 
-	response, err := runConnect(ctx, p, parsed.mode, opts)
+	response, err := runConnectWithHandoff(ctx, p, parsed.mode, parsed.handoff, opts)
 	if err != nil {
 		return lifecycleCommandError(err)
 	}
@@ -70,10 +70,11 @@ func runDisconnectCommand(ctx context.Context, args []string, stdout io.Writer, 
 type connectArgs struct {
 	mode       string
 	profileRef string
+	handoff    string
 }
 
 func parseConnectArgs(args []string) (connectArgs, error) {
-	parsed := connectArgs{mode: planner.ModeProxyOnly}
+	parsed := connectArgs{mode: planner.ModeProxyOnly, handoff: api.HandoffBlock}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		value, hasInlineValue := cutFlagValue(arg)
@@ -84,6 +85,13 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 				return parsed, err
 			}
 			parsed.mode = strings.ToLower(strings.TrimSpace(v))
+			i = next
+		case arg == "--handoff" || strings.HasPrefix(arg, "--handoff="):
+			v, next, err := flagValue("connect --handoff", args, i, value, hasInlineValue)
+			if err != nil {
+				return parsed, err
+			}
+			parsed.handoff = api.NormalizeHandoffPolicy(v)
 			i = next
 		case arg == "--json":
 			return parsed, usageError("connect --json is not implemented yet")
@@ -102,6 +110,12 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 	default:
 		return parsed, usageError("unsupported connect mode %q", parsed.mode)
 	}
+	if err := api.ValidateHandoffPolicy(parsed.handoff); err != nil {
+		return parsed, usageError(err.Error())
+	}
+	if parsed.handoff != api.HandoffBlock && parsed.mode != planner.ModeTun {
+		return parsed, usageError("connect --handoff is only supported with --mode tun")
+	}
 	if parsed.profileRef == "" {
 		return parsed, usageError("connect requires a profile id")
 	}
@@ -119,10 +133,15 @@ func validateConnectProfile(p profile.Profile, mode string) error {
 }
 
 func runConnect(ctx context.Context, p profile.Profile, mode string, opts options) (api.LifecycleResponse, error) {
+	return runConnectWithHandoff(ctx, p, mode, api.HandoffBlock, opts)
+}
+
+func runConnectWithHandoff(ctx context.Context, p profile.Profile, mode string, handoff string, opts options) (api.LifecycleResponse, error) {
+	req := api.ConnectRequest{Mode: mode, Profile: profileSnapshot(p), Handoff: api.NormalizeHandoffPolicy(handoff)}
 	if opts.connect != nil {
-		return opts.connect(ctx, p, mode)
+		return opts.connect(ctx, req)
 	}
-	return (client.LifecycleClient{}).Connect(ctx, api.ConnectRequest{Mode: mode, Profile: profileSnapshot(p)})
+	return (client.LifecycleClient{}).Connect(ctx, req)
 }
 
 func runDisconnect(ctx context.Context, opts options) (api.LifecycleResponse, error) {
@@ -206,10 +225,12 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz connect [--mode proxy-only|tun] <profile-id>
+  podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
 
 Start the stored profile through the daemon-managed lifecycle. The default mode
-is proxy-only. TUN mode requires daemon networking privileges.
+is proxy-only. TUN mode requires daemon networking privileges. The TUN handoff
+policy defaults to block and refuses foreign VPN/DNS owners before mutating host
+networking.
 `)
 }
 
