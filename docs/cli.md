@@ -11,6 +11,7 @@ JSON support. Keep details out unless they affect users or scripts.
 - Read-only commands do not require root.
 - The CLI must not be SUID and must not directly mutate privileged Linux networking.
 - Output must redact secrets and generated runtime configuration.
+- Human output must be stable without ANSI color. Commands that use symbolic status markers also support `--plain` where documented.
 
 ## Global
 
@@ -79,7 +80,7 @@ podlaz profile add --name <name> --server <host> --port <port> --protocol <vless
 podlaz profile import <share-uri>
 podlaz profile list [--json]
 podlaz profile show <profile-id> [--json]
-podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json]
+podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json] [--plain]
 podlaz profile delete <profile-id> [--yes]
 ```
 
@@ -87,6 +88,11 @@ podlaz profile delete <profile-id> [--yes]
 mutate user-owned profile state. `profile delete` requires confirmation in
 non-interactive and JSON contexts unless `--yes` is passed. Validation failures
 for an existing profile return exit code `3`.
+
+`profile validate` prints a compact structured human result by default: profile
+metadata, selected mode/backend/protocol, result, reason on failure, and next-step
+guidance. `--plain` replaces Unicode status markers with ASCII status words.
+`--json` preserves the existing machine-readable schema.
 
 ```bash
 podlaz subscription add --name <name> --url <url>
@@ -162,12 +168,20 @@ lifecycle and forwarded stdout/stderr lines. `logs --json` is deferred.
 
 ```bash
 podlaz plan --mode proxy-only <profile-id> [--json]
-podlaz plan --mode tun <profile-id> [--json]
+podlaz plan --mode tun <profile-id> [--json] [--verbose|-v] [--plain]
 ```
 
 Read-only dry-run. Must not start Xray, write runtime config, or mutate host
 networking. Grouped `xray-json` profiles support `proxy-only` planning only;
 `plan --mode tun` fails before collecting a host networking snapshot.
+
+`plan --mode tun` prints a compact human summary by default: profile status,
+planned high-level changes, blockers, warnings, safety notes, and next-step
+guidance. It intentionally hides raw nftables rules, rollback keys, ownership
+labels, and long command stderr in default human output. Use `--verbose` or `-v`
+for the detailed TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump.
+`--plain` replaces Unicode status markers with ASCII status words. `--json`
+preserves the existing automation schema and is not affected by `--verbose`.
 
 ```bash
 podlaz connect [--mode proxy-only|tun] <profile-id>

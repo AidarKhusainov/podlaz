@@ -9,21 +9,11 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .OP --help
 .YS
 .SY podlaz
-.B version
-.YS
-.SY podlaz
-.B import
-.I input
-.YS
-.SY podlaz
-.B profile
-.I subcommand
-.RI [ arguments ]
-.YS
-.SY podlaz
-.B subscription
-.I subcommand
-.RI [ arguments ]
+.B profile validate
+.I profile-id
+.OP --mode proxy-only|tun
+.OP --json
+.OP --plain
 .YS
 .SY podlaz
 .B plan
@@ -31,6 +21,8 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .IR proxy-only | tun
 .I profile-id
 .OP --json
+.OP --verbose
+.OP --plain
 .YS
 .SY podlaz
 .B connect
@@ -43,13 +35,6 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .SY podlaz
 .B check
 .I profile-id
-.OP --target target-id
-.OP --timeout duration
-.OP --json
-.YS
-.SY podlaz
-.B check
-.B --all
 .OP --target target-id
 .OP --timeout duration
 .OP --json
@@ -81,11 +66,14 @@ and sends connection or cleanup intents to the local
 .BR podlazd (8)
 daemon when runtime behavior is required.
 .PP
-The CLI is intentionally conservative: read-only commands do not require root,
-proxy-only mode does not mutate host networking, and privileged TUN/recovery
-work belongs to daemon-owned transaction state.
+Read-only commands do not require root, proxy-only mode does not mutate host
+networking, and privileged TUN/recovery work belongs to daemon-owned transaction
+state. Default human output is stable without ANSI color. Commands that use
+symbolic status markers document
+.B --plain
+for ASCII-only output.
 .PP
-Packaged installs may also provide
+Packaged installs may provide
 .B plz
 as a short alias for
 .BR podlaz .
@@ -109,12 +97,7 @@ Import a share URI, local profile file, or subscription URL. The command does
 not connect or mutate host networking.
 .TP
 .B profile add --name <name> --server <host> --port <port> --protocol <protocol>
-Create a manual profile. Supported protocols are
-.BR vless ,
-.BR vmess ,
-.BR trojan ,
-and
-.BR shadowsocks .
+Create a manual profile.
 .TP
 .B profile import <share-uri>
 Import one profile from a supported share URI.
@@ -125,9 +108,12 @@ List stored profiles.
 .B profile show <profile-id> [--json]
 Show one stored profile with sensitive fields redacted.
 .TP
-.B profile validate <profile-id> [--mode proxy-only|tun] [--json]
+.B profile validate <profile-id> [--mode proxy-only|tun] [--json] [--plain]
 Validate a profile without starting Xray, contacting the daemon, requiring root,
-writing runtime config, or mutating networking.
+writing runtime config, or mutating networking. Human output is a compact
+structured profile check with result, reason on failure, and next-step guidance.
+.B --plain
+uses ASCII status words instead of symbolic status markers.
 .TP
 .B profile delete <profile-id> [--yes]
 Delete a profile. Non-interactive deletion requires
@@ -138,7 +124,6 @@ Store a subscription source without fetching it.
 .TP
 .B subscription update <subscription-id>
 Fetch a subscription and replace only profiles owned by that subscription.
-Failed updates preserve last known good state.
 .TP
 .B subscription list [--json]
 List subscription sources with redacted URLs.
@@ -147,15 +132,24 @@ List subscription sources with redacted URLs.
 Show one subscription source with redacted URL material.
 .TP
 .B subscription delete <subscription-id> [--yes] [--keep-profiles]
-Delete subscription metadata and, by default, its owned profiles. Use
-.B --keep-profiles
-to leave imported profiles in place.
+Delete subscription metadata and, by default, its owned profiles.
 .TP
 .B plan --mode proxy-only <profile-id> [--json]
 Show a read-only proxy-only plan.
 .TP
-.B plan --mode tun <profile-id> [--json]
-Show a read-only full-tunnel plan before host networking changes.
+.B plan --mode tun <profile-id> [--json] [--verbose|-v] [--plain]
+Show a read-only full-tunnel plan before host networking changes. Default human
+output is a compact summary with profile status, planned high-level changes,
+blockers, warnings, safety notes, and next-step guidance. It hides raw nftables
+rules, rollback keys, owner labels, and long command stderr. Use
+.B --verbose
+or
+.B -v
+for the detailed TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump.
+.B --plain
+uses ASCII status words instead of symbolic status markers. JSON output keeps the
+stable machine-readable schema and is not changed by
+.BR --verbose .
 .TP
 .B connect [--mode proxy-only|tun] <profile-id>
 Start a daemon-managed connection. The default mode is
@@ -165,13 +159,7 @@ Start a daemon-managed connection. The default mode is
 Stop the active daemon-managed connection. Safe to repeat.
 .TP
 .B check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
-Run explicit bounded proxy-only connectivity diagnostics for one profile. The
-command validates renderability, checks daemon state, starts temporary proxy-only
-Xray only through
-.BR podlazd (8)
-when safe, verifies local SOCKS/HTTP egress, runs documented service probes, and
-cleans up the temporary connection only when current daemon status still matches
-the check-started connection.
+Run explicit bounded proxy-only connectivity diagnostics for one profile.
 .TP
 .B check --all [--target <target-id>] [--timeout <duration>] [--json]
 Check all stored profiles with deterministic output and a small default
@@ -193,30 +181,24 @@ Read recent podlaz journal entries.
 Inspect stale podlaz-owned recovery candidates without changing the host.
 .TP
 .B recover --execute --yes [--json]
-Ask the daemon to clean clearly podlaz-owned stale state. Ambiguous resources are
-skipped.
+Ask the daemon to clean clearly podlaz-owned stale state.
 .SH OPTIONS
 .TP
-.B --help, -h
-Print help where supported.
-.TP
 .B --json
-Print stable JSON for commands whose JSON contract is implemented. Deferred JSON
-support fails with exit status 2. For
-.BR check ,
-JSON output includes schema version, status, warnings, errors, profile metadata,
-and per-step probe results.
+Print stable JSON for commands whose JSON contract is implemented.
+.TP
+.B --verbose, -v
+For
+.B plan --mode tun,
+print detailed technical planning sections instead of the compact default human
+summary.
+.TP
+.B --plain
+For commands that use symbolic human status markers, print ASCII status words
+such as OK, WARN, BLOCKED, and SKIP.
 .TP
 .B --yes
-Confirm destructive state removal or recovery execution. Long-only.
-.TP
-.B --keep-profiles
-For
-.BR "subscription delete" ,
-keep imported profiles while removing subscription metadata.
-.TP
-.B --execute
-Execute recovery cleanup through the daemon. Long-only.
+Confirm destructive state removal or recovery execution.
 .TP
 .B --mode proxy-only|tun
 Select connection, planning, or validation mode.
@@ -224,19 +206,10 @@ Select connection, planning, or validation mode.
 .B --target <target-id>
 Select a service target for
 .BR check .
-May be repeated. Supported target ids are
-.BR cloudflare ,
-.BR github ,
-.BR google ,
-.BR instagram ,
-.BR telegram ,
-and
-.BR youtube .
 .TP
 .B --timeout <duration>
 Set the per-probe timeout for
 .BR check .
-The default is 3s.
 .TP
 .B --follow, -f
 Follow journal output for
@@ -268,11 +241,7 @@ Runtime or operation failure.
 Invalid usage, flags, arguments, or deferred JSON output.
 .TP
 .B 3
-Diagnostic command found unhealthy state. For
-.BR "profile validate" ,
-the profile exists but cannot be rendered for the selected mode/backend. For
-.BR check ,
-the check result was degraded or failed.
+Diagnostic command found unhealthy state.
 .TP
 .B 4
 Permission or authorization failure.
@@ -282,12 +251,10 @@ Required daemon access was unavailable.
 .SH FILES
 .TP
 .I $XDG_CONFIG_HOME/podlaz/
-User configuration directory. Defaults to
-.IR ~/.config/podlaz/ .
+User configuration directory.
 .TP
 .I $XDG_STATE_HOME/podlaz/
-User state directory. Defaults to
-.IR ~/.local/state/podlaz/ .
+User state directory.
 .TP
 .I /run/podlaz/
 Daemon runtime directory.
@@ -313,10 +280,10 @@ Standard XDG base directory variables used for user-owned state.
 .SH EXAMPLES
 .EX
 podlaz profile import <share-uri>
-podlaz profile list
-podlaz plan --mode proxy-only my-profile
-podlaz check my-profile --target telegram
-podlaz connect my-profile
+podlaz profile validate my-profile --mode tun
+podlaz plan --mode tun my-profile
+podlaz plan --mode tun my-profile --verbose
+podlaz connect --mode tun my-profile
 podlaz status
 podlaz disconnect
 .EE

@@ -75,6 +75,7 @@ fi
 rm -rf "${root_dir}"
 mkdir -p \
   "${root_dir}/usr/bin" \
+  "${root_dir}/usr/lib/podlaz" \
   "${root_dir}/usr/lib/systemd/system" \
   "${root_dir}/usr/lib/sysusers.d" \
   "${root_dir}/usr/share/bash-completion/completions" \
@@ -83,7 +84,8 @@ mkdir -p \
   "${root_dir}/usr/share/polkit-1/actions" \
   "${root_dir}/usr/share/man/man1" \
   "${root_dir}/usr/share/man/man8" \
-  "${root_dir}/usr/share/doc/podlaz"
+  "${root_dir}/usr/share/doc/podlaz/third-party" \
+  "${root_dir}/usr/share/lintian/overrides"
 
 commit="${PODLAZ_COMMIT:-unknown}"
 built="${PODLAZ_BUILT:-unknown}"
@@ -94,6 +96,16 @@ ldflags="-s -w -X ${version_assignment} -X ${commit_assignment} -X ${built_assig
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlaz" ./cmd/podlaz
 CGO_ENABLED=1 GOOS=linux GOARCH="${goarch}" go build -trimpath -ldflags "${ldflags}" -o "${root_dir}/usr/bin/podlazd" ./cmd/podlazd
 ln -s podlaz "${root_dir}/usr/bin/plz"
+
+bash scripts/package-runtime-helpers.sh "${root_dir}" "${arch}" "${goarch}"
+
+cat > "${root_dir}/usr/share/lintian/overrides/podlaz" <<'EOF'
+podlaz: statically-linked-binary usr/lib/podlaz/tun2socks
+podlaz: statically-linked-binary usr/lib/podlaz/xray
+podlaz: unstripped-binary-or-object usr/lib/podlaz/tun2socks
+podlaz: unstripped-binary-or-object usr/lib/podlaz/xray
+EOF
+chmod 0644 "${root_dir}/usr/share/lintian/overrides/podlaz"
 
 generate_completion bash "${root_dir}/usr/share/bash-completion/completions/podlaz"
 generate_completion zsh "${root_dir}/usr/share/zsh/vendor-completions/_podlaz"

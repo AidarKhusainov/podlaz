@@ -38,19 +38,29 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		return api.LifecycleResponse{}, err
 	}
 
-	runtimeDir := m.runtimeDir()
-	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
-	xrayPath, err := m.resolveXrayPath()
-	if err != nil {
-		return api.LifecycleResponse{}, err
-	}
-
 	m.mu.Lock()
 	if m.cmd != nil || m.state.Connection == "active" {
 		m.mu.Unlock()
 		return api.LifecycleResponse{}, errConnectionAlreadyActive
 	}
 	m.mu.Unlock()
+
+	runtimeDir := m.runtimeDir()
+	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
+	xrayPath, err := m.resolveXrayPath()
+	if err != nil {
+		return api.LifecycleResponse{}, wrapRuntimeUnavailable("Xray", err)
+	}
+	if err := validatePackagedRuntimeArchitecture(xrayPath, "Xray"); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	tunAdapterPath, err := resolveTunAdapterPath("")
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	if err := validateTunRuntimeDependencies(); err != nil {
+		return api.LifecycleResponse{}, err
+	}
 
 	snapshot := m.collectTunSnapshot(ctx, netsnapshot.Options{Server: p.Server})
 	plan, err := planner.PlanTun(p, snapshot)
@@ -90,6 +100,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 			return m.stopStartedCore(core.cmd, core.done, corePlan.RuntimeConfigPath)
 		},
 		startAdapter: func(ctx context.Context, plan tunAdapterRuntimePlan) (fullTunnelAdapterHandle, error) {
+			plan.Binary = tunAdapterPath
 			plan.Identity = coreIdentity
 			adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, plan)
 			if err != nil {
@@ -170,36 +181,5 @@ func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (
 	if err := stopRegisteredTunAdapter(m); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	store := txstate.TransactionStore{RuntimeDir: m.runtimeDir()}
-	tx, _, err := store.Load(transactionID)
-	if err != nil {
-		return api.LifecycleResponse{}, fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
-	}
-	plan := tunPlanFromTransaction(tx)
-	if err := rollbackTunTransaction(ctx, store, &tx, plan, m.tunPlanExecutor()); err != nil {
-		return api.LifecycleResponse{}, err
-	}
-	if err := removeTransactionFile(store, transactionID); err != nil {
-		return api.LifecycleResponse{}, fmt.Errorf("remove rolled-back TUN transaction %s: %w", transactionID, err)
-	}
-	m.mu.Lock()
-	m.state = inactiveXrayState()
-	m.mu.Unlock()
-	return lifecycleResponse(inactiveXrayState()), nil
-}
-
-func (m *XrayManager) rollbackVerifiedTun(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error {
-	return rollbackVerifiedTunTransaction(ctx, m.runtimeDir(), transactionID, plan, executor)
-}
-
-func verifyCoreStarted(done <-chan struct{}) error {
-	if done == nil {
-		return errors.New("missing Xray process completion channel")
-	}
-	select {
-	case <-done:
-		return errors.New("Xray exited during startup verification")
-	case <-time.After(50 * time.Millisecond):
-		return nil
-	}
+	return m.runTunCleanup(ctx, transactionID)
 }

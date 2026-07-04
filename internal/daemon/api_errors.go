@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
@@ -72,6 +73,9 @@ func daemonAPIHTTPStatusCode(err error) int {
 	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) {
 		return http.StatusConflict
 	}
+	if isRuntimeUnavailableError(err) || isRuntimeResolutionError(err) {
+		return http.StatusServiceUnavailable
+	}
 	var apiErr *daemonAPIError
 	if !errors.As(err, &apiErr) {
 		return http.StatusInternalServerError
@@ -88,6 +92,14 @@ func daemonAPIHTTPStatusCode(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+func isRuntimeResolutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "resolve Xray binary") || strings.Contains(message, "resolve TUN adapter binary")
 }
 
 func writeDaemonAPIHTTPError(w http.ResponseWriter, err error) {

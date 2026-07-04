@@ -72,6 +72,7 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 		Severity: platformSeverity(),
 		Message:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 	}}
+	checks = append(checks, runtimeHelperChecks(ctx, runner)...)
 
 	ipPath, ipOK := commandAvailability(runner, "ip", "iproute2")
 	checks = append(checks, ipPath.check)

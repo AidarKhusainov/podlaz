@@ -37,7 +37,7 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "list", "--json"}, &listJSON, opts); err != nil {
 		t.Fatalf("subscription list json failed: %v", err)
 	}
-	assertJSONEnvelope(t, listJSON.Bytes())
+	assertSubscriptionJSONEnvelope(t, listJSON.Bytes())
 	if strings.Contains(listJSON.String(), sourceURL) {
 		t.Fatalf("subscription list json leaked source URL: %q", listJSON.String())
 	}
@@ -162,7 +162,7 @@ func uuidForTest(n int) string {
 	return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
 }
 
-func assertJSONEnvelope(t *testing.T, data []byte) {
+func assertSubscriptionJSONEnvelope(t *testing.T, data []byte) {
 	t.Helper()
 	var got map[string]any
 	if err := json.Unmarshal(data, &got); err != nil {
