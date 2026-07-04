@@ -13,12 +13,7 @@ func FakeResolvedDesktop() Snapshot {
 			Gateway:     "192.0.2.1",
 			Raw:         "default via 192.0.2.1 dev wlp0s20f3 proto dhcp metric 600",
 		},
-		DefaultIPv6: Route{
-			Status:      StatusMissing,
-			Family:      "ipv6",
-			Destination: "default",
-			Detail:      "route not found",
-		},
+		DefaultIPv6: Route{Status: StatusMissing, Family: "ipv6", Destination: "default", Detail: "route not found"},
 		ServerRoute: Route{
 			Status:      StatusDetected,
 			Destination: "example.com",
@@ -39,10 +34,7 @@ func FakeResolvedDesktop() Snapshot {
 				DNSDomains:       []string{"lan.example.invalid"},
 			}},
 		},
-		NetworkManager: NetworkManager{
-			Finding: Finding{Status: StatusDetected, Summary: "NetworkManager state available", Detail: "running:connected"},
-			State:   "connected",
-		},
+		NetworkManager: NetworkManager{Finding: Finding{Status: StatusDetected, Summary: "NetworkManager state available", Detail: "running:connected"}, State: "connected"},
 		Nftables: Nftables{
 			Availability: Finding{Status: StatusDetected, Summary: "nftables table listing available"},
 			PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not found"},
@@ -53,8 +45,6 @@ func FakeResolvedDesktop() Snapshot {
 	}
 }
 
-// FakeDesktopWithForeignDefaultDNSOwner returns a desktop topology where another
-// VPN-like link owns the route-only default DNS domain.
 func FakeDesktopWithForeignDefaultDNSOwner() Snapshot {
 	s := FakeResolvedDesktop()
 	s.DNS.ResolvedLinks = append(s.DNS.ResolvedLinks, ResolvedLink{
@@ -69,8 +59,30 @@ func FakeDesktopWithForeignDefaultDNSOwner() Snapshot {
 	return s
 }
 
-// FakeDesktopMissingDefaultRoute returns a topology where full-tunnel planning
-// cannot select a stable default uplink for server bypass.
+func FakeDesktopWithForeignTunLikeInterface() Snapshot {
+	s := FakeResolvedDesktop()
+	s.TunDevices = append(s.TunDevices, TunDevice{Name: "wg0", Status: StatusDetected, Raw: "9: wg0: <POINTOPOINT,UP> mtu 1420"})
+	return s
+}
+
+func FakeDesktopWithForeignPolicyRouting() Snapshot {
+	s := FakeResolvedDesktop()
+	s.PolicyRouting = []PolicyRoutingSignal{{Kind: "rule", Priority: "100", Fwmark: "0xca6c", Table: "51821", Raw: "100: from all fwmark 0xca6c lookup 51821"}}
+	return s
+}
+
+func FakeDesktopWithActiveNetworkManagerVPN() Snapshot {
+	s := FakeResolvedDesktop()
+	s.NetworkManager.ActiveConnections = []NetworkManagerConnection{{Name: "Work VPN", UUID: "11111111-2222-3333-4444-555555555555", Type: "vpn", Device: "tun0", State: "activated"}}
+	return s
+}
+
+func FakeDesktopWithServerRouteViaForeignVPN() Snapshot {
+	s := FakeDesktopWithForeignTunLikeInterface()
+	s.ServerRoute = Route{Status: StatusDetected, Destination: "example.com", Interface: "wg0", Raw: "203.0.113.10 dev wg0 src 10.64.0.2 uid 1000"}
+	return s
+}
+
 func FakeDesktopMissingDefaultRoute() Snapshot {
 	s := FakeResolvedDesktop()
 	s.DefaultIPv4 = Route{Status: StatusMissing, Family: "ipv4", Destination: "default", Detail: "route not found"}
@@ -79,41 +91,24 @@ func FakeDesktopMissingDefaultRoute() Snapshot {
 	return s
 }
 
-// FakeDesktopWithServerRouteLoop returns a topology where the VPN server route
-// already points at podlaz's TUN interface and would loop.
 func FakeDesktopWithServerRouteLoop() Snapshot {
 	s := FakeResolvedDesktop()
-	s.ServerRoute = Route{
-		Status:      StatusDetected,
-		Destination: "example.com",
-		Interface:   DefaultTunName,
-		Raw:         "203.0.113.10 dev podlaz0 src 10.0.0.2 uid 1000",
-	}
+	s.ServerRoute = Route{Status: StatusDetected, Destination: "example.com", Interface: DefaultTunName, Raw: "203.0.113.10 dev podlaz0 src 10.0.0.2 uid 1000"}
 	return s
 }
 
-// FakeDesktopWithoutOptionalTools returns a desktop topology where optional tools
-// used by TUN planning are unavailable but snapshot collection still succeeds.
 func FakeDesktopWithoutOptionalTools() Snapshot {
 	s := FakeResolvedDesktop()
 	s.DNS = DNS{Mode: "unknown", Resolved: Finding{Status: StatusMissing, Summary: "resolvectl not found"}}
 	s.NetworkManager = NetworkManager{Finding: Finding{Status: StatusMissing, Summary: "nmcli not found"}}
-	s.Nftables = Nftables{
-		Availability: Finding{Status: StatusMissing, Summary: "nft not found"},
-		PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"},
-	}
+	s.Nftables = Nftables{Availability: Finding{Status: StatusMissing, Summary: "nft not found"}, PodlazTable: Finding{Status: StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"}}
 	return s
 }
 
-// FakeDesktopWithStalepodlazResources returns a topology with old podlaz-owned
-// resources that future recover/connect flows must handle before mutation.
 func FakeDesktopWithStalepodlazResources() Snapshot {
 	s := FakeResolvedDesktop()
 	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}}
 	s.Nftables.PodlazTable = Finding{Status: StatusDetected, Summary: "podlaz nftables table exists"}
-	s.StaleResources = []StaleResource{
-		{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"},
-		{Kind: "nftables-table", Name: DefaultNFTFamily + " " + DefaultNFTTable, Status: StatusDetected},
-	}
+	s.StaleResources = []StaleResource{{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}, {Kind: "nftables-table", Name: DefaultNFTFamily + " " + DefaultNFTTable, Status: StatusDetected}}
 	return s
 }
