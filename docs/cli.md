@@ -184,17 +184,20 @@ for the detailed TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump.
 preserves the existing automation schema and is not affected by `--verbose`.
 
 ```bash
-podlaz connect [--mode proxy-only|tun] [--handoff=block] <profile-id>
+podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
 podlaz disconnect
 ```
 
 Requires daemon access. `connect` defaults to `proxy-only`. Proxy-only must not
 mutate host networking. TUN mode is daemon-owned and transaction-backed.
-`connect --mode tun` supports the explicit `--handoff=block` policy only: before
-network mutation the daemon blocks foreign default DNS ownership and stale
-podlaz-owned state, then reports the required manual next step. Unsupported
-handoff values fail before network mutation. `disconnect` is safe to repeat.
-`connect --json` and `disconnect --json` are deferred.
+`connect --mode tun` supports explicit handoff policies. `block` keeps host
+state unchanged and reports foreign ownership or stale podlaz-owned blockers
+before mutation. `ask` is rejected in daemon/non-interactive connect paths.
+`stop-known` attempts to stop manageable NetworkManager VPN connections and then
+rechecks host ownership. `replace-podlaz` performs controlled podlaz-owned
+disconnect/recover before starting the new TUN transaction. Unsupported handoff
+values fail before network mutation. `disconnect` is safe to repeat. `connect
+--json` and `disconnect --json` are deferred.
 
 ```bash
 podlaz check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
