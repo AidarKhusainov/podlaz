@@ -38,6 +38,13 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		return api.LifecycleResponse{}, err
 	}
 
+	m.mu.Lock()
+	if m.cmd != nil || m.state.Connection == "active" {
+		m.mu.Unlock()
+		return api.LifecycleResponse{}, errConnectionAlreadyActive
+	}
+	m.mu.Unlock()
+
 	runtimeDir := m.runtimeDir()
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
 	xrayPath, err := m.resolveXrayPath()
@@ -54,13 +61,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := validateTunRuntimeDependencies(); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-
-	m.mu.Lock()
-	if m.cmd != nil || m.state.Connection == "active" {
-		m.mu.Unlock()
-		return api.LifecycleResponse{}, errConnectionAlreadyActive
-	}
-	m.mu.Unlock()
 
 	snapshot := m.collectTunSnapshot(ctx, netsnapshot.Options{Server: p.Server})
 	plan, err := planner.PlanTun(p, snapshot)
