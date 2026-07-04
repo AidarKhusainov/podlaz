@@ -81,7 +81,7 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 	var out bytes.Buffer
 	var gotMode string
 	var gotHandoff string
-	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", "--handoff=replace-podlaz", p.ID}, &out, options{
+	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", "--handoff=block", p.ID}, &out, options{
 		profileStorePath: storePath,
 		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
 			gotMode = req.Mode
@@ -103,8 +103,8 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 	if gotMode != planner.ModeTun {
 		t.Fatalf("expected tun mode, got %q", gotMode)
 	}
-	if gotHandoff != api.HandoffReplacePodlaz {
-		t.Fatalf("expected replace-podlaz handoff, got %q", gotHandoff)
+	if gotHandoff != api.HandoffBlock {
+		t.Fatalf("expected block handoff, got %q", gotHandoff)
 	}
 	for _, text := range []string{"Mode: tun", "TUN: enabled (podlaz0)", "Routes: applied 2 route(s)"} {
 		if !strings.Contains(out.String(), text) {
@@ -113,16 +113,16 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 	}
 }
 
-func TestRunCLIConnectRejectsHandoffWithoutTunMode(t *testing.T) {
+func TestRunCLIConnectRejectsUnsupportedHandoffPolicy(t *testing.T) {
 	var out bytes.Buffer
-	err := run(context.Background(), []string{"connect", "--handoff=replace-podlaz", "profile-id"}, &out)
+	err := run(context.Background(), []string{"connect", "--mode=tun", "--handoff=replace-podlaz", "profile-id"}, &out)
 	if err == nil {
-		t.Fatal("expected handoff without TUN mode to fail")
+		t.Fatal("expected unsupported handoff policy to fail")
 	}
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("expected exit code 2, got %d", got)
 	}
-	if !strings.Contains(err.Error(), "connect --handoff is only supported with --mode tun") {
+	if !strings.Contains(err.Error(), "unsupported handoff policy") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
