@@ -20,7 +20,7 @@ depends:
   - ca-certificates
   - iproute2
   - nftables
-  - systemd-resolved
+  - systemd-resolved | systemd
   - polkitd | policykit-1
 
 scripts:
