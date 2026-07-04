@@ -63,6 +63,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	}
 
 	snapshot := m.collectTunSnapshot(ctx, netsnapshot.Options{Server: p.Server})
+	if err := preflightTunOwnership(snapshot, req.Handoff); err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	plan, err := planner.PlanTun(p, snapshot)
 	if err != nil {
 		return api.LifecycleResponse{}, err
