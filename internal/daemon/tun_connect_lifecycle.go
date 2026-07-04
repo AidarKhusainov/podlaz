@@ -42,6 +42,13 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
 	xrayPath, err := m.resolveXrayPath()
 	if err != nil {
+		return api.LifecycleResponse{}, wrapRuntimeUnavailable("Xray", err)
+	}
+	tunAdapterPath, err := resolveTunAdapterPath("")
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	if err := validateTunRuntimeDependencies(); err != nil {
 		return api.LifecycleResponse{}, err
 	}
 
@@ -90,6 +97,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 			return m.stopStartedCore(core.cmd, core.done, corePlan.RuntimeConfigPath)
 		},
 		startAdapter: func(ctx context.Context, plan tunAdapterRuntimePlan) (fullTunnelAdapterHandle, error) {
+			plan.Binary = tunAdapterPath
 			plan.Identity = coreIdentity
 			adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, plan)
 			if err != nil {
@@ -199,7 +207,7 @@ func verifyCoreStarted(done <-chan struct{}) error {
 	select {
 	case <-done:
 		return errors.New("Xray exited during startup verification")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(750 * time.Millisecond):
 		return nil
 	}
 }
