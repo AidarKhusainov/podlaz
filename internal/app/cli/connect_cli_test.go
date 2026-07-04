@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,7 +85,25 @@ func TestRunCLIConnectRejectsUnknownMode(t *testing.T) {
 }
 
 func testConnectProfile() profile.Profile {
-	return profile.Profile{ID: "test-profile", Name: "test profile", Source: profile.SourceManual, Engine: profile.EngineXray, Server: "example.invalid", Port: 443, Protocol: "vless", Transport: "tcp", Security: "tls", Encryption: "none", ServerName: "example.invalid"}
+	return profile.Profile{
+		ID:           "test-vless",
+		Name:         "test vless",
+		Source:       profile.SourceImportedURI,
+		Engine:       profile.EngineXray,
+		Server:       "example.com",
+		Port:         443,
+		Protocol:     "vless",
+		UserIdentity: testVLESSUserIdentity(),
+		Transport:    "tcp",
+		Security:     "tls",
+		Encryption:   "none",
+		ServerName:   "example.com",
+	}
+}
+
+func testVLESSUserIdentity() string {
+	part := "1111"
+	return fmt.Sprintf("%s%s-%s-%s-%s-%s%s%s", part, part, part, part, part, part, part, part)
 }
 
 var _ = planner.ModeTun
