@@ -222,12 +222,14 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz connect [--mode proxy-only|tun] [--handoff=block] <profile-id>
+  podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
 
 Start the stored profile through the daemon-managed lifecycle. The default mode
 is proxy-only. TUN mode requires daemon networking privileges. The TUN handoff
-policy currently supports only block and refuses foreign VPN/DNS owners before
-mutating host networking.
+policy defaults to block. ask fails in non-interactive daemon contexts;
+stop-known attempts to stop manageable NetworkManager VPN connections;
+replace-podlaz performs controlled podlaz-owned disconnect/recover before the new
+TUN transaction.
 `)
 }
 
