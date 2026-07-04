@@ -187,25 +187,48 @@ func runProfileValidate(store profile.Store, args []string, stdout io.Writer) er
 			return err
 		}
 	} else {
-		fmt.Fprintln(stdout, "Profile validation")
-		fmt.Fprintf(stdout, "Profile: %s\n", out.Name)
-		fmt.Fprintf(stdout, "Profile ID: %s\n", out.ID)
-		fmt.Fprintf(stdout, "Source: %s\n", out.Source)
-		fmt.Fprintf(stdout, "Mode: %s\n", parsed.mode)
-		fmt.Fprintf(stdout, "Backend: %s\n", render.Redact(string(p.Engine)))
-		fmt.Fprintf(stdout, "Protocol: %s\n", out.Protocol)
-		if validationErr == nil {
-			fmt.Fprintln(stdout, "Status: valid")
-		} else {
-			fmt.Fprintln(stdout, "Status: invalid")
-			fmt.Fprintf(stdout, "Reason: %s\n", render.Redact(validationErr.Error()))
-		}
+		renderProfileValidateHuman(stdout, p, out, parsed, validationErr)
 	}
 
 	if validationErr != nil {
 		return exitError{code: 3, err: validationErr}
 	}
 	return nil
+}
+
+func renderProfileValidateHuman(w io.Writer, original profile.Profile, out profile.Profile, parsed profileValidateArgs, validationErr error) {
+	marks := outputStatusMarks(parsed.plainOutput)
+	fmt.Fprintln(w, "Profile check")
+	fmt.Fprintln(w)
+	renderAlignedField(w, "Name", out.Name)
+	renderAlignedField(w, "Mode", humanModeLabel(parsed.mode))
+	renderAlignedField(w, "Backend", humanBackendLabel(string(original.Engine)))
+	renderAlignedField(w, "Protocol", humanProtocolLabel(out.Protocol))
+	renderAlignedField(w, "Source", humanSourceLabel(string(original.Source)))
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Result")
+	if validationErr == nil {
+		fmt.Fprintf(w, "  %s Profile is valid for %s mode.\n", marks.OK, humanModeLabel(parsed.mode))
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Next step")
+		fmt.Fprintf(w, "  Run: plz plan --mode %s %s\n", parsed.mode, out.ID)
+		return
+	}
+
+	fmt.Fprintf(w, "  %s This profile cannot be used in %s mode.\n", marks.Blocked, humanModeLabel(parsed.mode))
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Reason")
+	fmt.Fprintf(w, "  %s\n", render.Redact(validationErr.Error()))
+
+	fmt.Fprintln(w)
+	if parsed.mode == planner.ModeTun && validateProfileForMode(original, planner.ModeProxyOnly) == nil {
+		fmt.Fprintln(w, "Try instead")
+		fmt.Fprintf(w, "  plz connect --mode proxy-only %s\n", out.ID)
+		return
+	}
+	fmt.Fprintln(w, "Next step")
+	fmt.Fprintf(w, "  Fix the profile and run: plz profile validate %s --mode %s\n", out.ID, parsed.mode)
 }
 
 func runProfileDelete(store profile.Store, args []string, stdout io.Writer, opts options) error {
@@ -237,9 +260,10 @@ type profileAddArgs struct {
 }
 
 type profileValidateArgs struct {
-	id         string
-	mode       string
-	jsonOutput bool
+	id          string
+	mode        string
+	jsonOutput  bool
+	plainOutput bool
 }
 
 func parseProfileAddArgs(args []string) (profileAddArgs, error) {
@@ -354,6 +378,8 @@ func parseProfileValidateArgs(args []string) (profileValidateArgs, error) {
 			i = next
 		case arg == "--json":
 			parsed.jsonOutput = true
+		case arg == "--plain":
+			parsed.plainOutput = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return parsed, usageError("unsupported profile validate argument %q", arg)
@@ -518,15 +544,15 @@ func redactedProfileUserIdentity(p profile.Profile) string {
 		return ""
 	}
 	switch strings.ToLower(p.Protocol) {
-	case "trojan", "shadowsocks":
-		return "REDACTED"
-	default:
+	case "vless":
 		return render.Redact(p.UserIdentity)
+	default:
+		return "REDACTED"
 	}
 }
 
-func printOptionalProfileField(w io.Writer, label, value string) {
-	if value == "" {
+func printOptionalProfileField(w io.Writer, label string, value string) {
+	if strings.TrimSpace(value) == "" {
 		return
 	}
 	fmt.Fprintf(w, "%s: %s\n", label, value)
@@ -534,23 +560,13 @@ func printOptionalProfileField(w io.Writer, label, value string) {
 
 func printProfileHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
+  podlaz profile add --name <name> --server <host> --port <port> --protocol <protocol>
   podlaz profile import <share-uri>
   podlaz profile list [--json]
   podlaz profile show <profile-id> [--json]
-  podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json]
+  podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json] [--plain]
   podlaz profile delete <profile-id> [--yes]
 
-Manage profiles in local podlaz user state. These commands never start
-network processes and never mutate TUN, routes, DNS, nftables, or firewall state.
-
-Implemented in v0.1:
-  manual profile add/list/show/validate/delete, VLESS/VMess/Trojan/Shadowsocks
-  share URI import, validation, JSON list/show/validate output, and atomic local
-  profile storage under the documented XDG user state location.
-
-Not implemented yet:
-  profile import --json, profile inspect/explain, Xray config generation for
-  non-VLESS imported profiles, connect/disconnect behavior
+Manage local VPN profiles. Profile validation uses compact human output by default; use --json for automation and --plain for ASCII status markers.
 `)
 }
