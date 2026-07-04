@@ -9,7 +9,10 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const resolvedStatusForTest = `Link 7 (podlaz0)
+const resolvedStatusForTest = `Global
+       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported
+
+Link 7 (podlaz0)
     Current Scopes: DNS
          Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
 Current DNS Server: 1.1.1.1
@@ -39,7 +42,7 @@ func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		{"resolvectl", "dns", "podlaz0", "1.1.1.1"},
 		{"resolvectl", "domain", "podlaz0", "~."},
 		{"resolvectl", "default-route", "podlaz0", "yes"},
-		{"resolvectl", "status", "podlaz0", "--no-pager"},
+		{"resolvectl", "status", "--no-pager"},
 		{"resolvectl", "revert", "podlaz0"},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
@@ -55,6 +58,20 @@ func TestResolvedDNSExecutorFailsClearlyWhenPlanIsBlocked(t *testing.T) {
 	_, err := (ResolvedDNSExecutor{Runner: &recordingRunner{}}).Apply(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected blocked DNS plan failure")
+	}
+}
+
+func TestResolvedDNSExecutorVerifyRejectsForeignRouteOnlyDNSOwner(t *testing.T) {
+	plan := dnsPlanForTest()
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: resolvedStatusForTest + `
+
+Link 9 (wg0)
+    Current Scopes: DNS
+Current DNS Server: 198.51.100.53
+       DNS Servers: 198.51.100.53
+        DNS Domain: ~.`}}).Verify(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected verify failure when foreign route-only DNS owner remains")
 	}
 }
 
