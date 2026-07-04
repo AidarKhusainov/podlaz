@@ -40,7 +40,9 @@ func (c LifecycleClient) do(ctx context.Context, operation, path string, payload
 		timeout = defaultLifecycleTimeout
 	}
 
-	lifecycle, err := c.doViaSocket(ctx, socketPath, timeout, operation, path, payload)
+	lifecycle, err := retryDaemonSocketReadiness(ctx, func(attemptCtx context.Context) (api.LifecycleResponse, error) {
+		return c.doViaSocket(attemptCtx, socketPath, timeout, operation, path, payload)
+	})
 	if err == nil {
 		return lifecycle, nil
 	}
@@ -96,7 +98,7 @@ func (c LifecycleClient) doViaSocket(ctx context.Context, socketPath string, tim
 		if data, readErr := io.ReadAll(resp.Body); readErr == nil {
 			message = strings.TrimSpace(string(data))
 		}
-		if resp.StatusCode == http.StatusServiceUnavailable && message != "" {
+		if shouldReturnDaemonMessage(resp.StatusCode, message) {
 			return api.LifecycleResponse{}, errors.New(message)
 		}
 		return api.LifecycleResponse{}, api.LifecycleHTTPError(operation, resp.Status, message)
@@ -110,4 +112,14 @@ func (c LifecycleClient) doViaSocket(ctx context.Context, socketPath string, tim
 		return api.LifecycleResponse{}, fmt.Errorf("daemon %s response was invalid: %w", operation, err)
 	}
 	return lifecycle, nil
+}
+
+func shouldReturnDaemonMessage(statusCode int, message string) bool {
+	if strings.TrimSpace(message) == "" {
+		return false
+	}
+	return statusCode == http.StatusBadRequest ||
+		statusCode == http.StatusForbidden ||
+		statusCode == http.StatusConflict ||
+		statusCode == http.StatusServiceUnavailable
 }
