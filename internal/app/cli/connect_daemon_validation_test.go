@@ -118,7 +118,7 @@ func TestRunCLIConnectRejectsUnsupportedProfileBeforeDaemon(t *testing.T) {
 			var out bytes.Buffer
 			err = runWithOptions(context.Background(), []string{"connect", "--mode", tt.mode, p.ID}, &out, options{
 				profileStorePath: storePath,
-				connect: func(context.Context, profile.Profile, string) (api.LifecycleResponse, error) {
+				connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
 					calledDaemon = true
 					return api.LifecycleResponse{}, nil
 				},
