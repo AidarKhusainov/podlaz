@@ -158,7 +158,7 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 					t.Fatalf("profile show --json leaked %q in %q", leaked, jsonOut.String())
 				}
 			}
-			assertJSONEnvelope(t, jsonOut.Bytes())
+			assertProfileImportJSONEnvelope(t, jsonOut.Bytes())
 		})
 	}
 }
@@ -179,7 +179,7 @@ func importedProfileIDFromOutput(t *testing.T, out string) string {
 	return ""
 }
 
-func assertJSONEnvelope(t *testing.T, data []byte) {
+func assertProfileImportJSONEnvelope(t *testing.T, data []byte) {
 	t.Helper()
 	var payload map[string]any
 	if err := json.Unmarshal(data, &payload); err != nil {
