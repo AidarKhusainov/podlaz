@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/AidarKhusainov/podlaz/internal/api"
 	profilecheck "github.com/AidarKhusainov/podlaz/internal/check"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
@@ -178,6 +179,7 @@ func analyzeCompletion(root *completionCommand, words []string, cursor int) comp
 
 func completionRegistry() *completionCommand {
 	modes := []string{planner.ModeProxyOnly, planner.ModeTun}
+	handoffPolicies := []string{api.HandoffBlock}
 	protocols := []string{"vless", "vmess", "trojan", "shadowsocks"}
 	targetIDs := profilecheck.SupportedTargetIDs()
 	jsonFlag := longBoolFlag("--json", "Print JSON output")
@@ -185,6 +187,7 @@ func completionRegistry() *completionCommand {
 	plainFlag := longBoolFlag("--plain", "Print plain human output")
 	verboseFlag := completionFlag{Name: "--verbose", Shorthand: "-v", Description: "Show verbose output", NonRepeatable: true}
 	modeFlag := longEnumFlag("--mode", modes, "Select connection mode")
+	handoffFlag := longEnumFlag("--handoff", handoffPolicies, "Select TUN handoff policy")
 	targetFlag := completionFlag{Name: "--target", Description: "Select service target", TakesValue: true, Values: targetIDs}
 
 	return &completionCommand{Children: []*completionCommand{
@@ -234,7 +237,7 @@ func completionRegistry() *completionCommand {
 			},
 		},
 		{Name: "plan", Description: "Preview connection plan", Flags: []completionFlag{modeFlag, jsonFlag, verboseFlag, plainFlag}, Dynamic: completionDynamicProfileIDs},
-		{Name: "connect", Description: "Start connection", Flags: []completionFlag{modeFlag}, Dynamic: completionDynamicProfileIDs},
+		{Name: "connect", Description: "Start connection", Flags: []completionFlag{modeFlag, handoffFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "disconnect", Description: "Stop connection"},
 		{
 			Name:        "check",
@@ -330,5 +333,10 @@ func completionShellNames() []string {
 
 func completionConnectionModeNames() []string {
 	flag, _ := mustCompletionCommand("plan").findFlag("--mode")
+	return append([]string(nil), flag.Values...)
+}
+
+func completionHandoffPolicyNames() []string {
+	flag, _ := mustCompletionCommand("connect").findFlag("--handoff")
 	return append([]string(nil), flag.Values...)
 }
