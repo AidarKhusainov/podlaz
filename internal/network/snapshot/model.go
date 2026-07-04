@@ -2,12 +2,12 @@
 package snapshot
 
 const (
-	DefaultTunName   = "podlaz0"
-	DefaultNFTFamily = "inet"
-	DefaultNFTTable  = "podlaz"
+	DefaultTunName      = "podlaz0"
+	DefaultNFTFamily    = "inet"
+	DefaultNFTTable     = "podlaz"
+	DefaultRouteTableID = "51820"
 )
 
-// Status describes whether a read-only observation was available.
 type Status string
 
 const (
@@ -17,14 +17,12 @@ const (
 	StatusDetected    Status = "detected"
 )
 
-// Finding is a generic read-only observation with a stable status vocabulary.
 type Finding struct {
 	Status  Status `json:"status"`
 	Summary string `json:"summary"`
 	Detail  string `json:"detail,omitempty"`
 }
 
-// Route describes a route observation from the host routing table.
 type Route struct {
 	Status      Status `json:"status"`
 	Family      string `json:"family,omitempty"`
@@ -35,7 +33,6 @@ type Route struct {
 	Detail      string `json:"detail,omitempty"`
 }
 
-// ResolvedLink describes one systemd-resolved per-link DNS status block.
 type ResolvedLink struct {
 	Index            string   `json:"index,omitempty"`
 	Name             string   `json:"name"`
@@ -46,26 +43,31 @@ type ResolvedLink struct {
 	DNSDomains       []string `json:"dns_domains,omitempty"`
 }
 
-// DNS describes DNS backend state relevant to future full-tunnel DNS planning.
 type DNS struct {
 	Mode          string         `json:"mode"`
 	Resolved      Finding        `json:"systemd_resolved"`
 	ResolvedLinks []ResolvedLink `json:"resolved_links,omitempty"`
 }
 
-// NetworkManager describes NetworkManager availability and advisory state.
-type NetworkManager struct {
-	Finding Finding `json:"finding"`
-	State   string  `json:"state,omitempty"`
+type NetworkManagerConnection struct {
+	Name   string `json:"name,omitempty"`
+	UUID   string `json:"uuid,omitempty"`
+	Type   string `json:"type,omitempty"`
+	Device string `json:"device,omitempty"`
+	State  string `json:"state,omitempty"`
 }
 
-// Nftables describes nftables availability and podlaz-owned table presence.
+type NetworkManager struct {
+	Finding           Finding                    `json:"finding"`
+	State             string                     `json:"state,omitempty"`
+	ActiveConnections []NetworkManagerConnection `json:"active_connections,omitempty"`
+}
+
 type Nftables struct {
 	Availability Finding `json:"availability"`
 	PodlazTable  Finding `json:"podlaz_table"`
 }
 
-// TunDevice describes a known podlaz TUN interface name.
 type TunDevice struct {
 	Name   string `json:"name"`
 	Status Status `json:"status"`
@@ -73,7 +75,16 @@ type TunDevice struct {
 	Raw    string `json:"raw,omitempty"`
 }
 
-// StaleResource describes detected podlaz-owned system state from a read-only snapshot.
+type PolicyRoutingSignal struct {
+	Kind      string `json:"kind"`
+	Priority  string `json:"priority,omitempty"`
+	Selector  string `json:"selector,omitempty"`
+	Table     string `json:"table,omitempty"`
+	Fwmark    string `json:"fwmark,omitempty"`
+	Interface string `json:"interface,omitempty"`
+	Raw       string `json:"raw,omitempty"`
+}
+
 type StaleResource struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`
@@ -81,20 +92,20 @@ type StaleResource struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// Snapshot is the host state input for TUN planners.
 type Snapshot struct {
-	OS             string          `json:"os"`
-	DefaultIPv4    Route           `json:"default_ipv4_route"`
-	DefaultIPv6    Route           `json:"default_ipv6_route"`
-	ServerRoute    Route           `json:"server_route"`
-	DNS            DNS             `json:"dns"`
-	NetworkManager NetworkManager  `json:"network_manager"`
-	Nftables       Nftables        `json:"nftables"`
-	TunDevices     []TunDevice     `json:"tun_devices"`
-	IPv4           Finding         `json:"ipv4"`
-	IPv6           Finding         `json:"ipv6"`
-	StaleResources []StaleResource `json:"stale_resources"`
-	Warnings       []string        `json:"warnings,omitempty"`
+	OS             string                `json:"os"`
+	DefaultIPv4    Route                 `json:"default_ipv4_route"`
+	DefaultIPv6    Route                 `json:"default_ipv6_route"`
+	ServerRoute    Route                 `json:"server_route"`
+	DNS            DNS                   `json:"dns"`
+	NetworkManager NetworkManager        `json:"network_manager"`
+	Nftables       Nftables              `json:"nftables"`
+	TunDevices     []TunDevice           `json:"tun_devices"`
+	PolicyRouting  []PolicyRoutingSignal `json:"policy_routing,omitempty"`
+	IPv4           Finding               `json:"ipv4"`
+	IPv6           Finding               `json:"ipv6"`
+	StaleResources []StaleResource       `json:"stale_resources"`
+	Warnings       []string              `json:"warnings,omitempty"`
 }
 
 func finding(status Status, summary string) Finding {
