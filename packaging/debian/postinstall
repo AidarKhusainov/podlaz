@@ -9,6 +9,17 @@ start_service() {
 	deb-systemd-invoke start "$1" >/dev/null || true
 }
 
+try_restart_service() {
+	deb-systemd-invoke try-restart "$1" >/dev/null || true
+}
+
+reload_systemd() {
+	if ! command -v systemctl >/dev/null 2>&1; then
+		return 0
+	fi
+	systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
 is_enabled() {
 	if ! command -v systemctl >/dev/null 2>&1; then
 		return 0
@@ -56,7 +67,10 @@ else
 	rm -f "$marker" >/dev/null 2>&1 || true
 fi
 
+reload_systemd
+
 if command -v deb-systemd-invoke >/dev/null 2>&1 && is_enabled "$unit"; then
+	try_restart_service "$unit"
 	start_service "$unit"
 fi
 
