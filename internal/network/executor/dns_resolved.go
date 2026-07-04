@@ -164,11 +164,15 @@ func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan
 		return err
 	}
 	link := strings.TrimSpace(plan.TargetLink)
-	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", link, "--no-pager")
+	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
 	if err != nil {
 		return fmt.Errorf("verify systemd-resolved DNS for %s: %w", link, err)
 	}
-	resolvedLink, ok := findResolvedLink(netsnapshot.ParseResolvedLinks(result.Stdout), link)
+	links := netsnapshot.ParseResolvedLinks(result.Stdout)
+	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
+		return fmt.Errorf("verify systemd-resolved DNS for %s: foreign route-only DNS owner %s still has %s", link, foreign.Name, resolvedRouteOnlyDomain)
+	}
+	resolvedLink, ok := findResolvedLink(links, link)
 	if !ok {
 		return fmt.Errorf("verify systemd-resolved DNS for %s: link status not found", link)
 	}
@@ -184,6 +188,21 @@ func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan
 		return fmt.Errorf("verify systemd-resolved DNS for %s: route-only domain %s not found", link, resolvedRouteOnlyDomain)
 	}
 	return nil
+}
+
+func findForeignRouteOnlyDNSOwner(links []netsnapshot.ResolvedLink, targetLink string) (netsnapshot.ResolvedLink, bool) {
+	for _, link := range links {
+		if strings.TrimSpace(link.Name) == "" || link.Name == targetLink {
+			continue
+		}
+		if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
+			continue
+		}
+		if containsDNSValue(link.CurrentScopes, "DNS") || containsDNSValue(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
+			return link, true
+		}
+	}
+	return netsnapshot.ResolvedLink{}, false
 }
 
 func findResolvedLink(links []netsnapshot.ResolvedLink, name string) (netsnapshot.ResolvedLink, bool) {
