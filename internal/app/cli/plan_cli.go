@@ -55,14 +55,20 @@ func runPlanCommand(ctx context.Context, args []string, stdout io.Writer, opts o
 	if parsed.jsonOutput {
 		return writeJSON(stdout, tunPlanJSON(plan))
 	}
-	renderTunPlan(stdout, plan)
+	if parsed.verbose {
+		renderTunPlanVerbose(stdout, plan)
+		return nil
+	}
+	renderTunPlanSummary(stdout, plan, parsed.profileID, parsed.plainOutput)
 	return nil
 }
 
 type planArgs struct {
-	mode       string
-	profileID  string
-	jsonOutput bool
+	mode        string
+	profileID   string
+	jsonOutput  bool
+	verbose     bool
+	plainOutput bool
 }
 
 func parsePlanArgs(args []string) (planArgs, error) {
@@ -80,6 +86,10 @@ func parsePlanArgs(args []string) (planArgs, error) {
 			i = next
 		case arg == "--json":
 			parsed.jsonOutput = true
+		case arg == "--verbose" || arg == "-v":
+			parsed.verbose = true
+		case arg == "--plain":
+			parsed.plainOutput = true
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return parsed, usageError("unsupported plan argument %q", arg)
@@ -114,7 +124,158 @@ func renderProxyOnlyPlan(w io.Writer, p planner.ProxyOnlyPlan) {
 	printWarnings(w, p.Warnings)
 }
 
-func renderTunPlan(w io.Writer, p planner.TunPlan) {
+func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plain bool) {
+	marks := outputStatusMarks(plain)
+	blocked := tunPlanBlockers(p)
+	warnings := tunPlanHumanWarnings(p)
+
+	fmt.Fprintln(w, "podlaz plan")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Profile")
+	renderAlignedField(w, "Name", p.ProfileName)
+	renderAlignedField(w, "Mode", humanModeLabel(p.TunnelMode))
+	renderAlignedField(w, "Backend", "Xray / "+humanProtocolLabel("VLESS"))
+	renderAlignedField(w, "Status", tunPlanHumanStatus(blocked, warnings))
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "What will happen")
+	renderPlanAction(w, marks.OK, "Create TUN interface", fmt.Sprintf("%s, MTU %d", p.TunDevice.Name, p.TunDevice.MTU))
+	renderPlanAction(w, marks.OK, "Route traffic through VPN", "default IPv4 route via podlaz table")
+	renderServerBypassSummary(w, marks, p.ServerBypass)
+	renderDNSSummary(w, marks, p.DNS)
+	renderFirewallSummary(w, marks, p.Firewall)
+
+	if len(blocked) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Blockers")
+		for _, blocker := range blocked {
+			fmt.Fprintf(w, "  %s %s\n", marks.Blocked, render.Redact(blocker))
+		}
+	}
+	if len(warnings) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Warnings")
+		for _, warning := range warnings {
+			fmt.Fprintf(w, "  %s %s\n", marks.Warn, render.Redact(warning))
+		}
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Safety")
+	fmt.Fprintln(w, "  No changes were applied.")
+	fmt.Fprintln(w, "  If connect fails, podlaz can roll back TUN, routes, DNS and nftables state.")
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Next steps")
+	if len(blocked) > 0 {
+		fmt.Fprintln(w, "  Run: plz doctor")
+	} else {
+		fmt.Fprintf(w, "  Run: plz connect --mode tun %s\n", render.Redact(profileID))
+	}
+	fmt.Fprintf(w, "  Details: plz plan --mode tun %s --verbose\n", render.Redact(profileID))
+}
+
+func renderPlanAction(w io.Writer, mark, label, detail string) {
+	fmt.Fprintf(w, "  %s %-28s %s\n", mark, label, render.Redact(detail))
+}
+
+func renderServerBypassSummary(w io.Writer, marks humanStatusMarks, p planner.TunRoutePlan) {
+	if p.Action == "add" && p.Destination != "" {
+		detail := p.Destination
+		if p.Gateway != "" {
+			detail += " via " + p.Gateway
+		}
+		if p.Interface != "" {
+			detail += " dev " + p.Interface
+		}
+		renderPlanAction(w, marks.OK, "Keep VPN server reachable", detail)
+		return
+	}
+	renderPlanAction(w, marks.Blocked, "Keep VPN server reachable", "blocked: "+humanPlanDetail(p.Reason))
+}
+
+func renderDNSSummary(w io.Writer, marks humanStatusMarks, p planner.TunDNSPlan) {
+	if p.Action == planner.DNSActionConfigure {
+		renderPlanAction(w, marks.OK, "Configure DNS", fmt.Sprintf("systemd-resolved, %s", strings.Join(p.Servers, ", ")))
+		return
+	}
+	renderPlanAction(w, marks.Blocked, "Configure DNS", "blocked: "+humanPlanDetail(p.Reason))
+}
+
+func renderFirewallSummary(w io.Writer, marks humanStatusMarks, p planner.TunFirewallPlan) {
+	if p.TableAction == planner.FirewallActionBlocked {
+		renderPlanAction(w, marks.Blocked, "Configure kill switch", "blocked: "+humanPlanDetail(p.Reason))
+		return
+	}
+	if p.KillSwitch.Policy == planner.KillSwitchPolicyOff {
+		renderPlanAction(w, marks.Skip, "Configure kill switch", "disabled by policy")
+		return
+	}
+	renderPlanAction(w, marks.OK, "Configure kill switch", "reject non-VPN traffic during connection setup")
+}
+
+func tunPlanHumanStatus(blockers, warnings []string) string {
+	if len(blockers) > 0 {
+		return "Blocked"
+	}
+	if len(warnings) > 0 {
+		return "Ready with warnings"
+	}
+	return "Ready"
+}
+
+func tunPlanBlockers(p planner.TunPlan) []string {
+	var blockers []string
+	if p.ServerBypass.Action != "" && p.ServerBypass.Action != "add" {
+		blockers = append(blockers, "VPN server bypass cannot be prepared yet: "+humanPlanDetail(p.ServerBypass.Reason))
+	}
+	if p.DNS.Action == planner.DNSActionBlocked {
+		blockers = append(blockers, "DNS cannot be configured yet: "+humanPlanDetail(p.DNS.Reason))
+	}
+	if p.Firewall.TableAction == planner.FirewallActionBlocked {
+		blockers = append(blockers, "Kill switch cannot be prepared yet: "+humanPlanDetail(p.Firewall.Reason))
+	}
+	return blockers
+}
+
+func tunPlanHumanWarnings(p planner.TunPlan) []string {
+	seen := map[string]struct{}{}
+	var warnings []string
+	for _, warning := range append(append([]string{}, p.Warnings...), p.LoopRisks...) {
+		message := humanPlanDetail(warning)
+		if message == "" {
+			continue
+		}
+		if _, ok := seen[message]; ok {
+			continue
+		}
+		seen[message] = struct{}{}
+		warnings = append(warnings, message)
+	}
+	return warnings
+}
+
+func humanPlanDetail(value string) string {
+	value = humanSingleLine(render.Redact(value))
+	lower := strings.ToLower(value)
+	switch {
+	case strings.Contains(lower, "nftables") && (strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "not readable") || strings.Contains(lower, "inspect")):
+		return "nftables cannot be inspected as current user. The daemon will check this again before applying changes."
+	case strings.Contains(lower, "ipv6") && strings.Contains(lower, "default route"):
+		return "IPv6 default route was not found. IPv6 will stay disabled/bypassed for this TUN plan."
+	case strings.Contains(lower, "systemd-resolved") && strings.Contains(lower, "unsafe"):
+		return "systemd-resolved state is not readable. The daemon will check DNS again before applying changes."
+	}
+	for _, marker := range []string{"; stderr:", ", stderr:", " stderr:"} {
+		if idx := strings.Index(strings.ToLower(value), marker); idx >= 0 {
+			value = strings.TrimSpace(value[:idx])
+			break
+		}
+	}
+	return value
+}
+
+func renderTunPlanVerbose(w io.Writer, p planner.TunPlan) {
 	s := p.Snapshot
 	fmt.Fprintln(w, "podlaz TUN plan")
 	fmt.Fprintln(w, "TUN planning snapshot")
@@ -235,12 +396,59 @@ func printWarnings(w io.Writer, warnings []string) {
 
 func proxyOnlyPlanJSON(p planner.ProxyOnlyPlan) map[string]any {
 	warnings := redactedStrings(p.Warnings)
-	return map[string]any{"schema_version": "v1", "status": jsonStatus(warnings), "warnings": warnings, "errors": []string{}, "mode": p.Mode, "plan": map[string]any{"profile": map[string]any{"id": render.Redact(p.ProfileID), "name": render.Redact(p.ProfileName)}, "runtime_config_path": p.RuntimeConfigPath, "listeners": listenersForJSON(p.Listeners), "writes_config": false, "starts_xray": false, "modifies_system_networking": false, "system_networking": "will not modify TUN, routes, DNS, nftables, or firewall"}, "steps": redactedStrings(p.Steps), "rollback_steps": redactedStrings(p.RollbackSteps)}
+	return map[string]any{
+		"schema_version": "v1",
+		"status":         jsonStatus(warnings),
+		"warnings":       warnings,
+		"errors":         []string{},
+		"mode":           p.Mode,
+		"plan": map[string]any{
+			"profile": map[string]any{
+				"id":   render.Redact(p.ProfileID),
+				"name": render.Redact(p.ProfileName),
+			},
+			"runtime_config_path":       p.RuntimeConfigPath,
+			"listeners":                 listenersForJSON(p.Listeners),
+			"writes_config":             false,
+			"starts_xray":               false,
+			"modifies_system_networking": false,
+			"system_networking":         "will not modify TUN, routes, DNS, nftables, or firewall",
+		},
+		"steps":          redactedStrings(p.Steps),
+		"rollback_steps": redactedStrings(p.RollbackSteps),
+	}
 }
 
 func tunPlanJSON(p planner.TunPlan) map[string]any {
 	warnings := redactedStrings(p.Warnings)
-	return map[string]any{"schema_version": "v1", "status": jsonStatus(warnings), "warnings": warnings, "errors": []string{}, "mode": p.Mode, "loop_risks": redactedStrings(p.LoopRisks), "plan": map[string]any{"profile": map[string]any{"id": render.Redact(p.ProfileID), "name": render.Redact(p.ProfileName)}, "tunnel_mode": p.TunnelMode, "writes_config": false, "starts_xray": false, "modifies_system_networking": false, "tun": tunDeviceJSON(p.TunDevice), "routes": routesJSON(p.Routes), "policy_rules": rulesJSON(p.PolicyRules), "server_bypass": routePlanJSON(p.ServerBypass), "dns": dnsPlanJSON(p.DNS), "firewall": firewallPlanJSON(p.Firewall), "snapshot": snapshotForJSON(p.Snapshot), "claims_leak_protection": false}, "steps": redactedStrings(p.Steps), "rollback_steps": redactedStrings(p.RollbackSteps)}
+	return map[string]any{
+		"schema_version": "v1",
+		"status":         jsonStatus(warnings),
+		"warnings":       warnings,
+		"errors":         []string{},
+		"mode":           p.Mode,
+		"loop_risks":     redactedStrings(p.LoopRisks),
+		"plan": map[string]any{
+			"profile": map[string]any{
+				"id":   render.Redact(p.ProfileID),
+				"name": render.Redact(p.ProfileName),
+			},
+			"tunnel_mode":                 p.TunnelMode,
+			"writes_config":               false,
+			"starts_xray":                 false,
+			"modifies_system_networking":   false,
+			"tun":                         tunDeviceJSON(p.TunDevice),
+			"routes":                      routesJSON(p.Routes),
+			"policy_rules":                rulesJSON(p.PolicyRules),
+			"server_bypass":               routePlanJSON(p.ServerBypass),
+			"dns":                         dnsPlanJSON(p.DNS),
+			"firewall":                    firewallPlanJSON(p.Firewall),
+			"snapshot":                    snapshotForJSON(p.Snapshot),
+			"claims_leak_protection":       false,
+		},
+		"steps":          redactedStrings(p.Steps),
+		"rollback_steps": redactedStrings(p.RollbackSteps),
+	}
 }
 
 func jsonStatus(warnings []string) string {
@@ -249,6 +457,7 @@ func jsonStatus(warnings []string) string {
 	}
 	return "ok"
 }
+
 func listenersForJSON(v []planner.Listener) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, l := range v {
@@ -256,9 +465,11 @@ func listenersForJSON(v []planner.Listener) []map[string]any {
 	}
 	return out
 }
+
 func tunDeviceJSON(d planner.TunDevicePlan) map[string]any {
 	return map[string]any{"name": render.Redact(d.Name), "mtu": d.MTU, "action": render.Redact(d.Action), "reason": render.Redact(d.Reason)}
 }
+
 func routesJSON(v []planner.TunRoutePlan) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, r := range v {
@@ -266,9 +477,11 @@ func routesJSON(v []planner.TunRoutePlan) []map[string]any {
 	}
 	return out
 }
+
 func routePlanJSON(r planner.TunRoutePlan) map[string]any {
 	return map[string]any{"family": render.Redact(r.Family), "destination": render.Redact(r.Destination), "table": render.Redact(r.Table), "interface": render.Redact(r.Interface), "gateway": render.Redact(r.Gateway), "action": render.Redact(r.Action), "reason": render.Redact(r.Reason)}
 }
+
 func rulesJSON(v []planner.TunPolicyRulePlan) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, r := range v {
@@ -276,12 +489,15 @@ func rulesJSON(v []planner.TunPolicyRulePlan) []map[string]any {
 	}
 	return out
 }
+
 func dnsPlanJSON(p planner.TunDNSPlan) map[string]any {
 	return map[string]any{"backend": render.Redact(p.Backend), "target_link": render.Redact(p.TargetLink), "servers": redactedStrings(p.Servers), "route_only_domain": "~.", "default_route": true, "action": render.Redact(p.Action), "reason": render.Redact(p.Reason), "rollback": render.Redact(p.Rollback), "rollback_steps": redactedStrings(p.RollbackSteps)}
 }
+
 func firewallPlanJSON(p planner.TunFirewallPlan) map[string]any {
 	return map[string]any{"backend": render.Redact(p.Backend), "family": render.Redact(p.Family), "table": render.Redact(p.Table), "table_action": render.Redact(p.TableAction), "chains": firewallChainsJSON(p.Chains), "rules": firewallRulesJSON(p.Rules), "kill_switch": killSwitchPlanJSON(p.KillSwitch), "reason": render.Redact(p.Reason), "rollback": render.Redact(p.Rollback), "rollback_steps": redactedStrings(p.RollbackSteps)}
 }
+
 func firewallChainsJSON(v []planner.TunFirewallChainPlan) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, chain := range v {
@@ -289,6 +505,7 @@ func firewallChainsJSON(v []planner.TunFirewallChainPlan) []map[string]any {
 	}
 	return out
 }
+
 func firewallRulesJSON(v []planner.TunFirewallRulePlan) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, rule := range v {
@@ -296,6 +513,7 @@ func firewallRulesJSON(v []planner.TunFirewallRulePlan) []map[string]any {
 	}
 	return out
 }
+
 func killSwitchPlanJSON(p planner.TunKillSwitchPlan) map[string]any {
 	return map[string]any{"policy": render.Redact(p.Policy), "action": render.Redact(p.Action), "scope": render.Redact(p.Scope), "recovery": render.Redact(p.Recovery), "limitations": redactedStrings(p.Limitations)}
 }
@@ -303,12 +521,15 @@ func killSwitchPlanJSON(p planner.TunKillSwitchPlan) map[string]any {
 func snapshotForJSON(s netsnapshot.Snapshot) map[string]any {
 	return map[string]any{"os": render.Redact(s.OS), "default_ipv4_route": routeForJSON(s.DefaultIPv4), "default_ipv6_route": routeForJSON(s.DefaultIPv6), "server_route": routeForJSON(s.ServerRoute), "dns": map[string]any{"mode": render.Redact(s.DNS.Mode), "systemd_resolved": findingForJSON(s.DNS.Resolved)}, "network_manager": map[string]any{"finding": findingForJSON(s.NetworkManager.Finding), "state": render.Redact(s.NetworkManager.State)}, "nftables": map[string]any{"availability": findingForJSON(s.Nftables.Availability), "podlaz_table": findingForJSON(s.Nftables.PodlazTable)}, "tun_devices": tunDevicesForJSON(s.TunDevices), "ipv4": findingForJSON(s.IPv4), "ipv6": findingForJSON(s.IPv6), "stale_resources": staleResourcesForJSON(s.StaleResources)}
 }
+
 func routeForJSON(r netsnapshot.Route) map[string]any {
 	return map[string]any{"status": string(r.Status), "family": render.Redact(r.Family), "destination": render.Redact(r.Destination), "interface": render.Redact(r.Interface), "gateway": render.Redact(r.Gateway), "raw": render.Redact(r.Raw), "detail": render.Redact(r.Detail)}
 }
+
 func findingForJSON(f netsnapshot.Finding) map[string]any {
 	return map[string]any{"status": string(f.Status), "summary": render.Redact(f.Summary), "detail": render.Redact(f.Detail)}
 }
+
 func tunDevicesForJSON(v []netsnapshot.TunDevice) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, d := range v {
@@ -316,6 +537,7 @@ func tunDevicesForJSON(v []netsnapshot.TunDevice) []map[string]any {
 	}
 	return out
 }
+
 func staleResourcesForJSON(v []netsnapshot.StaleResource) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, r := range v {
@@ -334,9 +556,11 @@ func routePlanLine(r planner.TunRoutePlan) string {
 	}
 	return render.Redact(strings.Join(parts, " "))
 }
+
 func ruleLine(r planner.TunPolicyRulePlan) string {
 	return render.Redact(fmt.Sprintf("%s priority %d %s lookup %s", r.Action, r.Priority, r.Selector, r.Table))
 }
+
 func renderRoute(r netsnapshot.Route) string {
 	if r.Status == netsnapshot.StatusDetected {
 		parts := []string{string(r.Status)}
@@ -353,12 +577,14 @@ func renderRoute(r netsnapshot.Route) string {
 	}
 	return renderStatusDetail(r.Status, r.Detail, r.Raw)
 }
+
 func renderDefaultInterface(r netsnapshot.Route) string {
 	if r.Status == netsnapshot.StatusDetected && r.Interface != "" {
 		return render.Redact(r.Interface)
 	}
 	return renderStatusDetail(r.Status, r.Detail, r.Raw)
 }
+
 func renderNetworkManager(nm netsnapshot.NetworkManager) string {
 	line := renderFinding(nm.Finding)
 	if nm.State != "" {
@@ -366,9 +592,11 @@ func renderNetworkManager(nm netsnapshot.NetworkManager) string {
 	}
 	return render.Redact(line)
 }
+
 func renderFinding(f netsnapshot.Finding) string {
 	return renderStatusDetail(f.Status, f.Summary, f.Detail)
 }
+
 func renderStatusDetail(status netsnapshot.Status, a, b string) string {
 	parts := []string{string(status)}
 	if a != "" {
@@ -379,6 +607,7 @@ func renderStatusDetail(status netsnapshot.Status, a, b string) string {
 	}
 	return render.Redact(strings.Join(parts, ": "))
 }
+
 func redactedStrings(values []string) []string {
 	out := make([]string, len(values))
 	for i, v := range values {
@@ -390,8 +619,8 @@ func redactedStrings(values []string) []string {
 func printPlanHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   podlaz plan --mode proxy-only <profile-id> [--json]
-  podlaz plan --mode tun <profile-id> [--json]
+  podlaz plan --mode tun <profile-id> [--json] [--verbose|-v] [--plain]
 
-Print a read-only connection plan. TUN planning snapshots feed a full-tunnel TUN/route/DNS/nftables kill-switch dry-run plan with server bypass, route-loop risk, warnings, and rollback steps.
+Print a read-only connection plan. TUN planning defaults to a compact human summary. Use --verbose for the full TUN/route/DNS/nftables kill-switch dry-run plan with server bypass, route-loop risk, warnings, and rollback steps. Use --plain for ASCII status markers in human output.
 `)
 }
