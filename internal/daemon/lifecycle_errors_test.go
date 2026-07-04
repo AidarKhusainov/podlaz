@@ -51,8 +51,10 @@ func TestDaemonAPIHTTPStatusCodeUsesStableCategories(t *testing.T) {
 		{name: "conflict", err: daemonAPIConflict(errors.New("plain conflict")), want: http.StatusConflict},
 		{name: "active conflict", err: activeConnectionError(), want: http.StatusConflict},
 		{name: "full-tunnel active race", err: errFullTunnelConnectionBecameActive, want: http.StatusConflict},
+		{name: "foreign DNS handoff blocker", err: &tunHandoffBlocker{Interface: "wg0", DNSDomain: defaultDNSRouteDomain, DNSServer: "198.51.100.53"}, want: http.StatusConflict},
 		{name: "access denial", err: daemonAPIAccessDenied(errors.New("plain access denial")), want: http.StatusForbidden},
 		{name: "service unavailable", err: daemonAPIServiceUnavailable(errors.New("plain unavailable")), want: http.StatusServiceUnavailable},
+		{name: "TUN verification", err: newTunVerificationError("dns", "DNS through the tunnel did not resolve example.com before timeout", errors.New("dns timeout")), want: http.StatusServiceUnavailable},
 		{name: "internal", err: daemonAPIInternal(errors.New("plain internal")), want: http.StatusInternalServerError},
 		{name: "uncategorized old conflict text is internal", err: errors.New("connection already active; run podlaz disconnect before connecting another profile"), want: http.StatusInternalServerError},
 	}
@@ -121,6 +123,28 @@ func TestConnectHandlerSentinelConflictDoesNotRequireActiveStatus(t *testing.T) 
 	}
 	if lifecycle.connectCalls != 1 {
 		t.Fatalf("connect lifecycle called %d time(s), want 1", lifecycle.connectCalls)
+	}
+}
+
+func TestConnectHandlerTunVerificationFailureIsServiceUnavailable(t *testing.T) {
+	lifecycle := &staticLifecycle{
+		connectErr: withTunRollbackCompleted(newTunVerificationError("dns", "DNS through the tunnel did not resolve example.com before timeout", errors.New("dns timeout"))),
+		status:     api.StatusResponse{Connection: "inactive"},
+	}
+	mux := http.NewServeMux()
+	registerLifecycleHandlers(mux, lifecycle)
+
+	req := httptest.NewRequest(http.MethodPost, api.ConnectPath, strings.NewReader(validConnectBody(planner.ModeTun)))
+	rr := httptest.NewRecorder()
+
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d: %s", rr.Code, http.StatusServiceUnavailable, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "Internal Server Error") || !strings.Contains(body, "Rollback completed") {
+		t.Fatalf("expected friendly non-500 verification body, got:\n%s", body)
 	}
 }
 
