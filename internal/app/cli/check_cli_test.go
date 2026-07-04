@@ -43,10 +43,10 @@ func TestRunCLICheckProductionPathStartsProbesAndCleansUpOwnedProxy(t *testing.T
 		daemonStatus: func(context.Context) (status.Report, error) {
 			return statusForState(), nil
 		},
-		connect: func(_ context.Context, got profile.Profile, mode string) (api.LifecycleResponse, error) {
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
 			connectCalled = true
-			if got.ID != p.ID || mode != planner.ModeProxyOnly {
-				t.Fatalf("unexpected connect request: profile=%s mode=%s", got.ID, mode)
+			if req.Profile.ID != p.ID || req.Mode != planner.ModeProxyOnly {
+				t.Fatalf("unexpected connect request: profile=%s mode=%s", req.Profile.ID, req.Mode)
 			}
 			connection = "active"
 			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeProxyOnly, ProfileID: p.ID, ProfileName: p.Name, Proxy: proxyLine, TUN: "disabled", Routes: "not modified", DNS: "not modified", Firewall: "not modified", RuntimeConfigPath: planner.DefaultRuntimeConfigPath}, nil
@@ -132,7 +132,7 @@ func TestRunCLICheckRejectsUnsupportedProfileBeforeDaemon(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"check", p.ID}, &out, options{
 		profileStorePath: storePath,
-		connect: func(context.Context, profile.Profile, string) (api.LifecycleResponse, error) {
+		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
 			calledDaemon = true
 			return api.LifecycleResponse{}, nil
 		},

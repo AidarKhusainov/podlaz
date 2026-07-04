@@ -27,6 +27,7 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .SY podlaz
 .B connect
 .OP --mode proxy-only|tun
+.OP --handoff=block|ask|stop-known|replace-podlaz
 .I profile-id
 .YS
 .SY podlaz
@@ -151,9 +152,23 @@ uses ASCII status words instead of symbolic status markers. JSON output keeps th
 stable machine-readable schema and is not changed by
 .BR --verbose .
 .TP
-.B connect [--mode proxy-only|tun] <profile-id>
+.B connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
 Start a daemon-managed connection. The default mode is
 .BR proxy-only .
+For TUN mode,
+.B --handoff
+selects an explicit handoff policy. The default
+.B block
+policy keeps host state unchanged and reports foreign ownership or stale
+podlaz-owned blockers before mutation.
+.B ask
+is rejected in daemon/non-interactive connect paths.
+.B stop-known
+attempts to stop manageable NetworkManager VPN connections and then rechecks
+host ownership.
+.B replace-podlaz
+performs controlled podlaz-owned disconnect/recover before starting the new TUN
+transaction. Unsupported handoff values fail before network mutation.
 .TP
 .B disconnect
 Stop the active daemon-managed connection. Safe to repeat.
@@ -202,6 +217,10 @@ Confirm destructive state removal or recovery execution.
 .TP
 .B --mode proxy-only|tun
 Select connection, planning, or validation mode.
+.TP
+.B --handoff=block|ask|stop-known|replace-podlaz
+For TUN connects, select the explicit handoff policy. Unsupported handoff values
+are rejected before network mutation.
 .TP
 .B --target <target-id>
 Select a service target for
@@ -283,7 +302,7 @@ podlaz profile import <share-uri>
 podlaz profile validate my-profile --mode tun
 podlaz plan --mode tun my-profile
 podlaz plan --mode tun my-profile --verbose
-podlaz connect --mode tun my-profile
+podlaz connect --mode tun --handoff=replace-podlaz my-profile
 podlaz status
 podlaz disconnect
 .EE

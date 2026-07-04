@@ -9,7 +9,15 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const resolvedStatusForTest = "Link 7 (podlaz0)\n    DNS Servers: 1.1.1.1\n    DNS Domain: ~."
+const resolvedStatusForTest = `Global
+       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported
+
+Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 1.1.1.1
+       DNS Servers: 1.1.1.1
+        DNS Domain: ~.`
 
 func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	runner := &recordingRunner{stdout: resolvedStatusForTest}
@@ -34,7 +42,7 @@ func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		{"resolvectl", "dns", "podlaz0", "1.1.1.1"},
 		{"resolvectl", "domain", "podlaz0", "~."},
 		{"resolvectl", "default-route", "podlaz0", "yes"},
-		{"resolvectl", "status", "podlaz0", "--no-pager"},
+		{"resolvectl", "status", "--no-pager"},
 		{"resolvectl", "revert", "podlaz0"},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
@@ -53,9 +61,36 @@ func TestResolvedDNSExecutorFailsClearlyWhenPlanIsBlocked(t *testing.T) {
 	}
 }
 
+func TestResolvedDNSExecutorVerifyRejectsForeignRouteOnlyDNSOwner(t *testing.T) {
+	plan := dnsPlanForTest()
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: resolvedStatusForTest + `
+
+Link 9 (wg0)
+    Current Scopes: DNS
+Current DNS Server: 198.51.100.53
+       DNS Servers: 198.51.100.53
+        DNS Domain: ~.`}}).Verify(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected verify failure when foreign route-only DNS owner remains")
+	}
+}
+
+func TestResolvedDNSExecutorVerifyRequiresDNSScope(t *testing.T) {
+	plan := dnsPlanForTest()
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+       DNS Servers: 1.1.1.1
+        DNS Domain: ~.`}}).Verify(context.Background(), plan)
+	if err == nil {
+		t.Fatal("expected verify failure when DNS current scope is missing")
+	}
+}
+
 func TestResolvedDNSExecutorVerifyRequiresRouteOnlyDomain(t *testing.T) {
 	plan := dnsPlanForTest()
-	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: "Link 7 (podlaz0)"}}).Verify(context.Background(), plan)
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+       DNS Servers: 1.1.1.1`}}).Verify(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected verify failure when route-only domain is missing")
 	}

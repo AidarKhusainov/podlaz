@@ -47,7 +47,7 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 			"/usr/sbin/ip -6 route show default":         {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
 			"/usr/sbin/ip route get 203.0.113.10":        {Stdout: "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000"},
 			"/usr/sbin/ip link show dev podlaz0":         {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
-			"/usr/bin/resolvectl status --no-pager":      {Stdout: "Global\n       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported"},
+			"/usr/bin/resolvectl status --no-pager":      {Stdout: resolvedStatusWithDesktopLinkForTest},
 			"/usr/bin/nmcli -t -f RUNNING,STATE general": {Stdout: "running:connected"},
 			"/usr/sbin/nft list tables":                  {Stdout: "table inet filter"},
 		},
@@ -67,11 +67,42 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 	if s.DNS.Mode != "systemd-resolved" || s.NetworkManager.State != "connected" {
 		t.Fatalf("unexpected DNS/NM snapshot: %#v %#v", s.DNS, s.NetworkManager)
 	}
+	if len(s.DNS.ResolvedLinks) != 1 || s.DNS.ResolvedLinks[0].Name != "wlp0s20f3" || !containsValue(s.DNS.ResolvedLinks[0].CurrentScopes, "DNS") {
+		t.Fatalf("expected parsed resolved link DNS scope, got %#v", s.DNS.ResolvedLinks)
+	}
 	if s.Nftables.Availability.Status != StatusDetected || s.Nftables.PodlazTable.Status != StatusMissing {
 		t.Fatalf("unexpected nftables snapshot: %#v", s.Nftables)
 	}
 	if len(s.StaleResources) != 0 {
 		t.Fatalf("expected no stale resources, got %#v", s.StaleResources)
+	}
+}
+
+func TestParseResolvedLinksDetectsRouteOnlyDefaultDNSScope(t *testing.T) {
+	links := ParseResolvedLinks(`Global
+       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported
+
+Link 3 (wlp0s20f3)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 192.0.2.53
+       DNS Servers: 192.0.2.53
+        DNS Domain: lan.example.invalid
+
+Link 9 (wg0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 198.51.100.53
+       DNS Servers: 198.51.100.53
+                    198.51.100.54
+        DNS Domain: ~.`)
+
+	if len(links) != 2 {
+		t.Fatalf("expected two parsed links, got %#v", links)
+	}
+	foreign := links[1]
+	if foreign.Name != "wg0" || foreign.CurrentDNSServer != "198.51.100.53" || !containsValue(foreign.DNSDomains, "~.") || !containsValue(foreign.DNSServers, "198.51.100.54") {
+		t.Fatalf("unexpected foreign DNS owner parse result: %#v", foreign)
 	}
 }
 
@@ -214,4 +245,23 @@ func TestFakeSnapshotsCoverCommonTopologies(t *testing.T) {
 			t.Fatalf("fake snapshot is incomplete: %#v", s)
 		}
 	}
+}
+
+const resolvedStatusWithDesktopLinkForTest = `Global
+       Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported
+
+Link 3 (wlp0s20f3)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Current DNS Server: 192.0.2.53
+       DNS Servers: 192.0.2.53
+        DNS Domain: lan.example.invalid`
+
+func containsValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

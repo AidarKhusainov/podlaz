@@ -17,6 +17,12 @@ import (
 var ErrDaemonUnavailable = errors.New("podlazd unavailable")
 var ErrDaemonPermissionDenied = errors.New("daemon socket permission denied")
 
+const (
+	defaultStatusTimeout       = 750 * time.Millisecond
+	daemonReadinessRetryWindow = 2 * time.Second
+	daemonReadinessRetryDelay  = 100 * time.Millisecond
+)
+
 type daemonUnavailableError struct {
 	detail           string
 	cause            error
@@ -54,10 +60,12 @@ func (c StatusClient) Status(ctx context.Context) (api.StatusResponse, error) {
 	}
 	timeout := c.Timeout
 	if timeout == 0 {
-		timeout = 750 * time.Millisecond
+		timeout = defaultStatusTimeout
 	}
 
-	status, err := c.statusViaSocket(ctx, socketPath, timeout)
+	status, err := retryDaemonSocketReadiness(ctx, func(attemptCtx context.Context) (api.StatusResponse, error) {
+		return c.statusViaSocket(attemptCtx, socketPath, timeout)
+	})
 	if err == nil {
 		return status, nil
 	}
@@ -108,6 +116,42 @@ func (c StatusClient) statusViaSocket(ctx context.Context, socketPath string, ti
 		return api.StatusResponse{}, fmt.Errorf("daemon status response was invalid: %w", err)
 	}
 	return status, nil
+}
+
+func retryDaemonSocketReadiness[T any](ctx context.Context, fn func(context.Context) (T, error)) (T, error) {
+	deadline := time.Now().Add(daemonReadinessRetryWindow)
+	var zero T
+	var lastErr error
+	for {
+		result, err := fn(ctx)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if !shouldRetryDaemonReadiness(err) || time.Now().After(deadline) {
+			return zero, lastErr
+		}
+		timer := time.NewTimer(daemonReadinessRetryDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return zero, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func shouldRetryDaemonReadiness(err error) bool {
+	var unavailable daemonUnavailableError
+	if !errors.As(err, &unavailable) {
+		return false
+	}
+	return errors.Is(unavailable.cause, os.ErrNotExist) || errors.Is(unavailable.cause, syscall.ECONNREFUSED)
 }
 
 func IsDaemonUnavailable(err error) bool { return errors.Is(err, ErrDaemonUnavailable) }

@@ -114,7 +114,7 @@ func TestFullTunnelTransactionRunnerFailureBranchesRollbackAppliedState(t *testi
 			configure: func(h *fullTunnelRunnerHarness) {
 				h.verifyCoreErr = errRunnerCoreStartupFailed
 			},
-			wantErr:             "rolled back applied",
+			wantErr:             "rollback completed",
 			wantErrIs:           errRunnerCoreStartupFailed,
 			wantExecutorCalls:   "apply,verify,rollback",
 			wantCoreStarted:     1,
@@ -168,7 +168,7 @@ func TestFullTunnelTransactionRunnerFailureBranchesRollbackAppliedState(t *testi
 			configure: func(h *fullTunnelRunnerHarness) {
 				h.commitErr = errFullTunnelCoreExitedBeforeCommit
 			},
-			wantErr:             "rolled back applied podlaz-owned networking state",
+			wantErr:             "rollback completed",
 			wantErrIs:           errFullTunnelCoreExitedBeforeCommit,
 			wantExecutorCalls:   "apply,verify,rollback",
 			wantCoreStarted:     1,
@@ -229,6 +229,23 @@ func TestFullTunnelTransactionRunnerFailureBranchesRollbackAppliedState(t *testi
 			}
 		})
 	}
+}
+
+func TestFullTunnelTransactionRunnerConnectivityFailureMarksRollbackCompleted(t *testing.T) {
+	h := newFullTunnelRunnerHarness(t)
+	h.verifyConnectivityErr = newTunVerificationError("dns", "DNS through the tunnel did not resolve example.com before timeout", errRunnerConnectivityFailed)
+
+	_, err := h.runner().run(context.Background())
+	if err == nil {
+		t.Fatal("expected connectivity verification failure")
+	}
+	if !strings.Contains(err.Error(), "Rollback completed; no podlaz-owned network changes were left applied.") {
+		t.Fatalf("expected friendly rollback completion marker, got:\n%s", err.Error())
+	}
+	if !errors.Is(err, errRunnerConnectivityFailed) {
+		t.Fatalf("expected wrapped connectivity cause, got %v", err)
+	}
+	h.requireTransactionState(t, txstate.TransactionRolledBack, false)
 }
 
 type fullTunnelRunnerHarness struct {

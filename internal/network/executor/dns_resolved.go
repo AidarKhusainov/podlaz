@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 const (
@@ -156,25 +157,70 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 	return Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}, nil
 }
 
-// Verify checks that the target link exposes planned DNS servers and route-only domain after apply.
+// Verify checks that the target link exposes DNS scope, planned DNS servers, and
+// the route-only domain after apply.
 func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
 	if err := validateDNSPlan(plan); err != nil {
 		return err
 	}
 	link := strings.TrimSpace(plan.TargetLink)
-	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", link, "--no-pager")
+	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
 	if err != nil {
 		return fmt.Errorf("verify systemd-resolved DNS for %s: %w", link, err)
 	}
+	links := netsnapshot.ParseResolvedLinks(result.Stdout)
+	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
+		return fmt.Errorf("verify systemd-resolved DNS for %s: foreign route-only DNS owner %s still has %s", link, foreign.Name, resolvedRouteOnlyDomain)
+	}
+	resolvedLink, ok := findResolvedLink(links, link)
+	if !ok {
+		return fmt.Errorf("verify systemd-resolved DNS for %s: link status not found", link)
+	}
+	if !containsDNSValue(resolvedLink.CurrentScopes, "DNS") {
+		return fmt.Errorf("verify systemd-resolved DNS for %s: Current Scopes does not include DNS", link)
+	}
 	for _, server := range plan.Servers {
-		if !strings.Contains(result.Stdout, server) {
+		if !containsDNSValue(resolvedLink.DNSServers, server) {
 			return fmt.Errorf("verify systemd-resolved DNS for %s: DNS server %s not found", link, server)
 		}
 	}
-	if !strings.Contains(result.Stdout, resolvedRouteOnlyDomain) {
+	if !containsDNSValue(resolvedLink.DNSDomains, resolvedRouteOnlyDomain) {
 		return fmt.Errorf("verify systemd-resolved DNS for %s: route-only domain %s not found", link, resolvedRouteOnlyDomain)
 	}
 	return nil
+}
+
+func findForeignRouteOnlyDNSOwner(links []netsnapshot.ResolvedLink, targetLink string) (netsnapshot.ResolvedLink, bool) {
+	for _, link := range links {
+		if strings.TrimSpace(link.Name) == "" || link.Name == targetLink {
+			continue
+		}
+		if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
+			continue
+		}
+		if containsDNSValue(link.CurrentScopes, "DNS") || containsDNSValue(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
+			return link, true
+		}
+	}
+	return netsnapshot.ResolvedLink{}, false
+}
+
+func findResolvedLink(links []netsnapshot.ResolvedLink, name string) (netsnapshot.ResolvedLink, bool) {
+	for _, link := range links {
+		if link.Name == name {
+			return link, true
+		}
+	}
+	return netsnapshot.ResolvedLink{}, false
+}
+
+func containsDNSValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Rollback reverts all systemd-resolved per-link state for the podlaz link.

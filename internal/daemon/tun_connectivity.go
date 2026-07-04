@@ -43,12 +43,12 @@ func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCo
 	if err := runProbe(ctx, routeProbeTimeout, func(probeCtx context.Context) error {
 		return lookupTunRouteForProbe(probeCtx, probeHost, plan.TunDevice.Name)
 	}); err != nil {
-		return fmt.Errorf("full-tunnel route lookup for %s failed: %w", probeHost, err)
+		return newTunVerificationError("route", fmt.Sprintf("Full-tunnel route lookup for %s did not use the planned TUN path", probeHost), err)
 	}
 	if err := runProbe(ctx, tcpProbeTimeout, func(probeCtx context.Context) error {
 		return dialTunProbeTarget(probeCtx, probeHost, defaultTunProbePort)
 	}); err != nil {
-		return fmt.Errorf("basic full-tunnel connectivity probe to %s:%d failed: %w", probeHost, defaultTunProbePort, err)
+		return newTunVerificationError("tcp", fmt.Sprintf("Basic full-tunnel connectivity probe to %s:%d failed", probeHost, defaultTunProbePort), err)
 	}
 	var resolvedIP string
 	if err := runProbe(ctx, dnsProbeTimeout, func(probeCtx context.Context) error {
@@ -56,12 +56,12 @@ func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCo
 		resolvedIP = ip
 		return err
 	}); err != nil {
-		return fmt.Errorf("full-tunnel DNS probe for %s failed: %w", defaultTunDNSProbeName, err)
+		return newTunVerificationError("dns", fmt.Sprintf("DNS through the tunnel did not resolve %s before timeout", defaultTunDNSProbeName), err)
 	}
 	if err := runProbe(ctx, routeProbeTimeout, func(probeCtx context.Context) error {
 		return lookupTunRouteForProbe(probeCtx, resolvedIP, plan.TunDevice.Name)
 	}); err != nil {
-		return fmt.Errorf("full-tunnel route lookup for DNS result %s (%s) failed: %w", defaultTunDNSProbeName, resolvedIP, err)
+		return newTunVerificationError("dns-route", fmt.Sprintf("Full-tunnel route lookup for %s DNS result %s did not use the planned TUN path", defaultTunDNSProbeName, resolvedIP), err)
 	}
 	return nil
 }
@@ -107,14 +107,14 @@ func defaultDialTunProbeTarget(ctx context.Context, host string, port uint16) er
 func defaultResolveTunDNSName(ctx context.Context, name string) (string, error) {
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, name)
 	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w%s", name, err, tunDNSDiagnostics(name))
+		return "", fmt.Errorf("resolve %s: %w", name, err)
 	}
 	for _, ip := range ips {
 		if ipv4 := ip.IP.To4(); ipv4 != nil {
 			return ipv4.String(), nil
 		}
 	}
-	return "", fmt.Errorf("resolve %s returned no IPv4 address: %v%s", name, ips, tunDNSDiagnostics(name))
+	return "", fmt.Errorf("resolve %s returned no IPv4 address: %v", name, ips)
 }
 
 func containsAdjacentRouteFields(fields []string, key, value string) bool {

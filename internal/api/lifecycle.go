@@ -11,11 +11,17 @@ const (
 	DisconnectPath     = "/v1/disconnect"
 	XrayPathEnv        = "PODLAZ_XRAY_PATH"
 	DefaultXrayCommand = "xray"
+
+	HandoffBlock         = "block"
+	HandoffAsk           = "ask"
+	HandoffStopKnown     = "stop-known"
+	HandoffReplacePodlaz = "replace-podlaz"
 )
 
-// ProfileSnapshot is the daemon API's normalized profile payload. It mirrors the
-// profile domain model without making the API contract package depend on user
-// state storage internals.
+func HandoffPolicies() []string {
+	return []string{HandoffBlock, HandoffAsk, HandoffStopKnown, HandoffReplacePodlaz}
+}
+
 type ProfileSnapshot struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
@@ -40,13 +46,12 @@ type ProfileSnapshot struct {
 	RealitySpiderX   string `json:"reality_spider_x,omitempty"`
 }
 
-// ConnectRequest asks the daemon to start a supervised proxy-only core process.
 type ConnectRequest struct {
 	Mode    string          `json:"mode"`
 	Profile ProfileSnapshot `json:"profile"`
+	Handoff string          `json:"handoff,omitempty"`
 }
 
-// LifecycleResponse is returned by connect and disconnect daemon operations.
 type LifecycleResponse struct {
 	Connection        string   `json:"connection"`
 	Mode              string   `json:"mode,omitempty"`
@@ -78,6 +83,9 @@ func ValidateConnectRequest(r ConnectRequest) error {
 	if r.Mode == "" {
 		return errors.New("missing mode field")
 	}
+	if err := ValidateHandoffPolicy(r.Handoff); err != nil {
+		return err
+	}
 	if r.Profile.ID == "" {
 		return errors.New("missing profile.id field")
 	}
@@ -100,6 +108,32 @@ func ValidateConnectRequest(r ConnectRequest) error {
 		return errors.New("missing profile.port field")
 	}
 	return nil
+}
+
+func NormalizeHandoffPolicy(policy string) string {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "":
+		return HandoffBlock
+	case HandoffBlock:
+		return HandoffBlock
+	case HandoffAsk:
+		return HandoffAsk
+	case HandoffStopKnown:
+		return HandoffStopKnown
+	case HandoffReplacePodlaz:
+		return HandoffReplacePodlaz
+	default:
+		return strings.ToLower(strings.TrimSpace(policy))
+	}
+}
+
+func ValidateHandoffPolicy(policy string) error {
+	switch NormalizeHandoffPolicy(policy) {
+	case HandoffBlock, HandoffAsk, HandoffStopKnown, HandoffReplacePodlaz:
+		return nil
+	default:
+		return fmt.Errorf("unsupported handoff policy %q", policy)
+	}
 }
 
 func LifecycleHTTPError(operation string, status string, body string) error {

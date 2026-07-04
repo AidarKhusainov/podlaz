@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestCompletionSubscriptionDeleteCompletesCommandIDAndFlags(t *testing.T) {
@@ -29,12 +31,7 @@ func TestCompletionSubscriptionDeleteCompletesCommandIDAndFlags(t *testing.T) {
 func TestCompletionProfileValidateCompletesProfileIDsFlagsAndModeValues(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#Russia%201"
-	var importOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "import", uri}, &importOut, opts); err != nil {
-		t.Fatalf("profile import failed: %v", err)
-	}
-	profileID := importedProfileIDFromOutput(t, importOut.String())
+	profileID := storeCompletionProfile(t, opts, "russia-1", "Russia 1")
 
 	commands := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "profile", ""}}, opts)
 	assertCompletionCandidate(t, commands, "validate")
@@ -55,6 +52,17 @@ func TestCompletionProfileValidateCompletesProfileIDsFlagsAndModeValues(t *testi
 	assertCompletionCandidate(t, inlineModeValues, "--mode=tun")
 }
 
+func TestCompletionConnectCompletesHandoffPolicyValues(t *testing.T) {
+	flags := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "connect", "--"}}, options{})
+	assertCompletionCandidate(t, flags, "--handoff")
+
+	values := completepodlaz(completionRequest{Shell: "bash", Cursor: 3, Words: []string{"podlaz", "connect", "--handoff", ""}}, options{})
+	assertCompletionCandidate(t, values, "block")
+
+	inlineValues := completepodlaz(completionRequest{Shell: "zsh", Cursor: 2, Words: []string{"podlaz", "connect", "--handoff="}}, options{})
+	assertCompletionCandidate(t, inlineValues, "--handoff=block")
+}
+
 func TestCompletionFishScriptIncludesProfileValidateStaticFlags(t *testing.T) {
 	var out bytes.Buffer
 	printFishCompletion(&out)
@@ -72,15 +80,25 @@ func TestCompletionFishScriptIncludesProfileValidateStaticFlags(t *testing.T) {
 func TestCompletionProfileIDsUseDisplayNamesAsDescriptions(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#Russia%201"
-	var importOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "import", uri}, &importOut, opts); err != nil {
-		t.Fatalf("profile import failed: %v", err)
-	}
-	profileID := importedProfileIDFromOutput(t, importOut.String())
+	profileID := storeCompletionProfile(t, opts, "russia-1", "Russia 1")
 
 	ids := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "connect", ""}}, opts)
 	assertCompletionCandidateDescription(t, ids, profileID, "Russia 1")
+}
+
+func storeCompletionProfile(t *testing.T, opts options, id string, name string) string {
+	t.Helper()
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := testConnectProfile()
+	p.ID = id
+	p.Name = name
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	return p.ID
 }
 
 func assertCompletionCandidate(t *testing.T, result completionResult, want string) {
