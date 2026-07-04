@@ -111,10 +111,7 @@ func parseConnectArgs(args []string) (connectArgs, error) {
 		return parsed, usageError("unsupported connect mode %q", parsed.mode)
 	}
 	if err := api.ValidateHandoffPolicy(parsed.handoff); err != nil {
-		return parsed, usageError(err.Error())
-	}
-	if parsed.handoff != api.HandoffBlock && parsed.mode != planner.ModeTun {
-		return parsed, usageError("connect --handoff is only supported with --mode tun")
+		return parsed, usageError("%s", err.Error())
 	}
 	if parsed.profileRef == "" {
 		return parsed, usageError("connect requires a profile id")
@@ -225,12 +222,12 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
+  podlaz connect [--mode proxy-only|tun] [--handoff=block] <profile-id>
 
 Start the stored profile through the daemon-managed lifecycle. The default mode
 is proxy-only. TUN mode requires daemon networking privileges. The TUN handoff
-policy defaults to block and refuses foreign VPN/DNS owners before mutating host
-networking.
+policy currently supports only block and refuses foreign VPN/DNS owners before
+mutating host networking.
 `)
 }
 
