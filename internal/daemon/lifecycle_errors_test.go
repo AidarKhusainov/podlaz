@@ -51,7 +51,7 @@ func TestDaemonAPIHTTPStatusCodeUsesStableCategories(t *testing.T) {
 		{name: "conflict", err: daemonAPIConflict(errors.New("plain conflict")), want: http.StatusConflict},
 		{name: "active conflict", err: activeConnectionError(), want: http.StatusConflict},
 		{name: "full-tunnel active race", err: errFullTunnelConnectionBecameActive, want: http.StatusConflict},
-		{name: "foreign DNS handoff blocker", err: &tunHandoffBlocker{Interface: "wg0", DNSDomain: defaultDNSRouteDomain, DNSServer: "198.51.100.53"}, want: http.StatusConflict},
+		{name: "foreign handoff blocker", err: &tunHandoffBlocker{Policy: api.HandoffBlock, Conflicts: []string{"foreign route-only DNS owner interface=wg0 domain=~. server=198.51.100.53"}}, want: http.StatusConflict},
 		{name: "stale podlaz state blocker", err: &tunStalePodlazStateBlocker{Resources: []string{"tun-device podlaz0"}}, want: http.StatusConflict},
 		{name: "access denial", err: daemonAPIAccessDenied(errors.New("plain access denial")), want: http.StatusForbidden},
 		{name: "service unavailable", err: daemonAPIServiceUnavailable(errors.New("plain unavailable")), want: http.StatusServiceUnavailable},
@@ -88,11 +88,7 @@ func TestConnectHandlerConflictRaceFromLifecycleConnectRemainsConflict(t *testin
 }
 
 func TestConnectHandlerGenericErrorAfterStartedStatusRemainsInternal(t *testing.T) {
-	lifecycle := &staticLifecycle{
-		connectErr:         errors.New("start side effect failed"),
-		status:             api.StatusResponse{Connection: "inactive"},
-		statusAfterConnect: api.StatusResponse{Connection: "active"},
-	}
+	lifecycle := &staticLifecycle{connectErr: errors.New("start side effect failed"), status: api.StatusResponse{Connection: "inactive"}, statusAfterConnect: api.StatusResponse{Connection: "active"}}
 	mux := http.NewServeMux()
 	registerLifecycleHandlers(mux, lifecycle)
 
@@ -128,10 +124,7 @@ func TestConnectHandlerSentinelConflictDoesNotRequireActiveStatus(t *testing.T) 
 }
 
 func TestConnectHandlerTunVerificationFailureIsServiceUnavailable(t *testing.T) {
-	lifecycle := &staticLifecycle{
-		connectErr: withTunRollbackCompleted(newTunVerificationError("dns", "DNS through the tunnel did not resolve example.com before timeout", errors.New("dns timeout"))),
-		status:     api.StatusResponse{Connection: "inactive"},
-	}
+	lifecycle := &staticLifecycle{connectErr: withTunRollbackCompleted(newTunVerificationError("dns", "DNS through the tunnel did not resolve example.com before timeout", errors.New("dns timeout"))), status: api.StatusResponse{Connection: "inactive"}}
 	mux := http.NewServeMux()
 	registerLifecycleHandlers(mux, lifecycle)
 
@@ -155,26 +148,17 @@ func TestXrayManagerActiveCoreConflictUsesSentinelBeforeStatusActive(t *testing.
 	t.Cleanup(func() { currentEUID = originalCurrentEUID })
 
 	fakeXray := writeFakeXray(t, "#!/bin/sh\nexit 0\n")
-	tests := []struct {
-		name string
-		mode string
-	}{
-		{name: "proxy-only", mode: planner.ModeProxyOnly},
-		{name: "tun", mode: planner.ModeTun},
-	}
-
+	tests := []struct{ name, mode string }{{name: "proxy-only", mode: planner.ModeProxyOnly}, {name: "tun", mode: planner.ModeTun}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			manager := &XrayManager{RuntimeDir: t.TempDir(), XrayPath: fakeXray}
 			manager.cmd = &exec.Cmd{}
-
 			req := connectRequestForTest()
 			req.Mode = tt.mode
 			_, err := manager.Connect(context.Background(), req)
 			if !errors.Is(err, errConnectionAlreadyActive) {
 				t.Fatalf("Connect error = %v, want errConnectionAlreadyActive", err)
 			}
-
 			if status := manager.Status(context.Background()); status.Connection != "inactive" {
 				t.Fatalf("status connection = %q, want inactive", status.Connection)
 			}
