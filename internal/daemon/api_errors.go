@@ -46,11 +46,25 @@ func categorizeDaemonAPIError(category daemonAPIErrorCategory, err error) error 
 	return &daemonAPIError{category: category, err: err}
 }
 
-func daemonAPIBadRequest(err error) error { return categorizeDaemonAPIError(daemonAPIErrorBadRequest, err) }
-func daemonAPIConflict(err error) error { return categorizeDaemonAPIError(daemonAPIErrorConflict, err) }
-func daemonAPIAccessDenied(err error) error { return categorizeDaemonAPIError(daemonAPIErrorAccessDenied, err) }
-func daemonAPIServiceUnavailable(err error) error { return categorizeDaemonAPIError(daemonAPIErrorServiceUnavailable, err) }
-func daemonAPIInternal(err error) error { return categorizeDaemonAPIError(daemonAPIErrorInternal, err) }
+func daemonAPIBadRequest(err error) error {
+	return categorizeDaemonAPIError(daemonAPIErrorBadRequest, err)
+}
+
+func daemonAPIConflict(err error) error {
+	return categorizeDaemonAPIError(daemonAPIErrorConflict, err)
+}
+
+func daemonAPIAccessDenied(err error) error {
+	return categorizeDaemonAPIError(daemonAPIErrorAccessDenied, err)
+}
+
+func daemonAPIServiceUnavailable(err error) error {
+	return categorizeDaemonAPIError(daemonAPIErrorServiceUnavailable, err)
+}
+
+func daemonAPIInternal(err error) error {
+	return categorizeDaemonAPIError(daemonAPIErrorInternal, err)
+}
 
 func daemonAPIHTTPStatusCode(err error) int {
 	if profile.IsValidationError(err) {
