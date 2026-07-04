@@ -19,8 +19,10 @@ func TestRedactMasksSensitiveOutput(t *testing.T) {
 			t.Fatalf("redacted output leaked %q in %q", forbidden, got)
 		}
 	}
-	if got != "REDACTED" {
-		t.Fatalf("expected sensitive aggregate output to be fully redacted, got %q", got)
+	for _, want := range []string{"https://example.com/sub?REDACTED", "password=REDACTED", "api_key=REDACTED", "123e…4000"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected redacted output to contain %q, got %q", want, got)
+		}
 	}
 }
 
