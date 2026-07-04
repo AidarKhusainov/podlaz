@@ -19,10 +19,15 @@ func TestRedactMasksSensitiveOutput(t *testing.T) {
 			t.Fatalf("redacted output leaked %q in %q", forbidden, got)
 		}
 	}
-	for _, want := range []string{"https://example.com/sub?REDACTED", "password=REDACTED", "api_key=REDACTED", "123e…4000"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected redacted output to contain %q, got %q", want, got)
-		}
+	if got != "REDACTED" {
+		t.Fatalf("expected sensitive aggregate output to be fully redacted, got %q", got)
+	}
+}
+
+func TestRedactShortensUUIDs(t *testing.T) {
+	got := Redact("profile=123e4567-e89b-12d3-a456-426614174000")
+	if got != "profile=123e…4000" {
+		t.Fatalf("expected UUID to be shortened, got %q", got)
 	}
 }
 
