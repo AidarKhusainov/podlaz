@@ -544,12 +544,7 @@ func redactedProfileUserIdentity(p profile.Profile) string {
 	if strings.TrimSpace(p.UserIdentity) == "" {
 		return ""
 	}
-	switch strings.ToLower(p.Protocol) {
-	case "vless":
-		return render.Redact(p.UserIdentity)
-	default:
-		return "REDACTED"
-	}
+	return render.Redact(p.UserIdentity)
 }
 
 func printOptionalProfileField(w io.Writer, label string, value string) {
