@@ -263,9 +263,105 @@ func dns(ctx context.Context, runner CommandRunner) DNS {
 	}
 	result, err := runCommand(ctx, runner, path, "status", "--no-pager")
 	if commandSucceeded(result, err) {
-		return DNS{Mode: "systemd-resolved", Resolved: findingWithDetail(StatusDetected, "systemd-resolved status available", firstNonEmptyLine(result.Stdout))}
+		return DNS{
+			Mode:          "systemd-resolved",
+			Resolved:      findingWithDetail(StatusDetected, "systemd-resolved status available", firstNonEmptyLine(result.Stdout)),
+			ResolvedLinks: ParseResolvedLinks(result.Stdout),
+		}
 	}
 	return DNS{Mode: "unknown", Resolved: findingWithDetail(StatusUnknown, "systemd-resolved status unavailable", commandFailureMessage(result, err))}
+}
+
+func ParseResolvedLinks(output string) []ResolvedLink {
+	var links []ResolvedLink
+	var current *ResolvedLink
+	lastKey := ""
+	flush := func() {
+		if current != nil && strings.TrimSpace(current.Name) != "" {
+			links = append(links, *current)
+		}
+	}
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if index, name, ok := parseResolvedLinkHeader(line); ok {
+			flush()
+			current = &ResolvedLink{Index: index, Name: name}
+			lastKey = ""
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			lastKey = strings.TrimSpace(key)
+			applyResolvedLinkField(current, lastKey, strings.TrimSpace(value))
+			continue
+		}
+		if lastKey != "" {
+			applyResolvedLinkField(current, lastKey, line)
+		}
+	}
+	flush()
+	return links
+}
+
+func parseResolvedLinkHeader(line string) (index string, name string, ok bool) {
+	if !strings.HasPrefix(line, "Link ") {
+		return "", "", false
+	}
+	open := strings.LastIndex(line, "(")
+	close := strings.LastIndex(line, ")")
+	if open < 0 || close <= open {
+		return "", "", false
+	}
+	prefix := strings.TrimSpace(strings.TrimPrefix(line[:open], "Link "))
+	return prefix, strings.TrimSpace(line[open+1 : close]), true
+}
+
+func applyResolvedLinkField(link *ResolvedLink, key, value string) {
+	if link == nil || strings.TrimSpace(value) == "" {
+		return
+	}
+	switch strings.TrimSpace(key) {
+	case "Current Scopes":
+		link.CurrentScopes = appendUniqueTokens(link.CurrentScopes, value)
+	case "Protocols":
+		link.Protocols = appendUniqueTokens(link.Protocols, value)
+	case "Current DNS Server":
+		link.CurrentDNSServer = firstField(value)
+	case "DNS Servers":
+		link.DNSServers = appendUniqueTokens(link.DNSServers, value)
+	case "DNS Domain":
+		link.DNSDomains = appendUniqueTokens(link.DNSDomains, value)
+	}
+}
+
+func appendUniqueTokens(values []string, text string) []string {
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, token := range strings.Fields(text) {
+		token = strings.TrimSpace(token)
+		if token == "" || seen[token] {
+			continue
+		}
+		seen[token] = true
+		values = append(values, token)
+	}
+	return values
+}
+
+func firstField(value string) string {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func networkManager(ctx context.Context, runner CommandRunner) NetworkManager {
@@ -274,11 +370,11 @@ func networkManager(ctx context.Context, runner CommandRunner) NetworkManager {
 		return NetworkManager{Finding: finding(StatusMissing, "nmcli not found")}
 	}
 	result, err := runCommand(ctx, runner, path, "-t", "-f", "RUNNING,STATE", "general")
-	if commandSucceeded(result, err) {
-		line := firstNonEmptyLine(result.Stdout)
-		return NetworkManager{Finding: findingWithDetail(StatusDetected, "NetworkManager state available", line), State: parseNMState(line)}
+	if !commandSucceeded(result, err) {
+		return NetworkManager{Finding: findingWithDetail(StatusUnknown, "NetworkManager state unavailable", commandFailureMessage(result, err))}
 	}
-	return NetworkManager{Finding: findingWithDetail(StatusUnknown, "NetworkManager state unavailable", commandFailureMessage(result, err))}
+	line := firstNonEmptyLine(result.Stdout)
+	return NetworkManager{Finding: findingWithDetail(StatusDetected, "NetworkManager state available", line), State: parseNMState(line)}
 }
 
 func parseNMState(line string) string {
