@@ -33,7 +33,13 @@ grep -Fx "built: ${built}" /tmp/plz-version.txt
 test -x /usr/bin/podlaz
 test -x /usr/bin/plz
 test -x /usr/bin/podlazd
+test -x /usr/lib/podlaz/xray
+test -x /usr/lib/podlaz/tun2socks
+test -s /usr/share/doc/podlaz/third-party/xray-LICENSE
+test -s /usr/share/doc/podlaz/third-party/tun2socks-LICENSE
 test -f /usr/lib/systemd/system/podlazd.service
+grep -Fx 'Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray' /usr/lib/systemd/system/podlazd.service
+grep -Fx 'Environment=PODLAZ_TUN2SOCKS_PATH=/usr/lib/podlaz/tun2socks' /usr/lib/systemd/system/podlazd.service
 test -f /usr/lib/sysusers.d/podlaz.conf
 test -f /usr/share/bash-completion/completions/podlaz
 test -f /usr/share/bash-completion/completions/plz
@@ -94,6 +100,10 @@ grep -Fx "podlaz version ${version}" /tmp/podlaz-version-reinstall.txt
 grep -Fx "commit: ${commit}" /tmp/podlaz-version-reinstall.txt
 grep -Fx "built: ${built}" /tmp/podlaz-version-reinstall.txt
 
+test -x /usr/lib/podlaz/xray
+test -x /usr/lib/podlaz/tun2socks
+test -s /usr/share/doc/podlaz/third-party/xray-LICENSE
+test -s /usr/share/doc/podlaz/third-party/tun2socks-LICENSE
 test -f /usr/share/bash-completion/completions/podlaz
 test -f /usr/share/bash-completion/completions/plz
 test -f /usr/share/zsh/vendor-completions/_podlaz
@@ -118,5 +128,7 @@ fi
 test ! -e /usr/bin/podlaz
 test ! -e /usr/bin/plz
 test ! -e /usr/bin/podlazd
+test ! -e /usr/lib/podlaz/xray
+test ! -e /usr/lib/podlaz/tun2socks
 test ! -e /usr/lib/systemd/system/podlazd.service
 test ! -e /usr/lib/sysusers.d/podlaz.conf
