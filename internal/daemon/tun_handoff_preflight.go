@@ -30,7 +30,7 @@ Detected:
   DNS server: %s
 
 podlaz did not change network state.
-Stop the other VPN first, or run with an explicit handoff option.
+Stop the other VPN first, then retry.
 
 Run:
   plz doctor
@@ -49,12 +49,7 @@ func preflightTunOwnership(s netsnapshot.Snapshot, handoff string) error {
 		DNSServer: firstNonEmpty(foreign.CurrentDNSServer, firstOrDefault(foreign.DNSServers, "")),
 		Policy:    policy,
 	}
-	switch policy {
-	case api.HandoffBlock, api.HandoffAsk, api.HandoffStopKnown, api.HandoffReplacePodlaz:
-		return blocker
-	default:
-		return blocker
-	}
+	return blocker
 }
 
 func isTunHandoffBlocker(err error) bool {
