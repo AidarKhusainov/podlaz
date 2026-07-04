@@ -58,89 +58,153 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	r.setDefaults()
 
 	result, err := r.runNetworkTransaction(ctx, r.runtimeDir, r.profile, r.plan, r.executor, r.now)
-	if err != nil { return xrayState{}, err }
-	if err := maybePauseForE2ETunHook(ctx, result.TransactionID); err != nil {
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil {
-			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after E2E hook failure: %w", rollbackErr))
-		}
+	if err != nil {
 		return xrayState{}, err
+	}
+	transactionID := result.TransactionID
+
+	if err := maybePauseForE2ETunHook(ctx, transactionID); err != nil {
+		return xrayState{}, r.rollbackApplied(ctx, transactionID, "E2E hook failure", err)
 	}
 
 	core, err := r.startCore(ctx)
 	if err != nil {
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil {
-			if errors.Is(err, errFullTunnelConnectionBecameActive) { return xrayState{}, errors.Join(err, rollbackErr) }
+		if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+			if errors.Is(err, errFullTunnelConnectionBecameActive) {
+				return xrayState{}, errors.Join(err, rollbackErr)
+			}
 			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray start failure: %w", rollbackErr))
 		}
-		if errors.Is(err, errFullTunnelConnectionBecameActive) { return xrayState{}, fullTunnelSemanticError{msg: "connection already active; rolled back newly applied TUN transaction", err: errFullTunnelConnectionBecameActive} }
+		if errors.Is(err, errFullTunnelConnectionBecameActive) {
+			return xrayState{}, fullTunnelSemanticError{msg: "connection already active; rolled back newly applied TUN transaction", err: errFullTunnelConnectionBecameActive}
+		}
 		return xrayState{}, err
 	}
 
-	if err := r.saveCoreMetadata(result.Store, result.TransactionID, r.corePlan.RuntimeConfigPath, core.pid, transactionNow(result.Store)); err != nil {
+	if err := r.saveCoreMetadata(result.Store, transactionID, r.corePlan.RuntimeConfigPath, core.pid, transactionNow(result.Store)); err != nil {
 		_ = r.stopCore(core)
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after core metadata failure: %w", rollbackErr)) }
-		return xrayState{}, err
+		return xrayState{}, r.rollbackApplied(ctx, transactionID, "core metadata failure", err)
 	}
 	if err := r.verifyCoreStarted(core.done); err != nil {
 		_ = r.stopCore(core)
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray startup verification failure: %w", rollbackErr)) }
+		if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after Xray startup verification failure: %w", rollbackErr))
+		}
 		return xrayState{}, fmt.Errorf("%w; rollback completed", err)
 	}
 
 	adapter, err := r.startAdapter(ctx, tunAdapterRuntimePlan{TunDevice: r.plan.TunDevice.Name, SOCKSEndpoint: r.corePlan.SOCKSEndpoint})
 	if err != nil {
 		_ = r.stopCore(core)
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after TUN adapter startup failure: %w", rollbackErr)) }
-		return xrayState{}, err
+		return xrayState{}, r.rollbackApplied(ctx, transactionID, "TUN adapter startup failure", err)
 	}
-	if err := r.saveAdapterMetadata(result.Store, result.TransactionID, adapter.pid, transactionNow(result.Store)); err != nil {
-		_ = r.stopAdapter(); _ = r.stopCore(core)
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after TUN adapter metadata failure: %w", rollbackErr)) }
-		return xrayState{}, err
+	if err := r.saveAdapterMetadata(result.Store, transactionID, adapter.pid, transactionNow(result.Store)); err != nil {
+		_ = r.stopAdapter()
+		_ = r.stopCore(core)
+		return xrayState{}, r.rollbackApplied(ctx, transactionID, "TUN adapter metadata failure", err)
 	}
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
-		_ = r.stopAdapter(); _ = r.stopCore(core)
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr)) }
+		_ = r.stopAdapter()
+		_ = r.stopCore(core)
+		if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr))
+		}
 		return xrayState{}, withTunRollbackCompleted(err)
 	}
 
-	active := fullTunnelActiveState(r.profile, r.plan, r.corePlan, result.TransactionID)
-	if err := r.commitActiveState(result.Store, result.TransactionID, core, active); err != nil {
+	active := fullTunnelActiveState(r.profile, r.plan, r.corePlan, transactionID)
+	if err := r.commitActiveState(result.Store, transactionID, core, active); err != nil {
 		if errors.Is(err, errFullTunnelCoreExitedBeforeCommit) {
 			_ = r.stopAdapter()
-			if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, rollbackErr) }
+			if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+				return xrayState{}, errors.Join(err, rollbackErr)
+			}
 			return xrayState{}, fullTunnelSemanticError{msg: "Xray exited before TUN transaction commit; rollback completed", err: errFullTunnelCoreExitedBeforeCommit}
 		}
-		_ = r.stopAdapter(); _ = r.stopCore(core)
-		if rollbackErr := r.rollbackTransaction(ctx, result.TransactionID, r.plan, r.executor); rollbackErr != nil { return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after commit failure: %w", rollbackErr)) }
-		return xrayState{}, err
+		_ = r.stopAdapter()
+		_ = r.stopCore(core)
+		return xrayState{}, r.rollbackApplied(ctx, transactionID, "commit failure", err)
 	}
 
 	return active, nil
 }
 
+func (r *fullTunnelTransactionRunner) rollbackApplied(ctx context.Context, transactionID, reason string, err error) error {
+	if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+		return errors.Join(err, fmt.Errorf("rollback TUN transaction after %s: %w", reason, rollbackErr))
+	}
+	return err
+}
+
 func (r *fullTunnelTransactionRunner) setDefaults() {
-	if r.now == nil { r.now = time.Now }
-	if r.runNetworkTransaction == nil { r.runNetworkTransaction = runTunTransaction }
-	if r.startCore == nil { r.startCore = func(context.Context) (fullTunnelCoreHandle, error) { return fullTunnelCoreHandle{}, errors.New("missing full-tunnel core starter") } }
-	if r.stopCore == nil { r.stopCore = func(fullTunnelCoreHandle) error { return nil } }
-	if r.verifyCoreStarted == nil { r.verifyCoreStarted = verifyCoreStarted }
-	if r.saveCoreMetadata == nil { r.saveCoreMetadata = saveCoreRollbackMetadata }
-	if r.startAdapter == nil { r.startAdapter = func(context.Context, tunAdapterRuntimePlan) (fullTunnelAdapterHandle, error) { return fullTunnelAdapterHandle{}, errors.New("missing full-tunnel TUN adapter starter") } }
-	if r.stopAdapter == nil { r.stopAdapter = func() error { return nil } }
-	if r.saveAdapterMetadata == nil { r.saveAdapterMetadata = saveTunAdapterRollbackMetadata }
-	if r.verifyConnectivity == nil { r.verifyConnectivity = verifyTunConnectivity }
-	if r.commitActiveState == nil { r.commitActiveState = func(store txstate.TransactionStore, transactionID string, _ fullTunnelCoreHandle, _ xrayState) error { return commitTunTransaction(store, transactionID) } }
-	if r.rollbackTransaction == nil { r.rollbackTransaction = func(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error { return rollbackVerifiedTunTransaction(ctx, r.runtimeDir, transactionID, plan, executor) } }
+	if r.now == nil {
+		r.now = time.Now
+	}
+	if r.runNetworkTransaction == nil {
+		r.runNetworkTransaction = runTunTransaction
+	}
+	if r.startCore == nil {
+		r.startCore = func(context.Context) (fullTunnelCoreHandle, error) {
+			return fullTunnelCoreHandle{}, errors.New("missing full-tunnel core starter")
+		}
+	}
+	if r.stopCore == nil {
+		r.stopCore = func(fullTunnelCoreHandle) error { return nil }
+	}
+	if r.verifyCoreStarted == nil {
+		r.verifyCoreStarted = verifyCoreStarted
+	}
+	if r.saveCoreMetadata == nil {
+		r.saveCoreMetadata = saveCoreRollbackMetadata
+	}
+	if r.startAdapter == nil {
+		r.startAdapter = func(context.Context, tunAdapterRuntimePlan) (fullTunnelAdapterHandle, error) {
+			return fullTunnelAdapterHandle{}, errors.New("missing full-tunnel TUN adapter starter")
+		}
+	}
+	if r.stopAdapter == nil {
+		r.stopAdapter = func() error { return nil }
+	}
+	if r.saveAdapterMetadata == nil {
+		r.saveAdapterMetadata = saveTunAdapterRollbackMetadata
+	}
+	if r.verifyConnectivity == nil {
+		r.verifyConnectivity = verifyTunConnectivity
+	}
+	if r.commitActiveState == nil {
+		r.commitActiveState = func(store txstate.TransactionStore, transactionID string, _ fullTunnelCoreHandle, _ xrayState) error {
+			return commitTunTransaction(store, transactionID)
+		}
+	}
+	if r.rollbackTransaction == nil {
+		r.rollbackTransaction = func(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error {
+			return rollbackVerifiedTunTransaction(ctx, r.runtimeDir, transactionID, plan, executor)
+		}
+	}
 }
 
 func fullTunnelActiveState(p profile.Profile, plan planner.TunPlan, corePlan tunCoreRuntimePlan, transactionID string) xrayState {
-	return xrayState{Connection: "active", Mode: planner.ModeTun, ProfileID: p.ID, ProfileName: p.Name, Proxy: corePlan.Status, TUN: fmt.Sprintf("enabled (%s)", plan.TunDevice.Name), Routes: fmt.Sprintf("applied %d route(s) and %d policy rule(s)", len(appliedRoutes(plan)), len(appliedPolicyRules(plan))), DNS: dnsStatusLine(plan.DNS), Firewall: firewallStatusLine(plan.Firewall), RuntimeConfigPath: corePlan.RuntimeConfigPath, TransactionID: transactionID, Warnings: append(append([]string{}, corePlan.Warnings...), plan.Warnings...)}
+	return xrayState{
+		Connection:        "active",
+		Mode:              planner.ModeTun,
+		ProfileID:         p.ID,
+		ProfileName:       p.Name,
+		Proxy:             corePlan.Status,
+		TUN:               fmt.Sprintf("enabled (%s)", plan.TunDevice.Name),
+		Routes:            fmt.Sprintf("applied %d route(s) and %d policy rule(s)", len(appliedRoutes(plan)), len(appliedPolicyRules(plan))),
+		DNS:               dnsStatusLine(plan.DNS),
+		Firewall:          firewallStatusLine(plan.Firewall),
+		RuntimeConfigPath: corePlan.RuntimeConfigPath,
+		TransactionID:     transactionID,
+		Warnings:          append(append([]string{}, corePlan.Warnings...), plan.Warnings...),
+	}
 }
 
 func rollbackVerifiedTunTransaction(ctx context.Context, runtimeDir, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error {
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	tx, _, err := store.Load(transactionID)
-	if err != nil { return fmt.Errorf("load TUN transaction %s: %w", transactionID, err) }
+	if err != nil {
+		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
+	}
 	return rollbackTunTransaction(ctx, store, &tx, plan, executor)
 }
