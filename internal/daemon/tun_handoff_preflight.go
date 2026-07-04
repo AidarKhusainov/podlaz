@@ -5,14 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const defaultDNSRouteDomain = "~."
+const podlazTunRulePriority = "10000"
+const podlazServerRulePriority = "9999"
 
 var nmcliConnectionDown = func(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
@@ -32,6 +36,27 @@ var controlledPodlazRecover = func(ctx context.Context, runtimeDir string) error
 		return fmt.Errorf("controlled podlaz recovery did not fully complete before replace-podlaz handoff: %s", strings.TrimSpace(result.String()))
 	}
 	return nil
+}
+
+var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot.StaleResource {
+	ipPath, err := exec.LookPath("ip")
+	if err != nil {
+		return nil
+	}
+	var resources []netsnapshot.StaleResource
+	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok && strings.TrimSpace(out) != "" {
+		resources = append(resources, netsnapshot.StaleResource{Kind: "route-table", Name: netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusDetected, Detail: firstNonEmptyLine(out)})
+	}
+	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || !podlazPolicyRuleLine(line) {
+				continue
+			}
+			resources = append(resources, netsnapshot.StaleResource{Kind: "policy-rule", Name: policyRuleName(line), Status: netsnapshot.StatusDetected, Detail: line})
+		}
+	}
+	return resources
 }
 
 type tunHandoffBlocker struct {
@@ -105,6 +130,7 @@ func (m *XrayManager) prepareActivePodlazReplace(ctx context.Context, handoff st
 
 func (m *XrayManager) prepareTunHandoff(ctx context.Context, s netsnapshot.Snapshot, handoff string, opts netsnapshot.Options) (netsnapshot.Snapshot, error) {
 	policy := api.NormalizeHandoffPolicy(handoff)
+	s = m.withPodlazRuntimeStaleState(ctx, s)
 	switch policy {
 	case api.HandoffAsk:
 		return s, &tunHandoffBlocker{Policy: policy, Conflicts: []string{"--handoff=ask is interactive and is not supported by daemon/non-interactive connect"}, NextStep: "Use --handoff=block, --handoff=stop-known, or --handoff=replace-podlaz explicitly."}
@@ -113,7 +139,7 @@ func (m *XrayManager) prepareTunHandoff(ctx context.Context, s netsnapshot.Snaps
 			if err := m.runControlledPodlazRecover(ctx); err != nil {
 				return s, err
 			}
-			s = m.collectTunSnapshot(ctx, opts)
+			s = m.withPodlazRuntimeStaleState(ctx, m.collectTunSnapshot(ctx, opts))
 		}
 	case api.HandoffStopKnown:
 		connections := activeNetworkManagerVPNConnections(s)
@@ -124,13 +150,40 @@ func (m *XrayManager) prepareTunHandoff(ctx context.Context, s netsnapshot.Snaps
 			}
 		}
 		if len(connections) > 0 {
-			s = m.collectTunSnapshot(ctx, opts)
+			s = m.withPodlazRuntimeStaleState(ctx, m.collectTunSnapshot(ctx, opts))
 		}
 	}
 	if err := preflightTunOwnership(s, policy); err != nil {
 		return s, err
 	}
 	return s, nil
+}
+
+func (m *XrayManager) withPodlazRuntimeStaleState(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
+	s.StaleResources = append(s.StaleResources, podlazRuntimeRoutingStaleResources(ctx)...)
+	s.StaleResources = append(s.StaleResources, m.transactionFileStaleResources()...)
+	return s
+}
+
+func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResource {
+	runtimeDir := strings.TrimSpace(m.runtimeDir())
+	if runtimeDir == "" {
+		return nil
+	}
+	pattern := filepath.Join(runtimeDir, txstate.TransactionDirName, "*"+txstate.TransactionFileSuffix)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil
+	}
+	resources := make([]netsnapshot.StaleResource, 0, len(matches))
+	for _, match := range matches {
+		base := strings.TrimSpace(filepath.Base(match))
+		if base == "" {
+			continue
+		}
+		resources = append(resources, netsnapshot.StaleResource{Kind: "transaction-file", Name: base, Status: netsnapshot.StatusDetected})
+	}
+	return resources
 }
 
 func (m *XrayManager) runControlledPodlazRecover(ctx context.Context) error {
@@ -177,6 +230,9 @@ func foreignOwnershipConflicts(s netsnapshot.Snapshot) []string {
 		conflicts = append(conflicts, "VPN server route uses foreign VPN interface "+s.ServerRoute.Interface)
 	}
 	for _, signal := range s.PolicyRouting {
+		if podlazPolicyRoutingSignal(signal) {
+			continue
+		}
 		conflicts = append(conflicts, fmt.Sprintf("foreign policy routing %s", fallbackUnknown(signal.Raw)))
 	}
 	for _, connection := range activeNetworkManagerVPNConnections(s) {
@@ -232,6 +288,17 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 	if s.Nftables.PodlazTable.Status == netsnapshot.StatusDetected {
 		add("nftables-table", netsnapshot.DefaultNFTFamily+" "+netsnapshot.DefaultNFTTable)
 	}
+	for _, signal := range s.PolicyRouting {
+		if !podlazPolicyRoutingSignal(signal) {
+			continue
+		}
+		switch signal.Kind {
+		case "route":
+			add("route-table", firstNonEmpty(signal.Table, netsnapshot.DefaultRouteTableID))
+		case "rule":
+			add("policy-rule", firstNonEmpty(signal.Priority, signal.Table, netsnapshot.DefaultRouteTableID))
+		}
+	}
 	return resources
 }
 
@@ -248,6 +315,48 @@ func foreignDefaultDNSOwner(s netsnapshot.Snapshot) (netsnapshot.ResolvedLink, b
 		}
 	}
 	return netsnapshot.ResolvedLink{}, false
+}
+
+func podlazPolicyRoutingSignal(signal netsnapshot.PolicyRoutingSignal) bool {
+	table := strings.TrimSpace(signal.Table)
+	priority := strings.TrimSpace(signal.Priority)
+	return table == netsnapshot.DefaultRouteTableID || table == "podlaz" || priority == podlazTunRulePriority || priority == podlazServerRulePriority
+}
+
+func podlazPolicyRuleLine(line string) bool {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return false
+	}
+	priority := strings.TrimSuffix(fields[0], ":")
+	return priority == podlazTunRulePriority || priority == podlazServerRulePriority || strings.Contains(line, "lookup "+netsnapshot.DefaultRouteTableID) || strings.Contains(line, "lookup podlaz")
+}
+
+func policyRuleName(line string) string {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return netsnapshot.DefaultRouteTableID
+	}
+	priority := strings.TrimSuffix(fields[0], ":")
+	return firstNonEmpty(priority, netsnapshot.DefaultRouteTableID)
+}
+
+func runReadOnlyCommand(ctx context.Context, name string, args ...string) (string, bool) {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
+}
+
+func firstNonEmptyLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func isForeignTunLikeName(name string) bool {
