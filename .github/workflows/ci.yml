@@ -164,7 +164,7 @@ jobs:
           PODLAZ_EXPECT_BUILT: Jun 19 2026
         run: |
           set -o pipefail
-          bash scripts/ci/validate-package-install.sh "${DEV_DEB}" 2>&1 | tee /tmp/podlaz-package-install.txt
+          bash scripts/ci/validate-package-install-v2.sh "${DEV_DEB}" 2>&1 | tee /tmp/podlaz-package-install.txt
 
       - name: Upload package install diagnostics
         if: always()
