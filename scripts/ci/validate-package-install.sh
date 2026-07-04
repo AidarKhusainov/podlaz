@@ -15,6 +15,10 @@ validate_service="${PODLAZ_VALIDATE_SERVICE:-0}"
 test -f "${package}"
 test "$(dpkg-deb --field "${package}" Architecture)" = amd64
 
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends iproute2 nftables systemd-resolved polkitd || \
+  sudo apt-get install -y --no-install-recommends iproute2 nftables systemd-resolved policykit-1
+
 ip route show > /tmp/podlaz-routes-before.txt
 sudo apt install -y "./${package}"
 ip route show > /tmp/podlaz-routes-after.txt
