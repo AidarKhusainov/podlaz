@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -71,31 +70,7 @@ func startTunAdapter(ctx context.Context, plan tunAdapterRuntimePlan) (*exec.Cmd
 }
 
 func resolveTunAdapterPath(explicit string) (string, error) {
-	path := strings.TrimSpace(explicit)
-	if path == "" {
-		path = strings.TrimSpace(os.Getenv(tunAdapterPathEnv))
-	}
-	if path == "" {
-		path = defaultTunAdapterCommand
-	}
-	if strings.ContainsRune(path, os.PathSeparator) {
-		info, err := os.Stat(path)
-		if err != nil {
-			return "", fmt.Errorf("resolve TUN adapter binary %s: %w", path, err)
-		}
-		if info.IsDir() {
-			return "", fmt.Errorf("resolve TUN adapter binary %s: is a directory", path)
-		}
-		if info.Mode().Perm()&0o111 == 0 {
-			return "", fmt.Errorf("resolve TUN adapter binary %s: not executable", path)
-		}
-		return path, nil
-	}
-	resolved, err := exec.LookPath(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve TUN adapter binary %q: %w; set %s to the tun2socks executable path", path, err, tunAdapterPathEnv)
-	}
-	return resolved, nil
+	return resolveRuntimeExecutable(explicit, tunAdapterPathEnv, defaultTunAdapterCommand, "the TUN adapter")
 }
 
 func verifyTunAdapterStarted(done <-chan struct{}) error {
@@ -105,7 +80,7 @@ func verifyTunAdapterStarted(done <-chan struct{}) error {
 	select {
 	case <-done:
 		return errors.New("TUN adapter exited during startup verification")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(250 * time.Millisecond):
 		return nil
 	}
 }

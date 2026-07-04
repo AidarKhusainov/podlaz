@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -94,6 +95,9 @@ func (c LifecycleClient) doViaSocket(ctx context.Context, socketPath string, tim
 		message := ""
 		if data, readErr := io.ReadAll(resp.Body); readErr == nil {
 			message = strings.TrimSpace(string(data))
+		}
+		if resp.StatusCode == http.StatusServiceUnavailable && message != "" {
+			return api.LifecycleResponse{}, errors.New(message)
 		}
 		return api.LifecycleResponse{}, api.LifecycleHTTPError(operation, resp.Status, message)
 	}

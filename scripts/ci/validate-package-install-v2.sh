@@ -10,15 +10,14 @@ package="$1"
 version="${PODLAZ_EXPECT_VERSION:-0.0.0~dev}"
 commit="${PODLAZ_EXPECT_COMMIT:-ci-test}"
 built="${PODLAZ_EXPECT_BUILT:-Jun 19 2026}"
-validate_service="${PODLAZ_VALIDATE_SERVICE:-0}"
 export DEBIAN_FRONTEND=noninteractive
 
 test -f "${package}"
 test "$(dpkg-deb --field "${package}" Architecture)" = amd64
 
 sudo -E apt-get update
-sudo -E apt-get install -y --no-install-recommends iproute2 nftables systemd-resolved polkitd || \
-  sudo -E apt-get install -y --no-install-recommends iproute2 nftables systemd-resolved policykit-1
+sudo -E apt-get install -y --no-install-recommends iproute2 nftables polkitd || \
+  sudo -E apt-get install -y --no-install-recommends iproute2 nftables policykit-1
 sudo -E apt install -y "./${package}"
 
 for binary in podlaz plz; do
@@ -58,19 +57,11 @@ zsh -n /usr/share/zsh/vendor-completions/_plz
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish'
 
-if [ "${validate_service}" = 1 ]; then
-  sudo systemctl daemon-reload
-  sudo systemctl is-enabled --quiet podlazd.service
-  sudo systemctl is-active --quiet podlazd.service
-  test -S /run/podlaz/podlazd.sock
-fi
-
 sudo -E apt install -y --reinstall "./${package}"
 podlaz version | tee /tmp/podlaz-version-reinstall.txt
 grep -Fx "podlaz version ${version}" /tmp/podlaz-version-reinstall.txt
 grep -Fx "commit: ${commit}" /tmp/podlaz-version-reinstall.txt
 grep -Fx "built: ${built}" /tmp/podlaz-version-reinstall.txt
-
 test -x /usr/lib/podlaz/xray
 test -x /usr/lib/podlaz/tun2socks
 

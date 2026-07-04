@@ -121,7 +121,7 @@ jobs:
       - name: Install package tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg file lintian man-db zsh fish gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo apt-get install -y --no-install-recommends curl dpkg file lintian man-db unzip zsh fish gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           bash scripts/ci/install-go-tool.sh nfpm
 
       - name: Build Debian packages
@@ -162,4 +162,15 @@ jobs:
           PODLAZ_EXPECT_VERSION: 0.0.0~dev
           PODLAZ_EXPECT_COMMIT: ci-test
           PODLAZ_EXPECT_BUILT: Jun 19 2026
-        run: bash scripts/ci/validate-package-install.sh "${DEV_DEB}"
+        run: |
+          set -o pipefail
+          bash scripts/ci/validate-package-install-v2.sh "${DEV_DEB}" 2>&1 | tee /tmp/podlaz-package-install.txt
+
+      - name: Upload package install diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: podlaz-package-install-diagnostics
+          path: /tmp/podlaz-package-install.txt
+          if-no-files-found: ignore
+          retention-days: 7
