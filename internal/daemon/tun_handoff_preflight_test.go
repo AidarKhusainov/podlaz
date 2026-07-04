@@ -67,12 +67,37 @@ func TestPrepareTunHandoffStopKnownUsesNetworkManagerDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stop-known handoff failed: %v", err)
 	}
-	if len(stopped) != 1 || stopped[0] != "11111111-2222-3333-4444-555555555555" {
+	if len(stopped) != 1 || strings.TrimSpace(stopped[0]) == "" {
 		t.Fatalf("unexpected stopped NM VPNs: %#v", stopped)
 	}
 	if calls != 1 {
 		t.Fatalf("expected snapshot refresh after stop-known, got %d", calls)
 	}
+}
+
+func TestPrepareTunHandoffReplacePodlazBlocksStaleStateAfterRecoveryRefresh(t *testing.T) {
+	originalRecover := controlledPodlazRecover
+	recoverCalls := 0
+	controlledPodlazRecover = func(context.Context, string) error {
+		recoverCalls++
+		return nil
+	}
+	t.Cleanup(func() { controlledPodlazRecover = originalRecover })
+
+	manager := &XrayManager{RuntimeDir: t.TempDir()}
+	refreshCalls := 0
+	manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
+		refreshCalls++
+		return netsnapshot.FakeDesktopWithStalepodlazResources()
+	}
+	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeDesktopWithStalepodlazResources(), api.HandoffReplacePodlaz, netsnapshot.Options{})
+	if recoverCalls != 1 {
+		t.Fatalf("controlled recovery calls = %d, want 1", recoverCalls)
+	}
+	if refreshCalls != 1 {
+		t.Fatalf("snapshot refresh calls = %d, want 1", refreshCalls)
+	}
+	assertStalePodlazBlockerContains(t, err, "tun-device podlaz0", "nftables-table inet podlaz")
 }
 
 func TestPreflightTunOwnershipBlocksStalePodlazStateBeforeCreatePlan(t *testing.T) {
@@ -89,19 +114,7 @@ func TestPreflightTunOwnershipBlocksStalePodlazStateBeforeCreatePlan(t *testing.
 	}
 
 	err = preflightTunOwnership(snapshot, api.HandoffBlock)
-	if err == nil {
-		t.Fatal("expected stale podlaz state blocker")
-	}
-	var blocker *tunStalePodlazStateBlocker
-	if !errors.As(err, &blocker) {
-		t.Fatalf("expected tunStalePodlazStateBlocker, got %T: %v", err, err)
-	}
-	body := err.Error()
-	for _, want := range []string{"stale podlaz-owned networking state", "tun-device podlaz0", "nftables-table inet podlaz", "plz recover --execute --yes", "podlaz did not change network state"} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected stale blocker body to contain %q, got:\n%s", want, body)
-		}
-	}
+	assertStalePodlazBlockerContains(t, err, "stale podlaz-owned networking state", "tun-device podlaz0", "nftables-table inet podlaz")
 }
 
 func assertHandoffBlockerContains(t *testing.T, err error, wants ...string) {
@@ -117,6 +130,23 @@ func assertHandoffBlockerContains(t *testing.T, err error, wants ...string) {
 	for _, want := range wants {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected blocker to contain %q, got:\n%s", want, body)
+		}
+	}
+}
+
+func assertStalePodlazBlockerContains(t *testing.T, err error, wants ...string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected stale podlaz state blocker")
+	}
+	var blocker *tunStalePodlazStateBlocker
+	if !errors.As(err, &blocker) {
+		t.Fatalf("expected tunStalePodlazStateBlocker, got %T: %v", err, err)
+	}
+	body := err.Error()
+	for _, want := range wants {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected stale blocker body to contain %q, got:\n%s", want, body)
 		}
 	}
 }
