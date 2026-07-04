@@ -37,6 +37,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
+	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
+		return api.LifecycleResponse{}, err
+	}
 
 	m.mu.Lock()
 	if m.cmd != nil || m.state.Connection == "active" {
@@ -62,8 +65,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		return api.LifecycleResponse{}, err
 	}
 
-	snapshot := m.collectTunSnapshot(ctx, netsnapshot.Options{Server: p.Server})
-	if err := preflightTunOwnership(snapshot, req.Handoff); err != nil {
+	snapshotOpts := netsnapshot.Options{Server: p.Server}
+	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
+	snapshot, err = m.prepareTunHandoff(ctx, snapshot, req.Handoff, snapshotOpts)
+	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
 	plan, err := planner.PlanTun(p, snapshot)
@@ -156,13 +161,7 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 	if opts.OutboundAddressOverride != "" && opts.OutboundAddressOverride != p.Server {
 		warnings = append(warnings, "TUN-mode Xray runtime uses the pre-resolved VPN server IP to avoid recursive DNS through the full-tunnel route")
 	}
-	return tunCoreRuntimePlan{
-		RuntimeConfigPath: runtimeConfigPath,
-		XrayConfig:        xrayConfig,
-		SOCKSEndpoint:     endpoint,
-		Status:            "TUN-mode Xray runtime config with private adapter SOCKS endpoint " + endpoint,
-		Warnings:          warnings,
-	}, nil
+	return tunCoreRuntimePlan{RuntimeConfigPath: runtimeConfigPath, XrayConfig: xrayConfig, SOCKSEndpoint: endpoint, Status: "TUN-mode Xray runtime config with private adapter SOCKS endpoint " + endpoint, Warnings: warnings}, nil
 }
 
 func tunRuntimeServerAddress(plan planner.TunPlan) string {
