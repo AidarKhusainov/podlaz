@@ -182,48 +182,121 @@ func completionRegistry() *completionCommand {
 	targetIDs := profilecheck.SupportedTargetIDs()
 	jsonFlag := longBoolFlag("--json", "Print JSON output")
 	yesFlag := longBoolFlag("--yes", "Confirm without prompting")
+	plainFlag := longBoolFlag("--plain", "Print plain human output")
+	verboseFlag := completionFlag{Name: "--verbose", Shorthand: "-v", Description: "Show verbose output", NonRepeatable: true}
 	modeFlag := longEnumFlag("--mode", modes, "Select connection mode")
 	targetFlag := completionFlag{Name: "--target", Description: "Select service target", TakesValue: true, Values: targetIDs}
+
 	return &completionCommand{Children: []*completionCommand{
 		{Name: "version", Description: "Show version"},
 		{Name: "import", Description: "Import profile or subscription", DefaultFiles: true},
-		{Name: "profile", Description: "Manage profiles", Children: []*completionCommand{
-			{Name: "add", Description: "Add manual profile", Flags: []completionFlag{
-				longValueFlag("--name", "Profile name"),
-				longValueFlag("--server", "Server hostname"),
-				longValueFlag("--port", "Server port"),
-				longEnumFlag("--protocol", protocols, "Profile protocol"),
-			}},
-			{Name: "import", Description: "Import share URI"},
-			{Name: "list", Description: "List profiles", Flags: []completionFlag{jsonFlag}},
-			{Name: "show", Description: "Show profile", Flags: []completionFlag{jsonFlag}, Dynamic: completionDynamicProfileIDs},
-			{Name: "validate", Description: "Validate profile", Flags: []completionFlag{modeFlag, jsonFlag}, Dynamic: completionDynamicProfileIDs},
-			{Name: "delete", Description: "Delete profile", Flags: []completionFlag{yesFlag}, Dynamic: completionDynamicProfileIDs},
-		}},
-		{Name: "subscription", Description: "Manage subscriptions", Children: []*completionCommand{
-			{Name: "add", Description: "Add subscription", Flags: []completionFlag{longValueFlag("--name", "Subscription name"), longValueFlag("--url", "Subscription URL")}},
-			{Name: "list", Description: "List subscriptions", Flags: []completionFlag{jsonFlag}},
-			{Name: "show", Description: "Show subscription", Flags: []completionFlag{jsonFlag}, Dynamic: completionDynamicSubscriptionIDs},
-			{Name: "update", Description: "Fetch subscription", Dynamic: completionDynamicSubscriptionIDs},
-			{Name: "delete", Description: "Delete subscription", Flags: []completionFlag{yesFlag, longBoolFlag("--keep-profiles", "Keep imported profiles")}, Dynamic: completionDynamicSubscriptionIDs},
-		}},
-		{Name: "plan", Description: "Preview connection plan", Flags: []completionFlag{modeFlag, jsonFlag}, Dynamic: completionDynamicProfileIDs},
+		{
+			Name: "profile", Description: "Manage profiles", Children: []*completionCommand{
+				{
+					Name:        "add",
+					Description: "Add manual profile",
+					Flags: []completionFlag{
+						longValueFlag("--name", "Profile name"),
+						longValueFlag("--server", "Server hostname"),
+						longValueFlag("--port", "Server port"),
+						longEnumFlag("--protocol", protocols, "Profile protocol"),
+					},
+				},
+				{Name: "import", Description: "Import share URI"},
+				{Name: "list", Description: "List profiles", Flags: []completionFlag{jsonFlag}},
+				{Name: "show", Description: "Show profile", Flags: []completionFlag{jsonFlag}, Dynamic: completionDynamicProfileIDs},
+				{Name: "validate", Description: "Validate profile", Flags: []completionFlag{modeFlag, jsonFlag, plainFlag}, Dynamic: completionDynamicProfileIDs},
+				{Name: "delete", Description: "Delete profile", Flags: []completionFlag{yesFlag}, Dynamic: completionDynamicProfileIDs},
+			},
+		},
+		{
+			Name: "subscription", Description: "Manage subscriptions", Children: []*completionCommand{
+				{
+					Name:        "add",
+					Description: "Add subscription",
+					Flags: []completionFlag{
+						longValueFlag("--name", "Subscription name"),
+						longValueFlag("--url", "Subscription URL"),
+					},
+				},
+				{Name: "list", Description: "List subscriptions", Flags: []completionFlag{jsonFlag}},
+				{Name: "show", Description: "Show subscription", Flags: []completionFlag{jsonFlag}, Dynamic: completionDynamicSubscriptionIDs},
+				{Name: "update", Description: "Fetch subscription", Dynamic: completionDynamicSubscriptionIDs},
+				{
+					Name:        "delete",
+					Description: "Delete subscription",
+					Flags: []completionFlag{
+						yesFlag,
+						longBoolFlag("--keep-profiles", "Keep imported profiles"),
+					},
+					Dynamic: completionDynamicSubscriptionIDs,
+				},
+			},
+		},
+		{Name: "plan", Description: "Preview connection plan", Flags: []completionFlag{modeFlag, jsonFlag, verboseFlag, plainFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "connect", Description: "Start connection", Flags: []completionFlag{modeFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "disconnect", Description: "Stop connection"},
-		{Name: "check", Description: "Check profile connectivity", Flags: []completionFlag{longBoolFlag("--all", "Check all profiles"), targetFlag, longValueFlag("--timeout", "Per-probe timeout"), jsonFlag}, Dynamic: completionDynamicProfileIDs},
+		{
+			Name:        "check",
+			Description: "Check profile connectivity",
+			Flags: []completionFlag{
+				longBoolFlag("--all", "Check all profiles"),
+				targetFlag,
+				longValueFlag("--timeout", "Per-probe timeout"),
+				jsonFlag,
+			},
+			Dynamic: completionDynamicProfileIDs,
+		},
 		{Name: "status", Description: "Show status"},
-		{Name: "doctor", Description: "Run diagnostics", Flags: []completionFlag{longBoolFlag("--core", "Check core binary"), longValueFlag("--xray", "Core binary path"), jsonFlag}},
-		{Name: "logs", Description: "Show logs", Flags: []completionFlag{
-			{Name: "--follow", Shorthand: "-f", Description: "Follow logs", NonRepeatable: true},
-			longBoolFlag("--daemon", "Daemon logs"),
-			longBoolFlag("--core", "Core logs"),
-			longValueFlag("--since", "Journal time filter"),
-		}},
+		{
+			Name:        "doctor",
+			Description: "Run diagnostics",
+			Flags: []completionFlag{
+				longBoolFlag("--core", "Check core binary"),
+				longValueFlag("--xray", "Core binary path"),
+				jsonFlag,
+			},
+		},
+		{
+			Name:        "logs",
+			Description: "Show logs",
+			Flags: []completionFlag{
+				{Name: "--follow", Shorthand: "-f", Description: "Follow logs", NonRepeatable: true},
+				longBoolFlag("--daemon", "Daemon logs"),
+				longBoolFlag("--core", "Core logs"),
+				longValueFlag("--since", "Journal time filter"),
+			},
+		},
 		{Name: "recover", Description: "Inspect recovery", Flags: []completionFlag{longBoolFlag("--execute", "Execute cleanup"), yesFlag, jsonFlag}},
-		{Name: "completion", Description: "Generate completion", Children: []*completionCommand{{Name: "bash", Description: "Bash script"}, {Name: "zsh", Description: "Zsh script"}, {Name: "fish", Description: "Fish script"}}},
-		{Name: "help", Description: "Show help", Children: []*completionCommand{
-			{Name: "version", Description: "Version help"}, {Name: "import", Description: "Import help"}, {Name: "profile", Description: "Profile help"}, {Name: "subscription", Description: "Subscription help"}, {Name: "plan", Description: "Plan help"}, {Name: "connect", Description: "Connect help"}, {Name: "disconnect", Description: "Disconnect help"}, {Name: "check", Description: "Check help"}, {Name: "status", Description: "Status help"}, {Name: "doctor", Description: "Doctor help"}, {Name: "logs", Description: "Logs help"}, {Name: "recover", Description: "Recover help"}, {Name: "completion", Description: "Completion help"}, {Name: "help", Description: "Help help"},
-		}},
+		{
+			Name:        "completion",
+			Description: "Generate completion",
+			Children: []*completionCommand{
+				{Name: "bash", Description: "Bash script"},
+				{Name: "zsh", Description: "Zsh script"},
+				{Name: "fish", Description: "Fish script"},
+			},
+		},
+		{
+			Name:        "help",
+			Description: "Show help",
+			Children: []*completionCommand{
+				{Name: "version", Description: "Version help"},
+				{Name: "import", Description: "Import help"},
+				{Name: "profile", Description: "Profile help"},
+				{Name: "subscription", Description: "Subscription help"},
+				{Name: "plan", Description: "Plan help"},
+				{Name: "connect", Description: "Connect help"},
+				{Name: "disconnect", Description: "Disconnect help"},
+				{Name: "check", Description: "Check help"},
+				{Name: "status", Description: "Status help"},
+				{Name: "doctor", Description: "Doctor help"},
+				{Name: "logs", Description: "Logs help"},
+				{Name: "recover", Description: "Recover help"},
+				{Name: "completion", Description: "Completion help"},
+				{Name: "help", Description: "Help help"},
+			},
+		},
 	}}
 }
 

@@ -8,6 +8,7 @@ import (
 var (
 	urlQueryPattern         = regexp.MustCompile(`https?://[^\s?]+\?[^\s]+`)
 	secretAssignmentPattern = regexp.MustCompile(`(?i)\b(token|password|passwd|secret|api[_-]?key|authorization)=([^\s;]+)`)
+	secretValuePattern      = regexp.MustCompile(`(?i)(^|[:/._-])(password|passwd|secret)([:/._-]|$)`)
 	uuidPattern             = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 )
 
@@ -29,6 +30,9 @@ func Redact(s string) string {
 	s = uuidPattern.ReplaceAllStringFunc(s, func(match string) string {
 		return match[:4] + "…" + match[len(match)-4:]
 	})
+	if secretValuePattern.MatchString(s) {
+		return "REDACTED"
+	}
 	return s
 }
 

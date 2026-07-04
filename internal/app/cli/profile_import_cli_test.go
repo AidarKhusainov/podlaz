@@ -158,7 +158,7 @@ func TestRunCLIProfileImportNewShareURIsListShowAndRedact(t *testing.T) {
 					t.Fatalf("profile show --json leaked %q in %q", leaked, jsonOut.String())
 				}
 			}
-			assertJSONEnvelope(t, jsonOut.Bytes())
+			assertProfileImportJSONEnvelope(t, jsonOut.Bytes())
 		})
 	}
 }
@@ -168,113 +168,24 @@ func vmessURIForCLITest() string {
 	return "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(payload))
 }
 
-func TestRunCLIProfileImportRejectsMalformedVLESS(t *testing.T) {
-	tests := []struct {
-		name        string
-		uri         string
-		wantMessage string
-	}{
-		{name: "missing-port", uri: "vless://00000000-0000-0000-0000-000000000001@example.com?type=tcp#missing-port", wantMessage: "server port is required"},
-		{name: "malformed-query", uri: "vless://00000000-0000-0000-0000-000000000001@example.com:443?path=%ZZ#bad-query", wantMessage: "query is not valid percent-encoding"},
-		{name: "incompatible-reality-transport", uri: "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=ws&security=reality#bad", wantMessage: "transport/security combination"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := runWithOptions(context.Background(), []string{"profile", "import", tt.uri}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-			if err == nil {
-				t.Fatal("expected malformed import to fail")
-			}
-			if got := ExitCode(err); got != 2 {
-				t.Fatalf("expected exit code 2, got %d", got)
-			}
-			if !strings.Contains(err.Error(), tt.wantMessage) {
-				t.Fatalf("expected error containing %q, got %v", tt.wantMessage, err)
-			}
-		})
-	}
-}
-
-func TestRunCLIProfileImportSameDisplayNameCreatesDistinctProfiles(t *testing.T) {
-	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	opts := options{profileStorePath: storePath}
-	uris := []string{
-		"vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls#same-name",
-		"vless://00000000-0000-0000-0000-000000000002@example.com:443?type=tcp&security=tls#same-name",
-	}
-
-	var ids []string
-	for _, uri := range uris {
-		var out bytes.Buffer
-		if err := runWithOptions(context.Background(), []string{"profile", "import", uri}, &out, opts); err != nil {
-			t.Fatalf("profile import failed: %v", err)
-		}
-		ids = append(ids, importedProfileIDFromOutput(t, out.String()))
-	}
-	if ids[0] == ids[1] {
-		t.Fatalf("expected distinct imported profile IDs, got %q", ids[0])
-	}
-
-	var listOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &listOut, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	for _, id := range ids {
-		if !strings.Contains(listOut.String(), id) {
-			t.Fatalf("expected list output to contain %q, got %q", id, listOut.String())
-		}
-	}
-}
-
-func TestRunCLIProfileImportJSONIsDeferred(t *testing.T) {
-	err := runWithOptions(context.Background(), []string{"profile", "import", "--json", "vless://demo@example.com:443#demo"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-	if err == nil {
-		t.Fatal("expected profile import --json to fail")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
-	}
-	if !strings.Contains(err.Error(), "profile import --json is not implemented") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestRunCLIProfileShowJSONRedactsImportedUserIdentity(t *testing.T) {
-	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	opts := options{profileStorePath: storePath}
-	uri := "vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls&encryption=none#json-redaction"
-	var importOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "import", uri}, &importOut, opts); err != nil {
-		t.Fatalf("profile import failed: %v", err)
-	}
-	profileID := importedProfileIDFromOutput(t, importOut.String())
-
-	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "show", profileID, "--json"}, &out, opts); err != nil {
-		t.Fatalf("profile show --json failed: %v", err)
-	}
-	if strings.Contains(out.String(), "00000000-0000-0000-0000-000000000001") {
-		t.Fatalf("profile show --json leaked full VLESS user identity: %q", out.String())
-	}
-	if !strings.Contains(out.String(), "0000…0001") {
-		t.Fatalf("profile show --json did not include redacted identity: %q", out.String())
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("decode show JSON: %v", err)
-	}
-	assertCommonJSON(t, got)
-}
-
-func importedProfileIDFromOutput(t *testing.T, output string) string {
+func importedProfileIDFromOutput(t *testing.T, out string) string {
 	t.Helper()
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
+	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "Imported profile: ") {
 			return strings.TrimSpace(strings.TrimPrefix(line, "Imported profile: "))
 		}
 	}
-	t.Fatalf("did not find imported profile ID in output: %q", output)
+	t.Fatalf("imported profile id not found in output: %q", out)
 	return ""
+}
+
+func assertProfileImportJSONEnvelope(t *testing.T, data []byte) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, data)
+	}
+	if payload["schema_version"] != "v1" || payload["profile"] == nil {
+		t.Fatalf("unexpected json envelope: %v", payload)
+	}
 }

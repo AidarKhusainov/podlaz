@@ -26,6 +26,13 @@ func TestRedactMasksSensitiveOutput(t *testing.T) {
 	}
 }
 
+func TestRedactShortensUUIDs(t *testing.T) {
+	got := Redact("profile=123e4567-e89b-12d3-a456-426614174000")
+	if got != "profile=123e…4000" {
+		t.Fatalf("expected UUID to be shortened, got %q", got)
+	}
+}
+
 func TestRedactCollapsesWhitespace(t *testing.T) {
 	got := Redact("line one\n\tline two")
 	if got != "line one line two" {
