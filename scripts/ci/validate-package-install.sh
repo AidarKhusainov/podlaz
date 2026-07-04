@@ -17,8 +17,8 @@ test -f "${package}"
 test "$(dpkg-deb --field "${package}" Architecture)" = amd64
 
 sudo -E apt-get update
-sudo -E apt-get install -y --no-install-recommends iproute2 nftables systemd-resolved polkitd || \
-  sudo -E apt-get install -y --no-install-recommends iproute2 nftables systemd-resolved policykit-1
+sudo -E apt-get install -y --no-install-recommends iproute2 nftables polkitd || \
+  sudo -E apt-get install -y --no-install-recommends iproute2 nftables policykit-1
 sudo -E apt install -y "./${package}"
 
 for binary in podlaz plz; do
