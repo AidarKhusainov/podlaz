@@ -37,7 +37,30 @@ Run:
   resolvectl status`, fallbackUnknown(e.Interface), fallbackUnknown(e.DNSDomain), fallbackUnknown(e.DNSServer))
 }
 
+type tunStalePodlazStateBlocker struct {
+	Resources []string
+}
+
+func (e *tunStalePodlazStateBlocker) Error() string {
+	if e == nil || len(e.Resources) == 0 {
+		return "podlaz: stale podlaz-owned networking state blocks TUN connect"
+	}
+	return fmt.Sprintf(`podlaz: stale podlaz-owned networking state blocks TUN connect.
+
+Detected:
+  - %s
+
+podlaz did not change network state.
+Run daemon-owned recovery first, then retry connect.
+
+Run:
+  plz recover --execute --yes`, strings.Join(e.Resources, "\n  - "))
+}
+
 func preflightTunOwnership(s netsnapshot.Snapshot, handoff string) error {
+	if blocker := stalePodlazStateBlocker(s); blocker != nil {
+		return blocker
+	}
 	policy := api.NormalizeHandoffPolicy(handoff)
 	foreign, ok := foreignDefaultDNSOwner(s)
 	if !ok {
@@ -55,6 +78,51 @@ func preflightTunOwnership(s netsnapshot.Snapshot, handoff string) error {
 func isTunHandoffBlocker(err error) bool {
 	var blocker *tunHandoffBlocker
 	return errors.As(err, &blocker)
+}
+
+func isTunStalePodlazStateBlocker(err error) bool {
+	var blocker *tunStalePodlazStateBlocker
+	return errors.As(err, &blocker)
+}
+
+func stalePodlazStateBlocker(s netsnapshot.Snapshot) *tunStalePodlazStateBlocker {
+	resources := stalePodlazResourceSummaries(s)
+	if len(resources) == 0 {
+		return nil
+	}
+	return &tunStalePodlazStateBlocker{Resources: resources}
+}
+
+func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
+	seen := map[string]bool{}
+	var resources []string
+	add := func(kind, name string) {
+		kind = strings.TrimSpace(kind)
+		name = strings.TrimSpace(name)
+		if kind == "" || name == "" {
+			return
+		}
+		value := kind + " " + name
+		if seen[value] {
+			return
+		}
+		seen[value] = true
+		resources = append(resources, value)
+	}
+	for _, resource := range s.StaleResources {
+		if resource.Status == netsnapshot.StatusDetected {
+			add(resource.Kind, resource.Name)
+		}
+	}
+	for _, device := range s.TunDevices {
+		if device.Name == netsnapshot.DefaultTunName && device.Status == netsnapshot.StatusDetected {
+			add("tun-device", device.Name)
+		}
+	}
+	if s.Nftables.PodlazTable.Status == netsnapshot.StatusDetected {
+		add("nftables-table", netsnapshot.DefaultNFTFamily+" "+netsnapshot.DefaultNFTTable)
+	}
+	return resources
 }
 
 func foreignDefaultDNSOwner(s netsnapshot.Snapshot) (netsnapshot.ResolvedLink, bool) {
