@@ -26,6 +26,14 @@ var nmcliConnectionDown = func(ctx context.Context, id string) error {
 	return nil
 }
 
+var controlledPodlazRecover = func(ctx context.Context, runtimeDir string) error {
+	result := recovery.ExecuteWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir, Executor: recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir}})
+	if result.HasFailures() || result.HasIncompleteCleanup() {
+		return fmt.Errorf("controlled podlaz recovery did not fully complete before replace-podlaz handoff: %s", strings.TrimSpace(result.String()))
+	}
+	return nil
+}
+
 type tunHandoffBlocker struct {
 	Policy    string
 	Conflicts []string
@@ -126,16 +134,12 @@ func (m *XrayManager) prepareTunHandoff(ctx context.Context, s netsnapshot.Snaps
 }
 
 func (m *XrayManager) runControlledPodlazRecover(ctx context.Context) error {
-	result := recovery.ExecuteWithOptions(ctx, recovery.Options{RuntimeDir: m.runtimeDir(), Executor: recovery.DaemonCleanupExecutor{RuntimeDir: m.runtimeDir()}})
-	if result.HasFailures() || result.HasIncompleteCleanup() {
-		return fmt.Errorf("controlled podlaz recovery did not fully complete before replace-podlaz handoff: %s", strings.TrimSpace(result.String()))
-	}
-	return nil
+	return controlledPodlazRecover(ctx, m.runtimeDir())
 }
 
 func preflightTunOwnership(s netsnapshot.Snapshot, handoff string) error {
 	policy := api.NormalizeHandoffPolicy(handoff)
-	if blocker := stalePodlazStateBlocker(s); blocker != nil && policy != api.HandoffReplacePodlaz {
+	if blocker := stalePodlazStateBlocker(s); blocker != nil {
 		return blocker
 	}
 	conflicts := foreignOwnershipConflicts(s)
