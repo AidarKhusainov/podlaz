@@ -35,10 +35,22 @@ type Route struct {
 	Detail      string `json:"detail,omitempty"`
 }
 
+// ResolvedLink describes one systemd-resolved per-link DNS status block.
+type ResolvedLink struct {
+	Index            string   `json:"index,omitempty"`
+	Name             string   `json:"name"`
+	CurrentScopes    []string `json:"current_scopes,omitempty"`
+	Protocols        []string `json:"protocols,omitempty"`
+	CurrentDNSServer string   `json:"current_dns_server,omitempty"`
+	DNSServers       []string `json:"dns_servers,omitempty"`
+	DNSDomains       []string `json:"dns_domains,omitempty"`
+}
+
 // DNS describes DNS backend state relevant to future full-tunnel DNS planning.
 type DNS struct {
-	Mode     string  `json:"mode"`
-	Resolved Finding `json:"systemd_resolved"`
+	Mode          string         `json:"mode"`
+	Resolved      Finding        `json:"systemd_resolved"`
+	ResolvedLinks []ResolvedLink `json:"resolved_links,omitempty"`
 }
 
 // NetworkManager describes NetworkManager availability and advisory state.
