@@ -70,7 +70,7 @@ func daemonAPIHTTPStatusCode(err error) int {
 	if profile.IsValidationError(err) {
 		return http.StatusBadRequest
 	}
-	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) || isTunHandoffBlocker(err) {
+	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) || isTunHandoffBlocker(err) || isTunStalePodlazStateBlocker(err) {
 		return http.StatusConflict
 	}
 	if isRuntimeUnavailableError(err) || isRuntimeResolutionError(err) || isTunVerificationError(err) {
