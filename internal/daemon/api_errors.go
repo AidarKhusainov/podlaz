@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
@@ -45,25 +46,11 @@ func categorizeDaemonAPIError(category daemonAPIErrorCategory, err error) error 
 	return &daemonAPIError{category: category, err: err}
 }
 
-func daemonAPIBadRequest(err error) error {
-	return categorizeDaemonAPIError(daemonAPIErrorBadRequest, err)
-}
-
-func daemonAPIConflict(err error) error {
-	return categorizeDaemonAPIError(daemonAPIErrorConflict, err)
-}
-
-func daemonAPIAccessDenied(err error) error {
-	return categorizeDaemonAPIError(daemonAPIErrorAccessDenied, err)
-}
-
-func daemonAPIServiceUnavailable(err error) error {
-	return categorizeDaemonAPIError(daemonAPIErrorServiceUnavailable, err)
-}
-
-func daemonAPIInternal(err error) error {
-	return categorizeDaemonAPIError(daemonAPIErrorInternal, err)
-}
+func daemonAPIBadRequest(err error) error { return categorizeDaemonAPIError(daemonAPIErrorBadRequest, err) }
+func daemonAPIConflict(err error) error { return categorizeDaemonAPIError(daemonAPIErrorConflict, err) }
+func daemonAPIAccessDenied(err error) error { return categorizeDaemonAPIError(daemonAPIErrorAccessDenied, err) }
+func daemonAPIServiceUnavailable(err error) error { return categorizeDaemonAPIError(daemonAPIErrorServiceUnavailable, err) }
+func daemonAPIInternal(err error) error { return categorizeDaemonAPIError(daemonAPIErrorInternal, err) }
 
 func daemonAPIHTTPStatusCode(err error) int {
 	if profile.IsValidationError(err) {
@@ -71,6 +58,9 @@ func daemonAPIHTTPStatusCode(err error) int {
 	}
 	if errors.Is(err, errConnectionAlreadyActive) || errors.Is(err, errFullTunnelConnectionBecameActive) {
 		return http.StatusConflict
+	}
+	if isRuntimeUnavailableError(err) || isRuntimeResolutionError(err) {
+		return http.StatusServiceUnavailable
 	}
 	var apiErr *daemonAPIError
 	if !errors.As(err, &apiErr) {
@@ -88,6 +78,14 @@ func daemonAPIHTTPStatusCode(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+func isRuntimeResolutionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "resolve Xray binary") || strings.Contains(message, "resolve TUN adapter binary")
 }
 
 func writeDaemonAPIHTTPError(w http.ResponseWriter, err error) {
