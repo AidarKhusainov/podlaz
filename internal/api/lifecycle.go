@@ -12,10 +12,7 @@ const (
 	XrayPathEnv        = "PODLAZ_XRAY_PATH"
 	DefaultXrayCommand = "xray"
 
-	HandoffBlock         = "block"
-	HandoffAsk           = "ask"
-	HandoffStopKnown     = "stop-known"
-	HandoffReplacePodlaz = "replace-podlaz"
+	HandoffBlock = "block"
 )
 
 // ProfileSnapshot is the daemon API's normalized profile payload. It mirrors the
@@ -115,8 +112,8 @@ func NormalizeHandoffPolicy(policy string) string {
 	switch strings.ToLower(strings.TrimSpace(policy)) {
 	case "":
 		return HandoffBlock
-	case HandoffBlock, HandoffAsk, HandoffStopKnown, HandoffReplacePodlaz:
-		return strings.ToLower(strings.TrimSpace(policy))
+	case HandoffBlock:
+		return HandoffBlock
 	default:
 		return strings.ToLower(strings.TrimSpace(policy))
 	}
@@ -124,7 +121,7 @@ func NormalizeHandoffPolicy(policy string) string {
 
 func ValidateHandoffPolicy(policy string) error {
 	switch NormalizeHandoffPolicy(policy) {
-	case HandoffBlock, HandoffAsk, HandoffStopKnown, HandoffReplacePodlaz:
+	case HandoffBlock:
 		return nil
 	default:
 		return fmt.Errorf("unsupported handoff policy %q", policy)
