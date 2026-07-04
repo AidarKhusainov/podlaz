@@ -68,6 +68,30 @@ func TestRunCLIProfileValidateHumanOutputIsStructuredAndRedacted(t *testing.T) {
 	assertNoRawValue(t, got, p.UserIdentity)
 }
 
+func TestRunCLIProfileValidateHumanOutputDoesNotLeakHostnameBearingIDInNextStep(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "profiles.json")
+	store := mustProfileStore(t, storePath)
+	p := renderableVLESSProfile()
+	p.ID = "vless-swe1.censor-amoroso.com-443-5659e4f0c6"
+	if err := store.Add(p); err != nil {
+		t.Fatalf("add profile: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := runWithOptions(context.Background(), []string{"profile", "validate", p.ID, "--mode", "tun"}, &out, options{profileStorePath: storePath})
+	if err != nil {
+		t.Fatalf("profile validate failed: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "censor-amoroso.com") || strings.Contains(got, p.ID) {
+		t.Fatalf("expected hostname-bearing profile id to be hidden in next-step output, got %q", got)
+	}
+	if !strings.Contains(got, "Run: plz plan --mode tun <profile-id>") {
+		t.Fatalf("expected safe profile-id placeholder in next-step output, got %q", got)
+	}
+	assertNoRawValue(t, got, p.UserIdentity)
+}
+
 func TestRunCLIProfileValidateHumanFailureUsesPlainBlockedStatus(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	store := mustProfileStore(t, storePath)
@@ -139,5 +163,17 @@ func assertNoRawValue(t *testing.T, output, raw string) {
 }
 
 func renderableVLESSProfile() profile.Profile {
-	return profile.Profile{ID: "demo-vless", Name: "demo vless", Source: profile.SourceImportedURI, Engine: profile.EngineXray, Server: "example.com", Port: 443, Protocol: "vless", UserIdentity: "11111111-2222-3333-4444-555555555555", Transport: "tcp", Security: "none", Encryption: "none"}
+	return profile.Profile{
+		ID:           "demo-vless",
+		Name:         "demo vless",
+		Source:       profile.SourceImportedURI,
+		Engine:       profile.EngineXray,
+		Server:       "example.com",
+		Port:         443,
+		Protocol:     "vless",
+		UserIdentity: "11111111-2222-3333-4444-555555555555",
+		Transport:    "tcp",
+		Security:     "none",
+		Encryption:   "none",
+	}
 }
