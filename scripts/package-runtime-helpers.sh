@@ -60,6 +60,7 @@ printf '%s  %s\n' "${xray_sha256}" "${xray_archive}" | sha256sum --check --statu
 xray_tmp="$(mktemp -d)"
 tun_tmp="$(mktemp -d)"
 cleanup() {
+  chmod -R u+w "${xray_tmp}" "${tun_tmp}" 2>/dev/null || true
   rm -rf "${xray_tmp}" "${tun_tmp}"
 }
 trap cleanup EXIT
