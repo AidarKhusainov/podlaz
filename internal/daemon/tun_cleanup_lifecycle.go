@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -25,4 +27,16 @@ func (m *XrayManager) runTunCleanup(ctx context.Context, transactionID string) (
 	m.state = inactiveXrayState()
 	m.mu.Unlock()
 	return lifecycleResponse(inactiveXrayState()), nil
+}
+
+func verifyCoreStarted(done <-chan struct{}) error {
+	if done == nil {
+		return errors.New("missing Xray process completion channel")
+	}
+	select {
+	case <-done:
+		return errors.New("Xray exited during startup verification")
+	case <-time.After(50 * time.Millisecond):
+		return nil
+	}
 }
