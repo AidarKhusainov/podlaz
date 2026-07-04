@@ -23,16 +23,16 @@ func TestRunCLIConnectStartsStoredProfileViaDaemon(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	var gotProfile profile.Profile
+	var gotProfile api.ProfileSnapshot
 	var gotMode string
 	err = runWithOptions(context.Background(), []string{"connect", "--mode", "proxy-only", p.ID}, &out, options{
 		profileStorePath: storePath,
-		connect: func(_ context.Context, p profile.Profile, mode string) (api.LifecycleResponse, error) {
-			gotProfile = p
-			gotMode = mode
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			gotProfile = req.Profile
+			gotMode = req.Mode
 			return api.LifecycleResponse{
 				Connection:        "active",
-				Mode:              mode,
+				Mode:              req.Mode,
 				Proxy:             "listening on 127.0.0.1:1080 (SOCKS), 127.0.0.1:8080 (HTTP)",
 				TUN:               "disabled",
 				Routes:            "not modified",
@@ -80,13 +80,15 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 
 	var out bytes.Buffer
 	var gotMode string
-	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", p.ID}, &out, options{
+	var gotHandoff string
+	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", "--handoff=replace-podlaz", p.ID}, &out, options{
 		profileStorePath: storePath,
-		connect: func(_ context.Context, _ profile.Profile, mode string) (api.LifecycleResponse, error) {
-			gotMode = mode
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			gotMode = req.Mode
+			gotHandoff = req.Handoff
 			return api.LifecycleResponse{
 				Connection: "active",
-				Mode:       mode,
+				Mode:       req.Mode,
 				Proxy:      "not started in this executor slice",
 				TUN:        "enabled (podlaz0)",
 				Routes:     "applied 2 route(s) and 2 policy rule(s)",
@@ -101,10 +103,27 @@ func TestRunCLIConnectAcceptsTunModeViaDaemon(t *testing.T) {
 	if gotMode != planner.ModeTun {
 		t.Fatalf("expected tun mode, got %q", gotMode)
 	}
+	if gotHandoff != api.HandoffReplacePodlaz {
+		t.Fatalf("expected replace-podlaz handoff, got %q", gotHandoff)
+	}
 	for _, text := range []string{"Mode: tun", "TUN: enabled (podlaz0)", "Routes: applied 2 route(s)"} {
 		if !strings.Contains(out.String(), text) {
 			t.Fatalf("expected output to contain %q, got %q", text, out.String())
 		}
+	}
+}
+
+func TestRunCLIConnectRejectsHandoffWithoutTunMode(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"connect", "--handoff=replace-podlaz", "profile-id"}, &out)
+	if err == nil {
+		t.Fatal("expected handoff without TUN mode to fail")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("expected exit code 2, got %d", got)
+	}
+	if !strings.Contains(err.Error(), "connect --handoff is only supported with --mode tun") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
