@@ -18,6 +18,10 @@ depends:
   - libc6 (>= 2.34)
   - systemd
   - ca-certificates
+  - iproute2
+  - nftables
+  - systemd-resolved
+  - polkitd | policykit-1
 
 scripts:
   preinstall: ./packaging/debian/preinstall.sh
@@ -35,6 +39,11 @@ contents:
     type: symlink
   - src: __PACKAGE_ROOT__/usr/bin/podlazd
     dst: /usr/bin/podlazd
+    file_info:
+      mode: 0755
+  - src: __PACKAGE_ROOT__/usr/lib/podlaz
+    dst: /usr/lib/podlaz
+    type: tree
     file_info:
       mode: 0755
   - src: __PACKAGE_ROOT__/usr/lib/systemd/system/podlazd.service
