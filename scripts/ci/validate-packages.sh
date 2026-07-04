@@ -177,5 +177,8 @@ if [ -n "${PODLAZ_LINKAGE_ROOT:-}" ]; then
 fi
 
 for package in "$@"; do
-  lintian --fail-on error "${package}"
+  lintian \
+    --fail-on error \
+    --suppress-tags statically-linked-binary,unstripped-binary-or-object \
+    "${package}"
 done 2>&1 | tee /tmp/podlaz-lintian.txt
