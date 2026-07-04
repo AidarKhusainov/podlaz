@@ -26,7 +26,19 @@ func FakeResolvedDesktop() Snapshot {
 			Gateway:     "192.0.2.1",
 			Raw:         "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000",
 		},
-		DNS: DNS{Mode: "systemd-resolved", Resolved: Finding{Status: StatusDetected, Summary: "systemd-resolved status available", Detail: "Global"}},
+		DNS: DNS{
+			Mode:     "systemd-resolved",
+			Resolved: Finding{Status: StatusDetected, Summary: "systemd-resolved status available", Detail: "Global"},
+			ResolvedLinks: []ResolvedLink{{
+				Index:            "3",
+				Name:             "wlp0s20f3",
+				CurrentScopes:    []string{"DNS"},
+				Protocols:        []string{"+DefaultRoute", "+LLMNR", "-mDNS", "-DNSOverTLS", "DNSSEC=no/unsupported"},
+				CurrentDNSServer: "192.0.2.53",
+				DNSServers:       []string{"192.0.2.53"},
+				DNSDomains:       []string{"lan.example.invalid"},
+			}},
+		},
 		NetworkManager: NetworkManager{
 			Finding: Finding{Status: StatusDetected, Summary: "NetworkManager state available", Detail: "running:connected"},
 			State:   "connected",
@@ -39,6 +51,22 @@ func FakeResolvedDesktop() Snapshot {
 		IPv4:       Finding{Status: StatusDetected, Summary: "IPv4 default route detected"},
 		IPv6:       Finding{Status: StatusMissing, Summary: "IPv6 default route missing", Detail: "route not found"},
 	}
+}
+
+// FakeDesktopWithForeignDefaultDNSOwner returns a desktop topology where another
+// VPN-like link owns the route-only default DNS domain.
+func FakeDesktopWithForeignDefaultDNSOwner() Snapshot {
+	s := FakeResolvedDesktop()
+	s.DNS.ResolvedLinks = append(s.DNS.ResolvedLinks, ResolvedLink{
+		Index:            "9",
+		Name:             "wg0",
+		CurrentScopes:    []string{"DNS"},
+		Protocols:        []string{"+DefaultRoute", "+LLMNR", "-mDNS", "-DNSOverTLS", "DNSSEC=no/unsupported"},
+		CurrentDNSServer: "198.51.100.53",
+		DNSServers:       []string{"198.51.100.53"},
+		DNSDomains:       []string{"~."},
+	})
+	return s
 }
 
 // FakeDesktopMissingDefaultRoute returns a topology where full-tunnel planning
