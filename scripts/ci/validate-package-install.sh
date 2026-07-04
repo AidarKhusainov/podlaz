@@ -57,6 +57,17 @@ zsh -n /usr/share/zsh/vendor-completions/_podlaz
 zsh -n /usr/share/zsh/vendor-completions/_plz
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish'
+bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz; COMP_WORDS=(podlaz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
+bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
+zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _podlaz; whence _podlaz >/dev/null'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F completion'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan -" | grep -F -- "--mode"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan --mode " | grep -F "proxy-only"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz profile add --protocol " | grep -F "vless"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz logs -" | grep -F -- "--follow"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz recover --execute -" | grep -F -- "--yes"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz recover --execute -" | grep -F -- "--yes"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz plan -" | grep -F -- "--mode"'
 
 if [ "${validate_service}" = 1 ]; then
   sudo systemctl daemon-reload
