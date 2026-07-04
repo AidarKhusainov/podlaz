@@ -52,6 +52,7 @@ func TestDaemonAPIHTTPStatusCodeUsesStableCategories(t *testing.T) {
 		{name: "active conflict", err: activeConnectionError(), want: http.StatusConflict},
 		{name: "full-tunnel active race", err: errFullTunnelConnectionBecameActive, want: http.StatusConflict},
 		{name: "foreign DNS handoff blocker", err: &tunHandoffBlocker{Interface: "wg0", DNSDomain: defaultDNSRouteDomain, DNSServer: "198.51.100.53"}, want: http.StatusConflict},
+		{name: "stale podlaz state blocker", err: &tunStalePodlazStateBlocker{Resources: []string{"tun-device podlaz0"}}, want: http.StatusConflict},
 		{name: "access denial", err: daemonAPIAccessDenied(errors.New("plain access denial")), want: http.StatusForbidden},
 		{name: "service unavailable", err: daemonAPIServiceUnavailable(errors.New("plain unavailable")), want: http.StatusServiceUnavailable},
 		{name: "TUN verification", err: newTunVerificationError("dns", "DNS through the tunnel did not resolve example.com before timeout", errors.New("dns timeout")), want: http.StatusServiceUnavailable},
