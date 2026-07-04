@@ -27,6 +27,17 @@ func renderAlignedField(w io.Writer, label, value string) {
 	fmt.Fprintf(w, "  %-10s %s\n", label, render.Redact(strings.TrimSpace(value)))
 }
 
+func safeCommandProfileID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "<profile-id>"
+	}
+	if strings.ContainsAny(id, ".:/@") {
+		return "<profile-id>"
+	}
+	return render.Redact(id)
+}
+
 func humanModeLabel(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "tun":
