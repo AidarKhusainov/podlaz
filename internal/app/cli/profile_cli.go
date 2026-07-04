@@ -198,6 +198,7 @@ func runProfileValidate(store profile.Store, args []string, stdout io.Writer) er
 
 func renderProfileValidateHuman(w io.Writer, original profile.Profile, out profile.Profile, parsed profileValidateArgs, validationErr error) {
 	marks := outputStatusMarks(parsed.plainOutput)
+	commandID := safeCommandProfileID(out.ID)
 	fmt.Fprintln(w, "Profile check")
 	fmt.Fprintln(w)
 	renderAlignedField(w, "Name", out.Name)
@@ -212,7 +213,7 @@ func renderProfileValidateHuman(w io.Writer, original profile.Profile, out profi
 		fmt.Fprintf(w, "  %s Profile is valid for %s mode.\n", marks.OK, humanModeLabel(parsed.mode))
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Next step")
-		fmt.Fprintf(w, "  Run: plz plan --mode %s %s\n", parsed.mode, out.ID)
+		fmt.Fprintf(w, "  Run: plz plan --mode %s %s\n", parsed.mode, commandID)
 		return
 	}
 
@@ -224,11 +225,11 @@ func renderProfileValidateHuman(w io.Writer, original profile.Profile, out profi
 	fmt.Fprintln(w)
 	if parsed.mode == planner.ModeTun && validateProfileForMode(original, planner.ModeProxyOnly) == nil {
 		fmt.Fprintln(w, "Try instead")
-		fmt.Fprintf(w, "  plz connect --mode proxy-only %s\n", out.ID)
+		fmt.Fprintf(w, "  plz connect --mode proxy-only %s\n", commandID)
 		return
 	}
 	fmt.Fprintln(w, "Next step")
-	fmt.Fprintf(w, "  Fix the profile and run: plz profile validate %s --mode %s\n", out.ID, parsed.mode)
+	fmt.Fprintf(w, "  Fix the profile and run: plz profile validate %s --mode %s\n", commandID, parsed.mode)
 }
 
 func runProfileDelete(store profile.Store, args []string, stdout io.Writer, opts options) error {
