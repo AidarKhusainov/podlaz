@@ -44,10 +44,12 @@ const (
 	FirewallVerdictReject      = "reject"
 	FirewallVerdictDrop        = "drop"
 	FirewallServerBypassOwner  = "podlaz:firewall:server-bypass"
+	FirewallEstablishedOwner   = "podlaz:firewall:established"
 	FirewallLoopbackOwner      = "podlaz:firewall:loopback"
 	FirewallTunEgressOwner     = "podlaz:firewall:tun-egress"
 	FirewallKillSwitchOwner    = "podlaz:firewall:kill-switch"
 	FirewallServerBypassKey    = "inet/podlaz/output/server-bypass"
+	FirewallEstablishedKey     = "inet/podlaz/output/established"
 	FirewallLoopbackKey        = "inet/podlaz/output/loopback"
 	FirewallTunEgressKey       = "inet/podlaz/output/tun-egress"
 	FirewallKillSwitchKey      = "inet/podlaz/output/kill-switch"
@@ -318,7 +320,7 @@ func firewallRuleAction(tableAction string) string {
 }
 
 func firewallRules(policy string, device TunDevicePlan, serverIP, action string) []TunFirewallRulePlan {
-	rules := []TunFirewallRulePlan{serverBypassFirewallRule(serverIP, action), loopbackFirewallRule(action), tunEgressFirewallRule(device, action)}
+	rules := []TunFirewallRulePlan{serverBypassFirewallRule(serverIP, action), establishedFirewallRule(action), loopbackFirewallRule(action), tunEgressFirewallRule(device, action)}
 	if rule := killSwitchFirewallRule(policy, device, action); rule.Action != "" {
 		rules = append(rules, rule)
 	}
@@ -341,6 +343,18 @@ func serverBypassFirewallRule(serverIP, action string) TunFirewallRulePlan {
 		rule.Reason = "VPN server bypass target is unknown; firewall bypass rule cannot be applied safely"
 	}
 	return rule
+}
+
+func establishedFirewallRule(action string) TunFirewallRulePlan {
+	return TunFirewallRulePlan{
+		Chain:       FirewallOutputChain,
+		Expr:        "ct state established,related",
+		Verdict:     FirewallVerdictAccept,
+		Action:      action,
+		Reason:      "allow replies for already established inbound connections before non-TUN blocking",
+		Ownership:   FirewallEstablishedOwner,
+		RollbackKey: FirewallEstablishedKey,
+	}
 }
 
 func loopbackFirewallRule(action string) TunFirewallRulePlan {

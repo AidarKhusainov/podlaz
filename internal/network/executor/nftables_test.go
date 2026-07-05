@@ -34,6 +34,7 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		{"nft", "add", "table", "inet", "podlaz"},
 		{"nft", "add", "chain", "inet", "podlaz", "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", "accept", ";", "}"},
 		{"nft", "add", "rule", "inet", "podlaz", "output", "ip", "daddr", "203.0.113.10", "counter", "accept", "comment", `"` + planner.FirewallServerBypassOwner + `"`},
+		{"nft", "add", "rule", "inet", "podlaz", "output", "ct", "state", "established,related", "counter", "accept", "comment", `"` + planner.FirewallEstablishedOwner + `"`},
 		{"nft", "add", "rule", "inet", "podlaz", "output", "oifname", "lo", "counter", "accept", "comment", `"` + planner.FirewallLoopbackOwner + `"`},
 		{"nft", "add", "rule", "inet", "podlaz", "output", "oifname", "podlaz0", "counter", "accept", "comment", `"` + planner.FirewallTunEgressOwner + `"`},
 		{"nft", "add", "rule", "inet", "podlaz", "output", "oifname", "!=", "podlaz0", "counter", "reject", "comment", `"` + planner.FirewallKillSwitchOwner + `"`},
@@ -134,6 +135,7 @@ func TestNftablesExecutorVerifyMatchesRuleFieldsOnSameLine(t *testing.T) {
 		type filter hook output priority 0; policy accept;
 		oifname != "podlaz0" counter reject comment "other-project"
 		ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"
+		ct state established,related counter accept comment "podlaz:firewall:established"
 		oifname "lo" counter accept comment "podlaz:firewall:loopback"
 		oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"
 		meta l4proto tcp counter reject comment "podlaz:firewall:kill-switch"
@@ -161,6 +163,7 @@ func firewallPlanForTest() planner.TunFirewallPlan {
 		}},
 		Rules: []planner.TunFirewallRulePlan{
 			{Chain: planner.FirewallOutputChain, Expr: "ip daddr 203.0.113.10", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallServerBypassOwner, RollbackKey: planner.FirewallServerBypassKey},
+			{Chain: planner.FirewallOutputChain, Expr: "ct state established,related", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallEstablishedOwner, RollbackKey: planner.FirewallEstablishedKey},
 			{Chain: planner.FirewallOutputChain, Expr: "oifname \"lo\"", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallLoopbackOwner, RollbackKey: planner.FirewallLoopbackKey},
 			{Chain: planner.FirewallOutputChain, Expr: "oifname \"podlaz0\"", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallTunEgressOwner, RollbackKey: planner.FirewallTunEgressKey},
 			{Chain: planner.FirewallOutputChain, Expr: "oifname != \"podlaz0\"", Verdict: planner.FirewallVerdictReject, Action: planner.FirewallActionAdd, Ownership: planner.FirewallKillSwitchOwner, RollbackKey: planner.FirewallKillSwitchKey},
@@ -176,6 +179,7 @@ func nftablesListOutputForTest() string {
 	chain output {
 		type filter hook output priority 0; policy accept;
 		ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"
+		ct state established,related counter accept comment "podlaz:firewall:established"
 		oifname "lo" counter accept comment "podlaz:firewall:loopback"
 		oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"
 		oifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"

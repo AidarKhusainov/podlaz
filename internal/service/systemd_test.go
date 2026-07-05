@@ -16,7 +16,6 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"Group=podlaz",
 		"UMask=0077",
 		"Environment=PODLAZ_SERVICE=systemd",
-		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
 		"RuntimeDirectory=podlaz",
 		"RuntimeDirectoryMode=0711",
 		"StateDirectory=podlaz",
@@ -29,6 +28,14 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("expected systemd unit to contain %q, got:\n%s", want, content)
 		}
+	}
+}
+
+func TestSystemdUnitUsesSocketGroupFallbackByDefault(t *testing.T) {
+	content := readSystemdUnit(t)
+
+	if strings.Contains(content, "PODLAZ_POLKIT_AUTHORIZATION=required") {
+		t.Fatalf("packaged service must not require polkit by default; group socket access is the current packaged fallback:\n%s", content)
 	}
 }
 

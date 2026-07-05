@@ -179,3 +179,35 @@ func TestContainsAdjacentRouteFields(t *testing.T) {
 		t.Fatal("did not expect route fields to contain dev podlaz0")
 	}
 }
+
+func TestFirstIPv4InText(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "resolvectl output",
+			text: "example.com: 93.184.216.34 -- link: podlaz0\n",
+			want: "93.184.216.34",
+		},
+		{
+			name: "ignores IPv6 before IPv4",
+			text: "example.com: 2606:2800:220:1:248:1893:25c8:1946 93.184.216.34\n",
+			want: "93.184.216.34",
+		},
+		{
+			name: "no IPv4",
+			text: "example.com: no addresses found\n",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := firstIPv4InText(tt.text); got != tt.want {
+				t.Fatalf("firstIPv4InText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

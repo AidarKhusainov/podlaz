@@ -105,16 +105,29 @@ func defaultDialTunProbeTarget(ctx context.Context, host string, port uint16) er
 }
 
 func defaultResolveTunDNSName(ctx context.Context, name string) (string, error) {
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, name)
+	cmd := exec.CommandContext(ctx, "resolvectl", "--legend=no", "--type=A", "query", name)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w", name, err)
+		return "", fmt.Errorf("resolvectl query %s: %w: %s%s", name, err, strings.TrimSpace(string(output)), tunDNSDiagnostics(name))
 	}
-	for _, ip := range ips {
-		if ipv4 := ip.IP.To4(); ipv4 != nil {
-			return ipv4.String(), nil
+	if ip := firstIPv4InText(string(output)); ip != "" {
+		return ip, nil
+	}
+	return "", fmt.Errorf("resolvectl query %s returned no IPv4 address: %s%s", name, strings.TrimSpace(string(output)), tunDNSDiagnostics(name))
+}
+
+func firstIPv4InText(text string) string {
+	for _, field := range strings.Fields(text) {
+		token := strings.Trim(field, "[](),;")
+		ip := net.ParseIP(token)
+		if ip == nil {
+			continue
+		}
+		if ipv4 := ip.To4(); ipv4 != nil {
+			return ipv4.String()
 		}
 	}
-	return "", fmt.Errorf("resolve %s returned no IPv4 address: %v", name, ips)
+	return ""
 }
 
 func containsAdjacentRouteFields(fields []string, key, value string) bool {

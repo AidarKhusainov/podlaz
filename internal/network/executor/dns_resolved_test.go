@@ -75,14 +75,14 @@ Current DNS Server: 198.51.100.53
 	}
 }
 
-func TestResolvedDNSExecutorVerifyRequiresDNSScope(t *testing.T) {
+func TestResolvedDNSExecutorVerifyAllowsConfiguredDNSWithoutCurrentScope(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
     Current Scopes: none
        DNS Servers: 1.1.1.1
         DNS Domain: ~.`}}).Verify(context.Background(), plan)
-	if err == nil {
-		t.Fatal("expected verify failure when DNS current scope is missing")
+	if err != nil {
+		t.Fatalf("verify DNS without active current scope: %v", err)
 	}
 }
 

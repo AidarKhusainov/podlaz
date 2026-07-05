@@ -92,7 +92,7 @@ Expected cleanup result:
 Run these in a VM only:
 
 1. Make `PODLAZ_XRAY_PATH` point to a binary that exits immediately. Connect must fail and roll back podlaz-owned networking state.
-2. Make `PODLAZ_TUN2SOCKS_PATH` point to a missing binary. Connect must fail after network verification and roll back podlaz-owned networking state.
+2. Make `PODLAZ_TUN2SOCKS_PATH` point to a missing binary. Connect must fail during preflight before TUN, route, DNS, or nftables mutation.
 3. Temporarily break outbound connectivity for the probe. Connect must fail before commit and roll back podlaz-owned networking state.
 4. Kill Xray while connected. Status/doctor must report the core failure and recovery must remain possible.
 5. Run `podlaz recover` after simulated daemon interruption. It must remain read-only unless explicitly executed with the documented confirmation flags.

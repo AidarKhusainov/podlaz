@@ -157,8 +157,10 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 	return Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}, nil
 }
 
-// Verify checks that the target link exposes DNS scope, planned DNS servers, and
-// the route-only domain after apply.
+// Verify checks that the target link keeps the planned DNS servers and
+// route-only domain after apply. Current Scopes is intentionally not used as an
+// ownership check: systemd-resolved reports active DNS scopes from live link
+// state, while podlaz needs to verify the per-link configuration it just wrote.
 func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
 	if err := validateDNSPlan(plan); err != nil {
 		return err
@@ -175,9 +177,6 @@ func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan
 	resolvedLink, ok := findResolvedLink(links, link)
 	if !ok {
 		return fmt.Errorf("verify systemd-resolved DNS for %s: link status not found", link)
-	}
-	if !containsDNSValue(resolvedLink.CurrentScopes, "DNS") {
-		return fmt.Errorf("verify systemd-resolved DNS for %s: Current Scopes does not include DNS", link)
 	}
 	for _, server := range plan.Servers {
 		if !containsDNSValue(resolvedLink.DNSServers, server) {

@@ -196,6 +196,9 @@ func assertDefaultFirewallPlan(t *testing.T, plan TunFirewallPlan, ruleAction, k
 	if !containsFirewallRule(plan.Rules, FirewallServerBypassOwner, ruleAction, FirewallVerdictAccept, "ip daddr 203.0.113.10") {
 		t.Fatalf("expected server bypass firewall rule, got %#v", plan.Rules)
 	}
+	if !containsFirewallRule(plan.Rules, FirewallEstablishedOwner, ruleAction, FirewallVerdictAccept, "ct state established,related") {
+		t.Fatalf("expected established connection firewall rule, got %#v", plan.Rules)
+	}
 	if !containsFirewallRule(plan.Rules, FirewallTunEgressOwner, ruleAction, FirewallVerdictAccept, `oifname "podlaz0"`) {
 		t.Fatalf("expected TUN egress firewall rule, got %#v", plan.Rules)
 	}
