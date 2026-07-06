@@ -19,6 +19,9 @@ func preflightXrayTunSupport(ctx context.Context, xrayPath, runtimeConfigPath st
 	if strings.TrimSpace(xrayPath) == "" {
 		return errors.New("missing Xray binary path for TUN preflight")
 	}
+	if strings.TrimSpace(runtimeConfigPath) == "" {
+		return errors.New("missing Xray runtime config path for TUN preflight")
+	}
 	if len(xrayConfig) == 0 {
 		return errors.New("missing Xray TUN preflight config")
 	}
@@ -26,13 +29,12 @@ func preflightXrayTunSupport(ctx context.Context, xrayPath, runtimeConfigPath st
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create generated config directory for TUN preflight: %w", err)
 	}
-	preflightPath := filepath.Join(dir, "xray-tun-preflight.json")
-	if err := writeRuntimeConfig(preflightPath, xrayConfig, identity.runtimeConfigPermissions()); err != nil {
+	if err := writeRuntimeConfig(runtimeConfigPath, xrayConfig, identity.runtimeConfigPermissions()); err != nil {
 		return fmt.Errorf("write Xray TUN preflight config: %w", err)
 	}
-	defer removeGeneratedConfig(preflightPath)
+	defer removeGeneratedConfig(runtimeConfigPath)
 
-	cmd := exec.CommandContext(ctx, xrayPath, "test", "-config", preflightPath)
+	cmd := exec.CommandContext(ctx, xrayPath, "test", "-config", runtimeConfigPath)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
