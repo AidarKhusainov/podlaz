@@ -1,4 +1,4 @@
-.TH PODLAZD 8 "June 2026" "podlaz" "System Administration"
+.TH PODLAZD 8 "July 2026" "podlaz" "System Administration"
 .SH NAME
 podlazd \- local podlaz daemon for proxy and VPN lifecycle state
 .SH SYNOPSIS
@@ -28,11 +28,13 @@ and the canonical project documentation.
 .PP
 The packaged service is the privileged host-networking boundary for TUN mode.
 It runs the daemon as UID 0 with a restricted capability bounding set for
-TUN, route, nftables, ownership, and child-identity transitions. It does not
-grant ambient capabilities, and supervised Xray/TUN adapter children run as
-the dedicated unprivileged
+route, nftables, ownership, and child-identity transitions. It keeps only the
+ambient capabilities needed for child lifecycle. The supervised Xray child runs
+as the dedicated unprivileged
 .BR podlaz-xray:podlaz-xray
-identity.
+identity and owns packet ingestion through the native Xray
+.B tun
+inbound.
 .SH SERVICE MANAGEMENT
 The packaged service unit is
 .BR podlazd.service .
@@ -124,16 +126,16 @@ Repository sysusers definition for packaged service identities.
 .SH SECURITY MODEL
 The packaged daemon runs as
 .BR root:podlaz
-because TUN mode must inspect and mutate host TUN devices, routes, DNS, and
-nftables state inside daemon-owned transactions. The unit restricts the daemon
-with
-.BR CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_NET_ADMIN
-and keeps
-.B AmbientCapabilities=
-empty so capabilities are not placed in the ambient set for child processes.
+because TUN mode must inspect and mutate host routes, DNS, and nftables state
+inside daemon-owned transactions around the Xray-owned TUN link. The unit
+restricts the daemon with
+.BR CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN
+and keeps only
+.BR AmbientCapabilities=CAP_SETUID CAP_KILL
+for daemon-owned Xray child lifecycle.
 .PP
-The daemon must not run Xray or the TUN adapter as UID 0. When the packaged
-daemon is UID 0, it starts child processes as the dedicated
+The daemon must not run Xray as UID 0. When the packaged daemon is UID 0, it
+starts the child process as the dedicated
 .BR podlaz-xray:podlaz-xray
 identity with supplementary groups disabled. Generated Xray runtime
 configuration remains private by using ownership
@@ -145,8 +147,12 @@ and generated config file mode
 .PP
 Proxy-only lifecycle must not mutate TUN devices, routes, policy rules, DNS
 settings, nftables, or firewall state. TUN lifecycle may mutate only the
-podlaz-owned resources represented in its transaction state and rollback plan.
-The CLI must not become a privileged or SUID networking mutator.
+podlaz-owned routes, policy rules, DNS, and nftables resources represented in
+its transaction state and rollback plan. Xray-owned
+.B podlaz0
+is released by stopping the Xray child, not by recording it as a podlaz-owned
+TUN rollback target. The CLI must not become a privileged or SUID networking
+mutator.
 .SH RUNTIME STATE
 On startup, the daemon creates or uses the runtime directory, creates a lock
 file, removes only a stale Unix socket at the socket path, fails if the socket
@@ -162,14 +168,19 @@ starts Xray as a supervised child process, and records active state for
 status. Proxy-only lifecycle must not mutate TUN devices, routes, policy
 rules, DNS settings, nftables, or firewall state.
 .PP
+During TUN connect, the daemon opens a transaction, records generated config
+rollback metadata, verifies the generated native Xray TUN config, starts Xray,
+verifies the Xray-owned TUN link, applies podlaz-owned host networking state,
+verifies connectivity, and commits only after those checks pass.
+.PP
 During graceful shutdown, the daemon stops an active Xray child, shuts down the
 HTTP server, closes the Unix socket listener, removes the socket path, and
 removes the lock file.
 .PP
-On disconnect, the daemon stops the active Xray child, removes the generated
-runtime config path, and reports inactive proxy state. If Xray exits
-unexpectedly, the daemon keeps the generated config for inspection or recovery
-and reports the core failure through status warnings.
+On disconnect, the daemon rolls back podlaz-owned host networking state, stops
+the active Xray child, removes the generated runtime config path, and reports
+inactive state. If Xray exits unexpectedly, the daemon keeps transaction state
+for inspection or recovery and reports the core failure through status warnings.
 .PP
 Recovery dry-run inspection is read-only. Explicit recovery execution is scoped
 to clearly podlaz-owned volatile resources and must skip ambiguous targets.
@@ -218,69 +229,5 @@ podlaz doctor
 .TP
 .B Socket path exists but daemon cannot start
 The daemon removes stale Unix sockets, but it fails when the socket path is a
-non-socket filesystem object. Inspect the path before deleting anything.
-.TP
-.B Xray exited unexpectedly
-Use:
-.EX
-podlaz status
-podlaz logs --core
-journalctl -u podlazd -n 100 --no-pager
-.EE
-.TP
-.B Stale podlaz-owned runtime state
-Inspect first:
-.EX
-podlaz recover
-.EE
-Then use explicit daemon-owned cleanup only when the output is understood:
-.EX
-podlaz recover --execute --yes
-.EE
-.SH EXAMPLES
-.TP
-Manual development install of service identities and the systemd unit:
-.EX
-sudo install -m 0644 packaging/sysusers.d/podlaz.conf \
-  /usr/lib/sysusers.d/podlaz.conf
-sudo systemd-sysusers /usr/lib/sysusers.d/podlaz.conf
-sudo usermod -aG podlaz "$USER"
-newgrp podlaz
-sudo install -m 0644 packaging/systemd/podlazd.service \
-  /etc/systemd/system/podlazd.service
-sudo systemd-analyze verify /etc/systemd/system/podlazd.service
-sudo systemctl daemon-reload
-sudo systemctl start podlazd
-.EE
-.TP
-Verify daemon-backed inactive state:
-.EX
-systemctl status podlazd --no-pager
-podlaz status
-podlaz doctor
-journalctl -u podlazd -n 50 --no-pager
-.EE
-.TP
-Run a local non-root development daemon with a temporary runtime directory:
-.EX
-PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlazd
-PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlaz status
-.EE
-.TP
-Run proxy-only lifecycle with an explicit Xray path in local development:
-.EX
-PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev \
-PODLAZ_XRAY_PATH=/usr/local/bin/xray \
-go run ./cmd/podlazd
-.EE
-.SH SEE ALSO
-.BR podlaz (1),
-.BR systemctl (1),
-.BR journalctl (1),
-.BR systemd.unit (5),
-.BR sysusers.d (5)
-.PP
-Canonical project documentation is installed in the repository under
-.I docs/
-and starts with
-.IR docs/README.md .
+non-socket file. Inspect and remove only the unexpected file after verifying it
+is not owned by a running daemon.
