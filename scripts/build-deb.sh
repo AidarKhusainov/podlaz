@@ -100,9 +100,7 @@ ln -s podlaz "${root_dir}/usr/bin/plz"
 bash scripts/package-runtime-helpers.sh "${root_dir}" "${arch}" "${goarch}"
 
 cat > "${root_dir}/usr/share/lintian/overrides/podlaz" <<'EOF'
-podlaz: statically-linked-binary usr/lib/podlaz/tun2socks
 podlaz: statically-linked-binary usr/lib/podlaz/xray
-podlaz: unstripped-binary-or-object usr/lib/podlaz/tun2socks
 podlaz: unstripped-binary-or-object usr/lib/podlaz/xray
 EOF
 chmod 0644 "${root_dir}/usr/share/lintian/overrides/podlaz"
