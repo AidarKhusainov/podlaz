@@ -101,7 +101,10 @@ func TestXrayManagerDisconnectActiveTunRollsBackHostBeforeStoppingXray(t *testin
 
 	fakeXray := writeFakeXray(t, `#!/bin/sh
 trap 'printf "%s\n" stop-xray >> "$ORDER_FILE"; exit 0' TERM
-while true; do sleep 1; done
+while true; do
+  sleep 3600 &
+  wait $!
+done
 `)
 	cmd := exec.Command(fakeXray)
 	cmd.Env = append(os.Environ(), "ORDER_FILE="+orderPath)
@@ -122,7 +125,7 @@ while true; do sleep 1; done
 
 	manager := &XrayManager{
 		RuntimeDir:  runtimeDir,
-		StopTimeout: time.Second,
+		StopTimeout: 3 * time.Second,
 		tunExecutor: &activeTunDisconnectOrderExecutor{orderPath: orderPath},
 	}
 	manager.mu.Lock()
