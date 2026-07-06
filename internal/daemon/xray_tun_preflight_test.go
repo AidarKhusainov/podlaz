@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestPreflightXrayTunSupportUsesConfigTestAndRemovesTemporaryConfig(t *testing.T) {
+func TestPreflightXrayTunSupportUsesConfigTestAndRemovesTrackedRuntimeConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script test")
 	}
@@ -19,7 +19,10 @@ func TestPreflightXrayTunSupportUsesConfigTestAndRemovesTemporaryConfig(t *testi
 test "$1" = "test"
 test "$2" = "-config"
 test -f "$3"
-exit 0
+case "$3" in
+  */xray.generated.json) exit 0 ;;
+  *) exit 9 ;;
+esac
 `)
 	runtimeConfigPath := filepath.Join(dir, "generated", generatedXrayName)
 
@@ -27,8 +30,8 @@ exit 0
 	if err != nil {
 		t.Fatalf("preflight Xray TUN support: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, "generated", "xray-tun-preflight.json")); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("expected preflight config to be removed, stat err=%v", statErr)
+	if _, statErr := os.Stat(runtimeConfigPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected tracked runtime config to be removed after successful preflight, stat err=%v", statErr)
 	}
 }
 
