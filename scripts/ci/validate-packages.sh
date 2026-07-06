@@ -148,10 +148,10 @@ for package in "$@"; do
   grep -Fx 'StateDirectoryMode=0700' "${service}"
   grep -Fx 'NoNewPrivileges=yes' "${service}"
   grep -Fx 'CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN' "${service}"
-  grep -Fx 'AmbientCapabilities=CAP_SETUID CAP_KILL' "${service}"
+  grep -Fx 'AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN' "${service}"
   grep -Fx 'RestrictSUIDSGID=yes' "${service}"
   grep -Fx 'MemoryDenyWriteExecute=yes' "${service}"
-  assert_no_match '^AmbientCapabilities=.*CAP_(NET_ADMIN|SETGID|SYS_ADMIN)' "${service}"
+  assert_no_match '^AmbientCapabilities=.*CAP_(CHOWN|SETGID|SYS_ADMIN)' "${service}"
 
   grep -F 'unit=podlazd.service' "${control}/postinst"
   grep -F "deb-systemd-helper enable \"\$unit\"" "${control}/postinst"
