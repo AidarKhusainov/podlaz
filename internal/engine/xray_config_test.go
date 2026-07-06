@@ -67,19 +67,25 @@ func TestGenerateXrayProxyOnlyConfigSupportsVLESSRealityXHTTP(t *testing.T) {
 	}
 }
 
-func TestGenerateXrayTunConfigUsesPrivateSocksInbound(t *testing.T) {
+func TestGenerateXrayTunConfigUsesNativeTunInbound(t *testing.T) {
 	got, err := GenerateXrayTunConfig(proxyOnlyRealityProfile(), DefaultXrayTunConfigOptions())
 	if err != nil {
 		t.Fatalf("generate TUN-mode Xray config: %v", err)
 	}
+	if strings.Contains(string(got), "podlaz-tun-socks") || strings.Contains(string(got), `"protocol": "socks"`) {
+		t.Fatalf("TUN-mode config must not expose the old private SOCKS adapter plumbing:\n%s", got)
+	}
+
 	var cfg struct {
 		Inbounds []struct {
 			Tag      string `json:"tag"`
-			Listen   string `json:"listen"`
-			Port     uint16 `json:"port"`
 			Protocol string `json:"protocol"`
 			Settings struct {
-				UDP bool `json:"udp"`
+				Name      string   `json:"name"`
+				MTU       int      `json:"mtu"`
+				Gateway   []string `json:"gateway"`
+				DNS       []string `json:"dns"`
+				UserLevel int      `json:"userLevel"`
 			} `json:"settings"`
 		} `json:"inbounds"`
 		Outbounds []struct {
@@ -94,11 +100,20 @@ func TestGenerateXrayTunConfigUsesPrivateSocksInbound(t *testing.T) {
 		t.Fatalf("decode TUN-mode Xray config: %v", err)
 	}
 	if len(cfg.Inbounds) != 1 {
-		t.Fatalf("expected one private TUN adapter inbound, got %#v", cfg.Inbounds)
+		t.Fatalf("expected one native TUN inbound, got %#v", cfg.Inbounds)
 	}
 	inbound := cfg.Inbounds[0]
-	if inbound.Tag != "podlaz-tun-socks" || inbound.Listen != DefaultTunSOCKSListen || inbound.Port != DefaultTunSOCKSPort || inbound.Protocol != "socks" || !inbound.Settings.UDP {
-		t.Fatalf("unexpected TUN inbound: %#v", inbound)
+	if inbound.Tag != "podlaz-tun" || inbound.Protocol != "tun" {
+		t.Fatalf("unexpected TUN inbound identity: %#v", inbound)
+	}
+	if inbound.Settings.Name != DefaultXrayTunName || inbound.Settings.MTU != DefaultXrayTunMTU || inbound.Settings.UserLevel != 0 {
+		t.Fatalf("unexpected TUN inbound settings: %#v", inbound.Settings)
+	}
+	if gotGateway := strings.Join(inbound.Settings.Gateway, ","); gotGateway != DefaultXrayTunGateway {
+		t.Fatalf("unexpected TUN gateway: %#v", inbound.Settings.Gateway)
+	}
+	if gotDNS := strings.Join(inbound.Settings.DNS, ","); gotDNS != DefaultXrayTunDNS {
+		t.Fatalf("unexpected TUN DNS: %#v", inbound.Settings.DNS)
 	}
 	if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Tag != "podlaz-tun-proxy" || cfg.Outbounds[0].Protocol != "vless" {
 		t.Fatalf("unexpected TUN outbound: %#v", cfg.Outbounds)
