@@ -80,6 +80,33 @@ func TestTunTransactionRecordsGeneratedConfigRollbackBeforePreflight(t *testing.
 	}
 }
 
+func TestRollbackTunTransactionStopsChildProcessesAfterExecutorRollback(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: clock}
+	tx := txstate.NewTransaction("tun-order-test", "test-profile", planner.ModeTun, clock())
+	tx.Rollback.ChildProcesses = []txstate.ChildProcessRollback{{PID: 12345, Label: "xray", Owner: txstate.TransactionOwner}}
+	if _, err := store.Save(tx); err != nil {
+		t.Fatalf("save transaction: %v", err)
+	}
+
+	var order []string
+	oldStop := stopRollbackChildProcesses
+	stopRollbackChildProcesses = func(txstate.Transaction) error {
+		order = append(order, "stop-child")
+		return nil
+	}
+	defer func() { stopRollbackChildProcesses = oldStop }()
+
+	executor := &rollbackOrderExecutor{order: &order}
+	if err := rollbackTunTransaction(context.Background(), store, &tx, transactionPlanForTest(), executor); err != nil {
+		t.Fatalf("rollback TUN transaction: %v", err)
+	}
+	if strings.Join(order, ",") != "executor-rollback,stop-child" {
+		t.Fatalf("expected host rollback before child stop, got %#v", order)
+	}
+}
+
 func TestTunTransactionRollsBackOnlyAppliedStepsAfterPartialApplyFailure(t *testing.T) {
 	runtimeDir := t.TempDir()
 	executor := &recordingTunExecutor{applyErr: errors.New("route apply failed")}
@@ -180,6 +207,21 @@ func (e *recordingTunExecutor) Verify(context.Context, planner.TunPlan) error {
 
 func (e *recordingTunExecutor) Rollback(context.Context, planner.TunPlan) error {
 	e.calls = append(e.calls, "rollback")
+	return nil
+}
+
+type rollbackOrderExecutor struct {
+	order *[]string
+}
+
+func (e *rollbackOrderExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, nil
+}
+
+func (e *rollbackOrderExecutor) Verify(context.Context, planner.TunPlan) error { return nil }
+
+func (e *rollbackOrderExecutor) Rollback(context.Context, planner.TunPlan) error {
+	*e.order = append(*e.order, "executor-rollback")
 	return nil
 }
 
