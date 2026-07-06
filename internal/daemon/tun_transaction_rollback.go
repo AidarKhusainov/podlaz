@@ -24,33 +24,54 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
-	if executor == nil {
-		return errors.New("missing TUN executor")
-	}
-	if tx.State == txstate.TransactionRolledBack {
-		return nil
-	}
-	if tx.State != txstate.TransactionRollingBack {
-		if _, err := txstate.Transition(tx, txstate.TransactionRollingBack, transactionNow(store)); err != nil {
-			return err
-		}
-		if _, err := store.Save(*tx); err != nil {
-			return err
-		}
+	if err := beginTunRollback(store, tx); err != nil {
+		return err
 	}
 
 	var rollbackErrs []error
-	if err := executor.Rollback(ctx, plan); err != nil {
+	if err := rollbackTunHostState(ctx, plan, executor); err != nil {
 		rollbackErrs = append(rollbackErrs, err)
 	}
 	if err := stopRollbackChildProcesses(*tx); err != nil {
 		rollbackErrs = append(rollbackErrs, err)
 	}
+	removeRollbackGeneratedConfigs(*tx)
+	if len(rollbackErrs) > 0 {
+		return errors.Join(rollbackErrs...)
+	}
+	return finishTunRollback(store, tx)
+}
+
+func beginTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) error {
+	if tx.State == txstate.TransactionRolledBack {
+		return nil
+	}
+	if tx.State == txstate.TransactionRollingBack {
+		return nil
+	}
+	if _, err := txstate.Transition(tx, txstate.TransactionRollingBack, transactionNow(store)); err != nil {
+		return err
+	}
+	_, err := store.Save(*tx)
+	return err
+}
+
+func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor) error {
+	if executor == nil {
+		return errors.New("missing TUN executor")
+	}
+	return executor.Rollback(ctx, plan)
+}
+
+func removeRollbackGeneratedConfigs(tx txstate.Transaction) {
 	for _, cfg := range tx.Rollback.GeneratedConfigs {
 		removeGeneratedConfig(cfg.Path)
 	}
-	if len(rollbackErrs) > 0 {
-		return errors.Join(rollbackErrs...)
+}
+
+func finishTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) error {
+	if tx.State == txstate.TransactionRolledBack {
+		return nil
 	}
 	if _, err := txstate.Transition(tx, txstate.TransactionRolledBack, transactionNow(store)); err != nil {
 		return err
