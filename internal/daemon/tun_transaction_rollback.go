@@ -24,6 +24,9 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
+	if tx.State == txstate.TransactionRolledBack {
+		return nil
+	}
 	if err := beginTunRollback(store, tx); err != nil {
 		return err
 	}
