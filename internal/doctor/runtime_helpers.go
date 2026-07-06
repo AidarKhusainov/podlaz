@@ -17,7 +17,6 @@ type runtimeHelperDiagnostic struct {
 func runtimeHelperChecks(ctx context.Context, runner CommandRunner) []Check {
 	configured := []runtimeHelperDiagnostic{
 		{name: "xray runtime", envName: "PODLAZ_XRAY_PATH", command: "xray", versionArg: []string{"version"}},
-		{name: "tun2socks runtime", envName: "PODLAZ_TUN2SOCKS_PATH", command: "tun2socks", versionArg: []string{"--version"}},
 	}
 	checks := make([]Check, 0, len(configured))
 	for _, helper := range configured {
