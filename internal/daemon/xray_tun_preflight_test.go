@@ -20,7 +20,7 @@ test "$1" = "test"
 test "$2" = "-config"
 test -f "$3"
 case "$3" in
-  */xray.generated.json) exit 0 ;;
+  */xray.json) exit 0 ;;
   *) exit 9 ;;
 esac
 `)
