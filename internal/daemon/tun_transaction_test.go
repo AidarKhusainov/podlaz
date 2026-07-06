@@ -54,6 +54,32 @@ func TestTunTransactionDoesNotPersistPreApplyRollbackOwnership(t *testing.T) {
 	}
 }
 
+func TestTunTransactionRecordsGeneratedConfigRollbackBeforePreflight(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	result, err := beginTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "test-profile"}, transactionPlanForTest(), clock)
+	if err != nil {
+		t.Fatalf("begin TUN transaction: %v", err)
+	}
+	runtimeConfigPath := "/run/podlaz/generated/xray.json"
+	if err := saveGeneratedConfigRollbackMetadata(result.Store, result.TransactionID, runtimeConfigPath, clock()); err != nil {
+		t.Fatalf("save generated config rollback metadata: %v", err)
+	}
+	tx, _, err := result.Store.Load(result.TransactionID)
+	if err != nil {
+		t.Fatalf("load transaction: %v", err)
+	}
+	if tx.DesiredPlan.Core.RuntimeConfigPath != runtimeConfigPath || tx.DesiredPlan.Core.ProcessLabel != "xray" {
+		t.Fatalf("expected core desired plan before preflight, got %#v", tx.DesiredPlan.Core)
+	}
+	if len(tx.Rollback.GeneratedConfigs) != 1 || tx.Rollback.GeneratedConfigs[0].Path != runtimeConfigPath {
+		t.Fatalf("expected generated config rollback metadata before preflight, got %#v", tx.Rollback.GeneratedConfigs)
+	}
+	if tx.Health.Status != "core-preflight-planned" {
+		t.Fatalf("expected preflight health marker, got %#v", tx.Health)
+	}
+}
+
 func TestTunTransactionRollsBackOnlyAppliedStepsAfterPartialApplyFailure(t *testing.T) {
 	runtimeDir := t.TempDir()
 	executor := &recordingTunExecutor{applyErr: errors.New("route apply failed")}
