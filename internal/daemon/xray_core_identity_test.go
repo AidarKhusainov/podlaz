@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"os/user"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -50,13 +49,13 @@ func TestTunCoreExecutionIdentityUsesDedicatedIdentityWithNetAdminWhenRoot(t *te
 		t.Fatalf("select TUN core identity: %v", err)
 	}
 	assertDedicatedCoreIdentity(t, identity)
-	if len(identity.AmbientCaps) != 1 || identity.AmbientCaps[0] != syscall.CAP_NET_ADMIN {
+	if len(identity.AmbientCaps) != 1 || identity.AmbientCaps[0] != linuxCapNetAdmin {
 		t.Fatalf("native TUN Xray must receive only CAP_NET_ADMIN as ambient capability, got %#v", identity.AmbientCaps)
 	}
 
 	cmd := exec.Command("core-test")
 	configureCoreCommandCredential(cmd, identity)
-	if cmd.SysProcAttr == nil || len(cmd.SysProcAttr.AmbientCaps) != 1 || cmd.SysProcAttr.AmbientCaps[0] != syscall.CAP_NET_ADMIN {
+	if cmd.SysProcAttr == nil || len(cmd.SysProcAttr.AmbientCaps) != 1 || cmd.SysProcAttr.AmbientCaps[0] != linuxCapNetAdmin {
 		t.Fatalf("expected native TUN command to carry CAP_NET_ADMIN ambient capability, got %#v", cmd.SysProcAttr)
 	}
 }
