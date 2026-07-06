@@ -39,15 +39,17 @@ type fullTunnelTransactionRunner struct {
 	executor   tunPlanExecutor
 	now        func() time.Time
 
-	beginNetworkTransaction func(context.Context, string, profile.Profile, planner.TunPlan, func() time.Time) (tunTransactionResult, error)
-	applyNetworkTransaction func(context.Context, tunTransactionResult, tunPlanExecutor) error
-	startCore               func(context.Context) (fullTunnelCoreHandle, error)
-	stopCore                func(fullTunnelCoreHandle) error
-	verifyCoreStarted       func(<-chan struct{}) error
-	saveCoreMetadata        func(txstate.TransactionStore, string, string, int, time.Time) error
-	verifyConnectivity      func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
-	commitActiveState       func(txstate.TransactionStore, string, fullTunnelCoreHandle, xrayState) error
-	rollbackTransaction     func(context.Context, string, planner.TunPlan, tunPlanExecutor) error
+	beginNetworkTransaction      func(context.Context, string, profile.Profile, planner.TunPlan, func() time.Time) (tunTransactionResult, error)
+	applyNetworkTransaction      func(context.Context, tunTransactionResult, tunPlanExecutor) error
+	preflightCore                func(context.Context) error
+	saveGeneratedConfigMetadata  func(txstate.TransactionStore, string, string, time.Time) error
+	startCore                    func(context.Context) (fullTunnelCoreHandle, error)
+	stopCore                     func(fullTunnelCoreHandle) error
+	verifyCoreStarted            func(<-chan struct{}) error
+	saveCoreMetadata             func(txstate.TransactionStore, string, string, int, time.Time) error
+	verifyConnectivity           func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
+	commitActiveState            func(txstate.TransactionStore, string, fullTunnelCoreHandle, xrayState) error
+	rollbackTransaction          func(context.Context, string, planner.TunPlan, tunPlanExecutor) error
 }
 
 func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error) {
@@ -61,6 +63,12 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 
 	if err := maybePauseForE2ETunHook(ctx, transactionID); err != nil {
 		return xrayState{}, r.rollbackStarted(ctx, transactionID, "E2E hook failure", emptyTunRollbackPlan(r.plan), err)
+	}
+	if err := r.saveGeneratedConfigMetadata(result.Store, transactionID, r.corePlan.RuntimeConfigPath, transactionNow(result.Store)); err != nil {
+		return xrayState{}, r.rollbackStarted(ctx, transactionID, "generated config metadata failure", emptyTunRollbackPlan(r.plan), err)
+	}
+	if err := r.preflightCore(ctx); err != nil {
+		return xrayState{}, r.rollbackStarted(ctx, transactionID, "Xray TUN preflight failure", emptyTunRollbackPlan(r.plan), err)
 	}
 
 	core, err := r.startCore(ctx)
@@ -94,10 +102,11 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		return xrayState{}, err
 	}
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
-		_ = r.stopCore(core)
 		if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+			_ = r.stopCore(core)
 			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr))
 		}
+		_ = r.stopCore(core)
 		return xrayState{}, withTunRollbackCompleted(err)
 	}
 
@@ -109,8 +118,12 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 			}
 			return xrayState{}, fullTunnelSemanticError{msg: "Xray exited before TUN transaction commit; rollback completed", err: errFullTunnelCoreExitedBeforeCommit}
 		}
+		if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+			_ = r.stopCore(core)
+			return xrayState{}, errors.Join(err, fmt.Errorf("rollback TUN transaction after commit failure: %w", rollbackErr))
+		}
 		_ = r.stopCore(core)
-		return xrayState{}, r.rollbackStarted(ctx, transactionID, "commit failure", r.plan, err)
+		return xrayState{}, err
 	}
 
 	return active, nil
@@ -132,6 +145,12 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 	}
 	if r.applyNetworkTransaction == nil {
 		r.applyNetworkTransaction = applyVerifyTunTransaction
+	}
+	if r.preflightCore == nil {
+		r.preflightCore = func(context.Context) error { return nil }
+	}
+	if r.saveGeneratedConfigMetadata == nil {
+		r.saveGeneratedConfigMetadata = saveGeneratedConfigRollbackMetadata
 	}
 	if r.startCore == nil {
 		r.startCore = func(context.Context) (fullTunnelCoreHandle, error) {
