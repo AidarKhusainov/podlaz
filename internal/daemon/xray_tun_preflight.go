@@ -15,6 +15,38 @@ import (
 
 var errXrayTunUnsupported = errors.New("TUN mode requires an Xray-core build with tun inbound support")
 
+func preflightXrayNativeTunSupport(ctx context.Context, xrayPath string, identity coreExecutionIdentity) error {
+	dir, err := os.MkdirTemp("", "podlaz-xray-tun-preflight-*")
+	if err != nil {
+		return fmt.Errorf("create Xray TUN preflight temp directory: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	return preflightXrayTunSupport(ctx, xrayPath, filepath.Join(dir, generatedXrayName), minimalXrayTunPreflightConfig(), identity)
+}
+
+func minimalXrayTunPreflightConfig() []byte {
+	return []byte(`{
+  "inbounds": [
+    {
+      "tag": "podlaz-tun-preflight",
+      "protocol": "tun",
+      "settings": {
+        "name": "podlaz-preflight",
+        "MTU": 1500,
+        "userLevel": 0
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    }
+  ]
+}
+`)
+}
+
 func preflightXrayTunSupport(ctx context.Context, xrayPath, runtimeConfigPath string, xrayConfig []byte, identity coreExecutionIdentity) error {
 	if strings.TrimSpace(xrayPath) == "" {
 		return errors.New("missing Xray binary path for TUN preflight")
