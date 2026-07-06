@@ -231,3 +231,68 @@ podlaz doctor
 The daemon removes stale Unix sockets, but it fails when the socket path is a
 non-socket file. Inspect and remove only the unexpected file after verifying it
 is not owned by a running daemon.
+.TP
+.B Xray exited unexpectedly
+Use:
+.EX
+podlaz status
+podlaz logs --core
+journalctl -u podlazd -n 100 --no-pager
+.EE
+.TP
+.B Stale podlaz-owned runtime state
+Inspect first:
+.EX
+podlaz recover
+.EE
+Then use explicit daemon-owned cleanup only when the output is understood:
+.EX
+podlaz recover --execute --yes
+.EE
+.SH EXAMPLES
+.TP
+Manual development install of service identities and the systemd unit:
+.EX
+sudo install -m 0644 packaging/sysusers.d/podlaz.conf \
+  /usr/lib/sysusers.d/podlaz.conf
+sudo systemd-sysusers /usr/lib/sysusers.d/podlaz.conf
+sudo usermod -aG podlaz "$USER"
+newgrp podlaz
+sudo install -m 0644 packaging/systemd/podlazd.service \
+  /etc/systemd/system/podlazd.service
+sudo systemd-analyze verify /etc/systemd/system/podlazd.service
+sudo systemctl daemon-reload
+sudo systemctl start podlazd
+.EE
+.TP
+Verify daemon-backed inactive state:
+.EX
+systemctl status podlazd --no-pager
+podlaz status
+podlaz doctor
+journalctl -u podlazd -n 50 --no-pager
+.EE
+.TP
+Run a local non-root development daemon with a temporary runtime directory:
+.EX
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlazd
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlaz status
+.EE
+.TP
+Run proxy-only lifecycle with an explicit Xray path in local development:
+.EX
+PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev \
+PODLAZ_XRAY_PATH=/usr/local/bin/xray \
+go run ./cmd/podlazd
+.EE
+.SH SEE ALSO
+.BR podlaz (1),
+.BR systemctl (1),
+.BR journalctl (1),
+.BR systemd.unit (5),
+.BR sysusers.d (5)
+.PP
+Canonical project documentation is installed in the repository under
+.I docs/
+and starts with
+.IR docs/README.md .
