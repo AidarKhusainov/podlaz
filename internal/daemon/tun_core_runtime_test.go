@@ -30,6 +30,7 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 		RealitySpiderX:   "/",
 	}
 	plan := planner.TunPlan{
+		TunDevice:    planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify"},
 		ServerBypass: planner.TunRoutePlan{Destination: "203.0.113.10/32"},
 	}
 
@@ -40,18 +41,46 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 	if runtime.RuntimeConfigPath != "/run/podlaz/generated/xray.json" {
 		t.Fatalf("unexpected runtime config path: %q", runtime.RuntimeConfigPath)
 	}
-	if runtime.SOCKSEndpoint == "" || !strings.Contains(runtime.Status, runtime.SOCKSEndpoint) {
-		t.Fatalf("expected private SOCKS endpoint in runtime status, got %#v", runtime)
+	if !strings.Contains(runtime.Status, "native podlaz0 TUN inbound") {
+		t.Fatalf("expected native Xray TUN status, got %#v", runtime)
 	}
-	if len(runtime.Warnings) == 0 {
-		t.Fatal("expected TUN runtime warnings to describe connectivity verification")
+	if len(runtime.Warnings) == 0 || !strings.Contains(strings.Join(runtime.Warnings, "\n"), "route, TCP, or DNS verification") {
+		t.Fatalf("expected TUN runtime warnings to describe pinned-schema route/DNS verification, got %#v", runtime.Warnings)
 	}
-	var config map[string]any
+	text := string(runtime.XrayConfig)
+	if strings.Contains(text, "podlaz-tun-socks") || strings.Contains(text, `"protocol": "socks"`) {
+		t.Fatalf("TUN runtime must not generate private SOCKS adapter config: %s", text)
+	}
+
+	var config struct {
+		Inbounds []struct {
+			Tag      string `json:"tag"`
+			Protocol string `json:"protocol"`
+			Settings struct {
+				Name      string `json:"name"`
+				MTU       int    `json:"MTU"`
+				UserLevel int    `json:"userLevel"`
+			} `json:"settings"`
+		} `json:"inbounds"`
+		Outbounds []struct {
+			Settings struct {
+				Address string `json:"address"`
+			} `json:"settings"`
+		} `json:"outbounds"`
+	}
 	if err := json.Unmarshal(runtime.XrayConfig, &config); err != nil {
 		t.Fatalf("generated TUN Xray config is not valid JSON: %v", err)
 	}
-	text := string(runtime.XrayConfig)
-	for _, want := range []string{"203.0.113.10", p.UserIdentity, p.Protocol} {
+	if len(config.Inbounds) != 1 || config.Inbounds[0].Tag != "podlaz-tun" || config.Inbounds[0].Protocol != "tun" {
+		t.Fatalf("expected native TUN inbound, got %#v", config.Inbounds)
+	}
+	if config.Inbounds[0].Settings.Name != "podlaz0" || config.Inbounds[0].Settings.MTU != 1500 {
+		t.Fatalf("unexpected TUN inbound settings: %#v", config.Inbounds[0].Settings)
+	}
+	if len(config.Outbounds) != 1 || config.Outbounds[0].Settings.Address != "203.0.113.10" {
+		t.Fatalf("expected pre-resolved outbound address, got %#v", config.Outbounds)
+	}
+	for _, want := range []string{p.UserIdentity, p.Protocol} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TUN Xray config does not contain %q: %s", want, text)
 		}
