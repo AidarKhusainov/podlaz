@@ -8,11 +8,10 @@ import (
 	"testing"
 )
 
-func TestResolveTunAdapterPathClassifiesMissingHelper(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "tun2socks")
-	t.Setenv(tunAdapterPathEnv, missing)
+func TestResolveXrayRuntimeClassifiesMissingHelper(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "xray")
 
-	_, err := resolveTunAdapterPath("")
+	_, err := resolveRuntimeExecutable(missing, "PODLAZ_XRAY_PATH", "xray", "Xray")
 	if err == nil {
 		t.Fatal("expected missing helper error")
 	}
@@ -20,7 +19,7 @@ func TestResolveTunAdapterPathClassifiesMissingHelper(t *testing.T) {
 		t.Fatalf("expected runtime unavailable error, got %T: %v", err, err)
 	}
 	for _, want := range []string{
-		"TUN mode cannot start because the TUN adapter is unavailable.",
+		"TUN mode cannot start because Xray is unavailable.",
 		"Expected: " + missing,
 		"No network changes were applied.",
 		"Run: plz doctor",
@@ -31,13 +30,13 @@ func TestResolveTunAdapterPathClassifiesMissingHelper(t *testing.T) {
 	}
 }
 
-func TestResolveTunAdapterPathRejectsNonExecutableHelper(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tun2socks")
+func TestResolveXrayRuntimeRejectsNonExecutableHelper(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "xray")
 	if err := os.WriteFile(path, []byte("not executable\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := resolveTunAdapterPath(path)
+	_, err := resolveRuntimeExecutable(path, "PODLAZ_XRAY_PATH", "xray", "Xray")
 	if err == nil {
 		t.Fatal("expected non-executable helper error")
 	}
