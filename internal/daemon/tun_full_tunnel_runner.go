@@ -55,6 +55,10 @@ type fullTunnelTransactionRunner struct {
 func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error) {
 	r.setDefaults()
 
+	if err := r.preflightCore(ctx); err != nil {
+		return xrayState{}, err
+	}
+
 	result, err := r.beginNetworkTransaction(ctx, r.runtimeDir, r.profile, r.plan, r.now)
 	if err != nil {
 		return xrayState{}, err
@@ -66,9 +70,6 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	}
 	if err := r.saveGeneratedConfigMetadata(result.Store, transactionID, r.corePlan.RuntimeConfigPath, transactionNow(result.Store)); err != nil {
 		return xrayState{}, r.rollbackStarted(ctx, transactionID, "generated config metadata failure", emptyTunRollbackPlan(r.plan), err)
-	}
-	if err := r.preflightCore(ctx); err != nil {
-		return xrayState{}, r.rollbackStarted(ctx, transactionID, "Xray TUN preflight failure", emptyTunRollbackPlan(r.plan), err)
 	}
 
 	core, err := r.startCore(ctx)
