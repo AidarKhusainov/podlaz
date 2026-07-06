@@ -30,7 +30,7 @@ plz --help
 | Mode | Meaning |
 | --- | --- |
 | `proxy-only` | Local proxy lifecycle. Default mode. |
-| `tun` | Full-tunnel lifecycle through daemon-owned privileged state. |
+| `tun` | Full-tunnel lifecycle through daemon-owned privileged state and native Xray TUN packet ingestion. |
 
 | Exit | Meaning |
 | ---: | --- |
@@ -189,7 +189,13 @@ podlaz disconnect
 ```
 
 Requires daemon access. `connect` defaults to `proxy-only`. Proxy-only must not
-mutate host networking. TUN mode is daemon-owned and transaction-backed.
+mutate host networking. TUN mode is daemon-owned and transaction-backed. Xray
+owns `podlaz0` packet ingestion through its native `tun` inbound; podlazd owns
+and rolls back the surrounding routes, policy rules, DNS, nftables, generated
+config metadata, and child process metadata. Before host-networking mutation,
+`connect --mode tun` records transaction metadata and verifies that the packaged
+Xray helper accepts the generated native TUN config.
+
 `connect --mode tun` supports explicit handoff policies. `block` keeps host
 state unchanged and reports foreign ownership or stale podlaz-owned blockers
 before mutation. `ask` is rejected in daemon/non-interactive connect paths.
@@ -238,14 +244,3 @@ podlaz recover --execute --yes [--json]
 `recover` is read-only. `recover --execute --yes` sends cleanup intent to the
 daemon. The CLI must not perform privileged host cleanup directly. Ambiguous
 resources are skipped. Non-interactive execution requires `--yes`.
-
-## Files
-
-- User state: `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz`.
-- Daemon runtime: `/run/podlaz`, `/run/podlaz/podlazd.sock`, `/run/podlaz/transactions`.
-- Generated runtime config is not persistent source of truth and must not be logged in full.
-
-## See also
-
-- [State and security](./state-and-security.md)
-- [Debian package](./debian-package.md)
