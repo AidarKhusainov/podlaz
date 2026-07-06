@@ -266,3 +266,62 @@ Runtime or operation failure.
 .TP
 .B 2
 Invalid usage, flags, arguments, or deferred JSON output.
+.TP
+.B 3
+Diagnostic command found unhealthy state.
+.TP
+.B 4
+Permission or authorization failure.
+.TP
+.B 5
+Required daemon access was unavailable.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/podlaz/
+User configuration directory.
+.TP
+.I $XDG_STATE_HOME/podlaz/
+User state directory.
+.TP
+.I /run/podlaz/
+Daemon runtime directory.
+.TP
+.I /run/podlaz/podlazd.sock
+Local Unix socket for the daemon API.
+.TP
+.I /run/podlaz/generated/
+Daemon-owned generated runtime configuration.
+.TP
+.I /run/podlaz/transactions/
+Volatile daemon transaction state.
+.SH ENVIRONMENT
+.TP
+.B PODLAZ_RUNTIME_DIR
+Override the daemon runtime directory for tests and development.
+.TP
+.B PODLAZ_XRAY_PATH
+Override the Xray-compatible core path for daemon lifecycle tests.
+.TP
+.B XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_CACHE_HOME
+Standard XDG base directory variables used for user-owned state.
+.SH EXAMPLES
+.EX
+podlaz profile import <share-uri>
+podlaz profile validate my-profile --mode tun
+podlaz plan --mode tun my-profile
+podlaz plan --mode tun my-profile --verbose
+podlaz connect --mode tun --handoff=replace-podlaz my-profile
+podlaz status
+podlaz disconnect
+.EE
+.PP
+.EX
+plz status
+plz logs --daemon --since "1 hour ago"
+podlaz recover
+.EE
+.SH SEE ALSO
+.BR podlazd (8),
+.BR journalctl (1),
+.BR systemctl (1),
+.BR systemd.unit (5)
