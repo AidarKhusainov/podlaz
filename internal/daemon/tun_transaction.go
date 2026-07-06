@@ -101,6 +101,24 @@ func commitTunTransaction(store txstate.TransactionStore, transactionID string) 
 	return nil
 }
 
+func saveGeneratedConfigRollbackMetadata(store txstate.TransactionStore, transactionID, runtimeConfigPath string, now time.Time) error {
+	tx, _, err := store.Load(transactionID)
+	if err != nil {
+		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
+	}
+	tx.DesiredPlan.Core = txstate.CorePlan{
+		RuntimeConfigPath: runtimeConfigPath,
+		ProcessLabel:      "xray",
+		Owner:             txstate.TransactionOwner,
+	}
+	if !hasGeneratedConfigRollback(tx.Rollback, runtimeConfigPath) {
+		tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{Path: runtimeConfigPath, Owner: txstate.TransactionOwner})
+	}
+	tx.Health = txstate.HealthResult{Status: "core-preflight-planned", CheckedAt: now.UTC(), Message: "Xray generated config rollback metadata recorded before preflight writes the config"}
+	_, err = store.Save(tx)
+	return err
+}
+
 func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, now time.Time) error {
 	tx, _, err := store.Load(transactionID)
 	if err != nil {
@@ -111,17 +129,24 @@ func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, run
 		ProcessLabel:      "xray",
 		Owner:             txstate.TransactionOwner,
 	}
-	tx.Rollback = mergeRollbackMetadata(tx.Rollback, txstate.RollbackMetadata{
-		GeneratedConfigs: []txstate.GeneratedConfigRollback{{Path: runtimeConfigPath, Owner: txstate.TransactionOwner}},
-	})
+	if !hasGeneratedConfigRollback(tx.Rollback, runtimeConfigPath) {
+		tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{Path: runtimeConfigPath, Owner: txstate.TransactionOwner})
+	}
 	if pid > 0 {
-		tx.Rollback = mergeRollbackMetadata(tx.Rollback, txstate.RollbackMetadata{
-			ChildProcesses: []txstate.ChildProcessRollback{{PID: pid, Label: "xray", ConfigRef: runtimeConfigPath, Owner: txstate.TransactionOwner}},
-		})
+		tx.Rollback.ChildProcesses = append(tx.Rollback.ChildProcesses, txstate.ChildProcessRollback{PID: pid, Label: "xray", ConfigRef: runtimeConfigPath, Owner: txstate.TransactionOwner})
 	}
 	tx.Health = txstate.HealthResult{Status: "core-started", CheckedAt: now.UTC(), Message: "Xray process stayed alive during startup verification"}
 	_, err = store.Save(tx)
 	return err
+}
+
+func hasGeneratedConfigRollback(metadata txstate.RollbackMetadata, path string) bool {
+	for _, cfg := range metadata.GeneratedConfigs {
+		if cfg.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeRollbackMetadata(base txstate.RollbackMetadata, extra txstate.RollbackMetadata) txstate.RollbackMetadata {
