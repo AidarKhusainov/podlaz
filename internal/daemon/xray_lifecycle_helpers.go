@@ -64,6 +64,8 @@ func emptyAs(value, fallback string) string {
 	return value
 }
 
+// coreLogWriter buffers core output until the child PID is known so every log
+// line can include stable process context while still redacting sensitive values.
 type coreLogWriter struct {
 	mu         sync.Mutex
 	pid        int
