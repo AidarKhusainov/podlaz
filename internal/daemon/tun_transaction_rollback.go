@@ -13,7 +13,7 @@ import (
 
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
 	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
-	tx.Rollback = rollbackMetadataFromTunPlan(rollbackPlan)
+	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
 	_, _ = store.Save(*tx)
 	if err := rollbackTunTransaction(ctx, store, tx, rollbackPlan, executor); err != nil {
 		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
