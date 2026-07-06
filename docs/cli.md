@@ -244,3 +244,14 @@ podlaz recover --execute --yes [--json]
 `recover` is read-only. `recover --execute --yes` sends cleanup intent to the
 daemon. The CLI must not perform privileged host cleanup directly. Ambiguous
 resources are skipped. Non-interactive execution requires `--yes`.
+
+## Files
+
+- User state: `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz`.
+- Daemon runtime: `/run/podlaz`, `/run/podlaz/podlazd.sock`, `/run/podlaz/transactions`.
+- Generated runtime config is not persistent source of truth and must not be logged in full.
+
+## See also
+
+- [State and security](./state-and-security.md)
+- [Debian package](./debian-package.md)
