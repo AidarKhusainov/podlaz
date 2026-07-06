@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"os/user"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -17,6 +18,9 @@ func TestProxyOnlyCoreExecutionIdentityUsesCurrentDaemonUserWhenNotRoot(t *testi
 	}
 	if identity.DropCredentials {
 		t.Fatalf("expected non-root daemon to keep current unprivileged identity, got %#v", identity)
+	}
+	if len(identity.AmbientCaps) != 0 {
+		t.Fatalf("proxy-only non-root identity must not request ambient capabilities, got %#v", identity.AmbientCaps)
 	}
 
 	permissions := identity.runtimeConfigPermissions()
@@ -33,9 +37,12 @@ func TestProxyOnlyCoreExecutionIdentityUsesDedicatedIdentityWhenRoot(t *testing.
 		t.Fatalf("select proxy-only core identity: %v", err)
 	}
 	assertDedicatedCoreIdentity(t, identity)
+	if len(identity.AmbientCaps) != 0 {
+		t.Fatalf("proxy-only Xray must not receive ambient capabilities, got %#v", identity.AmbientCaps)
+	}
 }
 
-func TestTunCoreExecutionIdentityUsesDedicatedIdentityWhenRoot(t *testing.T) {
+func TestTunCoreExecutionIdentityUsesDedicatedIdentityWithNetAdminWhenRoot(t *testing.T) {
 	withDedicatedCoreIdentity(t)
 
 	identity, err := tunCoreExecutionIdentity()
@@ -43,6 +50,15 @@ func TestTunCoreExecutionIdentityUsesDedicatedIdentityWhenRoot(t *testing.T) {
 		t.Fatalf("select TUN core identity: %v", err)
 	}
 	assertDedicatedCoreIdentity(t, identity)
+	if len(identity.AmbientCaps) != 1 || identity.AmbientCaps[0] != syscall.CAP_NET_ADMIN {
+		t.Fatalf("native TUN Xray must receive only CAP_NET_ADMIN as ambient capability, got %#v", identity.AmbientCaps)
+	}
+
+	cmd := exec.Command("core-test")
+	configureCoreCommandCredential(cmd, identity)
+	if cmd.SysProcAttr == nil || len(cmd.SysProcAttr.AmbientCaps) != 1 || cmd.SysProcAttr.AmbientCaps[0] != syscall.CAP_NET_ADMIN {
+		t.Fatalf("expected native TUN command to carry CAP_NET_ADMIN ambient capability, got %#v", cmd.SysProcAttr)
+	}
 }
 
 func TestProxyOnlyCoreExecutionIdentityFailsWhenDedicatedUserMissing(t *testing.T) {
