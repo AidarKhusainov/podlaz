@@ -40,14 +40,14 @@ func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore,
 	}
 
 	var rollbackErrs []error
+	if err := executor.Rollback(ctx, plan); err != nil {
+		rollbackErrs = append(rollbackErrs, err)
+	}
 	if err := stopRollbackChildProcesses(*tx); err != nil {
 		rollbackErrs = append(rollbackErrs, err)
 	}
 	for _, cfg := range tx.Rollback.GeneratedConfigs {
 		removeGeneratedConfig(cfg.Path)
-	}
-	if err := executor.Rollback(ctx, plan); err != nil {
-		rollbackErrs = append(rollbackErrs, err)
 	}
 	if len(rollbackErrs) > 0 {
 		return errors.Join(rollbackErrs...)
