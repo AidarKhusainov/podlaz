@@ -64,6 +64,22 @@ func TestFullTunnelTransactionRunnerStartsXrayBeforeApplyingHostNetworking(t *te
 	}
 }
 
+func TestFullTunnelTransactionRunnerRollsBackHostNetworkingBeforeStoppingXray(t *testing.T) {
+	h := newFullTunnelRunnerHarness(t)
+	h.verifyConnectivityErr = errRunnerConnectivityFailed
+	var order []string
+	h.onRollback = func() { order = append(order, "rollback") }
+	h.onCoreStopped = func() { order = append(order, "stop-core") }
+
+	_, err := h.runner().run(context.Background())
+	if !errors.Is(err, errRunnerConnectivityFailed) {
+		t.Fatalf("expected connectivity failure, got %v", err)
+	}
+	if strings.Join(order, ",") != "rollback,stop-core" {
+		t.Fatalf("expected host networking rollback before Xray stop, got %#v", order)
+	}
+}
+
 func TestFullTunnelTransactionRunnerFailureBranchesRollbackAppliedState(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -252,7 +268,9 @@ type fullTunnelRunnerHarness struct {
 	committedState       xrayState
 
 	onCoreStarted    func()
+	onCoreStopped    func()
 	onNetworkApplied func()
+	onRollback       func()
 }
 
 func newFullTunnelRunnerHarness(t *testing.T) *fullTunnelRunnerHarness {
@@ -299,6 +317,9 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 		},
 		stopCore: func(fullTunnelCoreHandle) error {
 			h.coreStopped++
+			if h.onCoreStopped != nil {
+				h.onCoreStopped()
+			}
 			return nil
 		},
 		saveCoreMetadata: func(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, now time.Time) error {
@@ -324,6 +345,12 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 			}
 			h.committedState = active
 			return nil
+		},
+		rollbackTransaction: func(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error {
+			if h.onRollback != nil {
+				h.onRollback()
+			}
+			return rollbackVerifiedTunTransaction(ctx, h.runtimeDir, transactionID, plan, executor)
 		},
 	}
 }
