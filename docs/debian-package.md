@@ -57,6 +57,7 @@ The package installs only packaged files under Debian/FHS-appropriate locations:
 /usr/bin/podlaz
 /usr/bin/plz -> /usr/bin/podlaz
 /usr/bin/podlazd
+/usr/lib/podlaz/xray
 /usr/lib/systemd/system/podlazd.service
 /usr/lib/sysusers.d/podlaz.conf
 /usr/share/bash-completion/completions/podlaz
@@ -72,6 +73,7 @@ The package installs only packaged files under Debian/FHS-appropriate locations:
 /usr/share/doc/podlaz/LICENSE
 /usr/share/doc/podlaz/copyright
 /usr/share/doc/podlaz/changelog.Debian.gz
+/usr/share/doc/podlaz/third-party/xray-LICENSE
 /usr/share/doc/podlaz/docs/...
 ```
 
@@ -107,12 +109,12 @@ Initial metadata contract:
 - priority: `optional`
 - architecture: `amd64` by default, `arm64` supported through `PODLAZ_DEB_ARCH=arm64`
 - maintainer: project maintainer metadata from the package manifest
-- runtime dependencies: `libc6`, `systemd`, and `ca-certificates`
+- runtime dependencies: `libc6`, `systemd`, `ca-certificates`, `iproute2`, `nftables`, `systemd-resolved | systemd`, and `polkitd | policykit-1`
 - polkit action namespace: `io.github.aidarkhusainov.podlaz.*`
 
-The package depends on `libc6` because it ships dynamically linked Linux binaries. It depends on `systemd` because the installed service contract uses systemd unit, sysusers, runtime/state directory management, and journald-oriented diagnostics. It depends on `ca-certificates` because profile/subscription and future core download flows rely on TLS trust roots.
+The package depends on `libc6` because it ships dynamically linked Linux binaries. It depends on `systemd` because the installed service contract uses systemd unit, sysusers, runtime/state directory management, and journald-oriented diagnostics. It depends on `ca-certificates` because profile/subscription and packaged Xray validation rely on TLS trust roots.
 
-The package does not depend on polkit. Installing the static policy file does not make polkit mandatory; the daemon uses socket-group fallback unless polkit authorization is explicitly enabled and available.
+TUN mode requires `iproute2`, `nftables`, and `systemd-resolved` for route, policy-rule, firewall, resolver, verification, rollback, and recovery operations around the Xray-owned TUN link. The package installs the pinned Xray helper under `/usr/lib/podlaz/xray`; it does not ship `tun2socks`.
 
 ## Service install behavior
 
@@ -122,6 +124,7 @@ Package installation:
 
 - installs the CLI and daemon binaries;
 - installs `plz` as a symlink to the canonical CLI binary;
+- installs the pinned Xray helper and its third-party notice file;
 - installs shell completion files for both `podlaz` and `plz`;
 - installs the optional polkit action file;
 - installs the systemd unit;
@@ -157,7 +160,7 @@ The fallback is not a generic error-masking layer. Daemon responses from the abs
 
 | Category | Location | Owner | Package behavior |
 | --- | --- | --- | --- |
-| Packaged files | `/usr/bin`, `/usr/lib/systemd/system`, `/usr/lib/sysusers.d`, `/usr/share/bash-completion`, `/usr/share/zsh`, `/usr/share/fish`, `/usr/share/polkit-1/actions`, `/usr/share/man`, `/usr/share/doc/podlaz` | Debian package manager | Installed, upgraded, and removed by `dpkg`/`apt`. |
+| Packaged files | `/usr/bin`, `/usr/lib/podlaz`, `/usr/lib/systemd/system`, `/usr/lib/sysusers.d`, `/usr/share/bash-completion`, `/usr/share/zsh`, `/usr/share/fish`, `/usr/share/polkit-1/actions`, `/usr/share/man`, `/usr/share/doc/podlaz` | Debian package manager | Installed, upgraded, and removed by `dpkg`/`apt`. |
 | Daemon runtime state | `/run/podlaz` | `podlazd` through systemd `RuntimeDirectory=` | Volatile; not shipped in the package. |
 | Daemon persistent state | `/var/lib/podlaz` | systemd `StateDirectory=` and daemon | Reserved for daemon-owned persistent state; not shipped as packaged files. |
 | User intent/state | `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz` | invoking user | Not owned, modified, or removed by package lifecycle scripts. |
@@ -171,4 +174,4 @@ dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 dist/podlaz_0.0.0~dev-1_linux_arm64.deb
 ```
 
-The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, bounded daemon capabilities, the narrow ambient capabilities required for daemon-owned child lifecycle, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
+The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, bounded daemon capabilities, the narrow ambient capabilities required for daemon-owned child lifecycle, packaged Xray helper layout and architecture, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
