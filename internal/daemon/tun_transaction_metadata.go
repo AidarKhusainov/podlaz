@@ -11,6 +11,8 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+const xrayTunInboundOwner = "xray:tun-inbound"
+
 func snapshotMetadata(s netsnapshot.Snapshot, now time.Time) txstate.SnapshotMetadata {
 	summary := []string{
 		"default IPv4 route: " + string(s.DefaultIPv4.Status),
@@ -54,7 +56,7 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		TUN: txstate.TUNDesiredState{
 			InterfaceName: plan.TunDevice.Name,
 			MTU:           plan.TunDevice.MTU,
-			Owner:         netexecutor.OwnerTunDevice,
+			Owner:         tunDesiredOwner(plan.TunDevice.Action),
 		},
 		Routes: routes,
 		DNS: txstate.DNSPlan{
@@ -100,6 +102,15 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 		metadata.NFTables = []txstate.NFTablesRollback{{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Owner: netexecutor.OwnerFirewall}}
 	}
 	return metadata
+}
+
+func tunDesiredOwner(action string) string {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "verify", "use-existing":
+		return xrayTunInboundOwner
+	default:
+		return netexecutor.OwnerTunDevice
+	}
 }
 
 func tunRollbackOwnsLink(action string) bool {
