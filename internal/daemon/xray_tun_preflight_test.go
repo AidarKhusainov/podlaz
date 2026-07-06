@@ -41,6 +41,7 @@ func TestPreflightXrayNativeTunSupportUsesMinimalPinnedSchemaConfig(t *testing.T
 	}
 	dir := t.TempDir()
 	observedConfig := filepath.Join(dir, "observed.json")
+	t.Setenv("OBSERVED_CONFIG", observedConfig)
 	xray := writeXrayPreflightExecutable(t, filepath.Join(dir, "xray"), `#!/bin/sh
 cp "$3" "$OBSERVED_CONFIG"
 exit 0
