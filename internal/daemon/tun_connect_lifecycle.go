@@ -84,7 +84,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		executor:   executor,
 		now:        time.Now,
 		preflightCore: func(ctx context.Context) error {
-			return preflightXrayTunSupport(ctx, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
+			return preflightXrayNativeTunSupport(ctx, xrayPath, coreIdentity)
 		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
