@@ -90,7 +90,7 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 		rules = append(rules, policyRuleRollback(rule))
 	}
 	metadata := txstate.RollbackMetadata{Routes: routes, PolicyRules: rules}
-	if plan.TunDevice.Name != "" {
+	if plan.TunDevice.Name != "" && tunRollbackOwnsLink(plan.TunDevice.Action) {
 		metadata.TUN = []txstate.TUNRollback{{InterfaceName: plan.TunDevice.Name, Owner: netexecutor.OwnerTunDevice}}
 	}
 	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
@@ -100,6 +100,15 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 		metadata.NFTables = []txstate.NFTablesRollback{{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Owner: netexecutor.OwnerFirewall}}
 	}
 	return metadata
+}
+
+func tunRollbackOwnsLink(action string) bool {
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "", "create":
+		return true
+	default:
+		return false
+	}
 }
 
 func policyRuleRollback(rule planner.TunPolicyRulePlan) txstate.PolicyRuleRollback {
