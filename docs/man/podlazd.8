@@ -28,11 +28,14 @@ and the canonical project documentation.
 .PP
 The packaged service is the privileged host-networking boundary for TUN mode.
 It runs the daemon as UID 0 with a restricted capability bounding set for
-route, nftables, ownership, and child-identity transitions. It keeps only the
-ambient capabilities needed for child lifecycle. The supervised Xray child runs
+route, nftables, ownership, and child-identity transitions. Proxy-only Xray runs
 as the dedicated unprivileged
 .BR podlaz-xray:podlaz-xray
-identity and owns packet ingestion through the native Xray
+identity without network-administration ambient capability. Native TUN Xray runs
+as the same dedicated identity with only
+.B CAP_NET_ADMIN
+ambient capability so it can own packet ingestion and link setup through the
+native Xray
 .B tun
 inbound.
 .SH SERVICE MANAGEMENT
@@ -130,15 +133,19 @@ because TUN mode must inspect and mutate host routes, DNS, and nftables state
 inside daemon-owned transactions around the Xray-owned TUN link. The unit
 restricts the daemon with
 .BR CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN
-and keeps only
-.BR AmbientCapabilities=CAP_SETUID CAP_KILL
-for daemon-owned Xray child lifecycle.
+and keeps
+.BR AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN .
 .PP
 The daemon must not run Xray as UID 0. When the packaged daemon is UID 0, it
-starts the child process as the dedicated
+starts Xray as the dedicated
 .BR podlaz-xray:podlaz-xray
-identity with supplementary groups disabled. Generated Xray runtime
-configuration remains private by using ownership
+identity with supplementary groups disabled. Proxy-only Xray receives no
+network-administration ambient capability. Native TUN Xray receives only
+.B CAP_NET_ADMIN
+as ambient capability because pinned Xray must open
+.I /dev/net/tun
+and configure the Xray-owned TUN link. Generated Xray runtime configuration
+remains private by using ownership
 .BR root:podlaz-xray ,
 generated directory mode
 .BR 0750 ,
@@ -168,8 +175,8 @@ starts Xray as a supervised child process, and records active state for
 status. Proxy-only lifecycle must not mutate TUN devices, routes, policy
 rules, DNS settings, nftables, or firewall state.
 .PP
-During TUN connect, the daemon opens a transaction, records generated config
-rollback metadata, verifies the generated native Xray TUN config, starts Xray,
+During TUN connect, the daemon verifies native Xray TUN support before opening
+a transaction, then records generated config rollback metadata, starts Xray,
 verifies the Xray-owned TUN link, applies podlaz-owned host networking state,
 verifies connectivity, and commits only after those checks pass.
 .PP
@@ -220,7 +227,7 @@ flow when that contract exists.
 id
 getent group podlaz
 ls -ld /run/podlaz
-ls -l /run/podlaz/podlazd.sock
+ls -l /run/podlazd.sock
 sudo usermod -aG podlaz "$USER"
 newgrp podlaz
 podlaz status
@@ -260,39 +267,13 @@ sudo usermod -aG podlaz "$USER"
 newgrp podlaz
 sudo install -m 0644 packaging/systemd/podlazd.service \
   /etc/systemd/system/podlazd.service
-sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl start podlazd
-.EE
-.TP
-Verify daemon-backed inactive state:
-.EX
-systemctl status podlazd --no-pager
 podlaz status
-podlaz doctor
-journalctl -u podlazd -n 50 --no-pager
-.EE
-.TP
-Run a local non-root development daemon with a temporary runtime directory:
-.EX
-PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlazd
-PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev go run ./cmd/podlaz status
-.EE
-.TP
-Run proxy-only lifecycle with an explicit Xray path in local development:
-.EX
-PODLAZ_RUNTIME_DIR=/tmp/podlaz-dev \
-PODLAZ_XRAY_PATH=/usr/local/bin/xray \
-go run ./cmd/podlazd
 .EE
 .SH SEE ALSO
 .BR podlaz (1),
-.BR systemctl (1),
+.BR systemd.service (5),
 .BR journalctl (1),
-.BR systemd.unit (5),
-.BR sysusers.d (5)
-.PP
-Canonical project documentation is installed in the repository under
-.I docs/
-and starts with
-.IR docs/README.md .
+.BR systemd-sysusers (8)
