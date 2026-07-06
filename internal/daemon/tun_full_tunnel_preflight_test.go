@@ -41,12 +41,13 @@ func TestFullTunnelTransactionRunnerRunsPreflightBeforeTransactionMutation(t *te
 	}
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	if len(summaries) != 0 || len(warnings) != 0 {
-		t.Fatalf("unsupported Xray TUN preflight must not leave transaction artifacts: summaries=%#v warnings=%#v", summaries, warnings)
+		t.Fatalf("preflight failure must not leave transaction artifacts: summaries=%#v warnings=%#v", summaries, warnings)
 	}
 }
 
 func TestFullTunnelTransactionRunnerPreflightOrder(t *testing.T) {
 	var order []string
+	beginErr := errors.New("begin failed after preflight")
 	runtimeDir := t.TempDir()
 	runner := &fullTunnelTransactionRunner{
 		runtimeDir: runtimeDir,
@@ -59,18 +60,15 @@ func TestFullTunnelTransactionRunnerPreflightOrder(t *testing.T) {
 			order = append(order, "preflight")
 			return nil
 		},
-		beginNetworkTransaction: func(ctx context.Context, runtimeDir string, p profile.Profile, plan planner.TunPlan, now func() time.Time) (tunTransactionResult, error) {
+		beginNetworkTransaction: func(context.Context, string, profile.Profile, planner.TunPlan, func() time.Time) (tunTransactionResult, error) {
 			order = append(order, "begin")
-			return beginTunTransaction(ctx, runtimeDir, p, plan, now)
-		},
-		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
-			return fullTunnelCoreHandle{}, errors.New("stop after begin")
+			return tunTransactionResult{}, beginErr
 		},
 	}
 
 	_, err := runner.run(context.Background())
-	if err == nil {
-		t.Fatal("expected runner to stop after transaction begin")
+	if !errors.Is(err, beginErr) {
+		t.Fatalf("expected begin error, got %v", err)
 	}
 	if got := strings.Join(order, ","); got != "preflight,begin" {
 		t.Fatalf("wrong preflight order: %s", got)
