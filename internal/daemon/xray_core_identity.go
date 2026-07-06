@@ -13,6 +13,10 @@ const (
 	proxyCoreExecutionUser  = "podlaz-xray"
 	proxyCoreExecutionGroup = "podlaz-xray"
 
+	// CAP_NET_ADMIN is Linux capability number 12. Keep the numeric value local
+	// because syscall does not expose named capability constants on every Go target.
+	linuxCapNetAdmin uintptr = 12
+
 	coreExecutionIdentitySetupHint = "install the packaged service or create the documented system user from packaging/sysusers.d/podlaz.conf"
 )
 
@@ -52,7 +56,7 @@ func tunCoreExecutionIdentity() (coreExecutionIdentity, error) {
 		return coreExecutionIdentity{}, err
 	}
 	if identity.DropCredentials {
-		identity.AmbientCaps = append(identity.AmbientCaps, syscall.CAP_NET_ADMIN)
+		identity.AmbientCaps = append(identity.AmbientCaps, linuxCapNetAdmin)
 	}
 	return identity, nil
 }
