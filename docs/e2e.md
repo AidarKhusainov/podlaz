@@ -24,7 +24,7 @@ Default job order:
 
 Run E2E validation when a change touches:
 
-- TUN devices;
+- TUN devices or native Xray TUN inbound behavior;
 - route, DNS, nftables, firewall, or resolver behavior;
 - daemon privilege boundaries;
 - systemd service behavior;
@@ -76,6 +76,18 @@ bash scripts/e2e/tun-fault-injection.sh
 ```
 
 Run only the subset that matches the risk of the change. For example, a CLI-only change normally does not need provider-backed data-plane coverage.
+
+## Native Xray TUN validation
+
+For changes that touch native Xray TUN startup, record VM or self-hosted runner evidence for these cases:
+
+1. `podlaz connect --mode tun <profile>` starts Xray, verifies `podlaz0`, applies podlaz-owned routes, policy rules, DNS, and nftables, then commits the transaction.
+2. `podlaz status` reports active TUN mode with the transaction ID and without exposing generated config content.
+3. DNS resolution and TCP egress work through the tunnel after commit.
+4. `podlaz disconnect` removes podlaz-owned routes, policy rules, DNS, nftables, generated config, and child process state.
+5. A failing `xray test -config` preflight leaves no host-networking mutation and recovery can remove any tracked generated config.
+6. A failure after host-networking apply rolls back nftables/DNS/routes/rules before Xray is stopped.
+7. `podlaz recover --execute --yes` after daemon interruption is able to clean transaction-owned state without deleting `/run/podlaz` wholesale.
 
 ## TUN fault-injection coverage
 
