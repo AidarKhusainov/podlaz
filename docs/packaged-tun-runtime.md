@@ -23,6 +23,20 @@ Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
 
 TUN mode no longer ships or starts a separate `tun2socks` helper. Xray owns packet ingestion through its native `tun` inbound. `podlazd` still owns the host networking state around that link: route bypass, policy rules, DNS, nftables, transaction files, rollback, and recovery.
 
+## Pinned Xray TUN schema
+
+The pinned Xray release currently accepts only native TUN packet-ingestion settings in the generated inbound: interface `name`, `MTU`, and `userLevel`. It does not accept `gateway` or `dns` in the pinned `v26.3.27` schema. podlazd therefore must not invent unsupported Xray JSON fields.
+
+The deliberate contract for this PR is:
+
+- Xray creates and owns the `podlaz0` link lifecycle and packet ingestion;
+- podlazd owns Linux route, policy-rule, DNS, nftables, transaction, rollback, and recovery state;
+- podlazd records generated config rollback metadata before `xray test -config` writes the config;
+- podlazd commits only after route lookup, routed TCP, DNS resolution, and DNS-result route verification pass;
+- VM or self-hosted validation must provide evidence that this pinned-schema split works on the target Linux hosts before the PR leaves draft.
+
+If a future pinned Xray release adds supported `gateway`/`dns` fields, this contract must be revisited in the issue/PR with Xray schema evidence, generated JSON tests, and VM validation evidence.
+
 ## Hard TUN dependencies
 
 Packaged TUN mode relies on these host components and declares them as Debian dependencies:
