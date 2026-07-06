@@ -20,9 +20,9 @@ func TestFullTunnelTransactionRunnerRunsPreflightBeforeTransactionMutation(t *te
 		runtimeDir: runtimeDir,
 		profile:    profile.Profile{ID: "test-profile", Name: "Test Profile"},
 		plan:       transactionPlanForTest(),
-		corePlan:  tunCoreRuntimePlan{Status: "test TUN core runtime"},
-		executor:  &recordingTunExecutor{},
-		now:       fixedClock(),
+		corePlan:   tunCoreRuntimePlan{Status: "test TUN core runtime"},
+		executor:   &recordingTunExecutor{},
+		now:        fixedClock(),
 		preflightCore: func(context.Context) error {
 			return preflightErr
 		},
@@ -52,9 +52,9 @@ func TestFullTunnelTransactionRunnerPreflightOrder(t *testing.T) {
 		runtimeDir: runtimeDir,
 		profile:    profile.Profile{ID: "test-profile", Name: "Test Profile"},
 		plan:       transactionPlanForTest(),
-		corePlan:  tunCoreRuntimePlan{Status: "test TUN core runtime"},
-		executor:  &recordingTunExecutor{},
-		now:       fixedClock(),
+		corePlan:   tunCoreRuntimePlan{Status: "test TUN core runtime"},
+		executor:   &recordingTunExecutor{},
+		now:        fixedClock(),
 		preflightCore: func(context.Context) error {
 			order = append(order, "preflight")
 			return nil
