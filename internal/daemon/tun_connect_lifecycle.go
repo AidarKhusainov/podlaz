@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -20,7 +19,6 @@ import (
 type tunCoreRuntimePlan struct {
 	RuntimeConfigPath string
 	XrayConfig        []byte
-	SOCKSEndpoint     string
 	Status            string
 	Warnings          []string
 }
@@ -57,11 +55,14 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := validatePackagedRuntimeArchitecture(xrayPath, "Xray"); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	tunAdapterPath, err := resolveTunAdapterPath("")
+	if err := validateTunRuntimeDependencies(); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	preflightConfig, err := engine.GenerateXrayTunConfig(p, engine.DefaultXrayTunConfigOptions())
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := validateTunRuntimeDependencies(); err != nil {
+	if err := preflightXrayTunSupport(ctx, xrayPath, runtimeConfigPath, preflightConfig, coreIdentity); err != nil {
 		return api.LifecycleResponse{}, err
 	}
 
@@ -75,6 +76,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
+	plan = xrayOwnedTunPlan(plan)
 	corePlan, err := planTunCoreRuntime(p, runtimeConfigPath, plan)
 	if err != nil {
 		return api.LifecycleResponse{}, err
@@ -107,23 +109,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		stopCore: func(core fullTunnelCoreHandle) error {
 			return m.stopStartedCore(core.cmd, core.done, corePlan.RuntimeConfigPath)
 		},
-		startAdapter: func(ctx context.Context, plan tunAdapterRuntimePlan) (fullTunnelAdapterHandle, error) {
-			plan.Binary = tunAdapterPath
-			plan.Identity = coreIdentity
-			adapterCmd, adapterDone, adapterCancel, err := startTunAdapter(ctx, plan)
-			if err != nil {
-				return fullTunnelAdapterHandle{}, err
-			}
-			registerTunAdapter(m, adapterCancel, adapterDone)
-			pid := 0
-			if adapterCmd.Process != nil {
-				pid = adapterCmd.Process.Pid
-			}
-			return fullTunnelAdapterHandle{pid: pid}, nil
-		},
-		stopAdapter: func() error {
-			return stopRegisteredTunAdapter(m)
-		},
 		commitActiveState: func(store txstate.TransactionStore, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -149,6 +134,8 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 		return tunCoreRuntimePlan{}, errors.New("TUN-mode Xray runtime config requires a runtime config path")
 	}
 	opts := engine.DefaultXrayTunConfigOptions()
+	opts.Name = plan.TunDevice.Name
+	opts.MTU = plan.TunDevice.MTU
 	if serverIP := tunRuntimeServerAddress(plan); serverIP != "" {
 		opts.OutboundAddressOverride = serverIP
 	}
@@ -156,12 +143,31 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 	if err != nil {
 		return tunCoreRuntimePlan{}, err
 	}
-	endpoint := net.JoinHostPort(opts.SOCKSListen, fmt.Sprintf("%d", opts.SOCKSPort))
-	warnings := []string{"TUN-mode connectivity is verified through full-tunnel route lookup, routed TCP probe, and DNS probe before transaction commit"}
+	warnings := []string{
+		"TUN-mode connectivity is verified through full-tunnel route lookup, routed TCP probe, and DNS probe before transaction commit",
+		"Xray owns podlaz0 packet ingestion; podlazd verifies the link and owns routes, DNS, nftables, rollback, and recovery metadata",
+	}
 	if opts.OutboundAddressOverride != "" && opts.OutboundAddressOverride != p.Server {
 		warnings = append(warnings, "TUN-mode Xray runtime uses the pre-resolved VPN server IP to avoid recursive DNS through the full-tunnel route")
 	}
-	return tunCoreRuntimePlan{RuntimeConfigPath: runtimeConfigPath, XrayConfig: xrayConfig, SOCKSEndpoint: endpoint, Status: "TUN-mode Xray runtime config with private adapter SOCKS endpoint " + endpoint, Warnings: warnings}, nil
+	return tunCoreRuntimePlan{
+		RuntimeConfigPath: runtimeConfigPath,
+		XrayConfig:        xrayConfig,
+		Status:            "TUN-mode Xray runtime config with native podlaz0 TUN inbound",
+		Warnings:          warnings,
+	}, nil
+}
+
+func xrayOwnedTunPlan(plan planner.TunPlan) planner.TunPlan {
+	plan.TunDevice.Action = "verify"
+	plan.TunDevice.Reason = "Xray tun inbound owns podlaz0 creation and packet ingestion; podlaz verifies the link before applying routes, DNS, and firewall state"
+	plan.Steps = append([]string{
+		"Start Xray native tun inbound and verify podlaz0 before applying podlaz-owned Linux routes, DNS, and nftables state",
+	}, plan.Steps...)
+	plan.RollbackSteps = append([]string{
+		"Stop Xray to release podlaz0 when Xray owns the link lifecycle",
+	}, plan.RollbackSteps...)
+	return plan
 }
 
 func tunRuntimeServerAddress(plan planner.TunPlan) string {
@@ -180,8 +186,5 @@ func tunRuntimeServerAddress(plan planner.TunPlan) string {
 }
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
-	if err := stopRegisteredTunAdapter(m); err != nil {
-		return api.LifecycleResponse{}, err
-	}
 	return m.runTunCleanup(ctx, transactionID)
 }
