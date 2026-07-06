@@ -26,6 +26,9 @@ type tunTransactionResult struct {
 }
 
 func runTunTransaction(ctx context.Context, runtimeDir string, p profile.Profile, plan planner.TunPlan, executor tunPlanExecutor, now func() time.Time) (tunTransactionResult, error) {
+	if executor == nil {
+		return tunTransactionResult{}, errors.New("missing TUN executor")
+	}
 	result, err := beginTunTransaction(ctx, runtimeDir, p, plan, now)
 	if err != nil {
 		return tunTransactionResult{}, err
