@@ -141,7 +141,8 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 	}
 	warnings := []string{
 		"TUN-mode connectivity is verified through full-tunnel route lookup, routed TCP probe, and DNS probe before transaction commit",
-		"Xray owns podlaz0 packet ingestion; podlazd verifies the link and owns routes, DNS, nftables, rollback, and recovery metadata",
+		"Pinned Xray TUN schema owns packet ingestion only; podlazd owns Linux route and DNS state and fails before commit if route, TCP, or DNS verification does not pass",
+		"Xray owns podlaz0 lifecycle; podlazd verifies the link and owns routes, DNS, nftables, rollback, and recovery metadata",
 	}
 	if opts.OutboundAddressOverride != "" && opts.OutboundAddressOverride != p.Server {
 		warnings = append(warnings, "TUN-mode Xray runtime uses the pre-resolved VPN server IP to avoid recursive DNS through the full-tunnel route")
