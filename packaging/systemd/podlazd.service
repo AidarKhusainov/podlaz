@@ -14,7 +14,6 @@ UMask=0077
 Environment=PODLAZ_SERVICE=systemd
 Environment=PODLAZ_POLKIT_AUTHORIZATION=required
 Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
-Environment=PODLAZ_TUN2SOCKS_PATH=/usr/lib/podlaz/tun2socks
 RuntimeDirectory=podlaz
 RuntimeDirectoryMode=0711
 StateDirectory=podlaz
