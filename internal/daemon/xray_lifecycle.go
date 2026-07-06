@@ -1,11 +1,9 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +16,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
-	"github.com/AidarKhusainov/podlaz/internal/render"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
