@@ -155,7 +155,7 @@ while true; do sleep 1; done
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("expected generated config cleanup, got stat err %v", err)
 	}
-	if _, err := store.Load(tx.ID); err == nil {
+	if _, _, err := store.Load(tx.ID); err == nil {
 		t.Fatal("expected rolled-back transaction file to be removed after active TUN disconnect")
 	}
 }
