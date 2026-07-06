@@ -35,6 +35,38 @@ esac
 	}
 }
 
+func TestPreflightXrayNativeTunSupportUsesMinimalPinnedSchemaConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script test")
+	}
+	dir := t.TempDir()
+	observedConfig := filepath.Join(dir, "observed.json")
+	xray := writeXrayPreflightExecutable(t, filepath.Join(dir, "xray"), `#!/bin/sh
+cp "$3" "$OBSERVED_CONFIG"
+exit 0
+`)
+
+	err := preflightXrayNativeTunSupport(context.Background(), xray, sameUserCoreExecutionIdentity())
+	if err != nil {
+		t.Fatalf("preflight native Xray TUN support: %v", err)
+	}
+	data, err := os.ReadFile(observedConfig)
+	if err != nil {
+		t.Fatalf("read observed preflight config: %v", err)
+	}
+	config := string(data)
+	for _, want := range []string{`"protocol": "tun"`, `"name": "podlaz-preflight"`, `"MTU": 1500`, `"userLevel": 0`} {
+		if !strings.Contains(config, want) {
+			t.Fatalf("minimal preflight config missing %s: %s", want, config)
+		}
+	}
+	for _, forbidden := range []string{`"server"`, `"gateway"`, `"dns"`, `"mtu"`} {
+		if strings.Contains(config, forbidden) {
+			t.Fatalf("minimal preflight config must not contain %s: %s", forbidden, config)
+		}
+	}
+}
+
 func TestPreflightXrayTunSupportReturnsStableUnsupportedError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script test")
