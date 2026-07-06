@@ -23,7 +23,7 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"StateDirectory=podlaz",
 		"StateDirectoryMode=0700",
 		"CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN",
-		"AmbientCapabilities=CAP_SETUID CAP_KILL",
+		"AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN",
 		"StandardOutput=journal",
 		"StandardError=journal",
 	} {
@@ -33,16 +33,15 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitOnlyKeepsChildLifecycleAmbientCapabilities(t *testing.T) {
+func TestSystemdUnitOnlyKeepsRequiredAmbientCapabilities(t *testing.T) {
 	content := readSystemdUnit(t)
 
-	if !strings.Contains(content, "AmbientCapabilities=CAP_SETUID CAP_KILL") {
-		t.Fatalf("systemd unit must keep only CAP_SETUID and CAP_KILL ambient for daemon-owned Xray child lifecycle:\n%s", content)
+	if !strings.Contains(content, "AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN") {
+		t.Fatalf("systemd unit must keep CAP_SETUID/CAP_KILL for child lifecycle and CAP_NET_ADMIN for native Xray TUN:\n%s", content)
 	}
 	for _, forbidden := range []string{
 		"AmbientCapabilities=CAP_CHOWN",
 		"AmbientCapabilities=CAP_SETGID",
-		"AmbientCapabilities=CAP_NET_ADMIN",
 		"AmbientCapabilities=CAP_SYS_ADMIN",
 	} {
 		if strings.Contains(content, forbidden) {
