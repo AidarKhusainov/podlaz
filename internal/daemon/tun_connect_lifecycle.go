@@ -58,13 +58,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := validateTunRuntimeDependencies(); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	preflightConfig, err := engine.GenerateXrayTunConfig(p, engine.DefaultXrayTunConfigOptions())
-	if err != nil {
-		return api.LifecycleResponse{}, err
-	}
-	if err := preflightXrayTunSupport(ctx, xrayPath, runtimeConfigPath, preflightConfig, coreIdentity); err != nil {
-		return api.LifecycleResponse{}, err
-	}
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
@@ -90,6 +83,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		corePlan:   corePlan,
 		executor:   executor,
 		now:        time.Now,
+		preflightCore: func(ctx context.Context) error {
+			return preflightXrayTunSupport(ctx, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
+		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -161,13 +157,31 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 func xrayOwnedTunPlan(plan planner.TunPlan) planner.TunPlan {
 	plan.TunDevice.Action = "verify"
 	plan.TunDevice.Reason = "Xray tun inbound owns podlaz0 creation and packet ingestion; podlaz verifies the link before applying routes, DNS, and firewall state"
-	plan.Steps = append([]string{
-		"Start Xray native tun inbound and verify podlaz0 before applying podlaz-owned Linux routes, DNS, and nftables state",
-	}, plan.Steps...)
-	plan.RollbackSteps = append([]string{
-		"Stop Xray to release podlaz0 when Xray owns the link lifecycle",
-	}, plan.RollbackSteps...)
+	plan.Steps = xrayOwnedTunSteps(plan)
+	plan.RollbackSteps = xrayOwnedTunRollbackSteps(plan)
 	return plan
+}
+
+func xrayOwnedTunSteps(plan planner.TunPlan) []string {
+	steps := []string{"Start Xray native tun inbound and verify podlaz0 before applying podlaz-owned Linux routes, DNS, and nftables state"}
+	for _, step := range plan.Steps {
+		if strings.Contains(step, "Plan TUN interface") || strings.Contains(step, "Leave TUN devices") {
+			continue
+		}
+		steps = append(steps, step)
+	}
+	return steps
+}
+
+func xrayOwnedTunRollbackSteps(plan planner.TunPlan) []string {
+	steps := []string{"Roll back podlaz-owned nftables, DNS, routes, and policy rules before stopping Xray and releasing podlaz0"}
+	for _, step := range plan.RollbackSteps {
+		if strings.Contains(step, "Delete TUN interface") {
+			continue
+		}
+		steps = append(steps, step)
+	}
+	return steps
 }
 
 func tunRuntimeServerAddress(plan planner.TunPlan) string {
