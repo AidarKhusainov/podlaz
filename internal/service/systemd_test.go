@@ -17,6 +17,7 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"UMask=0077",
 		"Environment=PODLAZ_SERVICE=systemd",
 		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
+		"Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray",
 		"RuntimeDirectory=podlaz",
 		"RuntimeDirectoryMode=0711",
 		"StateDirectory=podlaz",
@@ -57,6 +58,8 @@ func TestSystemdUnitDoesNotBlockTunDeviceWork(t *testing.T) {
 		"Private" + "Devices=yes",
 		"Protect" + "KernelTunables=yes",
 		"Restrict" + "AddressFamilies=",
+		"PODLAZ_TUN2SOCKS_PATH",
+		"/usr/lib/podlaz/tun2socks",
 	} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("systemd unit contains %q, which would need explicit validation before TUN/nftables work:\n%s", forbidden, content)
