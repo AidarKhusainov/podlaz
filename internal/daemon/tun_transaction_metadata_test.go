@@ -35,6 +35,19 @@ func TestTunTransactionRecordsRollbackOnlyForAppliedSteps(t *testing.T) {
 	}
 }
 
+func TestDesiredPlanRecordsXrayOwnerForVerifiedTunLink(t *testing.T) {
+	plan := transactionPlanForTest()
+	plan.TunDevice.Action = "verify"
+	desired := desiredPlanFromTunPlan(plan)
+	if desired.TUN.Owner != xrayTunInboundOwner {
+		t.Fatalf("expected Xray TUN owner for verified link, got %q", desired.TUN.Owner)
+	}
+	rollback := rollbackMetadataFromTunPlan(plan)
+	if len(rollback.TUN) != 0 {
+		t.Fatalf("verified Xray-owned link must not produce podlaz TUN rollback metadata: %#v", rollback.TUN)
+	}
+}
+
 type appliedOnlyTunExecutor struct {
 	steps []netexecutor.Step
 }
