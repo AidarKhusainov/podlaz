@@ -170,7 +170,11 @@ func appendAppliedStep(steps []Step, step Step) []Step {
 }
 
 func tunDeviceAction(action string) string {
-	return strings.ToLower(strings.TrimSpace(action))
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "add" {
+		return "create"
+	}
+	return action
 }
 
 func (e TunExecutor) validate() error {
