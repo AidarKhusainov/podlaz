@@ -14,9 +14,9 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 	if runtimeConfigPath == "" {
 		return tunCoreRuntimePlan{}, errors.New("TUN-mode Xray runtime config requires a runtime config path")
 	}
-	serverIP := tunRuntimeServerAddress(plan)
-	if serverIP == "" {
-		return tunCoreRuntimePlan{}, newRuntimeUnavailableError("VPN server bypass", "TUN mode requires a concrete IPv4 server bypass before generating the native Xray TUN runtime config. Resolve the profile server to an IPv4 address outside podlaz0 before starting TUN mode.")
+	serverIP, err := requireTunRuntimeServerBypass(plan)
+	if err != nil {
+		return tunCoreRuntimePlan{}, err
 	}
 
 	opts := engine.DefaultXrayTunConfigOptions()
@@ -41,6 +41,14 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 		Status:            "TUN-mode Xray runtime config with native podlaz0 TUN inbound",
 		Warnings:          warnings,
 	}, nil
+}
+
+func requireTunRuntimeServerBypass(plan planner.TunPlan) (string, error) {
+	serverIP := tunRuntimeServerAddress(plan)
+	if serverIP == "" {
+		return "", newRuntimeUnavailableError("VPN server bypass", "TUN mode requires a concrete IPv4 server bypass before generating the native Xray TUN runtime config. Resolve the profile server to an IPv4 address outside podlaz0 before starting TUN mode.")
+	}
+	return serverIP, nil
 }
 
 func tunRuntimeServerAddress(plan planner.TunPlan) string {
