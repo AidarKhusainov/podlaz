@@ -159,9 +159,12 @@ For TUN mode, Xray owns
 .B podlaz0
 packet ingestion through its native
 .B tun
-inbound. The daemon records transaction metadata, verifies the generated native
-TUN config with Xray, then applies podlaz-owned routes, policy rules, DNS, and
-nftables state around that link.
+inbound. Before handoff or host-networking changes, TUN mode verifies that the
+packaged Xray helper accepts a minimal pinned-schema native TUN config. The
+profile-generated Xray runtime config is written later after the TUN transaction
+starts; podlazd records rollback metadata before supervised Xray start and then
+applies podlaz-owned routes, policy rules, DNS, and nftables state around that
+link.
 .PP
 For TUN mode,
 .B --handoff
@@ -265,10 +268,10 @@ Success.
 Runtime or operation failure.
 .TP
 .B 2
-Invalid usage, flags, arguments, or deferred JSON output.
+Invalid usage, invalid flags or arguments, or deferred JSON output.
 .TP
 .B 3
-Diagnostic command found unhealthy state.
+Diagnostic command found an unhealthy state.
 .TP
 .B 4
 Permission or authorization failure.
@@ -277,51 +280,14 @@ Permission or authorization failure.
 Required daemon access was unavailable.
 .SH FILES
 .TP
-.I $XDG_CONFIG_HOME/podlaz/
-User configuration directory.
+.I $XDG_CONFIG_HOME/podlaz
+User configuration and profiles.
 .TP
-.I $XDG_STATE_HOME/podlaz/
-User state directory.
+.I $XDG_STATE_HOME/podlaz
+User state.
 .TP
-.I /run/podlaz/
-Daemon runtime directory.
-.TP
-.I /run/podlaz/podlazd.sock
-Local Unix socket for the daemon API.
-.TP
-.I /run/podlaz/generated/
-Daemon-owned generated runtime configuration.
-.TP
-.I /run/podlaz/transactions/
-Volatile daemon transaction state.
-.SH ENVIRONMENT
-.TP
-.B PODLAZ_RUNTIME_DIR
-Override the daemon runtime directory for tests and development.
-.TP
-.B PODLAZ_XRAY_PATH
-Override the Xray-compatible core path for daemon lifecycle tests.
-.TP
-.B XDG_CONFIG_HOME, XDG_STATE_HOME, XDG_CACHE_HOME
-Standard XDG base directory variables used for user-owned state.
-.SH EXAMPLES
-.EX
-podlaz profile import <share-uri>
-podlaz profile validate my-profile --mode tun
-podlaz plan --mode tun my-profile
-podlaz plan --mode tun my-profile --verbose
-podlaz connect --mode tun --handoff=replace-podlaz my-profile
-podlaz status
-podlaz disconnect
-.EE
-.PP
-.EX
-plz status
-plz logs --daemon --since "1 hour ago"
-podlaz recover
-.EE
+.I /run/podlaz
+Daemon runtime directory, socket, generated config metadata, and transaction
+state.
 .SH SEE ALSO
-.BR podlazd (8),
-.BR journalctl (1),
-.BR systemctl (1),
-.BR systemd.unit (5)
+.BR podlazd (8)
