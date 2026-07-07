@@ -48,6 +48,20 @@ func TestDesiredPlanRecordsXrayOwnerForVerifiedTunLink(t *testing.T) {
 	}
 }
 
+func TestLegacyTunAddActionStillRecordsOwnedRollbackMetadata(t *testing.T) {
+	plan := transactionPlanForTest()
+	plan.TunDevice.Action = "add"
+
+	desired := desiredPlanFromTunPlan(plan)
+	if desired.TUN.Owner != netexecutor.OwnerTunDevice {
+		t.Fatalf("expected legacy add action to remain podlaz-owned, got %q", desired.TUN.Owner)
+	}
+	rollback := rollbackMetadataFromTunPlan(plan)
+	if len(rollback.TUN) != 1 || rollback.TUN[0].InterfaceName != "podlaz0" || rollback.TUN[0].Owner != netexecutor.OwnerTunDevice {
+		t.Fatalf("expected legacy add action TUN rollback metadata, got %#v", rollback.TUN)
+	}
+}
+
 type appliedOnlyTunExecutor struct {
 	steps []netexecutor.Step
 }
