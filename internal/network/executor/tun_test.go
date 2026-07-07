@@ -47,6 +47,23 @@ func TestTunExecutorApplyVerifyAndRollbackOrder(t *testing.T) {
 	}
 }
 
+func TestTunExecutorRollbackTreatsLegacyTunAddActionAsOwnedLink(t *testing.T) {
+	recorder := &callRecorder{}
+	exec := TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder}, PolicyRules: fakeRules{rec: recorder}}
+	plan := executorPlanForTest()
+	plan.TunDevice.Action = "add"
+	plan.Routes = nil
+	plan.PolicyRules = nil
+
+	if err := exec.Rollback(context.Background(), plan); err != nil {
+		t.Fatalf("rollback legacy add action: %v", err)
+	}
+	want := []string{"tun:rollback:podlaz0"}
+	if !reflect.DeepEqual(recorder.calls, want) {
+		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
+	}
+}
+
 func TestTunExecutorApplySkipsUnmutatedSteps(t *testing.T) {
 	recorder := &callRecorder{}
 	exec := TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder, skipTarget: "main:203.0.113.10/32"}, PolicyRules: fakeRules{rec: recorder}}
