@@ -71,7 +71,7 @@ func preflightXrayTunSupport(ctx context.Context, xrayPath, runtimeConfigPath st
 	}
 	defer removeGeneratedConfig(runtimeConfigPath)
 
-	cmd := exec.CommandContext(ctx, xrayPath, "test", "-config", runtimeConfigPath)
+	cmd := exec.CommandContext(ctx, xrayPath, "run", "-test", "-config", runtimeConfigPath)
 	var output bytes.Buffer
 	cmd.Stdout = &output
 	cmd.Stderr = &output
