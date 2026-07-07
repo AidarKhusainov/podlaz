@@ -53,6 +53,26 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		return api.LifecycleResponse{}, err
 	}
 
+	policy := api.NormalizeHandoffPolicy(req.Handoff)
+	m.mu.Lock()
+	active := m.cmd != nil || m.state.Connection == "active"
+	activeMode := m.state.Mode
+	m.mu.Unlock()
+	if active && (policy != api.HandoffReplacePodlaz || activeMode != planner.ModeTun) {
+		return api.LifecycleResponse{}, errConnectionAlreadyActive
+	}
+
+	snapshotOpts := netsnapshot.Options{Server: p.Server}
+	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
+	preHandoffPlan, err := planner.PlanTun(p, snapshot)
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	preHandoffPlan = xrayOwnedTunPlan(preHandoffPlan)
+	if _, err := requireTunRuntimeServerBypass(preHandoffPlan); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+
 	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, err
 	}
@@ -64,8 +84,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	}
 	m.mu.Unlock()
 
-	snapshotOpts := netsnapshot.Options{Server: p.Server}
-	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
+	snapshot = m.collectTunSnapshot(ctx, snapshotOpts)
 	snapshot, err = m.prepareTunHandoff(ctx, snapshot, req.Handoff, snapshotOpts)
 	if err != nil {
 		return api.LifecycleResponse{}, err
@@ -120,11 +139,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 			return nil
 		},
 	}
-	active, err := runner.run(ctx)
+	activeState, err := runner.run(ctx)
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	return lifecycleResponse(active), nil
+	return lifecycleResponse(activeState), nil
 }
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
