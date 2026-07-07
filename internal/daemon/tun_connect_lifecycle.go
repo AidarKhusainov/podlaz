@@ -16,6 +16,11 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+var (
+	preflightNativeTunSupport           = preflightXrayNativeTunSupport
+	validateTunRuntimeDependenciesHook = validateTunRuntimeDependencies
+)
+
 type tunCoreRuntimePlan struct {
 	RuntimeConfigPath string
 	XrayConfig        []byte
@@ -45,10 +50,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := validatePackagedRuntimeArchitecture(xrayPath, "Xray"); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := validateTunRuntimeDependencies(); err != nil {
+	if err := validateTunRuntimeDependenciesHook(); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := preflightXrayNativeTunSupport(ctx, xrayPath, coreIdentity); err != nil {
+	if err := preflightNativeTunSupport(ctx, xrayPath, coreIdentity); err != nil {
 		return api.LifecycleResponse{}, err
 	}
 
