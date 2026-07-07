@@ -64,18 +64,18 @@ Packaged TUN mode relies on these host components and declares them as Debian de
 
 ## Preflight contract
 
-Before opening a TUN transaction or applying host-networking changes, daemon-side connect checks that:
+Before active podlaz replacement, controlled handoff cleanup, opening a TUN transaction, or applying host-networking changes, daemon-side connect checks that:
 
 - the Xray helper resolves to an executable;
 - packaged helpers under `/usr/lib/podlaz` match the running helper architecture when ELF metadata can be inspected;
 - `ip`, `nft`, and `resolvectl` are available in the daemon execution environment;
 - the pinned Xray helper accepts a minimal native `tun` inbound config through `xray test -config`.
 
-The unsupported-Xray preflight uses a temporary, redaction-safe config with only `protocol: tun` and pinned-schema `name`/`MTU`/`userLevel` settings. It does not use profile-derived runtime config and it runs before `beginTunTransaction`, so unsupported Xray TUN support must not leave a transaction artifact.
+The unsupported-Xray preflight uses a temporary, redaction-safe config with only `protocol: tun` and pinned-schema `name`/`MTU`/`userLevel` settings. It does not use profile-derived runtime config and it runs before `prepareActivePodlazReplace`, `prepareTunHandoff`, and `beginTunTransaction`. Unsupported Xray TUN support must not disconnect active podlaz TUN, run controlled handoff cleanup, stop an external VPN connection, or leave a transaction artifact.
 
 The generated profile runtime config path is recorded in transaction rollback metadata after the transaction is opened and before the daemon starts Xray with the generated config. If the daemon is interrupted after generated config write, recovery knows how to remove the generated config.
 
-Missing or non-executable helpers, missing hard TUN commands, and unsupported Xray TUN config are setup/runtime-unavailable failures. They must fail before route, DNS, nftables, firewall, or transaction mutation starts.
+Missing or non-executable helpers, missing hard TUN commands, and unsupported Xray TUN config are setup/runtime-unavailable failures. They must fail before route, DNS, nftables, firewall, handoff, active-podlaz replacement, or transaction mutation starts.
 
 User-facing CLI output must not present these failures as a daemon crash or raw internal server error. It must state that TUN mode cannot start and that no network changes were applied.
 
