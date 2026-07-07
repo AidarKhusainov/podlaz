@@ -16,7 +16,6 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"Group=podlaz",
 		"UMask=0077",
 		"Environment=PODLAZ_SERVICE=systemd",
-		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
 		"Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray",
 		"RuntimeDirectory=podlaz",
 		"RuntimeDirectoryMode=0711",
@@ -29,6 +28,19 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("expected systemd unit to contain %q, got:\n%s", want, content)
+		}
+	}
+}
+
+func TestSystemdUnitDoesNotForcePolkitAuthorization(t *testing.T) {
+	content := readSystemdUnit(t)
+
+	for _, forbidden := range []string{
+		"PODLAZ_POLKIT_AUTHORIZATION=required",
+		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("packaged systemd unit must not force polkit authorization with %q:\n%s", forbidden, content)
 		}
 	}
 }
