@@ -47,7 +47,12 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 		} `json:"inbounds"`
 		Outbounds []struct {
 			Settings struct {
-				Address string `json:"address"`
+				VNext []struct {
+					Address string `json:"address"`
+					Users   []struct {
+						ID string `json:"id"`
+					} `json:"users"`
+				} `json:"vnext"`
 			} `json:"settings"`
 		} `json:"outbounds"`
 	}
@@ -60,8 +65,11 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 	if config.Inbounds[0].Settings.Name != "podlaz0" || config.Inbounds[0].Settings.MTU != 1500 {
 		t.Fatalf("unexpected TUN inbound settings: %#v", config.Inbounds[0].Settings)
 	}
-	if len(config.Outbounds) != 1 || config.Outbounds[0].Settings.Address != "203.0.113.10" {
+	if len(config.Outbounds) != 1 || len(config.Outbounds[0].Settings.VNext) != 1 || config.Outbounds[0].Settings.VNext[0].Address != "203.0.113.10" {
 		t.Fatalf("expected pre-resolved outbound address, got %#v", config.Outbounds)
+	}
+	if users := config.Outbounds[0].Settings.VNext[0].Users; len(users) != 1 || users[0].ID != p.UserIdentity {
+		t.Fatalf("expected TUN VLESS user identity, got %#v", users)
 	}
 	for _, want := range []string{p.UserIdentity, p.Protocol} {
 		if !strings.Contains(text, want) {
