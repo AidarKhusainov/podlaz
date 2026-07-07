@@ -28,9 +28,9 @@ func DefaultXrayTunConfigOptions() XrayTunConfigOptions {
 }
 
 type xrayTunConfig struct {
-	Log       xrayLog          `json:"log"`
-	Inbounds  []xrayTunInbound `json:"inbounds"`
-	Outbounds []xrayOutbound   `json:"outbounds"`
+	Log       xrayLog           `json:"log"`
+	Inbounds  []xrayTunInbound  `json:"inbounds"`
+	Outbounds []map[string]any  `json:"outbounds"`
 }
 
 type xrayTunInbound struct {
@@ -86,19 +86,7 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 				UserLevel: 0,
 			},
 		}},
-		Outbounds: []xrayOutbound{{
-			Tag:      "podlaz-tun-proxy",
-			Protocol: "vless",
-			Settings: xrayVLESSSettings{
-				Address:    outboundAddress,
-				Port:       p.Port,
-				ID:         p.UserIdentity,
-				Encryption: vlessEncryption(p),
-				Flow:       strings.TrimSpace(p.Flow),
-				Level:      0,
-			},
-			StreamSettings: streamSettings,
-		}},
+		Outbounds: []map[string]any{xrayTunOutboundConfig(p, outboundAddress, streamSettings)},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
