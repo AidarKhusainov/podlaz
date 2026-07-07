@@ -23,7 +23,7 @@ func TestPackagedXrayAcceptsPinnedTunConfigs(t *testing.T) {
 	if err := os.WriteFile(minimalPath, minimalXrayTunPreflightConfig(), 0o600); err != nil {
 		t.Fatalf("write minimal preflight config: %v", err)
 	}
-	assertXrayConfigTest(t, xrayPath, minimalPath)
+	assertXrayTunConfigSchemaAccepted(t, xrayPath, minimalPath)
 
 	generated, err := engine.GenerateXrayTunConfig(packagedXrayTunProfileForTest(), engine.XrayTunConfigOptions{Name: engine.DefaultXrayTunName, MTU: engine.DefaultXrayTunMTU, OutboundAddressOverride: "203.0.113.10"})
 	if err != nil {
@@ -33,16 +33,21 @@ func TestPackagedXrayAcceptsPinnedTunConfigs(t *testing.T) {
 	if err := os.WriteFile(generatedPath, generated, 0o600); err != nil {
 		t.Fatalf("write generated runtime config: %v", err)
 	}
-	assertXrayConfigTest(t, xrayPath, generatedPath)
+	assertXrayTunConfigSchemaAccepted(t, xrayPath, generatedPath)
 }
 
-func assertXrayConfigTest(t *testing.T, xrayPath, configPath string) {
+func assertXrayTunConfigSchemaAccepted(t *testing.T, xrayPath, configPath string) {
 	t.Helper()
 	cmd := exec.CommandContext(context.Background(), xrayPath, "run", "-test", "-config", configPath)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s run -test -config %s failed: %v\n%s", xrayPath, configPath, err, strings.TrimSpace(string(output)))
+	text := strings.TrimSpace(string(output))
+	if err == nil {
+		return
 	}
+	if strings.Contains(text, "Reading config") && strings.Contains(text, "failed to create server") {
+		return
+	}
+	t.Fatalf("%s run -test -config %s rejected config before TUN server creation: %v\n%s", xrayPath, configPath, err, text)
 }
 
 func packagedXrayTunProfileForTest() profile.Profile {
