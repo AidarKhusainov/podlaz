@@ -47,10 +47,88 @@ func (e IPTunDeviceExecutor) Create(ctx context.Context, plan planner.TunDeviceP
 }
 
 func (e IPTunDeviceExecutor) Verify(ctx context.Context, plan planner.TunDevicePlan) error {
-	if err := e.run(ctx, "ip", "link", "show", "dev", plan.Name); err != nil {
+	if strings.TrimSpace(plan.Name) == "" {
+		return errors.New("missing TUN device name")
+	}
+	result, err := observeCommand(ctx, e.Runner, "ip", "-details", "link", "show", "dev", plan.Name)
+	if err != nil {
+		return fmt.Errorf("verify TUN device %s: %w", plan.Name, err)
+	}
+	if err := verifyTUNLinkDetails(plan, result.Stdout); err != nil {
 		return fmt.Errorf("verify TUN device %s: %w", plan.Name, err)
 	}
 	return nil
+}
+
+func verifyTUNLinkDetails(plan planner.TunDevicePlan, output string) error {
+	text := strings.TrimSpace(output)
+	if text == "" {
+		return errors.New("empty ip link details output")
+	}
+	if !tunLinkOutputIsTun(text) {
+		return fmt.Errorf("link is not a TUN device: %s", firstLine(text))
+	}
+	if plan.MTU > 0 && !linkOutputHasMTU(text, plan.MTU) {
+		return fmt.Errorf("link MTU does not match planned MTU %d: %s", plan.MTU, firstLine(text))
+	}
+	if !linkOutputIsUp(text) {
+		return fmt.Errorf("link is not up: %s", firstLine(text))
+	}
+	return nil
+}
+
+func tunLinkOutputIsTun(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		for i := 0; i+2 < len(fields); i++ {
+			if fields[i] == "tun" && fields[i+1] == "type" && fields[i+2] == "tun" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func linkOutputHasMTU(output string, mtu int) bool {
+	want := strconv.Itoa(mtu)
+	for _, fieldList := range strings.Split(output, "\n") {
+		fields := strings.Fields(fieldList)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "mtu" && fields[i+1] == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func linkOutputIsUp(output string) bool {
+	line := firstLine(output)
+	if strings.Contains(line, "state UP") {
+		return true
+	}
+	start := strings.Index(line, "<")
+	end := strings.Index(line, ">")
+	if start < 0 || end <= start {
+		return false
+	}
+	flags := strings.Split(line[start+1:end], ",")
+	for _, flag := range flags {
+		if strings.TrimSpace(flag) == "UP" {
+			return true
+		}
+	}
+	return false
+}
+
+func firstLine(output string) string {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return "<empty>"
 }
 
 func (e IPTunDeviceExecutor) Rollback(ctx context.Context, plan planner.TunDevicePlan) error {
