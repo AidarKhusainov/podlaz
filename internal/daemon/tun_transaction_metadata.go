@@ -115,7 +115,7 @@ func tunDesiredOwner(action string) string {
 
 func tunRollbackOwnsLink(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "", "create":
+	case "", "create", "add":
 		return true
 	default:
 		return false
