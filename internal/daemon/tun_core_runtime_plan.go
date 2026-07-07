@@ -14,12 +14,15 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 	if runtimeConfigPath == "" {
 		return tunCoreRuntimePlan{}, errors.New("TUN-mode Xray runtime config requires a runtime config path")
 	}
+	serverIP := tunRuntimeServerAddress(plan)
+	if serverIP == "" {
+		return tunCoreRuntimePlan{}, newRuntimeUnavailableError("VPN server bypass", "TUN mode requires a concrete IPv4 server bypass before generating the native Xray TUN runtime config. Resolve the profile server to an IPv4 address outside podlaz0 before starting TUN mode.")
+	}
+
 	opts := engine.DefaultXrayTunConfigOptions()
 	opts.Name = plan.TunDevice.Name
 	opts.MTU = plan.TunDevice.MTU
-	if serverIP := tunRuntimeServerAddress(plan); serverIP != "" {
-		opts.OutboundAddressOverride = serverIP
-	}
+	opts.OutboundAddressOverride = serverIP
 	xrayConfig, err := engine.GenerateXrayTunConfig(p, opts)
 	if err != nil {
 		return tunCoreRuntimePlan{}, err
@@ -29,7 +32,7 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 		"Pinned Xray TUN schema owns packet ingestion only; podlazd owns Linux route and DNS state and fails before commit if route, TCP, or DNS verification does not pass",
 		"Xray owns podlaz0 lifecycle; podlazd verifies the link and owns host networking rollback metadata",
 	}
-	if opts.OutboundAddressOverride != "" && opts.OutboundAddressOverride != p.Server {
+	if opts.OutboundAddressOverride != p.Server {
 		warnings = append(warnings, "TUN-mode Xray runtime uses the pre-resolved server address")
 	}
 	return tunCoreRuntimePlan{
