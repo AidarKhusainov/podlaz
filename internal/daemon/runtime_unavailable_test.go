@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,5 +55,40 @@ func TestDaemonAPIHTTPStatusCodeMapsRuntimeUnavailableToServiceUnavailable(t *te
 	err := newRuntimeUnavailableError("nftables", "Command \"nft\" was not found in PATH.")
 	if got := daemonAPIHTTPStatusCode(err); got != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected HTTP status: got %d want %d", got, http.StatusServiceUnavailable)
+	}
+}
+
+func TestNativeTunPreflightUnsupportedClassifiesRuntimeUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script test")
+	}
+	dir := t.TempDir()
+	xray := writeXrayPreflightExecutable(t, filepath.Join(dir, "xray"), `#!/bin/sh
+echo 'unknown inbound protocol: tun' >&2
+exit 23
+`)
+
+	err := preflightXrayNativeTunSupport(context.Background(), xray, sameUserCoreExecutionIdentity())
+	if err == nil {
+		t.Fatal("expected unsupported native TUN preflight error")
+	}
+	if !isRuntimeUnavailableError(err) {
+		t.Fatalf("expected runtime unavailable classification, got %T: %v", err, err)
+	}
+	if !errors.Is(err, errXrayTunUnsupported) {
+		t.Fatalf("expected unsupported TUN sentinel in error chain, got %v", err)
+	}
+	if got := daemonAPIHTTPStatusCode(err); got != http.StatusServiceUnavailable {
+		t.Fatalf("unexpected HTTP status: got %d want %d", got, http.StatusServiceUnavailable)
+	}
+	for _, want := range []string{
+		"TUN mode cannot start because Xray TUN support is unavailable.",
+		"TUN mode requires an Xray-core build with tun inbound support",
+		"No network changes were applied.",
+		"Run: plz doctor",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got:\n%s", want, err)
+		}
 	}
 }
