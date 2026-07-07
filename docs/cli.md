@@ -192,9 +192,10 @@ Requires daemon access. `connect` defaults to `proxy-only`. Proxy-only must not
 mutate host networking. TUN mode is daemon-owned and transaction-backed. Xray
 owns `podlaz0` packet ingestion through its native `tun` inbound; podlazd owns
 and rolls back the surrounding routes, policy rules, DNS, nftables, generated
-config metadata, and child process metadata. Before host-networking mutation,
-`connect --mode tun` records transaction metadata and verifies that the packaged
-Xray helper accepts the generated native TUN config.
+config metadata, and child process metadata. Before handoff or host changes,
+`connect --mode tun` checks that the packaged Xray helper accepts a minimal
+pinned-schema native TUN config. The profile-generated Xray runtime config is
+written later after the TUN transaction starts.
 
 `connect --mode tun` supports explicit handoff policies. `block` keeps host
 state unchanged and reports foreign ownership or stale podlaz-owned blockers
