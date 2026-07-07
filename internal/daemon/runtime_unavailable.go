@@ -14,6 +14,7 @@ const packagedRuntimeDir = "/usr/lib/podlaz/"
 
 type runtimeUnavailableError struct {
 	message string
+	cause   error
 }
 
 func (e *runtimeUnavailableError) Error() string {
@@ -23,7 +24,18 @@ func (e *runtimeUnavailableError) Error() string {
 	return e.message
 }
 
+func (e *runtimeUnavailableError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 func newRuntimeUnavailableError(component, detail string) error {
+	return newRuntimeUnavailableErrorWithCause(component, detail, nil)
+}
+
+func newRuntimeUnavailableErrorWithCause(component, detail string, cause error) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "TUN mode cannot start because %s is unavailable.", component)
 	if strings.TrimSpace(detail) != "" {
@@ -32,14 +44,14 @@ func newRuntimeUnavailableError(component, detail string) error {
 	}
 	b.WriteString("\nNo network changes were applied.")
 	b.WriteString("\nRun: plz doctor")
-	return &runtimeUnavailableError{message: b.String()}
+	return &runtimeUnavailableError{message: b.String(), cause: cause}
 }
 
 func wrapRuntimeUnavailable(component string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return newRuntimeUnavailableError(component, err.Error())
+	return newRuntimeUnavailableErrorWithCause(component, err.Error(), err)
 }
 
 func isRuntimeUnavailableError(err error) bool {
