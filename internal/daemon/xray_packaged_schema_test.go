@@ -38,10 +38,10 @@ func TestPackagedXrayAcceptsPinnedTunConfigs(t *testing.T) {
 
 func assertXrayConfigTest(t *testing.T, xrayPath, configPath string) {
 	t.Helper()
-	cmd := exec.CommandContext(context.Background(), xrayPath, "test", "-config", configPath)
+	cmd := exec.CommandContext(context.Background(), xrayPath, "run", "-test", "-config", configPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("%s test -config %s failed: %v\n%s", xrayPath, configPath, err, strings.TrimSpace(string(output)))
+		t.Fatalf("%s run -test -config %s failed: %v\n%s", xrayPath, configPath, err, strings.TrimSpace(string(output)))
 	}
 }
 
