@@ -35,16 +35,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
-		return api.LifecycleResponse{}, err
-	}
-
-	m.mu.Lock()
-	if m.cmd != nil || m.state.Connection == "active" {
-		m.mu.Unlock()
-		return api.LifecycleResponse{}, errConnectionAlreadyActive
-	}
-	m.mu.Unlock()
 
 	runtimeDir := m.runtimeDir()
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
@@ -58,6 +48,20 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := validateTunRuntimeDependencies(); err != nil {
 		return api.LifecycleResponse{}, err
 	}
+	if err := preflightXrayNativeTunSupport(ctx, xrayPath, coreIdentity); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+
+	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+
+	m.mu.Lock()
+	if m.cmd != nil || m.state.Connection == "active" {
+		m.mu.Unlock()
+		return api.LifecycleResponse{}, errConnectionAlreadyActive
+	}
+	m.mu.Unlock()
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
@@ -83,9 +87,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		corePlan:   corePlan,
 		executor:   executor,
 		now:        time.Now,
-		preflightCore: func(ctx context.Context) error {
-			return preflightXrayNativeTunSupport(ctx, xrayPath, coreIdentity)
-		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
