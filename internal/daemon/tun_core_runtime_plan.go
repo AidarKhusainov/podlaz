@@ -26,7 +26,7 @@ func planTunCoreRuntime(p profile.Profile, runtimeConfigPath string, plan planne
 	}
 	warnings := []string{
 		"TUN-mode connectivity is verified before transaction commit",
-		"Pinned Xray TUN schema owns packet ingestion only; podlazd owns Linux route and DNS state",
+		"Pinned Xray TUN schema owns packet ingestion only; podlazd owns Linux route and DNS state and fails before commit if route, TCP, or DNS verification does not pass",
 		"Xray owns podlaz0 lifecycle; podlazd verifies the link and owns host networking rollback metadata",
 	}
 	if opts.OutboundAddressOverride != "" && opts.OutboundAddressOverride != p.Server {
