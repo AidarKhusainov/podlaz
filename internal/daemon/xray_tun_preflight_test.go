@@ -10,16 +10,17 @@ import (
 	"testing"
 )
 
-func TestPreflightXrayTunSupportUsesConfigTestAndRemovesTrackedRuntimeConfig(t *testing.T) {
+func TestPreflightXrayTunSupportUsesRunTestConfigAndRemovesTrackedRuntimeConfig(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script test")
 	}
 	dir := t.TempDir()
 	xray := writeXrayPreflightExecutable(t, filepath.Join(dir, "xray"), `#!/bin/sh
-test "$1" = "test"
-test "$2" = "-config"
-test -f "$3"
-case "$3" in
+test "$1" = "run"
+test "$2" = "-test"
+test "$3" = "-config"
+test -f "$4"
+case "$4" in
   */xray.json) exit 0 ;;
   *) exit 9 ;;
 esac
@@ -43,7 +44,7 @@ func TestPreflightXrayNativeTunSupportUsesMinimalPinnedSchemaConfig(t *testing.T
 	observedConfig := filepath.Join(dir, "observed.json")
 	t.Setenv("OBSERVED_CONFIG", observedConfig)
 	xray := writeXrayPreflightExecutable(t, filepath.Join(dir, "xray"), `#!/bin/sh
-cp "$3" "$OBSERVED_CONFIG"
+cp "$4" "$OBSERVED_CONFIG"
 exit 0
 `)
 
