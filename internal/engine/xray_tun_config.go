@@ -28,9 +28,9 @@ func DefaultXrayTunConfigOptions() XrayTunConfigOptions {
 }
 
 type xrayTunConfig struct {
-	Log       xrayLog           `json:"log"`
-	Inbounds  []xrayTunInbound  `json:"inbounds"`
-	Outbounds []map[string]any  `json:"outbounds"`
+	Log       xrayLog          `json:"log"`
+	Inbounds  []xrayTunInbound `json:"inbounds"`
+	Outbounds []map[string]any `json:"outbounds"`
 }
 
 type xrayTunInbound struct {
