@@ -21,7 +21,12 @@ func preflightXrayNativeTunSupport(ctx context.Context, xrayPath string, identit
 		return fmt.Errorf("create Xray TUN preflight temp directory: %w", err)
 	}
 	defer os.RemoveAll(dir)
-	return preflightXrayTunSupport(ctx, xrayPath, filepath.Join(dir, generatedXrayName), minimalXrayTunPreflightConfig(), identity)
+
+	err = preflightXrayTunSupport(ctx, xrayPath, filepath.Join(dir, generatedXrayName), minimalXrayTunPreflightConfig(), identity)
+	if errors.Is(err, errXrayTunUnsupported) {
+		return wrapRuntimeUnavailable("Xray TUN support", err)
+	}
+	return err
 }
 
 func minimalXrayTunPreflightConfig() []byte {
