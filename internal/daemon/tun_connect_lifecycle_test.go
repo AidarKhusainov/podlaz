@@ -34,14 +34,14 @@ func TestConnectTunServerBypassFailureRunsBeforeStopKnownHandoff(t *testing.T) {
 		XrayPath:   writeFakeXray(t, "#!/bin/sh\nexit 0\n"),
 		snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
 			return netsnapshot.Snapshot{
-				OS:          "linux",
-				DefaultIPv4: netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "eth0", Gateway: "192.0.2.1"},
-				ServerRoute: netsnapshot.Route{Status: netsnapshot.StatusMissing, Family: "ipv4", Destination: "vpn.example"},
-				DNS: netsnapshot.DNS{Resolved: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "systemd-resolved detected"}},
+				OS:             "linux",
+				DefaultIPv4:    netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "eth0", Gateway: "192.0.2.1"},
+				ServerRoute:    netsnapshot.Route{Status: netsnapshot.StatusMissing, Family: "ipv4", Destination: "vpn.example"},
+				DNS:            netsnapshot.DNS{Resolved: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "systemd-resolved detected"}},
 				NetworkManager: netsnapshot.NetworkManager{ActiveConnections: []netsnapshot.NetworkManagerConnection{{Name: "Example VPN", UUID: "11111111-1111-1111-1111-111111111111", Type: "vpn", Device: "tun9", State: "activated"}}},
-				Nftables: netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "nftables detected"}},
-				IPv4:     netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv4 detected"},
-				IPv6:     netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv6 detected"},
+				Nftables:       netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "nftables detected"}},
+				IPv4:           netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv4 detected"},
+				IPv6:           netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv6 detected"},
 			}
 		},
 	}
