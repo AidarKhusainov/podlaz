@@ -12,7 +12,6 @@ User=root
 Group=podlaz
 UMask=0077
 Environment=PODLAZ_SERVICE=systemd
-Environment=PODLAZ_POLKIT_AUTHORIZATION=required
 Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
 RuntimeDirectory=podlaz
 RuntimeDirectoryMode=0711
