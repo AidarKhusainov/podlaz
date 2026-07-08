@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ func TestRunCLICompletionGeneratesSupportedShells(t *testing.T) {
 		{
 			name: "bash",
 			args: []string{"completion", "bash"},
-			want: []string{"_podlaz()", "__complete bash", "complete -o default -F _podlaz podlaz", "proxy-only tun", "vless vmess trojan shadowsocks", "if [[ -z \"${COMP_TYPE+x}\" ]]; then", "insert_only=true"},
+			want: []string{"_podlaz()", "__complete bash", "complete -o default -F _podlaz podlaz", "proxy-only tun", "vless vmess trojan shadowsocks", "COMPREPLY=(\"${values[@]}\")", "value-only display fallback"},
 		},
 		{
 			name: "zsh",
@@ -46,6 +47,103 @@ func TestRunCLICompletionGeneratesSupportedShells(t *testing.T) {
 			for _, want := range tt.want {
 				if !strings.Contains(got, want) {
 					t.Fatalf("expected completion output to contain %q, got %q", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRunCLIBashCompletionNeverAppendsRawProtocolLines(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"completion", "bash"}, &out); err != nil {
+		t.Fatalf("completion command failed: %v", err)
+	}
+	got := out.String()
+	for _, forbidden := range []string{
+		`matches+=("$line")`,
+		`COMPREPLY+=("$line")`,
+		`COMPREPLY+=("${line}")`,
+		`COMPREPLY=("${matches[@]}")`,
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("bash completion must not append raw runtime protocol lines to COMPREPLY; found %q in:\n%s", forbidden, got)
+		}
+	}
+	for _, want := range []string{
+		`value="${line%%$'\t'*}"`,
+		`values+=("$value")`,
+		`COMPREPLY=("${values[@]}")`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected bash completion to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunCLIBashCompletionScriptKeepsCOMPREPLYInsertable(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is not available")
+	}
+
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"completion", "bash"}, &out); err != nil {
+		t.Fatalf("completion command failed: %v", err)
+	}
+	script := out.String()
+
+	tests := []struct {
+		name    string
+		fixture string
+		words   []string
+		want    []string
+	}{
+		{
+			name:    "described profile subcommands",
+			fixture: "described-profile",
+			words:   []string{"podlaz", "profile", ""},
+			want:    []string{"add", "delete", "import", "list", "show", "validate"},
+		},
+		{
+			name:    "described top level commands",
+			fixture: "described-top-level",
+			words:   []string{"podlaz", ""},
+			want:    []string{"profile", "connect", "status"},
+		},
+		{
+			name:    "described flags",
+			fixture: "described-flags",
+			words:   []string{"podlaz", "plan", "-"},
+			want:    []string{"--mode", "--json"},
+		},
+		{
+			name:    "dynamic IDs without descriptions",
+			fixture: "plain-dynamic",
+			words:   []string{"podlaz", "connect", ""},
+			want:    []string{"alpha", "bravo"},
+		},
+		{
+			name:    "no files directive with plain values",
+			fixture: "no-files",
+			words:   []string{"podlaz", "connect", ""},
+			want:    []string{"alpha"},
+		},
+		{
+			name:    "default files directive returns without values",
+			fixture: "default-files",
+			words:   []string{"podlaz", "import", ""},
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := runGeneratedBashCompletion(t, script, tt.fixture, tt.words...)
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Fatalf("unexpected COMPREPLY values\nwant: %#v\n got: %#v", tt.want, got)
+			}
+			for _, value := range got {
+				if strings.Contains(value, "\t") {
+					t.Fatalf("COMPREPLY value must not contain raw runtime description protocol tab: %#v", got)
 				}
 			}
 		})
@@ -156,6 +254,14 @@ func TestRunCLICompletionRuntimeSuggestsCommandDescriptions(t *testing.T) {
 	assertContainsCandidateLine(t, got, "subscription", "Manage subscriptions")
 }
 
+func TestRunCLICompletionRuntimeSuggestsProfileSubcommandDescriptions(t *testing.T) {
+	opts := seedCompletionStores(t)
+	got := runCompletionRuntime(t, opts, bashCompleteArgs(2, "podlaz", "profile", "")...)
+	assertContainsCandidateLine(t, got, "add", "Add manual profile")
+	assertContainsCandidateLine(t, got, "delete", "Delete profile")
+	assertContainsCandidateLine(t, got, "validate", "Validate profile")
+}
+
 func TestRunCLICompletionRuntimeSuggestsFlagDescriptions(t *testing.T) {
 	opts := seedCompletionStores(t)
 	got := runCompletionRuntime(t, opts, bashCompleteArgs(2, "podlaz", "plan", "-")...)
@@ -239,6 +345,95 @@ func runCompletionRuntime(t *testing.T, opts options, args ...string) []string {
 	}
 	return splitLines(out.String())
 }
+
+func runGeneratedBashCompletion(t *testing.T, completionScript string, fixture string, words ...string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	completionPath := filepath.Join(dir, "podlaz.bash")
+	if err := os.WriteFile(completionPath, []byte(completionScript), 0o600); err != nil {
+		t.Fatalf("write generated bash completion: %v", err)
+	}
+	fakePodlazPath := filepath.Join(dir, "podlaz")
+	if err := os.WriteFile(fakePodlazPath, []byte(fakePodlazRuntimeCompletionScript), 0o700); err != nil {
+		t.Fatalf("write fake podlaz runtime completion: %v", err)
+	}
+
+	var driver strings.Builder
+	driver.WriteString("source ")
+	driver.WriteString(strconv.Quote(completionPath))
+	driver.WriteString("\n")
+	driver.WriteString("COMP_WORDS=(")
+	driver.WriteString(shellWords(words))
+	driver.WriteString(")\n")
+	driver.WriteString("COMP_CWORD=")
+	driver.WriteString(strconv.Itoa(len(words) - 1))
+	driver.WriteString("\n")
+	driver.WriteString("COMP_TYPE=63\n")
+	driver.WriteString("_podlaz\n")
+	driver.WriteString("printf '%s\\n' \"${COMPREPLY[@]}\"\n")
+
+	cmd := exec.Command("bash", "-c", driver.String())
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"PODLAZ_COMPLETION_FIXTURE="+fixture,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run generated bash completion: %v\nscript:\n%s\noutput:\n%s", err, driver.String(), out)
+	}
+	return splitLines(string(out))
+}
+
+func shellWords(words []string) string {
+	quoted := make([]string, 0, len(words))
+	for _, word := range words {
+		quoted = append(quoted, strconv.Quote(word))
+	}
+	return strings.Join(quoted, " ")
+}
+
+const fakePodlazRuntimeCompletionScript = `#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" != "__complete" ]; then
+  exit 64
+fi
+
+case "${PODLAZ_COMPLETION_FIXTURE:-}" in
+  described-profile)
+    printf '%s\n' ':no-files'
+    printf 'add\tAdd manual profile\n'
+    printf 'delete\tDelete profile\n'
+    printf 'import\tImport share URI\n'
+    printf 'list\tList profiles\n'
+    printf 'show\tShow profile\n'
+    printf 'validate\tValidate profile\n'
+    ;;
+  described-top-level)
+    printf '%s\n' ':no-files'
+    printf 'profile\tManage profiles\n'
+    printf 'connect\tStart connection\n'
+    printf 'status\tShow status\n'
+    ;;
+  described-flags)
+    printf '%s\n' ':no-files'
+    printf -- '--mode\tSelect connection mode\n'
+    printf -- '--json\tPrint JSON output\n'
+    ;;
+  plain-dynamic)
+    printf '%s\n' ':no-files' alpha bravo
+    ;;
+  no-files)
+    printf '%s\n' ':no-files' alpha
+    ;;
+  default-files)
+    printf '%s\n' ':default-files'
+    ;;
+  *)
+    exit 65
+    ;;
+esac
+`
 
 func splitLines(raw string) []string {
 	var lines []string
