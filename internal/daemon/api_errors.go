@@ -99,7 +99,7 @@ func isRuntimeResolutionError(err error) bool {
 		return false
 	}
 	message := err.Error()
-	return strings.Contains(message, "resolve Xray binary") || strings.Contains(message, "resolve TUN adapter binary")
+	return strings.Contains(message, "resolve Xray binary")
 }
 
 func writeDaemonAPIHTTPError(w http.ResponseWriter, err error) {
