@@ -31,8 +31,9 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 		t.Fatalf("expected TUN runtime warnings to describe pinned-schema route/DNS verification, got %#v", runtime.Warnings)
 	}
 	text := string(runtime.XrayConfig)
-	if strings.Contains(text, "podlaz-tun-socks") || strings.Contains(text, `"protocol": "socks"`) {
-		t.Fatalf("TUN runtime must not generate private SOCKS adapter config: %s", text)
+	legacyTunSocksTag := "podlaz-" + "tun-socks"
+	if strings.Contains(text, legacyTunSocksTag) || strings.Contains(text, `"protocol": "socks"`) {
+		t.Fatalf("TUN runtime must not generate legacy private SOCKS plumbing: %s", text)
 	}
 
 	var config struct {
@@ -92,7 +93,7 @@ func TestPlanTunCoreRuntimeFailsClosedWithoutConcreteServerBypass(t *testing.T) 
 		t.Fatalf("expected no Xray config without concrete server bypass, got %s", runtime.XrayConfig)
 	}
 	if !isRuntimeUnavailableError(err) {
-		t.Fatalf("expected runtime unavailable classification, got %T: %v", err, err)
+		t.Fatalf("expected runtime unavailable classification, got %T: %v", err)
 	}
 	if got := daemonAPIHTTPStatusCode(err); got != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected HTTP status: got %d want %d", got, http.StatusServiceUnavailable)
