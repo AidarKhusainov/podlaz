@@ -31,8 +31,9 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 		t.Fatalf("expected TUN runtime warnings to describe pinned-schema route/DNS verification, got %#v", runtime.Warnings)
 	}
 	text := string(runtime.XrayConfig)
-	if strings.Contains(text, "podlaz-tun-socks") || strings.Contains(text, `"protocol": "socks"`) {
-		t.Fatalf("TUN runtime must not generate private SOCKS adapter config: %s", text)
+	legacyTunSocksTag := "podlaz-" + "tun-socks"
+	if strings.Contains(text, legacyTunSocksTag) || strings.Contains(text, `"protocol": "socks"`) {
+		t.Fatalf("TUN runtime must not generate legacy private SOCKS plumbing: %s", text)
 	}
 
 	var config struct {

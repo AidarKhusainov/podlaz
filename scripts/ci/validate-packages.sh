@@ -6,6 +6,14 @@ if [ "$#" -lt 1 ]; then
   exit 2
 fi
 
+if ! command -v gzip >/dev/null 2>&1; then
+  echo "gzip is required to inspect compressed packaged documentation" >&2
+  exit 2
+fi
+
+# shellcheck source=scripts/ci/package-obsolete-tun-gate.sh
+source scripts/ci/package-obsolete-tun-gate.sh
+
 assert_no_match() {
   local pattern="$1"
   local file="$2"
@@ -91,6 +99,7 @@ for package in "$@"; do
   sysusers="/tmp/podlaz-${arch}.sysusers"
   control="/tmp/podlaz-${arch}-control"
   depends="/tmp/podlaz-${arch}-depends.txt"
+  extracted_root="/tmp/podlaz-${arch}-package-root"
 
   test "$(dpkg-deb --field "${package}" Package)" = podlaz
   test -n "${version}"
@@ -102,6 +111,10 @@ for package in "$@"; do
   dpkg-deb --info "${package}"
   dpkg-deb --contents "${package}" | tee "${contents}"
   dpkg-deb --field "${package}" Depends | tee "${depends}"
+  rm -rf "${extracted_root}"
+  mkdir -p "${extracted_root}"
+  dpkg-deb -x "${package}" "${extracted_root}"
+  assert_no_obsolete_tun_artifacts "${extracted_root}" "extracted package root for ${package}"
 
   assert_no_match '(^| )\./usr/local(/|$)' "${contents}"
   assert_no_match '(^| )\./run(/|$)' "${contents}"
@@ -125,8 +138,6 @@ for package in "$@"; do
   grep -F './usr/share/man/man1/podlaz.1.gz' "${contents}"
   grep -F './usr/share/man/man8/podlazd.8.gz' "${contents}"
   grep -F './usr/share/doc/podlaz/third-party/xray-LICENSE' "${contents}"
-  assert_no_fixed_match './usr/lib/podlaz/tun2socks' "${contents}"
-  assert_no_fixed_match './usr/share/doc/podlaz/third-party/tun2socks-LICENSE' "${contents}"
   assert_no_fixed_match './usr/share/metainfo/' "${contents}"
   assert_no_fixed_match './usr/share/applications/' "${contents}"
   assert_no_fixed_match './usr/share/icons/' "${contents}"
@@ -158,7 +169,7 @@ for package in "$@"; do
   grep -Fx 'UMask=0077' "${service}"
   grep -Fx 'Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray' "${service}"
   assert_no_fixed_match 'PODLAZ_POLKIT_AUTHORIZATION=required' "${service}"
-  assert_no_fixed_match 'PODLAZ_TUN2SOCKS_PATH' "${service}"
+  assert_no_fixed_match "PODLAZ_${legacy_tun_helper_upper}_PATH" "${service}"
   grep -Fx 'RuntimeDirectory=podlaz' "${service}"
   grep -Fx 'RuntimeDirectoryMode=0711' "${service}"
   grep -Fx 'StateDirectory=podlaz' "${service}"

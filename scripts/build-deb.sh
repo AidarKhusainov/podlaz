@@ -24,6 +24,9 @@ function generate_completion() {
   env -u GOOS -u GOARCH -u CC -u CXX CGO_ENABLED=1 go run ./cmd/podlaz completion "${shell}" > "${target}"
 }
 
+# shellcheck source=scripts/ci/package-obsolete-tun-gate.sh
+source scripts/ci/package-obsolete-tun-gate.sh
+
 binary_version="${PODLAZ_VERSION:-0.0.0~dev}"
 package_version="${PODLAZ_DEB_VERSION:-${binary_version}-1}"
 arch="${PODLAZ_DEB_ARCH:-amd64}"
@@ -129,6 +132,7 @@ find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
   mkdir -p "$(dirname "${target}")"
   install -m 0644 "${file}" "${target}"
 done
+assert_no_obsolete_tun_artifacts "${root_dir}" "package root"
 
 sed \
   -e "s#__PACKAGE_ROOT__#${root_dir}#g" \

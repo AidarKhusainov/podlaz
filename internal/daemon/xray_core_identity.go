@@ -117,10 +117,6 @@ func configureCoreCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentit
 	configureChildCommandCredential(cmd, identity)
 }
 
-func configureTunAdapterCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentity) {
-	configureChildCommandCredential(cmd, identity)
-}
-
 func configureChildCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentity) {
 	if !identity.DropCredentials && len(identity.AmbientCaps) == 0 {
 		return

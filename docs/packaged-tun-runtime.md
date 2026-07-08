@@ -21,7 +21,7 @@ The packaged systemd unit points the daemon at the bundled helper with an absolu
 Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
 ```
 
-TUN mode no longer ships or starts a separate `tun2socks` helper. Xray owns packet ingestion through its native `tun` inbound. `podlazd` still owns the host networking state around that link: route bypass, policy rules, DNS, nftables, transaction files, rollback, and recovery.
+TUN mode uses Xray packet ingestion through its native `tun` inbound. `podlazd` owns the host networking state around that link: route bypass, policy rules, DNS, nftables, transaction files, rollback, and recovery.
 
 ## Native TUN privilege contract
 
@@ -81,6 +81,6 @@ User-facing CLI output must not present these failures as a daemon crash or raw 
 
 ## CI gates
 
-Package validation checks the Xray helper file, executable bit, architecture, service environment, declared dependencies, and third-party notice file for both `amd64` and `arm64` packages.
+Package validation checks the Xray helper file, executable bit, architecture, service environment, declared dependencies, third-party notice file, and absence of obsolete TUN helper artifacts for both `amd64` and `arm64` packages.
 
 Installed package smoke checks verify that the helper file and notice are present after install and reinstall, and that they are removed on purge together with other packaged files.
