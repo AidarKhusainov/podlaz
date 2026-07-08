@@ -74,6 +74,19 @@ validate_executable_mode() {
   grep -E '^-rwxr-xr-x' <<<"${listing}"
 }
 
+validate_bash_completion_protocol_boundary() {
+  local extracted_root="$1"
+  local bash_completion="${extracted_root}/usr/share/bash-completion/completions/podlaz"
+
+  test -f "${bash_completion}"
+  grep -F 'value-only display fallback' "${bash_completion}"
+  grep -F 'COMPREPLY=("${values[@]}")' "${bash_completion}"
+  assert_no_fixed_match 'matches+=("$line")' "${bash_completion}"
+  assert_no_fixed_match 'COMPREPLY+=("$line")' "${bash_completion}"
+  assert_no_fixed_match 'COMPREPLY+=("${line}")' "${bash_completion}"
+  assert_no_fixed_match 'COMPREPLY=("${matches[@]}")' "${bash_completion}"
+}
+
 run_native_packaged_xray_schema_test() {
   local package="$1"
   local arch="$2"
@@ -115,6 +128,7 @@ for package in "$@"; do
   mkdir -p "${extracted_root}"
   dpkg-deb -x "${package}" "${extracted_root}"
   assert_no_obsolete_tun_artifacts "${extracted_root}" "extracted package root for ${package}"
+  validate_bash_completion_protocol_boundary "${extracted_root}"
 
   assert_no_match '(^| )\./usr/local(/|$)' "${contents}"
   assert_no_match '(^| )\./run(/|$)' "${contents}"
