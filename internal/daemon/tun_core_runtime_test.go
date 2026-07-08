@@ -93,7 +93,7 @@ func TestPlanTunCoreRuntimeFailsClosedWithoutConcreteServerBypass(t *testing.T) 
 		t.Fatalf("expected no Xray config without concrete server bypass, got %s", runtime.XrayConfig)
 	}
 	if !isRuntimeUnavailableError(err) {
-		t.Fatalf("expected runtime unavailable classification, got %T: %v", err)
+		t.Fatalf("expected runtime unavailable classification, got %T: %v", err, err)
 	}
 	if got := daemonAPIHTTPStatusCode(err); got != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected HTTP status: got %d want %d", got, http.StatusServiceUnavailable)
