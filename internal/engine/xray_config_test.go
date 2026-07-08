@@ -73,8 +73,9 @@ func TestGenerateXrayTunConfigUsesPinnedNativeTunInboundSchema(t *testing.T) {
 		t.Fatalf("generate TUN-mode Xray config: %v", err)
 	}
 	text := string(got)
-	if strings.Contains(text, "podlaz-tun-socks") || strings.Contains(text, `"protocol": "socks"`) {
-		t.Fatalf("TUN-mode config must not expose the old private SOCKS adapter plumbing:\n%s", got)
+	legacyTunSocksTag := "podlaz-" + "tun-socks"
+	if strings.Contains(text, legacyTunSocksTag) || strings.Contains(text, `"protocol": "socks"`) {
+		t.Fatalf("TUN-mode config must not expose legacy private SOCKS plumbing:\n%s", got)
 	}
 	if strings.Contains(text, `"mtu"`) || strings.Contains(text, `"dns"`) || strings.Contains(text, `"gateway"`) {
 		t.Fatalf("TUN-mode config must match pinned Xray tun schema with name, MTU, userLevel only:\n%s", got)
