@@ -54,6 +54,59 @@ func TestTunTransactionDoesNotPersistPreApplyRollbackOwnership(t *testing.T) {
 	}
 }
 
+func TestTunTransactionRecordsGeneratedConfigRollbackBeforePreflight(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	result, err := beginTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "test-profile"}, transactionPlanForTest(), clock)
+	if err != nil {
+		t.Fatalf("begin TUN transaction: %v", err)
+	}
+	runtimeConfigPath := "/run/podlaz/generated/xray.json"
+	if err := saveGeneratedConfigRollbackMetadata(result.Store, result.TransactionID, runtimeConfigPath, clock()); err != nil {
+		t.Fatalf("save generated config rollback metadata: %v", err)
+	}
+	tx, _, err := result.Store.Load(result.TransactionID)
+	if err != nil {
+		t.Fatalf("load transaction: %v", err)
+	}
+	if tx.DesiredPlan.Core.RuntimeConfigPath != runtimeConfigPath || tx.DesiredPlan.Core.ProcessLabel != "xray" {
+		t.Fatalf("expected core desired plan before preflight, got %#v", tx.DesiredPlan.Core)
+	}
+	if len(tx.Rollback.GeneratedConfigs) != 1 || tx.Rollback.GeneratedConfigs[0].Path != runtimeConfigPath {
+		t.Fatalf("expected generated config rollback metadata before preflight, got %#v", tx.Rollback.GeneratedConfigs)
+	}
+	if tx.Health.Status != "core-preflight-planned" {
+		t.Fatalf("expected preflight health marker, got %#v", tx.Health)
+	}
+}
+
+func TestRollbackTunTransactionStopsChildProcessesAfterExecutorRollback(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: clock}
+	tx := txstate.NewTransaction("tun-order-test", "test-profile", planner.ModeTun, clock())
+	tx.Rollback.ChildProcesses = []txstate.ChildProcessRollback{{PID: 12345, Label: "xray", Owner: txstate.TransactionOwner}}
+	if _, err := store.Save(tx); err != nil {
+		t.Fatalf("save transaction: %v", err)
+	}
+
+	var order []string
+	oldStop := stopRollbackChildProcesses
+	stopRollbackChildProcesses = func(txstate.Transaction) error {
+		order = append(order, "stop-child")
+		return nil
+	}
+	defer func() { stopRollbackChildProcesses = oldStop }()
+
+	executor := &rollbackOrderExecutor{order: &order}
+	if err := rollbackTunTransaction(context.Background(), store, &tx, transactionPlanForTest(), executor); err != nil {
+		t.Fatalf("rollback TUN transaction: %v", err)
+	}
+	if strings.Join(order, ",") != "executor-rollback,stop-child" {
+		t.Fatalf("expected host rollback before child stop, got %#v", order)
+	}
+}
+
 func TestTunTransactionRollsBackOnlyAppliedStepsAfterPartialApplyFailure(t *testing.T) {
 	runtimeDir := t.TempDir()
 	executor := &recordingTunExecutor{applyErr: errors.New("route apply failed")}
@@ -154,6 +207,21 @@ func (e *recordingTunExecutor) Verify(context.Context, planner.TunPlan) error {
 
 func (e *recordingTunExecutor) Rollback(context.Context, planner.TunPlan) error {
 	e.calls = append(e.calls, "rollback")
+	return nil
+}
+
+type rollbackOrderExecutor struct {
+	order *[]string
+}
+
+func (e *rollbackOrderExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, nil
+}
+
+func (e *rollbackOrderExecutor) Verify(context.Context, planner.TunPlan) error { return nil }
+
+func (e *rollbackOrderExecutor) Rollback(context.Context, planner.TunPlan) error {
+	*e.order = append(*e.order, "executor-rollback")
 	return nil
 }
 

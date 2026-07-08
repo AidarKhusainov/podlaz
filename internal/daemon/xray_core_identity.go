@@ -13,6 +13,10 @@ const (
 	proxyCoreExecutionUser  = "podlaz-xray"
 	proxyCoreExecutionGroup = "podlaz-xray"
 
+	// CAP_NET_ADMIN is Linux capability number 12. Keep the numeric value local
+	// because syscall does not expose named capability constants on every Go target.
+	linuxCapNetAdmin uintptr = 12
+
 	coreExecutionIdentitySetupHint = "install the packaged service or create the documented system user from packaging/sysusers.d/podlaz.conf"
 )
 
@@ -27,6 +31,7 @@ type coreExecutionIdentity struct {
 	UID             int
 	GID             int
 	DropCredentials bool
+	AmbientCaps     []uintptr
 }
 
 type runtimeConfigPermissions struct {
@@ -46,7 +51,14 @@ func proxyOnlyCoreExecutionIdentity() (coreExecutionIdentity, error) {
 }
 
 func tunCoreExecutionIdentity() (coreExecutionIdentity, error) {
-	return coreChildExecutionIdentity()
+	identity, err := coreChildExecutionIdentity()
+	if err != nil {
+		return coreExecutionIdentity{}, err
+	}
+	if identity.DropCredentials {
+		identity.AmbientCaps = append(identity.AmbientCaps, linuxCapNetAdmin)
+	}
+	return identity, nil
 }
 
 func coreChildExecutionIdentity() (coreExecutionIdentity, error) {
@@ -110,17 +122,22 @@ func configureTunAdapterCommandCredential(cmd *exec.Cmd, identity coreExecutionI
 }
 
 func configureChildCommandCredential(cmd *exec.Cmd, identity coreExecutionIdentity) {
-	if !identity.DropCredentials {
+	if !identity.DropCredentials && len(identity.AmbientCaps) == 0 {
 		return
 	}
 	attr := cmd.SysProcAttr
 	if attr == nil {
 		attr = &syscall.SysProcAttr{}
 	}
-	attr.Credential = &syscall.Credential{
-		Uid:    uint32(identity.UID),
-		Gid:    uint32(identity.GID),
-		Groups: []uint32{},
+	if identity.DropCredentials {
+		attr.Credential = &syscall.Credential{
+			Uid:    uint32(identity.UID),
+			Gid:    uint32(identity.GID),
+			Groups: []uint32{},
+		}
+	}
+	if len(identity.AmbientCaps) > 0 {
+		attr.AmbientCaps = append(append([]uintptr(nil), attr.AmbientCaps...), identity.AmbientCaps...)
 	}
 	cmd.SysProcAttr = attr
 }

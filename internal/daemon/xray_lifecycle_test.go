@@ -3,12 +3,16 @@ package daemon
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestXrayManagerConnectStatusAndDisconnect(t *testing.T) {
@@ -69,6 +73,93 @@ while true; do sleep 1; done
 	}
 	if disconnectedAgain.Connection != "inactive" {
 		t.Fatalf("expected idempotent inactive disconnect, got %#v", disconnectedAgain)
+	}
+}
+
+func TestXrayManagerDisconnectActiveTunRollsBackHostBeforeStoppingXray(t *testing.T) {
+	runtimeDir := t.TempDir()
+	orderPath := filepath.Join(runtimeDir, "disconnect-order.log")
+	configPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatalf("create generated dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"inbounds":[]}`), 0o600); err != nil {
+		t.Fatalf("write generated config: %v", err)
+	}
+
+	plan := transactionPlanForTest()
+	plan.TunDevice.Action = "verify"
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: fixedClock()}
+	tx := txstate.NewTransaction("tun-active-disconnect", "test-profile", planner.ModeTun, store.Now())
+	tx.State = txstate.TransactionCommitted
+	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
+	tx.Rollback = rollbackMetadataFromTunPlan(plan)
+	tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{Path: configPath, Owner: txstate.TransactionOwner})
+	if _, err := store.Save(tx); err != nil {
+		t.Fatalf("save active TUN transaction: %v", err)
+	}
+
+	fakeXray := writeFakeXray(t, `#!/bin/sh
+trap 'printf "%s\n" stop-xray >> "$ORDER_FILE"; exit 0' TERM
+while true; do
+  sleep 3600 &
+  wait $!
+done
+`)
+	cmd := exec.Command(fakeXray)
+	cmd.Env = append(os.Environ(), "ORDER_FILE="+orderPath)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start fake Xray: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-done
+	})
+
+	manager := &XrayManager{
+		RuntimeDir:  runtimeDir,
+		StopTimeout: 3 * time.Second,
+		tunExecutor: &activeTunDisconnectOrderExecutor{orderPath: orderPath},
+	}
+	manager.mu.Lock()
+	manager.cmd = cmd
+	manager.done = done
+	manager.state = xrayState{
+		Connection:        "active",
+		Mode:              planner.ModeTun,
+		ProfileID:         "test-profile",
+		ProfileName:       "test profile",
+		RuntimeConfigPath: configPath,
+		TransactionID:     tx.ID,
+	}
+	manager.mu.Unlock()
+
+	disconnected, err := manager.Disconnect(context.Background())
+	if err != nil {
+		t.Fatalf("disconnect active TUN: %v", err)
+	}
+	if disconnected.Connection != "inactive" {
+		t.Fatalf("expected inactive disconnect response, got %#v", disconnected)
+	}
+	orderData, err := os.ReadFile(orderPath)
+	if err != nil {
+		t.Fatalf("read disconnect order: %v", err)
+	}
+	if got, want := strings.Fields(string(orderData)), []string{"rollback-host", "stop-xray"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("wrong active TUN disconnect order: got %v want %v", got, want)
+	}
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("expected generated config cleanup, got stat err %v", err)
+	}
+	if _, _, err := store.Load(tx.ID); err == nil {
+		t.Fatal("expected rolled-back transaction file to be removed after active TUN disconnect")
 	}
 }
 
@@ -152,6 +243,30 @@ func TestXrayManagerReportsCoreCrashInStatus(t *testing.T) {
 	if len(status.Warnings) == 0 || !strings.Contains(status.Warnings[0], "Xray process exited unexpectedly") {
 		t.Fatalf("expected crash warning, got %#v", status.Warnings)
 	}
+}
+
+type activeTunDisconnectOrderExecutor struct {
+	orderPath string
+}
+
+func (e *activeTunDisconnectOrderExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, nil
+}
+
+func (e *activeTunDisconnectOrderExecutor) Verify(context.Context, planner.TunPlan) error { return nil }
+
+func (e *activeTunDisconnectOrderExecutor) Rollback(context.Context, planner.TunPlan) error {
+	return appendTestOrder(e.orderPath, "rollback-host")
+}
+
+func appendTestOrder(path, value string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.WriteString(value + "\n")
+	return err
 }
 
 func writeFakeXray(t *testing.T, script string) string {

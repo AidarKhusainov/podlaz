@@ -16,13 +16,13 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 		"Group=podlaz",
 		"UMask=0077",
 		"Environment=PODLAZ_SERVICE=systemd",
-		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
+		"Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray",
 		"RuntimeDirectory=podlaz",
 		"RuntimeDirectoryMode=0711",
 		"StateDirectory=podlaz",
 		"StateDirectoryMode=0700",
 		"CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN",
-		"AmbientCapabilities=CAP_SETUID CAP_KILL",
+		"AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN",
 		"StandardOutput=journal",
 		"StandardError=journal",
 	} {
@@ -32,16 +32,28 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitOnlyKeepsChildLifecycleAmbientCapabilities(t *testing.T) {
+func TestSystemdUnitDoesNotForcePolkitAuthorization(t *testing.T) {
 	content := readSystemdUnit(t)
 
-	if !strings.Contains(content, "AmbientCapabilities=CAP_SETUID CAP_KILL") {
-		t.Fatalf("systemd unit must keep only CAP_SETUID and CAP_KILL ambient for daemon-owned Xray child lifecycle:\n%s", content)
+	for _, forbidden := range []string{
+		"PODLAZ_POLKIT_AUTHORIZATION=required",
+		"Environment=PODLAZ_POLKIT_AUTHORIZATION=required",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("packaged systemd unit must not force polkit authorization with %q:\n%s", forbidden, content)
+		}
+	}
+}
+
+func TestSystemdUnitOnlyKeepsRequiredAmbientCapabilities(t *testing.T) {
+	content := readSystemdUnit(t)
+
+	if !strings.Contains(content, "AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN") {
+		t.Fatalf("systemd unit must keep CAP_SETUID/CAP_KILL for child lifecycle and CAP_NET_ADMIN for native Xray TUN:\n%s", content)
 	}
 	for _, forbidden := range []string{
 		"AmbientCapabilities=CAP_CHOWN",
 		"AmbientCapabilities=CAP_SETGID",
-		"AmbientCapabilities=CAP_NET_ADMIN",
 		"AmbientCapabilities=CAP_SYS_ADMIN",
 	} {
 		if strings.Contains(content, forbidden) {
@@ -57,6 +69,8 @@ func TestSystemdUnitDoesNotBlockTunDeviceWork(t *testing.T) {
 		"Private" + "Devices=yes",
 		"Protect" + "KernelTunables=yes",
 		"Restrict" + "AddressFamilies=",
+		"PODLAZ_TUN2SOCKS_PATH",
+		"/usr/lib/podlaz/tun2socks",
 	} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("systemd unit contains %q, which would need explicit validation before TUN/nftables work:\n%s", forbidden, content)

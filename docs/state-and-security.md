@@ -12,6 +12,7 @@ daemon privilege boundaries, and privileged networking safety.
 | Daemon persistent state | `/var/lib/podlaz` | `podlazd` via systemd `StateDirectory=` |
 | Transaction files | `/run/podlaz/transactions/*.json` | `podlazd` |
 | Generated runtime config | `/run/podlaz/generated/` | `podlazd` and the dedicated core child identity |
+| TUN packet ingestion | `podlaz0` native Xray `tun` inbound | Xray child process, orchestrated by `podlazd` |
 
 Rules:
 
@@ -34,15 +35,22 @@ Packaged daemon access has two local socket boundaries. The filesystem socket is
 
 ## Networking safety
 
-TUN mode may touch only podlaz-owned networking state:
+TUN mode may touch only podlaz-owned networking state around the Xray-owned TUN link:
 
-- managed TUN interface;
 - podlaz-owned routes and policy rules;
 - podlaz-owned DNS link state;
 - podlaz-owned nftables/firewall table, chains, and rules.
 
+Xray owns `podlaz0` packet ingestion through the native `tun` inbound. `podlazd` may verify that `podlaz0` exists before applying host networking, but it must not record Xray-created `podlaz0` as a podlaz-owned TUN device rollback target. Stopping Xray is the release mechanism for the Xray-owned TUN link.
+
 Apply/verify/rollback must be explicit. Rollback must remove only what the active
 transaction actually applied. Ambiguous host state must be skipped, not guessed.
+
+For native Xray TUN startup, durable rollback order is:
+
+1. roll back podlaz-owned nftables, DNS, routes, and policy rules;
+2. stop the Xray child process;
+3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
 ## Recovery
 
@@ -52,6 +60,7 @@ transaction actually applied. Ambiguous host state must be skipped, not guessed.
 - Recovery may clean only clearly podlaz-owned volatile state.
 - `/run/podlaz` must not be deleted wholesale.
 - Stale PID metadata alone is not enough to signal a process.
+- Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
 
 ## Redaction
 

@@ -67,26 +67,43 @@ func TestGenerateXrayProxyOnlyConfigSupportsVLESSRealityXHTTP(t *testing.T) {
 	}
 }
 
-func TestGenerateXrayTunConfigUsesPrivateSocksInbound(t *testing.T) {
+func TestGenerateXrayTunConfigUsesPinnedNativeTunInboundSchema(t *testing.T) {
 	got, err := GenerateXrayTunConfig(proxyOnlyRealityProfile(), DefaultXrayTunConfigOptions())
 	if err != nil {
 		t.Fatalf("generate TUN-mode Xray config: %v", err)
 	}
+	text := string(got)
+	if strings.Contains(text, "podlaz-tun-socks") || strings.Contains(text, `"protocol": "socks"`) {
+		t.Fatalf("TUN-mode config must not expose the old private SOCKS adapter plumbing:\n%s", got)
+	}
+	if strings.Contains(text, `"mtu"`) || strings.Contains(text, `"dns"`) || strings.Contains(text, `"gateway"`) {
+		t.Fatalf("TUN-mode config must match pinned Xray tun schema with name, MTU, userLevel only:\n%s", got)
+	}
+
 	var cfg struct {
 		Inbounds []struct {
 			Tag      string `json:"tag"`
-			Listen   string `json:"listen"`
-			Port     uint16 `json:"port"`
 			Protocol string `json:"protocol"`
 			Settings struct {
-				UDP bool `json:"udp"`
+				Name      string `json:"name"`
+				MTU       int    `json:"MTU"`
+				UserLevel int    `json:"userLevel"`
 			} `json:"settings"`
 		} `json:"inbounds"`
 		Outbounds []struct {
 			Tag      string `json:"tag"`
 			Protocol string `json:"protocol"`
 			Settings struct {
-				Address string `json:"address"`
+				VNext []struct {
+					Address string `json:"address"`
+					Port    uint16 `json:"port"`
+					Users   []struct {
+						ID         string `json:"id"`
+						Encryption string `json:"encryption"`
+						Flow       string `json:"flow"`
+						Level      int    `json:"level"`
+					} `json:"users"`
+				} `json:"vnext"`
 			} `json:"settings"`
 		} `json:"outbounds"`
 	}
@@ -94,17 +111,23 @@ func TestGenerateXrayTunConfigUsesPrivateSocksInbound(t *testing.T) {
 		t.Fatalf("decode TUN-mode Xray config: %v", err)
 	}
 	if len(cfg.Inbounds) != 1 {
-		t.Fatalf("expected one private TUN adapter inbound, got %#v", cfg.Inbounds)
+		t.Fatalf("expected one native TUN inbound, got %#v", cfg.Inbounds)
 	}
 	inbound := cfg.Inbounds[0]
-	if inbound.Tag != "podlaz-tun-socks" || inbound.Listen != DefaultTunSOCKSListen || inbound.Port != DefaultTunSOCKSPort || inbound.Protocol != "socks" || !inbound.Settings.UDP {
-		t.Fatalf("unexpected TUN inbound: %#v", inbound)
+	if inbound.Tag != "podlaz-tun" || inbound.Protocol != "tun" {
+		t.Fatalf("unexpected TUN inbound identity: %#v", inbound)
+	}
+	if inbound.Settings.Name != DefaultXrayTunName || inbound.Settings.MTU != DefaultXrayTunMTU || inbound.Settings.UserLevel != 0 {
+		t.Fatalf("unexpected TUN inbound settings: %#v", inbound.Settings)
 	}
 	if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Tag != "podlaz-tun-proxy" || cfg.Outbounds[0].Protocol != "vless" {
 		t.Fatalf("unexpected TUN outbound: %#v", cfg.Outbounds)
 	}
-	if cfg.Outbounds[0].Settings.Address != "example.com" {
-		t.Fatalf("expected default TUN outbound address to use profile server, got %q", cfg.Outbounds[0].Settings.Address)
+	if len(cfg.Outbounds[0].Settings.VNext) != 1 || cfg.Outbounds[0].Settings.VNext[0].Address != "example.com" {
+		t.Fatalf("expected default TUN outbound address to use profile server, got %#v", cfg.Outbounds[0].Settings.VNext)
+	}
+	if users := cfg.Outbounds[0].Settings.VNext[0].Users; len(users) != 1 || users[0].ID != proxyOnlyRealityProfile().UserIdentity || users[0].Encryption != "none" {
+		t.Fatalf("unexpected TUN VLESS users: %#v", users)
 	}
 }
 
@@ -118,7 +141,9 @@ func TestGenerateXrayTunConfigCanUsePreResolvedOutboundAddress(t *testing.T) {
 	var cfg struct {
 		Outbounds []struct {
 			Settings struct {
-				Address string `json:"address"`
+				VNext []struct {
+					Address string `json:"address"`
+				} `json:"vnext"`
 			} `json:"settings"`
 			StreamSettings map[string]any `json:"streamSettings"`
 		} `json:"outbounds"`
@@ -126,11 +151,11 @@ func TestGenerateXrayTunConfigCanUsePreResolvedOutboundAddress(t *testing.T) {
 	if err := json.Unmarshal(got, &cfg); err != nil {
 		t.Fatalf("decode TUN-mode Xray config: %v", err)
 	}
-	if len(cfg.Outbounds) != 1 {
-		t.Fatalf("expected one TUN outbound, got %#v", cfg.Outbounds)
+	if len(cfg.Outbounds) != 1 || len(cfg.Outbounds[0].Settings.VNext) != 1 {
+		t.Fatalf("expected one TUN outbound vnext, got %#v", cfg.Outbounds)
 	}
-	if cfg.Outbounds[0].Settings.Address != "203.0.113.10" {
-		t.Fatalf("expected pre-resolved outbound address, got %q", cfg.Outbounds[0].Settings.Address)
+	if cfg.Outbounds[0].Settings.VNext[0].Address != "203.0.113.10" {
+		t.Fatalf("expected pre-resolved outbound address, got %q", cfg.Outbounds[0].Settings.VNext[0].Address)
 	}
 	realitySettings, _ := cfg.Outbounds[0].StreamSettings["realitySettings"].(map[string]any)
 	if realitySettings["serverName"] != "www.example.com" {

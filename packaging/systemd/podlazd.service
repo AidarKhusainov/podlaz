@@ -12,16 +12,14 @@ User=root
 Group=podlaz
 UMask=0077
 Environment=PODLAZ_SERVICE=systemd
-Environment=PODLAZ_POLKIT_AUTHORIZATION=required
 Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
-Environment=PODLAZ_TUN2SOCKS_PATH=/usr/lib/podlaz/tun2socks
 RuntimeDirectory=podlaz
 RuntimeDirectoryMode=0711
 StateDirectory=podlaz
 StateDirectoryMode=0700
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN
-AmbientCapabilities=CAP_SETUID CAP_KILL
+AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes

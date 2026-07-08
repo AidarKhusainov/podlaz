@@ -1,11 +1,9 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +16,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
-	"github.com/AidarKhusainov/podlaz/internal/render"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -148,6 +145,13 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 		removeGeneratedConfig(configPath)
 		return lifecycleResponse(inactiveXrayState()), nil
 	}
+	if mode == planner.ModeTun {
+		m.mu.Unlock()
+		if transactionID == "" {
+			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz recover")
+		}
+		return m.disconnectActiveTun(ctx, transactionID, cmd, done, configPath)
+	}
 	m.stopping = true
 	m.mu.Unlock()
 
@@ -155,13 +159,54 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 		return api.LifecycleResponse{}, err
 	}
 	removeGeneratedConfig(configPath)
-	if mode == planner.ModeTun {
-		if transactionID == "" {
-			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz recover")
-		}
-		return m.disconnectTun(ctx, transactionID)
+
+	return lifecycleResponse(inactiveXrayState()), nil
+}
+
+func (m *XrayManager) disconnectActiveTun(ctx context.Context, transactionID string, cmd *exec.Cmd, done <-chan struct{}, configPath string) (api.LifecycleResponse, error) {
+	store := txstate.TransactionStore{RuntimeDir: m.runtimeDir()}
+	tx, _, err := store.Load(transactionID)
+	if err != nil {
+		return api.LifecycleResponse{}, fmt.Errorf("load active TUN transaction %s: %w", transactionID, err)
+	}
+	plan := tunPlanFromTransaction(tx)
+	if err := beginTunRollback(store, &tx); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	if err := rollbackTunHostState(ctx, plan, m.tunPlanExecutor()); err != nil {
+		_, _ = txstate.MarkFailure(&tx, err.Error(), transactionNow(store))
+		_, _ = store.Save(tx)
+		return api.LifecycleResponse{}, fmt.Errorf("rollback active TUN host networking before stopping Xray: %w", err)
 	}
 
+	m.mu.Lock()
+	if m.cmd == cmd {
+		m.stopping = true
+	}
+	m.mu.Unlock()
+	if err := m.stopCoreProcess(cmd, done); err != nil {
+		_, _ = txstate.MarkFailure(&tx, err.Error(), transactionNow(store))
+		_, _ = store.Save(tx)
+		return api.LifecycleResponse{}, fmt.Errorf("stop Xray after active TUN host rollback: %w", err)
+	}
+
+	removeRollbackGeneratedConfigs(tx)
+	removeGeneratedConfig(configPath)
+	if err := finishTunRollback(store, &tx); err != nil {
+		return api.LifecycleResponse{}, err
+	}
+	if err := removeTransactionFile(store, transactionID); err != nil {
+		return api.LifecycleResponse{}, fmt.Errorf("remove rolled-back TUN transaction %s: %w", transactionID, err)
+	}
+
+	m.mu.Lock()
+	if m.cmd == cmd {
+		m.cmd = nil
+		m.done = nil
+	}
+	m.stopping = false
+	m.state = inactiveXrayState()
+	m.mu.Unlock()
 	return lifecycleResponse(inactiveXrayState()), nil
 }
 
@@ -424,117 +469,6 @@ func lifecycleResponse(state xrayState) api.LifecycleResponse {
 		DNS:               state.DNS,
 		Firewall:          state.Firewall,
 		RuntimeConfigPath: state.RuntimeConfigPath,
-		Warnings:          append([]string(nil), state.Warnings...),
+		Warnings:          append([]string{}, state.Warnings...),
 	}
-}
-
-func profileFromSnapshot(p api.ProfileSnapshot) profile.Profile {
-	return profile.Profile{
-		ID:               p.ID,
-		Name:             p.Name,
-		Source:           profile.SourceType(p.Source),
-		Engine:           profile.Engine(p.Engine),
-		Server:           p.Server,
-		Port:             p.Port,
-		Protocol:         p.Protocol,
-		UserIdentity:     p.UserIdentity,
-		Transport:        p.Transport,
-		Security:         p.Security,
-		Encryption:       p.Encryption,
-		Flow:             p.Flow,
-		ServerName:       p.ServerName,
-		ALPN:             p.ALPN,
-		Fingerprint:      p.Fingerprint,
-		Path:             p.Path,
-		HostHeader:       p.HostHeader,
-		ServiceName:      p.ServiceName,
-		RealityPublicKey: p.RealityPublicKey,
-		RealityShortID:   p.RealityShortID,
-		RealitySpiderX:   p.RealitySpiderX,
-	}
-}
-
-func proxyListenersLine(listeners []planner.Listener) string {
-	parts := make([]string, 0, len(listeners))
-	for _, listener := range listeners {
-		parts = append(parts, fmt.Sprintf("%s (%s)", listener.Endpoint(), strings.ToUpper(listener.Protocol)))
-	}
-	if len(parts) == 0 {
-		return "inactive"
-	}
-	return "listening on " + strings.Join(parts, ", ")
-}
-
-func processExitMessage(err error) string {
-	if err == nil {
-		return "Xray process exited unexpectedly"
-	}
-	return "Xray process exited unexpectedly: " + err.Error()
-}
-
-func emptyAs(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}
-
-type coreLogWriter struct {
-	mu         sync.Mutex
-	pid        int
-	pidKnown   bool
-	profileID  string
-	streamName string
-	pending    []byte
-}
-
-func newCoreLogWriter(profileID, streamName string) *coreLogWriter {
-	return &coreLogWriter{profileID: profileID, streamName: streamName}
-}
-
-func (w *coreLogWriter) setPID(pid int) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.pid = pid
-	w.pidKnown = true
-	w.flushCompleteLinesLocked()
-}
-
-func (w *coreLogWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	written := len(p)
-	w.pending = append(w.pending, p...)
-	if w.pidKnown {
-		w.flushCompleteLinesLocked()
-	}
-	return written, nil
-}
-
-func (w *coreLogWriter) Flush() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.flushCompleteLinesLocked()
-	if len(w.pending) == 0 {
-		return
-	}
-	w.logLineLocked(w.pending)
-	w.pending = w.pending[:0]
-}
-
-func (w *coreLogWriter) flushCompleteLinesLocked() {
-	for {
-		idx := bytes.IndexByte(w.pending, '\n')
-		if idx < 0 {
-			return
-		}
-		w.logLineLocked(w.pending[:idx])
-		copy(w.pending, w.pending[idx+1:])
-		w.pending = w.pending[:len(w.pending)-idx-1]
-	}
-}
-
-func (w *coreLogWriter) logLineLocked(line []byte) {
-	cleanLine := strings.TrimRight(string(line), "\r")
-	log.Printf("podlazd: core xray %s pid=%d profile=%s: %s", w.streamName, w.pid, render.Redact(w.profileID), render.Redact(cleanLine))
 }

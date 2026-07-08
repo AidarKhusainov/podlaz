@@ -10,7 +10,9 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func stopRollbackChildProcesses(tx txstate.Transaction) error {
+var stopRollbackChildProcesses = defaultStopRollbackChildProcesses
+
+func defaultStopRollbackChildProcesses(tx txstate.Transaction) error {
 	var errs []error
 	for _, child := range tx.Rollback.ChildProcesses {
 		if child.PID <= 0 {

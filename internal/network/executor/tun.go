@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -60,11 +61,20 @@ func (e TunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, e
 	}
 	steps := make([]Step, 0, 1+len(plan.Routes)+len(plan.PolicyRules))
 
-	step, err := e.TunDevice.Create(ctx, plan.TunDevice)
-	if err != nil {
-		return steps, err
+	switch tunDeviceAction(plan.TunDevice.Action) {
+	case "", "create":
+		step, err := e.TunDevice.Create(ctx, plan.TunDevice)
+		if err != nil {
+			return steps, err
+		}
+		steps = appendAppliedStep(steps, step)
+	case "verify", "use-existing":
+		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
+			return steps, err
+		}
+	default:
+		return steps, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action)
 	}
-	steps = appendAppliedStep(steps, step)
 
 	for _, route := range plan.Routes {
 		if route.Action != "add" {
@@ -138,8 +148,16 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 			errs = append(errs, err)
 		}
 	}
-	if err := e.TunDevice.Rollback(ctx, plan.TunDevice); err != nil {
-		errs = append(errs, err)
+	switch tunDeviceAction(plan.TunDevice.Action) {
+	case "", "create":
+		if strings.TrimSpace(plan.TunDevice.Name) != "" {
+			if err := e.TunDevice.Rollback(ctx, plan.TunDevice); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	case "verify", "use-existing":
+	default:
+		errs = append(errs, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action))
 	}
 	return errors.Join(errs...)
 }
@@ -149,6 +167,14 @@ func appendAppliedStep(steps []Step, step Step) []Step {
 		return steps
 	}
 	return append(steps, step)
+}
+
+func tunDeviceAction(action string) string {
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "add" {
+		return "create"
+	}
+	return action
 }
 
 func (e TunExecutor) validate() error {

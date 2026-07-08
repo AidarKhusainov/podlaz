@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,42 +10,57 @@ import (
 )
 
 const (
-	DefaultTunSOCKSListen = "127.0.0.1"
-	DefaultTunSOCKSPort   = uint16(1081)
+	DefaultXrayTunName = "podlaz0"
+	DefaultXrayTunMTU  = 1500
 )
 
-// XrayTunConfigOptions selects the private local SOCKS endpoint used by the
-// TUN adapter. Unlike proxy-only listeners, this endpoint is daemon-internal
-// runtime plumbing and must not be advertised as a user proxy service.
 type XrayTunConfigOptions struct {
-	SOCKSListen             string
-	SOCKSPort               uint16
+	Name                    string
+	MTU                     int
 	OutboundAddressOverride string
 }
 
-// DefaultXrayTunConfigOptions returns the daemon-private local endpoint used by
-// the supported TUN adapter design: podlaz0 -> tun2socks -> Xray SOCKS ->
-// configured Xray outbound.
 func DefaultXrayTunConfigOptions() XrayTunConfigOptions {
-	return XrayTunConfigOptions{SOCKSListen: DefaultTunSOCKSListen, SOCKSPort: DefaultTunSOCKSPort}
+	return XrayTunConfigOptions{
+		Name: DefaultXrayTunName,
+		MTU:  DefaultXrayTunMTU,
+	}
+}
+
+type xrayTunConfig struct {
+	Log       xrayLog          `json:"log"`
+	Inbounds  []xrayTunInbound `json:"inbounds"`
+	Outbounds []map[string]any `json:"outbounds"`
+}
+
+type xrayTunInbound struct {
+	Tag      string                 `json:"tag"`
+	Protocol string                 `json:"protocol"`
+	Settings xrayTunInboundSettings `json:"settings"`
+}
+
+type xrayTunInboundSettings struct {
+	Name      string `json:"name"`
+	MTU       int    `json:"MTU"`
+	UserLevel int    `json:"userLevel"`
 }
 
 // GenerateXrayTunConfig builds deterministic Xray JSON for TUN mode.
 //
-// Xray-core is still the protocol engine. The Linux TUN device itself is owned
-// by podlaz's network transaction, and packet attachment is performed by the
-// daemon-supervised TUN adapter. Therefore this config exposes only a private
-// SOCKS inbound for the adapter and must not be reused as a user-visible
-// proxy-only config.
+// The packaged Xray version owns packet ingestion through its native tun
+// inbound. podlazd remains responsible for transaction-backed Linux host state
+// around that link: route bypass, policy rules, DNS, nftables, rollback, and
+// recovery.
 func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte, error) {
 	if profile.IsProviderXrayConfigProfile(p) {
 		return nil, unsupportedProviderXrayTunModeError()
 	}
-	if opts.SOCKSListen == "" {
-		return nil, fmt.Errorf("TUN-mode Xray config requires a SOCKS listen address")
+	opts = normalizeXrayTunOptions(opts)
+	if opts.Name == "" {
+		return nil, errors.New("TUN-mode Xray config requires a TUN interface name")
 	}
-	if opts.SOCKSPort == 0 {
-		return nil, fmt.Errorf("TUN-mode Xray config requires a SOCKS listen port")
+	if opts.MTU <= 0 {
+		return nil, errors.New("TUN-mode Xray config requires a positive MTU")
 	}
 	if err := ValidateXrayTunProfile(p); err != nil {
 		return nil, err
@@ -59,28 +75,18 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 		outboundAddress = p.Server
 	}
 
-	cfg := xrayConfig{
+	cfg := xrayTunConfig{
 		Log: xrayLog{LogLevel: "warning"},
-		Inbounds: []xrayInbound{{
-			Tag:      "podlaz-tun-socks",
-			Listen:   opts.SOCKSListen,
-			Port:     opts.SOCKSPort,
-			Protocol: "socks",
-			Settings: xraySOCKSInboundSettings{Auth: "noauth", UDP: true, UserLevel: 0},
-		}},
-		Outbounds: []xrayOutbound{{
-			Tag:      "podlaz-tun-proxy",
-			Protocol: "vless",
-			Settings: xrayVLESSSettings{
-				Address:    outboundAddress,
-				Port:       p.Port,
-				ID:         p.UserIdentity,
-				Encryption: vlessEncryption(p),
-				Flow:       strings.TrimSpace(p.Flow),
-				Level:      0,
+		Inbounds: []xrayTunInbound{{
+			Tag:      "podlaz-tun",
+			Protocol: "tun",
+			Settings: xrayTunInboundSettings{
+				Name:      opts.Name,
+				MTU:       opts.MTU,
+				UserLevel: 0,
 			},
-			StreamSettings: streamSettings,
 		}},
+		Outbounds: []map[string]any{xrayTunOutboundConfig(p, outboundAddress, streamSettings)},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -88,4 +94,17 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 		return nil, fmt.Errorf("encode TUN-mode Xray config: %w", err)
 	}
 	return append(out, '\n'), nil
+}
+
+func normalizeXrayTunOptions(opts XrayTunConfigOptions) XrayTunConfigOptions {
+	if strings.TrimSpace(opts.Name) == "" {
+		opts.Name = DefaultXrayTunName
+	} else {
+		opts.Name = strings.TrimSpace(opts.Name)
+	}
+	if opts.MTU == 0 {
+		opts.MTU = DefaultXrayTunMTU
+	}
+	opts.OutboundAddressOverride = strings.TrimSpace(opts.OutboundAddressOverride)
+	return opts
 }

@@ -142,7 +142,9 @@ jobs:
       - name: Validate package metadata and contents
         env:
           PODLAZ_LINKAGE_ROOT: dist/package-root
-        run: bash scripts/ci/validate-packages.sh "${DEV_DEB}" "${ARM64_DEB}"
+        run: |
+          set -o pipefail
+          bash scripts/ci/validate-packages.sh "${DEV_DEB}" "${ARM64_DEB}" 2>&1 | tee /tmp/podlaz-package-validation.txt
 
       - name: Upload package validation diagnostics
         if: always()
@@ -154,6 +156,7 @@ jobs:
             /tmp/podlazd-*.service
             /tmp/podlaz-*.sysusers
             /tmp/podlaz-lintian.txt
+            /tmp/podlaz-package-validation.txt
           if-no-files-found: ignore
           retention-days: 7
 

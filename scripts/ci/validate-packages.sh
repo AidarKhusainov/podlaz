@@ -66,6 +66,21 @@ validate_executable_mode() {
   grep -E '^-rwxr-xr-x' <<<"${listing}"
 }
 
+run_native_packaged_xray_schema_test() {
+  local package="$1"
+  local arch="$2"
+  local host_arch
+  host_arch="$(dpkg --print-architecture)"
+  if [ "${arch}" != "${host_arch}" ]; then
+    echo "Skipping packaged Xray config test for ${arch} on ${host_arch} host"
+    return 0
+  fi
+  local xray="/tmp/podlaz-${arch}-packaged-xray-schema-test"
+  dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/podlaz/xray > "${xray}"
+  chmod 0755 "${xray}"
+  PODLAZ_PACKAGED_XRAY_PATH="${xray}" go test ./internal/daemon -run '^TestPackagedXrayAcceptsPinnedTunConfigs$' -count=1
+}
+
 for package in "$@"; do
   test -f "${package}"
 
@@ -98,7 +113,6 @@ for package in "$@"; do
   grep -F './usr/bin/podlazd' "${contents}"
   grep -F './usr/lib/podlaz/' "${contents}"
   grep -F './usr/lib/podlaz/xray' "${contents}"
-  grep -F './usr/lib/podlaz/tun2socks' "${contents}"
   grep -F './usr/lib/systemd/system/podlazd.service' "${contents}"
   grep -F './usr/lib/sysusers.d/podlaz.conf' "${contents}"
   grep -F './usr/share/bash-completion/completions/podlaz' "${contents}"
@@ -111,7 +125,8 @@ for package in "$@"; do
   grep -F './usr/share/man/man1/podlaz.1.gz' "${contents}"
   grep -F './usr/share/man/man8/podlazd.8.gz' "${contents}"
   grep -F './usr/share/doc/podlaz/third-party/xray-LICENSE' "${contents}"
-  grep -F './usr/share/doc/podlaz/third-party/tun2socks-LICENSE' "${contents}"
+  assert_no_fixed_match './usr/lib/podlaz/tun2socks' "${contents}"
+  assert_no_fixed_match './usr/share/doc/podlaz/third-party/tun2socks-LICENSE' "${contents}"
   assert_no_fixed_match './usr/share/metainfo/' "${contents}"
   assert_no_fixed_match './usr/share/applications/' "${contents}"
   assert_no_fixed_match './usr/share/icons/' "${contents}"
@@ -127,9 +142,8 @@ for package in "$@"; do
   validate_binary_architecture "${package}" "${arch}" podlaz
   validate_binary_architecture "${package}" "${arch}" podlazd
   validate_elf_architecture "${package}" "${arch}" "/usr/lib/podlaz/xray" "xray"
-  validate_elf_architecture "${package}" "${arch}" "/usr/lib/podlaz/tun2socks" "tun2socks"
   validate_executable_mode "${package}" "/usr/lib/podlaz/xray"
-  validate_executable_mode "${package}" "/usr/lib/podlaz/tun2socks"
+  run_native_packaged_xray_schema_test "${package}" "${arch}"
 
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/systemd/system/podlazd.service > "${service}"
   dpkg-deb --fsys-tarfile "${package}" | tar -xOf - ./usr/lib/sysusers.d/podlaz.conf > "${sysusers}"
@@ -143,17 +157,18 @@ for package in "$@"; do
   grep -Fx 'Group=podlaz' "${service}"
   grep -Fx 'UMask=0077' "${service}"
   grep -Fx 'Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray' "${service}"
-  grep -Fx 'Environment=PODLAZ_TUN2SOCKS_PATH=/usr/lib/podlaz/tun2socks' "${service}"
+  assert_no_fixed_match 'PODLAZ_POLKIT_AUTHORIZATION=required' "${service}"
+  assert_no_fixed_match 'PODLAZ_TUN2SOCKS_PATH' "${service}"
   grep -Fx 'RuntimeDirectory=podlaz' "${service}"
   grep -Fx 'RuntimeDirectoryMode=0711' "${service}"
   grep -Fx 'StateDirectory=podlaz' "${service}"
   grep -Fx 'StateDirectoryMode=0700' "${service}"
   grep -Fx 'NoNewPrivileges=yes' "${service}"
   grep -Fx 'CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN' "${service}"
-  grep -Fx 'AmbientCapabilities=CAP_SETUID CAP_KILL' "${service}"
+  grep -Fx 'AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN' "${service}"
   grep -Fx 'RestrictSUIDSGID=yes' "${service}"
   grep -Fx 'MemoryDenyWriteExecute=yes' "${service}"
-  assert_no_match '^AmbientCapabilities=.*CAP_(NET_ADMIN|SETGID|SYS_ADMIN)' "${service}"
+  assert_no_match '^AmbientCapabilities=.*CAP_(CHOWN|SETGID|SYS_ADMIN)' "${service}"
 
   grep -F 'unit=podlazd.service' "${control}/postinst"
   grep -F "deb-systemd-helper enable \"\$unit\"" "${control}/postinst"
@@ -169,10 +184,11 @@ if grep -R -E '(^|[^[:alnum:]_])systemctl[[:space:]]+(start|enable)([[:space:]]|
 fi
 
 if [ -n "${PODLAZ_LINKAGE_ROOT:-}" ]; then
-  file "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz" "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd" "${PODLAZ_LINKAGE_ROOT}/usr/lib/podlaz/xray" "${PODLAZ_LINKAGE_ROOT}/usr/lib/podlaz/tun2socks"
+  file "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz" "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd" "${PODLAZ_LINKAGE_ROOT}/usr/lib/podlaz/xray"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlaz" | grep -F 'libc.so.6'
+  ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd"
   ldd "${PODLAZ_LINKAGE_ROOT}/usr/bin/podlazd" | grep -F 'libc.so.6'
 fi
 
