@@ -65,12 +65,13 @@ func TestSystemdUnitOnlyKeepsRequiredAmbientCapabilities(t *testing.T) {
 func TestSystemdUnitDoesNotBlockTunDeviceWork(t *testing.T) {
 	content := readSystemdUnit(t)
 
+	obsoleteHelperName := "tun" + "2socks"
 	for _, forbidden := range []string{
 		"Private" + "Devices=yes",
 		"Protect" + "KernelTunables=yes",
 		"Restrict" + "AddressFamilies=",
-		"PODLAZ_TUN2SOCKS_PATH",
-		"/usr/lib/podlaz/tun2socks",
+		"PODLAZ_" + "TUN2SOCKS" + "_PATH",
+		"/usr/lib/podlaz/" + obsoleteHelperName,
 	} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("systemd unit contains %q, which would need explicit validation before TUN/nftables work:\n%s", forbidden, content)
