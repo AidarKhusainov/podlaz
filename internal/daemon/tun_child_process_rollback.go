@@ -50,8 +50,6 @@ func rollbackChildProcessMatches(child txstate.ChildProcessRollback) (bool, erro
 	switch strings.TrimSpace(child.Label) {
 	case "xray":
 		return strings.Contains(cmdline, "xray") && (child.ConfigRef == "" || strings.Contains(cmdline, child.ConfigRef)), nil
-	case "tun2socks":
-		return strings.Contains(cmdline, "tun2socks"), nil
 	default:
 		return false, nil
 	}
