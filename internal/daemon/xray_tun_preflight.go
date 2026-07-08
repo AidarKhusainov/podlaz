@@ -15,6 +15,8 @@ import (
 
 var errXrayTunUnsupported = errors.New("TUN mode requires an Xray-core build with tun inbound support")
 
+const xrayTunPreflightInterfaceName = "podlaz-pf0"
+
 func preflightXrayNativeTunSupport(ctx context.Context, xrayPath string, identity coreExecutionIdentity) error {
 	dir, err := os.MkdirTemp("", "podlaz-xray-tun-preflight-*")
 	if err != nil {
@@ -36,7 +38,7 @@ func minimalXrayTunPreflightConfig() []byte {
       "tag": "podlaz-tun-preflight",
       "protocol": "tun",
       "settings": {
-        "name": "podlaz-preflight",
+        "name": "` + xrayTunPreflightInterfaceName + `",
         "MTU": 1500,
         "userLevel": 0
       }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,15 +58,38 @@ exit 0
 		t.Fatalf("read observed preflight config: %v", err)
 	}
 	config := string(data)
-	for _, want := range []string{`"protocol": "tun"`, `"name": "podlaz-preflight"`, `"MTU": 1500`, `"userLevel": 0`} {
+	for _, want := range []string{`"protocol": "tun"`, `"name": "podlaz-pf0"`, `"MTU": 1500`, `"userLevel": 0`} {
 		if !strings.Contains(config, want) {
 			t.Fatalf("minimal preflight config missing %s: %s", want, config)
 		}
 	}
-	for _, forbidden := range []string{`"server"`, `"gateway"`, `"dns"`, `"mtu"`} {
+	for _, forbidden := range []string{`"server"`, `"gateway"`, `"dns"`, `"mtu"`, "podlaz-preflight"} {
 		if strings.Contains(config, forbidden) {
 			t.Fatalf("minimal preflight config must not contain %s: %s", forbidden, config)
 		}
+	}
+}
+
+func TestMinimalXrayTunPreflightInterfaceNameFitsLinuxIFNAMSIZ(t *testing.T) {
+	var cfg struct {
+		Inbounds []struct {
+			Settings struct {
+				Name string `json:"name"`
+			} `json:"settings"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal(minimalXrayTunPreflightConfig(), &cfg); err != nil {
+		t.Fatalf("decode minimal preflight config: %v", err)
+	}
+	if len(cfg.Inbounds) != 1 {
+		t.Fatalf("expected one preflight inbound, got %#v", cfg.Inbounds)
+	}
+	name := cfg.Inbounds[0].Settings.Name
+	if name == "" {
+		t.Fatal("expected preflight interface name")
+	}
+	if len(name) > 15 {
+		t.Fatalf("preflight interface name %q is too long for Linux IFNAMSIZ user-visible names", name)
 	}
 }
 
