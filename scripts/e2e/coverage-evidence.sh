@@ -141,7 +141,7 @@ line 52 "existing evidence" "Transaction records are inspected by recover/status
 line 53 "existing evidence" "Ambiguous cleanup safety is covered by recovery diagnostics."
 line 54 "existing evidence" "Cleanup scripts call recovery flow instead of deleting runtime roots directly."
 line 55 "existing evidence" "Old PID safety is covered by process identity diagnostics."
-line 56 "existing runtime probe" "Server coverage captures active TUN snapshots for device, routes, rules, DNS, filters, and adapter evidence."
+line 56 "existing runtime probe" "Server coverage captures active TUN snapshots for device, routes, rules, DNS, filters, and native Xray TUN evidence."
 line 57 "existing contract" "Unsupported-only import/subscription behavior is documented."
 line 58 "new unit test" "HTTP 404/500 and response size-limit contracts are covered."
 line 59 "existing code evidence" "Top-level share-URI import dispatch is implemented."
