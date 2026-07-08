@@ -51,27 +51,16 @@ func printBashCompletion(w io.Writer) {
 
 _podlaz()
 {
-    local cur line value insert_only
-    local -a runtime_lines matches values
+    local cur line value
+    local -a runtime_lines values
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
-    insert_only=false
 
     compopt +o default 2>/dev/null || true
     compopt +o nospace 2>/dev/null || true
 
     if ! mapfile -t runtime_lines < <("${COMP_WORDS[0]}" __complete bash "$COMP_CWORD" "${COMP_WORDS[@]}" 2>/dev/null); then
         return 0
-    fi
-
-    if [[ -z "${COMP_TYPE+x}" ]]; then
-        insert_only=true
-    else
-        case "$COMP_TYPE" in
-            37|42)
-                insert_only=true
-                ;;
-        esac
     fi
 
     for line in "${runtime_lines[@]}"; do
@@ -94,23 +83,12 @@ _podlaz()
         esac
         value="${line%%$'\t'*}"
         [[ "$value" == "$cur"* ]] || continue
-        matches+=("$line")
         values+=("$value")
     done
 
-    if ((${#matches[@]} == 1)); then
-        COMPREPLY=("${values[0]}")
-        return 0
-    fi
-
-    for line in "${matches[@]}"; do
-        value="${line%%$'\t'*}"
-        if [[ "$insert_only" == true || "$line" != *$'\t'* ]]; then
-            COMPREPLY+=("$value")
-        else
-            COMPREPLY+=("$line")
-        fi
-    done
+    # Bash COMPREPLY has no separate description field. Keep value<TAB>description
+    # as an internal runtime protocol and use a clean value-only display fallback.
+    COMPREPLY=("${values[@]}")
     return 0
 }
 
