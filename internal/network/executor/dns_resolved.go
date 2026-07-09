@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
@@ -13,6 +14,9 @@ import (
 const (
 	OwnerDNS                = "podlaz:dns-link"
 	resolvedRouteOnlyDomain = "~."
+
+	defaultResolvedVerifyAttempts     = 3
+	defaultResolvedVerifyPollInterval = 25 * time.Millisecond
 )
 
 // DNSExecutor owns systemd-resolved per-link DNS apply, verification, and cleanup.
@@ -136,6 +140,14 @@ func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
 // edits /etc/resolv.conf.
 type ResolvedDNSExecutor struct {
 	Runner CommandRunner
+
+	// VerifyAttempts and VerifyPollInterval bound systemd-resolved propagation
+	// polling after Apply. Zero values use conservative production defaults.
+	VerifyAttempts     int
+	VerifyPollInterval time.Duration
+
+	// Sleep is injectable for deterministic tests.
+	Sleep func(context.Context, time.Duration) error
 }
 
 // Apply configures the DNS servers, route-only default DNS domain, and per-link DNS default route.
@@ -158,36 +170,99 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 }
 
 // Verify checks that the target link exposes DNS scope, planned DNS servers, and
-// the route-only domain after apply.
+// the route-only domain after apply. systemd-resolved can expose recently-applied
+// per-link state with a short delay, so transient missing link/scope/server/domain
+// observations are polled for a bounded period instead of failing immediately.
 func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
 	if err := validateDNSPlan(plan); err != nil {
 		return err
 	}
 	link := strings.TrimSpace(plan.TargetLink)
+	attempts := e.VerifyAttempts
+	if attempts <= 0 {
+		attempts = defaultResolvedVerifyAttempts
+	}
+	pollInterval := e.VerifyPollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultResolvedVerifyPollInterval
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := e.verifyResolvedDNSOnce(ctx, link, plan)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		var verifyErr resolvedDNSVerifyError
+		if !errors.As(err, &verifyErr) || !verifyErr.retryable || attempt == attempts {
+			return err
+		}
+		if err := sleepResolvedDNSVerify(ctx, e.Sleep, pollInterval); err != nil {
+			return errors.Join(lastErr, err)
+		}
+	}
+	return lastErr
+}
+
+func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link string, plan planner.TunDNSPlan) error {
 	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
 	if err != nil {
 		return fmt.Errorf("verify systemd-resolved DNS for %s: %w", link, err)
 	}
 	links := netsnapshot.ParseResolvedLinks(result.Stdout)
 	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
-		return fmt.Errorf("verify systemd-resolved DNS for %s: foreign route-only DNS owner %s still has %s", link, foreign.Name, resolvedRouteOnlyDomain)
+		return newResolvedDNSVerifyError(link, false, "foreign route-only DNS owner %s still has %s", foreign.Name, resolvedRouteOnlyDomain)
 	}
 	resolvedLink, ok := findResolvedLink(links, link)
 	if !ok {
-		return fmt.Errorf("verify systemd-resolved DNS for %s: link status not found", link)
+		return newResolvedDNSVerifyError(link, true, "link status not found")
 	}
 	if !containsDNSValue(resolvedLink.CurrentScopes, "DNS") {
-		return fmt.Errorf("verify systemd-resolved DNS for %s: Current Scopes does not include DNS", link)
+		return newResolvedDNSVerifyError(link, true, "Current Scopes does not include DNS")
 	}
 	for _, server := range plan.Servers {
 		if !containsDNSValue(resolvedLink.DNSServers, server) {
-			return fmt.Errorf("verify systemd-resolved DNS for %s: DNS server %s not found", link, server)
+			return newResolvedDNSVerifyError(link, true, "DNS server %s not found", server)
 		}
 	}
 	if !containsDNSValue(resolvedLink.DNSDomains, resolvedRouteOnlyDomain) {
-		return fmt.Errorf("verify systemd-resolved DNS for %s: route-only domain %s not found", link, resolvedRouteOnlyDomain)
+		return newResolvedDNSVerifyError(link, true, "route-only domain %s not found", resolvedRouteOnlyDomain)
 	}
 	return nil
+}
+
+type resolvedDNSVerifyError struct {
+	message   string
+	retryable bool
+}
+
+func (e resolvedDNSVerifyError) Error() string {
+	return e.message
+}
+
+func newResolvedDNSVerifyError(link string, retryable bool, format string, args ...any) error {
+	return resolvedDNSVerifyError{
+		message:   fmt.Sprintf("verify systemd-resolved DNS for %s: %s", link, fmt.Sprintf(format, args...)),
+		retryable: retryable,
+	}
+}
+
+func sleepResolvedDNSVerify(ctx context.Context, sleep func(context.Context, time.Duration) error, duration time.Duration) error {
+	if duration <= 0 {
+		return nil
+	}
+	if sleep != nil {
+		return sleep(ctx, duration)
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func findForeignRouteOnlyDNSOwner(links []netsnapshot.ResolvedLink, targetLink string) (netsnapshot.ResolvedLink, bool) {
