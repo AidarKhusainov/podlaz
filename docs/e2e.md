@@ -49,7 +49,7 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 - systemd;
 - `/dev/net/tun`;
 - `iproute2`, `nftables`, `resolvectl`, `journalctl`;
-- Go from the workflow setup step, or Go 1.26.4 for manual script runs;
+- Go from the workflow setup step, or Go 1.26.5 for manual script runs;
 - package build tools from `docs/development.md`;
 - provider/profile configuration supplied through the runner environment, not committed to the repository.
 
