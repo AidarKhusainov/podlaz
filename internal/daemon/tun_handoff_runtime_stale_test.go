@@ -55,7 +55,7 @@ func TestPrepareTunHandoffBlocksCleanupRequiredTransactionFiles(t *testing.T) {
 			manager := &XrayManager{RuntimeDir: runtimeDir}
 
 			_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-			assertRuntimeStaleBlockerContains(t, err, "transaction-file stale.json", "state="+string(state))
+			assertRuntimeStaleBlockerContains(t, err, "transaction-file stale.json", "recover --execute --yes")
 		})
 	}
 }
