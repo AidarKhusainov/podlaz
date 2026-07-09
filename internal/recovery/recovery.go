@@ -283,6 +283,7 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	runtimeDir := runtimeDir(s.RuntimeDir)
 	var result ScanResult
 	result.scanManagedInterface(ctx, runner)
+	result.scanManagedResolvedLink(ctx, runner)
 	result.scanManagedNFTTable(ctx, runner)
 	result.scanTransactionState(runtimeDir)
 	result.scanGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
@@ -363,6 +364,8 @@ func (e OSCleanupExecutor) Cleanup(ctx context.Context, candidate Candidate) Cle
 	switch candidate.Kind {
 	case "tun-interface":
 		return e.cleanupTUNInterface(ctx, candidate)
+	case managedDNSCandidateKind:
+		return e.cleanupManagedResolvedLink(ctx, candidate)
 	case "nftables-table":
 		return e.cleanupNFTablesTable(ctx, candidate)
 	case "transaction-state":
@@ -622,6 +625,8 @@ func orderCleanupCandidates(candidates []Candidate) []Candidate {
 			return 10
 		case "nftables-table":
 			return 20
+		case managedDNSCandidateKind:
+			return 25
 		case "tun-interface":
 			return 30
 		case "generated-runtime-configs":
