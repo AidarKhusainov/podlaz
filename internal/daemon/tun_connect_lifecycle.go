@@ -22,6 +22,7 @@ type tunCoreRuntimePlan struct {
 	XrayConfig        []byte
 	Status            string
 	Warnings          []string
+	ConnectivityProbe tunConnectivityProbeConfig
 }
 
 func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {

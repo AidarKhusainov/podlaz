@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
@@ -59,6 +61,56 @@ func TestVerifyTunConnectivityChecksRouteDialAndDNS(t *testing.T) {
 		t.Fatalf("unexpected dial target: host=%q port=%d", dialHost, dialPort)
 	}
 	if resolvedName != defaultTunDNSProbeName {
+		t.Fatalf("unexpected DNS probe name: %q", resolvedName)
+	}
+}
+
+func TestVerifyTunConnectivityUsesConfiguredProbeTargets(t *testing.T) {
+	originalRouteLookup := lookupTunRouteForProbe
+	originalDial := dialTunProbeTarget
+	originalResolve := resolveTunDNSName
+	defer func() {
+		lookupTunRouteForProbe = originalRouteLookup
+		dialTunProbeTarget = originalDial
+		resolveTunDNSName = originalResolve
+	}()
+
+	var routeHosts []string
+	var dialHost string
+	var dialPort uint16
+	var resolvedName string
+	lookupTunRouteForProbe = func(_ context.Context, host, _ string) error {
+		routeHosts = append(routeHosts, host)
+		return nil
+	}
+	dialTunProbeTarget = func(_ context.Context, host string, port uint16) error {
+		dialHost = host
+		dialPort = port
+		return nil
+	}
+	resolveTunDNSName = func(_ context.Context, name string) (string, error) {
+		resolvedName = name
+		return "198.51.100.30", nil
+	}
+
+	core := tunCoreRuntimePlan{ConnectivityProbe: tunConnectivityProbeConfig{
+		RouteHost:    "198.51.100.20",
+		TCPPort:      443,
+		DNSName:      "probe.example.com",
+		RouteTimeout: time.Second,
+		TCPTimeout:   time.Second,
+		DNSTimeout:   time.Second,
+	}}
+	if err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, core); err != nil {
+		t.Fatalf("expected configured connectivity probe to pass, got %v", err)
+	}
+	if len(routeHosts) != 2 || routeHosts[0] != "198.51.100.20" || routeHosts[1] != "198.51.100.30" {
+		t.Fatalf("unexpected route hosts: %#v", routeHosts)
+	}
+	if dialHost != "198.51.100.20" || dialPort != 443 {
+		t.Fatalf("unexpected dial target: host=%q port=%d", dialHost, dialPort)
+	}
+	if resolvedName != "probe.example.com" {
 		t.Fatalf("unexpected DNS probe name: %q", resolvedName)
 	}
 }
@@ -168,6 +220,30 @@ func TestSelectTunProbeHostAvoidsServerBypassTarget(t *testing.T) {
 	plan := planner.TunPlan{ServerBypass: planner.TunRoutePlan{Destination: defaultTunProbeHost + "/32"}}
 	if got := selectTunProbeHost(plan); got == defaultTunProbeHost {
 		t.Fatalf("expected alternate probe host when default probe is the server bypass target, got %q", got)
+	}
+}
+
+func TestSelectTunProbeHostUsesConfiguredAlternateTarget(t *testing.T) {
+	probe := tunConnectivityProbeConfig{RouteHost: "198.51.100.20", AlternateHost: "198.51.100.21"}
+	plan := planner.TunPlan{ServerBypass: planner.TunRoutePlan{Destination: "198.51.100.20/32"}}
+	if got := selectTunProbeHostWithConfig(plan, probe); got != "198.51.100.21" {
+		t.Fatalf("expected configured alternate probe host, got %q", got)
+	}
+}
+
+func TestSanitizeConnectivityDiagnosticRedactsPrivateNetworkDetails(t *testing.T) {
+	input := "default via 10.0.0.1 dev wlp3s0 src 192.168.1.20 search corp.internal query api.private.example.net vpn.example.test example.com"
+	got := sanitizeConnectivityDiagnostic(input)
+
+	for _, forbidden := range []string{"10.0.0.1", "192.168.1.20", "corp.internal", "api.private.example.net"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("sanitized diagnostics leaked %q: %q", forbidden, got)
+		}
+	}
+	for _, want := range []string{"<private-ipv4>", "<domain>", "vpn.example.test", "example.com"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected sanitized diagnostics to contain %q, got %q", want, got)
+		}
 	}
 }
 
