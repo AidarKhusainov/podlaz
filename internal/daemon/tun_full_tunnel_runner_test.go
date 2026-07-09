@@ -358,7 +358,17 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 func (h *fullTunnelRunnerHarness) requireTransactionState(t *testing.T, state txstate.TransactionState, requiresCleanup bool) {
 	t.Helper()
 	summaries, warnings := txstate.ScanTransactions(h.runtimeDir)
-	if len(warnings) > 0 || len(summaries) != 1 {
+	if len(warnings) > 0 {
+		t.Fatalf("unexpected transaction scan warnings: summaries=%#v warnings=%#v", summaries, warnings)
+	}
+	if len(summaries) == 0 && state == txstate.TransactionRolledBack && !requiresCleanup {
+		statuses, statusWarnings := transactionStatuses(h.runtimeDir)
+		if len(statusWarnings) > 0 || len(statuses) != 0 {
+			t.Fatalf("unexpected status transaction scan after removed rollback transaction: statuses=%#v warnings=%#v", statuses, statusWarnings)
+		}
+		return
+	}
+	if len(summaries) != 1 {
 		t.Fatalf("unexpected transaction scan: summaries=%#v warnings=%#v", summaries, warnings)
 	}
 	if summaries[0].State != state || summaries[0].RequiresCleanup != requiresCleanup {
