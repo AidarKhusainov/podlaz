@@ -8,7 +8,7 @@ import (
 )
 
 func daemonRecover(ctx context.Context, runtimeDir string) api.RecoveryResponse {
-	result := recovery.ExecuteWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir, Executor: recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir}})
+	result := recovery.ExecuteWithOptions(ctx, newDaemonRecoveryOptions(runtimeDir))
 	return recoveryResponseToAPI(result)
 }
 
