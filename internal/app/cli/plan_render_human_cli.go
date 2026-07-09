@@ -23,7 +23,8 @@ func renderProxyOnlyPlan(w io.Writer, p planner.ProxyOnlyPlan) {
 
 func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plain bool) {
 	marks := outputStatusMarks(plain)
-	blocked := tunPlanBlockers(p)
+	blockers := tunPlanBlockers(p)
+	localDryRunLimitations := tunPlanLocalDryRunLimitations(p)
 	warnings := tunPlanHumanWarnings(p)
 	commandID := safeCommandProfileID(profileID)
 
@@ -33,7 +34,7 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 	renderAlignedField(w, "Name", p.ProfileName)
 	renderAlignedField(w, "Mode", humanModeLabel(p.TunnelMode))
 	renderAlignedField(w, "Backend", "Xray / "+humanProtocolLabel("VLESS"))
-	renderAlignedField(w, "Status", tunPlanHumanStatus(blocked, warnings))
+	renderAlignedField(w, "Status", tunPlanHumanStatus(blockers, localDryRunLimitations, warnings))
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "What will happen")
@@ -43,11 +44,18 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 	renderDNSSummary(w, marks, p.DNS)
 	renderFirewallSummary(w, marks, p.Firewall)
 
-	if len(blocked) > 0 {
+	if len(blockers) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Blockers")
-		for _, blocker := range blocked {
+		for _, blocker := range blockers {
 			fmt.Fprintf(w, "  %s %s\n", marks.Blocked, render.Redact(blocker))
+		}
+	}
+	if len(localDryRunLimitations) > 0 {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Local dry-run limitations")
+		for _, limitation := range localDryRunLimitations {
+			fmt.Fprintf(w, "  %s %s\n", marks.Warn, render.Redact(limitation))
 		}
 	}
 	if len(warnings) > 0 {
@@ -65,7 +73,7 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Next steps")
-	if len(blocked) > 0 {
+	if len(blockers) > 0 {
 		fmt.Fprintln(w, "  Run: plz doctor")
 	} else {
 		fmt.Fprintf(w, "  Run: plz connect --mode tun %s\n", commandID)
@@ -112,9 +120,12 @@ func renderFirewallSummary(w io.Writer, marks humanStatusMarks, p planner.TunFir
 	renderPlanAction(w, marks.OK, "Configure kill switch", "reject non-VPN traffic during connection setup")
 }
 
-func tunPlanHumanStatus(blockers, warnings []string) string {
+func tunPlanHumanStatus(blockers, localDryRunLimitations, warnings []string) string {
 	if len(blockers) > 0 {
 		return "Blocked"
+	}
+	if len(localDryRunLimitations) > 0 {
+		return "Ready for daemon re-check"
 	}
 	if len(warnings) > 0 {
 		return "Ready with warnings"
@@ -130,10 +141,32 @@ func tunPlanBlockers(p planner.TunPlan) []string {
 	if p.DNS.Action == planner.DNSActionBlocked {
 		blockers = append(blockers, "DNS cannot be configured yet: "+humanPlanDetail(p.DNS.Reason))
 	}
-	if p.Firewall.TableAction == planner.FirewallActionBlocked {
+	if p.Firewall.TableAction == planner.FirewallActionBlocked && !tunPlanFirewallBlockedForLocalDryRun(p.Firewall) {
 		blockers = append(blockers, "Kill switch cannot be prepared yet: "+humanPlanDetail(p.Firewall.Reason))
 	}
 	return blockers
+}
+
+func tunPlanLocalDryRunLimitations(p planner.TunPlan) []string {
+	if tunPlanFirewallBlockedForLocalDryRun(p.Firewall) {
+		return []string{"Kill switch could not be fully planned in this local dry-run: " + humanPlanDetail(p.Firewall.Reason)}
+	}
+	return nil
+}
+
+func tunPlanFirewallBlockedForLocalDryRun(p planner.TunFirewallPlan) bool {
+	if p.TableAction != planner.FirewallActionBlocked {
+		return false
+	}
+	lower := strings.ToLower(p.Reason)
+	if strings.Contains(lower, "availability is missing") || strings.Contains(lower, "availability is unsupported") {
+		return false
+	}
+	return strings.Contains(lower, "availability is unknown") ||
+		strings.Contains(lower, "operation not permitted") ||
+		strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "not readable") ||
+		strings.Contains(lower, "current user")
 }
 
 func tunPlanHumanWarnings(p planner.TunPlan) []string {
@@ -157,6 +190,10 @@ func humanPlanDetail(value string) string {
 	value = humanSingleLine(render.Redact(value))
 	lower := strings.ToLower(value)
 	switch {
+	case strings.Contains(lower, "nftables") && strings.Contains(lower, "availability is missing"):
+		return "nftables is not available. Install or enable nftables before applying TUN firewall or kill-switch rules."
+	case strings.Contains(lower, "nftables") && strings.Contains(lower, "availability is unsupported"):
+		return "nftables is not supported on this host. TUN firewall and kill-switch rules cannot be applied safely."
 	case strings.Contains(lower, "nftables") && (strings.Contains(lower, "operation not permitted") || strings.Contains(lower, "not readable") || strings.Contains(lower, "inspect")):
 		return "nftables cannot be inspected as current user. The daemon will check this again before applying changes."
 	case strings.Contains(lower, "ipv6") && strings.Contains(lower, "default route"):
