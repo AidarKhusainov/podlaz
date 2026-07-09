@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
@@ -28,12 +30,42 @@ func TestPreflightTunOwnershipBlocksStalePolicyRuleOnly(t *testing.T) {
 	assertRuntimeStaleBlockerContains(t, err, "policy-rule 10000")
 }
 
-func TestPrepareTunHandoffBlocksTransactionFileOnly(t *testing.T) {
-	runtimeDir := writeRuntimeTransactionFile(t)
+func TestPrepareTunHandoffIgnoresRolledBackAndCommittedTransactionFiles(t *testing.T) {
+	runtimeDir := t.TempDir()
+	writeRuntimeTransactionState(t, runtimeDir, "rolled", txstate.TransactionRolledBack)
+	writeRuntimeTransactionState(t, runtimeDir, "committed", txstate.TransactionCommitted)
 	manager := &XrayManager{RuntimeDir: runtimeDir}
 
 	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	assertRuntimeStaleBlockerContains(t, err, "transaction-file stale.json")
+	if err != nil {
+		t.Fatalf("rolled_back/committed transaction files must not block clean handoff: %v", err)
+	}
+}
+
+func TestPrepareTunHandoffBlocksCleanupRequiredTransactionFiles(t *testing.T) {
+	for _, state := range []txstate.TransactionState{
+		txstate.TransactionPlanned,
+		txstate.TransactionApplying,
+		txstate.TransactionVerifying,
+		txstate.TransactionFailed,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			runtimeDir := t.TempDir()
+			writeRuntimeTransactionState(t, runtimeDir, "stale", state)
+			manager := &XrayManager{RuntimeDir: runtimeDir}
+
+			_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
+			assertRuntimeStaleBlockerContains(t, err, "transaction-file stale.json", "state="+string(state))
+		})
+	}
+}
+
+func TestPrepareTunHandoffBlocksInvalidTransactionFile(t *testing.T) {
+	runtimeDir := writeInvalidRuntimeTransactionFile(t)
+	manager := &XrayManager{RuntimeDir: runtimeDir}
+
+	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
+	assertRuntimeStaleBlockerContains(t, err, "transaction-file invalid-or-unreadable")
 }
 
 func TestPrepareTunHandoffReplacePodlazBlocksRoutingAndTransactionStateAfterRecovery(t *testing.T) {
@@ -55,7 +87,8 @@ func TestPrepareTunHandoffReplacePodlazBlocksRoutingAndTransactionStateAfterReco
 		podlazRuntimeRoutingStaleResources = originalRouting
 	})
 
-	runtimeDir := writeRuntimeTransactionFile(t)
+	runtimeDir := t.TempDir()
+	writeRuntimeTransactionState(t, runtimeDir, "stale", txstate.TransactionFailed)
 	manager := &XrayManager{RuntimeDir: runtimeDir}
 	refreshCalls := 0
 	manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
@@ -73,7 +106,21 @@ func TestPrepareTunHandoffReplacePodlazBlocksRoutingAndTransactionStateAfterReco
 	assertRuntimeStaleBlockerContains(t, err, "route-table 51820", "policy-rule 10000", "transaction-file stale.json")
 }
 
-func writeRuntimeTransactionFile(t *testing.T) string {
+func writeRuntimeTransactionState(t *testing.T, runtimeDir, id string, state txstate.TransactionState) {
+	t.Helper()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	tx := txstate.NewTransaction(id, "test-profile", planner.ModeTun, now)
+	tx.State = state
+	if state == txstate.TransactionFailed {
+		tx.FailureReason = "synthetic safe failure"
+	}
+	if _, err := store.Save(tx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeInvalidRuntimeTransactionFile(t *testing.T) string {
 	t.Helper()
 	runtimeDir := t.TempDir()
 	dir := filepath.Join(runtimeDir, txstate.TransactionDirName)
