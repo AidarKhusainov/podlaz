@@ -81,7 +81,7 @@ func postApplyRollbackRunnerForTest(runtimeDir string, executor *postApplyRollba
 		executor: executor,
 		now:      fixedClock(),
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
-			return fullTunnelCoreHandle{done: make(chan struct{}), pid: 12345}, nil
+			return fullTunnelCoreHandle{done: make(chan struct{})}, nil
 		},
 		verifyCoreStarted: func(<-chan struct{}) error { return nil },
 		verifyConnectivity: func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error {
