@@ -214,7 +214,8 @@ func rollbackVerifiedTunTransaction(ctx context.Context, runtimeDir, transaction
 	if err != nil {
 		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
 	}
-	return rollbackTunTransaction(ctx, store, &tx, plan, executor)
+	rollbackPlan := rollbackPlanFromPersistedTransaction(plan, tx)
+	return rollbackTunTransaction(ctx, store, &tx, rollbackPlan, executor)
 }
 
 func emptyTunRollbackPlan(plan planner.TunPlan) planner.TunPlan {
