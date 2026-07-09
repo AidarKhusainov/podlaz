@@ -44,10 +44,15 @@ func assertXrayTunConfigSchemaAccepted(t *testing.T, xrayPath, configPath string
 	if err == nil {
 		return
 	}
-	if strings.Contains(text, "Reading config") && strings.Contains(text, "failed to create server") {
+	if isXrayTunRuntimeStartupFailure(text) {
 		return
 	}
-	t.Fatalf("%s run -test -config %s rejected config before TUN server creation: %v\n%s", xrayPath, configPath, err, text)
+	t.Fatalf("%s run -test -config %s rejected config before TUN runtime startup: %v\n%s", xrayPath, configPath, err, text)
+}
+
+func isXrayTunRuntimeStartupFailure(text string) bool {
+	return strings.Contains(text, "failed to create server") && (strings.Contains(text, "operation not permitted") ||
+		strings.Contains(text, "permission denied"))
 }
 
 func packagedXrayTunProfileForTest() profile.Profile {
