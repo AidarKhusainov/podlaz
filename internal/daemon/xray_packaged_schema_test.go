@@ -51,9 +51,8 @@ func assertXrayTunConfigSchemaAccepted(t *testing.T, xrayPath, configPath string
 }
 
 func isXrayTunRuntimeStartupFailure(text string) bool {
-	return strings.Contains(text, "failed to create server") && (
-		strings.Contains(text, "operation not permitted") ||
-			strings.Contains(text, "permission denied"))
+	return strings.Contains(text, "failed to create server") && (strings.Contains(text, "operation not permitted") ||
+		strings.Contains(text, "permission denied"))
 }
 
 func packagedXrayTunProfileForTest() profile.Profile {
