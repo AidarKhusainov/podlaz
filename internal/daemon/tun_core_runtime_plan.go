@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"regexp"
 	"strings"
