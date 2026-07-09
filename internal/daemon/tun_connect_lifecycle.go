@@ -22,35 +22,36 @@ type tunCoreRuntimePlan struct {
 	XrayConfig        []byte
 	Status            string
 	Warnings          []string
+	ConnectivityProbe tunConnectivityProbeConfig
 }
 
 func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
 	p := profileFromSnapshot(req.Profile)
 	if err := profile.Validate(p); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	if err := validateE2ETunHookConfig(); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	coreIdentity, err := tunCoreExecutionIdentity()
 	if err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
 
 	runtimeDir := m.runtimeDir()
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
 	xrayPath, err := m.resolveXrayPath()
 	if err != nil {
-		return api.LifecycleResponse{}, wrapRuntimeUnavailable("Xray", err)
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", wrapRuntimeUnavailable("Xray", err))
 	}
 	if err := validatePackagedRuntimeArchitecture(xrayPath, "Xray"); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
 	if err := validateTunRuntimeDependenciesHook(); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
 	if err := preflightNativeTunSupport(ctx, xrayPath, coreIdentity); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
 
 	policy := api.NormalizeHandoffPolicy(req.Handoff)
@@ -59,44 +60,44 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	activeMode := m.state.Mode
 	m.mu.Unlock()
 	if active && (policy != api.HandoffReplacePodlaz || activeMode != planner.ModeTun) {
-		return api.LifecycleResponse{}, errConnectionAlreadyActive
+		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", errConnectionAlreadyActive)
 	}
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
 	preHandoffPlan, err := planner.PlanTun(p, snapshot)
 	if err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	preHandoffPlan = xrayOwnedTunPlan(preHandoffPlan)
 	if _, err := requireTunRuntimeServerBypass(preHandoffPlan); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("server-bypass", "", "not-started", err)
 	}
 
 	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
 
 	m.mu.Lock()
 	if m.cmd != nil || m.state.Connection == "active" {
 		m.mu.Unlock()
-		return api.LifecycleResponse{}, errConnectionAlreadyActive
+		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", errConnectionAlreadyActive)
 	}
 	m.mu.Unlock()
 
 	snapshot = m.collectTunSnapshot(ctx, snapshotOpts)
 	snapshot, err = m.prepareTunHandoff(ctx, snapshot, req.Handoff, snapshotOpts)
 	if err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
 	plan, err := planner.PlanTun(p, snapshot)
 	if err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	plan = xrayOwnedTunPlan(plan)
 	corePlan, err := planTunCoreRuntime(p, runtimeConfigPath, plan)
 	if err != nil {
-		return api.LifecycleResponse{}, err
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
 
 	executor := m.tunPlanExecutor()

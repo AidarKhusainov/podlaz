@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,8 +14,8 @@ import (
 
 func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	plan := firewallPlanForTest()
-	runner := &recordingRunner{stdout: nftablesListOutputForTest()}
-	exec := NftablesExecutor{Runner: runner}
+	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: nftablesListOutputForTest()}}
+	exec := NftablesExecutor{Runner: runner, ScriptDir: t.TempDir()}
 
 	step, err := exec.Apply(context.Background(), plan)
 	if err != nil {
@@ -30,18 +31,30 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		t.Fatalf("rollback nftables: %v", err)
 	}
 
-	want := [][]string{
-		{"nft", "add", "table", "inet", "podlaz"},
-		{"nft", "add", "chain", "inet", "podlaz", "output", "{", "type", "filter", "hook", "output", "priority", "0", ";", "policy", "accept", ";", "}"},
-		{"nft", "add", "rule", "inet", "podlaz", "output", "ip", "daddr", "203.0.113.10", "counter", "accept", "comment", `"` + planner.FirewallServerBypassOwner + `"`},
-		{"nft", "add", "rule", "inet", "podlaz", "output", "oifname", "lo", "counter", "accept", "comment", `"` + planner.FirewallLoopbackOwner + `"`},
-		{"nft", "add", "rule", "inet", "podlaz", "output", "oifname", "podlaz0", "counter", "accept", "comment", `"` + planner.FirewallTunEgressOwner + `"`},
-		{"nft", "add", "rule", "inet", "podlaz", "output", "oifname", "!=", "podlaz0", "counter", "reject", "comment", `"` + planner.FirewallKillSwitchOwner + `"`},
+	if len(runner.commands) != 3 {
+		t.Fatalf("expected apply batch, verify, rollback commands, got %#v", runner.commands)
+	}
+	if len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
+		t.Fatalf("expected nft batch apply command, got %#v", runner.commands[0])
+	}
+	wantTail := [][]string{
 		{"nft", "list", "table", "inet", "podlaz"},
 		{"nft", "delete", "table", "inet", "podlaz"},
 	}
-	if !reflect.DeepEqual(runner.commands, want) {
-		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
+	if !reflect.DeepEqual(runner.commands[1:], wantTail) {
+		t.Fatalf("unexpected commands after apply:\nwant %#v\n got %#v", wantTail, runner.commands[1:])
+	}
+	for _, want := range []string{
+		"add table inet podlaz",
+		"add chain inet podlaz output { type filter hook output priority 0; policy accept; }",
+		`add rule inet podlaz output ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"`,
+		`add rule inet podlaz output oifname "lo" counter accept comment "podlaz:firewall:loopback"`,
+		`add rule inet podlaz output oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"`,
+		`add rule inet podlaz output oifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"`,
+	} {
+		if !strings.Contains(runner.script, want) {
+			t.Fatalf("expected batch script to contain %q, got:\n%s", want, runner.script)
+		}
 	}
 }
 
@@ -59,17 +72,18 @@ func TestNftStringLiteralQuotesAndEscapesForNftCLI(t *testing.T) {
 	}
 }
 
-func TestNftablesExecutorRollsBackTableOnPartialApplyFailure(t *testing.T) {
+func TestNftablesExecutorApplyUsesAtomicBatchAndDoesNotRollbackOnBatchFailure(t *testing.T) {
 	plan := firewallPlanForTest()
-	runner := &failingNftRunner{failOn: []string{"add", "rule"}}
-	_, err := (NftablesExecutor{Runner: runner}).Apply(context.Background(), plan)
+	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{err: errors.New("injected nft batch failure")}}
+	_, err := (NftablesExecutor{Runner: runner, ScriptDir: t.TempDir()}).Apply(context.Background(), plan)
 	if err == nil {
-		t.Fatal("expected rule apply failure")
+		t.Fatal("expected batch apply failure")
 	}
-
-	wantLast := []string{"nft", "delete", "table", "inet", "podlaz"}
-	if len(runner.commands) < 2 || !reflect.DeepEqual(runner.commands[len(runner.commands)-1], wantLast) {
-		t.Fatalf("expected final cleanup command %v, got %#v", wantLast, runner.commands)
+	if len(runner.commands) != 1 || len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
+		t.Fatalf("expected only nft batch apply command without rollback side effect, got %#v", runner.commands)
+	}
+	if !strings.Contains(runner.script, "add table inet podlaz") || !strings.Contains(runner.script, `comment "podlaz:firewall:kill-switch"`) {
+		t.Fatalf("expected complete batch script to be produced before apply failure, got:\n%s", runner.script)
 	}
 }
 
@@ -183,25 +197,18 @@ func nftablesListOutputForTest() string {
 }`
 }
 
-type failingNftRunner struct {
-	commands [][]string
-	failOn   []string
+type nftScriptRecordingRunner struct {
+	recordingRunner
+	script string
 }
 
-func (r *failingNftRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
-	command := append([]string{name}, args...)
-	r.commands = append(r.commands, command)
-	if name == "nft" && len(args) >= len(r.failOn) {
-		matches := true
-		for i, token := range r.failOn {
-			if args[i] != token {
-				matches = false
-				break
-			}
+func (r *nftScriptRecordingRunner) Run(ctx context.Context, name string, args ...string) (CommandResult, error) {
+	if name == "nft" && len(args) == 2 && args[0] == "-f" {
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			return CommandResult{ExitCode: 1, Stderr: err.Error()}, err
 		}
-		if matches {
-			return CommandResult{ExitCode: 1, Stderr: "injected nft failure"}, errors.New("injected nft failure")
-		}
+		r.script = string(data)
 	}
-	return CommandResult{}, nil
+	return r.recordingRunner.Run(ctx, name, args...)
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
@@ -55,6 +56,16 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 					} `json:"users"`
 				} `json:"vnext"`
 			} `json:"settings"`
+			StreamSettings struct {
+				Security        string `json:"security"`
+				RealitySettings struct {
+					ServerName  string `json:"serverName"`
+					PublicKey   string `json:"publicKey"`
+					ShortID     string `json:"shortId"`
+					SpiderX     string `json:"spiderX"`
+					Fingerprint string `json:"fingerprint"`
+				} `json:"realitySettings"`
+			} `json:"streamSettings"`
 		} `json:"outbounds"`
 	}
 	if err := json.Unmarshal(runtime.XrayConfig, &config); err != nil {
@@ -72,6 +83,13 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 	if users := config.Outbounds[0].Settings.VNext[0].Users; len(users) != 1 || users[0].ID != p.UserIdentity {
 		t.Fatalf("expected TUN VLESS user identity, got %#v", users)
 	}
+	if config.Outbounds[0].StreamSettings.Security != "reality" {
+		t.Fatalf("expected Reality stream settings, got %#v", config.Outbounds[0].StreamSettings)
+	}
+	reality := config.Outbounds[0].StreamSettings.RealitySettings
+	if reality.ServerName != p.ServerName || reality.PublicKey != p.RealityPublicKey || reality.ShortID != p.RealityShortID || reality.SpiderX != p.RealitySpiderX || reality.Fingerprint != p.Fingerprint {
+		t.Fatalf("hostname/SNI/Reality semantics must be preserved while only vnext.address is overridden, got %#v", reality)
+	}
 	for _, want := range []string{p.UserIdentity, p.Protocol} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("generated TUN Xray config does not contain %q: %s", want, text)
@@ -83,6 +101,15 @@ func TestPlanTunCoreRuntimeFailsClosedWithoutConcreteServerBypass(t *testing.T) 
 	plan := planner.TunPlan{
 		TunDevice:    planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify"},
 		ServerBypass: planner.TunRoutePlan{Destination: "<server-ip>", Action: "blocked"},
+		Snapshot: netsnapshot.Snapshot{
+			ServerRoute: netsnapshot.Route{
+				Status:    netsnapshot.StatusMissing,
+				Interface: "wlan0",
+				Detail:    "DNS returned no IPv4 route for vpn.example.test from 192.168.1.20",
+				Raw:       "lookup vpn.example.test via 192.168.1.1 failed",
+			},
+			DefaultIPv4: netsnapshot.Route{Status: netsnapshot.StatusDetected, Interface: "wlan0", Gateway: "192.0.2.1"},
+		},
 	}
 
 	runtime, err := planTunCoreRuntime(tunRuntimeProfileForTest(), "/run/podlaz/generated/xray.json", plan)
@@ -98,9 +125,26 @@ func TestPlanTunCoreRuntimeFailsClosedWithoutConcreteServerBypass(t *testing.T) 
 	if got := daemonAPIHTTPStatusCode(err); got != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected HTTP status: got %d want %d", got, http.StatusServiceUnavailable)
 	}
-	for _, want := range []string{"TUN mode cannot start because VPN server bypass is unavailable.", "concrete IPv4 server bypass", "No network changes were applied."} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected error to contain %q, got:\n%s", want, err)
+	body := err.Error()
+	for _, want := range []string{
+		"TUN mode cannot start because VPN server bypass is unavailable.",
+		"concrete IPv4 server bypass",
+		"Diagnostics:",
+		"server route status: missing",
+		"server route interface: wlan0",
+		"server route detail: DNS returned no IPv4 route for vpn.example.test from <private-ipv4>",
+		"server route raw: lookup vpn.example.test via <private-ipv4> failed",
+		"default IPv4 interface: wlan0",
+		"default IPv4 gateway: 192.0.2.1",
+		"No network changes were applied.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected error to contain %q, got:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"192.168.1.20", "192.168.1.1"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("server-bypass diagnostics leaked private IPv4 %q:\n%s", forbidden, body)
 		}
 	}
 }
@@ -111,7 +155,7 @@ func tunRuntimeProfileForTest() profile.Profile {
 		Name:             "TUN Runtime VLESS",
 		Source:           profile.SourceImportedFile,
 		Engine:           profile.EngineXray,
-		Server:           "vpn.example",
+		Server:           "vpn.example.test",
 		Port:             443,
 		Protocol:         "vless",
 		UserIdentity:     "00000000-0000-0000-0000-000000000701",
@@ -119,7 +163,7 @@ func tunRuntimeProfileForTest() profile.Profile {
 		Security:         "reality",
 		Encryption:       "none",
 		Flow:             "xtls-rprx-vision",
-		ServerName:       "vpn.example",
+		ServerName:       "vpn.example.test",
 		Fingerprint:      "chrome",
 		RealityPublicKey: "public-key-tun",
 		RealityShortID:   "abcd",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -25,7 +26,8 @@ type FirewallExecutor interface {
 
 // NftablesExecutor applies only the table/chains/rules owned by podlaz.
 type NftablesExecutor struct {
-	Runner CommandRunner
+	Runner    CommandRunner
+	ScriptDir string
 }
 
 // Apply creates a fresh podlaz-owned nftables table and installs planned chains/rules.
@@ -34,34 +36,17 @@ func (e NftablesExecutor) Apply(ctx context.Context, plan planner.TunFirewallPla
 		return Step{}, err
 	}
 	family, table := firewallFamilyTable(plan)
-	if err := runCommand(ctx, e.Runner, "nft", "add", "table", family, table); err != nil {
-		return Step{}, fmt.Errorf("create nftables table %s %s: %w", family, table, err)
+	script, err := nftablesApplyScript(plan)
+	if err != nil {
+		return Step{}, err
 	}
-	createdTable := true
-	defer func() {
-		if err == nil || !createdTable {
-			return
-		}
-		if rollbackErr := e.Rollback(ctx, plan); rollbackErr != nil {
-			err = errors.Join(err, fmt.Errorf("rollback nftables table after failed apply: %w", rollbackErr))
-		}
-	}()
-
-	for _, chain := range plan.Chains {
-		if chain.Action != planner.FirewallTableAction && chain.Action != planner.FirewallActionAdd {
-			continue
-		}
-		if err := e.addChain(ctx, family, table, chain); err != nil {
-			return Step{}, err
-		}
+	scriptPath, cleanup, err := writeNFTBatchScript(e.ScriptDir, script)
+	if err != nil {
+		return Step{}, fmt.Errorf("prepare nftables batch for %s %s: %w", family, table, err)
 	}
-	for _, rule := range plan.Rules {
-		if rule.Action != planner.FirewallActionAdd {
-			continue
-		}
-		if err := e.addRule(ctx, family, table, rule); err != nil {
-			return Step{}, err
-		}
+	defer cleanup()
+	if err := runCommand(ctx, e.Runner, "nft", "-f", scriptPath); err != nil {
+		return Step{}, fmt.Errorf("apply nftables batch %s %s: %w", family, table, err)
 	}
 	return Step{Kind: "nftables", Target: firewallTarget(plan), Description: plan.Reason, Owner: OwnerFirewall}, nil
 }
@@ -111,26 +96,49 @@ func (e NftablesExecutor) Rollback(ctx context.Context, plan planner.TunFirewall
 	return nil
 }
 
-func (e NftablesExecutor) addChain(ctx context.Context, family, table string, chain planner.TunFirewallChainPlan) error {
-	args := []string{"add", "chain", family, table, chain.Name, "{", "type", chain.Type, "hook", chain.Hook, "priority", fmt.Sprintf("%d", chain.Priority), ";", "policy", chain.Policy, ";", "}"}
-	if err := runCommand(ctx, e.Runner, "nft", args...); err != nil {
-		return fmt.Errorf("create nftables chain %s %s %s: %w", family, table, chain.Name, err)
+func nftablesApplyScript(plan planner.TunFirewallPlan) (string, error) {
+	if err := validateFirewallPlan(plan); err != nil {
+		return "", err
 	}
-	return nil
+	family, table := firewallFamilyTable(plan)
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "add table %s %s\n", family, table)
+	for _, chain := range plan.Chains {
+		if chain.Action != planner.FirewallTableAction && chain.Action != planner.FirewallActionAdd {
+			continue
+		}
+		fmt.Fprintf(&builder, "add chain %s %s %s { type %s hook %s priority %d; policy %s; }\n", family, table, chain.Name, chain.Type, chain.Hook, chain.Priority, chain.Policy)
+	}
+	for _, rule := range plan.Rules {
+		if rule.Action != planner.FirewallActionAdd {
+			continue
+		}
+		expr := strings.TrimSpace(rule.Expr)
+		if expr == "" {
+			return "", fmt.Errorf("missing nftables rule expression for %s", rule.RollbackKey)
+		}
+		fmt.Fprintf(&builder, "add rule %s %s %s %s counter %s comment %s\n", family, table, rule.Chain, expr, rule.Verdict, nftStringLiteral(rule.Ownership))
+	}
+	return builder.String(), nil
 }
 
-func (e NftablesExecutor) addRule(ctx context.Context, family, table string, rule planner.TunFirewallRulePlan) error {
-	fields := nftExpressionFields(rule.Expr)
-	if len(fields) == 0 {
-		return fmt.Errorf("missing nftables rule expression for %s", rule.RollbackKey)
+func writeNFTBatchScript(dir, script string) (string, func(), error) {
+	file, err := os.CreateTemp(dir, "podlaz-nft-*.nft")
+	if err != nil {
+		return "", func() {}, err
 	}
-	args := []string{"add", "rule", family, table, rule.Chain}
-	args = append(args, fields...)
-	args = append(args, "counter", rule.Verdict, "comment", nftStringLiteral(rule.Ownership))
-	if err := runCommand(ctx, e.Runner, "nft", args...); err != nil {
-		return fmt.Errorf("create nftables rule %s %s %s: %w", family, table, rule.RollbackKey, err)
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if _, err := file.WriteString(script); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, err
 	}
-	return nil
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
 }
 
 func validateFirewallPlan(plan planner.TunFirewallPlan) error {

@@ -67,7 +67,7 @@ func TestRunWithOptionsReportsSuccessfulLinuxDiagnostics(t *testing.T) {
 	assertCheck(t, report, "default-interface", SeverityOK, "wlp0s20f3")
 	assertCheck(t, report, "networkmanager", SeverityOK, "nmcli found at /usr/bin/nmcli")
 	assertCheck(t, report, "systemd", SeverityOK, "systemctl found at /usr/bin/systemctl")
-	assertCheck(t, report, "resolved", SeverityOK, "resolvectl found at /usr/bin/resolvectl")
+	assertCheck(t, report, "resolved", SeverityOK, "no podlaz-owned DNS state found")
 	assertCheck(t, report, "nftables", SeverityOK, "nft found at /usr/sbin/nft")
 	assertCheck(t, report, "stale-resources", SeverityOK, "no podlaz-owned resources found")
 
@@ -116,6 +116,11 @@ func TestRunWithOptionsReportsCommandFailures(t *testing.T) {
 				},
 				"ip link show dev podlaz0": {
 					stderr:   "Device \"podlaz0\" does not exist.",
+					exitCode: 1,
+					err:      errors.New("exit status 1"),
+				},
+				"resolvectl status podlaz0 --no-pager": {
+					stderr:   "Link podlaz0 does not exist.",
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
@@ -204,6 +209,65 @@ func TestRunWithOptionsDoesNotTreatLiveDaemonRuntimeDirAsStale(t *testing.T) {
 	assertCheck(t, report, "stale-resources", SeverityOK, "no podlaz-owned resources found")
 }
 
+func TestRunWithOptionsWarnsAboutStaleResolvedLinkWithoutInterface(t *testing.T) {
+	report := RunWithOptions(context.Background(), Options{
+		Runner: fakeRunner{
+			paths: map[string]string{
+				"ip":         "/usr/sbin/ip",
+				"resolvectl": "/usr/bin/resolvectl",
+			},
+			commands: map[string]fakeCommand{
+				"ip route show default": {
+					stdout: "default via 192.0.2.1 dev wlp0s20f3",
+				},
+				"ip link show dev podlaz0": {
+					stderr:   "Device \"podlaz0\" does not exist.",
+					exitCode: 1,
+					err:      errors.New("exit status 1"),
+				},
+				"resolvectl status podlaz0 --no-pager": {
+					stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+       DNS Servers: 1.1.1.1`,
+				},
+			},
+		},
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
+	})
+
+	assertCheck(t, report, "resolved", SeverityWarning, "stale systemd-resolved link record for podlaz0 exists after the interface is missing")
+	assertCheck(t, report, "resolved", SeverityWarning, "run plz recover --execute --yes")
+}
+
+func TestRunWithOptionsWarnsAboutRouteOnlyResolvedDNSState(t *testing.T) {
+	report := RunWithOptions(context.Background(), Options{
+		Runner: fakeRunner{
+			paths: map[string]string{
+				"ip":         "/usr/sbin/ip",
+				"resolvectl": "/usr/bin/resolvectl",
+			},
+			commands: map[string]fakeCommand{
+				"ip route show default": {
+					stdout: "default via 192.0.2.1 dev wlp0s20f3",
+				},
+				"ip link show dev podlaz0": {
+					stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500",
+				},
+				"resolvectl status podlaz0 --no-pager": {
+					stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+       DNS Servers: 1.1.1.1
+        DNS Domain: ~.`,
+				},
+			},
+		},
+		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
+	})
+
+	assertCheck(t, report, "resolved", SeverityWarning, "podlaz DNS route-only domain ~. is active on podlaz0")
+	assertCheck(t, report, "resolved", SeverityWarning, "expected only during an active TUN session")
+}
+
 func TestReportStringIncludesSource(t *testing.T) {
 	report := Report{Source: SourceDaemon, Checks: []Check{{Name: "daemon", Severity: SeverityOK, Message: "running"}}}
 	got := report.String()
@@ -270,6 +334,11 @@ func successfulReport(t *testing.T) Report {
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
+				"resolvectl status podlaz0 --no-pager": {
+					stderr:   "Link podlaz0 does not exist.",
+					exitCode: 1,
+					err:      errors.New("exit status 1"),
+				},
 				"nft list table inet podlaz": {
 					stderr:   "Error: No such file or directory",
 					exitCode: 1,
@@ -296,6 +365,11 @@ func missingResourcesRunner() fakeRunner {
 			},
 			"ip link show dev podlaz0": {
 				stderr:   "Device \"podlaz0\" does not exist.",
+				exitCode: 1,
+				err:      errors.New("exit status 1"),
+			},
+			"resolvectl status podlaz0 --no-pager": {
+				stderr:   "Link podlaz0 does not exist.",
 				exitCode: 1,
 				err:      errors.New("exit status 1"),
 			},

@@ -88,7 +88,9 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 
 	resolvectlPath, resolvectlOK := commandAvailability(runner, "resolvectl", "resolved")
 	if resolvectlOK {
-		resolvectlPath.check.Message += "; " + resolvedDNSDiagnosticLine(ctx, runner, resolvectlPath.path)
+		dns := resolvedDNSDiagnosticLine(ctx, runner, resolvectlPath.path, ipPath.path, ipOK)
+		resolvectlPath.check.Severity = maxSeverity(resolvectlPath.check.Severity, dns.severity)
+		resolvectlPath.check.Message += "; " + dns.message
 	}
 	checks = append(checks, resolvectlPath.check)
 
@@ -105,6 +107,26 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 	}))
 
 	return Report{Source: SourceLocalFallback, Checks: checks}
+}
+
+func maxSeverity(left, right Severity) Severity {
+	if severityRank(right) > severityRank(left) {
+		return right
+	}
+	return left
+}
+
+func severityRank(severity Severity) int {
+	switch severity {
+	case SeverityFail:
+		return 3
+	case SeverityWarning:
+		return 2
+	case SeverityOK:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // FromDaemon converts a validated daemon API response into the user-facing doctor report.

@@ -20,6 +20,9 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 		_, _ = store.Save(*tx)
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
 	}
+	if err := removeTransactionFile(store, tx.ID); err != nil {
+		return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state; rolled-back transaction file cleanup failed", cause)
+	}
 	return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state", cause)
 }
 
@@ -92,6 +95,19 @@ func removeTransactionFile(store txstate.TransactionStore, transactionID string)
 		return err
 	}
 	return nil
+}
+
+func rollbackPlanFromPersistedTransaction(plan planner.TunPlan, tx txstate.Transaction) planner.TunPlan {
+	steps := make([]netexecutor.Step, 0, len(tx.AppliedSteps))
+	for _, step := range tx.AppliedSteps {
+		steps = append(steps, netexecutor.Step{
+			Kind:        step.Kind,
+			Target:      step.Target,
+			Description: step.Description,
+			Owner:       step.Owner,
+		})
+	}
+	return rollbackPlanFromAppliedSteps(plan, steps)
 }
 
 func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step) planner.TunPlan {

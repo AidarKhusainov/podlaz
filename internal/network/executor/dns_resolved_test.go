@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
@@ -75,14 +77,38 @@ Current DNS Server: 198.51.100.53
 	}
 }
 
+func TestResolvedDNSExecutorVerifyToleratesResolvedPropagationDelay(t *testing.T) {
+	plan := dnsPlanForTest()
+	runner := &recordingRunner{results: []CommandResult{
+		{Stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+       DNS Servers: 1.1.1.1
+        DNS Domain: ~.`},
+		{Stdout: resolvedStatusForTest},
+	}}
+	exec := ResolvedDNSExecutor{
+		Runner:             runner,
+		VerifyAttempts:     2,
+		VerifyPollInterval: time.Nanosecond,
+		Sleep:              noResolvedDNSTestSleep,
+	}
+
+	if err := exec.Verify(context.Background(), plan); err != nil {
+		t.Fatalf("verify DNS after propagation delay: %v", err)
+	}
+	if got := countResolvedStatusCommands(runner.commands); got != 2 {
+		t.Fatalf("expected 2 status polls, got %d: %#v", got, runner.commands)
+	}
+}
+
 func TestResolvedDNSExecutorVerifyRequiresDNSScope(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
     Current Scopes: none
        DNS Servers: 1.1.1.1
-        DNS Domain: ~.`}}).Verify(context.Background(), plan)
-	if err == nil {
-		t.Fatal("expected verify failure when DNS current scope is missing")
+        DNS Domain: ~.`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
+	if err == nil || !strings.Contains(err.Error(), "Current Scopes does not include DNS") {
+		t.Fatalf("expected DNS current scope failure, got %v", err)
 	}
 }
 
@@ -90,9 +116,31 @@ func TestResolvedDNSExecutorVerifyRequiresRouteOnlyDomain(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
     Current Scopes: DNS
-       DNS Servers: 1.1.1.1`}}).Verify(context.Background(), plan)
-	if err == nil {
-		t.Fatal("expected verify failure when route-only domain is missing")
+       DNS Servers: 1.1.1.1`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
+	if err == nil || !strings.Contains(err.Error(), "route-only domain ~. not found") {
+		t.Fatalf("expected route-only domain failure, got %v", err)
+	}
+}
+
+func TestResolvedDNSExecutorVerifyRequiresPlannedDNSServer(t *testing.T) {
+	plan := dnsPlanForTest()
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+       DNS Servers: 9.9.9.9
+        DNS Domain: ~.`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
+	if err == nil || !strings.Contains(err.Error(), "DNS server 1.1.1.1 not found") {
+		t.Fatalf("expected planned DNS server failure, got %v", err)
+	}
+}
+
+func TestResolvedDNSExecutorVerifyRequiresTargetLink(t *testing.T) {
+	plan := dnsPlanForTest()
+	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 2 (wlan0)
+    Current Scopes: DNS
+       DNS Servers: 1.1.1.1
+        DNS Domain: corp.example.test`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
+	if err == nil || !strings.Contains(err.Error(), "link status not found") {
+		t.Fatalf("expected target link failure, got %v", err)
 	}
 }
 
@@ -209,4 +257,18 @@ func (f fakeDNS) Verify(_ context.Context, plan planner.TunDNSPlan) error {
 func (f fakeDNS) Rollback(_ context.Context, plan planner.TunDNSPlan) error {
 	f.rec.calls = append(f.rec.calls, "dns:rollback:"+plan.TargetLink)
 	return nil
+}
+
+func noResolvedDNSTestSleep(context.Context, time.Duration) error {
+	return nil
+}
+
+func countResolvedStatusCommands(commands [][]string) int {
+	count := 0
+	for _, command := range commands {
+		if reflect.DeepEqual(command, []string{"resolvectl", "status", "--no-pager"}) {
+			count++
+		}
+	}
+	return count
 }

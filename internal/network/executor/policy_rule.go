@@ -19,9 +19,6 @@ func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRul
 		return Step{}, fmt.Errorf("inspect existing policy rule priority %d: %w", plan.Priority, err)
 	}
 	if line != "" {
-		if err := verifyPolicyRuleLine(line, plan); err != nil {
-			return Step{}, fmt.Errorf("existing policy rule priority %d differs from planned rule: %w", plan.Priority, err)
-		}
 		return Step{}, nil
 	}
 	args := ruleArgs("add", plan)
@@ -35,17 +32,12 @@ func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRul
 }
 
 func (e IPPolicyRuleExecutor) Verify(ctx context.Context, plan planner.TunPolicyRulePlan) error {
-	args := []string{"-4", "rule", "show", "priority", strconv.Itoa(plan.Priority)}
-	result, err := observeCommand(ctx, e.Runner, "ip", args...)
+	line, err := e.existingPolicyRuleLine(ctx, plan)
 	if err != nil {
 		return fmt.Errorf("verify policy rule priority %d: %w", plan.Priority, err)
 	}
-	line := firstNonEmptyLine(result.Stdout)
 	if line == "" {
 		return fmt.Errorf("verify policy rule priority %d: rule not found", plan.Priority)
-	}
-	if err := verifyPolicyRuleLine(line, plan); err != nil {
-		return fmt.Errorf("verify policy rule priority %d: %w", plan.Priority, err)
 	}
 	return nil
 }
@@ -67,7 +59,34 @@ func (e IPPolicyRuleExecutor) existingPolicyRuleLine(ctx context.Context, plan p
 	if err != nil {
 		return "", err
 	}
-	return firstNonEmptyLine(result.Stdout), nil
+	return matchingPolicyRuleLine(result.Stdout, plan)
+}
+
+func matchingPolicyRuleLine(output string, plan planner.TunPolicyRulePlan) (string, error) {
+	lines := nonEmptyLines(output)
+	if len(lines) == 0 {
+		return "", nil
+	}
+	var firstErr error
+	for _, line := range lines {
+		if err := verifyPolicyRuleLine(line, plan); err == nil {
+			return line, nil
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return "", fmt.Errorf("no matching rule among %d rule(s) at priority %d: %w", len(lines), plan.Priority, firstErr)
+}
+
+func nonEmptyLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func ruleArgs(op string, plan planner.TunPolicyRulePlan) []string {

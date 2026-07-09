@@ -54,6 +54,7 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		}
 		response, err := lifecycle.Connect(r.Context(), req)
 		if err != nil {
+			logConnectFailure(req, err)
 			writeDaemonAPIHTTPError(w, err)
 			return
 		}
@@ -80,6 +81,42 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: disconnect request handled")
 	})
+}
+
+func logConnectFailure(req api.ConnectRequest, err error) {
+	phase, transactionID, rollbackStatus := tunFailureLogFields(err)
+	classification := "error"
+	switch {
+	case isRuntimeUnavailableError(err):
+		classification = "runtime-unavailable"
+	case isTunHandoffBlocker(err):
+		classification = "handoff-blocked"
+	case isTunStalePodlazStateBlocker(err):
+		classification = "stale-podlaz-state"
+	case isTunVerificationError(err):
+		classification = "verification-failed"
+	}
+	log.Printf("podlazd: connect request failed mode=%s phase=%s transaction_id=%s rollback_status=%s classification=%s", safeLogField(req.Mode), safeLogField(phase), safeLogField(transactionID), safeLogField(rollbackStatus), safeLogField(classification))
+}
+
+func safeLogField(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "unknown"
+	}
+	return out
 }
 
 func connectAuthorizationAction(mode string) (AuthorizationAction, error) {

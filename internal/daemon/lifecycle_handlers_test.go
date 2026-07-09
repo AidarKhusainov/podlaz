@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,4 +50,57 @@ func TestLifecycleConnectHandlerRejectsUnsupportedMode(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "unsupported connect mode") {
 		t.Fatalf("expected unsupported mode message, got %q", recorder.Body.String())
 	}
+}
+
+func TestLifecycleConnectHandlerLogsSanitizedFailureSummary(t *testing.T) {
+	var logs bytes.Buffer
+	oldOutput := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+	})
+
+	mux := http.NewServeMux()
+	failure := withTunFailurePhase("network-apply", "tun-20260709T120000Z", "completed", errors.New("raw detail vpn.example.test 203.0.113.10 must not be logged"))
+	registerLifecycleHandlers(mux, failingLifecycle{err: failure})
+
+	req := connectRequestForTest()
+	req.Mode = "tun"
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, api.ConnectPath, bytes.NewReader(body))
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusInternalServerError, recorder.Code, recorder.Body.String())
+	}
+	logged := logs.String()
+	for _, want := range []string{"connect request failed", "mode=tun", "phase=network-apply", "transaction_id=tun-20260709T120000Z", "rollback_status=completed"} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("expected log to contain %q, got:\n%s", want, logged)
+		}
+	}
+	for _, forbidden := range []string{"vpn.example.test", "203.0.113.10", "raw detail"} {
+		if strings.Contains(logged, forbidden) {
+			t.Fatalf("connect failure log leaked %q:\n%s", forbidden, logged)
+		}
+	}
+}
+
+type failingLifecycle struct {
+	err error
+}
+
+func (f failingLifecycle) Connect(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{}, f.err
+}
+
+func (f failingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{}, nil
 }

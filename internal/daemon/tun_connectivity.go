@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -14,56 +15,93 @@ import (
 )
 
 const (
-	defaultTunProbeHost    = "1.1.1.1"
-	defaultTunProbePort    = uint16(53)
-	defaultTunDNSProbeName = "example.com"
-	routeProbeTimeout      = 3 * time.Second
-	tcpProbeTimeout        = 3 * time.Second
-	dnsProbeTimeout        = 15 * time.Second
-	diagnosticTimeout      = 8 * time.Second
-	commandTimeout         = 3 * time.Second
+	defaultTunProbeHost          = "1.1.1.1"
+	defaultTunAlternateProbeHost = "1.0.0.1"
+	defaultTunProbePort          = uint16(53)
+	defaultTunDNSProbeName       = "example.com"
+	routeProbeTimeout            = 3 * time.Second
+	tcpProbeTimeout              = 3 * time.Second
+	dnsProbeTimeout              = 15 * time.Second
+	diagnosticTimeout            = 8 * time.Second
+	commandTimeout               = 3 * time.Second
 )
 
 type tunRouteLookupFunc func(context.Context, string, string) error
 type tunTCPProbeFunc func(context.Context, string, uint16) error
 type tunDNSResolveFunc func(context.Context, string) (string, error)
 
+type tunConnectivityProbeConfig struct {
+	RouteHost     string
+	AlternateHost string
+	TCPPort       uint16
+	DNSName       string
+	RouteTimeout  time.Duration
+	TCPTimeout    time.Duration
+	DNSTimeout    time.Duration
+}
+
 var (
-	lookupTunRouteForProbe = defaultLookupTunRouteForProbe
-	dialTunProbeTarget     = defaultDialTunProbeTarget
-	resolveTunDNSName      = defaultResolveTunDNSName
+	lookupTunRouteForProbe       = defaultLookupTunRouteForProbe
+	dialTunProbeTarget           = defaultDialTunProbeTarget
+	resolveTunDNSName            = defaultResolveTunDNSName
+	diagnosticDomainTokenPattern = regexp.MustCompile(`\b(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:[A-Za-z]{2,63}|test)\b`)
 )
 
 func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCoreRuntimePlan) error {
-	_ = core
 	if plan.TunDevice.Name == "" {
 		return errors.New("connectivity probe requires a planned TUN device")
 	}
-	probeHost := selectTunProbeHost(plan)
-	if err := runProbe(ctx, routeProbeTimeout, func(probeCtx context.Context) error {
+	probe := core.ConnectivityProbe.withDefaults()
+	probeHost := selectTunProbeHostWithConfig(plan, probe)
+	if err := runProbe(ctx, probe.RouteTimeout, func(probeCtx context.Context) error {
 		return lookupTunRouteForProbe(probeCtx, probeHost, plan.TunDevice.Name)
 	}); err != nil {
 		return newTunVerificationError("route", fmt.Sprintf("Full-tunnel route lookup for %s did not use the planned TUN path", probeHost), err)
 	}
-	if err := runProbe(ctx, tcpProbeTimeout, func(probeCtx context.Context) error {
-		return dialTunProbeTarget(probeCtx, probeHost, defaultTunProbePort)
+	if err := runProbe(ctx, probe.TCPTimeout, func(probeCtx context.Context) error {
+		return dialTunProbeTarget(probeCtx, probeHost, probe.TCPPort)
 	}); err != nil {
-		return newTunVerificationError("tcp", fmt.Sprintf("Basic full-tunnel connectivity probe to %s:%d failed", probeHost, defaultTunProbePort), err)
+		return newTunVerificationError("tcp", fmt.Sprintf("Basic full-tunnel connectivity probe to %s:%d failed", probeHost, probe.TCPPort), err)
 	}
 	var resolvedIP string
-	if err := runProbe(ctx, dnsProbeTimeout, func(probeCtx context.Context) error {
-		ip, err := resolveTunDNSName(probeCtx, defaultTunDNSProbeName)
+	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
+		ip, err := resolveTunDNSName(probeCtx, probe.DNSName)
 		resolvedIP = ip
 		return err
 	}); err != nil {
-		return newTunVerificationError("dns", fmt.Sprintf("DNS through the tunnel did not resolve %s before timeout", defaultTunDNSProbeName), err)
+		return newTunVerificationError("dns", fmt.Sprintf("DNS through the tunnel did not resolve %s before timeout", probe.DNSName), err)
 	}
-	if err := runProbe(ctx, routeProbeTimeout, func(probeCtx context.Context) error {
+	if err := runProbe(ctx, probe.RouteTimeout, func(probeCtx context.Context) error {
 		return lookupTunRouteForProbe(probeCtx, resolvedIP, plan.TunDevice.Name)
 	}); err != nil {
-		return newTunVerificationError("dns-route", fmt.Sprintf("Full-tunnel route lookup for %s DNS result %s did not use the planned TUN path", defaultTunDNSProbeName, resolvedIP), err)
+		return newTunVerificationError("dns-route", fmt.Sprintf("Full-tunnel route lookup for %s DNS result %s did not use the planned TUN path", probe.DNSName, resolvedIP), err)
 	}
 	return nil
+}
+
+func (c tunConnectivityProbeConfig) withDefaults() tunConnectivityProbeConfig {
+	if strings.TrimSpace(c.RouteHost) == "" {
+		c.RouteHost = defaultTunProbeHost
+	}
+	if strings.TrimSpace(c.AlternateHost) == "" {
+		c.AlternateHost = defaultTunAlternateProbeHost
+	}
+	if c.TCPPort == 0 {
+		c.TCPPort = defaultTunProbePort
+	}
+	if strings.TrimSpace(c.DNSName) == "" {
+		c.DNSName = defaultTunDNSProbeName
+	}
+	if c.RouteTimeout <= 0 {
+		c.RouteTimeout = routeProbeTimeout
+	}
+	if c.TCPTimeout <= 0 {
+		c.TCPTimeout = tcpProbeTimeout
+	}
+	if c.DNSTimeout <= 0 {
+		c.DNSTimeout = dnsProbeTimeout
+	}
+	return c
 }
 
 func runProbe(ctx context.Context, timeout time.Duration, fn func(context.Context) error) error {
@@ -73,11 +111,16 @@ func runProbe(ctx context.Context, timeout time.Duration, fn func(context.Contex
 }
 
 func selectTunProbeHost(plan planner.TunPlan) string {
+	return selectTunProbeHostWithConfig(plan, tunConnectivityProbeConfig{}.withDefaults())
+}
+
+func selectTunProbeHostWithConfig(plan planner.TunPlan, probe tunConnectivityProbeConfig) string {
+	probe = probe.withDefaults()
 	serverBypassCIDR := strings.TrimSpace(plan.ServerBypass.Destination)
-	if strings.HasPrefix(serverBypassCIDR, defaultTunProbeHost+"/") {
-		return "1.0.0.1"
+	if strings.HasPrefix(serverBypassCIDR, probe.RouteHost+"/") {
+		return probe.AlternateHost
 	}
-	return defaultTunProbeHost
+	return probe.RouteHost
 }
 
 func defaultLookupTunRouteForProbe(ctx context.Context, host, tunDevice string) error {
@@ -85,12 +128,12 @@ func defaultLookupTunRouteForProbe(ctx context.Context, host, tunDevice string) 
 	cmd := exec.CommandContext(ctx, "ip", "-4", "route", "get", host)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("ip -4 route get %s: %w: %s%s", host, err, strings.TrimSpace(string(output)), tunRouteDiagnostics(host, tunDevice))
+		return fmt.Errorf("ip -4 route get %s: %w: %s%s", host, err, sanitizeConnectivityDiagnostic(string(output)), tunRouteDiagnostics(host, tunDevice))
 	}
 	line := strings.TrimSpace(string(output))
 	fields := strings.Fields(line)
 	if !containsAdjacentRouteFields(fields, "dev", tunDevice) {
-		return fmt.Errorf("route lookup did not use TUN device %s: %s%s", tunDevice, line, tunRouteDiagnostics(host, tunDevice))
+		return fmt.Errorf("route lookup did not use TUN device %s: %s%s", tunDevice, sanitizeConnectivityDiagnostic(line), tunRouteDiagnostics(host, tunDevice))
 	}
 	return nil
 }
@@ -185,12 +228,29 @@ func runDiagnosticCommand(ctx context.Context, name string, args ...string) stri
 	text := strings.TrimSpace(string(output))
 	if err != nil {
 		if text == "" {
-			return err.Error()
+			return sanitizeConnectivityDiagnostic(err.Error())
 		}
-		return err.Error() + ": " + text
+		return sanitizeConnectivityDiagnostic(err.Error() + ": " + text)
 	}
 	if text == "" {
 		return "<empty>"
 	}
-	return text
+	return sanitizeConnectivityDiagnostic(text)
+}
+
+func sanitizeConnectivityDiagnostic(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	text = safeDiagnosticValue(text)
+	if text == "" || text == "<missing>" {
+		return text
+	}
+	return diagnosticDomainTokenPattern.ReplaceAllStringFunc(text, func(candidate string) string {
+		lower := strings.ToLower(candidate)
+		switch {
+		case lower == "example.com", strings.HasSuffix(lower, ".example.com"), strings.HasSuffix(lower, ".example.test"):
+			return candidate
+		default:
+			return "<domain>"
+		}
+	})
 }

@@ -183,6 +183,7 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 func (p PlanResult) String() string {
 	var b strings.Builder
 	b.WriteString("podlaz recovery dry-run\n")
+	b.WriteString("Inspection: read-only; uses daemon startup scan when available plus local safe checks. Local permission warnings can differ from daemon-owned --execute cleanup.\n")
 	switch {
 	case len(p.Candidates) > 0:
 		for _, candidate := range p.Candidates {
@@ -285,7 +286,6 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	result.scanManagedNFTTable(ctx, runner)
 	result.scanTransactionState(runtimeDir)
 	result.scanGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
-	// Do not scan or report runtimeDir itself as a recovery candidate.
 	return result
 }
 
