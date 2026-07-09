@@ -145,15 +145,15 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  attest:
-    name: Attest release artifacts
+  attest-and-publish:
+    name: Attest and publish GitHub Release
     needs:
       - resolve
       - build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
     permissions:
-      contents: read
+      contents: write
       attestations: write
       id-token: write
     steps:
@@ -172,23 +172,6 @@ jobs:
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_arm64.deb
             dist/release/SHA256SUMS
-
-  publish:
-    name: Publish GitHub Release
-    needs:
-      - resolve
-      - build
-      - attest
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
-          path: dist/release
 
       - name: Publish GitHub Release assets
         env:
