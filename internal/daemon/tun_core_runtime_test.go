@@ -55,6 +55,16 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 					} `json:"users"`
 				} `json:"vnext"`
 			} `json:"settings"`
+			StreamSettings struct {
+				Security        string `json:"security"`
+				RealitySettings struct {
+					ServerName  string `json:"serverName"`
+					PublicKey   string `json:"publicKey"`
+					ShortID     string `json:"shortId"`
+					SpiderX     string `json:"spiderX"`
+					Fingerprint string `json:"fingerprint"`
+				} `json:"realitySettings"`
+			} `json:"streamSettings"`
 		} `json:"outbounds"`
 	}
 	if err := json.Unmarshal(runtime.XrayConfig, &config); err != nil {
@@ -71,6 +81,13 @@ func TestPlanTunCoreRuntimeGeneratesValidatedXrayConfig(t *testing.T) {
 	}
 	if users := config.Outbounds[0].Settings.VNext[0].Users; len(users) != 1 || users[0].ID != p.UserIdentity {
 		t.Fatalf("expected TUN VLESS user identity, got %#v", users)
+	}
+	if config.Outbounds[0].StreamSettings.Security != "reality" {
+		t.Fatalf("expected Reality stream settings, got %#v", config.Outbounds[0].StreamSettings)
+	}
+	reality := config.Outbounds[0].StreamSettings.RealitySettings
+	if reality.ServerName != p.ServerName || reality.PublicKey != p.RealityPublicKey || reality.ShortID != p.RealityShortID || reality.SpiderX != p.RealitySpiderX || reality.Fingerprint != p.Fingerprint {
+		t.Fatalf("hostname/SNI/Reality semantics must be preserved while only vnext.address is overridden, got %#v", reality)
 	}
 	for _, want := range []string{p.UserIdentity, p.Protocol} {
 		if !strings.Contains(text, want) {
@@ -111,7 +128,7 @@ func tunRuntimeProfileForTest() profile.Profile {
 		Name:             "TUN Runtime VLESS",
 		Source:           profile.SourceImportedFile,
 		Engine:           profile.EngineXray,
-		Server:           "vpn.example",
+		Server:           "vpn.example.test",
 		Port:             443,
 		Protocol:         "vless",
 		UserIdentity:     "00000000-0000-0000-0000-000000000701",
@@ -119,7 +136,7 @@ func tunRuntimeProfileForTest() profile.Profile {
 		Security:         "reality",
 		Encryption:       "none",
 		Flow:             "xtls-rprx-vision",
-		ServerName:       "vpn.example",
+		ServerName:       "vpn.example.test",
 		Fingerprint:      "chrome",
 		RealityPublicKey: "public-key-tun",
 		RealityShortID:   "abcd",
