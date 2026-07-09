@@ -97,6 +97,19 @@ func removeTransactionFile(store txstate.TransactionStore, transactionID string)
 	return nil
 }
 
+func rollbackPlanFromPersistedTransaction(plan planner.TunPlan, tx txstate.Transaction) planner.TunPlan {
+	steps := make([]netexecutor.Step, 0, len(tx.AppliedSteps))
+	for _, step := range tx.AppliedSteps {
+		steps = append(steps, netexecutor.Step{
+			Kind:        step.Kind,
+			Target:      step.Target,
+			Description: step.Description,
+			Owner:       step.Owner,
+		})
+	}
+	return rollbackPlanFromAppliedSteps(plan, steps)
+}
+
 func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step) planner.TunPlan {
 	rollback := planner.TunPlan{Mode: plan.Mode, TunnelMode: plan.TunnelMode, ProfileID: plan.ProfileID, ProfileName: plan.ProfileName}
 	for _, step := range steps {
