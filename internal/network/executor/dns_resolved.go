@@ -211,12 +211,12 @@ func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link str
 		return fmt.Errorf("verify systemd-resolved DNS for %s: %w", link, err)
 	}
 	links := netsnapshot.ParseResolvedLinks(result.Stdout)
+	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
+		return newResolvedDNSVerifyError(link, false, "foreign route-only DNS owner %s still has %s", foreign.Name, resolvedRouteOnlyDomain)
+	}
 	resolvedLink, ok := findResolvedLink(links, link)
 	if !ok {
 		return newResolvedDNSVerifyError(link, true, "link status not found")
-	}
-	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
-		return newResolvedDNSVerifyError(link, false, "foreign route-only DNS owner %s still has %s", foreign.Name, resolvedRouteOnlyDomain)
 	}
 	if !containsDNSValue(resolvedLink.CurrentScopes, "DNS") {
 		return newResolvedDNSVerifyError(link, true, "Current Scopes does not include DNS")
