@@ -115,18 +115,8 @@ func TestTunTransactionRollsBackOnlyAppliedStepsAfterPartialApplyFailure(t *test
 		t.Fatalf("expected rolled back apply failure, got %v", err)
 	}
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
-	if len(warnings) > 0 || len(summaries) != 1 {
-		t.Fatalf("unexpected transaction scan: summaries=%#v warnings=%#v", summaries, warnings)
-	}
-	if summaries[0].State != txstate.TransactionRolledBack || summaries[0].RequiresCleanup {
-		t.Fatalf("expected clean rolled-back transaction, got %#v", summaries[0])
-	}
-	tx, _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Load(summaries[0].ID)
-	if err != nil {
-		t.Fatalf("load transaction: %v", err)
-	}
-	if len(tx.Rollback.Routes) != 0 || len(tx.Rollback.PolicyRules) != 0 || len(tx.Rollback.TUN) != 1 {
-		t.Fatalf("expected rollback metadata to contain only applied TUN state, got %#v", tx.Rollback)
+	if len(warnings) > 0 || len(summaries) != 0 {
+		t.Fatalf("successful failed-connect rollback must remove or neutralize transaction file, summaries=%#v warnings=%#v", summaries, warnings)
 	}
 	if strings.Join(executor.calls, ",") != "apply,rollback" {
 		t.Fatalf("unexpected executor calls: %#v", executor.calls)
@@ -141,11 +131,8 @@ func TestTunTransactionRollsBackVerifyFailure(t *testing.T) {
 		t.Fatal("expected verify failure")
 	}
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
-	if len(warnings) > 0 || len(summaries) != 1 {
-		t.Fatalf("unexpected transaction scan: summaries=%#v warnings=%#v", summaries, warnings)
-	}
-	if summaries[0].State != txstate.TransactionRolledBack || summaries[0].RequiresCleanup {
-		t.Fatalf("expected clean rolled-back transaction, got %#v", summaries[0])
+	if len(warnings) > 0 || len(summaries) != 0 {
+		t.Fatalf("successful failed-connect rollback must remove or neutralize transaction file, summaries=%#v warnings=%#v", summaries, warnings)
 	}
 	if strings.Join(executor.calls, ",") != "apply,verify,rollback" {
 		t.Fatalf("unexpected executor calls: %#v", executor.calls)
