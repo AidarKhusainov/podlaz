@@ -16,6 +16,14 @@ func TestPackagedSocketGateRequiresSystemdServiceAndPeerCredentialAuthorizer(t *
 	}
 }
 
+func TestPackagedRequiredPolkitEnvEnablesAbstractSocket(t *testing.T) {
+	t.Setenv(api.ServiceEnv, api.ServiceSystemd)
+	t.Setenv(PolkitAuthorizationEnv, "required")
+	if !shouldListenOnAbstractSocket(authorizerFromEnv()) {
+		t.Fatal("packaged required-polkit mode should enable the abstract authorization socket")
+	}
+}
+
 func TestManualDaemonKeepsPackagedSocketDisabled(t *testing.T) {
 	t.Setenv(api.ServiceEnv, api.ServiceManual)
 	if shouldListenOnAbstractSocket(PolkitAuthorizer{}) {
