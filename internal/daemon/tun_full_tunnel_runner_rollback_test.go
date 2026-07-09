@@ -115,21 +115,21 @@ func requirePostApplyRollbackPlanUsesPersistedSteps(t *testing.T, plan planner.T
 	if plan.TunDevice.Name != "podlaz0" {
 		t.Fatalf("expected persisted TUN rollback target, got %#v", plan.TunDevice)
 	}
-	if !containsRollbackRoute(plan.Routes, planner.TunRoutingTable, "default") {
+	if !hasPostApplyRollbackRoute(plan.Routes, planner.TunRoutingTable, "default") {
 		t.Fatalf("expected persisted default route rollback target, got %#v", plan.Routes)
 	}
-	if !containsRollbackPolicyRule(plan.PolicyRules, planner.TunRulePriority, planner.TunRoutingTable, planner.IPv4DefaultSelector) {
+	if !hasPostApplyRollbackPolicyRule(plan.PolicyRules, planner.TunRulePriority, planner.TunRoutingTable, planner.IPv4DefaultSelector) {
 		t.Fatalf("expected persisted default policy-rule rollback target, got %#v", plan.PolicyRules)
 	}
-	if containsRollbackRoute(plan.Routes, planner.MainRoutingTable, "203.0.113.10/32") {
+	if hasPostApplyRollbackRoute(plan.Routes, planner.MainRoutingTable, "203.0.113.10/32") {
 		t.Fatalf("pre-existing server-bypass route must not be rolled back: %#v", plan.Routes)
 	}
-	if containsRollbackPolicyRule(plan.PolicyRules, planner.ServerRulePriority, planner.MainRoutingTable, "to 203.0.113.10/32") {
+	if hasPostApplyRollbackPolicyRule(plan.PolicyRules, planner.ServerRulePriority, planner.MainRoutingTable, "to 203.0.113.10/32") {
 		t.Fatalf("pre-existing server-bypass policy rule must not be rolled back: %#v", plan.PolicyRules)
 	}
 }
 
-func containsRollbackRoute(routes []planner.TunRoutePlan, table, destination string) bool {
+func hasPostApplyRollbackRoute(routes []planner.TunRoutePlan, table, destination string) bool {
 	for _, route := range routes {
 		if route.Table == table && route.Destination == destination {
 			return true
@@ -138,7 +138,7 @@ func containsRollbackRoute(routes []planner.TunRoutePlan, table, destination str
 	return false
 }
 
-func containsRollbackPolicyRule(rules []planner.TunPolicyRulePlan, priority int, table, selector string) bool {
+func hasPostApplyRollbackPolicyRule(rules []planner.TunPolicyRulePlan, priority int, table, selector string) bool {
 	for _, rule := range rules {
 		if rule.Priority == priority && rule.Table == table && rule.Selector == selector {
 			return true
