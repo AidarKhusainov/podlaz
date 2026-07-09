@@ -69,15 +69,43 @@ Before active podlaz replacement, controlled handoff cleanup, opening a TUN tran
 - the Xray helper resolves to an executable;
 - packaged helpers under `/usr/lib/podlaz` match the running helper architecture when ELF metadata can be inspected;
 - `ip`, `nft`, and `resolvectl` are available in the daemon execution environment;
-- the pinned Xray helper accepts a minimal native `tun` inbound config through `xray test -config`.
+- the pinned Xray helper accepts a minimal native `tun` inbound config through `xray test -config`;
+- the server bypass resolves to a concrete IPv4 route outside `podlaz0`.
 
 The unsupported-Xray preflight uses a temporary, redaction-safe config with only `protocol: tun` and pinned-schema `name`/`MTU`/`userLevel` settings. It does not use profile-derived runtime config and it runs before `prepareActivePodlazReplace`, `prepareTunHandoff`, and `beginTunTransaction`. Unsupported Xray TUN support must not disconnect active podlaz TUN, run controlled handoff cleanup, stop an external VPN connection, or leave a transaction artifact.
 
 The generated profile runtime config path is recorded in transaction rollback metadata after the transaction is opened and before the daemon starts Xray with the generated config. If the daemon is interrupted after generated config write, recovery knows how to remove the generated config.
 
-Missing or non-executable helpers, missing hard TUN commands, and unsupported Xray TUN config are setup/runtime-unavailable failures. They must fail before route, DNS, nftables, firewall, handoff, active-podlaz replacement, or transaction mutation starts.
+Missing or non-executable helpers, missing hard TUN commands, unsupported Xray TUN config, and unavailable server bypass are setup/runtime-unavailable failures. They must fail before route, DNS, nftables, firewall, handoff, active-podlaz replacement, or transaction mutation starts.
 
 User-facing CLI output must not present these failures as a daemon crash or raw internal server error. It must state that TUN mode cannot start and that no network changes were applied.
+
+## Transaction and rollback contract
+
+A failed TUN connect is allowed to start Xray before host network apply because the pinned native Xray TUN implementation owns packet ingestion and creates the `podlaz0` link. Xray start alone is not a committed VPN connection. The connection is committed only after host network apply, host network verify, connectivity verify, and active-state commit all succeed.
+
+When a failed connect successfully rolls back every podlaz-owned mutation it applied, the terminal transaction file is removed. If a terminal `rolled_back` or `committed` transaction file is found later, TUN handoff preflight treats it as non-blocking. Transaction files in cleanup-required states such as `planned`, `applying`, `applied`, `verifying`, `rolling_back`, or `failed` continue to block connect and point to daemon-owned recovery. Invalid or unreadable transaction files are blockers because their ownership and cleanup state cannot be proven safely.
+
+Rollback order for failed or disconnected native TUN sessions is:
+
+1. remove podlaz-owned nftables/firewall state;
+2. revert podlaz-owned systemd-resolved per-link DNS state;
+3. remove podlaz-owned routes and policy rules created by the transaction;
+4. stop the Xray child process when it was started by the transaction;
+5. remove generated runtime config;
+6. remove the terminal transaction file only after rollback succeeds.
+
+## DNS verification contract
+
+systemd-resolved can expose recently-applied per-link settings with a short delay. DNS verification therefore polls for a bounded period before failing on transient missing target link, DNS scope, planned DNS server, or route-only `~.` domain. A foreign route-only DNS owner remains a hard failure and is not retried as a harmless propagation delay.
+
+Rollback uses `resolvectl revert <link>` for the podlaz-owned link and must leave no route-only `~.` domain owned by the podlaz link after successful cleanup.
+
+## Diagnostics and logs
+
+Daemon connect failures are logged as sanitized phase summaries. The log line includes the requested mode, failure phase, transaction id when a transaction exists, rollback status, and broad classification. It intentionally does not include raw command output, profile servers, share URIs, private keys, tokens, private domains, or private IP addresses.
+
+User-facing errors remain actionable and may describe the safe next command, but daemon logs must use structured, low-cardinality fields rather than raw diagnostic text.
 
 ## CI gates
 
