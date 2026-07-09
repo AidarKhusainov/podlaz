@@ -170,18 +170,30 @@ func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResourc
 	if runtimeDir == "" {
 		return nil
 	}
-	pattern := filepath.Join(runtimeDir, txstate.TransactionDirName, "*"+txstate.TransactionFileSuffix)
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil
-	}
-	resources := make([]netsnapshot.StaleResource, 0, len(matches))
-	for _, match := range matches {
-		base := strings.TrimSpace(filepath.Base(match))
-		if base == "" {
+	summaries, warnings := txstate.ScanTransactions(runtimeDir)
+	resources := make([]netsnapshot.StaleResource, 0, len(summaries)+len(warnings))
+	for _, summary := range summaries {
+		if !summary.RequiresCleanup {
 			continue
 		}
-		resources = append(resources, netsnapshot.StaleResource{Kind: "transaction-file", Name: base, Status: netsnapshot.StatusDetected})
+		name := strings.TrimSpace(filepath.Base(summary.Path))
+		if name == "" || name == "." {
+			name = firstNonEmpty(summary.ID+txstate.TransactionFileSuffix, "unknown")
+		}
+		resources = append(resources, netsnapshot.StaleResource{
+			Kind:   "transaction-file",
+			Name:   name,
+			Status: netsnapshot.StatusDetected,
+			Detail: fmt.Sprintf("state=%s requires daemon-owned recovery", summary.State),
+		})
+	}
+	for range warnings {
+		resources = append(resources, netsnapshot.StaleResource{
+			Kind:   "transaction-file",
+			Name:   "invalid-or-unreadable",
+			Status: netsnapshot.StatusDetected,
+			Detail: "validated transaction scan failed; run daemon-owned recovery or inspect the transaction directory as administrator",
+		})
 	}
 	return resources
 }
