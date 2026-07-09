@@ -41,7 +41,7 @@ func (a PolkitAuthorizer) Authorize(ctx context.Context, action AuthorizationAct
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return fmt.Errorf("%w: polkit denied %s; keep using the non-root podlaz CLI and authenticate through a desktop or TTY polkit agent when available", ErrAuthorizationDenied, action)
 		}
-		return fmt.Errorf("%w: polkit could not authorize %s; ensure a polkit authentication agent is available or disable %s to use socket-group fallback", ErrAuthorizationUnavailable, action, PolkitAuthorizationEnv)
+		return fmt.Errorf("%w: polkit is unavailable for %s; ensure polkitd is installed and running and that a desktop or TTY polkit authentication agent is available", ErrAuthorizationUnavailable, action)
 	}
 	return nil
 }
@@ -60,7 +60,7 @@ func (a PolkitAuthorizer) resolveCommand() (string, error) {
 	}
 	resolved, err := lookupPath(command)
 	if err != nil {
-		return "", fmt.Errorf("%w: pkcheck is not installed or not in PATH; install polkit/polkitd or disable %s to use socket-group fallback", ErrAuthorizationUnavailable, PolkitAuthorizationEnv)
+		return "", fmt.Errorf("%w: pkcheck is not installed or not in PATH; install polkit/polkitd", ErrAuthorizationUnavailable)
 	}
 	return resolved, nil
 }
