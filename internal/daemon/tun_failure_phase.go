@@ -62,8 +62,8 @@ func tunFailureLogFields(err error) (phase, transactionID, rollbackStatus string
 			rollbackStatus = phased.rollbackStatus
 		}
 	}
-	if varificationPhase := tunVerificationPhase(err); varificationPhase != "" {
-		phase = varificationPhase + "-verify"
+	if verificationPhase := tunVerificationPhase(err); verificationPhase != "" {
+		phase = verificationPhase + "-verify"
 	}
 	return phase, transactionID, rollbackStatus
 }
