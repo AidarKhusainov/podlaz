@@ -1,10 +1,10 @@
 # Self-hosted E2E
 
-Manual and post-merge host validation for behavior that is not suitable for the default pull-request gate.
+Manual host validation for behavior that is not suitable for the default pull-request gate.
 
-The repository keeps `.github/workflows/e2e.yml` as a `workflow_dispatch` workflow for maintainers who have a compatible self-hosted runner. It is optional infrastructure: if no VPS/self-hosted runner is available, run the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host and record evidence in the related pull request, issue, or release notes.
+The repository keeps `.github/workflows/e2e.yml` as a `workflow_dispatch` workflow for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure: if no VPS/self-hosted runner is available, record manual evidence in the related pull request, issue, or release notes.
 
-The repository also runs `.github/workflows/e2e-post-merge.yml` after pushes to `master`. That workflow only dispatches the existing E2E workflow and is intentionally not part of the pull-request gate. E2E results should be treated as post-merge signal and release evidence, not as a merge blocker.
+The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results should be treated as manually requested validation and release evidence, not as a default merge blocker.
 
 ## Run through GitHub Actions
 
@@ -119,6 +119,7 @@ Do not paste provider URLs, subscription links, credentials, raw generated confi
 ## Non-goals
 
 - Not a default PR gate.
+- Not an automatic post-merge check.
 - Not a GitHub-hosted CI replacement.
 - Not permanent release evidence; keep evidence in issues, PRs, or release notes.
 - Not a production fault-injection interface; daemon hooks are for dedicated self-hosted E2E only.
