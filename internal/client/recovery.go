@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,6 +39,23 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 		operationTimeout = defaultRecoveryOperationTimeout
 	}
 
+	recovery, err := retryDaemonSocketReadiness(ctx, func(attemptCtx context.Context) (api.RecoveryResponse, error) {
+		return c.recoverViaSocket(attemptCtx, socketPath, dialTimeout, operationTimeout)
+	})
+	if err == nil {
+		return recovery, nil
+	}
+	if shouldTryAbstractSocket(socketPath, err) {
+		fallbackRecovery, fallbackErr := c.recoverViaSocket(ctx, api.AbstractSocketAddress(), dialTimeout, operationTimeout)
+		if fallbackErr == nil {
+			return fallbackRecovery, nil
+		}
+		return api.RecoveryResponse{}, abstractSocketFallbackError(err, fallbackErr)
+	}
+	return api.RecoveryResponse{}, err
+}
+
+func (c RecoveryClient) recoverViaSocket(ctx context.Context, socketPath string, dialTimeout, operationTimeout time.Duration) (api.RecoveryResponse, error) {
 	dialer := net.Dialer{Timeout: dialTimeout}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -54,7 +72,7 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.RecoveryResponse{}, fmt.Errorf("%w: %s", ErrDaemonUnavailable, unavailableDetail(socketPath, err))
+		return api.RecoveryResponse{}, newDaemonUnavailableError(socketPath, err)
 	}
 	defer resp.Body.Close()
 
@@ -62,6 +80,9 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 		message := ""
 		if data, readErr := io.ReadAll(resp.Body); readErr == nil {
 			message = strings.TrimSpace(string(data))
+		}
+		if shouldReturnDaemonMessage(resp.StatusCode, message) {
+			return api.RecoveryResponse{}, errors.New(message)
 		}
 		return api.RecoveryResponse{}, api.LifecycleHTTPError("recover", resp.Status, message)
 	}
