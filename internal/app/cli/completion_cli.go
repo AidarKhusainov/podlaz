@@ -81,7 +81,7 @@ _podlaz()
                 continue
                 ;;
         esac
-        value="${line%%$'\t'*}"
+        value="${line%%%%$'\t'*}"
         [[ "$value" == "$cur"* ]] || continue
         values+=("$value")
     done
@@ -128,7 +128,7 @@ _podlaz() {
         ;;
     esac
 
-    value="${line%%$'\t'*}"
+    value="${line%%%%$'\t'*}"
     if [[ "$line" == *$'\t'* ]]; then
       description="${line#*$'\t'}"
       described_values+=("${value}:${description}")
