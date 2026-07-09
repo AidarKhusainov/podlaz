@@ -138,7 +138,7 @@ func TestResolvedDNSExecutorVerifyRequiresTargetLink(t *testing.T) {
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 2 (wlan0)
     Current Scopes: DNS
        DNS Servers: 1.1.1.1
-        DNS Domain: ~.`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
+        DNS Domain: corp.example.test`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
 	if err == nil || !strings.Contains(err.Error(), "link status not found") {
 		t.Fatalf("expected target link failure, got %v", err)
 	}
