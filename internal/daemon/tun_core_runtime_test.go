@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
@@ -100,6 +101,15 @@ func TestPlanTunCoreRuntimeFailsClosedWithoutConcreteServerBypass(t *testing.T) 
 	plan := planner.TunPlan{
 		TunDevice:    planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify"},
 		ServerBypass: planner.TunRoutePlan{Destination: "<server-ip>", Action: "blocked"},
+		Snapshot: netsnapshot.Snapshot{
+			ServerRoute: netsnapshot.Route{
+				Status:    netsnapshot.StatusMissing,
+				Interface: "wlan0",
+				Detail:    "DNS returned no IPv4 route for vpn.example.test from 192.168.1.20",
+				Raw:       "lookup vpn.example.test via 192.168.1.1 failed",
+			},
+			DefaultIPv4: netsnapshot.Route{Status: netsnapshot.StatusDetected, Interface: "wlan0", Gateway: "192.0.2.1"},
+		},
 	}
 
 	runtime, err := planTunCoreRuntime(tunRuntimeProfileForTest(), "/run/podlaz/generated/xray.json", plan)
@@ -115,9 +125,26 @@ func TestPlanTunCoreRuntimeFailsClosedWithoutConcreteServerBypass(t *testing.T) 
 	if got := daemonAPIHTTPStatusCode(err); got != http.StatusServiceUnavailable {
 		t.Fatalf("unexpected HTTP status: got %d want %d", got, http.StatusServiceUnavailable)
 	}
-	for _, want := range []string{"TUN mode cannot start because VPN server bypass is unavailable.", "concrete IPv4 server bypass", "No network changes were applied."} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected error to contain %q, got:\n%s", want, err)
+	body := err.Error()
+	for _, want := range []string{
+		"TUN mode cannot start because VPN server bypass is unavailable.",
+		"concrete IPv4 server bypass",
+		"Diagnostics:",
+		"server route status: missing",
+		"server route interface: wlan0",
+		"server route detail: DNS returned no IPv4 route for vpn.example.test from <private-ipv4>",
+		"server route raw: lookup vpn.example.test via <private-ipv4> failed",
+		"default IPv4 interface: wlan0",
+		"default IPv4 gateway: 192.0.2.1",
+		"No network changes were applied.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected error to contain %q, got:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"192.168.1.20", "192.168.1.1"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("server-bypass diagnostics leaked private IPv4 %q:\n%s", forbidden, body)
 		}
 	}
 }
