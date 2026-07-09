@@ -20,6 +20,9 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 		_, _ = store.Save(*tx)
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
 	}
+	if err := removeTransactionFile(store, tx.ID); err != nil {
+		return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state; rolled-back transaction file cleanup failed", cause)
+	}
 	return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state", cause)
 }
 
