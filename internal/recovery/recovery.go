@@ -280,102 +280,294 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	if runner == nil {
 		runner = OSRunner{}
 	}
-	return ScanResult{Candidates: scanCandidates(ctx, runner, s.RuntimeDir), Warnings: scanWarnings(ctx, runner, s.RuntimeDir)}
+	runtimeDir := runtimeDir(s.RuntimeDir)
+	var result ScanResult
+	result.scanManagedInterface(ctx, runner)
+	result.scanManagedNFTTable(ctx, runner)
+	result.scanTransactionState(runtimeDir)
+	result.scanGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
+	return result
 }
 
-func scanCandidates(ctx context.Context, runner CommandRunner, runtimeDir string) []Candidate {
-	var candidates []Candidate
-	if exists(ctx, runner, "ip", "link", "show", "dev", managedInterface) {
-		candidates = append(candidates, Candidate{Kind: "interface", Description: "interface " + managedInterface, Target: managedInterface})
-	}
-	if exists(ctx, runner, "nft", "list", "table", managedNFTFamily, managedNFTTableName) {
-		candidates = append(candidates, Candidate{Kind: "nftables-table", Description: "nft table " + managedNFTTable, Target: managedNFTTable})
-	}
-	candidates = append(candidates, transactionCandidates(runtimeDir)...)
-	return candidates
+type commandCandidateScan struct {
+	command            string
+	commandUnavailable string
+	args               []string
+	candidate          Candidate
+	warningTarget      string
 }
 
-func transactionCandidates(runtimeDir string) []Candidate {
-	summaries, _ := txstate.ScanTransactions(runtimeDir)
-	candidates := make([]Candidate, 0, len(summaries))
+func (r *ScanResult) scanManagedInterface(ctx context.Context, runner CommandRunner) {
+	r.scanCommandCandidate(ctx, runner, commandCandidateScan{command: "ip", commandUnavailable: "ip command is unavailable", args: []string{"link", "show", "dev", managedInterface}, candidate: Candidate{Kind: "tun-interface", Description: "TUN interface", Target: managedInterface}, warningTarget: "TUN interface " + managedInterface})
+}
+
+func (r *ScanResult) scanManagedNFTTable(ctx context.Context, runner CommandRunner) {
+	r.scanCommandCandidate(ctx, runner, commandCandidateScan{command: "nft", commandUnavailable: "nft command is unavailable", args: []string{"list", "table", managedNFTFamily, managedNFTTableName}, candidate: Candidate{Kind: "nftables-table", Description: "nftables table", Target: managedNFTTable}, warningTarget: "nftables table " + managedNFTTable})
+}
+
+func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRunner, scan commandCandidateScan) {
+	commandPath, err := runner.LookPath(scan.command)
+	if err != nil {
+		r.Warnings = append(r.Warnings, Warning{Target: scan.warningTarget, Message: scan.commandUnavailable})
+		return
+	}
+	cmdResult, err := runCommand(ctx, runner, commandPath, scan.args...)
+	switch {
+	case commandSucceeded(cmdResult, err):
+		r.Candidates = append(r.Candidates, scan.candidate)
+	case resourceMissing(cmdResult):
+	case commandFailedUnexpectedly(cmdResult, err):
+		r.Warnings = append(r.Warnings, Warning{Target: scan.warningTarget, Message: commandFailureMessage(cmdResult, err)})
+	}
+}
+
+func (r *ScanResult) scanTransactionState(runtimeDir string) {
+	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	for _, summary := range summaries {
 		if !summary.RequiresCleanup {
 			continue
 		}
-		candidates = append(candidates, Candidate{
-			Kind:        "transaction-state",
-			Description: "transaction rollback state",
-			Target:      summary.Path,
-			Transaction: &TransactionCandidate{
-				ID:                summary.ID,
-				State:             string(summary.State),
-				Status:            summary.StatusLine(),
-				RollbackAvailable: summary.RollbackAvailable,
-				RequiresCleanup:   summary.RequiresCleanup,
-				Path:              summary.Path,
-			},
-		})
+		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: summary.RequiresCleanup, Path: summary.Path}})
 	}
-	return candidates
+	for _, warning := range warnings {
+		r.Warnings = append(r.Warnings, Warning{Target: "transaction state", Message: warning})
+	}
 }
 
-func scanWarnings(ctx context.Context, runner CommandRunner, runtimeDir string) []Warning {
-	var warnings []Warning
-	for _, command := range []struct {
-		target string
-		name   string
-		args   []string
-	}{
-		{target: "interface " + managedInterface, name: "ip", args: []string{"link", "show", "dev", managedInterface}},
-		{target: "nft table " + managedNFTTable, name: "nft", args: []string{"list", "table", managedNFTFamily, managedNFTTableName}},
-	} {
-		if _, err := runner.LookPath(command.name); err != nil {
-			warnings = append(warnings, Warning{Target: command.target, Message: command.name + " not found"})
-			continue
+func (r *ScanResult) scanGeneratedRuntimeConfigs(generatedDir string) {
+	stat, err := os.Stat(generatedDir)
+	switch {
+	case err == nil:
+		description := "generated runtime configs"
+		if !stat.IsDir() {
+			description = "generated runtime config path"
 		}
-		result, err := run(ctx, runner, command.name, command.args...)
-		if err == nil || resourceMissing(result) {
-			continue
-		}
-		warnings = append(warnings, Warning{Target: command.target, Message: commandFailureMessage(result, err)})
+		r.Candidates = append(r.Candidates, Candidate{Kind: "generated-runtime-configs", Description: description, Target: generatedDir})
+	case errors.Is(err, os.ErrNotExist):
+		return
+	default:
+		r.Warnings = append(r.Warnings, Warning{Target: "generated runtime configs " + generatedDir, Message: err.Error()})
 	}
-	_, txWarnings := txstate.ScanTransactions(runtimeDir)
-	for _, warning := range txWarnings {
-		warnings = append(warnings, Warning{Target: "transaction state", Message: warning})
-	}
-	return warnings
 }
 
-func exists(ctx context.Context, runner CommandRunner, name string, args ...string) bool {
-	if _, err := runner.LookPath(name); err != nil {
-		return false
+type OSCleanupExecutor struct {
+	Runner     CommandRunner
+	RuntimeDir string
+}
+
+func (e OSCleanupExecutor) Cleanup(ctx context.Context, candidate Candidate) CleanupResult {
+	if strings.TrimSpace(candidate.Kind) == "" {
+		return skipped(candidate, "missing recovery candidate kind")
 	}
-	result, err := run(ctx, runner, name, args...)
+	e = e.withDefaults()
+	switch candidate.Kind {
+	case "tun-interface":
+		return e.cleanupTUNInterface(ctx, candidate)
+	case "nftables-table":
+		return e.cleanupNFTablesTable(ctx, candidate)
+	case "transaction-state":
+		return skipped(candidate, "transaction rollback requires daemon safety validation")
+	case "generated-runtime-configs":
+		return e.cleanupGeneratedRuntimeConfigs(candidate)
+	case "runtime-directory":
+		return skipped(candidate, "runtime root cleanup is intentionally unsupported")
+	default:
+		return skipped(candidate, "unsupported recovery candidate kind")
+	}
+}
+
+func (e OSCleanupExecutor) withDefaults() OSCleanupExecutor {
+	if e.Runner == nil {
+		e.Runner = OSRunner{}
+	}
+	if strings.TrimSpace(e.RuntimeDir) == "" {
+		e.RuntimeDir = defaultRuntimeDir
+	}
+	e.RuntimeDir = filepath.Clean(e.RuntimeDir)
+	return e
+}
+
+func (e OSCleanupExecutor) cleanupTUNInterface(ctx context.Context, candidate Candidate) CleanupResult {
+	if candidate.Target != managedInterface {
+		return skipped(candidate, "non-podlaz TUN interface target")
+	}
+	if err := e.run(ctx, "ip", "link", "del", "dev", managedInterface); err != nil && !commandErrorIsMissing(err) {
+		return failed(candidate, err)
+	}
+	return recovered(candidate)
+}
+
+func (e OSCleanupExecutor) cleanupNFTablesTable(ctx context.Context, candidate Candidate) CleanupResult {
+	family, table, ok := parseNFTTarget(candidate.Target)
+	if !ok || !isManagedNFTTarget(family, table) {
+		return skipped(candidate, "non-podlaz nftables target")
+	}
+	if err := e.run(ctx, "nft", "delete", "table", family, table); err != nil && !commandErrorIsMissing(err) {
+		return failed(candidate, err)
+	}
+	return recovered(candidate)
+}
+
+func (e OSCleanupExecutor) cleanupGeneratedRuntimeConfigs(candidate Candidate) CleanupResult {
+	generatedDir := filepath.Join(e.RuntimeDir, generatedDirName)
+	if !sameCleanPath(candidate.Target, generatedDir) {
+		return skipped(candidate, "generated runtime config path is outside podlaz runtime state")
+	}
+	if err := os.RemoveAll(generatedDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return failed(candidate, fmt.Errorf("remove generated runtime configs %s: %w", generatedDir, err))
+	}
+	return recovered(candidate)
+}
+
+func (e OSCleanupExecutor) rollbackNFTables(ctx context.Context, entries []txstate.NFTablesRollback) error {
+	seen := make(map[string]struct{})
+	var errs []error
+	for _, entry := range entries {
+		if entry.Owner != txstate.TransactionOwner || !isManagedNFTTarget(entry.Family, entry.Table) {
+			errs = append(errs, fmt.Errorf("refuse to rollback non-podlaz nftables target %s %s", entry.Family, entry.Table))
+			continue
+		}
+		key := entry.Family + " " + entry.Table
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := e.run(ctx, "nft", "delete", "table", managedNFTFamily, managedNFTTableName); err != nil && !commandErrorIsMissing(err) {
+			errs = append(errs, fmt.Errorf("delete nftables table %s: %w", managedNFTTable, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (e OSCleanupExecutor) rollbackDNS(ctx context.Context, dns txstate.DNSRollback) error {
+	if dns.Owner != txstate.TransactionOwner || dns.Link != managedInterface || (dns.Backend != "" && dns.Backend != "systemd-resolved") {
+		return fmt.Errorf("refuse to rollback ambiguous DNS target link=%s backend=%s", dns.Link, dns.Backend)
+	}
+	if err := e.run(ctx, "resolvectl", "revert", managedInterface); err != nil && !commandErrorIsMissing(err) {
+		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", managedInterface, err)
+	}
+	return nil
+}
+
+func (e OSCleanupExecutor) rollbackPolicyRule(ctx context.Context, rule txstate.PolicyRuleRollback) error {
+	if rule.Owner != txstate.TransactionOwner {
+		return fmt.Errorf("refuse to rollback non-podlaz policy rule priority %d", rule.Priority)
+	}
+	if rule.Priority <= 0 {
+		return nil
+	}
+	table, ok := managedTableToken(rule.Table)
+	if !ok {
+		return fmt.Errorf("refuse to rollback policy rule priority %d with non-podlaz table %s", rule.Priority, rule.Table)
+	}
+	args := []string{"-4", "rule", "del", "priority", strconv.Itoa(rule.Priority)}
+	if strings.TrimSpace(rule.From) != "" {
+		args = append(args, "from", strings.TrimSpace(rule.From))
+	}
+	if strings.TrimSpace(rule.To) != "" {
+		args = append(args, "to", strings.TrimSpace(rule.To))
+	}
+	if strings.TrimSpace(rule.Mark) != "" {
+		args = append(args, "fwmark", strings.TrimSpace(rule.Mark))
+	}
+	args = append(args, "lookup", table)
+	if err := e.run(ctx, "ip", args...); err != nil && !commandErrorIsMissing(err) {
+		return fmt.Errorf("delete policy rule priority %d: %w", rule.Priority, err)
+	}
+	return nil
+}
+
+func (e OSCleanupExecutor) rollbackRoute(ctx context.Context, route txstate.RouteRollback) error {
+	if route.Owner != txstate.TransactionOwner {
+		return fmt.Errorf("refuse to rollback non-podlaz route %s table %s", route.CIDR, route.Table)
+	}
+	table, ok := managedTableToken(route.Table)
+	if !ok {
+		return fmt.Errorf("refuse to rollback route %s with non-podlaz table %s", route.CIDR, route.Table)
+	}
+	cidr := strings.TrimSpace(route.CIDR)
+	if cidr == "" {
+		return nil
+	}
+	args := []string{"-4", "route", "del", cidr}
+	if strings.TrimSpace(route.Via) != "" {
+		args = append(args, "via", strings.TrimSpace(route.Via))
+	}
+	if strings.TrimSpace(route.Dev) != "" {
+		if route.Dev != managedInterface {
+			return fmt.Errorf("refuse to rollback route %s with non-podlaz device %s", route.CIDR, route.Dev)
+		}
+		args = append(args, "dev", route.Dev)
+	}
+	args = append(args, "table", table)
+	if err := e.run(ctx, "ip", args...); err != nil && !commandErrorIsMissing(err) {
+		return fmt.Errorf("delete route %s table %s: %w", route.CIDR, route.Table, err)
+	}
+	return nil
+}
+
+func (e OSCleanupExecutor) rollbackTUN(ctx context.Context, tun txstate.TUNRollback) error {
+	if tun.Owner != txstate.TransactionOwner || tun.InterfaceName != managedInterface {
+		return fmt.Errorf("refuse to rollback non-podlaz TUN interface %s", tun.InterfaceName)
+	}
+	if err := e.run(ctx, "ip", "link", "del", "dev", managedInterface); err != nil && !commandErrorIsMissing(err) {
+		return fmt.Errorf("delete TUN device %s: %w", managedInterface, err)
+	}
+	return nil
+}
+
+func (e OSCleanupExecutor) removeGeneratedConfig(config txstate.GeneratedConfigRollback) error {
+	if config.Owner != txstate.TransactionOwner {
+		return fmt.Errorf("refuse to remove non-podlaz generated config %s", config.Path)
+	}
+	path := filepath.Clean(config.Path)
+	if !isUnderDir(filepath.Join(e.RuntimeDir, generatedDirName), path) {
+		return fmt.Errorf("refuse to remove generated config outside podlaz runtime state: %s", config.Path)
+	}
+	if err := os.RemoveAll(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove generated config %s: %w", path, err)
+	}
+	return nil
+}
+
+func (e OSCleanupExecutor) run(ctx context.Context, command string, args ...string) error {
+	path, err := e.Runner.LookPath(command)
+	if err != nil {
+		return fmt.Errorf("%s command is unavailable", command)
+	}
+	result, err := runCommand(ctx, e.Runner, path, args...)
+	if commandSucceeded(result, err) {
+		return nil
+	}
+	return fmt.Errorf("%s %s: %s", command, strings.Join(args, " "), commandFailureMessage(result, err))
+}
+
+func runCommand(ctx context.Context, runner CommandRunner, name string, args ...string) (CommandResult, error) {
+	cmdCtx, cancel := context.WithTimeout(ctx, defaultCommandTimeout)
+	defer cancel()
+	return runner.Run(cmdCtx, name, args...)
+}
+
+func commandSucceeded(result CommandResult, err error) bool {
 	return err == nil && result.ExitCode == 0
 }
 
-func run(ctx context.Context, runner CommandRunner, name string, args ...string) (CommandResult, error) {
-	cmdCtx, cancel := context.WithTimeout(ctx, defaultCommandTimeout)
-	defer cancel()
-	path, err := runner.LookPath(name)
-	if err != nil {
-		return CommandResult{ExitCode: -1}, err
-	}
-	return runner.Run(cmdCtx, path, args...)
+func commandFailedUnexpectedly(result CommandResult, err error) bool {
+	return err != nil || result.ExitCode != 0
 }
 
 func resourceMissing(result CommandResult) bool {
+	if result.ExitCode == 0 {
+		return false
+	}
 	text := strings.ToLower(result.Stdout + " " + result.Stderr)
-	return strings.Contains(text, "does not exist") ||
-		strings.Contains(text, "cannot find device") ||
-		strings.Contains(text, "no such file or directory") ||
-		strings.Contains(text, "no such table")
+	return strings.Contains(text, "does not exist") || strings.Contains(text, "cannot find device") || strings.Contains(text, "no such file or directory") || strings.Contains(text, "no such table")
 }
 
 func commandFailureMessage(result CommandResult, err error) string {
 	parts := make([]string, 0, 3)
 	if result.ExitCode >= 0 {
-		parts = append(parts, "exit code "+strconv.Itoa(result.ExitCode))
+		parts = append(parts, fmt.Sprintf("exit code %d", result.ExitCode))
 	}
 	if result.Stderr != "" {
 		parts = append(parts, "stderr: "+singleLine(result.Stderr))
@@ -393,8 +585,21 @@ func singleLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
-func failed(candidate Candidate, err error) CleanupResult {
-	return CleanupResult{Candidate: candidate, Status: "failed", Message: err.Error()}
+func commandErrorIsMissing(err error) bool {
+	return errorStringContains(err, "does not exist", "cannot find device", "no such process", "no such file or directory", "no such table", "no such file")
+}
+
+func errorStringContains(err error, needles ...string) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	for _, needle := range needles {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func recovered(candidate Candidate) CleanupResult {
@@ -403,4 +608,77 @@ func recovered(candidate Candidate) CleanupResult {
 
 func skipped(candidate Candidate, message string) CleanupResult {
 	return CleanupResult{Candidate: candidate, Status: "skipped", Message: message}
+}
+
+func failed(candidate Candidate, err error) CleanupResult {
+	return CleanupResult{Candidate: candidate, Status: "failed", Message: err.Error()}
+}
+
+func orderCleanupCandidates(candidates []Candidate) []Candidate {
+	ordered := append([]Candidate(nil), candidates...)
+	weight := func(kind string) int {
+		switch kind {
+		case "transaction-state":
+			return 10
+		case "nftables-table":
+			return 20
+		case "tun-interface":
+			return 30
+		case "generated-runtime-configs":
+			return 40
+		case "runtime-directory":
+			return 50
+		default:
+			return 100
+		}
+	}
+	for i := 1; i < len(ordered); i++ {
+		for j := i; j > 0 && weight(ordered[j-1].Kind) > weight(ordered[j].Kind); j-- {
+			ordered[j-1], ordered[j] = ordered[j], ordered[j-1]
+		}
+	}
+	return ordered
+}
+
+func parseNFTTarget(target string) (string, string, bool) {
+	fields := strings.Fields(target)
+	if len(fields) != 2 {
+		return "", "", false
+	}
+	return fields[0], fields[1], true
+}
+
+func isManagedNFTTarget(family, table string) bool {
+	return strings.TrimSpace(family) == managedNFTFamily && strings.TrimSpace(table) == managedNFTTableName
+}
+
+func managedTableToken(table string) (string, bool) {
+	switch strings.TrimSpace(table) {
+	case managedRouteTable, managedRouteTableID:
+		return managedRouteTableID, true
+	default:
+		return "", false
+	}
+}
+
+func isTransactionPath(runtimeDir, path string) bool {
+	transactionsDir := filepath.Join(runtimeDir, txstate.TransactionDirName)
+	return isUnderDir(transactionsDir, path) && strings.HasSuffix(path, txstate.TransactionFileSuffix)
+}
+
+func isUnderDir(dir, path string) bool {
+	dir = filepath.Clean(dir)
+	path = filepath.Clean(path)
+	if path == dir {
+		return true
+	}
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+}
+
+func sameCleanPath(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b)
 }
