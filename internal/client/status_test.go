@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestStatusReturnsUnavailableWhenSocketMissing(t *testing.T) {
@@ -38,11 +41,71 @@ func TestUnavailableMessagePreservesPermissionDeniedGuidance(t *testing.T) {
 		t.Fatalf("expected permission denied classification, got %v", err)
 	}
 	got := UnavailableMessage(err)
-	if !strings.Contains(got, "permission denied") || !strings.Contains(got, "podlaz group") {
-		t.Fatalf("expected permission guidance, got %q", got)
+	if !strings.Contains(got, "permission denied") || !strings.Contains(got, "polkit-gated abstract socket") {
+		t.Fatalf("expected packaged polkit guidance, got %q", got)
+	}
+	if strings.Contains(got, "usermod") || strings.Contains(got, "newgrp") || strings.Contains(got, "podlaz group") {
+		t.Fatalf("primary guidance must not require manual group setup, got %q", got)
 	}
 	if strings.Contains(got, ErrDaemonUnavailable.Error()) {
 		t.Fatalf("user-facing message should not include sentinel error text, got %q", got)
+	}
+}
+
+func TestUnavailableMessageExplainsUnavailablePolkitFallback(t *testing.T) {
+	filesystemCause := &os.PathError{Op: "connect", Path: "/run/podlaz/podlazd.sock", Err: os.ErrPermission}
+	filesystemErr := daemonUnavailableError{
+		detail:           unavailableDetail("/run/podlaz/podlazd.sock", filesystemCause),
+		cause:            filesystemCause,
+		permissionDenied: true,
+	}
+	abstractErr := daemonUnavailableError{
+		detail: unavailableDetail(api.AbstractSocketAddress(), syscall.ECONNREFUSED),
+		cause:  syscall.ECONNREFUSED,
+	}
+
+	err := abstractSocketFallbackError(filesystemErr, abstractErr)
+	if !IsDaemonUnavailable(err) {
+		t.Fatalf("expected daemon unavailable classification, got %T: %v", err, err)
+	}
+	if !IsDaemonPermissionDenied(err) {
+		t.Fatalf("expected original filesystem permission-denied classification, got %T: %v", err, err)
+	}
+	got := UnavailableMessage(err)
+	for _, want := range []string{
+		"Authentication service is unavailable",
+		"polkit IPC path",
+		"plz doctor",
+		"PODLAZ_SERVICE=systemd",
+		"PODLAZ_POLKIT_AUTHORIZATION=required",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in fallback guidance, got %q", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"daemon socket podlazd refused the connection",
+		"\x00",
+		"usermod",
+		"newgrp",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("fallback guidance contains misleading or manual setup text %q: %q", forbidden, got)
+		}
+	}
+}
+
+func TestAbstractFallbackPreservesReachableDaemonProtocolError(t *testing.T) {
+	filesystemCause := &os.PathError{Op: "connect", Path: "/run/podlaz/podlazd.sock", Err: os.ErrPermission}
+	filesystemErr := daemonUnavailableError{detail: unavailableDetail("/run/podlaz/podlazd.sock", filesystemCause), cause: filesystemCause, permissionDenied: true}
+	protocolErr := errors.New("daemon status response was invalid: missing daemon field")
+
+	err := abstractSocketFallbackError(filesystemErr, protocolErr)
+	if !errors.Is(err, protocolErr) {
+		t.Fatalf("reachable daemon protocol errors must be authoritative, got %v", err)
+	}
+	if IsDaemonUnavailable(err) {
+		t.Fatalf("protocol errors must not be downgraded to daemon unavailable: %v", err)
 	}
 }
 
