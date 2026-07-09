@@ -80,8 +80,8 @@ func TestCleanupStaleResolvedLinkRevertsMissingInterfaceRecord(t *testing.T) {
 		},
 		commands: map[string][]daemonRecoveryFakeCommand{
 			"ip link show dev podlaz0": {{stderr: `Device "podlaz0" does not exist.`, exitCode: 1, err: errors.New("exit status 1")}},
-			"resolvectl revert podlaz0": {{ }},
-			"resolvectl status podlaz0 --no-pager": {{stderr: "Link podlaz0 does not exist.", exitCode: 1, err: errors.New("exit status 1")}},
+			"resolvectl revert podlaz0": {{}}
+,			"resolvectl status podlaz0 --no-pager": {{stderr: "Link podlaz0 does not exist.", exitCode: 1, err: errors.New("exit status 1")}},
 		},
 	}
 	candidate := recovery.Candidate{Kind: recoveryResolvedCandidateKind, Description: "systemd-resolved link state", Target: recoveryResolvedInterface}
@@ -109,8 +109,8 @@ func TestCleanupStaleResolvedLinkDoesNotClaimRecoveredWhenRecordPersists(t *test
 		},
 		commands: map[string][]daemonRecoveryFakeCommand{
 			"ip link show dev podlaz0": {{stderr: `Device "podlaz0" does not exist.`, exitCode: 1, err: errors.New("exit status 1")}},
-			"resolvectl revert podlaz0": {{ }},
-			"resolvectl status podlaz0 --no-pager": {{stdout: `Link 7 (podlaz0)
+			"resolvectl revert podlaz0": {{}}
+,			"resolvectl status podlaz0 --no-pager": {{stdout: `Link 7 (podlaz0)
     Current Scopes: none`}},
 		},
 	}
