@@ -19,10 +19,12 @@ Unix socket API, generated runtime configuration, supervised Xray child
 processes, startup recovery scan visibility, and daemon-owned cleanup or
 networking transactions where the current milestone enables them.
 .PP
-The daemon API is local-only and uses HTTP/JSON over a Unix domain socket at
+The daemon API is local-only and uses HTTP/JSON over Unix domain sockets.
+Packaged deployments keep the filesystem socket at
 .IR /run/podlaz/podlazd.sock
-for packaged deployments. User-facing command names, output, exit codes, and
-JSON shape belong to
+as an internal/admin fallback and expose a packaged abstract Unix socket for
+ordinary CLI clients that must be authorized through polkit. User-facing
+command names, output, exit codes, and JSON shape belong to
 .BR podlaz (1)
 and the canonical project documentation.
 .PP
@@ -51,26 +53,29 @@ journalctl -u podlazd -n 50 --no-pager
 sudo systemctl stop podlazd
 .EE
 .PP
+Packaged service access for ordinary users is polkit-mediated by default. The
+unit sets
+.B PODLAZ_SERVICE=systemd
+and
+.BR PODLAZ_POLKIT_AUTHORIZATION=required ,
+so normal commands such as
+.BR "plz status" ,
+.BR "plz connect" ,
+.BR "plz disconnect" ,
+and
+.BR "plz recover --execute --yes"
+should not require adding the current user to the
+.B podlaz
+group. If authentication is required, the system polkit agent prompts for an
+admin password.
+.PP
 After manually installing the repository unit for development, reload systemd
 before starting the service:
 .EX
 sudo systemctl daemon-reload
 sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl start podlazd
-.EE
-.PP
-Users that run
-.BR podlaz (1)
-against the packaged daemon need access to the daemon socket, normally through
-the
-.B podlaz
-group. Apply the one-time group membership and refresh the current shell or
-start a new login session before verifying access:
-.EX
-sudo usermod -aG podlaz "$USER"
-newgrp podlaz
-podlaz status
-podlaz doctor
+plz status
 .EE
 .SH FILES
 .TP
@@ -88,20 +93,21 @@ Daemon runtime directory. Packaged systemd units create it with
 .B RuntimeDirectory=podlaz
 and mode
 .BR 0711 .
-The group execute bit lets members of the
-.B podlaz
-group traverse to the control socket without listing daemon-private runtime
-state. The other execute bit lets the unprivileged
+The execute bits allow traversal for the daemon socket boundary and for the
+unprivileged
 .B podlaz-xray
-child identity traverse to its generated runtime config without granting read
-or write access to daemon-private directories.
+child identity to reach generated runtime config when required. They do not make
+daemon-private runtime state listable or writable by ordinary users.
 .TP
 .I /run/podlaz/podlazd.sock
-Local daemon API socket. The daemon applies socket mode
+Filesystem local daemon API socket. The daemon applies socket mode
 .BR 0660 .
-Only this control socket is exposed to the
-.B podlaz
-group by the package/runtime contract.
+Packaged CLI clients use the polkit-gated abstract socket after filesystem
+permission denial; this filesystem socket remains a narrow internal/admin
+fallback rather than the normal user-facing access path.
+.TP
+.I /usr/share/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy
+Packaged polkit action policy for privileged daemon operations.
 .TP
 .I /run/podlaz/generated/
 Daemon-owned generated runtime configuration directory. Generated Xray config
@@ -162,10 +168,12 @@ TUN rollback target. The CLI must not become a privileged or SUID networking
 mutator.
 .SH RUNTIME STATE
 On startup, the daemon creates or uses the runtime directory, creates a lock
-file, removes only a stale Unix socket at the socket path, fails if the socket
-path exists but is not a Unix socket, listens on the Unix socket, applies the
-socket mode, and serves local status, doctor, connect, disconnect, and recovery
-endpoints according to the current implementation.
+file, removes only a stale Unix socket at the filesystem socket path, fails if
+the socket path exists but is not a Unix socket, listens on the filesystem Unix
+socket, applies the socket mode, listens on the packaged abstract Unix socket
+when packaged polkit authorization is enabled, and serves local status, doctor,
+connect, disconnect, and recovery endpoints according to the current
+implementation.
 .PP
 During proxy-only connect, the daemon selects the Xray execution identity,
 validates the mode and profile snapshot received from the CLI, builds a
@@ -181,8 +189,8 @@ verifies the Xray-owned TUN link, applies podlaz-owned host networking state,
 verifies connectivity, and commits only after those checks pass.
 .PP
 During graceful shutdown, the daemon stops an active Xray child, shuts down the
-HTTP server, closes the Unix socket listener, removes the socket path, and
-removes the lock file.
+HTTP server, closes the Unix socket listeners, removes the filesystem socket
+path, and removes the lock file.
 .PP
 On disconnect, the daemon rolls back podlaz-owned host networking state, stops
 the active Xray child, removes the generated runtime config path, and reports
@@ -217,22 +225,22 @@ systemctl status podlazd --no-pager
 journalctl -u podlazd -n 50 --no-pager
 .EE
 .TP
-.B Permission denied when using podlaz status or doctor
-Check that the user belongs to the
-.B podlaz
-group and that the socket exists with restrictive group access. Normal CLI
-workflows use this group access model now, or a future polkit authorization
-flow when that contract exists.
+.B Permission denied or authentication service unavailable when using podlaz status or doctor
+The normal packaged path is filesystem-socket attempt, permission-denied
+fallback to the polkit-gated abstract socket, then daemon-side polkit
+authorization for privileged operations. Verify the service is running in
+packaged polkit mode and that polkit is installed and active:
 .EX
-id
-getent group podlaz
-ls -ld /run/podlaz
-ls -l /run/podlaz/podlazd.sock
-sudo usermod -aG podlaz "$USER"
-newgrp podlaz
-podlaz status
-podlaz doctor
+systemctl status podlazd --no-pager
+systemctl show podlazd -p Environment --no-pager
+systemctl status polkit --no-pager || systemctl status polkitd --no-pager
+journalctl -u podlazd -n 100 --no-pager
+plz doctor
 .EE
+The service environment should include
+.B PODLAZ_SERVICE=systemd
+and
+.BR PODLAZ_POLKIT_AUTHORIZATION=required .
 .TP
 .B Socket path exists but daemon cannot start
 The daemon removes stale Unix sockets, but it fails when the socket path is a
@@ -263,14 +271,12 @@ Manual development install of service identities and the systemd unit:
 sudo install -m 0644 packaging/sysusers.d/podlaz.conf \
   /usr/lib/sysusers.d/podlaz.conf
 sudo systemd-sysusers /usr/lib/sysusers.d/podlaz.conf
-sudo usermod -aG podlaz "$USER"
-newgrp podlaz
 sudo install -m 0644 packaging/systemd/podlazd.service \
   /etc/systemd/system/podlazd.service
 sudo systemctl daemon-reload
 sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl start podlazd
-podlaz status
+plz status
 .EE
 .SH SEE ALSO
 .BR podlaz (1),
