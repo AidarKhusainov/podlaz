@@ -34,6 +34,8 @@ test -x /usr/bin/podlazd
 test -x /usr/lib/podlaz/xray
 test -s /usr/share/doc/podlaz/third-party/xray-LICENSE
 test -f /usr/lib/systemd/system/podlazd.service
+grep -Fx 'Environment=PODLAZ_SERVICE=systemd' /usr/lib/systemd/system/podlazd.service
+grep -Fx 'Environment=PODLAZ_POLKIT_AUTHORIZATION=required' /usr/lib/systemd/system/podlazd.service
 grep -Fx 'Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray' /usr/lib/systemd/system/podlazd.service
 test -f /usr/lib/sysusers.d/podlaz.conf
 test -f /usr/share/bash-completion/completions/podlaz
@@ -71,6 +73,8 @@ if [ "${validate_service}" = 1 ]; then
   sudo systemctl is-enabled --quiet podlazd.service
   sudo systemctl is-active --quiet podlazd.service
   test -S /run/podlaz/podlazd.sock
+  podlaz status | grep -Fx 'Daemon: running'
+  plz status | grep -Fx 'Daemon: running'
 fi
 
 sudo -E apt install -y --reinstall "./${package}"

@@ -26,6 +26,23 @@ func (c DoctorClient) Doctor(ctx context.Context) (api.DoctorResponse, error) {
 		timeout = 750 * time.Millisecond
 	}
 
+	doctor, err := retryDaemonSocketReadiness(ctx, func(attemptCtx context.Context) (api.DoctorResponse, error) {
+		return c.doctorViaSocket(attemptCtx, socketPath, timeout)
+	})
+	if err == nil {
+		return doctor, nil
+	}
+	if shouldTryAbstractSocket(socketPath, err) {
+		fallbackDoctor, fallbackErr := c.doctorViaSocket(ctx, api.AbstractSocketAddress(), timeout)
+		if fallbackErr == nil {
+			return fallbackDoctor, nil
+		}
+		return api.DoctorResponse{}, abstractSocketFallbackError(err, fallbackErr)
+	}
+	return api.DoctorResponse{}, err
+}
+
+func (c DoctorClient) doctorViaSocket(ctx context.Context, socketPath string, timeout time.Duration) (api.DoctorResponse, error) {
 	dialer := net.Dialer{Timeout: timeout}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -42,7 +59,7 @@ func (c DoctorClient) Doctor(ctx context.Context) (api.DoctorResponse, error) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.DoctorResponse{}, fmt.Errorf("%w: %s", ErrDaemonUnavailable, unavailableDetail(socketPath, err))
+		return api.DoctorResponse{}, newDaemonUnavailableError(socketPath, err)
 	}
 	defer resp.Body.Close()
 

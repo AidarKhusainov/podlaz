@@ -74,7 +74,7 @@ func (c StatusClient) Status(ctx context.Context) (api.StatusResponse, error) {
 		if fallbackErr == nil {
 			return fallbackStatus, nil
 		}
-		return api.StatusResponse{}, fallbackErr
+		return api.StatusResponse{}, abstractSocketFallbackError(err, fallbackErr)
 	}
 	return api.StatusResponse{}, err
 }
@@ -96,11 +96,7 @@ func (c StatusClient) statusViaSocket(ctx context.Context, socketPath string, ti
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.StatusResponse{}, daemonUnavailableError{
-			detail:           unavailableDetail(socketPath, err),
-			cause:            err,
-			permissionDenied: isPermissionDenied(err),
-		}
+		return api.StatusResponse{}, newDaemonUnavailableError(socketPath, err)
 	}
 	defer resp.Body.Close()
 
@@ -173,24 +169,59 @@ func UnavailableMessage(err error) string {
 	return message
 }
 
+func newDaemonUnavailableError(socketPath string, err error) daemonUnavailableError {
+	return daemonUnavailableError{
+		detail:           unavailableDetail(socketPath, err),
+		cause:            err,
+		permissionDenied: isPermissionDenied(err),
+	}
+}
+
+func abstractSocketFallbackError(filesystemErr, abstractErr error) error {
+	if !IsDaemonUnavailable(abstractErr) {
+		return abstractErr
+	}
+	return daemonUnavailableError{
+		detail:           abstractSocketFallbackDetail(abstractErr),
+		cause:            errors.Join(filesystemErr, abstractErr),
+		permissionDenied: errors.Is(filesystemErr, ErrDaemonPermissionDenied),
+	}
+}
+
+func abstractSocketFallbackDetail(abstractErr error) string {
+	message := "Authentication service is unavailable or podlazd is not listening on the polkit IPC path. Run `plz doctor` or restart podlazd. If podlazd is running, ensure the packaged service uses PODLAZ_SERVICE=systemd and PODLAZ_POLKIT_AUTHORIZATION=required"
+	if abstractErr == nil {
+		return message
+	}
+	return message + ". Last polkit IPC error: " + UnavailableMessage(abstractErr)
+}
+
 func unavailableDetail(socketPath string, err error) string {
+	displayPath := displaySocketPath(socketPath)
 	if isPermissionDenied(err) {
-		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); packaged installs retry a polkit-gated abstract socket when podlazd.service runs with PODLAZ_POLKIT_AUTHORIZATION=required, or an administrator may use the explicit podlaz group fallback", socketPath)
+		return fmt.Sprintf("daemon socket %s is not accessible (permission denied); packaged installs use a polkit-gated abstract socket for ordinary users, while the filesystem socket remains an internal/admin fallback", displayPath)
 	}
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Sprintf("daemon socket %s does not exist; start podlazd", socketPath)
+		return fmt.Sprintf("daemon socket %s does not exist; start podlazd", displayPath)
 	}
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return fmt.Sprintf("daemon socket %s refused the connection; remove a stale socket or restart podlazd", socketPath)
+		return fmt.Sprintf("daemon socket %s refused the connection; remove a stale socket or restart podlazd", displayPath)
 	}
 	if isTimeout(err) {
-		return fmt.Sprintf("daemon socket %s did not respond before timeout; start or restart podlazd", socketPath)
+		return fmt.Sprintf("daemon socket %s did not respond before timeout; start or restart podlazd", displayPath)
 	}
-	return fmt.Sprintf("daemon socket %s is not reachable; start or restart podlazd", socketPath)
+	return fmt.Sprintf("daemon socket %s is not reachable; start or restart podlazd", displayPath)
+}
+
+func displaySocketPath(socketPath string) string {
+	if socketPath == api.AbstractSocketAddress() {
+		return "abstract " + api.AbstractSocketName
+	}
+	return socketPath
 }
 
 func shouldTryAbstractSocket(socketPath string, err error) bool {
-	return socketPath == api.SocketPath("") && isPermissionDenied(err)
+	return socketPath == api.SocketPath("") && errors.Is(err, ErrDaemonPermissionDenied)
 }
 
 func isPermissionDenied(err error) bool {

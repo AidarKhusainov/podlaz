@@ -57,37 +57,30 @@ Package installation:
 - installs `plz` as a symlink to the canonical CLI binary;
 - installs the pinned Xray helper and its third-party notice file;
 - installs shell completion files for both `podlaz` and `plz`;
-- installs the optional polkit action file;
+- installs the polkit action file;
 - installs the systemd unit;
 - installs the sysusers configuration;
 - creates or declares packaged service identities through `systemd-sysusers` when that command is available;
 - unmasks, enables, and records `podlazd.service` state through Debian systemd helper tools when available;
 - repairs stale Debian helper-state-only enablement only for install-from-Config-Files package state marked by `preinstall` and confirmed by Debian helper state;
 - requests `podlazd.service` startup through Debian systemd invocation helper tools when the unit is enabled after helper processing;
+- enables polkit authorization for packaged daemon access;
 - does not start Xray because of package installation alone;
 - does not create TUN devices;
 - does not change routes, DNS, nftables, firewall rules, or host resolver files;
-- does not enable polkit authorization by itself;
 - does not install AppStream metadata, desktop entries, or icons.
 
-Users who should access the packaged daemon from the ordinary CLI need one-time membership in the `podlaz` group and a refreshed login/session group set before using daemon-backed commands:
+Ordinary CLI users do not need membership in the `podlaz` group for standard packaged use. The packaged service runs with `PODLAZ_SERVICE=systemd` and `PODLAZ_POLKIT_AUTHORIZATION=required`, keeps the filesystem socket as an internal/admin fallback, and exposes the packaged abstract Unix socket as the normal local IPC path for user-facing CLI commands. Privileged operations are authorized through polkit; when authentication is required, the system polkit agent is responsible for prompting for an admin password.
 
-```bash
-sudo usermod -aG podlaz "$USER"
-newgrp podlaz
-podlaz status
-podlaz doctor
-```
-
-This group-mediated access applies to the daemon socket only. The packaged daemon itself runs as `root:podlaz` with a bounded capability set for networking, child identity transitions, and child process signaling.
+The internal `podlaz` and `podlaz-xray` system identities still exist for daemon/runtime isolation. The packaged daemon runs as `root:podlaz` with a bounded capability set for networking, child identity transitions, and child process signaling, but ordinary users should not be instructed to join `podlaz` as part of the primary setup path.
 
 Proxy-only Xray is started as the dedicated `podlaz-xray:podlaz-xray` identity without `CAP_NET_ADMIN`. Native TUN Xray is also started as `podlaz-xray:podlaz-xray`, but receives only `CAP_NET_ADMIN` as an ambient capability so pinned Xray can open `/dev/net/tun` and configure the Xray-owned `podlaz0` link. The unit keeps `NoNewPrivileges=yes` and does not rely on file capabilities or setuid helpers.
 
 ## Packaged daemon socket boundary
 
-Packaged installs keep the filesystem daemon socket narrow and may expose an abstract Unix socket for the polkit-gated daemon boundary. CLI clients first try the filesystem socket. If that attempt fails with a transport-level permission error, the client retries the packaged abstract socket.
+Packaged installs keep the filesystem daemon socket narrow and expose an abstract Unix socket for the polkit-gated daemon boundary. CLI clients first try the filesystem socket. If that attempt fails with a transport-level permission error, the client retries the packaged abstract socket.
 
-The fallback is not a generic error-masking layer. Daemon responses from the abstract socket are surfaced as-is: authorization denied, authorization unavailable on headless/server systems, malformed JSON, and invalid daemon responses remain distinct from a stopped or unreachable daemon.
+The fallback is not a generic error-masking layer. Daemon responses from the abstract socket are surfaced as-is: authorization denied, authorization unavailable on headless/server systems, malformed JSON, and invalid daemon responses remain distinct from a stopped or unreachable daemon. If the filesystem socket is permission-denied and the abstract socket is unavailable, the CLI must report that the authentication service or packaged polkit IPC path is unavailable instead of reporting only a raw abstract-socket connection failure.
 
 ## State ownership and lifecycle
 
@@ -107,4 +100,4 @@ dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 dist/podlaz_0.0.0~dev-1_linux_arm64.deb
 ```
 
-The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, bounded daemon capabilities, the ambient `CAP_NET_ADMIN` required only for native TUN Xray, packaged Xray helper layout and architecture, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, absence of obsolete TUN helper artifacts, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
+The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, required packaged polkit authorization environment, bounded daemon capabilities, the ambient `CAP_NET_ADMIN` required only for native TUN Xray, packaged Xray helper layout and architecture, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, absence of obsolete TUN helper artifacts, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.

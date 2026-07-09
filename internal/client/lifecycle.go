@@ -51,7 +51,7 @@ func (c LifecycleClient) do(ctx context.Context, operation, path string, payload
 		if fallbackErr == nil {
 			return fallbackLifecycle, nil
 		}
-		return api.LifecycleResponse{}, fallbackErr
+		return api.LifecycleResponse{}, abstractSocketFallbackError(err, fallbackErr)
 	}
 	return api.LifecycleResponse{}, err
 }
@@ -85,11 +85,7 @@ func (c LifecycleClient) doViaSocket(ctx context.Context, socketPath string, tim
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.LifecycleResponse{}, daemonUnavailableError{
-			detail:           unavailableDetail(socketPath, err),
-			cause:            err,
-			permissionDenied: isPermissionDenied(err),
-		}
+		return api.LifecycleResponse{}, newDaemonUnavailableError(socketPath, err)
 	}
 	defer resp.Body.Close()
 
