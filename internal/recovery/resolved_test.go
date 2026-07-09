@@ -114,8 +114,8 @@ func newResolvedRecoveryRunner(ipLinkResults, resolvedStatusResults []resolvedRe
 			"resolvectl": "/usr/bin/resolvectl",
 		},
 		commands: map[string][]resolvedRecoveryCommand{
-			"ip link show dev podlaz0":                ipLinkResults,
-			"nft list table inet podlaz":              {missingNFTTable()},
+			"ip link show dev podlaz0":             ipLinkResults,
+			"nft list table inet podlaz":           []resolvedRecoveryCommand{missingNFTTable()},
 			"resolvectl status podlaz0 --no-pager": resolvedStatusResults,
 		},
 	}
