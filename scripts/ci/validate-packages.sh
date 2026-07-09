@@ -77,14 +77,30 @@ validate_executable_mode() {
 validate_bash_completion_protocol_boundary() {
   local extracted_root="$1"
   local bash_completion="${extracted_root}/usr/share/bash-completion/completions/podlaz"
+  local pattern
+
+  # These are literal generated Bash snippets, not expressions evaluated by this
+  # validation script.
+  # shellcheck disable=SC2016
+  local -a required_literal_patterns=(
+    'value-only display fallback'
+    'COMPREPLY=("${values[@]}")'
+  )
+  # shellcheck disable=SC2016
+  local -a forbidden_literal_patterns=(
+    'matches+=("$line")'
+    'COMPREPLY+=("$line")'
+    'COMPREPLY+=("${line}")'
+    'COMPREPLY=("${matches[@]}")'
+  )
 
   test -f "${bash_completion}"
-  grep -F 'value-only display fallback' "${bash_completion}"
-  grep -F 'COMPREPLY=("${values[@]}")' "${bash_completion}"
-  assert_no_fixed_match 'matches+=("$line")' "${bash_completion}"
-  assert_no_fixed_match 'COMPREPLY+=("$line")' "${bash_completion}"
-  assert_no_fixed_match 'COMPREPLY+=("${line}")' "${bash_completion}"
-  assert_no_fixed_match 'COMPREPLY=("${matches[@]}")' "${bash_completion}"
+  for pattern in "${required_literal_patterns[@]}"; do
+    grep -F "${pattern}" "${bash_completion}"
+  done
+  for pattern in "${forbidden_literal_patterns[@]}"; do
+    assert_no_fixed_match "${pattern}" "${bash_completion}"
+  done
 }
 
 run_native_packaged_xray_schema_test() {
