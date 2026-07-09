@@ -33,6 +33,8 @@ test -x /usr/bin/podlazd
 test -x /usr/lib/podlaz/xray
 test -s /usr/share/doc/podlaz/third-party/xray-LICENSE
 test -f /usr/lib/systemd/system/podlazd.service
+grep -Fx 'Environment=PODLAZ_SERVICE=systemd' /usr/lib/systemd/system/podlazd.service
+grep -Fx 'Environment=PODLAZ_POLKIT_AUTHORIZATION=required' /usr/lib/systemd/system/podlazd.service
 grep -Fx 'Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray' /usr/lib/systemd/system/podlazd.service
 test -f /usr/lib/sysusers.d/podlaz.conf
 test -f /usr/share/bash-completion/completions/podlaz
