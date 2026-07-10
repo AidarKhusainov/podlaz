@@ -164,7 +164,7 @@ jobs:
           path: dist/release
 
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz
