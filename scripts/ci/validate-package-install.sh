@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ci/validate-installed-status.sh
+source "${script_dir}/validate-installed-status.sh"
+
 if [ "$#" -ne 1 ]; then
   echo "usage: $0 <amd64-package.deb>" >&2
   exit 2
@@ -73,8 +77,9 @@ if [ "${validate_service}" = 1 ]; then
   sudo systemctl is-enabled --quiet podlazd.service
   sudo systemctl is-active --quiet podlazd.service
   test -S /run/podlaz/podlazd.sock
-  podlaz status | grep -Fx 'Daemon: running'
-  plz status | grep -Fx 'Daemon: running'
+  for binary in podlaz plz; do
+    validate_installed_daemon_status "${binary}" "/tmp/${binary}-status"
+  done
 fi
 
 sudo -E apt install -y --reinstall "./${package}"
