@@ -28,7 +28,7 @@ validate_installed_daemon_status() {
       ;;
   esac
 
-  if ! grep -Fx 'Daemon: running' "${stdout_file}"; then
+  if ! grep -Fxq 'Daemon: running' "${stdout_file}"; then
     echo "${binary} status did not confirm that the packaged daemon is running" >&2
     return 1
   fi
