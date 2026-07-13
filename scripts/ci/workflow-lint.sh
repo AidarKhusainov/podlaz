@@ -23,6 +23,8 @@ mapfile -t e2e_scripts < <(
 )
 
 shellcheck -x -s bash "${core_scripts[@]}"
+bash scripts/ci/validate-installed-status-test.sh
+
 # E2E entrypoints intentionally collect host diagnostics through sudo-owned commands
 # into user-owned artifact files and carry defensive state variables for cleanup.
 shellcheck -x -s bash -P scripts/e2e \
