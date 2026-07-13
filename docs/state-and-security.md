@@ -61,6 +61,7 @@ For native Xray TUN startup, durable rollback order is:
 - `/run/podlaz` must not be deleted wholesale.
 - Stale PID metadata alone is not enough to signal a process.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
+- Stale `systemd-resolved` link records for missing `podlaz0` may be reverted with `resolvectl revert podlaz0`; recovery must not silently restart `systemd-resolved` and must tell the user when a manual restart is still required.
 
 ## Redaction
 

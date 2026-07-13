@@ -54,6 +54,8 @@ func (e DaemonCleanupExecutor) CleanupMany(ctx context.Context, candidate Candid
 	switch candidate.Kind {
 	case "tun-interface":
 		return []CleanupResult{osExec.cleanupTUNInterface(ctx, candidate)}
+	case managedDNSCandidateKind:
+		return []CleanupResult{osExec.cleanupManagedResolvedLink(ctx, candidate)}
 	case "nftables-table":
 		return []CleanupResult{osExec.cleanupNFTablesTable(ctx, candidate)}
 	case "transaction-state":

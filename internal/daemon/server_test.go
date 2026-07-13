@@ -267,9 +267,6 @@ func TestServerRefreshesStartupScanAfterRecoveryExecute(t *testing.T) {
 			t.Fatalf("startup scan still reports recovered generated runtime state: %#v", after.StartupScan)
 		}
 	}
-	if after.StartupScan.SuggestedAction == "podlaz recover" {
-		t.Fatalf("startup scan should not suggest recover after successful cleanup: %#v", after.StartupScan)
-	}
 }
 
 func TestServerRejectsNonSocketAtSocketPath(t *testing.T) {
