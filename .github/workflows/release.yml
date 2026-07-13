@@ -158,7 +158,7 @@ jobs:
       id-token: write
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
