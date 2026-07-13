@@ -49,6 +49,8 @@ Before publication, the workflow validates:
 
 Package install validation must confirm that install does not start Xray and does not change host routing. The package may make `podlazd.service` available through Debian helper-managed service enable/start behavior.
 
+The service availability smoke requires the systemd unit to be enabled and active, the packaged daemon socket to exist, and both `podlaz status` and `plz status` to report `Daemon: running`. Status exit code `3` is accepted only for this smoke because it is the documented diagnostic result for stale or incomplete ambient host state; exit codes other than `0` and `3`, or missing daemon-running output, still fail release validation.
+
 ## Publication
 
 The workflow treats published release assets as immutable. It never uploads with `--clobber` and never replaces an already attached expected artifact.
