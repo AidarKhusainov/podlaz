@@ -93,11 +93,3 @@ privileged networking operations. The CLI remains unprivileged and uses the
 socket access boundary.
 
 Expected systemd baseline:
-
-- `NoNewPrivileges=true`;
-- `ProtectSystem=strict`;
-- `ProtectHome=true`;
-- `PrivateTmp=true`;
-- writable paths limited to systemd-owned runtime and state directories;
-- daemon capabilities limited to those required by the implemented networking paths;
-- child processes must not inherit daemon capabilities unless their own runtime path explicitly requires them.
