@@ -9,10 +9,10 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-// recoveryRollbackMetadata fills rollback categories that the daemon may not
-// have persisted before an abrupt stop from the durable desired plan written
-// before host mutation. Every synthesized entry still passes the normal
-// ownership and fixed-target guards in DaemonCleanupExecutor.
+// recoveryRollbackMetadata fills only rollback categories in podlaz-reserved
+// namespaces that the daemon may not have persisted before an abrupt stop.
+// Main-table server bypass state is intentionally excluded because desired state
+// alone cannot prove that podlaz, rather than another process, created it.
 func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 	rollback := tx.Rollback
 	desired := tx.DesiredPlan
@@ -22,7 +22,7 @@ func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 	}
 	if len(rollback.Routes) == 0 {
 		for _, route := range desired.Routes {
-			if route.Operation != "add" || !ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
+			if route.Operation != "add" || route.Table != planner.TunRoutingTable || !ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
 				continue
 			}
 			rollback.Routes = append(rollback.Routes, txstate.RouteRollback{
@@ -37,9 +37,10 @@ func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 	if len(rollback.PolicyRules) == 0 {
 		for _, step := range desired.Steps {
 			rule, ok := desiredPolicyRuleRollback(step)
-			if ok {
-				rollback.PolicyRules = append(rollback.PolicyRules, rule)
+			if !ok || !reservedTunPolicyRule(rule) {
+				continue
 			}
+			rollback.PolicyRules = append(rollback.PolicyRules, rule)
 		}
 	}
 	if len(rollback.DNS) == 0 && desired.DNS.Link == managedInterface && systemdResolvedBackend(desired.DNS.Backend) && ownedRollbackMetadata(desired.DNS.Owner, netexecutor.OwnerDNS) {
@@ -78,6 +79,14 @@ func desiredPolicyRuleRollback(step txstate.PlannedStep) (txstate.PolicyRuleRoll
 		return txstate.PolicyRuleRollback{}, false
 	}
 	return rule, true
+}
+
+func reservedTunPolicyRule(rule txstate.PolicyRuleRollback) bool {
+	return rule.Priority == planner.TunRulePriority &&
+		rule.Table == planner.TunRoutingTable &&
+		strings.TrimSpace(rule.From) == planner.IPv4DefaultSelector &&
+		strings.TrimSpace(rule.To) == "" &&
+		strings.TrimSpace(rule.Mark) == ""
 }
 
 const normalizedSystemdResolvedBackend = "systemd-resolved"
