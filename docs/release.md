@@ -53,6 +53,8 @@ The service availability smoke requires the systemd unit to be enabled and activ
 
 Pull-request CI and tagged release validation must invoke the same canonical `scripts/ci/validate-package-install.sh` script with `PODLAZ_VALIDATE_SERVICE=1`. Release validation may supply release-specific version metadata, but it must not introduce a stricter package installation or service-availability contract that was not already exercised before merge. `scripts/ci/validate-package-workflow-contract.sh` enforces this parity.
 
+The tagged workflow remains responsible for rebuilding immutable artifacts from the tag and checking their release metadata, checksums, attestations, and publication behavior. Those release-only checks may still fail after tagging, but package installation, service availability, CLI access, and purge behavior must already have passed the pull-request gate.
+
 ## Publication
 
 The workflow treats published release assets as immutable. It never uploads with `--clobber` and never replaces an already attached expected artifact.
