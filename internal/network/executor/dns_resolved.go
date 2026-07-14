@@ -220,22 +220,34 @@ func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link str
 	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
 		return newResolvedDNSVerifyError(link, false, "foreign route-only DNS owner %s still has %s", foreign.Name, resolvedRouteOnlyDomain)
 	}
-	resolvedLink, ok := findResolvedLink(links, link)
-	if !ok {
+	targetLinks := findResolvedLinks(links, link)
+	if len(targetLinks) == 0 {
 		return newResolvedDNSVerifyError(link, true, "link status not found")
 	}
+	lastMismatch := "link configuration does not match the DNS plan"
+	for _, resolvedLink := range targetLinks {
+		mismatch := resolvedLinkMismatch(resolvedLink, plan)
+		if mismatch == "" {
+			return nil
+		}
+		lastMismatch = mismatch
+	}
+	return newResolvedDNSVerifyError(link, true, "%s", lastMismatch)
+}
+
+func resolvedLinkMismatch(link netsnapshot.ResolvedLink, plan planner.TunDNSPlan) string {
 	for _, server := range plan.Servers {
-		if !containsDNSValue(resolvedLink.DNSServers, server) {
-			return newResolvedDNSVerifyError(link, true, "DNS server %s not found", server)
+		if !containsDNSValue(link.DNSServers, server) {
+			return fmt.Sprintf("DNS server %s not found", server)
 		}
 	}
-	if !containsDNSValue(resolvedLink.DNSDomains, resolvedRouteOnlyDomain) {
-		return newResolvedDNSVerifyError(link, true, "route-only domain %s not found", resolvedRouteOnlyDomain)
+	if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
+		return fmt.Sprintf("route-only domain %s not found", resolvedRouteOnlyDomain)
 	}
-	if !containsDNSValue(resolvedLink.Protocols, "+DefaultRoute") {
-		return newResolvedDNSVerifyError(link, true, "DNS default route is not enabled")
+	if !containsDNSValue(link.Protocols, "+DefaultRoute") {
+		return "DNS default route is not enabled"
 	}
-	return nil
+	return ""
 }
 
 type resolvedDNSVerifyError struct {
@@ -286,13 +298,14 @@ func findForeignRouteOnlyDNSOwner(links []netsnapshot.ResolvedLink, targetLink s
 	return netsnapshot.ResolvedLink{}, false
 }
 
-func findResolvedLink(links []netsnapshot.ResolvedLink, name string) (netsnapshot.ResolvedLink, bool) {
+func findResolvedLinks(links []netsnapshot.ResolvedLink, name string) []netsnapshot.ResolvedLink {
+	matches := make([]netsnapshot.ResolvedLink, 0, 1)
 	for _, link := range links {
 		if link.Name == name {
-			return link, true
+			matches = append(matches, link)
 		}
 	}
-	return netsnapshot.ResolvedLink{}, false
+	return matches
 }
 
 func containsDNSValue(values []string, want string) bool {
