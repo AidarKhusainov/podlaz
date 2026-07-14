@@ -7,11 +7,14 @@ workflows=(
 )
 
 for workflow in "${workflows[@]}"; do
-  if [ "$(grep -Fc 'bash scripts/ci/validate-package-install.sh' "${workflow}")" -ne 1 ]; then
+  validator_count="$(grep -Fc 'bash scripts/ci/validate-package-install.sh' "${workflow}" || true)"
+  if [ "${validator_count}" -ne 1 ]; then
     echo "${workflow} must invoke the canonical package install validator exactly once" >&2
     exit 1
   fi
-  if [ "$(grep -Fc "PODLAZ_VALIDATE_SERVICE: '1'" "${workflow}")" -ne 1 ]; then
+
+  service_count="$(grep -Fc "PODLAZ_VALIDATE_SERVICE: '1'" "${workflow}" || true)"
+  if [ "${service_count}" -ne 1 ]; then
     echo "${workflow} must enable packaged service validation" >&2
     exit 1
   fi
