@@ -8,7 +8,7 @@ import (
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
-func TestPrepareTunHandoffAutoRecoversPodlazOwnedStateForDefaultPolicy(t *testing.T) {
+func TestAutoRecoverTunOwnedStateRecoversForDefaultPolicy(t *testing.T) {
 	originalRecover := controlledPodlazRecover
 	recoverCalls := 0
 	controlledPodlazRecover = func(context.Context, string) error {
@@ -24,9 +24,12 @@ func TestPrepareTunHandoffAutoRecoversPodlazOwnedStateForDefaultPolicy(t *testin
 		return netsnapshot.FakeResolvedDesktop()
 	}
 
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeDesktopWithStalepodlazResources(), api.HandoffBlock, netsnapshot.Options{})
+	recovered, err := manager.autoRecoverTunOwnedState(context.Background(), netsnapshot.FakeDesktopWithStalepodlazResources(), api.HandoffBlock, netsnapshot.Options{})
 	if err != nil {
 		t.Fatalf("default TUN connect must auto-recover unambiguous podlaz-owned stale state: %v", err)
+	}
+	if stalePodlazStateBlocker(recovered) != nil {
+		t.Fatalf("refreshed snapshot must be clean after successful controlled recovery: %#v", recovered.StaleResources)
 	}
 	if recoverCalls != 1 {
 		t.Fatalf("controlled recovery calls = %d, want 1", recoverCalls)
