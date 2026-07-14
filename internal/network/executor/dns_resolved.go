@@ -306,10 +306,14 @@ func (e ResolvedDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPl
 	if link == "" {
 		return nil
 	}
-	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resourceMissing(err) {
+	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resolvedCommandErrorIsMissing(err) {
 		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", link, err)
 	}
 	return nil
+}
+
+func resolvedCommandErrorIsMissing(err error) bool {
+	return resourceMissing(err) || commandErrorContains(err, "no such device")
 }
 
 func validateDNSPlan(plan planner.TunDNSPlan) error {
