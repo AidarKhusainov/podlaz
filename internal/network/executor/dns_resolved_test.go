@@ -41,6 +41,7 @@ func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	}
 
 	want := [][]string{
+		{"resolvectl", "revert", "podlaz0"},
 		{"resolvectl", "dns", "podlaz0", "1.1.1.1"},
 		{"resolvectl", "domain", "podlaz0", "~."},
 		{"resolvectl", "default-route", "podlaz0", "yes"},
