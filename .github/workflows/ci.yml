@@ -165,9 +165,10 @@ jobs:
           PODLAZ_EXPECT_VERSION: 0.0.0~dev
           PODLAZ_EXPECT_COMMIT: ci-test
           PODLAZ_EXPECT_BUILT: Jun 19 2026
+          PODLAZ_VALIDATE_SERVICE: '1'
         run: |
           set -o pipefail
-          bash scripts/ci/validate-package-install-v2.sh "${DEV_DEB}" 2>&1 | tee /tmp/podlaz-package-install.txt
+          bash scripts/ci/validate-package-install.sh "${DEV_DEB}" 2>&1 | tee /tmp/podlaz-package-install.txt
 
       - name: Upload package install diagnostics
         if: always()
