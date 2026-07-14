@@ -82,9 +82,10 @@ func desiredPolicyRuleRollback(step txstate.PlannedStep) (txstate.PolicyRuleRoll
 }
 
 func reservedTunPolicyRule(rule txstate.PolicyRuleRollback) bool {
+	defaultFrom := strings.TrimSpace(strings.TrimPrefix(planner.IPv4DefaultSelector, "from "))
 	return rule.Priority == planner.TunRulePriority &&
 		rule.Table == planner.TunRoutingTable &&
-		strings.TrimSpace(rule.From) == planner.IPv4DefaultSelector &&
+		strings.TrimSpace(rule.From) == defaultFrom &&
 		strings.TrimSpace(rule.To) == "" &&
 		strings.TrimSpace(rule.Mark) == ""
 }
