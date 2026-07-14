@@ -8,16 +8,17 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 func TestAutoRecoverTunOwnedStateRecoversForDefaultPolicy(t *testing.T) {
-	originalRecover := controlledPodlazRecover
+	originalRecover := automaticPodlazRecover
 	recoverCalls := 0
-	controlledPodlazRecover = func(context.Context, string) error {
+	automaticPodlazRecover = func(context.Context, string) error {
 		recoverCalls++
 		return nil
 	}
-	t.Cleanup(func() { controlledPodlazRecover = originalRecover })
+	t.Cleanup(func() { automaticPodlazRecover = originalRecover })
 
 	manager := &XrayManager{RuntimeDir: t.TempDir()}
 	refreshCalls := 0
@@ -31,10 +32,10 @@ func TestAutoRecoverTunOwnedStateRecoversForDefaultPolicy(t *testing.T) {
 		t.Fatalf("default TUN connect must auto-recover unambiguous podlaz-owned stale state: %v", err)
 	}
 	if stalePodlazStateBlocker(recovered) != nil {
-		t.Fatalf("refreshed snapshot must be clean after successful controlled recovery: %#v", recovered.StaleResources)
+		t.Fatalf("refreshed snapshot must be clean after successful automatic recovery: %#v", recovered.StaleResources)
 	}
 	if recoverCalls != 1 {
-		t.Fatalf("controlled recovery calls = %d, want 1", recoverCalls)
+		t.Fatalf("automatic recovery calls = %d, want 1", recoverCalls)
 	}
 	if refreshCalls != 1 {
 		t.Fatalf("snapshot refresh calls = %d, want 1", refreshCalls)
@@ -42,13 +43,13 @@ func TestAutoRecoverTunOwnedStateRecoversForDefaultPolicy(t *testing.T) {
 }
 
 func TestAutoRecoverTunOwnedStateKeepsAskMutationFree(t *testing.T) {
-	originalRecover := controlledPodlazRecover
+	originalRecover := automaticPodlazRecover
 	recoverCalls := 0
-	controlledPodlazRecover = func(context.Context, string) error {
+	automaticPodlazRecover = func(context.Context, string) error {
 		recoverCalls++
 		return nil
 	}
-	t.Cleanup(func() { controlledPodlazRecover = originalRecover })
+	t.Cleanup(func() { automaticPodlazRecover = originalRecover })
 
 	manager := &XrayManager{RuntimeDir: t.TempDir()}
 	refreshCalls := 0
@@ -71,11 +72,11 @@ func TestAutoRecoverTunOwnedStateKeepsAskMutationFree(t *testing.T) {
 }
 
 func TestAutoRecoverTunOwnedStateStopsAfterRecoveryFailure(t *testing.T) {
-	originalRecover := controlledPodlazRecover
-	controlledPodlazRecover = func(context.Context, string) error {
-		return errors.New("controlled recovery failed")
+	originalRecover := automaticPodlazRecover
+	automaticPodlazRecover = func(context.Context, string) error {
+		return errors.New("automatic recovery failed")
 	}
-	t.Cleanup(func() { controlledPodlazRecover = originalRecover })
+	t.Cleanup(func() { automaticPodlazRecover = originalRecover })
 
 	manager := &XrayManager{RuntimeDir: t.TempDir()}
 	refreshCalls := 0
@@ -85,10 +86,37 @@ func TestAutoRecoverTunOwnedStateStopsAfterRecoveryFailure(t *testing.T) {
 	}
 
 	_, err := manager.autoRecoverTunOwnedState(context.Background(), netsnapshot.FakeDesktopWithStalepodlazResources(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil || !strings.Contains(err.Error(), "controlled recovery failed") {
-		t.Fatalf("expected controlled recovery failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "automatic recovery failed") {
+		t.Fatalf("expected automatic recovery failure, got %v", err)
 	}
 	if refreshCalls != 0 {
 		t.Fatalf("failed recovery must not pretend to validate a refreshed snapshot, calls=%d", refreshCalls)
+	}
+}
+
+func TestAutomaticRecoveryCompleteAllowsOnlyDeferredResolvedRecord(t *testing.T) {
+	result := recovery.ExecuteResult{Results: []recovery.CleanupResult{
+		{Candidate: recovery.Candidate{Kind: "route-table"}, Status: "recovered"},
+		{
+			Candidate: recovery.Candidate{Kind: "dns-link"},
+			Status:    "skipped",
+			Message:   "systemd-resolved link record persisted after revert; restart systemd-resolved manually",
+		},
+	}}
+	if !automaticRecoveryComplete(result) {
+		t.Fatal("persistent podlaz resolved record must be deferred until podlaz0 is recreated")
+	}
+}
+
+func TestAutomaticRecoveryCompleteRejectsOtherIncompleteCleanup(t *testing.T) {
+	cases := []recovery.ExecuteResult{
+		{Warnings: []recovery.Warning{{Target: "transaction state", Message: "inspection failed"}}},
+		{Results: []recovery.CleanupResult{{Candidate: recovery.Candidate{Kind: "transaction-state"}, Status: "skipped", Message: "transaction state was preserved"}}},
+		{Results: []recovery.CleanupResult{{Candidate: recovery.Candidate{Kind: "dns-link"}, Status: "failed", Message: "unexpected resolver failure"}}},
+	}
+	for i, result := range cases {
+		if automaticRecoveryComplete(result) {
+			t.Fatalf("case %d: incomplete or failed recovery must remain blocking", i)
+		}
 	}
 }
