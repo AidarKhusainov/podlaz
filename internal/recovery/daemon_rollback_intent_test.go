@@ -6,21 +6,21 @@ import (
 	"testing"
 	"time"
 
-	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestDaemonCleanupExecutorUsesRollbackIntentAfterPreApplyCrash(t *testing.T) {
+func TestDaemonCleanupExecutorUsesDesiredPlanAfterPreApplyCrash(t *testing.T) {
 	runtimeDir := t.TempDir()
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	tx := txstate.NewTransaction("tx-pre-apply-crash", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
-	tx.RollbackIntent = txstate.RollbackMetadata{
-		DNS: []txstate.DNSRollback{{
-			Backend: "systemd-resolved",
-			Link:    managedInterface,
-			Owner:   netexecutor.OwnerDNS,
-		}},
+	tx.DesiredPlan.DNS = txstate.DNSPlan{
+		Backend:       planner.DNSBackendSystemdResolved,
+		Link:          managedInterface,
+		Servers:       []string{planner.DefaultTunDNSServer},
+		SearchDomains: []string{"~."},
+		Owner:         txstate.TransactionOwner,
 	}
 	path, err := store.Save(tx)
 	if err != nil {
@@ -38,6 +38,6 @@ func TestDaemonCleanupExecutorUsesRollbackIntentAfterPreApplyCrash(t *testing.T)
 	assertCleanupResult(t, results, "dns", "recovered", "")
 	assertCleanupResult(t, results, "transaction-state", "recovered", "")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("successful intent-based recovery must remove transaction state, stat err=%v", err)
+		t.Fatalf("successful desired-plan recovery must remove transaction state, stat err=%v", err)
 	}
 }
