@@ -85,3 +85,7 @@ func resolvedResourceMissing(result CommandResult) bool {
 	text := strings.ToLower(result.Stdout + " " + result.Stderr)
 	return result.ExitCode != 0 && strings.Contains(text, "no such device")
 }
+
+func resolvedCommandErrorIsMissing(err error) bool {
+	return commandErrorIsMissing(err) || errorStringContains(err, "no such device")
+}
