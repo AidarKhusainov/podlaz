@@ -105,6 +105,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
 	results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
 	results = append(results, e.rollbackGeneratedConfigResults(osExec, rollback.GeneratedConfigs)...)
+	results = append(results, e.inspectUnrecordedDesiredMainState(ctx, tx)...)
 
 	if hasFailedCleanup(results) {
 		results = append(results, failed(candidate, errors.New("transaction cleanup completed with failures; transaction state was preserved")))
