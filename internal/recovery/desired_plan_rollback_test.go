@@ -8,7 +8,7 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestRecoveryRollbackMetadataSynthesizesGuardedHostState(t *testing.T) {
+func TestRecoveryRollbackMetadataSynthesizesOnlyReservedPodlazState(t *testing.T) {
 	tx := txstate.Transaction{
 		DesiredPlan: txstate.DesiredPlan{
 			TUN: txstate.TUNDesiredState{InterfaceName: managedInterface, Owner: "xray:tun-inbound"},
@@ -33,8 +33,14 @@ func TestRecoveryRollbackMetadataSynthesizesGuardedHostState(t *testing.T) {
 	if len(got.TUN) != 0 {
 		t.Fatalf("Xray-owned TUN link must not be synthesized as daemon-owned rollback: %#v", got.TUN)
 	}
-	if len(got.Routes) != 2 || len(got.PolicyRules) != 2 || len(got.DNS) != 1 || len(got.NFTables) != 1 {
-		t.Fatalf("unexpected synthesized host rollback metadata: %#v", got)
+	if len(got.Routes) != 1 || got.Routes[0].Table != planner.TunRoutingTable {
+		t.Fatalf("only the reserved podlaz route may be synthesized: %#v", got.Routes)
+	}
+	if len(got.PolicyRules) != 1 || got.PolicyRules[0].Priority != planner.TunRulePriority || got.PolicyRules[0].Table != planner.TunRoutingTable {
+		t.Fatalf("only the reserved podlaz policy rule may be synthesized: %#v", got.PolicyRules)
+	}
+	if len(got.DNS) != 1 || len(got.NFTables) != 1 {
+		t.Fatalf("expected guarded DNS and nftables recovery metadata: %#v", got)
 	}
 	if got.DNS[0].Backend != normalizedSystemdResolvedBackend || got.DNS[0].Link != managedInterface {
 		t.Fatalf("unexpected normalized DNS rollback metadata: %#v", got.DNS)
