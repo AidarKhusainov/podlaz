@@ -70,3 +70,6 @@ steps:
 EOF
 printf '#!/usr/bin/env bash\n' >"${fixture_scripts_dir}/validate-package-install-extra.sh"
 expect_failure run_guard
+rm -f "${fixture_scripts_dir}/validate-package-install-extra.sh"
+
+run_guard
