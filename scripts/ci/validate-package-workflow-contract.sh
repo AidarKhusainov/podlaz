@@ -64,7 +64,7 @@ inspect_workflow() {
         ;;
     esac
 
-    if [ "${trimmed}" = 'PODLAZ_VALIDATE_SERVICE=1 \' ]; then
+    if [ "${trimmed}" = "PODLAZ_VALIDATE_SERVICE=1 \\" ]; then
       service_assignment_pending=1
     else
       service_assignment_pending=0
