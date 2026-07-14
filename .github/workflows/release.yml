@@ -124,8 +124,9 @@ jobs:
           PODLAZ_EXPECT_VERSION: ${{ needs.resolve.outputs.version }}
           PODLAZ_EXPECT_COMMIT: ${{ steps.release-commit.outputs.commit_sha }}
           PODLAZ_EXPECT_BUILT: ${{ steps.release-commit.outputs.built_date }}
-          PODLAZ_VALIDATE_SERVICE: '1'
-        run: bash scripts/ci/validate-package-install.sh "dist/podlaz_${VERSION}_linux_amd64.deb"
+        run: |
+          PODLAZ_VALIDATE_SERVICE=1 \
+            bash scripts/ci/validate-package-install.sh "dist/podlaz_${VERSION}_linux_amd64.deb"
 
       - name: Create release artifacts
         env:
