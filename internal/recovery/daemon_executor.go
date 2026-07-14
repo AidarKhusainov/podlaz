@@ -96,14 +96,15 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 		return []CleanupResult{recovered(candidate)}
 	}
 
+	rollback := recoveryRollbackMetadata(tx)
 	results := make([]CleanupResult, 0)
-	results = append(results, e.rollbackChildProcessResults(tx.Rollback.ChildProcesses)...)
-	results = append(results, e.rollbackNFTablesResults(ctx, osExec, tx.Rollback.NFTables)...)
-	results = append(results, e.rollbackDNSResults(ctx, osExec, tx.Rollback.DNS)...)
-	results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, tx.Rollback.PolicyRules)...)
-	results = append(results, e.rollbackRouteResults(ctx, osExec, tx.Rollback.Routes)...)
-	results = append(results, e.rollbackTUNResults(ctx, osExec, tx.Rollback.TUN)...)
-	results = append(results, e.rollbackGeneratedConfigResults(osExec, tx.Rollback.GeneratedConfigs)...)
+	results = append(results, e.rollbackChildProcessResults(rollback.ChildProcesses)...)
+	results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+	results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
+	results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
+	results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
+	results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
+	results = append(results, e.rollbackGeneratedConfigResults(osExec, rollback.GeneratedConfigs)...)
 
 	if hasFailedCleanup(results) {
 		results = append(results, failed(candidate, errors.New("transaction cleanup completed with failures; transaction state was preserved")))
@@ -167,12 +168,13 @@ func (e DaemonCleanupExecutor) rollbackDNSResults(ctx context.Context, osExec OS
 	results := make([]CleanupResult, 0, len(entries))
 	for _, dns := range entries {
 		candidate := Candidate{Kind: "dns", Description: "DNS link state", Target: dns.Link}
-		if !ownedRollbackMetadata(dns.Owner, netexecutor.OwnerDNS) || dns.Link != managedInterface || (dns.Backend != "" && dns.Backend != "systemd-resolved") {
+		if !ownedRollbackMetadata(dns.Owner, netexecutor.OwnerDNS) || dns.Link != managedInterface || !systemdResolvedBackend(dns.Backend) {
 			results = append(results, skipped(candidate, "ambiguous or non-podlaz DNS rollback target"))
 			continue
 		}
 		rollback := dns
 		rollback.Owner = txstate.TransactionOwner
+		rollback.Backend = normalizedSystemdResolvedBackend
 		if err := osExec.rollbackDNS(ctx, rollback); err != nil {
 			results = append(results, failed(candidate, err))
 			continue
