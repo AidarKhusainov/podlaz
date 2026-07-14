@@ -169,10 +169,12 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 	return Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}, nil
 }
 
-// Verify checks that the target link exposes DNS scope, planned DNS servers, and
-// the route-only domain after apply. systemd-resolved can expose recently-applied
-// per-link state with a short delay, so transient missing link/scope/server/domain
-// observations are polled for a bounded period instead of failing immediately.
+// Verify checks that the target link keeps the planned DNS servers, route-only
+// domain, and DNS default-route setting after apply. Current Scopes is not an
+// ownership or configuration check: systemd-resolved derives it from active
+// lookup scope state and may report none while the per-link configuration is
+// already present. Transient missing link/server/domain/default-route observations
+// are polled for a bounded period instead of failing immediately.
 func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
 	if err := validateDNSPlan(plan); err != nil {
 		return err
@@ -218,9 +220,6 @@ func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link str
 	if !ok {
 		return newResolvedDNSVerifyError(link, true, "link status not found")
 	}
-	if !containsDNSValue(resolvedLink.CurrentScopes, "DNS") {
-		return newResolvedDNSVerifyError(link, true, "Current Scopes does not include DNS")
-	}
 	for _, server := range plan.Servers {
 		if !containsDNSValue(resolvedLink.DNSServers, server) {
 			return newResolvedDNSVerifyError(link, true, "DNS server %s not found", server)
@@ -228,6 +227,9 @@ func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link str
 	}
 	if !containsDNSValue(resolvedLink.DNSDomains, resolvedRouteOnlyDomain) {
 		return newResolvedDNSVerifyError(link, true, "route-only domain %s not found", resolvedRouteOnlyDomain)
+	}
+	if !containsDNSValue(resolvedLink.Protocols, "+DefaultRoute") {
+		return newResolvedDNSVerifyError(link, true, "DNS default route is not enabled")
 	}
 	return nil
 }
