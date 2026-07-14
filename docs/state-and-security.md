@@ -64,7 +64,7 @@ For native Xray TUN startup, durable rollback order is:
 - Stale PID metadata alone is not enough to signal a process.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
 - Stale `systemd-resolved` link records for missing `podlaz0` may be reverted with `resolvectl revert podlaz0`; recovery must not silently restart `systemd-resolved` and must tell the user when a manual restart is still required.
-- A non-zero `resolvectl status` or `resolvectl revert` result stating that `podlaz0` is already missing is idempotent for stale-link cleanup, transaction recovery, and runtime DNS rollback. Stale-link cleanup must continue with post-revert inspection and report `skipped` with manual restart guidance when a resolved record still persists.
+- A non-zero `resolvectl status` or `resolvectl revert` result stating that `podlaz0` is already missing is idempotent for stale-link cleanup, transaction recovery, and runtime DNS rollback. This classification is specific to `resolvectl`; generic command missing-resource classification remains unchanged. Stale-link cleanup must continue with post-revert inspection and report `skipped` with manual restart guidance when a resolved record still persists.
 
 ## Redaction
 
