@@ -43,7 +43,7 @@ func TestDaemonCleanupRemovesTransactionWhenUnrecordedMainBypassIsAbsent(t *test
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]fakeCommand{
 			"ip -4 route show table main 203.0.113.10/32": {},
-			"ip -4 rule show priority 9999":                    {},
+			"ip -4 rule show priority 9999":               {},
 		},
 	}
 
