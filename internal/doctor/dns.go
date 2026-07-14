@@ -22,7 +22,7 @@ func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolv
 	if podlazLinkMissing(ctx, runner, ipPath, ipOK) {
 		return resolvedDNSDiagnostic{
 			severity: SeverityWarning,
-			message:  "stale systemd-resolved link record for " + managedInterface + " exists after the interface is missing; the next TUN connect will refresh this podlaz-owned link state automatically",
+			message:  "stale systemd-resolved link record for " + managedInterface + " exists after the interface is missing; the next TUN connect will refresh this podlaz-owned link state automatically; run plz recover --execute --yes to clean it immediately",
 		}
 	}
 	if !ipOK {
@@ -39,7 +39,7 @@ func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolv
 	}
 	return resolvedDNSDiagnostic{
 		severity: SeverityWarning,
-		message:  "podlaz DNS link exists without route-only domain ~. on " + managedInterface + "; the next TUN connect will refresh this podlaz-owned link state automatically",
+		message:  "podlaz DNS link exists without route-only domain ~. on " + managedInterface + "; the next TUN connect will refresh this podlaz-owned link state automatically; run plz recover --execute --yes to clean it immediately",
 	}
 }
 
