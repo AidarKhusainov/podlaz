@@ -12,7 +12,7 @@ type resolvedDNSDiagnostic struct {
 
 func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolvectlPath, ipPath string, ipOK bool) resolvedDNSDiagnostic {
 	result, err := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resourceMissing(result) {
+	if resolvedResourceMissing(result) {
 		return resolvedDNSDiagnostic{severity: SeverityOK, message: "no podlaz-owned DNS state found for " + managedInterface}
 	}
 	if !commandSucceeded(result, err) {
@@ -22,7 +22,7 @@ func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolv
 	if podlazLinkMissing(ctx, runner, ipPath, ipOK) {
 		return resolvedDNSDiagnostic{
 			severity: SeverityWarning,
-			message:  "stale systemd-resolved link record for " + managedInterface + " exists after the interface is missing; run plz recover --execute --yes, then restart systemd-resolved if the record persists",
+			message:  "stale systemd-resolved link record for " + managedInterface + " exists after the interface is missing; the next TUN connect will refresh this podlaz-owned link state automatically; run plz recover --execute --yes to clean it immediately",
 		}
 	}
 	if !ipOK {
@@ -39,8 +39,16 @@ func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolv
 	}
 	return resolvedDNSDiagnostic{
 		severity: SeverityWarning,
-		message:  "podlaz DNS link exists without route-only domain ~. on " + managedInterface + "; this is likely stale systemd-resolved state after rollback; run plz recover --execute --yes, then restart systemd-resolved if the record persists",
+		message:  "podlaz DNS link exists without route-only domain ~. on " + managedInterface + "; the next TUN connect will refresh this podlaz-owned link state automatically; run plz recover --execute --yes to clean it immediately",
 	}
+}
+
+func resolvedResourceMissing(result CommandResult) bool {
+	if resourceMissing(result) {
+		return true
+	}
+	text := strings.ToLower(result.Stdout + " " + result.Stderr)
+	return result.ExitCode != 0 && strings.Contains(text, "no such device")
 }
 
 func podlazLinkMissing(ctx context.Context, runner CommandRunner, ipPath string, ipOK bool) bool {

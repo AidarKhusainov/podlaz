@@ -41,6 +41,7 @@ func TestResolvedDNSExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	}
 
 	want := [][]string{
+		{"resolvectl", "revert", "podlaz0"},
 		{"resolvectl", "dns", "podlaz0", "1.1.1.1"},
 		{"resolvectl", "domain", "podlaz0", "~."},
 		{"resolvectl", "default-route", "podlaz0", "yes"},
@@ -101,14 +102,14 @@ func TestResolvedDNSExecutorVerifyToleratesResolvedPropagationDelay(t *testing.T
 	}
 }
 
-func TestResolvedDNSExecutorVerifyRequiresDNSScope(t *testing.T) {
+func TestResolvedDNSExecutorVerifyRequiresDNSDefaultRoute(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
     Current Scopes: none
        DNS Servers: 1.1.1.1
         DNS Domain: ~.`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
-	if err == nil || !strings.Contains(err.Error(), "Current Scopes does not include DNS") {
-		t.Fatalf("expected DNS current scope failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "DNS default route is not enabled") {
+		t.Fatalf("expected DNS default-route failure, got %v", err)
 	}
 }
 
@@ -116,6 +117,7 @@ func TestResolvedDNSExecutorVerifyRequiresRouteOnlyDomain(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
     Current Scopes: DNS
+         Protocols: +DefaultRoute
        DNS Servers: 1.1.1.1`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
 	if err == nil || !strings.Contains(err.Error(), "route-only domain ~. not found") {
 		t.Fatalf("expected route-only domain failure, got %v", err)
@@ -126,6 +128,7 @@ func TestResolvedDNSExecutorVerifyRequiresPlannedDNSServer(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 7 (podlaz0)
     Current Scopes: DNS
+         Protocols: +DefaultRoute
        DNS Servers: 9.9.9.9
         DNS Domain: ~.`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
 	if err == nil || !strings.Contains(err.Error(), "DNS server 1.1.1.1 not found") {
@@ -137,6 +140,7 @@ func TestResolvedDNSExecutorVerifyRequiresTargetLink(t *testing.T) {
 	plan := dnsPlanForTest()
 	err := (ResolvedDNSExecutor{Runner: &recordingRunner{stdout: `Link 2 (wlan0)
     Current Scopes: DNS
+         Protocols: +DefaultRoute
        DNS Servers: 1.1.1.1
         DNS Domain: corp.example.test`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
 	if err == nil || !strings.Contains(err.Error(), "link status not found") {

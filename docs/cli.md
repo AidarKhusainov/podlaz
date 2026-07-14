@@ -197,14 +197,22 @@ config metadata, and child process metadata. Before handoff or host changes,
 pinned-schema native TUN config. The profile-generated Xray runtime config is
 written later after the TUN transaction starts.
 
-`connect --mode tun` supports explicit handoff policies. `block` keeps host
-state unchanged and reports foreign ownership or stale podlaz-owned blockers
-before mutation. `ask` is rejected in daemon/non-interactive connect paths.
-`stop-known` attempts to stop manageable NetworkManager VPN connections and then
-rechecks host ownership. `replace-podlaz` performs controlled podlaz-owned
-disconnect/recover before starting the new TUN transaction. Unsupported handoff
-values fail before network mutation. `disconnect` is safe to repeat. `connect
---json` and `disconnect --json` are deferred.
+For non-interactive TUN connects, the daemon automatically recovers only
+unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, and transaction
+state, recollects the host snapshot, and proceeds only when that owned state is
+clean. Stale podlaz `systemd-resolved` link state is refreshed on `podlaz0`
+before per-link DNS is applied. Foreign VPN interfaces, foreign route-only DNS
+owners, ambiguous resources, and incomplete recovery remain blockers.
+
+`connect --mode tun` supports explicit handoff policies. The default `block`
+policy never stops a foreign VPN or removes ambiguous state; podlaz-owned
+self-recovery described above is still allowed. `ask` is rejected in
+daemon/non-interactive connect paths and performs no recovery or handoff
+mutation. `stop-known` may additionally stop manageable NetworkManager VPN
+connections and then rechecks host ownership. `replace-podlaz` may additionally
+disconnect an active podlaz TUN session before starting the new transaction.
+Unsupported handoff values fail before network mutation. `disconnect` is safe
+to repeat. `connect --json` and `disconnect --json` are deferred.
 
 ```bash
 podlaz check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]

@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -17,7 +18,7 @@ func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner Command
 		return
 	}
 	status, statusErr := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resourceMissing(status) {
+	if resolvedResourceMissing(status) {
 		return
 	}
 	if !commandSucceeded(status, statusErr) {
@@ -63,16 +64,28 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 		return failed(candidate, fmt.Errorf("resolvectl command is unavailable"))
 	}
 	revert, revertErr := runCommand(ctx, e.Runner, resolvectlPath, "revert", managedInterface)
-	if !commandSucceeded(revert, revertErr) && !resourceMissing(revert) {
+	if !commandSucceeded(revert, revertErr) && !resolvedResourceMissing(revert) {
 		return failed(candidate, fmt.Errorf("revert systemd-resolved DNS: %s", commandFailureMessage(revert, revertErr)))
 	}
 
 	status, statusErr := runCommand(ctx, e.Runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resourceMissing(status) {
+	if resolvedResourceMissing(status) {
 		return recovered(candidate)
 	}
 	if commandSucceeded(status, statusErr) {
 		return skipped(candidate, "systemd-resolved link record persisted after revert; restart systemd-resolved manually")
 	}
 	return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", commandFailureMessage(status, statusErr)))
+}
+
+func resolvedResourceMissing(result CommandResult) bool {
+	if resourceMissing(result) {
+		return true
+	}
+	text := strings.ToLower(result.Stdout + " " + result.Stderr)
+	return result.ExitCode != 0 && strings.Contains(text, "no such device")
+}
+
+func resolvedCommandErrorIsMissing(err error) bool {
+	return commandErrorIsMissing(err) || errorStringContains(err, "no such device")
 }

@@ -446,7 +446,7 @@ func (e OSCleanupExecutor) rollbackDNS(ctx context.Context, dns txstate.DNSRollb
 	if dns.Owner != txstate.TransactionOwner || dns.Link != managedInterface || (dns.Backend != "" && dns.Backend != "systemd-resolved") {
 		return fmt.Errorf("refuse to rollback ambiguous DNS target link=%s backend=%s", dns.Link, dns.Backend)
 	}
-	if err := e.run(ctx, "resolvectl", "revert", managedInterface); err != nil && !commandErrorIsMissing(err) {
+	if err := e.run(ctx, "resolvectl", "revert", managedInterface); err != nil && !resolvedCommandErrorIsMissing(err) {
 		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", managedInterface, err)
 	}
 	return nil

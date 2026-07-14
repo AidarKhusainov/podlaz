@@ -162,23 +162,32 @@ packet ingestion through its native
 inbound. Before handoff or host-networking changes, TUN mode verifies that the
 packaged Xray helper accepts a minimal pinned-schema native TUN config. The
 profile-generated Xray runtime config is written later after the TUN transaction
-starts; podlazd records rollback metadata before supervised Xray start and then
-applies podlaz-owned routes, policy rules, DNS, and nftables state around that
-link.
+starts; podlazd records durable desired state before supervised Xray start and
+then applies podlaz-owned routes, policy rules, DNS, and nftables state around
+that link.
+.PP
+For non-interactive TUN connects, podlazd automatically recovers only
+unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, and transaction
+state, then recollects the host snapshot. Stale podlaz systemd-resolved link
+state is refreshed on
+.B podlaz0
+before per-link DNS is applied. Foreign VPN interfaces, foreign route-only DNS
+owners, ambiguous resources, and incomplete recovery remain blockers.
 .PP
 For TUN mode,
 .B --handoff
 selects an explicit handoff policy. The default
 .B block
-policy keeps host state unchanged and reports foreign ownership or stale
-podlaz-owned blockers before mutation.
+policy never stops a foreign VPN or removes ambiguous state; safe podlaz-owned
+self-recovery remains enabled.
 .B ask
-is rejected in daemon/non-interactive connect paths.
+is rejected in daemon/non-interactive connect paths and performs no recovery or
+handoff mutation.
 .B stop-known
-attempts to stop manageable NetworkManager VPN connections and then rechecks
-host ownership.
+may additionally stop manageable NetworkManager VPN connections and then
+rechecks host ownership.
 .B replace-podlaz
-performs controlled podlaz-owned disconnect/recover before starting the new TUN
+may additionally disconnect an active podlaz TUN session before starting the new
 transaction. Unsupported handoff values fail before network mutation.
 .TP
 .B disconnect
