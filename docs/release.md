@@ -49,6 +49,12 @@ Before publication, the workflow validates:
 
 Package install validation must confirm that install does not start Xray and does not change host routing. The package may make `podlazd.service` available through Debian helper-managed service enable/start behavior.
 
+The service availability smoke requires the systemd unit to be enabled and active, the packaged daemon socket to exist, and both `podlaz status` and `plz status` to report `Daemon: running`. Status exit code `3` is accepted only for this smoke because it is the documented diagnostic result for stale or incomplete ambient host state; exit codes other than `0` and `3`, or missing daemon-running output, still fail release validation.
+
+Pull-request CI and tagged release validation must invoke the same canonical `scripts/ci/validate-package-install.sh` script exactly once. `PODLAZ_VALIDATE_SERVICE=1` must be bound directly to that command invocation; an unrelated workflow or step environment declaration does not satisfy the parity contract. Release validation may supply release-specific version metadata, but it must not introduce a stricter package installation or service-availability contract that was not already exercised before merge. `scripts/ci/validate-package-workflow-contract.sh` enforces this parity.
+
+The tagged workflow remains responsible for rebuilding immutable artifacts from the tag and checking their release metadata, checksums, attestations, and publication behavior. Those release-only checks may still fail after tagging, but package installation, service availability, CLI access, and purge behavior must already have passed the pull-request gate.
+
 ## Publication
 
 The workflow treats published release assets as immutable. It never uploads with `--clobber` and never replaces an already attached expected artifact.
