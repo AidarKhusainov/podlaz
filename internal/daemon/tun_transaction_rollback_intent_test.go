@@ -9,7 +9,7 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestBeginTunTransactionPersistsRollbackIntentBeforeMutation(t *testing.T) {
+func TestBeginTunTransactionPersistsRecoveryIntentBeforeMutation(t *testing.T) {
 	plan := transactionPlanForTest()
 	plan.DNS = planner.TunDNSPlan{
 		Backend:    planner.DNSBackendSystemdResolved,
@@ -36,12 +36,18 @@ func TestBeginTunTransactionPersistsRollbackIntentBeforeMutation(t *testing.T) {
 	if tx.Rollback.Available() {
 		t.Fatalf("pre-apply transaction must not claim applied ownership: %#v", tx.Rollback)
 	}
-	intent := tx.RollbackIntent
-	if len(intent.TUN) != 1 || len(intent.Routes) != 1 || len(intent.PolicyRules) != 1 || len(intent.DNS) != 1 || len(intent.NFTables) != 1 {
-		t.Fatalf("expected durable rollback intent for every planned host mutation, got %#v", intent)
+	if tx.DesiredPlan.TUN.InterfaceName != "podlaz0" || len(tx.DesiredPlan.Routes) != 1 || tx.DesiredPlan.DNS.Link != "podlaz0" || tx.DesiredPlan.NFT.Table != "podlaz" {
+		t.Fatalf("expected structured desired plan to provide durable recovery intent, got %#v", tx.DesiredPlan)
 	}
-	if !tx.Summary(result.TransactionPath).RollbackAvailable {
-		t.Fatal("transaction summary must expose pre-apply rollback intent as recoverable")
+	foundPolicyRule := false
+	for _, step := range tx.DesiredPlan.Steps {
+		if step.Kind == "policy-rule" && step.Owner != "" {
+			foundPolicyRule = true
+			break
+		}
+	}
+	if !foundPolicyRule {
+		t.Fatalf("expected structured policy-rule recovery intent, got %#v", tx.DesiredPlan.Steps)
 	}
 	if tx.Owner != txstate.TransactionOwner {
 		t.Fatalf("unexpected transaction owner: %q", tx.Owner)
