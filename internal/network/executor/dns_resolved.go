@@ -15,6 +15,8 @@ const (
 	OwnerDNS                = "podlaz:dns-link"
 	resolvedRouteOnlyDomain = "~."
 
+	defaultResolvedApplyAttempts      = 20
+	defaultResolvedApplyPollInterval  = 100 * time.Millisecond
 	defaultResolvedVerifyAttempts     = 20
 	defaultResolvedVerifyPollInterval = 100 * time.Millisecond
 )
@@ -141,6 +143,11 @@ func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
 type ResolvedDNSExecutor struct {
 	Runner CommandRunner
 
+	// ApplyAttempts and ApplyPollInterval bound retries while systemd-resolved
+	// registers a newly-created podlaz0 link. Only missing-link errors are retried.
+	ApplyAttempts     int
+	ApplyPollInterval time.Duration
+
 	// VerifyAttempts and VerifyPollInterval bound systemd-resolved propagation
 	// polling after Apply. Zero values use conservative production defaults.
 	VerifyAttempts     int
@@ -161,16 +168,43 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 		return Step{}, fmt.Errorf("refresh stale systemd-resolved DNS for %s: %w", link, err)
 	}
 	args := append([]string{"dns", link}, plan.Servers...)
-	if err := runCommand(ctx, e.Runner, "resolvectl", args...); err != nil {
+	if err := e.runResolvedApplyCommand(ctx, args...); err != nil {
 		return Step{}, fmt.Errorf("configure systemd-resolved DNS server for %s: %w", link, err)
 	}
-	if err := runCommand(ctx, e.Runner, "resolvectl", "domain", link, resolvedRouteOnlyDomain); err != nil {
+	if err := e.runResolvedApplyCommand(ctx, "domain", link, resolvedRouteOnlyDomain); err != nil {
 		return Step{}, fmt.Errorf("configure systemd-resolved route-only DNS domain for %s: %w", link, err)
 	}
-	if err := runCommand(ctx, e.Runner, "resolvectl", "default-route", link, "yes"); err != nil {
+	if err := e.runResolvedApplyCommand(ctx, "default-route", link, "yes"); err != nil {
 		return Step{}, fmt.Errorf("configure systemd-resolved DNS default route for %s: %w", link, err)
 	}
 	return Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}, nil
+}
+
+func (e ResolvedDNSExecutor) runResolvedApplyCommand(ctx context.Context, args ...string) error {
+	attempts := e.ApplyAttempts
+	if attempts <= 0 {
+		attempts = defaultResolvedApplyAttempts
+	}
+	pollInterval := e.ApplyPollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultResolvedApplyPollInterval
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := runCommand(ctx, e.Runner, "resolvectl", args...)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !resolvedCommandErrorIsMissing(err) || attempt == attempts {
+			return err
+		}
+		if err := sleepResolvedDNSPoll(ctx, e.Sleep, pollInterval); err != nil {
+			return errors.Join(lastErr, err)
+		}
+	}
+	return lastErr
 }
 
 // Verify checks that the target link keeps the planned DNS servers, route-only
@@ -204,7 +238,7 @@ func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan
 		if !errors.As(err, &verifyErr) || !verifyErr.retryable || attempt == attempts {
 			return err
 		}
-		if err := sleepResolvedDNSVerify(ctx, e.Sleep, pollInterval); err != nil {
+		if err := sleepResolvedDNSPoll(ctx, e.Sleep, pollInterval); err != nil {
 			return errors.Join(lastErr, err)
 		}
 	}
@@ -266,7 +300,7 @@ func newResolvedDNSVerifyError(link string, retryable bool, format string, args 
 	}
 }
 
-func sleepResolvedDNSVerify(ctx context.Context, sleep func(context.Context, time.Duration) error, duration time.Duration) error {
+func sleepResolvedDNSPoll(ctx context.Context, sleep func(context.Context, time.Duration) error, duration time.Duration) error {
 	if duration <= 0 {
 		return nil
 	}
