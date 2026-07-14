@@ -15,8 +15,8 @@ const (
 	OwnerDNS                = "podlaz:dns-link"
 	resolvedRouteOnlyDomain = "~."
 
-	defaultResolvedVerifyAttempts     = 3
-	defaultResolvedVerifyPollInterval = 25 * time.Millisecond
+	defaultResolvedVerifyAttempts     = 20
+	defaultResolvedVerifyPollInterval = 100 * time.Millisecond
 )
 
 // DNSExecutor owns systemd-resolved per-link DNS apply, verification, and cleanup.
@@ -150,12 +150,16 @@ type ResolvedDNSExecutor struct {
 	Sleep func(context.Context, time.Duration) error
 }
 
-// Apply configures the DNS servers, route-only default DNS domain, and per-link DNS default route.
+// Apply first removes any stale podlaz-owned per-link record, then configures
+// the DNS servers, route-only default DNS domain, and per-link DNS default route.
 func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan) (Step, error) {
 	if err := validateDNSPlan(plan); err != nil {
 		return Step{}, err
 	}
 	link := strings.TrimSpace(plan.TargetLink)
+	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resolvedCommandErrorIsMissing(err) {
+		return Step{}, fmt.Errorf("refresh stale systemd-resolved DNS for %s: %w", link, err)
+	}
 	args := append([]string{"dns", link}, plan.Servers...)
 	if err := runCommand(ctx, e.Runner, "resolvectl", args...); err != nil {
 		return Step{}, fmt.Errorf("configure systemd-resolved DNS server for %s: %w", link, err)
