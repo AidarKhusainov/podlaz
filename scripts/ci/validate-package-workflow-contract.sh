@@ -20,7 +20,9 @@ for workflow in "${workflows[@]}"; do
   fi
 done
 
-if grep -RFn --include='*.yml' --include='*.yaml' 'validate-package-install-v2.sh' .github/workflows; then
-  echo "workflows must not use a second package install validator" >&2
+mapfile -t install_validators < <(find scripts/ci -maxdepth 1 -type f -name 'validate-package-install*.sh' -print | sort)
+if [ "${#install_validators[@]}" -ne 1 ] || [ "${install_validators[0]:-}" != scripts/ci/validate-package-install.sh ]; then
+  printf 'expected one canonical package install validator, found:\n' >&2
+  printf '  %s\n' "${install_validators[@]}" >&2
   exit 1
 fi
