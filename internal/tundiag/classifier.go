@@ -225,7 +225,7 @@ func firstExpectedProviderFailure(probes []ProbeResult, ids ...string) (ProbeRes
 
 func expectedProviderFailure(probe ProbeResult) bool {
 	if probe.Classification == ClassTimeout {
-		return true
+		return expectedProviderTimeout(probe)
 	}
 	switch probe.ID {
 	case "tcp-443":
@@ -241,6 +241,24 @@ func expectedProviderFailure(probe ProbeResult) bool {
 	}
 }
 
+func expectedProviderTimeout(probe ProbeResult) bool {
+	switch probe.ID {
+	case "tcp-443":
+		return probe.FailurePhase == FailurePhaseTCPConnect
+	case "tls":
+		return probe.FailurePhase == FailurePhaseTCPConnect || probe.FailurePhase == FailurePhaseTLSHandshake
+	case "https-cloudflare-small", "https-google-small", "doh-cloudflare", "doh-google":
+		switch probe.FailurePhase {
+		case FailurePhaseTCPConnect, FailurePhaseTLSHandshake, FailurePhaseHTTPRequest, FailurePhaseHTTPResponse, FailurePhaseHTTPBody:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
 func appendProviderAggregate(report Report, id string, layer Layer, classification Classification, failure ProbeResult) Report {
 	if containsProbe(report.Probes, id) {
 		return report
@@ -251,7 +269,7 @@ func appendProviderAggregate(report Report, id string, layer Layer, classificati
 		Status:         ProbeFail,
 		Classification: classification,
 		Error:          fmt.Sprintf("provider %s failed while an independent provider succeeded", failure.ID),
-		Evidence:       Evidence{Notes: []string{"root classification preserved on probe " + failure.ID}},
+		Evidence:       Evidence{Notes: []string{"root classification and failure phase preserved on probe " + failure.ID}},
 	})
 	return report
 }
