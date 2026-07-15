@@ -76,7 +76,7 @@ func TestUnexpectedTunCoreExitRefreshesRecoverySnapshotWithBoundedContext(t *tes
 		startupScan: func(ctx context.Context) recovery.PlanResult {
 			call := scanCalls.Add(1)
 			if call == 1 {
-				return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Target: "podlaz0"}}}
+				return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Target: "podlaz0", Description: "stale TUN interface"}}}
 			}
 			if deadline, ok := ctx.Deadline(); ok {
 				remaining := time.Until(deadline)
