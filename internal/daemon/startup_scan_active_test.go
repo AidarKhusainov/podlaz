@@ -53,12 +53,25 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 		}},
 	}
 
-	filtered := filterStartupScanForActiveRuntime(scan, status, runtimeDir)
+	state := &startupScanState{scan: scan}
+	filtered := state.FilterForStatus(status, runtimeDir)
 	if len(filtered.Candidates) != 1 || filtered.Candidates[0].Target != "inet foreign" {
 		t.Fatalf("active resources were not filtered precisely: %#v", filtered.Candidates)
 	}
 	if len(filtered.Warnings) != 0 {
 		t.Fatalf("unexpected filter warnings: %#v", filtered.Warnings)
+	}
+
+	activeOnly := recovery.PlanResult{Candidates: append([]recovery.Candidate(nil), scan.Candidates[:4]...)}
+	activeState := &startupScanState{scan: activeOnly}
+	activeState.FilterForStatus(status, runtimeDir)
+	publishedStatus := withStartupScanStatus(status, activeState.Snapshot())
+	if publishedStatus.StartupScan == nil || publishedStatus.StartupScan.Status != api.StartupScanStatusClean || len(publishedStatus.StartupScan.Candidates) != 0 {
+		t.Fatalf("active resources were published as stale in status: %#v", publishedStatus.StartupScan)
+	}
+	publishedDoctor := withStartupScanDoctor(api.DoctorResponse{}, activeState.Snapshot())
+	if len(publishedDoctor.Checks) == 0 || publishedDoctor.Checks[len(publishedDoctor.Checks)-1].Severity != "ok" {
+		t.Fatalf("active resources were published as stale in doctor: %#v", publishedDoctor.Checks)
 	}
 }
 
