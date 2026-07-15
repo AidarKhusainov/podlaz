@@ -44,3 +44,48 @@ func TestRenderHumanShowsSkippedDependency(t *testing.T) {
 		t.Fatalf("missing skipped reason: %s", text)
 	}
 }
+
+func TestRenderHumanCompactShowsDNSAndIPState(t *testing.T) {
+	report := Report{
+		Session: Session{State: "active", Mode: "tun", Interface: "podlaz0"},
+		Network: Network{
+			TunInterface: "podlaz0",
+			TunMTU:       1500,
+			DNSServers:   []string{"1.1.1.1"},
+			IPv4Status:   "through_tun",
+			IPv6Status:   "possible_leak",
+		},
+	}
+	text := RenderHuman(report, false)
+	for _, want := range []string{"DNS           1.1.1.1", "IPv4=through_tun", "IPv6=possible_leak"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("compact output missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "vpn.example.test") {
+		t.Fatalf("compact output unexpectedly included verbose endpoint details: %s", text)
+	}
+}
+
+func TestRenderHumanVerboseShowsBaseNetworkContext(t *testing.T) {
+	report := Report{
+		Session: Session{State: "active", Mode: "tun", Interface: "podlaz0"},
+		Network: Network{
+			PhysicalInterface: "wlan0",
+			SSID:              "Example Wi-Fi",
+			Gateway:           "192.0.2.1",
+			LocalAddresses:    []string{"192.0.2.20/24"},
+			TunInterface:      "podlaz0",
+			DNSServers:        []string{"1.1.1.1"},
+			ServerEndpoint:    "vpn.example.test:443",
+			ServerAddresses:   []string{"203.0.113.10"},
+			DoHProviders:      []string{"https://dns.example.test/dns-query"},
+		},
+	}
+	text := RenderHuman(report, true)
+	for _, want := range []string{"wlan0 (Example Wi-Fi)", "192.0.2.1", "192.0.2.20/24", "vpn.example.test:443", "203.0.113.10", "https://dns.example.test/dns-query"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("verbose output missing %q: %s", want, text)
+		}
+	}
+}
