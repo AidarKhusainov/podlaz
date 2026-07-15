@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -65,54 +63,42 @@ func TestCustomServerStatusOmitsTransactionIDOutsideActiveTun(t *testing.T) {
 }
 
 func TestUnexpectedTunCoreExitRefreshesRecoverySnapshotWithBoundedContext(t *testing.T) {
-	t.Setenv(api.ServiceEnv, api.ServiceManual)
 	runtimeDir := t.TempDir()
-	manager := &XrayManager{RuntimeDir: runtimeDir}
+	fakeXray := writeFakeXray(t, "#!/bin/sh\nsleep 0.5\nexit 23\n")
+	manager := &XrayManager{RuntimeDir: runtimeDir, XrayPath: fakeXray, StopTimeout: time.Second}
 	var scanCalls atomic.Int32
 	var boundedRefresh atomic.Bool
-	statusClient := startCoreExitTestServer(t, Server{
-		RuntimeDir: runtimeDir,
-		Lifecycle:  manager,
-		startupScan: func(ctx context.Context) recovery.PlanResult {
-			call := scanCalls.Add(1)
-			if call == 1 {
-				return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Target: "podlaz0", Description: "stale TUN interface"}}}
-			}
-			if deadline, ok := ctx.Deadline(); ok {
-				remaining := time.Until(deadline)
-				boundedRefresh.Store(remaining > 0 && remaining <= 6*time.Second)
-			}
-			return recovery.PlanResult{}
-		},
+	scanState := newStartupScanState(func(ctx context.Context) recovery.PlanResult {
+		call := scanCalls.Add(1)
+		if call <= 2 {
+			return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Target: "podlaz0", Description: "stale TUN interface"}}}
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			boundedRefresh.Store(remaining > 0 && remaining <= 6*time.Second)
+		}
+		return recovery.PlanResult{}
 	})
-
-	configPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+	scanState.Refresh(context.Background())
+	lifecycle := startupScanRefreshingLifecycle{
+		lifecycle: manager,
+		refresh: func(ctx context.Context) {
+			scanState.Refresh(ctx)
+		},
+	}
+	if _, err := lifecycle.Connect(context.Background(), connectRequestForTest()); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte(`{"inbounds":[]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	fakeXray := writeFakeXray(t, "#!/bin/sh\nsleep 0.05\nexit 23\n")
-	cmd := exec.Command(fakeXray)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
 	manager.mu.Lock()
-	manager.cmd = cmd
-	manager.done = done
-	manager.state = xrayState{
-		Connection:        "active",
-		Mode:              planner.ModeTun,
-		ProfileID:         "profile-test",
-		Proxy:             "active",
-		TUN:               "enabled (podlaz0)",
-		RuntimeConfigPath: configPath,
-		TransactionID:     "tun-crashed",
-	}
+	done := manager.done
+	manager.state.Mode = planner.ModeTun
+	manager.state.TUN = "enabled (podlaz0)"
+	manager.state.TransactionID = "tun-crashed"
+	manager.state.RuntimeConfigPath = filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
 	manager.mu.Unlock()
-	go manager.waitForExit(cmd, done, nil, configPath, "profile-test")
+	if done == nil {
+		t.Fatal("connected core has no completion channel")
+	}
 
 	select {
 	case <-done:
@@ -120,22 +106,20 @@ func TestUnexpectedTunCoreExitRefreshesRecoverySnapshotWithBoundedContext(t *tes
 		t.Fatal("fake core did not exit")
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for scanCalls.Load() < 2 && time.Now().Before(deadline) {
+	for scanCalls.Load() < 3 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	status, err := statusClient.Status(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanCalls.Load() < 2 {
-		t.Fatalf("unexpected core exit did not refresh recovery state; calls=%d status=%#v", scanCalls.Load(), status.StartupScan)
+	status := manager.statusForPublication(context.Background())
+	scan := scanState.FilterForStatus(status, runtimeDir)
+	if scanCalls.Load() < 3 {
+		t.Fatalf("unexpected core exit did not refresh recovery state; calls=%d scan=%#v", scanCalls.Load(), scan)
 	}
 	if !boundedRefresh.Load() {
 		t.Fatal("unexpected-exit recovery refresh did not receive a bounded context")
 	}
-	if status.StartupScan == nil || status.StartupScan.Status != api.StartupScanStatusClean || len(status.StartupScan.Candidates) != 0 {
-		t.Fatalf("status published stale pre-exit recovery evidence: %#v", status.StartupScan)
+	if len(scan.Candidates) != 0 || len(scan.Warnings) != 0 {
+		t.Fatalf("publication reused stale pre-exit recovery evidence: %#v", scan)
 	}
 	if status.ActiveTransactionID != "" {
 		t.Fatalf("crashed TUN state must not publish an active transaction id: %#v", status)
