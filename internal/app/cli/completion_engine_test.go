@@ -63,6 +63,13 @@ func TestCompletionConnectCompletesHandoffPolicyValues(t *testing.T) {
 	assertCompletionCandidate(t, inlineValues, "--handoff=block")
 }
 
+func TestCompletionDoctorCompletesTunFormats(t *testing.T) {
+	flags := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "doctor", "--"}}, options{})
+	for _, want := range []string{"--tun", "--verbose", "-v", "--json"} {
+		assertCompletionCandidate(t, flags, want)
+	}
+}
+
 func TestCompletionFishScriptIncludesProfileValidateStaticFlags(t *testing.T) {
 	var out bytes.Buffer
 	printFishCompletion(&out)
