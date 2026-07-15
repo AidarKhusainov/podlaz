@@ -131,7 +131,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 		stopCore: func(core fullTunnelCoreHandle) error {
 			return m.stopStartedCore(core.cmd, core.done, corePlan.RuntimeConfigPath)
 		},
-		collectFailureDiagnostics: func(ctx context.Context, transactionID string, plan planner.TunPlan, cause error) string {
+		collectFailureDiagnostics: func(ctx context.Context, transactionID string, plan planner.TunPlan, cause error) tunFailureDiagnosticSummary {
 			return m.collectTunFailureDiagnostics(ctx, transactionID, plan, cause)
 		},
 		commitActiveState: func(store txstate.TransactionStore, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
