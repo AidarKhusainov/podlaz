@@ -59,7 +59,10 @@ func (s Server) Run(ctx context.Context) error {
 		startupScanFn = defaultStartupScanFunc(runtimeDir)
 	}
 	startupScan := newStartupScanState(startupScanFn)
-	logStartupScan(startupScan.Refresh(ctx))
+	refreshStartupScan := func(refreshCtx context.Context) {
+		logStartupScan(startupScan.Refresh(refreshCtx))
+	}
+	refreshStartupScan(ctx)
 
 	socketPath := api.SocketPath(runtimeDir)
 	if err := removeStaleSocket(socketPath); err != nil {
@@ -115,6 +118,7 @@ func (s Server) Run(ctx context.Context) error {
 		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), startupScan.Snapshot()))
 		log.Printf("podlazd: doctor request handled")
 	})
+	registerTunDiagnosticsHandler(mux, lifecycle)
 	mux.HandleFunc(api.RecoverPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: recover request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodPost {
@@ -127,11 +131,11 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		response := daemonRecover(r.Context(), runtimeDir)
-		startupScan.Refresh(r.Context())
+		refreshStartupScan(context.WithoutCancel(r.Context()))
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
-	registerLifecycleHandlers(mux, lifecycle, authorizer)
+	registerLifecycleHandlers(mux, startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: refreshStartupScan}, authorizer)
 
 	httpServer := http.Server{
 		Handler: mux,
