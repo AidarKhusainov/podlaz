@@ -18,10 +18,13 @@ const (
 )
 
 type tunDiagnosticInput struct {
-	state       xrayState
-	coreRunning bool
-	plan        planner.TunPlan
-	snapshot    netsnapshot.Snapshot
+	state          xrayState
+	coreRunning    bool
+	plan           planner.TunPlan
+	snapshot       netsnapshot.Snapshot
+	serverEndpoint string
+	serverName     string
+	metadataError  string
 }
 
 func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
@@ -37,7 +40,6 @@ func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
 		}
 		return tundiag.Finalize(tundiag.Report{
 			GeneratedAt: time.Now().UTC(),
-			ReportPath:  store.Path(),
 			Session: tundiag.Session{
 				State: state.Connection,
 				Mode:  state.Mode,
@@ -56,7 +58,6 @@ func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
 	if err != nil {
 		return tundiag.Finalize(tundiag.Report{
 			GeneratedAt: time.Now().UTC(),
-			ReportPath:  store.Path(),
 			Session:     tunDiagnosticSession(state, coreRunning),
 			Probes: []tundiag.ProbeResult{{
 				ID:             "session",
@@ -72,35 +73,62 @@ func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
 	if plan.TunDevice.Name == "" {
 		plan.TunDevice.Name = netsnapshot.DefaultTunName
 	}
+	serverEndpoint, serverName := tunDiagnosticServerMetadata(transaction)
 	snapshot := m.collectTunSnapshot(ctx, tunSnapshotOptionsForState(state))
-	return m.runAndPersistTunDiagnostics(ctx, tunDiagnosticInput{state: state, coreRunning: coreRunning, plan: plan, snapshot: snapshot})
+	return m.runAndPersistTunDiagnostics(ctx, tunDiagnosticInput{
+		state: state, coreRunning: coreRunning, plan: plan, snapshot: snapshot,
+		serverEndpoint: serverEndpoint, serverName: serverName,
+	})
 }
 
 func (m *XrayManager) runAndPersistTunDiagnostics(ctx context.Context, input tunDiagnosticInput) tundiag.Report {
 	runCtx, cancel := context.WithTimeout(ctx, tunDiagnosticRunTimeout)
 	defer cancel()
-	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(buildTunDiagnosticAdapters(input)))
-	path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report)
-	if err != nil {
-		report.Warnings = append(report.Warnings, "persist latest TUN diagnostic report: "+err.Error())
-		return tundiag.Finalize(report)
+	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(buildHardenedTunDiagnosticAdapters(input)))
+	if input.metadataError != "" {
+		report = appendTunInternalDiagnosticFailure(report, "transaction-metadata", input.metadataError)
 	}
-	report.ReportPath = path
-	return tundiag.Finalize(report)
+	report, _ = m.persistTunDiagnosticReport(report)
+	return report
 }
 
-func (m *XrayManager) runAndPersistTunFailureDiagnostics(ctx context.Context, input tunDiagnosticInput) tundiag.Report {
-	report := tundiag.Runner{}.Run(ctx, tunDiagnosticBase(input), tundiag.PreRollbackProbes(buildTunDiagnosticAdapters(input)))
-	path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report)
-	if err != nil {
-		report.Warnings = append(report.Warnings, "persist latest TUN diagnostic report: "+err.Error())
-		return tundiag.Finalize(report)
+func (m *XrayManager) runAndPersistTunFailureDiagnostics(ctx context.Context, input tunDiagnosticInput, cause error) (tundiag.Report, bool) {
+	report := tundiag.Runner{}.Run(ctx, tunDiagnosticBase(input), tundiag.PreRollbackProbes(buildHardenedTunDiagnosticAdapters(input)))
+	if input.metadataError != "" {
+		report = appendTunInternalDiagnosticFailure(report, "transaction-metadata", input.metadataError)
 	}
-	report.ReportPath = path
-	return tundiag.Finalize(report)
+	if cause != nil {
+		report.Errors = append(report.Errors, "connectivity verification failure: "+cause.Error())
+	}
+	return m.persistTunDiagnosticReport(tundiag.Finalize(report))
 }
 
-func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transactionID string, plan planner.TunPlan, cause error) string {
+func (m *XrayManager) persistTunDiagnosticReport(report tundiag.Report) (tundiag.Report, bool) {
+	path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report)
+	if err != nil {
+		report.ReportPath = ""
+		report = appendTunInternalDiagnosticFailure(report, "report-persistence", "persist latest TUN diagnostic report: "+err.Error())
+		return tundiag.Finalize(report), false
+	}
+	report.ReportPath = path
+	return tundiag.Finalize(report), true
+}
+
+func appendTunInternalDiagnosticFailure(report tundiag.Report, id, message string) tundiag.Report {
+	if _, exists := report.Probe(id); exists {
+		return report
+	}
+	report.Probes = append(report.Probes, tundiag.ProbeResult{
+		ID:             id,
+		Layer:          tundiag.LayerSession,
+		Status:         tundiag.ProbeFail,
+		Classification: tundiag.ClassInternalDiagnosticError,
+		Error:          message,
+	})
+	return report
+}
+
+func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transactionID string, plan planner.TunPlan, cause error) tunFailureDiagnosticSummary {
 	state := xrayState{
 		Connection:    "verifying",
 		Mode:          planner.ModeTun,
@@ -109,22 +137,25 @@ func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transact
 		TUN:           "enabled (" + emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName) + ")",
 		TransactionID: transactionID,
 	}
+	input := tunDiagnosticInput{state: state, coreRunning: true, plan: plan}
+	if transaction, _, err := (txstate.TransactionStore{RuntimeDir: m.runtimeDir()}).Load(transactionID); err != nil {
+		input.metadataError = "load TUN transaction diagnostic metadata: " + err.Error()
+	} else {
+		input.serverEndpoint, input.serverName = tunDiagnosticServerMetadata(transaction)
+	}
 	diagnosticCtx, cancel := context.WithTimeout(ctx, tunFailureDiagnosticRunTimeout)
 	defer cancel()
-	snapshot := m.collectTunSnapshot(diagnosticCtx, tunSnapshotOptionsForState(state))
-	report := m.runAndPersistTunFailureDiagnostics(diagnosticCtx, tunDiagnosticInput{state: state, coreRunning: true, plan: plan, snapshot: snapshot})
-	if cause != nil {
-		report.Errors = append(report.Errors, "connectivity verification failure: "+cause.Error())
-		report = tundiag.Finalize(report)
-		if path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report); err == nil {
-			report.ReportPath = path
-		}
-	}
-	classification := string(report.PrimaryClassification)
+	input.snapshot = m.collectTunSnapshot(diagnosticCtx, tunSnapshotOptionsForState(state))
+	report, persisted := m.runAndPersistTunFailureDiagnostics(diagnosticCtx, input, cause)
+	classification := report.PrimaryClassification
 	if classification == "" {
-		classification = string(report.Status)
+		classification = tundiag.Classification(report.Status)
 	}
-	return fmt.Sprintf("TUN diagnostics: %s; last report: %s", classification, emptyAs(report.ReportPath, (tundiag.Store{RuntimeDir: m.runtimeDir()}).Path()))
+	return tunFailureDiagnosticSummary{
+		PrimaryClassification: classification,
+		ReportPath:            report.ReportPath,
+		Persisted:             persisted,
+	}
 }
 
 func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
@@ -132,11 +163,13 @@ func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 	snapshot := input.snapshot
 	bypass := tunDiagnosticServerBypass(plan)
 	serverAddresses := []string{}
-	serverEndpoint := ""
+	serverEndpoint := strings.TrimSpace(input.serverEndpoint)
 	if bypass.Destination != "" {
 		serverAddress := strings.TrimSuffix(bypass.Destination, "/32")
 		serverAddresses = append(serverAddresses, serverAddress)
-		serverEndpoint = serverAddress
+		if serverEndpoint == "" {
+			serverEndpoint = serverAddress
+		}
 	}
 	tunName := emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName)
 	return tundiag.Report{
@@ -154,6 +187,8 @@ func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 			IPv4Status:        string(snapshot.IPv4.Status),
 			IPv6Status:        string(snapshot.IPv6.Status),
 			ServerEndpoint:    serverEndpoint,
+			ServerHostname:    tunDiagnosticHostname(serverEndpoint),
+			ServerName:        strings.TrimSpace(input.serverName),
 			ServerAddresses:   serverAddresses,
 			DoHProviders:      tunDiagnosticDoHEndpoints(),
 		},
