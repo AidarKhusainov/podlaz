@@ -43,6 +43,14 @@ func (s Server) Run(ctx context.Context) error {
 	if authorizer == nil {
 		authorizer = authorizerFromEnv()
 	}
+	currentStatus := func(statusCtx context.Context) api.StatusResponse {
+		if s.Status == nil {
+			return lifecycle.statusForPublication(statusCtx)
+		}
+		status := s.Status(statusCtx)
+		status.ActiveTransactionID = lifecycle.activeTransactionID()
+		return status
+	}
 
 	lockPath := api.LockPath(runtimeDir)
 	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -60,9 +68,8 @@ func (s Server) Run(ctx context.Context) error {
 	}
 	startupScan := newStartupScanState(startupScanFn)
 	refreshStartupScan := func(refreshCtx context.Context) {
-		scan := startupScan.Refresh(refreshCtx)
-		scan = startupScan.FilterForStatus(lifecycle.Status(refreshCtx), runtimeDir)
-		logStartupScan(scan)
+		startupScan.Refresh(refreshCtx)
+		logStartupScan(startupScan.FilterForStatus(currentStatus(refreshCtx), runtimeDir))
 	}
 	refreshStartupScan(ctx)
 
@@ -98,12 +105,10 @@ func (s Server) Run(ctx context.Context) error {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		statusFn := s.Status
-		if statusFn == nil {
-			statusFn = lifecycle.Status
-		}
+		status := currentStatus(r.Context())
+		scan := startupScan.FilterForStatus(status, runtimeDir)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(withStartupScanStatus(statusFn(r.Context()), startupScan.Snapshot()))
+		_ = json.NewEncoder(w).Encode(withStartupScanStatus(status, scan))
 		log.Printf("podlazd: status request handled")
 	})
 	mux.HandleFunc(api.DoctorPath, func(w http.ResponseWriter, r *http.Request) {
@@ -116,8 +121,9 @@ func (s Server) Run(ctx context.Context) error {
 		if doctorFn == nil {
 			doctorFn = lifecycle.Doctor
 		}
+		scan := startupScan.FilterForStatus(currentStatus(r.Context()), runtimeDir)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), startupScan.Snapshot()))
+		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), scan))
 		log.Printf("podlazd: doctor request handled")
 	})
 	registerTunDiagnosticsHandler(mux, lifecycle)
