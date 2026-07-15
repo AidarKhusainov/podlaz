@@ -13,3 +13,22 @@ func TestCatalogHasIndependentDoHProvidersAndBoundedPMTUTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestStandardProbeGraphSkipsNameDependentLayersAfterResolutionFailure(t *testing.T) {
+	probes := StandardProbes(ProbeAdapters{})
+	dependencies := make(map[string][]string, len(probes))
+	for _, probe := range probes {
+		dependencies[probe.Definition.ID] = probe.Definition.DependsOn
+	}
+	want := map[string]string{
+		"tcp-443":                "dns-system-resolution",
+		"https-cloudflare-small": "tls",
+		"https-google-small":     "dns-system-resolution",
+	}
+	for id, dependency := range want {
+		got := dependencies[id]
+		if len(got) != 1 || got[0] != dependency {
+			t.Fatalf("probe %s dependencies = %v; want [%s]", id, got, dependency)
+		}
+	}
+}
