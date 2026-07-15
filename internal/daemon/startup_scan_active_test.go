@@ -44,11 +44,12 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 		{Kind: "nftables-table", Target: "inet foreign"},
 	}}
 	status := api.StatusResponse{
-		Connection:        "active",
-		Mode:              planner.ModeTun,
-		ProfileID:         tx.ProfileID,
-		RuntimeDirectory:  "present",
-		RuntimeConfigPath: configPath,
+		Connection:          "active",
+		Mode:                planner.ModeTun,
+		ProfileID:           tx.ProfileID,
+		RuntimeDirectory:    "present",
+		RuntimeConfigPath:   configPath,
+		ActiveTransactionID: tx.ID,
 		Transactions: []api.TransactionStatus{{
 			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: filepath.Join(runtimeDir, txstate.TransactionDirName, tx.ID+txstate.TransactionFileSuffix),
 		}},
@@ -65,14 +66,17 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 
 	activeOnly := recovery.PlanResult{Candidates: append([]recovery.Candidate(nil), scan.Candidates[:4]...)}
 	activeState := &startupScanState{scan: activeOnly}
-	activeState.FilterForStatus(status, runtimeDir)
-	publishedStatus := withStartupScanStatus(status, activeState.Snapshot())
+	activeFiltered := activeState.FilterForStatus(status, runtimeDir)
+	publishedStatus := withStartupScanStatus(status, activeFiltered)
 	if publishedStatus.StartupScan == nil || publishedStatus.StartupScan.Status != api.StartupScanStatusClean || len(publishedStatus.StartupScan.Candidates) != 0 {
 		t.Fatalf("active resources were published as stale in status: %#v", publishedStatus.StartupScan)
 	}
-	publishedDoctor := withStartupScanDoctor(api.DoctorResponse{}, activeState.Snapshot())
+	publishedDoctor := withStartupScanDoctor(api.DoctorResponse{}, activeFiltered)
 	if len(publishedDoctor.Checks) == 0 || publishedDoctor.Checks[len(publishedDoctor.Checks)-1].Severity != string(doctor.SeverityOK) {
 		t.Fatalf("active resources were published as stale in doctor: %#v", publishedDoctor.Checks)
+	}
+	if raw := activeState.Snapshot(); len(raw.Candidates) != 4 {
+		t.Fatalf("publication filtering mutated raw recovery state: %#v", raw.Candidates)
 	}
 }
 
@@ -97,7 +101,7 @@ func TestFilterStartupScanKeepsGeneratedDirectoryContainingUnownedFiles(t *testi
 	}
 	status := api.StatusResponse{
 		Connection: "active", Mode: planner.ModeTun, ProfileID: tx.ProfileID,
-		RuntimeDirectory: "present", RuntimeConfigPath: configPath,
+		RuntimeDirectory: "present", RuntimeConfigPath: configPath, ActiveTransactionID: tx.ID,
 		Transactions: []api.TransactionStatus{{ID: tx.ID, State: string(txstate.TransactionCommitted), Path: "unused"}},
 	}
 	candidate := recovery.Candidate{Kind: "generated-runtime-configs", Target: generatedDir}
