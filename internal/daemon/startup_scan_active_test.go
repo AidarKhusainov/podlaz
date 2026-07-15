@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -26,9 +27,9 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 	tx := txstate.NewTransaction("tx-active", "profile-test", planner.ModeTun, time.Now())
 	tx.State = txstate.TransactionCommitted
 	tx.DesiredPlan.Core = txstate.CorePlan{RuntimeConfigPath: configPath, Owner: txstate.TransactionOwner}
-	tx.Rollback.TUN = []txstate.TUNRollback{{InterfaceName: "podlaz0", Owner: txstate.TransactionOwner}}
-	tx.Rollback.DNS = []txstate.DNSRollback{{Link: "podlaz0", Owner: txstate.TransactionOwner}}
-	tx.Rollback.NFTables = []txstate.NFTablesRollback{{Family: "inet", Table: "podlaz", Owner: txstate.TransactionOwner}}
+	tx.DesiredPlan.TUN = txstate.TUNDesiredState{InterfaceName: "podlaz0", Owner: xrayTunInboundOwner}
+	tx.Rollback.DNS = []txstate.DNSRollback{{Link: "podlaz0", Owner: netexecutor.OwnerDNS}}
+	tx.Rollback.NFTables = []txstate.NFTablesRollback{{Family: "inet", Table: "podlaz", Owner: netexecutor.OwnerFirewall}}
 	tx.Rollback.GeneratedConfigs = []txstate.GeneratedConfigRollback{{Path: configPath, Owner: txstate.TransactionOwner}}
 	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
 		t.Fatal(err)

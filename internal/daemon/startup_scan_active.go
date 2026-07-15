@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -79,20 +80,16 @@ func activeCommittedTransaction(status api.StatusResponse) (txstate.Transaction,
 func activeTransactionOwnsCandidate(tx txstate.Transaction, candidate recovery.Candidate) bool {
 	switch candidate.Kind {
 	case "tun-interface":
-		for _, entry := range tx.Rollback.TUN {
-			if entry.Owner == txstate.TransactionOwner && entry.InterfaceName == candidate.Target {
-				return true
-			}
-		}
+		return tx.DesiredPlan.TUN.Owner == xrayTunInboundOwner && tx.DesiredPlan.TUN.InterfaceName == candidate.Target
 	case "dns-link":
 		for _, entry := range tx.Rollback.DNS {
-			if entry.Owner == txstate.TransactionOwner && entry.Link == candidate.Target {
+			if entry.Owner == netexecutor.OwnerDNS && entry.Link == candidate.Target {
 				return true
 			}
 		}
 	case "nftables-table":
 		for _, entry := range tx.Rollback.NFTables {
-			if entry.Owner == txstate.TransactionOwner && strings.TrimSpace(entry.Family+" "+entry.Table) == strings.TrimSpace(candidate.Target) {
+			if entry.Owner == netexecutor.OwnerFirewall && strings.TrimSpace(entry.Family+" "+entry.Table) == strings.TrimSpace(candidate.Target) {
 				return true
 			}
 		}
