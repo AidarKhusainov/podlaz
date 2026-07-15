@@ -19,6 +19,7 @@ func RenderHuman(report Report, verbose bool) string {
 	report = Finalize(report)
 	var b strings.Builder
 	b.WriteString("TUN diagnostics\n")
+	fmt.Fprintf(&b, "  Status        %s\n", report.Status)
 	fmt.Fprintf(&b, "  Session       %s\n", emptyAs(report.Session.State, "unknown"))
 	if report.Session.Mode != "" {
 		fmt.Fprintf(&b, "  Mode          %s\n", report.Session.Mode)
@@ -26,11 +27,20 @@ func RenderHuman(report Report, verbose bool) string {
 	if report.Session.ProfileName != "" {
 		fmt.Fprintf(&b, "  Profile       %s\n", report.Session.ProfileName)
 	}
-	if report.Session.Interface != "" {
-		fmt.Fprintf(&b, "  Interface     %s\n", report.Session.Interface)
+	if report.Session.Interface != "" || report.Network.TunInterface != "" {
+		fmt.Fprintf(&b, "  Interface     %s\n", emptyAs(report.Network.TunInterface, report.Session.Interface))
 	}
-	if report.Network.TunMTU > 0 {
-		fmt.Fprintf(&b, "  MTU           %d\n", report.Network.TunMTU)
+	if report.Network.TunMTU > 0 || report.Network.UplinkMTU > 0 {
+		fmt.Fprintf(&b, "  MTU           tun=%s uplink=%s\n", integerOrDash(report.Network.TunMTU), integerOrDash(report.Network.UplinkMTU))
+	}
+	if len(report.Network.DNSServers) > 0 {
+		fmt.Fprintf(&b, "  DNS           %s\n", strings.Join(report.Network.DNSServers, ", "))
+	}
+	if report.Network.IPv4Status != "" || report.Network.IPv6Status != "" {
+		fmt.Fprintf(&b, "  IP state      IPv4=%s IPv6=%s\n", emptyAs(report.Network.IPv4Status, "unknown"), emptyAs(report.Network.IPv6Status, "unknown"))
+	}
+	if verbose {
+		renderVerboseNetwork(&b, report.Network)
 	}
 	if report.Historical {
 		b.WriteString("  Report        saved result; live re-probing unavailable\n")
@@ -79,6 +89,31 @@ func RenderHuman(report Report, verbose bool) string {
 	return b.String()
 }
 
+func renderVerboseNetwork(b *strings.Builder, network Network) {
+	if network.PhysicalInterface != "" {
+		fmt.Fprintf(b, "  Uplink        %s", network.PhysicalInterface)
+		if network.SSID != "" {
+			fmt.Fprintf(b, " (%s)", network.SSID)
+		}
+		b.WriteByte('\n')
+	}
+	if network.Gateway != "" {
+		fmt.Fprintf(b, "  Gateway       %s\n", network.Gateway)
+	}
+	if len(network.LocalAddresses) > 0 {
+		fmt.Fprintf(b, "  Local IPs     %s\n", strings.Join(network.LocalAddresses, ", "))
+	}
+	if network.ServerEndpoint != "" {
+		fmt.Fprintf(b, "  VPN server    %s\n", network.ServerEndpoint)
+	}
+	if len(network.ServerAddresses) > 0 {
+		fmt.Fprintf(b, "  Server IPs    %s\n", strings.Join(network.ServerAddresses, ", "))
+	}
+	if len(network.DoHProviders) > 0 {
+		fmt.Fprintf(b, "  DoH targets   %s\n", strings.Join(network.DoHProviders, ", "))
+	}
+}
+
 func renderVerboseEvidence(b *strings.Builder, probe ProbeResult) {
 	if probe.Target != "" {
 		fmt.Fprintf(b, "           target: %s\n", probe.Target)
@@ -93,7 +128,7 @@ func renderVerboseEvidence(b *strings.Builder, probe ProbeResult) {
 		fmt.Fprintf(b, "           resolved: %s\n", strings.Join(probe.Evidence.ResolvedAddresses, ", "))
 	}
 	if route := probe.Evidence.Route; route != nil {
-		fmt.Fprintf(b, "           route: dev=%s via=%s table=%s rule=%s\n", emptyAs(route.Interface, "-"), emptyAs(route.Gateway, "-"), emptyAs(route.Table, "-"), emptyAs(route.Rule, "-"))
+		fmt.Fprintf(b, "           route: destination=%s dev=%s via=%s table=%s rule=%s\n", emptyAs(route.Destination, "-"), emptyAs(route.Interface, "-"), emptyAs(route.Gateway, "-"), emptyAs(route.Table, "-"), emptyAs(route.Rule, "-"))
 	}
 	if dns := probe.Evidence.DNS; dns != nil {
 		fmt.Fprintf(b, "           dns: server=%s name=%s rcode=%d answers=%s\n", emptyAs(dns.Server, "-"), emptyAs(dns.Name, "-"), dns.ResponseCode, strings.Join(dns.Addresses, ","))
@@ -157,4 +192,11 @@ func emptyAs(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func integerOrDash(value int) string {
+	if value <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", value)
 }
