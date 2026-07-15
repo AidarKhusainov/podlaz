@@ -17,10 +17,7 @@ func (s *startupScanState) FilterForStatus(status api.StatusResponse, runtimeDir
 	if s == nil {
 		return recovery.PlanResult{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.scan = filterStartupScanForActiveRuntime(s.scan, status, runtimeDir)
-	return cloneRecoveryPlan(s.scan)
+	return filterStartupScanForActiveRuntime(s.Snapshot(), status, runtimeDir)
 }
 
 func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.StatusResponse, runtimeDir string) recovery.PlanResult {
@@ -49,32 +46,42 @@ func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.Stat
 }
 
 func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (txstate.Transaction, bool, error) {
-	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
-	var loadErrors []string
+	activeID := strings.TrimSpace(status.ActiveTransactionID)
+	if activeID == "" {
+		return txstate.Transaction{}, false, fmt.Errorf("active status has no active transaction id; refusing ownership filtering")
+	}
+
+	matches := 0
+	var activeSummary api.TransactionStatus
 	for _, summary := range status.Transactions {
-		if summary.State != string(txstate.TransactionCommitted) || summary.RequiresCleanup {
+		if summary.ID != activeID {
 			continue
 		}
-		tx, _, err := store.Load(summary.ID)
-		if err != nil {
-			loadErrors = append(loadErrors, err.Error())
-			continue
-		}
-		if tx.Owner != txstate.TransactionOwner || tx.State != txstate.TransactionCommitted {
-			continue
-		}
-		if status.ProfileID != "" && tx.ProfileID != status.ProfileID {
-			continue
-		}
-		if status.RuntimeConfigPath != "" && filepath.Clean(tx.DesiredPlan.Core.RuntimeConfigPath) != filepath.Clean(status.RuntimeConfigPath) {
-			continue
-		}
-		return tx, true, nil
+		matches++
+		activeSummary = summary
 	}
-	if len(loadErrors) > 0 {
-		return txstate.Transaction{}, false, fmt.Errorf("load committed active transaction: %s", strings.Join(loadErrors, "; "))
+	if matches != 1 {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s has %d status matches; refusing ownership filtering", activeID, matches)
 	}
-	return txstate.Transaction{}, false, nil
+	if activeSummary.State != string(txstate.TransactionCommitted) || activeSummary.RequiresCleanup {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s is not a clean committed transaction", activeID)
+	}
+
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	tx, _, err := store.Load(activeID)
+	if err != nil {
+		return txstate.Transaction{}, false, fmt.Errorf("load active committed transaction %s: %w", activeID, err)
+	}
+	if tx.Owner != txstate.TransactionOwner || tx.State != txstate.TransactionCommitted {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s has invalid owner or state", activeID)
+	}
+	if status.ProfileID != "" && tx.ProfileID != status.ProfileID {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s profile does not match status", activeID)
+	}
+	if status.RuntimeConfigPath != "" && filepath.Clean(tx.DesiredPlan.Core.RuntimeConfigPath) != filepath.Clean(status.RuntimeConfigPath) {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s runtime config does not match status", activeID)
+	}
+	return tx, true, nil
 }
 
 func activeTransactionOwnsCandidate(tx txstate.Transaction, candidate recovery.Candidate) bool {
