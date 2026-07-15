@@ -90,7 +90,7 @@ func Finalize(report Report) Report {
 	report.PrimaryClassification = choosePrimary(present)
 
 	switch {
-	case report.PrimaryClassification == ClassSessionInactive && report.Historical:
+	case report.PrimaryClassification == ClassSessionInactive:
 		report.Status = StatusUnavailable
 	case unhealthy:
 		report.Status = StatusUnhealthy
