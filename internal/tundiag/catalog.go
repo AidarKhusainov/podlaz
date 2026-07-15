@@ -18,15 +18,16 @@ const (
 )
 
 type Target struct {
-	ID               string        `json:"id"`
-	Kind             TargetKind    `json:"kind"`
-	Host             string        `json:"host,omitempty"`
-	Port             uint16        `json:"port,omitempty"`
-	URL              string        `json:"url,omitempty"`
-	Timeout          time.Duration `json:"-"`
-	MaxResponseBytes int64         `json:"max_response_bytes,omitempty"`
-	PrivacyNote      string        `json:"privacy_note"`
-	Required         bool          `json:"required"`
+	ID                 string        `json:"id"`
+	Kind               TargetKind    `json:"kind"`
+	Host               string        `json:"host,omitempty"`
+	Port               uint16        `json:"port,omitempty"`
+	URL                string        `json:"url,omitempty"`
+	BootstrapAddresses []string      `json:"bootstrap_addresses,omitempty"`
+	Timeout            time.Duration `json:"-"`
+	MaxResponseBytes   int64         `json:"max_response_bytes,omitempty"`
+	PrivacyNote        string        `json:"privacy_note"`
+	Required           bool          `json:"required"`
 }
 
 func Catalog() []Target {
@@ -121,26 +122,28 @@ var targetCatalog = []Target{
 		Required:         true,
 	},
 	{
-		ID:               "doh-cloudflare",
-		Kind:             TargetDoH,
-		Host:             "cloudflare-dns.com",
-		Port:             443,
-		URL:              "https://cloudflare-dns.com/dns-query",
-		Timeout:          6 * time.Second,
-		MaxResponseBytes: 4096,
-		PrivacyNote:      "Cloudflare receives one RFC 8484 DNS-over-HTTPS query for example.com.",
-		Required:         false,
+		ID:                 "doh-cloudflare",
+		Kind:               TargetDoH,
+		Host:               "cloudflare-dns.com",
+		Port:               443,
+		URL:                "https://cloudflare-dns.com/dns-query",
+		BootstrapAddresses: []string{"1.1.1.1", "1.0.0.1"},
+		Timeout:            6 * time.Second,
+		MaxResponseBytes:   4096,
+		PrivacyNote:        "Cloudflare receives one RFC 8484 DNS-over-HTTPS query for example.com.",
+		Required:           false,
 	},
 	{
-		ID:               "doh-google",
-		Kind:             TargetDoH,
-		Host:             "dns.google",
-		Port:             443,
-		URL:              "https://dns.google/dns-query",
-		Timeout:          6 * time.Second,
-		MaxResponseBytes: 4096,
-		PrivacyNote:      "Google Public DNS receives one RFC 8484 DNS-over-HTTPS query for example.com.",
-		Required:         false,
+		ID:                 "doh-google",
+		Kind:               TargetDoH,
+		Host:               "dns.google",
+		Port:               443,
+		URL:                "https://dns.google/dns-query",
+		BootstrapAddresses: []string{"8.8.8.8", "8.8.4.4"},
+		Timeout:            6 * time.Second,
+		MaxResponseBytes:   4096,
+		PrivacyNote:        "Google Public DNS receives one RFC 8484 DNS-over-HTTPS query for example.com.",
+		Required:           false,
 	},
 	{
 		ID:               "pmtu-cloudflare-16k",
