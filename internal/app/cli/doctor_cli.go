@@ -91,6 +91,9 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 		return parsed, usageError("doctor --verbose requires --tun")
 	}
 	if parsed.tun {
+		if parsed.verbose && parsed.json {
+			return parsed, usageError("doctor --tun --verbose and --json are mutually exclusive")
+		}
 		if parsed.xrayPath != "" {
 			return parsed, usageError("doctor --xray requires --core")
 		}
