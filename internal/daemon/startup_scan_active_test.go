@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
@@ -70,7 +71,7 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 		t.Fatalf("active resources were published as stale in status: %#v", publishedStatus.StartupScan)
 	}
 	publishedDoctor := withStartupScanDoctor(api.DoctorResponse{}, activeState.Snapshot())
-	if len(publishedDoctor.Checks) == 0 || publishedDoctor.Checks[len(publishedDoctor.Checks)-1].Severity != "ok" {
+	if len(publishedDoctor.Checks) == 0 || publishedDoctor.Checks[len(publishedDoctor.Checks)-1].Severity != string(doctor.SeverityOK) {
 		t.Fatalf("active resources were published as stale in doctor: %#v", publishedDoctor.Checks)
 	}
 }
