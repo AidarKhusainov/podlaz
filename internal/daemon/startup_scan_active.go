@@ -13,22 +13,22 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func (s *startupScanState) FilterForStatus(status api.StatusResponse) recovery.PlanResult {
+func (s *startupScanState) FilterForStatus(status api.StatusResponse, runtimeDir string) recovery.PlanResult {
 	if s == nil {
 		return recovery.PlanResult{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.scan = filterStartupScanForActiveRuntime(s.scan, status)
+	s.scan = filterStartupScanForActiveRuntime(s.scan, status, runtimeDir)
 	return cloneRecoveryPlan(s.scan)
 }
 
-func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.StatusResponse) recovery.PlanResult {
+func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.StatusResponse, runtimeDir string) recovery.PlanResult {
 	out := cloneRecoveryPlan(scan)
 	if status.Connection != "active" || status.Mode != planner.ModeTun {
 		return out
 	}
-	tx, ok, err := activeCommittedTransaction(status)
+	tx, ok, err := activeCommittedTransaction(status, runtimeDir)
 	if err != nil {
 		out.Warnings = append(out.Warnings, recovery.Warning{Target: "active TUN transaction", Message: err.Error()})
 		return out
@@ -48,8 +48,8 @@ func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.Stat
 	return out
 }
 
-func activeCommittedTransaction(status api.StatusResponse) (txstate.Transaction, bool, error) {
-	store := txstate.TransactionStore{RuntimeDir: status.RuntimeDirectory}
+func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (txstate.Transaction, bool, error) {
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	var loadErrors []string
 	for _, summary := range status.Transactions {
 		if summary.State != string(txstate.TransactionCommitted) || summary.RequiresCleanup {

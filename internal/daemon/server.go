@@ -61,7 +61,7 @@ func (s Server) Run(ctx context.Context) error {
 	startupScan := newStartupScanState(startupScanFn)
 	refreshStartupScan := func(refreshCtx context.Context) {
 		scan := startupScan.Refresh(refreshCtx)
-		scan = startupScan.FilterForStatus(lifecycle.Status(refreshCtx))
+		scan = startupScan.FilterForStatus(lifecycle.Status(refreshCtx), runtimeDir)
 		logStartupScan(scan)
 	}
 	refreshStartupScan(ctx)

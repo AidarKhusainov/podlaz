@@ -46,14 +46,14 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 		Connection:        "active",
 		Mode:              planner.ModeTun,
 		ProfileID:         tx.ProfileID,
-		RuntimeDirectory:  runtimeDir,
+		RuntimeDirectory:  "present",
 		RuntimeConfigPath: configPath,
 		Transactions: []api.TransactionStatus{{
 			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: filepath.Join(runtimeDir, txstate.TransactionDirName, tx.ID+txstate.TransactionFileSuffix),
 		}},
 	}
 
-	filtered := filterStartupScanForActiveRuntime(scan, status)
+	filtered := filterStartupScanForActiveRuntime(scan, status, runtimeDir)
 	if len(filtered.Candidates) != 1 || filtered.Candidates[0].Target != "inet foreign" {
 		t.Fatalf("active resources were not filtered precisely: %#v", filtered.Candidates)
 	}
@@ -83,11 +83,11 @@ func TestFilterStartupScanKeepsGeneratedDirectoryContainingUnownedFiles(t *testi
 	}
 	status := api.StatusResponse{
 		Connection: "active", Mode: planner.ModeTun, ProfileID: tx.ProfileID,
-		RuntimeDirectory: runtimeDir, RuntimeConfigPath: configPath,
+		RuntimeDirectory: "present", RuntimeConfigPath: configPath,
 		Transactions: []api.TransactionStatus{{ID: tx.ID, State: string(txstate.TransactionCommitted), Path: "unused"}},
 	}
 	candidate := recovery.Candidate{Kind: "generated-runtime-configs", Target: generatedDir}
-	filtered := filterStartupScanForActiveRuntime(recovery.PlanResult{Candidates: []recovery.Candidate{candidate}}, status)
+	filtered := filterStartupScanForActiveRuntime(recovery.PlanResult{Candidates: []recovery.Candidate{candidate}}, status, runtimeDir)
 	if len(filtered.Candidates) != 1 {
 		t.Fatalf("directory with unowned stale file must remain recoverable: %#v", filtered.Candidates)
 	}
