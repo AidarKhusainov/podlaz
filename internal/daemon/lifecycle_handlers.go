@@ -96,7 +96,8 @@ func logConnectFailure(req api.ConnectRequest, err error) {
 	case isTunVerificationError(err):
 		classification = "verification-failed"
 	}
-	log.Printf("podlazd: connect request failed mode=%s phase=%s transaction_id=%s rollback_status=%s classification=%s", safeLogField(req.Mode), safeLogField(phase), safeLogField(transactionID), safeLogField(rollbackStatus), safeLogField(classification))
+	tunPrimaryClassification, tunReportLocation := tunFailureDiagnosticLogFields(err)
+	log.Printf("podlazd: connect request failed mode=%s phase=%s transaction_id=%s rollback_status=%s classification=%s tun_primary_classification=%s tun_report_location=%s", safeLogField(req.Mode), safeLogField(phase), safeLogField(transactionID), safeLogField(rollbackStatus), safeLogField(classification), safeLogField(tunPrimaryClassification), safeLogField(tunReportLocation))
 }
 
 func safeLogField(value string) string {
