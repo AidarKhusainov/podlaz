@@ -11,6 +11,7 @@ daemon privilege boundaries, and privileged networking safety.
 | Daemon runtime | `/run/podlaz` | `podlazd` via systemd `RuntimeDirectory=` |
 | Daemon persistent state | `/var/lib/podlaz` | `podlazd` via systemd `StateDirectory=` |
 | Transaction files | `/run/podlaz/transactions/*.json` | `podlazd` |
+| Latest TUN diagnostic report | `/run/podlaz/diagnostics/tun-last.json` | `podlazd` |
 | Generated runtime config | `/run/podlaz/generated/` | `podlazd` and the dedicated core child identity |
 | TUN packet ingestion | `podlaz0` native Xray `tun` inbound | Xray child process, orchestrated by `podlazd` |
 
@@ -19,6 +20,9 @@ Rules:
 - User profile/subscription state must not require root.
 - Runtime config is generated output, not persistent source of truth.
 - Transaction files must be atomic, private, versioned, and redaction-safe.
+- The latest TUN diagnostic report is replacement-only, atomically written,
+  bounded to 256 KiB, and mode `0600`; podlaz keeps no unbounded diagnostic
+  history under `/run`.
 - Read-only commands may inspect state but must not clean it up.
 
 ## CLI and daemon boundary
@@ -30,6 +34,10 @@ Rules:
 - `proxy-only` must not mutate host networking.
 - `tun` execution must record enough durable desired and applied state to recover
   after failure or daemon restart.
+- `doctor --tun` is daemon-backed because authoritative active-session,
+  transaction, route, resolver, and ownership evidence belongs to the daemon.
+  The diagnostic handler is read-only apart from atomically replacing the
+  private latest-report file.
 
 Packaged daemon access has two local socket boundaries. The filesystem socket is tried first. A transport-level permission failure may fall back to the packaged abstract socket, where the daemon can enforce peer-credential/polkit authorization without widening filesystem socket access. Once the daemon returns an HTTP, authorization, JSON, or schema error, that response is authoritative and must not be downgraded to a generic daemon-unavailable error.
 
@@ -53,6 +61,20 @@ For native Xray TUN startup, durable rollback order is:
 2. stop the Xray child process;
 3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
+If post-apply connectivity verification fails, `podlazd` must first run the
+bounded layered TUN diagnostics while the failing host state still exists,
+atomically save the centrally redacted latest report, and attach its primary
+classification and path to the returned connect error. Only then may normal
+rollback begin. A diagnostic failure must not suppress or reorder rollback.
+
+The TUN diagnostic path may perform only read-only snapshot collection, kernel
+route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private latest-report
+replacement. It must never change interface MTU, routes, policy rules, DNS,
+`systemd-resolved`, NetworkManager, `/etc/resolv.conf`, nftables/firewall state,
+services, other VPNs, or browser state. TLS certificate validation must remain
+enabled. Unit tests must use local protocol fixtures rather than live internet
+endpoints.
+
 ## Recovery
 
 - `podlaz recover` is read-only.
@@ -66,12 +88,21 @@ For native Xray TUN startup, durable rollback order is:
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
 - A non-zero `resolvectl status` or `resolvectl revert` result stating that `podlaz0` is already missing is idempotent for stale-link cleanup, transaction recovery, runtime DNS rollback, and doctor inspection. This classification is specific to `resolvectl`; generic command missing-resource classification remains unchanged.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
+- The daemon startup scan is refreshed after every connect attempt, after
+  disconnect, and after recovery execution, including failed operations, so
+  subsequent status/doctor output reflects the latest cleanup and stale-state
+  view rather than the startup-only snapshot.
 
 ## Redaction
 
 Human and JSON output must redact secrets and generated runtime configuration.
 This applies to `status`, `doctor`, `logs`, `plan`, `recover`, validation output,
 and all JSON responses.
+
+The same central redaction and evidence-size limits apply before TUN diagnostics
+are rendered or persisted. The latest report must not store raw profile secrets,
+UUIDs, generated Xray configuration, authentication material, or unbounded
+command/protocol output.
 
 JSON output must include `schema_version`. Existing JSON field meanings must not
 change without an explicit compatibility note.
