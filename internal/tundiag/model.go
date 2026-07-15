@@ -54,7 +54,7 @@ const (
 	ClassDoHPartialFailure           Classification = "doh_partial_failure"
 	ClassDoHFailure                  Classification = "doh_failure"
 	ClassIPv6NotPresent              Classification = "ipv6_not_present"
-	ClassIPv6Unusable               Classification = "ipv6_unusable"
+	ClassIPv6Unusable                Classification = "ipv6_unusable"
 	ClassIPv6Leak                    Classification = "ipv6_leak"
 	ClassLikelyPMTUBlackhole         Classification = "likely_pmtu_blackhole"
 	ClassTimeout                     Classification = "timeout"
