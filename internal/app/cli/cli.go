@@ -13,6 +13,7 @@ import (
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	"github.com/AidarKhusainov/podlaz/internal/status"
+	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
 var version = "0.0.0-dev"
@@ -53,6 +54,7 @@ type options struct {
 	doctor                func(context.Context) doctor.Report
 	coreDoctor            func(context.Context, string) doctor.Report
 	daemonDoctor          func(context.Context) (doctor.Report, error)
+	tunDoctor             func(context.Context) (tundiag.Report, error)
 	logs                  func(context.Context, io.Writer, logs.Options) error
 	profileStorePath      string
 	subscriptionStorePath string
