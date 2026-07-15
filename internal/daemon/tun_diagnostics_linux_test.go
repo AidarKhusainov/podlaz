@@ -21,7 +21,7 @@ func TestParseTunDiagnosticRouteAndPolicyRule(t *testing.T) {
 
 func TestProbeTunDNSStateRejectsForeignRouteOnlyOwner(t *testing.T) {
 	result := probeTunDNSState(planner.TunPlan{DNS: planner.TunDNSPlan{TargetLink: "podlaz0", Servers: []string{"1.1.1.1"}}}, netsnapshot.Snapshot{
-		DNS: netsnapshot.DNSState{ResolvedLinks: []netsnapshot.ResolvedLink{
+		DNS: netsnapshot.DNS{ResolvedLinks: []netsnapshot.ResolvedLink{
 			{Name: "podlaz0", DNSServers: []string{"1.1.1.1"}, DNSDomains: []string{"~."}, Protocols: []string{"+DefaultRoute"}},
 			{Name: "wg0", DNSDomains: []string{"~."}},
 		}},
