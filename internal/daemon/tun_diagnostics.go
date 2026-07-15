@@ -84,7 +84,7 @@ func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
 func (m *XrayManager) runAndPersistTunDiagnostics(ctx context.Context, input tunDiagnosticInput) tundiag.Report {
 	runCtx, cancel := context.WithTimeout(ctx, tunDiagnosticRunTimeout)
 	defer cancel()
-	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(buildHardenedTunDiagnosticAdapters(input)))
+	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(buildPhaseAwareTunDiagnosticAdapters(input)))
 	if input.metadataError != "" {
 		report = appendTunInternalDiagnosticFailure(report, "transaction-metadata", input.metadataError)
 	}
@@ -93,7 +93,7 @@ func (m *XrayManager) runAndPersistTunDiagnostics(ctx context.Context, input tun
 }
 
 func (m *XrayManager) runAndPersistTunFailureDiagnostics(ctx context.Context, input tunDiagnosticInput, cause error) (tundiag.Report, bool) {
-	report := tundiag.Runner{}.Run(ctx, tunDiagnosticBase(input), tundiag.PreRollbackProbes(buildHardenedTunDiagnosticAdapters(input)))
+	report := tundiag.Runner{}.Run(ctx, tunDiagnosticBase(input), tundiag.PreRollbackProbes(buildPhaseAwareTunDiagnosticAdapters(input)))
 	if input.metadataError != "" {
 		report = appendTunInternalDiagnosticFailure(report, "transaction-metadata", input.metadataError)
 	}
