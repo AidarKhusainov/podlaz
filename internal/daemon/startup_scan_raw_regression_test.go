@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +13,30 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
+
+func TestStatusForPublicationIncludesExactActiveTransactionID(t *testing.T) {
+	runtimeDir := t.TempDir()
+	configPath := filepath.Join(runtimeDir, "generated", "xray.json")
+	tx := saveStartupScanCommittedTransaction(t, runtimeDir, "tx-active", "profile-test", configPath)
+	manager := &XrayManager{RuntimeDir: runtimeDir}
+	manager.state = xrayState{
+		Connection:        "active",
+		Mode:              planner.ModeTun,
+		ProfileID:         tx.ProfileID,
+		Proxy:             "active",
+		TUN:               "enabled (podlaz0)",
+		RuntimeConfigPath: configPath,
+		TransactionID:     tx.ID,
+	}
+
+	status := manager.statusForPublication(context.Background())
+	if status.ActiveTransactionID != tx.ID {
+		t.Fatalf("expected exact active transaction id %q, got %q", tx.ID, status.ActiveTransactionID)
+	}
+	if len(status.Transactions) != 1 || status.Transactions[0].ID != tx.ID {
+		t.Fatalf("expected matching committed transaction summary, got %#v", status.Transactions)
+	}
+}
 
 func TestFilterForStatusPreservesRawSnapshotForInactivePublication(t *testing.T) {
 	runtimeDir := t.TempDir()
