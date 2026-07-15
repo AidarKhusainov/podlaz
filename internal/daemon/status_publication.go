@@ -59,11 +59,3 @@ func (m *XrayManager) statusPublicationIdentity() statusPublicationIdentity {
 		TransactionID:     m.state.TransactionID,
 	}
 }
-
-func (m *XrayManager) activeTransactionID() string {
-	identity := m.statusPublicationIdentity()
-	if !identity.isActiveTun() {
-		return ""
-	}
-	return identity.TransactionID
-}
