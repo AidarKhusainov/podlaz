@@ -51,6 +51,7 @@ const (
 	ClassTCP443Failure               Classification = "tcp_443_failure"
 	ClassTLSFailure                  Classification = "tls_failure"
 	ClassHTTPSFailure                Classification = "https_failure"
+	ClassHTTPSPartialFailure         Classification = "https_partial_failure"
 	ClassDoHPartialFailure           Classification = "doh_partial_failure"
 	ClassDoHFailure                  Classification = "doh_failure"
 	ClassIPv6NotPresent              Classification = "ipv6_not_present"
@@ -94,13 +95,16 @@ type Network struct {
 	LocalAddresses    []string `json:"local_addresses,omitempty"`
 	TunInterface      string   `json:"tun_interface,omitempty"`
 	TunMTU            int      `json:"tun_mtu,omitempty"`
-	UplinkMTU         int      `json:"uplink_mtu,omitempty"`
+	UplinkMTT         int      `json:"uplink_mtu,omitempty"`
 	DNSServers        []string `json:"dns_servers,omitempty"`
 	IPv4Status        string   `json:"ipv4_status,omitempty"`
 	IPv6Status        string   `json:"ipv6_status,omitempty"`
 	ServerEndpoint    string   `json:"server_endpoint,omitempty"`
+	ServerHostname    string   `json:"server_hostname,omitempty"`
+	ServerName        string   `json:"server_name,omitempty"`
 	ServerAddresses   []string `json:"server_addresses,omitempty"`
 	DoHProviders      []string `json:"doh_providers,omitempty"`
+	NftablesStatus    string   `json:"nftables_status,omitempty"`
 }
 
 type ProbeResult struct {
@@ -125,6 +129,8 @@ type Evidence struct {
 	HTTP              *HTTPEvidence     `json:"http,omitempty"`
 	IPv6              *IPv6Evidence     `json:"ipv6,omitempty"`
 	Commands          []CommandEvidence `json:"commands,omitempty"`
+	PolicyRules       []string          `json:"policy_rules,omitempty"`
+	NftablesRules     []string          `json:"nftables_rules,omitempty"`
 	Notes             []string          `json:"notes,omitempty"`
 }
 
@@ -155,12 +161,14 @@ type TLSEvidence struct {
 }
 
 type HTTPEvidence struct {
-	StatusCode    int    `json:"status_code,omitempty"`
-	Location      string `json:"location,omitempty"`
-	ContentLength int64  `json:"content_length,omitempty"`
-	BytesRead     int64  `json:"bytes_read,omitempty"`
-	HeaderMS      int64  `json:"header_ms,omitempty"`
-	BodyMS        int64  `json:"body_ms,omitempty"`
+	StatusCode       int    `json:"status_code,omitempty"`
+	Location         string `json:"location,omitempty"`
+	ContentLength    int64  `json:"content_length,omitempty"`
+	BytesRead        int64  `json:"bytes_read,omitempty"`
+	HeaderMS         int64  `json:"header_ms,omitempty"`
+	BodyMS           int64  `json:"body_ms,omitempty"`
+	ResponseAccepted bool   `json:"response_accepted,omitempty"`
+	FailurePhase     string `json:"failure_phase,omitempty"`
 }
 
 type IPv6Evidence struct {

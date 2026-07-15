@@ -106,6 +106,12 @@ func renderVerboseNetwork(b *strings.Builder, network Network) {
 	if network.ServerEndpoint != "" {
 		fmt.Fprintf(b, "  VPN server    %s\n", network.ServerEndpoint)
 	}
+	if network.ServerHostname != "" {
+		fmt.Fprintf(b, "  Server host   %s\n", network.ServerHostname)
+	}
+	if network.ServerName != "" {
+		fmt.Fprintf(b, "  TLS SNI       %s\n", network.ServerName)
+	}
 	if len(network.ServerAddresses) > 0 {
 		fmt.Fprintf(b, "  Server IPs    %s\n", strings.Join(network.ServerAddresses, ", "))
 	}
@@ -137,7 +143,7 @@ func renderVerboseEvidence(b *strings.Builder, probe ProbeResult) {
 		fmt.Fprintf(b, "           tls: version=%s cipher=%s subject=%s issuer=%s handshake=%d ms\n", emptyAs(tls.Version, "-"), emptyAs(tls.Cipher, "-"), emptyAs(tls.PeerSubject, "-"), emptyAs(tls.PeerIssuer, "-"), tls.HandshakeMS)
 	}
 	if http := probe.Evidence.HTTP; http != nil {
-		fmt.Fprintf(b, "           http: status=%d location=%s content_length=%d bytes=%d header=%d ms body=%d ms\n", http.StatusCode, emptyAs(http.Location, "-"), http.ContentLength, http.BytesRead, http.HeaderMS, http.BodyMS)
+		fmt.Fprintf(b, "           http: status=%d location=%s content_length=%d bytes=%d header=%d ms body=%d ms accepted=%t failure_phase=%s\n", http.StatusCode, emptyAs(http.Location, "-"), http.ContentLength, http.BytesRead, http.HeaderMS, http.BodyMS, http.ResponseAccepted, emptyAs(http.FailurePhase, "-"))
 	}
 	if ipv6 := probe.Evidence.IPv6; ipv6 != nil {
 		fmt.Fprintf(b, "           ipv6: state=%s default_dev=%s table=%s uplink=%s tun=%s\n", emptyAs(ipv6.State, "-"), emptyAs(ipv6.DefaultInterface, "-"), emptyAs(ipv6.RouteTable, "-"), strings.Join(ipv6.UplinkAddresses, ","), strings.Join(ipv6.TunAddresses, ","))
@@ -172,8 +178,8 @@ func Guidance(classification Classification) string {
 		return "inspect egress filtering and TCP/443 reachability"
 	case ClassTLSFailure:
 		return "inspect TLS certificate validation, clock, and interception evidence"
-	case ClassHTTPSFailure:
-		return "inspect HTTP header/body timings and endpoint-specific results"
+	case ClassHTTPSFailure, ClassHTTPSPartialFailure:
+		return "compare the independent HTTPS provider results and inspect header/body timings"
 	case ClassDoHFailure, ClassDoHPartialFailure:
 		return "compare the independent DoH provider results"
 	case ClassIPv6Leak, ClassIPv6Unusable:

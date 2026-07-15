@@ -106,7 +106,7 @@ func (r Runner) Run(ctx context.Context, base Report, probes []Probe) Report {
 		if result.Status == "" {
 			result.Status = ProbePass
 		}
-		if probeErr != nil && result.Status == ProbePass {
+		if probeErr != nil {
 			result.Status = ProbeFail
 			result.Classification = cancellationClassification(probeErr)
 			result.Error = probeErr.Error()

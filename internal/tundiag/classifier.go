@@ -25,6 +25,7 @@ var primaryClassificationPriority = []Classification{
 	ClassTimeout,
 	ClassCancelled,
 	ClassInternalDiagnosticError,
+	ClassHTTPSPartialFailure,
 	ClassDoHPartialFailure,
 	ClassIPv6NotPresent,
 }
@@ -131,7 +132,7 @@ func hasAnyClassification(present map[Classification]struct{}, candidates map[Cl
 
 func isAdvisoryClassification(classification Classification) bool {
 	switch classification {
-	case ClassDoHPartialFailure, ClassIPv6NotPresent:
+	case ClassHTTPSPartialFailure, ClassDoHPartialFailure, ClassIPv6NotPresent:
 		return true
 	default:
 		return false
@@ -139,47 +140,65 @@ func isAdvisoryClassification(classification Classification) bool {
 }
 
 func applyDerivedClassifications(report Report) Report {
-	dohPasses := 0
-	dohFailures := 0
-	for _, probe := range report.Probes {
-		if probe.Layer != LayerDoH {
-			continue
-		}
-		switch probe.Status {
-		case ProbePass:
-			dohPasses++
-		case ProbeFail:
-			dohFailures++
-		}
-	}
-	if dohPasses > 0 && dohFailures > 0 {
-		for i := range report.Probes {
-			if report.Probes[i].Layer == LayerDoH && report.Probes[i].Status == ProbeFail {
-				report.Probes[i].Classification = ClassDoHPartialFailure
-			}
-		}
-	}
+	applyPartialProviderClassification(report.Probes, LayerHTTPS, ClassHTTPSPartialFailure)
+	applyPartialProviderClassification(report.Probes, LayerDoH, ClassDoHPartialFailure)
 
 	smallHTTPSPass := false
-	pmtuTimeoutFailures := 0
+	pmtuTransportFailures := 0
 	for _, probe := range report.Probes {
 		if probe.Layer == LayerHTTPS && probe.Status == ProbePass {
 			smallHTTPSPass = true
 		}
-		if probe.Layer == LayerPMTU && probe.Status == ProbeFail && (probe.Classification == ClassTimeout || probe.Classification == ClassHTTPSFailure) {
-			pmtuTimeoutFailures++
+		if probe.Layer == LayerPMTU && probe.Status == ProbeFail && isPMTUTransportFailure(probe) {
+			pmtuTransportFailures++
 		}
 	}
-	if smallHTTPSPass && pmtuTimeoutFailures >= 2 && !containsProbe(report.Probes, "pmtu-corroboration") {
+	if smallHTTPSPass && pmtuTransportFailures >= 2 && !containsProbe(report.Probes, "pmtu-corroboration") {
 		report.Probes = append(report.Probes, ProbeResult{
 			ID:             "pmtu-corroboration",
 			Layer:          LayerPMTU,
 			Status:         ProbeFail,
 			Classification: ClassLikelyPMTUBlackhole,
-			Error:          "small HTTPS succeeded while two independent bounded 16 KiB transfers failed",
+			Error:          "small HTTPS succeeded while two independent bounded transfers stalled after valid HTTP responses",
 		})
 	}
 	return report
+}
+
+func applyPartialProviderClassification(probes []ProbeResult, layer Layer, partial Classification) {
+	passes := 0
+	failures := 0
+	for _, probe := range probes {
+		if probe.Layer != layer {
+			continue
+		}
+		switch probe.Status {
+		case ProbePass:
+			passes++
+		case ProbeFail:
+			failures++
+		}
+	}
+	if passes == 0 || failures == 0 {
+		return
+	}
+	for i := range probes {
+		if probes[i].Layer == layer && probes[i].Status == ProbeFail {
+			probes[i].Classification = partial
+		}
+	}
+}
+
+func isPMTUTransportFailure(probe ProbeResult) bool {
+	if probe.Evidence.HTTP == nil || !probe.Evidence.HTTP.ResponseAccepted {
+		return false
+	}
+	switch probe.Evidence.HTTP.FailurePhase {
+	case "body_timeout", "body_transport":
+		return true
+	default:
+		return false
+	}
 }
 
 func containsProbe(probes []ProbeResult, id string) bool {

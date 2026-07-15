@@ -98,7 +98,7 @@ var targetCatalog = []Target{
 		ExpectedSuccess: "HTTP 200 with at most 4096 response bytes", ExpectedStatusCodes: []int{200},
 		Host: "www.cloudflare.com", Port: 443, URL: "https://www.cloudflare.com/cdn-cgi/trace",
 		Timeout: 6 * time.Second, MaxResponseBytes: 4096,
-		PrivacyNote: "Cloudflare receives one bounded HTTPS connectivity request.", Required: true,
+		PrivacyNote: "Cloudflare receives one bounded HTTPS connectivity request.", Required: false,
 	},
 	{
 		ID: "https-google-small", Kind: TargetHTTPS,
@@ -106,7 +106,7 @@ var targetCatalog = []Target{
 		ExpectedSuccess: "HTTP 204 with an empty response", ExpectedStatusCodes: []int{204},
 		Host: "www.google.com", Port: 443, URL: "https://www.google.com/generate_204",
 		Timeout: 6 * time.Second, MaxResponseBytes: 1024,
-		PrivacyNote: "Google receives one bounded HTTPS connectivity request.", Required: true,
+		PrivacyNote: "Google receives one bounded HTTPS connectivity request.", Required: false,
 	},
 	{
 		ID: "doh-cloudflare", Kind: TargetDoH,
