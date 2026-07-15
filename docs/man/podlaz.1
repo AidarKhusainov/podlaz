@@ -48,6 +48,10 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .RI [ options ]
 .YS
 .SY podlaz
+.B doctor --tun
+.RI [ --verbose | --json ]
+.YS
+.SY podlaz
 .B logs
 .RI [ options ]
 .YS
@@ -189,6 +193,11 @@ rechecks host ownership.
 .B replace-podlaz
 may additionally disconnect an active podlaz TUN session before starting the new
 transaction. Unsupported handoff values fail before network mutation.
+.PP
+If post-apply TUN connectivity verification fails, podlazd runs bounded layered
+diagnostics before the first rollback command, stores the redacted latest report,
+adds its primary classification and path to the error, and then performs normal
+rollback.
 .TP
 .B disconnect
 Stop the active daemon-managed connection. Safe to repeat.
@@ -205,6 +214,19 @@ Print daemon-backed status when available, otherwise local read-only status.
 .TP
 .B doctor [--json]
 Print environment and runtime diagnostics.
+.TP
+.B doctor --tun [--verbose|-v|--json]
+Run daemon-backed, read-only diagnostics for the active TUN session or return the
+saved latest TUN report. The bounded dependency-aware sequence checks session and
+ownership metadata, the VPN server bypass, IPv4 policy routing, systemd-resolved
+link ownership, DNS over UDP and TCP, positive system resolution, reserved
+.invalid NXDOMAIN integrity, TCP/443, TLS, small HTTPS, two independent DoH
+providers, IPv6 state, and guarded PMTU evidence. Compact output reports the
+primary classification and next step. Verbose output adds bounded evidence.
+JSON uses the same centrally redacted schema with
+.BR schema_version=1 .
+The command does not change routes, policy rules, DNS, MTU, nftables, services,
+other VPNs, or browser state.
 .TP
 .B doctor --core --xray <path> [--json]
 Validate an explicitly supplied Xray-compatible core binary.
@@ -226,7 +248,9 @@ Print stable JSON for commands whose JSON contract is implemented.
 For
 .B plan --mode tun,
 print detailed technical planning sections instead of the compact default human
-summary.
+summary. For
+.BR doctor --tun ,
+print bounded route, DNS, TLS, HTTP, IPv6, command, and timing evidence.
 .TP
 .B --plain
 For commands that use symbolic human status markers, print ASCII status words
@@ -261,6 +285,10 @@ Select daemon log lines for
 .B --core
 Select core diagnostics or core log lines, depending on the command.
 .TP
+.B --tun
+Select layered daemon-backed TUN diagnostics for
+.BR doctor .
+.TP
 .B --xray <path>
 Provide the core binary path for
 .BR "doctor --core" .
@@ -280,7 +308,7 @@ Runtime or operation failure.
 Invalid usage, invalid flags or arguments, or deferred JSON output.
 .TP
 .B 3
-Diagnostic command found an unhealthy state.
+Diagnostic command found an unhealthy or unavailable state.
 .TP
 .B 4
 Permission or authorization failure.
@@ -298,5 +326,9 @@ User state.
 .I /run/podlaz
 Daemon runtime directory, socket, generated config metadata, and transaction
 state.
+.TP
+.I /run/podlaz/diagnostics/tun-last.json
+Daemon-owned, atomically replaced latest TUN diagnostic report. The report is
+centrally redacted, bounded to 256 KiB, and stored with mode 0600.
 .SH SEE ALSO
 .BR podlazd (8)
