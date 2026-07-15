@@ -61,6 +61,7 @@ func TestConcurrentStartupScanRefreshesShareOneScan(t *testing.T) {
 func TestStartupScanRefreshWaitHonorsContextDeadline(t *testing.T) {
 	firstEntered := make(chan struct{})
 	releaseFirst := make(chan struct{})
+	ownerDone := make(chan struct{})
 	state := newStartupScanState(func(context.Context) recovery.PlanResult {
 		select {
 		case <-firstEntered:
@@ -70,7 +71,10 @@ func TestStartupScanRefreshWaitHonorsContextDeadline(t *testing.T) {
 		}
 		return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "tun-interface", Target: "podlaz0", Description: "existing raw evidence"}}}
 	})
-	go state.Refresh(context.Background())
+	go func() {
+		defer close(ownerDone)
+		state.Refresh(context.Background())
+	}()
 	<-firstEntered
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
@@ -79,6 +83,7 @@ func TestStartupScanRefreshWaitHonorsContextDeadline(t *testing.T) {
 	result := state.Refresh(ctx)
 	elapsed := time.Since(started)
 	close(releaseFirst)
+	<-ownerDone
 
 	if elapsed > 100*time.Millisecond {
 		t.Fatalf("refresh wait ignored context deadline: %s", elapsed)
