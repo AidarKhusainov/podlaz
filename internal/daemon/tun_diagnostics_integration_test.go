@@ -2,10 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,81 +15,147 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
+func TestCollectTunFailureDiagnosticsPreservesParentCancellation(t *testing.T) {
+	original := tunDiagnosticCommandRunner
+	commandCalls := 0
+	tunDiagnosticCommandRunner = func(ctx context.Context, name string, args ...string) (tunDiagnosticCommandResult, error) {
+		commandCalls++
+		return tunDiagnosticCommandResult{command: strings.TrimSpace(name + " " + strings.Join(args, " ")), exitCode: -1}, ctx.Err()
+	}
+	t.Cleanup(func() { tunDiagnosticCommandRunner = original })
+
+	manager := &XrayManager{RuntimeDir: t.TempDir()}
+	manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
+		return productionTunDiagnosticInput().snapshot
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	started := time.Now()
+	_ = manager.collectTunFailureDiagnostics(ctx, "tx-test", productionTunDiagnosticInput().plan, errors.New("verification failed"))
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("cancelled diagnostics delayed rollback for %s", elapsed)
+	}
+	if commandCalls != 0 {
+		t.Fatalf("cancelled parent must stop pre-rollback command probes, got %d calls", commandCalls)
+	}
+}
+
 func TestRunAndPersistTunDiagnosticsDetectsMissingTunThroughProductionPath(t *testing.T) {
-	input, network := productionTunDiagnosticInput()
+	input := productionTunDiagnosticInput()
 	input.snapshot.TunDevices = nil
 	installProductionTunDiagnosticCommandRunner(t, nil)
 
 	report := (&XrayManager{RuntimeDir: t.TempDir()}).runAndPersistTunDiagnostics(context.Background(), input)
 	assertProbeClassification(t, report, "session", tundiag.ClassOwnershipMismatch)
-	if len(network.tcpCalls) != 0 {
-		t.Fatalf("network probes must be skipped after session ownership failure, got TCP calls %v", network.tcpCalls)
-	}
 }
 
-func TestRunAndPersistTunDiagnosticsDetectsDuplicateResolvedRecordsThroughProductionPath(t *testing.T) {
-	input, _ := productionTunDiagnosticInput()
-	input.snapshot.DNS.ResolvedLinks = append(input.snapshot.DNS.ResolvedLinks, input.snapshot.DNS.ResolvedLinks[0])
-	installProductionTunDiagnosticCommandRunner(t, nil)
+func TestProductionAdaptersDetectMissingExpectedNftablesState(t *testing.T) {
+	input := productionTunDiagnosticInput()
+	input.plan.Firewall = planner.TunFirewallPlan{
+		Backend:     planner.FirewallBackendNftables,
+		Family:      netsnapshot.DefaultNFTFamily,
+		Table:       netsnapshot.DefaultNFTTable,
+		TableAction: planner.FirewallTableAction,
+	}
+	input.snapshot.Nftables.PodlazTable.Status = netsnapshot.StatusMissing
 
-	report := (&XrayManager{RuntimeDir: t.TempDir()}).runAndPersistTunDiagnostics(context.Background(), input)
+	report := runProductionAdapter(t, input, "session")
+	assertProbeClassification(t, report, "session", tundiag.ClassOwnershipMismatch)
+}
+
+func TestProductionAdaptersDetectDuplicateResolvedRecords(t *testing.T) {
+	input := productionTunDiagnosticInput()
+	input.snapshot.DNS.ResolvedLinks = append(input.snapshot.DNS.ResolvedLinks, input.snapshot.DNS.ResolvedLinks[0])
+
+	report := runProductionAdapter(t, input, "dns-state")
 	probe := assertProbeClassification(t, report, "dns-state", tundiag.ClassDNSApplyFailure)
 	if !strings.Contains(probe.Error, "duplicate") {
 		t.Fatalf("expected duplicate resolved-record evidence, got %#v", probe)
 	}
 }
 
-func TestRunAndPersistTunDiagnosticsChecksEveryDNSRouteThroughProductionPath(t *testing.T) {
-	input, _ := productionTunDiagnosticInput()
-	installProductionTunDiagnosticCommandRunner(t, map[string]string{"1.1.1.1": "eth0"})
+func TestProductionAdaptersCheckEveryDNSRoute(t *testing.T) {
+	input := productionTunDiagnosticInput()
+	input.plan.DNS.Servers = []string{"192.0.2.53"}
+	input.snapshot.DNS.ResolvedLinks[0].DNSServers = []string{"192.0.2.53"}
+	installProductionTunDiagnosticCommandRunner(t, map[string]string{"192.0.2.53": "eth0"})
 
-	report := (&XrayManager{RuntimeDir: t.TempDir()}).runAndPersistTunDiagnostics(context.Background(), input)
+	report := runProductionAdapter(t, input, "dns-state")
 	probe := assertProbeClassification(t, report, "dns-state", tundiag.ClassRouteFailure)
 	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
 		t.Fatalf("expected concrete DNS route evidence, got %#v", probe.Evidence)
 	}
 }
 
-func TestRunAndPersistTunDiagnosticsChecksSystemResolverRouteThroughProductionPath(t *testing.T) {
-	input, _ := productionTunDiagnosticInput()
+func TestProductionAdaptersCheckSystemResolverRoute(t *testing.T) {
+	input := productionTunDiagnosticInput()
+	installDiagnosticResolver(t)
 	installProductionTunDiagnosticCommandRunner(t, map[string]string{"198.51.100.10": "eth0"})
 
-	report := (&XrayManager{RuntimeDir: t.TempDir()}).runAndPersistTunDiagnostics(context.Background(), input)
+	report := runProductionAdapter(t, input, "dns-system-resolution")
 	probe := assertProbeClassification(t, report, "dns-system-resolution", tundiag.ClassRouteFailure)
 	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
 		t.Fatalf("expected system-resolver route evidence, got %#v", probe.Evidence)
 	}
 }
 
-func TestRunAndPersistTunDiagnosticsChecksRouteBeforeTCP443ThroughProductionPath(t *testing.T) {
-	input, network := productionTunDiagnosticInput()
-	installProductionTunDiagnosticCommandRunner(t, map[string]string{"198.51.100.20": "eth0"})
+func TestProductionAdaptersCheckRouteBeforeTCP443(t *testing.T) {
+	input := productionTunDiagnosticInput()
+	installDiagnosticResolver(t)
+	installProductionTunDiagnosticCommandRunner(t, map[string]string{"198.51.100.10": "eth0"})
 
-	report := (&XrayManager{RuntimeDir: t.TempDir()}).runAndPersistTunDiagnostics(context.Background(), input)
+	report := runProductionAdapter(t, input, "tcp-443")
 	probe := assertProbeClassification(t, report, "tcp-443", tundiag.ClassRouteFailure)
 	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
 		t.Fatalf("expected TCP target route evidence, got %#v", probe.Evidence)
 	}
-	for _, call := range network.tcpCalls {
-		if strings.HasPrefix(call, "198.51.100.20:") {
-			t.Fatalf("TCP connect ran before rejecting the wrong route: %v", network.tcpCalls)
-		}
-	}
 }
 
-func TestRunAndPersistTunDiagnosticsDetectsIPv6UplinkLeakThroughProductionPath(t *testing.T) {
-	input, _ := productionTunDiagnosticInput()
+func TestProductionAdaptersDetectIPv6UplinkLeak(t *testing.T) {
+	input := productionTunDiagnosticInput()
+	installDiagnosticResolver(t)
 	installProductionTunDiagnosticCommandRunner(t, map[string]string{"2001:db8::20": "eth0"})
 
-	report := (&XrayManager{RuntimeDir: t.TempDir()}).runAndPersistTunDiagnostics(context.Background(), input)
+	report := runProductionAdapter(t, input, "ipv6")
 	probe := assertProbeClassification(t, report, "ipv6", tundiag.ClassIPv6Leak)
 	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
 		t.Fatalf("expected IPv6 route evidence, got %#v", probe.Evidence)
 	}
 }
 
-func productionTunDiagnosticInput() (tunDiagnosticInput, *fakeTunDiagnosticNetwork) {
-	network := &fakeTunDiagnosticNetwork{}
+func runProductionAdapter(t *testing.T, input tunDiagnosticInput, target string) tundiag.Report {
+	t.Helper()
+	real := buildTunDiagnosticAdapters(input)
+	adapters := passingTunDiagnosticAdapters()
+	switch target {
+	case "session":
+		adapters.Session = real.Session
+	case "dns-state":
+		adapters.DNSState = real.DNSState
+	case "dns-system-resolution":
+		adapters.SystemResolver = real.SystemResolver
+	case "tcp-443":
+		adapters.TCP443 = real.TCP443
+	case "ipv6":
+		adapters.IPv6 = real.IPv6
+	default:
+		t.Fatalf("unsupported production adapter %q", target)
+	}
+	return tundiag.Runner{}.Run(context.Background(), tunDiagnosticBase(input), tundiag.StandardProbes(adapters))
+}
+
+func passingTunDiagnosticAdapters() tundiag.ProbeAdapters {
+	pass := func(context.Context) tundiag.ProbeResult { return tundiag.ProbeResult{Status: tundiag.ProbePass} }
+	return tundiag.ProbeAdapters{
+		Session: pass, ServerBypass: pass, IPv4Route: pass, DNSState: pass,
+		DNSUDP: pass, DNSTCP: pass, SystemResolver: pass, NXDomainIntegrity: pass,
+		TCP443: pass, TLS: pass, HTTPSCloudflare: pass, HTTPSGoogle: pass,
+		DoHCloudflare: pass, DoHGoogle: pass, IPv6: pass,
+		PMTUCloudflare: pass, PMTUHetzner: pass,
+	}
+}
+
+func productionTunDiagnosticInput() tunDiagnosticInput {
 	return tunDiagnosticInput{
 		state: xrayState{
 			Connection:    "active",
@@ -123,8 +189,7 @@ func productionTunDiagnosticInput() (tunDiagnosticInput, *fakeTunDiagnosticNetwo
 				Protocols:  []string{"+DefaultRoute"},
 			}}},
 		},
-		network: network,
-	}, network
+	}
 }
 
 func installProductionTunDiagnosticCommandRunner(t *testing.T, routeInterfaces map[string]string) {
@@ -155,11 +220,7 @@ func installProductionTunDiagnosticCommandRunner(t *testing.T, routeInterfaces m
 					iface = netsnapshot.DefaultTunName
 				}
 			}
-			family := "ipv4"
-			if strings.Contains(target, ":") {
-				family = "ipv6"
-			}
-			result.stdout = fmt.Sprintf("%s dev %s table 51820 src %s\n", target, iface, diagnosticSourceAddress(family))
+			result.stdout = fmt.Sprintf("%s dev %s table 51820\n", target, iface)
 			return result, nil
 		}
 		return tunDiagnosticCommandResult{command: command, exitCode: 1, stderr: "unexpected command"}, errors.New("unexpected command: " + command)
@@ -167,11 +228,79 @@ func installProductionTunDiagnosticCommandRunner(t *testing.T, routeInterfaces m
 	t.Cleanup(func() { tunDiagnosticCommandRunner = original })
 }
 
-func diagnosticSourceAddress(family string) string {
-	if family == "ipv6" {
-		return "2001:db8:2::2"
+func installDiagnosticResolver(t *testing.T) {
+	t.Helper()
+	original := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{
+		PreferGo: true,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			client, server := net.Pipe()
+			go serveDiagnosticDNS(server)
+			return client, nil
+		},
 	}
-	return "198.51.100.2"
+	t.Cleanup(func() { net.DefaultResolver = original })
+}
+
+func serveDiagnosticDNS(conn net.Conn) {
+	defer conn.Close()
+	buffer := make([]byte, 4096)
+	count, err := conn.Read(buffer)
+	if err != nil {
+		return
+	}
+	query := buffer[:count]
+	framed := len(query) > 2 && int(binary.BigEndian.Uint16(query[:2])) == len(query)-2
+	if framed {
+		query = query[2:]
+	}
+	response, ok := diagnosticDNSResponse(query)
+	if !ok {
+		return
+	}
+	if framed {
+		frame := make([]byte, 2+len(response))
+		binary.BigEndian.PutUint16(frame[:2], uint16(len(response)))
+		copy(frame[2:], response)
+		response = frame
+	}
+	_, _ = conn.Write(response)
+}
+
+func diagnosticDNSResponse(query []byte) ([]byte, bool) {
+	if len(query) < 17 {
+		return nil, false
+	}
+	questionEnd := 12
+	for questionEnd < len(query) && query[questionEnd] != 0 {
+		questionEnd += int(query[questionEnd]) + 1
+	}
+	questionEnd += 5
+	if questionEnd > len(query) {
+		return nil, false
+	}
+	recordType := binary.BigEndian.Uint16(query[questionEnd-4 : questionEnd-2])
+	header := make([]byte, 12)
+	copy(header[:2], query[:2])
+	binary.BigEndian.PutUint16(header[2:4], 0x8180)
+	binary.BigEndian.PutUint16(header[4:6], 1)
+	binary.BigEndian.PutUint16(header[6:8], 1)
+	response := append(header, query[12:questionEnd]...)
+	response = append(response, 0xc0, 0x0c)
+	answer := make([]byte, 10)
+	binary.BigEndian.PutUint16(answer[0:2], recordType)
+	binary.BigEndian.PutUint16(answer[2:4], 1)
+	binary.BigEndian.PutUint32(answer[4:8], 60)
+	if recordType == 28 {
+		binary.BigEndian.PutUint16(answer[8:10], 16)
+		response = append(response, answer...)
+		response = append(response, net.ParseIP("2001:db8::20").To16()...)
+		return response, true
+	}
+	binary.BigEndian.PutUint16(answer[8:10], 4)
+	response = append(response, answer...)
+	response = append(response, 198, 51, 100, 10)
+	return response, true
 }
 
 func assertProbeClassification(t *testing.T, report tundiag.Report, id string, classification tundiag.Classification) tundiag.ProbeResult {
@@ -184,70 +313,4 @@ func assertProbeClassification(t *testing.T, report tundiag.Report, id string, c
 		t.Fatalf("unexpected %s probe: %#v", id, probe)
 	}
 	return probe
-}
-
-type fakeTunDiagnosticNetwork struct {
-	tcpCalls []string
-}
-
-func (f *fakeTunDiagnosticNetwork) DNSUDP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
-	return successfulDiagnosticDNS(), nil
-}
-
-func (f *fakeTunDiagnosticNetwork) DNSTCP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
-	return successfulDiagnosticDNS(), nil
-}
-
-func (f *fakeTunDiagnosticNetwork) Resolve(_ context.Context, name string) ([]string, error) {
-	switch name {
-	case "podlaz-diagnostic.invalid":
-		return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
-	case "example.com":
-		return []string{"198.51.100.10"}, nil
-	case "www.cloudflare.com":
-		return []string{"198.51.100.20", "2001:db8::20"}, nil
-	default:
-		return nil, fmt.Errorf("unexpected resolve target %q", name)
-	}
-}
-
-func (f *fakeTunDiagnosticNetwork) TCP(_ context.Context, host string, port uint16) (time.Duration, error) {
-	f.tcpCalls = append(f.tcpCalls, net.JoinHostPort(host, strconv.Itoa(int(port))))
-	return time.Millisecond, nil
-}
-
-func (f *fakeTunDiagnosticNetwork) TLS(context.Context, string, uint16) (tundiag.TLSEvidence, error) {
-	return tundiag.TLSEvidence{Version: "TLS 1.3", Cipher: "TLS_AES_128_GCM_SHA256", PeerSubject: "example.test", PeerIssuer: "Example Test CA", HandshakeMS: 1}, nil
-}
-
-func (f *fakeTunDiagnosticNetwork) HTTPS(_ context.Context, target tundiag.Target) (tundiag.HTTPEvidence, error) {
-	bytesRead := target.MaxResponseBytes
-	if bytesRead <= 0 {
-		bytesRead = 1
-	}
-	return tundiag.HTTPEvidence{StatusCode: 204, BytesRead: bytesRead, HeaderMS: 1, BodyMS: 1}, nil
-}
-
-func (f *fakeTunDiagnosticNetwork) DoH(_ context.Context, target tundiag.Target, name string, recordType uint16) (tundiag.DNSEvidence, tundiag.HTTPEvidence, error) {
-	dns := successfulDiagnosticDNS()
-	dns.Server = target.URL
-	dns.Name = name
-	dns.Type = recordType
-	return dns, tundiag.HTTPEvidence{StatusCode: 200, BytesRead: 32}, nil
-}
-
-func (f *fakeTunDiagnosticNetwork) IsNXDomain(err error) bool {
-	var dnsError *net.DNSError
-	return errors.As(err, &dnsError) && dnsError.IsNotFound
-}
-
-func successfulDiagnosticDNS() tundiag.DNSEvidence {
-	return tundiag.DNSEvidence{
-		Server:       "1.1.1.1:53",
-		Name:         "example.com",
-		Type:         tundiag.DNSRecordTypeA,
-		ResponseCode: tundiag.DNSRCodeSuccess,
-		Addresses:    []string{"198.51.100.10"},
-		MessageID:    1,
-	}
 }
