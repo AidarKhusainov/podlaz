@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,4 +120,32 @@ func serveDNSFixture(t *testing.T, conn net.Conn, network string) {
 		return
 	}
 	_, _ = conn.Write(response)
+}
+
+func TestNetworkClientHTTPSRejectsDowngradeAndUnexpectedRedirects(t *testing.T) {
+	for _, location := range []string{"http://example.com/plain", "https://example.com/other"} {
+		t.Run(location, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", location)
+				w.WriteHeader(http.StatusFound)
+			}))
+			defer server.Close()
+			pool := x509.NewCertPool()
+			pool.AddCert(server.Certificate())
+			client := NetworkClient{
+				DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+				},
+				TLSConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
+			}
+			client.TLSConfig.RootCAs = pool
+			_, err := client.HTTPS(context.Background(), Target{
+				ID: "redirect", Kind: TargetHTTPS, URL: "https://example.com/start",
+				ExpectedSuccess: "HTTP 200", ExpectedStatusCodes: []int{200}, MaxResponseBytes: 1024,
+			})
+			if err == nil || !strings.Contains(err.Error(), "redirect") {
+				t.Fatalf("expected redirect rejection, got %v", err)
+			}
+		})
+	}
 }
