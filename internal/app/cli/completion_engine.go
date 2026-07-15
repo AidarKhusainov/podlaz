@@ -255,7 +255,9 @@ func completionRegistry() *completionCommand {
 			Description: "Run diagnostics",
 			Flags: []completionFlag{
 				longBoolFlag("--core", "Check core binary"),
+				longBoolFlag("--tun", "Diagnose the active TUN session"),
 				longValueFlag("--xray", "Core binary path"),
+				verboseFlag,
 				jsonFlag,
 			},
 		},
