@@ -42,6 +42,7 @@ func SanitizeReport(report Report) Report {
 func SanitizeProbeResult(result ProbeResult) ProbeResult {
 	result.ID = sanitize(result.ID)
 	result.Target = sanitize(result.Target)
+	result.FailurePhase = FailurePhase(sanitize(string(result.FailurePhase)))
 	result.Error = sanitize(result.Error)
 	result.DependencyReason = sanitize(result.DependencyReason)
 	result.Evidence.Endpoint = sanitize(result.Evidence.Endpoint)
