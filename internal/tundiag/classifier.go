@@ -61,12 +61,13 @@ func Finalize(report Report) Report {
 	unhealthy := false
 	degraded := false
 	for _, probe := range report.Probes {
-		if probe.Classification != "" {
+		pmtuEvidenceOnly := probe.Layer == LayerPMTU && probe.Classification != ClassLikelyPMTUBlackhole
+		if probe.Classification != "" && !pmtuEvidenceOnly {
 			present[probe.Classification] = struct{}{}
 		}
 		switch probe.Status {
 		case ProbeFail:
-			if isAdvisoryClassification(probe.Classification) {
+			if pmtuEvidenceOnly || isAdvisoryClassification(probe.Classification) {
 				degraded = true
 			} else {
 				unhealthy = true
