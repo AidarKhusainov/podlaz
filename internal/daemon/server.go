@@ -13,6 +13,7 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 type Server struct {
@@ -70,6 +71,16 @@ func (s Server) Run(ctx context.Context) error {
 		startupScan.Refresh(refreshCtx)
 		logStartupScan(startupScan.FilterForStatus(currentStatus(refreshCtx), runtimeDir))
 	}
+	refreshForCoreErrorPublication := func(requestCtx context.Context, status api.StatusResponse) {
+		identity := lifecycle.statusPublicationIdentity()
+		if status.Connection != "error (core exited)" || status.Mode != planner.ModeTun ||
+			identity.Connection != "error (core exited)" || identity.Mode != planner.ModeTun {
+			return
+		}
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(requestCtx), unexpectedCoreExitRefreshTimeout)
+		defer cancel()
+		startupScan.Refresh(refreshCtx)
+	}
 	refreshStartupScan(ctx)
 
 	socketPath := api.SocketPath(runtimeDir)
@@ -105,6 +116,7 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		status := currentStatus(r.Context())
+		refreshForCoreErrorPublication(r.Context(), status)
 		scan := startupScan.FilterForStatus(status, runtimeDir)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(withStartupScanStatus(status, scan))
@@ -120,7 +132,9 @@ func (s Server) Run(ctx context.Context) error {
 		if doctorFn == nil {
 			doctorFn = lifecycle.Doctor
 		}
-		scan := startupScan.FilterForStatus(currentStatus(r.Context()), runtimeDir)
+		status := currentStatus(r.Context())
+		refreshForCoreErrorPublication(r.Context(), status)
+		scan := startupScan.FilterForStatus(status, runtimeDir)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), scan))
 		log.Printf("podlazd: doctor request handled")
