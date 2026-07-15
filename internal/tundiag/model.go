@@ -21,6 +21,7 @@ type OverallStatus string
 type ProbeStatus string
 type Classification string
 type Layer string
+type FailurePhase string
 
 const (
 	LayerSession Layer = "session"
@@ -33,6 +34,16 @@ const (
 	LayerDoH     Layer = "doh"
 	LayerIPv6    Layer = "ipv6"
 	LayerPMTU    Layer = "pmtu"
+)
+
+const (
+	FailurePhaseDNSResolution FailurePhase = "dns_resolution"
+	FailurePhaseRouteLookup   FailurePhase = "route_lookup"
+	FailurePhaseTCPConnect    FailurePhase = "tcp_connect"
+	FailurePhaseTLSHandshake  FailurePhase = "tls_handshake"
+	FailurePhaseHTTPRequest   FailurePhase = "http_request"
+	FailurePhaseHTTPResponse  FailurePhase = "http_response"
+	FailurePhaseHTTPBody      FailurePhase = "http_body"
 )
 
 const (
@@ -115,6 +126,7 @@ type ProbeResult struct {
 	TimeoutMS        int64          `json:"timeout_ms"`
 	Target           string         `json:"target,omitempty"`
 	Classification   Classification `json:"classification,omitempty"`
+	FailurePhase     FailurePhase   `json:"failure_phase,omitempty"`
 	Error            string         `json:"error,omitempty"`
 	DependencyReason string         `json:"dependency_reason,omitempty"`
 	Evidence         Evidence       `json:"evidence,omitempty"`
