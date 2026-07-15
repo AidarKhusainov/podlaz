@@ -47,11 +47,25 @@ func TestActiveCommittedTransactionRefusesAmbiguousHeuristicMatches(t *testing.T
 	oldTx := saveStartupScanCommittedTransaction(t, runtimeDir, "tx-old", "profile-test", configPath)
 	newTx := saveStartupScanCommittedTransaction(t, runtimeDir, "tx-new", "profile-test", configPath)
 	status := startupScanActiveStatus(oldTx, configPath)
+	status.ActiveTransactionID = ""
 	status.Transactions = append(status.Transactions, api.TransactionStatus{ID: newTx.ID, State: string(txstate.TransactionCommitted), Path: "unused-new"})
 
 	_, ok, err := activeCommittedTransaction(status, runtimeDir)
 	if ok || err == nil {
-		t.Fatalf("ambiguous committed transactions must disable filtering: ok=%t err=%v", ok, err)
+		t.Fatalf("ambiguous committed transactions without an exact active id must disable filtering: ok=%t err=%v", ok, err)
+	}
+}
+
+func TestActiveCommittedTransactionRefusesDuplicateExactMatches(t *testing.T) {
+	runtimeDir := t.TempDir()
+	configPath := filepath.Join(runtimeDir, "generated", "xray.json")
+	tx := saveStartupScanCommittedTransaction(t, runtimeDir, "tx-active", "profile-test", configPath)
+	status := startupScanActiveStatus(tx, configPath)
+	status.Transactions = append(status.Transactions, status.Transactions[0])
+
+	_, ok, err := activeCommittedTransaction(status, runtimeDir)
+	if ok || err == nil {
+		t.Fatalf("duplicate exact active transaction summaries must disable filtering: ok=%t err=%v", ok, err)
 	}
 }
 
@@ -97,10 +111,11 @@ func saveStartupScanCommittedTransaction(t *testing.T, runtimeDir, id, profileID
 
 func startupScanActiveStatus(tx txstate.Transaction, configPath string) api.StatusResponse {
 	return api.StatusResponse{
-		Connection:        "active",
-		Mode:              planner.ModeTun,
-		ProfileID:         tx.ProfileID,
-		RuntimeConfigPath: configPath,
+		Connection:          "active",
+		Mode:                planner.ModeTun,
+		ProfileID:           tx.ProfileID,
+		RuntimeConfigPath:   configPath,
+		ActiveTransactionID: tx.ID,
 		Transactions: []api.TransactionStatus{{
 			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: "unused-active",
 		}},
