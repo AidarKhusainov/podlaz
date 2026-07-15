@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -32,9 +33,17 @@ func (c NetworkClient) HTTPSWithFailurePhase(ctx context.Context, target Target)
 	if maxBytes <= 0 {
 		maxBytes = 4096
 	}
+	tracker := &failurePhaseTracker{phase: FailurePhaseHTTPRequest}
 	transport := &http.Transport{
-		Proxy:             nil,
-		DialContext:       c.dial,
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			tracker.set(FailurePhaseTCPConnect)
+			conn, err := c.dial(ctx, network, address)
+			if err != nil {
+				tracker.set(transportFailurePhase(err, FailurePhaseTCPConnect))
+			}
+			return conn, err
+		},
 		DisableKeepAlives: true,
 		TLSClientConfig:   c.tlsConfig(parsed.Hostname()),
 		ForceAttemptHTTP2: true,
@@ -57,7 +66,6 @@ func (c NetworkClient) HTTPSWithFailurePhase(ctx context.Context, target Target)
 	started := time.Now()
 	var firstByte time.Time
 	var firstByteMu sync.Mutex
-	tracker := &failurePhaseTracker{phase: FailurePhaseHTTPRequest}
 	trace := tracker.trace()
 	trace.GotFirstResponseByte = func() {
 		tracker.set(FailurePhaseHTTPResponse)
