@@ -1,0 +1,178 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/tundiag"
+)
+
+const tunDiagnosticRunTimeout = 40 * time.Second
+
+type tunDiagnosticInput struct {
+	state       xrayState
+	coreRunning bool
+	plan        planner.TunPlan
+	snapshot    netsnapshot.Snapshot
+}
+
+func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
+	m.mu.Lock()
+	state := m.state
+	coreRunning := m.cmd != nil
+	m.mu.Unlock()
+
+	store := tundiag.Store{RuntimeDir: m.runtimeDir()}
+	if state.Connection != "active" || state.Mode != planner.ModeTun {
+		if report, _, err := store.Load(); err == nil {
+			return report
+		}
+		return tundiag.Finalize(tundiag.Report{
+			GeneratedAt: time.Now().UTC(),
+			ReportPath:  store.Path(),
+			Session: tundiag.Session{
+				State: state.Connection,
+				Mode:  state.Mode,
+			},
+			Probes: []tundiag.ProbeResult{{
+				ID:             "session",
+				Layer:          tundiag.LayerSession,
+				Status:         tundiag.ProbeFail,
+				Classification: tundiag.ClassSessionInactive,
+				Error:          "no active podlaz TUN session and no saved TUN diagnostic report",
+			}},
+		})
+	}
+
+	transaction, _, err := (txstate.TransactionStore{RuntimeDir: m.runtimeDir()}).Load(state.TransactionID)
+	if err != nil {
+		return tundiag.Finalize(tundiag.Report{
+			GeneratedAt: time.Now().UTC(),
+			ReportPath:  store.Path(),
+			Session:     tunDiagnosticSession(state, coreRunning),
+			Probes: []tundiag.ProbeResult{{
+				ID:             "session",
+				Layer:          tundiag.LayerSession,
+				Status:         tundiag.ProbeFail,
+				Classification: tundiag.ClassSessionMetadataInconsistent,
+				Error:          fmt.Sprintf("load active TUN transaction: %v", err),
+			}},
+		})
+	}
+	plan := tunPlanFromTransaction(transaction)
+	plan.ProfileName = state.ProfileName
+	if plan.TunDevice.Name == "" {
+		plan.TunDevice.Name = netsnapshot.DefaultTunName
+	}
+	snapshot := m.collectTunSnapshot(ctx, tunSnapshotOptionsForState(state))
+	return m.runAndPersistTunDiagnostics(ctx, tunDiagnosticInput{state: state, coreRunning: coreRunning, plan: plan, snapshot: snapshot})
+}
+
+func (m *XrayManager) runAndPersistTunDiagnostics(ctx context.Context, input tunDiagnosticInput) tundiag.Report {
+	runCtx, cancel := context.WithTimeout(ctx, tunDiagnosticRunTimeout)
+	defer cancel()
+	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(tunDiagnosticAdapters(input)))
+	path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report)
+	if err != nil {
+		report.Warnings = append(report.Warnings, "persist latest TUN diagnostic report: "+err.Error())
+		return tundiag.Finalize(report)
+	}
+	report.ReportPath = path
+	return tundiag.Finalize(report)
+}
+
+func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transactionID string, plan planner.TunPlan, cause error) string {
+	state := xrayState{
+		Connection:    "verifying",
+		Mode:          planner.ModeTun,
+		ProfileID:     plan.ProfileID,
+		ProfileName:   plan.ProfileName,
+		TUN:           "enabled (" + emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName) + ")",
+		TransactionID: transactionID,
+	}
+	diagnosticCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunDiagnosticRunTimeout)
+	defer cancel()
+	snapshot := m.collectTunSnapshot(diagnosticCtx, tunSnapshotOptionsForState(state))
+	report := m.runAndPersistTunDiagnostics(diagnosticCtx, tunDiagnosticInput{state: state, coreRunning: true, plan: plan, snapshot: snapshot})
+	if cause != nil {
+		report.Errors = append(report.Errors, "connectivity verification failure: "+cause.Error())
+		report = tundiag.Finalize(report)
+		if path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report); err == nil {
+			report.ReportPath = path
+		}
+	}
+	classification := string(report.PrimaryClassification)
+	if classification == "" {
+		classification = string(report.Status)
+	}
+	return fmt.Sprintf("TUN diagnostics: %s; last report: %s", classification, emptyAs(report.ReportPath, (tundiag.Store{RuntimeDir: m.runtimeDir()}).Path()))
+}
+
+func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
+	plan := input.plan
+	snapshot := input.snapshot
+	bypass := tunDiagnosticServerBypass(plan)
+	serverAddresses := []string{}
+	serverEndpoint := ""
+	if bypass.Destination != "" {
+		serverAddress := strings.TrimSuffix(bypass.Destination, "/32")
+		serverAddresses = append(serverAddresses, serverAddress)
+		serverEndpoint = serverAddress
+	}
+	tunName := emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName)
+	return tundiag.Report{
+		GeneratedAt: time.Now().UTC(),
+		Session:     tunDiagnosticSession(input.state, input.coreRunning),
+		Network: tundiag.Network{
+			PhysicalInterface: snapshot.DefaultIPv4.Interface,
+			Gateway:           snapshot.DefaultIPv4.Gateway,
+			TunInterface:      tunName,
+			TunMTU:            firstPositive(plan.TunDevice.MTU, readInterfaceMTU(tunName)),
+			UplinkMTU:         readInterfaceMTU(snapshot.DefaultIPv4.Interface),
+			DNSServers:        append([]string(nil), plan.DNS.Servers...),
+			IPv4Status:        string(snapshot.IPv4.Status),
+			IPv6Status:        string(snapshot.IPv6.Status),
+			ServerEndpoint:    serverEndpoint,
+			ServerAddresses:   serverAddresses,
+			DoHProviders:      []string{"cloudflare-dns.com", "dns.google"},
+		},
+	}
+}
+
+func tunDiagnosticSession(state xrayState, coreRunning bool) tundiag.Session {
+	return tundiag.Session{
+		State:          emptyAs(state.Connection, "inactive"),
+		Mode:           state.Mode,
+		ProfileName:    state.ProfileName,
+		TransactionID:  state.TransactionID,
+		CoreRunning:    coreRunning,
+		Interface:      netsnapshot.DefaultTunName,
+		MetadataSource: "podlazd active state and transaction",
+	}
+}
+
+func tunDiagnosticServerBypass(plan planner.TunPlan) planner.TunRoutePlan {
+	if plan.ServerBypass.Destination != "" {
+		return plan.ServerBypass
+	}
+	for _, route := range plan.Routes {
+		if route.Table == planner.MainRoutingTable && route.Destination != "" && route.Destination != planner.IPv4DefaultRoute {
+			return route
+		}
+	}
+	return planner.TunRoutePlan{}
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
