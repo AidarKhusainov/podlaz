@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -28,9 +29,17 @@ func (c NetworkClient) DoHWithFailurePhase(ctx context.Context, target Target, n
 		err := fmt.Errorf("target %s is not an HTTPS DoH URL", target.ID)
 		return DNSEvidence{}, HTTPEvidence{}, FailurePhaseHTTPRequest, withFailurePhase(FailurePhaseHTTPRequest, err)
 	}
+	tracker := &failurePhaseTracker{phase: FailurePhaseHTTPRequest}
 	transport := &http.Transport{
-		Proxy:             nil,
-		DialContext:       c.dial,
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			tracker.set(FailurePhaseTCPConnect)
+			conn, err := c.dial(ctx, network, address)
+			if err != nil {
+				tracker.set(transportFailurePhase(err, FailurePhaseTCPConnect))
+			}
+			return conn, err
+		},
 		DisableKeepAlives: true,
 		TLSClientConfig:   c.tlsConfig(parsed.Hostname()),
 		ForceAttemptHTTP2: true,
@@ -47,7 +56,6 @@ func (c NetworkClient) DoHWithFailurePhase(ctx context.Context, target Target, n
 	request.Header.Set("Content-Type", "application/dns-message")
 	request.Header.Set("Accept", "application/dns-message")
 	request.Header.Set("User-Agent", "podlaz-diagnostic/1")
-	tracker := &failurePhaseTracker{phase: FailurePhaseHTTPRequest}
 	request = request.WithContext(httptrace.WithClientTrace(request.Context(), tracker.trace()))
 	started := time.Now()
 	response, err := client.Do(request)
