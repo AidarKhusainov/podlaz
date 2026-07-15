@@ -22,6 +22,8 @@ func TestStatusPublicationRefreshesStableTunCoreErrorSnapshot(t *testing.T) {
 		ProfileID:         "profile-test",
 		RuntimeConfigPath: filepath.Join(runtimeDir, generatedDirName, generatedXrayName),
 		TransactionID:     "tun-crashed",
+		Proxy:             "inactive",
+		TUN:               "error",
 	}
 	var calls atomic.Int32
 	var bounded atomic.Bool
