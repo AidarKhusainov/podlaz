@@ -12,7 +12,10 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
-const tunDiagnosticRunTimeout = 40 * time.Second
+const (
+	tunDiagnosticRunTimeout        = 40 * time.Second
+	tunFailureDiagnosticRunTimeout = 6 * time.Second
+)
 
 type tunDiagnosticInput struct {
 	state       xrayState
@@ -76,7 +79,18 @@ func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
 func (m *XrayManager) runAndPersistTunDiagnostics(ctx context.Context, input tunDiagnosticInput) tundiag.Report {
 	runCtx, cancel := context.WithTimeout(ctx, tunDiagnosticRunTimeout)
 	defer cancel()
-	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(tunDiagnosticAdapters(input)))
+	report := tundiag.Runner{}.Run(runCtx, tunDiagnosticBase(input), tundiag.StandardProbes(buildTunDiagnosticAdapters(input)))
+	path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report)
+	if err != nil {
+		report.Warnings = append(report.Warnings, "persist latest TUN diagnostic report: "+err.Error())
+		return tundiag.Finalize(report)
+	}
+	report.ReportPath = path
+	return tundiag.Finalize(report)
+}
+
+func (m *XrayManager) runAndPersistTunFailureDiagnostics(ctx context.Context, input tunDiagnosticInput) tundiag.Report {
+	report := tundiag.Runner{}.Run(ctx, tunDiagnosticBase(input), tundiag.PreRollbackProbes(buildTunDiagnosticAdapters(input)))
 	path, err := (tundiag.Store{RuntimeDir: m.runtimeDir()}).Save(report)
 	if err != nil {
 		report.Warnings = append(report.Warnings, "persist latest TUN diagnostic report: "+err.Error())
@@ -95,10 +109,10 @@ func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transact
 		TUN:           "enabled (" + emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName) + ")",
 		TransactionID: transactionID,
 	}
-	diagnosticCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunDiagnosticRunTimeout)
+	diagnosticCtx, cancel := context.WithTimeout(ctx, tunFailureDiagnosticRunTimeout)
 	defer cancel()
 	snapshot := m.collectTunSnapshot(diagnosticCtx, tunSnapshotOptionsForState(state))
-	report := m.runAndPersistTunDiagnostics(diagnosticCtx, tunDiagnosticInput{state: state, coreRunning: true, plan: plan, snapshot: snapshot})
+	report := m.runAndPersistTunFailureDiagnostics(diagnosticCtx, tunDiagnosticInput{state: state, coreRunning: true, plan: plan, snapshot: snapshot})
 	if cause != nil {
 		report.Errors = append(report.Errors, "connectivity verification failure: "+cause.Error())
 		report = tundiag.Finalize(report)
@@ -130,7 +144,9 @@ func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 		Session:     tunDiagnosticSession(input.state, input.coreRunning),
 		Network: tundiag.Network{
 			PhysicalInterface: snapshot.DefaultIPv4.Interface,
+			SSID:              tunDiagnosticConnectionName(snapshot),
 			Gateway:           snapshot.DefaultIPv4.Gateway,
+			LocalAddresses:    tunDiagnosticLocalAddresses(snapshot.DefaultIPv4.Interface),
 			TunInterface:      tunName,
 			TunMTU:            firstPositive(plan.TunDevice.MTU, readInterfaceMTU(tunName)),
 			UplinkMTU:         readInterfaceMTU(snapshot.DefaultIPv4.Interface),
@@ -139,7 +155,7 @@ func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 			IPv6Status:        string(snapshot.IPv6.Status),
 			ServerEndpoint:    serverEndpoint,
 			ServerAddresses:   serverAddresses,
-			DoHProviders:      []string{"cloudflare-dns.com", "dns.google"},
+			DoHProviders:      tunDiagnosticDoHEndpoints(),
 		},
 	}
 }
