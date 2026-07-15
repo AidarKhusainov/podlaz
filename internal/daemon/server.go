@@ -44,12 +44,11 @@ func (s Server) Run(ctx context.Context) error {
 		authorizer = authorizerFromEnv()
 	}
 	currentStatus := func(statusCtx context.Context) api.StatusResponse {
-		if s.Status == nil {
-			return lifecycle.statusForPublication(statusCtx)
+		statusFn := lifecycle.Status
+		if s.Status != nil {
+			statusFn = s.Status
 		}
-		status := s.Status(statusCtx)
-		status.ActiveTransactionID = lifecycle.activeTransactionID()
-		return status
+		return lifecycle.statusForPublicationFrom(statusCtx, statusFn)
 	}
 
 	lockPath := api.LockPath(runtimeDir)
