@@ -2,8 +2,10 @@ package tundiag
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestProbeFailurePhaseRoundTripsJSON(t *testing.T) {
@@ -33,5 +35,27 @@ func TestProbeFailurePhaseRoundTripsJSON(t *testing.T) {
 	}
 	if !bytes.Contains(encoded, []byte(`"failure_phase":"route_lookup"`)) {
 		t.Fatalf("failure phase was dropped from the stable JSON model: %s", encoded)
+	}
+}
+
+func TestRunnerPreservesFailurePhaseWhenDeadlineOverridesClassification(t *testing.T) {
+	report := Runner{}.Run(context.Background(), Report{}, []Probe{{
+		Definition: ProbeDefinition{ID: "tcp-443", Layer: LayerTCP, Timeout: 10 * time.Millisecond},
+		Run: func(ctx context.Context) ProbeResult {
+			<-ctx.Done()
+			return ProbeResult{
+				Status:         ProbeFail,
+				Classification: ClassRouteFailure,
+				FailurePhase:   FailurePhaseRouteLookup,
+				Error:          "route command timed out",
+			}
+		},
+	}})
+	probe, ok := report.Probe("tcp-443")
+	if !ok {
+		t.Fatal("missing tcp-443 probe")
+	}
+	if probe.Classification != ClassTimeout || probe.FailurePhase != FailurePhaseRouteLookup {
+		t.Fatalf("Runner must preserve phase while applying timeout classification: %#v", probe)
 	}
 }
