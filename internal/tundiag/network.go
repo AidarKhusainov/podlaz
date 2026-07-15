@@ -235,8 +235,22 @@ func (c NetworkClient) HTTPS(ctx context.Context, target Target) (HTTPEvidence, 
 	if readErr != nil {
 		return evidence, readErr
 	}
-	if response.StatusCode >= 500 {
-		return evidence, fmt.Errorf("HTTP status %d", response.StatusCode)
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		location := strings.TrimSpace(response.Header.Get("Location"))
+		if location == "" {
+			return evidence, fmt.Errorf("unexpected HTTP redirect %d without Location", response.StatusCode)
+		}
+		redirectURL, parseErr := url.Parse(location)
+		if parseErr != nil {
+			return evidence, fmt.Errorf("invalid HTTP redirect location %q: %w", location, parseErr)
+		}
+		if redirectURL.Scheme != "https" {
+			return evidence, fmt.Errorf("refused HTTP downgrade redirect to %s", location)
+		}
+		return evidence, fmt.Errorf("unexpected HTTPS redirect to %s", location)
+	}
+	if !targetAcceptsStatus(target, response.StatusCode) {
+		return evidence, fmt.Errorf("unexpected HTTP status %d; expected %s", response.StatusCode, target.ExpectedSuccess)
 	}
 	return evidence, nil
 }
@@ -261,7 +275,12 @@ func (c NetworkClient) DoH(ctx context.Context, target Target, name string, reco
 		ForceAttemptHTTP2: true,
 	}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport}
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.URL, bytes.NewReader(query))
 	if err != nil {
 		return DNSEvidence{}, HTTPEvidence{}, err
@@ -293,8 +312,11 @@ func (c NetworkClient) DoH(ctx context.Context, target Target, name string, reco
 	if int64(len(body)) > maxBytes {
 		return DNSEvidence{}, httpEvidence, fmt.Errorf("DoH response exceeds %d bytes", maxBytes)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return DNSEvidence{}, httpEvidence, fmt.Errorf("DoH HTTP status %d", response.StatusCode)
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		return DNSEvidence{}, httpEvidence, fmt.Errorf("unexpected DoH redirect to %q", response.Header.Get("Location"))
+	}
+	if !targetAcceptsStatus(target, response.StatusCode) {
+		return DNSEvidence{}, httpEvidence, fmt.Errorf("unexpected DoH HTTP status %d; expected %s", response.StatusCode, target.ExpectedSuccess)
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if !strings.HasPrefix(contentType, "application/dns-message") {
@@ -385,4 +407,16 @@ func tlsVersionName(version uint16) string {
 	default:
 		return fmt.Sprintf("0x%x", version)
 	}
+}
+
+func targetAcceptsStatus(target Target, status int) bool {
+	if len(target.ExpectedStatusCodes) == 0 {
+		return status >= 200 && status < 300
+	}
+	for _, expected := range target.ExpectedStatusCodes {
+		if status == expected {
+			return true
+		}
+	}
+	return false
 }
