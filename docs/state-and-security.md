@@ -84,14 +84,21 @@ nftables/firewall state, services, other VPNs, or browser state. TLS certificate
 validation must remain enabled. Unit tests must use local protocol fixtures
 rather than live internet endpoints.
 
-Ordinary HTTPS and DoH checks use independent providers. One provider passing
-while another fails is degraded corroboration, not automatic proof that the VPN
-is unhealthy. PMTU classification requires small HTTPS success plus two
-independent larger transfers that accepted a permitted HTTP response and then
-stalled or failed in the response body transport phase. DNS, route, TCP, TLS,
-redirect, status-code, request, and short-body failures are not PMTU evidence.
-Probe deadline and cancellation causes override layer-specific adapter errors so
-timeout and cancelled remain stable machine-readable classifications.
+Ordinary HTTPS and DoH checks use independent provider paths. The Cloudflare
+HTTPS path includes its TCP/443, TLS, and small-HTTPS probes; the Google small
+HTTPS probe is an independent corroborating path. When one path has an expected
+endpoint-specific failure or timeout and the other succeeds, the report adds a
+separate `https_partial_failure` or `doh_partial_failure` aggregate and treats the
+result as degraded. The original per-probe classification is retained for
+machine-readable debugging. `cancelled` and `internal_diagnostic_error` are never
+suppressed by provider aggregation and remain unhealthy.
+
+PMTU classification requires small HTTPS success plus two independent larger
+transfers that accepted a permitted HTTP response and then stalled or failed in
+the response body transport phase. DNS, route, TCP, TLS, redirect, status-code,
+request, and short-body failures are not PMTU evidence. Probe deadline and
+cancellation causes override layer-specific adapter errors so timeout and
+cancelled remain stable machine-readable classifications.
 
 IPv6 evidence includes global-unicast address filtering, `ip -6 rule show`, a
 bounded AAAA selection, `ip -6 route get`, and TCP/443 connectivity. Link-local,
@@ -111,14 +118,21 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - A non-zero `resolvectl status` or `resolvectl revert` result stating that `podlaz0` is already missing is idempotent for stale-link cleanup, transaction recovery, runtime DNS rollback, and doctor inspection. This classification is specific to `resolvectl`; generic command missing-resource classification remains unchanged.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
 - The daemon startup scan is refreshed after every connect attempt, after
-  disconnect, and after recovery execution, including failed operations, so
-  subsequent status/doctor output reflects the latest cleanup and stale-state
-  view rather than the startup-only snapshot.
-- Before a refreshed scan is published, candidates are reconciled against the
-  active committed TUN transaction. Only resources with matching durable
-  podlaz ownership records are omitted from stale status. Foreign resources,
-  mixed generated-config directories, ownership mismatches, or failure to load
-  the committed transaction remain visible as candidates or inspection warnings.
+  disconnect, and after recovery execution, including failed operations. The
+  stored scan remains the raw scanner result; active-session filtering never
+  overwrites it.
+- Status and doctor derive a filtered view from that raw scan at each publication.
+  Therefore an unexpected Xray exit immediately exposes the previously hidden
+  `podlaz0`, nftables, DNS, and generated-config candidates without requiring a
+  second scan.
+- Active-resource filtering requires the exact active transaction id captured
+  from the same daemon lifecycle state. Exactly one matching committed transaction
+  summary must exist and its durable owner, profile, and runtime-config metadata
+  must agree. A missing id, duplicate match, load failure, or metadata mismatch
+  leaves every candidate visible and adds an inspection warning.
+- Only resources with matching durable podlaz ownership records are omitted from
+  active status. Foreign resources and mixed generated-config directories remain
+  visible.
 
 ## Redaction
 
