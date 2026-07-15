@@ -30,24 +30,29 @@ func TestStatusForPublicationOmitsTransactionIDAfterCoreExit(t *testing.T) {
 func TestCustomServerStatusOmitsTransactionIDOutsideActiveTun(t *testing.T) {
 	t.Setenv(api.ServiceEnv, api.ServiceManual)
 	runtimeDir := t.TempDir()
+	configPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
 	manager := &XrayManager{RuntimeDir: runtimeDir}
 	manager.state = xrayState{
-		Connection:    "error (core exited)",
-		Mode:          planner.ModeTun,
-		TransactionID: "tun-crashed",
+		Connection:        "active",
+		Mode:              planner.ModeTun,
+		ProfileID:         "profile-test",
+		RuntimeConfigPath: configPath,
+		TransactionID:     "tun-active",
 	}
 	statusClient := startCoreExitTestServer(t, Server{
 		RuntimeDir: runtimeDir,
 		Lifecycle:  manager,
 		Status: func(context.Context) api.StatusResponse {
 			return api.StatusResponse{
-				Daemon:           "running",
-				Service:          api.ServiceManual,
-				Connection:       "error (core exited)",
-				Mode:             planner.ModeTun,
-				RuntimeDirectory: "present",
-				Proxy:            "inactive",
-				TUN:              "error",
+				Daemon:            "running",
+				Service:           api.ServiceManual,
+				Connection:        "error (core exited)",
+				Mode:              planner.ModeTun,
+				ProfileID:         "profile-test",
+				RuntimeDirectory:  "present",
+				RuntimeConfigPath: configPath,
+				Proxy:             "inactive",
+				TUN:               "error",
 			}
 		},
 		startupScan: func(context.Context) recovery.PlanResult { return recovery.PlanResult{} },
