@@ -23,6 +23,9 @@ Rules:
 - The latest TUN diagnostic report is replacement-only, atomically written,
   bounded to 256 KiB, and mode `0600`; podlaz keeps no unbounded diagnostic
   history under `/run`.
+- A diagnostic persistence failure must clear the public report location and
+  produce `internal_diagnostic_error`; output and logs must not claim that a
+  report exists when atomic replacement failed.
 - Read-only commands may inspect state but must not clean it up.
 
 ## CLI and daemon boundary
@@ -34,6 +37,9 @@ Rules:
 - `proxy-only` must not mutate host networking.
 - `tun` execution must record enough durable desired and applied state to recover
   after failure or daemon restart.
+- The active TUN transaction records the original VPN server endpoint and TLS
+  server name needed to distinguish hostname/SNI semantics from resolved bypass
+  addresses in diagnostics.
 - `doctor --tun` is daemon-backed because authoritative active-session,
   transaction, route, resolver, and ownership evidence belongs to the daemon.
   The diagnostic handler is read-only apart from atomically replacing the
@@ -61,19 +67,35 @@ For native Xray TUN startup, durable rollback order is:
 2. stop the Xray child process;
 3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
-If post-apply connectivity verification fails, `podlazd` must first run the
-bounded layered TUN diagnostics while the failing host state still exists,
-atomically save the centrally redacted latest report, and attach its primary
-classification and path to the returned connect error. Only then may normal
-rollback begin. A diagnostic failure must not suppress or reorder rollback.
+If post-apply connectivity verification fails, `podlazd` first attempts a short,
+bounded, cancellation-aware safe diagnostic subset while the failing host state
+still exists. Optional diagnostics must never delay or suppress cleanup. Normal
+rollback then runs with a separate daemon-owned bounded cleanup context derived
+without the requesting HTTP client's cancellation, so a disconnected client or
+expired request deadline cannot immediately cancel DNS, route, rule, or nftables
+cleanup. The returned error and daemon log expose the primary TUN classification
+and the report location as separate fields when persistence succeeded.
 
-The TUN diagnostic path may perform only read-only snapshot collection, kernel
-route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private latest-report
-replacement. It must never change interface MTU, routes, policy rules, DNS,
-`systemd-resolved`, NetworkManager, `/etc/resolv.conf`, nftables/firewall state,
-services, other VPNs, or browser state. TLS certificate validation must remain
-enabled. Unit tests must use local protocol fixtures rather than live internet
-endpoints.
+The full TUN diagnostic path may perform only read-only snapshot collection,
+kernel route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private
+latest-report replacement. It must never change interface MTU, routes, policy
+rules, DNS, `systemd-resolved`, NetworkManager, `/etc/resolv.conf`,
+nftables/firewall state, services, other VPNs, or browser state. TLS certificate
+validation must remain enabled. Unit tests must use local protocol fixtures
+rather than live internet endpoints.
+
+Ordinary HTTPS and DoH checks use independent providers. One provider passing
+while another fails is degraded corroboration, not automatic proof that the VPN
+is unhealthy. PMTU classification requires small HTTPS success plus two
+independent larger transfers that accepted a permitted HTTP response and then
+stalled or failed in the response body transport phase. DNS, route, TCP, TLS,
+redirect, status-code, request, and short-body failures are not PMTU evidence.
+Probe deadline and cancellation causes override layer-specific adapter errors so
+timeout and cancelled remain stable machine-readable classifications.
+
+IPv6 evidence includes global-unicast address filtering, `ip -6 rule show`, a
+bounded AAAA selection, `ip -6 route get`, and TCP/443 connectivity. Link-local,
+loopback, and non-address tokens are not reported as usable IPv6 addresses.
 
 ## Recovery
 
@@ -92,6 +114,11 @@ endpoints.
   disconnect, and after recovery execution, including failed operations, so
   subsequent status/doctor output reflects the latest cleanup and stale-state
   view rather than the startup-only snapshot.
+- Before a refreshed scan is published, candidates are reconciled against the
+  active committed TUN transaction. Only resources with matching durable
+  podlaz ownership records are omitted from stale status. Foreign resources,
+  mixed generated-config directories, ownership mismatches, or failure to load
+  the committed transaction remain visible as candidates or inspection warnings.
 
 ## Redaction
 
