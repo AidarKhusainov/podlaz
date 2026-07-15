@@ -28,3 +28,10 @@ func TestFinalizeTreatsHistoricalInactiveReportAsUnavailable(t *testing.T) {
 		t.Fatalf("expected unavailable historical status, got %q", report.Status)
 	}
 }
+
+func TestFinalizeTreatsLiveInactiveReportAsUnavailable(t *testing.T) {
+	report := Finalize(Report{Probes: []ProbeResult{{ID: "session", Status: ProbeFail, Classification: ClassSessionInactive}}})
+	if report.Status != StatusUnavailable {
+		t.Fatalf("expected unavailable live status, got %q", report.Status)
+	}
+}
