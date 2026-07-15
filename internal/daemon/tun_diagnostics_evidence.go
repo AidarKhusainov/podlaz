@@ -57,18 +57,19 @@ func probeTunDiagnosticOwnership(ctx context.Context, input tunDiagnosticInput) 
 		result.Error = "active TUN metadata exists but " + tunName + " is not detected"
 		return result
 	}
-	if !input.plan.Firewall.Enabled {
+	if !tunDiagnosticFirewallRequired(input.plan.Firewall) {
 		result.Evidence.Notes = append(result.Evidence.Notes, "nftables ownership is not required by this transaction")
 		return result
 	}
-	tableName := emptyAs(input.plan.Firewall.TableName, "podlaz")
-	if input.snapshot.Nftables.PodlazTable.Status != netsnapshot.StatusDetected || input.snapshot.Nftables.PodlazTable.Table != tableName {
+	family := emptyAs(input.plan.Firewall.Family, netsnapshot.DefaultNFTFamily)
+	tableName := emptyAs(input.plan.Firewall.Table, netsnapshot.DefaultNFTTable)
+	if input.snapshot.Nftables.PodlazTable.Status != netsnapshot.StatusDetected {
 		result.Status = tundiag.ProbeFail
 		result.Classification = tundiag.ClassOwnershipMismatch
 		result.Error = fmt.Sprintf("expected nftables table inet %s is not present in the current snapshot", tableName)
 		return result
 	}
-	commandResult, err := tunDiagnosticCommandRunner(ctx, "nft", "list", "table", "inet", tableName)
+	commandResult, err := tunDiagnosticCommandRunner(ctx, "nft", "list", "table", family, tableName)
 	result.Evidence.Commands = append(result.Evidence.Commands, commandEvidence(commandResult))
 	if err != nil {
 		result.Status = tundiag.ProbeFail
@@ -76,7 +77,7 @@ func probeTunDiagnosticOwnership(ctx context.Context, input tunDiagnosticInput) 
 		result.Error = "inspect expected nftables ownership: " + err.Error()
 		return result
 	}
-	result.Evidence.Notes = append(result.Evidence.Notes, "nftables table inet "+tableName+" is present and readable")
+	result.Evidence.Notes = append(result.Evidence.Notes, "nftables table "+family+" "+tableName+" is present and readable")
 	return result
 }
 
@@ -337,11 +338,20 @@ func tunDiagnosticDoHEndpoints() []string {
 }
 
 func tunDiagnosticNftablesStatus(plan planner.TunPlan, snapshot netsnapshot.Snapshot) string {
-	if !plan.Firewall.Enabled {
+	if !tunDiagnosticFirewallRequired(plan.Firewall) {
 		return "not required by transaction"
 	}
 	if snapshot.Nftables.PodlazTable.Status != netsnapshot.StatusDetected {
 		return "expected table not detected"
 	}
-	return "owned table inet " + snapshot.Nftables.PodlazTable.Table + " detected"
+	family := emptyAs(plan.Firewall.Family, netsnapshot.DefaultNFTFamily)
+	table := emptyAs(plan.Firewall.Table, netsnapshot.DefaultNFTTable)
+	return "owned table " + family + " " + table + " detected"
+}
+
+func tunDiagnosticFirewallRequired(firewall planner.TunFirewallPlan) bool {
+	if firewall.Backend != planner.FirewallBackendNftables || strings.TrimSpace(firewall.Table) == "" {
+		return false
+	}
+	return firewall.TableAction != planner.FirewallActionSkip && firewall.TableAction != planner.FirewallActionBlocked
 }
