@@ -67,7 +67,12 @@ func TestRunCLIDoctorTunReturnsDiagnosticExitCodeForUnhealthyReport(t *testing.T
 }
 
 func TestRunCLIDoctorTunRejectsInvalidFlagCombinations(t *testing.T) {
-	for _, args := range [][]string{{"doctor", "--tun", "--core"}, {"doctor", "--verbose"}, {"doctor", "--tun", "--xray", "/tmp/xray"}} {
+	for _, args := range [][]string{
+		{"doctor", "--tun", "--core"},
+		{"doctor", "--verbose"},
+		{"doctor", "--tun", "--verbose", "--json"},
+		{"doctor", "--tun", "--xray", "/tmp/xray"},
+	} {
 		var out bytes.Buffer
 		err := run(context.Background(), args, &out)
 		if ExitCode(err) != 2 {
