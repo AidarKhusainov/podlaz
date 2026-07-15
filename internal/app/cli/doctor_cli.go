@@ -22,6 +22,9 @@ func runDoctorCommand(ctx context.Context, args []string, stdout io.Writer, opts
 		return err
 	}
 
+	if doctorArgs.tun {
+		return runTunDoctorCommand(ctx, stdout, opts, doctorArgs)
+	}
 	if doctorArgs.core {
 		report := runCoreDoctor(ctx, opts, doctorArgs.xrayPath)
 		if doctorArgs.json {
@@ -47,6 +50,8 @@ func runDoctorCommand(ctx context.Context, args []string, stdout io.Writer, opts
 
 type parsedDoctorArgs struct {
 	core     bool
+	tun      bool
+	verbose  bool
 	json     bool
 	xrayPath string
 }
@@ -59,6 +64,10 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 		switch {
 		case arg == "--core":
 			parsed.core = true
+		case arg == "--tun":
+			parsed.tun = true
+		case arg == "--verbose" || arg == "-v":
+			parsed.verbose = true
 		case arg == "--json":
 			parsed.json = true
 		case arg == "--xray" || strings.HasPrefix(arg, "--xray="):
@@ -75,9 +84,21 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 		}
 	}
 
+	if parsed.core && parsed.tun {
+		return parsed, usageError("doctor --core and --tun are mutually exclusive")
+	}
+	if parsed.verbose && !parsed.tun {
+		return parsed, usageError("doctor --verbose requires --tun")
+	}
+	if parsed.tun {
+		if parsed.xrayPath != "" {
+			return parsed, usageError("doctor --xray requires --core")
+		}
+		return parsed, nil
+	}
 	if !parsed.core {
 		if parsed.json {
-			return parsed, usageError("doctor --json is not implemented yet")
+			return parsed, usageError("doctor --json is not implemented yet without --tun or --core")
 		}
 		if parsed.xrayPath != "" {
 			return parsed, usageError("doctor --xray requires --core")
