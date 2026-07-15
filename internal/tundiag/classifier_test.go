@@ -35,3 +35,24 @@ func TestFinalizeTreatsLiveInactiveReportAsUnavailable(t *testing.T) {
 		t.Fatalf("expected unavailable live status, got %q", report.Status)
 	}
 }
+
+func TestFinalizeTreatsOnePMTUTransferFailureAsDegradedEvidence(t *testing.T) {
+	report := Finalize(Report{Probes: []ProbeResult{
+		{ID: "https-small", Layer: LayerHTTPS, Status: ProbePass},
+		{ID: "pmtu-one", Layer: LayerPMTU, Status: ProbeFail, Classification: ClassHTTPSFailure},
+	}})
+	if report.Status != StatusDegraded || report.PrimaryClassification != "" {
+		t.Fatalf("unexpected single PMTU evidence result: %#v", report)
+	}
+}
+
+func TestFinalizeRequiresTwoIndependentPMTUFailures(t *testing.T) {
+	report := Finalize(Report{Probes: []ProbeResult{
+		{ID: "https-small", Layer: LayerHTTPS, Status: ProbePass},
+		{ID: "pmtu-one", Layer: LayerPMTU, Status: ProbeFail, Classification: ClassHTTPSFailure},
+		{ID: "pmtu-two", Layer: LayerPMTU, Status: ProbeFail, Classification: ClassTimeout},
+	}})
+	if report.Status != StatusUnhealthy || report.PrimaryClassification != ClassLikelyPMTUBlackhole {
+		t.Fatalf("unexpected corroborated PMTU result: %#v", report)
+	}
+}
