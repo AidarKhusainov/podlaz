@@ -27,9 +27,17 @@ func TestNetworkClientDNSUDPAndTCPUseBoundedWireProtocol(t *testing.T) {
 			defer cancel()
 			var evidence DNSEvidence
 			var err error
-			if network == "udp" { evidence, err = client.DNSUDP(ctx, "192.0.2.53", "example.com", DNSRecordTypeA) } else { evidence, err = client.DNSTCP(ctx, "192.0.2.53", "example.com", DNSRecordTypeA) }
-			if err != nil { t.Fatal(err) }
-			if len(evidence.Addresses) != 1 || evidence.Addresses[0] != "192.0.2.20" { t.Fatalf("unexpected evidence: %#v", evidence) }
+			if network == "udp" {
+				evidence, err = client.DNSUDP(ctx, "192.0.2.53", "example.com", DNSRecordTypeA)
+			} else {
+				evidence, err = client.DNSTCP(ctx, "192.0.2.53", "example.com", DNSRecordTypeA)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(evidence.Addresses) != 1 || evidence.Addresses[0] != "192.0.2.20" {
+				t.Fatalf("unexpected evidence: %#v", evidence)
+			}
 		})
 	}
 }
@@ -41,7 +49,10 @@ func TestNetworkClientHTTPSAndDoHUseLocalTLSFixtures(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		case "/doh":
 			query, err := io.ReadAll(io.LimitReader(r.Body, 4097))
-			if err != nil || len(query) < 12 { http.Error(w, "bad query", http.StatusBadRequest); return }
+			if err != nil || len(query) < 12 {
+				http.Error(w, "bad query", http.StatusBadRequest)
+				return
+			}
 			id := binary.BigEndian.Uint16(query[:2])
 			response := dnsFixtureResponse(t, id, "example.com", DNSRecordTypeA, DNSRCodeSuccess, net.ParseIP("192.0.2.30").To4())
 			w.Header().Set("Content-Type", "application/dns-message")
@@ -51,21 +62,31 @@ func TestNetworkClientHTTPSAndDoHUseLocalTLSFixtures(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+
 	pool := x509.NewCertPool()
 	pool.AddCert(server.Certificate())
 	client := NetworkClient{
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) { return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String()) },
-		TLSConfig:   server.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
-		MessageID:   func() (uint16, error) { return 0x5151, nil },
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+		},
+		TLSConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
+		MessageID: func() (uint16, error) { return 0x5151, nil },
 	}
 	client.TLSConfig.RootCAs = pool
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	httpEvidence, err := client.HTTPS(ctx, Target{ID: "local-small", Kind: TargetHTTPS, URL: "https://example.com/small", MaxResponseBytes: 1024})
-	if err != nil || httpEvidence.StatusCode != http.StatusNoContent { t.Fatalf("unexpected HTTPS result: %#v err=%v", httpEvidence, err) }
+	if err != nil || httpEvidence.StatusCode != http.StatusNoContent {
+		t.Fatalf("unexpected HTTPS result: %#v err=%v", httpEvidence, err)
+	}
 	dnsEvidence, dohHTTP, err := client.DoH(ctx, Target{ID: "local-doh", Kind: TargetDoH, URL: "https://example.com/doh", MaxResponseBytes: 4096}, "example.com", DNSRecordTypeA)
-	if err != nil { t.Fatal(err) }
-	if dohHTTP.StatusCode != http.StatusOK || len(dnsEvidence.Addresses) != 1 || dnsEvidence.Addresses[0] != "192.0.2.30" { t.Fatalf("unexpected DoH result: dns=%#v http=%#v", dnsEvidence, dohHTTP) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dohHTTP.StatusCode != http.StatusOK || len(dnsEvidence.Addresses) != 1 || dnsEvidence.Addresses[0] != "192.0.2.30" {
+		t.Fatalf("unexpected DoH result: dns=%#v http=%#v", dnsEvidence, dohHTTP)
+	}
 }
 
 func serveDNSFixture(t *testing.T, conn net.Conn, network string) {
@@ -73,13 +94,19 @@ func serveDNSFixture(t *testing.T, conn net.Conn, network string) {
 	var query []byte
 	if network == "tcp" {
 		var prefix [2]byte
-		if _, err := io.ReadFull(conn, prefix[:]); err != nil { return }
+		if _, err := io.ReadFull(conn, prefix[:]); err != nil {
+			return
+		}
 		query = make([]byte, int(binary.BigEndian.Uint16(prefix[:])))
-		if _, err := io.ReadFull(conn, query); err != nil { return }
+		if _, err := io.ReadFull(conn, query); err != nil {
+			return
+		}
 	} else {
 		buffer := make([]byte, 4096)
 		count, err := conn.Read(buffer)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 		query = buffer[:count]
 	}
 	id := binary.BigEndian.Uint16(query[:2])
