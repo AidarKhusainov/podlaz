@@ -83,6 +83,14 @@ func ValidateStatusResponse(s StatusResponse) error {
 		return errors.New("missing proxy field")
 	case s.TUN == "":
 		return errors.New("missing tun field")
+	case s.ActiveTransactionID != "" && s.Connection != "active":
+		return fmt.Errorf("active_transaction_id requires active connection, got %q", s.Connection)
+	case s.ActiveTransactionID != "" && s.Mode != "tun":
+		return fmt.Errorf("active_transaction_id requires TUN mode, got %q", s.Mode)
+	case s.ActiveTransactionID != "" && s.ProfileID == "":
+		return errors.New("active_transaction_id requires profile_id")
+	case s.ActiveTransactionID != "" && s.RuntimeConfigPath == "":
+		return errors.New("active_transaction_id requires runtime_config_path")
 	}
 	for _, tx := range s.Transactions {
 		if err := ValidateTransactionStatus(tx); err != nil {
