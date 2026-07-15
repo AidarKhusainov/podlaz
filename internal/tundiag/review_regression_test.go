@@ -15,8 +15,12 @@ func TestFinalizeTreatsOneHTTPSProviderFailureAsDegraded(t *testing.T) {
 		t.Fatalf("unexpected HTTPS partial result: %#v", report)
 	}
 	failed, _ := report.Probe("https-google-small")
-	if failed.Classification != ClassHTTPSPartialFailure {
-		t.Fatalf("expected partial classification, got %#v", failed)
+	if failed.Classification != ClassHTTPSFailure {
+		t.Fatalf("provider root classification was overwritten: %#v", failed)
+	}
+	aggregate, ok := report.Probe("https-provider-quorum")
+	if !ok || aggregate.Classification != ClassHTTPSPartialFailure {
+		t.Fatalf("expected separate partial aggregate, got %#v", report.Probes)
 	}
 }
 
