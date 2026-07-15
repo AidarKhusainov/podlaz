@@ -95,7 +95,7 @@ type Network struct {
 	LocalAddresses    []string `json:"local_addresses,omitempty"`
 	TunInterface      string   `json:"tun_interface,omitempty"`
 	TunMTU            int      `json:"tun_mtu,omitempty"`
-	UplinkMTT         int      `json:"uplink_mtu,omitempty"`
+	UplinkMTU         int      `json:"uplink_mtu,omitempty"`
 	DNSServers        []string `json:"dns_servers,omitempty"`
 	IPv4Status        string   `json:"ipv4_status,omitempty"`
 	IPv6Status        string   `json:"ipv6_status,omitempty"`
