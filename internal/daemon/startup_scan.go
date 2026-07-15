@@ -16,9 +16,10 @@ import (
 type startupScanFunc func(context.Context) recovery.PlanResult
 
 type startupScanState struct {
-	mu     sync.RWMutex
-	scan   recovery.PlanResult
-	scanFn startupScanFunc
+	refreshMu sync.Mutex
+	mu        sync.RWMutex
+	scan      recovery.PlanResult
+	scanFn    startupScanFunc
 }
 
 func defaultStartupScanFunc(runtimeDir string) startupScanFunc {
@@ -35,6 +36,9 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 	if s == nil || s.scanFn == nil {
 		return recovery.PlanResult{}
 	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
 	scan := cloneRecoveryPlan(s.scanFn(ctx))
 	s.mu.Lock()
 	s.scan = cloneRecoveryPlan(scan)
