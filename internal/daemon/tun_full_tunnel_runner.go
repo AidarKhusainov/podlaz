@@ -49,6 +49,7 @@ type fullTunnelTransactionRunner struct {
 	verifyCoreStarted           func(<-chan struct{}) error
 	saveCoreMetadata            func(txstate.TransactionStore, string, string, int, time.Time) error
 	verifyConnectivity          func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
+	collectFailureDiagnostics   func(context.Context, string, planner.TunPlan, error) string
 	commitActiveState           func(txstate.TransactionStore, string, fullTunnelCoreHandle, xrayState) error
 	rollbackTransaction         func(context.Context, string, planner.TunPlan, tunPlanExecutor) error
 }
@@ -104,6 +105,9 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		return xrayState{}, withTunFailurePhase(networkApplyVerifyPhase(err), transactionID, "completed", err)
 	}
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
+		if summary := strings.TrimSpace(r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)); summary != "" {
+			err = fmt.Errorf("%w; %s", err, summary)
+		}
 		if rollbackErr := r.rollbackTransaction(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
 			_ = r.stopCore(core)
 			return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr)))
@@ -178,6 +182,9 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 	}
 	if r.verifyConnectivity == nil {
 		r.verifyConnectivity = verifyTunConnectivity
+	}
+	if r.collectFailureDiagnostics == nil {
+		r.collectFailureDiagnostics = func(context.Context, string, planner.TunPlan, error) string { return "" }
 	}
 	if r.commitActiveState == nil {
 		r.commitActiveState = func(store txstate.TransactionStore, transactionID string, _ fullTunnelCoreHandle, _ xrayState) error {
