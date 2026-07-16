@@ -25,7 +25,9 @@ Rules:
   history under `/run`.
 - A diagnostic persistence failure must clear the public report location and
   produce `internal_diagnostic_error`; output and logs must not claim that a
-  report exists when atomic replacement failed.
+  report exists when atomic replacement failed. This includes failures before
+  replacement and directory-sync failures after rename. Save and load are
+  serialized so a reader cannot accept a report from an unsuccessful attempt.
 - Read-only commands may inspect state but must not clean it up.
 
 ## CLI and daemon boundary
@@ -84,6 +86,13 @@ nftables/firewall state, services, other VPNs, or browser state. TLS certificate
 validation must remain enabled. Unit tests must use local protocol fixtures
 rather than live internet endpoints.
 
+DNS wire responses must match the original message id, echoed question name,
+question type, and IN class. Address evidence accepts only the requested A or
+AAAA type whose owner is the queried name or is reachable through a validated,
+acyclic CNAME chain beginning at that name. Unrelated owners, mismatched address
+types, conflicting aliases, and disconnected CNAME chains are diagnostic
+failures for UDP, TCP, and DoH paths.
+
 Ordinary HTTPS and DoH checks use independent provider paths. The Cloudflare
 HTTPS path includes its TCP/443, TLS, and small-HTTPS probes; the Google small
 HTTPS probe is an independent corroborating path. Provider aggregation creates a
@@ -137,14 +146,12 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
   stored scan remains the raw scanner result; active-session filtering never
   overwrites it.
 - An unexpected TUN core exit schedules an eager read-only refresh with a
-  daemon-owned five-second deadline. In addition, status and doctor perform a
-  bounded refresh synchronously before publishing a stable
-  `error (core exited)` TUN state. The synchronous refresh inherits the request
-  cancellation and any earlier request deadline, publishes the exact result
-  returned by a coalesced refresh, and therefore preserves an inspection warning
-  if the wait cannot complete. Lifecycle status is read again after the scan and
-  active-resource filtering uses that latest status, so reconnect or disconnect
-  transitions cannot be paired with stale pre-scan status.
+  daemon-owned five-second deadline. In addition, status and doctor perform the
+  same bounded refresh synchronously before publishing a stable
+  `error (core exited)` TUN state. The synchronous publication refresh inherits
+  request cancellation and any earlier request deadline, publishes the exact
+  refresh result including coalesced-waiter warnings, and rereads lifecycle
+  status after the scan before applying active-resource filtering.
 - `active_transaction_id` is published only when both lifecycle state and the
   selected status provider describe the same stable active TUN session. It is
   omitted for inactive, verifying, stopping, and error states, including custom
@@ -167,10 +174,13 @@ and all JSON responses.
 The same central redaction and evidence-size limits apply before TUN diagnostics
 are rendered or persisted. The latest report must not store raw profile secrets,
 UUIDs, generated Xray configuration, authentication material, or unbounded
-command/protocol output.
+command/protocol output. Every public network string and structured policy or
+nftables rule is sanitized and bounded through the same central policy.
 
 JSON output must include `schema_version`. Existing JSON field meanings must not
-change without an explicit compatibility note.
+change without an explicit compatibility note. Required collection fields such
+as `probes`, `warnings`, and `errors` are always JSON arrays, including when
+empty; they must never change type to `null`.
 
 ## Confirmation
 
@@ -192,3 +202,13 @@ privileged networking operations. The CLI remains unprivileged and uses the
 socket access boundary.
 
 Expected systemd baseline:
+
+- `User=root`
+- `Group=podlaz`
+- `RuntimeDirectory=podlaz`
+- `StateDirectory=podlaz`
+- `RuntimeDirectoryMode=0750`
+- `StateDirectoryMode=0750`
+- `UMask=0027`
+- explicit systemd hardening that does not remove the networking privileges TUN
+  execution requires.
