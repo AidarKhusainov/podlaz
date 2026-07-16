@@ -15,6 +15,11 @@ const (
 	DNSClassIN         = uint16(1)
 	DNSRCodeSuccess    = 0
 	DNSRCodeNameError  = 3
+
+	dnsFlagResponse  = uint16(0x8000)
+	dnsOpcodeMask    = uint16(0x7800)
+	dnsFlagTruncated = uint16(0x0200)
+	dnsReservedZMask = uint16(0x0070)
 )
 
 type dnsAnswerRecord struct {
@@ -56,8 +61,17 @@ func ParseDNSResponse(message []byte, expectedID uint16, expectedName string, ex
 	if id != expectedID {
 		return DNSEvidence{}, fmt.Errorf("DNS response id %d does not match query id %d", id, expectedID)
 	}
-	if flags&0x8000 == 0 {
+	if flags&dnsFlagResponse == 0 {
 		return DNSEvidence{}, errors.New("DNS message is not a response")
+	}
+	if flags&dnsOpcodeMask != 0 {
+		return DNSEvidence{}, fmt.Errorf("DNS response opcode is %d; expected standard query", (flags&dnsOpcodeMask)>>11)
+	}
+	if flags&dnsFlagTruncated != 0 {
+		return DNSEvidence{}, errors.New("DNS response is truncated")
+	}
+	if flags&dnsReservedZMask != 0 {
+		return DNSEvidence{}, errors.New("DNS response reserved Z bits are non-zero")
 	}
 	if questionCount != 1 {
 		return DNSEvidence{}, fmt.Errorf("DNS response has %d questions; expected 1", questionCount)
@@ -116,6 +130,7 @@ func ParseDNSResponse(message []byte, expectedID uint16, expectedName string, ex
 		MessageID:    id,
 	}
 	cnameTargets := make(map[string]string)
+	addressOwners := make(map[string]struct{})
 	addressRecords := make([]dnsAddressRecord, 0, answerCount)
 	for i, record := range records {
 		if record.recordClass != DNSClassIN {
@@ -124,6 +139,9 @@ func ParseDNSResponse(message []byte, expectedID uint16, expectedName string, ex
 		data := message[record.dataOffset : record.dataOffset+record.dataLength]
 		switch record.recordType {
 		case DNSRecordTypeCNAME:
+			if _, hasAddress := addressOwners[record.owner]; hasAddress {
+				return DNSEvidence{}, fmt.Errorf("DNS owner %q contains both CNAME and address data", record.owner)
+			}
 			target, next, err := readDNSName(message, record.dataOffset, 0)
 			if err != nil {
 				return DNSEvidence{}, fmt.Errorf("decode DNS answer %d CNAME target: %w", i, err)
@@ -139,7 +157,14 @@ func ParseDNSResponse(message []byte, expectedID uint16, expectedName string, ex
 				return DNSEvidence{}, fmt.Errorf("DNS owner %q has conflicting CNAME targets %q and %q", record.owner, existing, target)
 			}
 			cnameTargets[record.owner] = target
-		case expectedType:
+		case DNSRecordTypeA, DNSRecordTypeAAAA:
+			if _, hasCNAME := cnameTargets[record.owner]; hasCNAME {
+				return DNSEvidence{}, fmt.Errorf("DNS owner %q contains both CNAME and address data", record.owner)
+			}
+			addressOwners[record.owner] = struct{}{}
+			if record.recordType != expectedType {
+				continue
+			}
 			address, err := parseDNSAddress(record.recordType, data)
 			if err != nil {
 				return DNSEvidence{}, fmt.Errorf("decode DNS answer %d address: %w", i, err)
