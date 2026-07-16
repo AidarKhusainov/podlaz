@@ -68,13 +68,38 @@ func TestParseDNSResponseRejectsInvalidHeaderFlags(t *testing.T) {
 	for name, flag := range map[string]uint16{
 		"truncated":        0x0200,
 		"non-query opcode": 0x0800,
-		"non-zero z":       0x0010,
+		"non-zero z":       0x0040,
 	} {
 		t.Run(name, func(t *testing.T) {
 			message := append([]byte(nil), base...)
 			binary.BigEndian.PutUint16(message[2:4], binary.BigEndian.Uint16(message[2:4])|flag)
 			if _, err := ParseDNSResponse(message, id, "example.com", DNSRecordTypeA); err == nil {
 				t.Fatalf("expected DNS header flag 0x%04x to be rejected", flag)
+			}
+		})
+	}
+}
+
+func TestParseDNSResponseAllowsDNSSECHeaderBits(t *testing.T) {
+	const id = 0x1009
+	base := dnsFixtureResponseWithAnswers(t, id, "example.com", DNSRecordTypeA,
+		dnsTestAnswer{owner: "example.com", recordType: DNSRecordTypeA, address: net.ParseIP("192.0.2.41").To4()},
+	)
+
+	for name, flag := range map[string]uint16{
+		"AD":    0x0020,
+		"CD":    0x0010,
+		"AD+CD": 0x0030,
+	} {
+		t.Run(name, func(t *testing.T) {
+			message := append([]byte(nil), base...)
+			binary.BigEndian.PutUint16(message[2:4], binary.BigEndian.Uint16(message[2:4])|flag)
+			evidence, err := ParseDNSResponse(message, id, "example.com", DNSRecordTypeA)
+			if err != nil {
+				t.Fatalf("expected DNSSEC header bits 0x%04x to be accepted: %v", flag, err)
+			}
+			if len(evidence.Addresses) != 1 || evidence.Addresses[0] != "192.0.2.41" {
+				t.Fatalf("unexpected DNSSEC-header evidence: %#v", evidence)
 			}
 		})
 	}
