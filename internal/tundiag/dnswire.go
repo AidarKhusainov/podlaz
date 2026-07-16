@@ -18,11 +18,11 @@ const (
 )
 
 type dnsAnswerRecord struct {
-	owner      string
-	recordType uint16
+	owner       string
+	recordType  uint16
 	recordClass uint16
-	dataOffset int
-	dataLength int
+	dataOffset  int
+	dataLength  int
 }
 
 type dnsAddressRecord struct {
