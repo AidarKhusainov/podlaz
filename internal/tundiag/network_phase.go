@@ -79,7 +79,6 @@ func transportFailurePhase(err error, fallback FailurePhase) FailurePhase {
 // distinction between local resolution, endpoint connection, and handshake
 // failures.
 func (c NetworkClient) TLSWithFailurePhase(ctx context.Context, host string, port uint16) (TLSEvidence, FailurePhase, error) {
-	started := time.Now()
 	conn, err := c.dial(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(int(port))))
 	if err != nil {
 		phase := transportFailurePhase(err, FailurePhaseTCPConnect)
@@ -88,6 +87,7 @@ func (c NetworkClient) TLSWithFailurePhase(ctx context.Context, host string, por
 	defer conn.Close()
 	applyContextDeadline(ctx, conn)
 	tlsConn := tls.Client(conn, c.tlsConfig(host))
+	handshakeStarted := time.Now()
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return TLSEvidence{}, FailurePhaseTLSHandshake, withFailurePhase(FailurePhaseTLSHandshake, err)
 	}
@@ -95,7 +95,7 @@ func (c NetworkClient) TLSWithFailurePhase(ctx context.Context, host string, por
 	evidence := TLSEvidence{
 		Version:     tlsVersionName(state.Version),
 		Cipher:      tls.CipherSuiteName(state.CipherSuite),
-		HandshakeMS: time.Since(started).Milliseconds(),
+		HandshakeMS: time.Since(handshakeStarted).Milliseconds(),
 	}
 	if len(state.PeerCertificates) > 0 {
 		evidence.PeerSubject = state.PeerCertificates[0].Subject.CommonName
