@@ -13,7 +13,6 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
-	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 type Server struct {
@@ -68,18 +67,8 @@ func (s Server) Run(ctx context.Context) error {
 	}
 	startupScan := newStartupScanState(startupScanFn)
 	refreshStartupScan := func(refreshCtx context.Context) {
-		startupScan.Refresh(refreshCtx)
-		logStartupScan(startupScan.FilterForStatus(currentStatus(refreshCtx), runtimeDir))
-	}
-	refreshForCoreErrorPublication := func(requestCtx context.Context, status api.StatusResponse) {
-		identity := lifecycle.statusPublicationIdentity()
-		if status.Connection != "error (core exited)" || status.Mode != planner.ModeTun ||
-			identity.Connection != "error (core exited)" || identity.Mode != planner.ModeTun {
-			return
-		}
-		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(requestCtx), unexpectedCoreExitRefreshTimeout)
-		defer cancel()
-		startupScan.Refresh(refreshCtx)
+		scan := startupScan.Refresh(refreshCtx)
+		logStartupScan(filterStartupScanForActiveRuntime(scan, currentStatus(refreshCtx), runtimeDir))
 	}
 	refreshStartupScan(ctx)
 
@@ -115,9 +104,9 @@ func (s Server) Run(ctx context.Context) error {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		status := currentStatus(r.Context())
-		refreshForCoreErrorPublication(r.Context(), status)
-		scan := startupScan.FilterForStatus(status, runtimeDir)
+		status, scan := startupScanForPublication(
+			r.Context(), currentStatus, lifecycle, startupScan, runtimeDir, unexpectedCoreExitRefreshTimeout,
+		)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(withStartupScanStatus(status, scan))
 		log.Printf("podlazd: status request handled")
@@ -132,9 +121,9 @@ func (s Server) Run(ctx context.Context) error {
 		if doctorFn == nil {
 			doctorFn = lifecycle.Doctor
 		}
-		status := currentStatus(r.Context())
-		refreshForCoreErrorPublication(r.Context(), status)
-		scan := startupScan.FilterForStatus(status, runtimeDir)
+		_, scan := startupScanForPublication(
+			r.Context(), currentStatus, lifecycle, startupScan, runtimeDir, unexpectedCoreExitRefreshTimeout,
+		)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), scan))
 		log.Printf("podlazd: doctor request handled")
