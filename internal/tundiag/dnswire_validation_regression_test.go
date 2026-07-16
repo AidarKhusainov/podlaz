@@ -66,9 +66,9 @@ func TestParseDNSResponseRejectsInvalidHeaderFlags(t *testing.T) {
 	)
 
 	for name, flag := range map[string]uint16{
-		"truncated":       0x0200,
+		"truncated":        0x0200,
 		"non-query opcode": 0x0800,
-		"non-zero z":      0x0010,
+		"non-zero z":       0x0010,
 	} {
 		t.Run(name, func(t *testing.T) {
 			message := append([]byte(nil), base...)
