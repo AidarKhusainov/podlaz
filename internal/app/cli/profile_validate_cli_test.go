@@ -72,7 +72,7 @@ func TestRunCLIProfileValidateHumanOutputDoesNotLeakHostnameBearingIDInNextStep(
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	store := mustProfileStore(t, storePath)
 	p := renderableVLESSProfile()
-	p.ID = "vless-swe1.censor-amoroso.com-443-5659e4f0c6"
+	p.ID = "vless-vpn.example.test-443-5659e4f0c6"
 	if err := store.Add(p); err != nil {
 		t.Fatalf("add profile: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRunCLIProfileValidateHumanOutputDoesNotLeakHostnameBearingIDInNextStep(
 		t.Fatalf("profile validate failed: %v", err)
 	}
 	got := out.String()
-	if strings.Contains(got, "censor-amoroso.com") || strings.Contains(got, p.ID) {
+	if strings.Contains(got, "vpn.example.test") || strings.Contains(got, p.ID) {
 		t.Fatalf("expected hostname-bearing profile id to be hidden in next-step output, got %q", got)
 	}
 	if !strings.Contains(got, "Run: plz plan --mode tun <profile-id>") {
