@@ -28,8 +28,11 @@ func SanitizeReport(report Report) Report {
 	report.Network.IPv4Status = sanitize(report.Network.IPv4Status)
 	report.Network.IPv6Status = sanitize(report.Network.IPv6Status)
 	report.Network.ServerEndpoint = sanitize(report.Network.ServerEndpoint)
+	report.Network.ServerHostname = sanitize(report.Network.ServerHostname)
+	report.Network.ServerName = sanitize(report.Network.ServerName)
 	report.Network.ServerAddresses = sanitizeSlice(report.Network.ServerAddresses)
 	report.Network.DoHProviders = sanitizeSlice(report.Network.DoHProviders)
+	report.Network.NftablesStatus = sanitize(report.Network.NftablesStatus)
 	report.Warnings = sanitizeSlice(report.Warnings)
 	report.Errors = sanitizeSlice(report.Errors)
 	report.ReportPath = sanitize(report.ReportPath)
@@ -47,6 +50,8 @@ func SanitizeProbeResult(result ProbeResult) ProbeResult {
 	result.DependencyReason = sanitize(result.DependencyReason)
 	result.Evidence.Endpoint = sanitize(result.Evidence.Endpoint)
 	result.Evidence.ResolvedAddresses = sanitizeSlice(result.Evidence.ResolvedAddresses)
+	result.Evidence.PolicyRules = sanitizeSlice(result.Evidence.PolicyRules)
+	result.Evidence.NftablesRules = sanitizeSlice(result.Evidence.NftablesRules)
 	result.Evidence.Notes = sanitizeSlice(result.Evidence.Notes)
 	if result.Evidence.Route != nil {
 		route := *result.Evidence.Route
