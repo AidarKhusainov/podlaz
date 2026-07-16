@@ -19,7 +19,7 @@ const (
 	dnsFlagResponse  = uint16(0x8000)
 	dnsOpcodeMask    = uint16(0x7800)
 	dnsFlagTruncated = uint16(0x0200)
-	dnsReservedZMask = uint16(0x0070)
+	dnsReservedZMask = uint16(0x0040)
 )
 
 type dnsAnswerRecord struct {
