@@ -21,9 +21,9 @@ const (
 var diagnosticStoreMu sync.RWMutex
 
 type Store struct {
-	RuntimeDir     string
-	Now            func() time.Time
-	syncDirectory  func(string) error
+	RuntimeDir    string
+	Now           func() time.Time
+	syncDirectory func(string) error
 }
 
 func (s Store) Path() string {
