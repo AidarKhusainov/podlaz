@@ -124,6 +124,9 @@ func renderVerboseEvidence(b *strings.Builder, probe ProbeResult) {
 	if probe.Target != "" {
 		fmt.Fprintf(b, "           target: %s\n", probe.Target)
 	}
+	if probe.FailurePhase != "" {
+		fmt.Fprintf(b, "           failure phase: %s\n", probe.FailurePhase)
+	}
 	if probe.Error != "" {
 		fmt.Fprintf(b, "           error: %s\n", probe.Error)
 	}
