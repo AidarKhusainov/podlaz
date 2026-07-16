@@ -10,6 +10,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -56,7 +57,17 @@ func (c NetworkClient) DoHWithFailurePhase(ctx context.Context, target Target, n
 	request.Header.Set("Content-Type", "application/dns-message")
 	request.Header.Set("Accept", "application/dns-message")
 	request.Header.Set("User-Agent", "podlaz-diagnostic/1")
-	request = request.WithContext(httptrace.WithClientTrace(request.Context(), tracker.trace()))
+
+	var firstByte time.Time
+	var firstByteMu sync.Mutex
+	trace := tracker.trace()
+	trace.GotFirstResponseByte = func() {
+		tracker.set(FailurePhaseHTTPResponse)
+		firstByteMu.Lock()
+		firstByte = time.Now()
+		firstByteMu.Unlock()
+	}
+	request = request.WithContext(httptrace.WithClientTrace(request.Context(), trace))
 	started := time.Now()
 	response, err := client.Do(request)
 	if err != nil {
@@ -64,43 +75,59 @@ func (c NetworkClient) DoHWithFailurePhase(ctx context.Context, target Target, n
 		return DNSEvidence{}, HTTPEvidence{}, phase, withFailurePhase(phase, err)
 	}
 	defer response.Body.Close()
-	tracker.set(FailurePhaseHTTPBody)
-	maxBytes := target.MaxResponseBytes
-	if maxBytes <= 0 {
-		maxBytes = 4096
+
+	firstByteMu.Lock()
+	headerAt := firstByte
+	firstByteMu.Unlock()
+	if headerAt.IsZero() {
+		headerAt = time.Now()
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	httpEvidence := HTTPEvidence{
 		StatusCode:    response.StatusCode,
 		Location:      response.Header.Get("Location"),
 		ContentLength: response.ContentLength,
-		BytesRead:     int64(len(body)),
-		HeaderMS:      time.Since(started).Milliseconds(),
-	}
-	if err != nil {
-		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPBody, withFailurePhase(FailurePhaseHTTPBody, err)
-	}
-	tracker.set(FailurePhaseHTTPResponse)
-	if int64(len(body)) > maxBytes {
-		err := fmt.Errorf("DoH response exceeds %d bytes", maxBytes)
-		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPResponse, withFailurePhase(FailurePhaseHTTPResponse, err)
+		HeaderMS:      headerAt.Sub(started).Milliseconds(),
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		httpEvidence.FailurePhase = "redirect"
 		err := fmt.Errorf("unexpected DoH redirect to %q", response.Header.Get("Location"))
 		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPResponse, withFailurePhase(FailurePhaseHTTPResponse, err)
 	}
 	if !targetAcceptsStatus(target, response.StatusCode) {
+		httpEvidence.FailurePhase = "status"
 		err := fmt.Errorf("unexpected DoH HTTP status %d; expected %s", response.StatusCode, target.ExpectedSuccess)
 		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPResponse, withFailurePhase(FailurePhaseHTTPResponse, err)
 	}
 	contentType := strings.ToLower(response.Header.Get("Content-Type"))
 	if !strings.HasPrefix(contentType, "application/dns-message") {
+		httpEvidence.FailurePhase = "content_type"
 		err := fmt.Errorf("DoH content type %q is not application/dns-message", contentType)
 		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPResponse, withFailurePhase(FailurePhaseHTTPResponse, err)
 	}
+	httpEvidence.ResponseAccepted = true
+
+	tracker.set(FailurePhaseHTTPBody)
+	maxBytes := target.MaxResponseBytes
+	if maxBytes <= 0 {
+		maxBytes = 4096
+	}
+	bodyStarted := time.Now()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
+	httpEvidence.BytesRead = int64(len(body))
+	httpEvidence.BodyMS = time.Since(bodyStarted).Milliseconds()
+	if err != nil {
+		httpEvidence.FailurePhase = "body_error"
+		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPBody, withFailurePhase(FailurePhaseHTTPBody, err)
+	}
+	if int64(len(body)) > maxBytes {
+		httpEvidence.FailurePhase = "body_too_large"
+		err := fmt.Errorf("DoH response exceeds %d bytes", maxBytes)
+		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPBody, withFailurePhase(FailurePhaseHTTPBody, err)
+	}
 	dnsEvidence, err := ParseDNSResponse(body, id, name, recordType)
 	if err != nil {
-		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPResponse, withFailurePhase(FailurePhaseHTTPResponse, err)
+		httpEvidence.FailurePhase = "dns_payload"
+		return DNSEvidence{}, httpEvidence, FailurePhaseHTTPBody, withFailurePhase(FailurePhaseHTTPBody, err)
 	}
 	dnsEvidence.Server = target.URL
 	return dnsEvidence, httpEvidence, "", nil
