@@ -9,12 +9,26 @@ import (
 )
 
 const (
-	DNSRecordTypeA    = uint16(1)
-	DNSRecordTypeAAAA = uint16(28)
-	DNSClassIN        = uint16(1)
-	DNSRCodeSuccess   = 0
-	DNSRCodeNameError = 3
+	DNSRecordTypeA     = uint16(1)
+	DNSRecordTypeCNAME = uint16(5)
+	DNSRecordTypeAAAA  = uint16(28)
+	DNSClassIN         = uint16(1)
+	DNSRCodeSuccess    = 0
+	DNSRCodeNameError  = 3
 )
+
+type dnsAnswerRecord struct {
+	owner      string
+	recordType uint16
+	recordClass uint16
+	dataOffset int
+	dataLength int
+}
+
+type dnsAddressRecord struct {
+	owner   string
+	address string
+}
 
 func BuildDNSQuery(id uint16, name string, recordType uint16) ([]byte, error) {
 	encodedName, err := encodeDNSName(name)
@@ -68,14 +82,9 @@ func ParseDNSResponse(message []byte, expectedID uint16, expectedName string, ex
 		return DNSEvidence{}, fmt.Errorf("DNS response question type/class is %d/%d; expected %d/%d", questionType, questionClass, expectedType, DNSClassIN)
 	}
 
-	evidence := DNSEvidence{
-		Name:         normalizeDNSName(expectedName),
-		Type:         expectedType,
-		ResponseCode: int(flags & 0x000f),
-		MessageID:    id,
-	}
+	records := make([]dnsAnswerRecord, 0, answerCount)
 	for i := 0; i < answerCount; i++ {
-		_, next, err := readDNSName(message, offset, 0)
+		owner, next, err := readDNSName(message, offset, 0)
 		if err != nil {
 			return DNSEvidence{}, fmt.Errorf("decode DNS answer %d name: %w", i, err)
 		}
@@ -87,22 +96,115 @@ func ParseDNSResponse(message []byte, expectedID uint16, expectedName string, ex
 		recordClass := binary.BigEndian.Uint16(message[offset+2 : offset+4])
 		dataLength := int(binary.BigEndian.Uint16(message[offset+8 : offset+10]))
 		offset += 10
-		if dataLength < 0 || offset+dataLength > len(message) {
+		if offset+dataLength > len(message) {
 			return DNSEvidence{}, fmt.Errorf("DNS answer %d data is truncated", i)
 		}
-		data := message[offset : offset+dataLength]
+		records = append(records, dnsAnswerRecord{
+			owner:       normalizeDNSName(owner),
+			recordType:  recordType,
+			recordClass: recordClass,
+			dataOffset:  offset,
+			dataLength:  dataLength,
+		})
 		offset += dataLength
-		if recordClass != DNSClassIN {
+	}
+
+	evidence := DNSEvidence{
+		Name:         normalizeDNSName(expectedName),
+		Type:         expectedType,
+		ResponseCode: int(flags & 0x000f),
+		MessageID:    id,
+	}
+	cnameTargets := make(map[string]string)
+	addressRecords := make([]dnsAddressRecord, 0, answerCount)
+	for i, record := range records {
+		if record.recordClass != DNSClassIN {
 			continue
 		}
-		switch {
-		case recordType == DNSRecordTypeA && dataLength == net.IPv4len:
-			evidence.Addresses = append(evidence.Addresses, net.IP(data).String())
-		case recordType == DNSRecordTypeAAAA && dataLength == net.IPv6len:
-			evidence.Addresses = append(evidence.Addresses, net.IP(data).String())
+		data := message[record.dataOffset : record.dataOffset+record.dataLength]
+		switch record.recordType {
+		case DNSRecordTypeCNAME:
+			target, next, err := readDNSName(message, record.dataOffset, 0)
+			if err != nil {
+				return DNSEvidence{}, fmt.Errorf("decode DNS answer %d CNAME target: %w", i, err)
+			}
+			if next != record.dataOffset+record.dataLength {
+				return DNSEvidence{}, fmt.Errorf("DNS answer %d CNAME data length does not match encoded name", i)
+			}
+			target = normalizeDNSName(target)
+			if record.owner == "" || target == "" {
+				return DNSEvidence{}, fmt.Errorf("DNS answer %d contains an empty CNAME owner or target", i)
+			}
+			if existing, ok := cnameTargets[record.owner]; ok && existing != target {
+				return DNSEvidence{}, fmt.Errorf("DNS owner %q has conflicting CNAME targets %q and %q", record.owner, existing, target)
+			}
+			cnameTargets[record.owner] = target
+		case expectedType:
+			address, err := parseDNSAddress(record.recordType, data)
+			if err != nil {
+				return DNSEvidence{}, fmt.Errorf("decode DNS answer %d address: %w", i, err)
+			}
+			if address != "" {
+				addressRecords = append(addressRecords, dnsAddressRecord{owner: record.owner, address: address})
+			}
 		}
 	}
+
+	if evidence.ResponseCode != DNSRCodeSuccess {
+		return evidence, nil
+	}
+	reachable, err := validatedDNSCNAMEChain(evidence.Name, cnameTargets)
+	if err != nil {
+		return DNSEvidence{}, err
+	}
+	seenAddresses := make(map[string]struct{})
+	for _, record := range addressRecords {
+		if _, ok := reachable[record.owner]; !ok {
+			continue
+		}
+		if _, duplicate := seenAddresses[record.address]; duplicate {
+			continue
+		}
+		seenAddresses[record.address] = struct{}{}
+		evidence.Addresses = append(evidence.Addresses, record.address)
+	}
+	if answerCount > 0 && len(evidence.Addresses) == 0 {
+		return evidence, fmt.Errorf("DNS response contains no IN type %d answer for %q or its validated CNAME chain", expectedType, evidence.Name)
+	}
 	return evidence, nil
+}
+
+func parseDNSAddress(recordType uint16, data []byte) (string, error) {
+	switch recordType {
+	case DNSRecordTypeA:
+		if len(data) != net.IPv4len {
+			return "", fmt.Errorf("A record has %d bytes; expected %d", len(data), net.IPv4len)
+		}
+		return net.IP(data).String(), nil
+	case DNSRecordTypeAAAA:
+		if len(data) != net.IPv6len {
+			return "", fmt.Errorf("AAAA record has %d bytes; expected %d", len(data), net.IPv6len)
+		}
+		return net.IP(data).String(), nil
+	default:
+		return "", nil
+	}
+}
+
+func validatedDNSCNAMEChain(expectedName string, cnameTargets map[string]string) (map[string]struct{}, error) {
+	reachable := make(map[string]struct{})
+	current := normalizeDNSName(expectedName)
+	for {
+		if _, exists := reachable[current]; exists {
+			return nil, fmt.Errorf("DNS CNAME chain for %q contains a cycle at %q", expectedName, current)
+		}
+		reachable[current] = struct{}{}
+		target, ok := cnameTargets[current]
+		if !ok {
+			return reachable, nil
+		}
+		current = target
+	}
 }
 
 func encodeDNSName(name string) ([]byte, error) {
