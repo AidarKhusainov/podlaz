@@ -33,9 +33,12 @@ func SanitizeReport(report Report) Report {
 	report.Network.ServerAddresses = sanitizeSlice(report.Network.ServerAddresses)
 	report.Network.DoHProviders = sanitizeSlice(report.Network.DoHProviders)
 	report.Network.NftablesStatus = sanitize(report.Network.NftablesStatus)
-	report.Warnings = sanitizeSlice(report.Warnings)
-	report.Errors = sanitizeSlice(report.Errors)
+	report.Warnings = sanitizeRequiredSlice(report.Warnings)
+	report.Errors = sanitizeRequiredSlice(report.Errors)
 	report.ReportPath = sanitize(report.ReportPath)
+	if report.Probes == nil {
+		report.Probes = []ProbeResult{}
+	}
 	for i := range report.Probes {
 		report.Probes[i] = SanitizeProbeResult(report.Probes[i])
 	}
@@ -105,6 +108,14 @@ func SanitizeProbeResult(result ProbeResult) ProbeResult {
 
 func sanitize(value string) string {
 	return limitText(render.Redact(value), maxDiagnosticText)
+}
+
+func sanitizeRequiredSlice(values []string) []string {
+	values = sanitizeSlice(values)
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func sanitizeSlice(values []string) []string {
