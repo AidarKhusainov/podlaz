@@ -16,9 +16,11 @@ import (
 type startupScanFunc func(context.Context) recovery.PlanResult
 
 type startupScanState struct {
-	mu     sync.RWMutex
-	scan   recovery.PlanResult
-	scanFn startupScanFunc
+	refreshMu   sync.Mutex
+	refreshDone chan struct{}
+	mu          sync.RWMutex
+	scan        recovery.PlanResult
+	scanFn      startupScanFunc
 }
 
 func defaultStartupScanFunc(runtimeDir string) startupScanFunc {
@@ -35,11 +37,45 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 	if s == nil || s.scanFn == nil {
 		return recovery.PlanResult{}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	s.refreshMu.Lock()
+	if done := s.refreshDone; done != nil {
+		s.refreshMu.Unlock()
+		select {
+		case <-done:
+			return s.Snapshot()
+		case <-ctx.Done():
+			scan := s.Snapshot()
+			scan.Warnings = append(scan.Warnings, recovery.Warning{
+				Target:  "recovery scan",
+				Message: "wait for concurrent recovery scan: " + ctx.Err().Error(),
+			})
+			return scan
+		}
+	}
+	done := make(chan struct{})
+	s.refreshDone = done
+	s.refreshMu.Unlock()
+	defer s.finishRefresh(done)
+
 	scan := cloneRecoveryPlan(s.scanFn(ctx))
 	s.mu.Lock()
 	s.scan = cloneRecoveryPlan(scan)
 	s.mu.Unlock()
 	return scan
+}
+
+func (s *startupScanState) finishRefresh(done chan struct{}) {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	if s.refreshDone != done {
+		return
+	}
+	close(done)
+	s.refreshDone = nil
 }
 
 func (s *startupScanState) Snapshot() recovery.PlanResult {

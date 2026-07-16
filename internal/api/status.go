@@ -29,22 +29,23 @@ const (
 )
 
 type StatusResponse struct {
-	Daemon            string              `json:"daemon"`
-	Service           string              `json:"service"`
-	Connection        string              `json:"connection"`
-	Mode              string              `json:"mode,omitempty"`
-	ProfileID         string              `json:"profile_id,omitempty"`
-	ProfileName       string              `json:"profile_name,omitempty"`
-	RuntimeDirectory  string              `json:"runtime_directory"`
-	RuntimeConfigPath string              `json:"runtime_config_path,omitempty"`
-	Proxy             string              `json:"proxy"`
-	TUN               string              `json:"tun"`
-	Routes            string              `json:"routes,omitempty"`
-	DNS               string              `json:"dns,omitempty"`
-	Firewall          string              `json:"firewall,omitempty"`
-	Transactions      []TransactionStatus `json:"transactions,omitempty"`
-	StartupScan       *StartupScanStatus  `json:"startup_scan,omitempty"`
-	Warnings          []string            `json:"warnings,omitempty"`
+	Daemon              string              `json:"daemon"`
+	Service             string              `json:"service"`
+	Connection          string              `json:"connection"`
+	Mode                string              `json:"mode,omitempty"`
+	ProfileID           string              `json:"profile_id,omitempty"`
+	ProfileName         string              `json:"profile_name,omitempty"`
+	RuntimeDirectory    string              `json:"runtime_directory"`
+	RuntimeConfigPath   string              `json:"runtime_config_path,omitempty"`
+	ActiveTransactionID string              `json:"active_transaction_id,omitempty"`
+	Proxy               string              `json:"proxy"`
+	TUN                 string              `json:"tun"`
+	Routes              string              `json:"routes,omitempty"`
+	DNS                 string              `json:"dns,omitempty"`
+	Firewall            string              `json:"firewall,omitempty"`
+	Transactions        []TransactionStatus `json:"transactions,omitempty"`
+	StartupScan         *StartupScanStatus  `json:"startup_scan,omitempty"`
+	Warnings            []string            `json:"warnings,omitempty"`
 }
 
 // TransactionStatus is the daemon API's redacted transaction summary. It
@@ -82,6 +83,14 @@ func ValidateStatusResponse(s StatusResponse) error {
 		return errors.New("missing proxy field")
 	case s.TUN == "":
 		return errors.New("missing tun field")
+	case s.ActiveTransactionID != "" && s.Connection != "active":
+		return fmt.Errorf("active_transaction_id requires active connection, got %q", s.Connection)
+	case s.ActiveTransactionID != "" && s.Mode != "tun":
+		return fmt.Errorf("active_transaction_id requires TUN mode, got %q", s.Mode)
+	case s.ActiveTransactionID != "" && s.ProfileID == "":
+		return errors.New("active_transaction_id requires profile_id")
+	case s.ActiveTransactionID != "" && s.RuntimeConfigPath == "":
+		return errors.New("active_transaction_id requires runtime_config_path")
 	}
 	for _, tx := range s.Transactions {
 		if err := ValidateTransactionStatus(tx); err != nil {

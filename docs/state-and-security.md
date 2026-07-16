@@ -11,6 +11,7 @@ daemon privilege boundaries, and privileged networking safety.
 | Daemon runtime | `/run/podlaz` | `podlazd` via systemd `RuntimeDirectory=` |
 | Daemon persistent state | `/var/lib/podlaz` | `podlazd` via systemd `StateDirectory=` |
 | Transaction files | `/run/podlaz/transactions/*.json` | `podlazd` |
+| Latest TUN diagnostic report | `/run/podlaz/diagnostics/tun-last.json` | `podlazd` |
 | Generated runtime config | `/run/podlaz/generated/` | `podlazd` and the dedicated core child identity |
 | TUN packet ingestion | `podlaz0` native Xray `tun` inbound | Xray child process, orchestrated by `podlazd` |
 
@@ -19,6 +20,14 @@ Rules:
 - User profile/subscription state must not require root.
 - Runtime config is generated output, not persistent source of truth.
 - Transaction files must be atomic, private, versioned, and redaction-safe.
+- The latest TUN diagnostic report is replacement-only, atomically written,
+  bounded to 256 KiB, and mode `0600`; podlaz keeps no unbounded diagnostic
+  history under `/run`.
+- A diagnostic persistence failure must clear the public report location and
+  produce `internal_diagnostic_error`; output and logs must not claim that a
+  report exists when atomic replacement failed. This includes failures before
+  replacement and directory-sync failures after rename. Save and load are
+  serialized so a reader cannot accept a report from an unsuccessful attempt.
 - Read-only commands may inspect state but must not clean it up.
 
 ## CLI and daemon boundary
@@ -30,6 +39,13 @@ Rules:
 - `proxy-only` must not mutate host networking.
 - `tun` execution must record enough durable desired and applied state to recover
   after failure or daemon restart.
+- The active TUN transaction records the original VPN server endpoint and TLS
+  server name needed to distinguish hostname/SNI semantics from resolved bypass
+  addresses in diagnostics.
+- `doctor --tun` is daemon-backed because authoritative active-session,
+  transaction, route, resolver, and ownership evidence belongs to the daemon.
+  The diagnostic handler is read-only apart from atomically replacing the
+  private latest-report file.
 
 Packaged daemon access has two local socket boundaries. The filesystem socket is tried first. A transport-level permission failure may fall back to the packaged abstract socket, where the daemon can enforce peer-credential/polkit authorization without widening filesystem socket access. Once the daemon returns an HTTP, authorization, JSON, or schema error, that response is authoritative and must not be downgraded to a generic daemon-unavailable error.
 
@@ -53,6 +69,65 @@ For native Xray TUN startup, durable rollback order is:
 2. stop the Xray child process;
 3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
+If post-apply connectivity verification fails, `podlazd` first attempts a short,
+bounded, cancellation-aware safe diagnostic subset while the failing host state
+still exists. Optional diagnostics must never delay or suppress cleanup. Normal
+rollback then runs with a separate daemon-owned bounded cleanup context derived
+without the requesting HTTP client's cancellation, so a disconnected client or
+expired request deadline cannot immediately cancel DNS, route, rule, or nftables
+cleanup. The returned error and daemon log expose the primary TUN classification
+and the report location as separate fields when persistence succeeded.
+
+The full TUN diagnostic path may perform only read-only snapshot collection,
+kernel route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private
+latest-report replacement. It must never change interface MTU, routes, policy
+rules, DNS, `systemd-resolved`, NetworkManager, `/etc/resolv.conf`,
+nftables/firewall state, services, other VPNs, or browser state. TLS certificate
+validation must remain enabled. Unit tests must use local protocol fixtures
+rather than live internet endpoints.
+
+DNS wire responses must match the original message id, echoed question name,
+question type, and IN class. Address evidence accepts only the requested A or
+AAAA type whose owner is the queried name or is reachable through a validated,
+acyclic CNAME chain beginning at that name. Unrelated owners, mismatched address
+types, conflicting aliases, and disconnected CNAME chains are diagnostic
+failures for UDP, TCP, and DoH paths.
+
+Ordinary HTTPS and DoH checks use independent provider paths. The Cloudflare
+HTTPS path includes its TCP/443, TLS, and small-HTTPS probes; the Google small
+HTTPS probe is an independent corroborating path. Provider aggregation creates a
+separate `https_partial_failure` or `doh_partial_failure` result and never
+rewrites the original probe classification.
+
+A timeout is eligible for provider degradation only when the stable
+`failure_phase` proves an endpoint transport phase: `tcp_connect`,
+`tls_handshake`, `http_request`, `http_response`, or `http_body`, as applicable
+to that probe. A timeout in `dns_resolution`, `route_lookup`, or another local
+inspection phase remains `timeout` and unhealthy even when the independent
+provider succeeds. `cancelled` and `internal_diagnostic_error` are never
+suppressed by provider aggregation. The phase and original per-probe
+classification remain available in both JSON and `doctor --tun --verbose`
+output for root-cause debugging.
+
+Timing evidence is phase-specific. `handshake_ms` measures only the TLS
+handshake after a TCP connection has been established; it does not include DNS
+resolution or TCP connect time. HTTP `header_ms` ends at the first response byte,
+and `body_ms` measures only the bounded response-body read. A DoH HTTP response
+is marked accepted only after its status and content type satisfy the endpoint
+contract; DNS payload parsing remains a separate subsequent validation step.
+
+PMTU classification requires small HTTPS success plus two independent larger
+transfers that accepted a permitted HTTP response and then stalled or failed in
+the response body transport phase. DNS, route, TCP, TLS, redirect, status-code,
+request, and short-body failures are not PMTU evidence. Probe deadline and
+cancellation causes override layer-specific adapter errors so timeout and
+cancelled remain stable machine-readable classifications without erasing the
+failure phase.
+
+IPv6 evidence includes global-unicast address filtering, `ip -6 rule show`, a
+bounded AAAA selection, `ip -6 route get`, and TCP/443 connectivity. Link-local,
+loopback, and non-address tokens are not reported as usable IPv6 addresses.
+
 ## Recovery
 
 - `podlaz recover` is read-only.
@@ -66,6 +141,29 @@ For native Xray TUN startup, durable rollback order is:
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
 - A non-zero `resolvectl status` or `resolvectl revert` result stating that `podlaz0` is already missing is idempotent for stale-link cleanup, transaction recovery, runtime DNS rollback, and doctor inspection. This classification is specific to `resolvectl`; generic command missing-resource classification remains unchanged.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
+- The daemon recovery scan is refreshed after every connect attempt, after
+  disconnect, and after recovery execution, including failed operations. The
+  stored scan remains the raw scanner result; active-session filtering never
+  overwrites it.
+- An unexpected TUN core exit schedules an eager read-only refresh with a
+  daemon-owned five-second deadline. In addition, status and doctor perform the
+  same bounded refresh synchronously before publishing a stable
+  `error (core exited)` TUN state. The synchronous publication refresh inherits
+  request cancellation and any earlier request deadline, publishes the exact
+  refresh result including coalesced-waiter warnings, and rereads lifecycle
+  status after the scan before applying active-resource filtering.
+- `active_transaction_id` is published only when both lifecycle state and the
+  selected status provider describe the same stable active TUN session. It is
+  omitted for inactive, verifying, stopping, and error states, including custom
+  `Server.Status` responses.
+- Active-resource filtering requires that exact active transaction id. Exactly
+  one matching committed transaction summary must exist and its durable owner,
+  profile, and runtime-config metadata must agree. A missing id, duplicate match,
+  load failure, or metadata mismatch leaves every candidate visible and adds an
+  inspection warning.
+- Only resources with matching durable podlaz ownership records are omitted from
+  active status. Foreign resources and mixed generated-config directories remain
+  visible.
 
 ## Redaction
 
@@ -73,8 +171,16 @@ Human and JSON output must redact secrets and generated runtime configuration.
 This applies to `status`, `doctor`, `logs`, `plan`, `recover`, validation output,
 and all JSON responses.
 
+The same central redaction and evidence-size limits apply before TUN diagnostics
+are rendered or persisted. The latest report must not store raw profile secrets,
+UUIDs, generated Xray configuration, authentication material, or unbounded
+command/protocol output. Every public network string and structured policy or
+nftables rule is sanitized and bounded through the same central policy.
+
 JSON output must include `schema_version`. Existing JSON field meanings must not
-change without an explicit compatibility note.
+change without an explicit compatibility note. Required collection fields such
+as `probes`, `warnings`, and `errors` are always JSON arrays, including when
+empty; they must never change type to `null`.
 
 ## Confirmation
 
@@ -96,3 +202,13 @@ privileged networking operations. The CLI remains unprivileged and uses the
 socket access boundary.
 
 Expected systemd baseline:
+
+- `User=root`
+- `Group=podlaz`
+- `RuntimeDirectory=podlaz`
+- `StateDirectory=podlaz`
+- `RuntimeDirectoryMode=0750`
+- `StateDirectoryMode=0750`
+- `UMask=0027`
+- explicit systemd hardening that does not remove the networking privileges TUN
+  execution requires.

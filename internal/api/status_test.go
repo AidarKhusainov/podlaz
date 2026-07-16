@@ -32,6 +32,43 @@ func TestValidateStatusResponseRequiresSupportedService(t *testing.T) {
 	}
 }
 
+func TestValidateStatusResponseRestrictsActiveTransactionID(t *testing.T) {
+	valid := StatusResponse{
+		Daemon:              "running",
+		Service:             ServiceSystemd,
+		Connection:          "active",
+		Mode:                "tun",
+		ProfileID:           "profile-test",
+		RuntimeDirectory:    "present",
+		RuntimeConfigPath:   "/run/podlaz/generated/xray.json",
+		ActiveTransactionID: "tun-active",
+		Proxy:               "active",
+		TUN:                 "enabled (podlaz0)",
+	}
+	if err := ValidateStatusResponse(valid); err != nil {
+		t.Fatalf("valid active TUN response failed validation: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*StatusResponse)
+	}{
+		{name: "error state", mutate: func(status *StatusResponse) { status.Connection = "error (core exited)" }},
+		{name: "non-TUN mode", mutate: func(status *StatusResponse) { status.Mode = "proxy-only" }},
+		{name: "missing profile", mutate: func(status *StatusResponse) { status.ProfileID = "" }},
+		{name: "missing runtime config", mutate: func(status *StatusResponse) { status.RuntimeConfigPath = "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status := valid
+			tc.mutate(&status)
+			if err := ValidateStatusResponse(status); err == nil || !strings.Contains(err.Error(), "active_transaction_id") {
+				t.Fatalf("expected active_transaction_id validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateTransactionStatusRequiresKnownState(t *testing.T) {
 	valid := TransactionStatus{
 		ID:                "tx-1",

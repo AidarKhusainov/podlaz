@@ -15,7 +15,9 @@ func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx 
 	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
 	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
 	_, _ = store.Save(*tx)
-	if err := rollbackTunTransaction(ctx, store, tx, rollbackPlan, executor); err != nil {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
+	defer cancel()
+	if err := rollbackTunTransaction(cleanupCtx, store, tx, rollbackPlan, executor); err != nil {
 		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
 		_, _ = store.Save(*tx)
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))

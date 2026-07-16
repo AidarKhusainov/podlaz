@@ -21,7 +21,7 @@ Usage:
   podlaz disconnect
   podlaz check <profile-id>|--all [--target <target-id>]
   podlaz status
-  podlaz doctor
+  podlaz doctor [--tun [--verbose|--json]]
   podlaz logs
   podlaz recover
   podlaz completion <bash|zsh|fish>
@@ -55,12 +55,22 @@ Exit code 3 means stale or incomplete local state was detected.
 func printDoctorHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   podlaz doctor
+  podlaz doctor --tun [--verbose|--json]
   podlaz doctor --core --xray <path> [--json]
 
-Run read-only diagnostics for the current Linux host. The command uses
+Run read-only diagnostics for the current Linux host. The default command uses
 daemon-backed diagnostics when the local Unix socket API is reachable and falls
 back to local read-only diagnostics when it is not. The core scope validates a
 local Xray binary without starting a long-running process.
+
+The TUN scope is daemon-backed and inspects the active TUN session in layers:
+server bypass, IPv4 policy routing, systemd-resolved ownership, DNS over UDP and
+TCP, system resolution and NXDOMAIN integrity, TCP/443, TLS, HTTPS, two
+independent DoH providers, IPv6 state, and guarded PMTU evidence. It does not
+change routes, DNS, MTU, firewall rules, services, or browser state. --verbose
+adds bounded evidence. --json emits the same schema_version=1 report model.
+
+Exit code 3 means the TUN diagnostic status is unhealthy or unavailable.
 `)
 }
 
