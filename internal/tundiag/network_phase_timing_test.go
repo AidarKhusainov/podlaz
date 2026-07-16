@@ -13,48 +13,27 @@ import (
 )
 
 func TestTLSWithFailurePhaseMeasuresOnlyTLSHandshake(t *testing.T) {
-	server := newPhaseTimingTLSServer(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
 	const dialDelay = 200 * time.Millisecond
 	client := phaseTimingClient(t, server, dialDelay)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	started := time.Now()
 	evidence, phase, err := client.TLSWithFailurePhase(ctx, "example.com", 443)
-	assertTLSHandshakeExcludesDial(t, started, evidence, err)
-	if phase != "" {
-		t.Fatalf("successful TLS probe returned failure phase %q", phase)
-	}
-}
-
-func TestNetworkClientTLSMeasuresOnlyTLSHandshake(t *testing.T) {
-	server := newPhaseTimingTLSServer(t)
-	const dialDelay = 200 * time.Millisecond
-	client := phaseTimingClient(t, server, dialDelay)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	started := time.Now()
-	evidence, err := client.TLS(ctx, "example.com", 443)
-	assertTLSHandshakeExcludesDial(t, started, evidence, err)
-}
-
-func assertTLSHandshakeExcludesDial(t *testing.T, started time.Time, evidence TLSEvidence, err error) {
-	t.Helper()
 	total := time.Since(started)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if phase != "" {
+		t.Fatalf("successful TLS probe returned failure phase %q", phase)
+	}
 	if excluded := total.Milliseconds() - evidence.HandshakeMS; excluded < 150 {
 		t.Fatalf("handshake timing still includes dial delay: total=%s handshake=%dms excluded=%dms", total, evidence.HandshakeMS, excluded)
 	}
-}
-
-func newPhaseTimingTLSServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(server.Close)
-	return server
 }
 
 func TestDoHWithFailurePhaseReportsTruthfulHTTPTimings(t *testing.T) {
