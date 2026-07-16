@@ -97,7 +97,15 @@ to that probe. A timeout in `dns_resolution`, `route_lookup`, or another local
 inspection phase remains `timeout` and unhealthy even when the independent
 provider succeeds. `cancelled` and `internal_diagnostic_error` are never
 suppressed by provider aggregation. The phase and original per-probe
-classification remain available in the JSON report for root-cause debugging.
+classification remain available in both JSON and `doctor --tun --verbose`
+output for root-cause debugging.
+
+Timing evidence is phase-specific. `handshake_ms` measures only the TLS
+handshake after a TCP connection has been established; it does not include DNS
+resolution or TCP connect time. HTTP `header_ms` ends at the first response byte,
+and `body_ms` measures only the bounded response-body read. A DoH HTTP response
+is marked accepted only after its status and content type satisfy the endpoint
+contract; DNS payload parsing remains a separate subsequent validation step.
 
 PMTU classification requires small HTTPS success plus two independent larger
 transfers that accepted a permitted HTTP response and then stalled or failed in
@@ -129,11 +137,14 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
   stored scan remains the raw scanner result; active-session filtering never
   overwrites it.
 - An unexpected TUN core exit schedules an eager read-only refresh with a
-  daemon-owned five-second deadline. In addition, status and doctor perform the
-  same bounded refresh synchronously before publishing a stable
-  `error (core exited)` TUN state. Thus publication never relies on the snapshot
-  captured while the core was still active; scanner warnings are surfaced when
-  current inspection is incomplete.
+  daemon-owned five-second deadline. In addition, status and doctor perform a
+  bounded refresh synchronously before publishing a stable
+  `error (core exited)` TUN state. The synchronous refresh inherits the request
+  cancellation and any earlier request deadline, publishes the exact result
+  returned by a coalesced refresh, and therefore preserves an inspection warning
+  if the wait cannot complete. Lifecycle status is read again after the scan and
+  active-resource filtering uses that latest status, so reconnect or disconnect
+  transitions cannot be paired with stale pre-scan status.
 - `active_transaction_id` is published only when both lifecycle state and the
   selected status provider describe the same stable active TUN session. It is
   omitted for inactive, verifying, stopping, and error states, including custom
