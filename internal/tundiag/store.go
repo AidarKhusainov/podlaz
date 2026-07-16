@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -17,9 +18,12 @@ const (
 	MaxReportBytes     = 256 * 1024
 )
 
+var diagnosticStoreMu sync.RWMutex
+
 type Store struct {
-	RuntimeDir string
-	Now        func() time.Time
+	RuntimeDir     string
+	Now            func() time.Time
+	syncDirectory  func(string) error
 }
 
 func (s Store) Path() string {
@@ -30,8 +34,21 @@ func (s Store) Path() string {
 	return filepath.Join(runtimeDir, DiagnosticsDirName, LastReportFileName)
 }
 
-func (s Store) Save(report Report) (string, error) {
+func (s Store) Save(report Report) (savedPath string, saveErr error) {
+	diagnosticStoreMu.Lock()
+	defer diagnosticStoreMu.Unlock()
+
 	path := s.Path()
+	defer func() {
+		if saveErr == nil {
+			return
+		}
+		savedPath = ""
+		if err := s.invalidate(path); err != nil {
+			saveErr = errors.Join(saveErr, fmt.Errorf("invalidate public TUN diagnostic report %s: %w", path, err))
+		}
+	}()
+
 	report.SchemaVersion = SchemaVersion
 	if report.GeneratedAt.IsZero() {
 		report.GeneratedAt = s.now()
@@ -80,13 +97,16 @@ func (s Store) Save(report Report) (string, error) {
 		return "", fmt.Errorf("replace diagnostic report %s: %w", path, err)
 	}
 	removeTemp = false
-	if err := syncDirectory(dir); err != nil {
+	if err := s.syncDirectoryPath(dir); err != nil {
 		return "", fmt.Errorf("sync diagnostic directory %s: %w", dir, err)
 	}
 	return path, nil
 }
 
 func (s Store) Load() (Report, string, error) {
+	diagnosticStoreMu.RLock()
+	defer diagnosticStoreMu.RUnlock()
+
 	path := s.Path()
 	file, err := os.Open(path)
 	if err != nil {
@@ -116,6 +136,27 @@ func (s Store) Load() (Report, string, error) {
 	report.ReportPath = path
 	report.Historical = true
 	return Finalize(report), path, nil
+}
+
+func (s Store) invalidate(path string) error {
+	err := os.Remove(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := s.syncDirectoryPath(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync directory after report removal: %w", err)
+	}
+	return nil
+}
+
+func (s Store) syncDirectoryPath(path string) error {
+	if s.syncDirectory != nil {
+		return s.syncDirectory(path)
+	}
+	return syncDirectory(path)
 }
 
 func (s Store) now() time.Time {
