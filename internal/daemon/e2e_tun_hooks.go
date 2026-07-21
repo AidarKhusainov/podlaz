@@ -22,7 +22,10 @@ const (
 
 	e2eTunHookRouteApplyPhase        = "route-apply"
 	e2eTunHookDNSApplyPhase          = "dns-apply"
+	e2eTunHookNetworkVerifyPhase     = "network-verify"
+	e2eTunHookDNSInactiveScopePhase  = "dns-inactive-scope"
 	e2eTunHookBeforeCommitPausePhase = "before-commit-pause"
+	e2eTunHookEventsFile             = "events.log"
 )
 
 func e2eTunHooksEnabled() bool {
@@ -42,7 +45,11 @@ func validateE2ETunHookConfig() error {
 		return nil
 	}
 	switch e2eTunHookPhase() {
-	case e2eTunHookRouteApplyPhase, e2eTunHookDNSApplyPhase, e2eTunHookBeforeCommitPausePhase:
+	case e2eTunHookRouteApplyPhase,
+		e2eTunHookDNSApplyPhase,
+		e2eTunHookNetworkVerifyPhase,
+		e2eTunHookDNSInactiveScopePhase,
+		e2eTunHookBeforeCommitPausePhase:
 		return nil
 	case "":
 		return fmt.Errorf("%s is enabled but %s is empty", e2eTunHookGateEnv, e2eTunHookPhaseEnv)
@@ -57,6 +64,15 @@ func maybeWrapE2ETunHookExecutor(executor netexecutor.DNSAwareTunExecutor) tunPl
 		executor.Base.Routes = e2eHookRouteExecutor{delegate: executor.Base.Routes}
 	case e2eTunHookDNSApplyPhase:
 		executor.DNS = e2eHookDNSExecutor{delegate: executor.DNS}
+	case e2eTunHookNetworkVerifyPhase:
+		return e2eHookNetworkVerifyExecutor{delegate: executor}
+	case e2eTunHookDNSInactiveScopePhase:
+		resolved, ok := executor.DNS.(netexecutor.ResolvedDNSExecutor)
+		if !ok {
+			return e2eHookConfigurationErrorExecutor{err: fmt.Errorf("E2E inactive-scope hook requires ResolvedDNSExecutor, got %T", executor.DNS)}
+		}
+		resolved.Runner = e2eInactiveScopeCommandRunner{delegate: resolved.Runner}
+		executor.DNS = resolved
 	}
 	return executor
 }
@@ -65,10 +81,7 @@ func maybePauseForE2ETunHook(ctx context.Context, transactionID string) error {
 	if e2eTunHookPhase() != e2eTunHookBeforeCommitPausePhase {
 		return nil
 	}
-	dir := strings.TrimSpace(os.Getenv(e2eTunHookDirEnv))
-	if dir == "" {
-		dir = filepath.Join(os.TempDir(), "podlaz-e2e-tun-hooks")
-	}
+	dir := e2eTunHookDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create E2E TUN hook directory: %w", err)
 	}
@@ -87,6 +100,35 @@ func maybePauseForE2ETunHook(ctx context.Context, transactionID string) error {
 	}
 }
 
+func e2eTunHookDir() string {
+	dir := strings.TrimSpace(os.Getenv(e2eTunHookDirEnv))
+	if dir == "" {
+		return filepath.Join(os.TempDir(), "podlaz-e2e-tun-hooks")
+	}
+	return filepath.Clean(dir)
+}
+
+func recordE2ETunHookEvent(event string) {
+	if !e2eTunHooksEnabled() {
+		return
+	}
+	event = strings.TrimSpace(event)
+	if event == "" || len(event) > 128 || strings.ContainsAny(event, "\r\n") {
+		return
+	}
+	dir := e2eTunHookDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return
+	}
+	path := filepath.Join(dir, e2eTunHookEventsFile)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(file, event)
+	_ = file.Close()
+}
+
 func e2eTunHookTimeout() time.Duration {
 	value := strings.TrimSpace(os.Getenv(e2eTunHookTimeoutSecondsEnv))
 	if value == "" {
@@ -103,10 +145,11 @@ type e2eHookRouteExecutor struct {
 	delegate netexecutor.RouteExecutor
 }
 
-func (e e2eHookRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (netexecutor.Step, error) {
+func (e e2eHookRouteExecutor) Add(context.Context, planner.TunRoutePlan) (netexecutor.Step, error) {
 	if e.delegate == nil {
 		return netexecutor.Step{}, errors.New("missing route executor")
 	}
+	recordE2ETunHookEvent("route-apply-injected")
 	return netexecutor.Step{}, errors.New("E2E hook: route apply failed before adding podlaz-owned route")
 }
 
@@ -136,6 +179,7 @@ func (e e2eHookDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan) 
 	if err != nil {
 		return step, err
 	}
+	recordE2ETunHookEvent("dns-apply-injected")
 	return step, errors.New("E2E hook: DNS apply failed after podlaz-owned per-link DNS was applied")
 }
 
@@ -151,4 +195,94 @@ func (e e2eHookDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPla
 		return errors.New("missing DNS executor")
 	}
 	return e.delegate.Rollback(ctx, plan)
+}
+
+type e2eHookNetworkVerifyExecutor struct {
+	delegate tunPlanExecutor
+}
+
+func (e e2eHookNetworkVerifyExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]netexecutor.Step, error) {
+	return e.delegate.Apply(ctx, plan)
+}
+
+func (e e2eHookNetworkVerifyExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
+	if err := e.delegate.Verify(ctx, plan); err != nil {
+		return err
+	}
+	recordE2ETunHookEvent("network-verify-injected")
+	return errors.New("E2E hook: network verification failed after production verification succeeded")
+}
+
+func (e e2eHookNetworkVerifyExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
+	return e.delegate.Rollback(ctx, plan)
+}
+
+type e2eHookConfigurationErrorExecutor struct {
+	err error
+}
+
+func (e e2eHookConfigurationErrorExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, e.err
+}
+
+func (e e2eHookConfigurationErrorExecutor) Verify(context.Context, planner.TunPlan) error {
+	return e.err
+}
+
+func (e e2eHookConfigurationErrorExecutor) Rollback(context.Context, planner.TunPlan) error {
+	return e.err
+}
+
+type e2eInactiveScopeCommandRunner struct {
+	delegate netexecutor.CommandRunner
+}
+
+func (r e2eInactiveScopeCommandRunner) Run(ctx context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
+	delegate := r.delegate
+	if delegate == nil {
+		delegate = netexecutor.OSRunner{}
+	}
+	result, err := delegate.Run(ctx, name, args...)
+	if err != nil || name != "resolvectl" || !equalStringSlice(args, []string{"status", "--no-pager"}) {
+		return result, err
+	}
+	updated, replaced := replaceResolvedCurrentScopes(result.Stdout, "podlaz0", "none")
+	if replaced {
+		result.Stdout = updated
+		recordE2ETunHookEvent("resolved-current-scopes-none")
+	}
+	return result, err
+}
+
+func replaceResolvedCurrentScopes(output, linkName, value string) (string, bool) {
+	lines := strings.Split(output, "\n")
+	inTarget := false
+	replaced := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Link ") {
+			inTarget = strings.Contains(trimmed, "("+linkName+")")
+			continue
+		}
+		if !inTarget || !strings.HasPrefix(trimmed, "Current Scopes:") {
+			continue
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		lines[i] = indent + "Current Scopes: " + value
+		replaced = true
+		break
+	}
+	return strings.Join(lines, "\n"), replaced
+}
+
+func equalStringSlice(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
