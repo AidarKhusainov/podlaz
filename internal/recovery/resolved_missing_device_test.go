@@ -9,7 +9,7 @@ import (
 
 func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsRecovered(t *testing.T) {
 	runner := newResolvedRecoveryRunner(
-		[]resolvedRecoveryCommand{missingPodlazLink(), missingPodlazLink()},
+		[]resolvedRecoveryCommand{missingPodlazLink(), missingPodlazLink(), missingPodlazLink()},
 		[]resolvedRecoveryCommand{resolvedLinkExists()},
 	)
 	runner.commands["resolvectl revert podlaz0"] = []resolvedRecoveryCommand{{
