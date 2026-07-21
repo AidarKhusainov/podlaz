@@ -18,8 +18,8 @@ func TestResolvedDNSExecutorApplyRetriesTransientMissingLinkRegistration(t *test
 			{},
 		},
 		errs: []error{
-			errors.New("exit status 1"),
-			errors.New("exit status 1"),
+			executorTestExitError{code: 1},
+			executorTestExitError{code: 1},
 		},
 	}
 	executor := ResolvedDNSExecutor{
