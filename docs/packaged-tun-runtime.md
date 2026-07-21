@@ -88,6 +88,13 @@ A failed TUN connect is allowed to start Xray before host network apply because 
 
 The transaction's structured `desired_plan` is durably written before the daemon starts Xray or mutates host networking. Normal in-process rollback continues to use recorded applied steps. If the daemon stops abruptly before an applied rollback category is persisted, daemon recovery may reconstruct only missing entries in reserved podlaz namespaces: routing table `51820`, policy priority `10000`, DNS link `podlaz0`, and nftables table `inet podlaz`. Every reconstructed entry must still pass the fixed ownership and target guards before mutation. Desired-only main-table server bypass state is never deleted by assumption: recovery inspects it, removes the transaction only when it is absent, and preserves the transaction as ambiguous when such a route or rule exists without durable applied ownership evidence.
 
+Low-level DNS/firewall composition executors do not perform hidden rollback when an apply method returns an error after mutating state. They return the partial non-zero applied `Step` together with the error. The transaction boundary persists that ownership and chooses the cleanup timing:
+
+- the direct transaction helper immediately performs one bounded fail-safe rollback before returning;
+- the production full-tunnel runner first collects and persists diagnostics, then invokes rollback using the same partial plan.
+
+This is the boundary that guarantees `network-apply` diagnostics precede the first DNS, nftables, route, rule, or TUN rollback command. A child executor that did not mutate state returns a zero `Step`, which is not added to rollback ownership.
+
 When a failed connect successfully rolls back every podlaz-owned mutation it applied, the terminal transaction file is removed. If a terminal `rolled_back` or `committed` transaction file is found later, TUN handoff preflight treats it as non-blocking. Transaction files in cleanup-required states such as `planned`, `applying`, `applied`, `verifying`, `rolling_back`, or `failed` continue to block connect until automatic or explicit daemon-owned recovery completes. Invalid or unreadable transaction files are blockers because their ownership and cleanup state cannot be proven safely.
 
 After every connect attempt, disconnect, or recovery execution, the daemon refreshes the startup recovery scan before publishing status/doctor/recover state. A successful rollback or recovery removes its completed transaction candidate, so an immediate subsequent TUN connect observes the reconciled host and persisted state rather than a phantom stale blocker.
@@ -107,7 +114,7 @@ Before applying DNS, podlaz runs a scoped `resolvectl revert podlaz0` to discard
 
 The kernel may expose the newly-created `podlaz0` before `systemd-resolved` registers it. DNS apply therefore retries only the transient missing-link response for the `dns`, `domain`, and `default-route` commands for up to roughly two seconds. Permission errors, unsupported commands, and other unexpected failures are not retried.
 
-`systemd-resolved` can expose recently applied per-link settings with a delay. DNS verification therefore polls for up to roughly two seconds before failing on transient missing target link, planned DNS server, route-only `~.` domain, or `+DefaultRoute`. `Current Scopes` is derived lookup state and is not an apply-success requirement. If stale and current `podlaz0` records temporarily coexist, verification succeeds when at least one complete record matches the plan. A foreign route-only DNS owner remains an immediate hard failure.
+`systemd-resolved` can expose recently applied per-link settings with a delay. DNS verification therefore polls for up to roughly two seconds before failing on transient missing target link, planned DNS server, route-only `~.` domain, or `+DefaultRoute`. `Current Scopes` is derived lookup state and is not an apply-success requirement. The target link must appear exactly once; duplicate `podlaz0` sections are ambiguous and fail closed. A foreign route-only DNS owner remains an immediate hard failure.
 
 Rollback uses `resolvectl revert <link>` for the podlaz-owned link. The exact missing-device response is successful idempotent cleanup in runtime rollback, stale cleanup, doctor inspection, and transaction recovery. Other unexpected errors remain failures.
 
@@ -125,4 +132,6 @@ User-facing errors include the stable phase, classification and safe report path
 
 Package validation checks the Xray helper file, executable bit, architecture, service environment, declared dependencies, third-party notice file, and absence of obsolete TUN helper artifacts for both `amd64` and `arm64` packages.
 
-Installed package smoke checks verify that the helper file and notice are present after install and reinstall, and that they are removed on purge together with other packaged files.
+The issue-specific installed-package convergence gate performs a clean purge, builds the branch `.deb`, installs and reinstalls the same package, extracts the built package, and compares SHA-256 hashes of packaged, installed, and running `podlazd` plus packaged/installed `podlaz`. It verifies the running systemd `MainPID` and tested commit identity.
+
+The same dedicated run must accept packaged `Current Scopes: none` and complete the real missing-link rollback scenario. Its scenario timeout leaves a separate cleanup window. On every outcome the workflow attempts daemon recovery, runs strictly scoped fallback cleanup, removes E2E sentinels, purges the package, and directly verifies no podlaz-owned state remains. Artifacts contain only normalized verdicts, classifications, lifecycle events, commit identity, and hashes; upload occurs only after cleanup assertions and scanning against configured secrets and actual host network values succeed.
