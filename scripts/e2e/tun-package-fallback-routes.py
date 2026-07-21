@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove and verify only routes owned by persisted podlaz transactions."""
+"""Remove and verify only routes owned by persisted podlaz E2E state."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ TRANSACTION_OWNER = "podlaz"
 ROUTE_OWNER = "podlaz:route"
 ALLOWED_TABLES = {"main", "51820", "podlaz"}
 DEV_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,64}$")
+SERVER_RULE_PRIORITY = "9999:"
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,8 @@ class OwnedRoute:
     family: str
     table: str
     cidr: str
-    via: str
-    dev: str
+    via: str = ""
+    dev: str = ""
 
     def delete_command(self) -> list[str]:
         args = ["sudo", "-n", "ip", self.family, "route", "del", self.cidr]
@@ -95,17 +96,45 @@ def transaction_routes(path: Path) -> list[OwnedRoute]:
     return validated
 
 
+def reserved_rule_routes() -> list[OwnedRoute]:
+    routes: list[OwnedRoute] = []
+    for family in ("-4", "-6"):
+        result = subprocess.run(
+            ["sudo", "-n", "ip", family, "rule", "show"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if not fields or fields[0] != SERVER_RULE_PRIORITY or "to" not in fields:
+                continue
+            index = fields.index("to")
+            if index + 1 >= len(fields):
+                continue
+            cidr = fields[index + 1]
+            try:
+                network = ipaddress.ip_network(cidr, strict=False)
+            except ValueError:
+                continue
+            expected = "-4" if network.version == 4 else "-6"
+            if family == expected:
+                routes.append(OwnedRoute(family, "main", cidr))
+    return routes
+
+
 def main(argv: list[str]) -> int:
     root = Path(argv[1] if len(argv) > 1 else "/run/podlaz/transactions")
-    if not root.is_dir():
-        return 0
-    routes: set[OwnedRoute] = set()
-    for path in sorted(root.glob("*.json")):
-        routes.update(transaction_routes(path))
-    for route in sorted(routes, key=lambda item: (item.family, item.table, item.cidr, item.via, item.dev)):
+    routes: set[OwnedRoute] = set(reserved_rule_routes())
+    if root.is_dir():
+        for path in sorted(root.glob("*.json")):
+            routes.update(transaction_routes(path))
+    ordered = sorted(routes, key=lambda item: (item.family, item.table, item.cidr, item.via, item.dev))
+    for route in ordered:
         subprocess.run(route.delete_command(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     failures = 0
-    for route in routes:
+    for route in ordered:
         result = subprocess.run(route.show_command(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
         if result.stdout.strip():
             failures += 1
