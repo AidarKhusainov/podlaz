@@ -26,6 +26,8 @@ shellcheck -x -s bash "${core_scripts[@]}"
 bash scripts/ci/validate-installed-status-test.sh
 bash scripts/ci/validate-package-workflow-contract-test.sh
 bash scripts/ci/validate-package-workflow-contract.sh
+python3 -m py_compile scripts/e2e/*.py scripts/e2e/lib/*.py scripts/e2e/tests/*.py
+python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
 
 # E2E entrypoints intentionally collect host diagnostics through sudo-owned commands
 # into user-owned artifact files and carry defensive state variables for cleanup.
