@@ -103,8 +103,16 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	}
 
 	if err := r.applyNetworkTransaction(ctx, result, r.executor); err != nil {
+		phase := networkApplyVerifyPhase(err)
+		summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)
+		err = withTunFailureDiagnosticSummary(err, summary)
+		rollbackErr := r.rollbackNetworkMutation(ctx, transactionID, err)
+		if rollbackErr != nil {
+			_ = r.stopCore(core)
+			return xrayState{}, withTunFailurePhase(phase, transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after %s failure: %w", phase, rollbackErr)))
+		}
 		_ = r.stopCore(core)
-		return xrayState{}, withTunFailurePhase(networkApplyVerifyPhase(err), transactionID, "completed", err)
+		return xrayState{}, withTunFailurePhase(phase, transactionID, "completed", withTunRollbackCompleted(err))
 	}
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
 		summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)
@@ -137,11 +145,25 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 }
 
 func networkApplyVerifyPhase(err error) string {
+	var mutationErr *tunNetworkMutationError
+	if errors.As(err, &mutationErr) && strings.TrimSpace(mutationErr.Phase()) != "" {
+		return mutationErr.Phase()
+	}
 	text := strings.ToLower(err.Error())
 	if strings.Contains(text, "verify tun plan") {
 		return "network-verify"
 	}
 	return "network-apply"
+}
+
+func (r *fullTunnelTransactionRunner) rollbackNetworkMutation(ctx context.Context, transactionID string, err error) error {
+	var mutationErr *tunNetworkMutationError
+	if !errors.As(err, &mutationErr) {
+		return r.rollback(ctx, transactionID, r.plan, r.executor)
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
+	defer cancel()
+	return mutationErr.Rollback(cleanupCtx, r.executor)
 }
 
 func (r *fullTunnelTransactionRunner) rollbackStarted(ctx context.Context, transactionID, reason string, plan planner.TunPlan, err error) error {
@@ -165,7 +187,7 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 		r.beginNetworkTransaction = beginTunTransaction
 	}
 	if r.applyNetworkTransaction == nil {
-		r.applyNetworkTransaction = applyVerifyTunTransaction
+		r.applyNetworkTransaction = applyVerifyTunTransactionDeferredRollback
 	}
 	if r.preflightCore == nil {
 		r.preflightCore = func(context.Context) error { return nil }
