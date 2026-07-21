@@ -12,20 +12,40 @@ import (
 )
 
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
-	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
-	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
-	_, _ = store.Save(*tx)
+	if err := prepareTunFailureRollback(store, tx, rollbackPlan, steps); err != nil {
+		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
 	defer cancel()
-	if err := rollbackTunTransaction(cleanupCtx, store, tx, rollbackPlan, executor); err != nil {
-		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
-		_, _ = store.Save(*tx)
+	if err := rollbackPreparedTunFailure(cleanupCtx, store, tx, rollbackPlan, executor); err != nil {
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
 	}
-	if err := removeTransactionFile(store, tx.ID); err != nil {
-		return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state; rolled-back transaction file cleanup failed", cause)
-	}
 	return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state", cause)
+}
+
+func prepareTunFailureRollback(store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, steps []netexecutor.Step) error {
+	if tx == nil {
+		return errors.New("missing TUN transaction")
+	}
+	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
+	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
+	_, err := store.Save(*tx)
+	return err
+}
+
+func rollbackPreparedTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor) error {
+	if tx == nil {
+		return errors.New("missing TUN transaction")
+	}
+	if err := rollbackTunTransaction(ctx, store, tx, rollbackPlan, executor); err != nil {
+		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
+		_, _ = store.Save(*tx)
+		return err
+	}
+	if err := removeTransactionFile(store, tx.ID); err != nil {
+		return fmt.Errorf("rolled-back transaction file cleanup failed: %w", err)
+	}
+	return nil
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
