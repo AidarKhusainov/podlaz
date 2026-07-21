@@ -2,7 +2,7 @@ package recovery
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -25,9 +25,9 @@ func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(
 		},
 		commands: map[string]fakeCommand{
 			"resolvectl revert podlaz0": {
-				stderr:   `Failed to resolve interface "podlaz0": No such device`,
+				stderr:   resolvedMissingDeviceStderr,
 				exitCode: 1,
-				err:      errors.New("exit status 1"),
+				err:      resolvedTestExitError(1),
 			},
 		},
 	}
@@ -44,4 +44,14 @@ func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("successful transaction recovery must remove transaction state, stat err=%v", err)
 	}
+}
+
+type resolvedTestExitError int
+
+func (e resolvedTestExitError) Error() string {
+	return fmt.Sprintf("exit status %d", int(e))
+}
+
+func (e resolvedTestExitError) ExitCode() int {
+	return int(e)
 }
