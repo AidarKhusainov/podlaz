@@ -45,7 +45,10 @@ func NewOSDNSExecutor() DNSAwareTunExecutor {
 }
 
 // Apply applies TUN, routes, policy rules, systemd-resolved per-link DNS, and
-// podlaz-owned nftables state from the already-inspected plan.
+// podlaz-owned nftables state from the already-inspected plan. A child executor
+// may return a non-zero Step together with an error after mutating host state.
+// Apply preserves that partial ownership for the transaction boundary and never
+// performs rollback itself, so production diagnostics can run before cleanup.
 func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, error) {
 	if err := e.validate(plan); err != nil {
 		return nil, err
@@ -56,25 +59,27 @@ func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([
 	}
 	if shouldApplyDNS(plan.DNS) {
 		dnsStep, err := e.DNS.Apply(ctx, plan.DNS)
+		if isAppliedStep(dnsStep) {
+			steps = append(steps, dnsStep)
+		}
 		if err != nil {
-			if rollbackErr := e.DNS.Rollback(ctx, plan.DNS); rollbackErr != nil {
-				return steps, errors.Join(err, fmt.Errorf("rollback DNS after failed apply: %w", rollbackErr))
-			}
 			return steps, err
 		}
-		steps = append(steps, dnsStep)
 	}
 	if shouldApplyFirewall(plan.Firewall) {
 		firewallStep, err := e.Firewall.Apply(ctx, plan.Firewall)
+		if isAppliedStep(firewallStep) {
+			steps = append(steps, firewallStep)
+		}
 		if err != nil {
-			if rollbackErr := e.Firewall.Rollback(ctx, plan.Firewall); rollbackErr != nil {
-				return steps, errors.Join(err, fmt.Errorf("rollback nftables after failed apply: %w", rollbackErr))
-			}
 			return steps, err
 		}
-		steps = append(steps, firewallStep)
 	}
 	return steps, nil
+}
+
+func isAppliedStep(step Step) bool {
+	return strings.TrimSpace(step.Kind) != "" && strings.TrimSpace(step.Target) != "" && strings.TrimSpace(step.Owner) != ""
 }
 
 // Verify checks base TUN state, systemd-resolved per-link DNS state, and
