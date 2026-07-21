@@ -94,7 +94,7 @@ func assertNoProductionTunTransactionBlocker(t *testing.T, runtimeDir string) {
 	}
 
 	manager := NewXrayManager(runtimeDir)
-	snapshot := manager.withPodlazRuntimeStaleState(context.Background(), netsnapshot.Snapshot{})
+	snapshot := netsnapshot.Snapshot{StaleResources: manager.transactionFileStaleResources()}
 	if err := preflightTunOwnership(snapshot, api.HandoffBlock); err != nil {
 		t.Fatalf("immediate TUN retry was blocked by stale production preflight state: %v", err)
 	}
