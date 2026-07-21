@@ -58,7 +58,16 @@ jobs:
         run: |
           artifact_dir="${RUNNER_TEMP}/podlaz-e2e-artifacts"
           mkdir -p "${artifact_dir}"
-          mapfile -t host_needles < <(sed '/^[[:space:]]*$/d' "${RUNNER_TEMP}/podlaz-e2e-tmp/network-sensitive-values.txt" 2>/dev/null || true)
+          mapfile -t host_needles < <(
+            {
+              hostname -f 2>/dev/null || true
+              ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
+              ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
+              ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
+              resolvectl status --no-pager 2>/dev/null | awk -F: '/Current DNS Server|DNS Servers|DNS Domain/ {gsub(/^[[:space:]]+/, "", $2); for (i=1; i<=split($2, values, /[[:space:]]+/); i++) print values[i]}'
+              curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" 2>/dev/null || true
+            } | sed '/^[[:space:]]*$/d' | sort -u
+          )
           python3 scripts/e2e/lib/redaction_scan.py \
             sensitive-values \
             "${artifact_dir}" \
