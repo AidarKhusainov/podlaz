@@ -30,7 +30,7 @@ Run E2E validation when a change touches:
 - systemd service behavior;
 - package install, reinstall, purge, or service lifecycle;
 - provider-backed proxy/TUN data-plane behavior;
-- crash, rollback, fault-injection, or recovery behavior.
+- crash, rollback, fault-injection, diagnostics-before-rollback, or recovery behavior.
 
 ## Runner and host requirements
 
@@ -86,14 +86,20 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 3. DNS resolution and TCP egress work through the tunnel after commit.
 4. `podlaz disconnect` removes podlaz-owned routes, policy rules, DNS, nftables, generated config, and child process state.
 5. A failing `xray test -config` preflight leaves no host-networking mutation and recovery can remove any tracked generated config.
-6. A failure after host-networking apply rolls back nftables/DNS/routes/rules before Xray is stopped.
-7. `podlaz recover --execute --yes` after daemon interruption is able to clean transaction-owned state without deleting `/run/podlaz` wholesale.
+6. A failure after host-networking apply captures a bounded redacted report before rollback, then rolls back nftables/DNS/routes/rules before Xray is stopped.
+7. The report exposes a stable `failure_phase`, stable primary classification, safe report path, and `rollback_status`; after rollback and daemon restart, `podlaz doctor --tun --verbose` can read the historical report.
+8. A complete `systemd-resolved` link with all planned DNS servers, `~.`, `+DefaultRoute`, and `Current Scopes: none` passes through the packaged production transaction path. Removing any planned server/domain/default-route evidence fails closed and rolls back.
+9. Removing `podlaz0` before DNS recovery makes the exact normal `resolvectl` exit status `1` plus bounded `No such device` stderr an idempotent success. Exit status `2`, unrelated exit status `1`, permission denial, signal termination, timeout, and cancellation remain failures.
+10. `podlaz status`, `podlaz doctor`, and `podlaz recover` agree after rollback/recovery; no cleanup-required transaction or stale startup-scan candidate blocks an immediate subsequent TUN connect. Cleanup-complete terminal history may remain visible but must be non-blocking.
+11. `podlaz recover --execute --yes` after daemon interruption cleans transaction-owned state without deleting `/run/podlaz` wholesale or changing unrelated host networking.
 
 ## TUN fault-injection coverage
 
 TUN fault-injection coverage is opt-in. The workflow job is safe by default and exits without host disruption unless `PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION=true` is set for the self-hosted runner environment.
 
 When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` that enables daemon-owned E2E hooks, runs deterministic DNS apply, route apply, and pre-commit interruption probes, scans its artifacts for configured sensitive values, then removes the drop-in during cleanup.
+
+For TUN lifecycle convergence changes, the fault-injection evidence must additionally prove that diagnostics are persisted before the first rollback command, cleanup completes even when diagnostics fail, the historical report is retained according to the `/run` lifetime, and an immediate retry is not rejected by stale daemon or transaction observations.
 
 The hook environment variables are E2E-only implementation details:
 
