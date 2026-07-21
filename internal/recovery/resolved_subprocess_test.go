@@ -23,6 +23,7 @@ func TestResolvedMissingDeviceRecoveryValidatesRealProcessOutcome(t *testing.T) 
 		wantStatus string
 	}{
 		{name: "exact exit one", scenario: "missing-exit-1", context: backgroundTestContext, wantStatus: "recovered"},
+		{name: "non-empty stdout", scenario: "missing-stdout-exit-1", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "same stderr exit two", scenario: "missing-exit-2", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "unrelated exit one", scenario: "unrelated-exit-1", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "permission denied", scenario: "permission-denied", context: backgroundTestContext, wantStatus: "failed"},
@@ -59,20 +60,25 @@ func TestTransactionDNSRollbackValidatesRealProcessOutcome(t *testing.T) {
 	tests := []struct {
 		name     string
 		scenario string
+		context  func(t *testing.T) context.Context
 		wantErr  bool
 	}{
-		{name: "exact exit one", scenario: "missing-exit-1"},
-		{name: "same stderr exit two", scenario: "missing-exit-2", wantErr: true},
-		{name: "unrelated exit one", scenario: "unrelated-exit-1", wantErr: true},
-		{name: "launch error", scenario: "launch-error", wantErr: true},
-		{name: "signal after partial stderr", scenario: "missing-signal", wantErr: true},
-		{name: "oversized missing stderr", scenario: "missing-oversized", wantErr: true},
+		{name: "exact exit one", scenario: "missing-exit-1", context: backgroundTestContext},
+		{name: "non-empty stdout", scenario: "missing-stdout-exit-1", context: backgroundTestContext, wantErr: true},
+		{name: "same stderr exit two", scenario: "missing-exit-2", context: backgroundTestContext, wantErr: true},
+		{name: "unrelated exit one", scenario: "unrelated-exit-1", context: backgroundTestContext, wantErr: true},
+		{name: "permission denied", scenario: "permission-denied", context: backgroundTestContext, wantErr: true},
+		{name: "launch error", scenario: "launch-error", context: backgroundTestContext, wantErr: true},
+		{name: "signal after partial stderr", scenario: "missing-signal", context: backgroundTestContext, wantErr: true},
+		{name: "oversized missing stderr", scenario: "missing-oversized", context: backgroundTestContext, wantErr: true},
+		{name: "timeout after partial stderr", scenario: "missing-sleep", context: timeoutTestContext, wantErr: true},
+		{name: "cancellation after partial stderr", scenario: "missing-sleep", context: cancelledTestContext, wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := newResolvedSubprocessRunner(t, tt.scenario)
-			err := (OSCleanupExecutor{Runner: runner}).rollbackDNS(context.Background(), txstate.DNSRollback{
+			err := (OSCleanupExecutor{Runner: runner}).rollbackDNS(tt.context(t), txstate.DNSRollback{
 				Backend: "systemd-resolved",
 				Link:    managedInterface,
 				Owner:   txstate.TransactionOwner,
@@ -95,6 +101,10 @@ func TestResolvedSubprocessHelper(t *testing.T) {
 
 	switch os.Getenv("PODLAZ_RESOLVED_SCENARIO") {
 	case "missing-exit-1":
+		writeResolvedMissingStderr()
+		os.Exit(1)
+	case "missing-stdout-exit-1":
+		_, _ = os.Stdout.WriteString("unexpected warning\n")
 		writeResolvedMissingStderr()
 		os.Exit(1)
 	case "missing-exit-2":
@@ -123,7 +133,7 @@ func TestResolvedSubprocessHelper(t *testing.T) {
 }
 
 func writeResolvedMissingStderr() {
-	_, _ = os.Stderr.WriteString(`Failed to resolve interface "podlaz0": No such device` + "\n")
+	_, _ = os.Stderr.WriteString(resolvedMissingDeviceStderr + "\n")
 }
 
 type resolvedSubprocessRunner struct {
