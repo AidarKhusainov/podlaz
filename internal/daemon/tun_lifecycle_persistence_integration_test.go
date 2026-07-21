@@ -38,7 +38,8 @@ func TestCollectTunFailureDiagnosticsPersistsStableLifecycleClassification(t *te
 				t.Fatalf("begin TUN transaction: %v", err)
 			}
 
-			const secret = "vless://00000000-0000-0000-0000-000000000000@private.example.test:443"
+			const secretID = "00000000-0000-0000-0000-000000000000"
+			const secret = "vless://" + secretID + "@private.example.test:443"
 			cause := &tunNetworkMutationError{
 				phase: tt.phase,
 				cause: errors.New("lifecycle failed for " + secret),
@@ -59,14 +60,14 @@ func TestCollectTunFailureDiagnosticsPersistsStableLifecycleClassification(t *te
 			if err != nil {
 				t.Fatalf("load persisted failure diagnostics: %v", err)
 			}
-			assertPersistedTunLifecycleFailure(t, loaded, loadedPath, summary.ReportPath, tt.phase, "pending", tt.want, secret)
+			assertPersistedTunLifecycleFailure(t, loaded, loadedPath, summary.ReportPath, tt.phase, "pending", tt.want, secret, secretID)
 
 			manager.finalizeTunFailureDiagnosticRollback(context.Background(), summary, "completed")
 			finalized, finalizedPath, err := store.Load()
 			if err != nil {
 				t.Fatalf("reload finalized failure diagnostics: %v", err)
 			}
-			assertPersistedTunLifecycleFailure(t, finalized, finalizedPath, summary.ReportPath, tt.phase, "completed", tt.want, secret)
+			assertPersistedTunLifecycleFailure(t, finalized, finalizedPath, summary.ReportPath, tt.phase, "completed", tt.want, secret, secretID)
 		})
 	}
 }
@@ -80,6 +81,7 @@ func assertPersistedTunLifecycleFailure(
 	wantRollback string,
 	wantClassification tundiag.Classification,
 	secret string,
+	secretID string,
 ) {
 	t.Helper()
 	if loadedPath != wantPath || report.ReportPath != wantPath {
@@ -108,7 +110,8 @@ func assertPersistedTunLifecycleFailure(
 	if err != nil {
 		t.Fatalf("marshal persisted report: %v", err)
 	}
-	if strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), "vless://") {
-		t.Fatalf("persisted lifecycle report leaked sensitive cause: %s", encoded)
+	text := string(encoded)
+	if strings.Contains(text, secret) || strings.Contains(text, secretID) {
+		t.Fatalf("persisted lifecycle report leaked original secret material: %s", encoded)
 	}
 }
