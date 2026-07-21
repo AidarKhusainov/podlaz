@@ -2,21 +2,25 @@ package executor
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
-func TestResolvedDNSExecutorVerifyAcceptsMatchingDuplicateLinkRecord(t *testing.T) {
+func TestResolvedDNSExecutorVerifyRejectsDuplicateTargetLinkRecords(t *testing.T) {
 	runner := &recordingRunner{stdout: `Link 5 (podlaz0)
     Current Scopes: none
+         Protocols: +DefaultRoute
+       DNS Servers: 1.1.1.1
+        DNS Domain: ~.
 
 Link 7 (podlaz0)
     Current Scopes: none
-         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
-Current DNS Server: 1.1.1.1
-       DNS Servers: 1.1.1.1
-        DNS Domain: ~.`}
+         Protocols: +DefaultRoute
+       DNS Servers: 9.9.9.9
+        DNS Domain: corp.example.test`}
 
-	if err := (ResolvedDNSExecutor{Runner: runner, VerifyAttempts: 1}).Verify(context.Background(), dnsPlanForTest()); err != nil {
-		t.Fatalf("a complete current podlaz0 record must win over a duplicate stale record: %v", err)
+	err := (ResolvedDNSExecutor{Runner: runner, VerifyAttempts: 1}).Verify(context.Background(), dnsPlanForTest())
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("ambiguous duplicate podlaz0 sections must fail closed, got %v", err)
 	}
 }
