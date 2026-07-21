@@ -27,7 +27,7 @@ func (s tunFailureDiagnosticSummary) String() string {
 	if !s.Persisted || location == "" {
 		location = "unavailable"
 	}
-	return fmt.Sprintf("TUN diagnostics: %s; last report: %s", classification, location)
+	return fmt.Sprintf("TUN diagnostics: %s; last report: %s; inspect with: plz doctor --tun --verbose", classification, location)
 }
 
 type tunFailureDiagnosticError struct {
