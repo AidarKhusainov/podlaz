@@ -21,13 +21,13 @@ func (s tunFailureDiagnosticSummary) Empty() bool {
 func (s tunFailureDiagnosticSummary) String() string {
 	classification := strings.TrimSpace(string(s.PrimaryClassification))
 	if classification == "" {
-		classification = "unknown"
+		classification = string(tundiag.ClassInternalDiagnosticError)
 	}
 	location := strings.TrimSpace(s.ReportPath)
 	if !s.Persisted || location == "" {
 		location = "unavailable"
 	}
-	return fmt.Sprintf("TUN diagnostics: %s; last report: %s; inspect with: plz doctor --tun --verbose", classification, location)
+	return fmt.Sprintf("TUN diagnostics: %s; last report: %s; inspect with: podlaz doctor --tun --verbose", classification, location)
 }
 
 type tunFailureDiagnosticError struct {
