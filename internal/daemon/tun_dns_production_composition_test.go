@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AidarKhusainov/podlaz/internal/api"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
@@ -89,6 +91,12 @@ func assertNoProductionTunTransactionBlocker(t *testing.T, runtimeDir string) {
 		if summary.RequiresCleanup {
 			t.Fatalf("rollback left a cleanup-required transaction/startup-scan blocker: %#v", summary)
 		}
+	}
+
+	manager := NewXrayManager(runtimeDir)
+	snapshot := manager.withPodlazRuntimeStaleState(context.Background(), netsnapshot.Snapshot{})
+	if err := preflightTunOwnership(snapshot, api.HandoffBlock); err != nil {
+		t.Fatalf("immediate TUN retry was blocked by stale production preflight state: %v", err)
 	}
 }
 
