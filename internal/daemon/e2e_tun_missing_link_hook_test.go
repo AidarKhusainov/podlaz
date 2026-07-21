@@ -64,8 +64,8 @@ func TestE2EDNSMissingLinkRollbackHookPausesAfterApplyUntilReleased(t *testing.T
 		if got.step.Kind != "dns" || got.step.Owner != netexecutor.OwnerDNS {
 			t.Fatalf("hook must preserve applied DNS step: %#v", got.step)
 		}
-		if got.err == nil || !strings.Contains(got.err.Error(), "missing-link rollback") {
-			t.Fatalf("hook must inject rollback-triggering failure after release: %v", got.err)
+		if got.err != nil {
+			t.Fatalf("hook must let production verification observe the removed link: %v", got.err)
 		}
 	case <-ctx.Done():
 		t.Fatalf("missing-link hook did not resume: %v", ctx.Err())
