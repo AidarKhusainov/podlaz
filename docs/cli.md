@@ -173,16 +173,18 @@ nftables, services, other VPNs, or browser state.
 Compact human output identifies the failed layer, primary classification, latest
 report path, and next step. `--verbose` adds bounded route, DNS, TLS, HTTP, IPv6,
 command, and timing evidence. `--json` emits the same centrally redacted model
-with `schema_version: 1`. A report with status `unhealthy` or `unavailable`
-returns exit code `3`.
+with `schema_version: 1`. Historical failed-connect reports also expose stable
+`failure_phase` and `rollback_status`. A report with status `unhealthy` or
+`unavailable` returns exit code `3`.
 
-Stable classifications include session and ownership inconsistencies; server
-bypass, route, and policy-rule failures; DNS apply/conflict/UDP/TCP/resolution/
-hijack failures; TCP, TLS, HTTPS, DoH partial/full failures; IPv6 absent,
-unusable, or leak states; guarded `likely_pmtu_blackhole`; timeout, cancellation,
-and internal diagnostic failures. One DoH provider failure is degraded. PMTU is
-reported only when small HTTPS succeeds, two independent bounded 16 KiB
-transfers fail, and no lower-layer failure explains the symptom.
+Stable classifications include session and ownership inconsistencies;
+`network_apply_failure` and `network_verify_failure`; server bypass, route, and
+policy-rule failures; DNS apply/conflict/UDP/TCP/resolution/hijack failures; TCP,
+TLS, HTTPS, DoH partial/full failures; IPv6 absent, unusable, or leak states;
+guarded `likely_pmtu_blackhole`; timeout, cancellation, and internal diagnostic
+failures. One DoH provider failure is degraded. PMTU is reported only when small
+HTTPS succeeds, two independent bounded 16 KiB transfers fail, and no lower-layer
+failure explains the symptom.
 
 The endpoint catalog is source-controlled and documents a stable target id,
 timeout, response-size bound, required/best-effort status, bootstrap addresses
@@ -244,10 +246,14 @@ disconnect an active podlaz TUN session before starting the new transaction.
 Unsupported handoff values fail before network mutation. `disconnect` is safe
 to repeat. `connect --json` and `disconnect --json` are deferred.
 
-If post-apply connectivity verification fails, podlazd runs bounded TUN
-diagnostics and atomically saves the report before the first rollback command.
-The returned error includes the primary classification and saved report path;
-normal rollback then proceeds.
+For failures during `network-apply`, `network-verify`, or later connectivity
+verification, podlazd runs bounded redacted diagnostics while the failed applied
+state still exists and atomically saves the report before the first rollback
+command. The report records a stable classification, `failure_phase`, and
+`rollback_status`; rollback finalizes the historical status as `completed` or
+`failed`. Diagnostic collection remains best-effort and cannot suppress cleanup.
+The returned error includes the classification and safe report path when
+available and directs the user to `podlaz doctor --tun --verbose`.
 
 ```bash
 podlaz check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
@@ -287,7 +293,11 @@ podlaz recover --execute --yes [--json]
 
 `recover` is read-only. `recover --execute --yes` sends cleanup intent to the
 daemon. The CLI must not perform privileged host cleanup directly. Ambiguous
-resources are skipped. Non-interactive execution requires `--yes`.
+resources are skipped. Non-interactive execution requires `--yes`. For the
+validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
+with the bounded `No such device` result is accepted as idempotent success.
+Timeout, cancellation, signals, permission errors, other exit codes, and
+unrelated exit `1` results remain failures.
 
 ## Files
 
