@@ -34,7 +34,6 @@ type tunNetworkMutationError struct {
 	store        txstate.TransactionStore
 	transaction  txstate.Transaction
 	rollbackPlan planner.TunPlan
-	steps        []netexecutor.Step
 	cause        error
 }
 
@@ -147,10 +146,11 @@ func applyVerifyTunTransactionDeferredRollback(ctx context.Context, result tunTr
 	if _, _, err := result.Store.Transition(tx.ID, txstate.TransactionVerifying); err != nil {
 		return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-apply", err)
 	}
-	tx, _, err = result.Store.Load(tx.ID)
+	loaded, _, err := result.Store.Load(tx.ID)
 	if err != nil {
 		return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-apply", err)
 	}
+	tx = loaded
 	if err := executor.Verify(ctx, result.Plan); err != nil {
 		return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-verify", fmt.Errorf("verify TUN plan: %w", err))
 	}
@@ -158,8 +158,10 @@ func applyVerifyTunTransactionDeferredRollback(ctx context.Context, result tunTr
 }
 
 func newTunNetworkMutationError(store txstate.TransactionStore, tx txstate.Transaction, rollbackPlan planner.TunPlan, steps []netexecutor.Step, phase string, cause error) error {
-	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
-	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
+	if len(tx.AppliedSteps) == 0 {
+		tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
+		tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
+	}
 	if _, err := store.Save(tx); err != nil {
 		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
 	}
@@ -168,7 +170,6 @@ func newTunNetworkMutationError(store txstate.TransactionStore, tx txstate.Trans
 		store:        store,
 		transaction:  tx,
 		rollbackPlan: rollbackPlan,
-		steps:        append([]netexecutor.Step(nil), steps...),
 		cause:        cause,
 	}
 }
