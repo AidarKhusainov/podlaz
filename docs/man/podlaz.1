@@ -194,10 +194,27 @@ rechecks host ownership.
 may additionally disconnect an active podlaz TUN session before starting the new
 transaction. Unsupported handoff values fail before network mutation.
 .PP
-If post-apply TUN connectivity verification fails, podlazd runs bounded layered
-diagnostics before the first rollback command, stores the redacted latest report,
-adds its primary classification and path to the error, and then performs normal
-rollback.
+If TUN
+.B network-apply,
+.B network-verify,
+or later connectivity verification fails, podlazd runs bounded redacted
+diagnostics while the failed applied state still exists and stores the latest
+report before the first rollback command. The report includes a stable primary
+classification,
+.B failure_phase,
+and
+.B rollback_status;
+known network lifecycle failures use
+.B network_apply_failure
+or
+.BR network_verify_failure .
+Rollback atomically finalizes the historical status as
+.B completed
+or
+.BR failed .
+Diagnostic failure does not suppress cleanup. The returned error includes the
+safe classification and report path when available and directs the user to
+.BR "podlaz doctor --tun --verbose" .
 .TP
 .B disconnect
 Stop the active daemon-managed connection. Safe to repeat.
@@ -223,6 +240,10 @@ link ownership, DNS over UDP and TCP, positive system resolution, reserved
 .invalid NXDOMAIN integrity, TCP/443, TLS, small HTTPS, two independent DoH
 providers, IPv6 state, and guarded PMTU evidence. Compact output reports the
 primary classification and next step. Verbose output adds bounded evidence.
+Historical failed-connect reports expose
+.B failure_phase
+and
+.BR rollback_status .
 JSON uses the same centrally redacted schema with
 .BR schema_version=1 .
 The command does not change routes, policy rules, DNS, MTU, nftables, services,
@@ -238,7 +259,19 @@ Read recent podlaz journal entries.
 Inspect stale podlaz-owned recovery candidates without changing the host.
 .TP
 .B recover --execute --yes [--json]
-Ask the daemon to clean clearly podlaz-owned stale state.
+Ask the daemon to clean clearly podlaz-owned stale state. For the validated
+podlaz-owned
+.B podlaz0
+target, only normal
+.B resolvectl
+exit status 1 with empty stdout and the exact bounded supported
+.B No such device
+stderr is accepted as idempotent cleanup. Cancellation, deadline expiry, process
+launch failure, signal termination, permission denial, other exit codes,
+unrelated exit status 1, or different/unbounded output remains a failure.
+Cleanup-complete terminal transaction history is non-blocking; recovery and an
+immediate subsequent TUN connect must not observe a cleanup-required phantom
+transaction or stale scan candidate.
 .SH OPTIONS
 .TP
 .B --json
