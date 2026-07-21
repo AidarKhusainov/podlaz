@@ -17,7 +17,11 @@ func (m *XrayManager) tunPlanExecutor() tunPlanExecutor {
 	if m.tunExecutor != nil {
 		return m.tunExecutor
 	}
-	return maybeWrapE2ETunHookExecutor(netexecutor.NewOSDNSExecutor())
+	return newProductionTunPlanExecutor(nil)
+}
+
+func newProductionTunPlanExecutor(runner netexecutor.CommandRunner) tunPlanExecutor {
+	return maybeWrapE2ETunHookExecutor(netexecutor.NewDNSExecutorWithRunner(runner))
 }
 
 func (m *XrayManager) collectTunSnapshot(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
