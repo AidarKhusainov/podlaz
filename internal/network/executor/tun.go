@@ -47,7 +47,13 @@ type TunExecutor struct {
 }
 
 func NewOSExecutor() TunExecutor {
-	runner := OSRunner{}
+	return newTunExecutorWithRunner(OSRunner{})
+}
+
+func newTunExecutorWithRunner(runner CommandRunner) TunExecutor {
+	if runner == nil {
+		runner = OSRunner{}
+	}
 	return TunExecutor{
 		TunDevice:   IPTunDeviceExecutor{Runner: runner, DeviceUser: defaultTunDeviceUser, DeviceGroup: defaultTunDeviceGroup},
 		Routes:      IPRouteExecutor{Runner: runner},
