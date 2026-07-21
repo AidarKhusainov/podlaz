@@ -120,7 +120,7 @@ def reserved_rule_routes() -> list[OwnedRoute]:
                 continue
             expected = "-4" if network.version == 4 else "-6"
             if family == expected:
-                routes.append(OwnedRoute(family, "main", cidr))
+                routes.append(OwnedRoute(family, "main", network.with_prefixlen))
     return routes
 
 
