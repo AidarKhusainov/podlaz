@@ -63,7 +63,7 @@ Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
 | Package and service | `scripts/e2e/package-service.sh` | Package install, reinstall, service, cleanup. |
 | Proxy data-plane | `scripts/e2e/data-plane.sh` | Proxy connect, egress, listener scope, cleanup. |
 | Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
-| TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Explicitly gated DNS/route rollback and pre-commit daemon interruption probes. |
+| TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Gated apply/verify failures, pre-rollback diagnostics, resolved edge cases, immediate retry, unrelated-state preservation, and pre-commit interruption. |
 
 ## Manual script order
 
@@ -89,7 +89,7 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 6. A failure after host-networking apply captures a bounded redacted report before rollback, then rolls back nftables/DNS/routes/rules before Xray is stopped.
 7. The report exposes a stable `failure_phase`, stable primary classification, safe report path, and `rollback_status`; after rollback and daemon restart, `podlaz doctor --tun --verbose` can read the historical report.
 8. A complete `systemd-resolved` link with all planned DNS servers, `~.`, `+DefaultRoute`, and `Current Scopes: none` passes through the packaged production transaction path. Removing any planned server/domain/default-route evidence fails closed and rolls back.
-9. Removing `podlaz0` before DNS recovery makes the exact normal `resolvectl` exit status `1` plus bounded `No such device` stderr an idempotent success. Exit status `2`, unrelated exit status `1`, permission denial, signal termination, timeout, and cancellation remain failures.
+9. Removing `podlaz0` before DNS recovery makes the exact normal `resolvectl` exit status `1` plus bounded `No such device` stderr an idempotent success. Non-empty stdout, exit status `2`, unrelated exit status `1`, permission denial, launch failure, signal termination, oversized stderr, timeout, and cancellation remain failures in direct and transaction rollback paths.
 10. `podlaz status`, `podlaz doctor`, and `podlaz recover` agree after rollback/recovery; no cleanup-required transaction or stale startup-scan candidate blocks an immediate subsequent TUN connect. Cleanup-complete terminal history may remain visible but must be non-blocking.
 11. `podlaz recover --execute --yes` after daemon interruption cleans transaction-owned state without deleting `/run/podlaz` wholesale or changing unrelated host networking.
 
@@ -97,15 +97,15 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 
 TUN fault-injection coverage is opt-in. The workflow job is safe by default and exits without host disruption unless `PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION=true` is set for the self-hosted runner environment.
 
-When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` that enables daemon-owned E2E hooks, runs deterministic DNS apply, route apply, and pre-commit interruption probes, scans its artifacts for configured sensitive values, then removes the drop-in during cleanup.
+When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` and runs bounded packaged scenarios for DNS apply failure, route apply failure, post-production network verification failure, synthetic `Current Scopes: none`, and pre-commit daemon interruption. It also runs the real-subprocess resolved result matrix, proves diagnostic persistence precedes the rollback boundary, reloads the historical report after daemon restart, performs an immediate successful retry, verifies clean status/doctor/recover publication, and keeps a foreign nftables sentinel intact. The script scans collected artifacts for configured sensitive values and removes all E2E-only state during cleanup.
 
-For TUN lifecycle convergence changes, the fault-injection evidence must additionally prove that diagnostics are persisted before the first rollback command, cleanup completes even when diagnostics fail, the historical report is retained according to the `/run` lifetime, and an immediate retry is not rejected by stale daemon or transaction observations.
+The hook event log is test evidence only. It records fixed low-cardinality lifecycle markers such as diagnostic persistence, rollback start, report finalization, and rollback completion; it must not contain profile material, command output, addresses, or generated configuration.
 
 The hook environment variables are E2E-only implementation details:
 
 - `PODLAZ_E2E_TUN_HOOKS` enables daemon-side E2E hooks;
 - `PODLAZ_E2E_TUN_HOOK_PHASE` selects the precise phase under test;
-- `PODLAZ_E2E_TUN_HOOK_DIR` stores temporary marker files for runner coordination;
+- `PODLAZ_E2E_TUN_HOOK_DIR` stores temporary marker files and lifecycle events for runner coordination;
 - `PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS` bounds the pre-commit pause probe.
 
 Do not set these variables in packaged or production service operation.
