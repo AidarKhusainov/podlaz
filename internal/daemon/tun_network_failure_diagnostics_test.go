@@ -23,12 +23,12 @@ func TestFullTunnelTransactionRunnerCapturesNetworkFailureDiagnosticsBeforeRollb
 		{
 			name:      "network apply",
 			phase:     "network-apply",
-			wantOrder: []string{"apply", "diagnostics", "rollback", "stop-core"},
+			wantOrder: []string{"apply", "diagnostics", "rollback", "finalize-completed", "stop-core"},
 		},
 		{
 			name:      "network verify",
 			phase:     "network-verify",
-			wantOrder: []string{"apply", "verify", "diagnostics", "rollback", "stop-core"},
+			wantOrder: []string{"apply", "verify", "diagnostics", "rollback", "finalize-completed", "stop-core"},
 		},
 	}
 
@@ -76,6 +76,12 @@ func TestFullTunnelTransactionRunnerCapturesNetworkFailureDiagnosticsBeforeRollb
 						ReportPath:            "/run/podlaz/diagnostics/tun-last.json",
 						Persisted:             true,
 					}
+				},
+				finalizeFailureDiagnostics: func(_ context.Context, summary tunFailureDiagnosticSummary, status string) {
+					if !summary.Persisted || status != "completed" {
+						t.Fatalf("unexpected diagnostic finalization: summary=%#v status=%q", summary, status)
+					}
+					events = append(events, "finalize-"+status)
 				},
 			}
 
