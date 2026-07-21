@@ -59,11 +59,11 @@ unit sets
 and
 .BR PODLAZ_POLKIT_AUTHORIZATION=required ,
 so normal commands such as
-.BR "plz status" ,
-.BR "plz connect" ,
-.BR "plz disconnect" ,
+.BR "podlaz status" ,
+.BR "podlaz connect" ,
+.BR "podlaz disconnect" ,
 and
-.BR "plz recover --execute --yes"
+.BR "podlaz recover --execute --yes"
 should not require adding the current user to the
 .B podlaz
 group. If authentication is required, the system polkit agent prompts for an
@@ -75,7 +75,7 @@ before starting the service:
 sudo systemctl daemon-reload
 sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl start podlazd
-plz status
+podlaz status
 .EE
 .SH FILES
 .TP
@@ -117,7 +117,15 @@ child process credentials.
 .TP
 .I /run/podlaz/transactions/
 Volatile transaction state used by status, diagnostics, rollback, disconnect,
-and recovery paths. Transaction files remain daemon-private state.
+and recovery paths. Transaction files remain daemon-private state. Terminal
+cleanup-complete history may remain for inspection but must not block a new TUN
+transaction.
+.TP
+.I /run/podlaz/diagnostics/tun-last.json
+Daemon-owned latest TUN diagnostic report. It is centrally redacted, bounded,
+atomically replaced, and stored with mode 0600. Failed-connect history may
+remain readable after rollback and daemon restart for the lifetime of
+.IR /run .
 .TP
 .I /var/lib/podlaz/
 Reserved daemon state directory created by
@@ -186,7 +194,36 @@ rules, DNS settings, nftables, or firewall state.
 During TUN connect, the daemon verifies native Xray TUN support before opening
 a transaction, then records generated config rollback metadata, starts Xray,
 verifies the Xray-owned TUN link, applies podlaz-owned host networking state,
-verifies connectivity, and commits only after those checks pass.
+verifies connectivity, and commits only after those checks pass. Resolved DNS
+verification requires every planned DNS server, the route-only domain
+.B ~.,
+and DNS default-route evidence.
+.B Current Scopes
+is derived resolver runtime state and is not an acceptance criterion.
+.PP
+If
+.B network-apply,
+.B network-verify,
+or later connectivity verification fails after host mutation, the daemon runs a
+short bounded redacted diagnostic subset before the first rollback command.
+The report records a stable primary classification,
+.B failure_phase,
+and
+.B rollback_status.
+Known network lifecycle failures use
+.B network_apply_failure
+or
+.BR network_verify_failure ;
+overall status words such as
+.B unhealthy
+are never used as classifications. The report is saved with rollback status
+.B pending
+and finalized atomically to
+.B completed
+or
+.BR failed .
+Diagnostic collection and persistence are best-effort and cannot suppress or
+delay the separate bounded rollback context.
 .PP
 During graceful shutdown, the daemon stops an active Xray child, shuts down the
 HTTP server, closes the Unix socket listeners, removes the filesystem socket
@@ -199,7 +236,21 @@ for inspection or recovery and reports the core failure through status warnings.
 .PP
 Recovery dry-run inspection is read-only. Explicit recovery execution is scoped
 to clearly podlaz-owned volatile resources and must skip ambiguous targets.
-The runtime root
+For the validated podlaz-owned
+.B podlaz0
+DNS target, missing-link cleanup is successful only for a normal
+.B resolvectl
+exit status 1 with empty stdout and the exact bounded supported
+.B No such device
+stderr. Caller cancellation or deadline, launch failure, signal termination,
+permission denial, another exit code, unrelated exit status 1, unexpected
+stdout, or different/unbounded stderr remains a failure. This rule is shared by
+direct stale-link cleanup and persisted transaction DNS rollback.
+.PP
+After connect, disconnect, rollback, or recovery, the daemon refreshes its
+startup-scan publication. Cleanup-complete terminal transaction history may
+remain visible but is non-blocking. A cleanup-required transaction or stale scan
+candidate must not reject an immediate subsequent TUN connect. The runtime root
 .I /run/podlaz
 is not removed wholesale.
 .SH LOGS
@@ -235,7 +286,7 @@ systemctl status podlazd --no-pager
 systemctl show podlazd -p Environment --no-pager
 systemctl status polkit --no-pager || systemctl status polkitd --no-pager
 journalctl -u podlazd -n 100 --no-pager
-plz doctor
+podlaz doctor
 .EE
 The service environment should include
 .B PODLAZ_SERVICE=systemd
@@ -254,6 +305,15 @@ podlaz status
 podlaz logs --core
 journalctl -u podlazd -n 100 --no-pager
 .EE
+.TP
+.B Failed TUN connect with a saved diagnostic report
+Use the canonical read-only diagnostic command:
+.EX
+podlaz doctor --tun --verbose
+.EE
+The historical report identifies the stable lifecycle phase, classification,
+and final rollback status without exposing raw profile secrets or generated
+configuration.
 .TP
 .B Stale podlaz-owned runtime state
 Inspect first:
@@ -276,7 +336,7 @@ sudo install -m 0644 packaging/systemd/podlazd.service \
 sudo systemctl daemon-reload
 sudo systemd-analyze verify /etc/systemd/system/podlazd.service
 sudo systemctl start podlazd
-plz status
+podlaz status
 .EE
 .SH SEE ALSO
 .BR podlaz (1),
