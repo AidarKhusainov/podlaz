@@ -63,14 +63,21 @@ func observeCommand(ctx context.Context, runner CommandRunner, name string, args
 	if err == nil && result.ExitCode == 0 {
 		return result, nil
 	}
-	return result, commandError{name: name, args: args, result: result, err: err}
+	return result, commandError{
+		name:       name,
+		args:       args,
+		result:     result,
+		err:        err,
+		contextErr: cmdCtx.Err(),
+	}
 }
 
 type commandError struct {
-	name   string
-	args   []string
-	result CommandResult
-	err    error
+	name       string
+	args       []string
+	result     CommandResult
+	err        error
+	contextErr error
 }
 
 func (e commandError) Error() string {
@@ -85,6 +92,10 @@ func (e commandError) Error() string {
 		parts = append(parts, e.err.Error())
 	}
 	return strings.Join(parts, ": ")
+}
+
+func (e commandError) Unwrap() error {
+	return e.err
 }
 
 func flushIPv4RouteCache(ctx context.Context, runner CommandRunner) error {
