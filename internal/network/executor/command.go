@@ -61,7 +61,11 @@ func observeCommand(ctx context.Context, runner CommandRunner, name string, args
 	defer cancel()
 	result, err := runner.Run(cmdCtx, name, args...)
 	if err == nil && result.ExitCode == 0 {
-		return result, nil
+		if validateErr := validateObservedCommandResult(name, args, result); validateErr == nil {
+			return result, nil
+		} else {
+			err = validateErr
+		}
 	}
 	return result, commandError{
 		name:       name,
