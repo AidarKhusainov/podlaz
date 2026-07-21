@@ -186,11 +186,11 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackDNSInSafeOrder(t *testing
 	}
 }
 
-func TestDNSAwareTunExecutorRollsBackDNSWhenApplyFailsAfterDNSMutation(t *testing.T) {
+func TestDNSAwareTunExecutorPreservesPartialDNSOwnershipWithoutInternalRollback(t *testing.T) {
 	recorder := &callRecorder{}
 	exec := DNSAwareTunExecutor{
 		Base: TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder}, PolicyRules: fakeRules{rec: recorder}},
-		DNS:  fakeDNS{rec: recorder, applyErr: errors.New("resolved failure")},
+		DNS:  fakeDNS{rec: recorder, applyErr: errors.New("resolved failure"), returnStepOnError: true},
 	}
 	plan := executorPlanForTest()
 	plan.DNS = dnsPlanForTest()
@@ -199,11 +199,11 @@ func TestDNSAwareTunExecutorRollsBackDNSWhenApplyFailsAfterDNSMutation(t *testin
 	if err == nil {
 		t.Fatal("expected DNS apply failure")
 	}
-	if len(steps) != 5 {
-		t.Fatalf("expected base networking steps to remain rollbackable, got %#v", steps)
+	if len(steps) != 6 || steps[len(steps)-1].Kind != "dns" || steps[len(steps)-1].Owner != OwnerDNS {
+		t.Fatalf("expected partial DNS step to remain rollbackable, got %#v", steps)
 	}
-	if recorder.calls[len(recorder.calls)-1] != "dns:rollback:podlaz0" {
-		t.Fatalf("expected immediate DNS rollback after DNS apply failure, got %#v", recorder.calls)
+	if got := recorder.calls[len(recorder.calls)-1]; got != "dns:apply:podlaz0" {
+		t.Fatalf("composition executor must not rollback before transaction diagnostics, got %q", got)
 	}
 }
 
@@ -241,16 +241,21 @@ func dnsPlanForTest() planner.TunDNSPlan {
 }
 
 type fakeDNS struct {
-	rec      *callRecorder
-	applyErr error
+	rec               *callRecorder
+	applyErr          error
+	returnStepOnError bool
 }
 
 func (f fakeDNS) Apply(_ context.Context, plan planner.TunDNSPlan) (Step, error) {
 	f.rec.calls = append(f.rec.calls, "dns:apply:"+plan.TargetLink)
+	step := Step{Kind: "dns", Target: plan.TargetLink, Owner: OwnerDNS}
 	if f.applyErr != nil {
+		if f.returnStepOnError {
+			return step, f.applyErr
+		}
 		return Step{}, f.applyErr
 	}
-	return Step{Kind: "dns", Target: plan.TargetLink, Owner: OwnerDNS}, nil
+	return step, nil
 }
 
 func (f fakeDNS) Verify(_ context.Context, plan planner.TunDNSPlan) error {
