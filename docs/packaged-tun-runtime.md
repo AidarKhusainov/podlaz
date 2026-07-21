@@ -90,6 +90,8 @@ The transaction's structured `desired_plan` is durably written before the daemon
 
 When a failed connect successfully rolls back every podlaz-owned mutation it applied, the terminal transaction file is removed. If a terminal `rolled_back` or `committed` transaction file is found later, TUN handoff preflight treats it as non-blocking. Transaction files in cleanup-required states such as `planned`, `applying`, `applied`, `verifying`, `rolling_back`, or `failed` continue to block connect until automatic or explicit daemon-owned recovery completes. Invalid or unreadable transaction files are blockers because their ownership and cleanup state cannot be proven safely.
 
+After every connect attempt, disconnect, or recovery execution, the daemon refreshes the startup recovery scan before publishing status/doctor/recover state. A successful rollback or recovery removes its completed transaction candidate, so an immediate subsequent TUN connect observes the reconciled host and persisted state rather than a phantom stale blocker.
+
 Rollback order for failed or disconnected native TUN sessions is:
 
 1. remove podlaz-owned nftables/firewall state;
@@ -111,9 +113,13 @@ Rollback uses `resolvectl revert <link>` for the podlaz-owned link. The exact mi
 
 ## Diagnostics and logs
 
+Failures during `network-apply`, `network-verify`, or later connectivity verification run a short bounded redacted diagnostic subset while the failed applied state still exists. The latest report is atomically persisted before the first rollback command when persistence succeeds. Diagnostic collection and persistence are best-effort: they never replace the original failure and never prevent the separate bounded rollback context from running.
+
+The report keeps `schema_version`, stable `failure_phase`, primary classification, bounded evidence, warnings/errors, safe report path, and `rollback_status`. It is first written with `rollback_status: pending`, then atomically finalized to `completed` or `failed`. After rollback and daemon restart, `doctor --tun` may read this replacement-only report as historical evidence according to the `/run` retention contract.
+
 Daemon connect failures are logged as sanitized phase summaries. The log line includes the requested mode, failure phase, transaction id when a transaction exists, rollback status, and broad classification. It intentionally does not include raw command output, profile servers, share URIs, private keys, tokens, private domains, or private IP addresses.
 
-User-facing errors remain actionable and may describe the safe next command, but daemon logs must use structured, low-cardinality fields rather than raw diagnostic text.
+User-facing errors include the stable phase, classification and safe report path when available, then point to `podlaz doctor --tun --verbose`. Daemon logs use structured, low-cardinality fields rather than raw diagnostic text.
 
 ## CI gates
 
