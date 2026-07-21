@@ -68,6 +68,7 @@ func observeCommand(ctx context.Context, runner CommandRunner, name string, args
 		args:       args,
 		result:     result,
 		err:        err,
+		parentErr:  ctx.Err(),
 		contextErr: cmdCtx.Err(),
 	}
 }
@@ -77,6 +78,7 @@ type commandError struct {
 	args       []string
 	result     CommandResult
 	err        error
+	parentErr  error
 	contextErr error
 }
 
@@ -103,11 +105,24 @@ func flushIPv4RouteCache(ctx context.Context, runner CommandRunner) error {
 }
 
 func resourceMissing(err error) bool {
+	var commandErr commandError
+	if errors.As(err, &commandErr) && commandErr.name == "resolvectl" {
+		return resolvedCommandFailureIsMissing(err)
+	}
 	return commandErrorContains(err, "does not exist", "cannot find device", "no such process", "no such file or directory", "no such table", "no such file")
 }
 
 func commandErrorContains(err error, needles ...string) bool {
 	if err == nil {
+		return false
+	}
+	var commandErr commandError
+	if errors.As(err, &commandErr) && commandErr.name == "resolvectl" {
+		for _, needle := range needles {
+			if strings.EqualFold(strings.TrimSpace(needle), "no such device") {
+				return resolvedCommandFailureIsMissing(err)
+			}
+		}
 		return false
 	}
 	text := strings.ToLower(err.Error())
