@@ -4,7 +4,7 @@ Manual host validation for behavior that is not suitable for the default pull-re
 
 The repository keeps `.github/workflows/e2e.yml` and `.github/workflows/e2e-tun-package-convergence.yml` as `workflow_dispatch` workflows for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure in general, but an issue or pull request may require a particular E2E result before completion. Record unavailable infrastructure or completed evidence in the related pull request, issue, or release notes.
 
-The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results are manually requested validation and release evidence, not an automatic default gate. When an issue explicitly requires package-level disposable-host validation, the corresponding pull request must remain draft until that workflow passes and redacted evidence is published.
+The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results are manually requested validation and release evidence, not an automatic default gate. When an issue explicitly requires package-level disposable-host validation, the corresponding pull request must remain draft until that workflow passes and safe evidence is published.
 
 ## Run through GitHub Actions
 
@@ -28,7 +28,12 @@ The general E2E workflow runs:
 4. Maximum server coverage
 5. Gated TUN fault-injection coverage
 
-The dedicated convergence workflow runs the release-like `.deb` scenario only. It is the required gate for issue #236 and equivalent changes to TUN rollback convergence.
+The dedicated convergence workflow is the required gate for issue #236 and equivalent changes to TUN rollback convergence. A single successful run must cover both packaged acceptance cases:
+
+1. valid per-link DNS with all planned servers, `~.`, `+DefaultRoute`, and synthetic `Current Scopes: none` is accepted through the installed production daemon;
+2. removing real `podlaz0` after DNS apply produces the exact supported `resolvectl` missing-link result, diagnostics are persisted before the first DNS rollback invocation, cleanup converges, and an immediate packaged retry succeeds.
+
+A green result from only the general E2E workflow does not replace this dedicated gate.
 
 ## When to run
 
@@ -74,7 +79,8 @@ The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or 
 | Proxy data-plane | `scripts/e2e/data-plane.sh` | Proxy connect, egress, listener scope, cleanup. |
 | Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
 | TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Gated apply/verify failures, pre-rollback diagnostics, resolved subprocess edge cases, immediate retry, unrelated-state preservation, and pre-commit interruption. |
-| Installed-package TUN convergence | `scripts/e2e/tun-package-convergence.sh` | Release-like `.deb`, real missing-link rollback, direct resource absence, unrelated host-state preservation, restart reconciliation, and immediate retry. |
+| Installed-package TUN convergence | `scripts/e2e/tun-package-convergence.sh` | Release-like `.deb`, packaged inactive-scope verification, real missing-link rollback, provenance, direct resource absence, unrelated host-state preservation, restart reconciliation, and immediate retry. |
+| Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | Bounded daemon recovery, scoped fallback cleanup, package purge, sentinel removal, and direct post-cleanup assertions. |
 
 ## Manual script order
 
@@ -98,7 +104,7 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 3. DNS resolution and TCP egress work through the tunnel after commit.
 4. `podlaz disconnect` removes podlaz-owned routes, policy rules, DNS, nftables, generated config, and child process state.
 5. A failing `xray test -config` preflight leaves no host-networking mutation and recovery can remove any tracked generated config.
-6. A failure after host-networking apply captures a bounded redacted report before rollback, then rolls back nftables/DNS/routes/rules before Xray is stopped.
+6. A failure after host-networking apply captures a bounded redacted report before rollback, then rolls back nftables/DNS/routes/rules before Xray is stopped. A composition executor must return partial applied ownership with the error and must not perform hidden cleanup before the transaction boundary records diagnostics.
 7. The report exposes a stable `failure_phase`, stable primary classification, safe report path, and `rollback_status`; after rollback and daemon restart, `podlaz doctor --tun --verbose` can read the historical report.
 8. A complete `systemd-resolved` link with all planned DNS servers, `~.`, `+DefaultRoute`, and `Current Scopes: none` passes through the packaged production transaction path. Removing planned server/domain/default-route evidence or returning duplicate target-link sections fails closed and rolls back.
 9. Removing `podlaz0` after packaged DNS apply and before rollback makes only the exact normal `resolvectl` exit status `1`, empty stdout, and bounded exact `No such device` stderr an idempotent success. Non-empty stdout, exit status `2`, unrelated exit status `1`, permission denial, launch failure, signal termination, oversized stderr, timeout, and cancellation remain failures in executor and recovery subprocess tests.
@@ -106,13 +112,21 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 11. `podlaz status`, `podlaz doctor`, and `podlaz recover` agree after rollback/recovery; no cleanup-required transaction or stale startup-scan candidate blocks an immediate subsequent TUN connect.
 12. `podlaz recover --execute --yes` after daemon interruption cleans transaction-owned state without deleting `/run/podlaz` wholesale or changing unrelated host networking.
 
+## Installed-package convergence safety
+
+The dedicated scenario starts by removing any previous package/test residue, installs the freshly built `.deb`, and performs an explicit reinstall even when the package version is unchanged. It extracts the built package and compares SHA-256 hashes for `podlaz` and `podlazd` with the installed files. It also verifies that systemd's current `MainPID` executes `/usr/bin/podlazd`, that `/proc/<pid>/exe` has the same hash, and that installed version metadata identifies the tested commit.
+
+Every background connect has a bounded wait and TERM/KILL escalation. The scenario trap and the workflow `if: always()` step both invoke `tun-package-cleanup.sh`. Teardown first attempts normal daemon-owned recovery, then performs only fixed podlaz-owned fallback cleanup, removes E2E sentinels, optionally purges the package, and directly asserts that TUN, routes, policy rules, resolved state, nftables, transaction-owned Xray, generated configs, transaction files, daemon state, and E2E sentinels are absent.
+
+The scenario timeout is shorter than the job timeout so cleanup retains a dedicated execution window. Failure to prove clean host state fails the workflow.
+
 ## TUN fault-injection coverage
 
 General TUN fault-injection coverage is opt-in. The general workflow job exits without host disruption unless `PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION=true` is set for the self-hosted runner environment.
 
 When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in and runs bounded packaged scenarios for DNS apply failure, route apply failure, post-production network verification failure, synthetic `Current Scopes: none`, and pre-commit interruption. It also runs real-subprocess resolved matrices, proves diagnostic persistence precedes rollback, reloads historical diagnostics after daemon restart, retries immediately, verifies clean lifecycle publication, preserves a foreign nftables sentinel, scans artifacts for configured sensitive values, and removes E2E-only state during cleanup.
 
-`scripts/e2e/tun-package-convergence.sh` is a separate release-like gate. It builds and installs the branch `.deb`, verifies that systemd executes `/usr/bin/podlazd`, waits after real DNS apply, confirms a daemon-owned transaction file exists, deletes real `podlaz0`, captures the real `resolvectl revert podlaz0` result, releases the installed daemon, and requires `network-verify` diagnostics to be persisted before rollback starts. After daemon restart it directly verifies absence of `podlaz0`, table `51820` routes, podlaz policy rules, the resolved link record, `inet podlaz`, Xray, generated config, and transaction files. It also preserves independent nftables, route, policy-rule, per-link DNS, service, default-route, and `systemd-resolved` sentinels and performs an immediate packaged reconnect/disconnect.
+`script/e2e/tun-package-convergence.sh` is a separate release-like gate. It builds, installs, and reinstalls the branch `.deb`; verifies package and running-daemon provenance; runs packaged `Current Scopes: none`; waits after real DNS apply; confirms a daemon-owned transaction exists; deletes real `podlaz0`; validates the real `resolvectl revert podlaz0` result; and requires the fixed event order `diagnostics-persisted`, `rollback-started`, `dns-rollback-started`. After daemon restart it directly verifies complete resource absence, unrelated-state preservation, and immediate packaged reconnect/disconnect.
 
 The hook event log contains only fixed lifecycle markers used to prove diagnostic/rollback ordering. It must not contain profile material, command output, addresses, or generated configuration.
 
@@ -130,13 +144,13 @@ Do not set these variables in packaged or production service operation.
 Record only non-sensitive evidence in the PR or issue:
 
 - host OS and architecture;
-- commit SHA;
+- tested commit SHA;
+- hashes of the built package and its installed binaries;
 - workflow run URL and result;
-- commands run;
-- pass/fail result;
-- redacted diagnostics or artifacts when useful.
+- normalized pass/fail verdicts;
+- bounded diagnostic classifications and lifecycle phases.
 
-Do not paste provider URLs, subscription links, credentials, raw generated configs, or unredacted logs.
+Raw public or local IP addresses, gateways, interface names, DNS server/domain output, complete routes, `ip link` output, resolver status, provider URLs, subscription links, credentials, generated configs, and unredacted logs must stay outside the artifact directory. The dedicated workflow scans the artifact directory against configured secrets and network values collected from the host. Evidence is uploaded only when both teardown assertions and the pre-upload scan pass.
 
 ## Non-goals
 
