@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd awk bash curl dpkg find getent go grep ip journalctl mktemp nft pgrep python3 resolvectl sed sleep sudo systemctl systemd-run timeout
+require_cmd apt awk bash cat cmp curl date dpkg env find getent go grep id install ip journalctl mktemp nft pgrep python3 resolvectl sed seq sleep sudo systemctl systemd-run test timeout touch tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -151,7 +151,7 @@ assert_foreign_state() {
   sudo -n ip -4 route show table "${FOREIGN_ROUTE_TABLE}" >"${E2E_ARTIFACT_DIR}/${phase}-foreign-route.txt"
   grep -F "blackhole ${FOREIGN_ROUTE_CIDR}" "${E2E_ARTIFACT_DIR}/${phase}-foreign-route.txt" >/dev/null || fail "${phase}: unrelated route was changed"
   sudo -n ip -4 rule show >"${E2E_ARTIFACT_DIR}/${phase}-foreign-rules.txt"
-  grep -F "${FOREIGN_RULE_PRIORITY}:" "${E2E_ARTIFACT_DIR}/${phase}-foreign-rules.txt" | grep -F "to ${FOREIGN_ROUTE_CIDR}" | grep -E 'lookup (42424|table 42424)' >/dev/null || fail "${phase}: unrelated policy rule was changed"
+  grep -F "${FOREIGN_RULE_PRIORITY}:" "${E2E_ARTIFACT_DIR}/${phase}-foreign-rules.txt" | grep -F "to ${FOREIGN_ROUTE_CIDR}" | grep -F "lookup ${FOREIGN_ROUTE_TABLE}" >/dev/null || fail "${phase}: unrelated policy rule was changed"
   sudo -n resolvectl status "${FOREIGN_DNS_LINK}" --no-pager >"${E2E_ARTIFACT_DIR}/${phase}-foreign-resolved.txt"
   grep -F "${FOREIGN_DNS_SERVER}" "${E2E_ARTIFACT_DIR}/${phase}-foreign-resolved.txt" >/dev/null || fail "${phase}: unrelated per-link DNS server was changed"
   grep -F "${FOREIGN_DNS_DOMAIN}" "${E2E_ARTIFACT_DIR}/${phase}-foreign-resolved.txt" >/dev/null || fail "${phase}: unrelated per-link DNS domain was changed"
@@ -164,11 +164,9 @@ assert_podlaz_resources_absent() {
     fail "${phase}: podlaz0 still exists"
   fi
 
-  sudo -n ip -4 route show table 51820 >"${E2E_ARTIFACT_DIR}/${phase}-podlaz-routes-51820.txt" 2>&1 || true
-  [[ ! -s "${E2E_ARTIFACT_DIR}/${phase}-podlaz-routes-51820.txt" ]] || fail "${phase}: podlaz route table 51820 is not empty"
-  sudo -n ip -4 route show table podlaz >"${E2E_ARTIFACT_DIR}/${phase}-podlaz-routes-named.txt" 2>&1 || true
-  if grep -v -E '^(Error: ipv4: FIB table does not exist|Dump terminated)$' "${E2E_ARTIFACT_DIR}/${phase}-podlaz-routes-named.txt" | grep -q '[^[:space:]]'; then
-    fail "${phase}: named podlaz route table is not empty"
+  sudo -n ip -4 route show table 51820 >"${E2E_ARTIFACT_DIR}/${phase}-podlaz-routes.txt" 2>&1 || true
+  if grep -v -E '^(Error: ipv4: FIB table does not exist|Dump terminated)$' "${E2E_ARTIFACT_DIR}/${phase}-podlaz-routes.txt" | grep -q '[^[:space:]]'; then
+    fail "${phase}: podlaz route table 51820 is not empty"
   fi
 
   sudo -n ip -4 rule show >"${E2E_ARTIFACT_DIR}/${phase}-rules.txt"
@@ -191,6 +189,10 @@ assert_podlaz_resources_absent() {
     sudo -n find /run/podlaz/generated -maxdepth 2 -printf '%y %p\n' >"${E2E_ARTIFACT_DIR}/${phase}-generated.txt"
     fail "${phase}: generated runtime config remains"
   fi
+  if sudo -n test -d /run/podlaz/transactions && sudo -n find /run/podlaz/transactions -type f -name '*.json' -print -quit | grep -q .; then
+    sudo -n find /run/podlaz/transactions -type f -name '*.json' -printf '%p\n' >"${E2E_ARTIFACT_DIR}/${phase}-transactions.txt"
+    fail "${phase}: persisted transaction file remains"
+  fi
 }
 
 assert_no_recovery_candidates() {
@@ -202,6 +204,29 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
 if payload.get("recovery", {}).get("candidates"):
     raise SystemExit("recovery candidates remain after rollback")
+PY
+}
+
+assert_failure_report() {
+  local path="$1" historical="$2"
+  python3 - "${path}" "${historical}" <<'PY'
+import json
+import sys
+path, historical = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    report = json.load(handle)
+expected = {
+    "failure_phase": "network-verify",
+    "primary_classification": "network_verify_failure",
+    "rollback_status": "completed",
+}
+for key, want in expected.items():
+    got = report.get(key)
+    if got != want:
+        raise SystemExit(f"{key}: got {got!r}, want {want!r}")
+want_historical = historical == "true"
+if bool(report.get("historical", False)) != want_historical:
+    raise SystemExit(f"historical: got {report.get('historical')!r}, want {want_historical!r}")
 PY
 }
 
@@ -272,7 +297,11 @@ sudo -n systemctl restart podlazd.service
 SERVICE_TOUCHED=1
 wait_for_daemon_socket
 
-[[ ! -e /usr/bin/podlazd ]] || true
+[[ -x /usr/bin/podlaz ]] || fail "installed /usr/bin/podlaz is missing"
+[[ -x /usr/bin/podlazd ]] || fail "installed /usr/bin/podlazd is missing"
+if pgrep -x xray >"${E2E_ARTIFACT_DIR}/preexisting-xray-pids.txt" 2>&1; then
+  fail "disposable host has a pre-existing Xray process"
+fi
 /usr/bin/podlaz version >"${E2E_ARTIFACT_DIR}/installed-version.txt"
 sudo -n systemctl show -p ExecStart podlazd.service >"${E2E_ARTIFACT_DIR}/installed-service-exec.txt"
 grep -F "/usr/bin/podlazd" "${E2E_ARTIFACT_DIR}/installed-service-exec.txt" >/dev/null || fail "installed service does not execute /usr/bin/podlazd"
@@ -293,6 +322,8 @@ done
 sudo -n test -f "${HOOK_READY}" || fail "daemon did not reach DNS missing-link rollback pause"
 sudo -n ip link show dev podlaz0 >"${E2E_ARTIFACT_DIR}/podlaz0-before-delete.txt"
 sudo -n resolvectl status podlaz0 --no-pager >"${E2E_ARTIFACT_DIR}/podlaz0-resolved-before-delete.txt"
+sudo -n find /run/podlaz/transactions -type f -name '*.json' -printf '%p\n' >"${E2E_ARTIFACT_DIR}/transaction-before-delete.txt"
+[[ -s "${E2E_ARTIFACT_DIR}/transaction-before-delete.txt" ]] || fail "daemon-owned transaction was not persisted before fault injection"
 
 log "delete real podlaz0 and capture real resolvectl missing-link outcome"
 sudo -n ip link del dev podlaz0
@@ -320,12 +351,14 @@ assert_event_order dns-missing-link-ready dns-missing-link-released
 assert_event_order diagnostics-persisted rollback-started
 sudo -n cat "${DIAGNOSTIC_REPORT}" >"${E2E_ARTIFACT_DIR}/missing-link-report.json"
 assert_json_file "${E2E_ARTIFACT_DIR}/missing-link-report.json"
+assert_failure_report "${E2E_ARTIFACT_DIR}/missing-link-report.json" false
 
 clear_hook
 sudo -n systemctl restart podlazd.service
 wait_for_daemon_socket
 expect_exit 3 historical-doctor run_installed_podlaz doctor --tun --json
 assert_json_file "${LAST_STDOUT}"
+assert_failure_report "${LAST_STDOUT}" true
 assert_no_recovery_candidates after-missing-link
 assert_podlaz_resources_absent after-missing-link
 assert_foreign_state after-missing-link
