@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"testing"
 )
 
@@ -13,7 +12,7 @@ func TestResolvedDNSExecutorRollbackTreatsNoSuchDeviceAsAlreadyReverted(t *testi
 			ExitCode: 1,
 			Stderr:   `Failed to resolve interface "podlaz0": No such device`,
 		}},
-		errs: []error{errors.New("exit status 1")},
+		errs: []error{executorTestExitError{code: 1}},
 	}
 
 	if err := (ResolvedDNSExecutor{Runner: runner}).Rollback(context.Background(), plan); err != nil {
