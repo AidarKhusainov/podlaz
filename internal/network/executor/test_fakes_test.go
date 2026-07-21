@@ -3,12 +3,25 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 var errRouteTestFailure = errors.New("route test failure")
+
+type executorTestExitError struct {
+	code int
+}
+
+func (e executorTestExitError) Error() string {
+	return fmt.Sprintf("exit status %d", e.code)
+}
+
+func (e executorTestExitError) ExitCode() int {
+	return e.code
+}
 
 type callRecorder struct {
 	calls []string
