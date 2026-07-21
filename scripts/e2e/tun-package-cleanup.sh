@@ -121,7 +121,7 @@ fallback_cleanup() {
   stop_owned_xray
   sudo -n resolvectl revert podlaz0 >/dev/null 2>&1 || true
   sudo -n nft delete table inet podlaz >/dev/null 2>&1 || true
-  if python3 "${SCRIPT_DIR}/tun-package-fallback-routes.py" /run/podlaz/transactions; then
+  if sudo -n python3 "${SCRIPT_DIR}/tun-package-fallback-routes.py" /run/podlaz/transactions; then
     record_cleanup_evidence fallback_routes_removed true
   else
     record_cleanup_evidence fallback_routes_removed false
