@@ -173,13 +173,14 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 	if err := e.runResolvedApplyCommand(ctx, args...); err != nil {
 		return Step{}, fmt.Errorf("configure systemd-resolved DNS server for %s: %w", link, err)
 	}
+	step := Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}
 	if err := e.runResolvedApplyCommand(ctx, "domain", link, resolvedRouteOnlyDomain); err != nil {
-		return Step{}, fmt.Errorf("configure systemd-resolved route-only DNS domain for %s: %w", link, err)
+		return step, fmt.Errorf("configure systemd-resolved route-only DNS domain for %s: %w", link, err)
 	}
 	if err := e.runResolvedApplyCommand(ctx, "default-route", link, "yes"); err != nil {
-		return Step{}, fmt.Errorf("configure systemd-resolved DNS default route for %s: %w", link, err)
+		return step, fmt.Errorf("configure systemd-resolved DNS default route for %s: %w", link, err)
 	}
-	return Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}, nil
+	return step, nil
 }
 
 func (e ResolvedDNSExecutor) runResolvedApplyCommand(ctx context.Context, args ...string) error {
