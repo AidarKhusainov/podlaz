@@ -211,8 +211,8 @@ func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 	}
 	tunName := emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName)
 	return tundiag.Report{
-		GeneratedAt:    time.Now().UTC(),
-		FailurePhase:  strings.TrimSpace(input.failurePhase),
+		GeneratedAt:     time.Now().UTC(),
+		FailurePhase:   strings.TrimSpace(input.failurePhase),
 		RollbackStatus: strings.TrimSpace(input.rollbackStatus),
 		Session:        tunDiagnosticSession(input.state, input.coreRunning),
 		Network: tundiag.Network{
