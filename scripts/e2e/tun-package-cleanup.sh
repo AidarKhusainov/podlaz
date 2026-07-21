@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd find grep ip nft pgrep resolvectl sudo systemctl timeout
+require_cmd apt find getent grep ip nft resolvectl seq sleep sudo systemctl timeout tr
 
 : "${PODLAZ_E2E_PURGE_PACKAGE:=true}"
 
@@ -14,6 +14,13 @@ HOOK_DROPIN="/run/systemd/system/podlazd.service.d/e2e-tun-hooks.conf"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 CLEANUP_XDG="${E2E_TMP_ROOT}/tun-package-cleanup-xdg"
 EVIDENCE="${E2E_ARTIFACT_DIR}/teardown-evidence.txt"
+
+FOREIGN_NFT_FAMILY="inet"
+FOREIGN_NFT_TABLE="podlaz_e2e_foreign_guard"
+FOREIGN_ROUTE_TABLE="42424"
+FOREIGN_RULE_PRIORITY="42424"
+FOREIGN_DNS_LINK="podlaz-e2e-dns0"
+FOREIGN_SERVICE="podlaz-e2e-foreign.service"
 
 mkdir -p "${CLEANUP_XDG}/config" "${CLEANUP_XDG}/state" "${CLEANUP_XDG}/cache"
 : >"${EVIDENCE}"
@@ -83,6 +90,7 @@ owned_xray_pids() {
 
 stop_owned_xray() {
   local pid
+  local -a pids=()
   mapfile -t pids < <(owned_xray_pids)
   if [[ "${#pids[@]}" -eq 0 ]]; then
     return 0
@@ -118,6 +126,17 @@ fallback_cleanup() {
   sudo -n ip -6 route flush table 51820 >/dev/null 2>&1 || true
   sudo -n ip link del dev podlaz0 >/dev/null 2>&1 || true
   sudo -n rm -rf -- /run/podlaz/generated /run/podlaz/transactions >/dev/null 2>&1 || true
+}
+
+cleanup_e2e_sentinels() {
+  sudo -n systemctl stop "${FOREIGN_SERVICE}" >/dev/null 2>&1 || true
+  sudo -n systemctl reset-failed "${FOREIGN_SERVICE}" >/dev/null 2>&1 || true
+  sudo -n resolvectl revert "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || true
+  sudo -n ip link del dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || true
+  sudo -n ip -4 rule del priority "${FOREIGN_RULE_PRIORITY}" >/dev/null 2>&1 || true
+  sudo -n ip -4 route flush table "${FOREIGN_ROUTE_TABLE}" >/dev/null 2>&1 || true
+  sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || true
+  record_cleanup_evidence e2e_sentinels_removed true
 }
 
 purge_package() {
@@ -167,11 +186,21 @@ assert_cleanup_complete() {
   if systemctl is-active --quiet podlazd.service; then
     fail "teardown: podlazd.service is still active"
   fi
+  if sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1; then
+    fail "teardown: E2E DNS sentinel link remains"
+  fi
+  if sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1; then
+    fail "teardown: E2E nftables sentinel remains"
+  fi
+  if systemctl is-active --quiet "${FOREIGN_SERVICE}"; then
+    fail "teardown: E2E service sentinel remains"
+  fi
   record_cleanup_evidence cleanup_assertions pass
 }
 
 clear_tun_hook
 attempt_daemon_recovery
 fallback_cleanup
+cleanup_e2e_sentinels
 purge_package
 assert_cleanup_complete
