@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -25,7 +26,9 @@ func TestResolvedMissingDeviceRecoveryValidatesRealProcessOutcome(t *testing.T) 
 		{name: "same stderr exit two", scenario: "missing-exit-2", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "unrelated exit one", scenario: "unrelated-exit-1", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "permission denied", scenario: "permission-denied", context: backgroundTestContext, wantStatus: "failed"},
+		{name: "launch error", scenario: "launch-error", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "signal after partial stderr", scenario: "missing-signal", context: backgroundTestContext, wantStatus: "failed"},
+		{name: "oversized missing stderr", scenario: "missing-oversized", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "timeout after partial stderr", scenario: "missing-sleep", context: timeoutTestContext, wantStatus: "failed"},
 		{name: "cancellation after partial stderr", scenario: "missing-sleep", context: cancelledTestContext, wantStatus: "failed"},
 	}
@@ -61,7 +64,9 @@ func TestTransactionDNSRollbackValidatesRealProcessOutcome(t *testing.T) {
 		{name: "exact exit one", scenario: "missing-exit-1"},
 		{name: "same stderr exit two", scenario: "missing-exit-2", wantErr: true},
 		{name: "unrelated exit one", scenario: "unrelated-exit-1", wantErr: true},
+		{name: "launch error", scenario: "launch-error", wantErr: true},
 		{name: "signal after partial stderr", scenario: "missing-signal", wantErr: true},
+		{name: "oversized missing stderr", scenario: "missing-oversized", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -105,6 +110,10 @@ func TestResolvedSubprocessHelper(t *testing.T) {
 		writeResolvedMissingStderr()
 		_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
 		time.Sleep(time.Second)
+	case "missing-oversized":
+		writeResolvedMissingStderr()
+		_, _ = os.Stderr.WriteString(strings.Repeat("x", maxResolvedMissingStderrSize+1))
+		os.Exit(1)
 	case "missing-sleep":
 		writeResolvedMissingStderr()
 		time.Sleep(10 * time.Second)
@@ -137,7 +146,11 @@ func (r *resolvedSubprocessRunner) LookPath(file string) (string, error) {
 }
 
 func (r *resolvedSubprocessRunner) Run(ctx context.Context, name string, args ...string) (CommandResult, error) {
-	cmd := exec.CommandContext(ctx, r.executable, "-test.run=TestResolvedSubprocessHelper", "--")
+	executable := r.executable
+	if r.scenario == "launch-error" && filepath.Base(name) == "resolvectl" {
+		executable = filepath.Join(filepath.Dir(r.executable), "podlaz-missing-resolvectl-helper")
+	}
+	cmd := exec.CommandContext(ctx, executable, "-test.run=TestResolvedSubprocessHelper", "--")
 	cmd.Env = append(os.Environ(),
 		"PODLAZ_RESOLVED_HELPER=1",
 		"PODLAZ_RESOLVED_TOOL="+filepath.Base(name),
