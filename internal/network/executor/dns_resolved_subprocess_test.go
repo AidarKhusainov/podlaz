@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -167,4 +166,3 @@ func executorCancelledContext(t *testing.T) context.Context {
 }
 
 var _ CommandRunner = (*executorResolvedSubprocessRunner)(nil)
-var _ = filepath.Separator
