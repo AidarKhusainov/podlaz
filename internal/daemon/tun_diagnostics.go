@@ -101,6 +101,7 @@ func (m *XrayManager) runAndPersistTunFailureDiagnostics(ctx context.Context, in
 	if input.metadataError != "" {
 		report = appendTunInternalDiagnosticFailure(report, "transaction-metadata", input.metadataError)
 	}
+	report = appendTunLifecycleFailureProbe(report, input.failurePhase, cause)
 	if cause != nil {
 		report.Errors = append(report.Errors, "TUN lifecycle failure: "+cause.Error())
 	}
@@ -159,7 +160,7 @@ func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transact
 	report, persisted := m.runAndPersistTunFailureDiagnostics(diagnosticCtx, input, cause)
 	classification := report.PrimaryClassification
 	if classification == "" {
-		classification = tundiag.Classification(report.Status)
+		classification = tundiag.ClassInternalDiagnosticError
 	}
 	return tunFailureDiagnosticSummary{
 		PrimaryClassification: classification,
