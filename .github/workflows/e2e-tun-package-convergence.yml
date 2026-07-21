@@ -36,30 +36,36 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Run installed-package convergence scenario
+        timeout-minutes: 115
         shell: bash
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/tun-package-convergence.sh
 
-      - name: Purge package and E2E state
+      - name: Recover and verify clean host state
         if: always()
+        timeout-minutes: 20
         shell: bash
         run: |
-          sudo -n rm -f /run/systemd/system/podlazd.service.d/e2e-tun-hooks.conf >/dev/null 2>&1 || true
-          sudo -n rm -rf /run/podlaz/e2e-tun-hooks >/dev/null 2>&1 || true
-          sudo -n systemctl stop podlaz-e2e-foreign.service >/dev/null 2>&1 || true
-          sudo -n resolvectl revert podlaz-e2e-dns0 >/dev/null 2>&1 || true
-          sudo -n ip link del dev podlaz-e2e-dns0 >/dev/null 2>&1 || true
-          sudo -n ip -4 rule del priority 42424 >/dev/null 2>&1 || true
-          sudo -n ip -4 route flush table 42424 >/dev/null 2>&1 || true
-          sudo -n nft delete table inet podlaz_e2e_foreign_guard >/dev/null 2>&1 || true
-          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
-          if command -v deb-systemd-helper >/dev/null 2>&1; then
-            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
-          fi
-          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
-          sudo -n systemctl reset-failed podlazd.service podlaz-e2e-foreign.service >/dev/null 2>&1 || true
+          PODLAZ_E2E_PURGE_PACKAGE=true \
+            timeout --signal=TERM --kill-after=30s 900s \
+            bash scripts/e2e/tun-package-cleanup.sh
+
+      - name: Scan evidence before upload
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          artifact_dir="${RUNNER_TEMP}/podlaz-e2e-artifacts"
+          mkdir -p "${artifact_dir}"
+          mapfile -t host_needles < <(sed '/^[[:space:]]*$/d' "${RUNNER_TEMP}/podlaz-e2e-tmp/network-sensitive-values.txt" 2>/dev/null || true)
+          python3 scripts/e2e/lib/redaction_scan.py \
+            sensitive-values \
+            "${artifact_dir}" \
+            "${artifact_dir}/pre-upload-redaction-scan.txt" \
+            "${PODLAZ_E2E_PROFILE_URI}" \
+            "${PODLAZ_E2E_PROFILE_URI_LIST}" \
+            "${host_needles[@]}"
 
       - name: Upload package convergence evidence
         if: always()
