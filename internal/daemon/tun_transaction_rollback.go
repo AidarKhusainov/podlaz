@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -63,7 +64,9 @@ func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore,
 	if err := stopRollbackChildProcesses(*tx); err != nil {
 		rollbackErrs = append(rollbackErrs, err)
 	}
-	removeRollbackGeneratedConfigs(*tx)
+	if err := removeRollbackGeneratedConfigs(*tx); err != nil {
+		rollbackErrs = append(rollbackErrs, err)
+	}
 	if len(rollbackErrs) > 0 {
 		return errors.Join(rollbackErrs...)
 	}
@@ -91,15 +94,54 @@ func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tu
 	return executor.Rollback(ctx, plan)
 }
 
-func removeRollbackGeneratedConfigs(tx txstate.Transaction) {
+func removeRollbackGeneratedConfigs(tx txstate.Transaction) error {
+	var errs []error
 	for _, cfg := range tx.Rollback.GeneratedConfigs {
-		removeGeneratedConfig(cfg.Path)
+		if err := removeGeneratedConfig(cfg.Path); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
+}
+
+func verifyRollbackGeneratedConfigsRemoved(tx txstate.Transaction) error {
+	parents := make(map[string]struct{})
+	var errs []error
+	for _, cfg := range tx.Rollback.GeneratedConfigs {
+		if cfg.Path == "" {
+			errs = append(errs, errors.New("generated runtime config rollback path is empty"))
+			continue
+		}
+		path := filepath.Clean(cfg.Path)
+		parents[filepath.Dir(path)] = struct{}{}
+		if _, err := os.Lstat(path); err == nil {
+			errs = append(errs, fmt.Errorf("generated runtime config still exists: %s", path))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("verify generated runtime config removal %s: %w", path, err))
+		}
+	}
+	for parent := range parents {
+		entries, err := os.ReadDir(parent)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			continue
+		case err != nil:
+			errs = append(errs, fmt.Errorf("verify generated runtime config directory removal %s: %w", parent, err))
+		case len(entries) > 0:
+			errs = append(errs, fmt.Errorf("generated runtime config directory is not empty: %s", parent))
+		default:
+			errs = append(errs, fmt.Errorf("generated runtime config directory still exists: %s", parent))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func finishTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) error {
 	if tx.State == txstate.TransactionRolledBack {
 		return nil
+	}
+	if err := verifyRollbackGeneratedConfigsRemoved(*tx); err != nil {
+		return err
 	}
 	if _, err := txstate.Transition(tx, txstate.TransactionRolledBack, transactionNow(store)); err != nil {
 		return err
