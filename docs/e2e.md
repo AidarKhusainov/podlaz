@@ -97,15 +97,15 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 
 TUN fault-injection coverage is opt-in. The workflow job is safe by default and exits without host disruption unless `PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION=true` is set for the self-hosted runner environment.
 
-When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in for `podlazd.service` and runs bounded packaged scenarios for DNS apply failure, route apply failure, post-production network verification failure, synthetic `Current Scopes: none`, and pre-commit daemon interruption. It also runs the real-subprocess resolved result matrix, proves diagnostic persistence precedes the rollback boundary, reloads the historical report after daemon restart, performs an immediate successful retry, verifies clean status/doctor/recover publication, and keeps a foreign nftables sentinel intact. The script scans collected artifacts for configured sensitive values and removes all E2E-only state during cleanup.
+When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in and runs bounded packaged scenarios for DNS apply failure, route apply failure, post-production network verification failure, synthetic `Current Scopes: none`, and pre-commit interruption. It also runs the real-subprocess resolved result matrix, proves diagnostic persistence precedes rollback, reloads historical diagnostics after daemon restart, retries immediately, verifies clean lifecycle publication, preserves a foreign nftables sentinel, scans artifacts for configured sensitive values, and removes E2E-only state during cleanup.
 
-The hook event log is test evidence only. It records fixed low-cardinality lifecycle markers such as diagnostic persistence, rollback start, report finalization, and rollback completion; it must not contain profile material, command output, addresses, or generated configuration.
+The hook event log contains only fixed lifecycle markers used to prove diagnostic/rollback ordering. It must not contain profile material, command output, addresses, or generated configuration.
 
 The hook environment variables are E2E-only implementation details:
 
 - `PODLAZ_E2E_TUN_HOOKS` enables daemon-side E2E hooks;
 - `PODLAZ_E2E_TUN_HOOK_PHASE` selects the precise phase under test;
-- `PODLAZ_E2E_TUN_HOOK_DIR` stores temporary marker files and lifecycle events for runner coordination;
+- `PODLAZ_E2E_TUN_HOOK_DIR` stores temporary marker files and lifecycle events;
 - `PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS` bounds the pre-commit pause probe.
 
 Do not set these variables in packaged or production service operation.
