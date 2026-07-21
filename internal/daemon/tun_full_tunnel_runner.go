@@ -42,18 +42,19 @@ type fullTunnelTransactionRunner struct {
 	executor   tunPlanExecutor
 	now        func() time.Time
 
-	beginNetworkTransaction     func(context.Context, string, profile.Profile, planner.TunPlan, func() time.Time) (tunTransactionResult, error)
-	applyNetworkTransaction     func(context.Context, tunTransactionResult, tunPlanExecutor) error
-	preflightCore               func(context.Context) error
-	saveGeneratedConfigMetadata func(txstate.TransactionStore, string, string, time.Time) error
-	startCore                   func(context.Context) (fullTunnelCoreHandle, error)
-	stopCore                    func(fullTunnelCoreHandle) error
-	verifyCoreStarted           func(<-chan struct{}) error
-	saveCoreMetadata            func(txstate.TransactionStore, string, string, int, time.Time) error
-	verifyConnectivity          func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
-	collectFailureDiagnostics   func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary
-	commitActiveState           func(txstate.TransactionStore, string, fullTunnelCoreHandle, xrayState) error
-	rollbackTransaction         func(context.Context, string, planner.TunPlan, tunPlanExecutor) error
+	beginNetworkTransaction      func(context.Context, string, profile.Profile, planner.TunPlan, func() time.Time) (tunTransactionResult, error)
+	applyNetworkTransaction      func(context.Context, tunTransactionResult, tunPlanExecutor) error
+	preflightCore                func(context.Context) error
+	saveGeneratedConfigMetadata  func(txstate.TransactionStore, string, string, time.Time) error
+	startCore                    func(context.Context) (fullTunnelCoreHandle, error)
+	stopCore                     func(fullTunnelCoreHandle) error
+	verifyCoreStarted            func(<-chan struct{}) error
+	saveCoreMetadata             func(txstate.TransactionStore, string, string, int, time.Time) error
+	verifyConnectivity           func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
+	collectFailureDiagnostics    func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary
+	finalizeFailureDiagnostics   func(context.Context, tunFailureDiagnosticSummary, string)
+	commitActiveState            func(txstate.TransactionStore, string, fullTunnelCoreHandle, xrayState) error
+	rollbackTransaction          func(context.Context, string, planner.TunPlan, tunPlanExecutor) error
 }
 
 func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error) {
@@ -108,9 +109,11 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		err = withTunFailureDiagnosticSummary(err, summary)
 		rollbackErr := r.rollbackNetworkMutation(ctx, transactionID, err)
 		if rollbackErr != nil {
+			r.finalizeFailureDiagnostics(ctx, summary, "failed")
 			_ = r.stopCore(core)
 			return xrayState{}, withTunFailurePhase(phase, transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after %s failure: %w", phase, rollbackErr)))
 		}
+		r.finalizeFailureDiagnostics(ctx, summary, "completed")
 		_ = r.stopCore(core)
 		return xrayState{}, withTunFailurePhase(phase, transactionID, "completed", withTunRollbackCompleted(err))
 	}
@@ -118,9 +121,11 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)
 		err = withTunFailureDiagnosticSummary(err, summary)
 		if rollbackErr := r.rollback(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
+			r.finalizeFailureDiagnostics(ctx, summary, "failed")
 			_ = r.stopCore(core)
 			return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr)))
 		}
+		r.finalizeFailureDiagnostics(ctx, summary, "completed")
 		_ = r.stopCore(core)
 		return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "completed", withTunRollbackCompleted(err))
 	}
@@ -216,6 +221,9 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 		r.collectFailureDiagnostics = func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary {
 			return tunFailureDiagnosticSummary{}
 		}
+	}
+	if r.finalizeFailureDiagnostics == nil {
+		r.finalizeFailureDiagnostics = func(context.Context, tunFailureDiagnosticSummary, string) {}
 	}
 	if r.commitActiveState == nil {
 		r.commitActiveState = func(store txstate.TransactionStore, transactionID string, _ fullTunnelCoreHandle, _ xrayState) error {
