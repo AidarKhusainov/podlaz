@@ -22,18 +22,6 @@ func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, e
 	if !errors.As(err, &commandErr) || commandErr.result != result {
 		return false
 	}
-	return resolvedCommandErrorIsExactMissing(commandErr)
-}
-
-func resolvedCommandFailureIsMissing(err error) bool {
-	var commandErr commandError
-	if !errors.As(err, &commandErr) {
-		return false
-	}
-	return resolvedCommandErrorIsExactMissing(commandErr)
-}
-
-func resolvedCommandErrorIsExactMissing(commandErr commandError) bool {
 	if commandErr.name != "resolvectl" || commandErr.parentErr != nil || commandErr.contextErr != nil || commandErr.err == nil {
 		return false
 	}
@@ -45,7 +33,6 @@ func resolvedCommandErrorIsExactMissing(commandErr commandError) bool {
 	if !errors.As(commandErr.err, &exitErr) || exitErr.ExitCode() != 1 {
 		return false
 	}
-	result := commandErr.result
 	if result.ExitCode != 1 || result.Stdout != "" {
 		return false
 	}
