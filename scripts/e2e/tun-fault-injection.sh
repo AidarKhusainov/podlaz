@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg
+require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg nft
 
 : "${PODLAZ_E2E_ENABLE_TUN_FAULT_INJECTION:=false}"
 : "${PODLAZ_E2E_PROFILE_URI:=}"
@@ -28,9 +28,13 @@ fi
 
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
+DIAGNOSTIC_REPORT="/run/podlaz/diagnostics/tun-last.json"
 HOOK_DIR="/run/podlaz/e2e-tun-hooks"
+HOOK_EVENTS="${HOOK_DIR}/events.log"
 HOOK_DROPIN_DIR="/run/systemd/system/podlazd.service.d"
 HOOK_DROPIN="${HOOK_DROPIN_DIR}/e2e-tun-hooks.conf"
+FOREIGN_NFT_FAMILY="inet"
+FOREIGN_NFT_TABLE="podlaz_e2e_foreign_guard"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 ACTIVE_CONNECT_PID=""
@@ -90,6 +94,16 @@ expect_secret_success() {
   local code=$?
   set -e
   [[ "${code}" == "0" ]] || fail "${name} failed with exit code ${code}"
+}
+
+expect_secret_exit_code() {
+  local name="$1" expected="$2"
+  shift 2
+  set +e
+  capture_secret_command "${name}" "$@"
+  local code=$?
+  set -e
+  [[ "${code}" == "${expected}" ]] || fail "${name} returned exit code ${code}; expected ${expected}"
 }
 
 first_profile_uri() {
@@ -159,12 +173,24 @@ EOF
   wait_for_daemon_socket
 }
 
+create_foreign_nft_sentinel() {
+  sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || true
+  sudo -n nft add table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}"
+}
+
+assert_foreign_nft_sentinel() {
+  local phase="$1"
+  sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >"${E2E_ARTIFACT_DIR}/foreign-nft-${phase}.txt" 2>&1 || \
+    fail "${phase}: unrelated nftables sentinel was removed"
+}
+
 cleanup_tun_fault_injection() {
   local code=$?
   if [[ -n "${ACTIVE_CONNECT_PID}" ]]; then
     wait "${ACTIVE_CONNECT_PID}" >/dev/null 2>&1 || true
   fi
   clear_tun_hook
+  sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || true
   if [[ "${SERVICE_TOUCHED}" == "1" ]]; then
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
   fi
@@ -211,11 +237,99 @@ assert_no_stale_state() {
   expect_secret_success "recover-${phase}-dry-run-json" run_podlaz_as_socket_user recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_candidates_empty "${phase}"
+  assert_foreign_nft_sentinel "${phase}"
+}
+
+copy_root_file() {
+  local source="$1" target="$2"
+  sudo -n test -f "${source}" || fail "required root-owned evidence file is missing: ${source}"
+  sudo -n cat "${source}" >"${target}"
+}
+
+assert_event_present() {
+  local path="$1" event="$2"
+  grep -Fx "${event}" "${path}" >/dev/null || fail "event ${event} is missing from ${path}"
+}
+
+assert_event_order() {
+  local path="$1" first="$2" second="$3"
+  python3 - "${path}" "${first}" "${second}" <<'PY'
+import sys
+path, first, second = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    events = [line.strip() for line in handle if line.strip()]
+try:
+    first_index = events.index(first)
+    second_index = events.index(second)
+except ValueError as exc:
+    raise SystemExit(f"missing lifecycle event: {exc}; events={events}")
+if first_index >= second_index:
+    raise SystemExit(f"invalid lifecycle event order: {first}={first_index}, {second}={second_index}, events={events}")
+PY
+}
+
+assert_failure_report() {
+  local path="$1" phase="$2" classification="$3" rollback="$4" historical="$5"
+  python3 - "${path}" "${phase}" "${classification}" "${rollback}" "${historical}" <<'PY'
+import json
+import sys
+path, phase, classification, rollback, historical = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    report = json.load(handle)
+checks = {
+    "failure_phase": phase,
+    "primary_classification": classification,
+    "rollback_status": rollback,
+}
+for key, expected in checks.items():
+    actual = report.get(key)
+    if actual != expected:
+        raise SystemExit(f"{path}: {key}={actual!r}, expected {expected!r}")
+if report.get("primary_classification") in {"healthy", "degraded", "unhealthy", "unavailable"}:
+    raise SystemExit(f"{path}: overall status leaked into classification taxonomy")
+if historical == "true" and report.get("historical") is not True:
+    raise SystemExit(f"{path}: expected historical report after daemon reload")
+PY
+}
+
+capture_failure_evidence() {
+  local phase="$1" classification="$2"
+  local events="${E2E_ARTIFACT_DIR}/${phase}-events.log"
+  local report="${E2E_ARTIFACT_DIR}/${phase}-report.json"
+  copy_root_file "${HOOK_EVENTS}" "${events}"
+  copy_root_file "${DIAGNOSTIC_REPORT}" "${report}"
+  assert_event_present "${events}" "diagnostics-persisted"
+  assert_event_present "${events}" "diagnostics-finalized-completed"
+  assert_event_present "${events}" "rollback-completed"
+  assert_event_order "${events}" "diagnostics-persisted" "rollback-started"
+  assert_event_order "${events}" "rollback-started" "rollback-completed"
+  assert_failure_report "${report}" "${phase}" "${classification}" "completed" any
 }
 
 run_apply_failure_probe() {
-  local phase="$1" id="$2"
-  log "TUN apply failure probe: ${phase}"
+  local hook_phase="$1" id="$2"
+  log "TUN apply failure probe: ${hook_phase}"
+  configure_tun_hook "${hook_phase}"
+  collect_host_snapshot "before-${hook_phase}"
+  set +e
+  capture_secret_command "connect-${hook_phase}" run_podlaz_as_socket_user connect --mode tun "${id}"
+  local code=$?
+  set -e
+  [[ "${code}" != "0" ]] || fail "${hook_phase}: connect unexpectedly succeeded"
+  capture_failure_evidence network-apply network_apply_failure
+  assert_foreign_nft_sentinel "after-${hook_phase}-failure"
+  clear_tun_hook
+  sudo -n systemctl restart podlazd.service
+  wait_for_daemon_socket
+  expect_secret_success "recover-execute-${hook_phase}" run_podlaz_as_socket_user recover --execute --yes
+  check_direct_connectivity "after-${hook_phase}"
+  assert_no_stale_state "after-${hook_phase}"
+  collect_host_snapshot "after-${hook_phase}"
+}
+
+run_network_verify_probe() {
+  local id="$1" phase="network-verify"
+  log "TUN network verification failure and diagnostic persistence probe"
   configure_tun_hook "${phase}"
   collect_host_snapshot "before-${phase}"
   set +e
@@ -223,13 +337,55 @@ run_apply_failure_probe() {
   local code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "${phase}: connect unexpectedly succeeded"
+  capture_failure_evidence "${phase}" network_verify_failure
+  assert_event_present "${E2E_ARTIFACT_DIR}/${phase}-events.log" network-verify-injected
+  assert_foreign_nft_sentinel "after-${phase}-failure"
+
   clear_tun_hook
   sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
-  expect_secret_success "recover-execute-${phase}" run_podlaz_as_socket_user recover --execute --yes
+  expect_secret_exit_code "doctor-${phase}-historical-json" 3 run_podlaz_as_socket_user doctor --tun --json
+  assert_json_file "${LAST_STDOUT}"
+  assert_failure_report "${LAST_STDOUT}" "${phase}" network_verify_failure completed true
+
+  expect_secret_success "connect-${phase}-immediate-retry" run_podlaz_as_socket_user connect --mode tun "${id}"
+  expect_secret_success "disconnect-${phase}-immediate-retry" run_podlaz_as_socket_user disconnect
+  check_direct_connectivity "after-${phase}-retry"
+  assert_no_stale_state "after-${phase}-retry"
+  collect_host_snapshot "after-${phase}-retry"
+}
+
+run_inactive_scope_probe() {
+  local id="$1" phase="dns-inactive-scope"
+  log "Packaged resolved verification with synthetic Current Scopes: none"
+  configure_tun_hook "${phase}"
+  collect_host_snapshot "before-${phase}"
+  expect_secret_success "connect-${phase}" run_podlaz_as_socket_user connect --mode tun "${id}"
+
+  local events="${E2E_ARTIFACT_DIR}/${phase}-events.log"
+  local status="${E2E_ARTIFACT_DIR}/${phase}-resolvectl-status.txt"
+  copy_root_file "${HOOK_EVENTS}" "${events}"
+  assert_event_present "${events}" resolved-current-scopes-none
+  sudo -n resolvectl status podlaz0 --no-pager >"${status}" 2>&1
+  grep -F "DNS Servers:" "${status}" >/dev/null || fail "${phase}: resolved status has no configured DNS servers"
+  grep -F "DNS Domain: ~." "${status}" >/dev/null || fail "${phase}: resolved status has no route-only domain"
+  grep -F "+DefaultRoute" "${status}" >/dev/null || fail "${phase}: resolved status has no DNS default route"
+  assert_foreign_nft_sentinel "during-${phase}"
+
+  expect_secret_success "disconnect-${phase}" run_podlaz_as_socket_user disconnect
+  clear_tun_hook
+  sudo -n systemctl restart podlazd.service
+  wait_for_daemon_socket
   check_direct_connectivity "after-${phase}"
   assert_no_stale_state "after-${phase}"
   collect_host_snapshot "after-${phase}"
+}
+
+run_resolved_subprocess_matrix() {
+  log "Real subprocess matrix for strict resolved missing-device semantics"
+  go test ./internal/recovery \
+    -run 'Test(ResolvedMissingDeviceRecoveryValidatesRealProcessOutcome|TransactionDNSRollbackValidatesRealProcessOutcome)$' \
+    -count=1 -v 2>&1 | tee "${E2E_ARTIFACT_DIR}/resolved-subprocess-matrix.log"
 }
 
 run_before_commit_probe() {
@@ -295,10 +451,16 @@ sudo -n systemctl reset-failed podlazd.service || true
 sudo -n systemctl start podlazd.service
 SERVICE_TOUCHED=1
 wait_for_daemon_socket
+create_foreign_nft_sentinel
+assert_foreign_nft_sentinel initial
 
+run_resolved_subprocess_matrix
 run_apply_failure_probe dns-apply "${PROFILE_ID}"
 run_apply_failure_probe route-apply "${PROFILE_ID}"
+run_network_verify_probe "${PROFILE_ID}"
+run_inactive_scope_probe "${PROFILE_ID}"
 run_before_commit_probe "${PROFILE_ID}"
+assert_foreign_nft_sentinel final
 assert_artifacts_do_not_contain_sensitive_values "tun-fault-injection" "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}"
 
 log "TUN fault-injection e2e completed"
