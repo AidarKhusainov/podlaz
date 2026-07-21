@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"testing"
 )
 
@@ -20,7 +19,7 @@ Current DNS Server: 1.1.1.1
        DNS Servers: 1.1.1.1
         DNS Domain: ~.`},
 		},
-		errs: []error{errors.New("exit status 1")},
+		errs: []error{executorTestExitError{code: 1}},
 	}
 	executor := ResolvedDNSExecutor{Runner: runner, VerifyAttempts: 1}
 	plan := dnsPlanForTest()
