@@ -218,7 +218,7 @@ func (e e2eHookDNSMissingLinkRollbackExecutor) Apply(ctx context.Context, plan p
 	if err := pauseForE2EDNSMissingLinkRollback(ctx); err != nil {
 		return step, err
 	}
-	return step, errors.New("E2E hook: missing-link rollback requested after DNS apply")
+	return step, nil
 }
 
 func (e e2eHookDNSMissingLinkRollbackExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
