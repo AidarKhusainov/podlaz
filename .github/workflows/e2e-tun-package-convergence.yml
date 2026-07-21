@@ -43,6 +43,7 @@ jobs:
           bash scripts/e2e/tun-package-convergence.sh
 
       - name: Recover and verify clean host state
+        id: cleanup
         if: always()
         timeout-minutes: 20
         shell: bash
@@ -52,7 +53,8 @@ jobs:
             bash scripts/e2e/tun-package-cleanup.sh
 
       - name: Scan evidence before upload
-        if: always()
+        id: evidence_scan
+        if: ${{ always() && steps.cleanup.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         run: |
@@ -77,7 +79,7 @@ jobs:
             "${host_needles[@]}"
 
       - name: Upload package convergence evidence
-        if: always()
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: podlaz-tun-package-convergence-e2e-evidence
