@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	managedDNSCandidateKind     = "dns-link"
-	managedDNSDescription       = "systemd-resolved link state"
-	managedDNSTarget            = "systemd-resolved link " + managedInterface
+	managedDNSCandidateKind      = "dns-link"
+	managedDNSDescription        = "systemd-resolved link state"
+	managedDNSTarget             = "systemd-resolved link " + managedInterface
 	maxResolvedMissingStderrSize = 512
 )
 
