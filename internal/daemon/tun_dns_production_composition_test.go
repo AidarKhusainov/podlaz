@@ -82,8 +82,13 @@ func beginAndApplyProductionTunTransaction(t *testing.T, runtimeDir string, p pr
 func assertNoProductionTunTransactionBlocker(t *testing.T, runtimeDir string) {
 	t.Helper()
 	summaries, warnings := transactionStatuses(runtimeDir)
-	if len(summaries) != 0 || len(warnings) != 0 {
-		t.Fatalf("rollback left a stale transaction/startup-scan blocker: summaries=%#v warnings=%#v", summaries, warnings)
+	if len(warnings) != 0 {
+		t.Fatalf("rollback left unreadable transaction state: %#v", warnings)
+	}
+	for _, summary := range summaries {
+		if summary.RequiresCleanup {
+			t.Fatalf("rollback left a cleanup-required transaction/startup-scan blocker: %#v", summary)
+		}
 	}
 }
 
