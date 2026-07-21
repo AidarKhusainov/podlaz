@@ -116,6 +116,7 @@ delete_owned_policy_rules() {
 }
 
 fallback_cleanup() {
+  local status=0
   record_cleanup_evidence fallback_cleanup_attempted true
   timeout --signal=TERM --kill-after=5s 20s sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
   stop_owned_xray
@@ -125,13 +126,14 @@ fallback_cleanup() {
     record_cleanup_evidence fallback_routes_removed true
   else
     record_cleanup_evidence fallback_routes_removed false
-    return 1
+    status=1
   fi
   delete_owned_policy_rules
   sudo -n ip -4 route flush table 51820 >/dev/null 2>&1 || true
   sudo -n ip -6 route flush table 51820 >/dev/null 2>&1 || true
   sudo -n ip link del dev podlaz0 >/dev/null 2>&1 || true
   sudo -n rm -rf -- /run/podlaz/generated /run/podlaz/transactions >/dev/null 2>&1 || true
+  return "${status}"
 }
 
 cleanup_e2e_sentinels() {
@@ -204,9 +206,13 @@ assert_cleanup_complete() {
   record_cleanup_evidence cleanup_assertions pass
 }
 
+cleanup_status=0
 clear_tun_hook
 attempt_daemon_recovery
-fallback_cleanup
+if ! fallback_cleanup; then
+  cleanup_status=1
+fi
 cleanup_e2e_sentinels
 purge_package
 assert_cleanup_complete
+exit "${cleanup_status}"
