@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import subprocess
 import sys
@@ -19,6 +20,11 @@ DEV_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,64}$")
 SERVER_RULE_PRIORITY = "9999:"
 
 
+def privileged_command(*args: str) -> list[str]:
+    prefix = [] if os.geteuid() == 0 else ["sudo", "-n"]
+    return [*prefix, *args]
+
+
 @dataclass(frozen=True)
 class OwnedRoute:
     family: str
@@ -28,16 +34,16 @@ class OwnedRoute:
     dev: str = ""
 
     def delete_command(self) -> list[str]:
-        args = ["sudo", "-n", "ip", self.family, "route", "del", self.cidr]
+        args = ["ip", self.family, "route", "del", self.cidr]
         if self.via:
             args.extend(["via", self.via])
         if self.dev:
             args.extend(["dev", self.dev])
         args.extend(["table", self.table])
-        return args
+        return privileged_command(*args)
 
     def show_command(self) -> list[str]:
-        return ["sudo", "-n", "ip", self.family, "route", "show", "table", self.table, "exact", self.cidr]
+        return privileged_command("ip", self.family, "route", "show", "table", self.table, "exact", self.cidr)
 
 
 def validated_families(cidr: str, via: str) -> list[str]:
@@ -100,7 +106,7 @@ def reserved_rule_routes() -> list[OwnedRoute]:
     routes: list[OwnedRoute] = []
     for family in ("-4", "-6"):
         result = subprocess.run(
-            ["sudo", "-n", "ip", family, "rule", "show"],
+            privileged_command("ip", family, "rule", "show"),
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
