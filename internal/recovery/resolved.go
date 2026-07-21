@@ -12,6 +12,7 @@ const (
 	managedDNSDescription        = "systemd-resolved link state"
 	managedDNSTarget             = "systemd-resolved link " + managedInterface
 	maxResolvedMissingStderrSize = 512
+	resolvedMissingDeviceStderr  = `Failed to resolve interface "podlaz0": No such device`
 )
 
 func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner CommandRunner) {
@@ -66,7 +67,7 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 		return failed(candidate, fmt.Errorf("resolvectl command is unavailable"))
 	}
 	revert, revertErr := runCommand(ctx, e.Runner, resolvectlPath, "revert", managedInterface)
-	if resolvedRevertAlreadyMissing(ctx, revert, revertErr) {
+	if resolvedMissingDeviceResult(ctx, revert, revertErr) {
 		return recovered(candidate)
 	}
 	if !commandSucceeded(revert, revertErr) {
@@ -83,7 +84,7 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 	return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", commandFailureMessage(status, statusErr)))
 }
 
-func resolvedRevertAlreadyMissing(ctx context.Context, result CommandResult, err error) bool {
+func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err error) bool {
 	if ctx != nil && ctx.Err() != nil {
 		return false
 	}
@@ -101,7 +102,7 @@ func resolvedRevertAlreadyMissing(ctx context.Context, result CommandResult, err
 	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return stderr == `Failed to resolve interface "podlaz0": No such device`
+	return stderr == resolvedMissingDeviceStderr
 }
 
 func resolvedStatusResourceMissing(result CommandResult) bool {
@@ -112,12 +113,5 @@ func resolvedStatusResourceMissing(result CommandResult) bool {
 	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return stderr == `Link podlaz0 does not exist.` || stderr == `Failed to resolve interface "podlaz0": No such device`
-}
-
-func resolvedCommandErrorIsMissing(err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	return strings.TrimSpace(err.Error()) == `resolvectl revert podlaz0: exit code 1, stderr: Failed to resolve interface "podlaz0": No such device`
+	return stderr == `Link podlaz0 does not exist.` || stderr == resolvedMissingDeviceStderr
 }
