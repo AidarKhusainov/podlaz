@@ -2,7 +2,6 @@ package recovery
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 
@@ -27,7 +26,7 @@ func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(
 			"resolvectl revert podlaz0": {
 				stderr:   resolvedMissingDeviceStderr,
 				exitCode: 1,
-				err:      resolvedTestExitError(1),
+				err:      resolvedTestExitError{code: 1},
 			},
 		},
 	}
@@ -44,14 +43,4 @@ func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("successful transaction recovery must remove transaction state, stat err=%v", err)
 	}
-}
-
-type resolvedTestExitError int
-
-func (e resolvedTestExitError) Error() string {
-	return fmt.Sprintf("exit status %d", int(e))
-}
-
-func (e resolvedTestExitError) ExitCode() int {
-	return int(e)
 }
