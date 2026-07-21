@@ -2,14 +2,16 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
 
 const (
-	managedDNSCandidateKind = "dns-link"
-	managedDNSDescription   = "systemd-resolved link state"
-	managedDNSTarget        = "systemd-resolved link " + managedInterface
+	managedDNSCandidateKind     = "dns-link"
+	managedDNSDescription       = "systemd-resolved link state"
+	managedDNSTarget            = "systemd-resolved link " + managedInterface
+	maxResolvedMissingStderrSize = 512
 )
 
 func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner CommandRunner) {
@@ -18,7 +20,7 @@ func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner Command
 		return
 	}
 	status, statusErr := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedResourceMissing(status) {
+	if resolvedStatusResourceMissing(status) {
 		return
 	}
 	if !commandSucceeded(status, statusErr) {
@@ -64,7 +66,7 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 		return failed(candidate, fmt.Errorf("resolvectl command is unavailable"))
 	}
 	revert, revertErr := runCommand(ctx, e.Runner, resolvectlPath, "revert", managedInterface)
-	if resolvedResourceMissing(revert) {
+	if resolvedRevertAlreadyMissing(ctx, revert, revertErr) {
 		return recovered(candidate)
 	}
 	if !commandSucceeded(revert, revertErr) {
@@ -72,7 +74,7 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 	}
 
 	status, statusErr := runCommand(ctx, e.Runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedResourceMissing(status) {
+	if resolvedStatusResourceMissing(status) {
 		return recovered(candidate)
 	}
 	if commandSucceeded(status, statusErr) {
@@ -81,14 +83,41 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 	return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", commandFailureMessage(status, statusErr)))
 }
 
-func resolvedResourceMissing(result CommandResult) bool {
-	if resourceMissing(result) {
-		return true
+func resolvedRevertAlreadyMissing(ctx context.Context, result CommandResult, err error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
 	}
-	text := strings.ToLower(result.Stdout + " " + result.Stderr)
-	return result.ExitCode != 0 && strings.Contains(text, "no such device")
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 {
+		return false
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return false
+	}
+	stderr := strings.TrimSpace(result.Stderr)
+	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+		return false
+	}
+	return stderr == `Failed to resolve interface "podlaz0": No such device`
+}
+
+func resolvedStatusResourceMissing(result CommandResult) bool {
+	if result.ExitCode != 1 || strings.TrimSpace(result.Stdout) != "" {
+		return false
+	}
+	stderr := strings.TrimSpace(result.Stderr)
+	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+		return false
+	}
+	return stderr == `Link podlaz0 does not exist.` || stderr == `Failed to resolve interface "podlaz0": No such device`
 }
 
 func resolvedCommandErrorIsMissing(err error) bool {
-	return commandErrorIsMissing(err) || errorStringContains(err, "no such device")
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	return strings.TrimSpace(err.Error()) == `resolvectl revert podlaz0: exit code 1, stderr: Failed to resolve interface "podlaz0": No such device`
 }
