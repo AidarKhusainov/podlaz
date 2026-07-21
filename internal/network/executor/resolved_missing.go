@@ -15,18 +15,26 @@ type processExitCoder interface {
 }
 
 func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, err error) bool {
-	if ctx == nil || ctx.Err() != nil || err == nil {
+	if ctx == nil || ctx.Err() != nil {
 		return false
 	}
+	var commandErr commandError
+	if !errors.As(err, &commandErr) || commandErr.result != result {
+		return false
+	}
+	return resolvedCommandErrorIsExactMissing(commandErr)
+}
 
+func resolvedCommandFailureIsMissing(err error) bool {
 	var commandErr commandError
 	if !errors.As(err, &commandErr) {
 		return false
 	}
-	if commandErr.contextErr != nil || commandErr.err == nil {
-		return false
-	}
-	if commandErr.result != result {
+	return resolvedCommandErrorIsExactMissing(commandErr)
+}
+
+func resolvedCommandErrorIsExactMissing(commandErr commandError) bool {
+	if commandErr.name != "resolvectl" || commandErr.parentErr != nil || commandErr.contextErr != nil || commandErr.err == nil {
 		return false
 	}
 	if errors.Is(commandErr.err, context.Canceled) || errors.Is(commandErr.err, context.DeadlineExceeded) {
@@ -37,6 +45,7 @@ func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, e
 	if !errors.As(commandErr.err, &exitErr) || exitErr.ExitCode() != 1 {
 		return false
 	}
+	result := commandErr.result
 	if result.ExitCode != 1 || result.Stdout != "" {
 		return false
 	}
