@@ -2,9 +2,9 @@
 
 Manual host validation for behavior that is not suitable for the default pull-request gate.
 
-The repository keeps `.github/workflows/e2e.yml` as a `workflow_dispatch` workflow for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure: if no VPS/self-hosted runner is available, record manual evidence in the related pull request, issue, or release notes.
+The repository keeps `.github/workflows/e2e.yml` as a `workflow_dispatch` workflow for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure in general, but an issue or pull request may require a particular E2E result before completion. Record unavailable infrastructure or completed evidence in the related pull request, issue, or release notes.
 
-The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results should be treated as manually requested validation and release evidence, not as a default merge blocker.
+The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results should be treated as manually requested validation and release evidence, not as an automatic default gate.
 
 ## Run through GitHub Actions
 
