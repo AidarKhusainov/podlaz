@@ -64,7 +64,10 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 		return failed(candidate, fmt.Errorf("resolvectl command is unavailable"))
 	}
 	revert, revertErr := runCommand(ctx, e.Runner, resolvectlPath, "revert", managedInterface)
-	if !commandSucceeded(revert, revertErr) && !resolvedResourceMissing(revert) {
+	if resolvedResourceMissing(revert) {
+		return recovered(candidate)
+	}
+	if !commandSucceeded(revert, revertErr) {
 		return failed(candidate, fmt.Errorf("revert systemd-resolved DNS: %s", commandFailureMessage(revert, revertErr)))
 	}
 
