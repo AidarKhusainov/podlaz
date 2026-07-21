@@ -20,12 +20,15 @@ const (
 	e2eTunHookDirEnv            = "PODLAZ_E2E_TUN_HOOK_DIR"
 	e2eTunHookTimeoutSecondsEnv = "PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS"
 
-	e2eTunHookRouteApplyPhase        = "route-apply"
-	e2eTunHookDNSApplyPhase          = "dns-apply"
-	e2eTunHookNetworkVerifyPhase     = "network-verify"
-	e2eTunHookDNSInactiveScopePhase  = "dns-inactive-scope"
-	e2eTunHookBeforeCommitPausePhase = "before-commit-pause"
-	e2eTunHookEventsFile             = "events.log"
+	e2eTunHookRouteApplyPhase             = "route-apply"
+	e2eTunHookDNSApplyPhase               = "dns-apply"
+	e2eTunHookNetworkVerifyPhase          = "network-verify"
+	e2eTunHookDNSInactiveScopePhase       = "dns-inactive-scope"
+	e2eTunHookDNSMissingLinkRollbackPhase = "dns-missing-link-rollback"
+	e2eTunHookBeforeCommitPausePhase      = "before-commit-pause"
+	e2eTunHookEventsFile                  = "events.log"
+	e2eTunHookDNSMissingLinkReadyFile     = "dns-missing-link.ready"
+	e2eTunHookDNSMissingLinkContinueFile  = "dns-missing-link.continue"
 )
 
 func e2eTunHooksEnabled() bool {
@@ -49,6 +52,7 @@ func validateE2ETunHookConfig() error {
 		e2eTunHookDNSApplyPhase,
 		e2eTunHookNetworkVerifyPhase,
 		e2eTunHookDNSInactiveScopePhase,
+		e2eTunHookDNSMissingLinkRollbackPhase,
 		e2eTunHookBeforeCommitPausePhase:
 		return nil
 	case "":
@@ -73,6 +77,8 @@ func maybeWrapE2ETunHookExecutor(executor netexecutor.DNSAwareTunExecutor) tunPl
 		}
 		resolved.Runner = e2eInactiveScopeCommandRunner{delegate: resolved.Runner}
 		executor.DNS = resolved
+	case e2eTunHookDNSMissingLinkRollbackPhase:
+		executor.DNS = e2eHookDNSMissingLinkRollbackExecutor{delegate: executor.DNS}
 	}
 	return executor
 }
@@ -195,6 +201,71 @@ func (e e2eHookDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPla
 		return errors.New("missing DNS executor")
 	}
 	return e.delegate.Rollback(ctx, plan)
+}
+
+type e2eHookDNSMissingLinkRollbackExecutor struct {
+	delegate netexecutor.DNSExecutor
+}
+
+func (e e2eHookDNSMissingLinkRollbackExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan) (netexecutor.Step, error) {
+	if e.delegate == nil {
+		return netexecutor.Step{}, errors.New("missing DNS executor")
+	}
+	step, err := e.delegate.Apply(ctx, plan)
+	if err != nil {
+		return step, err
+	}
+	if err := pauseForE2EDNSMissingLinkRollback(ctx); err != nil {
+		return step, err
+	}
+	return step, errors.New("E2E hook: missing-link rollback requested after DNS apply")
+}
+
+func (e e2eHookDNSMissingLinkRollbackExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
+	if e.delegate == nil {
+		return errors.New("missing DNS executor")
+	}
+	return e.delegate.Verify(ctx, plan)
+}
+
+func (e e2eHookDNSMissingLinkRollbackExecutor) Rollback(ctx context.Context, plan planner.TunDNSPlan) error {
+	if e.delegate == nil {
+		return errors.New("missing DNS executor")
+	}
+	return e.delegate.Rollback(ctx, plan)
+}
+
+func pauseForE2EDNSMissingLinkRollback(ctx context.Context) error {
+	dir := e2eTunHookDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create E2E TUN hook directory: %w", err)
+	}
+	ready := filepath.Join(dir, e2eTunHookDNSMissingLinkReadyFile)
+	if err := os.WriteFile(ready, []byte("phase="+e2eTunHookDNSMissingLinkRollbackPhase+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write E2E missing-link ready marker: %w", err)
+	}
+	recordE2ETunHookEvent("dns-missing-link-ready")
+
+	continuePath := filepath.Join(dir, e2eTunHookDNSMissingLinkContinueFile)
+	timer := time.NewTimer(e2eTunHookTimeout())
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return fmt.Errorf("E2E TUN hook %s timed out", e2eTunHookDNSMissingLinkRollbackPhase)
+		case <-ticker.C:
+			if _, err := os.Stat(continuePath); err == nil {
+				recordE2ETunHookEvent("dns-missing-link-released")
+				return nil
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect E2E missing-link continue marker: %w", err)
+			}
+		}
+	}
 }
 
 type e2eHookNetworkVerifyExecutor struct {
