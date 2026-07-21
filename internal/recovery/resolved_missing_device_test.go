@@ -2,7 +2,7 @@ package recovery
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -15,7 +15,7 @@ func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsRecovered(t *testin
 	runner.commands["resolvectl revert podlaz0"] = []resolvedRecoveryCommand{{
 		stderr:   `Failed to resolve interface "podlaz0": No such device`,
 		exitCode: 1,
-		err:      errors.New("exit status 1"),
+		err:      resolvedTestExitError{code: 1},
 	}}
 	runtimeDir := filepath.Join(t.TempDir(), "podlaz")
 
@@ -35,4 +35,16 @@ func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsRecovered(t *testin
 	if result.HasFailures() || result.HasIncompleteCleanup() {
 		t.Fatalf("missing-device cleanup must be complete: %#v", result)
 	}
+}
+
+type resolvedTestExitError struct {
+	code int
+}
+
+func (e resolvedTestExitError) Error() string {
+	return fmt.Sprintf("exit status %d", e.code)
+}
+
+func (e resolvedTestExitError) ExitCode() int {
+	return e.code
 }
