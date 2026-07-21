@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 const (
 	tunDiagnosticRunTimeout        = 40 * time.Second
 	tunFailureDiagnosticRunTimeout = 6 * time.Second
+	tunDiagnosticFinalizeTimeout   = 2 * time.Second
 )
 
 type tunDiagnosticInput struct {
@@ -25,6 +27,8 @@ type tunDiagnosticInput struct {
 	serverEndpoint string
 	serverName     string
 	metadataError  string
+	failurePhase   string
+	rollbackStatus string
 }
 
 func (m *XrayManager) TunDiagnostics(ctx context.Context) tundiag.Report {
@@ -98,7 +102,7 @@ func (m *XrayManager) runAndPersistTunFailureDiagnostics(ctx context.Context, in
 		report = appendTunInternalDiagnosticFailure(report, "transaction-metadata", input.metadataError)
 	}
 	if cause != nil {
-		report.Errors = append(report.Errors, "connectivity verification failure: "+cause.Error())
+		report.Errors = append(report.Errors, "TUN lifecycle failure: "+cause.Error())
 	}
 	return m.persistTunDiagnosticReport(tundiag.Finalize(report))
 }
@@ -137,7 +141,13 @@ func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transact
 		TUN:           "enabled (" + emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName) + ")",
 		TransactionID: transactionID,
 	}
-	input := tunDiagnosticInput{state: state, coreRunning: true, plan: plan}
+	input := tunDiagnosticInput{
+		state:          state,
+		coreRunning:    true,
+		plan:           plan,
+		failurePhase:   tunLifecycleDiagnosticFailurePhase(cause),
+		rollbackStatus: "pending",
+	}
 	if transaction, _, err := (txstate.TransactionStore{RuntimeDir: m.runtimeDir()}).Load(transactionID); err != nil {
 		input.metadataError = "load TUN transaction diagnostic metadata: " + err.Error()
 	} else {
@@ -158,6 +168,34 @@ func (m *XrayManager) collectTunFailureDiagnostics(ctx context.Context, transact
 	}
 }
 
+func tunLifecycleDiagnosticFailurePhase(cause error) string {
+	var mutationErr *tunNetworkMutationError
+	if errors.As(cause, &mutationErr) && strings.TrimSpace(mutationErr.Phase()) != "" {
+		return mutationErr.Phase()
+	}
+	return "connectivity-verify"
+}
+
+func (m *XrayManager) finalizeTunFailureDiagnosticRollback(ctx context.Context, summary tunFailureDiagnosticSummary, status string) {
+	if !summary.Persisted || strings.TrimSpace(summary.ReportPath) == "" {
+		return
+	}
+	finalizeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunDiagnosticFinalizeTimeout)
+	defer cancel()
+	select {
+	case <-finalizeCtx.Done():
+		return
+	default:
+	}
+	store := tundiag.Store{RuntimeDir: m.runtimeDir()}
+	report, _, err := store.Load()
+	if err != nil {
+		return
+	}
+	report.RollbackStatus = strings.TrimSpace(status)
+	_, _ = store.Save(report)
+}
+
 func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 	plan := input.plan
 	snapshot := input.snapshot
@@ -173,8 +211,10 @@ func tunDiagnosticBase(input tunDiagnosticInput) tundiag.Report {
 	}
 	tunName := emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName)
 	return tundiag.Report{
-		GeneratedAt: time.Now().UTC(),
-		Session:     tunDiagnosticSession(input.state, input.coreRunning),
+		GeneratedAt:    time.Now().UTC(),
+		FailurePhase:  strings.TrimSpace(input.failurePhase),
+		RollbackStatus: strings.TrimSpace(input.rollbackStatus),
+		Session:        tunDiagnosticSession(input.state, input.coreRunning),
 		Network: tundiag.Network{
 			PhysicalInterface: snapshot.DefaultIPv4.Interface,
 			SSID:              tunDiagnosticConnectionName(snapshot),
