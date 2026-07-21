@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
@@ -24,8 +25,8 @@ func TestCollectTunFailureDiagnosticsPersistsStableLifecycleClassification(t *te
 		t.Run(tt.phase, func(t *testing.T) {
 			runtimeDir := t.TempDir()
 			manager := NewXrayManager(runtimeDir)
-			manager.snapshotCollector = func(context.Context, snapshotOptions) snapshotResult {
-				return snapshotResult{}
+			manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
+				return netsnapshot.Snapshot{}
 			}
 
 			plan := transactionPlanForTest()
