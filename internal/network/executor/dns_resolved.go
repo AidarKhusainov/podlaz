@@ -160,7 +160,8 @@ func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan)
 		return Step{}, err
 	}
 	link := strings.TrimSpace(plan.TargetLink)
-	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resolvedCommandErrorIsMissing(err) {
+	result, err := observeCommand(ctx, e.Runner, "resolvectl", "revert", link)
+	if err != nil && !resolvedCommandResultIsMissing(ctx, result, err) {
 		return Step{}, fmt.Errorf("refresh stale systemd-resolved DNS for %s: %w", link, err)
 	}
 	args := append([]string{"dns", link}, plan.Servers...)
@@ -188,12 +189,12 @@ func (e ResolvedDNSExecutor) runResolvedApplyCommand(ctx context.Context, args .
 
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		err := runCommand(ctx, e.Runner, "resolvectl", args...)
+		result, err := observeCommand(ctx, e.Runner, "resolvectl", args...)
 		if err == nil {
 			return nil
 		}
 		lastErr = err
-		if !resolvedCommandErrorIsMissing(err) || attempt == attempts {
+		if !resolvedCommandResultIsMissing(ctx, result, err) || attempt == attempts {
 			return err
 		}
 		if err := sleepResolvedDNSPoll(ctx, e.Sleep, pollInterval); err != nil {
@@ -254,15 +255,13 @@ func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link str
 	if len(targetLinks) == 0 {
 		return newResolvedDNSVerifyError(link, true, "link status not found")
 	}
-	lastMismatch := "link configuration does not match the DNS plan"
-	for _, resolvedLink := range targetLinks {
-		mismatch := resolvedLinkMismatch(resolvedLink, plan)
-		if mismatch == "" {
-			return nil
-		}
-		lastMismatch = mismatch
+	if len(targetLinks) != 1 {
+		return newResolvedDNSVerifyError(link, false, "duplicate target link status records: %d", len(targetLinks))
 	}
-	return newResolvedDNSVerifyError(link, true, "%s", lastMismatch)
+	if mismatch := resolvedLinkMismatch(targetLinks[0], plan); mismatch != "" {
+		return newResolvedDNSVerifyError(link, true, "%s", mismatch)
+	}
+	return nil
 }
 
 func resolvedLinkMismatch(link netsnapshot.ResolvedLink, plan planner.TunDNSPlan) string {
@@ -353,14 +352,11 @@ func (e ResolvedDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPl
 	if link == "" {
 		return nil
 	}
-	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resolvedCommandErrorIsMissing(err) {
+	result, err := observeCommand(ctx, e.Runner, "resolvectl", "revert", link)
+	if err != nil && !resolvedCommandResultIsMissing(ctx, result, err) {
 		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", link, err)
 	}
 	return nil
-}
-
-func resolvedCommandErrorIsMissing(err error) bool {
-	return resourceMissing(err) || commandErrorContains(err, "no such device")
 }
 
 func validateDNSPlan(plan planner.TunDNSPlan) error {
