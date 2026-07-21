@@ -117,143 +117,191 @@ func (e DNSAwareTunExecutor) Rollback(ctx context.Context, plan planner.TunPlan)
 }
 
 func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
-	if e.DNS == nil && shouldApplyDNS(plan.DNS) {
+	if e.DNS == nil {
 		return errors.New("missing DNS executor")
 	}
-	if e.Firewall == nil && shouldApplyFirewall(plan.Firewall) {
-		return errors.New("missing firewall executor")
-	}
-	return nil
-}
-
-func shouldApplyDNS(plan planner.TunDNSPlan) bool {
-	return strings.TrimSpace(plan.TargetLink) != "" || len(plan.Servers) > 0 || strings.TrimSpace(plan.Action) != ""
-}
-
-func shouldApplyFirewall(plan planner.TunFirewallPlan) bool {
-	return strings.TrimSpace(plan.Table) != "" || strings.TrimSpace(plan.Action) != ""
-}
-
-// ResolvedDNSExecutor owns the systemd-resolved per-link configuration.
-type ResolvedDNSExecutor struct {
-	Runner             CommandRunner
-	ApplyAttempts      int
-	ApplyPollInterval  time.Duration
-	VerifyAttempts     int
-	VerifyPollInterval time.Duration
-	Sleep              func(context.Context, time.Duration) error
-}
-
-func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan) (Step, error) {
-	if err := validateResolvedDNSPlan(plan); err != nil {
-		return Step{}, err
-	}
-	if err := e.run(ctx, "resolvectl", "revert", plan.TargetLink); err != nil && !resolvedResourceMissing(err) {
-		return Step{}, fmt.Errorf("reset stale DNS link state for %s: %w", plan.TargetLink, err)
-	}
-	serverArgs := append([]string{"dns", plan.TargetLink}, plan.Servers...)
-	if err := e.runApplyCommand(ctx, plan.TargetLink, serverArgs...); err != nil {
-		return Step{}, fmt.Errorf("configure DNS servers for %s: %w", plan.TargetLink, err)
-	}
-	if err := e.runApplyCommand(ctx, plan.TargetLink, "domain", plan.TargetLink, resolvedRouteOnlyDomain); err != nil {
-		return Step{}, fmt.Errorf("configure route-only DNS domain for %s: %w", plan.TargetLink, err)
-	}
-	if err := e.runApplyCommand(ctx, plan.TargetLink, "default-route", plan.TargetLink, "yes"); err != nil {
-		return Step{}, fmt.Errorf("configure DNS default route for %s: %w", plan.TargetLink, err)
-	}
-	return Step{Kind: "dns", Target: plan.TargetLink, Description: plan.Reason, Owner: OwnerDNS}, nil
-}
-
-func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
-	if err := validateResolvedDNSPlan(plan); err != nil {
+	if err := validateDNSPlan(plan.DNS); err != nil {
 		return err
 	}
-	attempts := e.verifyAttempts()
+	if hasFirewallPlan(plan.Firewall) {
+		if e.Firewall == nil {
+			return errors.New("missing firewall executor")
+		}
+		if err := validateFirewallPlan(plan.Firewall); err != nil {
+			return err
+		}
+	}
+	return e.Base.validate()
+}
+
+// ResolvedDNSExecutor applies per-link DNS through resolvectl only. It never
+// edits /etc/resolv.conf.
+type ResolvedDNSExecutor struct {
+	Runner CommandRunner
+
+	// ApplyAttempts and ApplyPollInterval bound retries while systemd-resolved
+	// registers a newly-created podlaz0 link. Only missing-link errors are retried.
+	ApplyAttempts     int
+	ApplyPollInterval time.Duration
+
+	// VerifyAttempts and VerifyPollInterval bound systemd-resolved propagation
+	// polling after Apply. Zero values use conservative production defaults.
+	VerifyAttempts     int
+	VerifyPollInterval time.Duration
+
+	// Sleep is injectable for deterministic tests.
+	Sleep func(context.Context, time.Duration) error
+}
+
+// Apply first removes any stale podlaz-owned per-link record, then configures
+// the DNS servers, route-only default DNS domain, and per-link DNS default route.
+func (e ResolvedDNSExecutor) Apply(ctx context.Context, plan planner.TunDNSPlan) (Step, error) {
+	if err := validateDNSPlan(plan); err != nil {
+		return Step{}, err
+	}
+	link := strings.TrimSpace(plan.TargetLink)
+	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resolvedCommandErrorIsMissing(err) {
+		return Step{}, fmt.Errorf("refresh stale systemd-resolved DNS for %s: %w", link, err)
+	}
+	args := append([]string{"dns", link}, plan.Servers...)
+	if err := e.runResolvedApplyCommand(ctx, args...); err != nil {
+		return Step{}, fmt.Errorf("configure systemd-resolved DNS server for %s: %w", link, err)
+	}
+	if err := e.runResolvedApplyCommand(ctx, "domain", link, resolvedRouteOnlyDomain); err != nil {
+		return Step{}, fmt.Errorf("configure systemd-resolved route-only DNS domain for %s: %w", link, err)
+	}
+	if err := e.runResolvedApplyCommand(ctx, "default-route", link, "yes"); err != nil {
+		return Step{}, fmt.Errorf("configure systemd-resolved DNS default route for %s: %w", link, err)
+	}
+	return Step{Kind: "dns", Target: link, Description: plan.Reason, Owner: OwnerDNS}, nil
+}
+
+func (e ResolvedDNSExecutor) runResolvedApplyCommand(ctx context.Context, args ...string) error {
+	attempts := e.ApplyAttempts
+	if attempts <= 0 {
+		attempts = defaultResolvedApplyAttempts
+	}
+	pollInterval := e.ApplyPollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultResolvedApplyPollInterval
+	}
+
 	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := runCommand(ctx, e.Runner, "resolvectl", args...)
 		if err == nil {
-			lastErr = verifyResolvedDNSStatus(plan, result.Stdout)
-			if lastErr == nil {
-				return nil
-			}
-		} else {
-			lastErr = err
-		}
-		if attempt+1 < attempts {
-			if err := e.sleep(ctx, e.verifyPollInterval()); err != nil {
-				return err
-			}
-		}
-	}
-	return fmt.Errorf("verify systemd-resolved DNS for %s: %w", plan.TargetLink, lastErr)
-}
-
-func (e ResolvedDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPlan) error {
-	if strings.TrimSpace(plan.TargetLink) == "" {
-		return nil
-	}
-	if err := e.run(ctx, "resolvectl", "revert", plan.TargetLink); err != nil && !resolvedResourceMissing(err) {
-		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", plan.TargetLink, err)
-	}
-	return nil
-}
-
-func (e ResolvedDNSExecutor) run(ctx context.Context, name string, args ...string) error {
-	return runCommand(ctx, e.Runner, name, args...)
-}
-
-func (e ResolvedDNSExecutor) runApplyCommand(ctx context.Context, targetLink string, args ...string) error {
-	attempts := e.applyAttempts()
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		lastErr = e.run(ctx, "resolvectl", args...)
-		if lastErr == nil {
 			return nil
 		}
-		if !resolvedResourceMissing(lastErr) {
-			return lastErr
+		lastErr = err
+		if !resolvedCommandErrorIsMissing(err) || attempt == attempts {
+			return err
 		}
-		if attempt+1 < attempts {
-			if err := e.sleep(ctx, e.applyPollInterval()); err != nil {
-				return err
-			}
+		if err := sleepResolvedDNSPoll(ctx, e.Sleep, pollInterval); err != nil {
+			return errors.Join(lastErr, err)
 		}
 	}
-	return fmt.Errorf("systemd-resolved did not register link %s within retry window: %w", targetLink, lastErr)
+	return lastErr
 }
 
-func (e ResolvedDNSExecutor) applyAttempts() int {
-	if e.ApplyAttempts > 0 {
-		return e.ApplyAttempts
+// Verify checks that the target link keeps the planned DNS servers, route-only
+// domain, and DNS default-route setting after apply. Current Scopes is not an
+// ownership or configuration check: systemd-resolved derives it from active
+// lookup scope state and may report none while the per-link configuration is
+// already present. Transient missing link/server/domain/default-route observations
+// are polled for a bounded period instead of failing immediately.
+func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
+	if err := validateDNSPlan(plan); err != nil {
+		return err
 	}
-	return defaultResolvedApplyAttempts
-}
-
-func (e ResolvedDNSExecutor) applyPollInterval() time.Duration {
-	if e.ApplyPollInterval > 0 {
-		return e.ApplyPollInterval
+	link := strings.TrimSpace(plan.TargetLink)
+	attempts := e.VerifyAttempts
+	if attempts <= 0 {
+		attempts = defaultResolvedVerifyAttempts
 	}
-	return defaultResolvedApplyPollInterval
-}
-
-func (e ResolvedDNSExecutor) verifyAttempts() int {
-	if e.VerifyAttempts > 0 {
-		return e.VerifyAttempts
+	pollInterval := e.VerifyPollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultResolvedVerifyPollInterval
 	}
-	return defaultResolvedVerifyAttempts
-}
 
-func (e ResolvedDNSExecutor) verifyPollInterval() time.Duration {
-	if e.VerifyPollInterval > 0 {
-		return e.VerifyPollInterval
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err := e.verifyResolvedDNSOnce(ctx, link, plan)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		var verifyErr resolvedDNSVerifyError
+		if !errors.As(err, &verifyErr) || !verifyErr.retryable || attempt == attempts {
+			return err
+		}
+		if err := sleepResolvedDNSPoll(ctx, e.Sleep, pollInterval); err != nil {
+			return errors.Join(lastErr, err)
+		}
 	}
-	return defaultResolvedVerifyPollInterval
+	return lastErr
 }
 
-func (e ResolvedDNSExecutor) sleep(ctx context.Context, duration time.Duration) error {
-	if e.Sleep != nil {
-		return e.Sleep(ctx, duration)
+func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link string, plan planner.TunDNSPlan) error {
+	result, err := observeCommand(ctx, e.Runner, "resolvectl", "status", "--no-pager")
+	if err != nil {
+		return fmt.Errorf("verify systemd-resolved DNS for %s: %w", link, err)
+	}
+	links := netsnapshot.ParseResolvedLinks(result.Stdout)
+	if foreign, ok := findForeignRouteOnlyDNSOwner(links, link); ok {
+		return newResolvedDNSVerifyError(link, false, "foreign route-only DNS owner %s still has %s", foreign.Name, resolvedRouteOnlyDomain)
+	}
+	targetLinks := findResolvedLinks(links, link)
+	if len(targetLinks) == 0 {
+		return newResolvedDNSVerifyError(link, true, "link status not found")
+	}
+	lastMismatch := "link configuration does not match the DNS plan"
+	for _, resolvedLink := range targetLinks {
+		mismatch := resolvedLinkMismatch(resolvedLink, plan)
+		if mismatch == "" {
+			return nil
+		}
+		lastMismatch = mismatch
+	}
+	return newResolvedDNSVerifyError(link, true, "%s", lastMismatch)
+}
+
+func resolvedLinkMismatch(link netsnapshot.ResolvedLink, plan planner.TunDNSPlan) string {
+	for _, server := range plan.Servers {
+		if !containsDNSValue(link.DNSServers, server) {
+			return fmt.Sprintf("DNS server %s not found", server)
+		}
+	}
+	if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
+		return fmt.Sprintf("route-only domain %s not found", resolvedRouteOnlyDomain)
+	}
+	if !containsDNSValue(link.Protocols, "+DefaultRoute") {
+		return "DNS default route is not enabled"
+	}
+	return ""
+}
+
+type resolvedDNSVerifyError struct {
+	message   string
+	retryable bool
+}
+
+func (e resolvedDNSVerifyError) Error() string {
+	return e.message
+}
+
+func newResolvedDNSVerifyError(link string, retryable bool, format string, args ...any) error {
+	return resolvedDNSVerifyError{
+		message:   fmt.Sprintf("verify systemd-resolved DNS for %s: %s", link, fmt.Sprintf(format, args...)),
+		retryable: retryable,
+	}
+}
+
+func sleepResolvedDNSPoll(ctx context.Context, sleep func(context.Context, time.Duration) error, duration time.Duration) error {
+	if duration <= 0 {
+		return nil
+	}
+	if sleep != nil {
+		return sleep(ctx, duration)
 	}
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
@@ -265,72 +313,23 @@ func (e ResolvedDNSExecutor) sleep(ctx context.Context, duration time.Duration) 
 	}
 }
 
-func validateResolvedDNSPlan(plan planner.TunDNSPlan) error {
-	if strings.TrimSpace(plan.TargetLink) == "" {
-		return errors.New("missing DNS target link")
-	}
-	if plan.Action == planner.DNSActionBlocked {
-		return fmt.Errorf("DNS plan is blocked: %s", plan.Reason)
-	}
-	if plan.Backend != planner.DNSBackendSystemdResolved {
-		return fmt.Errorf("unsupported DNS backend %q", plan.Backend)
-	}
-	if len(plan.Servers) == 0 {
-		return errors.New("missing planned DNS servers")
-	}
-	return nil
-}
-
-func resolvedResourceMissing(err error) bool {
-	return commandErrorContains(err, "link "+netsnapshot.DefaultTunName+" does not exist", `failed to resolve interface "`+netsnapshot.DefaultTunName+`": no such device`)
-}
-
-func verifyResolvedDNSStatus(plan planner.TunDNSPlan, output string) error {
-	links := netsnapshot.ParseResolvedLinks(output)
-	targetLinks := resolvedLinksByName(links, plan.TargetLink)
-	if len(targetLinks) == 0 {
-		return fmt.Errorf("link status not found for %s", plan.TargetLink)
-	}
-	for _, link := range targetLinks {
-		if resolvedLinkMatchesPlan(link, plan) {
-			if foreign := foreignResolvedRouteOnlyOwner(links, plan.TargetLink); foreign != "" {
-				return fmt.Errorf("foreign route-only DNS owner remains on %s", foreign)
-			}
-			return nil
+func findForeignRouteOnlyDNSOwner(links []netsnapshot.ResolvedLink, targetLink string) (netsnapshot.ResolvedLink, bool) {
+	for _, link := range links {
+		if strings.TrimSpace(link.Name) == "" || link.Name == targetLink {
+			continue
+		}
+		if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
+			continue
+		}
+		if containsDNSValue(link.CurrentScopes, "DNS") || containsDNSValue(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
+			return link, true
 		}
 	}
-	return resolvedDNSMismatch(plan, targetLinks[0])
+	return netsnapshot.ResolvedLink{}, false
 }
 
-func resolvedLinkMatchesPlan(link netsnapshot.ResolvedLink, plan planner.TunDNSPlan) bool {
-	if !containsString(link.Domains, resolvedRouteOnlyDomain) || !link.DefaultRoute {
-		return false
-	}
-	for _, server := range plan.Servers {
-		if !containsString(link.DNSServers, server) {
-			return false
-		}
-	}
-	return true
-}
-
-func resolvedDNSMismatch(plan planner.TunDNSPlan, link netsnapshot.ResolvedLink) error {
-	for _, server := range plan.Servers {
-		if !containsString(link.DNSServers, server) {
-			return fmt.Errorf("DNS server %s not found on link %s", server, plan.TargetLink)
-		}
-	}
-	if !containsString(link.Domains, resolvedRouteOnlyDomain) {
-		return fmt.Errorf("route-only domain %s not found on link %s", resolvedRouteOnlyDomain, plan.TargetLink)
-	}
-	if !link.DefaultRoute {
-		return fmt.Errorf("DNS default route is not enabled on link %s", plan.TargetLink)
-	}
-	return fmt.Errorf("systemd-resolved link %s does not match planned configuration", plan.TargetLink)
-}
-
-func resolvedLinksByName(links []netsnapshot.ResolvedLink, name string) []netsnapshot.ResolvedLink {
-	var matches []netsnapshot.ResolvedLink
+func findResolvedLinks(links []netsnapshot.ResolvedLink, name string) []netsnapshot.ResolvedLink {
+	matches := make([]netsnapshot.ResolvedLink, 0, 1)
 	for _, link := range links {
 		if link.Name == name {
 			matches = append(matches, link)
@@ -339,23 +338,54 @@ func resolvedLinksByName(links []netsnapshot.ResolvedLink, name string) []netsna
 	return matches
 }
 
-func foreignResolvedRouteOnlyOwner(links []netsnapshot.ResolvedLink, targetName string) string {
-	for _, link := range links {
-		if link.Name == targetName {
-			continue
-		}
-		if containsString(link.Domains, resolvedRouteOnlyDomain) && link.CurrentScopesDNS {
-			return link.Name
-		}
-	}
-	return ""
-}
-
-func containsString(values []string, want string) bool {
+func containsDNSValue(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
 			return true
 		}
 	}
 	return false
+}
+
+// Rollback reverts all systemd-resolved per-link state for the podlaz link.
+func (e ResolvedDNSExecutor) Rollback(ctx context.Context, plan planner.TunDNSPlan) error {
+	link := strings.TrimSpace(plan.TargetLink)
+	if link == "" {
+		return nil
+	}
+	if err := runCommand(ctx, e.Runner, "resolvectl", "revert", link); err != nil && !resolvedCommandErrorIsMissing(err) {
+		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", link, err)
+	}
+	return nil
+}
+
+func resolvedCommandErrorIsMissing(err error) bool {
+	return resourceMissing(err) || commandErrorContains(err, "no such device")
+}
+
+func validateDNSPlan(plan planner.TunDNSPlan) error {
+	if plan.Action == planner.DNSActionBlocked {
+		return fmt.Errorf("DNS desired state is blocked: %s", plan.Reason)
+	}
+	if plan.Action != "" && plan.Action != planner.DNSActionConfigure {
+		return fmt.Errorf("unsupported DNS action %q", plan.Action)
+	}
+	if strings.TrimSpace(plan.TargetLink) == "" {
+		return errors.New("missing DNS target link")
+	}
+	if len(plan.Servers) == 0 {
+		return errors.New("missing DNS servers")
+	}
+	if plan.Backend != "" && plan.Backend != planner.DNSBackendSystemdResolved {
+		return fmt.Errorf("unsupported DNS backend %q", plan.Backend)
+	}
+	return nil
+}
+
+func shouldApplyDNS(plan planner.TunDNSPlan) bool {
+	return plan.Action == planner.DNSActionConfigure && strings.TrimSpace(plan.TargetLink) != ""
+}
+
+func hasFirewallPlan(plan planner.TunFirewallPlan) bool {
+	return strings.TrimSpace(plan.Backend) != "" || strings.TrimSpace(plan.Family) != "" || strings.TrimSpace(plan.Table) != "" || strings.TrimSpace(plan.TableAction) != ""
 }
