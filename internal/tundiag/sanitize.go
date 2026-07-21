@@ -12,6 +12,8 @@ const (
 )
 
 func SanitizeReport(report Report) Report {
+	report.FailurePhase = sanitize(report.FailurePhase)
+	report.RollbackStatus = sanitize(report.RollbackStatus)
 	report.Session.State = sanitize(report.Session.State)
 	report.Session.Mode = sanitize(report.Session.Mode)
 	report.Session.ProfileName = sanitize(report.Session.ProfileName)
