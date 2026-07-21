@@ -106,26 +106,38 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	if err := r.applyNetworkTransaction(ctx, result, r.executor); err != nil {
 		phase := networkApplyVerifyPhase(err)
 		summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)
+		recordFailureDiagnosticPersistenceEvent(summary)
 		err = withTunFailureDiagnosticSummary(err, summary)
+		recordE2ETunHookEvent("rollback-started")
 		rollbackErr := r.rollbackNetworkMutation(ctx, transactionID, err)
 		if rollbackErr != nil {
 			r.finalizeFailureDiagnostics(ctx, summary, "failed")
+			recordE2ETunHookEvent("diagnostics-finalized-failed")
+			recordE2ETunHookEvent("rollback-failed")
 			_ = r.stopCore(core)
 			return xrayState{}, withTunFailurePhase(phase, transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after %s failure: %w", phase, rollbackErr)))
 		}
 		r.finalizeFailureDiagnostics(ctx, summary, "completed")
+		recordE2ETunHookEvent("diagnostics-finalized-completed")
+		recordE2ETunHookEvent("rollback-completed")
 		_ = r.stopCore(core)
 		return xrayState{}, withTunFailurePhase(phase, transactionID, "completed", withTunRollbackCompleted(err))
 	}
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
 		summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)
+		recordFailureDiagnosticPersistenceEvent(summary)
 		err = withTunFailureDiagnosticSummary(err, summary)
+		recordE2ETunHookEvent("rollback-started")
 		if rollbackErr := r.rollback(ctx, transactionID, r.plan, r.executor); rollbackErr != nil {
 			r.finalizeFailureDiagnostics(ctx, summary, "failed")
+			recordE2ETunHookEvent("diagnostics-finalized-failed")
+			recordE2ETunHookEvent("rollback-failed")
 			_ = r.stopCore(core)
 			return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr)))
 		}
 		r.finalizeFailureDiagnostics(ctx, summary, "completed")
+		recordE2ETunHookEvent("diagnostics-finalized-completed")
+		recordE2ETunHookEvent("rollback-completed")
 		_ = r.stopCore(core)
 		return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "completed", withTunRollbackCompleted(err))
 	}
@@ -147,6 +159,14 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	}
 
 	return active, nil
+}
+
+func recordFailureDiagnosticPersistenceEvent(summary tunFailureDiagnosticSummary) {
+	if summary.Persisted && strings.TrimSpace(summary.ReportPath) != "" {
+		recordE2ETunHookEvent("diagnostics-persisted")
+		return
+	}
+	recordE2ETunHookEvent("diagnostics-not-persisted")
 }
 
 func networkApplyVerifyPhase(err error) string {
