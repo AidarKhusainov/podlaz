@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
-func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsPersistentRecord(t *testing.T) {
+func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsRecovered(t *testing.T) {
 	runner := newResolvedRecoveryRunner(
-		[]resolvedRecoveryCommand{missingPodlazLink(), missingPodlazLink(), missingPodlazLink()},
-		[]resolvedRecoveryCommand{resolvedLinkExists(), resolvedLinkExists()},
+		[]resolvedRecoveryCommand{missingPodlazLink(), missingPodlazLink()},
+		[]resolvedRecoveryCommand{resolvedLinkExists()},
 	)
 	runner.commands["resolvectl revert podlaz0"] = []resolvedRecoveryCommand{{
 		stderr:   `Failed to resolve interface "podlaz0": No such device`,
@@ -30,7 +29,10 @@ func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsPersistentRecord(t 
 		t.Fatalf("expected one cleanup result, got %#v", result.Results)
 	}
 	cleanup := result.Results[0]
-	if cleanup.Candidate.Kind != managedDNSCandidateKind || cleanup.Status != "skipped" || !strings.Contains(cleanup.Message, "restart systemd-resolved manually") {
-		t.Fatalf("expected persistent record guidance after missing-device revert, got %#v", cleanup)
+	if cleanup.Candidate.Kind != managedDNSCandidateKind || cleanup.Status != "recovered" || cleanup.Message != "" {
+		t.Fatalf("expected idempotent recovered result after missing-device revert, got %#v", cleanup)
+	}
+	if result.HasFailures() || result.HasIncompleteCleanup() {
+		t.Fatalf("missing-device cleanup must be complete: %#v", result)
 	}
 }
