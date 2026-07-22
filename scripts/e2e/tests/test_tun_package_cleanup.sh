@@ -23,6 +23,7 @@ record_cleanup_evidence() {
 }
 cleanup_error() { :; }
 
+# A failed purge must fail and must never claim package_purged=true.
 package_present() { return 0; }
 timeout() { return 124; }
 sudo() { return 0; }
@@ -31,6 +32,7 @@ if purge_package; then
 fi
 [[ "${last_evidence}" == "package_purged=false" ]] || fail_test "failed purge evidence was ${last_evidence}"
 
+# Invalid metadata must prevent transaction removal.
 ROLLBACK_METADATA_VALID=false
 transaction_remove_calls=0
 systemctl() { return 1; }
@@ -45,6 +47,7 @@ if fallback_cleanup; then
 fi
 [[ "${transaction_remove_calls}" == "0" ]] || fail_test "invalid transaction metadata was removed"
 
+# Sentinel cleanup failures must propagate and record failure.
 systemctl() { return 1; }
 sentinel_rule_present() { return 0; }
 sentinel_route_present() { return 1; }
@@ -59,8 +62,11 @@ if cleanup_e2e_sentinels; then
 fi
 [[ "${last_evidence}" == "e2e_sentinels_removed=false" ]] || fail_test "sentinel failure evidence was ${last_evidence}"
 
+# Final success requires no reserved collision, direct connectivity, and package absence.
 ROLLBACK_METADATA_VALID=true
 direct_called=0
+reserved_network_state_present() { return 1; }
+sentinel_service_present() { return 1; }
 resolved_has_podlaz_link() { return 1; }
 owned_xray_identities() { return 0; }
 sentinel_rule_present() { return 1; }
@@ -74,6 +80,14 @@ sudo() {
   fi
   return 1
 }
+
+reserved_network_state_present() { return 0; }
+if assert_cleanup_complete; then
+  fail_test "reserved network conflict was accepted"
+fi
+reserved_network_state_present() { return 1; }
+direct_called=0
+
 assert_cleanup_complete || fail_test "clean state assertions unexpectedly failed"
 [[ "${direct_called}" == "1" ]] || fail_test "direct connectivity was not asserted"
 [[ "${last_evidence}" == "cleanup_assertions=pass" ]] || fail_test "cleanup success evidence was ${last_evidence}"
