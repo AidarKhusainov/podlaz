@@ -8,6 +8,7 @@ PROCESS_POLL_INTERVAL="${PROCESS_POLL_INTERVAL:-0.1}"
 PROCESS_USE_SUDO="${PROCESS_USE_SUDO:-false}"
 WAIT_CHILD_REAPED=false
 WAIT_CHILD_EXIT_CODE=""
+WAIT_CHILD_IDENTITY_CHANGED=false
 
 process_read_file() {
   local path="$1"
@@ -35,20 +36,33 @@ process_stat_fields() {
   printf '%s\n' "${tail}"
 }
 
-process_state() {
+process_snapshot() {
   local pid="$1" tail
-  tail="$(process_stat_fields "${pid}")" || return 1
-  read -r -a fields <<<"${tail}"
-  [[ "${#fields[@]}" -ge 20 ]] || return 1
-  printf '%s\n' "${fields[0]}"
-}
-
-process_start_time() {
-  local pid="$1" tail
+  local -a fields=()
   tail="$(process_stat_fields "${pid}")" || return 1
   read -r -a fields <<<"${tail}"
   [[ "${#fields[@]}" -ge 20 && "${fields[19]}" =~ ^[0-9]+$ ]] || return 1
-  printf '%s\n' "${fields[19]}"
+  printf '%s %s\n' "${fields[0]}" "${fields[19]}"
+}
+
+process_state() {
+  local pid="$1" snapshot
+  snapshot="$(process_snapshot "${pid}")" || return 1
+  printf '%s\n' "${snapshot%% *}"
+}
+
+process_start_time() {
+  local pid="$1" snapshot
+  snapshot="$(process_snapshot "${pid}")" || return 1
+  printf '%s\n' "${snapshot#* }"
+}
+
+child_job_running() {
+  local pid="$1" job_pid
+  while IFS= read -r job_pid; do
+    [[ "${job_pid}" == "${pid}" ]] && return 0
+  done < <(jobs -pr)
+  return 1
 }
 
 process_identity_matches() {
@@ -81,20 +95,47 @@ process_send_signal() {
   fi
 }
 
+reap_child() {
+  local pid="$1" code restore_errexit=0
+  case $- in
+    *e*) restore_errexit=1 ;;
+  esac
+  set +e
+  wait "${pid}"
+  code=$?
+  if [[ "${restore_errexit}" == "1" ]]; then
+    set -e
+  fi
+  WAIT_CHILD_REAPED=true
+  WAIT_CHILD_EXIT_CODE="${code}"
+  return 0
+}
+
 wait_child_bounded() {
-  local pid="$1" expected_start="$2" attempts="${3:-50}" attempt state code
+  local pid="$1" expected_start="$2" attempts="${3:-50}" attempt snapshot state start
   WAIT_CHILD_REAPED=false
   WAIT_CHILD_EXIT_CODE=""
+  WAIT_CHILD_IDENTITY_CHANGED=false
+
   for attempt in $(seq 1 "${attempts}"); do
-    state="$(process_state "${pid}" 2>/dev/null || true)"
-    if [[ -z "${state}" || "${state}" == "Z" ]] || ! process_identity_matches "${pid}" "${expected_start}"; then
-      set +e
-      wait "${pid}"
-      code=$?
-      set -e
-      WAIT_CHILD_REAPED=true
-      WAIT_CHILD_EXIT_CODE="${code}"
-      return 0
+    if snapshot="$(process_snapshot "${pid}" 2>/dev/null)"; then
+      state="${snapshot%% *}"
+      start="${snapshot#* }"
+      if [[ "${state}" == "Z" ]]; then
+        reap_child "${pid}"
+        return 0
+      fi
+      if [[ "${start}" != "${expected_start}" ]]; then
+        WAIT_CHILD_IDENTITY_CHANGED=true
+        return 0
+      fi
+    else
+      # A transient /proc read failure is not evidence that the child exited.
+      # Bash's own job table is the independent authority for this child.
+      if ! child_job_running "${pid}"; then
+        reap_child "${pid}"
+        return 0
+      fi
     fi
     sleep "${PROCESS_POLL_INTERVAL}"
   done
@@ -105,17 +146,30 @@ terminate_child_bounded() {
   local pid="$1" expected_start="$2" attempts="${3:-50}" status
   if wait_child_bounded "${pid}" "${expected_start}" "${attempts}"; then
     return 0
+  else
+    status=$?
   fi
-  status=$?
   [[ "${status}" == "124" ]] || return "${status}"
+
   if ! process_identity_matches "${pid}" "${expected_start}"; then
-    wait_child_bounded "${pid}" "${expected_start}" 1 || true
-    return 0
+    # Do not signal an identity that can no longer be proven. Reap only when
+    # Bash no longer reports the tracked child as running; otherwise fail
+    # closed so the caller cannot proceed as if termination succeeded.
+    if ! child_job_running "${pid}"; then
+      reap_child "${pid}"
+      return 0
+    fi
+    return 125
   fi
+
   process_send_signal TERM "${pid}" >/dev/null 2>&1 || true
   if wait_child_bounded "${pid}" "${expected_start}" "${attempts}"; then
     return 0
+  else
+    status=$?
   fi
+  [[ "${status}" == "124" ]] || return "${status}"
+
   if process_identity_matches "${pid}" "${expected_start}"; then
     process_send_signal KILL "${pid}" >/dev/null 2>&1 || true
   fi
