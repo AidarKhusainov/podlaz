@@ -27,7 +27,7 @@ KNOWN_STATES = {
     "rolled_back",
     "failed",
 }
-CLEANUP_REQUIRED_STATES = {"planned", "applying", "applied", "verifying", "rolling_back", "failed"}
+CLEANUP_REQUIRED_STATES = {"planned", "applying", "applied", "verifying", "committed", "rolling_back", "failed"}
 MANAGED_TABLES = {"51820", "podlaz"}
 MAIN_TABLE = "main"
 MANAGED_LINK = "podlaz0"
@@ -155,6 +155,7 @@ def validated_route(value: object) -> OwnedRoute:
 
     if table not in MANAGED_TABLES:
         raise MetadataError("rollback route has unmanaged table")
+    table = "51820"
     if cidr_raw == "default":
         cidr = "default"
     else:
@@ -194,6 +195,7 @@ def validated_policy_rule(value: object) -> OwnedPolicyRule:
             raise MetadataError("main-table rollback rule is not an exact server bypass tuple")
         destination = _normalize_ipv4_prefix(destination, host_only=True)
     elif table in MANAGED_TABLES:
+        table = "51820"
         if priority != TUN_RULE_PRIORITY or not (source or destination or mark):
             raise MetadataError("managed-table rollback rule is ambiguous")
     else:
