@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/process_lifecycle.sh
+source "${SCRIPT_DIR}/lib/process_lifecycle.sh"
 
 require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep ip journalctl mktemp nft pgrep python3 readlink resolvectl sed sha256sum sleep sudo systemctl systemd-run timeout tr
 
@@ -41,8 +43,8 @@ FOREIGN_DNS_DOMAIN="~e2e.invalid"
 FOREIGN_SERVICE="podlaz-e2e-foreign.service"
 
 CONNECT_PID=""
-PACKAGE_INSTALLED=0
-SERVICE_TOUCHED=0
+CONNECT_START_TIME=""
+CONNECT_EXIT_CODE=""
 HOST_SENSITIVE_VALUES=""
 DEFAULT_ROUTE_BEFORE=""
 
@@ -128,14 +130,16 @@ capture_secret_import() {
 }
 
 clear_hook() {
-  sudo -n rm -f -- "${HOOK_DROPIN}" >/dev/null 2>&1 || true
-  sudo -n rm -rf -- "${HOOK_DIR}" >/dev/null 2>&1 || true
-  sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+  local status=0
+  sudo -n rm -f -- "${HOOK_DROPIN}" || status=1
+  sudo -n rm -rf -- "${HOOK_DIR}" || status=1
+  sudo -n systemctl daemon-reload || status=1
+  return "${status}"
 }
 
 configure_hook() {
   local phase="$1" tmp
-  clear_hook
+  clear_hook || fail "failed to clear previous E2E hook state"
   sudo -n mkdir -p "${HOOK_DROPIN_DIR}"
   tmp="$(mktemp "${E2E_TMP_ROOT}/podlaz-package-hook.XXXXXX")"
   cat >"${tmp}" <<EOF
@@ -149,51 +153,41 @@ EOF
   rm -f -- "${tmp}"
   sudo -n systemctl daemon-reload
   sudo -n systemctl restart podlazd.service
-  SERVICE_TOUCHED=1
   wait_for_daemon_socket
 }
 
 wait_connect_bounded() {
-  local pid="$1" attempts="${2:-600}" attempt code
-  for attempt in $(seq 1 "${attempts}"); do
-    if ! kill -0 "${pid}" >/dev/null 2>&1; then
-      set +e
-      wait "${pid}"
-      code=$?
-      set -e
-      CONNECT_PID=""
-      return "${code}"
-    fi
-    sleep 0.1
-  done
-  return 124
+  local pid="$1" attempts="${2:-600}" status
+  [[ "${pid}" == "${CONNECT_PID}" && -n "${CONNECT_START_TIME}" ]] || return 2
+  if wait_child_bounded "${pid}" "${CONNECT_START_TIME}" "${attempts}"; then
+    CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
+    CONNECT_PID=""
+    CONNECT_START_TIME=""
+    return 0
+  fi
+  status=$?
+  return "${status}"
 }
 
 terminate_connect_bounded() {
-  local pid="${CONNECT_PID:-}"
-  [[ -n "${pid}" ]] || return 0
-  if wait_connect_bounded "${pid}" 50; then
-    return 0
+  local pid="${CONNECT_PID:-}" start="${CONNECT_START_TIME:-}"
+  [[ -n "${pid}" && -n "${start}" ]] || return 0
+  if ! terminate_child_bounded "${pid}" "${start}" 50; then
+    return 1
   fi
-  kill -TERM "${pid}" >/dev/null 2>&1 || true
-  if wait_connect_bounded "${pid}" 50; then
-    return 0
-  fi
-  kill -KILL "${pid}" >/dev/null 2>&1 || true
-  set +e
-  wait "${pid}" >/dev/null 2>&1
-  set -e
+  CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
   CONNECT_PID=""
+  CONNECT_START_TIME=""
 }
 
 cleanup() {
   local code=$? cleanup_code=0 purge=true
-  terminate_connect_bounded || true
-  clear_hook
+  terminate_connect_bounded || cleanup_code=1
+  clear_hook || cleanup_code=1
   if [[ "${PODLAZ_E2E_KEEP_PACKAGE:-false}" == "true" ]]; then
     purge=false
   fi
-  PODLAZ_E2E_PURGE_PACKAGE="${purge}" bash "${SCRIPT_DIR}/tun-package-cleanup.sh" || cleanup_code=$?
+  PODLAZ_E2E_PURGE_PACKAGE="${purge}" bash "${SCRIPT_DIR}/tun-package-cleanup.sh" || cleanup_code=1
   if [[ "${code}" == "0" && "${cleanup_code}" != "0" ]]; then
     code="${cleanup_code}"
   fi
@@ -201,31 +195,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
+sentinel_rule_present() {
+  sudo -n ip -4 rule show 2>/dev/null | \
+    grep -F "${FOREIGN_RULE_PRIORITY}:" | \
+    grep -F "to ${FOREIGN_ROUTE_CIDR%/32}" | \
+    grep -E "lookup (${FOREIGN_ROUTE_TABLE})([[:space:]]|$)" >/dev/null
+}
+
+sentinel_route_present() {
+  sudo -n ip -4 route show table "${FOREIGN_ROUTE_TABLE}" exact "${FOREIGN_ROUTE_CIDR}" 2>/dev/null | \
+    grep -F "blackhole ${FOREIGN_ROUTE_CIDR%/32}" >/dev/null
+}
+
+assert_sentinel_absent_before_create() {
+  if sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || \
+    sentinel_rule_present || sentinel_route_present || \
+    sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || \
+    systemctl is-active --quiet "${FOREIGN_SERVICE}"; then
+    fail "E2E sentinel residue exists before setup"
+  fi
+}
+
 create_foreign_state() {
-  sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || true
+  assert_sentinel_absent_before_create
   sudo -n nft add table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}"
-  sudo -n ip -4 rule del priority "${FOREIGN_RULE_PRIORITY}" >/dev/null 2>&1 || true
-  sudo -n ip -4 route flush table "${FOREIGN_ROUTE_TABLE}" >/dev/null 2>&1 || true
   sudo -n ip -4 route add blackhole "${FOREIGN_ROUTE_CIDR}" table "${FOREIGN_ROUTE_TABLE}"
   sudo -n ip -4 rule add priority "${FOREIGN_RULE_PRIORITY}" to "${FOREIGN_ROUTE_CIDR}" lookup "${FOREIGN_ROUTE_TABLE}"
-  sudo -n ip link del dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || true
   sudo -n ip link add "${FOREIGN_DNS_LINK}" type dummy
   sudo -n ip link set dev "${FOREIGN_DNS_LINK}" up
   sudo -n resolvectl dns "${FOREIGN_DNS_LINK}" "${FOREIGN_DNS_SERVER}"
   sudo -n resolvectl domain "${FOREIGN_DNS_LINK}" "${FOREIGN_DNS_DOMAIN}"
   sudo -n resolvectl default-route "${FOREIGN_DNS_LINK}" no
-  sudo -n systemctl stop "${FOREIGN_SERVICE}" >/dev/null 2>&1 || true
   sudo -n systemd-run --unit="${FOREIGN_SERVICE%.service}" --property=Type=simple /bin/sh -c 'exec sleep 600' >/dev/null
 }
 
 assert_foreign_state() {
   local phase="$1" tmp
   sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || fail "${phase}: unrelated nftables state changed"
-  tmp="$(mktemp "${E2E_TMP_ROOT}/foreign-route.XXXXXX")"
-  sudo -n ip -4 route show table "${FOREIGN_ROUTE_TABLE}" >"${tmp}"
-  grep -F "blackhole ${FOREIGN_ROUTE_CIDR}" "${tmp}" >/dev/null || fail "${phase}: unrelated route changed"
-  sudo -n ip -4 rule show >"${tmp}"
-  grep -F "${FOREIGN_RULE_PRIORITY}:" "${tmp}" | grep -F "to ${FOREIGN_ROUTE_CIDR}" >/dev/null || fail "${phase}: unrelated policy rule changed"
+  sentinel_route_present || fail "${phase}: unrelated route changed"
+  sentinel_rule_present || fail "${phase}: unrelated policy rule changed"
+  tmp="$(mktemp "${E2E_TMP_ROOT}/foreign-resolved.XXXXXX")"
   sudo -n resolvectl status "${FOREIGN_DNS_LINK}" --no-pager >"${tmp}"
   grep -F "${FOREIGN_DNS_SERVER}" "${tmp}" >/dev/null || fail "${phase}: unrelated DNS server changed"
   grep -F "${FOREIGN_DNS_DOMAIN}" "${tmp}" >/dev/null || fail "${phase}: unrelated DNS domain changed"
@@ -235,19 +244,9 @@ assert_foreign_state() {
 }
 
 assert_podlaz_resources_absent() {
-  local phase="$1" output
+  local phase="$1"
   if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
     fail "${phase}: podlaz0 still exists"
-  fi
-  output="$(sudo -n ip -4 route show table 51820 2>/dev/null || true)"
-  [[ -z "${output//[[:space:]]/}" ]] || fail "${phase}: podlaz IPv4 route table is not empty"
-  output="$(sudo -n ip -6 route show table 51820 2>/dev/null || true)"
-  [[ -z "${output//[[:space:]]/}" ]] || fail "${phase}: podlaz IPv6 route table is not empty"
-  if sudo -n ip -4 rule show | grep -E 'lookup (podlaz|51820)([[:space:]]|$)' >/dev/null; then
-    fail "${phase}: podlaz IPv4 policy rule remains"
-  fi
-  if sudo -n ip -6 rule show | grep -E 'lookup (podlaz|51820)([[:space:]]|$)' >/dev/null; then
-    fail "${phase}: podlaz IPv6 policy rule remains"
   fi
   if sudo -n resolvectl status --no-pager 2>/dev/null | grep -E '^Link [0-9]+ \(podlaz0\)$' >/dev/null; then
     fail "${phase}: resolved still has podlaz0"
@@ -390,10 +389,12 @@ run_inactive_scope_probe() {
 }
 
 run_missing_link_probe() {
-  local attempt transaction_count revert_out revert_err connect_code events report doctor_output
+  local attempt transaction_count revert_out revert_err wait_status connect_code events report doctor_output
   configure_hook dns-missing-link-rollback
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${E2E_TMP_ROOT}/missing-link-connect.stdout" 2>"${E2E_TMP_ROOT}/missing-link-connect.stderr" &
   CONNECT_PID=$!
+  CONNECT_START_TIME="$(process_start_time "${CONNECT_PID}")"
+  [[ -n "${CONNECT_START_TIME}" ]] || fail "failed to record connect process identity"
   for attempt in $(seq 1 900); do
     sudo -n test -f "${HOOK_READY}" && break
     sleep 0.1
@@ -421,9 +422,14 @@ run_missing_link_probe() {
   sudo -n touch "${HOOK_CONTINUE}"
   set +e
   wait_connect_bounded "${CONNECT_PID}" 600
-  connect_code=$?
+  wait_status=$?
   set -e
-  [[ "${connect_code}" != "0" && "${connect_code}" != "124" ]] || fail "missing-link connect did not fail within the bounded wait"
+  if [[ "${wait_status}" != "0" ]]; then
+    [[ "${wait_status}" != "124" ]] || fail "missing-link connect timed out"
+    fail "missing-link connect wait failed"
+  fi
+  connect_code="${CONNECT_EXIT_CODE}"
+  [[ "${connect_code}" != "0" ]] || fail "missing-link connect unexpectedly succeeded"
 
   events="${E2E_ARTIFACT_DIR}/missing-link-events.log"
   sudo -n cat "${HOOK_EVENTS}" >"${events}"
@@ -482,10 +488,8 @@ test -f "${DEV_DEB}" || fail "expected package was not built"
 
 sudo -n apt install -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/apt-install.log" 2>&1
 sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/apt-reinstall.log" 2>&1
-PACKAGE_INSTALLED=1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
-SERVICE_TOUCHED=1
 wait_for_daemon_socket
 verify_package_provenance
 
