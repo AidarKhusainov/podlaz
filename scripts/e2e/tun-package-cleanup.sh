@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/process_lifecycle.sh
 source "${SCRIPT_DIR}/lib/process_lifecycle.sh"
+# shellcheck source=lib/host_state.sh
+source "${SCRIPT_DIR}/lib/host_state.sh"
 
 : "${PODLAZ_E2E_PURGE_PACKAGE:=true}"
 : "${PODLAZ_E2E_DNS_CHECK_HOST:=github.com}"
@@ -49,8 +51,37 @@ record_cleanup_evidence() {
   printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE}"
 }
 
+capture_status() {
+  local -n result_ref="$1"
+  local captured_rc
+  shift
+  if "$@"; then
+    captured_rc=0
+  else
+    captured_rc=$?
+  fi
+  result_ref="${captured_rc}"
+}
+
+assert_absent_state() {
+  local label="$1" status
+  shift
+  capture_status status "$@"
+  case "${status}" in
+    0) return 0 ;;
+    1) cleanup_error "teardown: ${label} remains" ;;
+    *) cleanup_error "teardown: ${label} inspection failed" ;;
+  esac
+  return 1
+}
+
 snapshot_rollback_metadata() {
-  sudo -n rm -f -- "${ROLLBACK_MANIFEST}" >/dev/null 2>&1 || true
+  if ! sudo -n rm -f -- "${ROLLBACK_MANIFEST}" >/dev/null 2>&1; then
+    ROLLBACK_METADATA_VALID=false
+    record_cleanup_evidence rollback_metadata_valid false
+    cleanup_error "teardown: failed to clear previous rollback manifest"
+    return 1
+  fi
   if sudo -n python3 "${FALLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${ROLLBACK_MANIFEST}"; then
     ROLLBACK_METADATA_VALID=true
     record_cleanup_evidence rollback_metadata_valid true
@@ -67,6 +98,8 @@ clear_tun_hook() {
   sudo -n rm -f -- "${HOOK_DROPIN}" >/dev/null 2>&1 || status=1
   sudo -n rm -rf -- "${HOOK_DIR}" >/dev/null 2>&1 || status=1
   sudo -n systemctl daemon-reload >/dev/null 2>&1 || status=1
+  assert_absent_state "E2E hook drop-in" inspect_path_state "${HOOK_DROPIN}" || status=1
+  assert_absent_state "E2E hook directory" inspect_path_state "${HOOK_DIR}" || status=1
   if [[ "${status}" == "0" ]]; then
     record_cleanup_evidence hook_cleanup true
   else
@@ -125,8 +158,17 @@ owned_xray_identities() {
   done
 }
 
+inspect_owned_xray_state() {
+  local output
+  if ! output="$(owned_xray_identities)"; then
+    return "${HOST_STATE_ERROR}"
+  fi
+  [[ -n "${output}" ]] && return "${HOST_STATE_PRESENT}"
+  return "${HOST_STATE_ABSENT}"
+}
+
 stop_owned_xray() {
-  local identity pid start status=0
+  local identity pid start status=0 inspect_status
   local -a identities=()
   mapfile -t identities < <(owned_xray_identities)
   for identity in "${identities[@]}"; do
@@ -136,86 +178,100 @@ stop_owned_xray() {
       status=1
     fi
   done
-  if [[ -n "$(owned_xray_identities)" ]]; then
+  capture_status inspect_status inspect_owned_xray_state
+  if [[ "${inspect_status}" != "0" ]]; then
     status=1
-  fi
-  if [[ "${status}" != "0" ]]; then
-    cleanup_error "teardown: transaction-owned Xray process remains"
+    cleanup_error "teardown: transaction-owned Xray process remains or cannot be inspected"
   fi
   return "${status}"
 }
 
-resolved_has_podlaz_link() {
-  sudo -n resolvectl status --no-pager 2>/dev/null | grep -E '^Link [0-9]+ \(podlaz0\)$' >/dev/null
-}
-
 cleanup_podlaz_resolved() {
-  if ! resolved_has_podlaz_link; then
-    return 0
-  fi
-  sudo -n resolvectl revert podlaz0 >/dev/null 2>&1 || true
-  if resolved_has_podlaz_link; then
-    cleanup_error "teardown: systemd-resolved still has podlaz0"
-    return 1
-  fi
+  local state
+  capture_status state inspect_resolved_link_state podlaz0
+  case "${state}" in
+    0) return 0 ;;
+    1) sudo -n resolvectl revert podlaz0 >/dev/null 2>&1 || true ;;
+    *) cleanup_error "teardown: systemd-resolved inspection failed"; return 1 ;;
+  esac
+  assert_absent_state "systemd-resolved podlaz0 state" inspect_resolved_link_state podlaz0
 }
 
 cleanup_podlaz_nftables() {
-  if sudo -n nft list table inet podlaz >/dev/null 2>&1; then
-    sudo -n nft delete table inet podlaz >/dev/null 2>&1 || true
+  local state
+  capture_status state inspect_nft_table_state inet podlaz
+  case "${state}" in
+    0) return 0 ;;
+    1) sudo -n nft delete table inet podlaz >/dev/null 2>&1 || true ;;
+    *) cleanup_error "teardown: nftables inspection failed"; return 1 ;;
+  esac
+  assert_absent_state "inet podlaz" inspect_nft_table_state inet podlaz
+}
+
+inspect_recorded_network_state() {
+  local status
+  [[ "${ROLLBACK_METADATA_VALID}" == "true" ]] || return "${HOST_STATE_ERROR}"
+  if sudo -n python3 "${FALLBACK_NETWORK_HELPER}" verify "${ROLLBACK_MANIFEST}"; then
+    return "${HOST_STATE_ABSENT}"
+  else
+    status=$?
   fi
-  if sudo -n nft list table inet podlaz >/dev/null 2>&1; then
-    cleanup_error "teardown: inet podlaz still exists"
-    return 1
-  fi
+  case "${status}" in
+    1) return "${HOST_STATE_PRESENT}" ;;
+    *) return "${HOST_STATE_ERROR}" ;;
+  esac
 }
 
 cleanup_recorded_network() {
+  local inspect_status
   if [[ "${ROLLBACK_METADATA_VALID}" != "true" ]]; then
     cleanup_error "teardown: refusing route/rule cleanup without validated rollback metadata"
     record_cleanup_evidence recorded_network_cleanup false
     return 1
   fi
-  if sudo -n python3 "${FALLBACK_NETWORK_HELPER}" cleanup "${ROLLBACK_MANIFEST}" && \
-    sudo -n python3 "${FALLBACK_NETWORK_HELPER}" verify "${ROLLBACK_MANIFEST}"; then
+  sudo -n python3 "${FALLBACK_NETWORK_HELPER}" cleanup "${ROLLBACK_MANIFEST}" >/dev/null 2>&1 || true
+  capture_status inspect_status inspect_recorded_network_state
+  if [[ "${inspect_status}" == "0" ]]; then
     record_cleanup_evidence recorded_network_cleanup true
     return 0
   fi
   record_cleanup_evidence recorded_network_cleanup false
-  cleanup_error "teardown: recorded route or policy-rule tuple remains"
+  if [[ "${inspect_status}" == "1" ]]; then
+    cleanup_error "teardown: recorded route or policy-rule tuple remains"
+  else
+    cleanup_error "teardown: recorded route or policy-rule inspection failed"
+  fi
   return 1
 }
 
 cleanup_podlaz_link() {
-  if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
-    sudo -n ip link del dev podlaz0 >/dev/null 2>&1 || true
-  fi
-  if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
-    cleanup_error "teardown: podlaz0 still exists"
-    return 1
-  fi
+  local state
+  capture_status state inspect_link_state podlaz0
+  case "${state}" in
+    0) return 0 ;;
+    1) sudo -n ip link del dev podlaz0 >/dev/null 2>&1 || true ;;
+    *) cleanup_error "teardown: podlaz0 inspection failed"; return 1 ;;
+  esac
+  assert_absent_state "podlaz0" inspect_link_state podlaz0
 }
 
 remove_generated_state() {
-  if ! sudo -n rm -rf -- "${GENERATED_DIR}" >/dev/null 2>&1; then
-    cleanup_error "teardown: failed to remove generated runtime state"
-    return 1
-  fi
+  sudo -n rm -rf -- "${GENERATED_DIR}" >/dev/null 2>&1 || true
+  assert_absent_state "generated runtime state" inspect_path_state "${GENERATED_DIR}"
 }
 
 remove_transaction_state() {
-  if ! sudo -n rm -rf -- "${TRANSACTION_DIR}" >/dev/null 2>&1; then
-    cleanup_error "teardown: failed to remove validated transaction state"
-    return 1
-  fi
+  sudo -n rm -rf -- "${TRANSACTION_DIR}" >/dev/null 2>&1 || true
+  assert_absent_state "validated transaction state" inspect_path_state "${TRANSACTION_DIR}"
 }
 
 fallback_cleanup() {
-  local status=0
+  local status=0 service_state
   record_cleanup_evidence fallback_cleanup_attempted true
   timeout --signal=TERM --kill-after=5s 20s sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-  if systemctl is-active --quiet podlazd.service; then
-    cleanup_error "teardown: podlazd.service did not stop"
+  capture_status service_state inspect_service_active_state podlazd.service
+  if [[ "${service_state}" != "0" ]]; then
+    cleanup_error "teardown: podlazd.service did not stop or could not be inspected"
     status=1
   fi
   stop_owned_xray || status=1
@@ -233,99 +289,153 @@ fallback_cleanup() {
   return "${status}"
 }
 
-sentinel_rule_present() {
-  sudo -n ip -4 rule show 2>/dev/null | \
-    grep -F "${FOREIGN_RULE_PRIORITY}:" | \
+inspect_sentinel_rule_state() {
+  local output
+  if ! output="$(sudo -n ip -4 rule show 2>/dev/null)"; then
+    return "${HOST_STATE_ERROR}"
+  fi
+  if grep -F "${FOREIGN_RULE_PRIORITY}:" <<<"${output}" | \
     grep -F "to ${FOREIGN_ROUTE_CIDR%/32}" | \
-    grep -E "lookup (${FOREIGN_ROUTE_TABLE})([[:space:]]|$)" >/dev/null
+    grep -E "lookup (${FOREIGN_ROUTE_TABLE})([[:space:]]|$)" >/dev/null; then
+    return "${HOST_STATE_PRESENT}"
+  fi
+  return "${HOST_STATE_ABSENT}"
 }
 
-sentinel_route_present() {
-  sudo -n ip -4 route show table "${FOREIGN_ROUTE_TABLE}" exact "${FOREIGN_ROUTE_CIDR}" 2>/dev/null | \
-    grep -F "blackhole ${FOREIGN_ROUTE_CIDR%/32}" >/dev/null
+inspect_sentinel_route_state() {
+  local output
+  if ! output="$(sudo -n ip -4 route show table all 2>/dev/null)"; then
+    return "${HOST_STATE_ERROR}"
+  fi
+  if grep -E "^blackhole ${FOREIGN_ROUTE_CIDR%/32}([[:space:]]|/32[[:space:]]).*table ${FOREIGN_ROUTE_TABLE}([[:space:]]|$)" <<<"${output}" >/dev/null; then
+    return "${HOST_STATE_PRESENT}"
+  fi
+  return "${HOST_STATE_ABSENT}"
 }
 
-sentinel_service_present() {
-  local load_state
-  load_state="$(systemctl show -p LoadState --value "${FOREIGN_SERVICE}" 2>/dev/null || true)"
-  [[ -n "${load_state}" && "${load_state}" != "not-found" ]]
-}
-
-reserved_network_state_present() {
-  local family output
+inspect_reserved_network_state() {
+  local family routes rules
   for family in -4 -6; do
-    output="$(sudo -n ip "${family}" route show table 51820 2>/dev/null || true)"
-    [[ -n "${output//[[:space:]]/}" ]] && return 0
-    if sudo -n ip "${family}" rule show 2>/dev/null | \
-      grep -E '(^|[[:space:]])(9999|10000):|lookup (podlaz|51820)([[:space:]]|$)' >/dev/null; then
-      return 0
+    if ! routes="$(sudo -n ip "${family}" route show table all 2>/dev/null)"; then
+      return "${HOST_STATE_ERROR}"
+    fi
+    if grep -E '(^|[[:space:]])table (podlaz|51820)([[:space:]]|$)' <<<"${routes}" >/dev/null; then
+      return "${HOST_STATE_PRESENT}"
+    fi
+    if ! rules="$(sudo -n ip "${family}" rule show 2>/dev/null)"; then
+      return "${HOST_STATE_ERROR}"
+    fi
+    if grep -E '(^|[[:space:]])(9999|10000):|lookup (podlaz|51820)([[:space:]]|$)' <<<"${rules}" >/dev/null; then
+      return "${HOST_STATE_PRESENT}"
     fi
   done
-  return 1
+  return "${HOST_STATE_ABSENT}"
+}
+
+inspect_e2e_sentinel_state() {
+  local state any_present=0
+  capture_status state inspect_service_load_state "${FOREIGN_SERVICE}"
+  [[ "${state}" == "2" ]] && return "${HOST_STATE_ERROR}"
+  [[ "${state}" == "1" ]] && any_present=1
+  capture_status state inspect_link_state "${FOREIGN_DNS_LINK}"
+  [[ "${state}" == "2" ]] && return "${HOST_STATE_ERROR}"
+  [[ "${state}" == "1" ]] && any_present=1
+  capture_status state inspect_sentinel_rule_state
+  [[ "${state}" == "2" ]] && return "${HOST_STATE_ERROR}"
+  [[ "${state}" == "1" ]] && any_present=1
+  capture_status state inspect_sentinel_route_state
+  [[ "${state}" == "2" ]] && return "${HOST_STATE_ERROR}"
+  [[ "${state}" == "1" ]] && any_present=1
+  capture_status state inspect_nft_table_state "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}"
+  [[ "${state}" == "2" ]] && return "${HOST_STATE_ERROR}"
+  [[ "${state}" == "1" ]] && any_present=1
+  [[ "${any_present}" == "1" ]] && return "${HOST_STATE_PRESENT}"
+  return "${HOST_STATE_ABSENT}"
 }
 
 cleanup_e2e_sentinels() {
-  local status=0
-  if sentinel_service_present; then
-    sudo -n systemctl stop "${FOREIGN_SERVICE}" >/dev/null 2>&1 || status=1
-    sudo -n systemctl reset-failed "${FOREIGN_SERVICE}" >/dev/null 2>&1 || true
-    sudo -n systemctl daemon-reload >/dev/null 2>&1 || status=1
-  fi
-  if sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1; then
-    sudo -n resolvectl revert "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || status=1
-    sudo -n ip link del dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || status=1
-  fi
-  if sentinel_rule_present; then
-    sudo -n ip -4 rule del priority "${FOREIGN_RULE_PRIORITY}" to "${FOREIGN_ROUTE_CIDR}" lookup "${FOREIGN_ROUTE_TABLE}" >/dev/null 2>&1 || status=1
-  fi
-  if sentinel_route_present; then
-    sudo -n ip -4 route del blackhole "${FOREIGN_ROUTE_CIDR}" table "${FOREIGN_ROUTE_TABLE}" >/dev/null 2>&1 || status=1
-  fi
-  if sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1; then
-    sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || status=1
-  fi
+  local status=0 state
 
-  if sentinel_service_present || \
-    sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || \
-    sentinel_rule_present || sentinel_route_present || \
-    sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1; then
-    status=1
-  fi
+  capture_status state inspect_service_load_state "${FOREIGN_SERVICE}"
+  case "${state}" in
+    0) ;;
+    1)
+      sudo -n systemctl stop "${FOREIGN_SERVICE}" >/dev/null 2>&1 || status=1
+      sudo -n systemctl reset-failed "${FOREIGN_SERVICE}" >/dev/null 2>&1 || true
+      sudo -n systemctl daemon-reload >/dev/null 2>&1 || status=1
+      ;;
+    *) status=1; cleanup_error "teardown: E2E sentinel service inspection failed" ;;
+  esac
+
+  capture_status state inspect_link_state "${FOREIGN_DNS_LINK}"
+  case "${state}" in
+    0) ;;
+    1)
+      sudo -n resolvectl revert "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || status=1
+      sudo -n ip link del dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || status=1
+      ;;
+    *) status=1; cleanup_error "teardown: E2E DNS sentinel inspection failed" ;;
+  esac
+
+  capture_status state inspect_sentinel_rule_state
+  case "${state}" in
+    0) ;;
+    1) sudo -n ip -4 rule del priority "${FOREIGN_RULE_PRIORITY}" to "${FOREIGN_ROUTE_CIDR}" lookup "${FOREIGN_ROUTE_TABLE}" >/dev/null 2>&1 || status=1 ;;
+    *) status=1; cleanup_error "teardown: E2E rule sentinel inspection failed" ;;
+  esac
+
+  capture_status state inspect_sentinel_route_state
+  case "${state}" in
+    0) ;;
+    1) sudo -n ip -4 route del blackhole "${FOREIGN_ROUTE_CIDR}" table "${FOREIGN_ROUTE_TABLE}" >/dev/null 2>&1 || status=1 ;;
+    *) status=1; cleanup_error "teardown: E2E route sentinel inspection failed" ;;
+  esac
+
+  capture_status state inspect_nft_table_state "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}"
+  case "${state}" in
+    0) ;;
+    1) sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || status=1 ;;
+    *) status=1; cleanup_error "teardown: E2E nftables sentinel inspection failed" ;;
+  esac
+
+  capture_status state inspect_e2e_sentinel_state
+  [[ "${state}" == "0" ]] || status=1
   if [[ "${status}" == "0" ]]; then
     record_cleanup_evidence e2e_sentinels_removed true
   else
     record_cleanup_evidence e2e_sentinels_removed false
-    cleanup_error "teardown: one or more E2E sentinels remain"
+    cleanup_error "teardown: E2E sentinel state remains or could not be inspected"
   fi
   return "${status}"
 }
 
-package_present() {
-  dpkg-query -W podlaz >/dev/null 2>&1
-}
-
 purge_package() {
-  local status=0
+  local status=0 package_state
   if [[ "${PODLAZ_E2E_PURGE_PACKAGE}" != "true" ]]; then
     record_cleanup_evidence package_purged false
     return 0
   fi
-  if package_present; then
-    timeout --signal=TERM --kill-after=10s 90s sudo -n apt purge -y podlaz >/dev/null 2>&1 || status=1
-  fi
+
+  capture_status package_state inspect_package_state podlaz
+  case "${package_state}" in
+    0) ;;
+    1) timeout --signal=TERM --kill-after=10s 90s sudo -n apt purge -y podlaz >/dev/null 2>&1 || status=1 ;;
+    *) status=1; cleanup_error "teardown: package state inspection failed before purge" ;;
+  esac
+
   if command -v deb-systemd-helper >/dev/null 2>&1; then
     sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || status=1
   fi
   sudo -n systemctl daemon-reload >/dev/null 2>&1 || status=1
   sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
-  if package_present; then
-    status=1
-  fi
+
+  capture_status package_state inspect_package_state podlaz
+  [[ "${package_state}" == "0" ]] || status=1
   if [[ "${status}" == "0" ]]; then
     record_cleanup_evidence package_purged true
   else
     record_cleanup_evidence package_purged false
-    cleanup_error "teardown: package purge failed or package remains installed"
+    cleanup_error "teardown: package purge failed, package remains, or package state cannot be inspected"
   fi
   return "${status}"
 }
@@ -348,59 +458,42 @@ assert_direct_connectivity() {
 }
 
 assert_cleanup_complete() {
-  local status=0
-  if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
-    cleanup_error "teardown: podlaz0 still exists"
+  local status=0 service_state package_state
+  assert_absent_state "podlaz0" inspect_link_state podlaz0 || status=1
+  assert_absent_state "recorded route/rule state" inspect_recorded_network_state || status=1
+  assert_absent_state "reserved route/rule state" inspect_reserved_network_state || status=1
+  assert_absent_state "systemd-resolved podlaz0 state" inspect_resolved_link_state podlaz0 || status=1
+  assert_absent_state "inet podlaz" inspect_nft_table_state inet podlaz || status=1
+  assert_absent_state "transaction-owned Xray process" inspect_owned_xray_state || status=1
+  assert_absent_state "generated runtime config" inspect_directory_content_state "${GENERATED_DIR}" || status=1
+  assert_absent_state "transaction metadata" inspect_directory_content_state "${TRANSACTION_DIR}" || status=1
+
+  capture_status service_state inspect_service_active_state podlazd.service
+  if [[ "${service_state}" != "0" ]]; then
+    if [[ "${service_state}" == "1" ]]; then
+      cleanup_error "teardown: podlazd.service is still active"
+    else
+      cleanup_error "teardown: podlazd.service state inspection failed"
+    fi
     status=1
   fi
-  if [[ "${ROLLBACK_METADATA_VALID}" != "true" ]] || \
-    ! sudo -n python3 "${FALLBACK_NETWORK_HELPER}" verify "${ROLLBACK_MANIFEST}"; then
-    cleanup_error "teardown: recorded route/rule absence is not proven"
-    status=1
+
+  assert_absent_state "E2E hook drop-in" inspect_path_state "${HOOK_DROPIN}" || status=1
+  assert_absent_state "E2E hook directory" inspect_path_state "${HOOK_DIR}" || status=1
+  assert_absent_state "E2E sentinel state" inspect_e2e_sentinel_state || status=1
+
+  if [[ "${PODLAZ_E2E_PURGE_PACKAGE}" == "true" ]]; then
+    capture_status package_state inspect_package_state podlaz
+    if [[ "${package_state}" != "0" ]]; then
+      if [[ "${package_state}" == "1" ]]; then
+        cleanup_error "teardown: podlaz package remains installed"
+      else
+        cleanup_error "teardown: podlaz package state inspection failed"
+      fi
+      status=1
+    fi
   fi
-  if reserved_network_state_present; then
-    cleanup_error "teardown: reserved route or policy-rule state remains or conflicts with the E2E namespace"
-    status=1
-  fi
-  if resolved_has_podlaz_link; then
-    cleanup_error "teardown: systemd-resolved still has podlaz0"
-    status=1
-  fi
-  if sudo -n nft list table inet podlaz >/dev/null 2>&1; then
-    cleanup_error "teardown: inet podlaz still exists"
-    status=1
-  fi
-  if [[ -n "$(owned_xray_identities)" ]]; then
-    cleanup_error "teardown: transaction-owned Xray process remains"
-    status=1
-  fi
-  if sudo -n test -d "${GENERATED_DIR}" && sudo -n find "${GENERATED_DIR}" -mindepth 1 -print -quit | grep -q .; then
-    cleanup_error "teardown: generated runtime config remains"
-    status=1
-  fi
-  if sudo -n test -d "${TRANSACTION_DIR}" && sudo -n find "${TRANSACTION_DIR}" -mindepth 1 -print -quit | grep -q .; then
-    cleanup_error "teardown: transaction metadata remains"
-    status=1
-  fi
-  if systemctl is-active --quiet podlazd.service; then
-    cleanup_error "teardown: podlazd.service is still active"
-    status=1
-  fi
-  if sudo -n test -e "${HOOK_DROPIN}" || sudo -n test -d "${HOOK_DIR}"; then
-    cleanup_error "teardown: E2E hook state remains"
-    status=1
-  fi
-  if sentinel_service_present || \
-    sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || \
-    sentinel_rule_present || sentinel_route_present || \
-    sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1; then
-    cleanup_error "teardown: E2E sentinel state remains"
-    status=1
-  fi
-  if [[ "${PODLAZ_E2E_PURGE_PACKAGE}" == "true" ]] && package_present; then
-    cleanup_error "teardown: podlaz package remains installed"
-    status=1
-  fi
+
   assert_direct_connectivity || status=1
   if [[ "${status}" == "0" ]]; then
     record_cleanup_evidence cleanup_assertions pass
@@ -415,7 +508,7 @@ if [[ "${PODLAZ_E2E_CLEANUP_SOURCE_ONLY:-false}" == "true" ]]; then
   return 0 2>/dev/null || exit 0
 fi
 
-require_cmd apt curl dpkg-query find getent grep ip nft python3 readlink resolvectl seq sleep sudo systemctl timeout tr
+require_cmd apt curl dpkg-query getent grep ip nft python3 readlink resolvectl seq sleep sudo systemctl timeout tr
 
 cleanup_status=0
 snapshot_rollback_metadata || cleanup_status=1
