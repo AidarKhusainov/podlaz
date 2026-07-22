@@ -114,7 +114,9 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 
 ## Installed-package convergence safety
 
-The dedicated scenario starts by checking that its exact E2E sentinels do not already exist. It never deletes a pre-existing route, rule, link, table, or service merely to obtain a clean test namespace. It installs the freshly built `.deb` and performs an explicit reinstall even when the package version is unchanged. It extracts the built package and compares SHA-256 hashes for `podlaz` and `podlazd` with the installed files. It also verifies that systemd's current `MainPID` executes `/usr/bin/podlazd`, that `/proc/<pid>/exe` has the same hash, and that installed version metadata identifies the tested commit.
+The dedicated scenario starts with idempotent teardown that may remove only exact E2E sentinel identities left by a previous run: the fixed test table, route tuple, policy-rule tuple, dummy DNS link, and transient service. It never treats a shared priority, routing table, or partial match as E2E ownership. Any nonmatching object or reserved-namespace conflict blocks the scenario. After teardown, the scenario verifies that its exact sentinel identities are absent before recreating them.
+
+It installs the freshly built `.deb` and performs an explicit reinstall even when the package version is unchanged. It extracts the built package and compares SHA-256 hashes for `podlaz` and `podlazd` with the installed files. It also verifies that systemd's current `MainPID` executes `/usr/bin/podlazd`, that `/proc/<pid>/exe` has the same hash, and that installed version metadata identifies the tested commit.
 
 Every background connect has a bounded wait. Child completion is tracked separately from the child's exit code: after `wait` reaps a process, that PID is never signalled. TERM/KILL escalation requires the same `/proc/<pid>/stat` start time. Xray escalation additionally revalidates the exact executable and transaction-generated config reference before TERM and again before KILL, so PID reuse cannot authorize a signal.
 
