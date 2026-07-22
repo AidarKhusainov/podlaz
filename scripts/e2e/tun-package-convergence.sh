@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/process_lifecycle.sh
 source "${SCRIPT_DIR}/lib/process_lifecycle.sh"
+# shellcheck source=lib/connect_lifecycle.sh
+source "${SCRIPT_DIR}/lib/connect_lifecycle.sh"
 
 require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep ip journalctl mktemp nft pgrep python3 readlink resolvectl sed sha256sum sleep sudo systemctl systemd-run timeout tr
 
@@ -142,42 +144,18 @@ configure_hook() {
   clear_hook || fail "failed to clear previous E2E hook state"
   sudo -n mkdir -p "${HOOK_DROPIN_DIR}"
   tmp="$(mktemp "${E2E_TMP_ROOT}/podlaz-package-hook.XXXXXX")"
-  cat >"${tmp}" <<EOF
+  cat >"${tmp}" <<HOOK
 [Service]
 Environment=PODLAZ_E2E_TUN_HOOKS=true
 Environment=PODLAZ_E2E_TUN_HOOK_PHASE=${phase}
 Environment=PODLAZ_E2E_TUN_HOOK_DIR=${HOOK_DIR}
 Environment=PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS=90
-EOF
+HOOK
   sudo -n install -m 0644 "${tmp}" "${HOOK_DROPIN}"
   rm -f -- "${tmp}"
   sudo -n systemctl daemon-reload
   sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
-}
-
-wait_connect_bounded() {
-  local pid="$1" attempts="${2:-600}" status
-  [[ "${pid}" == "${CONNECT_PID}" && -n "${CONNECT_START_TIME}" ]] || return 2
-  if wait_child_bounded "${pid}" "${CONNECT_START_TIME}" "${attempts}"; then
-    CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
-    CONNECT_PID=""
-    CONNECT_START_TIME=""
-    return 0
-  fi
-  status=$?
-  return "${status}"
-}
-
-terminate_connect_bounded() {
-  local pid="${CONNECT_PID:-}" start="${CONNECT_START_TIME:-}"
-  [[ -n "${pid}" && -n "${start}" ]] || return 0
-  if ! terminate_child_bounded "${pid}" "${start}" 50; then
-    return 1
-  fi
-  CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
-  CONNECT_PID=""
-  CONNECT_START_TIME=""
 }
 
 cleanup() {
