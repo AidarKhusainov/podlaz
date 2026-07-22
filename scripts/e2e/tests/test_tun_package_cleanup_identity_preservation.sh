@@ -97,6 +97,8 @@ run_network_failure_preserves_identity_case() (
     fail_test "transaction metadata was removed before complete cleanup"
   [[ "${RUNTIME_PROCESSES_QUIESCED:-false}" == "true" ]] || \
     fail_test "confirmed process quiescence was not recorded"
+  [[ "${IDENTITY_MATERIAL_RELEASED:-false}" == "false" ]] || \
+    fail_test "network failure authorized identity material release"
 )
 
 run_package_purge_gate_case() (
@@ -106,13 +108,20 @@ run_package_purge_gate_case() (
   purge_package() { purge_calls=$((purge_calls + 1)); return 0; }
 
   RUNTIME_PROCESSES_QUIESCED=false
+  IDENTITY_MATERIAL_RELEASED=false
   if purge_package_if_safe; then
     fail_test "package purge gate accepted live runtime processes"
   fi
   [[ "${purge_calls}" == "0" ]] || fail_test "package purge ran before process quiescence"
 
   RUNTIME_PROCESSES_QUIESCED=true
-  purge_package_if_safe || fail_test "package purge gate rejected confirmed quiescence"
+  if purge_package_if_safe; then
+    fail_test "package purge gate accepted unverified ownership-union cleanup"
+  fi
+  [[ "${purge_calls}" == "0" ]] || fail_test "package purge ran before ownership-union absence"
+
+  IDENTITY_MATERIAL_RELEASED=true
+  purge_package_if_safe || fail_test "package purge gate rejected verified identity release"
   [[ "${purge_calls}" == "1" ]] || fail_test "package purge did not run exactly once"
 )
 
