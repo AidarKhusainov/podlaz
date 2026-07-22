@@ -23,8 +23,12 @@ record_cleanup_evidence() {
 }
 cleanup_error() { :; }
 
-# A failed purge must fail and must never claim package_purged=true.
-package_present() { return 0; }
+# A timed-out purge must remain a failure and may never publish success.
+package_inspections=0
+inspect_package_state() {
+  package_inspections=$((package_inspections + 1))
+  return 1
+}
 timeout() { return 124; }
 sudo() { return 0; }
 if purge_package; then
@@ -32,13 +36,15 @@ if purge_package; then
 fi
 [[ "${last_evidence}" == "package_purged=false" ]] || fail_test "failed purge evidence was ${last_evidence}"
 
-# Invalid metadata must prevent transaction removal.
+# Invalid metadata must prevent transaction deletion even if every unrelated
+# fallback cleanup action succeeds.
 ROLLBACK_METADATA_VALID=false
 transaction_remove_calls=0
-systemctl() { return 1; }
+inspect_service_active_state() { return 0; }
 stop_owned_xray() { return 0; }
 cleanup_podlaz_resolved() { return 0; }
 cleanup_podlaz_nftables() { return 0; }
+cleanup_recorded_network() { return 1; }
 cleanup_podlaz_link() { return 0; }
 remove_generated_state() { return 0; }
 remove_transaction_state() { transaction_remove_calls=$((transaction_remove_calls + 1)); return 0; }
@@ -47,49 +53,68 @@ if fallback_cleanup; then
 fi
 [[ "${transaction_remove_calls}" == "0" ]] || fail_test "invalid transaction metadata was removed"
 
-# Sentinel cleanup failures must propagate and record failure.
-systemctl() { return 1; }
-sentinel_rule_present() { return 0; }
-sentinel_route_present() { return 1; }
-sudo() {
-  if [[ "$*" == *"rule del"* ]]; then
-    return 1
-  fi
-  return 1
-}
+# A sentinel inspection error must be propagated instead of treated as absence.
+inspect_service_load_state() { return 0; }
+inspect_link_state() { return 0; }
+inspect_sentinel_rule_state() { return 2; }
+inspect_sentinel_route_state() { return 0; }
+inspect_nft_table_state() { return 0; }
+inspect_e2e_sentinel_state() { return 2; }
 if cleanup_e2e_sentinels; then
-  fail_test "sentinel cleanup failure was suppressed"
+  fail_test "sentinel inspection failure was suppressed"
 fi
 [[ "${last_evidence}" == "e2e_sentinels_removed=false" ]] || fail_test "sentinel failure evidence was ${last_evidence}"
 
-# Final success requires no reserved collision, direct connectivity, and package absence.
-ROLLBACK_METADATA_VALID=true
-direct_called=0
-reserved_network_state_present() { return 1; }
-sentinel_service_present() { return 1; }
-resolved_has_podlaz_link() { return 1; }
-owned_xray_identities() { return 0; }
-sentinel_rule_present() { return 1; }
-sentinel_route_present() { return 1; }
-package_present() { return 1; }
-systemctl() { return 1; }
-assert_direct_connectivity() { direct_called=$((direct_called + 1)); return 0; }
-sudo() {
-  if [[ "$*" == *"python3"*" verify "* ]]; then
-    return 0
-  fi
-  return 1
+install_clean_assertion_baseline() {
+  ROLLBACK_METADATA_VALID=true
+  inspect_link_state() { return 0; }
+  inspect_recorded_network_state() { return 0; }
+  inspect_reserved_network_state() { return 0; }
+  inspect_resolved_link_state() { return 0; }
+  inspect_nft_table_state() { return 0; }
+  inspect_owned_xray_state() { return 0; }
+  inspect_directory_content_state() { return 0; }
+  inspect_service_active_state() { return 0; }
+  inspect_path_state() { return 0; }
+  inspect_e2e_sentinel_state() { return 0; }
+  inspect_package_state() { return 0; }
+  assert_direct_connectivity() { return 0; }
 }
 
-reserved_network_state_present() { return 0; }
-if assert_cleanup_complete; then
-  fail_test "reserved network conflict was accepted"
-fi
-reserved_network_state_present() { return 1; }
-direct_called=0
+run_inspection_failure_case() (
+  local inspector="$1"
+  install_clean_assertion_baseline
+  last_evidence=""
+  case "${inspector}" in
+    link) inspect_link_state() { return 2; } ;;
+    recorded-network) inspect_recorded_network_state() { return 2; } ;;
+    reserved-network) inspect_reserved_network_state() { return 2; } ;;
+    resolved) inspect_resolved_link_state() { return 2; } ;;
+    nftables) inspect_nft_table_state() { return 2; } ;;
+    xray) inspect_owned_xray_state() { return 2; } ;;
+    directory) inspect_directory_content_state() { return 2; } ;;
+    service) inspect_service_active_state() { return 2; } ;;
+    path) inspect_path_state() { return 2; } ;;
+    sentinels) inspect_e2e_sentinel_state() { return 2; } ;;
+    package) inspect_package_state() { return 2; } ;;
+    connectivity) assert_direct_connectivity() { return 1; } ;;
+    *) fail_test "unknown inspector test ${inspector}" ;;
+  esac
+  if assert_cleanup_complete; then
+    fail_test "${inspector} operational error produced cleanup success"
+  fi
+  [[ "${last_evidence}" == "cleanup_assertions=fail" ]] || \
+    fail_test "${inspector} failure evidence was ${last_evidence}"
+)
 
+for inspector in \
+  link recorded-network reserved-network resolved nftables xray directory service path sentinels package connectivity; do
+  run_inspection_failure_case "${inspector}"
+done
+
+install_clean_assertion_baseline
+last_evidence=""
 assert_cleanup_complete || fail_test "clean state assertions unexpectedly failed"
-[[ "${direct_called}" == "1" ]] || fail_test "direct connectivity was not asserted"
 [[ "${last_evidence}" == "cleanup_assertions=pass" ]] || fail_test "cleanup success evidence was ${last_evidence}"
 
 printf 'tun package cleanup tests passed\n'
