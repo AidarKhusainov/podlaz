@@ -23,6 +23,7 @@ EVIDENCE="${E2E_ARTIFACT_DIR}/teardown-evidence.txt"
 ROLLBACK_MANIFEST="${E2E_TMP_ROOT}/tun-package-rollback-network.json"
 FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 ROLLBACK_METADATA_VALID=false
+RUNTIME_PROCESSES_QUIESCED=false
 
 FOREIGN_NFT_FAMILY="inet"
 FOREIGN_NFT_TABLE="podlaz_e2e_foreign_guard"
@@ -297,24 +298,37 @@ remove_transaction_state() {
 
 fallback_cleanup() {
   local status=0 service_state
+  RUNTIME_PROCESSES_QUIESCED=false
   record_cleanup_evidence fallback_cleanup_attempted true
   timeout --signal=TERM --kill-after=5s 20s sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
   capture_status service_state inspect_service_active_state podlazd.service
   if [[ "${service_state}" != "0" ]]; then
     cleanup_error "teardown: podlazd.service did not stop or could not be inspected"
-    status=1
+    record_cleanup_evidence runtime_processes_quiesced false
+    record_cleanup_evidence identity_material_preserved true
+    return 1
   fi
-  stop_owned_xray || status=1
+  if ! stop_owned_xray; then
+    record_cleanup_evidence runtime_processes_quiesced false
+    record_cleanup_evidence identity_material_preserved true
+    return 1
+  fi
+  RUNTIME_PROCESSES_QUIESCED=true
+  record_cleanup_evidence runtime_processes_quiesced true
+
   cleanup_podlaz_resolved || status=1
   cleanup_podlaz_nftables || status=1
   cleanup_recorded_network || status=1
   cleanup_podlaz_link || status=1
-  remove_generated_state || status=1
 
+  if [[ "${status}" == "0" ]]; then
+    remove_generated_state || status=1
+  fi
   if [[ "${status}" == "0" ]]; then
     remove_transaction_state || status=1
   else
     record_cleanup_evidence transaction_metadata_preserved true
+    record_cleanup_evidence identity_material_preservation_required true
   fi
   return "${status}"
 }
@@ -470,6 +484,21 @@ purge_package() {
   return "${status}"
 }
 
+purge_package_if_safe() {
+  if [[ "${PODLAZ_E2E_PURGE_PACKAGE}" != "true" ]]; then
+    purge_package
+    return
+  fi
+  if [[ "${RUNTIME_PROCESSES_QUIESCED}" != "true" ]]; then
+    record_cleanup_evidence package_purge_deferred true
+    record_cleanup_evidence package_purged false
+    cleanup_error "teardown: refusing package purge while daemon or owned Xray absence is unproven"
+    return 1
+  fi
+  record_cleanup_evidence package_purge_deferred false
+  purge_package
+}
+
 assert_direct_connectivity() {
   local public_ip
   if ! getent hosts "${PODLAZ_E2E_DNS_CHECK_HOST}" >/dev/null 2>&1; then
@@ -546,6 +575,6 @@ clear_tun_hook || cleanup_status=1
 attempt_daemon_recovery
 fallback_cleanup || cleanup_status=1
 cleanup_e2e_sentinels || cleanup_status=1
-purge_package || cleanup_status=1
+purge_package_if_safe || cleanup_status=1
 assert_cleanup_complete || cleanup_status=1
 exit "${cleanup_status}"
