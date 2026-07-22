@@ -229,7 +229,7 @@ class FallbackNetworkTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.MetadataError, "invalid owner"):
             self.snapshot(payload)
 
-    def test_snapshot_rejects_desired_network_without_applied_proof(self) -> None:
+    def test_applying_rejects_desired_network_without_applied_proof(self) -> None:
         payload = transaction_payload(
             desired_routes=[route()],
             applied_routes=[],
@@ -335,15 +335,16 @@ class FallbackNetworkTests(unittest.TestCase):
         self.assertEqual(MODULE.validated_route(route(table="podlaz")).table, "51820")
         self.assertEqual(MODULE.validated_policy_rule(rule(table="podlaz")).table, "51820")
 
-    def test_committed_transaction_with_desired_network_but_no_applied_proof_is_ambiguous(self) -> None:
+    def test_committed_desired_network_without_owned_steps_is_non_mutating(self) -> None:
         payload = transaction_payload(
             desired_routes=[route()],
             applied_routes=[],
             rollback_routes=[],
             state="committed",
         )
-        with self.assertRaises(MODULE.MetadataError):
-            self.snapshot(payload)
+        manifest = self.snapshot(payload)
+        self.assertEqual(manifest.routes, ())
+        self.assertEqual(manifest.rules, ())
 
 
 if __name__ == "__main__":
