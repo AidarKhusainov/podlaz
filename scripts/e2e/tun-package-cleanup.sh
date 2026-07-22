@@ -147,15 +147,34 @@ attempt_daemon_recovery() {
 }
 
 owned_xray_identities() {
-  local pid start proc
-  for proc in /proc/[0-9]*; do
-    [[ -d "${proc}" ]] || continue
-    pid="${proc#/proc/}"
-    start="$(process_start_time "${pid}" 2>/dev/null || true)"
-    [[ -n "${start}" ]] || continue
-    owned_process_identity_matches "${pid}" "${start}" "/usr/lib/podlaz/xray" "/run/podlaz/generated/" || continue
-    printf '%s:%s\n' "${pid}" "${start}"
-  done
+  local output scan_status pid start
+  if output="$(sudo -n pgrep -f '^/usr/lib/podlaz/xray([[:space:]]|$).*\/run\/podlaz\/generated\/' 2>/dev/null)"; then
+    scan_status=0
+  else
+    scan_status=$?
+  fi
+  case "${scan_status}" in
+    1) return 0 ;;
+    0) ;;
+    *) return "${HOST_STATE_ERROR}" ;;
+  esac
+
+  while IFS= read -r pid; do
+    [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return "${HOST_STATE_ERROR}"
+    if ! start="$(process_start_time "${pid}" 2>/dev/null)"; then
+      if sudo -n kill -0 "${pid}" >/dev/null 2>&1; then
+        return "${HOST_STATE_ERROR}"
+      fi
+      continue
+    fi
+    if owned_process_identity_matches "${pid}" "${start}" "/usr/lib/podlaz/xray" "/run/podlaz/generated/"; then
+      printf '%s:%s\n' "${pid}" "${start}"
+      continue
+    fi
+    if sudo -n kill -0 "${pid}" >/dev/null 2>&1; then
+      return "${HOST_STATE_ERROR}"
+    fi
+  done <<<"${output}"
 }
 
 inspect_owned_xray_state() {
@@ -168,9 +187,20 @@ inspect_owned_xray_state() {
 }
 
 stop_owned_xray() {
-  local identity pid start status=0 inspect_status
+  local output scan_status identity pid start status=0 inspect_status
   local -a identities=()
-  mapfile -t identities < <(owned_xray_identities)
+  if output="$(owned_xray_identities)"; then
+    scan_status=0
+  else
+    scan_status=$?
+  fi
+  if [[ "${scan_status}" != "0" ]]; then
+    cleanup_error "teardown: transaction-owned Xray candidate inspection failed"
+    return 1
+  fi
+  if [[ -n "${output}" ]]; then
+    mapfile -t identities <<<"${output}"
+  fi
   for identity in "${identities[@]}"; do
     pid="${identity%%:*}"
     start="${identity#*:}"
@@ -508,7 +538,7 @@ if [[ "${PODLAZ_E2E_CLEANUP_SOURCE_ONLY:-false}" == "true" ]]; then
   return 0 2>/dev/null || exit 0
 fi
 
-require_cmd apt curl dpkg-query getent grep ip nft python3 readlink resolvectl seq sleep sudo systemctl timeout tr
+require_cmd apt curl dpkg-query getent grep ip nft pgrep python3 readlink resolvectl seq sleep sudo systemctl timeout tr
 
 cleanup_status=0
 snapshot_rollback_metadata || cleanup_status=1
