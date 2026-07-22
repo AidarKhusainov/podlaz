@@ -65,7 +65,7 @@ owned_process_identity_matches() {
   exe="$(process_readlink "${PROCESS_PROC_ROOT}/${pid}/exe" 2>/dev/null)" || return 1
   [[ "${exe}" == "${expected_exe}" ]] || return 1
   if [[ "${PROCESS_USE_SUDO}" == "true" ]]; then
-    cmdline="$(sudo -n tr '\0' ' ' <"${PROCESS_PROC_ROOT}/${pid}/cmdline" 2>/dev/null)" || return 1
+    cmdline="$(sudo -n cat -- "${PROCESS_PROC_ROOT}/${pid}/cmdline" 2>/dev/null | tr '\0' ' ')" || return 1
   else
     cmdline="$(tr '\0' ' ' <"${PROCESS_PROC_ROOT}/${pid}/cmdline" 2>/dev/null)" || return 1
   fi
