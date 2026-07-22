@@ -77,6 +77,12 @@ assert_absent_state() {
 }
 
 snapshot_rollback_metadata() {
+  if [[ "${RUNTIME_PROCESSES_QUIESCED}" != "true" ]]; then
+    ROLLBACK_METADATA_VALID=false
+    record_cleanup_evidence rollback_metadata_valid false
+    cleanup_error "teardown: refusing authoritative rollback snapshot before runtime quiescence"
+    return 1
+  fi
   if ! sudo -n rm -f -- "${ROLLBACK_MANIFEST}" >/dev/null 2>&1; then
     ROLLBACK_METADATA_VALID=false
     record_cleanup_evidence rollback_metadata_valid false
@@ -86,6 +92,7 @@ snapshot_rollback_metadata() {
   if sudo -n python3 "${FALLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${ROLLBACK_MANIFEST}"; then
     ROLLBACK_METADATA_VALID=true
     record_cleanup_evidence rollback_metadata_valid true
+    record_cleanup_evidence rollback_metadata_authoritative true
     return 0
   fi
   ROLLBACK_METADATA_VALID=false
@@ -299,6 +306,7 @@ remove_transaction_state() {
 fallback_cleanup() {
   local status=0 service_state
   RUNTIME_PROCESSES_QUIESCED=false
+  ROLLBACK_METADATA_VALID=false
   record_cleanup_evidence fallback_cleanup_attempted true
   timeout --signal=TERM --kill-after=5s 20s sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
   capture_status service_state inspect_service_active_state podlazd.service
@@ -315,6 +323,12 @@ fallback_cleanup() {
   fi
   RUNTIME_PROCESSES_QUIESCED=true
   record_cleanup_evidence runtime_processes_quiesced true
+
+  if ! snapshot_rollback_metadata; then
+    record_cleanup_evidence transaction_metadata_preserved true
+    record_cleanup_evidence identity_material_preserved true
+    return 1
+  fi
 
   cleanup_podlaz_resolved || status=1
   cleanup_podlaz_nftables || status=1
@@ -570,7 +584,6 @@ fi
 require_cmd apt curl dpkg-query getent grep ip nft pgrep python3 readlink resolvectl seq sleep sudo systemctl timeout tr
 
 cleanup_status=0
-snapshot_rollback_metadata || cleanup_status=1
 clear_tun_hook || cleanup_status=1
 attempt_daemon_recovery
 fallback_cleanup || cleanup_status=1
