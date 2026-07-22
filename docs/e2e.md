@@ -80,7 +80,7 @@ The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or 
 | Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
 | TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Gated apply/verify failures, pre-rollback diagnostics, resolved subprocess edge cases, immediate retry, unrelated-state preservation, and pre-commit interruption. |
 | Installed-package TUN convergence | `scripts/e2e/tun-package-convergence.sh` | Release-like `.deb`, packaged inactive-scope verification, real missing-link rollback, provenance, direct resource absence, unrelated host-state preservation, restart reconciliation, and immediate retry. |
-| Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | Bounded daemon recovery, scoped fallback cleanup, package purge, sentinel removal, and direct post-cleanup assertions. |
+| Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | Bounded daemon recovery, exact metadata-driven network cleanup, package purge, sentinel removal, and direct post-cleanup assertions. |
 
 ## Manual script order
 
@@ -114,11 +114,17 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 
 ## Installed-package convergence safety
 
-The dedicated scenario starts by removing any previous package/test residue, installs the freshly built `.deb`, and performs an explicit reinstall even when the package version is unchanged. It extracts the built package and compares SHA-256 hashes for `podlaz` and `podlazd` with the installed files. It also verifies that systemd's current `MainPID` executes `/usr/bin/podlazd`, that `/proc/<pid>/exe` has the same hash, and that installed version metadata identifies the tested commit.
+The dedicated scenario starts by checking that its exact E2E sentinels do not already exist. It never deletes a pre-existing route, rule, link, table, or service merely to obtain a clean test namespace. It installs the freshly built `.deb` and performs an explicit reinstall even when the package version is unchanged. It extracts the built package and compares SHA-256 hashes for `podlaz` and `podlazd` with the installed files. It also verifies that systemd's current `MainPID` executes `/usr/bin/podlazd`, that `/proc/<pid>/exe` has the same hash, and that installed version metadata identifies the tested commit.
 
-Every background connect has a bounded wait and TERM/KILL escalation. The scenario trap and the workflow `if: always()` step both invoke `tun-package-cleanup.sh`. Teardown first attempts normal daemon-owned recovery, then performs only fixed podlaz-owned fallback cleanup. Main-table bypass routes are removed only when proven by persisted `podlaz:route` metadata or the reserved priority `9999` rule. Teardown removes E2E sentinels, optionally purges the package, and directly asserts that TUN, routes, policy rules, resolved state, nftables, transaction-owned Xray, generated configs, transaction files, daemon state, and E2E sentinels are absent.
+Every background connect has a bounded wait. Child completion is tracked separately from the child's exit code: after `wait` reaps a process, that PID is never signalled. TERM/KILL escalation requires the same `/proc/<pid>/stat` start time. Xray escalation additionally revalidates the exact executable and transaction-generated config reference before TERM and again before KILL, so PID reuse cannot authorize a signal.
 
-The scenario timeout is shorter than the job timeout so cleanup retains a dedicated execution window. Failure to prove clean host state fails the workflow.
+The scenario trap and the workflow `if: always()` step both invoke `tun-package-cleanup.sh`. Before any route or policy-rule mutation, teardown parses every transaction file and atomically snapshots validated rollback metadata into a private temporary manifest. Unreadable JSON, an unsupported schema or owner, unexpected directory entries, or cleanup-required/committed state without exact rollback tuples makes teardown fail closed. The original transaction metadata is retained for inspection and recovery.
+
+A routing table number or rule priority is a namespace hint, not proof of ownership. Fallback never flushes table `51820` and never deletes every rule at priority `9999` or `10000`. It removes only exact persisted tuples: destination, gateway, device and table for routes; priority, selectors, mark and table for policy rules. The logical `podlaz` table name is normalized to numeric table `51820` before execution. An unrecorded object in a reserved namespace is not deleted; it causes teardown to fail as an ownership conflict.
+
+After normal daemon recovery and exact metadata-driven fallback, teardown accumulates rather than suppresses failures. It verifies the private manifest, reserved namespace absence, `podlaz0`, resolver and nftables state, transaction-owned Xray identity, generated config and transaction directories, hook drop-in and hook directory, every exact E2E sentinel including route/rule/service state, package absence after purge, and restored direct DNS plus IPv4 egress. Transaction metadata is removed only after all recorded network tuples and other podlaz-owned fallback state are proven clean. A failed or timed-out package purge records `package_purged=false`.
+
+The scenario timeout is shorter than the job timeout so cleanup retains a dedicated execution window. Failure to prove clean host state fails the workflow. Artifact scanning and upload are permitted only after teardown reports success.
 
 ## TUN fault-injection coverage
 
