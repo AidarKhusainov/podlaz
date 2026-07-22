@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 source "${SCRIPT_DIR}/lib/process_lifecycle.sh"
 # shellcheck source=lib/connect_lifecycle.sh
 source "${SCRIPT_DIR}/lib/connect_lifecycle.sh"
+# shellcheck source=lib/tun_package_assertions.sh
+source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
 require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep ip journalctl mktemp nft pgrep python3 readlink resolvectl sed sha256sum sleep sudo systemctl systemd-run timeout tr
 
@@ -33,6 +35,8 @@ HOOK_READY="${HOOK_DIR}/dns-missing-link.ready"
 HOOK_CONTINUE="${HOOK_DIR}/dns-missing-link.continue"
 HOOK_EVENTS="${HOOK_DIR}/events.log"
 DIAGNOSTIC_REPORT="/run/podlaz/diagnostics/tun-last.json"
+TRANSACTION_DIR="/run/podlaz/transactions"
+FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 
 FOREIGN_NFT_FAMILY="inet"
 FOREIGN_NFT_TABLE="podlaz_e2e_foreign_guard"
@@ -221,26 +225,25 @@ assert_foreign_state() {
   write_evidence acceptance.txt "foreign_state_${phase}" pass
 }
 
+snapshot_tun_network_manifest() {
+  local phase="$1" manifest="$2"
+  sudo -n rm -f -- "${manifest}" >/dev/null 2>&1 || fail "${phase}: failed to clear private network manifest"
+  sudo -n python3 "${FALLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${manifest}" >/dev/null || \
+    fail "${phase}: exact route/rule ownership snapshot failed"
+  sudo -n test -f "${manifest}" || fail "${phase}: exact route/rule manifest was not persisted"
+}
+
+verify_tun_network_manifest_absent() {
+  local phase="$1" manifest="$2"
+  verify_tun_package_network_absent "${phase}" "${FALLBACK_NETWORK_HELPER}" "${manifest}" || \
+    fail "${phase}: exact route/rule rollback could not be proven complete"
+  write_evidence acceptance.txt "network_absent_${phase}" pass
+}
+
 assert_podlaz_resources_absent() {
-  local phase="$1"
-  if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
-    fail "${phase}: podlaz0 still exists"
-  fi
-  if sudo -n resolvectl status --no-pager 2>/dev/null | grep -E '^Link [0-9]+ \(podlaz0\)$' >/dev/null; then
-    fail "${phase}: resolved still has podlaz0"
-  fi
-  if sudo -n nft list table inet podlaz >/dev/null 2>&1; then
-    fail "${phase}: inet podlaz remains"
-  fi
-  if pgrep -f '/usr/lib/podlaz/xray.*\/run\/podlaz\/generated\/' >/dev/null 2>&1; then
-    fail "${phase}: transaction-owned Xray remains"
-  fi
-  if sudo -n test -d /run/podlaz/generated && sudo -n find /run/podlaz/generated -mindepth 1 -print -quit | grep -q .; then
-    fail "${phase}: generated config remains"
-  fi
-  if sudo -n test -d /run/podlaz/transactions && sudo -n find /run/podlaz/transactions -mindepth 1 -print -quit | grep -q .; then
-    fail "${phase}: transaction metadata remains"
-  fi
+  local phase="$1" manifest="$2"
+  verify_tun_package_resources_absent "${phase}" "${FALLBACK_NETWORK_HELPER}" "${manifest}" || \
+    fail "${phase}: podlaz resource absence could not be proven"
   write_evidence acceptance.txt "resources_absent_${phase}" pass
 }
 
@@ -344,7 +347,8 @@ verify_package_provenance() {
 }
 
 run_inactive_scope_probe() {
-  local events tmp
+  local events tmp network_manifest
+  network_manifest="${E2E_TMP_ROOT}/inactive-scope-network-manifest.json"
   configure_hook dns-inactive-scope
   tmp="$(mktemp "${E2E_TMP_ROOT}/inactive-scope-connect.XXXXXX")"
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${tmp}" 2>&1 || fail "Current Scopes: none package connect failed"
@@ -355,19 +359,23 @@ run_inactive_scope_probe() {
   grep -F "DNS Servers:" "${tmp}" >/dev/null || fail "inactive-scope DNS servers missing"
   grep -F "DNS Domain: ~." "${tmp}" >/dev/null || fail "inactive-scope route-only domain missing"
   grep -F "+DefaultRoute" "${tmp}" >/dev/null || fail "inactive-scope default route missing"
+  snapshot_tun_network_manifest inactive-scope "${network_manifest}"
   run_installed_podlaz disconnect >"${tmp}" 2>&1 || fail "inactive-scope disconnect failed"
+  verify_tun_network_manifest_absent inactive-scope "${network_manifest}"
   rm -f -- "${tmp}"
   clear_hook
   sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
   assert_no_recovery_candidates inactive-scope
-  assert_podlaz_resources_absent inactive-scope
+  assert_podlaz_resources_absent inactive-scope "${network_manifest}"
   assert_foreign_state inactive-scope
   write_evidence acceptance.txt current_scopes_none pass
 }
 
 run_missing_link_probe() {
-  local attempt transaction_count revert_out revert_err wait_status connect_code events report doctor_output
+  local attempt transaction_count revert_out revert_err wait_status connect_code events report doctor_output network_manifest retry_manifest
+  network_manifest="${E2E_TMP_ROOT}/missing-link-network-manifest.json"
+  retry_manifest="${E2E_TMP_ROOT}/retry-network-manifest.json"
   configure_hook dns-missing-link-rollback
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${E2E_TMP_ROOT}/missing-link-connect.stdout" 2>"${E2E_TMP_ROOT}/missing-link-connect.stderr" &
   CONNECT_PID=$!
@@ -382,6 +390,7 @@ run_missing_link_probe() {
   sudo -n resolvectl status podlaz0 --no-pager >/dev/null 2>&1 || fail "resolved state was not present before fault injection"
   transaction_count="$(sudo -n find /run/podlaz/transactions -type f -name '*.json' | wc -l | tr -d '[:space:]')"
   [[ "${transaction_count}" -ge 1 ]] || fail "daemon-owned transaction was not persisted before fault injection"
+  snapshot_tun_network_manifest missing-link "${network_manifest}"
   write_evidence acceptance.txt transaction_persisted_before_fault pass
 
   sudo -n ip link del dev podlaz0
@@ -408,6 +417,7 @@ run_missing_link_probe() {
   fi
   connect_code="${CONNECT_EXIT_CODE}"
   [[ "${connect_code}" != "0" ]] || fail "missing-link connect unexpectedly succeeded"
+  verify_tun_network_manifest_absent missing-link "${network_manifest}"
 
   events="${E2E_ARTIFACT_DIR}/missing-link-events.log"
   sudo -n cat "${HOOK_EVENTS}" >"${events}"
@@ -436,13 +446,15 @@ run_missing_link_probe() {
   rm -f -- "${doctor_output}"
 
   assert_no_recovery_candidates missing-link
-  assert_podlaz_resources_absent missing-link
+  assert_podlaz_resources_absent missing-link "${network_manifest}"
   assert_foreign_state missing-link
 
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "immediate retry connect failed"
+  snapshot_tun_network_manifest retry "${retry_manifest}"
   run_installed_podlaz disconnect >/dev/null 2>&1 || fail "immediate retry disconnect failed"
+  verify_tun_network_manifest_absent retry "${retry_manifest}"
   assert_no_recovery_candidates retry
-  assert_podlaz_resources_absent retry
+  assert_podlaz_resources_absent retry "${retry_manifest}"
   assert_foreign_state retry
   write_evidence acceptance.txt immediate_retry pass
 }
