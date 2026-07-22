@@ -65,6 +65,20 @@ if cleanup_e2e_sentinels; then
 fi
 [[ "${last_evidence}" == "e2e_sentinels_removed=false" ]] || fail_test "sentinel failure evidence was ${last_evidence}"
 
+# The concrete Xray scanner must distinguish pgrep failure from no matches.
+sudo() {
+  if [[ "$*" == *"pgrep -f"* ]]; then
+    return 2
+  fi
+  return 0
+}
+if inspect_owned_xray_state; then
+  fail_test "Xray pgrep failure was treated as absence"
+else
+  xray_status=$?
+fi
+[[ "${xray_status}" == "2" ]] || fail_test "Xray pgrep failure returned ${xray_status}"
+
 install_clean_assertion_baseline() {
   ROLLBACK_METADATA_VALID=true
   inspect_link_state() { return 0; }
