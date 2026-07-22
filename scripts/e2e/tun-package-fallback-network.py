@@ -365,8 +365,8 @@ def _transaction_network(path: Path) -> tuple[list[OwnedRoute], list[OwnedPolicy
 
 
 def snapshot_transactions(root: Path, manifest_path: Path) -> NetworkManifest:
-    routes: set[OwnedRoute] = set()
-    rules: set[OwnedPolicyRule] = set()
+    routes: list[OwnedRoute] = []
+    rules: list[OwnedPolicyRule] = []
     if root.exists():
         if not root.is_dir():
             raise MetadataError("transaction path is not a directory")
@@ -376,8 +376,8 @@ def snapshot_transactions(root: Path, manifest_path: Path) -> NetworkManifest:
                 raise MetadataError("transaction directory contains an unexpected entry")
         for path in entries:
             tx_routes, tx_rules = _transaction_network(path)
-            routes.update(tx_routes)
-            rules.update(tx_rules)
+            routes.extend(tx_routes)
+            rules.extend(tx_rules)
 
     manifest = NetworkManifest(tuple(sorted(routes)), tuple(sorted(rules)))
     _write_manifest(manifest_path, manifest)
@@ -414,7 +414,7 @@ def load_manifest(path: Path) -> NetworkManifest:
         raise MetadataError("rollback manifest schema is unsupported")
     routes = tuple(validated_manifest_route(item) for item in _list(root.get("routes"), "manifest routes"))
     rules = tuple(validated_manifest_rule(item) for item in _list(root.get("rules"), "manifest rules"))
-    return NetworkManifest(tuple(sorted(set(routes))), tuple(sorted(set(rules))))
+    return NetworkManifest(tuple(sorted(routes)), tuple(sorted(rules)))
 
 
 def validated_manifest_route(value: object) -> OwnedRoute:
