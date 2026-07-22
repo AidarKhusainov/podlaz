@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -367,12 +368,26 @@ def _transaction_network(path: Path) -> tuple[list[OwnedRoute], list[OwnedPolicy
 def snapshot_transactions(root: Path, manifest_path: Path) -> NetworkManifest:
     routes: list[OwnedRoute] = []
     rules: list[OwnedPolicyRule] = []
-    if root.exists():
-        if not root.is_dir():
+    try:
+        root_stat = root.stat()
+    except FileNotFoundError:
+        root_stat = None
+    except OSError as exc:
+        raise MetadataError("transaction directory cannot be inspected") from exc
+
+    if root_stat is not None:
+        if not stat.S_ISDIR(root_stat.st_mode):
             raise MetadataError("transaction path is not a directory")
-        entries = sorted(root.iterdir())
+        try:
+            entries = sorted(root.iterdir())
+        except OSError as exc:
+            raise MetadataError("transaction directory cannot be read") from exc
         for entry in entries:
-            if entry.is_symlink() or not entry.is_file() or entry.suffix != ".json":
+            try:
+                entry_stat = entry.lstat()
+            except OSError as exc:
+                raise MetadataError("transaction directory entry cannot be inspected") from exc
+            if not stat.S_ISREG(entry_stat.st_mode) or entry.suffix != ".json":
                 raise MetadataError("transaction directory contains an unexpected entry")
         for path in entries:
             tx_routes, tx_rules = _transaction_network(path)
@@ -449,13 +464,16 @@ def validated_manifest_rule(value: object) -> OwnedPolicyRule:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise InspectionError(f"command launch failed: {' '.join(command)}") from exc
 
 
 def _inspection_output(command: list[str]) -> str:
