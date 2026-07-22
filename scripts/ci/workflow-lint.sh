@@ -39,9 +39,10 @@ python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
 bash scripts/e2e/tests/test_process_lifecycle.sh
 bash scripts/e2e/tests/test_tun_package_cleanup.sh
 
-# E2E entrypoints intentionally collect host diagnostics through sudo-owned commands
-# into user-owned artifact files and carry defensive state variables for cleanup.
+# E2E scripts use dynamic source paths, source-only test guards, and test-double
+# functions that shellcheck cannot resolve statically. Runtime regression tests
+# above exercise those paths before linting the complete script set.
 shellcheck -x -s bash -P scripts/e2e \
-  -e SC2024,SC2034,SC2086,SC2155,SC2318 \
+  -e SC1091,SC2024,SC2034,SC2086,SC2155,SC2317,SC2318 \
   "${e2e_scripts[@]}" \
   "${e2e_test_scripts[@]}"
