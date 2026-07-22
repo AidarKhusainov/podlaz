@@ -24,6 +24,7 @@ run_daemon_stop_failure_case() (
   timeout() { return 0; }
   inspect_service_active_state() { return 1; }
   stop_owned_xray() { destructive_calls=$((destructive_calls + 1)); return 0; }
+  snapshot_rollback_metadata() { destructive_calls=$((destructive_calls + 1)); return 0; }
   cleanup_podlaz_resolved() { destructive_calls=$((destructive_calls + 1)); return 0; }
   cleanup_podlaz_nftables() { destructive_calls=$((destructive_calls + 1)); return 0; }
   cleanup_recorded_network() { destructive_calls=$((destructive_calls + 1)); return 0; }
@@ -47,6 +48,7 @@ run_xray_stop_failure_case() (
   timeout() { return 0; }
   inspect_service_active_state() { return 0; }
   stop_owned_xray() { return 1; }
+  snapshot_rollback_metadata() { destructive_calls=$((destructive_calls + 1)); return 0; }
   cleanup_podlaz_resolved() { destructive_calls=$((destructive_calls + 1)); return 0; }
   cleanup_podlaz_nftables() { destructive_calls=$((destructive_calls + 1)); return 0; }
   cleanup_recorded_network() { destructive_calls=$((destructive_calls + 1)); return 0; }
@@ -66,11 +68,17 @@ run_xray_stop_failure_case() (
 run_network_failure_preserves_identity_case() (
   generated_calls=0
   transaction_calls=0
+  snapshot_quiesced=false
   cleanup_error() { :; }
   record_cleanup_evidence() { :; }
   timeout() { return 0; }
   inspect_service_active_state() { return 0; }
   stop_owned_xray() { return 0; }
+  snapshot_rollback_metadata() {
+    snapshot_quiesced="${RUNTIME_PROCESSES_QUIESCED:-false}"
+    ROLLBACK_METADATA_VALID=true
+    return 0
+  }
   cleanup_podlaz_resolved() { return 0; }
   cleanup_podlaz_nftables() { return 0; }
   cleanup_recorded_network() { return 1; }
@@ -81,6 +89,8 @@ run_network_failure_preserves_identity_case() (
   if fallback_cleanup; then
     fail_test "fallback accepted incomplete network cleanup"
   fi
+  [[ "${snapshot_quiesced}" == "true" ]] || \
+    fail_test "network manifest was not captured after process quiescence"
   [[ "${generated_calls}" == "0" ]] || \
     fail_test "generated config was removed before complete cleanup"
   [[ "${transaction_calls}" == "0" ]] || \
