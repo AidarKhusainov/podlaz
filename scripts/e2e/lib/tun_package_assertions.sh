@@ -9,14 +9,14 @@ source "${TUN_PACKAGE_ASSERTIONS_DIR}/host_state.sh"
 
 _tun_package_capture_status() {
   local -n result_ref="$1"
-  local status
+  local captured_rc
   shift
   if "$@"; then
-    status=0
+    captured_rc=0
   else
-    status=$?
+    captured_rc=$?
   fi
-  result_ref="${status}"
+  result_ref="${captured_rc}"
 }
 
 _tun_package_assert_absent_state() {
