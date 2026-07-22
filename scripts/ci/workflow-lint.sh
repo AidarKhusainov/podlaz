@@ -39,6 +39,7 @@ python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
 bash scripts/e2e/tests/test_process_lifecycle.sh
 bash scripts/e2e/tests/test_tun_package_cleanup.sh
 bash scripts/e2e/tests/test_tun_package_cleanup_identity_preservation.sh
+bash scripts/e2e/tests/test_tun_package_cleanup_authoritative_snapshot.sh
 bash scripts/e2e/tests/test_tun_package_acceptance_assertions.sh
 
 # E2E scripts use dynamic source paths, source-only test guards, and test-double
