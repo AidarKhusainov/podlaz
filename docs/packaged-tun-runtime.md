@@ -95,7 +95,9 @@ Low-level DNS/firewall composition executors do not perform hidden rollback when
 
 This is the boundary that guarantees `network-apply` diagnostics precede the first DNS, nftables, route, rule, or TUN rollback command. A child executor that did not mutate state returns a zero `Step`, which is not added to rollback ownership.
 
-When a failed connect successfully rolls back every podlaz-owned mutation it applied, the terminal transaction file is removed. If a terminal `rolled_back` or `committed` transaction file is found later, TUN handoff preflight treats it as non-blocking. Transaction files in cleanup-required states such as `planned`, `applying`, `applied`, `verifying`, `rolling_back`, or `failed` continue to block connect until automatic or explicit daemon-owned recovery completes. Invalid or unreadable transaction files are blockers because their ownership and cleanup state cannot be proven safely.
+When a failed connect successfully rolls back every podlaz-owned mutation it applied, the transaction is first persisted as terminal `rolled_back` and then removed in a separate filesystem operation. A surviving `rolled_back` file is therefore stale lifecycle metadata only: rollback has already relinquished route and policy-rule ownership, and its historical tuples must never authorize another deletion. Cleanup validates only the stale record's schema, owner, and terminal state before removing the metadata after host/process safety checks. A terminal `committed` record remains subject to exact applied/rollback ownership validation because it may still represent active or interrupted cleanup state.
+
+Transaction files in cleanup-required states such as `planned`, `applying`, `applied`, `verifying`, `committed`, `rolling_back`, or `failed` continue to block connect until automatic or explicit daemon-owned recovery completes. Invalid or unreadable transaction files are blockers because their ownership and cleanup state cannot be proven safely.
 
 After every connect attempt, disconnect, or recovery execution, the daemon refreshes the startup recovery scan before publishing status/doctor/recover state. A successful rollback or recovery removes its completed transaction candidate, so an immediate subsequent TUN connect observes the reconciled host and persisted state rather than a phantom stale blocker.
 
@@ -107,6 +109,8 @@ Rollback order for failed or disconnected native TUN sessions is:
 4. stop the Xray child process when it was started by the transaction;
 5. remove generated runtime config;
 6. remove the terminal transaction file only after rollback succeeds.
+
+The installed-package fallback has an additional fail-closed identity boundary. It must prove `podlazd` inactive and every transaction-owned Xray absent before removing generated configuration, transaction metadata, or package executables. If daemon stop, Xray termination, or identity inspection fails, those files are preserved for a later safe retry and package purge is refused. Network cleanup failure after process quiescence also preserves generated configuration and transaction metadata until complete cleanup can be proven.
 
 ## DNS verification contract
 
@@ -134,4 +138,6 @@ Package validation checks the Xray helper file, executable bit, architecture, se
 
 The issue-specific installed-package convergence gate performs a clean purge, builds the branch `.deb`, installs and reinstalls the same package, extracts the built package, and compares SHA-256 hashes of packaged, installed, and running `podlazd` plus packaged/installed `podlaz`. It verifies the running systemd `MainPID` and tested commit identity.
 
-The same dedicated run must accept packaged `Current Scopes: none` and complete the real missing-link rollback scenario. Its scenario timeout leaves a separate cleanup window. On every outcome the workflow attempts daemon recovery, runs strictly scoped fallback cleanup, removes E2E sentinels, purges the package, and directly verifies no podlaz-owned state remains. Artifacts contain only normalized verdicts, classifications, lifecycle events, commit identity, and hashes; upload occurs only after cleanup assertions and scanning against configured secrets and actual host network values succeed.
+The same dedicated run must accept packaged `Current Scopes: none` and complete the real missing-link rollback scenario. Before every disconnect or fault-release boundary it snapshots a private exact route/policy-rule manifest from the active transaction, including arbitrary main-table bypass tuples. Immediately after production rollback or disconnect it runs strict tri-state verification against that manifest; route/rule residue or an inspection error prevents `resources_absent=pass`. The private manifest remains outside the artifact directory.
+
+The scenario timeout leaves a separate cleanup window. On every outcome the workflow attempts daemon recovery, runs strictly scoped fallback cleanup, removes E2E sentinels, and purges the package only after daemon/Xray absence is proven. It directly verifies no podlaz-owned state remains. Artifacts contain only normalized verdicts, classifications, lifecycle events, commit identity, and hashes; upload occurs only after cleanup assertions and scanning against configured secrets and actual host network values succeed.
