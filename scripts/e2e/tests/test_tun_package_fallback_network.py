@@ -180,6 +180,23 @@ class FallbackNetworkTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.MetadataError, "exactly cover applied route"):
             self.snapshot(payload)
 
+    def test_snapshot_preserves_exact_duplicate_rule_count(self) -> None:
+        duplicate = rule()
+        manifest = self.snapshot(
+            transaction_payload(
+                desired_rules=[duplicate, duplicate],
+                applied_rules=[duplicate, duplicate],
+                rollback_rules=[duplicate, duplicate],
+            )
+        )
+        self.assertEqual(
+            manifest.rules,
+            (
+                MODULE.OwnedPolicyRule("-4", 10000, "all", "", "", "51820"),
+                MODULE.OwnedPolicyRule("-4", 10000, "all", "", "", "51820"),
+            ),
+        )
+
     def test_snapshot_rejects_two_applied_rules_with_one_rollback_rule(self) -> None:
         managed = rule()
         bypass = rule(priority=9999, source="", destination="203.0.113.10/32", table="main")
