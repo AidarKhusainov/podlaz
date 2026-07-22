@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/process_lifecycle.sh
 source "${SCRIPT_DIR}/../lib/process_lifecycle.sh"
+# shellcheck source=../lib/connect_lifecycle.sh
+source "${SCRIPT_DIR}/../lib/connect_lifecycle.sh"
 
 fail_test() {
   printf 'test failure: %s\n' "$*" >&2
@@ -19,6 +21,68 @@ wait_for_exit_without_reaping() {
   done
   fail_test "child did not exit"
 }
+
+PROCESS_POLL_INTERVAL=0.01
+
+# A real live child must produce the bounded timeout instead of allowing the
+# surrounding `if` compound command to overwrite 124 with success.
+sleep 30 &
+timeout_pid=$!
+timeout_start="$(process_start_time "${timeout_pid}")"
+if wait_child_bounded "${timeout_pid}" "${timeout_start}" 1; then
+  fail_test "live child wait unexpectedly succeeded"
+else
+  timeout_status=$?
+fi
+[[ "${timeout_status}" == "124" ]] || fail_test "bounded wait returned ${timeout_status}, expected 124"
+child_job_running "${timeout_pid}" || fail_test "timeout child stopped before termination"
+terminate_child_bounded "${timeout_pid}" "${timeout_start}" 50 || fail_test "live timeout child was not terminated"
+[[ "${WAIT_CHILD_REAPED}" == "true" ]] || fail_test "terminated child was not reaped"
+[[ "${WAIT_CHILD_EXIT_CODE}" == "143" || "${WAIT_CHILD_EXIT_CODE}" == "137" ]] || \
+  fail_test "terminated child exit code was ${WAIT_CHILD_EXIT_CODE}"
+child_job_running "${timeout_pid}" && fail_test "terminated child remains in the job table"
+
+# A transient /proc inspection failure must not trigger wait on a live child.
+sleep 30 &
+transient_pid=$!
+transient_start="$(process_start_time "${transient_pid}")"
+original_process_snapshot="$(declare -f process_snapshot)"
+inspection_calls=0
+process_snapshot() {
+  inspection_calls=$((inspection_calls + 1))
+  if [[ "${inspection_calls}" == "1" ]]; then
+    return 1
+  fi
+  eval "${original_process_snapshot}"
+  process_snapshot "$@"
+}
+if wait_child_bounded "${transient_pid}" "${transient_start}" 1; then
+  fail_test "transient inspection failure was treated as child completion"
+else
+  transient_status=$?
+fi
+[[ "${transient_status}" == "124" ]] || fail_test "transient inspection returned ${transient_status}"
+[[ "${WAIT_CHILD_REAPED}" == "false" ]] || fail_test "live child was reaped after transient inspection failure"
+child_job_running "${transient_pid}" || fail_test "transient child is no longer running"
+eval "${original_process_snapshot}"
+terminate_child_bounded "${transient_pid}" "${transient_start}" 50 || fail_test "transient child cleanup failed"
+
+# The connect wrapper must preserve the exact timeout and retain tracking state.
+sleep 30 &
+CONNECT_PID=$!
+CONNECT_START_TIME="$(process_start_time "${CONNECT_PID}")"
+CONNECT_EXIT_CODE=""
+if wait_connect_bounded "${CONNECT_PID}" 1; then
+  fail_test "connect bounded wait converted timeout to success"
+else
+  connect_status=$?
+fi
+[[ "${connect_status}" == "124" ]] || fail_test "connect bounded wait returned ${connect_status}"
+[[ -n "${CONNECT_PID}" && -n "${CONNECT_START_TIME}" ]] || fail_test "timed-out connect tracking was cleared"
+terminate_connect_bounded || fail_test "timed-out connect termination failed"
+[[ -z "${CONNECT_PID}" && -z "${CONNECT_START_TIME}" ]] || fail_test "terminated connect tracking remains"
+[[ "${CONNECT_EXIT_CODE}" == "143" || "${CONNECT_EXIT_CODE}" == "137" ]] || \
+  fail_test "connect termination exit code was ${CONNECT_EXIT_CODE}"
 
 signal_log=()
 process_send_signal() {
