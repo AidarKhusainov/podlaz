@@ -185,6 +185,36 @@ class FallbackNetworkTests(unittest.TestCase):
 
         self.assertFalse(MODULE.cleanup_manifest(manifest))
 
+    def test_managed_table_alias_is_normalized_to_numeric_table(self) -> None:
+        route = {
+            "table": "podlaz",
+            "cidr": "default",
+            "dev": "podlaz0",
+            "owner": "podlaz:route",
+        }
+        rule = {
+            "priority": 10000,
+            "from": "all",
+            "table": "podlaz",
+            "owner": "podlaz:policy-rule",
+        }
+        self.assertEqual(MODULE.validated_route(route).table, "51820")
+        self.assertEqual(MODULE.validated_policy_rule(rule).table, "51820")
+
+    def test_committed_transaction_with_desired_network_but_no_rollback_metadata_is_ambiguous(self) -> None:
+        payload = transaction_payload()
+        payload["state"] = "committed"
+        payload["desired_plan"] = {
+            "routes": [{"table": "main", "cidr": "203.0.113.10/32"}],
+            "steps": [{"kind": "policy-rule", "target": "priority 9999"}],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "transactions"
+            root.mkdir()
+            (root / "tx.json").write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(MODULE.MetadataError):
+                MODULE.snapshot_transactions(root, Path(directory) / "manifest.json")
+
 
 if __name__ == "__main__":
     unittest.main()
