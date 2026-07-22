@@ -411,7 +411,7 @@ assert_cleanup_complete() {
 }
 
 if [[ "${PODLAZ_E2E_CLEANUP_SOURCE_ONLY:-false}" == "true" ]]; then
-  # shellcheck disable=SC2317 -- the script is intentionally sourced by regression tests.
+  # shellcheck disable=SC2317
   return 0 2>/dev/null || exit 0
 fi
 
