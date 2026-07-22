@@ -349,6 +349,12 @@ def _transaction_network(path: Path) -> tuple[list[OwnedRoute], list[OwnedPolicy
     if state not in KNOWN_STATES:
         raise MetadataError("transaction state is unsupported")
 
+    # A terminal rolled-back record is stale metadata only. The completed
+    # rollback relinquished ownership before the separate file removal step, so
+    # its historical tuples must never authorize another network deletion.
+    if state == "rolled_back":
+        return [], []
+
     rollback = _dict(transaction.get("rollback", {}), "transaction rollback")
     route_values = _list(rollback.get("routes", []), "transaction rollback routes")
     rule_values = _list(rollback.get("policy_rules", []), "transaction rollback policy rules")
