@@ -57,12 +57,9 @@ process_start_time() {
   printf '%s\n' "${snapshot#* }"
 }
 
-child_job_running() {
-  local pid="$1" job_pid
-  while IFS= read -r job_pid; do
-    [[ "${job_pid}" == "${pid}" ]] && return 0
-  done < <(jobs -pr)
-  return 1
+child_process_exists() {
+  local pid="$1"
+  kill -0 "${pid}" >/dev/null 2>&1
 }
 
 process_identity_matches() {
@@ -127,12 +124,13 @@ wait_child_bounded() {
       fi
       if [[ "${start}" != "${expected_start}" ]]; then
         WAIT_CHILD_IDENTITY_CHANGED=true
-        return 0
+        return 125
       fi
     else
       # A transient /proc read failure is not evidence that the child exited.
-      # Bash's own job table is the independent authority for this child.
-      if ! child_job_running "${pid}"; then
+      # A failed signal-0 probe is independent evidence that this shell's child
+      # no longer has a live or stopped process identity.
+      if ! child_process_exists "${pid}"; then
         reap_child "${pid}"
         return 0
       fi
@@ -153,9 +151,9 @@ terminate_child_bounded() {
 
   if ! process_identity_matches "${pid}" "${expected_start}"; then
     # Do not signal an identity that can no longer be proven. Reap only when
-    # Bash no longer reports the tracked child as running; otherwise fail
+    # the tracked child no longer has any process identity; otherwise fail
     # closed so the caller cannot proceed as if termination succeeded.
-    if ! child_job_running "${pid}"; then
+    if ! child_process_exists "${pid}"; then
       reap_child "${pid}"
       return 0
     fi
