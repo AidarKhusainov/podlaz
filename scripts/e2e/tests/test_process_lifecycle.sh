@@ -35,12 +35,12 @@ else
   timeout_status=$?
 fi
 [[ "${timeout_status}" == "124" ]] || fail_test "bounded wait returned ${timeout_status}, expected 124"
-child_job_running "${timeout_pid}" || fail_test "timeout child stopped before termination"
+child_process_exists "${timeout_pid}" || fail_test "timeout child stopped before termination"
 terminate_child_bounded "${timeout_pid}" "${timeout_start}" 50 || fail_test "live timeout child was not terminated"
 [[ "${WAIT_CHILD_REAPED}" == "true" ]] || fail_test "terminated child was not reaped"
 [[ "${WAIT_CHILD_EXIT_CODE}" == "143" || "${WAIT_CHILD_EXIT_CODE}" == "137" ]] || \
   fail_test "terminated child exit code was ${WAIT_CHILD_EXIT_CODE}"
-child_job_running "${timeout_pid}" && fail_test "terminated child remains in the job table"
+child_process_exists "${timeout_pid}" && fail_test "terminated child still has a process identity"
 
 # A transient /proc inspection failure must not trigger wait on a live child.
 sleep 30 &
@@ -63,7 +63,7 @@ else
 fi
 [[ "${transient_status}" == "124" ]] || fail_test "transient inspection returned ${transient_status}"
 [[ "${WAIT_CHILD_REAPED}" == "false" ]] || fail_test "live child was reaped after transient inspection failure"
-child_job_running "${transient_pid}" || fail_test "transient child is no longer running"
+child_process_exists "${transient_pid}" || fail_test "transient child is no longer running"
 eval "${original_process_snapshot}"
 terminate_child_bounded "${transient_pid}" "${transient_start}" 50 || fail_test "transient child cleanup failed"
 
