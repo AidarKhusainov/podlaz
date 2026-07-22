@@ -245,13 +245,31 @@ sentinel_route_present() {
     grep -F "blackhole ${FOREIGN_ROUTE_CIDR%/32}" >/dev/null
 }
 
+sentinel_service_present() {
+  local load_state
+  load_state="$(systemctl show -p LoadState --value "${FOREIGN_SERVICE}" 2>/dev/null || true)"
+  [[ -n "${load_state}" && "${load_state}" != "not-found" ]]
+}
+
+reserved_network_state_present() {
+  local family output
+  for family in -4 -6; do
+    output="$(sudo -n ip "${family}" route show table 51820 2>/dev/null || true)"
+    [[ -n "${output//[[:space:]]/}" ]] && return 0
+    if sudo -n ip "${family}" rule show 2>/dev/null | \
+      grep -E '(^|[[:space:]])(9999|10000):|lookup (podlaz|51820)([[:space:]]|$)' >/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 cleanup_e2e_sentinels() {
   local status=0
-  if systemctl is-active --quiet "${FOREIGN_SERVICE}"; then
+  if sentinel_service_present; then
     sudo -n systemctl stop "${FOREIGN_SERVICE}" >/dev/null 2>&1 || status=1
-  fi
-  if systemctl is-failed --quiet "${FOREIGN_SERVICE}"; then
-    sudo -n systemctl reset-failed "${FOREIGN_SERVICE}" >/dev/null 2>&1 || status=1
+    sudo -n systemctl reset-failed "${FOREIGN_SERVICE}" >/dev/null 2>&1 || true
+    sudo -n systemctl daemon-reload >/dev/null 2>&1 || status=1
   fi
   if sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1; then
     sudo -n resolvectl revert "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || status=1
@@ -267,7 +285,7 @@ cleanup_e2e_sentinels() {
     sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || status=1
   fi
 
-  if systemctl is-active --quiet "${FOREIGN_SERVICE}" || \
+  if sentinel_service_present || \
     sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || \
     sentinel_rule_present || sentinel_route_present || \
     sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1; then
@@ -340,6 +358,10 @@ assert_cleanup_complete() {
     cleanup_error "teardown: recorded route/rule absence is not proven"
     status=1
   fi
+  if reserved_network_state_present; then
+    cleanup_error "teardown: reserved route or policy-rule state remains or conflicts with the E2E namespace"
+    status=1
+  fi
   if resolved_has_podlaz_link; then
     cleanup_error "teardown: systemd-resolved still has podlaz0"
     status=1
@@ -368,7 +390,7 @@ assert_cleanup_complete() {
     cleanup_error "teardown: E2E hook state remains"
     status=1
   fi
-  if systemctl is-active --quiet "${FOREIGN_SERVICE}" || \
+  if sentinel_service_present || \
     sudo -n ip link show dev "${FOREIGN_DNS_LINK}" >/dev/null 2>&1 || \
     sentinel_rule_present || sentinel_route_present || \
     sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1; then
@@ -389,6 +411,7 @@ assert_cleanup_complete() {
 }
 
 if [[ "${PODLAZ_E2E_CLEANUP_SOURCE_ONLY:-false}" == "true" ]]; then
+  # shellcheck disable=SC2317 -- the script is intentionally sourced by regression tests.
   return 0 2>/dev/null || exit 0
 fi
 
