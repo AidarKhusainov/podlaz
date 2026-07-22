@@ -30,7 +30,7 @@ KNOWN_STATES = {
     "rolled_back",
     "failed",
 }
-CLEANUP_REQUIRED_STATES = {"planned", "applying", "applied", "verifying", "committed", "rolling_back", "failed"}
+CLEANUP_REQUIRED_STATES = {"applying", "applied", "verifying", "committed", "rolling_back", "failed"}
 MANAGED_TABLES = {"51820", "podlaz"}
 MAIN_TABLE = "main"
 MANAGED_LINK = "podlaz0"
@@ -319,19 +319,29 @@ def _require_exact_applied_coverage(
     applied_steps: list[object],
     rollback_routes: list[OwnedRoute],
     rollback_rules: list[OwnedPolicyRule],
+    *,
+    require_desired_category_proof: bool,
 ) -> None:
     expected_routes, expected_rules = _applied_network(desired_routes, desired_steps, applied_steps)
     has_desired_rules = any(
         isinstance(step, dict) and str(step.get("kind", "")).strip() == "policy-rule" for step in desired_steps
     )
-    if desired_routes and not expected_routes:
-        raise MetadataError("cleanup-required transaction lacks applied route proof")
-    if has_desired_rules and not expected_rules:
-        raise MetadataError("cleanup-required transaction lacks applied policy-rule proof")
+    if require_desired_category_proof and desired_routes and not expected_routes:
+        raise MetadataError("applying transaction lacks applied route proof")
+    if require_desired_category_proof and has_desired_rules and not expected_rules:
+        raise MetadataError("applying transaction lacks applied policy-rule proof")
     if Counter(rollback_routes) != Counter(expected_routes):
         raise MetadataError("rollback routes do not exactly cover applied route steps")
     if Counter(rollback_rules) != Counter(expected_rules):
         raise MetadataError("rollback policy rules do not exactly cover applied policy-rule steps")
+
+
+def _has_network_applied_step(values: list[object]) -> bool:
+    for value in values:
+        step = _dict(value, "applied step")
+        if str(step.get("kind", "")).strip() in {"route", "policy-rule"}:
+            return True
+    return False
 
 
 def _transaction_network(path: Path) -> tuple[list[OwnedRoute], list[OwnedPolicyRule]]:
@@ -358,6 +368,19 @@ def _transaction_network(path: Path) -> tuple[list[OwnedRoute], list[OwnedPolicy
     rollback = _dict(transaction.get("rollback", {}), "transaction rollback")
     route_values = _list(rollback.get("routes", []), "transaction rollback routes")
     rule_values = _list(rollback.get("policy_rules", []), "transaction rollback policy rules")
+    applied_steps = _list(transaction.get("applied_steps", []), "transaction applied steps")
+
+    # planned is durably before mutation. Desired intent is not ownership, but
+    # any persisted network step or rollback tuple contradicts that state and is
+    # rejected instead of being silently ignored.
+    if state == "planned":
+        desired = _dict(transaction.get("desired_plan", {}), "transaction desired plan")
+        _list(desired.get("routes", []), "transaction desired routes")
+        _list(desired.get("steps", []), "transaction desired steps")
+        if route_values or rule_values or _has_network_applied_step(applied_steps):
+            raise MetadataError("planned transaction contains durable network ownership")
+        return [], []
+
     routes = [validated_route(value) for value in route_values]
     rules = [validated_policy_rule(value) for value in rule_values]
 
@@ -365,8 +388,14 @@ def _transaction_network(path: Path) -> tuple[list[OwnedRoute], list[OwnedPolicy
         desired = _dict(transaction.get("desired_plan", {}), "transaction desired plan")
         desired_routes = _list(desired.get("routes", []), "transaction desired routes")
         desired_steps = _list(desired.get("steps", []), "transaction desired steps")
-        applied_steps = _list(transaction.get("applied_steps", []), "transaction applied steps")
-        _require_exact_applied_coverage(desired_routes, desired_steps, applied_steps, routes, rules)
+        _require_exact_applied_coverage(
+            desired_routes,
+            desired_steps,
+            applied_steps,
+            routes,
+            rules,
+            require_desired_category_proof=state == "applying",
+        )
 
     return routes, rules
 
