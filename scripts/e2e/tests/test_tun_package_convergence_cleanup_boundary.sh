@@ -56,6 +56,55 @@ cleanup_definition="$(awk '
 [[ -n "${cleanup_definition}" ]] || fail_test "real convergence cleanup function was not found"
 eval "${cleanup_definition}"
 
+run_capture_failure_live_child_case() (
+  local child_pid child_start
+  PROCESS_POLL_INTERVAL=0.01
+  sleep 30 &
+  child_pid=$!
+  child_start="$(process_start_time "${child_pid}")"
+  [[ -n "${child_start}" ]] || fail_test "failed to capture live child identity"
+  printf '%s\n' "${child_pid}" >"${TEST_ROOT}/capture-failure-child.pid"
+  CONNECT_PID="${child_pid}"
+  CONNECT_START_TIME="${child_start}"
+  CONNECT_EXIT_CODE=""
+
+  capture_connect_pre_recovery_proof() {
+    export PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE=failed
+    return 1
+  }
+  clear_hook() {
+    if child_process_exists "${child_pid}"; then
+      printf 'live\n' >"${TEST_ROOT}/hook-process-state"
+    else
+      printf 'gone\n' >"${TEST_ROOT}/hook-process-state"
+    fi
+    if [[ -n "${CONNECT_PID}" || -n "${CONNECT_START_TIME}" ]]; then
+      printf 'tracked\n' >"${TEST_ROOT}/hook-tracking-state"
+    else
+      printf 'cleared\n' >"${TEST_ROOT}/hook-tracking-state"
+    fi
+    return 0
+  }
+  bash() { return 0; }
+
+  cleanup
+)
+
+set +e
+run_capture_failure_live_child_case
+capture_failure_status=$?
+set -e
+capture_failure_pid="$(cat "${TEST_ROOT}/capture-failure-child.pid")"
+if child_process_exists "${capture_failure_pid}"; then
+  kill -KILL "${capture_failure_pid}" >/dev/null 2>&1 || true
+fi
+[[ "${capture_failure_status}" != "0" ]] || \
+  fail_test "capture failure was not propagated by the real convergence cleanup"
+[[ "$(cat "${TEST_ROOT}/hook-process-state")" == "gone" ]] || \
+  fail_test "hook release ran while the connect child still had a process identity"
+[[ "$(cat "${TEST_ROOT}/hook-tracking-state")" == "cleared" ]] || \
+  fail_test "hook release ran before connect PID tracking was cleared"
+
 CONNECT_PID=""
 CONNECT_START_TIME=""
 CONNECT_EXIT_CODE=""
