@@ -138,7 +138,7 @@ set -e
 
 [[ "${cleanup_status}" != "0" ]] || \
   fail_test "real convergence trap accepted a residual main-table tuple"
-grep -F '203.0.113.10/32' "${E2E_TMP_ROOT}/tun-package-pre-recovery-network.json" >/dev/null || \
+sudo -n grep -F '203.0.113.10/32' "${E2E_TMP_ROOT}/tun-package-pre-recovery-network.json" >/dev/null || \
   fail_test "pre-release verification envelope missed the future exact tuple"
 [[ ! -e "${TEST_ROOT}/generated-removed" ]] || \
   fail_test "generated state was removed after ownership verification failed"
