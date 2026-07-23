@@ -8,24 +8,88 @@ PODLAZ_E2E_CLEANUP_SOURCE_ONLY=true
 source "${SCRIPT_DIR}/tun-package-cleanup-core.sh"
 PODLAZ_E2E_CLEANUP_SOURCE_ONLY="${cleanup_source_only_requested}"
 
-PRE_RECOVERY_ROLLBACK_MANIFEST="${E2E_TMP_ROOT}/tun-package-pre-recovery-network.json"
+PRE_RECOVERY_ROLLBACK_MANIFEST="${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH:-${E2E_TMP_ROOT}/tun-package-pre-recovery-network.json}"
 AUTHORITATIVE_ROLLBACK_MANIFEST="${E2E_TMP_ROOT}/tun-package-authoritative-network.json"
 ROLLBACK_MANIFEST="${AUTHORITATIVE_ROLLBACK_MANIFEST}"
+VERIFICATION_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-verification-network.py"
+EXTERNAL_PRE_RECOVERY_MANIFEST_STATE="${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE:-unset}"
+EXTERNAL_PRE_RECOVERY_MANIFEST_SHA256="${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_SHA256:-}"
 PRE_RECOVERY_METADATA_VALID=false
 IDENTITY_MATERIAL_RELEASED=false
 
+adopt_pre_recovery_metadata() {
+  local actual_digest verify_status
+
+  PRE_RECOVERY_METADATA_VALID=false
+  if [[ ! "${EXTERNAL_PRE_RECOVERY_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+    record_cleanup_evidence pre_recovery_metadata_valid false
+    cleanup_error "teardown: imported pre-recovery manifest checksum is invalid"
+    return 1
+  fi
+  if ! actual_digest="$(sudo -n sha256sum "${PRE_RECOVERY_ROLLBACK_MANIFEST}" 2>/dev/null | awk 'NF >= 1 {print $1; exit}')"; then
+    record_cleanup_evidence pre_recovery_metadata_valid false
+    cleanup_error "teardown: imported pre-recovery manifest cannot be hashed"
+    return 1
+  fi
+  if [[ "${actual_digest}" != "${EXTERNAL_PRE_RECOVERY_MANIFEST_SHA256}" ]]; then
+    record_cleanup_evidence pre_recovery_metadata_valid false
+    cleanup_error "teardown: imported pre-recovery manifest changed after capture"
+    return 1
+  fi
+
+  if sudo -n python3 "${FALLBACK_NETWORK_HELPER}" verify "${PRE_RECOVERY_ROLLBACK_MANIFEST}" >/dev/null 2>&1; then
+    verify_status=0
+  else
+    verify_status=$?
+  fi
+  case "${verify_status}" in
+    0|1) ;;
+    *)
+      record_cleanup_evidence pre_recovery_metadata_valid false
+      cleanup_error "teardown: imported pre-recovery manifest is invalid or cannot be inspected"
+      return 1
+      ;;
+  esac
+
+  PRE_RECOVERY_METADATA_VALID=true
+  record_cleanup_evidence pre_recovery_metadata_valid true
+  record_cleanup_evidence pre_recovery_metadata_verification_only true
+  record_cleanup_evidence pre_recovery_metadata_imported true
+  record_cleanup_evidence pre_recovery_metadata_immutable true
+}
+
 snapshot_pre_recovery_metadata() {
   PRE_RECOVERY_METADATA_VALID=false
+  case "${EXTERNAL_PRE_RECOVERY_MANIFEST_STATE}" in
+    ready)
+      adopt_pre_recovery_metadata
+      return
+      ;;
+    failed)
+      record_cleanup_evidence pre_recovery_metadata_valid false
+      record_cleanup_evidence pre_recovery_metadata_imported false
+      cleanup_error "teardown: caller failed to capture ownership proof before cancellation or hook release"
+      return 1
+      ;;
+    unset|"") ;;
+    *)
+      record_cleanup_evidence pre_recovery_metadata_valid false
+      cleanup_error "teardown: unsupported imported pre-recovery manifest state"
+      return 1
+      ;;
+  esac
+
   if ! sudo -n rm -f -- "${PRE_RECOVERY_ROLLBACK_MANIFEST}" >/dev/null 2>&1; then
     record_cleanup_evidence pre_recovery_metadata_valid false
     cleanup_error "teardown: failed to clear previous pre-recovery verification manifest"
     return 1
   fi
-  if sudo -n python3 "${FALLBACK_NETWORK_HELPER}" snapshot \
+  if sudo -n python3 "${VERIFICATION_NETWORK_HELPER}" snapshot \
     "${TRANSACTION_DIR}" "${PRE_RECOVERY_ROLLBACK_MANIFEST}"; then
     PRE_RECOVERY_METADATA_VALID=true
     record_cleanup_evidence pre_recovery_metadata_valid true
     record_cleanup_evidence pre_recovery_metadata_verification_only true
+    record_cleanup_evidence pre_recovery_metadata_imported false
     return 0
   fi
   record_cleanup_evidence pre_recovery_metadata_valid false
@@ -136,18 +200,15 @@ purge_package_if_safe() {
 teardown_main() {
   local cleanup_status=0
 
-  require_cmd apt curl dpkg-query getent grep ip nft pgrep python3 readlink resolvectl seq sleep sudo systemctl timeout tr
+  require_cmd apt awk curl dpkg-query getent grep ip nft pgrep python3 readlink resolvectl seq sha256sum sleep sudo systemctl timeout tr
 
   if ! snapshot_pre_recovery_metadata; then
-    cleanup_status=1
+    record_cleanup_evidence identity_material_preserved true
+    record_cleanup_evidence identity_material_release_authorized false
+    return 1
   fi
   clear_tun_hook || cleanup_status=1
-  if [[ "${PRE_RECOVERY_METADATA_VALID}" == "true" ]]; then
-    attempt_daemon_recovery
-  else
-    record_cleanup_evidence recovery_attempted false
-    record_cleanup_evidence recovery_result skipped_without_pre_recovery_proof
-  fi
+  attempt_daemon_recovery
   fallback_cleanup || cleanup_status=1
   cleanup_e2e_sentinels || cleanup_status=1
   purge_package_if_safe || cleanup_status=1
