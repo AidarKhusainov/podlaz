@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest import mock
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "tun-package-verification-network.py"
-FALLBACK_PATH = Path(__file__).resolve().parents[1] / "tun-package-fallback-network.py"
 
 
 def load_module(name: str, path: Path):
@@ -22,7 +21,6 @@ def load_module(name: str, path: Path):
 
 
 VERIFICATION = load_module("tun_package_verification_network", HELPER_PATH)
-FALLBACK = load_module("tun_package_fallback_network_for_verification_test", FALLBACK_PATH)
 
 
 def desired_main_route() -> dict[str, object]:
@@ -53,11 +51,7 @@ def transaction(*, state: str, durable: bool = False) -> dict[str, object]:
     rollback_rules = []
     if durable:
         applied_steps = [
-            {
-                "kind": "route",
-                "target": "main 203.0.113.10/32",
-                "owner": "podlaz:route",
-            },
+            {"kind": "route", "target": "main 203.0.113.10/32", "owner": "podlaz:route"},
             rule.copy(),
         ]
         rollback_routes = [route.copy()]
@@ -73,15 +67,9 @@ def transaction(*, state: str, durable: bool = False) -> dict[str, object]:
         "schema_version": "podlaz.transaction.v1",
         "owner": "podlaz",
         "state": state,
-        "desired_plan": {
-            "routes": [route],
-            "steps": [rule],
-        },
+        "desired_plan": {"routes": [route], "steps": [rule]},
         "applied_steps": applied_steps,
-        "rollback": {
-            "routes": rollback_routes,
-            "policy_rules": rollback_rules,
-        },
+        "rollback": {"routes": rollback_routes, "policy_rules": rollback_rules},
     }
 
 
@@ -116,11 +104,19 @@ class VerificationNetworkTests(unittest.TestCase):
             verification = self.snapshot(transaction(state="verifying"))
         self.assertEqual(
             verification.routes,
-            (FALLBACK.OwnedRoute("-4", "main", "203.0.113.10/32", "192.0.2.1", "eth0"),),
+            (
+                VERIFICATION.NETWORK.OwnedRoute(
+                    "-4", "main", "203.0.113.10/32", "192.0.2.1", "eth0"
+                ),
+            ),
         )
         self.assertEqual(
             verification.rules,
-            (FALLBACK.OwnedPolicyRule("-4", 9999, "", "203.0.113.10/32", "", "main"),),
+            (
+                VERIFICATION.NETWORK.OwnedPolicyRule(
+                    "-4", 9999, "", "203.0.113.10/32", "", "main"
+                ),
+            ),
         )
 
     def test_durable_owned_tuples_remain_obligations_when_present_at_capture(self) -> None:
