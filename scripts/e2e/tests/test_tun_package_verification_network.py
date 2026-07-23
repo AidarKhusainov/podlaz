@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "tun-package-verification-network.py"
 FALLBACK_PATH = Path(__file__).resolve().parents[1] / "tun-package-fallback-network.py"
@@ -36,21 +37,56 @@ def desired_main_route() -> dict[str, object]:
     }
 
 
-def transaction(*, state: str) -> dict[str, object]:
+def desired_main_rule() -> dict[str, object]:
+    return {
+        "kind": "policy-rule",
+        "target": "priority 9999 to 203.0.113.10/32 lookup main",
+        "owner": "podlaz:policy-rule",
+    }
+
+
+def transaction(*, state: str, durable: bool = False) -> dict[str, object]:
+    route = desired_main_route()
+    rule = desired_main_rule()
+    applied_steps = []
+    rollback_routes = []
+    rollback_rules = []
+    if durable:
+        applied_steps = [
+            {
+                "kind": "route",
+                "target": "main 203.0.113.10/32",
+                "owner": "podlaz:route",
+            },
+            rule.copy(),
+        ]
+        rollback_routes = [route.copy()]
+        rollback_rules = [
+            {
+                "owner": "podlaz:policy-rule",
+                "priority": 9999,
+                "to": "203.0.113.10/32",
+                "table": "main",
+            }
+        ]
     return {
         "schema_version": "podlaz.transaction.v1",
         "owner": "podlaz",
         "state": state,
         "desired_plan": {
-            "routes": [desired_main_route()],
-            "steps": [],
+            "routes": [route],
+            "steps": [rule],
         },
-        "applied_steps": [],
+        "applied_steps": applied_steps,
         "rollback": {
-            "routes": [],
-            "policy_rules": [],
+            "routes": rollback_routes,
+            "policy_rules": rollback_rules,
         },
     }
+
+
+ROUTE_PRESENT = "203.0.113.10 via 192.0.2.1 dev eth0\n"
+RULE_PRESENT = "9999: from all to 203.0.113.10 lookup main\n"
 
 
 class VerificationNetworkTests(unittest.TestCase):
@@ -64,34 +100,41 @@ class VerificationNetworkTests(unittest.TestCase):
             self.assertTrue(manifest_path.is_file())
             return manifest
 
-    def test_verification_snapshot_includes_unapplied_exact_desired_tuple(self) -> None:
-        payload = transaction(state="verifying")
+    def test_unowned_desired_tuples_present_at_capture_are_not_obligations(self) -> None:
+        for state in ("planned", "verifying", "committed"):
+            with self.subTest(state=state), mock.patch.object(
+                VERIFICATION.NETWORK,
+                "_inspection_output",
+                side_effect=[ROUTE_PRESENT, RULE_PRESENT],
+            ):
+                verification = self.snapshot(transaction(state=state))
+                self.assertEqual(verification.routes, ())
+                self.assertEqual(verification.rules, ())
 
-        verification = self.snapshot(payload)
-        self.assertEqual(len(verification.routes), 1)
-        captured = verification.routes[0]
+    def test_unowned_desired_tuples_absent_at_capture_become_obligations(self) -> None:
+        with mock.patch.object(VERIFICATION.NETWORK, "_inspection_output", return_value=""):
+            verification = self.snapshot(transaction(state="verifying"))
         self.assertEqual(
-            (
-                captured.family,
-                captured.table,
-                captured.cidr,
-                captured.via,
-                captured.dev,
-            ),
-            ("-4", "main", "203.0.113.10/32", "192.0.2.1", "eth0"),
+            verification.routes,
+            (FALLBACK.OwnedRoute("-4", "main", "203.0.113.10/32", "192.0.2.1", "eth0"),),
+        )
+        self.assertEqual(
+            verification.rules,
+            (FALLBACK.OwnedPolicyRule("-4", 9999, "", "203.0.113.10/32", "", "main"),),
         )
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "transactions"
-            root.mkdir()
-            (root / "tx.json").write_text(json.dumps(payload), encoding="utf-8")
-            authoritative = FALLBACK.snapshot_transactions(root, Path(directory) / "authoritative.json")
-        self.assertEqual(authoritative.routes, ())
+    def test_durable_owned_tuples_remain_obligations_when_present_at_capture(self) -> None:
+        with mock.patch.object(VERIFICATION.NETWORK, "_inspection_output", return_value=ROUTE_PRESENT):
+            verification = self.snapshot(transaction(state="verifying", durable=True))
+        self.assertEqual(len(verification.routes), 1)
+        self.assertEqual(len(verification.rules), 1)
 
     def test_verification_snapshot_ignores_terminal_rolled_back_intent(self) -> None:
-        manifest = self.snapshot(transaction(state="rolled_back"))
+        with mock.patch.object(VERIFICATION.NETWORK, "_inspection_output") as inspect:
+            manifest = self.snapshot(transaction(state="rolled_back"))
         self.assertEqual(manifest.routes, ())
         self.assertEqual(manifest.rules, ())
+        inspect.assert_not_called()
 
 
 if __name__ == "__main__":
