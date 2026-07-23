@@ -68,10 +68,7 @@ run_capture_failure_live_child_case() (
   CONNECT_START_TIME="${child_start}"
   CONNECT_EXIT_CODE=""
 
-  capture_connect_pre_recovery_proof() {
-    export PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE=failed
-    return 1
-  }
+  capture_connect_pre_recovery_proof() { return 1; }
   clear_hook() {
     if child_process_exists "${child_pid}"; then
       printf 'live\n' >"${TEST_ROOT}/hook-process-state"
