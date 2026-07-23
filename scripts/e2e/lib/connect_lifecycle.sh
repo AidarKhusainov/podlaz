@@ -36,9 +36,8 @@ capture_connect_pre_recovery_proof() {
     return 0
   fi
 
-  # The outer trap still continues to bounded cleanup. Exporting an explicit
-  # failed state prevents the child teardown from taking a misleading late
-  # snapshot after cancellation or hook release.
+  # Exporting an explicit failed state prevents the child teardown from taking
+  # a misleading late snapshot after cancellation or hook release.
   export PODLAZ_E2E_PRE_RECOVERY_MANIFEST_SHA256=""
   export PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE=failed
   return 1
@@ -60,17 +59,29 @@ wait_connect_bounded() {
 
 terminate_connect_bounded() {
   local pid="${CONNECT_PID:-}" start="${CONNECT_START_TIME:-}"
+  local capture_status=0 termination_status=0
 
   # This is the first operation executed by the real convergence EXIT trap.
-  # Capture the verification-only envelope before cancellation can reach the
-  # daemon and before the caller removes the blocking hook.
-  capture_connect_pre_recovery_proof || return 1
-
-  [[ -n "${pid}" && -n "${start}" ]] || return 0
-  if ! terminate_child_bounded "${pid}" "${start}" 50; then
-    return 1
+  # Capture proof before cancellation, but never let capture failure skip the
+  # independent bounded termination and reap of the tracked child.
+  if capture_connect_pre_recovery_proof; then
+    capture_status=0
+  else
+    capture_status=$?
   fi
-  CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
-  CONNECT_PID=""
-  CONNECT_START_TIME=""
+
+  if [[ -n "${pid}" && -n "${start}" ]]; then
+    if terminate_child_bounded "${pid}" "${start}" 50; then
+      CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
+      CONNECT_PID=""
+      CONNECT_START_TIME=""
+    else
+      termination_status=$?
+    fi
+  fi
+
+  if [[ "${termination_status}" != "0" ]]; then
+    return "${termination_status}"
+  fi
+  return "${capture_status}"
 }
