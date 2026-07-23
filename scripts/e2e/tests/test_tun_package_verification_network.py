@@ -88,7 +88,6 @@ class VerificationNetworkTests(unittest.TestCase):
             self.assertTrue(manifest_path.is_file())
             return manifest
 
-    @unittest.skip("temporarily isolate the real-process RED regression")
     def test_unowned_desired_tuples_present_at_capture_are_not_obligations(self) -> None:
         for state in ("planned", "verifying", "committed"):
             with self.subTest(state=state), mock.patch.object(
