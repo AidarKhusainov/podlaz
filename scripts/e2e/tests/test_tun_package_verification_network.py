@@ -68,9 +68,17 @@ class VerificationNetworkTests(unittest.TestCase):
         payload = transaction(state="verifying")
 
         verification = self.snapshot(payload)
+        self.assertEqual(len(verification.routes), 1)
+        captured = verification.routes[0]
         self.assertEqual(
-            verification.routes,
-            (FALLBACK.OwnedRoute("-4", "main", "203.0.113.10/32", "192.0.2.1", "eth0"),),
+            (
+                captured.family,
+                captured.table,
+                captured.cidr,
+                captured.via,
+                captured.dev,
+            ),
+            ("-4", "main", "203.0.113.10/32", "192.0.2.1", "eth0"),
         )
 
         with tempfile.TemporaryDirectory() as directory:
