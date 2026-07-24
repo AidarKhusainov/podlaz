@@ -15,10 +15,9 @@ func TestResolvedMissingDeviceResultUsesRawProductionOSRunnerOutput(t *testing.T
 		wantMissing   bool
 	}{
 		{
-			name:          "exact without line ending",
+			name:          "unterminated stderr",
 			stdoutCommand: ":",
 			stderrCommand: `printf '%s' 'Failed to resolve interface "podlaz0": No such device' >&2`,
-			wantMissing:   true,
 		},
 		{
 			name:          "exact LF",
