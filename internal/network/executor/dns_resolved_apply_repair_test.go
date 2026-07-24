@@ -10,7 +10,7 @@ func TestResolvedDNSExecutorApplyRefreshesStaleLinkBeforeConfiguration(t *testin
 	runner := &recordingRunner{
 		results: []CommandResult{{
 			ExitCode: 1,
-			Stderr:   `Failed to resolve interface "podlaz0": No such device`,
+			Stderr:   `Failed to resolve interface "podlaz0": No such device` + "\n",
 		}},
 		errs: []error{executorTestExitError{code: 1}},
 	}
