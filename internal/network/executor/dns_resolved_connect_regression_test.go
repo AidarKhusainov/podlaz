@@ -8,7 +8,7 @@ import (
 func TestResolvedDNSExecutorRepairsMissingDeviceAndAcceptsInactiveScope(t *testing.T) {
 	runner := &recordingRunner{
 		results: []CommandResult{
-			{ExitCode: 1, Stderr: `Failed to resolve interface "podlaz0": No such device`},
+			{ExitCode: 1, Stderr: `Failed to resolve interface "podlaz0": No such device` + "\n"},
 			{},
 			{},
 			{},
@@ -16,8 +16,8 @@ func TestResolvedDNSExecutorRepairsMissingDeviceAndAcceptsInactiveScope(t *testi
     Current Scopes: none
          Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
 Current DNS Server: 1.1.1.1
-       DNS Servers: 1.1.1.1
-        DNS Domain: ~.`},
+        DNS Servers: 1.1.1.1
+         DNS Domain: ~.`},
 		},
 		errs: []error{executorTestExitError{code: 1}},
 	}
