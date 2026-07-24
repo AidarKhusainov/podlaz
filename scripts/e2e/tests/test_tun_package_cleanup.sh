@@ -23,6 +23,39 @@ record_cleanup_evidence() {
 }
 cleanup_error() { :; }
 
+run_unproven_connect_termination_guard_case() (
+  local guard="${E2E_TMP_ROOT}/tun-package-connect-termination-unproven"
+  : >"${guard}"
+  : >"${TEST_ROOT}/guard-fixture-created"
+
+  require_cmd() { :; }
+  snapshot_pre_recovery_metadata() {
+    : >"${TEST_ROOT}/snapshot-ran-with-unproven-connect"
+    return 0
+  }
+  clear_tun_hook() {
+    : >"${TEST_ROOT}/hook-cleared-with-unproven-connect"
+    return 0
+  }
+  attempt_daemon_recovery() { return 0; }
+  fallback_cleanup() { return 0; }
+  cleanup_e2e_sentinels() { return 0; }
+  purge_package_if_safe() { return 0; }
+  assert_cleanup_complete() { return 0; }
+  record_cleanup_evidence() { :; }
+  cleanup_error() { :; }
+
+  if teardown_main; then
+    fail_test "workflow cleanup accepted unproven connect termination"
+  fi
+  [[ ! -e "${TEST_ROOT}/snapshot-ran-with-unproven-connect" ]] || \
+    fail_test "workflow cleanup captured or mutated state with unproven connect termination"
+  [[ ! -e "${TEST_ROOT}/hook-cleared-with-unproven-connect" ]] || \
+    fail_test "workflow cleanup released the hook with unproven connect termination"
+)
+run_unproven_connect_termination_guard_case
+rm -f -- "${E2E_TMP_ROOT}/tun-package-connect-termination-unproven"
+
 # A timed-out purge must remain a failure and may never publish success.
 package_inspections=0
 inspect_package_state() {
