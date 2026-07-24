@@ -102,9 +102,46 @@ fi
 [[ "$(cat "${TEST_ROOT}/hook-tracking-state")" == "cleared" ]] || \
   fail_test "hook release ran before connect PID tracking was cleared"
 
+run_termination_failure_blocks_release_case() (
+  CONNECT_PID="12345"
+  CONNECT_START_TIME="67890"
+  CONNECT_EXIT_CODE=""
+  CONNECT_PROCESS_QUIESCED=false
+
+  terminate_connect_bounded() {
+    CONNECT_PROCESS_QUIESCED=false
+    return 125
+  }
+  clear_hook() {
+    : >"${TEST_ROOT}/hook-released-after-termination-failure"
+    return 0
+  }
+  bash() {
+    : >"${TEST_ROOT}/teardown-ran-after-termination-failure"
+    return 0
+  }
+
+  cleanup
+)
+
+set +e
+run_termination_failure_blocks_release_case
+termination_failure_status=$?
+set -e
+[[ "${termination_failure_status}" != "0" ]] || \
+  fail_test "termination failure was not propagated by the real convergence cleanup"
+[[ ! -e "${TEST_ROOT}/hook-released-after-termination-failure" ]] || \
+  fail_test "hook was released without proven connect process quiescence"
+[[ ! -e "${TEST_ROOT}/teardown-ran-after-termination-failure" ]] || \
+  fail_test "shared teardown ran without proven connect process quiescence"
+[[ -f "${E2E_TMP_ROOT}/tun-package-connect-termination-unproven" ]] || \
+  fail_test "termination failure did not persist a workflow-cleanup guard"
+
 CONNECT_PID=""
 CONNECT_START_TIME=""
 CONNECT_EXIT_CODE=""
+CONNECT_PROCESS_QUIESCED=true
+rm -f -- "${E2E_TMP_ROOT}/tun-package-connect-termination-unproven"
 
 clear_hook() {
   [[ "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE:-}" == "ready" ]] || \
