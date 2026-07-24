@@ -114,12 +114,12 @@ clear_hook() {
   [[ "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || \
     fail_test "hook release ran without an immutable applying manifest checksum"
 
-  command "${REAL_SUDO}" -n grep -F '203.0.113.10/32' \
-    "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH}" >/dev/null || \
-    fail_test "applying envelope omitted the in-flight exact route"
-  command "${REAL_SUDO}" -n grep -F '"priority": 9999' \
-    "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH}" >/dev/null || \
-    fail_test "applying envelope omitted the in-flight exact policy rule"
+  if command "${REAL_SUDO}" -n grep -F '203.0.113.10/32' \
+    "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH}" >/dev/null && \
+    command "${REAL_SUDO}" -n grep -F '"priority": 9999' \
+      "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH}" >/dev/null; then
+    : >"${TEST_ROOT}/applying-obligations-captured"
+  fi
 
   # Cancellation or hook release removes the transaction record while the
   # in-flight exact route/rule survive on the host.
@@ -169,7 +169,13 @@ JSON
         "cleanup:${AUTHORITATIVE_ROLLBACK_MANIFEST}") return 0 ;;
         "verify:${AUTHORITATIVE_ROLLBACK_MANIFEST}") return 0 ;;
         "verify:${PRE_RECOVERY_ROLLBACK_MANIFEST}")
-          [[ -f "${TEST_ROOT}/residual-applying-network" ]] && return 1
+          if [[ -f "${TEST_ROOT}/residual-applying-network" ]] && \
+            command "${REAL_SUDO}" -n grep -F '203.0.113.10/32' \
+              "${PRE_RECOVERY_ROLLBACK_MANIFEST}" >/dev/null && \
+            command "${REAL_SUDO}" -n grep -F '"priority": 9999' \
+              "${PRE_RECOVERY_ROLLBACK_MANIFEST}" >/dev/null; then
+            return 1
+          fi
           return 0
           ;;
       esac
@@ -190,6 +196,8 @@ set -e
 
 [[ "${cleanup_status}" != "0" ]] || \
   fail_test "real convergence trap accepted applying network residue"
+[[ -f "${TEST_ROOT}/applying-obligations-captured" ]] || \
+  fail_test "caller-boundary manifest did not capture applying route/rule obligations"
 [[ ! -e "${TEST_ROOT}/generated-removed" ]] || \
   fail_test "generated state was removed after applying residue verification failed"
 [[ ! -e "${TEST_ROOT}/transaction-removed" ]] || \
