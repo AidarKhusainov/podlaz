@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 const (
@@ -95,23 +94,38 @@ func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err 
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 {
 		return false
 	}
-	if strings.TrimSpace(result.Stdout) != "" {
+	rawStdout := recoveryRawCommandOutput(result.RawStdout, result.Stdout)
+	rawStderr := recoveryRawCommandOutput(result.RawStderr, result.Stderr)
+	if rawStdout != "" {
 		return false
 	}
-	stderr := strings.TrimSpace(result.Stderr)
-	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+	if rawStderr == "" || len(rawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return stderr == resolvedMissingDeviceStderr
+	return exactRecoveryProtocolLine(rawStderr, resolvedMissingDeviceStderr)
 }
 
 func resolvedStatusResourceMissing(result CommandResult) bool {
-	if result.ExitCode != 1 || strings.TrimSpace(result.Stdout) != "" {
+	rawStdout := recoveryRawCommandOutput(result.RawStdout, result.Stdout)
+	rawStderr := recoveryRawCommandOutput(result.RawStderr, result.Stderr)
+	if result.ExitCode != 1 || rawStdout != "" {
 		return false
 	}
-	stderr := strings.TrimSpace(result.Stderr)
-	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+	if rawStderr == "" || len(rawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return stderr == `Link podlaz0 does not exist.` || stderr == resolvedMissingDeviceStderr
+	return exactRecoveryProtocolLine(rawStderr, `Link podlaz0 does not exist.`) || exactRecoveryProtocolLine(rawStderr, resolvedMissingDeviceStderr)
+}
+
+func recoveryRawCommandOutput(raw, normalized string) string {
+	if raw != "" {
+		return raw
+	}
+	return normalized
+}
+
+// exactRecoveryProtocolLine accepts only the exact protocol payload and one
+// conventional terminal LF or CRLF. Extra whitespace or lines fail closed.
+func exactRecoveryProtocolLine(raw, expected string) bool {
+	return raw == expected || raw == expected+"\n" || raw == expected+"\r\n"
 }
