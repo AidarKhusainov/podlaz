@@ -94,38 +94,23 @@ func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err 
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 {
 		return false
 	}
-	stdout, stderr, raw := recoveryProtocolOutput(result)
-	if stdout != "" {
+	if result.RawStdout != "" {
 		return false
 	}
-	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	if raw {
-		return exactTerminatedRecoveryProtocolLine(stderr, resolvedMissingDeviceStderr)
-	}
-	return stderr == resolvedMissingDeviceStderr
+	return exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceStderr)
 }
 
 func resolvedStatusResourceMissing(result CommandResult) bool {
-	stdout, stderr, raw := recoveryProtocolOutput(result)
-	if result.ExitCode != 1 || stdout != "" {
+	if result.ExitCode != 1 || result.RawStdout != "" {
 		return false
 	}
-	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	if raw {
-		return exactTerminatedRecoveryProtocolLine(stderr, `Link podlaz0 does not exist.`) || exactTerminatedRecoveryProtocolLine(stderr, resolvedMissingDeviceStderr)
-	}
-	return stderr == `Link podlaz0 does not exist.` || stderr == resolvedMissingDeviceStderr
-}
-
-func recoveryProtocolOutput(result CommandResult) (stdout, stderr string, raw bool) {
-	if result.RawStdout != "" || result.RawStderr != "" {
-		return result.RawStdout, result.RawStderr, true
-	}
-	return result.Stdout, result.Stderr, false
+	return exactTerminatedRecoveryProtocolLine(result.RawStderr, `Link podlaz0 does not exist.`) || exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceStderr)
 }
 
 // exactTerminatedRecoveryProtocolLine accepts only the exact protocol payload
