@@ -130,9 +130,13 @@ func (r *executorResolvedSubprocessRunner) Run(ctx context.Context, name string,
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	rawStdout := stdout.String()
+	rawStderr := stderr.String()
 	result := CommandResult{
-		Stdout: strings.TrimSpace(stdout.String()),
-		Stderr: strings.TrimSpace(stderr.String()),
+		Stdout:    strings.TrimSpace(rawStdout),
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStdout: rawStdout,
+		RawStderr: rawStderr,
 	}
 	if err == nil {
 		return result, nil
