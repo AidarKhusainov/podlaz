@@ -322,7 +322,7 @@ func foreignDefaultDNSOwner(s netsnapshot.Snapshot) (netsnapshot.ResolvedLink, b
 		if !containsToken(link.DNSDomains, defaultDNSRouteDomain) {
 			continue
 		}
-		if containsToken(link.CurrentScopes, "DNS") || containsToken(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
+		if containsToken(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
 			return link, true
 		}
 	}
