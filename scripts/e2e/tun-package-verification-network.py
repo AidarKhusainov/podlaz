@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Capture exact verification-only route and policy-rule obligations.
 
-Durable applied/rollback ownership is always an absence obligation. Desired
-network tuples without durable ownership become obligations only when the exact
-tuple is absent at capture time, so pre-existing host state is preserved.
+Durable applied/rollback ownership is always an absence obligation. During the
+``applying`` crash window, desired tuples without durable proof are also always
+obligations because current host presence cannot distinguish an in-flight
+podlaz mutation from pre-existing state. In states outside that window, an
+unowned desired tuple becomes an obligation only when the exact tuple is absent
+at capture time, preserving validated pre-existing host state.
+
 This manifest is safe only for later absence verification and must never
 authorize mutation.
 """
@@ -39,9 +43,21 @@ def _desired_policy_rules(values: list[object]) -> list[object]:
     return rules
 
 
+def _counter_difference(desired: list[object], durable: list[object]) -> list[object]:
+    difference = Counter(desired) - Counter(durable)
+    return [candidate for candidate, count in sorted(difference.items()) for _ in range(count)]
+
+
 def _load_transaction(
     path: Path,
-) -> tuple[list[object], list[object], list[object], list[object]]:
+) -> tuple[
+    list[object],
+    list[object],
+    list[object],
+    list[object],
+    list[object],
+    list[object],
+]:
     try:
         with path.open(encoding="utf-8") as handle:
             payload = json.load(handle)
@@ -58,7 +74,7 @@ def _load_transaction(
     if state not in NETWORK.KNOWN_STATES:
         raise NETWORK.MetadataError("transaction state is unsupported")
     if state == "rolled_back":
-        return [], [], [], []
+        return [], [], [], [], [], []
 
     desired = NETWORK._dict(transaction.get("desired_plan", {}), "transaction desired plan")
     desired_route_values = NETWORK._list(desired.get("routes", []), "transaction desired routes")
@@ -91,23 +107,34 @@ def _load_transaction(
             require_desired_category_proof=False,
         )
 
-    return durable_routes, durable_rules, desired_routes, desired_rules
+    unowned_routes = _counter_difference(desired_routes, durable_routes)
+    unowned_rules = _counter_difference(desired_rules, durable_rules)
+    if state == "applying":
+        return durable_routes, durable_rules, [], [], unowned_routes, unowned_rules
+    return durable_routes, durable_rules, unowned_routes, unowned_rules, [], []
 
 
-def _verification_obligations(durable: list[object], desired: list[object], present) -> list[object]:
+def _verification_obligations(
+    durable: list[object],
+    baseline_candidates: list[object],
+    ambiguous_candidates: list[object],
+    present,
+) -> list[object]:
     obligations = list(durable)
-    unowned_candidates = Counter(desired) - Counter(durable)
-    for candidate, count in sorted(unowned_candidates.items()):
+    obligations.extend(ambiguous_candidates)
+    for candidate in baseline_candidates:
         if not present(candidate):
-            obligations.extend([candidate] * count)
+            obligations.append(candidate)
     return obligations
 
 
 def snapshot_verification_transactions(root: Path, manifest_path: Path):
     durable_routes = []
     durable_rules = []
-    desired_routes = []
-    desired_rules = []
+    baseline_routes = []
+    baseline_rules = []
+    ambiguous_routes = []
+    ambiguous_rules = []
     try:
         root_stat = root.stat()
     except FileNotFoundError:
@@ -132,13 +159,20 @@ def snapshot_verification_transactions(root: Path, manifest_path: Path):
             if not stat.S_ISREG(entry_stat.st_mode) or entry.suffix != ".json":
                 raise NETWORK.MetadataError("transaction directory contains an unexpected entry")
         for path in entries:
-            tx_durable_routes, tx_durable_rules, tx_desired_routes, tx_desired_rules = (
-                _load_transaction(path)
-            )
+            (
+                tx_durable_routes,
+                tx_durable_rules,
+                tx_baseline_routes,
+                tx_baseline_rules,
+                tx_ambiguous_routes,
+                tx_ambiguous_rules,
+            ) = _load_transaction(path)
             durable_routes.extend(tx_durable_routes)
             durable_rules.extend(tx_durable_rules)
-            desired_routes.extend(tx_desired_routes)
-            desired_rules.extend(tx_desired_rules)
+            baseline_routes.extend(tx_baseline_routes)
+            baseline_rules.extend(tx_baseline_rules)
+            ambiguous_routes.extend(tx_ambiguous_routes)
+            ambiguous_rules.extend(tx_ambiguous_rules)
 
     inspection_cache: dict[tuple[str, ...], str] = {}
 
@@ -154,8 +188,12 @@ def snapshot_verification_transactions(root: Path, manifest_path: Path):
     def rule_present(rule) -> bool:
         return NETWORK._rule_present(rule, inspection_output(rule.show_command()))
 
-    routes = _verification_obligations(durable_routes, desired_routes, route_present)
-    rules = _verification_obligations(durable_rules, desired_rules, rule_present)
+    routes = _verification_obligations(
+        durable_routes, baseline_routes, ambiguous_routes, route_present
+    )
+    rules = _verification_obligations(
+        durable_rules, baseline_rules, ambiguous_rules, rule_present
+    )
     manifest = NETWORK.NetworkManifest(tuple(sorted(routes)), tuple(sorted(rules)))
     NETWORK._write_manifest(manifest_path, manifest)
     return manifest
