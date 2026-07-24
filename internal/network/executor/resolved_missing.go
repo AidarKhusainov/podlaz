@@ -33,24 +33,13 @@ func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, e
 	if !errors.As(commandErr.err, &exitErr) || exitErr.ExitCode() != 1 {
 		return false
 	}
-	stdout, stderr, raw := commandProtocolOutput(result)
-	if result.ExitCode != 1 || stdout != "" {
+	if result.ExitCode != 1 || result.RawStdout != "" {
 		return false
 	}
-	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
+	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	if raw {
-		return exactTerminatedProtocolLine(stderr, resolvedMissingLinkStderr)
-	}
-	return stderr == resolvedMissingLinkStderr
-}
-
-func commandProtocolOutput(result CommandResult) (stdout, stderr string, raw bool) {
-	if result.RawStdout != "" || result.RawStderr != "" {
-		return result.RawStdout, result.RawStderr, true
-	}
-	return result.Stdout, result.Stderr, false
+	return exactTerminatedProtocolLine(result.RawStderr, resolvedMissingLinkStderr)
 }
 
 // exactTerminatedProtocolLine accepts only the exact protocol payload followed
