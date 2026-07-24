@@ -94,38 +94,43 @@ func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err 
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 {
 		return false
 	}
-	rawStdout := recoveryRawCommandOutput(result.RawStdout, result.Stdout)
-	rawStderr := recoveryRawCommandOutput(result.RawStderr, result.Stderr)
-	if rawStdout != "" {
+	stdout, stderr, raw := recoveryProtocolOutput(result)
+	if stdout != "" {
 		return false
 	}
-	if rawStderr == "" || len(rawStderr) > maxResolvedMissingStderrSize {
+	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return exactRecoveryProtocolLine(rawStderr, resolvedMissingDeviceStderr)
+	if raw {
+		return exactTerminatedRecoveryProtocolLine(stderr, resolvedMissingDeviceStderr)
+	}
+	return stderr == resolvedMissingDeviceStderr
 }
 
 func resolvedStatusResourceMissing(result CommandResult) bool {
-	rawStdout := recoveryRawCommandOutput(result.RawStdout, result.Stdout)
-	rawStderr := recoveryRawCommandOutput(result.RawStderr, result.Stderr)
-	if result.ExitCode != 1 || rawStdout != "" {
+	stdout, stderr, raw := recoveryProtocolOutput(result)
+	if result.ExitCode != 1 || stdout != "" {
 		return false
 	}
-	if rawStderr == "" || len(rawStderr) > maxResolvedMissingStderrSize {
+	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return exactRecoveryProtocolLine(rawStderr, `Link podlaz0 does not exist.`) || exactRecoveryProtocolLine(rawStderr, resolvedMissingDeviceStderr)
-}
-
-func recoveryRawCommandOutput(raw, normalized string) string {
-	if raw != "" {
-		return raw
+	if raw {
+		return exactTerminatedRecoveryProtocolLine(stderr, `Link podlaz0 does not exist.`) || exactTerminatedRecoveryProtocolLine(stderr, resolvedMissingDeviceStderr)
 	}
-	return normalized
+	return stderr == `Link podlaz0 does not exist.` || stderr == resolvedMissingDeviceStderr
 }
 
-// exactRecoveryProtocolLine accepts only the exact protocol payload and one
-// conventional terminal LF or CRLF. Extra whitespace or lines fail closed.
-func exactRecoveryProtocolLine(raw, expected string) bool {
-	return raw == expected || raw == expected+"\n" || raw == expected+"\r\n"
+func recoveryProtocolOutput(result CommandResult) (stdout, stderr string, raw bool) {
+	if result.RawStdout != "" || result.RawStderr != "" {
+		return result.RawStdout, result.RawStderr, true
+	}
+	return result.Stdout, result.Stderr, false
+}
+
+// exactTerminatedRecoveryProtocolLine accepts only the exact protocol payload
+// followed by one terminal LF or CRLF. Extra whitespace, missing termination, or
+// additional lines fail closed.
+func exactTerminatedRecoveryProtocolLine(raw, expected string) bool {
+	return raw == expected+"\n" || raw == expected+"\r\n"
 }
