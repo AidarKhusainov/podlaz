@@ -12,6 +12,7 @@ PRE_RECOVERY_ROLLBACK_MANIFEST="${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH:-${E2E_T
 AUTHORITATIVE_ROLLBACK_MANIFEST="${E2E_TMP_ROOT}/tun-package-authoritative-network.json"
 ROLLBACK_MANIFEST="${AUTHORITATIVE_ROLLBACK_MANIFEST}"
 VERIFICATION_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-verification-network.py"
+CONNECT_TERMINATION_UNPROVEN_MARKER="${E2E_TMP_ROOT}/tun-package-connect-termination-unproven"
 EXTERNAL_PRE_RECOVERY_MANIFEST_STATE="${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE:-unset}"
 EXTERNAL_PRE_RECOVERY_MANIFEST_SHA256="${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_SHA256:-}"
 PRE_RECOVERY_METADATA_VALID=false
@@ -199,6 +200,15 @@ purge_package_if_safe() {
 
 teardown_main() {
   local cleanup_status=0
+
+  if [[ -e "${CONNECT_TERMINATION_UNPROVEN_MARKER}" || -L "${CONNECT_TERMINATION_UNPROVEN_MARKER}" ]]; then
+    record_cleanup_evidence connect_process_quiesced false
+    record_cleanup_evidence identity_material_preserved true
+    record_cleanup_evidence identity_material_release_authorized false
+    record_cleanup_evidence package_purge_deferred true
+    cleanup_error "teardown: refusing hook release and recovery because connect process termination is unproven"
+    return 1
+  fi
 
   require_cmd apt awk curl dpkg-query getent grep ip nft pgrep python3 readlink resolvectl seq sha256sum sleep sudo systemctl timeout tr
 
