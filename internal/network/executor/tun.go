@@ -2,17 +2,24 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
+
+type Step struct {
+	Kind        string
+	Target      string
+	Description string
+	Owner       string
+}
 
 const (
 	OwnerTunDevice  = "podlaz:tun-device"
 	OwnerRoute      = "podlaz:route"
 	OwnerPolicyRule = "podlaz:policy-rule"
+	OwnerDNS        = "podlaz:dns"
+	OwnerNFTables   = "podlaz:nftables"
 )
 
 type TunDeviceExecutor interface {
@@ -33,21 +40,14 @@ type PolicyRuleExecutor interface {
 	Rollback(ctx context.Context, plan planner.TunPolicyRulePlan) error
 }
 
-type Step struct {
-	Kind        string
-	Target      string
-	Description string
-	Owner       string
-}
-
 type TunExecutor struct {
-	TunDevice   TunDeviceExecutor
-	Routes      RouteExecutor
-	PolicyRules PolicyRuleExecutor
+	Device TunDeviceExecutor
+	Route  RouteExecutor
+	Rule   PolicyRuleExecutor
 }
 
-func NewOSExecutor() TunExecutor {
-	return newTunExecutorWithRunner(OSRunner{})
+func NewTunExecutor() TunExecutor {
+	return newTunExecutorWithRunner(nil)
 }
 
 func newTunExecutorWithRunner(runner CommandRunner) TunExecutor {
@@ -55,143 +55,95 @@ func newTunExecutorWithRunner(runner CommandRunner) TunExecutor {
 		runner = OSRunner{}
 	}
 	return TunExecutor{
-		TunDevice:   IPTunDeviceExecutor{Runner: runner, DeviceUser: defaultTunDeviceUser, DeviceGroup: defaultTunDeviceGroup},
-		Routes:      IPRouteExecutor{Runner: runner},
-		PolicyRules: IPPolicyRuleExecutor{Runner: runner},
+		Device: IPTunDeviceExecutor{Runner: runner, DeviceUser: defaultTunDeviceUser, DeviceGroup: defaultTunDeviceGroup},
+		Route:  IPRouteExecutor{Runner: runner},
+		Rule:   IPPolicyRuleExecutor{Runner: runner},
 	}
 }
 
 func (e TunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, error) {
-	if err := e.validate(); err != nil {
-		return nil, err
+	if e.Device == nil || e.Route == nil || e.Rule == nil {
+		return nil, fmt.Errorf("incomplete TUN executor")
 	}
-	steps := make([]Step, 0, 1+len(plan.Routes)+len(plan.PolicyRules))
-
-	switch tunDeviceAction(plan.TunDevice.Action) {
-	case "", "create":
-		step, err := e.TunDevice.Create(ctx, plan.TunDevice)
+	var steps []Step
+	if plan.TunDevice.Action == "create" {
+		step, err := e.Device.Create(ctx, plan.TunDevice)
+		steps = appendAppliedStep(steps, step)
 		if err != nil {
 			return steps, err
 		}
-		steps = appendAppliedStep(steps, step)
-	case "verify", "use-existing":
-		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
+	} else {
+		if err := e.Device.Verify(ctx, plan.TunDevice); err != nil {
 			return steps, err
 		}
-	default:
-		return steps, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action)
 	}
-
 	for _, route := range plan.Routes {
 		if route.Action != "add" {
 			continue
 		}
-		step, err := e.Routes.Add(ctx, route)
+		step, err := e.Route.Add(ctx, route)
+		steps = appendAppliedStep(steps, step)
 		if err != nil {
 			return steps, err
 		}
-		steps = appendAppliedStep(steps, step)
 	}
 	for _, rule := range plan.PolicyRules {
 		if rule.Action != "add" {
 			continue
 		}
-		step, err := e.PolicyRules.Add(ctx, rule)
+		step, err := e.Rule.Add(ctx, rule)
+		steps = appendAppliedStep(steps, step)
 		if err != nil {
 			return steps, err
 		}
-		steps = appendAppliedStep(steps, step)
 	}
 	return steps, nil
 }
 
-func (e TunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
-	if err := e.validate(); err != nil {
-		return err
+func appendAppliedStep(steps []Step, step Step) []Step {
+	if step.Kind == "" {
+		return steps
 	}
-	if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
+	return append(steps, step)
+}
+
+func (e TunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
+	if err := e.Device.Verify(ctx, plan.TunDevice); err != nil {
 		return err
 	}
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
-			continue
-		}
-		if err := e.Routes.Verify(ctx, route); err != nil {
-			return err
+		if route.Action == "add" {
+			if err := e.Route.Verify(ctx, route); err != nil {
+				return err
+			}
 		}
 	}
 	for _, rule := range plan.PolicyRules {
-		if rule.Action != "add" {
-			continue
-		}
-		if err := e.PolicyRules.Verify(ctx, rule); err != nil {
-			return err
+		if rule.Action == "add" {
+			if err := e.Rule.Verify(ctx, rule); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
 func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
-	if err := e.validate(); err != nil {
-		return err
-	}
-	var errs []error
+	var first error
 	for i := len(plan.PolicyRules) - 1; i >= 0; i-- {
-		rule := plan.PolicyRules[i]
-		if rule.Action != "add" {
-			continue
-		}
-		if err := e.PolicyRules.Rollback(ctx, rule); err != nil {
-			errs = append(errs, err)
+		if err := e.Rule.Rollback(ctx, plan.PolicyRules[i]); err != nil && first == nil {
+			first = err
 		}
 	}
 	for i := len(plan.Routes) - 1; i >= 0; i-- {
-		route := plan.Routes[i]
-		if route.Action != "add" {
-			continue
-		}
-		if err := e.Routes.Rollback(ctx, route); err != nil {
-			errs = append(errs, err)
+		if err := e.Route.Rollback(ctx, plan.Routes[i]); err != nil && first == nil {
+			first = err
 		}
 	}
-	switch tunDeviceAction(plan.TunDevice.Action) {
-	case "", "create":
-		if strings.TrimSpace(plan.TunDevice.Name) != "" {
-			if err := e.TunDevice.Rollback(ctx, plan.TunDevice); err != nil {
-				errs = append(errs, err)
-			}
+	if plan.TunDevice.Name != "" {
+		if err := e.Device.Rollback(ctx, plan.TunDevice); err != nil && first == nil {
+			first = err
 		}
-	case "verify", "use-existing":
-	default:
-		errs = append(errs, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action))
 	}
-	return errors.Join(errs...)
-}
-
-func appendAppliedStep(steps []Step, step Step) []Step {
-	if strings.TrimSpace(step.Kind) == "" {
-		return steps
-	}
-	return append(steps, step)
-}
-
-func tunDeviceAction(action string) string {
-	action = strings.ToLower(strings.TrimSpace(action))
-	if action == "add" {
-		return "create"
-	}
-	return action
-}
-
-func (e TunExecutor) validate() error {
-	if e.TunDevice == nil {
-		return errors.New("missing TUN device executor")
-	}
-	if e.Routes == nil {
-		return errors.New("missing route executor")
-	}
-	if e.PolicyRules == nil {
-		return errors.New("missing policy-rule executor")
-	}
-	return nil
+	return first
 }
