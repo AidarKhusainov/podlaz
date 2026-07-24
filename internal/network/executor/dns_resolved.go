@@ -326,7 +326,7 @@ func findForeignRouteOnlyDNSOwner(links []netsnapshot.ResolvedLink, targetLink s
 		if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
 			continue
 		}
-		if containsDNSValue(link.CurrentScopes, "DNS") || containsDNSValue(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
+		if containsDNSValue(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
 			return link, true
 		}
 	}
