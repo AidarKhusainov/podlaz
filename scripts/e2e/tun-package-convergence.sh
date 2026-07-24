@@ -51,6 +51,7 @@ FOREIGN_SERVICE="podlaz-e2e-foreign.service"
 CONNECT_PID=""
 CONNECT_START_TIME=""
 CONNECT_EXIT_CODE=""
+CONNECT_PROCESS_QUIESCED=false
 HOST_SENSITIVE_VALUES=""
 DEFAULT_ROUTE_BEFORE=""
 
@@ -164,12 +165,21 @@ HOOK
 
 cleanup() {
   local code=$? cleanup_code=0 purge=true
+
   terminate_connect_bounded || cleanup_code=1
-  clear_hook || cleanup_code=1
-  if [[ "${PODLAZ_E2E_KEEP_PACKAGE:-false}" == "true" ]]; then
-    purge=false
+  if [[ "${CONNECT_PROCESS_QUIESCED}" == "true" ]]; then
+    clear_hook || cleanup_code=1
+    if [[ "${PODLAZ_E2E_KEEP_PACKAGE:-false}" == "true" ]]; then
+      purge=false
+    fi
+    PODLAZ_E2E_PURGE_PACKAGE="${purge}" bash "${SCRIPT_DIR}/tun-package-cleanup.sh" || cleanup_code=1
+  else
+    # Do not release a paused daemon or invoke shared teardown while the tracked
+    # CLI child may still be alive and capable of lifecycle RPC mutations. The
+    # workflow cleanup step observes this private guard and also fails closed.
+    (umask 077; printf 'connect_process_quiescence=unproven\n' >"${E2E_TMP_ROOT}/tun-package-connect-termination-unproven") || cleanup_code=1
+    cleanup_code=1
   fi
-  PODLAZ_E2E_PURGE_PACKAGE="${purge}" bash "${SCRIPT_DIR}/tun-package-cleanup.sh" || cleanup_code=1
   if [[ "${code}" == "0" && "${cleanup_code}" != "0" ]]; then
     code="${cleanup_code}"
   fi
@@ -381,6 +391,7 @@ run_missing_link_probe() {
   CONNECT_PID=$!
   CONNECT_START_TIME="$(process_start_time "${CONNECT_PID}")"
   [[ -n "${CONNECT_START_TIME}" ]] || fail "failed to record connect process identity"
+  CONNECT_PROCESS_QUIESCED=false
   for attempt in $(seq 1 900); do
     sudo -n test -f "${HOOK_READY}" && break
     sleep 0.1
