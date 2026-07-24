@@ -33,27 +33,29 @@ func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, e
 	if !errors.As(commandErr.err, &exitErr) || exitErr.ExitCode() != 1 {
 		return false
 	}
-	rawStdout := rawCommandOutput(result.RawStdout, result.Stdout)
-	rawStderr := rawCommandOutput(result.RawStderr, result.Stderr)
-	if result.ExitCode != 1 || rawStdout != "" {
+	stdout, stderr, raw := commandProtocolOutput(result)
+	if result.ExitCode != 1 || stdout != "" {
 		return false
 	}
-	if rawStderr == "" || len(rawStderr) > maxResolvedMissingStderrSize {
+	if stderr == "" || len(stderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return exactProtocolLine(rawStderr, resolvedMissingLinkStderr)
-}
-
-func rawCommandOutput(raw, normalized string) string {
-	if raw != "" {
-		return raw
+	if raw {
+		return exactTerminatedProtocolLine(stderr, resolvedMissingLinkStderr)
 	}
-	return normalized
+	return stderr == resolvedMissingLinkStderr
 }
 
-// exactProtocolLine accepts only the exact protocol payload and the two
-// conventional single-line process endings. Additional whitespace or lines are
-// ambiguous and must fail closed.
-func exactProtocolLine(raw, expected string) bool {
-	return raw == expected || raw == expected+"\n" || raw == expected+"\r\n"
+func commandProtocolOutput(result CommandResult) (stdout, stderr string, raw bool) {
+	if result.RawStdout != "" || result.RawStderr != "" {
+		return result.RawStdout, result.RawStderr, true
+	}
+	return result.Stdout, result.Stderr, false
+}
+
+// exactTerminatedProtocolLine accepts only the exact protocol payload followed
+// by one conventional terminal LF or CRLF. Extra whitespace, missing termination,
+// or additional lines are ambiguous and must fail closed.
+func exactTerminatedProtocolLine(raw, expected string) bool {
+	return raw == expected+"\n" || raw == expected+"\r\n"
 }
