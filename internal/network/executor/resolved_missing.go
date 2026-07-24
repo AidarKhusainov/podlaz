@@ -33,11 +33,27 @@ func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, e
 	if !errors.As(commandErr.err, &exitErr) || exitErr.ExitCode() != 1 {
 		return false
 	}
-	if result.ExitCode != 1 || result.Stdout != "" {
+	rawStdout := rawCommandOutput(result.RawStdout, result.Stdout)
+	rawStderr := rawCommandOutput(result.RawStderr, result.Stderr)
+	if result.ExitCode != 1 || rawStdout != "" {
 		return false
 	}
-	if result.Stderr == "" || len(result.Stderr) > maxResolvedMissingStderrSize {
+	if rawStderr == "" || len(rawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return result.Stderr == resolvedMissingLinkStderr
+	return exactProtocolLine(rawStderr, resolvedMissingLinkStderr)
+}
+
+func rawCommandOutput(raw, normalized string) string {
+	if raw != "" {
+		return raw
+	}
+	return normalized
+}
+
+// exactProtocolLine accepts only the exact protocol payload and the two
+// conventional single-line process endings. Additional whitespace or lines are
+// ambiguous and must fail closed.
+func exactProtocolLine(raw, expected string) bool {
+	return raw == expected || raw == expected+"\n" || raw == expected+"\r\n"
 }
