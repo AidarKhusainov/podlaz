@@ -2,7 +2,10 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -18,18 +21,7 @@ func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(
 			Owner:   netexecutor.OwnerDNS,
 		}},
 	})
-	runner := fakeRunner{
-		paths: map[string]string{
-			"resolvectl": "/usr/bin/resolvectl",
-		},
-		commands: map[string]fakeCommand{
-			"resolvectl revert podlaz0": {
-				stderr:   resolvedMissingDeviceStderr,
-				exitCode: 1,
-				err:      resolvedTestExitError{code: 1},
-			},
-		},
-	}
+	runner := rawResolvedTransactionRunner{}
 
 	results := (DaemonCleanupExecutor{Runner: runner, RuntimeDir: runtimeDir}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
@@ -43,4 +35,25 @@ func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("successful transaction recovery must remove transaction state, stat err=%v", err)
 	}
+}
+
+type rawResolvedTransactionRunner struct{}
+
+func (rawResolvedTransactionRunner) LookPath(file string) (string, error) {
+	if file == "resolvectl" {
+		return "/usr/bin/resolvectl", nil
+	}
+	return "", errors.New("command not found")
+}
+
+func (rawResolvedTransactionRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
+	if filepath.Base(name) != "resolvectl" || strings.Join(args, " ") != "revert podlaz0" {
+		return CommandResult{ExitCode: -1}, errors.New("unexpected command")
+	}
+	rawStderr := resolvedMissingDeviceStderr + "\n"
+	return CommandResult{
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStderr: rawStderr,
+		ExitCode:  1,
+	}, resolvedTestExitError{code: 1}
 }
