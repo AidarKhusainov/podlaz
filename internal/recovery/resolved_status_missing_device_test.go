@@ -11,7 +11,7 @@ func TestPlanWithOptionsTreatsResolvedStatusNoSuchDeviceAsMissing(t *testing.T) 
 	runner := newResolvedRecoveryRunner(
 		[]resolvedRecoveryCommand{missingPodlazLink(), missingPodlazLink()},
 		[]resolvedRecoveryCommand{{
-			stderr:   `Failed to resolve interface "podlaz0": No such device`,
+			stderr:   `Failed to resolve interface "podlaz0": No such device` + "\n",
 			exitCode: 1,
 			err:      errors.New("exit status 1"),
 		}},
