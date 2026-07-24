@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+TEST_ROOT="$(mktemp -d)"
+trap 'rm -rf "${TEST_ROOT}"' EXIT
+E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export E2E_TMP_ROOT="${TEST_ROOT}/tmp"
+export E2E_ARTIFACT_DIR="${TEST_ROOT}/artifacts"
+export TRANSACTION_DIR="${TEST_ROOT}/transactions"
+export FALLBACK_NETWORK_HELPER="${E2E_DIR}/tun-package-fallback-network.py"
+mkdir -p "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}" "${TRANSACTION_DIR}"
+
+fail_test() {
+  printf 'test failure: %s\n' "$*" >&2
+  exit 1
+}
+
+cat >"${TRANSACTION_DIR}/tx.json" <<'JSON'
+{
+  "schema_version": "podlaz.transaction.v1",
+  "owner": "podlaz",
+  "state": "applying",
+  "desired_plan": {
+    "routes": [
+      {
+        "kind": "route",
+        "operation": "add",
+        "owner": "podlaz:route",
+        "table": "main",
+        "cidr": "203.0.113.10/32",
+        "via": "192.0.2.1",
+        "dev": "eth0"
+      }
+    ],
+    "steps": [
+      {
+        "kind": "policy-rule",
+        "target": "priority 9999 to 203.0.113.10/32 lookup main",
+        "owner": "podlaz:policy-rule"
+      }
+    ]
+  },
+  "applied_steps": [],
+  "rollback": {
+    "routes": [],
+    "policy_rules": []
+  }
+}
+JSON
+
+FAKE_BIN="${TEST_ROOT}/fake-bin"
+mkdir -p "${FAKE_BIN}"
+cat >"${FAKE_BIN}/ip" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  '-4 route show table main exact 203.0.113.10/32')
+    printf '203.0.113.10 via 192.0.2.1 dev eth0\n'
+    ;;
+  '-4 rule show')
+    printf '9999: from all to 203.0.113.10 lookup main\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+SH
+chmod 0755 "${FAKE_BIN}/ip"
+
+PATH="${FAKE_BIN}:${PATH}" ip -4 route show table main exact 203.0.113.10/32 | \
+  grep -F '203.0.113.10 via 192.0.2.1 dev eth0' >/dev/null || \
+  fail_test "in-flight route fixture is not present before caller-boundary capture"
+PATH="${FAKE_BIN}:${PATH}" ip -4 rule show | \
+  grep -F '9999: from all to 203.0.113.10 lookup main' >/dev/null || \
+  fail_test "in-flight policy-rule fixture is not present before caller-boundary capture"
+
+SCRIPT_DIR="${E2E_DIR}"
+# shellcheck source=../lib/process_lifecycle.sh
+source "${E2E_DIR}/lib/process_lifecycle.sh"
+# shellcheck source=../lib/connect_lifecycle.sh
+source "${E2E_DIR}/lib/connect_lifecycle.sh"
+
+cleanup_definition="$(awk '
+  /^cleanup\(\) \{/ { capture = 1 }
+  capture { print }
+  capture && /^}$/ { exit }
+' "${E2E_DIR}/tun-package-convergence.sh")"
+[[ -n "${cleanup_definition}" ]] || fail_test "real convergence cleanup function was not found"
+eval "${cleanup_definition}"
+
+REAL_SUDO="$(command -v sudo)"
+sudo() {
+  if [[ "${1:-}" == "-n" ]]; then
+    shift
+  fi
+  if [[ "${1:-}" == "python3" && "${2:-}" == "${E2E_DIR}/tun-package-verification-network.py" ]]; then
+    command "${REAL_SUDO}" -n env \
+      "PATH=${FAKE_BIN}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+      "$@"
+    return
+  fi
+  command "${REAL_SUDO}" -n "$@"
+}
+
+CONNECT_PID=""
+CONNECT_START_TIME=""
+CONNECT_EXIT_CODE=""
+
+clear_hook() {
+  [[ "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_STATE:-}" == "ready" ]] || \
+    fail_test "hook release ran without a ready applying verification proof"
+  [[ -f "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH:-}" ]] || \
+    fail_test "hook release ran before the applying verification manifest existed"
+  [[ "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || \
+    fail_test "hook release ran without an immutable applying manifest checksum"
+
+  command "${REAL_SUDO}" -n grep -F '203.0.113.10/32' \
+    "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH}" >/dev/null || \
+    fail_test "applying envelope omitted the in-flight exact route"
+  command "${REAL_SUDO}" -n grep -F '"priority": 9999' \
+    "${PODLAZ_E2E_PRE_RECOVERY_MANIFEST_PATH}" >/dev/null || \
+    fail_test "applying envelope omitted the in-flight exact policy rule"
+
+  # Cancellation or hook release removes the transaction record while the
+  # in-flight exact route/rule survive on the host.
+  : >"${TEST_ROOT}/residual-applying-network"
+  rm -f -- "${TRANSACTION_DIR}/tx.json"
+}
+
+bash() (
+  [[ "${1:-}" == "${E2E_DIR}/tun-package-cleanup.sh" ]] || \
+    fail_test "unexpected teardown command: $*"
+
+  export PODLAZ_E2E_CLEANUP_SOURCE_ONLY=true
+  # shellcheck source=../tun-package-cleanup.sh
+  source "${E2E_DIR}/tun-package-cleanup.sh"
+
+  require_cmd() { :; }
+  cleanup_error() { :; }
+  record_cleanup_evidence() { :; }
+  clear_tun_hook() { return 0; }
+  attempt_daemon_recovery() { return 0; }
+  timeout() { return 0; }
+  inspect_service_active_state() { return 0; }
+  stop_owned_xray() { return 0; }
+  cleanup_podlaz_resolved() { return 0; }
+  cleanup_podlaz_nftables() { return 0; }
+  cleanup_podlaz_link() { return 0; }
+  cleanup_e2e_sentinels() { return 0; }
+  assert_cleanup_complete() { return 1; }
+  remove_generated_state() { : >"${TEST_ROOT}/generated-removed"; return 0; }
+  remove_transaction_state() { : >"${TEST_ROOT}/transaction-removed"; return 0; }
+  purge_package() { : >"${TEST_ROOT}/package-purged"; return 0; }
+
+  snapshot_rollback_metadata() {
+    cat >"${AUTHORITATIVE_ROLLBACK_MANIFEST}" <<'JSON'
+{"routes": [], "rules": [], "schema_version": "podlaz.e2e.rollback-network.v1"}
+JSON
+    ROLLBACK_METADATA_VALID=true
+    return 0
+  }
+
+  sudo() {
+    if [[ "${1:-}" == "-n" ]]; then
+      shift
+    fi
+    if [[ "${1:-}" == "python3" && "${2:-}" == "${FALLBACK_NETWORK_HELPER}" ]]; then
+      case "${3:-}:${4:-}" in
+        "cleanup:${AUTHORITATIVE_ROLLBACK_MANIFEST}") return 0 ;;
+        "verify:${AUTHORITATIVE_ROLLBACK_MANIFEST}") return 0 ;;
+        "verify:${PRE_RECOVERY_ROLLBACK_MANIFEST}")
+          [[ -f "${TEST_ROOT}/residual-applying-network" ]] && return 1
+          return 0
+          ;;
+      esac
+    fi
+    command "${REAL_SUDO}" -n "$@"
+  }
+
+  teardown_main
+)
+
+set +e
+(
+  set +e
+  cleanup
+)
+cleanup_status=$?
+set -e
+
+[[ "${cleanup_status}" != "0" ]] || \
+  fail_test "real convergence trap accepted applying network residue"
+[[ ! -e "${TEST_ROOT}/generated-removed" ]] || \
+  fail_test "generated state was removed after applying residue verification failed"
+[[ ! -e "${TEST_ROOT}/transaction-removed" ]] || \
+  fail_test "transaction identity was removed after applying residue verification failed"
+[[ ! -e "${TEST_ROOT}/package-purged" ]] || \
+  fail_test "package was purged after applying residue verification failed"
+
+printf 'tun package applying cleanup boundary tests passed\n'
