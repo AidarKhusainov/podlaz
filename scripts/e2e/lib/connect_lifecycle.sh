@@ -7,6 +7,7 @@
 CONNECT_PID="${CONNECT_PID:-}"
 CONNECT_START_TIME="${CONNECT_START_TIME:-}"
 CONNECT_EXIT_CODE="${CONNECT_EXIT_CODE:-}"
+CONNECT_PROCESS_QUIESCED="${CONNECT_PROCESS_QUIESCED:-false}"
 
 capture_connect_pre_recovery_proof() {
   local manifest helper digest
@@ -50,16 +51,20 @@ wait_connect_bounded() {
     CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
     CONNECT_PID=""
     CONNECT_START_TIME=""
+    CONNECT_PROCESS_QUIESCED=true
     return 0
   else
     status=$?
   fi
+  CONNECT_PROCESS_QUIESCED=false
   return "${status}"
 }
 
 terminate_connect_bounded() {
   local pid="${CONNECT_PID:-}" start="${CONNECT_START_TIME:-}"
   local capture_status=0 termination_status=0
+
+  CONNECT_PROCESS_QUIESCED=false
 
   # This is the first operation executed by the real convergence EXIT trap.
   # Capture proof before cancellation, but never let capture failure skip the
@@ -70,14 +75,18 @@ terminate_connect_bounded() {
     capture_status=$?
   fi
 
-  if [[ -n "${pid}" && -n "${start}" ]]; then
-    if terminate_child_bounded "${pid}" "${start}" 50; then
-      CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
-      CONNECT_PID=""
-      CONNECT_START_TIME=""
-    else
-      termination_status=$?
-    fi
+  if [[ -z "${pid}" && -z "${start}" ]]; then
+    CONNECT_PROCESS_QUIESCED=true
+  elif [[ -z "${pid}" || -z "${start}" ]]; then
+    # Partial tracking cannot prove which process identity should be terminated.
+    termination_status=2
+  elif terminate_child_bounded "${pid}" "${start}" 50; then
+    CONNECT_EXIT_CODE="${WAIT_CHILD_EXIT_CODE}"
+    CONNECT_PID=""
+    CONNECT_START_TIME=""
+    CONNECT_PROCESS_QUIESCED=true
+  else
+    termination_status=$?
   fi
 
   if [[ "${termination_status}" != "0" ]]; then
