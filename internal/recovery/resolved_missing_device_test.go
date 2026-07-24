@@ -13,7 +13,7 @@ func TestExecuteWithOptionsTreatsResolvedRevertNoSuchDeviceAsRecovered(t *testin
 		[]resolvedRecoveryCommand{resolvedLinkExists()},
 	)
 	runner.commands["resolvectl revert podlaz0"] = []resolvedRecoveryCommand{{
-		stderr:   `Failed to resolve interface "podlaz0": No such device`,
+		stderr:   `Failed to resolve interface "podlaz0": No such device` + "\n",
 		exitCode: 1,
 		err:      resolvedTestExitError{code: 1},
 	}}
