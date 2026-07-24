@@ -106,19 +106,27 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) (C
 	r.commands = append(r.commands, command)
 	idx := len(r.commands) - 1
 	if idx < len(r.errs) && r.errs[idx] != nil {
-		result := CommandResult{ExitCode: 2, Stderr: r.errs[idx].Error()}
+		result := CommandResult{ExitCode: 2, Stderr: r.errs[idx].Error(), RawStderr: r.errs[idx].Error()}
 		if idx < len(r.results) {
-			result = r.results[idx]
+			result = withRawTestCommandOutput(r.results[idx])
 		}
 		return result, r.errs[idx]
 	}
 	if idx < len(r.results) {
-		return r.results[idx], nil
+		return withRawTestCommandOutput(r.results[idx]), nil
 	}
 	if r.err != nil {
-		return CommandResult{ExitCode: 2, Stderr: r.err.Error()}, r.err
+		return CommandResult{ExitCode: 2, Stderr: r.err.Error(), RawStderr: r.err.Error()}, r.err
 	}
-	return CommandResult{Stdout: r.stdout}, nil
+	return CommandResult{Stdout: r.stdout, RawStdout: r.stdout}, nil
+}
+
+func withRawTestCommandOutput(result CommandResult) CommandResult {
+	if result.RawStdout == "" && result.RawStderr == "" {
+		result.RawStdout = result.Stdout
+		result.RawStderr = result.Stderr
+	}
+	return result
 }
 
 func executorPlanForTest() planner.TunPlan {
