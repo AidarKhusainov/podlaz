@@ -13,9 +13,11 @@ import (
 const defaultCommandTimeout = 5 * time.Second
 
 type CommandResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout    string
+	Stderr    string
+	RawStdout string
+	RawStderr string
+	ExitCode  int
 }
 
 type CommandRunner interface {
@@ -32,9 +34,13 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	rawStdout := stdout.String()
+	rawStderr := stderr.String()
 	result := CommandResult{
-		Stdout: strings.TrimSpace(stdout.String()),
-		Stderr: strings.TrimSpace(stderr.String()),
+		Stdout:    strings.TrimSpace(rawStdout),
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStdout: rawStdout,
+		RawStderr: rawStderr,
 	}
 	if err == nil {
 		return result, nil
