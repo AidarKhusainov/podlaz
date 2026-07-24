@@ -172,7 +172,14 @@ func (r *resolvedSubprocessRunner) Run(ctx context.Context, name string, args ..
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	r.lastErr = err
-	result := CommandResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	rawStdout := stdout.String()
+	rawStderr := stderr.String()
+	result := CommandResult{
+		Stdout:    strings.TrimSpace(rawStdout),
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStdout: rawStdout,
+		RawStderr: rawStderr,
+	}
 	if err == nil {
 		return result, nil
 	}
