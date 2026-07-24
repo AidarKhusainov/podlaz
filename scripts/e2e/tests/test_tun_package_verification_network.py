@@ -99,6 +99,16 @@ class VerificationNetworkTests(unittest.TestCase):
                 self.assertEqual(verification.routes, ())
                 self.assertEqual(verification.rules, ())
 
+    def test_applying_desired_tuples_present_at_capture_remain_obligations(self) -> None:
+        with mock.patch.object(
+            VERIFICATION.NETWORK,
+            "_inspection_output",
+            side_effect=[ROUTE_PRESENT, RULE_PRESENT],
+        ):
+            verification = self.snapshot(transaction(state="applying"))
+        self.assertEqual(len(verification.routes), 1)
+        self.assertEqual(len(verification.rules), 1)
+
     def test_unowned_desired_tuples_absent_at_capture_become_obligations(self) -> None:
         with mock.patch.object(VERIFICATION.NETWORK, "_inspection_output", return_value=""):
             verification = self.snapshot(transaction(state="verifying"))
