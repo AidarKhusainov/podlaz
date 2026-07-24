@@ -12,6 +12,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestTunHandoffPreflightIgnoresCurrentScopesWithoutConfigurationEvidence(t *testing.T) {
@@ -119,7 +120,7 @@ func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *tes
 			if step.Kind != tt.wantKind || step.Owner != tt.wantOwner {
 				t.Fatalf("persisted ownership = %#v, want kind=%s owner=%s", step, tt.wantKind, tt.wantOwner)
 			}
-			assertIssue236ExactRollbackMetadata(t, tx.Rollback.TUN, tx.Rollback.Routes, tx.Rollback.PolicyRules, tt.wantKind)
+			assertIssue236ExactRollbackMetadata(t, tx.Rollback, tt.wantKind)
 
 			if rollbackErr := mutationErr.Rollback(context.Background(), executor); rollbackErr != nil {
 				t.Fatalf("rollback partial production mutation: %v", rollbackErr)
@@ -138,10 +139,25 @@ func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *tes
 	}
 }
 
-func assertIssue236ExactRollbackMetadata(t *testing.T, tun any, routes any, rules any, wantKind string) {
+func assertIssue236ExactRollbackMetadata(t *testing.T, rollback txstate.RollbackMetadata, wantKind string) {
 	t.Helper()
-	tunCount := len(tun.([]struct{}))
-	_ = tunCount
+	wantTUN, wantRoutes, wantRules := 0, 0, 0
+	switch wantKind {
+	case "tun-device":
+		wantTUN = 1
+	case "route":
+		wantRoutes = 1
+	case "policy-rule":
+		wantRules = 1
+	default:
+		t.Fatalf("unsupported ownership kind %q", wantKind)
+	}
+	if len(rollback.TUN) != wantTUN || len(rollback.Routes) != wantRoutes || len(rollback.PolicyRules) != wantRules {
+		t.Fatalf("rollback metadata is not exact for %s: %#v", wantKind, rollback)
+	}
+	if len(rollback.DNS) != 0 || len(rollback.NFTables) != 0 || len(rollback.GeneratedConfigs) != 0 || len(rollback.ChildProcesses) != 0 {
+		t.Fatalf("rollback metadata contains unrelated ownership for %s: %#v", wantKind, rollback)
+	}
 }
 
 func issue236PartialTunPlan() planner.TunPlan {
@@ -198,12 +214,12 @@ func issue236BasePartialPlan() planner.TunPlan {
 }
 
 type issue236PartialMutationRunner struct {
-	failCommand string
-	failed      bool
-	commands    []string
-	tunPresent  bool
+	failCommand  string
+	failed       bool
+	commands     []string
+	tunPresent   bool
 	routePresent bool
-	rulePresent bool
+	rulePresent  bool
 }
 
 func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
