@@ -22,5 +22,5 @@ func rollbackVerifiedTunTransactionWithChildStopper(ctx context.Context, runtime
 		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
 	}
 	rollbackPlan := rollbackPlanFromPersistedTransaction(plan, tx)
-	return rollbackTunTransactionWithChildStopper(ctx, store, &tx, rollbackPlan, executor, stopChildren)
+	return rollbackPreparedTunFailureWithChildStopper(ctx, store, &tx, rollbackPlan, executor, stopChildren)
 }
