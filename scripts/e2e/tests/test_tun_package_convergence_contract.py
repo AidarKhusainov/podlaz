@@ -25,6 +25,23 @@ class TunPackageConvergenceContractTests(unittest.TestCase):
         self.assertLess(wait, verify)
         self.assertLess(verify, resources)
 
+    def test_missing_link_validates_the_production_rollback_capture(self) -> None:
+        body = self.function_body("run_missing_link_probe", "\n}\n\nsetup_isolated_xdg")
+        self.assertNotIn("sudo -n resolvectl revert podlaz0", body)
+
+        release = body.index('touch "${HOOK_CONTINUE}"')
+        wait = body.index("wait_connect_bounded")
+        exit_code = body.index('grep -Fx "1" "${DNS_ROLLBACK_EXIT_CODE}"')
+        stdout = body.index('test ! -s "${DNS_ROLLBACK_STDOUT}"')
+        stderr = body.index('verify_resolvectl_missing_link.py" "${DNS_ROLLBACK_STDERR}"')
+        captured_event = body.index("dns-rollback-result-captured")
+
+        self.assertLess(release, wait)
+        self.assertLess(wait, exit_code)
+        self.assertLess(wait, stdout)
+        self.assertLess(wait, stderr)
+        self.assertLess(wait, captured_event)
+
     def test_successful_connects_verify_their_exact_network_manifest_after_disconnect(self) -> None:
         inactive = self.function_body("run_inactive_scope_probe", "\n}\n\nrun_missing_link_probe")
         self.assertLess(
