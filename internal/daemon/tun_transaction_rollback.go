@@ -12,6 +12,8 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+type tunRollbackChildStopper func(txstate.Transaction) error
+
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
 	if err := prepareTunFailureRollback(store, tx, rollbackPlan, steps); err != nil {
 		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
@@ -35,10 +37,14 @@ func prepareTunFailureRollback(store txstate.TransactionStore, tx *txstate.Trans
 }
 
 func rollbackPreparedTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor) error {
+	return rollbackPreparedTunFailureWithChildStopper(ctx, store, tx, rollbackPlan, executor, stopRollbackChildProcesses)
+}
+
+func rollbackPreparedTunFailureWithChildStopper(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, stopChildren tunRollbackChildStopper) error {
 	if tx == nil {
 		return errors.New("missing TUN transaction")
 	}
-	if err := rollbackTunTransaction(ctx, store, tx, rollbackPlan, executor); err != nil {
+	if err := rollbackTunTransactionWithChildStopper(ctx, store, tx, rollbackPlan, executor, stopChildren); err != nil {
 		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
 		_, _ = store.Save(*tx)
 		return err
@@ -50,25 +56,30 @@ func rollbackPreparedTunFailure(ctx context.Context, store txstate.TransactionSt
 }
 
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
+	return rollbackTunTransactionWithChildStopper(ctx, store, tx, plan, executor, stopRollbackChildProcesses)
+}
+
+func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor, stopChildren tunRollbackChildStopper) error {
 	if tx.State == txstate.TransactionRolledBack {
 		return nil
 	}
 	if err := beginTunRollback(store, tx); err != nil {
 		return err
 	}
+	if stopChildren == nil {
+		stopChildren = stopRollbackChildProcesses
+	}
 
-	var rollbackErrs []error
-	if err := rollbackTunHostState(ctx, plan, executor); err != nil {
-		rollbackErrs = append(rollbackErrs, err)
+	hostErr := rollbackTunHostState(ctx, plan, executor)
+	childErr := stopChildren(*tx)
+	if err := errors.Join(hostErr, childErr); err != nil {
+		return err
 	}
-	if err := stopRollbackChildProcesses(*tx); err != nil {
-		rollbackErrs = append(rollbackErrs, err)
-	}
+
+	// Runtime configuration is process identity material. It may be removed only
+	// after host rollback succeeded and the owned Xray process is proven absent.
 	if err := removeRollbackGeneratedConfigs(*tx); err != nil {
-		rollbackErrs = append(rollbackErrs, err)
-	}
-	if len(rollbackErrs) > 0 {
-		return errors.Join(rollbackErrs...)
+		return err
 	}
 	return finishTunRollback(store, tx)
 }
