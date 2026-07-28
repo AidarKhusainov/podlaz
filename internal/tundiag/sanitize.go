@@ -180,31 +180,6 @@ func privacySlice(values []string, placeholder string) []string {
 	return out
 }
 
-func sanitizeRequiredSlice(values []string) []string {
-	values = sanitizeSlice(values)
-	if values == nil {
-		return []string{}
-	}
-	return values
-}
-
-func sanitizeSlice(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	if len(values) > maxEvidenceItems {
-		values = values[:maxEvidenceItems]
-	}
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = sanitize(value)
-		if strings.TrimSpace(value) != "" {
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
 func limitText(value string, limit int) string {
 	if limit <= 0 || len(value) <= limit {
 		return value
