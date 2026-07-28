@@ -33,12 +33,15 @@ func TestRunCLIDoctorTunRendersCompactVerboseAndJSONFromSameModel(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
+			if strings.Contains(out.String(), "office") || strings.Contains(out.String(), "table=51820") {
+				t.Fatalf("doctor output leaked profile or route-table identifier: %s", out.String())
+			}
 			if tc.name == "json" {
 				var decoded tundiag.Report
 				if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 					t.Fatal(err)
 				}
-				if decoded.SchemaVersion != 1 || decoded.Status != tundiag.StatusHealthy {
+				if decoded.SchemaVersion != 1 || decoded.Status != tundiag.StatusHealthy || decoded.Session.ProfileName != "[profile]" {
 					t.Fatalf("unexpected JSON report: %#v", decoded)
 				}
 				return
@@ -46,11 +49,11 @@ func TestRunCLIDoctorTunRendersCompactVerboseAndJSONFromSameModel(t *testing.T) 
 			if !strings.Contains(out.String(), "route-ipv4") {
 				t.Fatalf("missing probe: %s", out.String())
 			}
-			if tc.name == "compact" && strings.Contains(out.String(), "table=51820") {
-				t.Fatalf("compact output leaked verbose evidence: %s", out.String())
+			if tc.name == "compact" && strings.Contains(out.String(), "route:") {
+				t.Fatalf("compact output included verbose evidence: %s", out.String())
 			}
-			if tc.name == "verbose" && !strings.Contains(out.String(), "table=51820") {
-				t.Fatalf("verbose output missing evidence: %s", out.String())
+			if tc.name == "verbose" && !strings.Contains(out.String(), "table=[route-table]") {
+				t.Fatalf("verbose output missing private structural evidence: %s", out.String())
 			}
 		})
 	}
