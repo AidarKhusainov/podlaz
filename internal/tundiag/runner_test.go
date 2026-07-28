@@ -36,7 +36,7 @@ func TestRunnerSkipsDependentProbesAfterRouteFailure(t *testing.T) {
 	if report.Status != StatusUnhealthy || report.PrimaryClassification != ClassRouteFailure {
 		t.Fatalf("unexpected report classification: %#v", report)
 	}
-	if got := report.Probes[1]; got.Status != ProbeSkipped || got.DependencyReason != "dependency route-ipv4 status is fail" {
+	if got := report.Probes[1]; got.Status != ProbeSkipped || got.DependencyReason != privacyDiagnosticText {
 		t.Fatalf("unexpected skipped result: %#v", got)
 	}
 }
@@ -68,7 +68,7 @@ func TestRunnerConvertsProbePanicToInternalDiagnosticFailure(t *testing.T) {
 	if got.Status != ProbeFail || got.Classification != ClassInternalDiagnosticError {
 		t.Fatalf("unexpected panic result: %#v", got)
 	}
-	if got.Error != "probe panic: boom token=REDACTED" {
-		t.Fatalf("panic error was not redacted: %q", got.Error)
+	if got.Error != privacyDiagnosticText {
+		t.Fatalf("panic detail crossed public privacy boundary: %q", got.Error)
 	}
 }
