@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,8 +96,15 @@ func (r *productionRollbackResultRunner) Run(context.Context, string, ...string)
 		Stderr:    strings.TrimSpace(testMissingLinkStderr),
 		RawStderr: testMissingLinkStderr,
 		ExitCode:  1,
-	}, errors.New("exit status 1")
+	}, testProcessExitError{code: 1}
 }
+
+type testProcessExitError struct {
+	code int
+}
+
+func (e testProcessExitError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e testProcessExitError) ExitCode() int { return e.code }
 
 func assertE2ECaptureFile(t *testing.T, dir, name, want string) {
 	t.Helper()
