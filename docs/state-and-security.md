@@ -71,6 +71,14 @@ For native Xray TUN startup, durable rollback order is:
 2. stop the Xray child process;
 3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
+Rollback is complete only after both host-state rollback and supervised Xray
+process quiescence succeed. The supervised stop performs a bounded wait, escalates
+from TERM to KILL when necessary, and requires the child to be reaped or otherwise
+proved absent. A stop, wait, identity-inspection, or force-stop error contributes
+to the rollback error and keeps `rollback_status=failed`. Generated runtime config
+and transaction ownership metadata must not be removed while process absence is
+unproven; a failed convergence remains cleanup-required for recovery.
+
 If `network-apply`, `network-verify`, or later connectivity verification fails,
 `podlazd` first attempts a short bounded, cancellation-aware safe diagnostic
 subset while the failing host state still exists. The report contains a stable
@@ -83,9 +91,10 @@ is never substituted for the classification taxonomy.
 Optional diagnostics must never delay or suppress cleanup. Normal rollback runs
 with a separate daemon-owned bounded cleanup context derived without the
 requesting HTTP client's cancellation, so a disconnected client or expired
-request deadline cannot immediately cancel DNS, route, rule, or nftables cleanup.
-The historical report is first persisted with rollback status `pending` and then
-atomically finalized to `completed` or `failed`. The returned error and daemon
+request deadline cannot immediately cancel DNS, route, rule, nftables, or process
+cleanup. The historical report is first persisted with rollback status `pending`
+and is finalized to `completed` only after host rollback and Xray quiescence are
+both proven; otherwise it is finalized to `failed`. The returned error and daemon
 log expose the primary TUN classification and report location as separate fields
 when persistence succeeded, and user guidance uses the canonical
 `podlaz doctor --tun --verbose` command.
@@ -147,7 +156,10 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - The CLI must not perform privileged cleanup directly.
 - Recovery may clean only clearly podlaz-owned volatile state.
 - `/run/podlaz` must not be deleted wholesale.
-- Stale PID metadata alone is not enough to signal a process.
+- Stale PID metadata alone is not enough to signal a process. Recovery validates
+  the recorded command/config identity and `/proc/<pid>/stat` start time before
+  TERM and again before KILL, waits for disappearance after each signal, and
+  treats any inspection or quiescence failure as cleanup failure.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
 - For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
