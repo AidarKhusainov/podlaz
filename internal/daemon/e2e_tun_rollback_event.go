@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,11 +21,25 @@ const (
 type e2eDNSRollbackCaptureContextKey struct{}
 
 func maybeRecordE2EDNSRollback(executor tunPlanExecutor) tunPlanExecutor {
-	switch e2eTunHookPhase() {
+	phase := e2eTunHookPhase()
+	switch phase {
 	case e2eTunHookDNSApplyPhase, e2eTunHookDNSMissingLinkRollbackPhase:
 		dnsAware, ok := executor.(netexecutor.DNSAwareTunExecutor)
 		if !ok || dnsAware.DNS == nil {
 			return executor
+		}
+		if phase == e2eTunHookDNSMissingLinkRollbackPhase {
+			hook, ok := dnsAware.DNS.(e2eHookDNSMissingLinkRollbackExecutor)
+			if !ok {
+				return e2eHookConfigurationErrorExecutor{err: fmt.Errorf("E2E missing-link capture requires rollback hook executor, got %T", dnsAware.DNS)}
+			}
+			resolved, ok := hook.delegate.(netexecutor.ResolvedDNSExecutor)
+			if !ok {
+				return e2eHookConfigurationErrorExecutor{err: fmt.Errorf("E2E missing-link capture requires ResolvedDNSExecutor, got %T", hook.delegate)}
+			}
+			resolved.Runner = e2eDNSRollbackCaptureRunner{delegate: resolved.Runner}
+			hook.delegate = resolved
+			dnsAware.DNS = hook
 		}
 		dnsAware.DNS = e2eDNSRollbackEventExecutor{delegate: dnsAware.DNS}
 		return dnsAware
@@ -176,5 +189,3 @@ func appendE2ETunHookEventStrict(event string) error {
 	}
 	return nil
 }
-
-var _ = errors.Is
