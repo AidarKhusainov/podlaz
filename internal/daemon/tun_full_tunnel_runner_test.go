@@ -303,7 +303,7 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 			if h.onNetworkApplied != nil {
 				h.onNetworkApplied()
 			}
-			return applyVerifyTunTransaction(ctx, result, executor)
+			return applyVerifyTunTransactionDeferredRollback(ctx, result, executor)
 		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			h.coreStarted++
@@ -346,11 +346,11 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 			h.committedState = active
 			return nil
 		},
-		rollbackTransaction: func(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor) error {
+		rollbackTransaction: func(ctx context.Context, transactionID string, plan planner.TunPlan, executor tunPlanExecutor, stopChildren tunRollbackChildStopper) error {
 			if h.onRollback != nil {
 				h.onRollback()
 			}
-			return rollbackVerifiedTunTransaction(ctx, h.runtimeDir, transactionID, plan, executor)
+			return rollbackVerifiedTunTransactionWithChildStopper(ctx, h.runtimeDir, transactionID, plan, executor, stopChildren)
 		},
 	}
 }
