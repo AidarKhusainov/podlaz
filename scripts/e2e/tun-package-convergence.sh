@@ -413,7 +413,7 @@ run_missing_link_probe() {
   set -e
   [[ "${REAL_REVERT_CODE}" == "1" ]] || fail "real resolvectl revert did not return exit 1"
   [[ ! -s "${revert_out}" ]] || fail "real resolvectl missing-link stdout is not empty"
-  [[ "$(tr -d '\r\n' <"${revert_err}")" == 'Failed to resolve interface "podlaz0": No such device' ]] || fail "real resolvectl missing-link stderr mismatch"
+  python3 "${SCRIPT_DIR}/verify_resolvectl_missing_link.py" "${revert_err}" || fail "real resolvectl missing-link stderr mismatch"
   rm -f -- "${revert_out}" "${revert_err}"
   write_evidence acceptance.txt real_resolvectl_missing_link pass
 
