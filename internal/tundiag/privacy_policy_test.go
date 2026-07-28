@@ -38,12 +38,12 @@ func TestPublicDiagnosticPrivacyPolicyRemovesIdentifiersFromPersistenceAndRender
 			DoHProviders:      []string{"https://doh.private.example.test/dns-query"},
 		},
 		Probes: []ProbeResult{{
-			ID:             "route",
-			Layer:          LayerRoute,
-			Status:         ProbeFail,
-			Classification: ClassRouteFailure,
-			Target:         "vpn.private.example.test:443",
-			Error:          "route to 192.0.2.44 through wlan-private0 failed for Profile Alpha 9Q",
+			ID:               "route",
+			Layer:            LayerRoute,
+			Status:           ProbeFail,
+			Classification:   ClassRouteFailure,
+			Target:           "vpn.private.example.test:443",
+			Error:            "route to 192.0.2.44 through wlan-private0 failed for Profile Alpha 9Q",
 			DependencyReason: "SSID Corp WiFi 9Q is unavailable",
 			Evidence: Evidence{
 				Endpoint:          "vpn.private.example.test:443",
