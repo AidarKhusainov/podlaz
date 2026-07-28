@@ -151,7 +151,7 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
 - For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
-- Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty stdout, and the supported `No such device` stderr. Caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup and persisted transaction DNS rollback.
+- Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty raw stdout, and the supported `No such device` raw stderr followed by exactly one `LF` or one `CRLF`. Unterminated stderr, embedded or additional line endings, caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup, persisted transaction DNS rollback, and the installed-package acceptance gate; trimming is permitted only for human-readable error rendering.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
 - The daemon recovery scan is refreshed after every connect attempt, after
   disconnect, and after recovery execution, including failed operations. The
@@ -187,18 +187,36 @@ Human and JSON output must redact secrets and generated runtime configuration.
 This applies to `status`, `doctor`, `logs`, `plan`, `recover`, validation output,
 and all JSON responses.
 
-The same central redaction and evidence-size limits apply before TUN diagnostics
-are rendered or persisted. The latest report must not store raw profile secrets,
-UUIDs, generated Xray configuration, authentication material, or unbounded
-command/protocol output. Every public network string and structured policy or
-nftables rule is sanitized and bounded through the same central policy.
+The generic secret redactor is not a sufficient privacy boundary for TUN
+diagnostics. Before persistence and before human or JSON rendering, the complete
+report passes through one fail-closed public diagnostic privacy projection.
+That projection must remove the original values of profile names/identifiers,
+transaction identifiers, SSIDs, physical host interface names, gateways, local
+addresses, DNS servers, VPN endpoints, hostnames, TLS server names, resolved
+addresses, DoH/provider URLs, certificate subjects/issuers, HTTP locations,
+route tables, complete routes, policy/nftables rules, arbitrary notes, errors,
+command lines, and command stdout/stderr. Typed placeholders may retain schema
+shape and cardinality, but they must not encode or permit reconstruction of the
+original value. The managed constant `podlaz0`, stable classifications, statuses,
+phases, timings, MTUs, response/status codes, exit codes, booleans, and other
+non-identifying structural evidence may remain.
+
+The same projection applies to `/run/podlaz/diagnostics/tun-last.json`, a report
+loaded from that file, `podlaz doctor --tun` human output, and `--json` output.
+Regression tests must inject and independently search for each profile name/ID,
+transaction ID, domain, endpoint, IPv4/IPv6 address, DNS server, SSID, host
+interface, route/rule token, and command-output marker. Checking only a complete
+URI, UUID, or generic secret pattern is insufficient.
+
+The latest report remains bounded and must not store generated Xray
+configuration, authentication material, or unbounded command/protocol output.
+Required collection fields such as `probes`, `warnings`, and `errors` remain JSON
+arrays, including when empty; they must never change type to `null`.
 
 Self-hosted evidence follows the same rule. Raw public/local addresses, gateways, host interface names, complete routes, resolver output, provider identifiers, and generated configuration must stay outside the upload directory. Package E2E stores only normalized verdicts, bounded classifications/events, commit identity, and cryptographic hashes. The workflow scans candidate artifacts against configured secrets and current host network values and must not upload them unless both the teardown assertions and scan succeed.
 
 JSON output must include `schema_version`. Existing JSON field meanings must not
-change without an explicit compatibility note. Required collection fields such
-as `probes`, `warnings`, and `errors` are always JSON arrays, including when
-empty; they must never change type to `null`.
+change without an explicit compatibility note.
 
 ## Confirmation
 
