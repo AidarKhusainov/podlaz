@@ -34,6 +34,9 @@ HOOK_DROPIN="${HOOK_DROPIN_DIR}/e2e-tun-hooks.conf"
 HOOK_READY="${HOOK_DIR}/dns-missing-link.ready"
 HOOK_CONTINUE="${HOOK_DIR}/dns-missing-link.continue"
 HOOK_EVENTS="${HOOK_DIR}/events.log"
+DNS_ROLLBACK_EXIT_CODE="${HOOK_DIR}/dns-rollback.exit-code"
+DNS_ROLLBACK_STDOUT="${HOOK_DIR}/dns-rollback.stdout"
+DNS_ROLLBACK_STDERR="${HOOK_DIR}/dns-rollback.stderr"
 DIAGNOSTIC_REPORT="/run/podlaz/diagnostics/tun-last.json"
 TRANSACTION_DIR="/run/podlaz/transactions"
 FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
@@ -383,7 +386,7 @@ run_inactive_scope_probe() {
 }
 
 run_missing_link_probe() {
-  local attempt transaction_count revert_out revert_err wait_status connect_code events report doctor_output network_manifest retry_manifest
+  local attempt transaction_count wait_status connect_code events report doctor_output network_manifest retry_manifest
   network_manifest="${E2E_TMP_ROOT}/missing-link-network-manifest.json"
   retry_manifest="${E2E_TMP_ROOT}/retry-network-manifest.json"
   configure_hook dns-missing-link-rollback
@@ -405,18 +408,6 @@ run_missing_link_probe() {
   write_evidence acceptance.txt transaction_persisted_before_fault pass
 
   sudo -n ip link del dev podlaz0
-  revert_out="$(mktemp "${E2E_TMP_ROOT}/resolvectl-revert.stdout.XXXXXX")"
-  revert_err="$(mktemp "${E2E_TMP_ROOT}/resolvectl-revert.stderr.XXXXXX")"
-  set +e
-  sudo -n resolvectl revert podlaz0 >"${revert_out}" 2>"${revert_err}"
-  REAL_REVERT_CODE=$?
-  set -e
-  [[ "${REAL_REVERT_CODE}" == "1" ]] || fail "real resolvectl revert did not return exit 1"
-  [[ ! -s "${revert_out}" ]] || fail "real resolvectl missing-link stdout is not empty"
-  python3 "${SCRIPT_DIR}/verify_resolvectl_missing_link.py" "${revert_err}" || fail "real resolvectl missing-link stderr mismatch"
-  rm -f -- "${revert_out}" "${revert_err}"
-  write_evidence acceptance.txt real_resolvectl_missing_link pass
-
   sudo -n touch "${HOOK_CONTINUE}"
   set +e
   wait_connect_bounded "${CONNECT_PID}" 600
@@ -428,16 +419,24 @@ run_missing_link_probe() {
   fi
   connect_code="${CONNECT_EXIT_CODE}"
   [[ "${connect_code}" != "0" ]] || fail "missing-link connect unexpectedly succeeded"
+
+  sudo -n grep -Fx "1" "${DNS_ROLLBACK_EXIT_CODE}" >/dev/null || fail "production resolvectl rollback did not return exit 1"
+  sudo -n test ! -s "${DNS_ROLLBACK_STDOUT}" || fail "production resolvectl missing-link stdout is not empty"
+  sudo -n python3 "${SCRIPT_DIR}/verify_resolvectl_missing_link.py" "${DNS_ROLLBACK_STDERR}" || fail "production resolvectl missing-link stderr mismatch"
+  write_evidence acceptance.txt real_resolvectl_missing_link pass
+
   verify_tun_network_manifest_absent missing-link "${network_manifest}"
 
   events="${E2E_ARTIFACT_DIR}/missing-link-events.log"
   sudo -n cat "${HOOK_EVENTS}" >"${events}"
-  for event in dns-missing-link-ready dns-missing-link-released diagnostics-persisted rollback-started dns-rollback-started rollback-completed; do
+  for event in dns-missing-link-ready dns-missing-link-released diagnostics-persisted rollback-started dns-rollback-started dns-rollback-result-captured rollback-completed; do
     grep -Fx "${event}" "${events}" >/dev/null || fail "missing lifecycle event: ${event}"
   done
   assert_event_order "${events}" diagnostics-persisted rollback-started
   assert_event_order "${events}" rollback-started dns-rollback-started
   assert_event_order "${events}" diagnostics-persisted dns-rollback-started
+  assert_event_order "${events}" dns-rollback-started dns-rollback-result-captured
+  assert_event_order "${events}" dns-rollback-result-captured rollback-completed
 
   report="$(mktemp "${E2E_TMP_ROOT}/missing-link-report.XXXXXX")"
   sudo -n cat "${DIAGNOSTIC_REPORT}" >"${report}"
