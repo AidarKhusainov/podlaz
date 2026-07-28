@@ -34,9 +34,6 @@ func TestFailedConnectPreservesOwnershipWhenSupervisedCoreStopFails(t *testing.T
 		return forceStopErr
 	}
 	var finalized []string
-	runner.finalizeFailureDiagnostics = func(context.Context, tunFailureDiagnosticSummary, string) {
-		finalized = append(finalized, "unexpected")
-	}
 	runner.finalizeFailureDiagnostics = func(_ context.Context, _ tunFailureDiagnosticSummary, status string) {
 		finalized = append(finalized, status)
 	}
