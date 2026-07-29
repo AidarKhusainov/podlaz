@@ -33,7 +33,7 @@ func TestDaemonCleanupExecutorSkipsRuntimeRoot(t *testing.T) {
 	}
 }
 
-func TestDaemonCleanupExecutorRecoversMissingStaleChildProcessAndCompletesTransaction(t *testing.T) {
+func TestDaemonRecoveryCompletesAfterRecordedXrayProcessDisappears(t *testing.T) {
 	runtimeDir := t.TempDir()
 	missingPID := 1 << 30
 	if _, err := os.Stat(fmt.Sprintf("/proc/%d", missingPID)); !os.IsNotExist(err) {
@@ -58,21 +58,37 @@ func TestDaemonCleanupExecutorRecoversMissingStaleChildProcessAndCompletesTransa
 			Owner: txstate.TransactionOwner,
 		}},
 	})
+	candidate := transactionCandidate(path, tx)
 
-	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+	first := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Scanner: fakeScanner{result: ScanResult{
+			Candidates: []Candidate{candidate},
+		}},
+		Executor: DaemonCleanupExecutor{RuntimeDir: runtimeDir},
+	})
 
-	assertCleanupResult(t, results, "child-process", "recovered", "already absent")
-	assertCleanupResult(t, results, "generated-runtime-config", "recovered", "")
-	assertCleanupResult(t, results, "transaction-state", "recovered", "")
+	assertCleanupResult(t, first.Results, "child-process", "recovered", "already absent")
+	assertCleanupResult(t, first.Results, "generated-runtime-config", "recovered", "")
+	assertCleanupResult(t, first.Results, "transaction-state", "recovered", "")
+	if first.HasFailures() || first.HasIncompleteCleanup() {
+		t.Fatalf("recovery must complete after recorded Xray disappearance: %#v", first)
+	}
 	if _, err := os.Stat(generatedPath); !os.IsNotExist(err) {
 		t.Fatalf("generated config must be removed after process absence is proven, stat err=%v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("transaction file must be removed after complete recovery, stat err=%v", err)
 	}
-	summaries, warnings := txstate.ScanTransactions(runtimeDir)
-	if len(warnings) != 0 || len(summaries) != 0 {
-		t.Fatalf("completed recovery must leave no transaction candidate: summaries=%#v warnings=%#v", summaries, warnings)
+
+	runner := fakeMissingResourcesRunner()
+	second := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Runner:     runner,
+		Executor:   DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner},
+	})
+	if len(second.Results) != 0 || len(second.Warnings) != 0 || second.HasFailures() || second.HasIncompleteCleanup() {
+		t.Fatalf("second daemon recovery run must be clean: %#v", second)
 	}
 }
 
