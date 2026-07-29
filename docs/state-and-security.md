@@ -72,12 +72,14 @@ For native Xray TUN startup, durable rollback order is:
 3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
 Rollback is complete only after both host-state rollback and supervised Xray
-process quiescence succeed. The supervised stop performs a bounded wait, escalates
-from TERM to KILL when necessary, and requires the child to be reaped or otherwise
-proved absent. A stop, wait, identity-inspection, or force-stop error contributes
-to the rollback error and keeps `rollback_status=failed`. Generated runtime config
-and transaction ownership metadata must not be removed while process absence is
-unproven; a failed convergence remains cleanup-required for recovery.
+process quiescence succeed. The transaction stop performs one bounded wait after
+TERM, escalates to KILL when necessary, and performs a second bounded wait for
+the supervisor completion signal after KILL. Successful signal delivery alone
+is never proof of exit. If the completion signal does not arrive within either
+bound, rollback returns a quiescence error and keeps `rollback_status=failed`.
+Generated runtime config and transaction ownership metadata must not be removed
+while process absence is unproven; a failed convergence remains cleanup-required
+for recovery.
 
 If `network-apply`, `network-verify`, or later connectivity verification fails,
 `podlazd` first attempts a short bounded, cancellation-aware safe diagnostic
@@ -156,10 +158,16 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - The CLI must not perform privileged cleanup directly.
 - Recovery may clean only clearly podlaz-owned volatile state.
 - `/run/podlaz` must not be deleted wholesale.
-- Stale PID metadata alone is not enough to signal a process. Recovery validates
-  the recorded command/config identity and `/proc/<pid>/stat` start time before
-  TERM and again before KILL, waits for disappearance after each signal, and
-  treats any inspection or quiescence failure as cleanup failure.
+- Stale PID metadata alone is not enough to signal a process. The current
+  transaction schema does not persist the executable identity and process start
+  time required for identity-safe orphan signalling, so daemon recovery never
+  sends TERM or KILL solely from a recorded PID/config reference.
+- For a recorded child PID greater than one, recovery uses a tri-state check:
+  absent `/proc/<pid>` means the original child is already absent and the child
+  result is recovered; an existing PID without sufficient durable identity is
+  skipped; an operational `/proc` inspection error is failed. Both skipped and
+  failed results preserve generated config and transaction metadata. A later
+  recovery run can complete after the process disappears.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
 - For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
