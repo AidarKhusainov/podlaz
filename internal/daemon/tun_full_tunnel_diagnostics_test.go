@@ -30,7 +30,7 @@ func TestFullTunnelTransactionRunnerCollectsDiagnosticsBeforeRollback(t *testing
 			Persisted:             true,
 		}
 	}
-	runner.rollbackTransaction = func(context.Context, string, planner.TunPlan, tunPlanExecutor) error {
+	runner.rollbackTransaction = func(context.Context, string, planner.TunPlan, tunPlanExecutor, tunRollbackChildStopper) error {
 		events = append(events, "rollback")
 		return nil
 	}
@@ -58,7 +58,7 @@ func TestFullTunnelTransactionRunnerRollbackOutlivesCancelledRequest(t *testing.
 		return tunFailureDiagnosticSummary{}
 	}
 	rollbackCalled := false
-	runner.rollbackTransaction = func(ctx context.Context, _ string, _ planner.TunPlan, _ tunPlanExecutor) error {
+	runner.rollbackTransaction = func(ctx context.Context, _ string, _ planner.TunPlan, _ tunPlanExecutor, _ tunRollbackChildStopper) error {
 		rollbackCalled = true
 		if err := ctx.Err(); err != nil {
 			t.Fatalf("cleanup context inherited request cancellation: %v", err)

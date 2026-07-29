@@ -27,6 +27,12 @@ func RenderHuman(report Report, verbose bool) string {
 	if report.Session.ProfileName != "" {
 		fmt.Fprintf(&b, "  Profile       %s\n", report.Session.ProfileName)
 	}
+	if report.FailurePhase != "" {
+		fmt.Fprintf(&b, "  Failure phase %s\n", report.FailurePhase)
+	}
+	if report.RollbackStatus != "" {
+		fmt.Fprintf(&b, "  Rollback      %s\n", report.RollbackStatus)
+	}
 	if report.Session.Interface != "" || report.Network.TunInterface != "" {
 		fmt.Fprintf(&b, "  Interface     %s\n", emptyAs(report.Network.TunInterface, report.Session.Interface))
 	}

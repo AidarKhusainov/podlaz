@@ -47,7 +47,13 @@ type TunExecutor struct {
 }
 
 func NewOSExecutor() TunExecutor {
-	runner := OSRunner{}
+	return newTunExecutorWithRunner(OSRunner{})
+}
+
+func newTunExecutorWithRunner(runner CommandRunner) TunExecutor {
+	if runner == nil {
+		runner = OSRunner{}
+	}
 	return TunExecutor{
 		TunDevice:   IPTunDeviceExecutor{Runner: runner, DeviceUser: defaultTunDeviceUser, DeviceGroup: defaultTunDeviceGroup},
 		Routes:      IPRouteExecutor{Runner: runner},
@@ -64,10 +70,10 @@ func (e TunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, e
 	switch tunDeviceAction(plan.TunDevice.Action) {
 	case "", "create":
 		step, err := e.TunDevice.Create(ctx, plan.TunDevice)
+		steps = appendAppliedStep(steps, step)
 		if err != nil {
 			return steps, err
 		}
-		steps = appendAppliedStep(steps, step)
 	case "verify", "use-existing":
 		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
 			return steps, err
@@ -81,20 +87,20 @@ func (e TunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, e
 			continue
 		}
 		step, err := e.Routes.Add(ctx, route)
+		steps = appendAppliedStep(steps, step)
 		if err != nil {
 			return steps, err
 		}
-		steps = appendAppliedStep(steps, step)
 	}
 	for _, rule := range plan.PolicyRules {
 		if rule.Action != "add" {
 			continue
 		}
 		step, err := e.PolicyRules.Add(ctx, rule)
+		steps = appendAppliedStep(steps, step)
 		if err != nil {
 			return steps, err
 		}
-		steps = appendAppliedStep(steps, step)
 	}
 	return steps, nil
 }

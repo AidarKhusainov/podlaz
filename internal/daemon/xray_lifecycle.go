@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
@@ -417,33 +416,11 @@ func (m *XrayManager) stopStartedCore(cmd *exec.Cmd, done <-chan struct{}, runti
 }
 
 func (m *XrayManager) stopCoreProcess(cmd *exec.Cmd, done <-chan struct{}) error {
-	if cmd == nil {
-		return nil
-	}
-	if cmd.Process != nil {
-		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("stop Xray gracefully: %w", err)
-		}
-	}
-	if done == nil {
-		return nil
-	}
-
 	stopTimeout := m.StopTimeout
 	if stopTimeout == 0 {
 		stopTimeout = defaultStopTimeout
 	}
-	select {
-	case <-done:
-	case <-time.After(stopTimeout):
-		if cmd.Process != nil {
-			if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return fmt.Errorf("force stop Xray: %w", err)
-			}
-		}
-		<-done
-	}
-	return nil
+	return stopCoreProcessBounded(cmd, done, stopTimeout)
 }
 
 func inactiveXrayState() xrayState {

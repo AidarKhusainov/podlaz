@@ -69,8 +69,8 @@ func TestProductionAdaptersDetectDuplicateResolvedRecords(t *testing.T) {
 
 	report := runProductionAdapter(t, input, "dns-state")
 	probe := assertProbeClassification(t, report, "dns-state", tundiag.ClassDNSApplyFailure)
-	if !strings.Contains(probe.Error, "duplicate") {
-		t.Fatalf("expected duplicate resolved-record evidence, got %#v", probe)
+	if probe.Error != "[detail omitted by diagnostic privacy policy]" {
+		t.Fatalf("expected private duplicate resolved-record evidence, got %#v", probe)
 	}
 }
 
@@ -82,9 +82,7 @@ func TestProductionAdaptersCheckEveryDNSRoute(t *testing.T) {
 
 	report := runProductionAdapter(t, input, "dns-state")
 	probe := assertProbeClassification(t, report, "dns-state", tundiag.ClassRouteFailure)
-	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
-		t.Fatalf("expected concrete DNS route evidence, got %#v", probe.Evidence)
-	}
+	assertPrivateRouteEvidence(t, probe.Evidence)
 }
 
 func TestProductionAdaptersCheckSystemResolverRoute(t *testing.T) {
@@ -94,9 +92,7 @@ func TestProductionAdaptersCheckSystemResolverRoute(t *testing.T) {
 
 	report := runProductionAdapter(t, input, "dns-system-resolution")
 	probe := assertProbeClassification(t, report, "dns-system-resolution", tundiag.ClassRouteFailure)
-	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
-		t.Fatalf("expected system-resolver route evidence, got %#v", probe.Evidence)
-	}
+	assertPrivateRouteEvidence(t, probe.Evidence)
 }
 
 func TestProductionAdaptersCheckRouteBeforeTCP443(t *testing.T) {
@@ -106,8 +102,9 @@ func TestProductionAdaptersCheckRouteBeforeTCP443(t *testing.T) {
 
 	report := runProductionAdapter(t, input, "tcp-443")
 	probe := assertProbeClassification(t, report, "tcp-443", tundiag.ClassRouteFailure)
-	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
-		t.Fatalf("expected TCP target route evidence, got %#v", probe.Evidence)
+	assertPrivateRouteEvidence(t, probe.Evidence)
+	if probe.Evidence.Endpoint != "[endpoint]" {
+		t.Fatalf("expected private TCP endpoint evidence, got %#v", probe.Evidence)
 	}
 }
 
@@ -118,8 +115,19 @@ func TestProductionAdaptersDetectIPv6UplinkLeak(t *testing.T) {
 
 	report := runProductionAdapter(t, input, "ipv6")
 	probe := assertProbeClassification(t, report, "ipv6", tundiag.ClassIPv6Leak)
-	if probe.Evidence.Route == nil || probe.Evidence.Route.Interface != "eth0" {
-		t.Fatalf("expected IPv6 route evidence, got %#v", probe.Evidence)
+	assertPrivateRouteEvidence(t, probe.Evidence)
+	if probe.Evidence.IPv6 == nil || probe.Evidence.IPv6.DefaultInterface != "[interface]" {
+		t.Fatalf("expected private IPv6 evidence, got %#v", probe.Evidence)
+	}
+}
+
+func assertPrivateRouteEvidence(t *testing.T, evidence tundiag.Evidence) {
+	t.Helper()
+	if evidence.Route == nil || evidence.Route.Interface != "[interface]" || evidence.Route.Table != "[route-table]" {
+		t.Fatalf("expected private structured route evidence, got %#v", evidence)
+	}
+	if len(evidence.Commands) == 0 || evidence.Commands[0].Command != "[command omitted by diagnostic privacy policy]" || evidence.Commands[0].ExitCode != 0 {
+		t.Fatalf("expected private command evidence with preserved exit code, got %#v", evidence.Commands)
 	}
 }
 

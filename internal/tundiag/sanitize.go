@@ -11,30 +11,57 @@ const (
 	maxEvidenceItems  = 32
 )
 
+const (
+	privacyProfileName     = "[profile]"
+	privacyTransactionID   = "[transaction]"
+	privacyInterfaceName   = "[interface]"
+	privacyNetworkName     = "[network]"
+	privacyAddress         = "[address]"
+	privacyEndpoint        = "[endpoint]"
+	privacyDomain          = "[domain]"
+	privacyTarget          = "[target]"
+	privacyRouteTable      = "[route-table]"
+	privacyCertificateName = "[certificate-name]"
+	privacyDiagnosticText  = "[detail omitted by diagnostic privacy policy]"
+	privacyCommand         = "[command omitted by diagnostic privacy policy]"
+	privacyCommandOutput   = "[output omitted by diagnostic privacy policy]"
+	privacyRule            = "[rule omitted by diagnostic privacy policy]"
+	privacyNote            = "[note omitted by diagnostic privacy policy]"
+)
+
+// SanitizeReport is the public diagnostics privacy boundary used before
+// persistence and before both human and JSON rendering. It deliberately keeps
+// classifications, statuses, durations, MTUs, response codes, and other safe
+// structural evidence while replacing user-, profile-, host-, and
+// network-specific identifiers with typed placeholders. Arbitrary command,
+// error, route/rule, and note payloads are not published because their content
+// cannot be proven identifier-free.
 func SanitizeReport(report Report) Report {
+	report.FailurePhase = sanitize(report.FailurePhase)
+	report.RollbackStatus = sanitize(report.RollbackStatus)
 	report.Session.State = sanitize(report.Session.State)
 	report.Session.Mode = sanitize(report.Session.Mode)
-	report.Session.ProfileName = sanitize(report.Session.ProfileName)
-	report.Session.TransactionID = sanitize(report.Session.TransactionID)
-	report.Session.Interface = sanitize(report.Session.Interface)
-	report.Session.MetadataSource = sanitize(report.Session.MetadataSource)
+	report.Session.ProfileName = privacyValue(report.Session.ProfileName, privacyProfileName)
+	report.Session.TransactionID = privacyValue(report.Session.TransactionID, privacyTransactionID)
+	report.Session.Interface = privacyManagedInterface(report.Session.Interface)
+	report.Session.MetadataSource = privacyValue(report.Session.MetadataSource, privacyDiagnosticText)
 
-	report.Network.PhysicalInterface = sanitize(report.Network.PhysicalInterface)
-	report.Network.SSID = sanitize(report.Network.SSID)
-	report.Network.Gateway = sanitize(report.Network.Gateway)
-	report.Network.LocalAddresses = sanitizeSlice(report.Network.LocalAddresses)
-	report.Network.TunInterface = sanitize(report.Network.TunInterface)
-	report.Network.DNSServers = sanitizeSlice(report.Network.DNSServers)
+	report.Network.PhysicalInterface = privacyValue(report.Network.PhysicalInterface, privacyInterfaceName)
+	report.Network.SSID = privacyValue(report.Network.SSID, privacyNetworkName)
+	report.Network.Gateway = privacyValue(report.Network.Gateway, privacyAddress)
+	report.Network.LocalAddresses = privacySlice(report.Network.LocalAddresses, privacyAddress)
+	report.Network.TunInterface = privacyManagedInterface(report.Network.TunInterface)
+	report.Network.DNSServers = privacySlice(report.Network.DNSServers, privacyAddress)
 	report.Network.IPv4Status = sanitize(report.Network.IPv4Status)
 	report.Network.IPv6Status = sanitize(report.Network.IPv6Status)
-	report.Network.ServerEndpoint = sanitize(report.Network.ServerEndpoint)
-	report.Network.ServerHostname = sanitize(report.Network.ServerHostname)
-	report.Network.ServerName = sanitize(report.Network.ServerName)
-	report.Network.ServerAddresses = sanitizeSlice(report.Network.ServerAddresses)
-	report.Network.DoHProviders = sanitizeSlice(report.Network.DoHProviders)
-	report.Network.NftablesStatus = sanitize(report.Network.NftablesStatus)
-	report.Warnings = sanitizeRequiredSlice(report.Warnings)
-	report.Errors = sanitizeRequiredSlice(report.Errors)
+	report.Network.ServerEndpoint = privacyValue(report.Network.ServerEndpoint, privacyEndpoint)
+	report.Network.ServerHostname = privacyValue(report.Network.ServerHostname, privacyDomain)
+	report.Network.ServerName = privacyValue(report.Network.ServerName, privacyDomain)
+	report.Network.ServerAddresses = privacySlice(report.Network.ServerAddresses, privacyAddress)
+	report.Network.DoHProviders = privacySlice(report.Network.DoHProviders, privacyEndpoint)
+	report.Network.NftablesStatus = privacyValue(report.Network.NftablesStatus, privacyDiagnosticText)
+	report.Warnings = privacyRequiredSlice(report.Warnings, privacyDiagnosticText)
+	report.Errors = privacyRequiredSlice(report.Errors, privacyDiagnosticText)
 	report.ReportPath = sanitize(report.ReportPath)
 	if report.Probes == nil {
 		report.Probes = []ProbeResult{}
@@ -47,61 +74,62 @@ func SanitizeReport(report Report) Report {
 
 func SanitizeProbeResult(result ProbeResult) ProbeResult {
 	result.ID = sanitize(result.ID)
-	result.Target = sanitize(result.Target)
+	result.Target = privacyValue(result.Target, privacyTarget)
 	result.FailurePhase = FailurePhase(sanitize(string(result.FailurePhase)))
-	result.Error = sanitize(result.Error)
-	result.DependencyReason = sanitize(result.DependencyReason)
-	result.Evidence.Endpoint = sanitize(result.Evidence.Endpoint)
-	result.Evidence.ResolvedAddresses = sanitizeSlice(result.Evidence.ResolvedAddresses)
-	result.Evidence.PolicyRules = sanitizeSlice(result.Evidence.PolicyRules)
-	result.Evidence.NftablesRules = sanitizeSlice(result.Evidence.NftablesRules)
-	result.Evidence.Notes = sanitizeSlice(result.Evidence.Notes)
+	result.Error = privacyValue(result.Error, privacyDiagnosticText)
+	result.DependencyReason = privacyValue(result.DependencyReason, privacyDiagnosticText)
+	result.Evidence.Endpoint = privacyValue(result.Evidence.Endpoint, privacyEndpoint)
+	result.Evidence.ResolvedAddresses = privacySlice(result.Evidence.ResolvedAddresses, privacyAddress)
+	result.Evidence.PolicyRules = privacySlice(result.Evidence.PolicyRules, privacyRule)
+	result.Evidence.NftablesRules = privacySlice(result.Evidence.NftablesRules, privacyRule)
+	result.Evidence.Notes = privacySlice(result.Evidence.Notes, privacyNote)
 	if result.Evidence.Route != nil {
 		route := *result.Evidence.Route
-		route.Destination = sanitize(route.Destination)
-		route.Interface = sanitize(route.Interface)
-		route.Gateway = sanitize(route.Gateway)
-		route.Table = sanitize(route.Table)
-		route.Rule = sanitize(route.Rule)
-		route.Raw = sanitize(route.Raw)
+		route.Destination = privacyValue(route.Destination, privacyAddress)
+		route.Interface = privacyValue(route.Interface, privacyInterfaceName)
+		route.Gateway = privacyValue(route.Gateway, privacyAddress)
+		route.Table = privacyValue(route.Table, privacyRouteTable)
+		route.Rule = privacyValue(route.Rule, privacyRule)
+		route.Raw = privacyValue(route.Raw, privacyDiagnosticText)
 		result.Evidence.Route = &route
 	}
 	if result.Evidence.DNS != nil {
 		dns := *result.Evidence.DNS
-		dns.Server = sanitize(dns.Server)
-		dns.Name = sanitize(dns.Name)
-		dns.Addresses = sanitizeSlice(dns.Addresses)
+		dns.Server = privacyValue(dns.Server, privacyAddress)
+		dns.Name = privacyValue(dns.Name, privacyDomain)
+		dns.Addresses = privacySlice(dns.Addresses, privacyAddress)
 		result.Evidence.DNS = &dns
 	}
 	if result.Evidence.TLS != nil {
 		tls := *result.Evidence.TLS
 		tls.Version = sanitize(tls.Version)
 		tls.Cipher = sanitize(tls.Cipher)
-		tls.PeerSubject = sanitize(tls.PeerSubject)
-		tls.PeerIssuer = sanitize(tls.PeerIssuer)
+		tls.PeerSubject = privacyValue(tls.PeerSubject, privacyCertificateName)
+		tls.PeerIssuer = privacyValue(tls.PeerIssuer, privacyCertificateName)
 		result.Evidence.TLS = &tls
 	}
 	if result.Evidence.HTTP != nil {
 		http := *result.Evidence.HTTP
-		http.Location = sanitize(http.Location)
+		http.Location = privacyValue(http.Location, privacyEndpoint)
+		http.FailurePhase = sanitize(http.FailurePhase)
 		result.Evidence.HTTP = &http
 	}
 	if result.Evidence.IPv6 != nil {
 		ipv6 := *result.Evidence.IPv6
 		ipv6.State = sanitize(ipv6.State)
-		ipv6.UplinkAddresses = sanitizeSlice(ipv6.UplinkAddresses)
-		ipv6.TunAddresses = sanitizeSlice(ipv6.TunAddresses)
-		ipv6.DefaultInterface = sanitize(ipv6.DefaultInterface)
-		ipv6.RouteTable = sanitize(ipv6.RouteTable)
+		ipv6.UplinkAddresses = privacySlice(ipv6.UplinkAddresses, privacyAddress)
+		ipv6.TunAddresses = privacySlice(ipv6.TunAddresses, privacyAddress)
+		ipv6.DefaultInterface = privacyValue(ipv6.DefaultInterface, privacyInterfaceName)
+		ipv6.RouteTable = privacyValue(ipv6.RouteTable, privacyRouteTable)
 		result.Evidence.IPv6 = &ipv6
 	}
 	if len(result.Evidence.Commands) > maxEvidenceItems {
 		result.Evidence.Commands = append([]CommandEvidence(nil), result.Evidence.Commands[:maxEvidenceItems]...)
 	}
 	for i := range result.Evidence.Commands {
-		result.Evidence.Commands[i].Command = sanitize(result.Evidence.Commands[i].Command)
-		result.Evidence.Commands[i].Stdout = sanitize(result.Evidence.Commands[i].Stdout)
-		result.Evidence.Commands[i].Stderr = sanitize(result.Evidence.Commands[i].Stderr)
+		result.Evidence.Commands[i].Command = privacyValue(result.Evidence.Commands[i].Command, privacyCommand)
+		result.Evidence.Commands[i].Stdout = privacyValue(result.Evidence.Commands[i].Stdout, privacyCommandOutput)
+		result.Evidence.Commands[i].Stderr = privacyValue(result.Evidence.Commands[i].Stderr, privacyCommandOutput)
 	}
 	return result
 }
@@ -110,15 +138,33 @@ func sanitize(value string) string {
 	return limitText(render.Redact(value), maxDiagnosticText)
 }
 
-func sanitizeRequiredSlice(values []string) []string {
-	values = sanitizeSlice(values)
+func privacyManagedInterface(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if value == "podlaz0" {
+		return value
+	}
+	return privacyInterfaceName
+}
+
+func privacyValue(value, placeholder string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return placeholder
+}
+
+func privacyRequiredSlice(values []string, placeholder string) []string {
+	values = privacySlice(values, placeholder)
 	if values == nil {
 		return []string{}
 	}
 	return values
 }
 
-func sanitizeSlice(values []string) []string {
+func privacySlice(values []string, placeholder string) []string {
 	if len(values) == 0 {
 		return nil
 	}
@@ -127,9 +173,8 @@ func sanitizeSlice(values []string) []string {
 	}
 	out := make([]string, 0, len(values))
 	for _, value := range values {
-		value = sanitize(value)
 		if strings.TrimSpace(value) != "" {
-			out = append(out, value)
+			out = append(out, placeholder)
 		}
 	}
 	return out

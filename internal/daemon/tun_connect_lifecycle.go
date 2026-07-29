@@ -129,10 +129,13 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 			return fullTunnelCoreHandle{cmd: cmd, done: done, pid: pid}, nil
 		},
 		stopCore: func(core fullTunnelCoreHandle) error {
-			return m.stopStartedCore(core.cmd, core.done, corePlan.RuntimeConfigPath)
+			return m.stopStartedCoreForTransaction(core.cmd, core.done)
 		},
 		collectFailureDiagnostics: func(ctx context.Context, transactionID string, plan planner.TunPlan, cause error) tunFailureDiagnosticSummary {
 			return m.collectTunFailureDiagnostics(ctx, transactionID, plan, cause)
+		},
+		finalizeFailureDiagnostics: func(ctx context.Context, summary tunFailureDiagnosticSummary, status string) {
+			m.finalizeTunFailureDiagnosticRollback(ctx, summary, status)
 		},
 		commitActiveState: func(store txstate.TransactionStore, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
 			m.mu.Lock()

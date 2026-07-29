@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestHumanAndJSONRenderersUseSameRedactedModel(t *testing.T) {
+func TestHumanAndJSONRenderersUseSamePrivateModel(t *testing.T) {
 	report := Report{
 		Session: Session{State: "active", ProfileName: "office token=profile-secret"},
 		Network: Network{ServerEndpoint: "vpn.example.test:443?token=query-secret"},
@@ -23,7 +23,15 @@ func TestHumanAndJSONRenderersUseSameRedactedModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, output := range []string{human, machine.String()} {
-		for _, secret := range []string{"profile-secret", "query-secret", "probe-secret", "command-secret", "123e4567-e89b-12d3-a456-426614174000"} {
+		for _, secret := range []string{
+			"office",
+			"vpn.example.test",
+			"profile-secret",
+			"query-secret",
+			"probe-secret",
+			"command-secret",
+			"123e4567-e89b-12d3-a456-426614174000",
+		} {
 			if strings.Contains(output, secret) {
 				t.Fatalf("output leaked %q: %s", secret, output)
 			}
@@ -33,19 +41,22 @@ func TestHumanAndJSONRenderersUseSameRedactedModel(t *testing.T) {
 	if err := json.Unmarshal(machine.Bytes(), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.SchemaVersion != SchemaVersion || decoded.PrimaryClassification != ClassHTTPSFailure {
+	if decoded.SchemaVersion != SchemaVersion || decoded.PrimaryClassification != ClassHTTPSFailure || decoded.Session.ProfileName != privacyProfileName {
 		t.Fatalf("unexpected JSON model: %#v", decoded)
 	}
 }
 
-func TestRenderHumanShowsSkippedDependency(t *testing.T) {
+func TestRenderHumanShowsPrivateSkippedDependency(t *testing.T) {
 	text := RenderHuman(Report{Probes: []ProbeResult{{ID: "tls", Layer: LayerTLS, Status: ProbeSkipped, DependencyReason: "dependency tcp-443 status is fail"}}}, false)
-	if !strings.Contains(text, "SKIPPED") || !strings.Contains(text, "dependency tcp-443 status is fail") {
-		t.Fatalf("missing skipped reason: %s", text)
+	if !strings.Contains(text, "SKIPPED") || !strings.Contains(text, privacyDiagnosticText) {
+		t.Fatalf("missing private skipped reason: %s", text)
+	}
+	if strings.Contains(text, "tcp-443") {
+		t.Fatalf("skipped dependency identifier leaked: %s", text)
 	}
 }
 
-func TestRenderHumanCompactShowsDNSAndIPState(t *testing.T) {
+func TestRenderHumanCompactShowsPrivateDNSAndIPState(t *testing.T) {
 	report := Report{
 		Session: Session{State: "active", Mode: "tun", Interface: "podlaz0"},
 		Network: Network{
@@ -57,19 +68,19 @@ func TestRenderHumanCompactShowsDNSAndIPState(t *testing.T) {
 		},
 	}
 	text := RenderHuman(report, false)
-	for _, want := range []string{"DNS           1.1.1.1", "IPv4=through_tun", "IPv6=possible_leak"} {
+	for _, want := range []string{"DNS           [address]", "IPv4=through_tun", "IPv6=possible_leak"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("compact output missing %q: %s", want, text)
 		}
 	}
-	if strings.Contains(text, "vpn.example.test") {
-		t.Fatalf("compact output unexpectedly included verbose endpoint details: %s", text)
+	if strings.Contains(text, "1.1.1.1") {
+		t.Fatalf("compact output leaked DNS address: %s", text)
 	}
 }
 
-func TestRenderHumanVerboseShowsBaseNetworkContext(t *testing.T) {
+func TestRenderHumanVerboseShowsTypedPrivacyPlaceholders(t *testing.T) {
 	report := Report{
-		Session: Session{State: "active", Mode: "tun", Interface: "podlaz0"},
+		Session: Session{State: "active", Mode: "tun", ProfileName: "Private profile", Interface: "podlaz0"},
 		Network: Network{
 			PhysicalInterface: "wlan0",
 			SSID:              "Example Wi-Fi",
@@ -83,9 +94,22 @@ func TestRenderHumanVerboseShowsBaseNetworkContext(t *testing.T) {
 		},
 	}
 	text := RenderHuman(report, true)
-	for _, want := range []string{"wlan0 (Example Wi-Fi)", "192.0.2.1", "192.0.2.20/24", "vpn.example.test:443", "203.0.113.10", "https://dns.example.test/dns-query"} {
+	for _, want := range []string{
+		"Profile       [profile]",
+		"Uplink        [interface] ([network])",
+		"Gateway       [address]",
+		"Local IPs     [address]",
+		"VPN server    [endpoint]",
+		"Server IPs    [address]",
+		"DoH targets   [endpoint]",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("verbose output missing %q: %s", want, text)
+		}
+	}
+	for _, sensitive := range []string{"Private profile", "wlan0", "Example Wi-Fi", "192.0.2.1", "192.0.2.20", "1.1.1.1", "vpn.example.test", "203.0.113.10", "dns.example.test"} {
+		if strings.Contains(text, sensitive) {
+			t.Fatalf("verbose output leaked %q: %s", sensitive, text)
 		}
 	}
 }

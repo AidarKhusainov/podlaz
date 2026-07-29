@@ -11,15 +11,15 @@ import (
 func TestResolvedDNSExecutorApplyRetriesTransientMissingLinkRegistration(t *testing.T) {
 	runner := &recordingRunner{
 		results: []CommandResult{
-			{ExitCode: 1, Stderr: `Failed to resolve interface "podlaz0": No such device`},
-			{ExitCode: 1, Stderr: `Failed to resolve interface "podlaz0": No such device`},
+			{ExitCode: 1, Stderr: `Failed to resolve interface "podlaz0": No such device` + "\n"},
+			{ExitCode: 1, Stderr: `Failed to resolve interface "podlaz0": No such device` + "\n"},
 			{},
 			{},
 			{},
 		},
 		errs: []error{
-			errors.New("exit status 1"),
-			errors.New("exit status 1"),
+			executorTestExitError{code: 1},
+			executorTestExitError{code: 1},
 		},
 	}
 	executor := ResolvedDNSExecutor{

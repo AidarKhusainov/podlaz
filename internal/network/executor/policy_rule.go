@@ -25,10 +25,11 @@ func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRul
 	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("add policy rule priority %d: %w", plan.Priority, err)
 	}
+	step := Step{Kind: "policy-rule", Target: ruleTarget(plan), Description: plan.Reason, Owner: OwnerPolicyRule}
 	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
-		return Step{}, fmt.Errorf("flush IPv4 route cache after add policy rule priority %d: %w", plan.Priority, err)
+		return step, fmt.Errorf("flush IPv4 route cache after add policy rule priority %d: %w", plan.Priority, err)
 	}
-	return Step{Kind: "policy-rule", Target: ruleTarget(plan), Description: plan.Reason, Owner: OwnerPolicyRule}, nil
+	return step, nil
 }
 
 func (e IPPolicyRuleExecutor) Verify(ctx context.Context, plan planner.TunPolicyRulePlan) error {

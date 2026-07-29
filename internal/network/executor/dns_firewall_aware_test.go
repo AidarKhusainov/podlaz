@@ -62,12 +62,12 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *te
 	}
 }
 
-func TestDNSAwareTunExecutorRollsBackFirewallWhenFirewallApplyFails(t *testing.T) {
+func TestDNSAwareTunExecutorPreservesPartialFirewallOwnershipWithoutInternalRollback(t *testing.T) {
 	recorder := &callRecorder{}
 	exec := DNSAwareTunExecutor{
 		Base:     TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder}, PolicyRules: fakeRules{rec: recorder}},
 		DNS:      fakeDNS{rec: recorder},
-		Firewall: fakeFirewall{rec: recorder, applyErr: errors.New("nft failure")},
+		Firewall: fakeFirewall{rec: recorder, applyErr: errors.New("nft failure"), returnStepOnError: true},
 	}
 	plan := executorPlanForTest()
 	plan.DNS = dnsPlanForTest()
@@ -77,26 +77,31 @@ func TestDNSAwareTunExecutorRollsBackFirewallWhenFirewallApplyFails(t *testing.T
 	if err == nil {
 		t.Fatal("expected firewall apply failure")
 	}
-	if len(steps) != 6 {
-		t.Fatalf("expected base networking and DNS steps to remain rollbackable, got %#v", steps)
+	if len(steps) != 7 || steps[len(steps)-1].Kind != "nftables" || steps[len(steps)-1].Owner != OwnerFirewall {
+		t.Fatalf("expected partial firewall step to remain rollbackable, got %#v", steps)
 	}
-	if got := recorder.calls[len(recorder.calls)-1]; got != "firewall:rollback:inet podlaz" {
-		t.Fatalf("expected immediate firewall rollback after apply failure, got %q", got)
+	if got := recorder.calls[len(recorder.calls)-1]; got != "firewall:apply:inet podlaz" {
+		t.Fatalf("composition executor must not rollback before transaction diagnostics, got %q", got)
 	}
 }
 
 type fakeFirewall struct {
-	rec      *callRecorder
-	applyErr error
+	rec               *callRecorder
+	applyErr          error
+	returnStepOnError bool
 }
 
 func (f fakeFirewall) Apply(_ context.Context, plan planner.TunFirewallPlan) (Step, error) {
 	target := plan.Family + " " + plan.Table
 	f.rec.calls = append(f.rec.calls, "firewall:apply:"+target)
+	step := Step{Kind: "nftables", Target: target, Owner: OwnerFirewall}
 	if f.applyErr != nil {
+		if f.returnStepOnError {
+			return step, f.applyErr
+		}
 		return Step{}, f.applyErr
 	}
-	return Step{Kind: "nftables", Target: target, Owner: OwnerFirewall}, nil
+	return step, nil
 }
 
 func (f fakeFirewall) Verify(_ context.Context, plan planner.TunFirewallPlan) error {

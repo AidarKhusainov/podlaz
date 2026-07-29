@@ -81,6 +81,8 @@ type Report struct {
 	PrimaryClassification Classification `json:"primary_classification,omitempty"`
 	GeneratedAt           time.Time      `json:"generated_at"`
 	Historical            bool           `json:"historical,omitempty"`
+	FailurePhase          string         `json:"failure_phase,omitempty"`
+	RollbackStatus        string         `json:"rollback_status,omitempty"`
 	Session               Session        `json:"session"`
 	Network               Network        `json:"network"`
 	Probes                []ProbeResult  `json:"probes"`

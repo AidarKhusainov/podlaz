@@ -5,47 +5,81 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+type tunRollbackChildStopper func(txstate.Transaction) error
+
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
-	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
-	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
-	_, _ = store.Save(*tx)
+	if err := prepareTunFailureRollback(store, tx, rollbackPlan, steps); err != nil {
+		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
+	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
 	defer cancel()
-	if err := rollbackTunTransaction(cleanupCtx, store, tx, rollbackPlan, executor); err != nil {
-		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
-		_, _ = store.Save(*tx)
+	if err := rollbackPreparedTunFailure(cleanupCtx, store, tx, rollbackPlan, executor); err != nil {
 		return errors.Join(cause, fmt.Errorf("rollback TUN plan: %w", err))
-	}
-	if err := removeTransactionFile(store, tx.ID); err != nil {
-		return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state; rolled-back transaction file cleanup failed", cause)
 	}
 	return fmt.Errorf("%w; rolled back applied podlaz-owned TUN, route, policy-rule, DNS, and nftables state", cause)
 }
 
+func prepareTunFailureRollback(store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, steps []netexecutor.Step) error {
+	if tx == nil {
+		return errors.New("missing TUN transaction")
+	}
+	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
+	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
+	_, err := store.Save(*tx)
+	return err
+}
+
+func rollbackPreparedTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor) error {
+	return rollbackPreparedTunFailureWithChildStopper(ctx, store, tx, rollbackPlan, executor, stopRollbackChildProcesses)
+}
+
+func rollbackPreparedTunFailureWithChildStopper(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, stopChildren tunRollbackChildStopper) error {
+	if tx == nil {
+		return errors.New("missing TUN transaction")
+	}
+	if err := rollbackTunTransactionWithChildStopper(ctx, store, tx, rollbackPlan, executor, stopChildren); err != nil {
+		_, _ = txstate.MarkFailure(tx, err.Error(), transactionNow(store))
+		_, _ = store.Save(*tx)
+		return err
+	}
+	if err := removeTransactionFile(store, tx.ID); err != nil {
+		return fmt.Errorf("rolled-back transaction file cleanup failed: %w", err)
+	}
+	return nil
+}
+
 func rollbackTunTransaction(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor) error {
+	return rollbackTunTransactionWithChildStopper(ctx, store, tx, plan, executor, stopRollbackChildProcesses)
+}
+
+func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, executor tunPlanExecutor, stopChildren tunRollbackChildStopper) error {
 	if tx.State == txstate.TransactionRolledBack {
 		return nil
 	}
 	if err := beginTunRollback(store, tx); err != nil {
 		return err
 	}
+	if stopChildren == nil {
+		stopChildren = stopRollbackChildProcesses
+	}
 
-	var rollbackErrs []error
-	if err := rollbackTunHostState(ctx, plan, executor); err != nil {
-		rollbackErrs = append(rollbackErrs, err)
+	hostErr := rollbackTunHostState(ctx, plan, executor)
+	childErr := stopChildren(*tx)
+	if err := errors.Join(hostErr, childErr); err != nil {
+		return err
 	}
-	if err := stopRollbackChildProcesses(*tx); err != nil {
-		rollbackErrs = append(rollbackErrs, err)
-	}
-	removeRollbackGeneratedConfigs(*tx)
-	if len(rollbackErrs) > 0 {
-		return errors.Join(rollbackErrs...)
+
+	// Runtime configuration is process identity material. It may be removed only
+	// after host rollback succeeded and the owned Xray process is proven absent.
+	if err := removeRollbackGeneratedConfigs(*tx); err != nil {
+		return err
 	}
 	return finishTunRollback(store, tx)
 }
@@ -71,15 +105,54 @@ func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tu
 	return executor.Rollback(ctx, plan)
 }
 
-func removeRollbackGeneratedConfigs(tx txstate.Transaction) {
+func removeRollbackGeneratedConfigs(tx txstate.Transaction) error {
+	var errs []error
 	for _, cfg := range tx.Rollback.GeneratedConfigs {
-		removeGeneratedConfig(cfg.Path)
+		if err := removeGeneratedConfig(cfg.Path); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	return errors.Join(errs...)
+}
+
+func verifyRollbackGeneratedConfigsRemoved(tx txstate.Transaction) error {
+	parents := make(map[string]struct{})
+	var errs []error
+	for _, cfg := range tx.Rollback.GeneratedConfigs {
+		if cfg.Path == "" {
+			errs = append(errs, errors.New("generated runtime config rollback path is empty"))
+			continue
+		}
+		path := filepath.Clean(cfg.Path)
+		parents[filepath.Dir(path)] = struct{}{}
+		if _, err := os.Lstat(path); err == nil {
+			errs = append(errs, fmt.Errorf("generated runtime config still exists: %s", path))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("verify generated runtime config removal %s: %w", path, err))
+		}
+	}
+	for parent := range parents {
+		entries, err := os.ReadDir(parent)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			continue
+		case err != nil:
+			errs = append(errs, fmt.Errorf("verify generated runtime config directory removal %s: %w", parent, err))
+		case len(entries) > 0:
+			errs = append(errs, fmt.Errorf("generated runtime config directory is not empty: %s", parent))
+		default:
+			errs = append(errs, fmt.Errorf("generated runtime config directory still exists: %s", parent))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func finishTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) error {
 	if tx.State == txstate.TransactionRolledBack {
 		return nil
+	}
+	if err := verifyRollbackGeneratedConfigsRemoved(*tx); err != nil {
+		return err
 	}
 	if _, err := txstate.Transition(tx, txstate.TransactionRolledBack, transactionNow(store)); err != nil {
 		return err

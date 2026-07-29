@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/AidarKhusainov/podlaz/internal/render"
 )
@@ -77,12 +79,20 @@ func applyRuntimeConfigOwnership(path string, permissions runtimeConfigPermissio
 	return os.Chown(path, permissions.UID, permissions.GID)
 }
 
-func removeGeneratedConfig(path string) {
+func removeGeneratedConfig(path string) error {
 	if path == "" {
-		return
+		return nil
 	}
-	_ = os.Remove(path)
-	_ = os.Remove(filepath.Dir(path))
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove generated runtime config %s: %w", path, err)
+	}
+	if err := os.Remove(filepath.Dir(path)); err != nil &&
+		!errors.Is(err, os.ErrNotExist) &&
+		!errors.Is(err, syscall.ENOTEMPTY) &&
+		!errors.Is(err, syscall.EEXIST) {
+		return fmt.Errorf("remove generated runtime config directory %s: %w", filepath.Dir(path), err)
+	}
+	return nil
 }
 
 func syncDirectory(path string) error {

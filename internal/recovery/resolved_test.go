@@ -38,7 +38,13 @@ func (r *resolvedRecoveryRunner) Run(_ context.Context, name string, args ...str
 	}
 	command := commands[0]
 	r.commands[key] = commands[1:]
-	return CommandResult{Stdout: command.stdout, Stderr: command.stderr, ExitCode: command.exitCode}, command.err
+	return CommandResult{
+		Stdout:    strings.TrimSpace(command.stdout),
+		Stderr:    strings.TrimSpace(command.stderr),
+		RawStdout: command.stdout,
+		RawStderr: command.stderr,
+		ExitCode:  command.exitCode,
+	}, command.err
 }
 
 func TestPlanWithOptionsReportsStaleResolvedLinkCandidate(t *testing.T) {
@@ -128,7 +134,7 @@ func resolvedLinkExists() resolvedRecoveryCommand {
 }
 
 func missingResolvedLink() resolvedRecoveryCommand {
-	return resolvedRecoveryCommand{stderr: "Link podlaz0 does not exist.", exitCode: 1, err: errors.New("exit status 1")}
+	return resolvedRecoveryCommand{stderr: "Link podlaz0 does not exist.\n", exitCode: 1, err: errors.New("exit status 1")}
 }
 
 func missingPodlazLink() resolvedRecoveryCommand {

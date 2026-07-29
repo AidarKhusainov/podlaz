@@ -109,9 +109,11 @@ type Options struct {
 }
 
 type CommandResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout    string
+	Stderr    string
+	RawStdout string
+	RawStderr string
+	ExitCode  int
 }
 
 type CommandRunner interface {
@@ -132,7 +134,14 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	result := CommandResult{Stdout: strings.TrimSpace(stdout.String()), Stderr: strings.TrimSpace(stderr.String())}
+	rawStdout := stdout.String()
+	rawStderr := stderr.String()
+	result := CommandResult{
+		Stdout:    strings.TrimSpace(rawStdout),
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStdout: rawStdout,
+		RawStderr: rawStderr,
+	}
 	if err == nil {
 		return result, nil
 	}
@@ -446,10 +455,11 @@ func (e OSCleanupExecutor) rollbackDNS(ctx context.Context, dns txstate.DNSRollb
 	if dns.Owner != txstate.TransactionOwner || dns.Link != managedInterface || (dns.Backend != "" && dns.Backend != "systemd-resolved") {
 		return fmt.Errorf("refuse to rollback ambiguous DNS target link=%s backend=%s", dns.Link, dns.Backend)
 	}
-	if err := e.run(ctx, "resolvectl", "revert", managedInterface); err != nil && !resolvedCommandErrorIsMissing(err) {
-		return fmt.Errorf("revert systemd-resolved DNS for %s: %w", managedInterface, err)
+	result, err := e.runResult(ctx, "resolvectl", "revert", managedInterface)
+	if commandSucceeded(result, err) || resolvedMissingDeviceResult(ctx, result, err) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("revert systemd-resolved DNS for %s: %s", managedInterface, commandFailureMessage(result, err))
 }
 
 func (e OSCleanupExecutor) rollbackPolicyRule(ctx context.Context, rule txstate.PolicyRuleRollback) error {
@@ -533,12 +543,16 @@ func (e OSCleanupExecutor) removeGeneratedConfig(config txstate.GeneratedConfigR
 	return nil
 }
 
-func (e OSCleanupExecutor) run(ctx context.Context, command string, args ...string) error {
+func (e OSCleanupExecutor) runResult(ctx context.Context, command string, args ...string) (CommandResult, error) {
 	path, err := e.Runner.LookPath(command)
 	if err != nil {
-		return fmt.Errorf("%s command is unavailable", command)
+		return CommandResult{ExitCode: -1}, fmt.Errorf("%s command is unavailable: %w", command, err)
 	}
-	result, err := runCommand(ctx, e.Runner, path, args...)
+	return runCommand(ctx, e.Runner, path, args...)
+}
+
+func (e OSCleanupExecutor) run(ctx context.Context, command string, args ...string) error {
+	result, err := e.runResult(ctx, command, args...)
 	if commandSucceeded(result, err) {
 		return nil
 	}

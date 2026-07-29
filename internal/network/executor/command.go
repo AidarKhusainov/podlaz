@@ -13,9 +13,11 @@ import (
 const defaultCommandTimeout = 5 * time.Second
 
 type CommandResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout    string
+	Stderr    string
+	RawStdout string
+	RawStderr string
+	ExitCode  int
 }
 
 type CommandRunner interface {
@@ -32,9 +34,13 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	rawStdout := stdout.String()
+	rawStderr := stderr.String()
 	result := CommandResult{
-		Stdout: strings.TrimSpace(stdout.String()),
-		Stderr: strings.TrimSpace(stderr.String()),
+		Stdout:    strings.TrimSpace(rawStdout),
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStdout: rawStdout,
+		RawStderr: rawStderr,
 	}
 	if err == nil {
 		return result, nil
@@ -63,14 +69,23 @@ func observeCommand(ctx context.Context, runner CommandRunner, name string, args
 	if err == nil && result.ExitCode == 0 {
 		return result, nil
 	}
-	return result, commandError{name: name, args: args, result: result, err: err}
+	return result, commandError{
+		name:       name,
+		args:       args,
+		result:     result,
+		err:        err,
+		parentErr:  ctx.Err(),
+		contextErr: cmdCtx.Err(),
+	}
 }
 
 type commandError struct {
-	name   string
-	args   []string
-	result CommandResult
-	err    error
+	name       string
+	args       []string
+	result     CommandResult
+	err        error
+	parentErr  error
+	contextErr error
 }
 
 func (e commandError) Error() string {
@@ -85,6 +100,10 @@ func (e commandError) Error() string {
 		parts = append(parts, e.err.Error())
 	}
 	return strings.Join(parts, ": ")
+}
+
+func (e commandError) Unwrap() error {
+	return e.err
 }
 
 func flushIPv4RouteCache(ctx context.Context, runner CommandRunner) error {

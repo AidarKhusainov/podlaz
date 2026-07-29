@@ -61,7 +61,9 @@ Xray owns `podlaz0` packet ingestion through the native `tun` inbound. `podlazd`
 
 Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. If the daemon stops inside the apply crash window before an applied category is persisted, recovery may reconstruct only missing entries in reserved podlaz namespaces from the durable structured `desired_plan`: routing table `51820`, policy priority `10000`, DNS link `podlaz0`, and nftables table `inet podlaz`. Desired-only main-table server bypass state must be inspected but never deleted by assumption; a present route or rule without durable applied ownership evidence keeps the transaction blocked for explicit inspection. Ambiguous host state must be skipped, not guessed.
 
-For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification checks the target link, planned DNS servers, `~.`, `+DefaultRoute`, and absence of a foreign active `~.` owner. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. Verification accepts a matching complete `podlaz0` record when a stale duplicate record temporarily coexists.
+A low-level composition executor must not perform hidden cleanup after a child apply method reports that it mutated state. It returns the partial non-zero applied step together with the error. The transaction boundary persists that ownership and controls rollback timing: direct helpers perform one immediate bounded fail-safe rollback, while the production lifecycle persists diagnostics before invoking rollback. A zero step means no owned mutation was recorded and is not added to the rollback plan.
+
+For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification checks the target link, planned DNS servers, `~.`, `+DefaultRoute`, and absence of a foreign active `~.` owner. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are ambiguous and fail closed.
 
 For native Xray TUN startup, durable rollback order is:
 
@@ -69,14 +71,35 @@ For native Xray TUN startup, durable rollback order is:
 2. stop the Xray child process;
 3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
 
-If post-apply connectivity verification fails, `podlazd` first attempts a short,
-bounded, cancellation-aware safe diagnostic subset while the failing host state
-still exists. Optional diagnostics must never delay or suppress cleanup. Normal
-rollback then runs with a separate daemon-owned bounded cleanup context derived
-without the requesting HTTP client's cancellation, so a disconnected client or
-expired request deadline cannot immediately cancel DNS, route, rule, or nftables
-cleanup. The returned error and daemon log expose the primary TUN classification
-and the report location as separate fields when persistence succeeded.
+Rollback is complete only after both host-state rollback and supervised Xray
+process quiescence succeed. The transaction stop performs one bounded wait after
+TERM, escalates to KILL when necessary, and performs a second bounded wait for
+the supervisor completion signal after KILL. Successful signal delivery alone
+is never proof of exit. If the completion signal does not arrive within either
+bound, rollback returns a quiescence error and keeps `rollback_status=failed`.
+Generated runtime config and transaction ownership metadata must not be removed
+while process absence is unproven; a failed convergence remains cleanup-required
+for recovery.
+
+If `network-apply`, `network-verify`, or later connectivity verification fails,
+`podlazd` first attempts a short bounded, cancellation-aware safe diagnostic
+subset while the failing host state still exists. The report contains a stable
+classification, lifecycle `failure_phase`, and `rollback_status`. Known network
+apply and verification failures use `network_apply_failure` and
+`network_verify_failure`; timeout, cancellation, and internal failures retain
+their existing stable classifications. Overall report status such as `unhealthy`
+is never substituted for the classification taxonomy.
+
+Optional diagnostics must never delay or suppress cleanup. Normal rollback runs
+with a separate daemon-owned bounded cleanup context derived without the
+requesting HTTP client's cancellation, so a disconnected client or expired
+request deadline cannot immediately cancel DNS, route, rule, nftables, or process
+cleanup. The historical report is first persisted with rollback status `pending`
+and is finalized to `completed` only after host rollback and Xray quiescence are
+both proven; otherwise it is finalized to `failed`. The returned error and daemon
+log expose the primary TUN classification and report location as separate fields
+when persistence succeeded, and user guidance uses the canonical
+`podlaz doctor --tun --verbose` command.
 
 The full TUN diagnostic path may perform only read-only snapshot collection,
 kernel route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private
@@ -135,16 +158,29 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - The CLI must not perform privileged cleanup directly.
 - Recovery may clean only clearly podlaz-owned volatile state.
 - `/run/podlaz` must not be deleted wholesale.
-- Stale PID metadata alone is not enough to signal a process.
+- Stale PID metadata alone is not enough to signal a process. The current
+  transaction schema does not persist the executable identity and process start
+  time required for identity-safe orphan signalling, so daemon recovery never
+  sends TERM or KILL solely from a recorded PID/config reference.
+- For a recorded child PID greater than one, recovery uses a tri-state check:
+  absent `/proc/<pid>` means the original child is already absent and the child
+  result is recovered; an existing PID without sufficient durable identity is
+  skipped; an operational `/proc` inspection error is failed. Both skipped and
+  failed results preserve generated config and transaction metadata. A later
+  recovery run can complete after the process disappears.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
 - For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
-- A non-zero `resolvectl status` or `resolvectl revert` result stating that `podlaz0` is already missing is idempotent for stale-link cleanup, transaction recovery, runtime DNS rollback, and doctor inspection. This classification is specific to `resolvectl`; generic command missing-resource classification remains unchanged.
+- Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty raw stdout, and the supported `No such device` raw stderr followed by exactly one `LF` or one `CRLF`. Unterminated stderr, embedded or additional line endings, caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup, persisted transaction DNS rollback, and the installed-package acceptance gate; trimming is permitted only for human-readable error rendering.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
 - The daemon recovery scan is refreshed after every connect attempt, after
   disconnect, and after recovery execution, including failed operations. The
   stored scan remains the raw scanner result; active-session filtering never
   overwrites it.
+- A successful rollback or recovery may retain terminal transaction history, but
+  `rolled_back` or otherwise cleanup-complete records must be non-blocking. An
+  immediate subsequent TUN connect must not be rejected by a cleanup-required
+  transaction or a stale startup-scan observation.
 - An unexpected TUN core exit schedules an eager read-only refresh with a
   daemon-owned five-second deadline. In addition, status and doctor perform the
   same bounded refresh synchronously before publishing a stable
@@ -171,16 +207,36 @@ Human and JSON output must redact secrets and generated runtime configuration.
 This applies to `status`, `doctor`, `logs`, `plan`, `recover`, validation output,
 and all JSON responses.
 
-The same central redaction and evidence-size limits apply before TUN diagnostics
-are rendered or persisted. The latest report must not store raw profile secrets,
-UUIDs, generated Xray configuration, authentication material, or unbounded
-command/protocol output. Every public network string and structured policy or
-nftables rule is sanitized and bounded through the same central policy.
+The generic secret redactor is not a sufficient privacy boundary for TUN
+diagnostics. Before persistence and before human or JSON rendering, the complete
+report passes through one fail-closed public diagnostic privacy projection.
+That projection must remove the original values of profile names/identifiers,
+transaction identifiers, SSIDs, physical host interface names, gateways, local
+addresses, DNS servers, VPN endpoints, hostnames, TLS server names, resolved
+addresses, DoH/provider URLs, certificate subjects/issuers, HTTP locations,
+route tables, complete routes, policy/nftables rules, arbitrary notes, errors,
+command lines, and command stdout/stderr. Typed placeholders may retain schema
+shape and cardinality, but they must not encode or permit reconstruction of the
+original value. The managed constant `podlaz0`, stable classifications, statuses,
+phases, timings, MTUs, response/status codes, exit codes, booleans, and other
+non-identifying structural evidence may remain.
+
+The same projection applies to `/run/podlaz/diagnostics/tun-last.json`, a report
+loaded from that file, `podlaz doctor --tun` human output, and `--json` output.
+Regression tests must inject and independently search for each profile name/ID,
+transaction ID, domain, endpoint, IPv4/IPv6 address, DNS server, SSID, host
+interface, route/rule token, and command-output marker. Checking only a complete
+URI, UUID, or generic secret pattern is insufficient.
+
+The latest report remains bounded and must not store generated Xray
+configuration, authentication material, or unbounded command/protocol output.
+Required collection fields such as `probes`, `warnings`, and `errors` remain JSON
+arrays, including when empty; they must never change type to `null`.
+
+Self-hosted evidence follows the same rule. Raw public/local addresses, gateways, host interface names, complete routes, resolver output, provider identifiers, and generated configuration must stay outside the upload directory. Package E2E stores only normalized verdicts, bounded classifications/events, commit identity, and cryptographic hashes. The workflow scans candidate artifacts against configured secrets and current host network values and must not upload them unless both the teardown assertions and scan succeed.
 
 JSON output must include `schema_version`. Existing JSON field meanings must not
-change without an explicit compatibility note. Required collection fields such
-as `probes`, `warnings`, and `errors` are always JSON arrays, including when
-empty; they must never change type to `null`.
+change without an explicit compatibility note.
 
 ## Confirmation
 

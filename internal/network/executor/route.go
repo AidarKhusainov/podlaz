@@ -30,10 +30,11 @@ func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (St
 	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("add route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
+	step := Step{Kind: "route", Target: routeTarget(plan), Description: plan.Reason, Owner: OwnerRoute}
 	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
-		return Step{}, fmt.Errorf("flush IPv4 route cache after add route %s table %s: %w", plan.Destination, plan.Table, err)
+		return step, fmt.Errorf("flush IPv4 route cache after add route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
-	return Step{Kind: "route", Target: routeTarget(plan), Description: plan.Reason, Owner: OwnerRoute}, nil
+	return step, nil
 }
 
 func (e IPRouteExecutor) Verify(ctx context.Context, plan planner.TunRoutePlan) error {

@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,26 +33,66 @@ func TestDaemonCleanupExecutorSkipsRuntimeRoot(t *testing.T) {
 	}
 }
 
-func TestDaemonCleanupExecutorSkipsAmbiguousChildProcessMetadata(t *testing.T) {
+func TestDaemonRecoveryCompletesAfterRecordedXrayProcessDisappears(t *testing.T) {
 	runtimeDir := t.TempDir()
+	missingPID := 1 << 30
+	if _, err := os.Stat(fmt.Sprintf("/proc/%d", missingPID)); !os.IsNotExist(err) {
+		t.Fatalf("test requires an absent process identity for pid %d, stat err=%v", missingPID, err)
+	}
+	generatedPath := filepath.Join(runtimeDir, generatedDirName, "xray.json")
+	if err := os.MkdirAll(filepath.Dir(generatedPath), 0o755); err != nil {
+		t.Fatalf("create generated dir: %v", err)
+	}
+	if err := os.WriteFile(generatedPath, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write generated config: %v", err)
+	}
 	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
 		ChildProcesses: []txstate.ChildProcessRollback{{
-			Label: "xray",
-			PID:   424242,
+			Label:     "xray",
+			PID:       missingPID,
+			ConfigRef: generatedPath,
+			Owner:     txstate.TransactionOwner,
+		}},
+		GeneratedConfigs: []txstate.GeneratedConfigRollback{{
+			Path:  generatedPath,
 			Owner: txstate.TransactionOwner,
 		}},
 	})
+	candidate := transactionCandidate(path, tx)
 
-	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+	first := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Scanner: fakeScanner{result: ScanResult{
+			Candidates: []Candidate{candidate},
+		}},
+		Executor: DaemonCleanupExecutor{RuntimeDir: runtimeDir},
+	})
 
-	assertCleanupResult(t, results, "child-process", "skipped", "process identity cannot be verified")
-	assertCleanupResult(t, results, "transaction-state", "skipped", "transaction state was preserved")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("transaction file must remain when cleanup is skipped: %v", err)
+	assertCleanupResult(t, first.Results, "child-process", "recovered", "already absent")
+	assertCleanupResult(t, first.Results, "generated-runtime-config", "recovered", "")
+	assertCleanupResult(t, first.Results, "transaction-state", "recovered", "")
+	if first.HasFailures() || first.HasIncompleteCleanup() {
+		t.Fatalf("recovery must complete after recorded Xray disappearance: %#v", first)
+	}
+	if _, err := os.Stat(generatedPath); !os.IsNotExist(err) {
+		t.Fatalf("generated config must be removed after process absence is proven, stat err=%v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("transaction file must be removed after complete recovery, stat err=%v", err)
+	}
+
+	runner := fakeMissingResourcesRunner()
+	second := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Runner:     runner,
+		Executor:   DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner},
+	})
+	if len(second.Results) != 0 || len(second.Warnings) != 0 || second.HasFailures() || second.HasIncompleteCleanup() {
+		t.Fatalf("second daemon recovery run must be clean: %#v", second)
 	}
 }
 
-func TestDaemonCleanupExecutorContinuesSafeCleanupWhenChildProcessIsSkipped(t *testing.T) {
+func TestDaemonCleanupExecutorPreservesConfigWhenChildPIDStillExists(t *testing.T) {
 	runtimeDir := t.TempDir()
 	generatedPath := filepath.Join(runtimeDir, generatedDirName, "xray.json")
 	if err := os.MkdirAll(filepath.Dir(generatedPath), 0o755); err != nil {
@@ -62,9 +103,10 @@ func TestDaemonCleanupExecutorContinuesSafeCleanupWhenChildProcessIsSkipped(t *t
 	}
 	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
 		ChildProcesses: []txstate.ChildProcessRollback{{
-			Label: "xray",
-			PID:   424242,
-			Owner: txstate.TransactionOwner,
+			Label:     "xray",
+			PID:       os.Getpid(),
+			ConfigRef: generatedPath,
+			Owner:     txstate.TransactionOwner,
 		}},
 		GeneratedConfigs: []txstate.GeneratedConfigRollback{{
 			Path:  generatedPath,
@@ -75,13 +117,13 @@ func TestDaemonCleanupExecutorContinuesSafeCleanupWhenChildProcessIsSkipped(t *t
 	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
 	assertCleanupResult(t, results, "child-process", "skipped", "process identity cannot be verified")
-	assertCleanupResult(t, results, "generated-runtime-config", "recovered", "")
+	assertCleanupResult(t, results, "generated-runtime-config", "skipped", "process absence is unproven")
 	assertCleanupResult(t, results, "transaction-state", "skipped", "transaction state was preserved")
-	if _, err := os.Stat(generatedPath); !os.IsNotExist(err) {
-		t.Fatalf("generated config must be removed even when child process is skipped, stat err=%v", err)
+	if _, err := os.Stat(generatedPath); err != nil {
+		t.Fatalf("generated config must remain while child identity is live and ambiguous: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("transaction file must remain when cleanup is incomplete: %v", err)
+		t.Fatalf("transaction file must remain when cleanup is skipped: %v", err)
 	}
 }
 

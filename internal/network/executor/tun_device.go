@@ -35,15 +35,16 @@ func (e IPTunDeviceExecutor) Create(ctx context.Context, plan planner.TunDeviceP
 	if err := e.run(ctx, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("create TUN device %s: %w", plan.Name, err)
 	}
+	step := Step{Kind: "tun-device", Target: plan.Name, Description: plan.Reason, Owner: OwnerTunDevice}
 	if plan.MTU > 0 {
 		if err := e.run(ctx, "ip", "link", "set", "dev", plan.Name, "mtu", strconv.Itoa(plan.MTU)); err != nil {
-			return Step{}, fmt.Errorf("set TUN device %s MTU: %w", plan.Name, err)
+			return step, fmt.Errorf("set TUN device %s MTU: %w", plan.Name, err)
 		}
 	}
 	if err := e.run(ctx, "ip", "link", "set", "dev", plan.Name, "up"); err != nil {
-		return Step{}, fmt.Errorf("bring TUN device %s up: %w", plan.Name, err)
+		return step, fmt.Errorf("bring TUN device %s up: %w", plan.Name, err)
 	}
-	return Step{Kind: "tun-device", Target: plan.Name, Description: plan.Reason, Owner: OwnerTunDevice}, nil
+	return step, nil
 }
 
 func (e IPTunDeviceExecutor) Verify(ctx context.Context, plan planner.TunDevicePlan) error {

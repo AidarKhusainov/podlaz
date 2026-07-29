@@ -18,7 +18,15 @@ mapfile -t e2e_scripts < <(
     scripts/e2e \
     -type f \
     -name '*.sh' \
-    ! -path 'scripts/e2e/lib/*' \
+    ! -path 'scripts/e2e/tests/*' \
+    -print | sort
+)
+
+mapfile -t e2e_test_scripts < <(
+  find \
+    scripts/e2e/tests \
+    -type f \
+    -name '*.sh' \
     -print | sort
 )
 
@@ -26,9 +34,20 @@ shellcheck -x -s bash "${core_scripts[@]}"
 bash scripts/ci/validate-installed-status-test.sh
 bash scripts/ci/validate-package-workflow-contract-test.sh
 bash scripts/ci/validate-package-workflow-contract.sh
+python3 -m py_compile scripts/e2e/*.py scripts/e2e/lib/*.py scripts/e2e/tests/*.py
+python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
+bash scripts/e2e/tests/test_process_lifecycle.sh
+bash scripts/e2e/tests/test_tun_package_cleanup.sh
+bash scripts/e2e/tests/test_tun_package_cleanup_identity_preservation.sh
+bash scripts/e2e/tests/test_tun_package_cleanup_authoritative_snapshot.sh
+bash scripts/e2e/tests/test_tun_package_convergence_cleanup_boundary.sh
+bash scripts/e2e/tests/test_tun_package_applying_cleanup_boundary.sh
+bash scripts/e2e/tests/test_tun_package_acceptance_assertions.sh
 
-# E2E entrypoints intentionally collect host diagnostics through sudo-owned commands
-# into user-owned artifact files and carry defensive state variables for cleanup.
+# E2E scripts use dynamic source paths, source-only test guards, and test-double
+# functions that shellcheck cannot resolve statically. Runtime regression tests
+# above exercise those paths before linting the complete script set.
 shellcheck -x -s bash -P scripts/e2e \
-  -e SC2024,SC2034,SC2086,SC2155,SC2318 \
-  "${e2e_scripts[@]}"
+  -e SC1091,SC2024,SC2034,SC2086,SC2155,SC2317,SC2318 \
+  "${e2e_scripts[@]}" \
+  "${e2e_test_scripts[@]}"
