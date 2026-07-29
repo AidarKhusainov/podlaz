@@ -320,6 +320,10 @@ func (e DaemonCleanupExecutor) rollbackGeneratedConfigResults(osExec OSCleanupEx
 			results = append(results, failed(candidate, err))
 			continue
 		}
+		if err := removeEmptyGeneratedRoot(e.RuntimeDir); err != nil {
+			results = append(results, failed(candidate, err))
+			continue
+		}
 		results = append(results, recovered(candidate))
 	}
 	return results
