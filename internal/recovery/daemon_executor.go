@@ -97,14 +97,19 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	}
 
 	rollback := recoveryRollbackMetadata(tx)
+	processResults := e.rollbackChildProcessResults(rollback.ChildProcesses)
 	results := make([]CleanupResult, 0)
-	results = append(results, e.rollbackChildProcessResults(rollback.ChildProcesses)...)
+	results = append(results, processResults...)
 	results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
 	results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
 	results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
 	results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
 	results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
-	results = append(results, e.rollbackGeneratedConfigResults(osExec, rollback.GeneratedConfigs)...)
+	if hasFailedCleanup(processResults) || hasSkippedCleanup(processResults) {
+		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
+	} else {
+		results = append(results, e.rollbackGeneratedConfigResults(osExec, rollback.GeneratedConfigs)...)
+	}
 	results = append(results, e.inspectUnrecordedDesiredMainState(ctx, tx)...)
 
 	if hasFailedCleanup(results) {
@@ -131,11 +136,19 @@ func (e DaemonCleanupExecutor) rollbackChildProcessResults(processes []txstate.C
 			results = append(results, skipped(candidate, "non-podlaz child process metadata"))
 			continue
 		}
-		if proc.PID > 1 {
-			results = append(results, skipped(candidate, "process identity cannot be verified from stale metadata"))
+		if proc.PID <= 1 {
+			results = append(results, skipped(candidate, "no live process pid recorded"))
 			continue
 		}
-		results = append(results, skipped(candidate, "no live process pid recorded"))
+		_, err := os.Stat(fmt.Sprintf("/proc/%d", proc.PID))
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			results = append(results, recoveredWithMessage(candidate, "recorded child process is already absent"))
+		case err != nil:
+			results = append(results, failed(candidate, fmt.Errorf("inspect stale child process pid %d: %w", proc.PID, err)))
+		default:
+			results = append(results, skipped(candidate, "process identity cannot be verified from stale metadata"))
+		}
 	}
 	return results
 }
@@ -270,6 +283,23 @@ func (e DaemonCleanupExecutor) rollbackTUNResults(ctx context.Context, osExec OS
 			continue
 		}
 		results = append(results, recovered(candidate))
+	}
+	return results
+}
+
+func (e DaemonCleanupExecutor) preserveGeneratedConfigResults(configs []txstate.GeneratedConfigRollback) []CleanupResult {
+	results := make([]CleanupResult, 0, len(configs))
+	for _, config := range configs {
+		candidate := Candidate{Kind: "generated-runtime-config", Description: "generated runtime config", Target: config.Path}
+		if config.Owner != txstate.TransactionOwner {
+			results = append(results, skipped(candidate, "non-podlaz generated config metadata"))
+			continue
+		}
+		if !isUnderDir(filepath.Join(e.RuntimeDir, generatedDirName), filepath.Clean(config.Path)) {
+			results = append(results, skipped(candidate, "generated config path is outside podlaz runtime state"))
+			continue
+		}
+		results = append(results, skipped(candidate, "process absence is unproven; generated config was preserved"))
 	}
 	return results
 }
