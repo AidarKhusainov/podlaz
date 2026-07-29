@@ -134,7 +134,7 @@ func writeDisconnectRegressionConfig(t *testing.T, runtimeDir string) string {
 	return configPath
 }
 
-func startCoreWithStuckCompletion(t *testing.T) (*exec.Cmd, <-chan struct{}, func()) {
+func startCoreWithStuckCompletion(t *testing.T) (*exec.Cmd, chan struct{}, func()) {
 	t.Helper()
 	ready := filepath.Join(t.TempDir(), "ready")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestXrayManagerDisconnectFixture$")
