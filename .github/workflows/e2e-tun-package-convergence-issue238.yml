@@ -8,7 +8,7 @@ on:
       - .github/workflows/e2e-tun-package-convergence-issue238.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: podlaz-tun-package-convergence-issue238-${{ github.ref_name }}
@@ -40,6 +40,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Run installed-package convergence scenario
+        id: convergence
         timeout-minutes: 115
         shell: bash
         run: |
@@ -83,6 +84,7 @@ jobs:
             "${host_needles[@]}"
 
       - name: Upload package convergence evidence
+        id: evidence_upload
         if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
@@ -90,3 +92,25 @@ jobs:
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish sanitized result marker
+        if: always()
+        shell: bash
+        env:
+          CONVERGENCE_OUTCOME: ${{ steps.convergence.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+          EVIDENCE_SCAN_OUTCOME: ${{ steps.evidence_scan.outcome }}
+          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "convergence=${CONVERGENCE_OUTCOME}" \
+            "cleanup=${CLEANUP_OUTCOME}" \
+            "evidence_scan=${EVIDENCE_SCAN_OUTCOME}" \
+            "evidence_upload=${EVIDENCE_UPLOAD_OUTCOME}" \
+            > .e2e-result-issue238
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .e2e-result-issue238
+          git commit -m 'ci: record issue 238 package convergence result'
+          git push origin HEAD:agent/issue-238-tun-l3-addressing
