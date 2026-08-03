@@ -30,25 +30,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Apply verified fresh-host cleanup fix
+      - name: Instrument sanitized profile-import diagnostics
         shell: bash
-        env:
-          EXPECTED_PATCH_SHA256: bd1ad98d9e6881ff05fa7463c3169cf8040f6b3fdb7d784f08cfb7c4c7efaf8d
-          PATCH_B64: ZGlmZiAtLWdpdCBhL3NjcmlwdHMvZTJlL3Rlc3RzL3Rlc3RfdHVuX3BhY2thZ2VfY2xlYW51cC5zaCBiL3NjcmlwdHMvZTJlL3Rlc3RzL3Rlc3RfdHVuX3BhY2thZ2VfY2xlYW51cC5zaAppbmRleCA1NTBmYmI3Li4wMTY1YjA4IDEwMDY0NAotLS0gYS9zY3JpcHRzL2UyZS90ZXN0cy90ZXN0X3R1bl9wYWNrYWdlX2NsZWFudXAuc2gKKysrIGIvc2NyaXB0cy9lMmUvdGVzdHMvdGVzdF90dW5fcGFja2FnZV9jbGVhbnVwLnNoCkBAIC02OSw2ICs2OSwyMiBAQCBpZiBwdXJnZV9wYWNrYWdlOyB0aGVuCiBmaQogW1sgIiR7bGFzdF9ldmlkZW5jZX0iID09ICJwYWNrYWdlX3B1cmdlZD1mYWxzZSIgXV0gfHwgZmFpbF90ZXN0ICJmYWlsZWQgcHVyZ2UgZXZpZGVuY2Ugd2FzICR7bGFzdF9ldmlkZW5jZX0iCiAKKyMgQSBmcmVzaCBob3N0IHdpdGggbm8gcGFja2FnZSBpbnN0YWxsZWQgaXMgYWxyZWFkeSBjb252ZXJnZWQgZXZlbiB3aGVuIHRoZQorIyBEZWJpYW4gaGVscGVyIGhhcyBubyBwYWNrYWdlLW93bmVkIHN0YXRlIHRvIHB1cmdlLgorbGFzdF9ldmlkZW5jZT0iIgoraW5zcGVjdF9wYWNrYWdlX3N0YXRlKCkgeyByZXR1cm4gMDsgfQordGltZW91dCgpIHsgcmV0dXJuIDA7IH0KK3N1ZG8oKSB7CisgIGlmIFtbICIkKiIgPT0gKiJkZWItc3lzdGVtZC1oZWxwZXIgcHVyZ2UgcG9kbGF6ZC5zZXJ2aWNlIiogXV07IHRoZW4KKyAgICByZXR1cm4gMQorICBmaQorICByZXR1cm4gMAorfQoraWYgISBwdXJnZV9wYWNrYWdlOyB0aGVuCisgIGZhaWxfdGVzdCAiYWJzZW50IHBhY2thZ2Ugd2FzIG5vdCB0cmVhdGVkIGFzIGNvbnZlcmdlZCIKK2ZpCitbWyAiJHtsYXN0X2V2aWRlbmNlfSIgPT0gInBhY2thZ2VfcHVyZ2VkPXRydWUiIF1dIHx8IGZhaWxfdGVzdCAiYWJzZW50IHBhY2thZ2UgZXZpZGVuY2Ugd2FzICR7bGFzdF9ldmlkZW5jZX0iCisKICMgSW52YWxpZCBtZXRhZGF0YSBtdXN0IHByZXZlbnQgdHJhbnNhY3Rpb24gZGVsZXRpb24gZXZlbiBpZiBldmVyeSB1bnJlbGF0ZWQKICMgZmFsbGJhY2sgY2xlYW51cCBhY3Rpb24gc3VjY2VlZHMuCiBST0xMQkFDS19NRVRBREFUQV9WQUxJRD1mYWxzZQpkaWZmIC0tZ2l0IGEvc2NyaXB0cy9lMmUvdHVuLXBhY2thZ2UtY2xlYW51cC1jb3JlLnNoIGIvc2NyaXB0cy9lMmUvdHVuLXBhY2thZ2UtY2xlYW51cC1jb3JlLnNoCmluZGV4IDNmNzcwNzUuLjNjODFlZTAgMTAwNjQ0Ci0tLSBhL3NjcmlwdHMvZTJlL3R1bi1wYWNrYWdlLWNsZWFudXAtY29yZS5zaAorKysgYi9zY3JpcHRzL2UyZS90dW4tcGFja2FnZS1jbGVhbnVwLWNvcmUuc2gKQEAgLTQ2OCw3ICs0NjgsNyBAQCBjbGVhbnVwX2UyZV9zZW50aW5lbHMoKSB7CiB9CiAKIHB1cmdlX3BhY2thZ2UoKSB7Ci0gIGxvY2FsIHN0YXR1cz0wIHBhY2thZ2Vfc3RhdGUKKyAgbG9jYWwgc3RhdHVzPTAgcGFja2FnZV9zdGF0ZSBwYWNrYWdlX3dhc19wcmVzZW50PWZhbHNlCiAgIGlmIFtbICIke1BPRExBWl9FMkVfUFVSR0VfUEFDS0FHRX0iICE9ICJ0cnVlIiBdXTsgdGhlbgogICAgIHJlY29yZF9jbGVhbnVwX2V2aWRlbmNlIHBhY2thZ2VfcHVyZ2VkIGZhbHNlCiAgICAgcmV0dXJuIDAKQEAgLTQ3NywxMiArNDc3LDE3IEBAIHB1cmdlX3BhY2thZ2UoKSB7CiAgIGNhcHR1cmVfc3RhdHVzIHBhY2thZ2Vfc3RhdGUgaW5zcGVjdF9wYWNrYWdlX3N0YXRlIHBvZGxhegogICBjYXNlICIke3BhY2thZ2Vfc3RhdGV9IiBpbgogICAgIDApIDs7Ci0gICAgMSkgdGltZW91dCAtLXNpZ25hbD1URVJNIC0ta2lsbC1hZnRlcj0xMHMgOTBzIHN1ZG8gLW4gYXB0IHB1cmdlIC15IHBvZGxheiA+L2Rldi9udWxsIDI+JjEgfHwgc3RhdHVzPTEgOzsKKyAgICAxKQorICAgICAgcGFja2FnZV93YXNfcHJlc2VudD10cnVlCisgICAgICB0aW1lb3V0IC0tc2lnbmFsPVRFUk0gLS1raWxsLWFmdGVyPTEwcyA5MHMgc3VkbyAtbiBhcHQgcHVyZ2UgLXkgcG9kbGF6ID4vZGV2L251bGwgMj4mMSB8fCBzdGF0dXM9MQorICAgICAgOzsKICAgICAqKSBzdGF0dXM9MTsgY2xlYW51cF9lcnJvciAidGVhcmRvd246IHBhY2thZ2Ugc3RhdGUgaW5zcGVjdGlvbiBmYWlsZWQgYmVmb3JlIHB1cmdlIiA7OwogICBlc2FjCiAKICAgaWYgY29tbWFuZCAtdiBkZWItc3lzdGVtZC1oZWxwZXIgPi9kZXYvbnVsbCAyPiYxOyB0aGVuCi0gICAgc3VkbyAtbiBkZWItc3lzdGVtZC1oZWxwZXIgcHVyZ2UgcG9kbGF6ZC5zZXJ2aWNlID4vZGV2L251bGwgMj4mMSB8fCBzdGF0dXM9MQorICAgIGlmICEgc3VkbyAtbiBkZWItc3lzdGVtZC1oZWxwZXIgcHVyZ2UgcG9kbGF6ZC5zZXJ2aWNlID4vZGV2L251bGwgMj4mMTsgdGhlbgorICAgICAgW1sgIiR7cGFja2FnZV93YXNfcHJlc2VudH0iID09ICJmYWxzZSIgXV0gfHwgc3RhdHVzPTEKKyAgICBmaQogICBmaQogICBzdWRvIC1uIHN5c3RlbWN0bCBkYWVtb24tcmVsb2FkID4vZGV2L251bGwgMj4mMSB8fCBzdGF0dXM9MQogICBzdWRvIC1uIHN5c3RlbWN0bCByZXNldC1mYWlsZWQgcG9kbGF6ZC5zZXJ2aWNlID4vZGV2L251bGwgMj4mMSB8fCB0cnVlCg==
         run: |
-          set -euo pipefail
-          printf '%s' "${PATCH_B64}" | base64 --decode >"${RUNNER_TEMP}/cleanup-fix.patch"
-          printf '%s  %s\n' "${EXPECTED_PATCH_SHA256}" "${RUNNER_TEMP}/cleanup-fix.patch" | sha256sum -c -
-          git apply --check "${RUNNER_TEMP}/cleanup-fix.patch"
-          git apply "${RUNNER_TEMP}/cleanup-fix.patch"
-          rm -f .e2e-result-issue238
-          bash scripts/e2e/tests/test_tun_package_cleanup.sh
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A -- scripts/e2e/tun-package-cleanup-core.sh scripts/e2e/tests/test_tun_package_cleanup.sh .e2e-result-issue238
-          git diff --cached --check
-          git commit -m 'fix: make fresh-host package cleanup idempotent'
-          git push origin HEAD:agent/issue-238-tun-l3-addressing
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/e2e/tun-package-convergence.sh")
+          text = path.read_text(encoding="utf-8")
+          needle = '''  if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+              rm -f -- "${out}" "${err}"
+              fail "profile import failed"
+            fi'''
+          replacement = '''  if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+              python3 -c 'import re, sys; text=open(sys.argv[1], encoding="utf-8", errors="replace").read().replace(sys.argv[2], "[redacted-uri]"); text=re.sub(r"(?i)\\b(?:vless|vmess|trojan|ss)://\\S+", "[redacted-uri]", text); text=re.sub(r"\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b", "[redacted-ip]", text); text=re.sub(r"(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}", "[redacted-host]", text); print(text[:2000], file=sys.stderr)' "${err}" "${uri}"
+              rm -f -- "${out}" "${err}"
+              fail "profile import failed"
+            fi'''
+          if text.count(needle) != 1:
+              raise SystemExit("profile-import diagnostic insertion point mismatch")
+          path.write_text(text.replace(needle, replacement), encoding="utf-8")
+          PY
 
       - name: Setup Go
         uses: actions/setup-go@v7
