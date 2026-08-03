@@ -17,6 +17,22 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 	if len(tx.Rollback.TUN) > 0 {
 		plan.TunDevice = planner.TunDevicePlan{Name: tx.Rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
 	}
+	if len(tx.Rollback.TUNAddresses) > 0 {
+		address := tx.Rollback.TUNAddresses[0]
+		plan.TunAddress = planner.TunAddressPlan{
+			Family:             address.Family,
+			Interface:          address.InterfaceName,
+			CIDR:               address.CIDR,
+			Scope:              address.Scope,
+			Action:             planner.TunAddressActionAssign,
+			Owner:              address.Owner,
+			RollbackKey:        address.InterfaceName + "/" + address.CIDR,
+			LinkIndex:          address.LinkIndex,
+			LinkKind:           address.LinkKind,
+			AppearedAfterCore:  address.AppearedAfterCore,
+			AllowOwnedExisting: true,
+		}
+	}
 	for _, route := range tx.Rollback.Routes {
 		plan.Routes = append(plan.Routes, planner.TunRoutePlan{
 			Family:      "ipv4",

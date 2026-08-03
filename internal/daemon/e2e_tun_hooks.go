@@ -20,6 +20,7 @@ const (
 	e2eTunHookDirEnv            = "PODLAZ_E2E_TUN_HOOK_DIR"
 	e2eTunHookTimeoutSecondsEnv = "PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS"
 
+	e2eTunHookTunAddressApplyPhase        = "tun-address-apply"
 	e2eTunHookRouteApplyPhase             = "route-apply"
 	e2eTunHookDNSApplyPhase               = "dns-apply"
 	e2eTunHookNetworkVerifyPhase          = "network-verify"
@@ -48,7 +49,8 @@ func validateE2ETunHookConfig() error {
 		return nil
 	}
 	switch e2eTunHookPhase() {
-	case e2eTunHookRouteApplyPhase,
+	case e2eTunHookTunAddressApplyPhase,
+		e2eTunHookRouteApplyPhase,
 		e2eTunHookDNSApplyPhase,
 		e2eTunHookNetworkVerifyPhase,
 		e2eTunHookDNSInactiveScopePhase,
@@ -64,6 +66,8 @@ func validateE2ETunHookConfig() error {
 
 func maybeWrapE2ETunHookExecutor(executor netexecutor.DNSAwareTunExecutor) tunPlanExecutor {
 	switch e2eTunHookPhase() {
+	case e2eTunHookTunAddressApplyPhase:
+		executor.Base.TunAddress = e2eHookTunAddressExecutor{delegate: executor.Base.TunAddress}
 	case e2eTunHookRouteApplyPhase:
 		executor.Base.Routes = e2eHookRouteExecutor{delegate: executor.Base.Routes}
 	case e2eTunHookDNSApplyPhase:
@@ -145,6 +149,43 @@ func e2eTunHookTimeout() time.Duration {
 		return 60 * time.Second
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+type e2eHookTunAddressExecutor struct {
+	delegate netexecutor.TunAddressExecutor
+}
+
+func (e e2eHookTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressPlan) (planner.TunAddressPlan, error) {
+	if e.delegate == nil {
+		return plan, errors.New("missing TUN address executor")
+	}
+	return e.delegate.Bind(ctx, plan)
+}
+
+func (e e2eHookTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddressPlan) (netexecutor.Step, error) {
+	if e.delegate == nil {
+		return netexecutor.Step{}, errors.New("missing TUN address executor")
+	}
+	step, err := e.delegate.Apply(ctx, plan)
+	if err != nil {
+		return step, err
+	}
+	recordE2ETunHookEvent("tun-address-apply-injected")
+	return step, fmt.Errorf("%w: E2E hook failed after the daemon-owned TUN address was applied", netexecutor.ErrTunAddressApply)
+}
+
+func (e e2eHookTunAddressExecutor) Verify(ctx context.Context, plan planner.TunAddressPlan) error {
+	if e.delegate == nil {
+		return errors.New("missing TUN address executor")
+	}
+	return e.delegate.Verify(ctx, plan)
+}
+
+func (e e2eHookTunAddressExecutor) Rollback(ctx context.Context, plan planner.TunAddressPlan) error {
+	if e.delegate == nil {
+		return errors.New("missing TUN address executor")
+	}
+	return e.delegate.Rollback(ctx, plan)
 }
 
 type e2eHookRouteExecutor struct {
@@ -276,6 +317,14 @@ func (e e2eHookNetworkVerifyExecutor) Apply(ctx context.Context, plan planner.Tu
 	return e.delegate.Apply(ctx, plan)
 }
 
+func (e e2eHookNetworkVerifyExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan, sink netexecutor.AppliedStepSink) ([]netexecutor.Step, error) {
+	incremental, ok := e.delegate.(incrementalTunPlanExecutor)
+	if !ok {
+		return nil, errors.New("E2E network verification delegate does not support incremental ownership persistence")
+	}
+	return incremental.ApplyWithStepSink(ctx, plan, sink)
+}
+
 func (e e2eHookNetworkVerifyExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.delegate.Verify(ctx, plan); err != nil {
 		return err
@@ -286,6 +335,14 @@ func (e e2eHookNetworkVerifyExecutor) Verify(ctx context.Context, plan planner.T
 
 func (e e2eHookNetworkVerifyExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	return e.delegate.Rollback(ctx, plan)
+}
+
+func (e e2eHookNetworkVerifyExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan) (planner.TunPlan, error) {
+	binder, ok := e.delegate.(tunAddressIdentityBinder)
+	if !ok {
+		return plan, errors.New("E2E network verification delegate cannot bind TUN address identity")
+	}
+	return binder.BindTunAddress(ctx, plan)
 }
 
 type e2eHookConfigurationErrorExecutor struct {
@@ -302,6 +359,10 @@ func (e e2eHookConfigurationErrorExecutor) Verify(context.Context, planner.TunPl
 
 func (e e2eHookConfigurationErrorExecutor) Rollback(context.Context, planner.TunPlan) error {
 	return e.err
+}
+
+func (e e2eHookConfigurationErrorExecutor) BindTunAddress(context.Context, planner.TunPlan) (planner.TunPlan, error) {
+	return planner.TunPlan{}, e.err
 }
 
 type e2eInactiveScopeCommandRunner struct {

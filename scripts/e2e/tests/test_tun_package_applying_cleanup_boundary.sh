@@ -75,6 +75,7 @@ PATH="${FAKE_BIN}:${PATH}" ip -4 rule show | \
   fail_test "in-flight policy-rule fixture is not present before caller-boundary capture"
 
 SCRIPT_DIR="${E2E_DIR}"
+FOREIGN_ADDRESS_LINK="podlaz-e2e-address0"
 # shellcheck source=../lib/process_lifecycle.sh
 source "${E2E_DIR}/lib/process_lifecycle.sh"
 # shellcheck source=../lib/connect_lifecycle.sh

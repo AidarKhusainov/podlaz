@@ -70,9 +70,13 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 		stopChildren = stopRollbackChildProcesses
 	}
 
-	hostErr := rollbackTunHostState(ctx, plan, executor)
-	childErr := stopChildren(*tx)
-	if err := errors.Join(hostErr, childErr); err != nil {
+	if err := rollbackTunHostState(ctx, plan, executor); err != nil {
+		// The Xray-owned link carries the exact address identity needed for a
+		// safe retry. Keep the tracked child and generated config intact until
+		// every daemon-owned host resource is proven rolled back.
+		return err
+	}
+	if err := stopChildren(*tx); err != nil {
 		return err
 	}
 
@@ -190,30 +194,55 @@ func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step
 	for _, step := range steps {
 		switch step.Kind {
 		case "tun-device":
-			if step.Target == plan.TunDevice.Name {
+			if step.Owner == netexecutor.OwnerTunDevice && step.Target == plan.TunDevice.Name {
 				rollback.TunDevice = plan.TunDevice
 			}
+		case "tun-address":
+			if step.Owner == netexecutor.OwnerTunAddress && step.Target == tunAddressTarget(plan.TunAddress) {
+				rollback.TunAddress = plan.TunAddress
+			}
 		case "route":
+			if step.Owner != netexecutor.OwnerRoute {
+				continue
+			}
 			for _, route := range plan.Routes {
 				if routeTarget(route) == step.Target {
 					rollback.Routes = append(rollback.Routes, route)
 				}
 			}
 		case "policy-rule":
+			if step.Owner != netexecutor.OwnerPolicyRule {
+				continue
+			}
 			for _, rule := range plan.PolicyRules {
 				if policyRuleTarget(rule) == step.Target {
 					rollback.PolicyRules = append(rollback.PolicyRules, rule)
 				}
 			}
 		case "dns":
-			if step.Target == plan.DNS.TargetLink {
+			if step.Owner == netexecutor.OwnerDNS && step.Target == plan.DNS.TargetLink {
 				rollback.DNS = plan.DNS
 			}
 		case "nftables":
-			if step.Target == firewallTarget(plan.Firewall) {
+			if step.Owner == netexecutor.OwnerFirewall && step.Target == firewallTarget(plan.Firewall) {
 				rollback.Firewall = plan.Firewall
 			}
 		}
 	}
 	return rollback
+}
+
+func filterOwnedAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step) []netexecutor.Step {
+	owned := make([]netexecutor.Step, 0, len(steps))
+	for _, step := range steps {
+		rollback := rollbackPlanFromAppliedSteps(plan, []netexecutor.Step{step})
+		if rollbackPlanHasOwnedResource(rollback) {
+			owned = append(owned, step)
+		}
+	}
+	return owned
+}
+
+func rollbackPlanHasOwnedResource(plan planner.TunPlan) bool {
+	return plan.TunDevice.Name != "" || plan.TunAddress.CIDR != "" || len(plan.Routes) > 0 || len(plan.PolicyRules) > 0 || plan.DNS.TargetLink != "" || plan.Firewall.Table != ""
 }

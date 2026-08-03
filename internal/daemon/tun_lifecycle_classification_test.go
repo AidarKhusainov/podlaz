@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
@@ -19,6 +20,9 @@ func TestTunLifecycleFailureClassificationUsesStableTaxonomy(t *testing.T) {
 		{name: "network verify", phase: "network-verify", cause: errors.New("verify failed"), want: tundiag.ClassNetworkVerifyFailure},
 		{name: "cancelled", phase: "network-verify", cause: context.Canceled, want: tundiag.ClassCancelled},
 		{name: "timeout", phase: "network-verify", cause: context.DeadlineExceeded, want: tundiag.ClassTimeout},
+		{name: "resolved link not ready", phase: "connectivity-verify", cause: netexecutor.ErrResolvedLinkNotReady, want: tundiag.ClassResolvedLinkNotReady},
+		{name: "resolved link query", phase: "connectivity-verify", cause: netexecutor.ErrResolvedLinkQueryFailure, want: tundiag.ClassResolvedLinkQueryFailure},
+		{name: "system resolver", phase: "connectivity-verify", cause: errSystemResolverFailure, want: tundiag.ClassSystemResolverFailure},
 		{name: "unknown lifecycle", phase: "connectivity-verify", cause: errors.New("unknown"), want: tundiag.ClassInternalDiagnosticError},
 	}
 

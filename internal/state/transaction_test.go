@@ -200,3 +200,66 @@ func fullRollbackMetadata() RollbackMetadata {
 		}},
 	}
 }
+
+func TestTransactionStorePersistsBoundTunAddressOwnership(t *testing.T) {
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	store := TransactionStore{RuntimeDir: t.TempDir(), Now: func() time.Time { return now }}
+	tx := NewTransaction("tx-address", "example-profile", "tun", now)
+	tx.DesiredPlan.TUNAddress = TUNAddressDesiredState{
+		Family:        "ipv4",
+		InterfaceName: "podlaz0",
+		CIDR:          "198.51.100.1/32",
+		Scope:         "global",
+		LinkIndex:     7,
+		LinkKind:      "tun",
+		Owner:         "podlaz:tun-address",
+	}
+	tx.Rollback.TUNAddresses = []TUNAddressRollback{{
+		Family:        "ipv4",
+		InterfaceName: "podlaz0",
+		CIDR:          "198.51.100.1/32",
+		Scope:         "global",
+		LinkIndex:     7,
+		LinkKind:      "tun",
+		Owner:         "podlaz:tun-address",
+	}}
+	if _, err := store.Save(tx); err != nil {
+		t.Fatalf("save TUN address transaction: %v", err)
+	}
+	loaded, _, err := store.Load(tx.ID)
+	if err != nil {
+		t.Fatalf("load TUN address transaction: %v", err)
+	}
+	if loaded.DesiredPlan.TUNAddress.LinkIndex != 7 || len(loaded.Rollback.TUNAddresses) != 1 || loaded.Rollback.TUNAddresses[0].CIDR != "198.51.100.1/32" {
+		t.Fatalf("unexpected persisted TUN address ownership: %#v", loaded)
+	}
+}
+
+func TestLegacyTransactionWithoutTunAddressMetadataRemainsReadable(t *testing.T) {
+	runtimeDir := t.TempDir()
+	path := filepath.Join(runtimeDir, TransactionDirName, "legacy.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "schema_version": "podlaz.transaction.v1",
+  "owner": "podlaz",
+  "id": "legacy",
+  "mode": "tun",
+  "state": "failed",
+  "created_at": "2026-08-03T12:00:00Z",
+  "updated_at": "2026-08-03T12:00:00Z",
+  "desired_plan": {"tun": {"interface_name": "podlaz0", "owner": "xray:tun-inbound"}},
+  "rollback": {"dns": [{"backend": "systemd-resolved", "link": "podlaz0", "owner": "podlaz:dns-link"}]}
+}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadTransactionFile(path)
+	if err != nil {
+		t.Fatalf("load legacy transaction: %v", err)
+	}
+	if loaded.DesiredPlan.TUNAddress != (TUNAddressDesiredState{}) || len(loaded.Rollback.TUNAddresses) != 0 {
+		t.Fatalf("legacy state must not gain guessed address authority: %#v", loaded)
+	}
+}

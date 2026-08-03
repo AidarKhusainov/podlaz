@@ -35,6 +35,19 @@ func tunDeviceJSON(d planner.TunDevicePlan) map[string]any {
 	}
 }
 
+func tunAddressJSON(a planner.TunAddressPlan) map[string]any {
+	return map[string]any{
+		"family":         render.Redact(a.Family),
+		"interface":      render.Redact(a.Interface),
+		"cidr":           render.Redact(a.CIDR),
+		"action":         render.Redact(a.Action),
+		"reason":         render.Redact(a.Reason),
+		"classification": render.Redact(a.Classification),
+		"owner":          render.Redact(a.Owner),
+		"rollback_key":   render.Redact(a.RollbackKey),
+	}
+}
+
 func routesJSON(v []planner.TunRoutePlan) []map[string]any {
 	out := make([]map[string]any, len(v))
 	for i, r := range v {

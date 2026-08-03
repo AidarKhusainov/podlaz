@@ -50,28 +50,34 @@ func NewOSDNSExecutor() DNSAwareTunExecutor {
 // Apply preserves that partial ownership for the transaction boundary and never
 // performs rollback itself, so production diagnostics can run before cleanup.
 func (e DNSAwareTunExecutor) Apply(ctx context.Context, plan planner.TunPlan) ([]Step, error) {
+	return e.ApplyWithStepSink(ctx, plan, nil)
+}
+
+// ApplyWithStepSink keeps the complete address -> routes/rules -> DNS ->
+// firewall ordering while making each owned mutation durable before the next
+// child executor is invoked.
+func (e DNSAwareTunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan, sink AppliedStepSink) ([]Step, error) {
 	if err := e.validate(plan); err != nil {
 		return nil, err
 	}
-	steps, err := e.Base.Apply(ctx, plan)
+	steps, err := e.Base.ApplyWithStepSink(ctx, plan, sink)
 	if err != nil {
 		return steps, err
 	}
+	record := func(step Step, applyErr error) error {
+		var persistErr error
+		steps, persistErr = recordAppliedStep(steps, step, sink)
+		return errors.Join(applyErr, persistErr)
+	}
 	if shouldApplyDNS(plan.DNS) {
-		dnsStep, err := e.DNS.Apply(ctx, plan.DNS)
-		if isAppliedStep(dnsStep) {
-			steps = append(steps, dnsStep)
-		}
-		if err != nil {
+		dnsStep, applyErr := e.DNS.Apply(ctx, plan.DNS)
+		if err := record(dnsStep, applyErr); err != nil {
 			return steps, err
 		}
 	}
 	if shouldApplyFirewall(plan.Firewall) {
-		firewallStep, err := e.Firewall.Apply(ctx, plan.Firewall)
-		if isAppliedStep(firewallStep) {
-			steps = append(steps, firewallStep)
-		}
-		if err != nil {
+		firewallStep, applyErr := e.Firewall.Apply(ctx, plan.Firewall)
+		if err := record(firewallStep, applyErr); err != nil {
 			return steps, err
 		}
 	}
@@ -136,7 +142,11 @@ func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
 			return err
 		}
 	}
-	return e.Base.validate()
+	return e.Base.validatePlan(plan)
+}
+
+func (e DNSAwareTunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan) (planner.TunPlan, error) {
+	return e.Base.BindTunAddress(ctx, plan)
 }
 
 // ResolvedDNSExecutor applies per-link DNS through resolvectl only. It never

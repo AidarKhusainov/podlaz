@@ -19,6 +19,7 @@ var (
 	errRunnerCoreStartFailed    = errors.New("core start failed")
 	errRunnerCoreMetadataFailed = errors.New("core metadata failed")
 	errRunnerCoreStartupFailed  = errors.New("core exited during startup")
+	errRunnerAddressBindFailed  = errors.New("TUN address binding failed")
 	errRunnerConnectivityFailed = errors.New("connectivity failed")
 	errRunnerCommitFailed       = errors.New("commit failed")
 )
@@ -62,6 +63,74 @@ func TestFullTunnelTransactionRunnerStartsXrayBeforeApplyingHostNetworking(t *te
 	if strings.Join(order, ",") != "core,network" {
 		t.Fatalf("expected Xray TUN inbound to start before host networking apply, got %#v", order)
 	}
+}
+
+func TestFullTunnelTransactionRunnerBindsAddressIdentityBeforeApplyingHostNetworking(t *testing.T) {
+	h := newFullTunnelRunnerHarness(t)
+	h.plan.TunAddress = unboundTunAddressPlanForTest()
+	var order []string
+	h.onCoreStarted = func() { order = append(order, "core") }
+	h.onAddressBound = func() { order = append(order, "bind-address") }
+	h.onNetworkApplied = func() { order = append(order, "network") }
+
+	_, err := h.runner().run(context.Background())
+	if err != nil {
+		t.Fatalf("run full-tunnel transaction: %v", err)
+	}
+	if strings.Join(order, ",") != "core,bind-address,network" {
+		t.Fatalf("expected Xray start, exact link binding, then host networking apply; got %#v", order)
+	}
+	if h.addressBindCalls != 1 {
+		t.Fatalf("expected one address identity binding, got %d", h.addressBindCalls)
+	}
+	got := h.executor.lastApplyPlan.TunAddress
+	if got.LinkIndex != 7 || got.LinkKind != "tun" || !got.AppearedAfterCore {
+		t.Fatalf("network apply received unbound address plan: %#v", got)
+	}
+}
+
+func TestFullTunnelTransactionRunnerPersistsAddressIdentityBeforeNetworkApply(t *testing.T) {
+	h := newFullTunnelRunnerHarness(t)
+	h.plan.TunAddress = unboundTunAddressPlanForTest()
+	h.onNetworkApplied = func() {
+		summaries, warnings := txstate.ScanTransactions(h.runtimeDir)
+		if len(warnings) != 0 || len(summaries) != 1 {
+			t.Fatalf("scan transaction before network apply: summaries=%#v warnings=%#v", summaries, warnings)
+		}
+		tx, _, err := (txstate.TransactionStore{RuntimeDir: h.runtimeDir}).Load(summaries[0].ID)
+		if err != nil {
+			t.Fatalf("load transaction before network apply: %v", err)
+		}
+		got := tx.DesiredPlan.TUNAddress
+		if got.LinkIndex != 7 || got.LinkKind != "tun" || !got.AppearedAfterCore {
+			t.Fatalf("address identity was not durably recorded before apply: %#v", got)
+		}
+		if len(tx.Rollback.TUNAddresses) != 0 {
+			t.Fatalf("pre-apply transaction must not claim address rollback ownership: %#v", tx.Rollback.TUNAddresses)
+		}
+	}
+
+	if _, err := h.runner().run(context.Background()); err != nil {
+		t.Fatalf("run full-tunnel transaction: %v", err)
+	}
+}
+
+func TestFullTunnelTransactionRunnerAddressBindingFailureRollsBackBeforeNetworkMutation(t *testing.T) {
+	h := newFullTunnelRunnerHarness(t)
+	h.plan.TunAddress = unboundTunAddressPlanForTest()
+	h.bindAddressErr = errRunnerAddressBindFailed
+
+	_, err := h.runner().run(context.Background())
+	if !errors.Is(err, errRunnerAddressBindFailed) {
+		t.Fatalf("expected address binding failure, got %v", err)
+	}
+	if strings.Join(h.executor.calls, ",") != "rollback" {
+		t.Fatalf("network apply must not run after binding failure, calls=%#v", h.executor.calls)
+	}
+	if h.coreStarted != 1 || h.coreStopped != 1 {
+		t.Fatalf("tracked Xray child must be stopped after binding failure: started=%d stopped=%d", h.coreStarted, h.coreStopped)
+	}
+	h.requireTransactionState(t, txstate.TransactionRolledBack, false)
 }
 
 func TestFullTunnelTransactionRunnerRollsBackHostNetworkingBeforeStoppingXray(t *testing.T) {
@@ -253,22 +322,26 @@ func TestFullTunnelTransactionRunnerConnectivityFailureMarksRollbackCompleted(t 
 type fullTunnelRunnerHarness struct {
 	runtimeDir string
 	executor   *recordingTunExecutor
+	plan       planner.TunPlan
 
 	beginErr              error
 	startCoreErr          error
 	saveCoreMetadataErr   error
 	verifyCoreErr         error
+	bindAddressErr        error
 	verifyConnectivityErr error
 	commitErr             error
 
 	coreStarted          int
 	coreStopped          int
+	addressBindCalls     int
 	connectivityVerified int
 	commitCalled         int
 	committedState       xrayState
 
 	onCoreStarted    func()
 	onCoreStopped    func()
+	onAddressBound   func()
 	onNetworkApplied func()
 	onRollback       func()
 }
@@ -278,6 +351,7 @@ func newFullTunnelRunnerHarness(t *testing.T) *fullTunnelRunnerHarness {
 	return &fullTunnelRunnerHarness{
 		runtimeDir: t.TempDir(),
 		executor:   &recordingTunExecutor{},
+		plan:       transactionPlanForTest(),
 	}
 }
 
@@ -286,7 +360,7 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 	return &fullTunnelTransactionRunner{
 		runtimeDir: h.runtimeDir,
 		profile:    profile.Profile{ID: "test-profile", Name: "Test Profile"},
-		plan:       transactionPlanForTest(),
+		plan:       h.plan,
 		corePlan: tunCoreRuntimePlan{
 			RuntimeConfigPath: filepath.Join(h.runtimeDir, generatedDirName, generatedXrayName),
 			Status:            "test TUN core runtime",
@@ -330,6 +404,22 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 		},
 		verifyCoreStarted: func(<-chan struct{}) error {
 			return h.verifyCoreErr
+		},
+		bindTunAddress: func(_ context.Context, plan planner.TunPlan, _ tunPlanExecutor) (planner.TunPlan, error) {
+			if strings.TrimSpace(plan.TunAddress.CIDR) == "" {
+				return plan, nil
+			}
+			h.addressBindCalls++
+			if h.bindAddressErr != nil {
+				return plan, h.bindAddressErr
+			}
+			plan.TunAddress.LinkIndex = 7
+			plan.TunAddress.LinkKind = "tun"
+			plan.TunAddress.AppearedAfterCore = true
+			if h.onAddressBound != nil {
+				h.onAddressBound()
+			}
+			return plan, nil
 		},
 		verifyConnectivity: func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error {
 			h.connectivityVerified++

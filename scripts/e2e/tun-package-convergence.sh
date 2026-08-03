@@ -50,6 +50,7 @@ FOREIGN_DNS_LINK="podlaz-e2e-dns0"
 FOREIGN_DNS_SERVER="192.0.2.53"
 FOREIGN_DNS_DOMAIN="~e2e.invalid"
 FOREIGN_SERVICE="podlaz-e2e-foreign.service"
+FOREIGN_ADDRESS_LINK="podlaz-e2e-address0"
 
 CONNECT_PID=""
 CONNECT_START_TIME=""
@@ -170,6 +171,7 @@ cleanup() {
   local code=$? cleanup_code=0 purge=true
 
   terminate_connect_bounded || cleanup_code=1
+  sudo -n ip link del dev "${FOREIGN_ADDRESS_LINK}" >/dev/null 2>&1 || true
   if [[ "${CONNECT_PROCESS_QUIESCED}" == "true" ]]; then
     clear_hook || cleanup_code=1
     if [[ "${PODLAZ_E2E_KEEP_PACKAGE:-false}" == "true" ]]; then
@@ -359,12 +361,46 @@ verify_package_provenance() {
   rm -rf -- "${extract_dir}" "${version_output}"
 }
 
+verify_tun_scoped_dns_query() {
+  local phase="$1" output
+  output="$(mktemp "${E2E_TMP_ROOT}/${phase}-scoped-dns.XXXXXX")"
+  sudo -n resolvectl --cache=no --interface=podlaz0 -4 query "${PODLAZ_E2E_DNS_CHECK_HOST}" >"${output}" 2>/dev/null || \
+    fail "${phase}: uncached interface-scoped DNS query failed"
+  grep -F -- "-- link: podlaz0" "${output}" >/dev/null || \
+    fail "${phase}: scoped DNS result did not identify podlaz0"
+  rm -f -- "${output}"
+  write_evidence acceptance.txt "scoped_dns_${phase}" pass
+}
+
+run_foreign_address_conflict_probe() {
+  local output network_manifest
+  output="$(mktemp "${E2E_TMP_ROOT}/foreign-address-conflict.XXXXXX")"
+  network_manifest="${E2E_TMP_ROOT}/foreign-address-conflict-network-manifest.json"
+  sudo -n ip link add "${FOREIGN_ADDRESS_LINK}" type dummy
+  sudo -n ip link set dev "${FOREIGN_ADDRESS_LINK}" up
+  sudo -n ip address add "${TUN_PACKAGE_ADDRESS_CIDR}" dev "${FOREIGN_ADDRESS_LINK}"
+  snapshot_tun_network_manifest foreign-address-conflict "${network_manifest}"
+  set +e
+  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${output}" 2>&1
+  local code=$?
+  set -e
+  [[ "${code}" != "0" ]] || fail "foreign-address-conflict: connect unexpectedly succeeded"
+  grep -F "TUN address conflict" "${output}" >/dev/null || \
+    fail "foreign-address-conflict: stable conflict classification was not reported"
+  assert_podlaz_resources_absent foreign-address-conflict "${network_manifest}"
+  sudo -n ip link del dev "${FOREIGN_ADDRESS_LINK}"
+  rm -f -- "${output}"
+  write_evidence acceptance.txt foreign_address_conflict_classification tun_address_conflict
+}
+
 run_inactive_scope_probe() {
   local events tmp network_manifest
   network_manifest="${E2E_TMP_ROOT}/inactive-scope-network-manifest.json"
   configure_hook dns-inactive-scope
   tmp="$(mktemp "${E2E_TMP_ROOT}/inactive-scope-connect.XXXXXX")"
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${tmp}" 2>&1 || fail "Current Scopes: none package connect failed"
+  assert_tun_package_address_present inactive-scope
+  verify_tun_scoped_dns_query inactive-scope
   events="${E2E_ARTIFACT_DIR}/inactive-scope-events.log"
   sudo -n cat "${HOOK_EVENTS}" >"${events}"
   grep -Fx resolved-current-scopes-none "${events}" >/dev/null || fail "inactive-scope production fixture did not run"
@@ -460,6 +496,8 @@ run_missing_link_probe() {
   assert_foreign_state missing-link
 
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "immediate retry connect failed"
+  assert_tun_package_address_present retry
+  verify_tun_scoped_dns_query retry
   snapshot_tun_network_manifest retry "${retry_manifest}"
   run_installed_podlaz disconnect >/dev/null 2>&1 || fail "immediate retry disconnect failed"
   verify_tun_network_manifest_absent retry "${retry_manifest}"
@@ -502,6 +540,7 @@ assert_foreign_state before
 RESOLVED_STATE_BEFORE="$(sudo -n systemctl is-active systemd-resolved)"
 [[ "${RESOLVED_STATE_BEFORE}" == "active" ]] || fail "systemd-resolved is not active"
 
+run_foreign_address_conflict_probe
 run_inactive_scope_probe
 run_missing_link_probe
 check_direct_connectivity

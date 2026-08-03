@@ -20,6 +20,7 @@ func TestResolvedDNSExecutorApplyValidatesInitialRevertProcessOutcome(t *testing
 		wantErr  bool
 	}{
 		{name: "exact exit one", scenario: "missing-exit-1", context: executorBackgroundContext},
+		{name: "Ubuntu exact exit one", scenario: "missing-ubuntu-exit-1", context: executorBackgroundContext},
 		{name: "non-empty stdout", scenario: "missing-stdout", context: executorBackgroundContext, wantErr: true},
 		{name: "same stderr exit two", scenario: "missing-exit-2", context: executorBackgroundContext, wantErr: true},
 		{name: "permission denied", scenario: "permission-denied", context: executorBackgroundContext, wantErr: true},
@@ -48,6 +49,7 @@ func TestResolvedDNSExecutorRollbackValidatesProcessOutcome(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "exact exit one", scenario: "missing-exit-1", context: executorBackgroundContext},
+		{name: "Ubuntu exact exit one", scenario: "missing-ubuntu-exit-1", context: executorBackgroundContext},
 		{name: "non-empty stdout", scenario: "missing-stdout", context: executorBackgroundContext, wantErr: true},
 		{name: "same stderr exit two", scenario: "missing-exit-2", context: executorBackgroundContext, wantErr: true},
 		{name: "permission denied", scenario: "permission-denied", context: executorBackgroundContext, wantErr: true},
@@ -75,6 +77,9 @@ func TestExecutorResolvedSubprocessHelper(t *testing.T) {
 	switch os.Getenv("PODLAZ_EXECUTOR_RESOLVED_SCENARIO") {
 	case "missing-exit-1":
 		writeExecutorResolvedMissingStderr()
+		os.Exit(1)
+	case "missing-ubuntu-exit-1":
+		_, _ = os.Stderr.WriteString(resolvedMissingLinkIgnoringStderr + "\n")
 		os.Exit(1)
 	case "missing-stdout":
 		_, _ = os.Stdout.WriteString("unexpected warning\n")

@@ -91,4 +91,26 @@ func TestStartupScanRefreshWaitHonorsContextDeadline(t *testing.T) {
 	if len(result.Warnings) == 0 || !strings.Contains(result.Warnings[len(result.Warnings)-1].Message, "concurrent recovery scan") {
 		t.Fatalf("timed-out shared refresh must publish an inspection warning: %#v", result.Warnings)
 	}
+	if len(result.Candidates) != 0 {
+		t.Fatalf("timed-out authoritative refresh must not republish stale candidates: %#v", result.Candidates)
+	}
+}
+
+func TestStartupScanRefreshPublishesIncompleteWhenAuthoritativeScanExceedsDeadline(t *testing.T) {
+	state := newStartupScanState(func(ctx context.Context) recovery.PlanResult {
+		<-ctx.Done()
+		return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "dns-link", Target: "podlaz0", Description: "stale result after timeout"}}}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	result := state.Refresh(ctx)
+	if len(result.Candidates) != 0 {
+		t.Fatalf("expired authoritative scan must not publish candidates: %#v", result.Candidates)
+	}
+	if len(result.Warnings) == 0 || !strings.Contains(result.Warnings[0].Message, "authoritative refresh did not complete") {
+		t.Fatalf("expired authoritative scan must publish incomplete evidence: %#v", result.Warnings)
+	}
+	if snapshot := state.Snapshot(); len(snapshot.Candidates) != 0 || len(snapshot.Warnings) == 0 {
+		t.Fatalf("published snapshot must remain incomplete without stale candidates: %#v", snapshot)
+	}
 }

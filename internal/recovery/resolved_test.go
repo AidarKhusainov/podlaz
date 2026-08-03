@@ -134,7 +134,7 @@ func resolvedLinkExists() resolvedRecoveryCommand {
 }
 
 func missingResolvedLink() resolvedRecoveryCommand {
-	return resolvedRecoveryCommand{stderr: "Link podlaz0 does not exist.\n", exitCode: 1, err: errors.New("exit status 1")}
+	return resolvedRecoveryCommand{stderr: "Link podlaz0 does not exist.\n", exitCode: 1, err: resolvedTestExitError{code: 1}}
 }
 
 func missingPodlazLink() resolvedRecoveryCommand {

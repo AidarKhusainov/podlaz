@@ -62,8 +62,11 @@ func TestStartupScanForPublicationPreservesCoalescedTimeoutWarningAndRequestDead
 	if len(scan.Warnings) == 0 || !strings.Contains(scan.Warnings[len(scan.Warnings)-1].Message, "concurrent recovery scan") {
 		t.Fatalf("coalesced refresh warning was not published: %#v", scan.Warnings)
 	}
-	if got := startupScanStatus(scan); got != api.StartupScanStatusStaleIncomplete {
-		t.Fatalf("expected stale incomplete publication, got %q: %#v", got, scan)
+	if got := startupScanStatus(scan); got != api.StartupScanStatusIncomplete {
+		t.Fatalf("expected authoritative incomplete publication without stale candidates, got %q: %#v", got, scan)
+	}
+	if len(scan.Candidates) != 0 {
+		t.Fatalf("timed-out authoritative refresh must not republish stale candidates: %#v", scan.Candidates)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
@@ -29,6 +30,7 @@ const (
 type tunRouteLookupFunc func(context.Context, string, string) error
 type tunTCPProbeFunc func(context.Context, string, uint16) error
 type tunDNSResolveFunc func(context.Context, string) (string, error)
+type tunScopedDNSResolveFunc func(context.Context, planner.TunAddressPlan, string) ([]string, error)
 
 type tunConnectivityProbeConfig struct {
 	RouteHost     string
@@ -41,8 +43,11 @@ type tunConnectivityProbeConfig struct {
 }
 
 var (
+	errSystemResolverFailure = errors.New("system resolver failed")
+
 	lookupTunRouteForProbe       = defaultLookupTunRouteForProbe
 	dialTunProbeTarget           = defaultDialTunProbeTarget
+	resolveTunDNSNameScoped      = defaultResolveTunDNSNameScoped
 	resolveTunDNSName            = defaultResolveTunDNSName
 	diagnosticDomainTokenPattern = regexp.MustCompile(`\b(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:[A-Za-z]{2,63}|test)\b`)
 )
@@ -63,13 +68,25 @@ func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCo
 	}); err != nil {
 		return newTunVerificationError("tcp", fmt.Sprintf("Basic full-tunnel connectivity probe to %s:%d failed", probeHost, probe.TCPPort), err)
 	}
+	if err := validateResolvedLinkReadiness(plan); err != nil {
+		return newTunVerificationError("resolved-link", "The planned TUN link is not ready for functional DNS verification", errors.Join(netexecutor.ErrResolvedLinkNotReady, err))
+	}
+	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
+		_, err := resolveTunDNSNameScoped(probeCtx, plan.TunAddress, probe.DNSName)
+		return err
+	}); err != nil {
+		if errors.Is(err, netexecutor.ErrResolvedLinkNotReady) {
+			return newTunVerificationError("resolved-link", "The planned TUN link is not ready for functional DNS verification", err)
+		}
+		return newTunVerificationError("resolved-link-query", fmt.Sprintf("Uncached DNS query for %s through %s failed", probe.DNSName, plan.TunDevice.Name), errors.Join(netexecutor.ErrResolvedLinkQueryFailure, err))
+	}
 	var resolvedIP string
 	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
 		ip, err := resolveTunDNSName(probeCtx, probe.DNSName)
 		resolvedIP = ip
 		return err
 	}); err != nil {
-		return newTunVerificationError("dns", fmt.Sprintf("DNS through the tunnel did not resolve %s before timeout", probe.DNSName), err)
+		return newTunVerificationError("system-resolver", fmt.Sprintf("The system resolver did not resolve %s through the active TUN path", probe.DNSName), errors.Join(errSystemResolverFailure, err))
 	}
 	if err := runProbe(ctx, probe.RouteTimeout, func(probeCtx context.Context) error {
 		return lookupTunRouteForProbe(probeCtx, resolvedIP, plan.TunDevice.Name)
@@ -145,6 +162,27 @@ func defaultDialTunProbeTarget(ctx context.Context, host string, port uint16) er
 		return err
 	}
 	return conn.Close()
+}
+
+func validateResolvedLinkReadiness(plan planner.TunPlan) error {
+	address := plan.TunAddress
+	if strings.TrimSpace(plan.TunDevice.Name) == "" || strings.TrimSpace(address.Interface) != strings.TrimSpace(plan.TunDevice.Name) {
+		return errors.New("planned TUN address interface does not match the TUN device")
+	}
+	if address.Family != "ipv4" || strings.TrimSpace(address.CIDR) == "" || address.Action != planner.TunAddressActionAssign {
+		return errors.New("planned daemon-owned IPv4 address is absent")
+	}
+	if address.LinkIndex <= 0 || address.LinkKind != "tun" || !address.AppearedAfterCore {
+		return errors.New("Xray-created TUN link identity is incomplete")
+	}
+	if address.Owner != netexecutor.OwnerTunAddress {
+		return errors.New("daemon-owned TUN address ownership is missing")
+	}
+	return nil
+}
+
+func defaultResolveTunDNSNameScoped(ctx context.Context, address planner.TunAddressPlan, name string) ([]string, error) {
+	return (netexecutor.TunDNSReadinessVerifier{Runner: netexecutor.OSRunner{}}).VerifyScoped(ctx, address, name)
 }
 
 func defaultResolveTunDNSName(ctx context.Context, name string) (string, error) {

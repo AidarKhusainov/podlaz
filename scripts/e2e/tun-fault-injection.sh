@@ -307,7 +307,7 @@ capture_failure_evidence() {
 }
 
 run_apply_failure_probe() {
-  local hook_phase="$1" id="$2"
+  local hook_phase="$1" id="$2" classification="$3" injected_event="$4"
   log "TUN apply failure probe: ${hook_phase}"
   configure_tun_hook "${hook_phase}"
   collect_host_snapshot "before-${hook_phase}"
@@ -316,7 +316,8 @@ run_apply_failure_probe() {
   local code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "${hook_phase}: connect unexpectedly succeeded"
-  capture_failure_evidence network-apply network_apply_failure
+  capture_failure_evidence network-apply "${classification}"
+  assert_event_present "${E2E_ARTIFACT_DIR}/network-apply-events.log" "${injected_event}"
   assert_foreign_nft_sentinel "after-${hook_phase}-failure"
   clear_tun_hook
   sudo -n systemctl restart podlazd.service
@@ -455,8 +456,9 @@ create_foreign_nft_sentinel
 assert_foreign_nft_sentinel initial
 
 run_resolved_subprocess_matrix
-run_apply_failure_probe dns-apply "${PROFILE_ID}"
-run_apply_failure_probe route-apply "${PROFILE_ID}"
+run_apply_failure_probe tun-address-apply "${PROFILE_ID}" tun_address_apply_failure tun-address-apply-injected
+run_apply_failure_probe dns-apply "${PROFILE_ID}" network_apply_failure dns-apply-injected
+run_apply_failure_probe route-apply "${PROFILE_ID}" network_apply_failure route-apply-injected
 run_network_verify_probe "${PROFILE_ID}"
 run_inactive_scope_probe "${PROFILE_ID}"
 run_before_commit_probe "${PROFILE_ID}"

@@ -98,13 +98,15 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 
 	rollback := recoveryRollbackMetadata(tx)
 	processResults := e.rollbackChildProcessResults(rollback.ChildProcesses)
+	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
-	results = append(results, processResults...)
 	results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
 	results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
 	results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
 	results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
+	results = append(results, e.rollbackTUNAddressResults(ctx, rollback.TUNAddresses, childAbsenceProven)...)
 	results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
+	results = append(results, processResults...)
 	if hasFailedCleanup(processResults) || hasSkippedCleanup(processResults) {
 		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
 	} else {

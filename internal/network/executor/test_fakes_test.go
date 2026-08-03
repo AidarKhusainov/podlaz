@@ -155,3 +155,30 @@ func containsCommandToken(command []string, want string) bool {
 	}
 	return false
 }
+
+type fakeTunAddress struct {
+	rec *callRecorder
+}
+
+func (f fakeTunAddress) Bind(_ context.Context, plan planner.TunAddressPlan) (planner.TunAddressPlan, error) {
+	f.rec.calls = append(f.rec.calls, "address:bind:"+plan.Interface)
+	plan.LinkIndex = 7
+	plan.LinkKind = "tun"
+	plan.AppearedAfterCore = true
+	return plan, nil
+}
+
+func (f fakeTunAddress) Apply(_ context.Context, plan planner.TunAddressPlan) (Step, error) {
+	f.rec.calls = append(f.rec.calls, "address:apply:"+plan.Interface+":"+plan.CIDR)
+	return Step{Kind: "tun-address", Target: plan.Interface + ":" + plan.CIDR, Owner: OwnerTunAddress}, nil
+}
+
+func (f fakeTunAddress) Verify(_ context.Context, plan planner.TunAddressPlan) error {
+	f.rec.calls = append(f.rec.calls, "address:verify:"+plan.Interface+":"+plan.CIDR)
+	return nil
+}
+
+func (f fakeTunAddress) Rollback(_ context.Context, plan planner.TunAddressPlan) error {
+	f.rec.calls = append(f.rec.calls, "address:rollback:"+plan.Interface+":"+plan.CIDR)
+	return nil
+}

@@ -85,6 +85,9 @@ func (r ExecuteResult) HasFailures() bool {
 }
 
 func (r ExecuteResult) HasIncompleteCleanup() bool {
+	if len(r.Warnings) > 0 {
+		return true
+	}
 	for _, result := range r.Results {
 		if result.Status == "skipped" && (result.Candidate.Kind == "transaction-state" || strings.Contains(result.Message, "transaction state was preserved")) {
 			return true
@@ -192,7 +195,7 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 func (p PlanResult) String() string {
 	var b strings.Builder
 	b.WriteString("podlaz recovery dry-run\n")
-	b.WriteString("Inspection: read-only; uses daemon startup scan when available plus local safe checks. Local permission warnings can differ from daemon-owned --execute cleanup.\n")
+	b.WriteString("Inspection: read-only; uses the authoritative daemon scan when available and local safe checks only as a fallback.\n")
 	switch {
 	case len(p.Candidates) > 0:
 		for _, candidate := range p.Candidates {

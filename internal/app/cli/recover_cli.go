@@ -109,12 +109,11 @@ func runRecover(ctx context.Context, opts options) recovery.PlanResult {
 	if opts.recover != nil {
 		return opts.recover(ctx)
 	}
-	local := recovery.Plan(ctx)
 	startup, ok := daemonStartupRecoverPlan(ctx)
-	if !ok {
-		return local
+	if ok {
+		return startup
 	}
-	return mergeRecoveryPlans(startup, local)
+	return recovery.Plan(ctx)
 }
 
 func daemonStartupRecoverPlan(ctx context.Context) (recovery.PlanResult, bool) {
@@ -141,39 +140,6 @@ func recoveryPlanFromStartupScan(scan api.StartupScanStatus) recovery.PlanResult
 	return recovery.PlanResult{Candidates: candidates, Warnings: warnings}
 }
 
-func mergeRecoveryPlans(plans ...recovery.PlanResult) recovery.PlanResult {
-	var merged recovery.PlanResult
-	seenCandidates := make(map[string]struct{})
-	seenWarnings := make(map[string]struct{})
-	for _, plan := range plans {
-		for _, candidate := range plan.Candidates {
-			key := recoveryCandidateKey(candidate)
-			if _, ok := seenCandidates[key]; ok {
-				continue
-			}
-			seenCandidates[key] = struct{}{}
-			merged.Candidates = append(merged.Candidates, candidate)
-		}
-		for _, warning := range plan.Warnings {
-			key := warning.Target + "\x00" + warning.Message
-			if _, ok := seenWarnings[key]; ok {
-				continue
-			}
-			seenWarnings[key] = struct{}{}
-			merged.Warnings = append(merged.Warnings, warning)
-		}
-	}
-	return merged
-}
-
-func recoveryCandidateKey(candidate recovery.Candidate) string {
-	txID := ""
-	if candidate.Transaction != nil {
-		txID = candidate.Transaction.ID
-	}
-	return candidate.Kind + "\x00" + candidate.Target + "\x00" + txID
-}
-
 func runRecoverExecute(ctx context.Context, opts options) (recovery.ExecuteResult, error) {
 	if opts.recoverExecute != nil {
 		return opts.recoverExecute(ctx)
@@ -186,10 +152,22 @@ func runRecoverExecute(ctx context.Context, opts options) (recovery.ExecuteResul
 }
 
 func recoverPlanJSON(plan recovery.PlanResult) map[string]any {
-	return okJSON(map[string]any{
+	payload := okJSON(map[string]any{
 		"mode":     "dry-run",
 		"recovery": redactedRecoveryPlan(plan),
 	})
+	var warnings []string
+	if len(plan.Candidates) > 0 {
+		warnings = append(warnings, "recovery candidates require cleanup")
+	}
+	if len(plan.Warnings) > 0 {
+		warnings = append(warnings, "recovery inspection is incomplete")
+	}
+	if len(warnings) > 0 {
+		payload["status"] = "warn"
+		payload["warnings"] = warnings
+	}
+	return payload
 }
 
 func recoverExecuteJSON(result recovery.ExecuteResult) map[string]any {

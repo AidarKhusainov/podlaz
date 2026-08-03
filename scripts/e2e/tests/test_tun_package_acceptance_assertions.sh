@@ -31,6 +31,39 @@ run_manifest_status_mapping() (
   [[ "${status}" == "2" ]] || fail_test "manifest inspection error returned ${status}"
 )
 
+run_tun_address_status_mapping() (
+  sudo() { printf '7: podlaz0    inet 198.18.0.1/32 scope global podlaz0\n'; return 0; }
+  if inspect_tun_package_address_state podlaz0 198.18.0.1/32; then
+    fail_test "exact daemon-owned TUN address was treated as absent"
+  else
+    status=$?
+  fi
+  [[ "${status}" == "1" ]] || fail_test "exact TUN address returned ${status}"
+
+  sudo() { return 0; }
+  inspect_tun_package_address_state podlaz0 198.18.0.1/32 || fail_test "empty TUN address inventory was not absent"
+
+  sudo() { printf '7: podlaz0    inet 198.18.0.2/32 scope global podlaz0\n'; return 0; }
+  if inspect_tun_package_address_state podlaz0 198.18.0.1/32; then
+    fail_test "foreign TUN address was treated as absent"
+  else
+    status=$?
+  fi
+  [[ "${status}" == "2" ]] || fail_test "foreign TUN address returned ${status}"
+
+  sudo() { return 2; }
+  inspect_link_state() { return 0; }
+  inspect_tun_package_address_state podlaz0 198.18.0.1/32 || fail_test "missing link was not converged address absence"
+
+  inspect_link_state() { return 1; }
+  if inspect_tun_package_address_state podlaz0 198.18.0.1/32; then
+    fail_test "address inspection error on an existing link was treated as absent"
+  else
+    status=$?
+  fi
+  [[ "${status}" == "2" ]] || fail_test "address inspection error returned ${status}"
+)
+
 run_xray_status_mapping() (
   sudo() { return 1; }
   inspect_tun_package_xray_state || fail_test "pgrep no-match was not absence"
@@ -54,6 +87,7 @@ run_xray_status_mapping() (
 
 install_clean_baseline() {
   inspect_exact_network_manifest_state() { return 0; }
+  inspect_tun_package_address_state() { return 0; }
   inspect_link_state() { return 0; }
   inspect_resolved_link_state() { return 0; }
   inspect_nft_table_state() { return 0; }
@@ -66,6 +100,7 @@ run_resource_inspection_failure_case() (
   install_clean_baseline
   case "${inspector}" in
     network) inspect_exact_network_manifest_state() { return 2; } ;;
+    address) inspect_tun_package_address_state() { return 2; } ;;
     link) inspect_link_state() { return 2; } ;;
     resolved) inspect_resolved_link_state() { return 2; } ;;
     nftables) inspect_nft_table_state() { return 2; } ;;
@@ -80,12 +115,13 @@ run_resource_inspection_failure_case() (
 )
 
 run_manifest_status_mapping
+run_tun_address_status_mapping
 run_xray_status_mapping
 
 install_clean_baseline
 verify_tun_package_resources_absent clean helper manifest || fail_test "clean resource state failed"
 
-for inspector in network link resolved nftables xray generated transactions; do
+for inspector in network address link resolved nftables xray generated transactions; do
   run_resource_inspection_failure_case "${inspector}"
 done
 

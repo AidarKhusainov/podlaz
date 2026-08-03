@@ -6,6 +6,7 @@ source "${TUN_PACKAGE_ASSERTIONS_DIR}/host_state.sh"
 
 : "${TUN_PACKAGE_GENERATED_DIR:=/run/podlaz/generated}"
 : "${TUN_PACKAGE_TRANSACTION_DIR:=/run/podlaz/transactions}"
+: "${TUN_PACKAGE_ADDRESS_CIDR:=198.18.0.1/32}"
 
 _tun_package_capture_status() {
   local -n result_ref="$1"
@@ -44,6 +45,48 @@ inspect_exact_network_manifest_state() {
   esac
 }
 
+inspect_tun_package_address_state() {
+  local interface="$1" cidr="$2" output status line family address
+  local exact_count=0 ipv4_count=0
+  if output="$(sudo -n ip -4 -o address show dev "${interface}" 2>/dev/null)"; then
+    :
+  else
+    status=$?
+    if inspect_link_state "${interface}"; then
+      return "${HOST_STATE_ABSENT}"
+    else
+      status=$?
+    fi
+    [[ "${status}" == "${HOST_STATE_PRESENT}" ]] && return "${HOST_STATE_ERROR}"
+    return "${HOST_STATE_ERROR}"
+  fi
+  while IFS= read -r line; do
+    [[ -n "${line//[[:space:]]/}" ]] || continue
+    read -r _ _ family address _ <<<"${line}"
+    [[ "${family}" == "inet" && -n "${address}" ]] || return "${HOST_STATE_ERROR}"
+    ipv4_count=$((ipv4_count + 1))
+    [[ "${address}" == "${cidr}" ]] && exact_count=$((exact_count + 1))
+  done <<<"${output}"
+  if [[ "${ipv4_count}" == "0" ]]; then
+    return "${HOST_STATE_ABSENT}"
+  fi
+  if [[ "${ipv4_count}" == "1" && "${exact_count}" == "1" ]]; then
+    return "${HOST_STATE_PRESENT}"
+  fi
+  return "${HOST_STATE_ERROR}"
+}
+
+assert_tun_package_address_present() {
+  local phase="$1" interface="${2:-podlaz0}" cidr="${3:-${TUN_PACKAGE_ADDRESS_CIDR}}" status
+  _tun_package_capture_status status inspect_tun_package_address_state "${interface}" "${cidr}"
+  case "${status}" in
+    "${HOST_STATE_PRESENT}") return 0 ;;
+    "${HOST_STATE_ABSENT}") printf 'ERROR: %s: exact TUN address %s is absent from %s\n' "${phase}" "${cidr}" "${interface}" >&2 ;;
+    *) printf 'ERROR: %s: TUN address inventory for %s is conflicting or unavailable\n' "${phase}" "${interface}" >&2 ;;
+  esac
+  return 1
+}
+
 inspect_tun_package_xray_state() {
   local output status pid
   if output="$(sudo -n pgrep -f '^/usr/lib/podlaz/xray([[:space:]]|$).*\/run\/podlaz\/generated\/' 2>/dev/null)"; then
@@ -74,6 +117,7 @@ verify_tun_package_network_absent() {
 verify_tun_package_resources_absent() {
   local phase="$1" helper="$2" manifest="$3" status=0
   verify_tun_package_network_absent "${phase}" "${helper}" "${manifest}" || status=1
+  _tun_package_assert_absent_state "${phase}" "daemon-owned TUN address" inspect_tun_package_address_state podlaz0 "${TUN_PACKAGE_ADDRESS_CIDR}" || status=1
   _tun_package_assert_absent_state "${phase}" "podlaz0" inspect_link_state podlaz0 || status=1
   _tun_package_assert_absent_state \
     "${phase}" \

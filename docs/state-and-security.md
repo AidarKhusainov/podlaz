@@ -53,23 +53,46 @@ Packaged daemon access has two local socket boundaries. The filesystem socket is
 
 TUN mode may touch only podlaz-owned networking state around the Xray-owned TUN link:
 
+- the exact daemon-owned IPv4 address `198.18.0.1/32` on the transaction-bound
+  Xray-created `podlaz0` link;
 - podlaz-owned routes and policy rules;
 - podlaz-owned DNS link state;
 - podlaz-owned nftables/firewall table, chains, and rules.
 
-Xray owns `podlaz0` packet ingestion through the native `tun` inbound. `podlazd` may verify that `podlaz0` exists before applying host networking, but it must not record Xray-created `podlaz0` as a podlaz-owned TUN device rollback target. Stopping Xray is the release mechanism for the Xray-owned TUN link.
+Xray owns `podlaz0` creation, lifetime, and packet ingestion through the native
+`tun` inbound. `podlazd` may configure only the exact link that appeared after
+the tracked Xray child started and whose name, ifindex, and TUN type still match
+the durable transaction identity. It must not recreate the link or record it as
+a podlaz-owned TUN device rollback target. podlazd owns only
+`198.18.0.1/32` on that link. Stopping Xray is the release mechanism for the
+Xray-owned link.
 
-Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. If the daemon stops inside the apply crash window before an applied category is persisted, recovery may reconstruct only missing entries in reserved podlaz namespaces from the durable structured `desired_plan`: routing table `51820`, policy priority `10000`, DNS link `podlaz0`, and nftables table `inet podlaz`. Desired-only main-table server bypass state must be inspected but never deleted by assumption; a present route or rule without durable applied ownership evidence keeps the transaction blocked for explicit inspection. Ambiguous host state must be skipped, not guessed.
+Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. If the daemon stops in the unavoidable interval between one successful host syscall and persistence of that same step, recovery may reconstruct only missing entries in reserved podlaz namespaces from the durable structured `desired_plan`: routing table `51820`, policy priority `10000`, DNS link `podlaz0`, and nftables table `inet podlaz`. Desired-only main-table server bypass state must be inspected but never deleted by assumption; a present route or rule without durable applied ownership evidence keeps the transaction blocked for explicit inspection. Ambiguous host state must be skipped, not guessed.
 
-A low-level composition executor must not perform hidden cleanup after a child apply method reports that it mutated state. It returns the partial non-zero applied step together with the error. The transaction boundary persists that ownership and controls rollback timing: direct helpers perform one immediate bounded fail-safe rollback, while the production lifecycle persists diagnostics before invoking rollback. A zero step means no owned mutation was recorded and is not added to the rollback plan.
+A low-level composition executor must not perform hidden cleanup after a child apply method reports that it mutated state. It returns the partial non-zero applied step together with the error and reports that step to the persistence sink before returning the error. The transaction boundary persists that ownership and controls rollback timing: direct helpers perform one immediate bounded fail-safe rollback, while the production lifecycle persists diagnostics before invoking rollback. A zero step means no owned mutation was recorded and is not added to the rollback plan. An owner or target that does not exactly match the validated plan is rejected and never grants cleanup authority.
 
-For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification checks the target link, planned DNS servers, `~.`, `+DefaultRoute`, and absence of a foreign active `~.` owner. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are ambiguous and fail closed.
+Before transaction mutation, authoritative daemon inspection rejects any host
+address or route that contains or overlaps `198.18.0.1/32`, and rejects foreign
+or ambiguous `podlaz0` address state. The deterministic policy does not probe a
+second candidate. Address apply uses explicit argv, persists partial ownership
+immediately after mutation, and verifies one exact global IPv4 address on the
+same UP link identity. Rollback removes only that exact address after identity
+revalidation; inspection failure is not absence.
+
+For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification checks the target link, planned DNS servers, `~.`, `+DefaultRoute`, and absence of a foreign active `~.` owner. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are
+ambiguous and fail closed. Static configuration is not DNS readiness. Before
+commit the daemon revalidates the exact address/link, performs an uncached IPv4
+query bound to `podlaz0`, requires the result to identify that link, performs a
+separate normal system resolution, and proves that at least one returned IPv4
+address routes through the planned TUN path.
 
 For native Xray TUN startup, durable rollback order is:
 
-1. roll back podlaz-owned nftables, DNS, routes, and policy rules;
-2. stop the Xray child process;
-3. verify or surface stale `podlaz0` state through recovery/status diagnostics.
+1. roll back podlaz-owned nftables and systemd-resolved state;
+2. roll back exact policy rules and routes;
+3. remove the exact daemon-owned TUN address after link-identity revalidation;
+4. stop the transaction-owned Xray child process;
+5. finalize generated config and transaction state, then refresh recovery/status publication.
 
 Rollback is complete only after both host-state rollback and supervised Xray
 process quiescence succeed. The transaction stop performs one bounded wait after
@@ -174,7 +197,10 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty raw stdout, and the supported `No such device` raw stderr followed by exactly one `LF` or one `CRLF`. Unterminated stderr, embedded or additional line endings, caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup, persisted transaction DNS rollback, and the installed-package acceptance gate; trimming is permitted only for human-readable error rendering.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
 - The daemon recovery scan is refreshed after every connect attempt, after
-  disconnect, and after recovery execution, including failed operations. The
+  disconnect, and after recovery execution, including failed operations. A
+  successful newer daemon scan is authoritative and replaces older candidates;
+  a timeout or failed refresh publishes incomplete/unknown evidence and never a
+  stale union or top-level success. The
   stored scan remains the raw scanner result; active-session filtering never
   overwrites it.
 - A successful rollback or recovery may retain terminal transaction history, but

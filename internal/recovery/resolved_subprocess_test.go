@@ -23,6 +23,7 @@ func TestResolvedMissingDeviceRecoveryValidatesRealProcessOutcome(t *testing.T) 
 		wantStatus string
 	}{
 		{name: "exact exit one", scenario: "missing-exit-1", context: backgroundTestContext, wantStatus: "recovered"},
+		{name: "Ubuntu exact exit one", scenario: "missing-ubuntu-exit-1", context: backgroundTestContext, wantStatus: "recovered"},
 		{name: "non-empty stdout", scenario: "missing-stdout-exit-1", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "same stderr exit two", scenario: "missing-exit-2", context: backgroundTestContext, wantStatus: "failed"},
 		{name: "unrelated exit one", scenario: "unrelated-exit-1", context: backgroundTestContext, wantStatus: "failed"},
@@ -64,6 +65,7 @@ func TestTransactionDNSRollbackValidatesRealProcessOutcome(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "exact exit one", scenario: "missing-exit-1", context: backgroundTestContext},
+		{name: "Ubuntu exact exit one", scenario: "missing-ubuntu-exit-1", context: backgroundTestContext},
 		{name: "non-empty stdout", scenario: "missing-stdout-exit-1", context: backgroundTestContext, wantErr: true},
 		{name: "same stderr exit two", scenario: "missing-exit-2", context: backgroundTestContext, wantErr: true},
 		{name: "unrelated exit one", scenario: "unrelated-exit-1", context: backgroundTestContext, wantErr: true},
@@ -90,6 +92,29 @@ func TestTransactionDNSRollbackValidatesRealProcessOutcome(t *testing.T) {
 	}
 }
 
+func TestResolvedStatusMissingRequiresValidProcessEnvelope(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		scenario string
+		context  func(*testing.T) context.Context
+		want     bool
+	}{
+		{name: "Ubuntu exact exit one", scenario: "missing-ubuntu-exit-1", context: backgroundTestContext, want: true},
+		{name: "timeout", scenario: "missing-sleep", context: timeoutTestContext},
+		{name: "signal", scenario: "missing-signal", context: backgroundTestContext},
+		{name: "launch error", scenario: "launch-error", context: backgroundTestContext},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := newResolvedSubprocessRunner(t, tc.scenario)
+			ctx := tc.context(t)
+			result, err := runner.Run(ctx, "resolvectl", "status", managedInterface, "--no-pager")
+			if got := resolvedStatusResourceMissing(ctx, result, err); got != tc.want {
+				t.Fatalf("unexpected missing classification: got %t want %t result=%#v err=%v", got, tc.want, result, err)
+			}
+		})
+	}
+}
+
 func TestResolvedSubprocessHelper(t *testing.T) {
 	if os.Getenv("PODLAZ_RESOLVED_HELPER") != "1" {
 		return
@@ -102,6 +127,9 @@ func TestResolvedSubprocessHelper(t *testing.T) {
 	switch os.Getenv("PODLAZ_RESOLVED_SCENARIO") {
 	case "missing-exit-1":
 		writeResolvedMissingStderr()
+		os.Exit(1)
+	case "missing-ubuntu-exit-1":
+		_, _ = os.Stderr.WriteString(resolvedMissingDeviceIgnoringStderr + "\n")
 		os.Exit(1)
 	case "missing-stdout-exit-1":
 		_, _ = os.Stdout.WriteString("unexpected warning\n")

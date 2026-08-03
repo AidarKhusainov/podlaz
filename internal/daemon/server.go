@@ -141,7 +141,9 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		response := daemonRecover(r.Context(), runtimeDir)
-		refreshStartupScan(context.WithoutCancel(r.Context()))
+		refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
+		refreshStartupScan(refreshCtx)
+		cancel()
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})

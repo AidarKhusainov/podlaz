@@ -17,6 +17,7 @@ func renderTunPlanVerbose(w io.Writer, p planner.TunPlan) {
 	fmt.Fprintf(w, "Profile: %s\nProfile ID: %s\nMode: %s\n", render.Redact(p.ProfileName), render.Redact(p.ProfileID), p.TunnelMode)
 	fmt.Fprintln(w, "Read-only: will not create TUN devices, change routes, change policy rules, change DNS, change nftables, start Xray, or write runtime config.")
 	fmt.Fprintf(w, "TUN: %s %s (MTU %d)\n", render.Redact(p.TunDevice.Action), render.Redact(p.TunDevice.Name), p.TunDevice.MTU)
+	fmt.Fprintf(w, "TUN address: %s %s dev %s owner=%s rollback=%s\n", render.Redact(p.TunAddress.Action), render.Redact(p.TunAddress.CIDR), render.Redact(p.TunAddress.Interface), render.Redact(p.TunAddress.Owner), render.Redact(p.TunAddress.RollbackKey))
 	fmt.Fprintf(w, "Routing table: %s (%d)\n", planner.TunRoutingTable, planner.TunRoutingTableID)
 	fmt.Fprintln(w, "Default traffic: route through podlaz table")
 	fmt.Fprintf(w, "VPN server bypass: %s\n", routePlanLine(p.ServerBypass))

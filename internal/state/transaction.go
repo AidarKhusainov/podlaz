@@ -62,19 +62,31 @@ type SnapshotMetadata struct {
 }
 
 type DesiredPlan struct {
-	PlanID string          `json:"plan_id,omitempty"`
-	TUN    TUNDesiredState `json:"tun,omitempty"`
-	Routes []RoutePlan     `json:"routes,omitempty"`
-	DNS    DNSPlan         `json:"dns,omitempty"`
-	NFT    NFTPlan         `json:"nftables,omitempty"`
-	Core   CorePlan        `json:"core,omitempty"`
-	Steps  []PlannedStep   `json:"steps,omitempty"`
+	PlanID     string                 `json:"plan_id,omitempty"`
+	TUN        TUNDesiredState        `json:"tun,omitempty"`
+	TUNAddress TUNAddressDesiredState `json:"tun_address,omitempty"`
+	Routes     []RoutePlan            `json:"routes,omitempty"`
+	DNS        DNSPlan                `json:"dns,omitempty"`
+	NFT        NFTPlan                `json:"nftables,omitempty"`
+	Core       CorePlan               `json:"core,omitempty"`
+	Steps      []PlannedStep          `json:"steps,omitempty"`
 }
 
 type TUNDesiredState struct {
 	InterfaceName string `json:"interface_name,omitempty"`
 	MTU           int    `json:"mtu,omitempty"`
 	Owner         string `json:"owner,omitempty"`
+}
+
+type TUNAddressDesiredState struct {
+	Family            string `json:"family,omitempty"`
+	InterfaceName     string `json:"interface_name,omitempty"`
+	CIDR              string `json:"cidr,omitempty"`
+	Scope             string `json:"scope,omitempty"`
+	LinkIndex         int    `json:"link_index,omitempty"`
+	LinkKind          string `json:"link_kind,omitempty"`
+	AppearedAfterCore bool   `json:"appeared_after_core,omitempty"`
+	Owner             string `json:"owner,omitempty"`
 }
 
 type RoutePlan struct {
@@ -136,6 +148,7 @@ type AppliedStep struct {
 
 type RollbackMetadata struct {
 	TUN              []TUNRollback             `json:"tun,omitempty"`
+	TUNAddresses     []TUNAddressRollback      `json:"tun_addresses,omitempty"`
 	Routes           []RouteRollback           `json:"routes,omitempty"`
 	PolicyRules      []PolicyRuleRollback      `json:"policy_rules,omitempty"`
 	DNS              []DNSRollback             `json:"dns,omitempty"`
@@ -147,6 +160,17 @@ type RollbackMetadata struct {
 type TUNRollback struct {
 	InterfaceName string `json:"interface_name"`
 	Owner         string `json:"owner,omitempty"`
+}
+
+type TUNAddressRollback struct {
+	Family            string `json:"family,omitempty"`
+	InterfaceName     string `json:"interface_name"`
+	CIDR              string `json:"cidr"`
+	Scope             string `json:"scope,omitempty"`
+	LinkIndex         int    `json:"link_index"`
+	LinkKind          string `json:"link_kind"`
+	AppearedAfterCore bool   `json:"appeared_after_core,omitempty"`
+	Owner             string `json:"owner,omitempty"`
 }
 
 type RouteRollback struct {
@@ -496,7 +520,7 @@ func (tx Transaction) RequiresCleanup() bool {
 }
 
 func (m RollbackMetadata) Available() bool {
-	return len(m.TUN) > 0 || len(m.Routes) > 0 || len(m.PolicyRules) > 0 || len(m.DNS) > 0 || len(m.NFTables) > 0 || len(m.GeneratedConfigs) > 0 || len(m.ChildProcesses) > 0
+	return len(m.TUN) > 0 || len(m.TUNAddresses) > 0 || len(m.Routes) > 0 || len(m.PolicyRules) > 0 || len(m.DNS) > 0 || len(m.NFTables) > 0 || len(m.GeneratedConfigs) > 0 || len(m.ChildProcesses) > 0
 }
 
 func (s TransactionSummary) StatusLine() string {

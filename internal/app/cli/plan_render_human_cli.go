@@ -39,6 +39,7 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "What will happen")
 	renderPlanAction(w, marks.OK, "Create TUN interface", fmt.Sprintf("%s, MTU %d", p.TunDevice.Name, p.TunDevice.MTU))
+	renderTunAddressSummary(w, marks, p.TunAddress)
 	renderPlanAction(w, marks.OK, "Route traffic through VPN", "default IPv4 route via podlaz table")
 	renderServerBypassSummary(w, marks, p.ServerBypass)
 	renderDNSSummary(w, marks, p.DNS)
@@ -100,6 +101,17 @@ func renderServerBypassSummary(w io.Writer, marks humanStatusMarks, p planner.Tu
 	renderPlanAction(w, marks.Blocked, "Keep VPN server reachable", "blocked: "+humanPlanDetail(p.Reason))
 }
 
+func renderTunAddressSummary(w io.Writer, marks humanStatusMarks, p planner.TunAddressPlan) {
+	switch p.Action {
+	case planner.TunAddressActionAssign:
+		renderPlanAction(w, marks.OK, "Assign TUN IPv4 address", fmt.Sprintf("%s on %s", p.CIDR, p.Interface))
+	case planner.TunAddressActionDaemonRecheck:
+		renderPlanAction(w, marks.Warn, "Assign TUN IPv4 address", "daemon re-check required: "+humanPlanDetail(p.Reason))
+	default:
+		renderPlanAction(w, marks.Blocked, "Assign TUN IPv4 address", "blocked: "+humanPlanDetail(p.Reason))
+	}
+}
+
 func renderDNSSummary(w io.Writer, marks humanStatusMarks, p planner.TunDNSPlan) {
 	if p.Action == planner.DNSActionConfigure {
 		renderPlanAction(w, marks.OK, "Configure DNS", fmt.Sprintf("systemd-resolved, %s", strings.Join(p.Servers, ", ")))
@@ -135,6 +147,9 @@ func tunPlanHumanStatus(blockers, localDryRunLimitations, warnings []string) str
 
 func tunPlanBlockers(p planner.TunPlan) []string {
 	var blockers []string
+	if p.TunAddress.Action == planner.TunAddressActionBlocked {
+		blockers = append(blockers, "TUN address cannot be assigned: "+humanPlanDetail(p.TunAddress.Reason))
+	}
 	if p.ServerBypass.Action != "" && p.ServerBypass.Action != "add" {
 		blockers = append(blockers, "VPN server bypass cannot be prepared yet: "+humanPlanDetail(p.ServerBypass.Reason))
 	}
@@ -148,10 +163,14 @@ func tunPlanBlockers(p planner.TunPlan) []string {
 }
 
 func tunPlanLocalDryRunLimitations(p planner.TunPlan) []string {
-	if tunPlanFirewallBlockedForLocalDryRun(p.Firewall) {
-		return []string{"Kill switch could not be fully planned in this local dry-run: " + humanPlanDetail(p.Firewall.Reason)}
+	var limitations []string
+	if p.TunAddress.Action == planner.TunAddressActionDaemonRecheck {
+		limitations = append(limitations, "TUN address collision inspection requires the privileged daemon: "+humanPlanDetail(p.TunAddress.Reason))
 	}
-	return nil
+	if tunPlanFirewallBlockedForLocalDryRun(p.Firewall) {
+		limitations = append(limitations, "Kill switch could not be fully planned in this local dry-run: "+humanPlanDetail(p.Firewall.Reason))
+	}
+	return limitations
 }
 
 func tunPlanFirewallBlockedForLocalDryRun(p planner.TunFirewallPlan) bool {

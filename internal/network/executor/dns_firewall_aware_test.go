@@ -113,3 +113,60 @@ func (f fakeFirewall) Rollback(_ context.Context, plan planner.TunFirewallPlan) 
 	f.rec.calls = append(f.rec.calls, "firewall:rollback:"+plan.Family+" "+plan.Table)
 	return nil
 }
+
+func TestDNSAwareTunExecutorApplyWithStepSinkPersistsDNSBeforeFirewall(t *testing.T) {
+	recorder := &callRecorder{}
+	exec := DNSAwareTunExecutor{
+		Base:     TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder}, PolicyRules: fakeRules{rec: recorder}},
+		DNS:      fakeDNS{rec: recorder},
+		Firewall: fakeFirewall{rec: recorder},
+	}
+	plan := executorPlanForTest()
+	plan.DNS = dnsPlanForTest()
+	plan.Firewall = firewallPlanForTest()
+
+	_, err := exec.ApplyWithStepSink(context.Background(), plan, func(step Step) error {
+		recorder.calls = append(recorder.calls, "persist:"+step.Kind)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("apply DNS-aware plan with sink: %v", err)
+	}
+
+	wantTail := []string{
+		"dns:apply:podlaz0",
+		"persist:dns",
+		"firewall:apply:inet podlaz",
+		"persist:nftables",
+	}
+	if got := recorder.calls[len(recorder.calls)-len(wantTail):]; !reflect.DeepEqual(got, wantTail) {
+		t.Fatalf("DNS ownership must be durable before firewall mutation:\nwant %#v\n got %#v", wantTail, got)
+	}
+}
+
+func TestDNSAwareTunExecutorApplyWithStepSinkPersistsPartialDNSOwnershipBeforeReturningError(t *testing.T) {
+	recorder := &callRecorder{}
+	exec := DNSAwareTunExecutor{
+		Base:     TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder}, PolicyRules: fakeRules{rec: recorder}},
+		DNS:      fakeDNS{rec: recorder, applyErr: errors.New("resolved failure"), returnStepOnError: true},
+		Firewall: fakeFirewall{rec: recorder},
+	}
+	plan := executorPlanForTest()
+	plan.DNS = dnsPlanForTest()
+	plan.Firewall = firewallPlanForTest()
+
+	steps, err := exec.ApplyWithStepSink(context.Background(), plan, func(step Step) error {
+		recorder.calls = append(recorder.calls, "persist:"+step.Kind)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected DNS apply failure")
+	}
+	if len(steps) == 0 || steps[len(steps)-1].Kind != "dns" {
+		t.Fatalf("partial DNS mutation must remain rollbackable, got %#v", steps)
+	}
+	wantTail := []string{"dns:apply:podlaz0", "persist:dns"}
+	if got := recorder.calls[len(recorder.calls)-len(wantTail):]; !reflect.DeepEqual(got, wantTail) {
+		t.Fatalf("partial DNS ownership must be persisted before returning error:\nwant %#v\n got %#v", wantTail, got)
+	}
+}

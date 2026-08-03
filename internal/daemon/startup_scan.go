@@ -48,12 +48,7 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 		case <-done:
 			return s.Snapshot()
 		case <-ctx.Done():
-			scan := s.Snapshot()
-			scan.Warnings = append(scan.Warnings, recovery.Warning{
-				Target:  "recovery scan",
-				Message: "wait for concurrent recovery scan: " + ctx.Err().Error(),
-			})
-			return scan
+			return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
 		}
 	}
 	done := make(chan struct{})
@@ -62,10 +57,17 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 	defer s.finishRefresh(done)
 
 	scan := cloneRecoveryPlan(s.scanFn(ctx))
+	if err := ctx.Err(); err != nil {
+		scan = incompleteStartupScan("authoritative refresh did not complete: " + err.Error())
+	}
 	s.mu.Lock()
 	s.scan = cloneRecoveryPlan(scan)
 	s.mu.Unlock()
 	return scan
+}
+
+func incompleteStartupScan(message string) recovery.PlanResult {
+	return recovery.PlanResult{Warnings: []recovery.Warning{{Target: "recovery scan", Message: message}}}
 }
 
 func (s *startupScanState) finishRefresh(done chan struct{}) {
