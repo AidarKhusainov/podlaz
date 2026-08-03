@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/lib/connect_lifecycle.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
-require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep ip journalctl mktemp nft pgrep python3 readlink resolvectl sed sha256sum sleep sudo systemctl systemd-run timeout tr
+require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep ip journalctl mktemp nft pgrep python3 readlink resolvectl runuser sed sha256sum sleep sudo systemctl systemd-run timeout tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -119,7 +119,7 @@ wait_for_daemon_socket() {
 }
 
 run_installed_podlaz() {
-  sudo -n -u "$(id -un)" -g podlaz env \
+  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
     XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
     XDG_STATE_HOME="${XDG_STATE_HOME}" \
     XDG_CACHE_HOME="${XDG_CACHE_HOME}" \

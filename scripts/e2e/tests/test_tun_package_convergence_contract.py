@@ -13,6 +13,14 @@ class TunPackageConvergenceContractTests(unittest.TestCase):
         end = text.index(next_marker, start)
         return text[start:end]
 
+    def test_installed_cli_runs_unprivileged_with_podlaz_socket_group(self) -> None:
+        text = SCRIPT.read_text(encoding="utf-8")
+        body = self.function_body("run_installed_podlaz", "\n}\n\ncapture_secret_import")
+        require_line = next(line for line in text.splitlines() if line.startswith("require_cmd "))
+        self.assertIn("runuser", require_line.split())
+        self.assertIn('sudo -n runuser -u "$(id -un)" -g podlaz -- env', body)
+        self.assertNotIn('sudo -n -u "$(id -un)" -g podlaz env', body)
+
     def test_missing_link_snapshots_before_release_and_verifies_after_rollback(self) -> None:
         body = self.function_body("run_missing_link_probe", "\n}\n\nsetup_isolated_xdg")
         snapshot = body.index("snapshot_tun_network_manifest")
