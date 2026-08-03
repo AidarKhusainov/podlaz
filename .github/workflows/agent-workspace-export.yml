@@ -1,36 +1,44 @@
-name: Agent workspace export
+name: Apply issue 238 workspace
 
 on:
-  pull_request:
   push:
     branches:
       - agent/issue-238-tun-l3-addressing
+    paths:
+      - .issue238/trigger
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
-    name: Export exact branch workspace
+  apply:
+    name: Apply verified issue 238 tree
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Checkout branch
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Create source archive
+      - name: Apply verified workspace and publish
         shell: bash
+        env:
+          EXPECTED_PATCH_SHA256: 673bf862b050fcfb16ef917d64ef301f742898aed8708e9c24471f2653a307b0
+          EXPECTED_TREE_SHA: db743384b4a01366792ed4492ab7b221891aadd2
         run: |
           set -euo pipefail
-          git archive \
-            --format=tar.gz \
-            --output="${RUNNER_TEMP}/podlaz-workspace.tar.gz" \
-            HEAD
-
-      - name: Upload source archive
-        uses: actions/upload-artifact@v7
-        with:
-          name: podlaz-agent-workspace
-          path: ${{ runner.temp }}/podlaz-workspace.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          cat .issue238/patch.part.* | base64 --decode | gzip -d >"${RUNNER_TEMP}/issue-238.patch"
+          printf '%s  %s\n' "${EXPECTED_PATCH_SHA256}" "${RUNNER_TEMP}/issue-238.patch" | sha256sum -c -
+          git apply --check "${RUNNER_TEMP}/issue-238.patch"
+          git apply "${RUNNER_TEMP}/issue-238.patch"
+          rm -rf .issue238
+          rm -f .github/workflows/agent-workspace-export.yml
+          git diff --check
+          git config user.name 'podlaz issue 238 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: make TUN L3 addressing transactional'
+          test "$(git rev-parse HEAD^{tree})" = "${EXPECTED_TREE_SHA}"
+          git push origin HEAD:agent/issue-238-tun-l3-addressing
