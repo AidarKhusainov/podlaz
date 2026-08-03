@@ -1,6 +1,7 @@
 name: Agent workspace export
 
 on:
+  pull_request:
   push:
     branches:
       - agent/issue-238-tun-l3-addressing
