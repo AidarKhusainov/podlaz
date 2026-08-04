@@ -118,7 +118,7 @@ func FakeDesktopWithoutOptionalTools() Snapshot {
 
 func FakeDesktopWithStalepodlazResources() Snapshot {
 	s := FakeResolvedDesktop()
-	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}}
+	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500", Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun"}}
 	s.Nftables.PodlazTable = Finding{Status: StatusDetected, Summary: "podlaz nftables table exists"}
 	s.StaleResources = []StaleResource{{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}, {Kind: "nftables-table", Name: DefaultNFTFamily + " " + DefaultNFTTable, Status: StatusDetected}}
 	return s
