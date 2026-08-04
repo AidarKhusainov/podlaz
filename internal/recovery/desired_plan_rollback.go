@@ -103,7 +103,7 @@ func rollbackAppliedProofMismatches(applied []txstate.AppliedStep, rollback txst
 		if appliedStepCounterConsume(proofs, kind, target, owner) {
 			return
 		}
-		reasons = append(reasons, fmt.Sprintf("rollback tuple lacks exact applied proof kind=%s target=%s", kind, target))
+		reasons = append(reasons, fmt.Sprintf("rollback tuple lacks exact applied proof kind=%s", kind))
 	}
 	for _, item := range rollback.TUN {
 		consume("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
