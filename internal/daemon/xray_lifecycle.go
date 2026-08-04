@@ -15,6 +15,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -168,7 +169,13 @@ func (m *XrayManager) disconnectActiveTun(ctx context.Context, transactionID str
 	if err != nil {
 		return api.LifecycleResponse{}, fmt.Errorf("load active TUN transaction %s: %w", transactionID, err)
 	}
-	plan := tunPlanFromTransaction(tx)
+	projection := recovery.ProjectRollbackMetadata(tx)
+	if projection.Incomplete {
+		return api.LifecycleResponse{}, fmt.Errorf("TUN rollback authority incomplete: %s", strings.Join(projection.Reasons, "; "))
+	}
+	projectedTx := tx
+	projectedTx.Rollback = projection.Rollback
+	plan := tunPlanFromTransaction(projectedTx)
 	if err := beginTunRollback(store, &tx); err != nil {
 		return api.LifecycleResponse{}, err
 	}
