@@ -38,21 +38,21 @@ func requireTunAddressPreflight(plan planner.TunPlan) error {
 // concrete NetworkManager connection. The normal post-handoff preflight still
 // rechecks the fresh authoritative snapshot without allowances.
 func (m *XrayManager) requireTunAddressPreflightBeforeHandoff(ctx context.Context, plan planner.TunPlan, handoff string) error {
-	allowed := make(map[string]struct{})
+	var allowed []tunAddressPreflightAllowance
 	policy := api.NormalizeHandoffPolicy(handoff)
 	if policy == api.HandoffReplacePodlaz {
 		status := m.statusForPublication(ctx)
 		if tx, ok, err := activeCommittedTransaction(status, m.runtimeDir()); err == nil && ok && transactionOwnsExactTunAddress(tx, plan.TunAddress.CIDR) {
-			allowed[netsnapshot.DefaultTunName] = struct{}{}
+			allowed = append(allowed, exactPodlazTunAddressAllowance(plan.TunAddress.CIDR))
 		}
 	}
-	if iface, ok := validatedRecoverableTunAddressInterface(m.runtimeDir(), plan.TunAddress.CIDR); ok {
-		allowed[iface] = struct{}{}
+	if iface, ok := validatedRecoverableTunAddressInterface(m.runtimeDir(), plan.TunAddress.CIDR); ok && iface == netsnapshot.DefaultTunName {
+		allowed = append(allowed, exactPodlazTunAddressAllowance(plan.TunAddress.CIDR))
 	}
 	if policy == api.HandoffStopKnown {
 		for _, connection := range activeNetworkManagerVPNConnections(plan.Snapshot) {
 			if device := strings.TrimSpace(connection.Device); device != "" {
-				allowed[device] = struct{}{}
+				allowed = append(allowed, tunAddressPreflightAllowance{Interface: device, InterfaceWide: true})
 			}
 		}
 	}
@@ -110,13 +110,28 @@ func validatedRecoverableTunAddressInterface(runtimeDir, cidr string) (string, b
 	return netsnapshot.DefaultTunName, matches == 1
 }
 
-func snapshotWithoutAllowedTunAddressConflicts(s netsnapshot.Snapshot, desiredCIDR string, allowed map[string]struct{}) netsnapshot.Snapshot {
+type tunAddressPreflightAllowance struct {
+	Interface             string
+	CIDR                  string
+	InterfaceWide         bool
+	AllowKernelLocalRoute bool
+}
+
+func exactPodlazTunAddressAllowance(cidr string) tunAddressPreflightAllowance {
+	return tunAddressPreflightAllowance{
+		Interface:             netsnapshot.DefaultTunName,
+		CIDR:                  strings.TrimSpace(cidr),
+		AllowKernelLocalRoute: true,
+	}
+}
+
+func snapshotWithoutAllowedTunAddressConflicts(s netsnapshot.Snapshot, desiredCIDR string, allowed []tunAddressPreflightAllowance) netsnapshot.Snapshot {
 	out := s
 	out.IPv4Addresses.Addresses = append([]netsnapshot.IPAddress(nil), s.IPv4Addresses.Addresses...)
 	out.IPv4Routes.Routes = append([]netsnapshot.Route(nil), s.IPv4Routes.Routes...)
 	addresses := out.IPv4Addresses.Addresses[:0]
 	for _, address := range out.IPv4Addresses.Addresses {
-		if _, ok := allowed[address.Interface]; ok && ipv4CIDRsOverlap(address.CIDR, desiredCIDR) {
+		if tunAddressAllowed(address, desiredCIDR, allowed) {
 			continue
 		}
 		addresses = append(addresses, address)
@@ -124,13 +139,68 @@ func snapshotWithoutAllowedTunAddressConflicts(s netsnapshot.Snapshot, desiredCI
 	out.IPv4Addresses.Addresses = addresses
 	routes := out.IPv4Routes.Routes[:0]
 	for _, route := range out.IPv4Routes.Routes {
-		if _, ok := allowed[route.Interface]; ok && ipv4CIDRsOverlap(route.Destination, desiredCIDR) {
+		if tunAddressRouteAllowed(route, desiredCIDR, allowed) {
 			continue
 		}
 		routes = append(routes, route)
 	}
 	out.IPv4Routes.Routes = routes
 	return out
+}
+
+func tunAddressAllowed(address netsnapshot.IPAddress, desiredCIDR string, allowed []tunAddressPreflightAllowance) bool {
+	for _, allowance := range allowed {
+		if address.Interface != allowance.Interface {
+			continue
+		}
+		if allowance.InterfaceWide && ipv4CIDRsOverlap(address.CIDR, desiredCIDR) {
+			return true
+		}
+		if strings.TrimSpace(address.CIDR) == strings.TrimSpace(allowance.CIDR) && strings.TrimSpace(address.CIDR) == strings.TrimSpace(desiredCIDR) {
+			return true
+		}
+	}
+	return false
+}
+
+func tunAddressRouteAllowed(route netsnapshot.Route, desiredCIDR string, allowed []tunAddressPreflightAllowance) bool {
+	for _, allowance := range allowed {
+		if route.Interface != allowance.Interface {
+			continue
+		}
+		if allowance.InterfaceWide && ipv4CIDRsOverlap(route.Destination, desiredCIDR) {
+			return true
+		}
+		if allowance.AllowKernelLocalRoute && kernelGeneratedLocalRouteForAddress(route, desiredCIDR, allowance.Interface) {
+			return true
+		}
+	}
+	return false
+}
+
+func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, iface string) bool {
+	if route.Interface != iface || strings.TrimSpace(route.Gateway) != "" {
+		return false
+	}
+	desiredIP, desiredNet, err := net.ParseCIDR(strings.TrimSpace(desiredCIDR))
+	if err != nil || desiredIP.To4() == nil {
+		return false
+	}
+	routeIP, routeNet, err := net.ParseCIDR(strings.TrimSpace(route.Destination))
+	if err != nil || routeIP.To4() == nil || !routeIP.Equal(desiredIP) {
+		return false
+	}
+	desiredOnes, desiredBits := desiredNet.Mask.Size()
+	routeOnes, routeBits := routeNet.Mask.Size()
+	if desiredOnes != routeOnes || desiredBits != routeBits {
+		return false
+	}
+	table := strings.ToLower(strings.TrimSpace(route.Table))
+	if table != "" && table != "local" {
+		return false
+	}
+	raw := strings.ToLower(route.Raw + " " + route.Detail)
+	return table == "local" || (strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host"))
 }
 
 func ipv4CIDRsOverlap(left, right string) bool {
