@@ -306,7 +306,10 @@ func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, i
 	if strings.ToLower(strings.TrimSpace(route.Table)) != "local" {
 		return false
 	}
-	raw := strings.ToLower(route.Raw + " " + route.Detail)
+	raw := strings.ToLower(strings.TrimSpace(route.Raw + " " + route.Detail))
+	if raw == "" {
+		return true
+	}
 	return strings.Contains(raw, "local") && strings.Contains(raw, "dev "+strings.ToLower(iface)) && strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host")
 }
 
