@@ -110,25 +110,25 @@ func rollbackDesiredSubsetMismatches(desired txstate.DesiredPlan, rollback txsta
 	var reasons []string
 	if len(rollback.Routes) > 0 {
 		desiredCounter := desiredRouteCounter(desired.Routes)
-		if len(desiredCounter) == 0 || !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredCounter) {
+		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredCounter) {
 			reasons = append(reasons, "route rollback multiset is not an exact subset of desired route multiset")
 		}
 	}
 	if len(rollback.PolicyRules) > 0 {
 		desiredCounter := desiredPolicyRuleCounter(desired.Steps)
-		if len(desiredCounter) == 0 || !stringCounterSubset(rollbackPolicyRuleCounter(rollback.PolicyRules), desiredCounter) {
+		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackPolicyRuleCounter(rollback.PolicyRules), desiredCounter) {
 			reasons = append(reasons, "policy-rule rollback multiset is not an exact subset of desired policy-rule multiset")
 		}
 	}
 	if len(rollback.DNS) > 0 {
 		desiredCounter := desiredDNSCounter(desired.DNS)
-		if len(desiredCounter) == 0 || !stringCounterSubset(rollbackDNSCounter(rollback.DNS), desiredCounter) {
+		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackDNSCounter(rollback.DNS), desiredCounter) {
 			reasons = append(reasons, "DNS rollback multiset is not an exact subset of desired DNS multiset")
 		}
 	}
 	if len(rollback.NFTables) > 0 {
 		desiredCounter := desiredNFTCounter(desired.NFT)
-		if len(desiredCounter) == 0 || !stringCounterSubset(rollbackNFTCounter(rollback.NFTables), desiredCounter) {
+		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackNFTCounter(rollback.NFTables), desiredCounter) {
 			reasons = append(reasons, "nftables rollback multiset is not an exact subset of desired nftables multiset")
 		}
 	}
