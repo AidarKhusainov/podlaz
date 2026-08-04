@@ -255,11 +255,15 @@ func snapshotProvesTunLinkIdentity(address txstate.TUNAddressRollback, s netsnap
 		if device.Name != address.InterfaceName || device.Status != netsnapshot.StatusDetected {
 			continue
 		}
-		index, ok := tunDeviceRawIndex(device.Raw)
+		observation := strings.TrimSpace(device.Detail)
+		if observation == "" {
+			observation = strings.TrimSpace(device.Raw)
+		}
+		index, ok := tunDeviceRawIndex(observation)
 		if !ok || index != address.LinkIndex {
 			return false
 		}
-		return tunDeviceRawKind(device.Raw+" "+device.Detail) == address.LinkKind
+		return tunDeviceRawKind(observation) == address.LinkKind
 	}
 	return false
 }
@@ -307,9 +311,6 @@ func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, i
 		return false
 	}
 	raw := strings.ToLower(strings.TrimSpace(route.Raw + " " + route.Detail))
-	if raw == "" {
-		return true
-	}
 	return strings.Contains(raw, "local") && strings.Contains(raw, "dev "+strings.ToLower(iface)) && strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host")
 }
 
