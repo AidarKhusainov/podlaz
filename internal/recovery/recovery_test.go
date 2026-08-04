@@ -393,3 +393,17 @@ func TestOSScannerIncludesCommittedTransactionForStartupRecovery(t *testing.T) {
 	}
 	t.Fatalf("committed transaction was not surfaced for recovery: %#v", result.Candidates)
 }
+
+func TestOSScannerPublishesInactiveCommittedTransactionForRecovery(t *testing.T) {
+	runtimeDir := t.TempDir()
+	tx := txstate.NewTransaction("tx-committed-restart", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionCommitted
+	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
+		t.Fatal(err)
+	}
+	plan := PlanWithOptions(context.Background(), Options{RuntimeDir: runtimeDir, Runner: fakeMissingResourcesRunner()})
+	candidate := assertTransactionCandidate(t, plan, tx.ID)
+	if candidate.State != string(txstate.TransactionCommitted) || !candidate.RequiresCleanup {
+		t.Fatalf("inactive committed transaction was not published as recoverable: %#v", candidate)
+	}
+}

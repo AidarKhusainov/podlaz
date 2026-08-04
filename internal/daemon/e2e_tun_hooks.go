@@ -118,6 +118,20 @@ func e2eTunHookDir() string {
 	return filepath.Clean(dir)
 }
 
+func e2eTunHookEventRecorded(event string) bool {
+	path := filepath.Join(e2eTunHookDir(), e2eTunHookEventsFile)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.TrimSpace(line) == event {
+			return true
+		}
+	}
+	return false
+}
+
 func recordE2ETunHookEvent(event string) {
 	if !e2eTunHooksEnabled() {
 		return
@@ -169,6 +183,9 @@ func (e e2eHookTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAd
 	step, err := e.delegate.Apply(ctx, plan)
 	if err != nil {
 		return step, err
+	}
+	if e2eTunHookEventRecorded("tun-address-apply-injected") {
+		return step, nil
 	}
 	recordE2ETunHookEvent("tun-address-apply-injected")
 	return step, fmt.Errorf("%w: E2E hook failed after the daemon-owned TUN address was applied", netexecutor.ErrTunAddressApply)

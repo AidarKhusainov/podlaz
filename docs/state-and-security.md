@@ -67,13 +67,19 @@ a podlaz-owned TUN device rollback target. podlazd owns only
 `198.18.0.1/32` on that link. Stopping Xray is the release mechanism for the
 Xray-owned link.
 
-Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. If the daemon stops in the unavoidable interval between one successful host syscall and persistence of that same step, recovery may reconstruct only missing entries in reserved podlaz namespaces from the durable structured `desired_plan`: routing table `51820`, policy priority `10000`, DNS link `podlaz0`, and nftables table `inet podlaz`. Desired-only main-table server bypass state must be inspected but never deleted by assumption; a present route or rule without durable applied ownership evidence keeps the transaction blocked for explicit inspection. Ambiguous host state must be skipped, not guessed.
+Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. Durable `desired_plan` content validates resource shape but never grants route, policy-rule, DNS, or nftables cleanup authority. `planned` contributes no network cleanup tuples. `applying` without durable applied/rollback proof is an ambiguous crash window and performs no such mutation. Later inactive recovery states use only exact durable ownership. The sole narrow syscall/persistence fallback is the daemon-owned TUN address in `applying`, using the pre-persisted name, ifindex, TUN kind, CIDR, and tracked-child appearance evidence and still requiring fail-closed host inspection. Desired-only main-table server bypass state must never be deleted by assumption. Ambiguous host state must be skipped, not guessed.
 
 A low-level composition executor must not perform hidden cleanup after a child apply method reports that it mutated state. It returns the partial non-zero applied step together with the error and reports that step to the persistence sink before returning the error. The transaction boundary persists that ownership and controls rollback timing: direct helpers perform one immediate bounded fail-safe rollback, while the production lifecycle persists diagnostics before invoking rollback. A zero step means no owned mutation was recorded and is not added to the rollback plan. An owner or target that does not exactly match the validated plan is rejected and never grants cleanup authority.
 
-Before transaction mutation, authoritative daemon inspection rejects any host
-address or route that contains or overlaps `198.18.0.1/32`, and rejects foreign
-or ambiguous `podlaz0` address state. The deterministic policy does not probe a
+Before active replacement, controlled handoff, transaction creation, or any
+host-network mutation, an ownership-aware daemon check rejects unrelated overlap
+and incomplete IPv4 address/route inventory. It may temporarily allow only exact
+active podlaz state, one validated stale podlaz address routed to canonical
+recovery, or state on the concrete NetworkManager device authorized by
+`stop-known`. After recovery/handoff, a second authoritative check runs without
+allowances and rejects any remaining host address or route that contains or
+overlaps `198.18.0.1/32`, as well as foreign or ambiguous `podlaz0` address
+state. The deterministic policy does not probe a
 second candidate. Address apply uses explicit argv, persists partial ownership
 immediately after mutation, and verifies one exact global IPv4 address on the
 same UP link identity. Rollback removes only that exact address after identity
@@ -82,9 +88,12 @@ revalidation; inspection failure is not absence.
 For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification checks the target link, planned DNS servers, `~.`, `+DefaultRoute`, and absence of a foreign active `~.` owner. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are
 ambiguous and fail closed. Static configuration is not DNS readiness. Before
 commit the daemon revalidates the exact address/link, performs an uncached IPv4
-query bound to `podlaz0`, requires the result to identify that link, performs a
-separate normal system resolution, and proves that at least one returned IPv4
-address routes through the planned TUN path.
+query bound to the persisted numeric link index, revalidates that same identity
+after the query, performs a separate normal system resolution, and checks a
+bounded, deduplicated set of returned IPv4 addresses until at least one is
+proven to route through the planned TUN path.
+
+Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
 
 For native Xray TUN startup, durable rollback order is:
 

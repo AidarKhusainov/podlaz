@@ -29,7 +29,7 @@ const (
 
 type tunRouteLookupFunc func(context.Context, string, string) error
 type tunTCPProbeFunc func(context.Context, string, uint16) error
-type tunDNSResolveFunc func(context.Context, string) (string, error)
+type tunDNSResolveFunc func(context.Context, string) ([]string, error)
 type tunScopedDNSResolveFunc func(context.Context, planner.TunAddressPlan, string) ([]string, error)
 
 type tunConnectivityProbeConfig struct {
@@ -80,20 +80,51 @@ func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCo
 		}
 		return newTunVerificationError("resolved-link-query", fmt.Sprintf("Uncached DNS query for %s through %s failed", probe.DNSName, plan.TunDevice.Name), errors.Join(netexecutor.ErrResolvedLinkQueryFailure, err))
 	}
-	var resolvedIP string
+	var resolvedIPs []string
 	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
-		ip, err := resolveTunDNSName(probeCtx, probe.DNSName)
-		resolvedIP = ip
+		ips, err := resolveTunDNSName(probeCtx, probe.DNSName)
+		resolvedIPs = ips
 		return err
 	}); err != nil {
 		return newTunVerificationError("system-resolver", fmt.Sprintf("The system resolver did not resolve %s through the active TUN path", probe.DNSName), errors.Join(errSystemResolverFailure, err))
 	}
 	if err := runProbe(ctx, probe.RouteTimeout, func(probeCtx context.Context) error {
-		return lookupTunRouteForProbe(probeCtx, resolvedIP, plan.TunDevice.Name)
+		return verifyAnyResolvedIPv4UsesTunRoute(probeCtx, resolvedIPs, plan.TunDevice.Name)
 	}); err != nil {
-		return newTunVerificationError("dns-route", fmt.Sprintf("Full-tunnel route lookup for %s DNS result %s did not use the planned TUN path", probe.DNSName, resolvedIP), err)
+		return newTunVerificationError("dns-route", fmt.Sprintf("No IPv4 result for %s used the planned TUN path", probe.DNSName), err)
 	}
 	return nil
+}
+
+func verifyAnyResolvedIPv4UsesTunRoute(ctx context.Context, resolvedIPs []string, tunDevice string) error {
+	if len(resolvedIPs) == 0 {
+		return errors.New("system resolver returned no IPv4 results")
+	}
+	var routeErrors []error
+	for i, resolvedIP := range resolvedIPs {
+		attemptCtx := ctx
+		cancel := func() {}
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			remainingAttempts := len(resolvedIPs) - i
+			if remaining <= 0 {
+				routeErrors = append(routeErrors, context.DeadlineExceeded)
+				break
+			}
+			attemptBudget := remaining / time.Duration(remainingAttempts)
+			if attemptBudget <= 0 {
+				attemptBudget = remaining
+			}
+			attemptCtx, cancel = context.WithTimeout(ctx, attemptBudget)
+		}
+		err := lookupTunRouteForProbe(attemptCtx, resolvedIP, tunDevice)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		routeErrors = append(routeErrors, fmt.Errorf("%s: %w", resolvedIP, err))
+	}
+	return errors.Join(routeErrors...)
 }
 
 func (c tunConnectivityProbeConfig) withDefaults() tunConnectivityProbeConfig {
@@ -185,17 +216,41 @@ func defaultResolveTunDNSNameScoped(ctx context.Context, address planner.TunAddr
 	return (netexecutor.TunDNSReadinessVerifier{Runner: netexecutor.OSRunner{}}).VerifyScoped(ctx, address, name)
 }
 
-func defaultResolveTunDNSName(ctx context.Context, name string) (string, error) {
+func defaultResolveTunDNSName(ctx context.Context, name string) ([]string, error) {
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, name)
 	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w", name, err)
+		return nil, fmt.Errorf("resolve %s: %w", name, err)
 	}
+	const maxResolvedIPv4 = 16
+	resolved := boundedUniqueIPv4(ips, maxResolvedIPv4)
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("resolve %s returned no IPv4 address: %v", name, ips)
+	}
+	return resolved, nil
+}
+
+func boundedUniqueIPv4(ips []net.IPAddr, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, limit)
+	resolved := make([]string, 0, limit)
 	for _, ip := range ips {
-		if ipv4 := ip.IP.To4(); ipv4 != nil {
-			return ipv4.String(), nil
+		ipv4 := ip.IP.To4()
+		if ipv4 == nil {
+			continue
+		}
+		value := ipv4.String()
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		resolved = append(resolved, value)
+		if len(resolved) == limit {
+			break
 		}
 	}
-	return "", fmt.Errorf("resolve %s returned no IPv4 address: %v", name, ips)
+	return resolved
 }
 
 func containsAdjacentRouteFields(fields []string, key, value string) bool {

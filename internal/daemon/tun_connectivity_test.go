@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -41,9 +43,9 @@ func TestVerifyTunConnectivityChecksRouteDialAndDNS(t *testing.T) {
 		dialPort = port
 		return nil
 	}
-	resolveTunDNSName = func(_ context.Context, name string) (string, error) {
+	resolveTunDNSName = func(_ context.Context, name string) ([]string, error) {
 		resolvedName = name
-		return "93.184.216.34", nil
+		return []string{"93.184.216.34"}, nil
 	}
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
@@ -91,9 +93,9 @@ func TestVerifyTunConnectivityUsesConfiguredProbeTargets(t *testing.T) {
 		dialPort = port
 		return nil
 	}
-	resolveTunDNSName = func(_ context.Context, name string) (string, error) {
+	resolveTunDNSName = func(_ context.Context, name string) ([]string, error) {
 		resolvedName = name
-		return "198.51.100.30", nil
+		return []string{"198.51.100.30"}, nil
 	}
 
 	core := tunCoreRuntimePlan{ConnectivityProbe: tunConnectivityProbeConfig{
@@ -136,9 +138,9 @@ func TestVerifyTunConnectivityFailsWhenRouteDoesNotUseTun(t *testing.T) {
 		t.Fatal("dial must not run when route lookup fails")
 		return nil
 	}
-	resolveTunDNSName = func(context.Context, string) (string, error) {
+	resolveTunDNSName = func(context.Context, string) ([]string, error) {
 		t.Fatal("DNS probe must not run when route lookup fails")
-		return "", nil
+		return nil, nil
 	}
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
@@ -160,9 +162,9 @@ func TestVerifyTunConnectivityFailsWhenDialFails(t *testing.T) {
 
 	lookupTunRouteForProbe = func(context.Context, string, string) error { return nil }
 	dialTunProbeTarget = func(context.Context, string, uint16) error { return errors.New("dial failed") }
-	resolveTunDNSName = func(context.Context, string) (string, error) {
+	resolveTunDNSName = func(context.Context, string) ([]string, error) {
 		t.Fatal("DNS probe must not run when TCP probe fails")
-		return "", nil
+		return nil, nil
 	}
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
@@ -184,7 +186,7 @@ func TestVerifyTunConnectivityFailsWhenDNSFails(t *testing.T) {
 
 	lookupTunRouteForProbe = func(context.Context, string, string) error { return nil }
 	dialTunProbeTarget = func(context.Context, string, uint16) error { return nil }
-	resolveTunDNSName = func(context.Context, string) (string, error) { return "", errors.New("dns timeout") }
+	resolveTunDNSName = func(context.Context, string) ([]string, error) { return nil, errors.New("dns timeout") }
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
 	if err == nil {
@@ -212,7 +214,7 @@ func TestVerifyTunConnectivityFailsWhenDNSResultDoesNotRouteThroughTun(t *testin
 		return nil
 	}
 	dialTunProbeTarget = func(context.Context, string, uint16) error { return nil }
-	resolveTunDNSName = func(context.Context, string) (string, error) { return "93.184.216.34", nil }
+	resolveTunDNSName = func(context.Context, string) ([]string, error) { return []string{"93.184.216.34"}, nil }
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
 	if err == nil {
@@ -290,9 +292,9 @@ func TestVerifyTunConnectivityRejectsMissingTunAddressBeforeDNS(t *testing.T) {
 		t.Fatal("scoped DNS must not run when the planned address identity is absent")
 		return nil, nil
 	}
-	resolveTunDNSName = func(context.Context, string) (string, error) {
+	resolveTunDNSName = func(context.Context, string) ([]string, error) {
 		t.Fatal("system resolver must not run when the planned address identity is absent")
-		return "", nil
+		return nil, nil
 	}
 
 	err := verifyTunConnectivity(context.Background(), planner.TunPlan{TunDevice: planner.TunDevicePlan{Name: "podlaz0"}}, tunCoreRuntimePlan{})
@@ -326,9 +328,9 @@ func TestVerifyTunConnectivityRunsScopedDNSBeforeSystemResolver(t *testing.T) {
 		order = append(order, "scoped:"+address.Interface+":"+name)
 		return []string{"198.51.100.30"}, nil
 	}
-	resolveTunDNSName = func(_ context.Context, name string) (string, error) {
+	resolveTunDNSName = func(_ context.Context, name string) ([]string, error) {
 		order = append(order, "system:"+name)
-		return "198.51.100.31", nil
+		return []string{"198.51.100.31"}, nil
 	}
 
 	if err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{}); err != nil {
@@ -357,9 +359,9 @@ func TestVerifyTunConnectivityClassifiesScopedDNSFailure(t *testing.T) {
 	resolveTunDNSNameScoped = func(context.Context, planner.TunAddressPlan, string) ([]string, error) {
 		return nil, errors.New("scoped timeout")
 	}
-	resolveTunDNSName = func(context.Context, string) (string, error) {
+	resolveTunDNSName = func(context.Context, string) ([]string, error) {
 		t.Fatal("system resolver must not run after scoped DNS failure")
-		return "", nil
+		return nil, nil
 	}
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
@@ -384,7 +386,7 @@ func TestVerifyTunConnectivityClassifiesSystemResolverFailureSeparately(t *testi
 	resolveTunDNSNameScoped = func(context.Context, planner.TunAddressPlan, string) ([]string, error) {
 		return []string{"198.51.100.30"}, nil
 	}
-	resolveTunDNSName = func(context.Context, string) (string, error) { return "", errors.New("system resolver timeout") }
+	resolveTunDNSName = func(context.Context, string) ([]string, error) { return nil, errors.New("system resolver timeout") }
 
 	err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{})
 	if !errors.Is(err, errSystemResolverFailure) {
@@ -407,5 +409,75 @@ func addressedTunPlanForConnectivityTest() planner.TunPlan {
 			LinkKind:          "tun",
 			AppearedAfterCore: true,
 		},
+	}
+}
+
+func TestVerifyTunConnectivityAcceptsAnyReturnedIPv4UsingTunRoute(t *testing.T) {
+	stubScopedDNSForConnectivityTest(t)
+	originalRouteLookup := lookupTunRouteForProbe
+	originalDial := dialTunProbeTarget
+	originalResolve := resolveTunDNSName
+	defer func() {
+		lookupTunRouteForProbe = originalRouteLookup
+		dialTunProbeTarget = originalDial
+		resolveTunDNSName = originalResolve
+	}()
+	var routeHosts []string
+	lookupTunRouteForProbe = func(_ context.Context, host, _ string) error {
+		routeHosts = append(routeHosts, host)
+		if host == "198.51.100.10" {
+			return errors.New("main-table exception")
+		}
+		return nil
+	}
+	dialTunProbeTarget = func(context.Context, string, uint16) error { return nil }
+	resolveTunDNSName = func(context.Context, string) ([]string, error) {
+		return []string{"198.51.100.10", "198.51.100.20", "198.51.100.20"}, nil
+	}
+	if err := verifyTunConnectivity(context.Background(), addressedTunPlanForConnectivityTest(), tunCoreRuntimePlan{}); err != nil {
+		t.Fatalf("at least one returned IPv4 used the TUN route: %v", err)
+	}
+	if len(routeHosts) != 3 || routeHosts[1] != "198.51.100.10" || routeHosts[2] != "198.51.100.20" {
+		t.Fatalf("unexpected bounded route attempts: %#v", routeHosts)
+	}
+}
+
+func TestBoundedUniqueIPv4DeduplicatesAndLimitsMultiAResults(t *testing.T) {
+	inputs := []net.IPAddr{{IP: net.ParseIP("2001:db8::1")}}
+	for i := 1; i <= 20; i++ {
+		value := net.ParseIP(fmt.Sprintf("198.51.100.%d", i))
+		inputs = append(inputs, net.IPAddr{IP: value}, net.IPAddr{IP: value})
+	}
+	got := boundedUniqueIPv4(inputs, 16)
+	if len(got) != 16 {
+		t.Fatalf("bounded IPv4 result count = %d, want 16: %#v", len(got), got)
+	}
+	for i, value := range got {
+		want := fmt.Sprintf("198.51.100.%d", i+1)
+		if value != want {
+			t.Fatalf("bounded IPv4 result[%d] = %q, want %q", i, value, want)
+		}
+	}
+}
+
+func TestVerifyAnyResolvedIPv4UsesFairBoundedAttempts(t *testing.T) {
+	originalRouteLookup := lookupTunRouteForProbe
+	defer func() { lookupTunRouteForProbe = originalRouteLookup }()
+	var attempts []string
+	lookupTunRouteForProbe = func(ctx context.Context, host, _ string) error {
+		attempts = append(attempts, host)
+		if host == "198.51.100.10" {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+	if err := verifyAnyResolvedIPv4UsesTunRoute(ctx, []string{"198.51.100.10", "198.51.100.20"}, "podlaz0"); err != nil {
+		t.Fatalf("later IPv4 was not checked after bounded first-address timeout: %v", err)
+	}
+	if len(attempts) != 2 || attempts[1] != "198.51.100.20" {
+		t.Fatalf("unexpected fair route attempts: %#v", attempts)
 	}
 }

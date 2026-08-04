@@ -271,6 +271,13 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 	}, nil
 }
 
+// PlanTunAddress classifies the deterministic daemon-owned TUN address against
+// one authoritative host snapshot. It is used by daemon preflight both before
+// and after explicitly permitted handoff/recovery mutations.
+func PlanTunAddress(s snapshot.Snapshot) TunAddressPlan {
+	return tunAddressPlan(s, TunDevicePlan{Name: snapshot.DefaultTunName})
+}
+
 func tunAddressPlan(s snapshot.Snapshot, device TunDevicePlan) TunAddressPlan {
 	plan := TunAddressPlan{
 		Family:      "ipv4",

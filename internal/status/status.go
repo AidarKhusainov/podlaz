@@ -386,7 +386,7 @@ func inspectTransactions(runtimeDir string) ([]txstate.TransactionSummary, []Can
 	summaries, scanWarnings := txstate.ScanTransactions(runtimeDir)
 	candidates := make([]Candidate, 0, len(summaries))
 	for _, summary := range summaries {
-		if summary.RequiresCleanup {
+		if summary.RequiresRecovery {
 			candidates = append(candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path})
 		}
 	}

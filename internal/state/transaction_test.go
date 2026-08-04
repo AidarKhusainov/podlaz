@@ -264,10 +264,17 @@ func TestLegacyTransactionWithoutTunAddressMetadataRemainsReadable(t *testing.T)
 	}
 }
 
-func TestCommittedTransactionRequiresCleanupUntilActiveRuntimeIsProven(t *testing.T) {
+func TestCommittedTransactionSeparatesLiveCleanupFromRestartRecovery(t *testing.T) {
 	tx := NewTransaction("tx-committed", "profile-1", "tun", time.Now().UTC())
 	tx.State = TransactionCommitted
-	if !tx.RequiresCleanup() {
-		t.Fatal("persisted committed transaction must remain recoverable after restart")
+	if tx.RequiresCleanup() {
+		t.Fatal("live committed transaction must not be classified as cleanup-required")
+	}
+	if !tx.RequiresRecovery() {
+		t.Fatal("persisted committed transaction must remain discoverable after restart")
+	}
+	summary := tx.Summary("/run/podlaz/transactions/tx-committed.json")
+	if summary.RequiresCleanup || !summary.RequiresRecovery {
+		t.Fatalf("unexpected committed summary semantics: %#v", summary)
 	}
 }

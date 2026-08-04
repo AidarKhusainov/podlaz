@@ -7,8 +7,28 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
-func daemonRecover(ctx context.Context, runtimeDir string) api.RecoveryResponse {
-	result := recovery.ExecuteWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir, Executor: recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir}})
+type fixedDaemonRecoveryScanner struct{ plan recovery.PlanResult }
+
+func (s fixedDaemonRecoveryScanner) Scan(context.Context) recovery.ScanResult {
+	return recovery.ScanResult{
+		Candidates: append([]recovery.Candidate(nil), s.plan.Candidates...),
+		Warnings:   append([]recovery.Warning(nil), s.plan.Warnings...),
+	}
+}
+
+func daemonRecover(ctx context.Context, runtimeDir string, status api.StatusResponse) api.RecoveryResponse {
+	return daemonRecoverWithOptions(ctx, runtimeDir, status, recovery.Options{})
+}
+
+func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api.StatusResponse, opts recovery.Options) api.RecoveryResponse {
+	opts.RuntimeDir = runtimeDir
+	plan := recovery.PlanWithOptions(ctx, opts)
+	plan = filterStartupScanForActiveRuntime(plan, status, runtimeDir)
+	opts.Scanner = fixedDaemonRecoveryScanner{plan: plan}
+	if opts.Executor == nil {
+		opts.Executor = recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: opts.Runner}
+	}
+	result := recovery.ExecuteWithOptions(ctx, opts)
 	return recoveryResponseToAPI(result)
 }
 

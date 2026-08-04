@@ -49,7 +49,7 @@ func TestFullTunnelTransactionRunnerCommitsActiveState(t *testing.T) {
 	if strings.Join(h.executor.calls, ",") != "apply,verify" {
 		t.Fatalf("unexpected executor calls: %#v", h.executor.calls)
 	}
-	h.requireTransactionState(t, txstate.TransactionCommitted, true)
+	h.requireTransactionState(t, txstate.TransactionCommitted, false)
 }
 
 func TestFullTunnelTransactionRunnerStartsXrayBeforeApplyingHostNetworking(t *testing.T) {

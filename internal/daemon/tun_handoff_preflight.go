@@ -173,7 +173,7 @@ func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResourc
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	resources := make([]netsnapshot.StaleResource, 0, len(summaries)+len(warnings))
 	for _, summary := range summaries {
-		if !summary.RequiresCleanup {
+		if !summary.RequiresRecovery {
 			continue
 		}
 		name := strings.TrimSpace(filepath.Base(summary.Path))

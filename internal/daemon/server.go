@@ -140,7 +140,7 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		response := daemonRecover(r.Context(), runtimeDir)
+		response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
 		refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 		refreshStartupScan(refreshCtx)
 		cancel()

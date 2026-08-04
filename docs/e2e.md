@@ -154,8 +154,10 @@ performs an uncached interface-scoped DNS query whose result identifies
 `podlaz0`; executes the inactive-scope and real missing-link acceptance cases; deletes real `podlaz0` and releases the daemon hook without issuing a manual revert; waits for the failed connect and production rollback to finish; then checks the private capture of that exact production `resolvectl revert`
 exit code and raw stdout/stderr byte-for-byte. The fault-injection scenario also
 fails immediately after real TUN address mutation, requires the exact ownership
-step and `tun_address_apply_failure`, and proves complete rollback before an
-immediate reconnect. Capture is enabled only for the rollback delegate, remains outside uploaded artifacts, and fails rollback closed if capture cannot be persisted. The scenario persists only normalized summaries and delegates failure-path cleanup to the same conservative teardown helper used by the workflow's `always` step.
+step and `tun_address_apply_failure`, proves address/routes/rules/DNS/nftables
+absence and no cleanup-required transaction before any restart or explicit
+recovery, then reconnects and disconnects on the same `podlazd` and
+`systemd-resolved` lifecycle and proves clean state again. Capture is enabled only for the rollback delegate, remains outside uploaded artifacts, and fails rollback closed if capture cannot be persisted. The scenario persists only normalized summaries and delegates failure-path cleanup to the same conservative teardown helper used by the workflow's `always` step.
 
 The hook event log contains only fixed lifecycle markers used to prove diagnostic/rollback ordering. It must not contain profile material, command output, addresses, or generated configuration. Raw production rollback capture files remain in the private hook directory and are removed before artifact scanning.
 

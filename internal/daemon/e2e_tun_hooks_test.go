@@ -42,6 +42,7 @@ func TestValidateE2ETunHookConfigAcceptsDocumentedPhases(t *testing.T) {
 func TestE2ETunAddressHookFailsAfterDelegateApplyAndPreservesOwnership(t *testing.T) {
 	t.Setenv(e2eTunHookGateEnv, "true")
 	t.Setenv(e2eTunHookPhaseEnv, e2eTunHookTunAddressApplyPhase)
+	t.Setenv(e2eTunHookDirEnv, t.TempDir())
 
 	address := &e2eHookApplyRecordingTunAddressExecutor{}
 	executor := maybeWrapE2ETunHookExecutor(netexecutor.DNSAwareTunExecutor{

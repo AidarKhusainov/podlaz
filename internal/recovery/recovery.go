@@ -338,10 +338,10 @@ func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRun
 func (r *ScanResult) scanTransactionState(runtimeDir string) {
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	for _, summary := range summaries {
-		if !summary.RequiresCleanup {
+		if !summary.RequiresRecovery {
 			continue
 		}
-		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: summary.RequiresCleanup, Path: summary.Path}})
+		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: true, Path: summary.Path}})
 	}
 	for _, warning := range warnings {
 		r.Warnings = append(r.Warnings, Warning{Target: "transaction state", Message: warning})

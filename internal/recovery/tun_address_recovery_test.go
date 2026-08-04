@@ -172,3 +172,41 @@ func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testin
 		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
 	})
 }
+
+func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent(t *testing.T) {
+	runtimeDir := t.TempDir()
+	runner := &recordingRunner{
+		paths: map[string]string{"ip": "/usr/sbin/ip"},
+		commands: map[string]fakeCommand{
+			"ip -details -o link show dev podlaz0":                             {stdout: recoveryTunLink(7)},
+			"ip -4 -o address show dev podlaz0":                                {stdout: recoveryTunAddress(7, planner.DefaultTunIPv4CIDR)},
+			"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0": {},
+		},
+	}
+	tx := txstate.NewTransaction("tx-address-route-crash", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionApplying
+	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family: "ipv4", InterfaceName: managedInterface, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
+		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
+	}
+	tx.DesiredPlan.Routes = []txstate.RoutePlan{{
+		Table: "podlaz", CIDR: "default", Dev: managedInterface, Owner: "podlaz:route", Operation: "add",
+	}}
+	path, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+	assertCleanupResult(t, results, "tun-address", "recovered", "")
+	assertCleanupResult(t, results, "transaction-ownership", "skipped", "routes")
+	assertCleanupResult(t, results, "transaction-state", "skipped", "preserved")
+	assertCommands(t, runner, []string{
+		"ip -details -o link show dev podlaz0",
+		"ip -4 -o address show dev podlaz0",
+		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
+	})
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("ambiguous applying transaction must remain after exact address cleanup: %v", err)
+	}
+}

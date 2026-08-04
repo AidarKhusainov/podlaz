@@ -230,6 +230,7 @@ type TransactionSummary struct {
 	Path              string           `json:"path"`
 	RollbackAvailable bool             `json:"rollback_available"`
 	RequiresCleanup   bool             `json:"requires_cleanup"`
+	RequiresRecovery  bool             `json:"requires_recovery,omitempty"`
 }
 
 type TransactionStore struct {
@@ -507,16 +508,24 @@ func (tx Transaction) Summary(path string) TransactionSummary {
 		Path:              path,
 		RollbackAvailable: tx.Rollback.Available(),
 		RequiresCleanup:   tx.RequiresCleanup(),
+		RequiresRecovery:  tx.RequiresRecovery(),
 	}
 }
 
 func (tx Transaction) RequiresCleanup() bool {
 	switch tx.State {
-	case TransactionPlanned, TransactionApplying, TransactionApplied, TransactionVerifying, TransactionCommitted, TransactionRollingBack, TransactionFailed:
+	case TransactionPlanned, TransactionApplying, TransactionApplied, TransactionVerifying, TransactionRollingBack, TransactionFailed:
 		return true
 	default:
 		return false
 	}
+}
+
+// RequiresRecovery reports whether persisted state must be considered by a
+// restart-time recovery scan. A committed transaction is recoverable only when
+// no active lifecycle session proves that it is the live transaction.
+func (tx Transaction) RequiresRecovery() bool {
+	return tx.RequiresCleanup() || tx.State == TransactionCommitted
 }
 
 func (m RollbackMetadata) Available() bool {

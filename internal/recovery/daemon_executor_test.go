@@ -210,3 +210,35 @@ func TestFullRecoveryPreservesForeignReplacementLinkAfterTransactionIdentityMism
 		t.Fatalf("replacement mismatch must keep recovery incomplete: %#v", result)
 	}
 }
+
+func TestPlannedAndPreMutationApplyingTransactionsDoNotMutateDesiredNetworkFixtures(t *testing.T) {
+	for _, state := range []txstate.TransactionState{txstate.TransactionPlanned, txstate.TransactionApplying} {
+		t.Run(string(state), func(t *testing.T) {
+			runtimeDir := t.TempDir()
+			tx := txstate.NewTransaction("tx-desired-"+string(state), "profile-1", "tun", time.Now().UTC())
+			tx.State = state
+			tx.DesiredPlan.Routes = []txstate.RoutePlan{{Table: "podlaz", CIDR: "default", Dev: "podlaz0", Owner: "podlaz:route", Operation: "add"}}
+			tx.DesiredPlan.Steps = []txstate.PlannedStep{{Kind: "policy-rule", Target: "priority 10000 from all lookup podlaz", Owner: "podlaz:policy-rule"}}
+			tx.DesiredPlan.DNS = txstate.DNSPlan{Backend: "systemd-resolved", Link: "podlaz0", Owner: "podlaz:dns-link"}
+			tx.DesiredPlan.NFT = txstate.NFTPlan{Family: "inet", Table: "podlaz", Owner: "podlaz:nftables"}
+			path, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &recordingRunner{paths: map[string]string{"ip": "/usr/sbin/ip", "nft": "/usr/sbin/nft", "resolvectl": "/usr/bin/resolvectl"}, commands: map[string]fakeCommand{}}
+			result := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+			for _, command := range runner.runCommands {
+				if strings.Contains(command, " route del ") || strings.Contains(command, " rule del ") || strings.Contains(command, "resolvectl revert") || strings.Contains(command, "nft delete") {
+					t.Fatalf("%s desired intent mutated host fixture: %q", state, command)
+				}
+			}
+			if state == txstate.TransactionApplying {
+				assertCleanupResult(t, result, "transaction-ownership", "skipped", "no durable ownership proof")
+				assertCleanupResult(t, result, "transaction-state", "skipped", "preserved")
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("ambiguous applying transaction must remain: %v", err)
+				}
+			}
+		})
+	}
+}

@@ -92,11 +92,12 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	if err != nil {
 		return []CleanupResult{failed(candidate, fmt.Errorf("load transaction state: %w", err))}
 	}
-	if !tx.RequiresCleanup() {
+	if !tx.RequiresRecovery() {
 		return []CleanupResult{recovered(candidate)}
 	}
 
 	rollback := recoveryRollbackMetadata(tx)
+	applyingOwnershipGaps := applyingDesiredOwnershipGaps(tx)
 	processResults := e.rollbackChildProcessResults(rollback.ChildProcesses)
 	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
@@ -107,7 +108,14 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	results = append(results, e.rollbackTUNAddressResults(ctx, rollback.TUNAddresses, childAbsenceProven)...)
 	results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
 	results = append(results, processResults...)
-	if hasFailedCleanup(processResults) || hasSkippedCleanup(processResults) {
+	if len(applyingOwnershipGaps) > 0 {
+		results = append(results, skipped(Candidate{
+			Kind:        "transaction-ownership",
+			Description: "applying ownership gap",
+			Target:      path,
+		}, "applying transaction has no durable ownership proof for "+strings.Join(applyingOwnershipGaps, ", ")))
+	}
+	if len(applyingOwnershipGaps) > 0 || hasFailedCleanup(processResults) || hasSkippedCleanup(processResults) {
 		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
 	} else {
 		results = append(results, e.rollbackGeneratedConfigResults(osExec, rollback.GeneratedConfigs)...)
@@ -128,6 +136,75 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	}
 	results = append(results, recovered(candidate))
 	return results
+}
+
+func applyingDesiredOwnershipGaps(tx txstate.Transaction) []string {
+	if tx.State != txstate.TransactionApplying {
+		return nil
+	}
+	var gaps []string
+	desired := tx.DesiredPlan
+	rollback := tx.Rollback
+
+	if desiredTunAddressIntent(desired.TUNAddress) && len(rollback.TUNAddresses) == 0 && !boundApplyingTunAddressCandidate(desired.TUNAddress) {
+		gaps = append(gaps, "TUN address")
+	}
+	if desiredRouteIntentCount(desired.Routes) > len(rollback.Routes) {
+		gaps = append(gaps, "routes")
+	}
+	if desiredPolicyRuleIntentCount(desired.Steps) > len(rollback.PolicyRules) {
+		gaps = append(gaps, "policy rules")
+	}
+	if desiredDNSIntent(desired.DNS) && len(rollback.DNS) == 0 {
+		gaps = append(gaps, "DNS")
+	}
+	if desiredNFTIntent(desired.NFT) && len(rollback.NFTables) == 0 {
+		gaps = append(gaps, "nftables")
+	}
+	return gaps
+}
+
+func desiredTunAddressIntent(address txstate.TUNAddressDesiredState) bool {
+	return address.Owner == netexecutor.OwnerTunAddress &&
+		address.InterfaceName == managedInterface &&
+		strings.TrimSpace(address.CIDR) != ""
+}
+
+func boundApplyingTunAddressCandidate(address txstate.TUNAddressDesiredState) bool {
+	return desiredTunAddressIntent(address) &&
+		address.LinkIndex > 0 &&
+		address.LinkKind == "tun" &&
+		address.AppearedAfterCore &&
+		strings.TrimSpace(address.CIDR) == planner.DefaultTunIPv4CIDR
+}
+
+func desiredRouteIntentCount(routes []txstate.RoutePlan) int {
+	count := 0
+	for _, route := range routes {
+		if route.Operation == "add" && ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
+			count++
+		}
+	}
+	return count
+}
+
+func desiredPolicyRuleIntentCount(steps []txstate.PlannedStep) int {
+	count := 0
+	for _, step := range steps {
+		if step.Kind == "policy-rule" && ownedRollbackMetadata(step.Owner, netexecutor.OwnerPolicyRule) {
+			count++
+		}
+	}
+	return count
+}
+
+func desiredDNSIntent(dns txstate.DNSPlan) bool {
+	return ownedRollbackMetadata(dns.Owner, netexecutor.OwnerDNS) && strings.TrimSpace(dns.Link) != ""
+}
+
+func desiredNFTIntent(nft txstate.NFTPlan) bool {
+	return ownedRollbackMetadata(nft.Owner, netexecutor.OwnerFirewall) &&
+		strings.TrimSpace(nft.Family) != "" && strings.TrimSpace(nft.Table) != ""
 }
 
 func (e DaemonCleanupExecutor) rollbackChildProcessResults(processes []txstate.ChildProcessRollback) []CleanupResult {

@@ -9,18 +9,19 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-// recoveryRollbackMetadata fills only rollback categories in podlaz-reserved
-// namespaces that the daemon may not have persisted before an abrupt stop.
-// Main-table server bypass state is intentionally excluded because desired state
-// alone cannot prove that podlaz, rather than another process, created it.
+// recoveryRollbackMetadata preserves durable rollback ownership and adds only
+// the narrow applying-state TUN-address syscall/persistence candidate. Desired
+// routes, policy rules, DNS, nftables, and link intent never grant cleanup
+// authority.
 func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 	rollback := tx.Rollback
 	desired := tx.DesiredPlan
 
-	if len(rollback.TUN) == 0 && desired.TUN.InterfaceName == managedInterface && ownedRollbackMetadata(desired.TUN.Owner, netexecutor.OwnerTunDevice) {
-		rollback.TUN = []txstate.TUNRollback{{InterfaceName: desired.TUN.InterfaceName, Owner: desired.TUN.Owner}}
-	}
-	if len(rollback.TUNAddresses) == 0 && transactionMayHaveMutatedNetwork(tx.State) {
+	// Desired state validates the shape of a resource but never proves that the
+	// daemon created it. The sole exception is the address syscall/persistence
+	// crash window while applying: the exact bound link identity was persisted
+	// before the mutable command and remains subject to fail-closed host checks.
+	if len(rollback.TUNAddresses) == 0 && tx.State == txstate.TransactionApplying {
 		address := desired.TUNAddress
 		if address.InterfaceName == managedInterface &&
 			address.LinkIndex > 0 &&
@@ -39,40 +40,6 @@ func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 				Owner:             address.Owner,
 			}}
 		}
-	}
-	if len(rollback.Routes) == 0 {
-		for _, route := range desired.Routes {
-			if route.Operation != "add" || route.Table != planner.TunRoutingTable || !ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
-				continue
-			}
-			rollback.Routes = append(rollback.Routes, txstate.RouteRollback{
-				Table: route.Table,
-				CIDR:  route.CIDR,
-				Via:   route.Via,
-				Dev:   route.Dev,
-				Owner: route.Owner,
-			})
-		}
-	}
-	if len(rollback.PolicyRules) == 0 {
-		for _, step := range desired.Steps {
-			rule, ok := desiredPolicyRuleRollback(step)
-			if !ok || !reservedTunPolicyRule(rule) {
-				continue
-			}
-			rollback.PolicyRules = append(rollback.PolicyRules, rule)
-		}
-	}
-	if len(rollback.DNS) == 0 && desired.DNS.Link == managedInterface && systemdResolvedBackend(desired.DNS.Backend) && ownedRollbackMetadata(desired.DNS.Owner, netexecutor.OwnerDNS) {
-		rollback.DNS = []txstate.DNSRollback{{
-			Backend:       normalizedSystemdResolvedBackend,
-			Link:          desired.DNS.Link,
-			SearchDomains: append([]string{}, desired.DNS.SearchDomains...),
-			Owner:         desired.DNS.Owner,
-		}}
-	}
-	if len(rollback.NFTables) == 0 && isManagedNFTTarget(desired.NFT.Family, desired.NFT.Table) && ownedRollbackMetadata(desired.NFT.Owner, netexecutor.OwnerFirewall) {
-		rollback.NFTables = []txstate.NFTablesRollback{{Family: desired.NFT.Family, Table: desired.NFT.Table, Owner: desired.NFT.Owner}}
 	}
 	return rollback
 }
@@ -115,13 +82,4 @@ const normalizedSystemdResolvedBackend = "systemd-resolved"
 func systemdResolvedBackend(backend string) bool {
 	backend = strings.TrimSpace(backend)
 	return backend == "" || backend == normalizedSystemdResolvedBackend || backend == planner.DNSBackendSystemdResolved
-}
-
-func transactionMayHaveMutatedNetwork(state txstate.TransactionState) bool {
-	switch state {
-	case txstate.TransactionApplying, txstate.TransactionApplied, txstate.TransactionVerifying, txstate.TransactionCommitted, txstate.TransactionRollingBack, txstate.TransactionFailed:
-		return true
-	default:
-		return false
-	}
 }
