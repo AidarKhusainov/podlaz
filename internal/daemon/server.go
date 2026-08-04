@@ -30,7 +30,7 @@ func (s Server) Run(ctx context.Context) error {
 		runtimeDir = api.RuntimeDirFromEnv()
 	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		return fmt.Errorf("create runtime directory %s: %w", runtimeDir)
+		return fmt.Errorf("create runtime directory %s: %w", runtimeDir, err)
 	}
 
 	lifecycle := s.Lifecycle
