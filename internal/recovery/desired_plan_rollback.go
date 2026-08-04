@@ -10,14 +10,37 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+type RollbackProjection struct {
+	Rollback   txstate.RollbackMetadata
+	Incomplete bool
+	Reasons    []string
+}
+
+func ProjectRollbackMetadata(tx txstate.Transaction) RollbackProjection {
+	projection := projectRollbackMetadataWithoutApplyingGaps(tx)
+	if projection.Incomplete {
+		return projection
+	}
+	gaps := applyingDesiredOwnershipGaps(tx)
+	if len(gaps) > 0 {
+		projection.Incomplete = true
+		projection.Reasons = append(projection.Reasons, gaps...)
+	}
+	return projection
+}
+
 // recoveryRollbackMetadata preserves durable rollback ownership and adds only
 // the narrow applying-state TUN-address syscall/persistence candidate. Desired
 // routes, policy rules, DNS, nftables, and link intent never grant cleanup
 // authority.
 func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
+	return projectRollbackMetadataWithoutApplyingGaps(tx).Rollback
+}
+
+func projectRollbackMetadataWithoutApplyingGaps(tx txstate.Transaction) RollbackProjection {
 	rollback := tx.Rollback
 	if reasons := rollbackOwnershipConsistencyReasons(tx, rollback); len(reasons) > 0 {
-		return mutationFreeAmbiguousRollback(rollback, reasons)
+		return RollbackProjection{Rollback: mutationFreeAmbiguousRollback(rollback, reasons), Incomplete: true, Reasons: reasons}
 	}
 	desired := tx.DesiredPlan
 
@@ -45,21 +68,25 @@ func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 			}}
 		}
 	}
-	return rollback
+	return RollbackProjection{Rollback: rollback}
 }
 
 func rollbackOwnershipConsistencyReasons(tx txstate.Transaction, rollback txstate.RollbackMetadata) []string {
-	if !rollbackHasNetworkOwnership(rollback) {
+	rollbackCounter := rollbackNetworkStepCounter(rollback)
+	appliedCounter := appliedNetworkStepCounter(tx.AppliedSteps)
+	if len(rollbackCounter) == 0 && len(appliedCounter) == 0 {
 		return nil
 	}
 	if tx.State == txstate.TransactionPlanned {
 		return []string{"planned transaction cannot authorize network cleanup"}
 	}
 	var reasons []string
+	reasons = append(reasons, rollbackDesiredSubsetMismatches(tx.DesiredPlan, rollback)...)
 	if tx.State == txstate.TransactionApplying {
-		reasons = append(reasons, applyingRollbackDesiredMismatches(tx, rollback)...)
+		reasons = append(reasons, rollbackAppliedSubsetMismatches(appliedCounter, rollbackCounter)...)
+	} else if !stringCounterEqual(appliedCounter, rollbackCounter) {
+		reasons = append(reasons, "applied network ownership multiset does not match rollback network multiset")
 	}
-	reasons = append(reasons, rollbackAppliedProofMismatches(tx.AppliedSteps, rollback)...)
 	return compactReasonStrings(reasons)
 }
 
@@ -76,116 +103,125 @@ func mutationFreeAmbiguousRollback(rollback txstate.RollbackMetadata, reasons []
 }
 
 func rollbackHasNetworkOwnership(rollback txstate.RollbackMetadata) bool {
-	for _, item := range rollback.TUN {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
-			return true
-		}
-	}
-	for _, item := range rollback.TUNAddresses {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
-			return true
-		}
-	}
-	for _, item := range rollback.Routes {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
-			return true
-		}
-	}
-	for _, item := range rollback.PolicyRules {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
-			return true
-		}
-	}
-	for _, item := range rollback.DNS {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
-			return true
-		}
-	}
-	for _, item := range rollback.NFTables {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
-			return true
-		}
-	}
-	return false
+	return len(rollback.TUN) > 0 || len(rollback.TUNAddresses) > 0 || len(rollback.Routes) > 0 || len(rollback.PolicyRules) > 0 || len(rollback.DNS) > 0 || len(rollback.NFTables) > 0
 }
 
-func applyingRollbackDesiredMismatches(tx txstate.Transaction, rollback txstate.RollbackMetadata) []string {
+func rollbackDesiredSubsetMismatches(desired txstate.DesiredPlan, rollback txstate.RollbackMetadata) []string {
 	var reasons []string
-	if desired := desiredRouteCounter(tx.DesiredPlan.Routes); len(desired) > 0 && !stringCounterEqual(desired, rollbackRouteCounter(rollback.Routes)) {
-		reasons = append(reasons, "route rollback multiset does not match desired route multiset")
+	if len(rollback.Routes) > 0 && len(desiredRouteCounter(desired.Routes)) > 0 && !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredRouteCounter(desired.Routes)) {
+		reasons = append(reasons, "route rollback multiset is not an exact subset of desired route multiset")
 	}
-	if desired := desiredPolicyRuleCounter(tx.DesiredPlan.Steps); len(desired) > 0 && !stringCounterEqual(desired, rollbackPolicyRuleCounter(rollback.PolicyRules)) {
-		reasons = append(reasons, "policy-rule rollback multiset does not match desired policy-rule multiset")
+	if len(rollback.PolicyRules) > 0 && len(desiredPolicyRuleCounter(desired.Steps)) > 0 && !stringCounterSubset(rollbackPolicyRuleCounter(rollback.PolicyRules), desiredPolicyRuleCounter(desired.Steps)) {
+		reasons = append(reasons, "policy-rule rollback multiset is not an exact subset of desired policy-rule multiset")
 	}
-	if desired := desiredDNSCounter(tx.DesiredPlan.DNS); len(desired) > 0 && !stringCounterEqual(desired, rollbackDNSCounter(rollback.DNS)) {
-		reasons = append(reasons, "DNS rollback multiset does not match desired DNS multiset")
+	if len(rollback.DNS) > 0 && len(desiredDNSCounter(desired.DNS)) > 0 && !stringCounterSubset(rollbackDNSCounter(rollback.DNS), desiredDNSCounter(desired.DNS)) {
+		reasons = append(reasons, "DNS rollback multiset is not an exact subset of desired DNS multiset")
 	}
-	if desired := desiredNFTCounter(tx.DesiredPlan.NFT); len(desired) > 0 && !stringCounterEqual(desired, rollbackNFTCounter(rollback.NFTables)) {
-		reasons = append(reasons, "nftables rollback multiset does not match desired nftables multiset")
+	if len(rollback.NFTables) > 0 && len(desiredNFTCounter(desired.NFT)) > 0 && !stringCounterSubset(rollbackNFTCounter(rollback.NFTables), desiredNFTCounter(desired.NFT)) {
+		reasons = append(reasons, "nftables rollback multiset is not an exact subset of desired nftables multiset")
 	}
 	return reasons
 }
 
-func rollbackAppliedProofMismatches(applied []txstate.AppliedStep, rollback txstate.RollbackMetadata) []string {
-	proofs := appliedStepCounter(applied)
-	var reasons []string
-	consume := func(kind, target, owner string) {
-		if appliedStepCounterConsume(proofs, kind, target, owner) {
-			return
-		}
-		reasons = append(reasons, fmt.Sprintf("rollback tuple lacks exact applied proof kind=%s", kind))
+func rollbackAppliedSubsetMismatches(applied, rollback map[string]int) []string {
+	if stringCounterSubset(rollback, applied) {
+		return nil
 	}
-	for _, item := range rollback.TUN {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
-			consume("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
-		}
-	}
-	for _, item := range rollback.TUNAddresses {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
-			consume("tun-address", tunAddressRollbackTarget(item), netexecutor.OwnerTunAddress)
-		}
-	}
-	for _, item := range rollback.Routes {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
-			consume("route", routeRollbackTarget(item), netexecutor.OwnerRoute)
-		}
-	}
-	for _, item := range rollback.PolicyRules {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
-			consume("policy-rule", policyRuleRollbackTarget(item), netexecutor.OwnerPolicyRule)
-		}
-	}
-	for _, item := range rollback.DNS {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
-			consume("dns", strings.TrimSpace(item.Link), netexecutor.OwnerDNS)
-		}
-	}
-	for _, item := range rollback.NFTables {
-		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
-			consume("nftables", nftRollbackTarget(item), netexecutor.OwnerFirewall)
-		}
-	}
-	return reasons
+	return []string{"rollback network multiset is not an exact subset of applied network ownership multiset"}
 }
 
-func appliedStepCounter(applied []txstate.AppliedStep) map[string]int {
+func appliedNetworkStepCounter(applied []txstate.AppliedStep) map[string]int {
 	out := make(map[string]int, len(applied))
 	for _, step := range applied {
-		out[appliedStepKey(step.Kind, step.Target, step.Owner)]++
+		if !networkAppliedStep(step) {
+			continue
+		}
+		out[appliedStepKey(step.Kind, step.Target, normalizeAppliedStepOwner(step.Owner, step.Kind))]++
 	}
 	return out
 }
 
-func appliedStepCounterConsume(counter map[string]int, kind, target, owner string) bool {
-	for _, candidateOwner := range []string{owner, txstate.TransactionOwner} {
-		key := appliedStepKey(kind, target, candidateOwner)
-		if counter[key] <= 0 {
-			continue
-		}
-		counter[key]--
-		return true
+func networkAppliedStep(step txstate.AppliedStep) bool {
+	switch step.Kind {
+	case "tun-device", "tun-address", "route", "policy-rule", "dns", "nftables":
+		return ownedNetworkStepOwner(step.Kind, step.Owner)
+	default:
+		return false
 	}
-	return false
+}
+
+func ownedNetworkStepOwner(kind, owner string) bool {
+	switch kind {
+	case "tun-device":
+		return ownedRollbackMetadata(owner, netexecutor.OwnerTunDevice)
+	case "tun-address":
+		return ownedRollbackMetadata(owner, netexecutor.OwnerTunAddress)
+	case "route":
+		return ownedRollbackMetadata(owner, netexecutor.OwnerRoute)
+	case "policy-rule":
+		return ownedRollbackMetadata(owner, netexecutor.OwnerPolicyRule)
+	case "dns":
+		return ownedRollbackMetadata(owner, netexecutor.OwnerDNS)
+	case "nftables":
+		return ownedRollbackMetadata(owner, netexecutor.OwnerFirewall)
+	default:
+		return false
+	}
+}
+
+func normalizeAppliedStepOwner(owner, kind string) string {
+	switch kind {
+	case "tun-device":
+		return normalizedRollbackOwner(owner, netexecutor.OwnerTunDevice)
+	case "tun-address":
+		return normalizedRollbackOwner(owner, netexecutor.OwnerTunAddress)
+	case "route":
+		return normalizedRollbackOwner(owner, netexecutor.OwnerRoute)
+	case "policy-rule":
+		return normalizedRollbackOwner(owner, netexecutor.OwnerPolicyRule)
+	case "dns":
+		return normalizedRollbackOwner(owner, netexecutor.OwnerDNS)
+	case "nftables":
+		return normalizedRollbackOwner(owner, netexecutor.OwnerFirewall)
+	default:
+		return strings.TrimSpace(owner)
+	}
+}
+
+func rollbackNetworkStepCounter(rollback txstate.RollbackMetadata) map[string]int {
+	out := map[string]int{}
+	add := func(kind, target, owner string) { out[appliedStepKey(kind, target, owner)]++ }
+	for _, item := range rollback.TUN {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
+			add("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
+		}
+	}
+	for _, item := range rollback.TUNAddresses {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
+			add("tun-address", tunAddressRollbackTarget(item), netexecutor.OwnerTunAddress)
+		}
+	}
+	for _, item := range rollback.Routes {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			add("route", routeRollbackTarget(item), netexecutor.OwnerRoute)
+		}
+	}
+	for _, item := range rollback.PolicyRules {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
+			add("policy-rule", policyRuleRollbackTarget(item), netexecutor.OwnerPolicyRule)
+		}
+	}
+	for _, item := range rollback.DNS {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
+			add("dns", strings.TrimSpace(item.Link), netexecutor.OwnerDNS)
+		}
+	}
+	for _, item := range rollback.NFTables {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
+			add("nftables", nftRollbackTarget(item), netexecutor.OwnerFirewall)
+		}
+	}
+	return out
 }
 
 func appliedStepKey(kind, target, owner string) string {
@@ -316,6 +352,15 @@ func stringCounterEqual(left, right map[string]int) bool {
 	}
 	for key, count := range left {
 		if right[key] != count {
+			return false
+		}
+	}
+	return true
+}
+
+func stringCounterSubset(subset, superset map[string]int) bool {
+	for key, count := range subset {
+		if superset[key] < count {
 			return false
 		}
 	}
