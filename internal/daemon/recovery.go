@@ -23,6 +23,9 @@ func daemonRecover(ctx context.Context, runtimeDir string, status api.StatusResp
 func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api.StatusResponse, opts recovery.Options) api.RecoveryResponse {
 	opts.RuntimeDir = runtimeDir
 	plan := recovery.PlanWithOptions(ctx, opts)
+	if status.Connection == "active" {
+		return recoveryResponseToAPI(activeRecoveryMutationFreeResult(plan, runtimeDir))
+	}
 	plan = filterStartupScanForActiveRuntime(plan, status, runtimeDir)
 	opts.Scanner = fixedDaemonRecoveryScanner{plan: plan}
 	if opts.Executor == nil {
@@ -30,6 +33,23 @@ func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api
 	}
 	result := recovery.ExecuteWithOptions(ctx, opts)
 	return recoveryResponseToAPI(result)
+}
+
+func activeRecoveryMutationFreeResult(plan recovery.PlanResult, runtimeDir string) recovery.ExecuteResult {
+	results := make([]recovery.CleanupResult, 0, len(plan.Candidates))
+	for _, candidate := range plan.Candidates {
+		results = append(results, recovery.CleanupResult{
+			Candidate: candidate,
+			Status:    "skipped",
+			Message:   "active lifecycle session is present; recovery execute is mutation-free",
+		})
+	}
+	warnings := append([]recovery.Warning(nil), plan.Warnings...)
+	warnings = append(warnings, recovery.Warning{
+		Target:  runtimeDir,
+		Message: "active lifecycle session is present; recovery execute did not authorize cleanup mutations",
+	})
+	return recovery.ExecuteResult{Results: results, Warnings: warnings}
 }
 
 func recoveryResponseToAPI(result recovery.ExecuteResult) api.RecoveryResponse {
