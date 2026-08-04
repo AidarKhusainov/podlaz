@@ -46,7 +46,7 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 		s.refreshMu.Unlock()
 		select {
 		case <-done:
-			return s.Snapshot()
+			return s.ForceRefresh(ctx)
 		case <-ctx.Done():
 			return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
 		}
