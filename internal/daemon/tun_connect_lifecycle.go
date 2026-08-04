@@ -76,6 +76,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := m.requireTunAddressPreflightBeforeHandoff(ctx, preHandoffPlan, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
+	if err := preflightActiveReplacementOwnership(preHandoffPlan.Snapshot, req.Handoff); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
+	}
 	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
