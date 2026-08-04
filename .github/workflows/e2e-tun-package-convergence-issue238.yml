@@ -28,7 +28,7 @@ jobs:
           EXPECTED_TREE_SHA: 6e6bb6e69347121bd40c40ab4209558800aaea9b
         run: |
           set -euo pipefail
-          base64 --decode .pr239-publish/patch.b64 | gzip -d >"${RUNNER_TEMP}/pr239-review.patch"
+          cat .pr239-publish/patch.part.* | base64 --decode | gzip -d >"${RUNNER_TEMP}/pr239-review.patch"
           printf '%s  %s\n' "${EXPECTED_PATCH_SHA256}" "${RUNNER_TEMP}/pr239-review.patch" | sha256sum -c -
           git apply --check "${RUNNER_TEMP}/pr239-review.patch"
           git apply "${RUNNER_TEMP}/pr239-review.patch"
