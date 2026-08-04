@@ -10,14 +10,18 @@ import (
 func TestSnapshotWithoutAllowedTunAddressConflictsKeepsSameInterfaceForeignOverlap(t *testing.T) {
 	allowed := []tunAddressPreflightAllowance{exactPodlazTunAddressAllowance(planner.DefaultTunIPv4CIDR)}
 	snapshot := netsnapshot.Snapshot{
-		IPv4Addresses: netsnapshot.IPAddressInventory{Addresses: []netsnapshot.IPAddress{
-			{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"},
-			{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: "198.18.0.2/32", Scope: "global"},
-		}},
-		IPv4Routes: netsnapshot.RouteInventory{Routes: []netsnapshot.Route{
-			{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: "local 198.18.0.1 dev podlaz0 proto kernel scope host"},
-			{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: "198.18.0.0/24", Table: "main", Raw: "198.18.0.0/24 dev podlaz0"},
-		}},
+		IPv4Addresses: netsnapshot.IPAddressInventory{
+			Addresses: []netsnapshot.IPAddress{
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"},
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: "198.18.0.2/32", Scope: "global"},
+			},
+		},
+		IPv4Routes: netsnapshot.RouteInventory{
+			Routes: []netsnapshot.Route{
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: "local 198.18.0.1 dev podlaz0 proto kernel scope host"},
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: "198.18.0.0/24", Table: "main", Raw: "198.18.0.0/24 dev podlaz0"},
+			},
+		},
 	}
 
 	filtered := snapshotWithoutAllowedTunAddressConflicts(snapshot, planner.DefaultTunIPv4CIDR, allowed)
@@ -39,8 +43,16 @@ func TestSnapshotWithoutAllowedTunAddressConflictsKeepsSameInterfaceForeignOverl
 func TestSnapshotWithoutAllowedTunAddressConflictsAllowsExactLocalRouteOnly(t *testing.T) {
 	allowed := []tunAddressPreflightAllowance{exactPodlazTunAddressAllowance(planner.DefaultTunIPv4CIDR)}
 	snapshot := netsnapshot.Snapshot{
-		IPv4Addresses: netsnapshot.IPAddressInventory{Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}}},
-		IPv4Routes: netsnapshot.RouteInventory{Routes: []netsnapshot.Route{{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: "local 198.18.0.1 dev podlaz0 proto kernel scope host"}}},
+		IPv4Addresses: netsnapshot.IPAddressInventory{
+			Addresses: []netsnapshot.IPAddress{
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"},
+			},
+		},
+		IPv4Routes: netsnapshot.RouteInventory{
+			Routes: []netsnapshot.Route{
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: "local 198.18.0.1 dev podlaz0 proto kernel scope host"},
+			},
+		},
 	}
 
 	filtered := snapshotWithoutAllowedTunAddressConflicts(snapshot, planner.DefaultTunIPv4CIDR, allowed)
