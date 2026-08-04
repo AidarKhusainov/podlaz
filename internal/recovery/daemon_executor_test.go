@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -133,11 +134,50 @@ func saveTransaction(t *testing.T, runtimeDir string, rollback txstate.RollbackM
 	tx := txstate.NewTransaction("tx-child-process", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
 	tx.Rollback = rollback
+	tx.AppliedSteps = appliedStepsForRollback(rollback, time.Now().UTC())
 	path, err := store.Save(tx)
 	if err != nil {
 		t.Fatalf("save transaction: %v", err)
 	}
 	return path, tx
+}
+
+func appliedStepsForRollback(rollback txstate.RollbackMetadata, now time.Time) []txstate.AppliedStep {
+	steps := make([]txstate.AppliedStep, 0, len(rollback.TUN)+len(rollback.TUNAddresses)+len(rollback.Routes)+len(rollback.PolicyRules)+len(rollback.DNS)+len(rollback.NFTables))
+	appendStep := func(kind, target, owner string) {
+		steps = append(steps, txstate.AppliedStep{Kind: kind, Target: target, Owner: owner, AppliedAt: now.UTC()})
+	}
+	for _, item := range rollback.TUN {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
+			appendStep("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
+		}
+	}
+	for _, item := range rollback.TUNAddresses {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
+			appendStep("tun-address", tunAddressRollbackTarget(item), netexecutor.OwnerTunAddress)
+		}
+	}
+	for _, item := range rollback.Routes {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			appendStep("route", routeRollbackTarget(item), netexecutor.OwnerRoute)
+		}
+	}
+	for _, item := range rollback.PolicyRules {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
+			appendStep("policy-rule", policyRuleRollbackTarget(item), netexecutor.OwnerPolicyRule)
+		}
+	}
+	for _, item := range rollback.DNS {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
+			appendStep("dns", strings.TrimSpace(item.Link), netexecutor.OwnerDNS)
+		}
+	}
+	for _, item := range rollback.NFTables {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
+			appendStep("nftables", nftRollbackTarget(item), netexecutor.OwnerFirewall)
+		}
+	}
+	return steps
 }
 
 func transactionCandidate(path string, tx txstate.Transaction) Candidate {
@@ -179,6 +219,7 @@ func TestFullRecoveryPreservesForeignReplacementLinkAfterTransactionIdentityMism
 		Family: "ipv4", InterfaceName: managedInterface, CIDR: "198.18.0.1/32", Scope: "global",
 		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
 	}}
+	tx.AppliedSteps = appliedStepsForRollback(tx.Rollback, time.Now().UTC())
 	path, err := store.Save(tx)
 	if err != nil {
 		t.Fatalf("save transaction: %v", err)
