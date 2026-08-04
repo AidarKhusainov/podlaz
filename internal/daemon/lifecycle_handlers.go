@@ -48,10 +48,6 @@ func registerLifecycleHandlers(mux *http.ServeMux, lifecycle lifecycleService, a
 			writeAuthorizationHTTPError(w, err)
 			return
 		}
-		if lifecycleConnectionActive(r.Context(), lifecycle) {
-			writeDaemonAPIHTTPError(w, daemonAPIConflict(activeConnectionError()))
-			return
-		}
 		response, err := lifecycle.Connect(r.Context(), req)
 		if err != nil {
 			logConnectFailure(req, err)
@@ -143,18 +139,4 @@ func decodeJSONBody(r *http.Request, dst any) error {
 		return errors.New("invalid JSON request body: trailing data")
 	}
 	return nil
-}
-
-func lifecycleConnectionActive(ctx context.Context, lifecycle lifecycleService) bool {
-	reporter, ok := lifecycle.(interface {
-		Status(context.Context) api.StatusResponse
-	})
-	if !ok {
-		return false
-	}
-	return reporter.Status(ctx).Connection == "active"
-}
-
-func activeConnectionError() error {
-	return errConnectionAlreadyActive
 }
