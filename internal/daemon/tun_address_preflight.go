@@ -259,7 +259,7 @@ func snapshotProvesTunLinkIdentity(address txstate.TUNAddressRollback, s netsnap
 		if !ok || index != address.LinkIndex {
 			return false
 		}
-		return address.LinkKind == "tun"
+		return tunDeviceRawKind(device.Raw+" "+device.Detail) == address.LinkKind
 	}
 	return false
 }
@@ -271,6 +271,19 @@ func tunDeviceRawIndex(raw string) (int, bool) {
 	}
 	index, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
 	return index, err == nil && index > 0
+}
+
+func tunDeviceRawKind(raw string) string {
+	fields := strings.Fields(strings.ToLower(raw))
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "type" && fields[i+1] == "tun" {
+			return "tun"
+		}
+	}
+	if strings.Contains(strings.ToLower(raw), " tun ") && strings.Contains(strings.ToLower(raw), " type tun") {
+		return "tun"
+	}
+	return ""
 }
 
 func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, iface string) bool {
@@ -294,7 +307,7 @@ func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, i
 		return false
 	}
 	raw := strings.ToLower(route.Raw + " " + route.Detail)
-	return strings.Contains(raw, "local") && strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host")
+	return strings.Contains(raw, "local") && strings.Contains(raw, "dev "+strings.ToLower(iface)) && strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host")
 }
 
 func ipv4CIDRsOverlap(left, right string) bool {
