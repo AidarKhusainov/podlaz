@@ -30,7 +30,7 @@ func (s Server) Run(ctx context.Context) error {
 		runtimeDir = api.RuntimeDirFromEnv()
 	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
-		return fmt.Errorf("create runtime directory %s: %w", runtimeDir, err)
+		return fmt.Errorf("create runtime directory %s: %w", runtimeDir)
 	}
 
 	lifecycle := s.Lifecycle
@@ -97,6 +97,7 @@ func (s Server) Run(ctx context.Context) error {
 		log.Printf("podlazd: packaged daemon API listening on abstract Unix socket")
 	}
 
+	operationLock := newLifecycleOperationLock()
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: status request method=%s path=%s", r.Method, r.URL.Path)
@@ -140,14 +141,16 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+		response := operationLock.runRecovery(func() api.RecoveryResponse {
+			return daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+		})
 		refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 		refreshStartupScan(refreshCtx)
 		cancel()
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
-	registerLifecycleHandlers(mux, startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: refreshStartupScan}, authorizer)
+	registerLifecycleHandlers(mux, operationLock.wrap(startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: refreshStartupScan}), authorizer)
 
 	httpServer := http.Server{
 		Handler: mux,
