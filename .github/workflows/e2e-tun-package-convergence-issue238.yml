@@ -1,4 +1,4 @@
-name: TUN Package Convergence E2E Issue 238
+name: PR 239 workspace export
 
 on:
   push:
@@ -8,132 +8,30 @@ on:
       - .github/workflows/e2e-tun-package-convergence-issue238.yml
 
 permissions:
-  contents: write
-
-concurrency:
-  group: podlaz-tun-package-convergence-issue238-${{ github.ref_name }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  package-convergence:
-    name: Installed package TUN convergence
+  export:
+    name: Export exact PR workspace
     runs-on: ubuntu-24.04
-    environment: vpn-e2e
-    timeout-minutes: 150
-    env:
-      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
-      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
-      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
-      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
-
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Apply verified unprivileged CLI runner fix
+      - name: Create source archive
         shell: bash
-        env:
-          EXPECTED_PATCH_SHA256: 3e403ddec4230f1a7e59acd7410d685e6f01c4ac80deded8d5c8e8cf4098bdc3
-          PATCH_B64: ZGlmZiAtLWdpdCBhL3NjcmlwdHMvZTJlL3Rlc3RzL3Rlc3RfdHVuX3BhY2thZ2VfY29udmVyZ2VuY2VfY29udHJhY3QucHkgYi9zY3JpcHRzL2UyZS90ZXN0cy90ZXN0X3R1bl9wYWNrYWdlX2NvbnZlcmdlbmNlX2NvbnRyYWN0LnB5CmluZGV4IDdiYjVhMGIuLjNkOTU2NWUgMTAwNjQ0Ci0tLSBhL3NjcmlwdHMvZTJlL3Rlc3RzL3Rlc3RfdHVuX3BhY2thZ2VfY29udmVyZ2VuY2VfY29udHJhY3QucHkKKysrIGIvc2NyaXB0cy9lMmUvdGVzdHMvdGVzdF90dW5fcGFja2FnZV9jb252ZXJnZW5jZV9jb250cmFjdC5weQpAQCAtMTMsNiArMTMsMTQgQEAgY2xhc3MgVHVuUGFja2FnZUNvbnZlcmdlbmNlQ29udHJhY3RUZXN0cyh1bml0dGVzdC5UZXN0Q2FzZSk6CiAgICAgICAgIGVuZCA9IHRleHQuaW5kZXgobmV4dF9tYXJrZXIsIHN0YXJ0KQogICAgICAgICByZXR1cm4gdGV4dFtzdGFydDplbmRdCiAKKyAgICBkZWYgdGVzdF9pbnN0YWxsZWRfY2xpX3J1bnNfdW5wcml2aWxlZ2VkX3dpdGhfcG9kbGF6X3NvY2tldF9ncm91cChzZWxmKSAtPiBOb25lOgorICAgICAgICB0ZXh0ID0gU0NSSVBULnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKQorICAgICAgICBib2R5ID0gc2VsZi5mdW5jdGlvbl9ib2R5KCJydW5faW5zdGFsbGVkX3BvZGxheiIsICJcbn1cblxuY2FwdHVyZV9zZWNyZXRfaW1wb3J0IikKKyAgICAgICAgcmVxdWlyZV9saW5lID0gbmV4dChsaW5lIGZvciBsaW5lIGluIHRleHQuc3BsaXRsaW5lcygpIGlmIGxpbmUuc3RhcnRzd2l0aCgicmVxdWlyZV9jbWQgIikpCisgICAgICAgIHNlbGYuYXNzZXJ0SW4oInJ1bnVzZXIiLCByZXF1aXJlX2xpbmUuc3BsaXQoKSkKKyAgICAgICAgc2VsZi5hc3NlcnRJbignc3VkbyAtbiBydW51c2VyIC11ICIkKGlkIC11bikiIC1nIHBvZGxheiAtLSBlbnYnLCBib2R5KQorICAgICAgICBzZWxmLmFzc2VydE5vdEluKCdzdWRvIC1uIC11ICIkKGlkIC11bikiIC1nIHBvZGxheiBlbnYnLCBib2R5KQorCiAgICAgZGVmIHRlc3RfbWlzc2luZ19saW5rX3NuYXBzaG90c19iZWZvcmVfcmVsZWFzZV9hbmRfdmVyaWZpZXNfYWZ0ZXJfcm9sbGJhY2soc2VsZikgLT4gTm9uZToKICAgICAgICAgYm9keSA9IHNlbGYuZnVuY3Rpb25fYm9keSgicnVuX21pc3NpbmdfbGlua19wcm9iZSIsICJcbn1cblxuc2V0dXBfaXNvbGF0ZWRfeGRnIikKICAgICAgICAgc25hcHNob3QgPSBib2R5LmluZGV4KCJzbmFwc2hvdF90dW5fbmV0d29ya19tYW5pZmVzdCIpCmRpZmYgLS1naXQgYS9zY3JpcHRzL2UyZS90dW4tcGFja2FnZS1jb252ZXJnZW5jZS5zaCBiL3NjcmlwdHMvZTJlL3R1bi1wYWNrYWdlLWNvbnZlcmdlbmNlLnNoCmluZGV4IDBjMWFlMzMuLmQzODM2OWUgMTAwNjQ0Ci0tLSBhL3NjcmlwdHMvZTJlL3R1bi1wYWNrYWdlLWNvbnZlcmdlbmNlLnNoCisrKyBiL3NjcmlwdHMvZTJlL3R1bi1wYWNrYWdlLWNvbnZlcmdlbmNlLnNoCkBAIC0xMSw3ICsxMSw3IEBAIHNvdXJjZSAiJHtTQ1JJUFRfRElSfS9saWIvY29ubmVjdF9saWZlY3ljbGUuc2giCiAjIHNoZWxsY2hlY2sgc291cmNlPWxpYi90dW5fcGFja2FnZV9hc3NlcnRpb25zLnNoCiBzb3VyY2UgIiR7U0NSSVBUX0RJUn0vbGliL3R1bl9wYWNrYWdlX2Fzc2VydGlvbnMuc2giCiAKLXJlcXVpcmVfY21kIGF3ayBiYXNoIGNtcCBjdXJsIGRwa2cgZHBrZy1kZWIgZmluZCBnZXRlbnQgZ2l0IGdyZXAgaXAgam91cm5hbGN0bCBta3RlbXAgbmZ0IHBncmVwIHB5dGhvbjMgcmVhZGxpbmsgcmVzb2x2ZWN0bCBzZWQgc2hhMjU2c3VtIHNsZWVwIHN1ZG8gc3lzdGVtY3RsIHN5c3RlbWQtcnVuIHRpbWVvdXQgdHIKK3JlcXVpcmVfY21kIGF3ayBiYXNoIGNtcCBjdXJsIGRwa2cgZHBrZy1kZWIgZmluZCBnZXRlbnQgZ2l0IGdyZXAgaXAgam91cm5hbGN0bCBta3RlbXAgbmZ0IHBncmVwIHB5dGhvbjMgcmVhZGxpbmsgcmVzb2x2ZWN0bCBydW51c2VyIHNlZCBzaGEyNTZzdW0gc2xlZXAgc3VkbyBzeXN0ZW1jdGwgc3lzdGVtZC1ydW4gdGltZW91dCB0cgogCiA6ICIke1BPRExBWl9FMkVfUFJPRklMRV9VUkk6PX0iCiA6ICIke1BPRExBWl9FMkVfUFJPRklMRV9VUklfTElTVDo9fSIKQEAgLTExOSw3ICsxMTksNyBAQCB3YWl0X2Zvcl9kYWVtb25fc29ja2V0KCkgewogfQogCiBydW5faW5zdGFsbGVkX3BvZGxheigpIHsKLSAgc3VkbyAtbiAtdSAiJChpZCAtdW4pIiAtZyBwb2RsYXogZW52IFwKKyAgc3VkbyAtbiBydW51c2VyIC11ICIkKGlkIC11bikiIC1nIHBvZGxheiAtLSBlbnYgXAogICAgIFhER19DT05GSUdfSE9NRT0iJHtYREdfQ09ORklHX0hPTUV9IiBcCiAgICAgWERHX1NUQVRFX0hPTUU9IiR7WERHX1NUQVRFX0hPTUV9IiBcCiAgICAgWERHX0NBQ0hFX0hPTUU9IiR7WERHX0NBQ0hFX0hPTUV9IiBcCg==
         run: |
           set -euo pipefail
-          printf '%s' "${PATCH_B64}" | base64 --decode >"${RUNNER_TEMP}/runuser-fix.patch"
-          printf '%s  %s\n' "${EXPECTED_PATCH_SHA256}" "${RUNNER_TEMP}/runuser-fix.patch" | sha256sum -c -
-          git apply --check "${RUNNER_TEMP}/runuser-fix.patch"
-          git apply "${RUNNER_TEMP}/runuser-fix.patch"
-          rm -f .e2e-result-issue238
-          python3 -m unittest scripts/e2e/tests/test_tun_package_convergence_contract.py
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A -- scripts/e2e/tun-package-convergence.sh scripts/e2e/tests/test_tun_package_convergence_contract.py .e2e-result-issue238
-          git diff --cached --check
-          git commit -m 'test: run packaged CLI through podlaz socket group'
-          git push origin HEAD:agent/issue-238-tun-l3-addressing
+          git archive \
+            --format=tar.gz \
+            --output="${RUNNER_TEMP}/podlaz-pr239-workspace.tar.gz" \
+            HEAD
 
-      - name: Setup Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.5'
-          cache: true
-          cache-dependency-path: |
-            go.mod
-            packaging/package-toolchain.env
-
-      - name: Run installed-package convergence scenario
-        id: convergence
-        timeout-minutes: 115
-        shell: bash
-        run: |
-          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
-          bash scripts/e2e/tun-package-convergence.sh
-
-      - name: Recover and verify clean host state
-        id: cleanup
-        if: always()
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          PODLAZ_E2E_PURGE_PACKAGE=true \
-            timeout --signal=TERM --kill-after=30s 900s \
-            bash scripts/e2e/tun-package-cleanup.sh
-
-      - name: Scan evidence before upload
-        id: evidence_scan
-        if: ${{ always() && steps.cleanup.outcome == 'success' }}
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          artifact_dir="${RUNNER_TEMP}/podlaz-e2e-artifacts"
-          mkdir -p "${artifact_dir}"
-          mapfile -t host_needles < <(
-            {
-              hostname -f 2>/dev/null || true
-              ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-              ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-              ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
-              resolvectl status --no-pager 2>/dev/null | awk -F: '/Current DNS Server|DNS Servers|DNS Domain/ {gsub(/^[[:space:]]+/, "", $2); for (i=1; i<=split($2, values, /[[:space:]]+/); i++) print values[i]}'
-              curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" 2>/dev/null || true
-            } | sed '/^[[:space:]]*$/d' | sort -u
-          )
-          python3 scripts/e2e/lib/redaction_scan.py \
-            sensitive-values \
-            "${artifact_dir}" \
-            "${artifact_dir}/pre-upload-redaction-scan.txt" \
-            "${PODLAZ_E2E_PROFILE_URI}" \
-            "${PODLAZ_E2E_PROFILE_URI_LIST}" \
-            "${host_needles[@]}"
-
-      - name: Upload package convergence evidence
-        id: evidence_upload
-        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' }}
+      - name: Upload source archive
         uses: actions/upload-artifact@v7
         with:
-          name: podlaz-tun-package-convergence-e2e-evidence-issue238
-          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          name: podlaz-pr239-workspace
+          path: ${{ runner.temp }}/podlaz-pr239-workspace.tar.gz
           if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish sanitized result marker
-        if: always()
-        shell: bash
-        env:
-          CONVERGENCE_OUTCOME: ${{ steps.convergence.outcome }}
-          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
-          EVIDENCE_SCAN_OUTCOME: ${{ steps.evidence_scan.outcome }}
-          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
-        run: |
-          set -euo pipefail
-          printf '%s\n' \
-            "convergence=${CONVERGENCE_OUTCOME}" \
-            "cleanup=${CLEANUP_OUTCOME}" \
-            "evidence_scan=${EVIDENCE_SCAN_OUTCOME}" \
-            "evidence_upload=${EVIDENCE_UPLOAD_OUTCOME}" \
-            > .e2e-result-issue238
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .e2e-result-issue238
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m 'ci: record issue 238 package convergence result'
-          git push origin HEAD:agent/issue-238-tun-l3-addressing
+          retention-days: 1
