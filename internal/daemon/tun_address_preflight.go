@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
@@ -42,12 +43,14 @@ func (m *XrayManager) requireTunAddressPreflightBeforeHandoff(ctx context.Contex
 	policy := api.NormalizeHandoffPolicy(handoff)
 	if policy == api.HandoffReplacePodlaz {
 		status := m.statusForPublication(ctx)
-		if tx, ok, err := activeCommittedTransaction(status, m.runtimeDir()); err == nil && ok && transactionOwnsExactTunAddress(tx, plan.TunAddress.CIDR) {
-			allowed = append(allowed, exactPodlazTunAddressAllowance(plan.TunAddress.CIDR))
+		if tx, ok, err := activeCommittedTransaction(status, m.runtimeDir()); err == nil && ok {
+			if allowance, ok := transactionExactTunAddressAllowance(tx, plan.TunAddress.CIDR, plan.Snapshot); ok {
+				allowed = append(allowed, allowance)
+			}
 		}
 	}
-	if iface, ok := validatedRecoverableTunAddressInterface(m.runtimeDir(), plan.TunAddress.CIDR); ok && iface == netsnapshot.DefaultTunName {
-		allowed = append(allowed, exactPodlazTunAddressAllowance(plan.TunAddress.CIDR))
+	if allowance, ok := validatedRecoverableTunAddressAllowance(m.runtimeDir(), plan.TunAddress.CIDR, plan.Snapshot); ok {
+		allowed = append(allowed, allowance)
 	}
 	if policy == api.HandoffStopKnown {
 		for _, connection := range activeNetworkManagerVPNConnections(plan.Snapshot) {
@@ -79,11 +82,40 @@ func transactionOwnsExactTunAddress(tx txstate.Transaction, cidr string) bool {
 	return matches == 1
 }
 
+func transactionExactTunAddressAllowance(tx txstate.Transaction, cidr string, s netsnapshot.Snapshot) (tunAddressPreflightAllowance, bool) {
+	var matched *txstate.TUNAddressRollback
+	for i := range tx.Rollback.TUNAddresses {
+		address := tx.Rollback.TUNAddresses[i]
+		if address.Owner != netexecutor.OwnerTunAddress ||
+			address.InterfaceName != netsnapshot.DefaultTunName ||
+			strings.TrimSpace(address.CIDR) != strings.TrimSpace(cidr) ||
+			address.LinkIndex <= 0 || address.LinkKind != "tun" || !address.AppearedAfterCore {
+			continue
+		}
+		if matched != nil {
+			return tunAddressPreflightAllowance{}, false
+		}
+		matched = &tx.Rollback.TUNAddresses[i]
+	}
+	if matched == nil || !snapshotProvesExactTunAddress(*matched, s) {
+		return tunAddressPreflightAllowance{}, false
+	}
+	return exactPodlazTunAddressAllowance(matched.CIDR), true
+}
+
 func validatedRecoverableTunAddressInterface(runtimeDir, cidr string) (string, bool) {
+	if allowance, ok := validatedRecoverableTunAddressAllowance(runtimeDir, cidr, netsnapshot.Snapshot{}); ok {
+		return allowance.Interface, true
+	}
+	return "", false
+}
+
+func validatedRecoverableTunAddressAllowance(runtimeDir, cidr string, s netsnapshot.Snapshot) (tunAddressPreflightAllowance, bool) {
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	if len(warnings) != 0 {
-		return "", false
+		return tunAddressPreflightAllowance{}, false
 	}
+	var allowance tunAddressPreflightAllowance
 	matches := 0
 	for _, summary := range summaries {
 		if !summary.RequiresRecovery {
@@ -91,23 +123,35 @@ func validatedRecoverableTunAddressInterface(runtimeDir, cidr string) (string, b
 		}
 		tx, _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Load(summary.ID)
 		if err != nil {
-			return "", false
+			return tunAddressPreflightAllowance{}, false
 		}
-		if transactionOwnsExactTunAddress(tx, cidr) {
+		if a, ok := transactionExactTunAddressAllowance(tx, cidr, s); ok {
 			matches++
+			allowance = a
 			continue
 		}
 		if tx.State != txstate.TransactionApplying {
 			continue
 		}
 		address := tx.DesiredPlan.TUNAddress
+		candidate := txstate.TUNAddressRollback{
+			Family:            address.Family,
+			InterfaceName:     address.InterfaceName,
+			CIDR:              address.CIDR,
+			Scope:             address.Scope,
+			LinkIndex:         address.LinkIndex,
+			LinkKind:          address.LinkKind,
+			AppearedAfterCore: address.AppearedAfterCore,
+			Owner:             address.Owner,
+		}
 		if address.Owner == netexecutor.OwnerTunAddress && address.InterfaceName == netsnapshot.DefaultTunName &&
 			strings.TrimSpace(address.CIDR) == strings.TrimSpace(cidr) && address.LinkIndex > 0 &&
-			address.LinkKind == "tun" && address.AppearedAfterCore {
+			address.LinkKind == "tun" && address.AppearedAfterCore && snapshotProvesExactTunAddress(candidate, s) {
 			matches++
+			allowance = exactPodlazTunAddressAllowance(address.CIDR)
 		}
 	}
-	return netsnapshot.DefaultTunName, matches == 1
+	return allowance, matches == 1
 }
 
 type tunAddressPreflightAllowance struct {
@@ -178,6 +222,57 @@ func tunAddressRouteAllowed(route netsnapshot.Route, desiredCIDR string, allowed
 	return false
 }
 
+func snapshotProvesExactTunAddress(address txstate.TUNAddressRollback, s netsnapshot.Snapshot) bool {
+	if s.IPv4Addresses.Inspection.Status != netsnapshot.StatusDetected || s.IPv4Routes.Inspection.Status != netsnapshot.StatusDetected {
+		return false
+	}
+	if !snapshotProvesTunLinkIdentity(address, s) {
+		return false
+	}
+	exactAddresses := 0
+	for _, item := range s.IPv4Addresses.Addresses {
+		if item.Interface == address.InterfaceName && strings.TrimSpace(item.CIDR) == strings.TrimSpace(address.CIDR) {
+			if strings.TrimSpace(item.Scope) != "global" {
+				return false
+			}
+			exactAddresses++
+		}
+	}
+	if exactAddresses != 1 {
+		return false
+	}
+	exactRoutes := 0
+	for _, route := range s.IPv4Routes.Routes {
+		if kernelGeneratedLocalRouteForAddress(route, address.CIDR, address.InterfaceName) {
+			exactRoutes++
+		}
+	}
+	return exactRoutes == 1
+}
+
+func snapshotProvesTunLinkIdentity(address txstate.TUNAddressRollback, s netsnapshot.Snapshot) bool {
+	for _, device := range s.TunDevices {
+		if device.Name != address.InterfaceName || device.Status != netsnapshot.StatusDetected {
+			continue
+		}
+		index, ok := tunDeviceRawIndex(device.Raw)
+		if !ok || index != address.LinkIndex {
+			return false
+		}
+		return address.LinkKind == "tun"
+	}
+	return false
+}
+
+func tunDeviceRawIndex(raw string) (int, bool) {
+	fields := strings.Fields(strings.TrimSpace(raw))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	index, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+	return index, err == nil && index > 0
+}
+
 func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, iface string) bool {
 	if route.Interface != iface || strings.TrimSpace(route.Gateway) != "" {
 		return false
@@ -195,12 +290,11 @@ func kernelGeneratedLocalRouteForAddress(route netsnapshot.Route, desiredCIDR, i
 	if desiredOnes != routeOnes || desiredBits != routeBits {
 		return false
 	}
-	table := strings.ToLower(strings.TrimSpace(route.Table))
-	if table != "" && table != "local" {
+	if strings.ToLower(strings.TrimSpace(route.Table)) != "local" {
 		return false
 	}
 	raw := strings.ToLower(route.Raw + " " + route.Detail)
-	return table == "local" || (strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host"))
+	return strings.Contains(raw, "local") && strings.Contains(raw, "proto kernel") && strings.Contains(raw, "scope host")
 }
 
 func ipv4CIDRsOverlap(left, right string) bool {
