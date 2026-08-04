@@ -76,21 +76,51 @@ func mutationFreeAmbiguousRollback(rollback txstate.RollbackMetadata, reasons []
 }
 
 func rollbackHasNetworkOwnership(rollback txstate.RollbackMetadata) bool {
-	return len(rollback.TUN) > 0 || len(rollback.TUNAddresses) > 0 || len(rollback.Routes) > 0 || len(rollback.PolicyRules) > 0 || len(rollback.DNS) > 0 || len(rollback.NFTables) > 0
+	for _, item := range rollback.TUN {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
+			return true
+		}
+	}
+	for _, item := range rollback.TUNAddresses {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
+			return true
+		}
+	}
+	for _, item := range rollback.Routes {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			return true
+		}
+	}
+	for _, item := range rollback.PolicyRules {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
+			return true
+		}
+	}
+	for _, item := range rollback.DNS {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
+			return true
+		}
+	}
+	for _, item := range rollback.NFTables {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
+			return true
+		}
+	}
+	return false
 }
 
 func applyingRollbackDesiredMismatches(tx txstate.Transaction, rollback txstate.RollbackMetadata) []string {
 	var reasons []string
-	if len(rollback.Routes) > 0 && !stringCounterEqual(desiredRouteCounter(tx.DesiredPlan.Routes), rollbackRouteCounter(rollback.Routes)) {
+	if desired := desiredRouteCounter(tx.DesiredPlan.Routes); len(desired) > 0 && !stringCounterEqual(desired, rollbackRouteCounter(rollback.Routes)) {
 		reasons = append(reasons, "route rollback multiset does not match desired route multiset")
 	}
-	if len(rollback.PolicyRules) > 0 && !stringCounterEqual(desiredPolicyRuleCounter(tx.DesiredPlan.Steps), rollbackPolicyRuleCounter(rollback.PolicyRules)) {
+	if desired := desiredPolicyRuleCounter(tx.DesiredPlan.Steps); len(desired) > 0 && !stringCounterEqual(desired, rollbackPolicyRuleCounter(rollback.PolicyRules)) {
 		reasons = append(reasons, "policy-rule rollback multiset does not match desired policy-rule multiset")
 	}
-	if len(rollback.DNS) > 0 && !stringCounterEqual(desiredDNSCounter(tx.DesiredPlan.DNS), rollbackDNSCounter(rollback.DNS)) {
+	if desired := desiredDNSCounter(tx.DesiredPlan.DNS); len(desired) > 0 && !stringCounterEqual(desired, rollbackDNSCounter(rollback.DNS)) {
 		reasons = append(reasons, "DNS rollback multiset does not match desired DNS multiset")
 	}
-	if len(rollback.NFTables) > 0 && !stringCounterEqual(desiredNFTCounter(tx.DesiredPlan.NFT), rollbackNFTCounter(rollback.NFTables)) {
+	if desired := desiredNFTCounter(tx.DesiredPlan.NFT); len(desired) > 0 && !stringCounterEqual(desired, rollbackNFTCounter(rollback.NFTables)) {
 		reasons = append(reasons, "nftables rollback multiset does not match desired nftables multiset")
 	}
 	return reasons
@@ -106,22 +136,34 @@ func rollbackAppliedProofMismatches(applied []txstate.AppliedStep, rollback txst
 		reasons = append(reasons, fmt.Sprintf("rollback tuple lacks exact applied proof kind=%s", kind))
 	}
 	for _, item := range rollback.TUN {
-		consume("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
+			consume("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
+		}
 	}
 	for _, item := range rollback.TUNAddresses {
-		consume("tun-address", tunAddressRollbackTarget(item), netexecutor.OwnerTunAddress)
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
+			consume("tun-address", tunAddressRollbackTarget(item), netexecutor.OwnerTunAddress)
+		}
 	}
 	for _, item := range rollback.Routes {
-		consume("route", routeRollbackTarget(item), netexecutor.OwnerRoute)
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			consume("route", routeRollbackTarget(item), netexecutor.OwnerRoute)
+		}
 	}
 	for _, item := range rollback.PolicyRules {
-		consume("policy-rule", policyRuleRollbackTarget(item), netexecutor.OwnerPolicyRule)
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
+			consume("policy-rule", policyRuleRollbackTarget(item), netexecutor.OwnerPolicyRule)
+		}
 	}
 	for _, item := range rollback.DNS {
-		consume("dns", strings.TrimSpace(item.Link), netexecutor.OwnerDNS)
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
+			consume("dns", strings.TrimSpace(item.Link), netexecutor.OwnerDNS)
+		}
 	}
 	for _, item := range rollback.NFTables {
-		consume("nftables", nftRollbackTarget(item), netexecutor.OwnerFirewall)
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
+			consume("nftables", nftRollbackTarget(item), netexecutor.OwnerFirewall)
+		}
 	}
 	return reasons
 }
