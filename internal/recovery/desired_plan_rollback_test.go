@@ -77,3 +77,50 @@ func TestRecoveryRollbackMetadataRejectsForeignDesiredTargets(t *testing.T) {
 		t.Fatalf("foreign or unowned desired targets must not become rollback metadata: %#v", got)
 	}
 }
+
+func TestRecoveryRollbackMetadataFailClosesPlannedNetworkRollback(t *testing.T) {
+	tx := txstate.NewTransaction("tx-planned-rollback", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionPlanned
+	tx.Rollback.Routes = []txstate.RouteRollback{{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute}}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func TestRecoveryRollbackMetadataFailClosesApplyingDesiredRollbackMismatch(t *testing.T) {
+	tx := txstate.NewTransaction("tx-applying-mismatch", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionApplying
+	tx.DesiredPlan.Routes = []txstate.RoutePlan{{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute, Operation: "add"}}
+	tx.Rollback.Routes = []txstate.RouteRollback{{Table: planner.TunRoutingTable, CIDR: "203.0.113.10/32", Dev: managedInterface, Owner: netexecutor.OwnerRoute}}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func TestRecoveryRollbackMetadataFailClosesAppliedRollbackWithoutExactStep(t *testing.T) {
+	tx := txstate.NewTransaction("tx-applied-no-step", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionApplied
+	tx.Rollback.Routes = []txstate.RouteRollback{{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute}}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func TestRecoveryRollbackMetadataFailClosesDuplicateRollbackCountMismatch(t *testing.T) {
+	tx := txstate.NewTransaction("tx-duplicate-mismatch", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionApplied
+	tx.AppliedSteps = []txstate.AppliedStep{{Kind: "route", Target: planner.TunRoutingTable + " default", Owner: netexecutor.OwnerRoute, AppliedAt: time.Now().UTC()}}
+	tx.Rollback.Routes = []txstate.RouteRollback{
+		{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute},
+		{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute},
+	}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func assertMutationFreeOwnershipBlocker(t *testing.T, metadata txstate.RollbackMetadata) {
+	t.Helper()
+	if len(metadata.TUN) != 0 || len(metadata.TUNAddresses) != 0 || len(metadata.Routes) != 0 || len(metadata.PolicyRules) != 0 || len(metadata.DNS) != 0 || len(metadata.NFTables) != 0 {
+		t.Fatalf("expected inconsistent ownership to authorize zero network mutations, got %#v", metadata)
+	}
+	if len(metadata.ChildProcesses) == 0 {
+		t.Fatalf("expected ownership blocker marker to preserve transaction/config metadata, got %#v", metadata)
+	}
+}
