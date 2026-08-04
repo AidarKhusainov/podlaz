@@ -25,12 +25,16 @@ func TestSnapshotProvesExactTunAddressRequiresCurrentLinkKindAndKernelLocalRoute
 	valid.TunDevices = []netsnapshot.TunDevice{{
 		Name:   netsnapshot.DefaultTunName,
 		Status: netsnapshot.StatusDetected,
-		Raw:    "7: podlaz0: <POINTOPOINT,UP> mtu 1500",
-		Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun",
+		Raw:    "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun",
 	}}
 	valid.IPv4Addresses = netsnapshot.IPAddressInventory{
 		Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected},
-		Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}},
+		Addresses: []netsnapshot.IPAddress{{
+			Family:    "ipv4",
+			Interface: netsnapshot.DefaultTunName,
+			CIDR:      planner.DefaultTunIPv4CIDR,
+			Scope:     "global",
+		}},
 	}
 	valid.IPv4Routes = netsnapshot.RouteInventory{
 		Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected},
@@ -48,7 +52,11 @@ func TestSnapshotProvesExactTunAddressRequiresCurrentLinkKindAndKernelLocalRoute
 	}
 
 	wrongKind := valid
-	wrongKind.TunDevices = []netsnapshot.TunDevice{{Name: netsnapshot.DefaultTunName, Status: netsnapshot.StatusDetected, Raw: "7: podlaz0: <BROADCAST,UP> mtu 1500", Detail: "7: podlaz0: <BROADCAST,UP> mtu 1500 ether type veth"}}
+	wrongKind.TunDevices = []netsnapshot.TunDevice{{
+		Name:   netsnapshot.DefaultTunName,
+		Status: netsnapshot.StatusDetected,
+		Raw:    "7: podlaz0: <BROADCAST,UP> mtu 1500 ether type veth",
+	}}
 	if snapshotProvesExactTunAddress(address, wrongKind) {
 		t.Fatal("foreign replacement with matching ifindex but non-tun current kind must not prove ownership")
 	}
