@@ -51,9 +51,7 @@ func TestActiveCommittedRecoverExecutePerformsNoMutation(t *testing.T) {
 	if executor.calls != 0 {
 		t.Fatalf("active committed recovery executed %d mutations", executor.calls)
 	}
-	if len(response.Results) != 0 || len(response.Warnings) != 0 {
-		t.Fatalf("active committed recovery must be clean: %#v", response)
-	}
+	assertActiveRecoverMutationFree(t, response)
 }
 
 func TestActiveCommittedStatusAndDoctorStayClean(t *testing.T) {
@@ -115,10 +113,28 @@ func TestActiveCommittedRecoverWithOSScannerPerformsNoMutation(t *testing.T) {
 	if executor.calls != 0 {
 		t.Fatalf("active committed OS recovery executed %d mutations", executor.calls)
 	}
-	if len(response.Results) != 0 || len(response.Warnings) != 0 {
-		t.Fatalf("active committed OS recovery must be clean: %#v", response)
-	}
+	assertActiveRecoverMutationFree(t, response)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("active committed transaction was modified: %v", err)
+	}
+}
+
+func assertActiveRecoverMutationFree(t *testing.T, response api.RecoveryResponse) {
+	t.Helper()
+	if len(response.Results) == 0 {
+		t.Fatalf("active recovery should explicitly report mutation-free skipped candidates: %#v", response)
+	}
+	for _, result := range response.Results {
+		if result.Status != "skipped" || !strings.Contains(result.Message, "active lifecycle session") {
+			t.Fatalf("active recovery result is not mutation-free skipped: %#v", response)
+		}
+	}
+	if len(response.Warnings) == 0 {
+		t.Fatalf("active recovery should include a mutation-free warning: %#v", response)
+	}
+	for _, warning := range response.Warnings {
+		if !strings.Contains(warning.Message, "active lifecycle session") {
+			t.Fatalf("active recovery warning does not explain mutation-free behavior: %#v", response)
+		}
 	}
 }
