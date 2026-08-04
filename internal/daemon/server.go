@@ -98,6 +98,7 @@ func (s Server) Run(ctx context.Context) error {
 	}
 
 	operationLock := newLifecycleOperationLock()
+	lockedLifecycle := operationLock.wrap(startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: refreshStartupScan})
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: status request method=%s path=%s", r.Method, r.URL.Path)
@@ -142,15 +143,16 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		response := operationLock.runRecovery(func() api.RecoveryResponse {
-			return daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+			response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+			refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
+			refreshStartupScan(refreshCtx)
+			cancel()
+			return response
 		})
-		refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
-		refreshStartupScan(refreshCtx)
-		cancel()
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
-	registerLifecycleHandlers(mux, operationLock.wrap(startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: refreshStartupScan}), authorizer)
+	registerLifecycleHandlers(mux, lockedLifecycle, authorizer)
 
 	httpServer := http.Server{
 		Handler: mux,
@@ -175,7 +177,7 @@ func (s Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		_, _ = lifecycle.Disconnect(context.Background())
+		_, _ = lockedLifecycle.Disconnect(context.Background())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -183,7 +185,7 @@ func (s Server) Run(ctx context.Context) error {
 		}
 		return collectServeErrors(errc, len(listeners))
 	case err := <-errc:
-		_, _ = lifecycle.Disconnect(context.Background())
+		_, _ = lockedLifecycle.Disconnect(context.Background())
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
@@ -222,13 +224,13 @@ func removeStaleSocket(path string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("inspect daemon socket path %s: %w", path, err)
+		return fmt.Errorf("inspect daemon socket path %s: %w", path)
 	}
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("daemon socket path %s exists and is not a Unix socket", path)
 	}
 	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale daemon socket %s: %w", path, err)
+		return fmt.Errorf("remove stale daemon socket %s: %w", path)
 	}
 	return nil
 }
