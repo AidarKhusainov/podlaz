@@ -7,14 +7,13 @@ import (
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
-	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const dnsRouteOnlyDomain = "~."
 
 func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
-	rollback := recovery.ProjectRollbackMetadata(tx).Rollback
+	rollback := tx.Rollback
 	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
 	if len(rollback.TUN) > 0 {
 		plan.TunDevice = planner.TunDevicePlan{Name: rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
