@@ -512,7 +512,7 @@ func (tx Transaction) Summary(path string) TransactionSummary {
 
 func (tx Transaction) RequiresCleanup() bool {
 	switch tx.State {
-	case TransactionPlanned, TransactionApplying, TransactionApplied, TransactionVerifying, TransactionRollingBack, TransactionFailed:
+	case TransactionPlanned, TransactionApplying, TransactionApplied, TransactionVerifying, TransactionCommitted, TransactionRollingBack, TransactionFailed:
 		return true
 	default:
 		return false

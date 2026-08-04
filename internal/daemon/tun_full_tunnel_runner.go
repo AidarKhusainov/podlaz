@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
@@ -50,7 +52,7 @@ type fullTunnelTransactionRunner struct {
 	stopCore                    func(fullTunnelCoreHandle) error
 	verifyCoreStarted           func(<-chan struct{}) error
 	saveCoreMetadata            func(txstate.TransactionStore, string, string, int, time.Time) error
-	bindTunAddress              func(context.Context, planner.TunPlan, tunPlanExecutor) (planner.TunPlan, error)
+	bindTunAddress              func(context.Context, planner.TunPlan, tunPlanExecutor, fullTunnelCoreHandle) (planner.TunPlan, error)
 	saveTunAddressMetadata      func(txstate.TransactionStore, string, planner.TunAddressPlan, time.Time) error
 	verifyConnectivity          func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
 	collectFailureDiagnostics   func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary
@@ -107,7 +109,7 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		return xrayState{}, withTunFailurePhase("core-start", transactionID, "completed", fmt.Errorf("%w; rollback completed", err))
 	}
 
-	boundPlan, err := r.bindTunAddress(ctx, r.plan, r.executor)
+	boundPlan, err := r.bindTunAddress(ctx, r.plan, r.executor, core)
 	if err != nil {
 		status, convergedErr := r.rollbackFailure(ctx, transactionID, emptyTunRollbackPlan(r.plan), err, "TUN address identity binding failure", stopCore)
 		return xrayState{}, withTunFailurePhase("tun-address-verify", transactionID, status, convergedErr)
@@ -282,10 +284,10 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 }
 
 type tunAddressIdentityBinder interface {
-	BindTunAddress(context.Context, planner.TunPlan) (planner.TunPlan, error)
+	BindTunAddress(context.Context, planner.TunPlan, netexecutor.TunLinkCreationProof) (planner.TunPlan, error)
 }
 
-func bindTunAddressWithExecutor(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor) (planner.TunPlan, error) {
+func bindTunAddressWithExecutor(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, core fullTunnelCoreHandle) (planner.TunPlan, error) {
 	if strings.TrimSpace(plan.TunAddress.CIDR) == "" {
 		return plan, nil
 	}
@@ -293,7 +295,12 @@ func bindTunAddressWithExecutor(ctx context.Context, plan planner.TunPlan, execu
 	if !ok {
 		return plan, errors.New("TUN executor cannot bind daemon-owned address to the Xray-created link identity")
 	}
-	return binder.BindTunAddress(ctx, plan)
+	proof := netexecutor.TunLinkCreationProof{
+		PreStartAbsent: tunLinkAuthoritativelyAbsentBeforeCore(plan.Snapshot, plan.TunAddress.Interface),
+		TrackedCorePID: core.pid,
+		CoreDone:       core.done,
+	}
+	return binder.BindTunAddress(ctx, plan, proof)
 }
 
 func fullTunnelActiveState(p profile.Profile, plan planner.TunPlan, corePlan tunCoreRuntimePlan, transactionID string) xrayState {
@@ -324,4 +331,18 @@ func emptyTunRollbackPlan(plan planner.TunPlan) planner.TunPlan {
 		ProfileID:   plan.ProfileID,
 		ProfileName: plan.ProfileName,
 	}
+}
+
+func tunLinkAuthoritativelyAbsentBeforeCore(snapshot netsnapshot.Snapshot, name string) bool {
+	matched := false
+	for _, device := range snapshot.TunDevices {
+		if strings.TrimSpace(device.Name) != strings.TrimSpace(name) {
+			continue
+		}
+		matched = true
+		if device.Status != netsnapshot.StatusMissing {
+			return false
+		}
+	}
+	return matched
 }

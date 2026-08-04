@@ -30,16 +30,24 @@ func TestPreflightTunOwnershipBlocksStalePolicyRuleOnly(t *testing.T) {
 	assertRuntimeStaleBlockerContains(t, err, "policy-rule 10000")
 }
 
-func TestPrepareTunHandoffIgnoresRolledBackAndCommittedTransactionFiles(t *testing.T) {
+func TestPrepareTunHandoffIgnoresRolledBackTransactionFile(t *testing.T) {
 	runtimeDir := t.TempDir()
 	writeRuntimeTransactionState(t, runtimeDir, "rolled", txstate.TransactionRolledBack)
-	writeRuntimeTransactionState(t, runtimeDir, "committed", txstate.TransactionCommitted)
 	manager := &XrayManager{RuntimeDir: runtimeDir}
 
 	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
 	if err != nil {
-		t.Fatalf("rolled_back/committed transaction files must not block clean handoff: %v", err)
+		t.Fatalf("rolled_back transaction file must not block clean handoff: %v", err)
 	}
+}
+
+func TestPrepareTunHandoffBlocksInactiveCommittedTransactionFile(t *testing.T) {
+	runtimeDir := t.TempDir()
+	writeRuntimeTransactionState(t, runtimeDir, "committed", txstate.TransactionCommitted)
+	manager := &XrayManager{RuntimeDir: runtimeDir}
+
+	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
+	assertRuntimeStaleBlockerContains(t, err, "transaction-file committed.json", "recover --execute --yes")
 }
 
 func TestPrepareTunHandoffBlocksCleanupRequiredTransactionFiles(t *testing.T) {

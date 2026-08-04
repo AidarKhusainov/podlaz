@@ -51,7 +51,7 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 		RuntimeConfigPath:   configPath,
 		ActiveTransactionID: tx.ID,
 		Transactions: []api.TransactionStatus{{
-			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: filepath.Join(runtimeDir, txstate.TransactionDirName, tx.ID+txstate.TransactionFileSuffix),
+			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: filepath.Join(runtimeDir, txstate.TransactionDirName, tx.ID+txstate.TransactionFileSuffix), RequiresCleanup: true,
 		}},
 	}
 

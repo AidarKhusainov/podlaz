@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -368,4 +370,26 @@ func assertTransactionCandidate(t *testing.T, plan PlanResult, id string) *Trans
 	}
 	t.Fatalf("transaction candidate id=%q not found in %#v", id, plan.Candidates)
 	return nil
+}
+
+func TestOSScannerIncludesCommittedTransactionForStartupRecovery(t *testing.T) {
+	runtimeDir := t.TempDir()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	tx := txstate.NewTransaction("tx-committed-restart", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionCommitted
+	tx.Rollback.TUNAddresses = []txstate.TUNAddressRollback{{
+		Family: "ipv4", InterfaceName: managedInterface, CIDR: planner.DefaultTunIPv4CIDR,
+		Scope: "global", LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: netexecutor.OwnerTunAddress,
+	}}
+	if _, err := store.Save(tx); err != nil {
+		t.Fatalf("save committed transaction: %v", err)
+	}
+
+	result := (OSScanner{Runner: fakeMissingResourcesRunner(), RuntimeDir: runtimeDir}).Scan(context.Background())
+	for _, candidate := range result.Candidates {
+		if candidate.Kind == "transaction-state" && candidate.Transaction != nil && candidate.Transaction.ID == tx.ID {
+			return
+		}
+	}
+	t.Fatalf("committed transaction was not surfaced for recovery: %#v", result.Candidates)
 }

@@ -20,6 +20,26 @@ func recoveryRollbackMetadata(tx txstate.Transaction) txstate.RollbackMetadata {
 	if len(rollback.TUN) == 0 && desired.TUN.InterfaceName == managedInterface && ownedRollbackMetadata(desired.TUN.Owner, netexecutor.OwnerTunDevice) {
 		rollback.TUN = []txstate.TUNRollback{{InterfaceName: desired.TUN.InterfaceName, Owner: desired.TUN.Owner}}
 	}
+	if len(rollback.TUNAddresses) == 0 && transactionMayHaveMutatedNetwork(tx.State) {
+		address := desired.TUNAddress
+		if address.InterfaceName == managedInterface &&
+			address.LinkIndex > 0 &&
+			address.LinkKind == "tun" &&
+			address.AppearedAfterCore &&
+			strings.TrimSpace(address.CIDR) == planner.DefaultTunIPv4CIDR &&
+			ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) {
+			rollback.TUNAddresses = []txstate.TUNAddressRollback{{
+				Family:            address.Family,
+				InterfaceName:     address.InterfaceName,
+				CIDR:              address.CIDR,
+				Scope:             address.Scope,
+				LinkIndex:         address.LinkIndex,
+				LinkKind:          address.LinkKind,
+				AppearedAfterCore: address.AppearedAfterCore,
+				Owner:             address.Owner,
+			}}
+		}
+	}
 	if len(rollback.Routes) == 0 {
 		for _, route := range desired.Routes {
 			if route.Operation != "add" || route.Table != planner.TunRoutingTable || !ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
@@ -95,4 +115,13 @@ const normalizedSystemdResolvedBackend = "systemd-resolved"
 func systemdResolvedBackend(backend string) bool {
 	backend = strings.TrimSpace(backend)
 	return backend == "" || backend == normalizedSystemdResolvedBackend || backend == planner.DNSBackendSystemdResolved
+}
+
+func transactionMayHaveMutatedNetwork(state txstate.TransactionState) bool {
+	switch state {
+	case txstate.TransactionApplying, txstate.TransactionApplied, txstate.TransactionVerifying, txstate.TransactionCommitted, txstate.TransactionRollingBack, txstate.TransactionFailed:
+		return true
+	default:
+		return false
+	}
 }

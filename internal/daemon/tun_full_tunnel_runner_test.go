@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
@@ -47,7 +49,7 @@ func TestFullTunnelTransactionRunnerCommitsActiveState(t *testing.T) {
 	if strings.Join(h.executor.calls, ",") != "apply,verify" {
 		t.Fatalf("unexpected executor calls: %#v", h.executor.calls)
 	}
-	h.requireTransactionState(t, txstate.TransactionCommitted, false)
+	h.requireTransactionState(t, txstate.TransactionCommitted, true)
 }
 
 func TestFullTunnelTransactionRunnerStartsXrayBeforeApplyingHostNetworking(t *testing.T) {
@@ -405,7 +407,7 @@ func (h *fullTunnelRunnerHarness) runner() *fullTunnelTransactionRunner {
 		verifyCoreStarted: func(<-chan struct{}) error {
 			return h.verifyCoreErr
 		},
-		bindTunAddress: func(_ context.Context, plan planner.TunPlan, _ tunPlanExecutor) (planner.TunPlan, error) {
+		bindTunAddress: func(_ context.Context, plan planner.TunPlan, _ tunPlanExecutor, _ fullTunnelCoreHandle) (planner.TunPlan, error) {
 			if strings.TrimSpace(plan.TunAddress.CIDR) == "" {
 				return plan, nil
 			}
@@ -473,3 +475,34 @@ func (h *fullTunnelRunnerHarness) requireTransactionState(t *testing.T, state tx
 		t.Fatalf("unexpected status transaction state: got %#v want state=%s requires_cleanup=%t", statuses[0], state, requiresCleanup)
 	}
 }
+
+func TestBindTunAddressWithExecutorPassesPreStartAndTrackedCoreProof(t *testing.T) {
+	done := make(chan struct{})
+	exec := &proofCapturingTunExecutor{}
+	plan := transactionPlanForTest()
+	plan.TunAddress = unboundTunAddressPlanForTest()
+	plan.Snapshot.TunDevices = []netsnapshot.TunDevice{{Name: "podlaz0", Status: netsnapshot.StatusMissing}}
+
+	_, err := bindTunAddressWithExecutor(context.Background(), plan, exec, fullTunnelCoreHandle{pid: 4321, done: done})
+	if err != nil {
+		t.Fatalf("bind TUN address with tracked core proof: %v", err)
+	}
+	if !exec.proof.PreStartAbsent || exec.proof.TrackedCorePID != 4321 || exec.proof.CoreDone != done {
+		t.Fatalf("unexpected creation proof: %#v", exec.proof)
+	}
+}
+
+type proofCapturingTunExecutor struct {
+	proof netexecutor.TunLinkCreationProof
+}
+
+func (e *proofCapturingTunExecutor) BindTunAddress(_ context.Context, plan planner.TunPlan, proof netexecutor.TunLinkCreationProof) (planner.TunPlan, error) {
+	e.proof = proof
+	return plan, nil
+}
+
+func (*proofCapturingTunExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, nil
+}
+func (*proofCapturingTunExecutor) Verify(context.Context, planner.TunPlan) error   { return nil }
+func (*proofCapturingTunExecutor) Rollback(context.Context, planner.TunPlan) error { return nil }

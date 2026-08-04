@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -24,17 +25,20 @@ type ResolvedScopedQueryVerifier struct {
 	Runner CommandRunner
 }
 
-func (e ResolvedScopedQueryVerifier) Query(ctx context.Context, link, name string) ([]string, error) {
+func (e ResolvedScopedQueryVerifier) Query(ctx context.Context, link string, linkIndex int, name string) ([]string, error) {
 	link = strings.TrimSpace(link)
 	name = strings.TrimSpace(name)
 	if link == "" {
 		return nil, fmt.Errorf("%w: missing target link", ErrResolvedLinkQueryFailure)
 	}
+	if linkIndex <= 0 {
+		return nil, fmt.Errorf("%w: missing target link index", ErrResolvedLinkQueryFailure)
+	}
 	if name == "" {
 		return nil, fmt.Errorf("%w: missing query name", ErrResolvedLinkQueryFailure)
 	}
 
-	result, err := observeCommand(ctx, e.Runner, "resolvectl", "--cache=no", "--interface="+link, "-4", "query", name)
+	result, err := observeCommand(ctx, e.Runner, "resolvectl", "--cache=no", "--interface="+strconv.Itoa(linkIndex), "-4", "query", name)
 	if err != nil {
 		return nil, fmt.Errorf("%w: query %s through %s: %w", ErrResolvedLinkQueryFailure, name, link, err)
 	}
@@ -69,7 +73,14 @@ func (e TunDNSReadinessVerifier) VerifyScoped(ctx context.Context, plan planner.
 	if err := (IPTunAddressExecutor{Runner: e.Runner}).Verify(ctx, plan); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResolvedLinkNotReady, err)
 	}
-	return (ResolvedScopedQueryVerifier{Runner: e.Runner}).Query(ctx, plan.Interface, name)
+	addresses, err := (ResolvedScopedQueryVerifier{Runner: e.Runner}).Query(ctx, plan.Interface, plan.LinkIndex, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := (IPTunAddressExecutor{Runner: e.Runner}).Verify(ctx, plan); err != nil {
+		return nil, fmt.Errorf("%w: TUN link identity changed during scoped query: %w", ErrResolvedLinkQueryFailure, err)
+	}
+	return addresses, nil
 }
 
 func parseResolvedScopedIPv4Answers(output, expectedLink string) ([]string, error) {

@@ -263,3 +263,11 @@ func TestLegacyTransactionWithoutTunAddressMetadataRemainsReadable(t *testing.T)
 		t.Fatalf("legacy state must not gain guessed address authority: %#v", loaded)
 	}
 }
+
+func TestCommittedTransactionRequiresCleanupUntilActiveRuntimeIsProven(t *testing.T) {
+	tx := NewTransaction("tx-committed", "profile-1", "tun", time.Now().UTC())
+	tx.State = TransactionCommitted
+	if !tx.RequiresCleanup() {
+		t.Fatal("persisted committed transaction must remain recoverable after restart")
+	}
+}

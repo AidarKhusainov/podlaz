@@ -145,8 +145,8 @@ func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
 	return e.Base.validatePlan(plan)
 }
 
-func (e DNSAwareTunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan) (planner.TunPlan, error) {
-	return e.Base.BindTunAddress(ctx, plan)
+func (e DNSAwareTunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan, proof TunLinkCreationProof) (planner.TunPlan, error) {
+	return e.Base.BindTunAddress(ctx, plan, proof)
 }
 
 // ResolvedDNSExecutor applies per-link DNS through resolvectl only. It never

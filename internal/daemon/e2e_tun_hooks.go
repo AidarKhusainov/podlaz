@@ -155,11 +155,11 @@ type e2eHookTunAddressExecutor struct {
 	delegate netexecutor.TunAddressExecutor
 }
 
-func (e e2eHookTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressPlan) (planner.TunAddressPlan, error) {
+func (e e2eHookTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressPlan, proof netexecutor.TunLinkCreationProof) (planner.TunAddressPlan, error) {
 	if e.delegate == nil {
 		return plan, errors.New("missing TUN address executor")
 	}
-	return e.delegate.Bind(ctx, plan)
+	return e.delegate.Bind(ctx, plan, proof)
 }
 
 func (e e2eHookTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddressPlan) (netexecutor.Step, error) {
@@ -337,12 +337,12 @@ func (e e2eHookNetworkVerifyExecutor) Rollback(ctx context.Context, plan planner
 	return e.delegate.Rollback(ctx, plan)
 }
 
-func (e e2eHookNetworkVerifyExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan) (planner.TunPlan, error) {
+func (e e2eHookNetworkVerifyExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan, proof netexecutor.TunLinkCreationProof) (planner.TunPlan, error) {
 	binder, ok := e.delegate.(tunAddressIdentityBinder)
 	if !ok {
 		return plan, errors.New("E2E network verification delegate cannot bind TUN address identity")
 	}
-	return binder.BindTunAddress(ctx, plan)
+	return binder.BindTunAddress(ctx, plan, proof)
 }
 
 type e2eHookConfigurationErrorExecutor struct {
@@ -361,7 +361,7 @@ func (e e2eHookConfigurationErrorExecutor) Rollback(context.Context, planner.Tun
 	return e.err
 }
 
-func (e e2eHookConfigurationErrorExecutor) BindTunAddress(context.Context, planner.TunPlan) (planner.TunPlan, error) {
+func (e e2eHookConfigurationErrorExecutor) BindTunAddress(context.Context, planner.TunPlan, netexecutor.TunLinkCreationProof) (planner.TunPlan, error) {
 	return planner.TunPlan{}, e.err
 }
 

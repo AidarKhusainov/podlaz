@@ -292,7 +292,7 @@ type e2eHookApplyRecordingTunAddressExecutor struct {
 	applyCalls int
 }
 
-func (e *e2eHookApplyRecordingTunAddressExecutor) Bind(_ context.Context, plan planner.TunAddressPlan) (planner.TunAddressPlan, error) {
+func (e *e2eHookApplyRecordingTunAddressExecutor) Bind(_ context.Context, plan planner.TunAddressPlan, _ netexecutor.TunLinkCreationProof) (planner.TunAddressPlan, error) {
 	return plan, nil
 }
 

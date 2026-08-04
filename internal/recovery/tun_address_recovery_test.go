@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -136,4 +137,38 @@ func TestOwnedTunAddressRollbackFixtureUsesDocumentationSafePolicy(t *testing.T)
 	if got.CIDR != planner.DefaultTunIPv4CIDR || strings.Contains(got.CIDR, "192.168.") {
 		t.Fatalf("unexpected recovery fixture: %#v", got)
 	}
+}
+
+func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testing.T) {
+	runtimeDir := t.TempDir()
+	runner := &recordingRunner{
+		paths: map[string]string{"ip": "/usr/sbin/ip"},
+		commands: map[string]fakeCommand{
+			"ip -details -o link show dev podlaz0":                             {stdout: recoveryTunLink(7)},
+			"ip -4 -o address show dev podlaz0":                                {stdout: recoveryTunAddress(7, planner.DefaultTunIPv4CIDR)},
+			"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0": {},
+		},
+	}
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	tx := txstate.NewTransaction("tx-address-syscall-crash", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionApplying
+	tx.DesiredPlan.TUN.Owner = "xray:tun-inbound"
+	tx.DesiredPlan.TUN.InterfaceName = managedInterface
+	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family: "ipv4", InterfaceName: managedInterface, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
+		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
+	}
+	path, err := store.Save(tx)
+	if err != nil {
+		t.Fatalf("save crash-window transaction: %v", err)
+	}
+
+	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+	assertCleanupResult(t, results, "tun-address", "recovered", "")
+	assertCleanupResult(t, results, "transaction-state", "recovered", "")
+	assertCommands(t, runner, []string{
+		"ip -details -o link show dev podlaz0",
+		"ip -4 -o address show dev podlaz0",
+		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
+	})
 }

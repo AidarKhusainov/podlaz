@@ -167,3 +167,46 @@ func assertCleanupResult(t *testing.T, results []CleanupResult, kind string, sta
 	}
 	t.Fatalf("cleanup result kind=%q status=%q message containing %q not found in %#v", kind, status, messageSubstring, results)
 }
+
+func TestFullRecoveryPreservesForeignReplacementLinkAfterTransactionIdentityMismatch(t *testing.T) {
+	runtimeDir := t.TempDir()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	tx := txstate.NewTransaction("tx-replacement", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionApplying
+	tx.DesiredPlan.TUN.Owner = "xray:tun-inbound"
+	tx.DesiredPlan.TUN.InterfaceName = managedInterface
+	tx.Rollback.TUNAddresses = []txstate.TUNAddressRollback{{
+		Family: "ipv4", InterfaceName: managedInterface, CIDR: "198.18.0.1/32", Scope: "global",
+		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
+	}}
+	path, err := store.Save(tx)
+	if err != nil {
+		t.Fatalf("save transaction: %v", err)
+	}
+
+	runner := &recordingRunner{
+		paths: map[string]string{"ip": "/usr/sbin/ip"},
+		commands: map[string]fakeCommand{
+			"ip link show dev podlaz0":             {stdout: "8: podlaz0: <POINTOPOINT,UP> mtu 1500"},
+			"ip -details -o link show dev podlaz0": {stdout: "8: podlaz0: <POINTOPOINT,UP> mtu 1500\n    tun type tun pi off"},
+		},
+	}
+	scan := (OSScanner{Runner: runner, RuntimeDir: runtimeDir}).Scan(context.Background())
+	result := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Scanner:    fakeScanner{result: scan},
+		Executor:   DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner},
+	})
+
+	for _, command := range runner.runCommands {
+		if command == "ip link del dev podlaz0" {
+			t.Fatalf("foreign replacement link was deleted after identity mismatch: %#v", runner.runCommands)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("transaction must remain after identity mismatch: %v", err)
+	}
+	if !result.HasFailures() && !result.HasIncompleteCleanup() {
+		t.Fatalf("replacement mismatch must keep recovery incomplete: %#v", result)
+	}
+}

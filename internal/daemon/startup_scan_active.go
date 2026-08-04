@@ -63,7 +63,7 @@ func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (t
 	if matches != 1 {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s has %d status matches; refusing ownership filtering", activeID, matches)
 	}
-	if activeSummary.State != string(txstate.TransactionCommitted) || activeSummary.RequiresCleanup {
+	if activeSummary.State != string(txstate.TransactionCommitted) {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s is not a clean committed transaction", activeID)
 	}
 

@@ -51,15 +51,53 @@ func TestIPTunAddressBindWaitsForTrackedXrayLinkAndRecordsIdentity(t *testing.T)
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
 		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{ExitCode: 1, Stderr: `Device "podlaz0" does not exist.`}, err: missing},
 		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
 	}}
 	exec := IPTunAddressExecutor{Runner: runner, BindAttempts: 2, BindPollInterval: time.Nanosecond, Sleep: func(context.Context, time.Duration) error { return nil }}
 
-	bound, err := exec.Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR, LinkKind: "tun"})
+	bound, err := exec.Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR, LinkKind: "tun"}, liveTunLinkProofForTest())
 	if err != nil {
 		t.Fatalf("bind TUN address identity: %v", err)
 	}
 	if bound.LinkIndex != 7 || bound.LinkKind != "tun" || !bound.AppearedAfterCore {
 		t.Fatalf("unexpected bound identity: %#v", bound)
+	}
+	runner.assertDone()
+}
+
+func TestIPTunAddressBindAcceptsFirstProbeExistingOnlyWithPreStartAbsenceProof(t *testing.T) {
+	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+	}}
+	bound, err := (IPTunAddressExecutor{Runner: runner, BindAttempts: 1}).Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR}, liveTunLinkProofForTest())
+	if err != nil {
+		t.Fatalf("bind first-probe-existing TUN link with pre-start proof: %v", err)
+	}
+	if bound.LinkIndex != 7 || !bound.AppearedAfterCore {
+		t.Fatalf("unexpected bound identity: %#v", bound)
+	}
+	runner.assertDone()
+}
+
+func TestIPTunAddressBindRejectsMissingPreStartAbsenceProof(t *testing.T) {
+	runner := &scriptedRunner{t: t}
+	proof := liveTunLinkProofForTest()
+	proof.PreStartAbsent = false
+	_, err := (IPTunAddressExecutor{Runner: runner}).Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR}, proof)
+	if err == nil || !errors.Is(err, ErrTunAddressVerify) || !strings.Contains(err.Error(), "not authoritatively absent") {
+		t.Fatalf("expected missing pre-start absence proof failure, got %v", err)
+	}
+}
+
+func TestIPTunAddressBindRejectsReplacementDuringIdentityConfirmation(t *testing.T) {
+	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(8, true)}},
+	}}
+	_, err := (IPTunAddressExecutor{Runner: runner, BindAttempts: 1}).Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR}, liveTunLinkProofForTest())
+	if err == nil || !errors.Is(err, ErrTunLinkIdentityMismatch) {
+		t.Fatalf("expected replacement-race failure, got %v", err)
 	}
 	runner.assertDone()
 }
@@ -113,6 +151,40 @@ func TestIPTunAddressApplyReturnsPartialOwnershipAfterReplace(t *testing.T) {
 	step, err := (IPTunAddressExecutor{Runner: runner}).Apply(context.Background(), plan)
 	if err == nil || !errors.Is(err, ErrTunAddressApply) || step.Kind != "tun-address" || step.Owner != OwnerTunAddress {
 		t.Fatalf("expected rollbackable partial address ownership, got step=%#v err=%v", step, err)
+	}
+	runner.assertDone()
+}
+
+func TestIPTunAddressApplyReturnsOwnershipWhenReplaceCompletionIsAmbiguous(t *testing.T) {
+	plan := boundAddressPlanForTest()
+	timeoutErr := context.DeadlineExceeded
+	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}},
+		{want: []string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}, result: CommandResult{ExitCode: -1}, err: timeoutErr},
+	}}
+
+	step, err := (IPTunAddressExecutor{Runner: runner}).Apply(context.Background(), plan)
+	if err == nil || !errors.Is(err, ErrTunAddressApply) || !errors.Is(err, timeoutErr) {
+		t.Fatalf("expected ambiguous replace failure, got step=%#v err=%v", step, err)
+	}
+	if step.Kind != "tun-address" || step.Owner != OwnerTunAddress || !strings.Contains(step.Target, "ifindex=7") {
+		t.Fatalf("mutable address command must retain rollback ownership, got %#v", step)
+	}
+	runner.assertDone()
+}
+
+func TestIPTunAddressVerifyRejectsAdditionalForeignIPv4Address(t *testing.T) {
+	plan := boundAddressPlanForTest()
+	inventory := addressLineForTest(7, planner.DefaultTunIPv4CIDR) + "\n" + addressLineForTest(7, "198.51.100.25/32")
+	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
+		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: inventory}},
+	}}
+
+	err := (IPTunAddressExecutor{Runner: runner}).Verify(context.Background(), plan)
+	if err == nil || !errors.Is(err, ErrTunAddressVerify) || !strings.Contains(err.Error(), "conflicting IPv4") {
+		t.Fatalf("expected foreign IPv4 verification failure, got %v", err)
 	}
 	runner.assertDone()
 }
@@ -197,4 +269,8 @@ func tunLinkDetailsForAddressTest(index int, up bool) string {
 
 func addressLineForTest(index int, cidr string) string {
 	return strconv.Itoa(index) + ": podlaz0    inet " + cidr + " scope global podlaz0\\       valid_lft forever preferred_lft forever"
+}
+
+func liveTunLinkProofForTest() TunLinkCreationProof {
+	return TunLinkCreationProof{PreStartAbsent: true, TrackedCorePID: 1234, CoreDone: make(chan struct{})}
 }

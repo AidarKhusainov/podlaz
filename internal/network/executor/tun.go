@@ -248,14 +248,14 @@ func shouldApplyTunAddress(plan planner.TunAddressPlan) bool {
 	return strings.TrimSpace(plan.CIDR) != "" && plan.Action == planner.TunAddressActionAssign
 }
 
-func (e TunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan) (planner.TunPlan, error) {
+func (e TunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan, proof TunLinkCreationProof) (planner.TunPlan, error) {
 	if strings.TrimSpace(plan.TunAddress.CIDR) == "" {
 		return plan, nil
 	}
 	if e.TunAddress == nil {
 		return plan, errors.New("missing TUN address executor")
 	}
-	bound, err := e.TunAddress.Bind(ctx, plan.TunAddress)
+	bound, err := e.TunAddress.Bind(ctx, plan.TunAddress, proof)
 	if err != nil {
 		return plan, err
 	}

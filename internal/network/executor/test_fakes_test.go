@@ -160,7 +160,7 @@ type fakeTunAddress struct {
 	rec *callRecorder
 }
 
-func (f fakeTunAddress) Bind(_ context.Context, plan planner.TunAddressPlan) (planner.TunAddressPlan, error) {
+func (f fakeTunAddress) Bind(_ context.Context, plan planner.TunAddressPlan, _ TunLinkCreationProof) (planner.TunAddressPlan, error) {
 	f.rec.calls = append(f.rec.calls, "address:bind:"+plan.Interface)
 	plan.LinkIndex = 7
 	plan.LinkKind = "tun"

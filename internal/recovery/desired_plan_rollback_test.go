@@ -1,12 +1,41 @@
 package recovery
 
 import (
+	"time"
+
 	"testing"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
+
+func TestRecoveryRollbackMetadataUsesBoundDesiredAddressOnlyAfterMutationCanStart(t *testing.T) {
+	base := txstate.NewTransaction("tx-address-crash", "profile-1", planner.ModeTun, time.Now().UTC())
+	base.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family:            "ipv4",
+		InterfaceName:     managedInterface,
+		CIDR:              planner.DefaultTunIPv4CIDR,
+		Scope:             "global",
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             netexecutor.OwnerTunAddress,
+	}
+
+	planned := base
+	planned.State = txstate.TransactionPlanned
+	if got := recoveryRollbackMetadata(planned); len(got.TUNAddresses) != 0 {
+		t.Fatalf("planned intent must not grant address rollback authority: %#v", got.TUNAddresses)
+	}
+
+	applying := base
+	applying.State = txstate.TransactionApplying
+	got := recoveryRollbackMetadata(applying)
+	if len(got.TUNAddresses) != 1 || got.TUNAddresses[0].LinkIndex != 7 || got.TUNAddresses[0].CIDR != planner.DefaultTunIPv4CIDR {
+		t.Fatalf("applying bound identity must become an inspection-gated address candidate: %#v", got.TUNAddresses)
+	}
+}
 
 func TestRecoveryRollbackMetadataSynthesizesOnlyReservedPodlazState(t *testing.T) {
 	tx := txstate.Transaction{

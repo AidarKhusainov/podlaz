@@ -298,6 +298,7 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	result.scanManagedResolvedLink(ctx, runner)
 	result.scanManagedNFTTable(ctx, runner)
 	result.scanTransactionState(runtimeDir)
+	result.reconcileManagedInterfaceWithTransactions()
 	result.scanGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
 	return result
 }
@@ -345,6 +346,27 @@ func (r *ScanResult) scanTransactionState(runtimeDir string) {
 	for _, warning := range warnings {
 		r.Warnings = append(r.Warnings, Warning{Target: "transaction state", Message: warning})
 	}
+}
+
+func (r *ScanResult) reconcileManagedInterfaceWithTransactions() {
+	hasTransaction := false
+	for _, candidate := range r.Candidates {
+		if candidate.Kind == "transaction-state" && candidate.Transaction != nil {
+			hasTransaction = true
+			break
+		}
+	}
+	if !hasTransaction {
+		return
+	}
+	filtered := r.Candidates[:0]
+	for _, candidate := range r.Candidates {
+		if candidate.Kind == "tun-interface" && candidate.Target == managedInterface {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	r.Candidates = filtered
 }
 
 func (r *ScanResult) scanGeneratedRuntimeConfigs(generatedDir string) {
@@ -402,14 +424,11 @@ func (e OSCleanupExecutor) withDefaults() OSCleanupExecutor {
 	return e
 }
 
-func (e OSCleanupExecutor) cleanupTUNInterface(ctx context.Context, candidate Candidate) CleanupResult {
+func (e OSCleanupExecutor) cleanupTUNInterface(_ context.Context, candidate Candidate) CleanupResult {
 	if candidate.Target != managedInterface {
 		return skipped(candidate, "non-podlaz TUN interface target")
 	}
-	if err := e.run(ctx, "ip", "link", "del", "dev", managedInterface); err != nil && !commandErrorIsMissing(err) {
-		return failed(candidate, err)
-	}
-	return recovered(candidate)
+	return skipped(candidate, "interface name alone is not podlaz ownership proof; use transaction-bound process/link identity")
 }
 
 func (e OSCleanupExecutor) cleanupNFTablesTable(ctx context.Context, candidate Candidate) CleanupResult {

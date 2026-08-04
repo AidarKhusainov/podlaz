@@ -26,8 +26,14 @@ var (
 	ErrTunLinkIdentityMismatch = errors.New("TUN link identity mismatch")
 )
 
+type TunLinkCreationProof struct {
+	PreStartAbsent bool
+	TrackedCorePID int
+	CoreDone       <-chan struct{}
+}
+
 type TunAddressExecutor interface {
-	Bind(context.Context, planner.TunAddressPlan) (planner.TunAddressPlan, error)
+	Bind(context.Context, planner.TunAddressPlan, TunLinkCreationProof) (planner.TunAddressPlan, error)
 	Apply(context.Context, planner.TunAddressPlan) (Step, error)
 	Verify(context.Context, planner.TunAddressPlan) error
 	Rollback(context.Context, planner.TunAddressPlan) error
@@ -40,7 +46,7 @@ type IPTunAddressExecutor struct {
 	Sleep            func(context.Context, time.Duration) error
 }
 
-func (e IPTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressPlan) (bound planner.TunAddressPlan, err error) {
+func (e IPTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressPlan, proof TunLinkCreationProof) (bound planner.TunAddressPlan, err error) {
 	bound = plan
 	defer func() {
 		if err != nil && !errors.Is(err, ErrTunAddressVerify) {
@@ -48,6 +54,9 @@ func (e IPTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressP
 		}
 	}()
 	if err := validateTunAddressIntent(plan); err != nil {
+		return bound, err
+	}
+	if err := validateTunLinkCreationProof(proof); err != nil {
 		return bound, err
 	}
 	attempts := e.BindAttempts
@@ -60,10 +69,23 @@ func (e IPTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressP
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
+		if err := requireTrackedCoreRunning(proof); err != nil {
+			return bound, err
+		}
 		identity, err := e.inspectIdentity(ctx, plan.Interface)
 		if err == nil {
 			if identity.Kind != "tun" {
 				return bound, fmt.Errorf("%w: %s is %s, expected tun", ErrTunLinkIdentityMismatch, plan.Interface, identity.Kind)
+			}
+			confirmed, confirmErr := e.inspectIdentity(ctx, plan.Interface)
+			if confirmErr != nil {
+				return bound, fmt.Errorf("revalidate appeared TUN link %s: %w", plan.Interface, confirmErr)
+			}
+			if confirmed.Index != identity.Index || confirmed.Kind != identity.Kind {
+				return bound, fmt.Errorf("%w: TUN link %s changed while binding from index=%d kind=%s to index=%d kind=%s", ErrTunLinkIdentityMismatch, plan.Interface, identity.Index, identity.Kind, confirmed.Index, confirmed.Kind)
+			}
+			if err := requireTrackedCoreRunning(proof); err != nil {
+				return bound, err
 			}
 			plan.LinkIndex = identity.Index
 			plan.LinkKind = identity.Kind
@@ -116,7 +138,7 @@ func (e IPTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddress
 	step = tunAddressStep(plan)
 	if exact == 0 {
 		if err := runCommand(ctx, e.Runner, "ip", "-4", "address", "replace", plan.CIDR, "dev", plan.Interface); err != nil {
-			return Step{}, fmt.Errorf("assign TUN address %s to %s: %w", plan.CIDR, plan.Interface, err)
+			return step, fmt.Errorf("assign TUN address %s to %s: %w", plan.CIDR, plan.Interface, err)
 		}
 	}
 	if err := runCommand(ctx, e.Runner, "ip", "link", "set", "dev", plan.Interface, "up"); err != nil {
@@ -145,21 +167,17 @@ func (e IPTunAddressExecutor) Verify(ctx context.Context, plan planner.TunAddres
 	if err != nil {
 		return fmt.Errorf("inspect TUN addresses during verification: %w", err)
 	}
-	exact := 0
-	for _, address := range addresses {
-		if address.CIDR != plan.CIDR {
-			continue
-		}
-		if address.Interface != plan.Interface || address.Family != "ipv4" {
-			return fmt.Errorf("TUN address %s is attached to unexpected identity", plan.CIDR)
-		}
-		if plan.Scope != "" && address.Scope != plan.Scope {
-			return fmt.Errorf("TUN address %s has scope %s, expected %s", plan.CIDR, address.Scope, plan.Scope)
-		}
-		exact++
+	exact, conflicts := addressInventoryState(addresses, plan)
+	if conflicts != 0 {
+		return fmt.Errorf("TUN link %s has %d conflicting IPv4 address entries", plan.Interface, conflicts)
 	}
 	if exact != 1 {
 		return fmt.Errorf("TUN address %s must exist exactly once on %s; found %d", plan.CIDR, plan.Interface, exact)
+	}
+	for _, address := range addresses {
+		if address.Interface == plan.Interface && address.Family == "ipv4" && address.CIDR == plan.CIDR && plan.Scope != "" && address.Scope != plan.Scope {
+			return fmt.Errorf("TUN address %s has scope %s, expected %s", plan.CIDR, address.Scope, plan.Scope)
+		}
 	}
 	return nil
 }
@@ -323,6 +341,28 @@ func (e IPTunAddressExecutor) sleep(ctx context.Context, delay time.Duration) er
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
+		return nil
+	}
+}
+
+func validateTunLinkCreationProof(proof TunLinkCreationProof) error {
+	if !proof.PreStartAbsent {
+		return errors.New("TUN link was not authoritatively absent before tracked Xray start")
+	}
+	if proof.TrackedCorePID <= 1 {
+		return errors.New("tracked Xray process identity is missing")
+	}
+	if proof.CoreDone == nil {
+		return errors.New("tracked Xray lifecycle channel is missing")
+	}
+	return requireTrackedCoreRunning(proof)
+}
+
+func requireTrackedCoreRunning(proof TunLinkCreationProof) error {
+	select {
+	case <-proof.CoreDone:
+		return errors.New("tracked Xray process exited before TUN link identity was bound")
+	default:
 		return nil
 	}
 }
