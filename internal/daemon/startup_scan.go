@@ -51,6 +51,36 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 			return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
 		}
 	}
+	return s.startRefreshLocked(ctx)
+}
+
+// ForceRefresh guarantees the scan it returns starts after the caller's mutation
+// boundary. If an older refresh is already running, it waits for that generation
+// and then starts a new authoritative scan instead of returning the coalesced
+// pre-mutation result.
+func (s *startupScanState) ForceRefresh(ctx context.Context) recovery.PlanResult {
+	if s == nil || s.scanFn == nil {
+		return recovery.PlanResult{}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		s.refreshMu.Lock()
+		if done := s.refreshDone; done != nil {
+			s.refreshMu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
+			}
+		}
+		return s.startRefreshLocked(ctx)
+	}
+}
+
+func (s *startupScanState) startRefreshLocked(ctx context.Context) recovery.PlanResult {
 	done := make(chan struct{})
 	s.refreshDone = done
 	s.refreshMu.Unlock()
