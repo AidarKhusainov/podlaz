@@ -123,11 +123,16 @@ func TestConnectTunRecoversOwnedStaleAddressBeforeAuthoritativeConflictCheck(t *
 	)
 
 	stale := netsnapshot.FakeDesktopWithStalepodlazResources()
+	stale.TunDevices = []netsnapshot.TunDevice{{
+		Name:   netsnapshot.DefaultTunName,
+		Status: netsnapshot.StatusDetected,
+		Raw:    "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun",
+	}}
 	stale.DefaultIPv4.Interface = "wlan0"
 	stale.DefaultIPv4.Gateway = "192.0.2.1"
 	stale.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "vpn.example.test", Interface: "wlan0", Gateway: "192.0.2.1", Raw: "203.0.113.10 via 192.0.2.1 dev wlan0"}
 	stale.IPv4Addresses = netsnapshot.IPAddressInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}}}
-	stale.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Routes: []netsnapshot.Route{{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: planner.DefaultTunIPv4CIDR, Interface: "podlaz0", Table: "local"}}}
+	stale.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Routes: []netsnapshot.Route{{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: planner.DefaultTunIPv4CIDR, Interface: "podlaz0", Table: "local", Raw: "local 198.18.0.1 dev podlaz0 table local proto kernel scope host"}}}
 
 	clean := netsnapshot.FakeResolvedDesktop()
 	clean.DefaultIPv4.Interface = "wlan0"
