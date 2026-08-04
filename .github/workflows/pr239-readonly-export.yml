@@ -1,0 +1,37 @@
+name: PR 239 read-only workspace export
+
+on:
+  push:
+    branches:
+      - agent/issue-238-tun-l3-addressing
+    paths:
+      - .github/workflows/pr239-readonly-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: Export exact branch workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Create source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive \
+            --format=tar.gz \
+            --output="${RUNNER_TEMP}/podlaz-pr239-current.tar.gz" \
+            HEAD
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: podlaz-pr239-current
+          path: ${{ runner.temp }}/podlaz-pr239-current.tar.gz
+          if-no-files-found: error
+          retention-days: 1
