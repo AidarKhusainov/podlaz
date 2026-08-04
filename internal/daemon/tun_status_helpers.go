@@ -7,18 +7,20 @@ import (
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 const dnsRouteOnlyDomain = "~."
 
 func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
+	rollback := recovery.ProjectRollbackMetadata(tx).Rollback
 	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
-	if len(tx.Rollback.TUN) > 0 {
-		plan.TunDevice = planner.TunDevicePlan{Name: tx.Rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
+	if len(rollback.TUN) > 0 {
+		plan.TunDevice = planner.TunDevicePlan{Name: rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
 	}
-	if len(tx.Rollback.TUNAddresses) > 0 {
-		address := tx.Rollback.TUNAddresses[0]
+	if len(rollback.TUNAddresses) > 0 {
+		address := rollback.TUNAddresses[0]
 		plan.TunAddress = planner.TunAddressPlan{
 			Family:             address.Family,
 			Interface:          address.InterfaceName,
@@ -33,7 +35,7 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 			AllowOwnedExisting: true,
 		}
 	}
-	for _, route := range tx.Rollback.Routes {
+	for _, route := range rollback.Routes {
 		plan.Routes = append(plan.Routes, planner.TunRoutePlan{
 			Family:      "ipv4",
 			Destination: route.CIDR,
@@ -43,7 +45,7 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 			Action:      "add",
 		})
 	}
-	for _, rule := range tx.Rollback.PolicyRules {
+	for _, rule := range rollback.PolicyRules {
 		selector := strings.TrimSpace(rule.From)
 		if rule.To != "" {
 			selector = "to " + rule.To
@@ -58,35 +60,21 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 			Action:   "add",
 		})
 	}
-	if len(tx.Rollback.DNS) > 0 {
-		dns := tx.Rollback.DNS[0]
+	if len(rollback.DNS) > 0 {
+		dns := rollback.DNS[0]
 		plan.DNS = planner.TunDNSPlan{
 			Backend:    dns.Backend,
 			TargetLink: dns.Link,
 			Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
 			Action:     planner.DNSActionConfigure,
 		}
-	} else if tx.DesiredPlan.DNS.Link != "" {
-		plan.DNS = planner.TunDNSPlan{
-			Backend:    tx.DesiredPlan.DNS.Backend,
-			TargetLink: tx.DesiredPlan.DNS.Link,
-			Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
-			Action:     planner.DNSActionConfigure,
-		}
 	}
-	if len(tx.Rollback.NFTables) > 0 {
-		nft := tx.Rollback.NFTables[0]
+	if len(rollback.NFTables) > 0 {
+		nft := rollback.NFTables[0]
 		plan.Firewall = planner.TunFirewallPlan{
 			Backend:     planner.FirewallBackendNftables,
 			Family:      nft.Family,
 			Table:       nft.Table,
-			TableAction: planner.FirewallTableAction,
-		}
-	} else if tx.DesiredPlan.NFT.Table != "" {
-		plan.Firewall = planner.TunFirewallPlan{
-			Backend:     planner.FirewallBackendNftables,
-			Family:      tx.DesiredPlan.NFT.Family,
-			Table:       tx.DesiredPlan.NFT.Table,
 			TableAction: planner.FirewallTableAction,
 		}
 	}
