@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
-	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -65,10 +63,6 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 	if tx.State == txstate.TransactionRolledBack {
 		return nil
 	}
-	projection := recovery.ProjectRollbackMetadata(*tx)
-	if projection.Incomplete && !rollbackPlanHasOwnedResource(plan) {
-		return fmt.Errorf("TUN rollback authority incomplete: %s", strings.Join(projection.Reasons, "; "))
-	}
 	if err := beginTunRollback(store, tx); err != nil {
 		return err
 	}
@@ -81,9 +75,6 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 		// safe retry. Keep the tracked child and generated config intact until
 		// every daemon-owned host resource is proven rolled back.
 		return err
-	}
-	if projection.Incomplete {
-		return fmt.Errorf("TUN rollback authority incomplete after partial cleanup: %s", strings.Join(projection.Reasons, "; "))
 	}
 	if err := stopChildren(*tx); err != nil {
 		return err
