@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -29,7 +31,30 @@ func (m *XrayManager) collectTunSnapshot(ctx context.Context, opts netsnapshot.O
 	if m.snapshotCollector != nil {
 		return m.snapshotCollector(ctx, opts)
 	}
-	return netsnapshot.Collect(ctx, opts)
+	return enrichTunSnapshotLinkKind(ctx, netsnapshot.Collect(ctx, opts))
+}
+
+func enrichTunSnapshotLinkKind(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
+	ipPath, err := exec.LookPath("ip")
+	if err != nil {
+		return s
+	}
+	for i := range s.TunDevices {
+		device := &s.TunDevices[i]
+		if device.Status != netsnapshot.StatusDetected || strings.TrimSpace(device.Name) == "" {
+			continue
+		}
+		out, ok := runReadOnlyCommand(ctx, ipPath, "-details", "-o", "link", "show", "dev", device.Name)
+		if !ok || strings.TrimSpace(out) == "" {
+			continue
+		}
+		if device.Detail == "" {
+			device.Detail = firstNonEmptyLine(out)
+		} else if !strings.Contains(device.Detail, firstNonEmptyLine(out)) {
+			device.Detail += "; " + firstNonEmptyLine(out)
+		}
+	}
+	return s
 }
 
 func tunSnapshotOptionsForState(xrayState) netsnapshot.Options {
