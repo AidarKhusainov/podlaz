@@ -140,3 +140,7 @@ func decodeJSONBody(r *http.Request, dst any) error {
 	}
 	return nil
 }
+
+func activeConnectionError() error {
+	return errConnectionAlreadyActive
+}
