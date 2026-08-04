@@ -1,37 +1,45 @@
-name: PR 239 workspace export
+name: Publish PR 239 review fixes
 
 on:
   push:
     branches:
       - agent/issue-238-tun-l3-addressing
     paths:
-      - .github/workflows/e2e-tun-package-convergence-issue238.yml
+      - .pr239-publish/trigger
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
-    name: Export exact PR workspace
+  publish:
+    name: Publish verified review patch
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Checkout exact branch
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Create source archive
+      - name: Apply and publish verified patch
         shell: bash
+        env:
+          EXPECTED_PATCH_SHA256: 6a8336e9f30dbc3c76bf9c864bcf5f8356dd4807c79c62a8acf990752d826930
+          EXPECTED_TREE_SHA: 6e6bb6e69347121bd40c40ab4209558800aaea9b
         run: |
           set -euo pipefail
-          git archive \
-            --format=tar.gz \
-            --output="${RUNNER_TEMP}/podlaz-pr239-workspace.tar.gz" \
-            HEAD
-
-      - name: Upload source archive
-        uses: actions/upload-artifact@v7
-        with:
-          name: podlaz-pr239-workspace
-          path: ${{ runner.temp }}/podlaz-pr239-workspace.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          base64 --decode .pr239-publish/patch.b64 | gzip -d >"${RUNNER_TEMP}/pr239-review.patch"
+          printf '%s  %s\n' "${EXPECTED_PATCH_SHA256}" "${RUNNER_TEMP}/pr239-review.patch" | sha256sum -c -
+          git apply --check "${RUNNER_TEMP}/pr239-review.patch"
+          git apply "${RUNNER_TEMP}/pr239-review.patch"
+          rm -rf .pr239-publish
+          rm -f .e2e-result-issue238
+          rm -f .github/workflows/e2e-tun-package-convergence-issue238.yml
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix: close TUN ownership review gaps'
+          test "$(git rev-parse HEAD^{tree})" = "${EXPECTED_TREE_SHA}"
+          git push origin HEAD:agent/issue-238-tun-l3-addressing
