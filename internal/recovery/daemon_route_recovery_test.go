@@ -214,6 +214,12 @@ func TestInactiveCommittedTransactionRecoversExactDurableRoute(t *testing.T) {
 		CIDR:  "0.0.0.0/0",
 		Dev:   "podlaz0",
 	}}
+	tx.AppliedSteps = []txstate.AppliedStep{{
+		Kind:      "route",
+		Target:    routeRollbackTarget(tx.Rollback.Routes[0]),
+		Owner:     netexecutor.OwnerRoute,
+		AppliedAt: time.Now().UTC(),
+	}}
 	path, err := store.Save(tx)
 	if err != nil {
 		t.Fatal(err)
