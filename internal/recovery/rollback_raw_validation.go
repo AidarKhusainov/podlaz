@@ -9,10 +9,19 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+// rawTransactionNetworkOwnershipReasons validates raw applied and rollback
+// network ownership before counters are allowed to authorize cleanup. Counter
+// construction intentionally ignores unsupported entries; this guard prevents
+// malformed or foreign entries from disappearing before the applied/rollback
+// multiset comparison.
+func rawTransactionNetworkOwnershipReasons(tx txstate.Transaction) []string {
+	reasons := rawRollbackMetadataReasons(tx.Rollback)
+	reasons = append(reasons, rawAppliedNetworkStepReasons(tx)...)
+	return compactReasonStrings(reasons)
+}
+
 // rawRollbackMetadataReasons validates every raw nested rollback entry before
-// counters are allowed to authorize cleanup. Counter construction intentionally
-// ignores unsupported entries; this guard prevents malformed or foreign entries
-// from disappearing before the applied/rollback multiset comparison.
+// counters are allowed to authorize cleanup.
 func rawRollbackMetadataReasons(rollback txstate.RollbackMetadata) []string {
 	var reasons []string
 	for i, item := range rollback.TUN {
@@ -46,6 +55,117 @@ func rawRollbackMetadataReasons(rollback txstate.RollbackMetadata) []string {
 		}
 	}
 	return compactReasonStrings(reasons)
+}
+
+func rawAppliedNetworkStepReasons(tx txstate.Transaction) []string {
+	rollbackCounter := rollbackNetworkStepCounter(tx.Rollback)
+	appliedCounter := map[string]int{}
+	var reasons []string
+	for i, step := range tx.AppliedSteps {
+		kind := strings.TrimSpace(step.Kind)
+		if !rawAppliedStepLooksNetworkOwned(step) {
+			continue
+		}
+		if !knownNetworkAppliedStepKind(kind) {
+			reasons = append(reasons, fmt.Sprintf("raw applied network step %d has unknown kind %q", i, kind))
+			continue
+		}
+		if !ownedNetworkStepOwner(kind, step.Owner) {
+			reasons = append(reasons, fmt.Sprintf("raw applied network step %d has unsupported owner", i))
+			continue
+		}
+		if strings.TrimSpace(step.Target) == "" {
+			reasons = append(reasons, fmt.Sprintf("raw applied network step %d has empty target", i))
+			continue
+		}
+		key := appliedStepKey(kind, step.Target, normalizeAppliedStepOwner(step.Owner, kind))
+		appliedCounter[key]++
+		if !rawAppliedStepTargetHasDesiredMapping(tx.DesiredPlan, step) {
+			reasons = append(reasons, fmt.Sprintf("raw applied network step %d has no unique desired full-tuple mapping", i))
+		}
+	}
+	for key, count := range appliedCounter {
+		if rollbackCounter[key] != count {
+			reasons = append(reasons, "raw applied network ownership multiset is not exactly represented in rollback metadata")
+			break
+		}
+	}
+	return compactReasonStrings(reasons)
+}
+
+func rawAppliedStepLooksNetworkOwned(step txstate.AppliedStep) bool {
+	kind := strings.TrimSpace(step.Kind)
+	if knownNetworkAppliedStepKind(kind) {
+		return true
+	}
+	switch strings.TrimSpace(step.Owner) {
+	case netexecutor.OwnerTunDevice, netexecutor.OwnerTunAddress, netexecutor.OwnerRoute, netexecutor.OwnerPolicyRule, netexecutor.OwnerDNS, netexecutor.OwnerFirewall:
+		return true
+	default:
+		return false
+	}
+}
+
+func knownNetworkAppliedStepKind(kind string) bool {
+	switch kind {
+	case "tun-device", "tun-address", "route", "policy-rule", "dns", "nftables":
+		return true
+	default:
+		return false
+	}
+}
+
+func rawAppliedStepTargetHasDesiredMapping(desired txstate.DesiredPlan, step txstate.AppliedStep) bool {
+	switch step.Kind {
+	case "tun-device":
+		return strings.TrimSpace(step.Target) == managedInterface && ownedRollbackMetadata(step.Owner, netexecutor.OwnerTunDevice)
+	case "tun-address":
+		return strings.TrimSpace(step.Target) == tunAddressRollbackTarget(txstate.TUNAddressRollback{
+			Family:            desired.TUNAddress.Family,
+			InterfaceName:     desired.TUNAddress.InterfaceName,
+			CIDR:              desired.TUNAddress.CIDR,
+			Scope:             desired.TUNAddress.Scope,
+			LinkIndex:         desired.TUNAddress.LinkIndex,
+			LinkKind:          desired.TUNAddress.LinkKind,
+			AppearedAfterCore: desired.TUNAddress.AppearedAfterCore,
+			Owner:             desired.TUNAddress.Owner,
+		}) && rawTUNAddressRollbackEntryValid(txstate.TUNAddressRollback{
+			Family:            desired.TUNAddress.Family,
+			InterfaceName:     desired.TUNAddress.InterfaceName,
+			CIDR:              desired.TUNAddress.CIDR,
+			Scope:             desired.TUNAddress.Scope,
+			LinkIndex:         desired.TUNAddress.LinkIndex,
+			LinkKind:          desired.TUNAddress.LinkKind,
+			AppearedAfterCore: desired.TUNAddress.AppearedAfterCore,
+			Owner:             desired.TUNAddress.Owner,
+		})
+	case "route":
+		matches := 0
+		for _, route := range desired.Routes {
+			if route.Operation == "add" && ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) && strings.TrimSpace(step.Target) == routeRollbackTarget(txstate.RouteRollback{Table: route.Table, CIDR: route.CIDR, Via: route.Via, Dev: route.Dev, Owner: route.Owner}) {
+				matches++
+			}
+		}
+		return matches == 1
+	case "policy-rule":
+		return desiredAppliedStepTargetCount(desired.Steps, "policy-rule", step.Target, netexecutor.OwnerPolicyRule) == 1
+	case "dns":
+		return strings.TrimSpace(step.Target) == strings.TrimSpace(desired.DNS.Link) && ownedRollbackMetadata(desired.DNS.Owner, netexecutor.OwnerDNS)
+	case "nftables":
+		return strings.TrimSpace(step.Target) == nftRollbackTarget(txstate.NFTablesRollback{Family: desired.NFT.Family, Table: desired.NFT.Table, Owner: desired.NFT.Owner}) && rawNFTablesRollbackEntryValid(txstate.NFTablesRollback{Family: desired.NFT.Family, Table: desired.NFT.Table, Owner: desired.NFT.Owner})
+	default:
+		return false
+	}
+}
+
+func desiredAppliedStepTargetCount(steps []txstate.PlannedStep, kind, target, owner string) int {
+	matches := 0
+	for _, step := range steps {
+		if step.Kind == kind && strings.TrimSpace(step.Target) == strings.TrimSpace(target) && ownedRollbackMetadata(step.Owner, owner) {
+			matches++
+		}
+	}
+	return matches
 }
 
 func rawTUNRollbackEntryValid(item txstate.TUNRollback) bool {
