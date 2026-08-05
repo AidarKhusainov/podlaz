@@ -72,15 +72,16 @@ func projectRollbackMetadataWithoutApplyingGaps(tx txstate.Transaction) Rollback
 }
 
 func rollbackOwnershipConsistencyReasons(tx txstate.Transaction, rollback txstate.RollbackMetadata) []string {
+	reasons := rawRollbackMetadataReasons(rollback)
 	rollbackCounter := rollbackNetworkStepCounter(rollback)
 	appliedCounter := appliedNetworkStepCounter(tx.AppliedSteps)
 	if len(rollbackCounter) == 0 && len(appliedCounter) == 0 {
-		return nil
+		return compactReasonStrings(reasons)
 	}
 	if tx.State == txstate.TransactionPlanned {
-		return []string{"planned transaction cannot authorize network cleanup"}
+		reasons = append(reasons, "planned transaction cannot authorize network cleanup")
+		return compactReasonStrings(reasons)
 	}
-	var reasons []string
 	reasons = append(reasons, rollbackDesiredSubsetMismatches(tx.DesiredPlan, rollback)...)
 	if tx.State == txstate.TransactionApplying {
 		reasons = append(reasons, applyingAppliedRollbackMismatches(appliedCounter, rollbackCounter)...)
