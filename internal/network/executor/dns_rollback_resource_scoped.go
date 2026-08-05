@@ -3,10 +3,13 @@ package executor
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
+
+const managedTunInterfaceName = "podlaz0"
 
 // RollbackResourceScoped preserves the pre-mutation identity gate for
 // link-scoped resources while still converging transaction-owned resources that
@@ -66,8 +69,18 @@ func independentRollbackRoute(route planner.TunRoutePlan) bool {
 	if strings.TrimSpace(route.Table) != planner.MainRoutingTable {
 		return false
 	}
-	if strings.TrimSpace(route.Interface) == "" || route.Interface == "podlaz0" {
+	if strings.TrimSpace(route.Interface) == "" || strings.TrimSpace(route.Interface) == managedTunInterfaceName {
 		return false
 	}
-	return strings.TrimSpace(route.Destination) != "" && strings.TrimSpace(route.Gateway) != ""
+	if strings.TrimSpace(route.Gateway) == "" {
+		return false
+	}
+	if gateway, err := netip.ParseAddr(strings.TrimSpace(route.Gateway)); err != nil || !gateway.Is4() {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(route.Destination))
+	if err != nil {
+		return false
+	}
+	return prefix.Addr().Is4() && prefix.Bits() == 32
 }
