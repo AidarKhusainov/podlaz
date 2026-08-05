@@ -102,7 +102,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	processResults := e.rollbackChildProcessResults(rollback.ChildProcesses)
 	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
-	gateResult, gateDecision := e.rollbackLinkIdentityGate(ctx, osExec, rollback, childAbsenceProven)
+	gateResult, gateDecision := e.rollbackLinkIdentityGate(ctx, osExec, rollback, tx.AppliedSteps, childAbsenceProven)
 	switch gateDecision {
 	case rollbackLinkBlocked:
 		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
@@ -176,14 +176,14 @@ const (
 	rollbackLinkBlocked           rollbackLinkDecision = "blocked"
 )
 
-func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osExec OSCleanupExecutor, rollback txstate.RollbackMetadata, childAbsenceProven bool) (CleanupResult, rollbackLinkDecision) {
+func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osExec OSCleanupExecutor, rollback txstate.RollbackMetadata, applied []txstate.AppliedStep, childAbsenceProven bool) (CleanupResult, rollbackLinkDecision) {
 	if !rollbackRequiresLinkIdentity(rollback) {
 		return CleanupResult{}, rollbackLinkMatched
 	}
 	candidate := Candidate{Kind: "tun-link-identity", Description: "TUN link identity", Target: managedInterface}
-	expected, ok := exactRollbackTUNAddressIdentity(rollback.TUNAddresses)
+	expected, ok := exactRollbackTUNLinkIdentity(rollback, applied)
 	if !ok {
-		return failed(candidate, errors.New("missing exact transaction-bound TUN address identity for link-scoped rollback")), rollbackLinkBlocked
+		return failed(candidate, errors.New("missing exact transaction-bound TUN address or creation identity for link-scoped rollback")), rollbackLinkBlocked
 	}
 	result, err := osExec.runResult(ctx, "ip", "-details", "-o", "link", "show", "dev", managedInterface)
 	if err != nil || !commandSucceeded(result, err) {
@@ -196,14 +196,21 @@ func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osE
 		return failed(candidate, fmt.Errorf("inspect TUN link identity before rollback: %s", commandFailureMessage(result, err))), rollbackLinkBlocked
 	}
 	current, ok := parseRollbackLinkIdentity(result.Stdout)
-	if !ok || current.Name != managedInterface || current.Index != expected.LinkIndex || current.Kind != expected.LinkKind {
-		return failed(candidate, fmt.Errorf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", managedInterface, expected.LinkIndex, expected.LinkKind)), rollbackLinkBlocked
+	if !ok || current.Name != expected.Name || current.Index != expected.Index || current.Kind != expected.Kind {
+		return failed(candidate, fmt.Errorf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", expected.Name, expected.Index, expected.Kind)), rollbackLinkBlocked
 	}
 	return CleanupResult{}, rollbackLinkMatched
 }
 
 func rollbackRequiresLinkIdentity(rollback txstate.RollbackMetadata) bool {
 	return len(rollback.DNS) > 0 || len(rollback.TUNAddresses) > 0 || len(rollback.TUN) > 0
+}
+
+func exactRollbackTUNLinkIdentity(rollback txstate.RollbackMetadata, applied []txstate.AppliedStep) (rollbackLinkIdentity, bool) {
+	if address, ok := exactRollbackTUNAddressIdentity(rollback.TUNAddresses); ok {
+		return rollbackLinkIdentity{Name: managedInterface, Index: address.LinkIndex, Kind: address.LinkKind}, true
+	}
+	return exactRollbackTUNCreationIdentity(rollback.TUN, applied)
 }
 
 func exactRollbackTUNAddressIdentity(addresses []txstate.TUNAddressRollback) (txstate.TUNAddressRollback, bool) {
@@ -224,6 +231,51 @@ func exactRollbackTUNAddressIdentity(addresses []txstate.TUNAddressRollback) (tx
 		out = address
 	}
 	return out, matches == 1
+}
+
+func exactRollbackTUNCreationIdentity(entries []txstate.TUNRollback, applied []txstate.AppliedStep) (rollbackLinkIdentity, bool) {
+	rollbackMatches := 0
+	for _, tun := range entries {
+		if ownedRollbackMetadata(tun.Owner, netexecutor.OwnerTunDevice) && tun.InterfaceName == managedInterface {
+			rollbackMatches++
+		}
+	}
+	if rollbackMatches != 1 {
+		return rollbackLinkIdentity{}, false
+	}
+	var out rollbackLinkIdentity
+	proofMatches := 0
+	for _, step := range applied {
+		if step.Kind != "tun-device" || step.Target != managedInterface || !ownedRollbackMetadata(step.Owner, netexecutor.OwnerTunDevice) {
+			continue
+		}
+		identity, ok := parseTUNCreationProofDescription(step.Description)
+		if !ok {
+			continue
+		}
+		proofMatches++
+		out = identity
+	}
+	return out, proofMatches == 1
+}
+
+func parseTUNCreationProofDescription(description string) (rollbackLinkIdentity, bool) {
+	values := map[string]string{}
+	for _, part := range strings.Split(description, ";") {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	if values["creation-proof-name"] != managedInterface || values["creation-proof-kind"] != "tun" || values["creation-proof-pre-existing-absent"] != "true" {
+		return rollbackLinkIdentity{}, false
+	}
+	index, err := strconv.Atoi(values["creation-proof-ifindex"])
+	if err != nil || index <= 0 {
+		return rollbackLinkIdentity{}, false
+	}
+	return rollbackLinkIdentity{Name: managedInterface, Index: index, Kind: "tun"}, true
 }
 
 func parseRollbackLinkIdentity(output string) (rollbackLinkIdentity, bool) {
