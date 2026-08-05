@@ -112,8 +112,11 @@ func rollbackDesiredSubsetMismatches(desired txstate.DesiredPlan, rollback txsta
 		desiredCounter := desiredRouteCounter(desired.Routes)
 		if len(desiredCounter) == 0 {
 			reasons = append(reasons, "route rollback requires exact desired route tuple metadata")
-		} else if !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredCounter) {
-			reasons = append(reasons, "route rollback multiset is not an exact subset of desired route multiset")
+		} else {
+			if !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredCounter) {
+				reasons = append(reasons, "route rollback multiset is not an exact subset of desired route multiset")
+			}
+			reasons = append(reasons, ambiguousDesiredRouteShortTargetMismatches(desired.Routes, rollback.Routes)...)
 		}
 	}
 	if len(rollback.PolicyRules) > 0 {
@@ -293,6 +296,43 @@ func rollbackRouteCounter(routes []txstate.RouteRollback) map[string]int {
 
 func routeRollbackKey(item txstate.RouteRollback) string {
 	return strings.Join([]string{strings.TrimSpace(item.Table), strings.TrimSpace(item.CIDR), strings.TrimSpace(item.Via), strings.TrimSpace(item.Dev), normalizedRollbackOwner(item.Owner, netexecutor.OwnerRoute)}, "\x00")
+}
+
+func ambiguousDesiredRouteShortTargetMismatches(desired []txstate.RoutePlan, rollback []txstate.RouteRollback) []string {
+	desiredByShort := map[string]map[string]int{}
+	for _, item := range desired {
+		if item.Operation != "add" || !ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			continue
+		}
+		rollbackItem := txstate.RouteRollback{Table: item.Table, CIDR: item.CIDR, Via: item.Via, Dev: item.Dev, Owner: item.Owner}
+		short := routeRollbackTarget(rollbackItem)
+		full := routeRollbackKey(rollbackItem)
+		if desiredByShort[short] == nil {
+			desiredByShort[short] = map[string]int{}
+		}
+		desiredByShort[short][full]++
+	}
+	rollbackByShort := map[string]int{}
+	for _, item := range rollback {
+		if !ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			continue
+		}
+		rollbackByShort[routeRollbackTarget(item)]++
+	}
+	var reasons []string
+	for short, count := range rollbackByShort {
+		fulls := desiredByShort[short]
+		if len(fulls) != 1 {
+			reasons = append(reasons, "route desired plan has ambiguous full tuples for applied route target "+short)
+			continue
+		}
+		for _, desiredCount := range fulls {
+			if desiredCount != count {
+				reasons = append(reasons, "route desired plan cardinality does not match applied route target "+short)
+			}
+		}
+	}
+	return reasons
 }
 
 func desiredPolicyRuleCounter(steps []txstate.PlannedStep) map[string]int {
