@@ -21,6 +21,9 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 				continue
 			}
 			plan.TunDevice = planner.TunDevicePlan{Name: tun.InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
+			if description := appliedStepDescription(tx.AppliedSteps, "tun-device", tun.InterfaceName, netexecutor.OwnerTunDevice); description != "" {
+				plan.TunDevice.Reason = description
+			}
 			break
 		}
 	}
@@ -41,7 +44,6 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 				LinkKind:           address.LinkKind,
 				AppearedAfterCore:  address.AppearedAfterCore,
 				AllowOwnedExisting: true,
-				AllowMissingLink:   true,
 			}
 			break
 		}
@@ -106,6 +108,65 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 		}
 	}
 	return plan
+}
+
+func validateTunRollbackProjection(tx txstate.Transaction) error {
+	var reasons []string
+	if err := validateSingleRollbackCategory("TUN", len(tx.Rollback.TUN), func(i int) bool {
+		entry := tx.Rollback.TUN[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerTunDevice) && strings.TrimSpace(entry.InterfaceName) != ""
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateSingleRollbackCategory("TUN address", len(tx.Rollback.TUNAddresses), func(i int) bool {
+		entry := tx.Rollback.TUNAddresses[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerTunAddress) &&
+			entry.InterfaceName == "podlaz0" &&
+			strings.TrimSpace(entry.Family) == "ipv4" &&
+			strings.TrimSpace(entry.Scope) == "global" &&
+			strings.TrimSpace(entry.CIDR) == planner.DefaultTunIPv4CIDR &&
+			entry.LinkIndex > 0 && entry.LinkKind == "tun" && entry.AppearedAfterCore
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateSingleRollbackCategory("DNS", len(tx.Rollback.DNS), func(i int) bool {
+		entry := tx.Rollback.DNS[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerDNS) && strings.TrimSpace(entry.Link) != ""
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateSingleRollbackCategory("nftables", len(tx.Rollback.NFTables), func(i int) bool {
+		entry := tx.Rollback.NFTables[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerFirewall) && strings.TrimSpace(entry.Family) != "" && strings.TrimSpace(entry.Table) != ""
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if len(reasons) > 0 {
+		return fmt.Errorf("ambiguous TUN rollback projection: %s", strings.Join(reasons, "; "))
+	}
+	return nil
+}
+
+func validateSingleRollbackCategory(name string, count int, valid func(int) bool) error {
+	if count == 0 {
+		return nil
+	}
+	if count != 1 {
+		return fmt.Errorf("%s rollback cardinality=%d, want 1", name, count)
+	}
+	if !valid(0) {
+		return fmt.Errorf("%s rollback entry is unsupported or incomplete", name)
+	}
+	return nil
+}
+
+func appliedStepDescription(applied []txstate.AppliedStep, kind, target, owner string) string {
+	for _, step := range applied {
+		if step.Kind == kind && step.Target == target && rollbackOwnerMatches(step.Owner, owner) {
+			return step.Description
+		}
+	}
+	return ""
 }
 
 func rollbackOwnerMatches(owner, expected string) bool {
