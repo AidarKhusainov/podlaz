@@ -41,6 +41,7 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 				LinkKind:           address.LinkKind,
 				AppearedAfterCore:  address.AppearedAfterCore,
 				AllowOwnedExisting: true,
+				AllowMissingLink:   true,
 			}
 			break
 		}
