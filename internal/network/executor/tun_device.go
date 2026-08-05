@@ -22,9 +22,9 @@ type IPTunDeviceExecutor struct {
 }
 
 type tunDeviceCreationProof struct {
-	Name             string
-	LinkIndex        int
-	LinkKind         string
+	Name              string
+	LinkIndex         int
+	LinkKind          string
 	PreExistingAbsent bool
 }
 
