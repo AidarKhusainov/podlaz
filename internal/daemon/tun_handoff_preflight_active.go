@@ -273,8 +273,8 @@ func currentRouteKey(route currentRouteEvidence) string {
 }
 
 func rollbackRuleKey(rule txstate.PolicyRuleRollback) string {
-	from := strings.TrimSpace(rule.From)
-	to := strings.TrimSpace(rule.To)
+	from := normalizeRuleSelector(rule.From)
+	to := normalizeRuleSelector(rule.To)
 	if from == "all" && to != "" {
 		from = ""
 	}
@@ -288,8 +288,8 @@ func rollbackRuleKey(rule txstate.PolicyRuleRollback) string {
 }
 
 func currentRuleKey(rule currentRuleEvidence) string {
-	from := strings.TrimSpace(rule.From)
-	to := strings.TrimSpace(rule.To)
+	from := normalizeRuleSelector(rule.From)
+	to := normalizeRuleSelector(rule.To)
 	if from == "all" && to != "" {
 		from = ""
 	}
@@ -320,6 +320,23 @@ func normalizeRouteDestination(destination string) string {
 		return ip.String() + "/32"
 	}
 	return destination
+}
+
+func normalizeRuleSelector(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "all" {
+		return value
+	}
+	if ip := net.ParseIP(value); ip != nil && ip.To4() != nil {
+		return ip.String() + "/32"
+	}
+	if ip, network, err := net.ParseCIDR(value); err == nil && ip.To4() != nil {
+		ones, bits := network.Mask.Size()
+		if bits == 32 && ones == 32 {
+			return ip.String() + "/32"
+		}
+	}
+	return value
 }
 
 func isRouteTypeToken(value string) bool {
