@@ -103,12 +103,23 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
 	if gateResult, ok := e.rollbackLinkIdentityGate(ctx, osExec, rollback); !ok {
+		// The link gate protects only link-scoped mutations. Exact nftables and
+		// routing rollback entries remain independently owned by the transaction and
+		// must converge even when the current podlaz0 identity is absent, unknown, or
+		// a foreign replacement.
+		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
+		results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
 		results = append(results, gateResult)
 		results = append(results, e.skipLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
 		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
 		results = append(results, e.inspectUnrecordedDesiredMainState(ctx, tx)...)
-		results = append(results, skipped(candidate, "transaction cleanup skipped ambiguous link identity; transaction state was preserved"))
+		if hasFailedCleanup(results) {
+			results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
+		} else {
+			results = append(results, skipped(candidate, "transaction cleanup skipped ambiguous link-scoped resources; transaction state was preserved"))
+		}
 		return results
 	}
 	results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
@@ -161,18 +172,18 @@ func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osE
 	candidate := Candidate{Kind: "tun-link-identity", Description: "TUN link identity", Target: managedInterface}
 	expected, ok := exactRollbackTUNAddressIdentity(rollback.TUNAddresses)
 	if !ok {
-		return skipped(candidate, "missing exact transaction-bound TUN address identity for link-scoped rollback"), false
+		return failed(candidate, errors.New("missing exact transaction-bound TUN address identity for link-scoped rollback")), false
 	}
 	result, err := osExec.runResult(ctx, "ip", "-details", "-o", "link", "show", "dev", managedInterface)
 	if err != nil || !commandSucceeded(result, err) {
 		if resourceMissing(result) {
-			return CleanupResult{}, true
+			return skipped(candidate, "transaction-bound TUN link is absent; link-scoped rollback was not authorized by name"), false
 		}
 		return failed(candidate, fmt.Errorf("inspect TUN link identity before rollback: %s", commandFailureMessage(result, err))), false
 	}
 	current, ok := parseRollbackLinkIdentity(result.Stdout)
 	if !ok || current.Name != managedInterface || current.Index != expected.LinkIndex || current.Kind != expected.LinkKind {
-		return skipped(candidate, fmt.Sprintf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", managedInterface, expected.LinkIndex, expected.LinkKind)), false
+		return failed(candidate, fmt.Errorf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", managedInterface, expected.LinkIndex, expected.LinkKind)), false
 	}
 	return CleanupResult{}, true
 }
@@ -185,7 +196,14 @@ func exactRollbackTUNAddressIdentity(addresses []txstate.TUNAddressRollback) (tx
 	var out txstate.TUNAddressRollback
 	matches := 0
 	for _, address := range addresses {
-		if !ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) || address.InterfaceName != managedInterface || address.LinkIndex <= 0 || address.LinkKind != "tun" {
+		if !ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) ||
+			address.InterfaceName != managedInterface ||
+			address.LinkIndex <= 0 ||
+			address.LinkKind != "tun" ||
+			!address.AppearedAfterCore ||
+			strings.TrimSpace(address.Family) != "ipv4" ||
+			strings.TrimSpace(address.Scope) != "global" ||
+			strings.TrimSpace(address.CIDR) != planner.DefaultTunIPv4CIDR {
 			continue
 		}
 		matches++
