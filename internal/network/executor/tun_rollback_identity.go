@@ -13,14 +13,21 @@ type tunAddressRollbackIdentityVerifier interface {
 }
 
 func (e TunExecutor) VerifyRollbackIdentity(ctx context.Context, plan planner.TunPlan) error {
-	if !shouldApplyTunAddress(plan.TunAddress) {
-		return nil
+	if shouldApplyTunAddress(plan.TunAddress) {
+		verifier, ok := e.TunAddress.(tunAddressRollbackIdentityVerifier)
+		if !ok {
+			return fmt.Errorf("TUN address executor cannot prove rollback link identity")
+		}
+		return verifier.VerifyRollbackIdentity(ctx, plan.TunAddress)
 	}
-	verifier, ok := e.TunAddress.(tunAddressRollbackIdentityVerifier)
-	if !ok {
-		return fmt.Errorf("TUN address executor cannot prove rollback link identity")
+	if rollbackNeedsTUNLinkIdentity(plan) {
+		return fmt.Errorf("link-scoped rollback requires exact transaction-bound TUN address identity")
 	}
-	return verifier.VerifyRollbackIdentity(ctx, plan.TunAddress)
+	return nil
+}
+
+func rollbackNeedsTUNLinkIdentity(plan planner.TunPlan) bool {
+	return strings.TrimSpace(plan.DNS.TargetLink) != "" || strings.TrimSpace(plan.TunDevice.Name) != ""
 }
 
 func (e IPTunAddressExecutor) VerifyRollbackIdentity(ctx context.Context, plan planner.TunAddressPlan) error {
