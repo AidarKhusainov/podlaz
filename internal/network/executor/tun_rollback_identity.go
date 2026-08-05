@@ -39,6 +39,9 @@ func (e IPTunAddressExecutor) VerifyRollbackIdentity(ctx context.Context, plan p
 	}
 	identity, err := e.inspectIdentity(ctx, plan.Interface)
 	if err != nil {
+		if plan.AllowMissingLink && resourceMissing(err) {
+			return nil
+		}
 		return fmt.Errorf("inspect TUN link before rollback identity gate: %w", err)
 	}
 	return verifyBoundIdentity(plan, identity, false)
