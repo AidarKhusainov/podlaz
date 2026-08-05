@@ -176,37 +176,61 @@ func activeTransactionOwnsStaleResource(tx txstate.Transaction, resource netsnap
 }
 
 func routeSignalMatchesRollback(signal netsnapshot.PolicyRoutingSignal, route txstate.RouteRollback) bool {
-	if strings.TrimSpace(signal.Table) != strings.TrimSpace(route.Table) {
+	current, ok := parseCurrentRouteEvidence(signal.Raw)
+	if !ok {
 		return false
 	}
-	if !cidrMatchesRouteDestination(strings.TrimSpace(route.CIDR), strings.TrimSpace(firstNonEmpty(signal.Destination, routeDestinationFromRaw(signal.Raw)))) {
-		return false
-	}
-	if strings.TrimSpace(route.Dev) != "" && strings.TrimSpace(signal.Interface) != strings.TrimSpace(route.Dev) {
-		return false
-	}
-	if strings.TrimSpace(route.Via) != "" && strings.TrimSpace(signal.Gateway) != strings.TrimSpace(route.Via) {
-		return false
-	}
-	if strings.TrimSpace(route.Via) == "" && strings.TrimSpace(signal.Gateway) != "" {
-		return false
-	}
-	return true
+	return routeEvidenceMatchesRollback(current, route)
 }
 
 func routeResourceMatchesRollback(resource netsnapshot.StaleResource, route txstate.RouteRollback) bool {
 	if strings.TrimSpace(resource.Detail) == "" {
 		return false
 	}
-	signal, ok := parseCurrentRouteSignal(resource.Detail)
+	current, ok := parseCurrentRouteEvidence(resource.Detail)
 	if !ok {
 		return false
 	}
-	return routeSignalMatchesRollback(signal, route)
+	return routeEvidenceMatchesRollback(current, route)
+}
+
+func routeEvidenceMatchesRollback(current currentRouteEvidence, route txstate.RouteRollback) bool {
+	if strings.TrimSpace(current.Table) != strings.TrimSpace(route.Table) {
+		return false
+	}
+	if !cidrMatchesRouteDestination(strings.TrimSpace(route.CIDR), strings.TrimSpace(current.Destination)) {
+		return false
+	}
+	if strings.TrimSpace(route.Dev) != "" && strings.TrimSpace(current.Dev) != strings.TrimSpace(route.Dev) {
+		return false
+	}
+	if strings.TrimSpace(route.Via) != strings.TrimSpace(current.Via) {
+		return false
+	}
+	return true
 }
 
 func ruleSignalMatchesRollback(signal netsnapshot.PolicyRoutingSignal, rule txstate.PolicyRuleRollback) bool {
-	if signal.Priority != "" && signal.Priority != strconv.Itoa(rule.Priority) {
+	current, ok := parseCurrentPolicyRuleSignal(signal.Raw)
+	if !ok {
+		return false
+	}
+	return ruleEvidenceMatchesRollback(current, rule)
+}
+
+func ruleResourceMatchesRollback(resource netsnapshot.StaleResource, rule txstate.PolicyRuleRollback) bool {
+	if strings.TrimSpace(resource.Detail) == "" {
+		return false
+	}
+	current, ok := parseCurrentPolicyRuleSignal(resource.Detail)
+	if !ok {
+		return false
+	}
+	return ruleEvidenceMatchesRollback(current, rule)
+}
+
+func ruleEvidenceMatchesRollback(signal netsnapshot.PolicyRoutingSignal, rule txstate.PolicyRuleRollback) bool {
+	if signal.Priority != strconv.Itoa(rule.Priority) {
 		return false
 	}
 	if strings.TrimSpace(signal.Table) != strings.TrimSpace(rule.Table) {
@@ -225,41 +249,38 @@ func ruleSignalMatchesRollback(signal netsnapshot.PolicyRoutingSignal, rule txst
 	return true
 }
 
-func ruleResourceMatchesRollback(resource netsnapshot.StaleResource, rule txstate.PolicyRuleRollback) bool {
-	if strings.TrimSpace(resource.Detail) == "" {
-		return false
-	}
-	signal, ok := parseCurrentPolicyRuleSignal(resource.Detail)
-	if !ok {
-		return false
-	}
-	return ruleSignalMatchesRollback(signal, rule)
+type currentRouteEvidence struct {
+	Destination string
+	Table       string
+	Dev         string
+	Via         string
+	Raw         string
 }
 
-func parseCurrentRouteSignal(line string) (netsnapshot.PolicyRoutingSignal, bool) {
+func parseCurrentRouteEvidence(line string) (currentRouteEvidence, bool) {
 	fields := strings.Fields(strings.TrimSpace(line))
 	if len(fields) == 0 {
-		return netsnapshot.PolicyRoutingSignal{}, false
+		return currentRouteEvidence{}, false
 	}
 	destinationIndex := 0
 	if isRouteTypeToken(fields[0]) {
 		destinationIndex = 1
 	}
 	if destinationIndex >= len(fields) {
-		return netsnapshot.PolicyRoutingSignal{}, false
+		return currentRouteEvidence{}, false
 	}
-	signal := netsnapshot.PolicyRoutingSignal{Kind: "route", Raw: strings.TrimSpace(line), Destination: normalizeRouteDestination(fields[destinationIndex]), Table: "main"}
+	evidence := currentRouteEvidence{Destination: normalizeRouteDestination(fields[destinationIndex]), Table: "main", Raw: strings.TrimSpace(line)}
 	for i := destinationIndex + 1; i+1 < len(fields); i++ {
 		switch fields[i] {
 		case "dev":
-			signal.Interface = strings.Split(fields[i+1], "@")[0]
+			evidence.Dev = strings.Split(fields[i+1], "@")[0]
 		case "via":
-			signal.Gateway = fields[i+1]
+			evidence.Via = fields[i+1]
 		case "table":
-			signal.Table = fields[i+1]
+			evidence.Table = fields[i+1]
 		}
 	}
-	return signal, strings.TrimSpace(signal.Table) != ""
+	return evidence, strings.TrimSpace(evidence.Table) != ""
 }
 
 func parseCurrentPolicyRuleSignal(line string) (netsnapshot.PolicyRoutingSignal, bool) {
@@ -283,14 +304,6 @@ func parseCurrentPolicyRuleSignal(line string) (netsnapshot.PolicyRoutingSignal,
 		}
 	}
 	return signal, signal.Priority != "" && signal.Table != ""
-}
-
-func routeDestinationFromRaw(raw string) string {
-	signal, ok := parseCurrentRouteSignal(raw)
-	if !ok {
-		return ""
-	}
-	return signal.Destination
 }
 
 func normalizeRouteDestination(destination string) string {
