@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -53,7 +54,8 @@ func snapshotWithoutActiveTransactionOwnership(s netsnapshot.Snapshot, tx txstat
 	out.PolicyRouting = append([]netsnapshot.PolicyRoutingSignal(nil), s.PolicyRouting...)
 	out.StaleResources = append([]netsnapshot.StaleResource(nil), s.StaleResources...)
 
-	if activeTransactionOwnsTunDevice(tx) {
+	tunDeviceProven := activeTransactionProvesCurrentTunDevice(tx, s)
+	if tunDeviceProven {
 		devices := out.TunDevices[:0]
 		for _, device := range out.TunDevices {
 			if device.Name == netsnapshot.DefaultTunName && device.Status == netsnapshot.StatusDetected {
@@ -79,7 +81,7 @@ func snapshotWithoutActiveTransactionOwnership(s netsnapshot.Snapshot, tx txstat
 
 	resources := out.StaleResources[:0]
 	for _, resource := range out.StaleResources {
-		if activeTransactionOwnsStaleResource(tx, resource) {
+		if activeTransactionOwnsStaleResource(tx, resource, tunDeviceProven) {
 			continue
 		}
 		resources = append(resources, resource)
@@ -88,12 +90,15 @@ func snapshotWithoutActiveTransactionOwnership(s netsnapshot.Snapshot, tx txstat
 	return out
 }
 
-func activeTransactionOwnsTunDevice(tx txstate.Transaction) bool {
-	if tx.DesiredPlan.TUN.InterfaceName == netsnapshot.DefaultTunName && strings.TrimSpace(tx.DesiredPlan.TUN.Owner) != "" {
-		return true
-	}
-	for _, entry := range tx.Rollback.TUN {
-		if entry.InterfaceName == netsnapshot.DefaultTunName && ownedRollbackOwner(entry.Owner, netexecutor.OwnerTunDevice) {
+func activeTransactionProvesCurrentTunDevice(tx txstate.Transaction, s netsnapshot.Snapshot) bool {
+	for _, address := range tx.Rollback.TUNAddresses {
+		if !ownedRollbackOwner(address.Owner, netexecutor.OwnerTunAddress) {
+			continue
+		}
+		if address.InterfaceName != netsnapshot.DefaultTunName || address.LinkIndex <= 0 || address.LinkKind != "tun" || !address.AppearedAfterCore {
+			continue
+		}
+		if snapshotProvesTunLinkIdentity(address, s) {
 			return true
 		}
 	}
@@ -137,16 +142,18 @@ func activeTransactionOwnsPolicyRoutingSignal(tx txstate.Transaction, signal net
 	return false
 }
 
-func activeTransactionOwnsStaleResource(tx txstate.Transaction, resource netsnapshot.StaleResource) bool {
+func activeTransactionOwnsStaleResource(tx txstate.Transaction, resource netsnapshot.StaleResource, tunDeviceProven bool) bool {
 	if resource.Status != netsnapshot.StatusDetected {
 		return false
 	}
 	switch resource.Kind {
+	case "transaction-file":
+		return tx.State == txstate.TransactionCommitted && strings.TrimSpace(resource.Name) == tx.ID+txstate.TransactionFileSuffix
 	case "tun-device":
-		return resource.Name == netsnapshot.DefaultTunName && activeTransactionOwnsTunDevice(tx)
+		return resource.Name == netsnapshot.DefaultTunName && tunDeviceProven
 	case "nftables-table":
 		return strings.TrimSpace(resource.Name) == netsnapshot.DefaultNFTFamily+" "+netsnapshot.DefaultNFTTable && activeTransactionOwnsNFTables(tx)
-	case "route-table":
+	case "route", "route-table":
 		for _, route := range tx.Rollback.Routes {
 			if !ownedRollbackOwner(route.Owner, netexecutor.OwnerRoute) {
 				continue
@@ -172,34 +179,37 @@ func routeSignalMatchesRollback(signal netsnapshot.PolicyRoutingSignal, route tx
 	if strings.TrimSpace(signal.Table) != strings.TrimSpace(route.Table) {
 		return false
 	}
-	raw := " " + strings.TrimSpace(signal.Raw) + " "
-	if strings.TrimSpace(route.CIDR) != "" && !strings.Contains(raw, " "+strings.TrimSpace(route.CIDR)+" ") {
+	if !cidrMatchesRouteDestination(strings.TrimSpace(route.CIDR), strings.TrimSpace(firstNonEmpty(signal.Destination, routeDestinationFromRaw(signal.Raw)))) {
 		return false
 	}
 	if strings.TrimSpace(route.Dev) != "" && strings.TrimSpace(signal.Interface) != strings.TrimSpace(route.Dev) {
 		return false
 	}
-	if strings.TrimSpace(route.Via) != "" && !strings.Contains(raw, " via "+strings.TrimSpace(route.Via)+" ") {
+	if strings.TrimSpace(route.Via) != "" && strings.TrimSpace(signal.Gateway) != strings.TrimSpace(route.Via) {
+		return false
+	}
+	if strings.TrimSpace(route.Via) == "" && strings.TrimSpace(signal.Gateway) != "" {
 		return false
 	}
 	return true
 }
 
 func routeResourceMatchesRollback(resource netsnapshot.StaleResource, route txstate.RouteRollback) bool {
-	if strings.TrimSpace(resource.Name) != strings.TrimSpace(route.Table) {
-		return false
-	}
 	if strings.TrimSpace(resource.Detail) == "" {
 		return false
 	}
-	return routeSignalMatchesRollback(netsnapshot.PolicyRoutingSignal{Kind: "route", Table: resource.Name, Interface: route.Dev, Raw: resource.Detail}, route)
+	signal, ok := parseCurrentRouteSignal(resource.Detail)
+	if !ok {
+		return false
+	}
+	return routeSignalMatchesRollback(signal, route)
 }
 
 func ruleSignalMatchesRollback(signal netsnapshot.PolicyRoutingSignal, rule txstate.PolicyRuleRollback) bool {
 	if signal.Priority != "" && signal.Priority != strconv.Itoa(rule.Priority) {
 		return false
 	}
-	if strings.TrimSpace(signal.Table) != "" && strings.TrimSpace(signal.Table) != strings.TrimSpace(rule.Table) {
+	if strings.TrimSpace(signal.Table) != strings.TrimSpace(rule.Table) {
 		return false
 	}
 	selector := strings.TrimSpace(signal.Selector)
@@ -209,20 +219,104 @@ func ruleSignalMatchesRollback(signal netsnapshot.PolicyRoutingSignal, rule txst
 	if rule.To != "" && selector != "to "+strings.TrimSpace(rule.To) {
 		return false
 	}
-	if rule.Mark != "" && strings.TrimSpace(signal.Fwmark) != strings.TrimSpace(rule.Mark) {
+	if strings.TrimSpace(rule.Mark) != strings.TrimSpace(signal.Fwmark) {
 		return false
 	}
 	return true
 }
 
 func ruleResourceMatchesRollback(resource netsnapshot.StaleResource, rule txstate.PolicyRuleRollback) bool {
-	if resource.Name != "" && resource.Name != strconv.Itoa(rule.Priority) {
-		return false
-	}
 	if strings.TrimSpace(resource.Detail) == "" {
 		return false
 	}
-	return ruleSignalMatchesRollback(netsnapshot.PolicyRoutingSignal{Kind: "rule", Priority: resource.Name, Raw: resource.Detail}, rule)
+	signal, ok := parseCurrentPolicyRuleSignal(resource.Detail)
+	if !ok {
+		return false
+	}
+	return ruleSignalMatchesRollback(signal, rule)
+}
+
+func parseCurrentRouteSignal(line string) (netsnapshot.PolicyRoutingSignal, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return netsnapshot.PolicyRoutingSignal{}, false
+	}
+	destinationIndex := 0
+	if isRouteTypeToken(fields[0]) {
+		destinationIndex = 1
+	}
+	if destinationIndex >= len(fields) {
+		return netsnapshot.PolicyRoutingSignal{}, false
+	}
+	signal := netsnapshot.PolicyRoutingSignal{Kind: "route", Raw: strings.TrimSpace(line), Destination: normalizeRouteDestination(fields[destinationIndex]), Table: "main"}
+	for i := destinationIndex + 1; i+1 < len(fields); i++ {
+		switch fields[i] {
+		case "dev":
+			signal.Interface = strings.Split(fields[i+1], "@")[0]
+		case "via":
+			signal.Gateway = fields[i+1]
+		case "table":
+			signal.Table = fields[i+1]
+		}
+	}
+	return signal, strings.TrimSpace(signal.Table) != ""
+}
+
+func parseCurrentPolicyRuleSignal(line string) (netsnapshot.PolicyRoutingSignal, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return netsnapshot.PolicyRoutingSignal{}, false
+	}
+	signal := netsnapshot.PolicyRoutingSignal{Kind: "rule", Raw: strings.TrimSpace(line), Priority: strings.TrimSuffix(fields[0], ":")}
+	for i := 0; i < len(fields)-1; i++ {
+		switch fields[i] {
+		case "lookup", "table":
+			signal.Table = fields[i+1]
+		case "fwmark":
+			signal.Fwmark = fields[i+1]
+		case "from", "to":
+			if signal.Selector == "" {
+				signal.Selector = fields[i] + " " + fields[i+1]
+			} else {
+				signal.Selector += " " + fields[i] + " " + fields[i+1]
+			}
+		}
+	}
+	return signal, signal.Priority != "" && signal.Table != ""
+}
+
+func routeDestinationFromRaw(raw string) string {
+	signal, ok := parseCurrentRouteSignal(raw)
+	if !ok {
+		return ""
+	}
+	return signal.Destination
+}
+
+func normalizeRouteDestination(destination string) string {
+	destination = strings.TrimSpace(destination)
+	if destination == "" || destination == "default" {
+		return destination
+	}
+	if ip := net.ParseIP(destination); ip != nil && ip.To4() != nil {
+		return ip.String() + "/32"
+	}
+	return destination
+}
+
+func cidrMatchesRouteDestination(expected, current string) bool {
+	expected = normalizeRouteDestination(expected)
+	current = normalizeRouteDestination(current)
+	return expected != "" && expected == current
+}
+
+func isRouteTypeToken(value string) bool {
+	switch value {
+	case "local", "broadcast", "unreachable", "blackhole", "prohibit", "throw", "nat", "multicast", "anycast", "unicast":
+		return true
+	default:
+		return false
+	}
 }
 
 func ownedRollbackOwner(owner, expected string) bool {
