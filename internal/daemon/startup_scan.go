@@ -97,20 +97,23 @@ func (s *startupScanState) startRefreshLocked(ctx context.Context, generation ui
 	if err := ctx.Err(); err != nil {
 		scan = incompleteStartupScan("authoritative refresh did not complete: " + err.Error())
 	}
-	s.publishScan(generation, scan)
+	if !s.publishScan(generation, scan) {
+		return incompleteStartupScan("authoritative refresh was superseded by a newer generation")
+	}
 	return scan
 }
 
-func (s *startupScanState) publishScan(generation uint64, scan recovery.PlanResult) {
+func (s *startupScanState) publishScan(generation uint64, scan recovery.PlanResult) bool {
+	cloned := cloneRecoveryPlan(scan)
 	s.refreshMu.Lock()
-	current := generation == s.refreshGeneration
-	s.refreshMu.Unlock()
-	if !current {
-		return
+	defer s.refreshMu.Unlock()
+	if generation != s.refreshGeneration {
+		return false
 	}
 	s.mu.Lock()
-	s.scan = cloneRecoveryPlan(scan)
+	s.scan = cloned
 	s.mu.Unlock()
+	return true
 }
 
 func incompleteStartupScan(message string) recovery.PlanResult {
