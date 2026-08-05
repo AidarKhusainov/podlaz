@@ -42,18 +42,26 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 		ctx = context.Background()
 	}
 
-	s.refreshMu.Lock()
-	if done := s.refreshDone; done != nil {
-		s.refreshMu.Unlock()
-		select {
-		case <-done:
-			return s.Snapshot()
-		case <-ctx.Done():
-			return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
+	for {
+		s.refreshMu.Lock()
+		generation := s.refreshGeneration
+		if done := s.refreshDone; done != nil {
+			s.refreshMu.Unlock()
+			select {
+			case <-done:
+				s.refreshMu.Lock()
+				current := generation == s.refreshGeneration
+				s.refreshMu.Unlock()
+				if current {
+					return s.Snapshot()
+				}
+				continue
+			case <-ctx.Done():
+				return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
+			}
 		}
+		return s.startRefreshLocked(ctx, generation)
 	}
-	generation := s.refreshGeneration
-	return s.startRefreshLocked(ctx, generation)
 }
 
 // ForceRefresh guarantees the scan it returns starts after the caller's mutation
