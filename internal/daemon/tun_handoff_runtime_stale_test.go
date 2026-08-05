@@ -30,6 +30,49 @@ func TestPreflightTunOwnershipBlocksStalePolicyRuleOnly(t *testing.T) {
 	assertRuntimeStaleBlockerContains(t, err, "policy-rule 10000")
 }
 
+func TestPodlazRuntimeRoutingStaleResourcesTreatsSupportedMissingRouteTableAsAbsent(t *testing.T) {
+	withFakeIPCommand(t, `#!/bin/sh
+if [ "$1 $2 $3 $4 $5" = "-4 route show table 51820" ]; then
+  printf 'Error: ipv4: FIB table does not exist.\nDump terminated\n' >&2
+  exit 2
+fi
+if [ "$1 $2 $3" = "-4 rule show" ]; then
+  exit 0
+fi
+exit 64
+`)
+
+	resources := podlazRuntimeRoutingStaleResources(context.Background())
+	if len(resources) != 0 {
+		t.Fatalf("supported missing route table must prove absence, got %#v", resources)
+	}
+}
+
+func TestPodlazRuntimeRoutingStaleResourcesKeepsUnknownRouteInspectionFailClosed(t *testing.T) {
+	withFakeIPCommand(t, `#!/bin/sh
+if [ "$1 $2 $3 $4 $5" = "-4 route show table 51820" ]; then
+  printf 'permission denied\n' >&2
+  exit 2
+fi
+if [ "$1 $2 $3" = "-4 rule show" ]; then
+  exit 0
+fi
+exit 64
+`)
+
+	resources := podlazRuntimeRoutingStaleResources(context.Background())
+	if len(resources) != 1 {
+		t.Fatalf("unknown route inspection must publish one blocker, got %#v", resources)
+	}
+	got := resources[0]
+	if got.Kind != "runtime-inspection" || got.Name != "route-table-"+netsnapshot.DefaultRouteTableID || got.Status != netsnapshot.StatusUnknown {
+		t.Fatalf("unexpected unknown route inspection resource: %#v", got)
+	}
+	if !strings.Contains(got.Detail, "permission denied") {
+		t.Fatalf("unknown inspection detail should preserve stderr, got %q", got.Detail)
+	}
+}
+
 func TestPrepareTunHandoffIgnoresRolledBackTransactionFile(t *testing.T) {
 	runtimeDir := t.TempDir()
 	writeRuntimeTransactionState(t, runtimeDir, "rolled", txstate.TransactionRolledBack)
@@ -112,6 +155,22 @@ func TestPrepareTunHandoffReplacePodlazBlocksRoutingAndTransactionStateAfterReco
 		t.Fatalf("snapshot refresh calls = %d, want 1", refreshCalls)
 	}
 	assertRuntimeStaleBlockerContains(t, err, "route-table 51820", "policy-rule 10000", "transaction-file stale.json")
+}
+
+func withFakeIPCommand(t *testing.T, script string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ip")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	if err := os.Setenv("PATH", dir+string(os.PathListSeparator)+oldPath); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", oldPath)
+	})
 }
 
 func writeRuntimeTransactionState(t *testing.T, runtimeDir, id string, state txstate.TransactionState) {
