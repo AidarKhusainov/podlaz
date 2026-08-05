@@ -44,8 +44,14 @@ var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot
 		return nil
 	}
 	var resources []netsnapshot.StaleResource
-	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok && strings.TrimSpace(out) != "" {
-		resources = append(resources, netsnapshot.StaleResource{Kind: "route-table", Name: netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusDetected, Detail: firstNonEmptyLine(out)})
+	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok {
+		for _, rawLine := range strings.Split(out, "\n") {
+			line := strings.TrimSpace(rawLine)
+			if line == "" {
+				continue
+			}
+			resources = append(resources, netsnapshot.StaleResource{Kind: "route", Name: staleRouteResourceName(line), Status: netsnapshot.StatusDetected, Detail: line})
+		}
 	}
 	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
 		for _, line := range strings.Split(out, "\n") {
@@ -306,7 +312,7 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 		}
 		switch signal.Kind {
 		case "route":
-			add("route-table", firstNonEmpty(signal.Table, netsnapshot.DefaultRouteTableID))
+			add("route", firstNonEmpty(staleRouteResourceName(signal.Raw), signal.Table, netsnapshot.DefaultRouteTableID))
 		case "rule":
 			add("policy-rule", firstNonEmpty(signal.Priority, signal.Table, netsnapshot.DefaultRouteTableID))
 		}
@@ -351,6 +357,25 @@ func policyRuleName(line string) string {
 	}
 	priority := strings.TrimSuffix(fields[0], ":")
 	return firstNonEmpty(priority, netsnapshot.DefaultRouteTableID)
+}
+
+func staleRouteResourceName(line string) string {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return netsnapshot.DefaultRouteTableID
+	}
+	destination := fields[0]
+	if isRouteTypeToken(destination) && len(fields) > 1 {
+		destination = fields[1]
+	}
+	table := netsnapshot.DefaultRouteTableID
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "table" {
+			table = fields[i+1]
+			break
+		}
+	}
+	return strings.TrimSpace(table + " " + destination)
 }
 
 func runReadOnlyCommand(ctx context.Context, name string, args ...string) (string, bool) {
