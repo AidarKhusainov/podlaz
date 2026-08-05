@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -44,16 +45,21 @@ var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot
 		return []netsnapshot.StaleResource{{Kind: "runtime-inspection", Name: "ip", Status: netsnapshot.StatusUnknown, Detail: "ip command is unavailable: " + err.Error()}}
 	}
 	var resources []netsnapshot.StaleResource
-	if out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok {
-		for _, rawLine := range strings.Split(out, "\n") {
+	routeTable := inspectPodlazRouteTable(ctx, ipPath)
+	switch {
+	case routeTable.UnknownDetail != "":
+		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "route-table-" + netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusUnknown, Detail: routeTable.UnknownDetail})
+	case routeTable.Missing:
+		// A supported iproute2 missing-table result is authoritative absence: a
+		// clean host has no podlaz-owned route residue in table 51820.
+	default:
+		for _, rawLine := range strings.Split(routeTable.Output, "\n") {
 			line := strings.TrimSpace(rawLine)
 			if line == "" {
 				continue
 			}
 			resources = append(resources, netsnapshot.StaleResource{Kind: "route", Name: staleRouteResourceName(line), Status: netsnapshot.StatusDetected, Detail: line})
 		}
-	} else {
-		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "route-table-" + netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusUnknown, Detail: detail})
 	}
 	if out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
 		for _, line := range strings.Split(out, "\n") {
@@ -67,6 +73,45 @@ var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot
 		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "policy-rules", Status: netsnapshot.StatusUnknown, Detail: detail})
 	}
 	return resources
+}
+
+type routeTableInspection struct {
+	Output        string
+	Missing       bool
+	UnknownDetail string
+}
+
+func inspectPodlazRouteTable(ctx context.Context, ipPath string) routeTableInspection {
+	args := []string{"-4", "route", "show", "table", netsnapshot.DefaultRouteTableID}
+	cmd := exec.CommandContext(ctx, ipPath, args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return routeTableInspection{Output: strings.TrimSpace(stdout.String())}
+	}
+	if supportedMissingRouteTableResult(err, stdout.String(), stderr.String()) {
+		return routeTableInspection{Missing: true}
+	}
+	raw := strings.TrimSpace(strings.Join(compactStrings([]string{stdout.String(), stderr.String()}), "\n"))
+	return routeTableInspection{UnknownDetail: fmt.Sprintf("%s %s failed: %v: %s", ipPath, strings.Join(args, " "), err, raw)}
+}
+
+func supportedMissingRouteTableResult(err error, stdout, stderr string) bool {
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 || stdout != "" {
+		return false
+	}
+	normalized := strings.ReplaceAll(stderr, "\r\n", "\n")
+	switch normalized {
+	case "Error: ipv4: FIB table does not exist.\nDump terminated\n",
+		"Error: FIB table does not exist.\nDump terminated\n":
+		return true
+	default:
+		return false
+	}
 }
 
 type tunHandoffBlocker struct {
