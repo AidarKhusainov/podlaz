@@ -114,3 +114,40 @@ func TestStartupScanRefreshPublishesIncompleteWhenAuthoritativeScanExceedsDeadli
 		t.Fatalf("published snapshot must remain incomplete without stale candidates: %#v", snapshot)
 	}
 }
+
+func TestStartupScanPublishIsAtomicWithGenerationInvalidation(t *testing.T) {
+	publishEntered := make(chan struct{})
+	allowPublish := make(chan struct{})
+	firstDone := make(chan recovery.PlanResult, 1)
+	state := newStartupScanState(func(context.Context) recovery.PlanResult {
+		select {
+		case <-publishEntered:
+		default:
+			close(publishEntered)
+			<-allowPublish
+		}
+		return recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "dns-link", Target: "podlaz0", Description: "stale pre-mutation scan"}}}
+	})
+
+	go func() {
+		firstDone <- state.Refresh(context.Background())
+	}()
+	<-publishEntered
+
+	forceCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	forced := state.ForceRefresh(forceCtx)
+	if len(forced.Candidates) != 0 || len(forced.Warnings) == 0 {
+		t.Fatalf("timed-out ForceRefresh must publish incomplete generation, got %#v", forced)
+	}
+
+	close(allowPublish)
+	first := <-firstDone
+	if len(first.Candidates) != 0 || len(first.Warnings) == 0 || !strings.Contains(first.Warnings[0].Message, "superseded") {
+		t.Fatalf("invalidated refresh must not return stale candidates as authoritative: %#v", first)
+	}
+	snapshot := state.Snapshot()
+	if len(snapshot.Candidates) != 0 || len(snapshot.Warnings) == 0 {
+		t.Fatalf("old scan overwrote newer incomplete generation: %#v", snapshot)
+	}
+}
