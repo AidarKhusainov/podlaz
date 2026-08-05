@@ -176,6 +176,7 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackDNSInSafeOrder(t *testing
 	if err := exec.Verify(context.Background(), plan); err != nil {
 		t.Fatalf("verify DNS-aware plan: %v", err)
 	}
+	addRollbackIdentityForTest(&exec, &plan, recorder)
 	if err := exec.Rollback(context.Background(), plan); err != nil {
 		t.Fatalf("rollback DNS-aware plan: %v", err)
 	}
@@ -226,6 +227,7 @@ func dnsAwareCallOrderForTest() []string {
 		"rule:rollback:9999:to 203.0.113.10/32",
 		"route:rollback:main:203.0.113.10/32",
 		"route:rollback:podlaz:default",
+		"address:rollback:podlaz0:198.18.0.1/32",
 		"tun:rollback:podlaz0",
 	}
 }
