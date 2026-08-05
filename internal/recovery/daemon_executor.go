@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -101,6 +102,15 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	processResults := e.rollbackChildProcessResults(rollback.ChildProcesses)
 	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
+	if gateResult, ok := e.rollbackLinkIdentityGate(ctx, osExec, rollback); !ok {
+		results = append(results, gateResult)
+		results = append(results, e.skipLinkScopedRollbackResults(rollback)...)
+		results = append(results, processResults...)
+		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
+		results = append(results, e.inspectUnrecordedDesiredMainState(ctx, tx)...)
+		results = append(results, skipped(candidate, "transaction cleanup skipped ambiguous link identity; transaction state was preserved"))
+		return results
+	}
 	results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
 	results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
 	results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
@@ -135,6 +145,97 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 		return results
 	}
 	results = append(results, recovered(candidate))
+	return results
+}
+
+type rollbackLinkIdentity struct {
+	Name  string
+	Index int
+	Kind  string
+}
+
+func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osExec OSCleanupExecutor, rollback txstate.RollbackMetadata) (CleanupResult, bool) {
+	if !rollbackRequiresLinkIdentity(rollback) {
+		return CleanupResult{}, true
+	}
+	candidate := Candidate{Kind: "tun-link-identity", Description: "TUN link identity", Target: managedInterface}
+	expected, ok := exactRollbackTUNAddressIdentity(rollback.TUNAddresses)
+	if !ok {
+		return skipped(candidate, "missing exact transaction-bound TUN address identity for link-scoped rollback"), false
+	}
+	result, err := osExec.runResult(ctx, "ip", "-details", "-o", "link", "show", "dev", managedInterface)
+	if err != nil || !commandSucceeded(result, err) {
+		if resourceMissing(result) {
+			return skipped(candidate, "transaction-bound TUN link is absent; link-scoped rollback was not attempted"), false
+		}
+		return failed(candidate, fmt.Errorf("inspect TUN link identity before rollback: %s", commandFailureMessage(result, err))), false
+	}
+	current, ok := parseRollbackLinkIdentity(result.Stdout)
+	if !ok || current.Name != managedInterface || current.Index != expected.LinkIndex || current.Kind != expected.LinkKind {
+		return skipped(candidate, fmt.Sprintf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", managedInterface, expected.LinkIndex, expected.LinkKind)), false
+	}
+	return CleanupResult{}, true
+}
+
+func rollbackRequiresLinkIdentity(rollback txstate.RollbackMetadata) bool {
+	return len(rollback.NFTables) > 0 || len(rollback.DNS) > 0 || len(rollback.PolicyRules) > 0 || len(rollback.Routes) > 0 || len(rollback.TUNAddresses) > 0 || len(rollback.TUN) > 0
+}
+
+func exactRollbackTUNAddressIdentity(addresses []txstate.TUNAddressRollback) (txstate.TUNAddressRollback, bool) {
+	var out txstate.TUNAddressRollback
+	matches := 0
+	for _, address := range addresses {
+		if !ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) || address.InterfaceName != managedInterface || address.LinkIndex <= 0 || address.LinkKind != "tun" {
+			continue
+		}
+		matches++
+		out = address
+	}
+	return out, matches == 1
+}
+
+func parseRollbackLinkIdentity(output string) (rollbackLinkIdentity, bool) {
+	line := firstNonEmptyLine(output)
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return rollbackLinkIdentity{}, false
+	}
+	index, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+	if err != nil || index <= 0 {
+		return rollbackLinkIdentity{}, false
+	}
+	name := strings.TrimSuffix(fields[1], ":")
+	name = strings.Split(name, "@")[0]
+	kind := ""
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "type" && fields[i+1] == "tun" {
+			kind = "tun"
+			break
+		}
+	}
+	return rollbackLinkIdentity{Name: name, Index: index, Kind: kind}, name != "" && kind != ""
+}
+
+func (e DaemonCleanupExecutor) skipLinkScopedRollbackResults(rollback txstate.RollbackMetadata) []CleanupResult {
+	var results []CleanupResult
+	for _, entry := range rollback.NFTables {
+		results = append(results, skipped(Candidate{Kind: "nftables-table", Description: "nftables table", Target: entry.Family + " " + entry.Table}, "link identity was not proven before rollback"))
+	}
+	for _, entry := range rollback.DNS {
+		results = append(results, skipped(Candidate{Kind: "dns", Description: "DNS link state", Target: entry.Link}, "link identity was not proven before rollback"))
+	}
+	for _, rule := range rollback.PolicyRules {
+		results = append(results, skipped(Candidate{Kind: "policy-rule", Description: "policy rule", Target: fmt.Sprintf("priority %d table %s", rule.Priority, rule.Table)}, "link identity was not proven before rollback"))
+	}
+	for _, route := range rollback.Routes {
+		results = append(results, skipped(Candidate{Kind: "route", Description: "route", Target: fmt.Sprintf("%s table %s", route.CIDR, route.Table)}, "link identity was not proven before rollback"))
+	}
+	for _, address := range rollback.TUNAddresses {
+		results = append(results, skipped(Candidate{Kind: "tun-address", Description: "TUN address", Target: address.InterfaceName + " " + address.CIDR}, "link identity was not proven before rollback"))
+	}
+	for _, tun := range rollback.TUN {
+		results = append(results, skipped(Candidate{Kind: "tun-interface", Description: "TUN interface", Target: tun.InterfaceName}, "link identity was not proven before rollback"))
+	}
 	return results
 }
 
