@@ -196,6 +196,7 @@ func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step
 		case "tun-device":
 			if step.Owner == netexecutor.OwnerTunDevice && step.Target == plan.TunDevice.Name {
 				rollback.TunDevice = plan.TunDevice
+				rollback.TunDevice.Reason = step.Description
 			}
 		case "tun-address":
 			if step.Owner == netexecutor.OwnerTunAddress && step.Target == tunAddressTarget(plan.TunAddress) {
