@@ -16,25 +16,39 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 	rollback := tx.Rollback
 	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
 	if len(rollback.TUN) > 0 {
-		plan.TunDevice = planner.TunDevicePlan{Name: rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
+		for _, tun := range rollback.TUN {
+			if !rollbackOwnerMatches(tun.Owner, netexecutor.OwnerTunDevice) {
+				continue
+			}
+			plan.TunDevice = planner.TunDevicePlan{Name: tun.InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
+			break
+		}
 	}
 	if len(rollback.TUNAddresses) > 0 {
-		address := rollback.TUNAddresses[0]
-		plan.TunAddress = planner.TunAddressPlan{
-			Family:             address.Family,
-			Interface:          address.InterfaceName,
-			CIDR:               address.CIDR,
-			Scope:              address.Scope,
-			Action:             planner.TunAddressActionAssign,
-			Owner:              address.Owner,
-			RollbackKey:        address.InterfaceName + "/" + address.CIDR,
-			LinkIndex:          address.LinkIndex,
-			LinkKind:           address.LinkKind,
-			AppearedAfterCore:  address.AppearedAfterCore,
-			AllowOwnedExisting: true,
+		for _, address := range rollback.TUNAddresses {
+			if !rollbackOwnerMatches(address.Owner, netexecutor.OwnerTunAddress) {
+				continue
+			}
+			plan.TunAddress = planner.TunAddressPlan{
+				Family:             address.Family,
+				Interface:          address.InterfaceName,
+				CIDR:               address.CIDR,
+				Scope:              address.Scope,
+				Action:             planner.TunAddressActionAssign,
+				Owner:              address.Owner,
+				RollbackKey:        address.InterfaceName + "/" + address.CIDR,
+				LinkIndex:          address.LinkIndex,
+				LinkKind:           address.LinkKind,
+				AppearedAfterCore:  address.AppearedAfterCore,
+				AllowOwnedExisting: true,
+			}
+			break
 		}
 	}
 	for _, route := range rollback.Routes {
+		if !rollbackOwnerMatches(route.Owner, netexecutor.OwnerRoute) {
+			continue
+		}
 		plan.Routes = append(plan.Routes, planner.TunRoutePlan{
 			Family:      "ipv4",
 			Destination: route.CIDR,
@@ -45,6 +59,9 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 		})
 	}
 	for _, rule := range rollback.PolicyRules {
+		if !rollbackOwnerMatches(rule.Owner, netexecutor.OwnerPolicyRule) {
+			continue
+		}
 		selector := strings.TrimSpace(rule.From)
 		if rule.To != "" {
 			selector = "to " + rule.To
@@ -60,24 +77,39 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 		})
 	}
 	if len(rollback.DNS) > 0 {
-		dns := rollback.DNS[0]
-		plan.DNS = planner.TunDNSPlan{
-			Backend:    dns.Backend,
-			TargetLink: dns.Link,
-			Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
-			Action:     planner.DNSActionConfigure,
+		for _, dns := range rollback.DNS {
+			if !rollbackOwnerMatches(dns.Owner, netexecutor.OwnerDNS) {
+				continue
+			}
+			plan.DNS = planner.TunDNSPlan{
+				Backend:    dns.Backend,
+				TargetLink: dns.Link,
+				Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
+				Action:     planner.DNSActionConfigure,
+			}
+			break
 		}
 	}
 	if len(rollback.NFTables) > 0 {
-		nft := rollback.NFTables[0]
-		plan.Firewall = planner.TunFirewallPlan{
-			Backend:     planner.FirewallBackendNftables,
-			Family:      nft.Family,
-			Table:       nft.Table,
-			TableAction: planner.FirewallTableAction,
+		for _, nft := range rollback.NFTables {
+			if !rollbackOwnerMatches(nft.Owner, netexecutor.OwnerFirewall) {
+				continue
+			}
+			plan.Firewall = planner.TunFirewallPlan{
+				Backend:     planner.FirewallBackendNftables,
+				Family:      nft.Family,
+				Table:       nft.Table,
+				TableAction: planner.FirewallTableAction,
+			}
+			break
 		}
 	}
 	return plan
+}
+
+func rollbackOwnerMatches(owner, expected string) bool {
+	owner = strings.TrimSpace(owner)
+	return owner == expected || owner == txstate.TransactionOwner
 }
 
 func routeTarget(route planner.TunRoutePlan) string {
