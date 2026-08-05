@@ -31,7 +31,7 @@ func (m *XrayManager) runTunCleanup(ctx context.Context, transactionID string) (
 		return api.LifecycleResponse{}, err
 	}
 	if err := removeTransactionFile(store, transactionID); err != nil {
-		return api.LifecycleResponse{}, fmt.Errorf("remove rolled-back TUN transaction %s: %w", transactionID)
+		return api.LifecycleResponse{}, fmt.Errorf("remove rolled-back TUN transaction %s: %w", transactionID, err)
 	}
 	m.mu.Lock()
 	m.state = inactiveXrayState()
