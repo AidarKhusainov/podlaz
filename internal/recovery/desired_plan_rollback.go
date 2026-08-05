@@ -83,7 +83,7 @@ func rollbackOwnershipConsistencyReasons(tx txstate.Transaction, rollback txstat
 	var reasons []string
 	reasons = append(reasons, rollbackDesiredSubsetMismatches(tx.DesiredPlan, rollback)...)
 	if tx.State == txstate.TransactionApplying {
-		reasons = append(reasons, applyingAppliedRollbackMismatches(tx, appliedCounter, rollbackCounter)...)
+		reasons = append(reasons, applyingAppliedRollbackMismatches(appliedCounter, rollbackCounter)...)
 	} else if !stringCounterEqual(appliedCounter, rollbackCounter) {
 		reasons = append(reasons, "applied network ownership multiset does not match rollback network multiset")
 	}
@@ -110,60 +110,44 @@ func rollbackDesiredSubsetMismatches(desired txstate.DesiredPlan, rollback txsta
 	var reasons []string
 	if len(rollback.Routes) > 0 {
 		desiredCounter := desiredRouteCounter(desired.Routes)
-		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredCounter) {
+		if len(desiredCounter) == 0 {
+			reasons = append(reasons, "route rollback requires exact desired route tuple metadata")
+		} else if !stringCounterSubset(rollbackRouteCounter(rollback.Routes), desiredCounter) {
 			reasons = append(reasons, "route rollback multiset is not an exact subset of desired route multiset")
 		}
 	}
 	if len(rollback.PolicyRules) > 0 {
 		desiredCounter := desiredPolicyRuleCounter(desired.Steps)
-		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackPolicyRuleCounter(rollback.PolicyRules), desiredCounter) {
+		if len(desiredCounter) == 0 {
+			reasons = append(reasons, "policy-rule rollback requires exact desired policy-rule tuple metadata")
+		} else if !stringCounterSubset(rollbackPolicyRuleCounter(rollback.PolicyRules), desiredCounter) {
 			reasons = append(reasons, "policy-rule rollback multiset is not an exact subset of desired policy-rule multiset")
 		}
 	}
 	if len(rollback.DNS) > 0 {
 		desiredCounter := desiredDNSCounter(desired.DNS)
-		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackDNSCounter(rollback.DNS), desiredCounter) {
+		if len(desiredCounter) == 0 {
+			reasons = append(reasons, "DNS rollback requires exact desired DNS tuple metadata")
+		} else if !stringCounterSubset(rollbackDNSCounter(rollback.DNS), desiredCounter) {
 			reasons = append(reasons, "DNS rollback multiset is not an exact subset of desired DNS multiset")
 		}
 	}
 	if len(rollback.NFTables) > 0 {
 		desiredCounter := desiredNFTCounter(desired.NFT)
-		if len(desiredCounter) > 0 && !stringCounterSubset(rollbackNFTCounter(rollback.NFTables), desiredCounter) {
+		if len(desiredCounter) == 0 {
+			reasons = append(reasons, "nftables rollback requires exact desired nftables tuple metadata")
+		} else if !stringCounterSubset(rollbackNFTCounter(rollback.NFTables), desiredCounter) {
 			reasons = append(reasons, "nftables rollback multiset is not an exact subset of desired nftables multiset")
 		}
 	}
 	return reasons
 }
 
-func applyingAppliedRollbackMismatches(tx txstate.Transaction, applied, rollback map[string]int) []string {
+func applyingAppliedRollbackMismatches(applied, rollback map[string]int) []string {
 	if stringCounterEqual(applied, rollback) {
 		return nil
 	}
-	adjusted := cloneStringCounter(rollback)
-	if key, ok := applyingTunAddressFallbackStepKey(tx); ok && adjusted[key] > applied[key] {
-		adjusted[key]--
-		if adjusted[key] == 0 {
-			delete(adjusted, key)
-		}
-	}
-	if stringCounterEqual(applied, adjusted) {
-		return nil
-	}
 	return []string{"applied network ownership multiset does not match rollback network multiset"}
-}
-
-func applyingTunAddressFallbackStepKey(tx txstate.Transaction) (string, bool) {
-	address := tx.DesiredPlan.TUNAddress
-	if !boundApplyingTunAddressCandidate(address) || !ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) {
-		return "", false
-	}
-	rollback := txstate.TUNAddressRollback{
-		InterfaceName: address.InterfaceName,
-		CIDR:          address.CIDR,
-		LinkIndex:     address.LinkIndex,
-		Owner:         netexecutor.OwnerTunAddress,
-	}
-	return appliedStepKey("tun-address", tunAddressRollbackTarget(rollback), netexecutor.OwnerTunAddress), true
 }
 
 func appliedNetworkStepCounter(applied []txstate.AppliedStep) map[string]int {
@@ -401,14 +385,6 @@ func stringCounterSubset(subset, superset map[string]int) bool {
 		}
 	}
 	return true
-}
-
-func cloneStringCounter(in map[string]int) map[string]int {
-	out := make(map[string]int, len(in))
-	for key, count := range in {
-		out[key] = count
-	}
-	return out
 }
 
 func compactReasonStrings(values []string) []string {
