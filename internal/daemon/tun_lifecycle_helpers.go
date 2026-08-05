@@ -31,10 +31,10 @@ func (m *XrayManager) collectTunSnapshot(ctx context.Context, opts netsnapshot.O
 	if m.snapshotCollector != nil {
 		return m.snapshotCollector(ctx, opts)
 	}
-	return enrichTunSnapshotLinkKind(ctx, netsnapshot.Collect(ctx, opts))
+	return replaceTunSnapshotLinkIdentityEvidence(ctx, netsnapshot.Collect(ctx, opts))
 }
 
-func enrichTunSnapshotLinkKind(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
+func replaceTunSnapshotLinkIdentityEvidence(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
 	ipPath, err := exec.LookPath("ip")
 	if err != nil {
 		return s
@@ -48,11 +48,8 @@ func enrichTunSnapshotLinkKind(ctx context.Context, s netsnapshot.Snapshot) nets
 		if !ok || strings.TrimSpace(out) == "" {
 			continue
 		}
-		if device.Detail == "" {
-			device.Detail = firstNonEmptyLine(out)
-		} else if !strings.Contains(device.Detail, firstNonEmptyLine(out)) {
-			device.Detail += "; " + firstNonEmptyLine(out)
-		}
+		device.Raw = firstNonEmptyLine(out)
+		device.Detail = ""
 	}
 	return s
 }
