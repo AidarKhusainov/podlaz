@@ -166,7 +166,7 @@ func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osE
 	result, err := osExec.runResult(ctx, "ip", "-details", "-o", "link", "show", "dev", managedInterface)
 	if err != nil || !commandSucceeded(result, err) {
 		if resourceMissing(result) {
-			return skipped(candidate, "transaction-bound TUN link is absent; link-scoped rollback was not attempted"), false
+			return CleanupResult{}, true
 		}
 		return failed(candidate, fmt.Errorf("inspect TUN link identity before rollback: %s", commandFailureMessage(result, err))), false
 	}
@@ -178,7 +178,7 @@ func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osE
 }
 
 func rollbackRequiresLinkIdentity(rollback txstate.RollbackMetadata) bool {
-	return len(rollback.NFTables) > 0 || len(rollback.DNS) > 0 || len(rollback.PolicyRules) > 0 || len(rollback.Routes) > 0 || len(rollback.TUNAddresses) > 0 || len(rollback.TUN) > 0
+	return len(rollback.DNS) > 0 || len(rollback.TUNAddresses) > 0 || len(rollback.TUN) > 0
 }
 
 func exactRollbackTUNAddressIdentity(addresses []txstate.TUNAddressRollback) (txstate.TUNAddressRollback, bool) {
@@ -218,17 +218,8 @@ func parseRollbackLinkIdentity(output string) (rollbackLinkIdentity, bool) {
 
 func (e DaemonCleanupExecutor) skipLinkScopedRollbackResults(rollback txstate.RollbackMetadata) []CleanupResult {
 	var results []CleanupResult
-	for _, entry := range rollback.NFTables {
-		results = append(results, skipped(Candidate{Kind: "nftables-table", Description: "nftables table", Target: entry.Family + " " + entry.Table}, "link identity was not proven before rollback"))
-	}
 	for _, entry := range rollback.DNS {
 		results = append(results, skipped(Candidate{Kind: "dns", Description: "DNS link state", Target: entry.Link}, "link identity was not proven before rollback"))
-	}
-	for _, rule := range rollback.PolicyRules {
-		results = append(results, skipped(Candidate{Kind: "policy-rule", Description: "policy rule", Target: fmt.Sprintf("priority %d table %s", rule.Priority, rule.Table)}, "link identity was not proven before rollback"))
-	}
-	for _, route := range rollback.Routes {
-		results = append(results, skipped(Candidate{Kind: "route", Description: "route", Target: fmt.Sprintf("%s table %s", route.CIDR, route.Table)}, "link identity was not proven before rollback"))
 	}
 	for _, address := range rollback.TUNAddresses {
 		results = append(results, skipped(Candidate{Kind: "tun-address", Description: "TUN address", Target: address.InterfaceName + " " + address.CIDR}, "link identity was not proven before rollback"))
