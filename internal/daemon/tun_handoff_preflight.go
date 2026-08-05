@@ -41,10 +41,10 @@ var controlledPodlazRecover = func(ctx context.Context, runtimeDir string) error
 var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot.StaleResource {
 	ipPath, err := exec.LookPath("ip")
 	if err != nil {
-		return nil
+		return []netsnapshot.StaleResource{{Kind: "runtime-inspection", Name: "ip", Status: netsnapshot.StatusUnknown, Detail: "ip command is unavailable: " + err.Error()}}
 	}
 	var resources []netsnapshot.StaleResource
-	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok {
+	if out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok {
 		for _, rawLine := range strings.Split(out, "\n") {
 			line := strings.TrimSpace(rawLine)
 			if line == "" {
@@ -52,8 +52,10 @@ var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot
 			}
 			resources = append(resources, netsnapshot.StaleResource{Kind: "route", Name: staleRouteResourceName(line), Status: netsnapshot.StatusDetected, Detail: line})
 		}
+	} else {
+		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "route-table-" + netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusUnknown, Detail: detail})
 	}
-	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
+	if out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
 		for _, line := range strings.Split(out, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || !podlazPolicyRuleLine(line) {
@@ -61,6 +63,8 @@ var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot
 			}
 			resources = append(resources, netsnapshot.StaleResource{Kind: "policy-rule", Name: policyRuleName(line), Status: netsnapshot.StatusDetected, Detail: line})
 		}
+	} else {
+		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "policy-rules", Status: netsnapshot.StatusUnknown, Detail: detail})
 	}
 	return resources
 }
@@ -294,7 +298,7 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 		resources = append(resources, value)
 	}
 	for _, resource := range s.StaleResources {
-		if resource.Status == netsnapshot.StatusDetected {
+		if resource.Status == netsnapshot.StatusDetected || resource.Status == netsnapshot.StatusUnknown {
 			add(resource.Kind, resource.Name)
 		}
 	}
@@ -364,10 +368,6 @@ func staleRouteResourceName(line string) string {
 	if len(fields) == 0 {
 		return netsnapshot.DefaultRouteTableID
 	}
-	destination := fields[0]
-	if isRouteTypeToken(destination) && len(fields) > 1 {
-		destination = fields[1]
-	}
 	table := netsnapshot.DefaultRouteTableID
 	for i := 0; i+1 < len(fields); i++ {
 		if fields[i] == "table" {
@@ -375,15 +375,15 @@ func staleRouteResourceName(line string) string {
 			break
 		}
 	}
-	return strings.TrimSpace(table + " " + destination)
+	return strings.TrimSpace(table)
 }
 
-func runReadOnlyCommand(ctx context.Context, name string, args ...string) (string, bool) {
+func runReadOnlyCommand(ctx context.Context, name string, args ...string) (string, bool, string) {
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
-		return "", false
+		return "", false, fmt.Sprintf("%s %s failed: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	return strings.TrimSpace(string(out)), true
+	return strings.TrimSpace(string(out)), true, ""
 }
 
 func firstNonEmptyLine(text string) string {
