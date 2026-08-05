@@ -102,7 +102,7 @@ func (s Server) Run(ctx context.Context) error {
 	}
 
 	operationLock := newLifecycleOperationLock()
-	lockedLifecycle := operationLock.wrap(startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: refreshStartupScan})
+	lockedLifecycle := operationLock.wrap(startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: forceRefreshStartupScan})
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: status request method=%s path=%s", r.Method, r.URL.Path)
