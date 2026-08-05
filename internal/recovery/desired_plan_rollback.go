@@ -72,7 +72,7 @@ func projectRollbackMetadataWithoutApplyingGaps(tx txstate.Transaction) Rollback
 }
 
 func rollbackOwnershipConsistencyReasons(tx txstate.Transaction, rollback txstate.RollbackMetadata) []string {
-	reasons := rawRollbackMetadataReasons(rollback)
+	reasons := rawTransactionNetworkOwnershipReasons(tx)
 	rollbackCounter := rollbackNetworkStepCounter(rollback)
 	appliedCounter := appliedNetworkStepCounter(tx.AppliedSteps)
 	if len(rollbackCounter) == 0 && len(appliedCounter) == 0 {
