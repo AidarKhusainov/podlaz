@@ -13,8 +13,12 @@ import (
 const dnsRouteOnlyDomain = "~."
 
 func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
-	rollback := tx.Rollback
 	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
+	if err := validateTunRollbackProjection(tx); err != nil {
+		plan.TunDevice = planner.TunDevicePlan{Name: "podlaz0", Action: "invalid-rollback-projection", Reason: err.Error()}
+		return plan
+	}
+	rollback := tx.Rollback
 	if len(rollback.TUN) > 0 {
 		for _, tun := range rollback.TUN {
 			if !rollbackOwnerMatches(tun.Owner, netexecutor.OwnerTunDevice) {
@@ -266,7 +270,7 @@ func dnsSearchDomains(plan planner.TunDNSPlan) []string {
 
 func transactionNow(store txstate.TransactionStore) time.Time {
 	if store.Now != nil {
-		return store.Now().UTC()
+		return store.Now().UTC)
 	}
 	return time.Now().UTC()
 }
