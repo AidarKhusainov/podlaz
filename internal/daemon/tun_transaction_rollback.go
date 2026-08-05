@@ -14,6 +14,10 @@ import (
 
 type tunRollbackChildStopper func(txstate.Transaction) error
 
+type resourceScopedTunRollbackExecutor interface {
+	RollbackResourceScoped(context.Context, planner.TunPlan) error
+}
+
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
 	if err := prepareTunFailureRollback(store, tx, rollbackPlan, steps); err != nil {
 		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
@@ -105,6 +109,9 @@ func beginTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) e
 func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor) error {
 	if executor == nil {
 		return errors.New("missing TUN executor")
+	}
+	if scoped, ok := executor.(resourceScopedTunRollbackExecutor); ok {
+		return scoped.RollbackResourceScoped(ctx, plan)
 	}
 	return executor.Rollback(ctx, plan)
 }
