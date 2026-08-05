@@ -108,26 +108,27 @@ func (e DNSAwareTunExecutor) Verify(ctx context.Context, plan planner.TunPlan) e
 	return nil
 }
 
-// Rollback reverts firewall first, then the base TUN host state. DNS rollback
-// runs only after base rollback proves and handles the transaction-bound link
-// identity, so a foreign replacement podlaz0 cannot be reverted by interface
-// name before the ifindex/kind check runs.
+// Rollback proves the transaction-bound link identity before the first
+// link-scoped mutation. Only after this read-only gate succeeds does rollback
+// proceed in the canonical order: firewall, DNS, policy rules/routes, address,
+// and finally any owned link cleanup performed by the base executor.
 func (e DNSAwareTunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
+	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
+		return err
+	}
 	var errs []error
 	if e.Firewall != nil && strings.TrimSpace(plan.Firewall.Table) != "" {
 		if err := e.Firewall.Rollback(ctx, plan.Firewall); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	baseErr := e.Base.Rollback(ctx, plan)
-	if baseErr != nil {
-		errs = append(errs, baseErr)
-		return errors.Join(errs...)
-	}
 	if e.DNS != nil && strings.TrimSpace(plan.DNS.TargetLink) != "" {
 		if err := e.DNS.Rollback(ctx, plan.DNS); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if err := e.Base.Rollback(ctx, plan); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
