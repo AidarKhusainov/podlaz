@@ -50,12 +50,12 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *te
 		"dns:verify:podlaz0",
 		"firewall:verify:inet podlaz",
 		"firewall:rollback:inet podlaz",
-		"dns:rollback:podlaz0",
 		"rule:rollback:10000:from all",
 		"rule:rollback:9999:to 203.0.113.10/32",
 		"route:rollback:main:203.0.113.10/32",
 		"route:rollback:podlaz:default",
 		"tun:rollback:podlaz0",
+		"dns:rollback:podlaz0",
 	}
 	if !reflect.DeepEqual(recorder.calls, want) {
 		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
