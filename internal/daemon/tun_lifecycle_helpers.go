@@ -44,8 +44,11 @@ func replaceTunSnapshotLinkIdentityEvidence(ctx context.Context, s netsnapshot.S
 		if device.Status != netsnapshot.StatusDetected || strings.TrimSpace(device.Name) == "" {
 			continue
 		}
-		out, ok := runReadOnlyCommand(ctx, ipPath, "-details", "-o", "link", "show", "dev", device.Name)
+		out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-details", "-o", "link", "show", "dev", device.Name)
 		if !ok || strings.TrimSpace(out) == "" {
+			device.Raw = ""
+			device.Detail = firstNonEmpty(detail, "authoritative detailed link identity inspection failed")
+			device.Status = netsnapshot.StatusUnknown
 			continue
 		}
 		device.Raw = firstNonEmptyLine(out)
