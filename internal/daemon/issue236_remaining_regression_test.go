@@ -15,6 +15,8 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+const productionTunOnelineLinkForTest = `7: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500 link/none tun type tun pi off vnet_hdr on persist off`
+
 func TestTunHandoffPreflightIgnoresCurrentScopesWithoutConfigurationEvidence(t *testing.T) {
 	for _, currentScopes := range [][]string{{"none"}, {"DNS"}} {
 		snapshot := netsnapshot.Snapshot{DNS: netsnapshot.DNS{ResolvedLinks: []netsnapshot.ResolvedLink{{
@@ -233,6 +235,8 @@ func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args
 	switch command {
 	case "ip -details link show dev podlaz0":
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest}, nil
+	case "ip -details -o link show dev podlaz0":
+		return netexecutor.CommandResult{Stdout: productionTunOnelineLinkForTest}, nil
 	case "ip tuntap add dev podlaz0 mode tun user podlaz-xray group podlaz-xray":
 		r.tunPresent = true
 	case "ip link set dev podlaz0 mtu 1500", "ip link set dev podlaz0 up":
