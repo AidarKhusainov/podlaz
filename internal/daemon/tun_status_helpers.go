@@ -69,12 +69,7 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 		if !rollbackOwnerMatches(rule.Owner, netexecutor.OwnerPolicyRule) {
 			continue
 		}
-		selector := strings.TrimSpace(rule.From)
-		if rule.To != "" {
-			selector = "to " + rule.To
-		} else if selector != "" && !strings.HasPrefix(selector, "from ") {
-			selector = "from " + selector
-		}
+		selector := policyRuleRollbackSelector(rule)
 		plan.PolicyRules = append(plan.PolicyRules, planner.TunPolicyRulePlan{
 			Family:   "ipv4",
 			Priority: rule.Priority,
@@ -133,6 +128,12 @@ func validateTunRollbackProjection(tx txstate.Transaction) error {
 	}); err != nil {
 		reasons = append(reasons, err.Error())
 	}
+	if err := validateRouteRollbackEntries(tx); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validatePolicyRuleRollbackEntries(tx); err != nil {
+		reasons = append(reasons, err.Error())
+	}
 	if err := validateSingleRollbackCategory("DNS", len(tx.Rollback.DNS), func(i int) bool {
 		entry := tx.Rollback.DNS[i]
 		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerDNS) && strings.TrimSpace(entry.Link) != ""
@@ -162,6 +163,106 @@ func validateSingleRollbackCategory(name string, count int, valid func(int) bool
 		return fmt.Errorf("%s rollback entry is unsupported or incomplete", name)
 	}
 	return nil
+}
+
+func validateRouteRollbackEntries(tx txstate.Transaction) error {
+	seen := make(map[string]int)
+	for _, route := range tx.Rollback.Routes {
+		if !rollbackOwnerMatches(route.Owner, netexecutor.OwnerRoute) {
+			return fmt.Errorf("route rollback entry has unsupported owner")
+		}
+		if strings.TrimSpace(route.Table) == "" || strings.TrimSpace(route.CIDR) == "" {
+			return fmt.Errorf("route rollback entry is incomplete")
+		}
+		key := routeRollbackFullKey(route)
+		seen[key]++
+		if !routeRollbackMatchesDesired(tx.DesiredPlan.Routes, route) {
+			return fmt.Errorf("route rollback entry has no exact desired tuple: %s", key)
+		}
+		if appliedStepDescription(tx.AppliedSteps, "route", routeRollbackAppliedTarget(route), netexecutor.OwnerRoute) == "" {
+			return fmt.Errorf("route rollback entry has no matching applied proof: %s", key)
+		}
+	}
+	for key, count := range seen {
+		if count != 1 {
+			return fmt.Errorf("duplicate route rollback entry: %s", key)
+		}
+	}
+	return nil
+}
+
+func validatePolicyRuleRollbackEntries(tx txstate.Transaction) error {
+	seen := make(map[string]int)
+	for _, rule := range tx.Rollback.PolicyRules {
+		if !rollbackOwnerMatches(rule.Owner, netexecutor.OwnerPolicyRule) {
+			return fmt.Errorf("policy-rule rollback entry has unsupported owner")
+		}
+		if rule.Priority <= 0 || strings.TrimSpace(rule.Table) == "" {
+			return fmt.Errorf("policy-rule rollback entry is incomplete")
+		}
+		key := policyRuleRollbackTarget(rule)
+		seen[key]++
+		if !plannedStepExists(tx.DesiredPlan.Steps, "policy-rule", key, netexecutor.OwnerPolicyRule) {
+			return fmt.Errorf("policy-rule rollback entry has no exact desired step: %s", key)
+		}
+		if appliedStepDescription(tx.AppliedSteps, "policy-rule", key, netexecutor.OwnerPolicyRule) == "" {
+			return fmt.Errorf("policy-rule rollback entry has no matching applied proof: %s", key)
+		}
+	}
+	for key, count := range seen {
+		if count != 1 {
+			return fmt.Errorf("duplicate policy-rule rollback entry: %s", key)
+		}
+	}
+	return nil
+}
+
+func routeRollbackMatchesDesired(routes []txstate.RoutePlan, rollback txstate.RouteRollback) bool {
+	matches := 0
+	for _, desired := range routes {
+		if desired.Kind == "route" &&
+			desired.Operation == "add" &&
+			rollbackOwnerMatches(desired.Owner, netexecutor.OwnerRoute) &&
+			desired.Table == rollback.Table &&
+			desired.CIDR == rollback.CIDR &&
+			desired.Via == rollback.Via &&
+			desired.Dev == rollback.Dev {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+func plannedStepExists(steps []txstate.PlannedStep, kind, target, owner string) bool {
+	matches := 0
+	for _, step := range steps {
+		if step.Kind == kind && step.Target == target && rollbackOwnerMatches(step.Owner, owner) {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+func routeRollbackFullKey(route txstate.RouteRollback) string {
+	return strings.Join([]string{route.Table, route.CIDR, route.Via, route.Dev}, "|")
+}
+
+func routeRollbackAppliedTarget(route txstate.RouteRollback) string {
+	return route.Table + " " + route.CIDR
+}
+
+func policyRuleRollbackSelector(rule txstate.PolicyRuleRollback) string {
+	selector := strings.TrimSpace(rule.From)
+	if rule.To != "" {
+		selector = "to " + rule.To
+	} else if selector != "" && !strings.HasPrefix(selector, "from ") {
+		selector = "from " + selector
+	}
+	return selector
+}
+
+func policyRuleRollbackTarget(rule txstate.PolicyRuleRollback) string {
+	return fmt.Sprintf("priority %d %s lookup %s", rule.Priority, policyRuleRollbackSelector(rule), rule.Table)
 }
 
 func appliedStepDescription(applied []txstate.AppliedStep, kind, target, owner string) string {
