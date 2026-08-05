@@ -102,33 +102,36 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	processResults := e.rollbackChildProcessResults(rollback.ChildProcesses)
 	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
-	if gateResult, ok := e.rollbackLinkIdentityGate(ctx, osExec, rollback); !ok {
-		// The link gate protects only link-scoped mutations. Exact nftables and
-		// routing rollback entries remain independently owned by the transaction and
-		// must converge even when the current podlaz0 identity is absent, unknown, or
-		// a foreign replacement.
+	gateResult, gateDecision := e.rollbackLinkIdentityGate(ctx, osExec, rollback, childAbsenceProven)
+	switch gateDecision {
+	case rollbackLinkBlocked:
 		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
 		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
-		results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
+		results = append(results, e.rollbackIndependentRouteResults(ctx, osExec, rollback.Routes)...)
 		results = append(results, gateResult)
-		results = append(results, e.skipLinkScopedRollbackResults(rollback)...)
+		results = append(results, e.failLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
 		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
 		results = append(results, e.inspectUnrecordedDesiredMainState(ctx, tx)...)
-		if hasFailedCleanup(results) {
-			results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
-		} else {
-			results = append(results, skipped(candidate, "transaction cleanup skipped ambiguous link-scoped resources; transaction state was preserved"))
-		}
+		results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
 		return results
+	case rollbackLinkAbsentChildAbsent:
+		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
+		results = append(results, e.rollbackIndependentRouteResults(ctx, osExec, rollback.Routes)...)
+		results = append(results, e.missingLinkRouteResults(rollback.Routes)...)
+		results = append(results, gateResult)
+		results = append(results, e.missingLinkScopedRollbackResults(rollback)...)
+		results = append(results, processResults...)
+	default:
+		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
+		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
+		results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
+		results = append(results, e.rollbackTUNAddressResults(ctx, rollback.TUNAddresses, childAbsenceProven)...)
+		results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
+		results = append(results, processResults...)
 	}
-	results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
-	results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
-	results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
-	results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
-	results = append(results, e.rollbackTUNAddressResults(ctx, rollback.TUNAddresses, childAbsenceProven)...)
-	results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
-	results = append(results, processResults...)
 	if len(applyingOwnershipGaps) > 0 {
 		results = append(results, skipped(Candidate{
 			Kind:        "transaction-ownership",
@@ -165,27 +168,38 @@ type rollbackLinkIdentity struct {
 	Kind  string
 }
 
-func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osExec OSCleanupExecutor, rollback txstate.RollbackMetadata) (CleanupResult, bool) {
+type rollbackLinkDecision string
+
+const (
+	rollbackLinkMatched           rollbackLinkDecision = "matched"
+	rollbackLinkAbsentChildAbsent rollbackLinkDecision = "absent-child-absent"
+	rollbackLinkBlocked           rollbackLinkDecision = "blocked"
+)
+
+func (e DaemonCleanupExecutor) rollbackLinkIdentityGate(ctx context.Context, osExec OSCleanupExecutor, rollback txstate.RollbackMetadata, childAbsenceProven bool) (CleanupResult, rollbackLinkDecision) {
 	if !rollbackRequiresLinkIdentity(rollback) {
-		return CleanupResult{}, true
+		return CleanupResult{}, rollbackLinkMatched
 	}
 	candidate := Candidate{Kind: "tun-link-identity", Description: "TUN link identity", Target: managedInterface}
 	expected, ok := exactRollbackTUNAddressIdentity(rollback.TUNAddresses)
 	if !ok {
-		return failed(candidate, errors.New("missing exact transaction-bound TUN address identity for link-scoped rollback")), false
+		return failed(candidate, errors.New("missing exact transaction-bound TUN address identity for link-scoped rollback")), rollbackLinkBlocked
 	}
 	result, err := osExec.runResult(ctx, "ip", "-details", "-o", "link", "show", "dev", managedInterface)
 	if err != nil || !commandSucceeded(result, err) {
 		if resourceMissing(result) {
-			return skipped(candidate, "transaction-bound TUN link is absent; link-scoped rollback was not authorized by name"), false
+			if childAbsenceProven {
+				return recoveredWithMessage(candidate, "transaction-bound TUN link and tracked child are absent"), rollbackLinkAbsentChildAbsent
+			}
+			return failed(candidate, errors.New("transaction-bound TUN link is absent but tracked child absence is unproven")), rollbackLinkBlocked
 		}
-		return failed(candidate, fmt.Errorf("inspect TUN link identity before rollback: %s", commandFailureMessage(result, err))), false
+		return failed(candidate, fmt.Errorf("inspect TUN link identity before rollback: %s", commandFailureMessage(result, err))), rollbackLinkBlocked
 	}
 	current, ok := parseRollbackLinkIdentity(result.Stdout)
 	if !ok || current.Name != managedInterface || current.Index != expected.LinkIndex || current.Kind != expected.LinkKind {
-		return failed(candidate, fmt.Errorf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", managedInterface, expected.LinkIndex, expected.LinkKind)), false
+		return failed(candidate, fmt.Errorf("current link identity does not match transaction-bound identity: expected name=%s ifindex=%d kind=%s", managedInterface, expected.LinkIndex, expected.LinkKind)), rollbackLinkBlocked
 	}
-	return CleanupResult{}, true
+	return CleanupResult{}, rollbackLinkMatched
 }
 
 func rollbackRequiresLinkIdentity(rollback txstate.RollbackMetadata) bool {
@@ -234,16 +248,30 @@ func parseRollbackLinkIdentity(output string) (rollbackLinkIdentity, bool) {
 	return rollbackLinkIdentity{Name: name, Index: index, Kind: kind}, name != "" && kind != ""
 }
 
-func (e DaemonCleanupExecutor) skipLinkScopedRollbackResults(rollback txstate.RollbackMetadata) []CleanupResult {
+func (e DaemonCleanupExecutor) failLinkScopedRollbackResults(rollback txstate.RollbackMetadata) []CleanupResult {
 	var results []CleanupResult
 	for _, entry := range rollback.DNS {
-		results = append(results, skipped(Candidate{Kind: "dns", Description: "DNS link state", Target: entry.Link}, "link identity was not proven before rollback"))
+		results = append(results, failed(Candidate{Kind: "dns", Description: "DNS link state", Target: entry.Link}, errors.New("link identity was not proven before rollback")))
 	}
 	for _, address := range rollback.TUNAddresses {
-		results = append(results, skipped(Candidate{Kind: "tun-address", Description: "TUN address", Target: address.InterfaceName + " " + address.CIDR}, "link identity was not proven before rollback"))
+		results = append(results, failed(Candidate{Kind: "tun-address", Description: "TUN address", Target: address.InterfaceName + " " + address.CIDR}, errors.New("link identity was not proven before rollback")))
 	}
 	for _, tun := range rollback.TUN {
-		results = append(results, skipped(Candidate{Kind: "tun-interface", Description: "TUN interface", Target: tun.InterfaceName}, "link identity was not proven before rollback"))
+		results = append(results, failed(Candidate{Kind: "tun-interface", Description: "TUN interface", Target: tun.InterfaceName}, errors.New("link identity was not proven before rollback")))
+	}
+	return results
+}
+
+func (e DaemonCleanupExecutor) missingLinkScopedRollbackResults(rollback txstate.RollbackMetadata) []CleanupResult {
+	var results []CleanupResult
+	for _, entry := range rollback.DNS {
+		results = append(results, recoveredWithMessage(Candidate{Kind: "dns", Description: "DNS link state", Target: entry.Link}, "target link is absent after tracked child exit; no name-scoped DNS mutation was run"))
+	}
+	for _, address := range rollback.TUNAddresses {
+		results = append(results, recoveredWithMessage(Candidate{Kind: "tun-address", Description: "TUN address", Target: address.InterfaceName + " " + address.CIDR}, "target link is absent after tracked child exit; address is already absent"))
+	}
+	for _, tun := range rollback.TUN {
+		results = append(results, recoveredWithMessage(Candidate{Kind: "tun-interface", Description: "TUN interface", Target: tun.InterfaceName}, "target link is absent after tracked child exit; link is already absent"))
 	}
 	return results
 }
@@ -416,6 +444,39 @@ func (e DaemonCleanupExecutor) rollbackPolicyRuleResults(ctx context.Context, os
 		results = append(results, recovered(candidate))
 	}
 	return results
+}
+
+func (e DaemonCleanupExecutor) rollbackIndependentRouteResults(ctx context.Context, osExec OSCleanupExecutor, routes []txstate.RouteRollback) []CleanupResult {
+	results := make([]CleanupResult, 0, len(routes))
+	for _, route := range routes {
+		if linkDependentRouteRollback(route) {
+			continue
+		}
+		results = append(results, e.rollbackRouteResults(ctx, osExec, []txstate.RouteRollback{route})...)
+	}
+	return results
+}
+
+func (e DaemonCleanupExecutor) missingLinkRouteResults(routes []txstate.RouteRollback) []CleanupResult {
+	results := make([]CleanupResult, 0, len(routes))
+	for _, route := range routes {
+		if !linkDependentRouteRollback(route) {
+			continue
+		}
+		results = append(results, recoveredWithMessage(Candidate{Kind: "route", Description: "route", Target: fmt.Sprintf("%s table %s", route.CIDR, route.Table)}, "transaction-bound link is absent after tracked child exit; link-dependent route is already absent"))
+	}
+	return results
+}
+
+func linkDependentRouteRollback(route txstate.RouteRollback) bool {
+	if safeMainServerBypassRoute(route) {
+		return false
+	}
+	if strings.TrimSpace(route.Dev) == managedInterface {
+		return true
+	}
+	_, managed := managedTableToken(route.Table)
+	return managed
 }
 
 func (e DaemonCleanupExecutor) rollbackRouteResults(ctx context.Context, osExec OSCleanupExecutor, routes []txstate.RouteRollback) []CleanupResult {
