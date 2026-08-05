@@ -29,6 +29,10 @@ type tunDeviceCreationProof struct {
 }
 
 func (e IPTunDeviceExecutor) Create(ctx context.Context, plan planner.TunDevicePlan) (Step, error) {
+	return e.CreateWithStepSink(ctx, plan, nil)
+}
+
+func (e IPTunDeviceExecutor) CreateWithStepSink(ctx context.Context, plan planner.TunDevicePlan, sink AppliedStepSink) (Step, error) {
 	if plan.Name == "" {
 		return Step{}, errors.New("missing TUN device name")
 	}
@@ -48,6 +52,11 @@ func (e IPTunDeviceExecutor) Create(ctx context.Context, plan planner.TunDeviceP
 		return step, fmt.Errorf("inspect created TUN device %s identity: %w", plan.Name, err)
 	}
 	step := Step{Kind: "tun-device", Target: plan.Name, Description: tunDeviceOwnershipDescription(plan.Reason, proof), Owner: OwnerTunDevice}
+	if sink != nil {
+		if err := sink(step); err != nil {
+			return step, fmt.Errorf("persist created TUN device %s identity before post-create mutation: %w", plan.Name, err)
+		}
+	}
 	if plan.MTU > 0 {
 		if err := e.run(ctx, "ip", "link", "set", "dev", plan.Name, "mtu", strconv.Itoa(plan.MTU)); err != nil {
 			return step, fmt.Errorf("set TUN device %s MTU: %w", plan.Name, err)
