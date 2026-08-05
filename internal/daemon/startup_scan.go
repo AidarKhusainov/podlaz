@@ -16,11 +16,12 @@ import (
 type startupScanFunc func(context.Context) recovery.PlanResult
 
 type startupScanState struct {
-	refreshMu   sync.Mutex
-	refreshDone chan struct{}
-	mu          sync.RWMutex
-	scan        recovery.PlanResult
-	scanFn      startupScanFunc
+	refreshMu         sync.Mutex
+	refreshDone       chan struct{}
+	refreshGeneration uint64
+	mu                sync.RWMutex
+	scan              recovery.PlanResult
+	scanFn            startupScanFunc
 }
 
 func defaultStartupScanFunc(runtimeDir string) startupScanFunc {
@@ -51,13 +52,13 @@ func (s *startupScanState) Refresh(ctx context.Context) recovery.PlanResult {
 			return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
 		}
 	}
-	return s.startRefreshLocked(ctx)
+	generation := s.refreshGeneration
+	return s.startRefreshLocked(ctx, generation)
 }
 
 // ForceRefresh guarantees the scan it returns starts after the caller's mutation
-// boundary. If an older refresh is already running, it waits for that generation
-// and then starts a new authoritative scan instead of returning the coalesced
-// pre-mutation result.
+// boundary. It invalidates any older running generation before waiting so the
+// older scan cannot publish stale pre-mutation candidates after the mutation.
 func (s *startupScanState) ForceRefresh(ctx context.Context) recovery.PlanResult {
 	if s == nil || s.scanFn == nil {
 		return recovery.PlanResult{}
@@ -65,22 +66,28 @@ func (s *startupScanState) ForceRefresh(ctx context.Context) recovery.PlanResult
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	s.refreshMu.Lock()
+	s.refreshGeneration++
+	generation := s.refreshGeneration
 	for {
-		s.refreshMu.Lock()
 		if done := s.refreshDone; done != nil {
 			s.refreshMu.Unlock()
 			select {
 			case <-done:
+				s.refreshMu.Lock()
 				continue
 			case <-ctx.Done():
-				return incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
+				scan := incompleteStartupScan("wait for concurrent recovery scan: " + ctx.Err().Error())
+				s.publishScan(generation, scan)
+				return scan
 			}
 		}
-		return s.startRefreshLocked(ctx)
+		return s.startRefreshLocked(ctx, generation)
 	}
 }
 
-func (s *startupScanState) startRefreshLocked(ctx context.Context) recovery.PlanResult {
+func (s *startupScanState) startRefreshLocked(ctx context.Context, generation uint64) recovery.PlanResult {
 	done := make(chan struct{})
 	s.refreshDone = done
 	s.refreshMu.Unlock()
@@ -90,10 +97,20 @@ func (s *startupScanState) startRefreshLocked(ctx context.Context) recovery.Plan
 	if err := ctx.Err(); err != nil {
 		scan = incompleteStartupScan("authoritative refresh did not complete: " + err.Error())
 	}
+	s.publishScan(generation, scan)
+	return scan
+}
+
+func (s *startupScanState) publishScan(generation uint64, scan recovery.PlanResult) {
+	s.refreshMu.Lock()
+	current := generation == s.refreshGeneration
+	s.refreshMu.Unlock()
+	if !current {
+		return
+	}
 	s.mu.Lock()
 	s.scan = cloneRecoveryPlan(scan)
 	s.mu.Unlock()
-	return scan
 }
 
 func incompleteStartupScan(message string) recovery.PlanResult {
