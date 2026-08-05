@@ -21,6 +21,10 @@ type TunDeviceExecutor interface {
 	Rollback(ctx context.Context, plan planner.TunDevicePlan) error
 }
 
+type tunDeviceStepSinkExecutor interface {
+	CreateWithStepSink(ctx context.Context, plan planner.TunDevicePlan, sink AppliedStepSink) (Step, error)
+}
+
 type RouteExecutor interface {
 	Add(ctx context.Context, plan planner.TunRoutePlan) (Step, error)
 	Verify(ctx context.Context, plan planner.TunRoutePlan) error
@@ -84,9 +88,20 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 		steps, persistErr = recordAppliedStep(steps, step, sink)
 		return errors.Join(applyErr, persistErr)
 	}
+	recordPersisted := func(step Step, applyErr error) error {
+		steps = appendAppliedStep(steps, step)
+		return applyErr
+	}
 
 	switch tunDeviceAction(plan.TunDevice.Action) {
 	case "", "create":
+		if creator, ok := e.TunDevice.(tunDeviceStepSinkExecutor); ok {
+			step, applyErr := creator.CreateWithStepSink(ctx, plan.TunDevice, sink)
+			if err := recordPersisted(step, applyErr); err != nil {
+				return steps, err
+			}
+			break
+		}
 		step, applyErr := e.TunDevice.Create(ctx, plan.TunDevice)
 		if err := record(step, applyErr); err != nil {
 			return steps, err
