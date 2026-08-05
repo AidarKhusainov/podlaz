@@ -143,6 +143,25 @@ func executorPlanForTest() planner.TunPlan {
 	}
 }
 
+func rollbackIdentityAddressPlanForTest() planner.TunAddressPlan {
+	return planner.TunAddressPlan{
+		Family:            "ipv4",
+		Interface:         "podlaz0",
+		CIDR:              planner.DefaultTunIPv4CIDR,
+		Scope:             "global",
+		Action:            planner.TunAddressActionAssign,
+		Owner:             OwnerTunAddress,
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+	}
+}
+
+func addRollbackIdentityForTest(exec *DNSAwareTunExecutor, plan *planner.TunPlan, recorder *callRecorder) {
+	exec.Base.TunAddress = fakeTunAddress{rec: recorder}
+	plan.TunAddress = rollbackIdentityAddressPlanForTest()
+}
+
 func ruleCallTarget(plan planner.TunPolicyRulePlan) string {
 	return strconv.Itoa(plan.Priority) + ":" + plan.Selector
 }
@@ -175,6 +194,10 @@ func (f fakeTunAddress) Apply(_ context.Context, plan planner.TunAddressPlan) (S
 
 func (f fakeTunAddress) Verify(_ context.Context, plan planner.TunAddressPlan) error {
 	f.rec.calls = append(f.rec.calls, "address:verify:"+plan.Interface+":"+plan.CIDR)
+	return nil
+}
+
+func (f fakeTunAddress) VerifyRollbackIdentity(_ context.Context, _ planner.TunAddressPlan) error {
 	return nil
 }
 
