@@ -134,12 +134,38 @@ func saveTransaction(t *testing.T, runtimeDir string, rollback txstate.RollbackM
 	tx := txstate.NewTransaction("tx-child-process", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
 	tx.Rollback = rollback
+	tx.DesiredPlan = desiredPlanForRollback(rollback)
 	tx.AppliedSteps = appliedStepsForRollback(rollback, time.Now().UTC())
 	path, err := store.Save(tx)
 	if err != nil {
 		t.Fatalf("save transaction: %v", err)
 	}
 	return path, tx
+}
+
+func desiredPlanForRollback(rollback txstate.RollbackMetadata) txstate.DesiredPlan {
+	var desired txstate.DesiredPlan
+	for _, route := range rollback.Routes {
+		if ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
+			desired.Routes = append(desired.Routes, txstate.RoutePlan{Table: route.Table, CIDR: route.CIDR, Via: route.Via, Dev: route.Dev, Owner: route.Owner, Operation: "add"})
+		}
+	}
+	for _, rule := range rollback.PolicyRules {
+		if ownedRollbackMetadata(rule.Owner, netexecutor.OwnerPolicyRule) {
+			desired.Steps = append(desired.Steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleRollbackTarget(rule), Owner: rule.Owner})
+		}
+	}
+	for _, dns := range rollback.DNS {
+		if ownedRollbackMetadata(dns.Owner, netexecutor.OwnerDNS) {
+			desired.DNS = txstate.DNSPlan{Backend: dns.Backend, Link: dns.Link, SearchDomains: append([]string(nil), dns.SearchDomains...), Owner: dns.Owner}
+		}
+	}
+	for _, nft := range rollback.NFTables {
+		if ownedRollbackMetadata(nft.Owner, netexecutor.OwnerFirewall) {
+			desired.NFT = txstate.NFTPlan{Family: nft.Family, Table: nft.Table, Owner: nft.Owner}
+		}
+	}
+	return desired
 }
 
 func appliedStepsForRollback(rollback txstate.RollbackMetadata, now time.Time) []txstate.AppliedStep {
