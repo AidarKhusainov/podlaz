@@ -70,6 +70,10 @@ func (s Server) Run(ctx context.Context) error {
 		scan := startupScan.Refresh(refreshCtx)
 		logStartupScan(filterStartupScanForActiveRuntime(scan, currentStatus(refreshCtx), runtimeDir))
 	}
+	forceRefreshStartupScan := func(refreshCtx context.Context) {
+		scan := startupScan.ForceRefresh(refreshCtx)
+		logStartupScan(filterStartupScanForActiveRuntime(scan, currentStatus(refreshCtx), runtimeDir))
+	}
 	refreshStartupScan(ctx)
 
 	socketPath := api.SocketPath(runtimeDir)
@@ -145,7 +149,7 @@ func (s Server) Run(ctx context.Context) error {
 		response := operationLock.runRecovery(func() api.RecoveryResponse {
 			response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
 			refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
-			refreshStartupScan(refreshCtx)
+			forceRefreshStartupScan(refreshCtx)
 			cancel()
 			return response
 		})
@@ -216,21 +220,4 @@ func DefaultDoctor(ctx context.Context, runtimeDir string) api.DoctorResponse {
 	report = doctor.WithSource(report, doctor.SourceDaemon)
 	report = doctor.WithDaemonCheck(report, doctor.SeverityOK, "running")
 	return doctor.ToDaemon(report)
-}
-
-func removeStaleSocket(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect daemon socket path %s: %w", path, err)
-	}
-	if info.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("daemon socket path %s exists and is not a Unix socket", path)
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale daemon socket %s: %w", path, err)
-	}
-	return nil
 }
