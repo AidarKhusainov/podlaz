@@ -110,10 +110,11 @@ func beginTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) e
 	return err
 }
 
-func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, childAbsenceProven bool) error {
+func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, childAbsenceProvenValues ...bool) error {
 	if executor == nil {
 		return errors.New("missing TUN executor")
 	}
+	childAbsenceProven := len(childAbsenceProvenValues) > 0 && childAbsenceProvenValues[0]
 	if childAbsenceProven {
 		if scoped, ok := executor.(resourceScopedChildAbsentTunRollbackExecutor); ok {
 			return scoped.RollbackResourceScopedChildAbsent(ctx, plan)
