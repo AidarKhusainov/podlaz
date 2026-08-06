@@ -15,8 +15,6 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-const productionTunOnelineLinkForTest = `7: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500 link/none tun type tun pi off vnet_hdr on persist off`
-
 func TestTunHandoffPreflightIgnoresCurrentScopesWithoutConfigurationEvidence(t *testing.T) {
 	for _, currentScopes := range [][]string{{"none"}, {"DNS"}} {
 		snapshot := netsnapshot.Snapshot{DNS: netsnapshot.DNS{ResolvedLinks: []netsnapshot.ResolvedLink{{
@@ -46,6 +44,34 @@ func TestTunHandoffPreflightUsesStableDNSConfigurationRegardlessOfCurrentScopes(
 	}
 }
 
+func TestProductionTunTransactionRejectsDaemonCreatedTunBeforeMutation(t *testing.T) {
+	t.Setenv(e2eTunHookGateEnv, "")
+	t.Setenv(e2eTunHookPhaseEnv, "")
+
+	runtimeDir := t.TempDir()
+	runner := &issue236PartialMutationRunner{}
+	executor := newProductionTunPlanExecutor(runner)
+	result, err := beginTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "example-profile"}, issue236PartialTunPlan(), fixedClock())
+	if err != nil {
+		t.Fatalf("begin TUN transaction: %v", err)
+	}
+
+	err = applyVerifyTunTransactionDeferredRollback(context.Background(), result, executor)
+	if err == nil || !strings.Contains(err.Error(), "daemon-created TUN links are unsupported") {
+		t.Fatalf("daemon-created TUN path must fail before host mutation, got %v", err)
+	}
+	if runner.tunPresent || runner.count("ip tuntap add dev podlaz0 mode tun user podlaz-xray group podlaz-xray") != 0 {
+		t.Fatalf("unsupported daemon-created path must not mutate host state: commands=%#v", runner.commands)
+	}
+	tx, _, loadErr := result.Store.Load(result.TransactionID)
+	if loadErr != nil {
+		t.Fatalf("load rejected transaction: %v", loadErr)
+	}
+	if len(tx.AppliedSteps) != 0 || len(tx.Rollback.TUN) != 0 {
+		t.Fatalf("unsupported daemon-created path must not persist TUN ownership: applied=%#v rollback=%#v", tx.AppliedSteps, tx.Rollback)
+	}
+}
+
 func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *testing.T) {
 	t.Setenv(e2eTunHookGateEnv, "")
 	t.Setenv(e2eTunHookPhaseEnv, "")
@@ -58,22 +84,6 @@ func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *tes
 		wantOwner       string
 		rollbackCommand string
 	}{
-		{
-			name:            "TUN MTU failure after tuntap add",
-			plan:            issue236PartialTunPlan(),
-			failCommand:     "ip link set dev podlaz0 mtu 1500",
-			wantKind:        "tun-device",
-			wantOwner:       netexecutor.OwnerTunDevice,
-			rollbackCommand: "ip link del dev podlaz0",
-		},
-		{
-			name:            "TUN up failure after tuntap add",
-			plan:            issue236PartialTunPlan(),
-			failCommand:     "ip link set dev podlaz0 up",
-			wantKind:        "tun-device",
-			wantOwner:       netexecutor.OwnerTunDevice,
-			rollbackCommand: "ip link del dev podlaz0",
-		},
 		{
 			name:            "route cache flush failure after route add",
 			plan:            issue236PartialRoutePlan(),
@@ -236,7 +246,7 @@ func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args
 	case "ip -details link show dev podlaz0":
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest}, nil
 	case "ip -details -o link show dev podlaz0":
-		return netexecutor.CommandResult{Stdout: productionTunOnelineLinkForTest}, nil
+		return netexecutor.CommandResult{Stdout: productionTunLinkOnelineForTest}, nil
 	case "ip tuntap add dev podlaz0 mode tun user podlaz-xray group podlaz-xray":
 		r.tunPresent = true
 	case "ip link set dev podlaz0 mtu 1500", "ip link set dev podlaz0 up":
