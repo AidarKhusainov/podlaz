@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,14 +18,7 @@ import (
 func TestDaemonRecoveryRemovesOnlyExactOwnedTunAddress(t *testing.T) {
 	runtimeDir := t.TempDir()
 	missingPID := 1 << 30
-	runner := &recordingRunner{
-		paths: map[string]string{"ip": "/usr/sbin/ip"},
-		commands: map[string]fakeCommand{
-			"ip -details -o link show dev podlaz0":                             {stdout: recoveryTunLink(7)},
-			"ip -4 -o address show dev podlaz0":                                {stdout: recoveryTunAddress(7, planner.DefaultTunIPv4CIDR)},
-			"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0": {},
-		},
-	}
+	runner := &tunAddressRecoveryRunner{addressPresent: true}
 	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
 		TUNAddresses: []txstate.TUNAddressRollback{ownedTunAddressRollback(7)},
 		ChildProcesses: []txstate.ChildProcessRollback{{
@@ -36,11 +31,7 @@ func TestDaemonRecoveryRemovesOnlyExactOwnedTunAddress(t *testing.T) {
 	assertCleanupResult(t, results, "tun-address", "recovered", "")
 	assertCleanupResult(t, results, "child-process", "recovered", "already absent")
 	assertCleanupResult(t, results, "transaction-state", "recovered", "")
-	assertCommands(t, runner, []string{
-		"ip -details -o link show dev podlaz0",
-		"ip -4 -o address show dev podlaz0",
-		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
-	})
+	assertTunAddressRecoveryCommands(t, runner)
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("successful exact-address recovery must remove transaction state: %v", err)
 	}
@@ -148,14 +139,7 @@ func TestOwnedTunAddressRollbackFixtureUsesDocumentationSafePolicy(t *testing.T)
 
 func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testing.T) {
 	runtimeDir := t.TempDir()
-	runner := &recordingRunner{
-		paths: map[string]string{"ip": "/usr/sbin/ip"},
-		commands: map[string]fakeCommand{
-			"ip -details -o link show dev podlaz0":                             {stdout: recoveryTunLink(7)},
-			"ip -4 -o address show dev podlaz0":                                {stdout: recoveryTunAddress(7, planner.DefaultTunIPv4CIDR)},
-			"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0": {},
-		},
-	}
+	runner := &tunAddressRecoveryRunner{addressPresent: true}
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	tx := txstate.NewTransaction("tx-address-syscall-crash", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
@@ -173,23 +157,12 @@ func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testin
 	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 	assertCleanupResult(t, results, "tun-address", "recovered", "")
 	assertCleanupResult(t, results, "transaction-state", "recovered", "")
-	assertCommands(t, runner, []string{
-		"ip -details -o link show dev podlaz0",
-		"ip -4 -o address show dev podlaz0",
-		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
-	})
+	assertTunAddressRecoveryCommands(t, runner)
 }
 
 func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent(t *testing.T) {
 	runtimeDir := t.TempDir()
-	runner := &recordingRunner{
-		paths: map[string]string{"ip": "/usr/sbin/ip"},
-		commands: map[string]fakeCommand{
-			"ip -details -o link show dev podlaz0":                             {stdout: recoveryTunLink(7)},
-			"ip -4 -o address show dev podlaz0":                                {stdout: recoveryTunAddress(7, planner.DefaultTunIPv4CIDR)},
-			"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0": {},
-		},
-	}
+	runner := &tunAddressRecoveryRunner{addressPresent: true}
 	tx := txstate.NewTransaction("tx-address-route-crash", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
 	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
@@ -208,12 +181,56 @@ func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent
 	assertCleanupResult(t, results, "tun-address", "recovered", "")
 	assertCleanupResult(t, results, "transaction-ownership", "skipped", "routes")
 	assertCleanupResult(t, results, "transaction-state", "skipped", "preserved")
-	assertCommands(t, runner, []string{
+	assertTunAddressRecoveryCommands(t, runner)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("ambiguous applying transaction must remain after exact address cleanup: %v", err)
+	}
+}
+
+type tunAddressRecoveryRunner struct {
+	addressPresent bool
+	commands       []string
+}
+
+func (r *tunAddressRecoveryRunner) LookPath(file string) (string, error) {
+	if file == "ip" {
+		return "/usr/sbin/ip", nil
+	}
+	return "", errors.New("command not found")
+}
+
+func (r *tunAddressRecoveryRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
+	command := filepath.Base(name) + " " + strings.Join(args, " ")
+	r.commands = append(r.commands, command)
+
+	switch command {
+	case "ip -details -o link show dev podlaz0":
+		return CommandResult{Stdout: recoveryTunLink(7)}, nil
+	case "ip -4 -o address show dev podlaz0":
+		if !r.addressPresent {
+			return CommandResult{}, nil
+		}
+		return CommandResult{Stdout: recoveryTunAddress(7, planner.DefaultTunIPv4CIDR)}, nil
+	case "ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0":
+		if !r.addressPresent {
+			return CommandResult{ExitCode: 1, Stderr: "address is already absent"}, errors.New("exit status 1")
+		}
+		r.addressPresent = false
+		return CommandResult{}, nil
+	default:
+		return CommandResult{ExitCode: -1}, fmt.Errorf("unexpected command: %s", command)
+	}
+}
+
+func assertTunAddressRecoveryCommands(t *testing.T, runner *tunAddressRecoveryRunner) {
+	t.Helper()
+	want := []string{
 		"ip -details -o link show dev podlaz0",
 		"ip -4 -o address show dev podlaz0",
 		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
-	})
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("ambiguous applying transaction must remain after exact address cleanup: %v", err)
+		"ip -4 -o address show dev podlaz0",
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
 	}
 }
