@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/netip"
-	"reflect"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 const managedTunInterfaceName = "podlaz0"
+const maxTunRollbackMissingStderrSize = 512
 
 type tunRollbackLinkAbsentError struct {
 	err error
@@ -56,28 +56,39 @@ func strictRollbackTunLinkAbsent(err error) bool {
 	if !errors.As(err, &cmdErr) {
 		return false
 	}
-	if cmdErr.parentErr != nil || cmdErr.contextErr != nil {
+	if !commandErrorMatchesArgv(cmdErr, "ip", "-details", "-o", "link", "show", "dev", managedTunInterfaceName) {
 		return false
 	}
-	if cmdErr.result.ExitCode != 1 {
+	if cmdErr.parentErr != nil || cmdErr.contextErr != nil || cmdErr.err == nil {
 		return false
 	}
-	if !reflect.DeepEqual(append([]string{cmdErr.name}, cmdErr.args...), []string{"ip", "-details", "-o", "link", "show", "dev", managedTunInterfaceName}) {
+	if errors.Is(cmdErr.err, context.Canceled) || errors.Is(cmdErr.err, context.DeadlineExceeded) {
 		return false
 	}
-	if strings.TrimSpace(cmdErr.result.Stdout) != "" || strings.TrimSpace(cmdErr.result.RawStdout) != "" {
+	var exitErr processExitCoder
+	if !errors.As(cmdErr.err, &exitErr) || exitErr.ExitCode() != 1 {
 		return false
 	}
-	stderr := strings.TrimSpace(cmdErr.result.RawStderr)
-	if stderr == "" {
-		stderr = strings.TrimSpace(cmdErr.result.Stderr)
-	}
-	switch stderr {
-	case `Device "podlaz0" does not exist.`, `Cannot find device "podlaz0"`:
-		return true
-	default:
+	if cmdErr.result.ExitCode != 1 || cmdErr.result.RawStdout != "" {
 		return false
 	}
+	if cmdErr.result.RawStderr == "" || len(cmdErr.result.RawStderr) > maxTunRollbackMissingStderrSize {
+		return false
+	}
+	return exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Device "podlaz0" does not exist.`) ||
+		exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Cannot find device "podlaz0"`)
+}
+
+func commandErrorMatchesArgv(cmdErr commandError, want ...string) bool {
+	if len(want) == 0 || cmdErr.name != want[0] || len(cmdErr.args) != len(want)-1 {
+		return false
+	}
+	for i, arg := range cmdErr.args {
+		if arg != want[i+1] {
+			return false
+		}
+	}
+	return true
 }
 
 // RollbackResourceScopedChildAbsent is the lifecycle-boundary variant for the
