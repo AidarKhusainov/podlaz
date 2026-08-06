@@ -14,7 +14,6 @@ import (
 func TestTunTransactionRecordsRollbackOnlyForAppliedSteps(t *testing.T) {
 	runtimeDir := t.TempDir()
 	executor := &appliedOnlyTunExecutor{steps: []netexecutor.Step{
-		{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice},
 		{Kind: "route", Target: "podlaz default", Owner: netexecutor.OwnerRoute},
 	}}
 	result, err := runTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "test-profile"}, transactionPlanForTest(), executor, fixedClock())
@@ -31,8 +30,8 @@ func TestTunTransactionRecordsRollbackOnlyForAppliedSteps(t *testing.T) {
 	if len(tx.Rollback.PolicyRules) != 0 {
 		t.Fatalf("unexpected policy rule rollback metadata: %#v", tx.Rollback.PolicyRules)
 	}
-	if len(tx.Rollback.TUN) != 1 {
-		t.Fatalf("unexpected TUN rollback metadata: %#v", tx.Rollback.TUN)
+	if len(tx.Rollback.TUN) != 0 {
+		t.Fatalf("Xray-owned link must not produce TUN rollback: %#v", tx.Rollback.TUN)
 	}
 }
 
