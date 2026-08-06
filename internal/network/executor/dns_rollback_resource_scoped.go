@@ -11,6 +11,29 @@ import (
 
 const managedTunInterfaceName = "podlaz0"
 
+type tunRollbackLinkAbsentError struct {
+	err error
+}
+
+func (e tunRollbackLinkAbsentError) Error() string {
+	if e.err == nil {
+		return "transaction-bound TUN link is absent"
+	}
+	return e.err.Error()
+}
+
+func (e tunRollbackLinkAbsentError) Unwrap() error { return e.err }
+func (e tunRollbackLinkAbsentError) IsTunRollbackLinkAbsent() bool { return true }
+
+// IsTunRollbackLinkAbsent reports whether err is the typed rollback decision
+// "transaction-bound TUN link was absent". Callers may combine this decision
+// with independently proven tracked-child absence to run missing-link cleanup,
+// but must not use it for identity mismatches or resource rollback failures.
+func IsTunRollbackLinkAbsent(err error) bool {
+	var target interface{ IsTunRollbackLinkAbsent() bool }
+	return errors.As(err, &target) && target.IsTunRollbackLinkAbsent()
+}
+
 // RollbackResourceScoped preserves the pre-mutation identity gate for
 // link-scoped resources while still converging transaction-owned resources that
 // do not depend on the current podlaz0 identity. It intentionally returns the
@@ -18,18 +41,23 @@ const managedTunInterfaceName = "podlaz0"
 // transaction/config/child evidence until the link-scoped subset converges.
 func (e DNSAwareTunExecutor) RollbackResourceScoped(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
-		return errors.Join(e.rollbackIndependentRollback(ctx, plan), err)
+		independentErr := e.rollbackIndependentRollback(ctx, plan)
+		if independentErr == nil && resourceMissing(err) {
+			return tunRollbackLinkAbsentError{err: err}
+		}
+		return errors.Join(independentErr, err)
 	}
 	return e.Rollback(ctx, plan)
 }
 
 // RollbackResourceScopedChildAbsent is the lifecycle-boundary variant for the
 // typed decision "link absent + tracked child absent". The caller reaches this
-// method only after a prior link observation failed and the tracked child was
-// then proven absent. Do not re-classify the link here: a foreign same-name TUN
-// may appear between observations. In this state DNS/address/link name-scoped
-// mutations are forbidden and already-missing address/link state is treated as
-// converged; only independent exact resources are cleaned up.
+// method only after a prior link observation proved the transaction-bound link
+// absent and the tracked child was then proven absent. Do not re-classify the
+// link here: a foreign same-name TUN may appear between observations. In this
+// state DNS/address/link name-scoped mutations are forbidden and already-missing
+// address/link state is treated as converged; only independent exact resources
+// are cleaned up.
 func (e DNSAwareTunExecutor) RollbackResourceScopedChildAbsent(ctx context.Context, plan planner.TunPlan) error {
 	return e.rollbackIndependentRollback(ctx, plan)
 }
