@@ -19,7 +19,7 @@ func TestPlanTunBuildsFullTunnelPlanFromFakeSnapshot(t *testing.T) {
 	if plan.TunDevice.Name != snapshot.DefaultTunName || plan.TunDevice.MTU != DefaultTunMTU || plan.TunDevice.Action != "verify" {
 		t.Fatalf("unexpected TUN device plan: %#v", plan.TunDevice)
 	}
-	if !strings.Contains(plan.TunDevice.Reason, "Xray-owned") {
+	if !strings.Contains(plan.TunDevice.Reason, "Xray owns TUN link creation and lifetime") {
 		t.Fatalf("TUN device plan must document Xray link ownership, got %#v", plan.TunDevice)
 	}
 	if !containsRoute(plan.Routes, TunRoutingTable, IPv4DefaultRoute, snapshot.DefaultTunName) {
