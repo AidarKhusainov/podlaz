@@ -3,7 +3,6 @@ package recovery
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,28 +11,20 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestDaemonCleanupExecutorTreatsResolvedNoSuchDeviceAsSuccessfulDNSRollback(t *testing.T) {
-	runtimeDir := t.TempDir()
-	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
-		DNS: []txstate.DNSRollback{{
-			Link:    managedInterface,
-			Backend: "systemd-resolved",
-			Owner:   netexecutor.OwnerDNS,
-		}},
-	})
+func TestResolvedRollbackTreatsExactMissingDeviceAsSuccess(t *testing.T) {
 	runner := rawResolvedTransactionRunner{}
-
-	results := (DaemonCleanupExecutor{Runner: runner, RuntimeDir: runtimeDir}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+	osExec := OSCleanupExecutor{Runner: runner}
+	results := (DaemonCleanupExecutor{}).rollbackDNSResults(context.Background(), osExec, []txstate.DNSRollback{{
+		Link:    managedInterface,
+		Backend: "systemd-resolved",
+		Owner:   netexecutor.OwnerDNS,
+	}})
 
 	assertCleanupResult(t, results, "dns", "recovered", "")
-	assertCleanupResult(t, results, "transaction-state", "recovered", "")
 	for _, result := range results {
 		if result.Status == "failed" {
-			t.Fatalf("resolved missing-device rollback must not fail transaction recovery: %#v", results)
+			t.Fatalf("resolved missing-device DNS rollback must converge: %#v", results)
 		}
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("successful transaction recovery must remove transaction state, stat err=%v", err)
 	}
 }
 

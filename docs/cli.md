@@ -208,8 +208,10 @@ networking. Grouped `xray-json` profiles support `proxy-only` planning only;
 `plan --mode tun` fails before collecting a host networking snapshot.
 
 `plan --mode tun` prints a compact human summary by default: profile status,
-planned high-level changes, blockers, warnings, safety notes, and next-step
-guidance. It intentionally hides raw nftables rules, rollback keys, ownership
+the deterministic daemon-owned TUN IPv4 address, planned high-level changes,
+blockers, warnings, safety notes, and next-step guidance. The Linux policy uses
+`198.18.0.1/32`; it is fixed rather than random and is never silently replaced
+with another candidate. It intentionally hides raw nftables rules, rollback keys, ownership
 labels, and long command stderr in default human output. Use `--verbose` or `-v`
 for the detailed TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump.
 `--plain` replaces Unicode status markers with ASCII status words. `--json`
@@ -222,9 +224,10 @@ podlaz disconnect
 
 Requires daemon access. `connect` defaults to `proxy-only`. Proxy-only must not
 mutate host networking. TUN mode is daemon-owned and transaction-backed. Xray
-owns `podlaz0` packet ingestion through its native `tun` inbound; podlazd owns
-and rolls back the surrounding routes, policy rules, DNS, nftables, generated
-config metadata, and child process metadata. Before handoff or host changes,
+owns `podlaz0` creation, lifetime, and packet ingestion through its native
+`tun` inbound. podlazd owns the exact OS address `198.18.0.1/32` on the verified
+Xray-created link and rolls back that address, the surrounding routes, policy
+rules, DNS, nftables, generated config metadata, and child process metadata. Before handoff or host changes,
 `connect --mode tun` checks that the packaged Xray helper accepts a minimal
 pinned-schema native TUN config. The profile-generated Xray runtime config is
 written later after the TUN transaction starts.
@@ -233,8 +236,12 @@ For non-interactive TUN connects, the daemon automatically recovers only
 unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, and transaction
 state, recollects the host snapshot, and proceeds only when that owned state is
 clean. Stale podlaz `systemd-resolved` link state is refreshed on `podlaz0`
-before per-link DNS is applied. Foreign VPN interfaces, foreign route-only DNS
-owners, ambiguous resources, and incomplete recovery remain blockers.
+before per-link DNS is applied. Before transaction mutation, the daemon checks
+all assigned IPv4 addresses, all routing tables, and any existing `podlaz0`
+state for overlap with `198.18.0.1/32`. Foreign or ambiguous overlap fails with
+`tun_address_conflict`; there is no random fallback. Foreign VPN interfaces,
+foreign route-only DNS owners, ambiguous resources, and incomplete recovery
+remain blockers.
 
 `connect --mode tun` supports explicit handoff policies. The default `block`
 policy never stops a foreign VPN or removes ambiguous state; podlaz-owned
@@ -252,8 +259,12 @@ state still exists and atomically saves the report before the first rollback
 command. The report records a stable classification, `failure_phase`, and
 `rollback_status`; rollback finalizes the historical status as `completed` or
 `failed`. Diagnostic collection remains best-effort and cannot suppress cleanup.
-The returned error includes the classification and safe report path when
-available and directs the user to `podlaz doctor --tun --verbose`.
+Before commit, static resolved ownership is followed by an uncached IPv4
+`resolvectl` query bound to the exact `podlaz0` link, a separate normal system
+resolver lookup, and route verification for at least one returned IPv4 address.
+`Current Scopes` remains diagnostic evidence only. The returned error includes
+the stable classification and safe report path when available and directs the
+user to `podlaz doctor --tun --verbose`.
 
 ```bash
 podlaz check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
@@ -295,9 +306,14 @@ podlaz recover --execute --yes [--json]
 daemon. The CLI must not perform privileged host cleanup directly. Ambiguous
 resources are skipped. Non-interactive execution requires `--yes`. For the
 validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
-with the bounded `No such device` result is accepted as idempotent success.
-Timeout, cancellation, signals, permission errors, other exit codes, and
-unrelated exit `1` results remain failures.
+with one exact supported bounded `No such device` result is accepted as
+idempotent success. The supported Ubuntu 24.04 form is `Failed to resolve
+interface "podlaz0", ignoring: No such device`; the older exact form without
+`, ignoring` remains supported. Timeout, cancellation, signals, launch or
+permission errors, other exit codes, extra output, and unrelated exit `1`
+results remain failures. A successful daemon scan is authoritative over older
+local evidence; a failed refresh is reported as incomplete rather than reusing
+stale candidates or top-level `ok`.
 
 ## Files
 

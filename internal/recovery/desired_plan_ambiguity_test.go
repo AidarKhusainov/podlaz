@@ -36,7 +36,7 @@ func TestDaemonCleanupPreservesUnrecordedExistingMainBypass(t *testing.T) {
 	}
 }
 
-func TestDaemonCleanupRemovesTransactionWhenUnrecordedMainBypassIsAbsent(t *testing.T) {
+func TestDaemonCleanupPreservesApplyingTransactionWhenUnrecordedMainBypassIsAbsent(t *testing.T) {
 	runtimeDir := t.TempDir()
 	path, tx := saveDesiredMainBypassTransaction(t, runtimeDir, "tx-main-absent")
 	runner := fakeRunner{
@@ -51,9 +51,10 @@ func TestDaemonCleanupRemovesTransactionWhenUnrecordedMainBypassIsAbsent(t *test
 
 	assertCleanupResult(t, results, "route", "recovered", "")
 	assertCleanupResult(t, results, "policy-rule", "recovered", "")
-	assertCleanupResult(t, results, "transaction-state", "recovered", "")
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("clean absent main-table state must allow transaction removal, stat err=%v", err)
+	assertCleanupResult(t, results, "transaction-ownership", "skipped", "routes, policy rules")
+	assertCleanupResult(t, results, "transaction-state", "skipped", "preserved")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("applying transaction without durable main-table ownership must remain, stat err=%v", err)
 	}
 }
 

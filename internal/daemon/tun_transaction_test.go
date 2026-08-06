@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -107,6 +109,55 @@ func TestRollbackTunTransactionStopsChildProcessesAfterExecutorRollback(t *testi
 	}
 }
 
+func TestRollbackTunTransactionPreservesChildAndRecoveryMetadataWhenHostRollbackFails(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: clock}
+	tx := txstate.NewTransaction("tun-host-rollback-failure", "test-profile", planner.ModeTun, clock())
+	configPath := runtimeDir + "/generated/xray.json"
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatalf("create generated config directory: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write generated config: %v", err)
+	}
+	tx.Rollback.GeneratedConfigs = []txstate.GeneratedConfigRollback{{Path: configPath, Owner: txstate.TransactionOwner}}
+	tx.Rollback.ChildProcesses = []txstate.ChildProcessRollback{{PID: 12345, Label: "xray", ConfigRef: configPath, Owner: txstate.TransactionOwner}}
+	if _, err := store.Save(tx); err != nil {
+		t.Fatalf("save transaction: %v", err)
+	}
+
+	hostErr := errors.New("address identity could not be revalidated")
+	stopCalls := 0
+	err := rollbackPreparedTunFailureWithChildStopper(
+		context.Background(),
+		store,
+		&tx,
+		transactionPlanForTest(),
+		&failingRollbackTunExecutor{err: hostErr},
+		func(txstate.Transaction) error {
+			stopCalls++
+			return nil
+		},
+	)
+	if !errors.Is(err, hostErr) {
+		t.Fatalf("expected host rollback failure, got %v", err)
+	}
+	if stopCalls != 0 {
+		t.Fatalf("Xray child must remain running while host cleanup is unproven, stop calls=%d", stopCalls)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("recovery identity config must remain after failed host rollback: %v", err)
+	}
+	loaded, _, err := store.Load(tx.ID)
+	if err != nil {
+		t.Fatalf("load failed transaction: %v", err)
+	}
+	if loaded.State != txstate.TransactionFailed || !loaded.Rollback.Available() {
+		t.Fatalf("failed host rollback must preserve recoverable transaction, got %#v", loaded)
+	}
+}
+
 func TestTunTransactionRollsBackOnlyAppliedStepsAfterPartialApplyFailure(t *testing.T) {
 	runtimeDir := t.TempDir()
 	executor := &recordingTunExecutor{applyErr: errors.New("route apply failed")}
@@ -170,21 +221,34 @@ func (e *preApplyInspectingTunExecutor) Verify(context.Context, planner.TunPlan)
 func (e *preApplyInspectingTunExecutor) Rollback(context.Context, planner.TunPlan) error { return nil }
 
 type recordingTunExecutor struct {
-	applyErr  error
-	verifyErr error
-	calls     []string
+	applyErr      error
+	verifyErr     error
+	calls         []string
+	lastApplyPlan planner.TunPlan
 }
 
-func (e *recordingTunExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+func (e *recordingTunExecutor) Apply(_ context.Context, plan planner.TunPlan) ([]netexecutor.Step, error) {
 	e.calls = append(e.calls, "apply")
+	e.lastApplyPlan = plan
 	if e.applyErr != nil {
-		return []netexecutor.Step{{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice}}, e.applyErr
+		return []netexecutor.Step{{Kind: "route", Target: "podlaz default", Owner: netexecutor.OwnerRoute}}, e.applyErr
 	}
 	return []netexecutor.Step{
-		{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice},
 		{Kind: "route", Target: "podlaz default", Owner: netexecutor.OwnerRoute},
-		{Kind: "policy-rule", Target: "priority 51820 from all lookup podlaz", Owner: netexecutor.OwnerPolicyRule},
+		{Kind: "policy-rule", Target: policyRuleTarget(plan.PolicyRules[0]), Owner: netexecutor.OwnerPolicyRule},
 	}, nil
+}
+
+func unboundTunAddressPlanForTest() planner.TunAddressPlan {
+	return planner.TunAddressPlan{
+		Family:      "ipv4",
+		Interface:   "podlaz0",
+		CIDR:        planner.DefaultTunIPv4CIDR,
+		Scope:       "global",
+		Action:      planner.TunAddressActionAssign,
+		Owner:       planner.TunAddressOwner,
+		RollbackKey: "podlaz0/" + planner.DefaultTunIPv4CIDR,
+	}
 }
 
 func (e *recordingTunExecutor) Verify(context.Context, planner.TunPlan) error {
@@ -195,6 +259,20 @@ func (e *recordingTunExecutor) Verify(context.Context, planner.TunPlan) error {
 func (e *recordingTunExecutor) Rollback(context.Context, planner.TunPlan) error {
 	e.calls = append(e.calls, "rollback")
 	return nil
+}
+
+type failingRollbackTunExecutor struct {
+	err error
+}
+
+func (e *failingRollbackTunExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, nil
+}
+
+func (e *failingRollbackTunExecutor) Verify(context.Context, planner.TunPlan) error { return nil }
+
+func (e *failingRollbackTunExecutor) Rollback(context.Context, planner.TunPlan) error {
+	return e.err
 }
 
 type rollbackOrderExecutor struct {
@@ -216,7 +294,7 @@ func transactionPlanForTest() planner.TunPlan {
 	return planner.TunPlan{
 		ProfileID: "test-profile",
 		Mode:      planner.ModeTun,
-		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "create"},
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify", Reason: "Xray-owned TUN link"},
 		Routes: []planner.TunRoutePlan{{
 			Family:      "ipv4",
 			Destination: "default",
@@ -231,7 +309,7 @@ func transactionPlanForTest() planner.TunPlan {
 			Table:    planner.TunRoutingTable,
 			Action:   "add",
 		}},
-		Steps: []string{"Plan TUN interface podlaz0"},
+		Steps: []string{"Verify Xray-owned TUN interface podlaz0"},
 	}
 }
 
@@ -262,3 +340,110 @@ func fixedClock() func() time.Time {
 		return current
 	}
 }
+
+func TestTunTransactionPersistsEachAppliedOwnershipStepInsideCompositeApply(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	plan := transactionPlanForTest()
+	plan.TunAddress = unboundTunAddressPlanForTest()
+	plan.TunAddress.LinkIndex = 7
+	plan.TunAddress.LinkKind = "tun"
+	plan.TunAddress.AppearedAfterCore = true
+
+	result, err := beginTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "test-profile"}, plan, clock)
+	if err != nil {
+		t.Fatalf("begin TUN transaction: %v", err)
+	}
+	executor := &incrementalPersistenceInspectingExecutor{
+		t:             t,
+		store:         result.Store,
+		transactionID: result.TransactionID,
+	}
+
+	err = applyVerifyTunTransactionDeferredRollback(context.Background(), result, executor)
+	if err == nil || !strings.Contains(err.Error(), "stop after address") {
+		t.Fatalf("expected injected post-address failure, got %v", err)
+	}
+	if !executor.inspected {
+		t.Fatal("address ownership was not inspected from durable transaction state during composite apply")
+	}
+}
+
+func TestTunTransactionRejectsUnownedIncrementalStepBeforePersistence(t *testing.T) {
+	runtimeDir := t.TempDir()
+	clock := fixedClock()
+	plan := transactionPlanForTest()
+	result, err := beginTunTransaction(context.Background(), runtimeDir, profile.Profile{ID: "test-profile"}, plan, clock)
+	if err != nil {
+		t.Fatalf("begin TUN transaction: %v", err)
+	}
+	executor := &unownedIncrementalStepExecutor{}
+
+	err = applyVerifyTunTransactionDeferredRollback(context.Background(), result, executor)
+	if err == nil || !strings.Contains(err.Error(), "unowned applied TUN step") {
+		t.Fatalf("expected unowned step rejection, got %v", err)
+	}
+	tx, _, loadErr := result.Store.Load(result.TransactionID)
+	if loadErr != nil {
+		t.Fatalf("load transaction: %v", loadErr)
+	}
+	if len(tx.AppliedSteps) != 0 || tx.Rollback.Available() {
+		t.Fatalf("unowned step must not create rollback authority: steps=%#v rollback=%#v", tx.AppliedSteps, tx.Rollback)
+	}
+}
+
+type incrementalPersistenceInspectingExecutor struct {
+	t             *testing.T
+	store         txstate.TransactionStore
+	transactionID string
+	inspected     bool
+}
+
+func (e *incrementalPersistenceInspectingExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, errors.New("legacy apply path used")
+}
+
+func (e *incrementalPersistenceInspectingExecutor) ApplyWithStepSink(_ context.Context, plan planner.TunPlan, sink netexecutor.AppliedStepSink) ([]netexecutor.Step, error) {
+	step := netexecutor.Step{
+		Kind:   "tun-address",
+		Target: tunAddressTarget(plan.TunAddress),
+		Owner:  netexecutor.OwnerTunAddress,
+	}
+	if err := sink(step); err != nil {
+		return []netexecutor.Step{step}, err
+	}
+	tx, _, err := e.store.Load(e.transactionID)
+	if err != nil {
+		e.t.Fatalf("load transaction inside apply: %v", err)
+	}
+	if len(tx.AppliedSteps) != 1 || tx.AppliedSteps[0].Kind != "tun-address" {
+		e.t.Fatalf("address step must be durable before next mutation: %#v", tx.AppliedSteps)
+	}
+	if len(tx.Rollback.TUNAddresses) != 1 || tx.Rollback.TUNAddresses[0].CIDR != plan.TunAddress.CIDR {
+		e.t.Fatalf("address rollback identity must be durable before next mutation: %#v", tx.Rollback.TUNAddresses)
+	}
+	e.inspected = true
+	return []netexecutor.Step{step}, errors.New("stop after address")
+}
+
+func (e *incrementalPersistenceInspectingExecutor) Verify(context.Context, planner.TunPlan) error {
+	return nil
+}
+
+func (e *incrementalPersistenceInspectingExecutor) Rollback(context.Context, planner.TunPlan) error {
+	return nil
+}
+
+type unownedIncrementalStepExecutor struct{}
+
+func (unownedIncrementalStepExecutor) Apply(context.Context, planner.TunPlan) ([]netexecutor.Step, error) {
+	return nil, errors.New("legacy apply path used")
+}
+
+func (unownedIncrementalStepExecutor) ApplyWithStepSink(_ context.Context, plan planner.TunPlan, sink netexecutor.AppliedStepSink) ([]netexecutor.Step, error) {
+	step := netexecutor.Step{Kind: "route", Target: routeTarget(plan.Routes[0]), Owner: "foreign:route"}
+	return []netexecutor.Step{step}, sink(step)
+}
+
+func (unownedIncrementalStepExecutor) Verify(context.Context, planner.TunPlan) error   { return nil }
+func (unownedIncrementalStepExecutor) Rollback(context.Context, planner.TunPlan) error { return nil }

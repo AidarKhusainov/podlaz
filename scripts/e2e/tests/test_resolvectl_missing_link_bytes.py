@@ -8,6 +8,7 @@ from pathlib import Path
 HELPER = Path(__file__).resolve().parents[1] / "verify_resolvectl_missing_link.py"
 SCRIPT = Path(__file__).resolve().parents[1] / "tun-package-convergence.sh"
 MARKER = b'Failed to resolve interface "podlaz0": No such device'
+UBUNTU_MARKER = b'Failed to resolve interface "podlaz0", ignoring: No such device'
 
 
 def load_helper():
@@ -24,6 +25,8 @@ class ResolvectlMissingLinkBytesTests(unittest.TestCase):
         helper = load_helper()
         self.assertTrue(helper.is_exact_missing_link_stderr(MARKER + b"\n"))
         self.assertTrue(helper.is_exact_missing_link_stderr(MARKER + b"\r\n"))
+        self.assertTrue(helper.is_exact_missing_link_stderr(UBUNTU_MARKER + b"\n"))
+        self.assertTrue(helper.is_exact_missing_link_stderr(UBUNTU_MARKER + b"\r\n"))
 
     def test_rejects_incompatible_raw_stderr(self) -> None:
         helper = load_helper()
@@ -46,6 +49,9 @@ class ResolvectlMissingLinkBytesTests(unittest.TestCase):
         )
         self.assertTrue(
             helper.is_exact_missing_link_result(b"1\n", b"", MARKER + b"\r\n")
+        )
+        self.assertTrue(
+            helper.is_exact_missing_link_result(b"1\n", b"", UBUNTU_MARKER + b"\n")
         )
         rejected = {
             "unterminated exit code": (b"1", b"", MARKER + b"\n"),

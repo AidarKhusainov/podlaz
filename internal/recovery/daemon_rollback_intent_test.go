@@ -10,7 +10,7 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestDaemonCleanupExecutorUsesDesiredPlanAfterPreApplyCrash(t *testing.T) {
+func TestDaemonCleanupExecutorPreservesPreApplyCrashWithoutDurableOwnership(t *testing.T) {
 	runtimeDir := t.TempDir()
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	tx := txstate.NewTransaction("tx-pre-apply-crash", "profile-1", "tun", time.Now().UTC())
@@ -35,9 +35,9 @@ func TestDaemonCleanupExecutorUsesDesiredPlanAfterPreApplyCrash(t *testing.T) {
 	}
 	results := (DaemonCleanupExecutor{Runner: runner, RuntimeDir: runtimeDir}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
-	assertCleanupResult(t, results, "dns", "recovered", "")
-	assertCleanupResult(t, results, "transaction-state", "recovered", "")
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("successful desired-plan recovery must remove transaction state, stat err=%v", err)
+	assertCleanupResult(t, results, "transaction-ownership", "skipped", "DNS")
+	assertCleanupResult(t, results, "transaction-state", "skipped", "preserved")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("ambiguous pre-apply transaction must remain, stat err=%v", err)
 	}
 }

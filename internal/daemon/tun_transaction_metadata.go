@@ -42,6 +42,9 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	for _, step := range plan.Steps {
 		steps = append(steps, txstate.PlannedStep{Kind: "plan", Target: planner.ModeTun, Description: step, Owner: txstate.TransactionOwner})
 	}
+	if plan.TunAddress.CIDR != "" {
+		steps = append(steps, txstate.PlannedStep{Kind: "tun-address", Target: tunAddressTarget(plan.TunAddress), Description: plan.TunAddress.Reason, Owner: netexecutor.OwnerTunAddress})
+	}
 	for _, rule := range plan.PolicyRules {
 		steps = append(steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleTarget(rule), Description: rule.Reason, Owner: netexecutor.OwnerPolicyRule})
 	}
@@ -58,7 +61,8 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 			MTU:           plan.TunDevice.MTU,
 			Owner:         tunDesiredOwner(plan.TunDevice.Action),
 		},
-		Routes: routes,
+		TUNAddress: tunAddressDesiredState(plan.TunAddress),
+		Routes:     routes,
 		DNS: txstate.DNSPlan{
 			Backend:       plan.DNS.Backend,
 			Link:          plan.DNS.TargetLink,
@@ -95,6 +99,9 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 	if plan.TunDevice.Name != "" && tunRollbackOwnsLink(plan.TunDevice.Action) {
 		metadata.TUN = []txstate.TUNRollback{{InterfaceName: plan.TunDevice.Name, Owner: netexecutor.OwnerTunDevice}}
 	}
+	if tunAddressRollbackIsOwned(plan.TunAddress) {
+		metadata.TUNAddresses = []txstate.TUNAddressRollback{tunAddressRollbackState(plan.TunAddress)}
+	}
 	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
 		metadata.DNS = []txstate.DNSRollback{{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, SearchDomains: dnsSearchDomains(plan.DNS), Owner: netexecutor.OwnerDNS}}
 	}
@@ -102,6 +109,43 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 		metadata.NFTables = []txstate.NFTablesRollback{{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Owner: netexecutor.OwnerFirewall}}
 	}
 	return metadata
+}
+
+func tunAddressDesiredState(plan planner.TunAddressPlan) txstate.TUNAddressDesiredState {
+	if strings.TrimSpace(plan.CIDR) == "" {
+		return txstate.TUNAddressDesiredState{}
+	}
+	return txstate.TUNAddressDesiredState{
+		Family:            plan.Family,
+		InterfaceName:     plan.Interface,
+		CIDR:              plan.CIDR,
+		Scope:             plan.Scope,
+		LinkIndex:         plan.LinkIndex,
+		LinkKind:          plan.LinkKind,
+		AppearedAfterCore: plan.AppearedAfterCore,
+		Owner:             netexecutor.OwnerTunAddress,
+	}
+}
+
+func tunAddressRollbackIsOwned(plan planner.TunAddressPlan) bool {
+	return plan.Action == planner.TunAddressActionAssign && plan.LinkIndex > 0 && plan.LinkKind == "tun" && plan.AppearedAfterCore && strings.TrimSpace(plan.CIDR) != ""
+}
+
+func tunAddressRollbackState(plan planner.TunAddressPlan) txstate.TUNAddressRollback {
+	return txstate.TUNAddressRollback{
+		Family:            plan.Family,
+		InterfaceName:     plan.Interface,
+		CIDR:              plan.CIDR,
+		Scope:             plan.Scope,
+		LinkIndex:         plan.LinkIndex,
+		LinkKind:          plan.LinkKind,
+		AppearedAfterCore: plan.AppearedAfterCore,
+		Owner:             netexecutor.OwnerTunAddress,
+	}
+}
+
+func tunAddressTarget(plan planner.TunAddressPlan) string {
+	return fmt.Sprintf("%s@ifindex=%d:%s", plan.Interface, plan.LinkIndex, plan.CIDR)
 }
 
 func tunDesiredOwner(action string) string {
@@ -115,7 +159,7 @@ func tunDesiredOwner(action string) string {
 
 func tunRollbackOwnsLink(action string) bool {
 	switch strings.ToLower(strings.TrimSpace(action)) {
-	case "", "create", "add":
+	case "create", "add":
 		return true
 	default:
 		return false

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
@@ -36,6 +37,18 @@ func tunLifecycleFailureClassification(phase string, cause error) tundiag.Classi
 		return tundiag.ClassCancelled
 	case errors.Is(cause, context.DeadlineExceeded):
 		return tundiag.ClassTimeout
+	case errors.Is(cause, netexecutor.ErrTunAddressConflict):
+		return tundiag.ClassTunAddressConflict
+	case errors.Is(cause, netexecutor.ErrTunAddressApply):
+		return tundiag.ClassTunAddressApplyFailure
+	case errors.Is(cause, netexecutor.ErrTunAddressVerify), errors.Is(cause, netexecutor.ErrTunLinkIdentityMismatch):
+		return tundiag.ClassTunAddressVerifyFailure
+	case errors.Is(cause, netexecutor.ErrResolvedLinkNotReady):
+		return tundiag.ClassResolvedLinkNotReady
+	case errors.Is(cause, netexecutor.ErrResolvedLinkQueryFailure):
+		return tundiag.ClassResolvedLinkQueryFailure
+	case errors.Is(cause, errSystemResolverFailure):
+		return tundiag.ClassSystemResolverFailure
 	}
 	switch strings.TrimSpace(phase) {
 	case "network-apply":

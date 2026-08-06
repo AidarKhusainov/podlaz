@@ -27,10 +27,29 @@ type Route struct {
 	Status      Status `json:"status"`
 	Family      string `json:"family,omitempty"`
 	Destination string `json:"destination,omitempty"`
+	Table       string `json:"table,omitempty"`
 	Interface   string `json:"interface,omitempty"`
 	Gateway     string `json:"gateway,omitempty"`
 	Raw         string `json:"raw,omitempty"`
 	Detail      string `json:"detail,omitempty"`
+}
+
+type IPAddress struct {
+	Family    string `json:"family,omitempty"`
+	Interface string `json:"interface"`
+	CIDR      string `json:"cidr"`
+	Scope     string `json:"scope,omitempty"`
+	Raw       string `json:"raw,omitempty"`
+}
+
+type IPAddressInventory struct {
+	Inspection Finding     `json:"inspection"`
+	Addresses  []IPAddress `json:"addresses,omitempty"`
+}
+
+type RouteInventory struct {
+	Inspection Finding `json:"inspection"`
+	Routes     []Route `json:"routes,omitempty"`
 }
 
 type ResolvedLink struct {
@@ -102,6 +121,8 @@ type Snapshot struct {
 	Nftables       Nftables              `json:"nftables"`
 	TunDevices     []TunDevice           `json:"tun_devices"`
 	PolicyRouting  []PolicyRoutingSignal `json:"policy_routing,omitempty"`
+	IPv4Addresses  IPAddressInventory    `json:"ipv4_addresses"`
+	IPv4Routes     RouteInventory        `json:"ipv4_routes"`
 	IPv4           Finding               `json:"ipv4"`
 	IPv6           Finding               `json:"ipv6"`
 	StaleResources []StaleResource       `json:"stale_resources"`

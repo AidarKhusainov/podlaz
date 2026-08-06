@@ -468,7 +468,7 @@ cleanup_e2e_sentinels() {
 }
 
 purge_package() {
-  local status=0 package_state
+  local status=0 package_state package_was_present=false
   if [[ "${PODLAZ_E2E_PURGE_PACKAGE}" != "true" ]]; then
     record_cleanup_evidence package_purged false
     return 0
@@ -477,12 +477,17 @@ purge_package() {
   capture_status package_state inspect_package_state podlaz
   case "${package_state}" in
     0) ;;
-    1) timeout --signal=TERM --kill-after=10s 90s sudo -n apt purge -y podlaz >/dev/null 2>&1 || status=1 ;;
+    1)
+      package_was_present=true
+      timeout --signal=TERM --kill-after=10s 90s sudo -n apt purge -y podlaz >/dev/null 2>&1 || status=1
+      ;;
     *) status=1; cleanup_error "teardown: package state inspection failed before purge" ;;
   esac
 
   if command -v deb-systemd-helper >/dev/null 2>&1; then
-    sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || status=1
+    if ! sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1; then
+      [[ "${package_was_present}" == "false" ]] || status=1
+    fi
   fi
   sudo -n systemctl daemon-reload >/dev/null 2>&1 || status=1
   sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true

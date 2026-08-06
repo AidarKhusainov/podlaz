@@ -14,6 +14,7 @@ const (
 
 	TunTunnelMode       = "full-tunnel"
 	DefaultTunMTU       = 1500
+	DefaultTunIPv4CIDR  = "198.18.0.1/32"
 	TunRoutingTable     = "podlaz"
 	TunRoutingTableID   = 51820
 	TunRulePriority     = 10000
@@ -27,6 +28,12 @@ const (
 	DNSActionBlocked          = "blocked"
 	DNSRollbackRestore        = "restore previous per-link DNS state where possible"
 	DefaultTunDNSServer       = "1.1.1.1"
+
+	TunAddressActionAssign           = "assign"
+	TunAddressActionBlocked          = "blocked"
+	TunAddressActionDaemonRecheck    = "daemon-recheck"
+	TunAddressConflictClassification = "tun_address_conflict"
+	TunAddressOwner                  = "podlaz:tun-address"
 
 	FirewallBackendNftables    = "nftables"
 	FirewallTableAction        = "create"
@@ -67,6 +74,23 @@ type TunDevicePlan struct {
 	MTU    int
 	Action string
 	Reason string
+}
+
+type TunAddressPlan struct {
+	Family             string
+	Interface          string
+	CIDR               string
+	Scope              string
+	Action             string
+	Reason             string
+	Classification     string
+	Owner              string
+	RollbackKey        string
+	LinkIndex          int
+	LinkKind           string
+	AppearedAfterCore  bool
+	AllowOwnedExisting bool
+	AllowMissingLink   bool
 }
 
 type TunRoutePlan struct {
@@ -146,6 +170,7 @@ type TunPlan struct {
 	ProfileName   string
 	Snapshot      snapshot.Snapshot
 	TunDevice     TunDevicePlan
+	TunAddress    TunAddressPlan
 	Routes        []TunRoutePlan
 	PolicyRules   []TunPolicyRulePlan
 	ServerBypass  TunRoutePlan
@@ -166,7 +191,8 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 		return TunPlan{}, err
 	}
 
-	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "create", Reason: "stable podlaz full-tunnel interface"}
+	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "verify", Reason: "Xray owns TUN link creation and lifetime; podlazd verifies the existing link before L3 mutations"}
+	address := tunAddressPlan(s, device)
 	serverIP := concreteServerBypassIP(s)
 	serverBypass := serverBypassRoute(s, serverIP)
 	routes := []TunRoutePlan{{
@@ -204,13 +230,15 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 	warnings := append([]string{}, s.Warnings...)
 	warnings = append(warnings, tunSnapshotWarnings(s)...)
 	warnings = append(warnings, tunDesiredStateWarnings(s, serverIP)...)
+	warnings = append(warnings, tunAddressPlanWarnings(address)...)
 	warnings = append(warnings, dnsPlanWarnings(s, dnsPlan)...)
 	warnings = append(warnings, firewallPlanWarnings(s, firewallPlan)...)
 	warnings = append(warnings, loopRisks...)
 
 	steps := []string{
 		"Collect current host networking snapshot without requiring root",
-		fmt.Sprintf("Plan TUN interface %s with MTU %d", device.Name, device.MTU),
+		fmt.Sprintf("Plan Xray-owned TUN interface %s with MTU %d and daemon-side identity verification", device.Name, device.MTU),
+		fmt.Sprintf("Plan daemon-owned IPv4 address %s on %s", address.CIDR, address.Interface),
 		fmt.Sprintf("Plan routing table %s (%d) with IPv4 default route through %s", TunRoutingTable, TunRoutingTableID, device.Name),
 	}
 	if serverIP != "" {
@@ -230,6 +258,7 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 		ProfileName:   p.Name,
 		Snapshot:      s,
 		TunDevice:     device,
+		TunAddress:    address,
 		Routes:        routes,
 		PolicyRules:   policyRules,
 		ServerBypass:  serverBypass,
@@ -238,8 +267,95 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 		LoopRisks:     loopRisks,
 		Warnings:      compactWarnings(warnings),
 		Steps:         steps,
-		RollbackSteps: rollbackSteps(device, routes, policyRules, dnsPlan, firewallPlan),
+		RollbackSteps: rollbackSteps(address, routes, policyRules, dnsPlan, firewallPlan),
 	}, nil
+}
+
+// PlanTunAddress classifies the deterministic daemon-owned TUN address against
+// one authoritative host snapshot. It is used by daemon preflight both before
+// and after explicitly permitted handoff/recovery mutations.
+func PlanTunAddress(s snapshot.Snapshot) TunAddressPlan {
+	return tunAddressPlan(s, TunDevicePlan{Name: snapshot.DefaultTunName})
+}
+
+func tunAddressPlan(s snapshot.Snapshot, device TunDevicePlan) TunAddressPlan {
+	plan := TunAddressPlan{
+		Family:      "ipv4",
+		Interface:   device.Name,
+		CIDR:        DefaultTunIPv4CIDR,
+		Scope:       "global",
+		Action:      TunAddressActionAssign,
+		Reason:      "assign the deterministic podlaz-owned point address required for Linux link-scoped DNS",
+		Owner:       TunAddressOwner,
+		RollbackKey: device.Name + "/" + DefaultTunIPv4CIDR,
+		LinkKind:    "tun",
+	}
+	if s.IPv4Addresses.Inspection.Status != snapshot.StatusDetected || s.IPv4Routes.Inspection.Status != snapshot.StatusDetected {
+		plan.Action = TunAddressActionDaemonRecheck
+		plan.Reason = fmt.Sprintf("IPv4 address/route collision inspection is incomplete (addresses=%s routes=%s); the privileged daemon must inspect again before mutation", s.IPv4Addresses.Inspection.Status, s.IPv4Routes.Inspection.Status)
+		return plan
+	}
+	if conflict := tunAddressConflict(s, DefaultTunIPv4CIDR); conflict != "" {
+		plan.Action = TunAddressActionBlocked
+		plan.Classification = TunAddressConflictClassification
+		plan.Reason = conflict
+	}
+	return plan
+}
+
+func tunAddressConflict(s snapshot.Snapshot, desiredCIDR string) string {
+	desiredIP, desiredNet, err := net.ParseCIDR(desiredCIDR)
+	if err != nil || desiredIP.To4() == nil {
+		return "invalid product TUN IPv4 address policy"
+	}
+	for _, address := range s.IPv4Addresses.Addresses {
+		addressIP, addressNet, parseErr := net.ParseCIDR(strings.TrimSpace(address.CIDR))
+		if parseErr != nil || addressIP.To4() == nil {
+			return fmt.Sprintf("IPv4 address inventory contains an invalid entry on %s; refusing to infer absence", address.Interface)
+		}
+		if addressNet.Contains(desiredIP) || desiredNet.Contains(addressIP) {
+			return fmt.Sprintf("selected TUN address %s conflicts with assigned address %s on %s", desiredCIDR, address.CIDR, address.Interface)
+		}
+	}
+	for _, route := range s.IPv4Routes.Routes {
+		destination := strings.TrimSpace(route.Destination)
+		if destination == "" || destination == "default" || destination == "0.0.0.0/0" {
+			continue
+		}
+		_, routeNet, parseErr := net.ParseCIDR(destination)
+		if parseErr != nil {
+			return fmt.Sprintf("IPv4 route inventory contains an invalid destination in table %s; refusing to infer absence", fallbackRouteTable(route.Table))
+		}
+		if routeNet.Contains(desiredIP) || desiredNet.Contains(routeNet.IP) {
+			return fmt.Sprintf("selected TUN address %s conflicts with route %s in table %s via %s", desiredCIDR, destination, fallbackRouteTable(route.Table), fallbackRouteInterface(route.Interface))
+		}
+	}
+	return ""
+}
+
+func fallbackRouteTable(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "main"
+	}
+	return strings.TrimSpace(value)
+}
+
+func fallbackRouteInterface(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "<none>"
+	}
+	return strings.TrimSpace(value)
+}
+
+func tunAddressPlanWarnings(plan TunAddressPlan) []string {
+	switch plan.Action {
+	case TunAddressActionBlocked:
+		return []string{"TUN address desired state is blocked: " + plan.Reason}
+	case TunAddressActionDaemonRecheck:
+		return []string{"TUN address collision state requires daemon re-check: " + plan.Reason}
+	default:
+		return nil
+	}
 }
 
 func serverBypassRoute(s snapshot.Snapshot, serverIP string) TunRoutePlan {
@@ -474,7 +590,7 @@ func tunDesiredStateWarnings(s snapshot.Snapshot, serverIP string) []string {
 	var warnings []string
 	for _, device := range s.TunDevices {
 		if device.Name == snapshot.DefaultTunName && device.Status == snapshot.StatusDetected {
-			warnings = append(warnings, fmt.Sprintf("podlaz TUN device %s already exists; recover or validate ownership before applying the planned create step", device.Name))
+			warnings = append(warnings, fmt.Sprintf("podlaz TUN device %s already exists; daemon apply must validate Xray ownership before L3 mutations", device.Name))
 		}
 	}
 	if s.DefaultIPv4.Status == snapshot.StatusDetected && s.DefaultIPv4.Interface == snapshot.DefaultTunName {
@@ -542,7 +658,7 @@ func firstIPFromRoute(route snapshot.Route) string {
 	return ""
 }
 
-func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolicyRulePlan, dns TunDNSPlan, firewall TunFirewallPlan) []string {
+func rollbackSteps(address TunAddressPlan, routes []TunRoutePlan, rules []TunPolicyRulePlan, dns TunDNSPlan, firewall TunFirewallPlan) []string {
 	steps := make([]string, 0, len(routes)+len(rules)+len(dns.RollbackSteps)+len(firewall.RollbackSteps)+1)
 	steps = append(steps, firewall.RollbackSteps...)
 	steps = append(steps, dns.RollbackSteps...)
@@ -557,7 +673,9 @@ func rollbackSteps(device TunDevicePlan, routes []TunRoutePlan, rules []TunPolic
 		}
 		steps = append(steps, rollbackRouteStep(route))
 	}
-	steps = append(steps, fmt.Sprintf("Delete TUN interface %s only if this transaction created it and ownership matches podlaz", device.Name))
+	if address.CIDR != "" && address.Interface != "" {
+		steps = append(steps, fmt.Sprintf("Remove exact daemon-owned TUN address %s from %s only when transaction and link identity match", address.CIDR, address.Interface))
+	}
 	return steps
 }
 

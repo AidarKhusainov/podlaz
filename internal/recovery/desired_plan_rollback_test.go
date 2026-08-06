@@ -1,6 +1,8 @@
 package recovery
 
 import (
+	"time"
+
 	"testing"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -8,45 +10,56 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestRecoveryRollbackMetadataSynthesizesOnlyReservedPodlazState(t *testing.T) {
+func TestRecoveryRollbackMetadataUsesBoundDesiredAddressOnlyAfterMutationCanStart(t *testing.T) {
+	base := txstate.NewTransaction("tx-address-crash", "profile-1", planner.ModeTun, time.Now().UTC())
+	base.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family:            "ipv4",
+		InterfaceName:     managedInterface,
+		CIDR:              planner.DefaultTunIPv4CIDR,
+		Scope:             "global",
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             netexecutor.OwnerTunAddress,
+	}
+
+	planned := base
+	planned.State = txstate.TransactionPlanned
+	if got := recoveryRollbackMetadata(planned); len(got.TUNAddresses) != 0 {
+		t.Fatalf("planned intent must not grant address rollback authority: %#v", got.TUNAddresses)
+	}
+
+	applying := base
+	applying.State = txstate.TransactionApplying
+	got := recoveryRollbackMetadata(applying)
+	if len(got.TUNAddresses) != 1 || got.TUNAddresses[0].LinkIndex != 7 || got.TUNAddresses[0].CIDR != planner.DefaultTunIPv4CIDR {
+		t.Fatalf("applying bound identity must become an inspection-gated address candidate: %#v", got.TUNAddresses)
+	}
+}
+
+func TestRecoveryRollbackMetadataDoesNotSynthesizeDesiredNetworkOwnership(t *testing.T) {
 	tx := txstate.Transaction{
+		State: txstate.TransactionPlanned,
 		DesiredPlan: txstate.DesiredPlan{
 			TUN: txstate.TUNDesiredState{InterfaceName: managedInterface, Owner: "xray:tun-inbound"},
 			Routes: []txstate.RoutePlan{
 				{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute, Operation: "add"},
-				{Table: planner.MainRoutingTable, CIDR: "203.0.113.10/32", Via: "192.0.2.1", Dev: "eth0", Owner: netexecutor.OwnerRoute, Operation: "add"},
 			},
-			DNS: txstate.DNSPlan{Backend: planner.DNSBackendSystemdResolved, Link: managedInterface, SearchDomains: []string{"~."}, Owner: txstate.TransactionOwner},
-			NFT: txstate.NFTPlan{Family: managedNFTFamily, Table: managedNFTTableName, Owner: netexecutor.OwnerFirewall},
-			Steps: []txstate.PlannedStep{
-				{Kind: "policy-rule", Target: "priority 9999 to 203.0.113.10/32 lookup main", Owner: netexecutor.OwnerPolicyRule},
-				{Kind: "policy-rule", Target: "priority 10000 from all lookup podlaz", Owner: netexecutor.OwnerPolicyRule},
-			},
-		},
-		Rollback: txstate.RollbackMetadata{
-			GeneratedConfigs: []txstate.GeneratedConfigRollback{{Path: "/run/podlaz/generated/xray.json", Owner: txstate.TransactionOwner}},
-			ChildProcesses:   []txstate.ChildProcessRollback{{PID: 1234, Label: "xray", Owner: txstate.TransactionOwner}},
+			DNS:   txstate.DNSPlan{Backend: planner.DNSBackendSystemdResolved, Link: managedInterface, SearchDomains: []string{"~."}, Owner: netexecutor.OwnerDNS},
+			NFT:   txstate.NFTPlan{Family: managedNFTFamily, Table: managedNFTTableName, Owner: netexecutor.OwnerFirewall},
+			Steps: []txstate.PlannedStep{{Kind: "policy-rule", Target: "priority 10000 from all lookup podlaz", Owner: netexecutor.OwnerPolicyRule}},
 		},
 	}
 
-	got := recoveryRollbackMetadata(tx)
-	if len(got.TUN) != 0 {
-		t.Fatalf("Xray-owned TUN link must not be synthesized as daemon-owned rollback: %#v", got.TUN)
-	}
-	if len(got.Routes) != 1 || got.Routes[0].Table != planner.TunRoutingTable {
-		t.Fatalf("only the reserved podlaz route may be synthesized: %#v", got.Routes)
-	}
-	if len(got.PolicyRules) != 1 || got.PolicyRules[0].Priority != planner.TunRulePriority || got.PolicyRules[0].Table != planner.TunRoutingTable {
-		t.Fatalf("only the reserved podlaz policy rule may be synthesized: %#v", got.PolicyRules)
-	}
-	if len(got.DNS) != 1 || len(got.NFTables) != 1 {
-		t.Fatalf("expected guarded DNS and nftables recovery metadata: %#v", got)
-	}
-	if got.DNS[0].Backend != normalizedSystemdResolvedBackend || got.DNS[0].Link != managedInterface {
-		t.Fatalf("unexpected normalized DNS rollback metadata: %#v", got.DNS)
-	}
-	if len(got.GeneratedConfigs) != 1 || len(got.ChildProcesses) != 1 {
-		t.Fatalf("existing process/config rollback metadata must be preserved: %#v", got)
+	for _, state := range []txstate.TransactionState{txstate.TransactionPlanned, txstate.TransactionApplying, txstate.TransactionApplied, txstate.TransactionVerifying, txstate.TransactionCommitted} {
+		t.Run(string(state), func(t *testing.T) {
+			candidate := tx
+			candidate.State = state
+			got := recoveryRollbackMetadata(candidate)
+			if len(got.Routes) != 0 || len(got.PolicyRules) != 0 || len(got.DNS) != 0 || len(got.NFTables) != 0 {
+				t.Fatalf("desired intent granted network cleanup authority in %s: %#v", state, got)
+			}
+		})
 	}
 }
 
@@ -62,5 +75,52 @@ func TestRecoveryRollbackMetadataRejectsForeignDesiredTargets(t *testing.T) {
 	got := recoveryRollbackMetadata(tx)
 	if got.Available() {
 		t.Fatalf("foreign or unowned desired targets must not become rollback metadata: %#v", got)
+	}
+}
+
+func TestRecoveryRollbackMetadataFailClosesPlannedNetworkRollback(t *testing.T) {
+	tx := txstate.NewTransaction("tx-planned-rollback", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionPlanned
+	tx.Rollback.Routes = []txstate.RouteRollback{{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute}}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func TestRecoveryRollbackMetadataFailClosesApplyingDesiredRollbackMismatch(t *testing.T) {
+	tx := txstate.NewTransaction("tx-applying-mismatch", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionApplying
+	tx.DesiredPlan.Routes = []txstate.RoutePlan{{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute, Operation: "add"}}
+	tx.Rollback.Routes = []txstate.RouteRollback{{Table: planner.TunRoutingTable, CIDR: "203.0.113.10/32", Dev: managedInterface, Owner: netexecutor.OwnerRoute}}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func TestRecoveryRollbackMetadataFailClosesAppliedRollbackWithoutExactStep(t *testing.T) {
+	tx := txstate.NewTransaction("tx-applied-no-step", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionApplied
+	tx.Rollback.Routes = []txstate.RouteRollback{{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute}}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func TestRecoveryRollbackMetadataFailClosesDuplicateRollbackCountMismatch(t *testing.T) {
+	tx := txstate.NewTransaction("tx-duplicate-mismatch", "profile-1", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionApplied
+	tx.AppliedSteps = []txstate.AppliedStep{{Kind: "route", Target: planner.TunRoutingTable + " default", Owner: netexecutor.OwnerRoute, AppliedAt: time.Now().UTC()}}
+	tx.Rollback.Routes = []txstate.RouteRollback{
+		{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute},
+		{Table: planner.TunRoutingTable, CIDR: "default", Dev: managedInterface, Owner: netexecutor.OwnerRoute},
+	}
+
+	assertMutationFreeOwnershipBlocker(t, recoveryRollbackMetadata(tx))
+}
+
+func assertMutationFreeOwnershipBlocker(t *testing.T, metadata txstate.RollbackMetadata) {
+	t.Helper()
+	if len(metadata.TUN) != 0 || len(metadata.TUNAddresses) != 0 || len(metadata.Routes) != 0 || len(metadata.PolicyRules) != 0 || len(metadata.DNS) != 0 || len(metadata.NFTables) != 0 {
+		t.Fatalf("expected inconsistent ownership to authorize zero network mutations, got %#v", metadata)
+	}
+	if len(metadata.ChildProcesses) == 0 {
+		t.Fatalf("expected ownership blocker marker to preserve transaction/config metadata, got %#v", metadata)
 	}
 }

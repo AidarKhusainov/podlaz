@@ -193,11 +193,21 @@ rules, DNS settings, nftables, or firewall state.
 .PP
 During TUN connect, the daemon verifies native Xray TUN support before opening
 a transaction, then records generated config rollback metadata, starts Xray,
-verifies the Xray-owned TUN link, applies podlaz-owned host networking state,
-verifies connectivity, and commits only after those checks pass. Resolved DNS
+verifies that the Xray-owned TUN link appeared after the tracked child and
+binds its name, ifindex, and TUN type, assigns the daemon-owned
+.B 198.18.0.1/32
+address, applies podlaz-owned host networking state, verifies connectivity, and
+commits only after those checks pass. Xray remains the only owner of link
+creation and lifetime. Resolved DNS
 verification requires every planned DNS server, the route-only domain
 .B ~.,
-and DNS default-route evidence.
+and DNS default-route evidence. It then requires the exact address on the same
+UP link identity, an uncached IPv4
+.B resolvectl
+query bound to
+.BR podlaz0 ,
+a separate normal resolver lookup, and a TUN route for at least one returned
+IPv4 address.
 .B Current Scopes
 is derived resolver runtime state and is not an acceptance criterion.
 .PP
@@ -216,7 +226,12 @@ or
 .BR network_verify_failure ;
 overall status words such as
 .B unhealthy
-are never used as classifications. The report is saved with rollback status
+are never used as classifications. Address-specific failures use
+.BR tun_address_conflict ,
+.BR tun_address_apply_failure ,
+or
+.BR tun_address_verify_failure ;
+resolved readiness, scoped-query, and normal resolver failures remain separate. The report is saved with rollback status
 .B pending
 and finalized atomically to
 .B completed
@@ -244,11 +259,16 @@ exit status 1 with empty stdout and the exact bounded supported
 .B No such device
 stderr. Caller cancellation or deadline, launch failure, signal termination,
 permission denial, another exit code, unrelated exit status 1, unexpected
-stdout, or different/unbounded stderr remains a failure. This rule is shared by
+stdout, or different/unbounded stderr remains a failure. The exact Ubuntu 24.04
+line containing
+.BR ", ignoring: No such device"
+is supported under the same strict envelope. This rule is shared by
 direct stale-link cleanup and persisted transaction DNS rollback.
 .PP
-After connect, disconnect, rollback, or recovery, the daemon refreshes its
-startup-scan publication. Cleanup-complete terminal transaction history may
+After connect, disconnect, rollback, or recovery, the daemon performs a bounded
+authoritative refresh of its startup-scan publication. A newer successful scan
+replaces older candidates; timeout or failure publishes incomplete/unknown
+status and must not produce top-level recovery success. Cleanup-complete terminal transaction history may
 remain visible but is non-blocking. A cleanup-required transaction or stale scan
 candidate must not reject an immediate subsequent TUN connect. The runtime root
 .I /run/podlaz

@@ -146,7 +146,18 @@ General TUN fault-injection coverage is opt-in. The general workflow job exits w
 
 When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd drop-in and runs bounded packaged scenarios for DNS apply failure, route apply failure, post-production network verification failure, synthetic `Current Scopes: none`, and pre-commit interruption. It also runs real-subprocess resolved matrices, proves diagnostic persistence precedes rollback, reloads historical diagnostics after daemon restart, retries immediately, verifies clean lifecycle publication, preserves a foreign nftables sentinel, scans artifacts for configured sensitive values, and removes E2E-only state during cleanup.
 
-`scripts/e2e/tun-package-convergence.sh` is a separate release-like gate. It builds, installs, and reinstalls the branch `.deb`; verifies package and running-daemon provenance; executes the inactive-scope and real missing-link acceptance cases; deletes real `podlaz0` and releases the daemon hook without issuing a manual revert; waits for the failed connect and production rollback to finish; then checks the private capture of that exact production `resolvectl revert` exit code and raw stdout/stderr byte-for-byte. Capture is enabled only for the rollback delegate, remains outside uploaded artifacts, and fails rollback closed if capture cannot be persisted. The scenario persists only normalized summaries and delegates failure-path cleanup to the same conservative teardown helper used by the workflow's `always` step.
+`scripts/e2e/tun-package-convergence.sh` is a separate release-like gate. It
+builds, installs, and reinstalls the branch `.deb`; verifies package and
+running-daemon provenance; proves that a foreign `198.18.0.1/32` conflict blocks
+before podlaz mutation; verifies the exact address is present once on `podlaz0`;
+performs an uncached interface-scoped DNS query whose result identifies
+`podlaz0`; executes the inactive-scope and real missing-link acceptance cases; deletes real `podlaz0` and releases the daemon hook without issuing a manual revert; waits for the failed connect and production rollback to finish; then checks the private capture of that exact production `resolvectl revert`
+exit code and raw stdout/stderr byte-for-byte. The fault-injection scenario also
+fails immediately after real TUN address mutation, requires the exact ownership
+step and `tun_address_apply_failure`, proves address/routes/rules/DNS/nftables
+absence and no cleanup-required transaction before any restart or explicit
+recovery, then reconnects and disconnects on the same `podlazd` and
+`systemd-resolved` lifecycle and proves clean state again. Capture is enabled only for the rollback delegate, remains outside uploaded artifacts, and fails rollback closed if capture cannot be persisted. The scenario persists only normalized summaries and delegates failure-path cleanup to the same conservative teardown helper used by the workflow's `always` step.
 
 The hook event log contains only fixed lifecycle markers used to prove diagnostic/rollback ordering. It must not contain profile material, command output, addresses, or generated configuration. Raw production rollback capture files remain in the private hook directory and are removed before artifact scanning.
 

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,13 +42,26 @@ var controlledPodlazRecover = func(ctx context.Context, runtimeDir string) error
 var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot.StaleResource {
 	ipPath, err := exec.LookPath("ip")
 	if err != nil {
-		return nil
+		return []netsnapshot.StaleResource{{Kind: "runtime-inspection", Name: "ip", Status: netsnapshot.StatusUnknown, Detail: "ip command is unavailable: " + err.Error()}}
 	}
 	var resources []netsnapshot.StaleResource
-	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "route", "show", "table", netsnapshot.DefaultRouteTableID); ok && strings.TrimSpace(out) != "" {
-		resources = append(resources, netsnapshot.StaleResource{Kind: "route-table", Name: netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusDetected, Detail: firstNonEmptyLine(out)})
+	routeTable := inspectPodlazRouteTable(ctx, ipPath)
+	switch {
+	case routeTable.UnknownDetail != "":
+		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "route-table-" + netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusUnknown, Detail: routeTable.UnknownDetail})
+	case routeTable.Missing:
+		// A supported iproute2 missing-table result is authoritative absence: a
+		// clean host has no podlaz-owned route residue in table 51820.
+	default:
+		for _, rawLine := range strings.Split(routeTable.Output, "\n") {
+			line := strings.TrimSpace(rawLine)
+			if line == "" {
+				continue
+			}
+			resources = append(resources, netsnapshot.StaleResource{Kind: "route", Name: staleRouteResourceName(line), Status: netsnapshot.StatusDetected, Detail: line})
+		}
 	}
-	if out, ok := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
+	if out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-4", "rule", "show"); ok {
 		for _, line := range strings.Split(out, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || !podlazPolicyRuleLine(line) {
@@ -55,8 +69,49 @@ var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot
 			}
 			resources = append(resources, netsnapshot.StaleResource{Kind: "policy-rule", Name: policyRuleName(line), Status: netsnapshot.StatusDetected, Detail: line})
 		}
+	} else {
+		resources = append(resources, netsnapshot.StaleResource{Kind: "runtime-inspection", Name: "policy-rules", Status: netsnapshot.StatusUnknown, Detail: detail})
 	}
 	return resources
+}
+
+type routeTableInspection struct {
+	Output        string
+	Missing       bool
+	UnknownDetail string
+}
+
+func inspectPodlazRouteTable(ctx context.Context, ipPath string) routeTableInspection {
+	args := []string{"-4", "route", "show", "table", netsnapshot.DefaultRouteTableID}
+	cmd := exec.CommandContext(ctx, ipPath, args...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return routeTableInspection{Output: strings.TrimSpace(stdout.String())}
+	}
+	if supportedMissingRouteTableResult(err, stdout.String(), stderr.String()) {
+		return routeTableInspection{Missing: true}
+	}
+	raw := strings.TrimSpace(strings.Join(compactStrings([]string{stdout.String(), stderr.String()}), "\n"))
+	return routeTableInspection{UnknownDetail: fmt.Sprintf("%s %s failed: %v: %s", ipPath, strings.Join(args, " "), err, raw)}
+}
+
+func supportedMissingRouteTableResult(err error, stdout, stderr string) bool {
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 || stdout != "" {
+		return false
+	}
+	normalized := strings.ReplaceAll(stderr, "\r\n", "\n")
+	switch normalized {
+	case "Error: ipv4: FIB table does not exist.\nDump terminated\n",
+		"Error: FIB table does not exist.\nDump terminated\n":
+		return true
+	default:
+		return false
+	}
 }
 
 type tunHandoffBlocker struct {
@@ -173,7 +228,7 @@ func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResourc
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	resources := make([]netsnapshot.StaleResource, 0, len(summaries)+len(warnings))
 	for _, summary := range summaries {
-		if !summary.RequiresCleanup {
+		if !summary.RequiresRecovery {
 			continue
 		}
 		name := strings.TrimSpace(filepath.Base(summary.Path))
@@ -288,7 +343,7 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 		resources = append(resources, value)
 	}
 	for _, resource := range s.StaleResources {
-		if resource.Status == netsnapshot.StatusDetected {
+		if resource.Status == netsnapshot.StatusDetected || resource.Status == netsnapshot.StatusUnknown {
 			add(resource.Kind, resource.Name)
 		}
 	}
@@ -306,7 +361,7 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 		}
 		switch signal.Kind {
 		case "route":
-			add("route-table", firstNonEmpty(signal.Table, netsnapshot.DefaultRouteTableID))
+			add("route", firstNonEmpty(staleRouteResourceName(signal.Raw), signal.Table, netsnapshot.DefaultRouteTableID))
 		case "rule":
 			add("policy-rule", firstNonEmpty(signal.Priority, signal.Table, netsnapshot.DefaultRouteTableID))
 		}
@@ -353,12 +408,27 @@ func policyRuleName(line string) string {
 	return firstNonEmpty(priority, netsnapshot.DefaultRouteTableID)
 }
 
-func runReadOnlyCommand(ctx context.Context, name string, args ...string) (string, bool) {
+func staleRouteResourceName(line string) string {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return netsnapshot.DefaultRouteTableID
+	}
+	table := netsnapshot.DefaultRouteTableID
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "table" {
+			table = fields[i+1]
+			break
+		}
+	}
+	return strings.TrimSpace(table)
+}
+
+func runReadOnlyCommand(ctx context.Context, name string, args ...string) (string, bool, string) {
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
-		return "", false
+		return "", false, fmt.Sprintf("%s %s failed: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	return strings.TrimSpace(string(out)), true
+	return strings.TrimSpace(string(out)), true, ""
 }
 
 func firstNonEmptyLine(text string) string {

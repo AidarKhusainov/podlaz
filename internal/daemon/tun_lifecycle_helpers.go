@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -29,7 +31,30 @@ func (m *XrayManager) collectTunSnapshot(ctx context.Context, opts netsnapshot.O
 	if m.snapshotCollector != nil {
 		return m.snapshotCollector(ctx, opts)
 	}
-	return netsnapshot.Collect(ctx, opts)
+	return replaceTunSnapshotLinkIdentityEvidence(ctx, netsnapshot.Collect(ctx, opts))
+}
+
+func replaceTunSnapshotLinkIdentityEvidence(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
+	ipPath, err := exec.LookPath("ip")
+	if err != nil {
+		return s
+	}
+	for i := range s.TunDevices {
+		device := &s.TunDevices[i]
+		if device.Status != netsnapshot.StatusDetected || strings.TrimSpace(device.Name) == "" {
+			continue
+		}
+		out, ok, detail := runReadOnlyCommand(ctx, ipPath, "-details", "-o", "link", "show", "dev", device.Name)
+		if !ok || strings.TrimSpace(out) == "" {
+			device.Raw = ""
+			device.Detail = firstNonEmpty(detail, "authoritative detailed link identity inspection failed")
+			device.Status = netsnapshot.StatusUnknown
+			continue
+		}
+		device.Raw = firstNonEmptyLine(out)
+		device.Detail = ""
+	}
+	return s
 }
 
 func tunSnapshotOptionsForState(xrayState) netsnapshot.Options {

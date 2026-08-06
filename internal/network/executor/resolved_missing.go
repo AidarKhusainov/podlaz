@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	resolvedMissingLinkStderr    = `Failed to resolve interface "podlaz0": No such device`
-	maxResolvedMissingStderrSize = 512
+	resolvedMissingLinkStderr         = `Failed to resolve interface "podlaz0": No such device`
+	resolvedMissingLinkIgnoringStderr = `Failed to resolve interface "podlaz0", ignoring: No such device`
+	maxResolvedMissingStderrSize      = 512
 )
 
 type processExitCoder interface {
@@ -39,7 +40,8 @@ func resolvedCommandResultIsMissing(ctx context.Context, result CommandResult, e
 	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return exactTerminatedProtocolLine(result.RawStderr, resolvedMissingLinkStderr)
+	return exactTerminatedProtocolLine(result.RawStderr, resolvedMissingLinkStderr) ||
+		exactTerminatedProtocolLine(result.RawStderr, resolvedMissingLinkIgnoringStderr)
 }
 
 // exactTerminatedProtocolLine accepts only the exact protocol payload followed

@@ -11,8 +11,8 @@ func TestPlanStringExplainsDryRunInspectionSource(t *testing.T) {
 	got := plan.String()
 	for _, want := range []string{
 		"Inspection: read-only",
-		"uses daemon startup scan when available plus local safe checks",
-		"Local permission warnings can differ from daemon-owned --execute cleanup",
+		"uses the authoritative daemon scan when available",
+		"local safe checks only as a fallback",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected recovery dry-run output to contain %q, got %q", want, got)

@@ -265,3 +265,41 @@ func containsValue(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestParseIPv4AddressInventoryPreservesExactLinkCIDRAndScope(t *testing.T) {
+	inventory, err := ParseIPv4Addresses(`2: wlan0    inet 192.0.2.55/24 brd 192.0.2.255 scope global dynamic wlan0\       valid_lft 86399sec preferred_lft 86399sec
+7: podlaz0  inet 198.51.100.1/32 scope link podlaz0\       valid_lft forever preferred_lft forever`)
+	if err != nil {
+		t.Fatalf("parse IPv4 addresses: %v", err)
+	}
+	if len(inventory) != 2 {
+		t.Fatalf("expected two addresses, got %#v", inventory)
+	}
+	if inventory[1].Interface != "podlaz0" || inventory[1].CIDR != "198.51.100.1/32" || inventory[1].Scope != "link" {
+		t.Fatalf("unexpected TUN address parse: %#v", inventory[1])
+	}
+}
+
+func TestParseIPv4RouteInventoryPreservesTableAndDestination(t *testing.T) {
+	routes, err := ParseIPv4Routes(`default via 192.0.2.1 dev wlan0 table main proto dhcp
+198.18.0.0/15 dev eth1 table 100 scope link
+local 192.0.2.55 dev wlan0 table local scope host`)
+	if err != nil {
+		t.Fatalf("parse IPv4 routes: %v", err)
+	}
+	if len(routes) != 3 {
+		t.Fatalf("expected three routes, got %#v", routes)
+	}
+	if routes[1].Destination != "198.18.0.0/15" || routes[1].Interface != "eth1" || routes[1].Table != "100" {
+		t.Fatalf("unexpected route parse: %#v", routes[1])
+	}
+}
+
+func TestParseIPv4InventoryRejectsMalformedOperationalOutput(t *testing.T) {
+	if _, err := ParseIPv4Addresses("not-an-ip-address-line"); err == nil {
+		t.Fatal("expected malformed address inventory to fail closed")
+	}
+	if _, err := ParseIPv4Routes("unparseable route output"); err == nil {
+		t.Fatal("expected malformed route inventory to fail closed")
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
@@ -28,7 +29,8 @@ const (
 
 type tunRouteLookupFunc func(context.Context, string, string) error
 type tunTCPProbeFunc func(context.Context, string, uint16) error
-type tunDNSResolveFunc func(context.Context, string) (string, error)
+type tunDNSResolveFunc func(context.Context, string) ([]string, error)
+type tunScopedDNSResolveFunc func(context.Context, planner.TunAddressPlan, string) ([]string, error)
 
 type tunConnectivityProbeConfig struct {
 	RouteHost     string
@@ -41,8 +43,11 @@ type tunConnectivityProbeConfig struct {
 }
 
 var (
+	errSystemResolverFailure = errors.New("system resolver failed")
+
 	lookupTunRouteForProbe       = defaultLookupTunRouteForProbe
 	dialTunProbeTarget           = defaultDialTunProbeTarget
+	resolveTunDNSNameScoped      = defaultResolveTunDNSNameScoped
 	resolveTunDNSName            = defaultResolveTunDNSName
 	diagnosticDomainTokenPattern = regexp.MustCompile(`\b(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+(?:[A-Za-z]{2,63}|test)\b`)
 )
@@ -63,20 +68,63 @@ func verifyTunConnectivity(ctx context.Context, plan planner.TunPlan, core tunCo
 	}); err != nil {
 		return newTunVerificationError("tcp", fmt.Sprintf("Basic full-tunnel connectivity probe to %s:%d failed", probeHost, probe.TCPPort), err)
 	}
-	var resolvedIP string
+	if err := validateResolvedLinkReadiness(plan); err != nil {
+		return newTunVerificationError("resolved-link", "The planned TUN link is not ready for functional DNS verification", errors.Join(netexecutor.ErrResolvedLinkNotReady, err))
+	}
 	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
-		ip, err := resolveTunDNSName(probeCtx, probe.DNSName)
-		resolvedIP = ip
+		_, err := resolveTunDNSNameScoped(probeCtx, plan.TunAddress, probe.DNSName)
 		return err
 	}); err != nil {
-		return newTunVerificationError("dns", fmt.Sprintf("DNS through the tunnel did not resolve %s before timeout", probe.DNSName), err)
+		if errors.Is(err, netexecutor.ErrResolvedLinkNotReady) {
+			return newTunVerificationError("resolved-link", "The planned TUN link is not ready for functional DNS verification", err)
+		}
+		return newTunVerificationError("resolved-link-query", fmt.Sprintf("Uncached DNS query for %s through %s failed", probe.DNSName, plan.TunDevice.Name), errors.Join(netexecutor.ErrResolvedLinkQueryFailure, err))
+	}
+	var resolvedIPs []string
+	if err := runProbe(ctx, probe.DNSTimeout, func(probeCtx context.Context) error {
+		ips, err := resolveTunDNSName(probeCtx, probe.DNSName)
+		resolvedIPs = ips
+		return err
+	}); err != nil {
+		return newTunVerificationError("system-resolver", fmt.Sprintf("The system resolver did not resolve %s through the active TUN path", probe.DNSName), errors.Join(errSystemResolverFailure, err))
 	}
 	if err := runProbe(ctx, probe.RouteTimeout, func(probeCtx context.Context) error {
-		return lookupTunRouteForProbe(probeCtx, resolvedIP, plan.TunDevice.Name)
+		return verifyAnyResolvedIPv4UsesTunRoute(probeCtx, resolvedIPs, plan.TunDevice.Name)
 	}); err != nil {
-		return newTunVerificationError("dns-route", fmt.Sprintf("Full-tunnel route lookup for %s DNS result %s did not use the planned TUN path", probe.DNSName, resolvedIP), err)
+		return newTunVerificationError("dns-route", fmt.Sprintf("No IPv4 result for %s used the planned TUN path", probe.DNSName), err)
 	}
 	return nil
+}
+
+func verifyAnyResolvedIPv4UsesTunRoute(ctx context.Context, resolvedIPs []string, tunDevice string) error {
+	if len(resolvedIPs) == 0 {
+		return errors.New("system resolver returned no IPv4 results")
+	}
+	var routeErrors []error
+	for i, resolvedIP := range resolvedIPs {
+		attemptCtx := ctx
+		cancel := func() {}
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(deadline)
+			remainingAttempts := len(resolvedIPs) - i
+			if remaining <= 0 {
+				routeErrors = append(routeErrors, context.DeadlineExceeded)
+				break
+			}
+			attemptBudget := remaining / time.Duration(remainingAttempts)
+			if attemptBudget <= 0 {
+				attemptBudget = remaining
+			}
+			attemptCtx, cancel = context.WithTimeout(ctx, attemptBudget)
+		}
+		err := lookupTunRouteForProbe(attemptCtx, resolvedIP, tunDevice)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		routeErrors = append(routeErrors, fmt.Errorf("%s: %w", resolvedIP, err))
+	}
+	return errors.Join(routeErrors...)
 }
 
 func (c tunConnectivityProbeConfig) withDefaults() tunConnectivityProbeConfig {
@@ -147,17 +195,62 @@ func defaultDialTunProbeTarget(ctx context.Context, host string, port uint16) er
 	return conn.Close()
 }
 
-func defaultResolveTunDNSName(ctx context.Context, name string) (string, error) {
+func validateResolvedLinkReadiness(plan planner.TunPlan) error {
+	address := plan.TunAddress
+	if strings.TrimSpace(plan.TunDevice.Name) == "" || strings.TrimSpace(address.Interface) != strings.TrimSpace(plan.TunDevice.Name) {
+		return errors.New("planned TUN address interface does not match the TUN device")
+	}
+	if address.Family != "ipv4" || strings.TrimSpace(address.CIDR) == "" || address.Action != planner.TunAddressActionAssign {
+		return errors.New("planned daemon-owned IPv4 address is absent")
+	}
+	if address.LinkIndex <= 0 || address.LinkKind != "tun" || !address.AppearedAfterCore {
+		return errors.New("Xray-created TUN link identity is incomplete")
+	}
+	if address.Owner != netexecutor.OwnerTunAddress {
+		return errors.New("daemon-owned TUN address ownership is missing")
+	}
+	return nil
+}
+
+func defaultResolveTunDNSNameScoped(ctx context.Context, address planner.TunAddressPlan, name string) ([]string, error) {
+	return (netexecutor.TunDNSReadinessVerifier{Runner: netexecutor.OSRunner{}}).VerifyScoped(ctx, address, name)
+}
+
+func defaultResolveTunDNSName(ctx context.Context, name string) ([]string, error) {
 	ips, err := net.DefaultResolver.LookupIPAddr(ctx, name)
 	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w", name, err)
+		return nil, fmt.Errorf("resolve %s: %w", name, err)
 	}
+	const maxResolvedIPv4 = 16
+	resolved := boundedUniqueIPv4(ips, maxResolvedIPv4)
+	if len(resolved) == 0 {
+		return nil, fmt.Errorf("resolve %s returned no IPv4 address: %v", name, ips)
+	}
+	return resolved, nil
+}
+
+func boundedUniqueIPv4(ips []net.IPAddr, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, limit)
+	resolved := make([]string, 0, limit)
 	for _, ip := range ips {
-		if ipv4 := ip.IP.To4(); ipv4 != nil {
-			return ipv4.String(), nil
+		ipv4 := ip.IP.To4()
+		if ipv4 == nil {
+			continue
+		}
+		value := ipv4.String()
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		resolved = append(resolved, value)
+		if len(resolved) == limit {
+			break
 		}
 	}
-	return "", fmt.Errorf("resolve %s returned no IPv4 address: %v", name, ips)
+	return resolved
 }
 
 func containsAdjacentRouteFields(fields []string, key, value string) bool {

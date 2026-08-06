@@ -14,10 +14,48 @@ const dnsRouteOnlyDomain = "~."
 
 func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
-	if len(tx.Rollback.TUN) > 0 {
-		plan.TunDevice = planner.TunDevicePlan{Name: tx.Rollback.TUN[0].InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
+	if err := validateTunRollbackProjection(tx); err != nil {
+		plan.TunDevice = planner.TunDevicePlan{Name: "podlaz0", Action: "invalid-rollback-projection", Reason: err.Error()}
+		return plan
 	}
-	for _, route := range tx.Rollback.Routes {
+	rollback := tx.Rollback
+	if len(rollback.TUN) > 0 {
+		for _, tun := range rollback.TUN {
+			if !rollbackOwnerMatches(tun.Owner, netexecutor.OwnerTunDevice) {
+				continue
+			}
+			plan.TunDevice = planner.TunDevicePlan{Name: tun.InterfaceName, MTU: tx.DesiredPlan.TUN.MTU, Action: "add"}
+			if description := appliedStepDescription(tx.AppliedSteps, "tun-device", tun.InterfaceName, netexecutor.OwnerTunDevice); description != "" {
+				plan.TunDevice.Reason = description
+			}
+			break
+		}
+	}
+	if len(rollback.TUNAddresses) > 0 {
+		for _, address := range rollback.TUNAddresses {
+			if !rollbackOwnerMatches(address.Owner, netexecutor.OwnerTunAddress) {
+				continue
+			}
+			plan.TunAddress = planner.TunAddressPlan{
+				Family:             address.Family,
+				Interface:          address.InterfaceName,
+				CIDR:               address.CIDR,
+				Scope:              address.Scope,
+				Action:             planner.TunAddressActionAssign,
+				Owner:              address.Owner,
+				RollbackKey:        address.InterfaceName + "/" + address.CIDR,
+				LinkIndex:          address.LinkIndex,
+				LinkKind:           address.LinkKind,
+				AppearedAfterCore:  address.AppearedAfterCore,
+				AllowOwnedExisting: true,
+			}
+			break
+		}
+	}
+	for _, route := range rollback.Routes {
+		if !rollbackOwnerMatches(route.Owner, netexecutor.OwnerRoute) {
+			continue
+		}
 		plan.Routes = append(plan.Routes, planner.TunRoutePlan{
 			Family:      "ipv4",
 			Destination: route.CIDR,
@@ -27,13 +65,11 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 			Action:      "add",
 		})
 	}
-	for _, rule := range tx.Rollback.PolicyRules {
-		selector := strings.TrimSpace(rule.From)
-		if rule.To != "" {
-			selector = "to " + rule.To
-		} else if selector != "" && !strings.HasPrefix(selector, "from ") {
-			selector = "from " + selector
+	for _, rule := range rollback.PolicyRules {
+		if !rollbackOwnerMatches(rule.Owner, netexecutor.OwnerPolicyRule) {
+			continue
 		}
+		selector := policyRuleRollbackSelector(rule)
 		plan.PolicyRules = append(plan.PolicyRules, planner.TunPolicyRulePlan{
 			Family:   "ipv4",
 			Priority: rule.Priority,
@@ -42,39 +78,205 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 			Action:   "add",
 		})
 	}
-	if len(tx.Rollback.DNS) > 0 {
-		dns := tx.Rollback.DNS[0]
-		plan.DNS = planner.TunDNSPlan{
-			Backend:    dns.Backend,
-			TargetLink: dns.Link,
-			Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
-			Action:     planner.DNSActionConfigure,
-		}
-	} else if tx.DesiredPlan.DNS.Link != "" {
-		plan.DNS = planner.TunDNSPlan{
-			Backend:    tx.DesiredPlan.DNS.Backend,
-			TargetLink: tx.DesiredPlan.DNS.Link,
-			Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
-			Action:     planner.DNSActionConfigure,
+	if len(rollback.DNS) > 0 {
+		for _, dns := range rollback.DNS {
+			if !rollbackOwnerMatches(dns.Owner, netexecutor.OwnerDNS) {
+				continue
+			}
+			plan.DNS = planner.TunDNSPlan{
+				Backend:    dns.Backend,
+				TargetLink: dns.Link,
+				Servers:    append([]string{}, tx.DesiredPlan.DNS.Servers...),
+				Action:     planner.DNSActionConfigure,
+			}
+			break
 		}
 	}
-	if len(tx.Rollback.NFTables) > 0 {
-		nft := tx.Rollback.NFTables[0]
-		plan.Firewall = planner.TunFirewallPlan{
-			Backend:     planner.FirewallBackendNftables,
-			Family:      nft.Family,
-			Table:       nft.Table,
-			TableAction: planner.FirewallTableAction,
-		}
-	} else if tx.DesiredPlan.NFT.Table != "" {
-		plan.Firewall = planner.TunFirewallPlan{
-			Backend:     planner.FirewallBackendNftables,
-			Family:      tx.DesiredPlan.NFT.Family,
-			Table:       tx.DesiredPlan.NFT.Table,
-			TableAction: planner.FirewallTableAction,
+	if len(rollback.NFTables) > 0 {
+		for _, nft := range rollback.NFTables {
+			if !rollbackOwnerMatches(nft.Owner, netexecutor.OwnerFirewall) {
+				continue
+			}
+			plan.Firewall = planner.TunFirewallPlan{
+				Backend:     planner.FirewallBackendNftables,
+				Family:      nft.Family,
+				Table:       nft.Table,
+				TableAction: planner.FirewallTableAction,
+			}
+			break
 		}
 	}
 	return plan
+}
+
+func validateTunRollbackProjection(tx txstate.Transaction) error {
+	var reasons []string
+	if err := validateSingleRollbackCategory("TUN", len(tx.Rollback.TUN), func(i int) bool {
+		entry := tx.Rollback.TUN[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerTunDevice) && strings.TrimSpace(entry.InterfaceName) != ""
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateSingleRollbackCategory("TUN address", len(tx.Rollback.TUNAddresses), func(i int) bool {
+		entry := tx.Rollback.TUNAddresses[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerTunAddress) &&
+			entry.InterfaceName == "podlaz0" &&
+			strings.TrimSpace(entry.Family) == "ipv4" &&
+			strings.TrimSpace(entry.Scope) == "global" &&
+			strings.TrimSpace(entry.CIDR) == planner.DefaultTunIPv4CIDR &&
+			entry.LinkIndex > 0 && entry.LinkKind == "tun" && entry.AppearedAfterCore
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateRouteRollbackEntries(tx); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validatePolicyRuleRollbackEntries(tx); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateSingleRollbackCategory("DNS", len(tx.Rollback.DNS), func(i int) bool {
+		entry := tx.Rollback.DNS[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerDNS) && strings.TrimSpace(entry.Link) != ""
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if err := validateSingleRollbackCategory("nftables", len(tx.Rollback.NFTables), func(i int) bool {
+		entry := tx.Rollback.NFTables[i]
+		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerFirewall) && strings.TrimSpace(entry.Family) != "" && strings.TrimSpace(entry.Table) != ""
+	}); err != nil {
+		reasons = append(reasons, err.Error())
+	}
+	if len(reasons) > 0 {
+		return fmt.Errorf("ambiguous TUN rollback projection: %s", strings.Join(reasons, "; "))
+	}
+	return nil
+}
+
+func validateSingleRollbackCategory(name string, count int, valid func(int) bool) error {
+	if count == 0 {
+		return nil
+	}
+	if count != 1 {
+		return fmt.Errorf("%s rollback cardinality=%d, want 1", name, count)
+	}
+	if !valid(0) {
+		return fmt.Errorf("%s rollback entry is unsupported or incomplete", name)
+	}
+	return nil
+}
+
+func validateRouteRollbackEntries(tx txstate.Transaction) error {
+	seen := make(map[string]int)
+	for _, route := range tx.Rollback.Routes {
+		if !rollbackOwnerMatches(route.Owner, netexecutor.OwnerRoute) {
+			return fmt.Errorf("route rollback entry has unsupported owner")
+		}
+		if strings.TrimSpace(route.Table) == "" || strings.TrimSpace(route.CIDR) == "" {
+			return fmt.Errorf("route rollback entry is incomplete")
+		}
+		key := routeRollbackFullKey(route)
+		seen[key]++
+		if !routeRollbackMatchesDesired(tx.DesiredPlan.Routes, route) {
+			return fmt.Errorf("route rollback entry has no exact desired tuple: %s", key)
+		}
+		if appliedStepDescription(tx.AppliedSteps, "route", routeRollbackAppliedTarget(route), netexecutor.OwnerRoute) == "" {
+			return fmt.Errorf("route rollback entry has no matching applied proof: %s", key)
+		}
+	}
+	for key, count := range seen {
+		if count != 1 {
+			return fmt.Errorf("duplicate route rollback entry: %s", key)
+		}
+	}
+	return nil
+}
+
+func validatePolicyRuleRollbackEntries(tx txstate.Transaction) error {
+	seen := make(map[string]int)
+	for _, rule := range tx.Rollback.PolicyRules {
+		if !rollbackOwnerMatches(rule.Owner, netexecutor.OwnerPolicyRule) {
+			return fmt.Errorf("policy-rule rollback entry has unsupported owner")
+		}
+		if rule.Priority <= 0 || strings.TrimSpace(rule.Table) == "" {
+			return fmt.Errorf("policy-rule rollback entry is incomplete")
+		}
+		key := policyRuleRollbackTarget(rule)
+		seen[key]++
+		if !plannedStepExists(tx.DesiredPlan.Steps, "policy-rule", key, netexecutor.OwnerPolicyRule) {
+			return fmt.Errorf("policy-rule rollback entry has no exact desired step: %s", key)
+		}
+		if appliedStepDescription(tx.AppliedSteps, "policy-rule", key, netexecutor.OwnerPolicyRule) == "" {
+			return fmt.Errorf("policy-rule rollback entry has no matching applied proof: %s", key)
+		}
+	}
+	for key, count := range seen {
+		if count != 1 {
+			return fmt.Errorf("duplicate policy-rule rollback entry: %s", key)
+		}
+	}
+	return nil
+}
+
+func routeRollbackMatchesDesired(routes []txstate.RoutePlan, rollback txstate.RouteRollback) bool {
+	matches := 0
+	for _, desired := range routes {
+		if desired.Kind == "route" &&
+			desired.Operation == "add" &&
+			rollbackOwnerMatches(desired.Owner, netexecutor.OwnerRoute) &&
+			desired.Table == rollback.Table &&
+			desired.CIDR == rollback.CIDR &&
+			desired.Via == rollback.Via &&
+			desired.Dev == rollback.Dev {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+func plannedStepExists(steps []txstate.PlannedStep, kind, target, owner string) bool {
+	matches := 0
+	for _, step := range steps {
+		if step.Kind == kind && step.Target == target && rollbackOwnerMatches(step.Owner, owner) {
+			matches++
+		}
+	}
+	return matches == 1
+}
+
+func routeRollbackFullKey(route txstate.RouteRollback) string {
+	return strings.Join([]string{route.Table, route.CIDR, route.Via, route.Dev}, "|")
+}
+
+func routeRollbackAppliedTarget(route txstate.RouteRollback) string {
+	return route.Table + " " + route.CIDR
+}
+
+func policyRuleRollbackSelector(rule txstate.PolicyRuleRollback) string {
+	selector := strings.TrimSpace(rule.From)
+	if rule.To != "" {
+		selector = "to " + rule.To
+	} else if selector != "" && !strings.HasPrefix(selector, "from ") {
+		selector = "from " + selector
+	}
+	return selector
+}
+
+func policyRuleRollbackTarget(rule txstate.PolicyRuleRollback) string {
+	return fmt.Sprintf("priority %d %s lookup %s", rule.Priority, policyRuleRollbackSelector(rule), rule.Table)
+}
+
+func appliedStepDescription(applied []txstate.AppliedStep, kind, target, owner string) string {
+	for _, step := range applied {
+		if step.Kind == kind && step.Target == target && rollbackOwnerMatches(step.Owner, owner) {
+			return step.Description
+		}
+	}
+	return ""
+}
+
+func rollbackOwnerMatches(owner, expected string) bool {
+	owner = strings.TrimSpace(owner)
+	return owner == expected || owner == txstate.TransactionOwner
 }
 
 func routeTarget(route planner.TunRoutePlan) string {

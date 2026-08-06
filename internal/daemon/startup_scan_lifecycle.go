@@ -8,7 +8,9 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const unexpectedCoreExitRefreshTimeout = 5 * time.Second
+const startupScanRefreshTimeout = 5 * time.Second
+
+const unexpectedCoreExitRefreshTimeout = startupScanRefreshTimeout
 
 type startupScanRefreshingLifecycle struct {
 	lifecycle *XrayManager
@@ -34,9 +36,19 @@ func (l startupScanRefreshingLifecycle) Status(ctx context.Context) api.StatusRe
 }
 
 func (l startupScanRefreshingLifecycle) refreshAfter(ctx context.Context) {
-	if l.refresh != nil {
-		l.refresh(context.WithoutCancel(ctx))
+	if l.refresh == nil {
+		return
 	}
+	refreshCtx, cancel := boundedStartupScanRefreshContext(ctx)
+	defer cancel()
+	l.refresh(refreshCtx)
+}
+
+func boundedStartupScanRefreshContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), startupScanRefreshTimeout)
 }
 
 func (l startupScanRefreshingLifecycle) watchUnexpectedCoreExit() {

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 func TestLifecycleConnectHandlerRejectsMalformedRequest(t *testing.T) {
@@ -49,6 +50,33 @@ func TestLifecycleConnectHandlerRejectsUnsupportedMode(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "unsupported connect mode") {
 		t.Fatalf("expected unsupported mode message, got %q", recorder.Body.String())
+	}
+}
+
+func TestLifecycleConnectHandlerDelegatesReplacePodlazActiveTUNToLifecycle(t *testing.T) {
+	lifecycle := &recordingLifecycle{status: api.StatusResponse{Connection: "active", Mode: planner.ModeTun, TUN: "enabled"}}
+	mux := http.NewServeMux()
+	registerLifecycleHandlers(mux, lifecycle)
+
+	req := connectRequestForTest()
+	req.Mode = planner.ModeTun
+	req.Handoff = api.HandoffReplacePodlaz
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, api.ConnectPath, bytes.NewReader(body))
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	if !lifecycle.called {
+		t.Fatal("expected lifecycle.Connect to receive replace-podlaz request")
+	}
+	if lifecycle.request.Mode != planner.ModeTun || lifecycle.request.Handoff != api.HandoffReplacePodlaz {
+		t.Fatalf("unexpected delegated request: %#v", lifecycle.request)
 	}
 }
 
@@ -91,6 +119,26 @@ func TestLifecycleConnectHandlerLogsSanitizedFailureSummary(t *testing.T) {
 			t.Fatalf("connect failure log leaked %q:\n%s", forbidden, logged)
 		}
 	}
+}
+
+type recordingLifecycle struct {
+	status  api.StatusResponse
+	request api.ConnectRequest
+	called  bool
+}
+
+func (r *recordingLifecycle) Connect(_ context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	r.called = true
+	r.request = request
+	return api.LifecycleResponse{Connection: "active", Mode: request.Mode, Proxy: "inactive", TUN: "enabled"}, nil
+}
+
+func (r *recordingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, nil
+}
+
+func (r *recordingLifecycle) Status(context.Context) api.StatusResponse {
+	return r.status
 }
 
 type failingLifecycle struct {

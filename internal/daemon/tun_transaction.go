@@ -18,6 +18,10 @@ type tunPlanExecutor interface {
 	Rollback(context.Context, planner.TunPlan) error
 }
 
+type incrementalTunPlanExecutor interface {
+	ApplyWithStepSink(context.Context, planner.TunPlan, netexecutor.AppliedStepSink) ([]netexecutor.Step, error)
+}
+
 type tunTransactionResult struct {
 	TransactionID   string
 	TransactionPath string
@@ -129,16 +133,29 @@ func applyVerifyTunTransactionDeferredRollback(ctx context.Context, result tunTr
 	if err != nil {
 		return err
 	}
-	steps, err := executor.Apply(ctx, result.Plan)
+	var steps []netexecutor.Step
+	if incremental, ok := executor.(incrementalTunPlanExecutor); ok {
+		steps, err = incremental.ApplyWithStepSink(ctx, result.Plan, func(step netexecutor.Step) error {
+			return persistAppliedTunStep(result.Store, &tx, result.Plan, step)
+		})
+	} else {
+		steps, err = executor.Apply(ctx, result.Plan)
+	}
 	if err != nil {
 		partialPlan := rollbackPlanFromAppliedSteps(result.Plan, steps)
 		return newTunNetworkMutationError(result.Store, tx, partialPlan, steps, "network-apply", fmt.Errorf("apply TUN plan: %w", err))
 	}
 	appliedPlan := rollbackPlanFromAppliedSteps(result.Plan, steps)
-	tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(result.Store))
-	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(appliedPlan))
-	if _, err := result.Store.Save(tx); err != nil {
-		return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-apply", fmt.Errorf("record applied TUN plan: %w", err))
+	if len(filterOwnedAppliedSteps(result.Plan, steps)) != len(steps) {
+		return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-apply", errors.New("unowned applied TUN step returned by executor"))
+	}
+	for _, step := range steps {
+		if hasAppliedTunStep(tx.AppliedSteps, step) {
+			continue
+		}
+		if err := persistAppliedTunStep(result.Store, &tx, result.Plan, step); err != nil {
+			return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-apply", fmt.Errorf("record applied TUN plan: %w", err))
+		}
 	}
 	if _, _, err := result.Store.Transition(tx.ID, txstate.TransactionApplied); err != nil {
 		return newTunNetworkMutationError(result.Store, tx, appliedPlan, steps, "network-apply", err)
@@ -159,7 +176,8 @@ func applyVerifyTunTransactionDeferredRollback(ctx context.Context, result tunTr
 
 func newTunNetworkMutationError(store txstate.TransactionStore, tx txstate.Transaction, rollbackPlan planner.TunPlan, steps []netexecutor.Step, phase string, cause error) error {
 	if len(tx.AppliedSteps) == 0 {
-		tx.AppliedSteps = appliedStepsFromExecutor(steps, transactionNow(store))
+		ownedSteps := filterOwnedAppliedSteps(rollbackPlan, steps)
+		tx.AppliedSteps = appliedStepsFromExecutor(ownedSteps, transactionNow(store))
 		tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
 	}
 	if _, err := store.Save(tx); err != nil {
@@ -172,6 +190,32 @@ func newTunNetworkMutationError(store txstate.TransactionStore, tx txstate.Trans
 		rollbackPlan: rollbackPlan,
 		cause:        cause,
 	}
+}
+
+func persistAppliedTunStep(store txstate.TransactionStore, tx *txstate.Transaction, plan planner.TunPlan, step netexecutor.Step) error {
+	if tx == nil {
+		return errors.New("missing TUN transaction")
+	}
+	if len(filterOwnedAppliedSteps(plan, []netexecutor.Step{step})) != 1 {
+		return fmt.Errorf("unowned applied TUN step: kind=%q target=%q owner=%q", step.Kind, step.Target, step.Owner)
+	}
+	if hasAppliedTunStep(tx.AppliedSteps, step) {
+		return nil
+	}
+	rollbackPlan := rollbackPlanFromAppliedSteps(plan, []netexecutor.Step{step})
+	tx.AppliedSteps = append(tx.AppliedSteps, appliedStepsFromExecutor([]netexecutor.Step{step}, transactionNow(store))...)
+	tx.Rollback = mergeRollbackMetadata(tx.Rollback, rollbackMetadataFromTunPlan(rollbackPlan))
+	_, err := store.Save(*tx)
+	return err
+}
+
+func hasAppliedTunStep(applied []txstate.AppliedStep, step netexecutor.Step) bool {
+	for _, existing := range applied {
+		if existing.Kind == step.Kind && existing.Target == step.Target && existing.Owner == step.Owner {
+			return true
+		}
+	}
+	return false
 }
 
 func commitTunTransaction(store txstate.TransactionStore, transactionID string) error {
@@ -220,6 +264,20 @@ func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, run
 	return err
 }
 
+func saveTunAddressIdentityMetadata(store txstate.TransactionStore, transactionID string, address planner.TunAddressPlan, now time.Time) error {
+	if !tunAddressRollbackIsOwned(address) {
+		return errors.New("cannot persist unverified TUN address identity")
+	}
+	tx, _, err := store.Load(transactionID)
+	if err != nil {
+		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
+	}
+	tx.DesiredPlan.TUNAddress = tunAddressDesiredState(address)
+	tx.Health = txstate.HealthResult{Status: "tun-link-identified", CheckedAt: now.UTC(), Message: "Xray-created TUN link identity recorded before address mutation"}
+	_, err = store.Save(tx)
+	return err
+}
+
 func hasGeneratedConfigRollback(metadata txstate.RollbackMetadata, path string) bool {
 	for _, cfg := range metadata.GeneratedConfigs {
 		if cfg.Path == path {
@@ -231,6 +289,7 @@ func hasGeneratedConfigRollback(metadata txstate.RollbackMetadata, path string) 
 
 func mergeRollbackMetadata(base txstate.RollbackMetadata, extra txstate.RollbackMetadata) txstate.RollbackMetadata {
 	base.TUN = append(base.TUN, extra.TUN...)
+	base.TUNAddresses = append(base.TUNAddresses, extra.TUNAddresses...)
 	base.Routes = append(base.Routes, extra.Routes...)
 	base.PolicyRules = append(base.PolicyRules, extra.PolicyRules...)
 	base.DNS = append(base.DNS, extra.DNS...)

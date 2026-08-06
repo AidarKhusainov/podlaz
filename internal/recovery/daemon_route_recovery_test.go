@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -17,7 +18,7 @@ func TestDaemonCleanupExecutorRemovesOwnedMainTableServerBypassRoute(t *testing.
 	runner := &recordingRunner{
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]fakeCommand{
-			"ip -4 route del 203.0.113.10/32 via 147.90.14.1 dev ens1 table main": {},
+			"ip -4 route del 203.0.113.10/32 via 192.0.2.1 dev ens1 table main": {},
 		},
 	}
 	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
@@ -25,7 +26,7 @@ func TestDaemonCleanupExecutorRemovesOwnedMainTableServerBypassRoute(t *testing.
 			Owner: netexecutor.OwnerRoute,
 			Table: "main",
 			CIDR:  "203.0.113.10/32",
-			Via:   "147.90.14.1",
+			Via:   "192.0.2.1",
 			Dev:   "ens1",
 		}},
 	})
@@ -34,7 +35,7 @@ func TestDaemonCleanupExecutorRemovesOwnedMainTableServerBypassRoute(t *testing.
 
 	assertCleanupResult(t, results, "route", "recovered", "")
 	assertCleanupResult(t, results, "transaction-state", "recovered", "")
-	assertCommands(t, runner, []string{"ip -4 route del 203.0.113.10/32 via 147.90.14.1 dev ens1 table main"})
+	assertCommands(t, runner, []string{"ip -4 route del 203.0.113.10/32 via 192.0.2.1 dev ens1 table main"})
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("transaction file must be removed after complete cleanup, stat err=%v", err)
 	}
@@ -45,7 +46,7 @@ func TestDaemonCleanupExecutorRejectsMainTableNonHostRoute(t *testing.T) {
 		Owner: netexecutor.OwnerRoute,
 		Table: "main",
 		CIDR:  "203.0.113.0/24",
-		Via:   "147.90.14.1",
+		Via:   "192.0.2.1",
 		Dev:   "ens1",
 	})
 }
@@ -64,7 +65,7 @@ func TestDaemonCleanupExecutorRejectsMainTableRouteWithoutDev(t *testing.T) {
 		Owner: netexecutor.OwnerRoute,
 		Table: "main",
 		CIDR:  "203.0.113.10/32",
-		Via:   "147.90.14.1",
+		Via:   "192.0.2.1",
 	})
 }
 
@@ -73,7 +74,7 @@ func TestDaemonCleanupExecutorRejectsNonPodlazRouteOwner(t *testing.T) {
 		Owner: "other",
 		Table: "main",
 		CIDR:  "203.0.113.10/32",
-		Via:   "147.90.14.1",
+		Via:   "192.0.2.1",
 		Dev:   "ens1",
 	})
 }
@@ -138,15 +139,14 @@ func assertMainTableRouteSkipped(t *testing.T, route txstate.RouteRollback) {
 	t.Helper()
 	runtimeDir := t.TempDir()
 	runner := &recordingRunner{paths: map[string]string{"ip": "/usr/sbin/ip"}}
-	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{Routes: []txstate.RouteRollback{route}})
+	path, tx := saveInvalidRawTransaction(t, runtimeDir, txstate.RollbackMetadata{Routes: []txstate.RouteRollback{route}})
 
 	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
-	assertCleanupResult(t, results, "route", "skipped", "")
 	assertCleanupResult(t, results, "transaction-state", "skipped", "transaction state was preserved")
 	assertCommands(t, runner, nil)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("transaction file must remain after skipped cleanup: %v", err)
+		t.Fatalf("invalid transaction must remain: %v", err)
 	}
 }
 
@@ -187,5 +187,67 @@ func assertCommands(t *testing.T, runner *recordingRunner, want []string) {
 		if runner.runCommands[i] != want[i] {
 			t.Fatalf("unexpected command[%d]: got %q want %q; all commands %#v", i, runner.runCommands[i], want[i], runner.runCommands)
 		}
+	}
+}
+
+func TestInactiveCommittedTransactionRecoversExactDurableRoute(t *testing.T) {
+	runtimeDir := t.TempDir()
+	runner := &recordingRunner{
+		paths: map[string]string{"ip": "/usr/sbin/ip", "nft": "/usr/sbin/nft"},
+		commands: map[string]fakeCommand{
+			"ip link show dev podlaz0": {
+				stderr: "Device \"podlaz0\" does not exist.", exitCode: 1, err: errors.New("exit status 1"),
+			},
+			"nft list table inet podlaz": {
+				stderr: "Error: No such file or directory", exitCode: 1, err: errors.New("exit status 1"),
+			},
+			"ip -4 route del 0.0.0.0/0 dev podlaz0 table 51820": {},
+		},
+	}
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	tx := txstate.NewTransaction("tx-committed-exact-cleanup", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionCommitted
+	tx.Rollback.Routes = []txstate.RouteRollback{{
+		Owner: netexecutor.OwnerRoute,
+		Table: "51820",
+		CIDR:  "0.0.0.0/0",
+		Dev:   "podlaz0",
+	}}
+	route := tx.Rollback.Routes[0]
+	tx.DesiredPlan.Routes = []txstate.RoutePlan{{
+		Kind:      "route",
+		Table:     route.Table,
+		CIDR:      route.CIDR,
+		Via:       route.Via,
+		Dev:       route.Dev,
+		Owner:     route.Owner,
+		Operation: "add",
+	}}
+	tx.AppliedSteps = []txstate.AppliedStep{{
+		Kind:      "route",
+		Target:    routeRollbackTarget(route),
+		Owner:     netexecutor.OwnerRoute,
+		AppliedAt: time.Now().UTC(),
+	}}
+	path, err := store.Save(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Runner:     runner,
+		Executor:   DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner},
+	})
+
+	assertCleanupResult(t, result.Results, "route", "recovered", "")
+	assertCleanupResult(t, result.Results, "transaction-state", "recovered", "")
+	assertCommands(t, runner, []string{
+		"ip link show dev podlaz0",
+		"nft list table inet podlaz",
+		"ip -4 route del 0.0.0.0/0 dev podlaz0 table 51820",
+	})
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("committed transaction file must be removed after exact cleanup, stat err=%v", err)
 	}
 }

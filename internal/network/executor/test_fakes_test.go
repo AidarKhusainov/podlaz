@@ -131,7 +131,7 @@ func withRawTestCommandOutput(result CommandResult) CommandResult {
 
 func executorPlanForTest() planner.TunPlan {
 	return planner.TunPlan{
-		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "create"},
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify"},
 		Routes: []planner.TunRoutePlan{
 			{Family: "ipv4", Destination: "default", Table: planner.TunRoutingTable, Interface: "podlaz0", Action: "add"},
 			{Family: "ipv4", Destination: "203.0.113.10/32", Table: planner.MainRoutingTable, Interface: "eth0", Gateway: "192.0.2.1", Action: "add"},
@@ -141,6 +141,25 @@ func executorPlanForTest() planner.TunPlan {
 			{Family: "ipv4", Priority: planner.TunRulePriority, Selector: planner.IPv4DefaultSelector, Table: planner.TunRoutingTable, Action: "add"},
 		},
 	}
+}
+
+func rollbackIdentityAddressPlanForTest() planner.TunAddressPlan {
+	return planner.TunAddressPlan{
+		Family:            "ipv4",
+		Interface:         "podlaz0",
+		CIDR:              planner.DefaultTunIPv4CIDR,
+		Scope:             "global",
+		Action:            planner.TunAddressActionAssign,
+		Owner:             OwnerTunAddress,
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+	}
+}
+
+func addRollbackIdentityForTest(exec *DNSAwareTunExecutor, plan *planner.TunPlan, recorder *callRecorder) {
+	exec.Base.TunAddress = fakeTunAddress{rec: recorder}
+	plan.TunAddress = rollbackIdentityAddressPlanForTest()
 }
 
 func ruleCallTarget(plan planner.TunPolicyRulePlan) string {
@@ -154,4 +173,35 @@ func containsCommandToken(command []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type fakeTunAddress struct {
+	rec *callRecorder
+}
+
+func (f fakeTunAddress) Bind(_ context.Context, plan planner.TunAddressPlan, _ TunLinkCreationProof) (planner.TunAddressPlan, error) {
+	f.rec.calls = append(f.rec.calls, "address:bind:"+plan.Interface)
+	plan.LinkIndex = 7
+	plan.LinkKind = "tun"
+	plan.AppearedAfterCore = true
+	return plan, nil
+}
+
+func (f fakeTunAddress) Apply(_ context.Context, plan planner.TunAddressPlan) (Step, error) {
+	f.rec.calls = append(f.rec.calls, "address:apply:"+plan.Interface+":"+plan.CIDR)
+	return Step{Kind: "tun-address", Target: plan.Interface + ":" + plan.CIDR, Owner: OwnerTunAddress}, nil
+}
+
+func (f fakeTunAddress) Verify(_ context.Context, plan planner.TunAddressPlan) error {
+	f.rec.calls = append(f.rec.calls, "address:verify:"+plan.Interface+":"+plan.CIDR)
+	return nil
+}
+
+func (f fakeTunAddress) VerifyRollbackIdentity(_ context.Context, _ planner.TunAddressPlan) error {
+	return nil
+}
+
+func (f fakeTunAddress) Rollback(_ context.Context, plan planner.TunAddressPlan) error {
+	f.rec.calls = append(f.rec.calls, "address:rollback:"+plan.Interface+":"+plan.CIDR)
+	return nil
 }

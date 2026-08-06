@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/host_state.sh
+source "${SCRIPT_DIR}/lib/host_state.sh"
 
 require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg nft
 
@@ -306,8 +308,54 @@ capture_failure_evidence() {
   assert_failure_report "${report}" "${phase}" "${classification}" "completed" any
 }
 
+assert_tun_owned_runtime_absent() {
+  local phase="$1" state routes rules
+
+  if inspect_link_state podlaz0; then
+    :
+  else
+    state=$?
+    case "${state}" in
+      1) fail "${phase}: podlaz0 still exists after production rollback" ;;
+      *) fail "${phase}: podlaz0 absence could not be inspected" ;;
+    esac
+  fi
+
+  if ! routes="$(sudo -n ip -4 route show table 51820 2>/dev/null)"; then
+    fail "${phase}: podlaz routing table absence could not be inspected"
+  fi
+  [[ -z "${routes}" ]] || fail "${phase}: podlaz routing table still contains routes"
+
+  if ! rules="$(sudo -n ip -4 rule show 2>/dev/null)"; then
+    fail "${phase}: podlaz policy-rule absence could not be inspected"
+  fi
+  if grep -E '^(9999|10000):' <<<"${rules}" >/dev/null; then
+    fail "${phase}: podlaz policy rule still exists"
+  fi
+
+  if inspect_resolved_link_state podlaz0; then
+    :
+  else
+    state=$?
+    case "${state}" in
+      1) fail "${phase}: systemd-resolved still has podlaz0 state" ;;
+      *) fail "${phase}: systemd-resolved podlaz0 absence could not be inspected" ;;
+    esac
+  fi
+
+  if inspect_nft_table_state inet podlaz; then
+    :
+  else
+    state=$?
+    case "${state}" in
+      1) fail "${phase}: podlaz nftables table still exists" ;;
+      *) fail "${phase}: podlaz nftables absence could not be inspected" ;;
+    esac
+  fi
+}
+
 run_apply_failure_probe() {
-  local hook_phase="$1" id="$2"
+  local hook_phase="$1" id="$2" classification="$3" injected_event="$4"
   log "TUN apply failure probe: ${hook_phase}"
   configure_tun_hook "${hook_phase}"
   collect_host_snapshot "before-${hook_phase}"
@@ -316,8 +364,21 @@ run_apply_failure_probe() {
   local code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "${hook_phase}: connect unexpectedly succeeded"
-  capture_failure_evidence network-apply network_apply_failure
+  capture_failure_evidence network-apply "${classification}"
+  assert_event_present "${E2E_ARTIFACT_DIR}/network-apply-events.log" "${injected_event}"
   assert_foreign_nft_sentinel "after-${hook_phase}-failure"
+  if [[ "${hook_phase}" == "tun-address-apply" ]]; then
+    assert_tun_owned_runtime_absent "rollback-${hook_phase}"
+    assert_no_stale_state "rollback-${hook_phase}"
+    expect_secret_success "connect-${hook_phase}-immediate-retry" run_podlaz_as_socket_user connect --mode tun "${id}"
+    expect_secret_success "disconnect-${hook_phase}-immediate-retry" run_podlaz_as_socket_user disconnect
+    assert_tun_owned_runtime_absent "after-${hook_phase}-retry"
+    assert_no_stale_state "after-${hook_phase}-retry"
+    check_direct_connectivity "after-${hook_phase}-retry"
+    collect_host_snapshot "after-${hook_phase}-retry"
+    clear_tun_hook
+    return 0
+  fi
   clear_tun_hook
   sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
@@ -455,8 +516,9 @@ create_foreign_nft_sentinel
 assert_foreign_nft_sentinel initial
 
 run_resolved_subprocess_matrix
-run_apply_failure_probe dns-apply "${PROFILE_ID}"
-run_apply_failure_probe route-apply "${PROFILE_ID}"
+run_apply_failure_probe tun-address-apply "${PROFILE_ID}" tun_address_apply_failure tun-address-apply-injected
+run_apply_failure_probe dns-apply "${PROFILE_ID}" network_apply_failure dns-apply-injected
+run_apply_failure_probe route-apply "${PROFILE_ID}" network_apply_failure route-apply-injected
 run_network_verify_probe "${PROFILE_ID}"
 run_inactive_scope_probe "${PROFILE_ID}"
 run_before_commit_probe "${PROFILE_ID}"

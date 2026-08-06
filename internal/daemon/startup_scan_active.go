@@ -63,14 +63,17 @@ func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (t
 	if matches != 1 {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s has %d status matches; refusing ownership filtering", activeID, matches)
 	}
-	if activeSummary.State != string(txstate.TransactionCommitted) || activeSummary.RequiresCleanup {
+	if activeSummary.State != string(txstate.TransactionCommitted) {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s is not a clean committed transaction", activeID)
 	}
 
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
-	tx, _, err := store.Load(activeID)
+	tx, loadedPath, err := store.Load(activeID)
 	if err != nil {
 		return txstate.Transaction{}, false, fmt.Errorf("load active committed transaction %s: %w", activeID, err)
+	}
+	if strings.TrimSpace(activeSummary.Path) == "" || filepath.Clean(activeSummary.Path) != filepath.Clean(loadedPath) {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s state path does not match the authoritative store path", activeID)
 	}
 	if tx.Owner != txstate.TransactionOwner || tx.State != txstate.TransactionCommitted {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s has invalid owner or state", activeID)
@@ -86,6 +89,12 @@ func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (t
 
 func activeTransactionOwnsCandidate(tx txstate.Transaction, candidate recovery.Candidate) bool {
 	switch candidate.Kind {
+	case "transaction-state":
+		if candidate.Transaction == nil || candidate.Transaction.ID != tx.ID || candidate.Transaction.State != string(txstate.TransactionCommitted) {
+			return false
+		}
+		return filepath.Clean(candidate.Target) == filepath.Clean(candidate.Transaction.Path) &&
+			filepath.Base(candidate.Target) == tx.ID+txstate.TransactionFileSuffix
 	case "tun-interface":
 		return tx.DesiredPlan.TUN.Owner == xrayTunInboundOwner && tx.DesiredPlan.TUN.InterfaceName == candidate.Target
 	case "dns-link":

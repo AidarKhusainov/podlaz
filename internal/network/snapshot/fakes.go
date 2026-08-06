@@ -40,8 +40,19 @@ func FakeResolvedDesktop() Snapshot {
 			PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not found"},
 		},
 		TunDevices: []TunDevice{{Name: DefaultTunName, Status: StatusMissing, Detail: "device not found"}},
-		IPv4:       Finding{Status: StatusDetected, Summary: "IPv4 default route detected"},
-		IPv6:       Finding{Status: StatusMissing, Summary: "IPv6 default route missing", Detail: "route not found"},
+		IPv4Addresses: IPAddressInventory{
+			Inspection: Finding{Status: StatusDetected, Summary: "IPv4 address inventory available"},
+			Addresses:  []IPAddress{{Family: "ipv4", Interface: "wlp0s20f3", CIDR: "192.0.2.55/24", Scope: "global"}},
+		},
+		IPv4Routes: RouteInventory{
+			Inspection: Finding{Status: StatusDetected, Summary: "IPv4 route inventory available"},
+			Routes: []Route{
+				{Status: StatusDetected, Family: "ipv4", Destination: "default", Table: "main", Interface: "wlp0s20f3", Gateway: "192.0.2.1"},
+				{Status: StatusDetected, Family: "ipv4", Destination: "192.0.2.0/24", Table: "main", Interface: "wlp0s20f3"},
+			},
+		},
+		IPv4: Finding{Status: StatusDetected, Summary: "IPv4 default route detected"},
+		IPv6: Finding{Status: StatusMissing, Summary: "IPv6 default route missing", Detail: "route not found"},
 	}
 }
 
@@ -107,7 +118,7 @@ func FakeDesktopWithoutOptionalTools() Snapshot {
 
 func FakeDesktopWithStalepodlazResources() Snapshot {
 	s := FakeResolvedDesktop()
-	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}}
+	s.TunDevices = []TunDevice{{Name: DefaultTunName, Status: StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500", Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun"}}
 	s.Nftables.PodlazTable = Finding{Status: StatusDetected, Summary: "podlaz nftables table exists"}
 	s.StaleResources = []StaleResource{{Kind: "tun-device", Name: DefaultTunName, Status: StatusDetected, Detail: "7: podlaz0: <POINTOPOINT,UP> mtu 1500"}, {Kind: "nftables-table", Name: DefaultNFTFamily + " " + DefaultNFTTable, Status: StatusDetected}}
 	return s

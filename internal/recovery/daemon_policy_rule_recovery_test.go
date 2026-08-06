@@ -88,14 +88,13 @@ func assertMainTablePolicyRuleSkipped(t *testing.T, rule txstate.PolicyRuleRollb
 	t.Helper()
 	runtimeDir := t.TempDir()
 	runner := &recordingRunner{paths: map[string]string{"ip": "/usr/sbin/ip"}}
-	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{PolicyRules: []txstate.PolicyRuleRollback{rule}})
+	path, tx := saveInvalidRawTransaction(t, runtimeDir, txstate.RollbackMetadata{PolicyRules: []txstate.PolicyRuleRollback{rule}})
 
 	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
-	assertCleanupResult(t, results, "policy-rule", "skipped", "")
 	assertCleanupResult(t, results, "transaction-state", "skipped", "transaction state was preserved")
 	assertCommands(t, runner, nil)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("transaction file must remain after skipped cleanup: %v", err)
+		t.Fatalf("invalid transaction must remain: %v", err)
 	}
 }

@@ -68,6 +68,7 @@ func TestActiveTunDisconnectReturnsBoundedQuiescenceErrorAndPreservesRecoverySta
 	tx.State = txstate.TransactionCommitted
 	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
 	tx.Rollback = rollbackMetadataFromTunPlan(plan)
+	tx.AppliedSteps = appliedStepsFromRollbackMetadataForTest(tx.Rollback, store.Now())
 	tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{
 		Path:  configPath,
 		Owner: txstate.TransactionOwner,

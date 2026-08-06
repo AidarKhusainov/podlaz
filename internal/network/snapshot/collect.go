@@ -87,11 +87,15 @@ func CollectWithRunner(ctx context.Context, runner CommandRunner, opts Options) 
 		s.ServerRoute = serverRoute(ctx, runner, ipPath, strings.TrimSpace(opts.Server), opts)
 		s.TunDevices = tunDevices(ctx, runner, ipPath, appendUniqueStrings(tunNames, tunLikeInterfaceNames(ctx, runner, ipPath)...))
 		s.PolicyRouting = policyRouting(ctx, runner, ipPath)
+		s.IPv4Addresses = ipv4Addresses(ctx, runner, ipPath)
+		s.IPv4Routes = ipv4Routes(ctx, runner, ipPath)
 	} else {
 		s.DefaultIPv4 = missingRoute("ipv4", "default", "ip command not found")
 		s.DefaultIPv6 = missingRoute("ipv6", "default", "ip command not found")
 		s.ServerRoute = missingRoute("", "server", "ip command not found")
 		s.TunDevices = missingTunDevices(tunNames, "ip command not found")
+		s.IPv4Addresses = IPAddressInventory{Inspection: finding(StatusMissing, "IPv4 address inventory unavailable because ip is missing")}
+		s.IPv4Routes = RouteInventory{Inspection: finding(StatusMissing, "IPv4 route inventory unavailable because ip is missing")}
 	}
 	s.IPv4 = availabilityFromDefaultRoute("IPv4", s.DefaultIPv4)
 	s.IPv6 = availabilityFromDefaultRoute("IPv6", s.DefaultIPv6)
@@ -118,6 +122,121 @@ func markUnsupported(s *Snapshot, tunNames []string) {
 	}
 	s.IPv4 = findingWithDetail(StatusUnsupported, "IPv4 route assumptions are unsupported on this platform", detail)
 	s.IPv6 = findingWithDetail(StatusUnsupported, "IPv6 route assumptions are unsupported on this platform", detail)
+	s.IPv4Addresses = IPAddressInventory{Inspection: findingWithDetail(StatusUnsupported, "IPv4 address inventory unsupported", detail)}
+	s.IPv4Routes = RouteInventory{Inspection: findingWithDetail(StatusUnsupported, "IPv4 route inventory unsupported", detail)}
+}
+
+func ipv4Addresses(ctx context.Context, runner CommandRunner, ipPath string) IPAddressInventory {
+	result, err := runCommand(ctx, runner, ipPath, "-4", "-o", "address", "show")
+	if !commandSucceeded(result, err) {
+		return IPAddressInventory{Inspection: findingWithDetail(StatusUnknown, "IPv4 address inventory unavailable", commandFailureMessage(result, err))}
+	}
+	addresses, parseErr := ParseIPv4Addresses(result.Stdout)
+	if parseErr != nil {
+		return IPAddressInventory{Inspection: findingWithDetail(StatusUnknown, "IPv4 address inventory malformed", parseErr.Error())}
+	}
+	return IPAddressInventory{Inspection: finding(StatusDetected, "IPv4 address inventory available"), Addresses: addresses}
+}
+
+func ipv4Routes(ctx context.Context, runner CommandRunner, ipPath string) RouteInventory {
+	result, err := runCommand(ctx, runner, ipPath, "-4", "-o", "route", "show", "table", "all")
+	if !commandSucceeded(result, err) {
+		return RouteInventory{Inspection: findingWithDetail(StatusUnknown, "IPv4 route inventory unavailable", commandFailureMessage(result, err))}
+	}
+	routes, parseErr := ParseIPv4Routes(result.Stdout)
+	if parseErr != nil {
+		return RouteInventory{Inspection: findingWithDetail(StatusUnknown, "IPv4 route inventory malformed", parseErr.Error())}
+	}
+	return RouteInventory{Inspection: finding(StatusDetected, "IPv4 route inventory available"), Routes: routes}
+}
+
+func ParseIPv4Addresses(output string) ([]IPAddress, error) {
+	var out []IPAddress
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 || strings.TrimSuffix(fields[0], ":") == "" || fields[2] != "inet" {
+			return nil, fmt.Errorf("invalid IPv4 address inventory line")
+		}
+		iface := strings.Split(strings.TrimSuffix(fields[1], ":"), "@")[0]
+		cidr := strings.TrimSpace(fields[3])
+		ip, _, err := net.ParseCIDR(cidr)
+		if err != nil || ip.To4() == nil || iface == "" {
+			return nil, fmt.Errorf("invalid IPv4 address inventory line")
+		}
+		scope := ""
+		for i := 4; i+1 < len(fields); i++ {
+			if fields[i] == "scope" {
+				scope = fields[i+1]
+				break
+			}
+		}
+		out = append(out, IPAddress{Family: "ipv4", Interface: iface, CIDR: cidr, Scope: scope, Raw: line})
+	}
+	return out, nil
+}
+
+func ParseIPv4Routes(output string) ([]Route, error) {
+	var out []Route
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		destinationIndex := 0
+		if isRouteType(fields[0]) {
+			destinationIndex = 1
+		}
+		if destinationIndex >= len(fields) {
+			return nil, fmt.Errorf("invalid IPv4 route inventory line")
+		}
+		destination := fields[destinationIndex]
+		if destination != "default" {
+			if ip := net.ParseIP(destination); ip != nil && ip.To4() != nil {
+				destination += "/32"
+			} else if ip, _, err := net.ParseCIDR(destination); err != nil || ip.To4() == nil {
+				return nil, fmt.Errorf("invalid IPv4 route inventory line")
+			}
+		}
+		route := Route{Status: StatusDetected, Family: "ipv4", Destination: destination, Table: MainRouteTable(fields), Raw: line}
+		for i := destinationIndex + 1; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "dev":
+				route.Interface = strings.Split(fields[i+1], "@")[0]
+			case "via":
+				route.Gateway = fields[i+1]
+			case "table":
+				route.Table = fields[i+1]
+			}
+		}
+		out = append(out, route)
+	}
+	return out, nil
+}
+
+func MainRouteTable(fields []string) string {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "table" {
+			return fields[i+1]
+		}
+	}
+	return "main"
+}
+
+func isRouteType(value string) bool {
+	switch value {
+	case "local", "broadcast", "unreachable", "blackhole", "prohibit", "throw", "nat", "multicast", "anycast":
+		return true
+	default:
+		return false
+	}
 }
 
 func lookup(runner CommandRunner, command string) (string, bool) {

@@ -14,6 +14,14 @@ import (
 
 type tunRollbackChildStopper func(txstate.Transaction) error
 
+type resourceScopedTunRollbackExecutor interface {
+	RollbackResourceScoped(context.Context, planner.TunPlan) error
+}
+
+type resourceScopedChildAbsentTunRollbackExecutor interface {
+	RollbackResourceScopedChildAbsent(context.Context, planner.TunPlan) error
+}
+
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
 	if err := prepareTunFailureRollback(store, tx, rollbackPlan, steps); err != nil {
 		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
@@ -70,9 +78,13 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 		stopChildren = stopRollbackChildProcesses
 	}
 
-	hostErr := rollbackTunHostState(ctx, plan, executor)
-	childErr := stopChildren(*tx)
-	if err := errors.Join(hostErr, childErr); err != nil {
+	if err := rollbackTunHostStateForTransaction(ctx, plan, executor, *tx); err != nil {
+		// The Xray-owned link carries the exact address identity needed for a
+		// safe retry. Keep the tracked child and generated config intact until
+		// every daemon-owned host resource is proven rolled back.
+		return err
+	}
+	if err := stopChildren(*tx); err != nil {
 		return err
 	}
 
@@ -98,11 +110,54 @@ func beginTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) e
 	return err
 }
 
-func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor) error {
+func rollbackTunHostStateForTransaction(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, tx txstate.Transaction) error {
+	err := rollbackTunHostState(ctx, plan, executor)
+	if err == nil {
+		return nil
+	}
+	if !netexecutor.IsTunRollbackLinkAbsent(err) {
+		return err
+	}
+	if !rollbackTrackedChildAbsenceProven(tx) {
+		return err
+	}
+	if scoped, ok := executor.(resourceScopedChildAbsentTunRollbackExecutor); ok {
+		if retryErr := scoped.RollbackResourceScopedChildAbsent(ctx, plan); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
+		return nil
+	}
+	return err
+}
+
+func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, childAbsenceProvenValues ...bool) error {
 	if executor == nil {
 		return errors.New("missing TUN executor")
 	}
+	childAbsenceProven := len(childAbsenceProvenValues) > 0 && childAbsenceProvenValues[0]
+	if childAbsenceProven {
+		if scoped, ok := executor.(resourceScopedChildAbsentTunRollbackExecutor); ok {
+			return scoped.RollbackResourceScopedChildAbsent(ctx, plan)
+		}
+	}
+	if scoped, ok := executor.(resourceScopedTunRollbackExecutor); ok {
+		return scoped.RollbackResourceScoped(ctx, plan)
+	}
 	return executor.Rollback(ctx, plan)
+}
+
+func rollbackTrackedChildAbsenceProven(tx txstate.Transaction) bool {
+	seen := false
+	for _, proc := range tx.Rollback.ChildProcesses {
+		if proc.Owner != txstate.TransactionOwner || proc.PID <= 1 {
+			continue
+		}
+		seen = true
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", proc.PID)); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return seen
 }
 
 func removeRollbackGeneratedConfigs(tx txstate.Transaction) error {
@@ -190,30 +245,56 @@ func rollbackPlanFromAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step
 	for _, step := range steps {
 		switch step.Kind {
 		case "tun-device":
-			if step.Target == plan.TunDevice.Name {
+			if step.Owner == netexecutor.OwnerTunDevice && step.Target == plan.TunDevice.Name {
 				rollback.TunDevice = plan.TunDevice
+				rollback.TunDevice.Reason = step.Description
+			}
+		case "tun-address":
+			if step.Owner == netexecutor.OwnerTunAddress && step.Target == tunAddressTarget(plan.TunAddress) {
+				rollback.TunAddress = plan.TunAddress
 			}
 		case "route":
+			if step.Owner != netexecutor.OwnerRoute {
+				continue
+			}
 			for _, route := range plan.Routes {
 				if routeTarget(route) == step.Target {
 					rollback.Routes = append(rollback.Routes, route)
 				}
 			}
 		case "policy-rule":
+			if step.Owner != netexecutor.OwnerPolicyRule {
+				continue
+			}
 			for _, rule := range plan.PolicyRules {
 				if policyRuleTarget(rule) == step.Target {
 					rollback.PolicyRules = append(rollback.PolicyRules, rule)
 				}
 			}
 		case "dns":
-			if step.Target == plan.DNS.TargetLink {
+			if step.Owner == netexecutor.OwnerDNS && step.Target == plan.DNS.TargetLink {
 				rollback.DNS = plan.DNS
 			}
 		case "nftables":
-			if step.Target == firewallTarget(plan.Firewall) {
+			if step.Owner == netexecutor.OwnerFirewall && step.Target == firewallTarget(plan.Firewall) {
 				rollback.Firewall = plan.Firewall
 			}
 		}
 	}
 	return rollback
+}
+
+func filterOwnedAppliedSteps(plan planner.TunPlan, steps []netexecutor.Step) []netexecutor.Step {
+	owned := make([]netexecutor.Step, 0, len(steps))
+	for _, step := range steps {
+		rollback := rollbackPlanFromAppliedSteps(plan, []netexecutor.Step{step})
+		if rollbackPlanHasOwnedResource(rollback) {
+			owned = append(owned, step)
+		}
+	}
+	return owned
+}
+
+func rollbackPlanHasOwnedResource(plan planner.TunPlan) bool {
+	return plan.TunDevice.Name != "" || plan.TunAddress.CIDR != "" || len(plan.Routes) > 0 || len(plan.PolicyRules) > 0 || plan.DNS.TargetLink != "" || plan.Firewall.Table != ""
 }

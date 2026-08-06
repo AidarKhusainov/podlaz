@@ -144,8 +144,11 @@ Show a read-only proxy-only plan.
 .TP
 .B plan --mode tun <profile-id> [--json] [--verbose|-v] [--plain]
 Show a read-only full-tunnel plan before host networking changes. Default human
-output is a compact summary with profile status, planned high-level changes,
-blockers, warnings, safety notes, and next-step guidance. It hides raw nftables
+output is a compact summary with profile status, the deterministic daemon-owned
+TUN IPv4 address, planned high-level changes, blockers, warnings, safety notes,
+and next-step guidance. The Linux address policy is
+.BR 198.18.0.1/32 ;
+there is no random fallback. It hides raw nftables
 rules, rollback keys, owner labels, and long command stderr. Use
 .B --verbose
 or
@@ -167,8 +170,11 @@ inbound. Before handoff or host-networking changes, TUN mode verifies that the
 packaged Xray helper accepts a minimal pinned-schema native TUN config. The
 profile-generated Xray runtime config is written later after the TUN transaction
 starts; podlazd records durable desired state before supervised Xray start and
-then applies podlaz-owned routes, policy rules, DNS, and nftables state around
-that link.
+then binds the exact link name, ifindex, and TUN type, assigns the
+podlazd-owned
+.B 198.18.0.1/32
+address, and applies podlaz-owned routes, policy rules, DNS, and nftables state
+around that link. Xray remains the owner of link creation and lifetime.
 .PP
 For non-interactive TUN connects, podlazd automatically recovers only
 unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, and transaction
@@ -176,7 +182,12 @@ state, then recollects the host snapshot. Stale podlaz systemd-resolved link
 state is refreshed on
 .B podlaz0
 before per-link DNS is applied. Foreign VPN interfaces, foreign route-only DNS
-owners, ambiguous resources, and incomplete recovery remain blockers.
+owners, ambiguous resources, and incomplete recovery remain blockers. Before
+mutation, all assigned IPv4 addresses and routes are checked for overlap with
+.BR 198.18.0.1/32 .
+A foreign or ambiguous overlap reports
+.B tun_address_conflict
+and no second candidate is selected.
 .PP
 For TUN mode,
 .B --handoff
@@ -212,8 +223,15 @@ Rollback atomically finalizes the historical status as
 .B completed
 or
 .BR failed .
-Diagnostic failure does not suppress cleanup. The returned error includes the
-safe classification and report path when available and directs the user to
+Static resolved ownership is not sufficient for commit. The daemon also
+requires the exact TUN address, an uncached IPv4 query bound to
+.BR podlaz0 ,
+a separate normal system resolver lookup, and a TUN route for at least one
+returned IPv4 address.
+.B Current Scopes
+is diagnostic evidence only. Diagnostic failure does not suppress cleanup. The
+returned error includes the safe classification and report path when available
+and directs the user to
 .BR "podlaz doctor --tun --verbose" .
 .TP
 .B disconnect
@@ -266,9 +284,14 @@ target, only normal
 .B resolvectl
 exit status 1 with empty stdout and the exact bounded supported
 .B No such device
-stderr is accepted as idempotent cleanup. Cancellation, deadline expiry, process
-launch failure, signal termination, permission denial, other exit codes,
-unrelated exit status 1, or different/unbounded output remains a failure.
+stderr is accepted as idempotent cleanup. This includes the exact Ubuntu 24.04
+form
+.BR "Failed to resolve interface "podlaz0", ignoring: No such device" .
+Cancellation, deadline expiry, process launch failure, signal termination,
+permission denial, other exit codes, extra output, unrelated exit status 1, or
+different/unbounded output remains a failure. A fresh successful daemon scan is
+authoritative; a failed scan reports incomplete status rather than reusing older
+candidates.
 Cleanup-complete terminal transaction history is non-blocking; recovery and an
 immediate subsequent TUN connect must not observe a cleanup-required phantom
 transaction or stale scan candidate.

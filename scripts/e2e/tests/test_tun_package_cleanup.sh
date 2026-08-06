@@ -69,6 +69,22 @@ if purge_package; then
 fi
 [[ "${last_evidence}" == "package_purged=false" ]] || fail_test "failed purge evidence was ${last_evidence}"
 
+# A fresh host with no package installed is already converged even when the
+# Debian helper has no package-owned state to purge.
+last_evidence=""
+inspect_package_state() { return 0; }
+timeout() { return 0; }
+sudo() {
+  if [[ "$*" == *"deb-systemd-helper purge podlazd.service"* ]]; then
+    return 1
+  fi
+  return 0
+}
+if ! purge_package; then
+  fail_test "absent package was not treated as converged"
+fi
+[[ "${last_evidence}" == "package_purged=true" ]] || fail_test "absent package evidence was ${last_evidence}"
+
 # Invalid metadata must prevent transaction deletion even if every unrelated
 # fallback cleanup action succeeds.
 ROLLBACK_METADATA_VALID=false

@@ -2,7 +2,6 @@ package recovery
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -13,7 +12,7 @@ func TestPlanWithOptionsTreatsResolvedStatusNoSuchDeviceAsMissing(t *testing.T) 
 		[]resolvedRecoveryCommand{{
 			stderr:   `Failed to resolve interface "podlaz0": No such device` + "\n",
 			exitCode: 1,
-			err:      errors.New("exit status 1"),
+			err:      resolvedTestExitError{code: 1},
 		}},
 	)
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -21,6 +22,7 @@ func TestValidateE2ETunHookConfigRejectsUnknownPhase(t *testing.T) {
 
 func TestValidateE2ETunHookConfigAcceptsDocumentedPhases(t *testing.T) {
 	for _, phase := range []string{
+		e2eTunHookTunAddressApplyPhase,
 		e2eTunHookRouteApplyPhase,
 		e2eTunHookDNSApplyPhase,
 		e2eTunHookNetworkVerifyPhase,
@@ -34,6 +36,48 @@ func TestValidateE2ETunHookConfigAcceptsDocumentedPhases(t *testing.T) {
 				t.Fatalf("validate documented E2E hook phase %q: %v", phase, err)
 			}
 		})
+	}
+}
+
+func TestE2ETunAddressHookFailsAfterDelegateApplyAndPreservesOwnership(t *testing.T) {
+	t.Setenv(e2eTunHookGateEnv, "true")
+	t.Setenv(e2eTunHookPhaseEnv, e2eTunHookTunAddressApplyPhase)
+	t.Setenv(e2eTunHookDirEnv, t.TempDir())
+
+	address := &e2eHookApplyRecordingTunAddressExecutor{}
+	executor := maybeWrapE2ETunHookExecutor(netexecutor.DNSAwareTunExecutor{
+		Base: netexecutor.TunExecutor{
+			TunDevice:   e2eHookApplyStaticTunDeviceExecutor{},
+			TunAddress:  address,
+			Routes:      recordingRouteExecutor{},
+			PolicyRules: e2eHookApplyStaticPolicyRuleExecutor{},
+		},
+		DNS: recordingDNSExecutor{},
+	})
+	steps, err := executor.Apply(context.Background(), planner.TunPlan{
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", Action: "verify"},
+		TunAddress: planner.TunAddressPlan{
+			Family:    "ipv4",
+			Interface: "podlaz0",
+			CIDR:      planner.DefaultTunIPv4CIDR,
+			Action:    planner.TunAddressActionAssign,
+			Owner:     planner.TunAddressOwner,
+		},
+		DNS: planner.TunDNSPlan{
+			Backend:    planner.DNSBackendSystemdResolved,
+			TargetLink: "podlaz0",
+			Servers:    []string{"192.0.2.53"},
+			Action:     planner.DNSActionConfigure,
+		},
+	})
+	if err == nil || !errors.Is(err, netexecutor.ErrTunAddressApply) {
+		t.Fatalf("expected typed post-mutation address failure, got %v", err)
+	}
+	if address.applyCalls != 1 {
+		t.Fatalf("address delegate Apply calls = %d, want 1", address.applyCalls)
+	}
+	if len(steps) != 1 || steps[0].Kind != "tun-address" || steps[0].Owner != netexecutor.OwnerTunAddress {
+		t.Fatalf("partial address ownership was not preserved: %#v", steps)
 	}
 }
 
@@ -58,17 +102,17 @@ func TestE2EHookRouteFailureThroughTunExecutorApplyDoesNotApplyRoute(t *testing.
 		},
 	}
 	executor := netexecutor.TunExecutor{
-		TunDevice: e2eHookApplyStaticTunDeviceExecutor{
-			step: netexecutor.Step{
-				Kind:  "tun-device",
-				Owner: netexecutor.OwnerTunDevice,
-			},
-		},
+		TunDevice:   e2eHookApplyStaticTunDeviceExecutor{},
 		Routes:      e2eHookRouteExecutor{delegate: routes},
 		PolicyRules: e2eHookApplyStaticPolicyRuleExecutor{},
 	}
 
 	steps, err := executor.Apply(context.Background(), planner.TunPlan{
+		TunDevice: planner.TunDevicePlan{
+			Name:   "podlaz0",
+			MTU:    1500,
+			Action: "verify",
+		},
 		Routes: []planner.TunRoutePlan{{Action: "add"}},
 	})
 	if err == nil {
@@ -80,11 +124,8 @@ func TestE2EHookRouteFailureThroughTunExecutorApplyDoesNotApplyRoute(t *testing.
 	if routes.addCalls != 0 {
 		t.Fatalf("route delegate Add calls = %d, want 0", routes.addCalls)
 	}
-	if got, want := len(steps), 1; got != want {
-		t.Fatalf("applied steps = %d, want %d", got, want)
-	}
-	if steps[0].Owner != netexecutor.OwnerTunDevice {
-		t.Fatalf("recorded step owner = %q, want %q", steps[0].Owner, netexecutor.OwnerTunDevice)
+	if got := len(steps); got != 0 {
+		t.Fatalf("applied steps = %d, want 0", got)
 	}
 }
 
@@ -242,5 +283,26 @@ func (e2eHookApplyStaticPolicyRuleExecutor) Verify(context.Context, planner.TunP
 }
 
 func (e2eHookApplyStaticPolicyRuleExecutor) Rollback(context.Context, planner.TunPolicyRulePlan) error {
+	return nil
+}
+
+type e2eHookApplyRecordingTunAddressExecutor struct {
+	applyCalls int
+}
+
+func (e *e2eHookApplyRecordingTunAddressExecutor) Bind(_ context.Context, plan planner.TunAddressPlan, _ netexecutor.TunLinkCreationProof) (planner.TunAddressPlan, error) {
+	return plan, nil
+}
+
+func (e *e2eHookApplyRecordingTunAddressExecutor) Apply(context.Context, planner.TunAddressPlan) (netexecutor.Step, error) {
+	e.applyCalls++
+	return netexecutor.Step{Kind: "tun-address", Target: "podlaz0 " + planner.DefaultTunIPv4CIDR, Owner: netexecutor.OwnerTunAddress}, nil
+}
+
+func (*e2eHookApplyRecordingTunAddressExecutor) Verify(context.Context, planner.TunAddressPlan) error {
+	return nil
+}
+
+func (*e2eHookApplyRecordingTunAddressExecutor) Rollback(context.Context, planner.TunAddressPlan) error {
 	return nil
 }

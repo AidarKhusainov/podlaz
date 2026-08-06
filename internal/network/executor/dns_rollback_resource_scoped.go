@@ -1,0 +1,169 @@
+package executor
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+	"strings"
+
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+)
+
+const managedTunInterfaceName = "podlaz0"
+const maxTunRollbackMissingStderrSize = 512
+
+type tunRollbackLinkAbsentError struct {
+	err error
+}
+
+func (e tunRollbackLinkAbsentError) Error() string {
+	if e.err == nil {
+		return "transaction-bound TUN link is absent"
+	}
+	return e.err.Error()
+}
+
+func (e tunRollbackLinkAbsentError) Unwrap() error                 { return e.err }
+func (e tunRollbackLinkAbsentError) IsTunRollbackLinkAbsent() bool { return true }
+
+// IsTunRollbackLinkAbsent reports whether err is the typed rollback decision
+// "transaction-bound TUN link was absent". Callers may combine this decision
+// with independently proven tracked-child absence to run missing-link cleanup,
+// but must not use it for identity mismatches or resource rollback failures.
+func IsTunRollbackLinkAbsent(err error) bool {
+	var target interface{ IsTunRollbackLinkAbsent() bool }
+	return errors.As(err, &target) && target.IsTunRollbackLinkAbsent()
+}
+
+// RollbackResourceScoped preserves the pre-mutation identity gate for
+// link-scoped resources while still converging transaction-owned resources that
+// do not depend on the current podlaz0 identity. It intentionally returns the
+// identity error after independent cleanup so lifecycle callers preserve
+// transaction/config/child evidence until the link-scoped subset converges.
+func (e DNSAwareTunExecutor) RollbackResourceScoped(ctx context.Context, plan planner.TunPlan) error {
+	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
+		independentErr := e.rollbackIndependentRollback(ctx, plan)
+		if independentErr == nil && strictRollbackTunLinkAbsent(err) {
+			return tunRollbackLinkAbsentError{err: err}
+		}
+		return errors.Join(independentErr, err)
+	}
+	return e.Rollback(ctx, plan)
+}
+
+func strictRollbackTunLinkAbsent(err error) bool {
+	var cmdErr commandError
+	if !errors.As(err, &cmdErr) {
+		return false
+	}
+	if !commandErrorMatchesArgv(cmdErr, "ip", "-details", "-o", "link", "show", "dev", managedTunInterfaceName) {
+		return false
+	}
+	if cmdErr.parentErr != nil || cmdErr.contextErr != nil || cmdErr.err == nil {
+		return false
+	}
+	if errors.Is(cmdErr.err, context.Canceled) || errors.Is(cmdErr.err, context.DeadlineExceeded) {
+		return false
+	}
+	var exitErr processExitCoder
+	if !errors.As(cmdErr.err, &exitErr) || exitErr.ExitCode() != 1 {
+		return false
+	}
+	if cmdErr.result.ExitCode != 1 || cmdErr.result.RawStdout != "" {
+		return false
+	}
+	if cmdErr.result.RawStderr == "" || len(cmdErr.result.RawStderr) > maxTunRollbackMissingStderrSize {
+		return false
+	}
+	return exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Device "podlaz0" does not exist.`) ||
+		exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Cannot find device "podlaz0"`)
+}
+
+func commandErrorMatchesArgv(cmdErr commandError, want ...string) bool {
+	if len(want) == 0 || cmdErr.name != want[0] || len(cmdErr.args) != len(want)-1 {
+		return false
+	}
+	for i, arg := range cmdErr.args {
+		if arg != want[i+1] {
+			return false
+		}
+	}
+	return true
+}
+
+// RollbackResourceScopedChildAbsent is the lifecycle-boundary variant for the
+// typed decision "link absent + tracked child absent". The caller reaches this
+// method only after a prior link observation proved the transaction-bound link
+// absent and the tracked child was then proven absent. Do not re-classify the
+// link here: a foreign same-name TUN may appear between observations. In this
+// state DNS/address/link name-scoped mutations are forbidden and already-missing
+// address/link state is treated as converged; only independent exact resources
+// are cleaned up.
+func (e DNSAwareTunExecutor) RollbackResourceScopedChildAbsent(ctx context.Context, plan planner.TunPlan) error {
+	return e.rollbackIndependentRollback(ctx, plan)
+}
+
+func (e DNSAwareTunExecutor) rollbackIndependentRollback(ctx context.Context, plan planner.TunPlan) error {
+	var errs []error
+	if e.Firewall != nil && strings.TrimSpace(plan.Firewall.Table) != "" {
+		if rollbackErr := e.Firewall.Rollback(ctx, plan.Firewall); rollbackErr != nil {
+			errs = append(errs, rollbackErr)
+		}
+	}
+	if rollbackErr := e.Base.RollbackIndependent(ctx, plan); rollbackErr != nil {
+		errs = append(errs, rollbackErr)
+	}
+	return errors.Join(errs...)
+}
+
+// RollbackIndependent removes only exact resources whose mutation does not rely
+// on a current podlaz0 name/ifindex/kind proof. It never mutates DNS, TUN
+// address, or TUN link state.
+func (e TunExecutor) RollbackIndependent(ctx context.Context, plan planner.TunPlan) error {
+	if err := e.validatePlan(plan); err != nil {
+		return err
+	}
+	var errs []error
+	for i := len(plan.PolicyRules) - 1; i >= 0; i-- {
+		rule := plan.PolicyRules[i]
+		if rule.Action != "add" {
+			continue
+		}
+		if err := e.PolicyRules.Rollback(ctx, rule); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for i := len(plan.Routes) - 1; i >= 0; i-- {
+		route := plan.Routes[i]
+		if !independentRollbackRoute(route) {
+			continue
+		}
+		if err := e.Routes.Rollback(ctx, route); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func independentRollbackRoute(route planner.TunRoutePlan) bool {
+	if route.Action != "add" {
+		return false
+	}
+	if strings.TrimSpace(route.Table) != planner.MainRoutingTable {
+		return false
+	}
+	if strings.TrimSpace(route.Interface) == "" || strings.TrimSpace(route.Interface) == managedTunInterfaceName {
+		return false
+	}
+	if strings.TrimSpace(route.Gateway) == "" {
+		return false
+	}
+	if gateway, err := netip.ParseAddr(strings.TrimSpace(route.Gateway)); err != nil || !gateway.Is4() {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(route.Destination))
+	if err != nil {
+		return false
+	}
+	return prefix.Addr().Is4() && prefix.Bits() == 32
+}

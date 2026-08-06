@@ -5,11 +5,11 @@ import sys
 from pathlib import Path
 
 MISSING_LINK_MARKER = b'Failed to resolve interface "podlaz0": No such device'
+MISSING_LINK_UBUNTU_MARKER = b'Failed to resolve interface "podlaz0", ignoring: No such device'
 _ALLOWED_STDERR = frozenset(
-    {
-        MISSING_LINK_MARKER + b"\n",
-        MISSING_LINK_MARKER + b"\r\n",
-    }
+    marker + terminator
+    for marker in (MISSING_LINK_MARKER, MISSING_LINK_UBUNTU_MARKER)
+    for terminator in (b"\n", b"\r\n")
 )
 _CAPTURE_EXIT_CODE = "dns-rollback.exit-code"
 _CAPTURE_STDOUT = "dns-rollback.stdout"

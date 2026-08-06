@@ -14,7 +14,7 @@ func TestPlanTunPinsCurrentDefaultPolicyShape(t *testing.T) {
 	if plan.Mode != ModeTun || plan.TunnelMode != TunTunnelMode {
 		t.Fatalf("unexpected TUN policy mode: mode=%q tunnel=%q", plan.Mode, plan.TunnelMode)
 	}
-	if plan.TunDevice.Name != snapshot.DefaultTunName || plan.TunDevice.Action != "create" || plan.TunDevice.MTU != DefaultTunMTU {
+	if plan.TunDevice.Name != snapshot.DefaultTunName || plan.TunDevice.Action != "verify" || plan.TunDevice.MTU != DefaultTunMTU {
 		t.Fatalf("unexpected TUN device policy: %#v", plan.TunDevice)
 	}
 	if !containsRoute(plan.Routes, TunRoutingTable, IPv4DefaultRoute, snapshot.DefaultTunName) {
@@ -87,10 +87,13 @@ func TestPlanTunPinsRollbackStepOrderingAndDomains(t *testing.T) {
 	for _, want := range []string{
 		"Delete route 203.0.113.10/32 from table main via 192.0.2.1 dev wlp0s20f3 if created by this transaction",
 		"Delete route default from table podlaz dev podlaz0 if created by this transaction",
-		"Delete TUN interface podlaz0 only if this transaction created it and ownership matches podlaz",
+		"Remove exact daemon-owned TUN address 198.18.0.1/32 from podlaz0 only when transaction and link identity match",
 	} {
 		if !containsString(plan.RollbackSteps, want) {
 			t.Fatalf("expected rollback step %q, got %#v", want, plan.RollbackSteps)
 		}
+	}
+	if rollbackStepIndex(plan.RollbackSteps, "Delete TUN interface") >= 0 {
+		t.Fatalf("rollback must not delete Xray-owned TUN link: %#v", plan.RollbackSteps)
 	}
 }

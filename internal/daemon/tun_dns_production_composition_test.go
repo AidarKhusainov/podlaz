@@ -110,6 +110,18 @@ func productionDNSPlanForTest() planner.TunPlan {
 			MTU:    1500,
 			Action: "verify",
 		},
+		TunAddress: planner.TunAddressPlan{
+			Family:            "ipv4",
+			Interface:         "podlaz0",
+			CIDR:              planner.DefaultTunIPv4CIDR,
+			Scope:             "global",
+			Action:            planner.TunAddressActionAssign,
+			Owner:             planner.TunAddressOwner,
+			RollbackKey:       "podlaz0/" + planner.DefaultTunIPv4CIDR,
+			LinkIndex:         7,
+			LinkKind:          "tun",
+			AppearedAfterCore: true,
+		},
 		DNS: planner.TunDNSPlan{
 			Backend:    planner.DNSBackendSystemdResolved,
 			TargetLink: "podlaz0",
@@ -123,6 +135,7 @@ func productionDNSPlanForTest() planner.TunPlan {
 type productionTunCommandRunner struct {
 	resolvedStatus string
 	commands       []string
+	addressPresent bool
 }
 
 func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
@@ -131,6 +144,21 @@ func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ..
 	switch command {
 	case "ip -details link show dev podlaz0":
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest}, nil
+	case "ip -details -o link show dev podlaz0":
+		return netexecutor.CommandResult{Stdout: productionTunLinkOnelineForTest}, nil
+	case "ip -4 -o address show dev podlaz0":
+		if r.addressPresent {
+			return netexecutor.CommandResult{Stdout: "7: podlaz0    inet " + planner.DefaultTunIPv4CIDR + " scope global podlaz0"}, nil
+		}
+		return netexecutor.CommandResult{}, nil
+	case "ip -4 address replace 198.18.0.1/32 dev podlaz0":
+		r.addressPresent = true
+		return netexecutor.CommandResult{}, nil
+	case "ip link set dev podlaz0 up":
+		return netexecutor.CommandResult{}, nil
+	case "ip -4 address del 198.18.0.1/32 dev podlaz0":
+		r.addressPresent = false
+		return netexecutor.CommandResult{}, nil
 	case "resolvectl status --no-pager":
 		return netexecutor.CommandResult{Stdout: r.resolvedStatus}, nil
 	case "resolvectl revert podlaz0",

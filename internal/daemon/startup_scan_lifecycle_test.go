@@ -28,3 +28,20 @@ func TestStartupScanRefreshingLifecycleRefreshesAfterSuccessAndFailure(t *testin
 		t.Fatalf("expected refresh after successful disconnect, got %d", refreshes)
 	}
 }
+
+func TestStartupScanRefreshingLifecycleUsesBoundedAuthoritativeRefresh(t *testing.T) {
+	manager := NewXrayManager(t.TempDir())
+	var deadlinePresent bool
+	lifecycle := startupScanRefreshingLifecycle{
+		lifecycle: manager,
+		refresh: func(ctx context.Context) {
+			_, deadlinePresent = ctx.Deadline()
+		},
+	}
+	if _, err := lifecycle.Connect(context.Background(), api.ConnectRequest{Mode: "unsupported"}); err == nil {
+		t.Fatal("expected failed connect")
+	}
+	if !deadlinePresent {
+		t.Fatal("post-lifecycle authoritative refresh must be bounded")
+	}
+}

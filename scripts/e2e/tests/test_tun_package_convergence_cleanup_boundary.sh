@@ -43,6 +43,7 @@ cat >"${TRANSACTION_DIR}/tx.json" <<'JSON'
 JSON
 
 SCRIPT_DIR="${E2E_DIR}"
+FOREIGN_ADDRESS_LINK="podlaz-e2e-address0"
 # shellcheck source=../lib/process_lifecycle.sh
 source "${E2E_DIR}/lib/process_lifecycle.sh"
 # shellcheck source=../lib/connect_lifecycle.sh

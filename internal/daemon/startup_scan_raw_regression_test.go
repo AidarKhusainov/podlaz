@@ -73,7 +73,7 @@ func TestActiveCommittedTransactionRefusesAmbiguousHeuristicMatches(t *testing.T
 	newTx := saveStartupScanCommittedTransaction(t, runtimeDir, "tx-new", "profile-test", configPath)
 	status := startupScanActiveStatus(oldTx, configPath)
 	status.ActiveTransactionID = ""
-	status.Transactions = append(status.Transactions, api.TransactionStatus{ID: newTx.ID, State: string(txstate.TransactionCommitted), Path: "unused-new"})
+	status.Transactions = append(status.Transactions, api.TransactionStatus{ID: newTx.ID, State: string(txstate.TransactionCommitted), Path: startupScanTransactionPath(runtimeDir, newTx.ID)})
 
 	_, ok, err := activeCommittedTransaction(status, runtimeDir)
 	if ok || err == nil {
@@ -107,8 +107,8 @@ func TestActiveCommittedTransactionUsesExactActiveTransactionID(t *testing.T) {
 		"runtime_config_path":"` + configPath + `",
 		"active_transaction_id":"tx-new",
 		"transactions":[
-			{"id":"tx-old","state":"committed","path":"unused-old"},
-			{"id":"tx-new","state":"committed","path":"unused-new"}
+			{"id":"tx-old","state":"committed","path":"` + startupScanTransactionPath(runtimeDir, oldTx.ID) + `"},
+			{"id":"tx-new","state":"committed","path":"` + startupScanTransactionPath(runtimeDir, newTx.ID) + `"}
 		]
 	}`)
 	var status api.StatusResponse
@@ -142,7 +142,11 @@ func startupScanActiveStatus(tx txstate.Transaction, configPath string) api.Stat
 		RuntimeConfigPath:   configPath,
 		ActiveTransactionID: tx.ID,
 		Transactions: []api.TransactionStatus{{
-			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: "unused-active",
+			ID: tx.ID, State: string(txstate.TransactionCommitted), Path: startupScanTransactionPath(filepath.Dir(filepath.Dir(configPath)), tx.ID),
 		}},
 	}
+}
+
+func startupScanTransactionPath(runtimeDir, id string) string {
+	return filepath.Join(runtimeDir, txstate.TransactionDirName, id+txstate.TransactionFileSuffix)
 }

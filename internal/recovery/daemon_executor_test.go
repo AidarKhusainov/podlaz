@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -133,11 +134,104 @@ func saveTransaction(t *testing.T, runtimeDir string, rollback txstate.RollbackM
 	tx := txstate.NewTransaction("tx-child-process", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
 	tx.Rollback = rollback
+	tx.DesiredPlan = desiredPlanForRollback(rollback)
+	tx.AppliedSteps = appliedStepsForRollback(rollback, time.Now().UTC())
 	path, err := store.Save(tx)
 	if err != nil {
 		t.Fatalf("save transaction: %v", err)
 	}
 	return path, tx
+}
+
+func desiredPlanForRollback(rollback txstate.RollbackMetadata) txstate.DesiredPlan {
+	var desired txstate.DesiredPlan
+	if len(rollback.TUNAddresses) == 1 {
+		address := rollback.TUNAddresses[0]
+		if ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) {
+			desired.TUN = txstate.TUNDesiredState{
+				InterfaceName: address.InterfaceName,
+				MTU:           1500,
+				Owner:         "xray:tun-inbound",
+			}
+			desired.TUNAddress = txstate.TUNAddressDesiredState{
+				Family:            address.Family,
+				InterfaceName:     address.InterfaceName,
+				CIDR:              address.CIDR,
+				Scope:             address.Scope,
+				LinkIndex:         address.LinkIndex,
+				LinkKind:          address.LinkKind,
+				AppearedAfterCore: address.AppearedAfterCore,
+				Owner:             address.Owner,
+			}
+		}
+	}
+	for _, route := range rollback.Routes {
+		if ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
+			desired.Routes = append(desired.Routes, txstate.RoutePlan{
+				Kind:      "route",
+				Table:     route.Table,
+				CIDR:      route.CIDR,
+				Via:       route.Via,
+				Dev:       route.Dev,
+				Owner:     route.Owner,
+				Operation: "add",
+			})
+		}
+	}
+	for _, rule := range rollback.PolicyRules {
+		if ownedRollbackMetadata(rule.Owner, netexecutor.OwnerPolicyRule) {
+			desired.Steps = append(desired.Steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleRollbackTarget(rule), Owner: rule.Owner})
+		}
+	}
+	for _, dns := range rollback.DNS {
+		if ownedRollbackMetadata(dns.Owner, netexecutor.OwnerDNS) {
+			desired.DNS = txstate.DNSPlan{Backend: dns.Backend, Link: dns.Link, SearchDomains: append([]string(nil), dns.SearchDomains...), Owner: dns.Owner}
+		}
+	}
+	for _, nft := range rollback.NFTables {
+		if ownedRollbackMetadata(nft.Owner, netexecutor.OwnerFirewall) {
+			desired.NFT = txstate.NFTPlan{Family: nft.Family, Table: nft.Table, Owner: nft.Owner}
+		}
+	}
+	return desired
+}
+
+func appliedStepsForRollback(rollback txstate.RollbackMetadata, now time.Time) []txstate.AppliedStep {
+	steps := make([]txstate.AppliedStep, 0, len(rollback.TUN)+len(rollback.TUNAddresses)+len(rollback.Routes)+len(rollback.PolicyRules)+len(rollback.DNS)+len(rollback.NFTables))
+	appendStep := func(kind, target, owner string) {
+		steps = append(steps, txstate.AppliedStep{Kind: kind, Target: target, Owner: owner, AppliedAt: now.UTC()})
+	}
+	for _, item := range rollback.TUN {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunDevice) {
+			appendStep("tun-device", strings.TrimSpace(item.InterfaceName), netexecutor.OwnerTunDevice)
+		}
+	}
+	for _, item := range rollback.TUNAddresses {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerTunAddress) {
+			appendStep("tun-address", tunAddressRollbackTarget(item), netexecutor.OwnerTunAddress)
+		}
+	}
+	for _, item := range rollback.Routes {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
+			appendStep("route", routeRollbackTarget(item), netexecutor.OwnerRoute)
+		}
+	}
+	for _, item := range rollback.PolicyRules {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) {
+			appendStep("policy-rule", policyRuleRollbackTarget(item), netexecutor.OwnerPolicyRule)
+		}
+	}
+	for _, item := range rollback.DNS {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerDNS) {
+			appendStep("dns", strings.TrimSpace(item.Link), netexecutor.OwnerDNS)
+		}
+	}
+	for _, item := range rollback.NFTables {
+		if ownedRollbackMetadata(item.Owner, netexecutor.OwnerFirewall) {
+			appendStep("nftables", nftRollbackTarget(item), netexecutor.OwnerFirewall)
+		}
+	}
+	return steps
 }
 
 func transactionCandidate(path string, tx txstate.Transaction) Candidate {
@@ -166,4 +260,97 @@ func assertCleanupResult(t *testing.T, results []CleanupResult, kind string, sta
 		}
 	}
 	t.Fatalf("cleanup result kind=%q status=%q message containing %q not found in %#v", kind, status, messageSubstring, results)
+}
+
+func TestFullRecoveryPreservesForeignReplacementLinkAfterTransactionIdentityMismatch(t *testing.T) {
+	runtimeDir := t.TempDir()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	tx := txstate.NewTransaction("tx-replacement", "profile-1", "tun", time.Now().UTC())
+	tx.State = txstate.TransactionApplying
+	tx.DesiredPlan.TUN.Owner = "xray:tun-inbound"
+	tx.DesiredPlan.TUN.InterfaceName = managedInterface
+	tx.DesiredPlan.TUN.MTU = 1500
+	tx.Rollback.TUNAddresses = []txstate.TUNAddressRollback{{
+		Family:            "ipv4",
+		InterfaceName:     managedInterface,
+		CIDR:              "198.18.0.1/32",
+		Scope:             "global",
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             "podlaz:tun-address",
+	}}
+	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family:            tx.Rollback.TUNAddresses[0].Family,
+		InterfaceName:     tx.Rollback.TUNAddresses[0].InterfaceName,
+		CIDR:              tx.Rollback.TUNAddresses[0].CIDR,
+		Scope:             tx.Rollback.TUNAddresses[0].Scope,
+		LinkIndex:         tx.Rollback.TUNAddresses[0].LinkIndex,
+		LinkKind:          tx.Rollback.TUNAddresses[0].LinkKind,
+		AppearedAfterCore: tx.Rollback.TUNAddresses[0].AppearedAfterCore,
+		Owner:             tx.Rollback.TUNAddresses[0].Owner,
+	}
+	tx.AppliedSteps = appliedStepsForRollback(tx.Rollback, time.Now().UTC())
+	path, err := store.Save(tx)
+	if err != nil {
+		t.Fatalf("save transaction: %v", err)
+	}
+
+	runner := &recordingRunner{
+		paths: map[string]string{"ip": "/usr/sbin/ip"},
+		commands: map[string]fakeCommand{
+			"ip link show dev podlaz0":             {stdout: "8: podlaz0: <POINTOPOINT,UP> mtu 1500"},
+			"ip -details -o link show dev podlaz0": {stdout: "8: podlaz0: <POINTOPOINT,UP> mtu 1500\n    tun type tun pi off"},
+		},
+	}
+	scan := (OSScanner{Runner: runner, RuntimeDir: runtimeDir}).Scan(context.Background())
+	result := ExecuteWithOptions(context.Background(), Options{
+		RuntimeDir: runtimeDir,
+		Scanner:    fakeScanner{result: scan},
+		Executor:   DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner},
+	})
+
+	for _, command := range runner.runCommands {
+		if command == "ip link del dev podlaz0" {
+			t.Fatalf("foreign replacement link was deleted after identity mismatch: %#v", runner.runCommands)
+		}
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("transaction must remain after identity mismatch: %v", err)
+	}
+	if !result.HasFailures() && !result.HasIncompleteCleanup() {
+		t.Fatalf("replacement mismatch must keep recovery incomplete: %#v", result)
+	}
+}
+
+func TestPlannedAndPreMutationApplyingTransactionsDoNotMutateDesiredNetworkFixtures(t *testing.T) {
+	for _, state := range []txstate.TransactionState{txstate.TransactionPlanned, txstate.TransactionApplying} {
+		t.Run(string(state), func(t *testing.T) {
+			runtimeDir := t.TempDir()
+			tx := txstate.NewTransaction("tx-desired-"+string(state), "profile-1", "tun", time.Now().UTC())
+			tx.State = state
+			tx.DesiredPlan.Routes = []txstate.RoutePlan{{Table: "podlaz", CIDR: "default", Dev: "podlaz0", Owner: "podlaz:route", Operation: "add"}}
+			tx.DesiredPlan.Steps = []txstate.PlannedStep{{Kind: "policy-rule", Target: "priority 10000 from all lookup podlaz", Owner: "podlaz:policy-rule"}}
+			tx.DesiredPlan.DNS = txstate.DNSPlan{Backend: "systemd-resolved", Link: "podlaz0", Owner: "podlaz:dns-link"}
+			tx.DesiredPlan.NFT = txstate.NFTPlan{Family: "inet", Table: "podlaz", Owner: "podlaz:nftables"}
+			path, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &recordingRunner{paths: map[string]string{"ip": "/usr/sbin/ip", "nft": "/usr/sbin/nft", "resolvectl": "/usr/bin/resolvectl"}, commands: map[string]fakeCommand{}}
+			result := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
+			for _, command := range runner.runCommands {
+				if strings.Contains(command, " route del ") || strings.Contains(command, " rule del ") || strings.Contains(command, "resolvectl revert") || strings.Contains(command, "nft delete") {
+					t.Fatalf("%s desired intent mutated host fixture: %q", state, command)
+				}
+			}
+			if state == txstate.TransactionApplying {
+				assertCleanupResult(t, result, "transaction-ownership", "skipped", "no durable ownership proof")
+				assertCleanupResult(t, result, "transaction-state", "skipped", "preserved")
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("ambiguous applying transaction must remain: %v", err)
+				}
+			}
+		})
+	}
 }

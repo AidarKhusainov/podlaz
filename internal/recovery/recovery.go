@@ -85,6 +85,9 @@ func (r ExecuteResult) HasFailures() bool {
 }
 
 func (r ExecuteResult) HasIncompleteCleanup() bool {
+	if len(r.Warnings) > 0 {
+		return true
+	}
 	for _, result := range r.Results {
 		if result.Status == "skipped" && (result.Candidate.Kind == "transaction-state" || strings.Contains(result.Message, "transaction state was preserved")) {
 			return true
@@ -192,7 +195,7 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 func (p PlanResult) String() string {
 	var b strings.Builder
 	b.WriteString("podlaz recovery dry-run\n")
-	b.WriteString("Inspection: read-only; uses daemon startup scan when available plus local safe checks. Local permission warnings can differ from daemon-owned --execute cleanup.\n")
+	b.WriteString("Inspection: read-only; uses the authoritative daemon scan when available and local safe checks only as a fallback.\n")
 	switch {
 	case len(p.Candidates) > 0:
 		for _, candidate := range p.Candidates {
@@ -295,6 +298,7 @@ func (s OSScanner) Scan(ctx context.Context) ScanResult {
 	result.scanManagedResolvedLink(ctx, runner)
 	result.scanManagedNFTTable(ctx, runner)
 	result.scanTransactionState(runtimeDir)
+	result.reconcileManagedInterfaceWithTransactions()
 	result.scanGeneratedRuntimeConfigs(filepath.Join(runtimeDir, generatedDirName))
 	return result
 }
@@ -334,14 +338,35 @@ func (r *ScanResult) scanCommandCandidate(ctx context.Context, runner CommandRun
 func (r *ScanResult) scanTransactionState(runtimeDir string) {
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	for _, summary := range summaries {
-		if !summary.RequiresCleanup {
+		if !summary.RequiresRecovery {
 			continue
 		}
-		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: summary.RequiresCleanup, Path: summary.Path}})
+		r.Candidates = append(r.Candidates, Candidate{Kind: "transaction-state", Description: "transaction rollback state", Target: summary.Path, Transaction: &TransactionCandidate{ID: summary.ID, State: string(summary.State), Status: summary.StatusLine(), RollbackAvailable: summary.RollbackAvailable, RequiresCleanup: true, Path: summary.Path}})
 	}
 	for _, warning := range warnings {
 		r.Warnings = append(r.Warnings, Warning{Target: "transaction state", Message: warning})
 	}
+}
+
+func (r *ScanResult) reconcileManagedInterfaceWithTransactions() {
+	hasTransaction := false
+	for _, candidate := range r.Candidates {
+		if candidate.Kind == "transaction-state" && candidate.Transaction != nil {
+			hasTransaction = true
+			break
+		}
+	}
+	if !hasTransaction {
+		return
+	}
+	filtered := r.Candidates[:0]
+	for _, candidate := range r.Candidates {
+		if candidate.Kind == "tun-interface" && candidate.Target == managedInterface {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	r.Candidates = filtered
 }
 
 func (r *ScanResult) scanGeneratedRuntimeConfigs(generatedDir string) {
@@ -399,14 +424,11 @@ func (e OSCleanupExecutor) withDefaults() OSCleanupExecutor {
 	return e
 }
 
-func (e OSCleanupExecutor) cleanupTUNInterface(ctx context.Context, candidate Candidate) CleanupResult {
+func (e OSCleanupExecutor) cleanupTUNInterface(_ context.Context, candidate Candidate) CleanupResult {
 	if candidate.Target != managedInterface {
 		return skipped(candidate, "non-podlaz TUN interface target")
 	}
-	if err := e.run(ctx, "ip", "link", "del", "dev", managedInterface); err != nil && !commandErrorIsMissing(err) {
-		return failed(candidate, err)
-	}
-	return recovered(candidate)
+	return skipped(candidate, "interface name alone is not podlaz ownership proof; use transaction-bound process/link identity")
 }
 
 func (e OSCleanupExecutor) cleanupNFTablesTable(ctx context.Context, candidate Candidate) CleanupResult {

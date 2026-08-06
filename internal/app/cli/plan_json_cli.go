@@ -49,6 +49,7 @@ func tunPlanJSON(p planner.TunPlan) map[string]any {
 			"starts_xray":                false,
 			"modifies_system_networking": false,
 			"tun":                        tunDeviceJSON(p.TunDevice),
+			"tun_address":                tunAddressJSON(p.TunAddress),
 			"routes":                     routesJSON(p.Routes),
 			"policy_rules":               rulesJSON(p.PolicyRules),
 			"server_bypass":              routePlanJSON(p.ServerBypass),

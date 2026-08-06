@@ -7,11 +7,12 @@ import (
 )
 
 const (
-	managedDNSCandidateKind      = "dns-link"
-	managedDNSDescription        = "systemd-resolved link state"
-	managedDNSTarget             = "systemd-resolved link " + managedInterface
-	maxResolvedMissingStderrSize = 512
-	resolvedMissingDeviceStderr  = `Failed to resolve interface "podlaz0": No such device`
+	managedDNSCandidateKind             = "dns-link"
+	managedDNSDescription               = "systemd-resolved link state"
+	managedDNSTarget                    = "systemd-resolved link " + managedInterface
+	maxResolvedMissingStderrSize        = 512
+	resolvedMissingDeviceStderr         = `Failed to resolve interface "podlaz0": No such device`
+	resolvedMissingDeviceIgnoringStderr = `Failed to resolve interface "podlaz0", ignoring: No such device`
 )
 
 func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner CommandRunner) {
@@ -20,7 +21,7 @@ func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner Command
 		return
 	}
 	status, statusErr := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedStatusResourceMissing(status) {
+	if resolvedStatusResourceMissing(ctx, status, statusErr) {
 		return
 	}
 	if !commandSucceeded(status, statusErr) {
@@ -74,7 +75,7 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 	}
 
 	status, statusErr := runCommand(ctx, e.Runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedStatusResourceMissing(status) {
+	if resolvedStatusResourceMissing(ctx, status, statusErr) {
 		return recovered(candidate)
 	}
 	if commandSucceeded(status, statusErr) {
@@ -100,17 +101,24 @@ func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err 
 	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceStderr)
+	return exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceStderr) ||
+		exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceIgnoringStderr)
 }
 
-func resolvedStatusResourceMissing(result CommandResult) bool {
-	if result.ExitCode != 1 || result.RawStdout != "" {
+func resolvedStatusResourceMissing(ctx context.Context, result CommandResult, err error) bool {
+	if ctx == nil || ctx.Err() != nil || err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var exitErr interface{ ExitCode() int }
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 || result.RawStdout != "" {
 		return false
 	}
 	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
 		return false
 	}
-	return exactTerminatedRecoveryProtocolLine(result.RawStderr, `Link podlaz0 does not exist.`) || exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceStderr)
+	return exactTerminatedRecoveryProtocolLine(result.RawStderr, `Link podlaz0 does not exist.`) ||
+		exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceStderr) ||
+		exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceIgnoringStderr)
 }
 
 // exactTerminatedRecoveryProtocolLine accepts only the exact protocol payload

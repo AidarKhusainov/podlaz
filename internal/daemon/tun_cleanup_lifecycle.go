@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -15,6 +17,14 @@ func (m *XrayManager) runTunCleanup(ctx context.Context, transactionID string) (
 	tx, _, err := store.Load(transactionID)
 	if err != nil {
 		return api.LifecycleResponse{}, fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
+	}
+	projection := recovery.ProjectRollbackMetadata(tx)
+	if projection.Incomplete {
+		return api.LifecycleResponse{}, fmt.Errorf("TUN rollback authority incomplete; host state was not mutated: %s", strings.Join(projection.Reasons, "; "))
+	}
+	tx.Rollback = projection.Rollback
+	if err := validateTunRollbackProjection(tx); err != nil {
+		return api.LifecycleResponse{}, fmt.Errorf("TUN rollback authority incomplete; host state was not mutated: %w", err)
 	}
 	plan := tunPlanFromTransaction(tx)
 	if err := rollbackTunTransaction(ctx, store, &tx, plan, m.tunPlanExecutor()); err != nil {
