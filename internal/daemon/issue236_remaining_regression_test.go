@@ -125,10 +125,13 @@ func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *tes
 			if loadErr != nil {
 				t.Fatalf("load failed transaction ownership: %v", loadErr)
 			}
-			if len(tx.AppliedSteps) != 1 {
-				t.Fatalf("persisted applied_steps = %#v, want exactly one owned step", tx.AppliedSteps)
+			if len(tx.AppliedSteps) != 2 {
+				t.Fatalf("persisted applied_steps = %#v, want address plus one owned network step", tx.AppliedSteps)
 			}
-			step := tx.AppliedSteps[0]
+			if tx.AppliedSteps[0].Kind != "tun-address" || tx.AppliedSteps[0].Owner != netexecutor.OwnerTunAddress {
+				t.Fatalf("first ownership step must be bound TUN address, got %#v", tx.AppliedSteps)
+			}
+			step := tx.AppliedSteps[1]
 			if step.Kind != tt.wantKind || step.Owner != tt.wantOwner {
 				t.Fatalf("persisted ownership = %#v, want kind=%s owner=%s", step, tt.wantKind, tt.wantOwner)
 			}
@@ -138,10 +141,13 @@ func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *tes
 				t.Fatalf("rollback partial production mutation: %v", rollbackErr)
 			}
 			if runner.hasOwnedResidue() {
-				t.Fatalf("rollback left owned host residue: tun=%v route=%v rule=%v commands=%#v", runner.tunPresent, runner.routePresent, runner.rulePresent, runner.commands)
+				t.Fatalf("rollback left owned host residue: address=%v tun=%v route=%v rule=%v commands=%#v", runner.addressPresent, runner.tunPresent, runner.routePresent, runner.rulePresent, runner.commands)
 			}
 			if got := runner.count(tt.rollbackCommand); got != 1 {
 				t.Fatalf("exact rollback command %q count = %d, want 1; commands=%#v", tt.rollbackCommand, got, runner.commands)
+			}
+			if got := runner.count("ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0"); got != 1 {
+				t.Fatalf("TUN address rollback command count = %d, want 1; commands=%#v", got, runner.commands)
 			}
 			summaries, warnings := transactionStatuses(runtimeDir)
 			if len(summaries) != 0 || len(warnings) != 0 {
@@ -153,10 +159,8 @@ func TestProductionTunTransactionPersistsAndRollsBackBasePartialOwnership(t *tes
 
 func assertIssue236ExactRollbackMetadata(t *testing.T, rollback txstate.RollbackMetadata, wantKind string) {
 	t.Helper()
-	wantTUN, wantRoutes, wantRules := 0, 0, 0
+	wantRoutes, wantRules := 0, 0
 	switch wantKind {
-	case "tun-device":
-		wantTUN = 1
 	case "route":
 		wantRoutes = 1
 	case "policy-rule":
@@ -164,8 +168,8 @@ func assertIssue236ExactRollbackMetadata(t *testing.T, rollback txstate.Rollback
 	default:
 		t.Fatalf("unsupported ownership kind %q", wantKind)
 	}
-	if len(rollback.TUN) != wantTUN || len(rollback.Routes) != wantRoutes || len(rollback.PolicyRules) != wantRules {
-		t.Fatalf("rollback metadata is not exact for %s: %#v", wantKind, rollback)
+	if len(rollback.TUN) != 0 || len(rollback.TUNAddresses) != 1 || len(rollback.Routes) != wantRoutes || len(rollback.PolicyRules) != wantRules {
+		t.Fatalf("rollback metadata is not exact for address+%s: %#v", wantKind, rollback)
 	}
 	if len(rollback.DNS) != 0 || len(rollback.NFTables) != 0 || len(rollback.GeneratedConfigs) != 0 || len(rollback.ChildProcesses) != 0 {
 		t.Fatalf("rollback metadata contains unrelated ownership for %s: %#v", wantKind, rollback)
@@ -174,6 +178,7 @@ func assertIssue236ExactRollbackMetadata(t *testing.T, rollback txstate.Rollback
 
 func issue236PartialTunPlan() planner.TunPlan {
 	plan := issue236BasePartialPlan()
+	plan.TunAddress = planner.TunAddressPlan{}
 	plan.TunDevice.Action = "create"
 	return plan
 }
@@ -215,6 +220,18 @@ func issue236BasePartialPlan() planner.TunPlan {
 			Action: "verify",
 			Reason: "example TUN device",
 		},
+		TunAddress: planner.TunAddressPlan{
+			Family:            "ipv4",
+			Interface:         "podlaz0",
+			CIDR:              planner.DefaultTunIPv4CIDR,
+			Scope:             "global",
+			Action:            planner.TunAddressActionAssign,
+			Owner:             planner.TunAddressOwner,
+			RollbackKey:       "podlaz0/" + planner.DefaultTunIPv4CIDR,
+			LinkIndex:         7,
+			LinkKind:          "tun",
+			AppearedAfterCore: true,
+		},
 		DNS: planner.TunDNSPlan{
 			Backend:    planner.DNSBackendSystemdResolved,
 			TargetLink: "podlaz0",
@@ -226,12 +243,13 @@ func issue236BasePartialPlan() planner.TunPlan {
 }
 
 type issue236PartialMutationRunner struct {
-	failCommand  string
-	failed       bool
-	commands     []string
-	tunPresent   bool
-	routePresent bool
-	rulePresent  bool
+	failCommand    string
+	failed         bool
+	commands       []string
+	addressPresent bool
+	tunPresent     bool
+	routePresent   bool
+	rulePresent    bool
 }
 
 func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
@@ -247,11 +265,20 @@ func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest}, nil
 	case "ip -details -o link show dev podlaz0":
 		return netexecutor.CommandResult{Stdout: productionTunLinkOnelineForTest}, nil
+	case "ip -4 -o address show dev podlaz0":
+		if r.addressPresent {
+			return netexecutor.CommandResult{Stdout: fmt.Sprintf("7: podlaz0    inet %s scope global podlaz0", planner.DefaultTunIPv4CIDR)}, nil
+		}
+		return netexecutor.CommandResult{}, nil
 	case "ip tuntap add dev podlaz0 mode tun user podlaz-xray group podlaz-xray":
 		r.tunPresent = true
 	case "ip link set dev podlaz0 mtu 1500", "ip link set dev podlaz0 up":
 	case "ip link del dev podlaz0":
 		r.tunPresent = false
+	case "ip -4 address replace " + planner.DefaultTunIPv4CIDR + " dev podlaz0":
+		r.addressPresent = true
+	case "ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0":
+		r.addressPresent = false
 	case "ip -4 route add default dev podlaz0 table 51820":
 		r.routePresent = true
 	case "ip -4 route del default dev podlaz0 table 51820":
@@ -270,7 +297,7 @@ func (r *issue236PartialMutationRunner) Run(_ context.Context, name string, args
 }
 
 func (r *issue236PartialMutationRunner) hasOwnedResidue() bool {
-	return r.tunPresent || r.routePresent || r.rulePresent
+	return r.addressPresent || r.tunPresent || r.routePresent || r.rulePresent
 }
 
 func (r *issue236PartialMutationRunner) count(command string) int {
