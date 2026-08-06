@@ -24,8 +24,13 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *te
 	if err != nil {
 		t.Fatalf("apply firewall-aware plan: %v", err)
 	}
-	if len(steps) != 7 {
-		t.Fatalf("expected TUN, route, policy-rule, DNS, and firewall steps, got %#v", steps)
+	if len(steps) != 6 {
+		t.Fatalf("expected route, policy-rule, DNS, and firewall steps without TUN ownership, got %#v", steps)
+	}
+	for _, step := range steps {
+		if step.Kind == "tun-device" {
+			t.Fatalf("Xray-owned TUN link must not create daemon ownership step: %#v", steps)
+		}
 	}
 	if err := exec.Verify(context.Background(), plan); err != nil {
 		t.Fatalf("verify firewall-aware plan: %v", err)
@@ -36,7 +41,7 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *te
 	}
 
 	want := []string{
-		"tun:create:podlaz0",
+		"tun:verify:podlaz0",
 		"route:add:podlaz:default",
 		"route:add:main:203.0.113.10/32",
 		"rule:add:9999:to 203.0.113.10/32",
@@ -57,7 +62,6 @@ func TestDNSAwareTunExecutorAppliesVerifiesAndRollsBackFirewallInSafeOrder(t *te
 		"route:rollback:main:203.0.113.10/32",
 		"route:rollback:podlaz:default",
 		"address:rollback:podlaz0:198.18.0.1/32",
-		"tun:rollback:podlaz0",
 	}
 	if !reflect.DeepEqual(recorder.calls, want) {
 		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
@@ -79,8 +83,8 @@ func TestDNSAwareTunExecutorPreservesPartialFirewallOwnershipWithoutInternalRoll
 	if err == nil {
 		t.Fatal("expected firewall apply failure")
 	}
-	if len(steps) != 7 || steps[len(steps)-1].Kind != "nftables" || steps[len(steps)-1].Owner != OwnerFirewall {
-		t.Fatalf("expected partial firewall step to remain rollbackable, got %#v", steps)
+	if len(steps) != 6 || steps[len(steps)-1].Kind != "nftables" || steps[len(steps)-1].Owner != OwnerFirewall {
+		t.Fatalf("expected partial firewall step to remain rollbackable without TUN ownership, got %#v", steps)
 	}
 	if got := recorder.calls[len(recorder.calls)-1]; got != "firewall:apply:inet podlaz" {
 		t.Fatalf("composition executor must not rollback before transaction diagnostics, got %q", got)
