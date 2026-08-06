@@ -220,7 +220,7 @@ func assertNotContains(t *testing.T, got, forbidden string) {
 }
 
 func assertNoPlanSecretLeak(t *testing.T, got string) {
-	t.Helper()	
+	t.Helper()
 	assertNotContains(t, got, "00000000-0000-0000-0000-000000000001")
 	assertNotContains(t, got, "public-key")
 }
