@@ -117,16 +117,15 @@ func (e IPTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddress
 	if err := validateBoundTunAddressPlan(plan); err != nil {
 		return step, err
 	}
-	identity, err := e.inspectIdentity(ctx, plan.Interface)
-	if err != nil {
-		return Step{}, fmt.Errorf("inspect TUN link before address apply: %w", err)
-	}
-	if err := verifyBoundIdentity(plan, identity, false); err != nil {
+	if err := e.verifyBoundIdentityFence(ctx, plan, "before address inventory", false); err != nil {
 		return Step{}, err
 	}
 	addresses, err := e.inspectAddresses(ctx, plan.Interface)
 	if err != nil {
 		return Step{}, fmt.Errorf("inspect TUN addresses before apply: %w", err)
+	}
+	if err := e.verifyBoundIdentityFence(ctx, plan, "after address inventory", false); err != nil {
+		return Step{}, err
 	}
 	exact, conflicts := addressInventoryState(addresses, plan)
 	if conflicts > 0 || (exact > 0 && !plan.AllowOwnedExisting) {
@@ -137,12 +136,24 @@ func (e IPTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddress
 	}
 	step = tunAddressStep(plan)
 	if exact == 0 {
+		if err := e.verifyBoundIdentityFence(ctx, plan, "immediately before address apply", false); err != nil {
+			return step, err
+		}
 		if err := runCommand(ctx, e.Runner, "ip", "-4", "address", "replace", plan.CIDR, "dev", plan.Interface); err != nil {
 			return step, fmt.Errorf("assign TUN address %s to %s: %w", plan.CIDR, plan.Interface, err)
 		}
+		if err := e.verifyAddressPresence(ctx, plan, 1, "after address apply"); err != nil {
+			return step, err
+		}
+	}
+	if err := e.verifyBoundIdentityFence(ctx, plan, "immediately before link up", false); err != nil {
+		return step, err
 	}
 	if err := runCommand(ctx, e.Runner, "ip", "link", "set", "dev", plan.Interface, "up"); err != nil {
 		return step, fmt.Errorf("bring addressed TUN link %s up: %w", plan.Interface, err)
+	}
+	if err := e.Verify(ctx, plan); err != nil {
+		return step, fmt.Errorf("verify TUN address after apply: %w", err)
 	}
 	return step, nil
 }
@@ -156,16 +167,15 @@ func (e IPTunAddressExecutor) Verify(ctx context.Context, plan planner.TunAddres
 	if err := validateBoundTunAddressPlan(plan); err != nil {
 		return err
 	}
-	identity, err := e.inspectIdentity(ctx, plan.Interface)
-	if err != nil {
-		return fmt.Errorf("inspect TUN link during address verification: %w", err)
-	}
-	if err := verifyBoundIdentity(plan, identity, true); err != nil {
+	if err := e.verifyBoundIdentityFence(ctx, plan, "before address verification inventory", true); err != nil {
 		return err
 	}
 	addresses, err := e.inspectAddresses(ctx, plan.Interface)
 	if err != nil {
 		return fmt.Errorf("inspect TUN addresses during verification: %w", err)
+	}
+	if err := e.verifyBoundIdentityFence(ctx, plan, "after address verification inventory", true); err != nil {
+		return err
 	}
 	exact, conflicts := addressInventoryState(addresses, plan)
 	if conflicts != 0 {
@@ -179,7 +189,7 @@ func (e IPTunAddressExecutor) Verify(ctx context.Context, plan planner.TunAddres
 			return fmt.Errorf("TUN address %s has scope %s, expected %s", plan.CIDR, address.Scope, plan.Scope)
 		}
 	}
-	return nil
+	return e.verifyBoundIdentityFence(ctx, plan, "after address verification", true)
 }
 
 func (e IPTunAddressExecutor) Rollback(ctx context.Context, plan planner.TunAddressPlan) error {
@@ -189,19 +199,18 @@ func (e IPTunAddressExecutor) Rollback(ctx context.Context, plan planner.TunAddr
 	if err := validateBoundTunAddressPlan(plan); err != nil {
 		return err
 	}
-	identity, err := e.inspectIdentity(ctx, plan.Interface)
-	if err != nil {
+	if err := e.verifyBoundIdentityFence(ctx, plan, "before address rollback inventory", false); err != nil {
 		if plan.AllowMissingLink && resourceMissing(err) {
 			return nil
 		}
-		return fmt.Errorf("inspect TUN link before address rollback: %w", err)
-	}
-	if err := verifyBoundIdentity(plan, identity, false); err != nil {
 		return err
 	}
 	addresses, err := e.inspectAddresses(ctx, plan.Interface)
 	if err != nil {
 		return fmt.Errorf("inspect TUN addresses before rollback: %w", err)
+	}
+	if err := e.verifyBoundIdentityFence(ctx, plan, "after address rollback inventory", false); err != nil {
+		return err
 	}
 	exact := 0
 	for _, address := range addresses {
@@ -215,16 +224,51 @@ func (e IPTunAddressExecutor) Rollback(ctx context.Context, plan planner.TunAddr
 	if exact != 1 {
 		return fmt.Errorf("refuse TUN address rollback: %s appears %d times on %s", plan.CIDR, exact, plan.Interface)
 	}
+	if err := e.verifyBoundIdentityFence(ctx, plan, "immediately before address rollback", false); err != nil {
+		return err
+	}
 	if err := runCommand(ctx, e.Runner, "ip", "-4", "address", "del", plan.CIDR, "dev", plan.Interface); err != nil && !resourceMissing(err) {
 		return fmt.Errorf("remove exact TUN address %s from %s: %w", plan.CIDR, plan.Interface, err)
 	}
-	return nil
+	return e.verifyAddressPresence(ctx, plan, 0, "after address rollback")
 }
 
 type tunLinkIdentity struct {
 	Index int
 	Kind  string
 	Up    bool
+}
+
+func (e IPTunAddressExecutor) verifyBoundIdentityFence(ctx context.Context, plan planner.TunAddressPlan, phase string, requireUp bool) error {
+	identity, err := e.inspectIdentity(ctx, plan.Interface)
+	if err != nil {
+		return fmt.Errorf("inspect TUN link %s: %w", phase, err)
+	}
+	if err := verifyBoundIdentity(plan, identity, requireUp); err != nil {
+		return fmt.Errorf("%s: %w", phase, err)
+	}
+	return nil
+}
+
+func (e IPTunAddressExecutor) verifyAddressPresence(ctx context.Context, plan planner.TunAddressPlan, wantExact int, phase string) error {
+	if err := e.verifyBoundIdentityFence(ctx, plan, phase+" identity", false); err != nil {
+		return err
+	}
+	addresses, err := e.inspectAddresses(ctx, plan.Interface)
+	if err != nil {
+		return fmt.Errorf("inspect TUN addresses %s: %w", phase, err)
+	}
+	if err := e.verifyBoundIdentityFence(ctx, plan, phase+" identity after inventory", false); err != nil {
+		return err
+	}
+	exact, conflicts := addressInventoryState(addresses, plan)
+	if conflicts != 0 {
+		return fmt.Errorf("TUN link %s has %d conflicting IPv4 address entries %s", plan.Interface, conflicts, phase)
+	}
+	if exact != wantExact {
+		return fmt.Errorf("TUN address %s exact entries %s = %d, want %d", plan.CIDR, phase, exact, wantExact)
+	}
+	return nil
 }
 
 func (e IPTunAddressExecutor) inspectIdentity(ctx context.Context, link string) (tunLinkIdentity, error) {
