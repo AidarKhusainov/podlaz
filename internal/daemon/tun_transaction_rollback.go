@@ -18,6 +18,10 @@ type resourceScopedTunRollbackExecutor interface {
 	RollbackResourceScoped(context.Context, planner.TunPlan) error
 }
 
+type resourceScopedChildAbsentTunRollbackExecutor interface {
+	RollbackResourceScopedChildAbsent(context.Context, planner.TunPlan) error
+}
+
 func rollbackTunFailure(ctx context.Context, store txstate.TransactionStore, tx *txstate.Transaction, rollbackPlan planner.TunPlan, executor tunPlanExecutor, steps []netexecutor.Step, cause error) error {
 	if err := prepareTunFailureRollback(store, tx, rollbackPlan, steps); err != nil {
 		cause = errors.Join(cause, fmt.Errorf("record failed TUN rollback ownership: %w", err))
@@ -74,7 +78,7 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 		stopChildren = stopRollbackChildProcesses
 	}
 
-	if err := rollbackTunHostState(ctx, plan, executor); err != nil {
+	if err := rollbackTunHostState(ctx, plan, executor, rollbackTrackedChildAbsenceProven(*tx)); err != nil {
 		// The Xray-owned link carries the exact address identity needed for a
 		// safe retry. Keep the tracked child and generated config intact until
 		// every daemon-owned host resource is proven rolled back.
@@ -106,14 +110,33 @@ func beginTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) e
 	return err
 }
 
-func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor) error {
+func rollbackTunHostState(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, childAbsenceProven bool) error {
 	if executor == nil {
 		return errors.New("missing TUN executor")
+	}
+	if childAbsenceProven {
+		if scoped, ok := executor.(resourceScopedChildAbsentTunRollbackExecutor); ok {
+			return scoped.RollbackResourceScopedChildAbsent(ctx, plan)
+		}
 	}
 	if scoped, ok := executor.(resourceScopedTunRollbackExecutor); ok {
 		return scoped.RollbackResourceScoped(ctx, plan)
 	}
 	return executor.Rollback(ctx, plan)
+}
+
+func rollbackTrackedChildAbsenceProven(tx txstate.Transaction) bool {
+	seen := false
+	for _, proc := range tx.Rollback.ChildProcesses {
+		if proc.Owner != txstate.TransactionOwner || proc.PID <= 1 {
+			continue
+		}
+		seen = true
+		if _, err := os.Stat(fmt.Sprintf("/proc/%d", proc.PID)); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return seen
 }
 
 func removeRollbackGeneratedConfigs(tx txstate.Transaction) error {
