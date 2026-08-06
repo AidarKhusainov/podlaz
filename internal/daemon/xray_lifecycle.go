@@ -179,7 +179,7 @@ func (m *XrayManager) disconnectActiveTun(ctx context.Context, transactionID str
 	if err := beginTunRollback(store, &tx); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	if err := rollbackTunHostState(ctx, plan, m.tunPlanExecutor()); err != nil {
+	if err := rollbackTunHostStateForTransaction(ctx, plan, m.tunPlanExecutor(), tx); err != nil {
 		_, _ = txstate.MarkFailure(&tx, err.Error(), transactionNow(store))
 		_, _ = store.Save(tx)
 		return api.LifecycleResponse{}, fmt.Errorf("rollback active TUN host networking before stopping Xray: %w", err)
@@ -388,7 +388,7 @@ func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfig
 
 	cmd := exec.Command(xrayPath, "run", "-config", runtimeConfigPath)
 	stdoutLog := newCoreLogWriter(p.ID, "stdout")
-	stderrLog := newCoreLogWriter(p.ID, "stderr")
+stderrLog := newCoreLogWriter(p.ID, "stderr")
 	cmd.Stdout = stdoutLog
 	cmd.Stderr = stderrLog
 	configureCoreCommandCredential(cmd, identity)
