@@ -131,7 +131,7 @@ func withRawTestCommandOutput(result CommandResult) CommandResult {
 
 func executorPlanForTest() planner.TunPlan {
 	return planner.TunPlan{
-		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "create"},
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify"},
 		Routes: []planner.TunRoutePlan{
 			{Family: "ipv4", Destination: "default", Table: planner.TunRoutingTable, Interface: "podlaz0", Action: "add"},
 			{Family: "ipv4", Destination: "203.0.113.10/32", Table: planner.MainRoutingTable, Interface: "eth0", Gateway: "192.0.2.1", Action: "add"},
