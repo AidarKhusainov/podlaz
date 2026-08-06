@@ -16,8 +16,11 @@ func TestPlanTunBuildsFullTunnelPlanFromFakeSnapshot(t *testing.T) {
 	if plan.Mode != ModeTun || plan.TunnelMode != TunTunnelMode {
 		t.Fatalf("unexpected TUN mode: mode=%q tunnel=%q", plan.Mode, plan.TunnelMode)
 	}
-	if plan.TunDevice.Name != snapshot.DefaultTunName || plan.TunDevice.MTU != DefaultTunMTU || plan.TunDevice.Action != "create" {
+	if plan.TunDevice.Name != snapshot.DefaultTunName || plan.TunDevice.MTU != DefaultTunMTU || plan.TunDevice.Action != "verify" {
 		t.Fatalf("unexpected TUN device plan: %#v", plan.TunDevice)
+	}
+	if !strings.Contains(plan.TunDevice.Reason, "Xray-owned") {
+		t.Fatalf("TUN device plan must document Xray link ownership, got %#v", plan.TunDevice)
 	}
 	if !containsRoute(plan.Routes, TunRoutingTable, IPv4DefaultRoute, snapshot.DefaultTunName) {
 		t.Fatalf("expected default route through %s table, got %#v", TunRoutingTable, plan.Routes)
@@ -36,10 +39,13 @@ func TestPlanTunBuildsFullTunnelPlanFromFakeSnapshot(t *testing.T) {
 	}
 	assertDefaultFirewallPlan(t, plan.Firewall, FirewallActionAdd, FirewallVerdictReject)
 	if len(plan.RollbackSteps) == 0 {
-		t.Fatalf("expected rollback steps for planned route/TUN changes")
+		t.Fatalf("expected rollback steps for daemon-owned route/address/DNS/firewall changes")
 	}
 	if !containsString(plan.RollbackSteps, "Restore previous systemd-resolved") || !containsString(plan.RollbackSteps, "Remove nftables table inet podlaz") {
 		t.Fatalf("expected DNS and nftables rollback steps, got %#v", plan.RollbackSteps)
+	}
+	if containsString(plan.RollbackSteps, "Delete TUN interface") {
+		t.Fatalf("rollback plan must not promise deletion of Xray-owned TUN link: %#v", plan.RollbackSteps)
 	}
 	if len(plan.LoopRisks) != 0 {
 		t.Fatalf("expected clean fake snapshot to have no loop risk, got %#v", plan.LoopRisks)
