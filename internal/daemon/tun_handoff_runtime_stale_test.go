@@ -19,7 +19,7 @@ func TestPreflightTunOwnershipBlocksStaleRouteTableOnly(t *testing.T) {
 	s.PolicyRouting = []netsnapshot.PolicyRoutingSignal{{Kind: "route", Table: netsnapshot.DefaultRouteTableID, Raw: "default dev podlaz0 table 51820"}}
 
 	err := preflightTunOwnership(s, api.HandoffBlock)
-	assertRuntimeStaleBlockerContains(t, err, "route-table 51820")
+	assertRuntimeStaleBlockerContains(t, err, "route 51820")
 }
 
 func TestPreflightTunOwnershipBlocksStalePolicyRuleOnly(t *testing.T) {
