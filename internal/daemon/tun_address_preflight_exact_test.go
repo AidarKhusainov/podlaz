@@ -66,3 +66,28 @@ func TestSnapshotWithoutAllowedTunAddressConflictsAllowsExactLocalRouteOnly(t *t
 		t.Fatalf("expected exact local route to be allowed, got %#v", filtered.IPv4Routes.Routes)
 	}
 }
+
+func TestParsedProductionLocalRouteCanBeAllowed(t *testing.T) {
+	routes, err := netsnapshot.ParseIPv4Routes(productionLocalTunRouteRawForTest)
+	if err != nil {
+		t.Fatalf("parse production local route: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("parsed route count = %d, want 1", len(routes))
+	}
+	if routes[0].Table != "local" {
+		t.Fatalf("parsed route table = %q, want local", routes[0].Table)
+	}
+	allowed := []tunAddressPreflightAllowance{exactPodlazTunAddressAllowance(planner.DefaultTunIPv4CIDR)}
+	snapshot := netsnapshot.Snapshot{
+		IPv4Addresses: netsnapshot.IPAddressInventory{
+			Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}},
+		},
+		IPv4Routes: netsnapshot.RouteInventory{Routes: routes},
+	}
+
+	filtered := snapshotWithoutAllowedTunAddressConflicts(snapshot, planner.DefaultTunIPv4CIDR, allowed)
+	if len(filtered.IPv4Addresses.Addresses) != 0 || len(filtered.IPv4Routes.Routes) != 0 {
+		t.Fatalf("parsed production local route was not allowed: %#v", filtered)
+	}
+}
