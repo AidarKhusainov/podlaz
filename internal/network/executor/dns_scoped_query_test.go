@@ -97,19 +97,3 @@ func successfulAddressVerifyCommands(index int) []scriptedCommand {
 		linkCommandResult(index, "", nil),
 	}
 }
-
-func linkCommandResult(index int, stderr string, err error) scriptedCommand {
-	result := CommandResult{Stdout: tunLinkDetailsForAddressTest(index, true)}
-	if stderr != "" || err != nil {
-		result = CommandResult{ExitCode: 1, Stderr: stderr, RawStderr: stderr}
-	}
-	return commandResult([]string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result, err)
-}
-
-func addressCommandResult(stdout string) scriptedCommand {
-	return commandResult([]string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, CommandResult{Stdout: stdout}, nil)
-}
-
-func commandResult(want []string, result CommandResult, err error) scriptedCommand {
-	return scriptedCommand{want: want, result: result, err: err}
-}
