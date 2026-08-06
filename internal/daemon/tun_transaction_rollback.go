@@ -78,7 +78,7 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 		stopChildren = stopRollbackChildProcesses
 	}
 
-	if err := rollbackTunHostState(ctx, plan, executor, rollbackTrackedChildAbsenceProven(*tx)); err != nil {
+	if err := rollbackTunHostStateForTransaction(ctx, plan, executor, *tx); err != nil {
 		// The Xray-owned link carries the exact address identity needed for a
 		// safe retry. Keep the tracked child and generated config intact until
 		// every daemon-owned host resource is proven rolled back.
@@ -107,6 +107,23 @@ func beginTunRollback(store txstate.TransactionStore, tx *txstate.Transaction) e
 		return err
 	}
 	_, err := store.Save(*tx)
+	return err
+}
+
+func rollbackTunHostStateForTransaction(ctx context.Context, plan planner.TunPlan, executor tunPlanExecutor, tx txstate.Transaction) error {
+	err := rollbackTunHostState(ctx, plan, executor)
+	if err == nil {
+		return nil
+	}
+	if !rollbackTrackedChildAbsenceProven(tx) {
+		return err
+	}
+	if scoped, ok := executor.(resourceScopedChildAbsentTunRollbackExecutor); ok {
+		if retryErr := scoped.RollbackResourceScopedChildAbsent(ctx, plan); retryErr != nil {
+			return errors.Join(err, retryErr)
+		}
+		return nil
+	}
 	return err
 }
 
