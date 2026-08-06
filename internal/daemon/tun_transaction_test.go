@@ -231,10 +231,9 @@ func (e *recordingTunExecutor) Apply(_ context.Context, plan planner.TunPlan) ([
 	e.calls = append(e.calls, "apply")
 	e.lastApplyPlan = plan
 	if e.applyErr != nil {
-		return []netexecutor.Step{{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice}}, e.applyErr
+		return []netexecutor.Step{{Kind: "route", Target: "podlaz default", Owner: netexecutor.OwnerRoute}}, e.applyErr
 	}
 	return []netexecutor.Step{
-		{Kind: "tun-device", Target: "podlaz0", Owner: netexecutor.OwnerTunDevice},
 		{Kind: "route", Target: "podlaz default", Owner: netexecutor.OwnerRoute},
 		{Kind: "policy-rule", Target: policyRuleTarget(plan.PolicyRules[0]), Owner: netexecutor.OwnerPolicyRule},
 	}, nil
@@ -295,7 +294,7 @@ func transactionPlanForTest() planner.TunPlan {
 	return planner.TunPlan{
 		ProfileID: "test-profile",
 		Mode:      planner.ModeTun,
-		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "create"},
+		TunDevice: planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify", Reason: "Xray-owned TUN link"},
 		Routes: []planner.TunRoutePlan{{
 			Family:      "ipv4",
 			Destination: "default",
@@ -310,7 +309,7 @@ func transactionPlanForTest() planner.TunPlan {
 			Table:    planner.TunRoutingTable,
 			Action:   "add",
 		}},
-		Steps: []string{"Plan TUN interface podlaz0"},
+		Steps: []string{"Verify Xray-owned TUN interface podlaz0"},
 	}
 }
 
@@ -346,7 +345,6 @@ func TestTunTransactionPersistsEachAppliedOwnershipStepInsideCompositeApply(t *t
 	runtimeDir := t.TempDir()
 	clock := fixedClock()
 	plan := transactionPlanForTest()
-	plan.TunDevice.Action = "verify"
 	plan.TunAddress = unboundTunAddressPlanForTest()
 	plan.TunAddress.LinkIndex = 7
 	plan.TunAddress.LinkKind = "tun"
