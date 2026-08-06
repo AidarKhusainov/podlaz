@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"reflect"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -42,12 +43,41 @@ func IsTunRollbackLinkAbsent(err error) bool {
 func (e DNSAwareTunExecutor) RollbackResourceScoped(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
 		independentErr := e.rollbackIndependentRollback(ctx, plan)
-		if independentErr == nil && resourceMissing(err) {
+		if independentErr == nil && strictRollbackTunLinkAbsent(err) {
 			return tunRollbackLinkAbsentError{err: err}
 		}
 		return errors.Join(independentErr, err)
 	}
 	return e.Rollback(ctx, plan)
+}
+
+func strictRollbackTunLinkAbsent(err error) bool {
+	var cmdErr commandError
+	if !errors.As(err, &cmdErr) {
+		return false
+	}
+	if cmdErr.parentErr != nil || cmdErr.contextErr != nil {
+		return false
+	}
+	if cmdErr.result.ExitCode != 1 {
+		return false
+	}
+	if !reflect.DeepEqual(append([]string{cmdErr.name}, cmdErr.args...), []string{"ip", "-details", "-o", "link", "show", "dev", managedTunInterfaceName}) {
+		return false
+	}
+	if strings.TrimSpace(cmdErr.result.Stdout) != "" || strings.TrimSpace(cmdErr.result.RawStdout) != "" {
+		return false
+	}
+	stderr := strings.TrimSpace(cmdErr.result.RawStderr)
+	if stderr == "" {
+		stderr = strings.TrimSpace(cmdErr.result.Stderr)
+	}
+	switch stderr {
+	case `Device "podlaz0" does not exist.`, `Cannot find device "podlaz0"`:
+		return true
+	default:
+		return false
+	}
 }
 
 // RollbackResourceScopedChildAbsent is the lifecycle-boundary variant for the
