@@ -75,8 +75,8 @@ func strictRollbackTunLinkAbsent(err error) bool {
 	if cmdErr.result.RawStderr == "" || len(cmdErr.result.RawStderr) > maxTunRollbackMissingStderrSize {
 		return false
 	}
-	return exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Device \"podlaz0\" does not exist.`) ||
-		exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Cannot find device \"podlaz0\"`)
+	return exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Device "podlaz0" does not exist.`) ||
+		exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Cannot find device "podlaz0"`)
 }
 
 func commandErrorMatchesArgv(cmdErr commandError, want ...string) bool {
