@@ -88,24 +88,10 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 		steps, persistErr = recordAppliedStep(steps, step, sink)
 		return errors.Join(applyErr, persistErr)
 	}
-	recordPersisted := func(step Step, applyErr error) error {
-		steps = appendAppliedStep(steps, step)
-		return applyErr
-	}
 
 	switch tunDeviceAction(plan.TunDevice.Action) {
 	case "", "create":
-		if creator, ok := e.TunDevice.(tunDeviceStepSinkExecutor); ok {
-			step, applyErr := creator.CreateWithStepSink(ctx, plan.TunDevice, sink)
-			if err := recordPersisted(step, applyErr); err != nil {
-				return steps, err
-			}
-			break
-		}
-		step, applyErr := e.TunDevice.Create(ctx, plan.TunDevice)
-		if err := record(step, applyErr); err != nil {
-			return steps, err
-		}
+		return steps, errors.New("daemon-created TUN links are unsupported; Xray owns podlaz0 creation and lifetime")
 	case "verify", "use-existing":
 		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
 			return steps, err
@@ -202,11 +188,7 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	}
 	switch tunDeviceAction(plan.TunDevice.Action) {
 	case "", "create":
-		if strings.TrimSpace(plan.TunDevice.Name) != "" {
-			if err := e.TunDevice.Rollback(ctx, plan.TunDevice); err != nil {
-				errs = append(errs, err)
-			}
-		}
+		errs = append(errs, errors.New("daemon-created TUN link rollback is unsupported without typed creation proof"))
 	case "verify", "use-existing":
 	default:
 		errs = append(errs, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action))
