@@ -388,7 +388,7 @@ func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfig
 
 	cmd := exec.Command(xrayPath, "run", "-config", runtimeConfigPath)
 	stdoutLog := newCoreLogWriter(p.ID, "stdout")
-stderrLog := newCoreLogWriter(p.ID, "stderr")
+	stderrLog := newCoreLogWriter(p.ID, "stderr")
 	cmd.Stdout = stdoutLog
 	cmd.Stderr = stderrLog
 	configureCoreCommandCredential(cmd, identity)
