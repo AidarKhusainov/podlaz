@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -30,8 +31,5 @@ func TestTunAddressApplyFinalFenceFailureReturnsNoOwnership(t *testing.T) {
 }
 
 func tunAddressIdentityLineForTest(ifindex int) string {
-	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(
-		"IFINDEX: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500 tun type tun pi off vnet_hdr on persist off",
-		"IFINDEX", string(rune('0'+ifindex))),
-		"10", "10"))
+	return fmt.Sprintf("%d: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500 tun type tun pi off vnet_hdr on persist off", ifindex)
 }
