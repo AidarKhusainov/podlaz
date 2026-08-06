@@ -38,7 +38,7 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "What will happen")
-	renderPlanAction(w, marks.OK, "Create TUN interface", fmt.Sprintf("%s, MTU %d", p.TunDevice.Name, p.TunDevice.MTU))
+	renderTunDeviceSummary(w, marks, p.TunDevice)
 	renderTunAddressSummary(w, marks, p.TunAddress)
 	renderPlanAction(w, marks.OK, "Route traffic through VPN", "default IPv4 route via podlaz table")
 	renderServerBypassSummary(w, marks, p.ServerBypass)
@@ -70,7 +70,7 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Safety")
 	fmt.Fprintln(w, "  No changes were applied.")
-	fmt.Fprintln(w, "  If connect fails, podlaz can roll back TUN, routes, DNS and nftables state.")
+	fmt.Fprintln(w, "  If connect fails, podlaz can roll back TUN L3, routes, DNS and nftables state.")
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Next steps")
@@ -80,6 +80,15 @@ func renderTunPlanSummary(w io.Writer, p planner.TunPlan, profileID string, plai
 		fmt.Fprintf(w, "  Run: plz connect --mode tun %s\n", commandID)
 	}
 	fmt.Fprintf(w, "  Details: plz plan --mode tun %s --verbose\n", commandID)
+}
+
+func renderTunDeviceSummary(w io.Writer, marks humanStatusMarks, p planner.TunDevicePlan) {
+	switch strings.TrimSpace(p.Action) {
+	case "", "verify", "use-existing":
+		renderPlanAction(w, marks.OK, "Verify Xray TUN link", fmt.Sprintf("%s, MTU %d, Xray-owned", p.Name, p.MTU))
+	default:
+		renderPlanAction(w, marks.Blocked, "Verify Xray TUN link", "unsupported TUN link action: "+humanPlanDetail(p.Action))
+	}
 }
 
 func renderPlanAction(w io.Writer, mark, label, detail string) {
