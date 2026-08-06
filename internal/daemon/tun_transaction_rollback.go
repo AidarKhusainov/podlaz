@@ -115,6 +115,9 @@ func rollbackTunHostStateForTransaction(ctx context.Context, plan planner.TunPla
 	if err == nil {
 		return nil
 	}
+	if !netexecutor.IsTunRollbackLinkAbsent(err) {
+		return err
+	}
 	if !rollbackTrackedChildAbsenceProven(tx) {
 		return err
 	}
