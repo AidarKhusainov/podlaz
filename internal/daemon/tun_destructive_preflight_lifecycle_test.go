@@ -22,8 +22,16 @@ func TestConnectTunActiveReplaceBlockedPlanDoesNotDisconnect(t *testing.T) {
 		snapshot netsnapshot.Snapshot
 		want     string
 	}{
-		{name: "DNS blocked", snapshot: tunLifecycleSnapshotWithBlockedDNS(), want: "DNS preflight blocked"},
-		{name: "firewall blocked", snapshot: tunLifecycleSnapshotWithBlockedFirewall(), want: "firewall preflight blocked"},
+		{
+			name:     "DNS blocked",
+			snapshot: tunLifecycleSnapshotWithBlockedDNS(),
+			want:     "DNS preflight blocked",
+		},
+		{
+			name:     "firewall blocked",
+			snapshot: tunLifecycleSnapshotWithBlockedFirewall(),
+			want:     "firewall preflight blocked",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			installTunLifecyclePreflightTestHooks(t)
@@ -45,8 +53,16 @@ func TestConnectTunStopKnownBlockedPlanDoesNotCallNmcliDown(t *testing.T) {
 		snapshot netsnapshot.Snapshot
 		want     string
 	}{
-		{name: "DNS blocked", snapshot: tunLifecycleSnapshotWithActiveNMAndBlockedDNS(), want: "DNS preflight blocked"},
-		{name: "firewall blocked", snapshot: tunLifecycleSnapshotWithActiveNMAndBlockedFirewall(), want: "firewall preflight blocked"},
+		{
+			name:     "DNS blocked",
+			snapshot: tunLifecycleSnapshotWithActiveNMAndBlockedDNS(),
+			want:     "DNS preflight blocked",
+		},
+		{
+			name:     "firewall blocked",
+			snapshot: tunLifecycleSnapshotWithActiveNMAndBlockedFirewall(),
+			want:     "firewall preflight blocked",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			installTunLifecyclePreflightTestHooks(t)
@@ -59,9 +75,11 @@ func TestConnectTunStopKnownBlockedPlanDoesNotCallNmcliDown(t *testing.T) {
 			t.Cleanup(func() { nmcliConnectionDown = oldDown })
 
 			manager := &XrayManager{
-				RuntimeDir:         t.TempDir(),
-				XrayPath:           writeFakeXray(t, lifecyclePreflightCoreScript()),
-				snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot { return tt.snapshot },
+				RuntimeDir: t.TempDir(),
+				XrayPath:   writeFakeXray(t, lifecyclePreflightCoreScript()),
+				snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
+					return tt.snapshot
+				},
 			}
 			_, err := manager.Connect(context.Background(), tunConnectRequestForLifecyclePreflight(api.HandoffStopKnown))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -78,7 +96,13 @@ func TestConnectTunActiveReplaceValidateOrReplaceReachesDisconnect(t *testing.T)
 	installTunLifecyclePreflightTestHooks(t)
 	snapshot := tunLifecycleSnapshotWithExactActiveOwnedState()
 	manager, done, stopFile := activeTunManagerForDestructivePreflight(t, snapshot)
-	persistActiveOwnedTunTransactionForPreflight(t, manager.RuntimeDir, manager.state.TransactionID, manager.state.RuntimeConfigPath, snapshot)
+	persistActiveOwnedTunTransactionForPreflight(
+		t,
+		manager.RuntimeDir,
+		manager.state.TransactionID,
+		manager.state.RuntimeConfigPath,
+		snapshot,
+	)
 
 	_, err := manager.Connect(context.Background(), tunConnectRequestForLifecyclePreflight(api.HandoffReplacePodlaz))
 	if err == nil {
@@ -203,38 +227,74 @@ func assertLifecyclePreflightStoppedCore(t *testing.T, done <-chan struct{}, sto
 
 func tunLifecycleSnapshotWithBlockedDNS() netsnapshot.Snapshot {
 	s := netsnapshot.FakeResolvedDesktop()
-	s.DNS = netsnapshot.DNS{Mode: "unknown", Resolved: netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "resolvectl not found"}}
+	s.DNS = netsnapshot.DNS{
+		Mode:     "unknown",
+		Resolved: netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "resolvectl not found"},
+	}
 	return s
 }
 
 func tunLifecycleSnapshotWithBlockedFirewall() netsnapshot.Snapshot {
 	s := netsnapshot.FakeResolvedDesktop()
 	s.Nftables.Availability = netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "nft not found"}
-	s.Nftables.PodlazTable = netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"}
+	s.Nftables.PodlazTable = netsnapshot.Finding{
+		Status:  netsnapshot.StatusMissing,
+		Summary: "podlaz nftables table not inspected because nft is unavailable",
+	}
 	return s
 }
 
 func tunLifecycleSnapshotWithActiveNMAndBlockedDNS() netsnapshot.Snapshot {
 	s := netsnapshot.FakeDesktopWithActiveNetworkManagerVPN()
-	s.DNS = netsnapshot.DNS{Mode: "unknown", Resolved: netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "resolvectl not found"}}
+	s.DNS = netsnapshot.DNS{
+		Mode:     "unknown",
+		Resolved: netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "resolvectl not found"},
+	}
 	return s
 }
 
 func tunLifecycleSnapshotWithActiveNMAndBlockedFirewall() netsnapshot.Snapshot {
 	s := netsnapshot.FakeDesktopWithActiveNetworkManagerVPN()
 	s.Nftables.Availability = netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "nft not found"}
-	s.Nftables.PodlazTable = netsnapshot.Finding{Status: netsnapshot.StatusMissing, Summary: "podlaz nftables table not inspected because nft is unavailable"}
+	s.Nftables.PodlazTable = netsnapshot.Finding{
+		Status:  netsnapshot.StatusMissing,
+		Summary: "podlaz nftables table not inspected because nft is unavailable",
+	}
 	return s
 }
 
 func tunLifecycleSnapshotWithExactActiveOwnedState() netsnapshot.Snapshot {
 	s := netsnapshot.FakeResolvedDesktop()
-	s.TunDevices = []netsnapshot.TunDevice{{Name: netsnapshot.DefaultTunName, Status: netsnapshot.StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500 tun type tun pi off vnet_hdr on persist off"}}
-	s.IPv4Addresses.Inspection = netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv4 address inventory available"}
-	s.IPv4Addresses.Addresses = []netsnapshot.IPAddress{{Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}}
-	s.IPv4Routes.Inspection = netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv4 route inventory available"}
-	s.IPv4Routes.Routes = []netsnapshot.Route{{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: productionLocalTunRouteRawForTest}}
-	s.Nftables.PodlazTable = netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "podlaz nftables table exists"}
+	s.TunDevices = []netsnapshot.TunDevice{{
+		Name:   netsnapshot.DefaultTunName,
+		Status: netsnapshot.StatusDetected,
+		Raw:    "7: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UNKNOWN mode DEFAULT group default qlen 500 tun type tun pi off vnet_hdr on persist off",
+	}}
+	s.IPv4Addresses.Inspection = netsnapshot.Finding{
+		Status:  netsnapshot.StatusDetected,
+		Summary: "IPv4 address inventory available",
+	}
+	s.IPv4Addresses.Addresses = []netsnapshot.IPAddress{{
+		Family:    "ipv4",
+		Interface: netsnapshot.DefaultTunName,
+		CIDR:      planner.DefaultTunIPv4CIDR,
+		Scope:     "global",
+	}}
+	s.IPv4Routes.Inspection = netsnapshot.Finding{
+		Status:  netsnapshot.StatusDetected,
+		Summary: "IPv4 route inventory available",
+	}
+	s.IPv4Routes.Routes = []netsnapshot.Route{{
+		Family:      "ipv4",
+		Interface:   netsnapshot.DefaultTunName,
+		Destination: planner.DefaultTunIPv4CIDR,
+		Table:       "local",
+		Raw:         productionLocalTunRouteRawForTest,
+	}}
+	s.Nftables.PodlazTable = netsnapshot.Finding{
+		Status:  netsnapshot.StatusDetected,
+		Summary: "podlaz nftables table exists",
+	}
 	return s
 }
 
@@ -254,7 +314,10 @@ func persistActiveOwnedTunTransactionForPreflight(t *testing.T, runtimeDir, tran
 	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
 	tx.DesiredPlan.Core.RuntimeConfigPath = configPath
 	tx.Rollback = rollbackMetadataFromTunPlan(plan)
-	tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{Path: configPath, Owner: txstate.TransactionOwner})
+	tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{
+		Path:  configPath,
+		Owner: txstate.TransactionOwner,
+	})
 	tx.AppliedSteps = appliedStepsFromRollbackMetadataForTest(tx.Rollback, store.Now())
 	if _, err := store.Save(tx); err != nil {
 		t.Fatalf("save active-owned transaction: %v", err)
