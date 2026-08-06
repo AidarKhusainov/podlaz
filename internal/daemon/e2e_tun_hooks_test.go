@@ -102,17 +102,17 @@ func TestE2EHookRouteFailureThroughTunExecutorApplyDoesNotApplyRoute(t *testing.
 		},
 	}
 	executor := netexecutor.TunExecutor{
-		TunDevice: e2eHookApplyStaticTunDeviceExecutor{
-			step: netexecutor.Step{
-				Kind:  "tun-device",
-				Owner: netexecutor.OwnerTunDevice,
-			},
-		},
+		TunDevice:   e2eHookApplyStaticTunDeviceExecutor{},
 		Routes:      e2eHookRouteExecutor{delegate: routes},
 		PolicyRules: e2eHookApplyStaticPolicyRuleExecutor{},
 	}
 
 	steps, err := executor.Apply(context.Background(), planner.TunPlan{
+		TunDevice: planner.TunDevicePlan{
+			Name:   "podlaz0",
+			MTU:    1500,
+			Action: "verify",
+		},
 		Routes: []planner.TunRoutePlan{{Action: "add"}},
 	})
 	if err == nil {
@@ -124,11 +124,8 @@ func TestE2EHookRouteFailureThroughTunExecutorApplyDoesNotApplyRoute(t *testing.
 	if routes.addCalls != 0 {
 		t.Fatalf("route delegate Add calls = %d, want 0", routes.addCalls)
 	}
-	if got, want := len(steps), 1; got != want {
-		t.Fatalf("applied steps = %d, want %d", got, want)
-	}
-	if steps[0].Owner != netexecutor.OwnerTunDevice {
-		t.Fatalf("recorded step owner = %q, want %q", steps[0].Owner, netexecutor.OwnerTunDevice)
+	if got := len(steps); got != 0 {
+		t.Fatalf("applied steps = %d, want 0", got)
 	}
 }
 
