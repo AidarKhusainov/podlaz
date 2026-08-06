@@ -145,9 +145,37 @@ func saveTransaction(t *testing.T, runtimeDir string, rollback txstate.RollbackM
 
 func desiredPlanForRollback(rollback txstate.RollbackMetadata) txstate.DesiredPlan {
 	var desired txstate.DesiredPlan
+	if len(rollback.TUNAddresses) == 1 {
+		address := rollback.TUNAddresses[0]
+		if ownedRollbackMetadata(address.Owner, netexecutor.OwnerTunAddress) {
+			desired.TUN = txstate.TUNDesiredState{
+				InterfaceName: address.InterfaceName,
+				MTU:           1500,
+				Owner:         "xray:tun-inbound",
+			}
+			desired.TUNAddress = txstate.TUNAddressDesiredState{
+				Family:            address.Family,
+				InterfaceName:     address.InterfaceName,
+				CIDR:              address.CIDR,
+				Scope:             address.Scope,
+				LinkIndex:         address.LinkIndex,
+				LinkKind:          address.LinkKind,
+				AppearedAfterCore: address.AppearedAfterCore,
+				Owner:             address.Owner,
+			}
+		}
+	}
 	for _, route := range rollback.Routes {
 		if ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
-			desired.Routes = append(desired.Routes, txstate.RoutePlan{Table: route.Table, CIDR: route.CIDR, Via: route.Via, Dev: route.Dev, Owner: route.Owner, Operation: "add"})
+			desired.Routes = append(desired.Routes, txstate.RoutePlan{
+				Kind:      "route",
+				Table:     route.Table,
+				CIDR:      route.CIDR,
+				Via:       route.Via,
+				Dev:       route.Dev,
+				Owner:     route.Owner,
+				Operation: "add",
+			})
 		}
 	}
 	for _, rule := range rollback.PolicyRules {
@@ -241,10 +269,27 @@ func TestFullRecoveryPreservesForeignReplacementLinkAfterTransactionIdentityMism
 	tx.State = txstate.TransactionApplying
 	tx.DesiredPlan.TUN.Owner = "xray:tun-inbound"
 	tx.DesiredPlan.TUN.InterfaceName = managedInterface
+	tx.DesiredPlan.TUN.MTU = 1500
 	tx.Rollback.TUNAddresses = []txstate.TUNAddressRollback{{
-		Family: "ipv4", InterfaceName: managedInterface, CIDR: "198.18.0.1/32", Scope: "global",
-		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
+		Family:            "ipv4",
+		InterfaceName:     managedInterface,
+		CIDR:              "198.18.0.1/32",
+		Scope:             "global",
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             "podlaz:tun-address",
 	}}
+	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family:            tx.Rollback.TUNAddresses[0].Family,
+		InterfaceName:     tx.Rollback.TUNAddresses[0].InterfaceName,
+		CIDR:              tx.Rollback.TUNAddresses[0].CIDR,
+		Scope:             tx.Rollback.TUNAddresses[0].Scope,
+		LinkIndex:         tx.Rollback.TUNAddresses[0].LinkIndex,
+		LinkKind:          tx.Rollback.TUNAddresses[0].LinkKind,
+		AppearedAfterCore: tx.Rollback.TUNAddresses[0].AppearedAfterCore,
+		Owner:             tx.Rollback.TUNAddresses[0].Owner,
+	}
 	tx.AppliedSteps = appliedStepsForRollback(tx.Rollback, time.Now().UTC())
 	path, err := store.Save(tx)
 	if err != nil {
