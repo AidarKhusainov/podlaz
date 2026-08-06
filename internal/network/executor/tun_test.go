@@ -18,8 +18,13 @@ func TestTunExecutorApplyVerifyAndRollbackOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
-	if len(steps) != 5 {
-		t.Fatalf("expected 5 applied steps, got %#v", steps)
+	if len(steps) != 4 {
+		t.Fatalf("expected 4 applied route/rule steps, got %#v", steps)
+	}
+	for _, step := range steps {
+		if step.Kind == "tun-device" {
+			t.Fatalf("Xray-owned TUN link must not produce daemon ownership step: %#v", steps)
+		}
 	}
 	if err := exec.Verify(context.Background(), plan); err != nil {
 		t.Fatalf("verify failed: %v", err)
@@ -29,7 +34,7 @@ func TestTunExecutorApplyVerifyAndRollbackOrder(t *testing.T) {
 	}
 
 	want := []string{
-		"tun:create:podlaz0",
+		"tun:verify:podlaz0",
 		"route:add:podlaz:default",
 		"route:add:main:203.0.113.10/32",
 		"rule:add:9999:to 203.0.113.10/32",
@@ -43,14 +48,13 @@ func TestTunExecutorApplyVerifyAndRollbackOrder(t *testing.T) {
 		"rule:rollback:9999:to 203.0.113.10/32",
 		"route:rollback:main:203.0.113.10/32",
 		"route:rollback:podlaz:default",
-		"tun:rollback:podlaz0",
 	}
 	if !reflect.DeepEqual(recorder.calls, want) {
 		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
 	}
 }
 
-func TestTunExecutorRollbackTreatsLegacyTunAddActionAsOwnedLink(t *testing.T) {
+func TestTunExecutorRollbackRejectsLegacyTunAddAction(t *testing.T) {
 	recorder := &callRecorder{}
 	exec := TunExecutor{TunDevice: fakeTun{rec: recorder}, Routes: fakeRoutes{rec: recorder}, PolicyRules: fakeRules{rec: recorder}}
 	plan := executorPlanForTest()
@@ -58,12 +62,11 @@ func TestTunExecutorRollbackTreatsLegacyTunAddActionAsOwnedLink(t *testing.T) {
 	plan.Routes = nil
 	plan.PolicyRules = nil
 
-	if err := exec.Rollback(context.Background(), plan); err != nil {
-		t.Fatalf("rollback legacy add action: %v", err)
+	if err := exec.Rollback(context.Background(), plan); err == nil {
+		t.Fatal("expected legacy add rollback to be rejected without typed creation proof")
 	}
-	want := []string{"tun:rollback:podlaz0"}
-	if !reflect.DeepEqual(recorder.calls, want) {
-		t.Fatalf("unexpected calls:\nwant %#v\n got %#v", want, recorder.calls)
+	if len(recorder.calls) != 0 {
+		t.Fatalf("legacy add rollback must not mutate TUN by name, got calls %#v", recorder.calls)
 	}
 }
 
@@ -80,9 +83,12 @@ func TestTunExecutorApplySkipsUnmutatedSteps(t *testing.T) {
 		if step.Kind == "route" && step.Target == "main 203.0.113.10/32" {
 			t.Fatalf("pre-existing route should not be recorded as applied: %#v", steps)
 		}
+		if step.Kind == "tun-device" {
+			t.Fatalf("Xray-owned TUN link should not be recorded as applied: %#v", steps)
+		}
 	}
-	if len(steps) != 4 {
-		t.Fatalf("expected TUN, managed route, and policy rules only, got %#v", steps)
+	if len(steps) != 3 {
+		t.Fatalf("expected managed route and policy rules only, got %#v", steps)
 	}
 }
 
@@ -99,8 +105,8 @@ func TestTunExecutorApplyFailureLeavesRollbackablePartialState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected apply failure")
 	}
-	if len(steps) != 2 {
-		t.Fatalf("expected TUN and first route as applied partial state, got %#v", steps)
+	if len(steps) != 1 || steps[0].Kind == "tun-device" {
+		t.Fatalf("expected only first route as applied partial state, got %#v", steps)
 	}
 }
 
@@ -113,7 +119,6 @@ func TestTunExecutorAppliesAddressBeforeRoutesAndRollsItBackBeforeLink(t *testin
 		PolicyRules: fakeRules{rec: recorder},
 	}
 	plan := executorPlanForTest()
-	plan.TunDevice.Action = "verify"
 	plan.TunAddress = boundAddressPlanForTest()
 
 	steps, err := exec.Apply(context.Background(), plan)
@@ -163,7 +168,6 @@ func TestTunExecutorApplyWithStepSinkPersistsEachMutationBeforeNext(t *testing.T
 		PolicyRules: fakeRules{rec: recorder},
 	}
 	plan := executorPlanForTest()
-	plan.TunDevice.Action = "verify"
 	plan.TunAddress = boundAddressPlanForTest()
 
 	_, err := exec.ApplyWithStepSink(context.Background(), plan, func(step Step) error {
@@ -201,7 +205,6 @@ func TestTunExecutorApplyWithStepSinkStopsBeforeNextMutationWhenPersistenceFails
 		PolicyRules: fakeRules{rec: recorder},
 	}
 	plan := executorPlanForTest()
-	plan.TunDevice.Action = "verify"
 	plan.TunAddress = boundAddressPlanForTest()
 	persistErr := errors.New("persist address ownership")
 
