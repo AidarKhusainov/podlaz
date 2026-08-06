@@ -108,20 +108,24 @@ func TestPlanTunMarksPermissionLimitedAddressInspectionForDaemonRecheck(t *testi
 	}
 }
 
-func TestPlanTunRollsBackAddressAfterRoutesBeforeLink(t *testing.T) {
+func TestPlanTunRollsBackAddressAfterRoutesWithoutDeletingXrayLink(t *testing.T) {
 	plan, err := PlanTun(testVLESSProfile(), snapshot.FakeResolvedDesktop())
 	if err != nil {
 		t.Fatalf("plan tun: %v", err)
 	}
 
-	address := rollbackStepIndex(plan.RollbackSteps, "Remove exact daemon-owned TUN address")
 	routes := rollbackStepIndex(plan.RollbackSteps, "Delete route")
+	address := rollbackStepIndex(plan.RollbackSteps, "Remove exact daemon-owned TUN address")
 	link := rollbackStepIndex(plan.RollbackSteps, "Delete TUN interface")
-	if routes < 0 || address < 0 || link < 0 {
-		t.Fatalf("missing rollback steps: %#v", plan.RollbackSteps)
+
+	if routes < 0 || address < 0 {
+		t.Fatalf("missing route/address rollback steps: %#v", plan.RollbackSteps)
 	}
-	if !(routes < address && address < link) {
-		t.Fatalf("expected routes/rules -> address -> link rollback order, got %#v", plan.RollbackSteps)
+	if routes >= address {
+		t.Fatalf("address must be removed after routes/rules: %#v", plan.RollbackSteps)
+	}
+	if link >= 0 {
+		t.Fatalf("rollback must not delete Xray-owned TUN link: %#v", plan.RollbackSteps)
 	}
 }
 
