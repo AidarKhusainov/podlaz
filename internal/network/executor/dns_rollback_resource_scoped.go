@@ -24,18 +24,14 @@ func (e DNSAwareTunExecutor) RollbackResourceScoped(ctx context.Context, plan pl
 }
 
 // RollbackResourceScopedChildAbsent is the lifecycle-boundary variant for the
-// typed decision "link absent + tracked child absent". Missing link is accepted
-// only here, because the caller has already proven the tracked child cannot
-// recreate the transaction-bound link. DNS/address/link name-scoped mutations
-// are still skipped; only independent exact resources are converged.
+// typed decision "link absent + tracked child absent". The caller reaches this
+// method only after a prior link observation failed and the tracked child was
+// then proven absent. Do not re-classify the link here: a foreign same-name TUN
+// may appear between observations. In this state DNS/address/link name-scoped
+// mutations are forbidden and already-missing address/link state is treated as
+// converged; only independent exact resources are cleaned up.
 func (e DNSAwareTunExecutor) RollbackResourceScopedChildAbsent(ctx context.Context, plan planner.TunPlan) error {
-	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
-		if resourceMissing(err) {
-			return e.rollbackIndependentRollback(ctx, plan)
-		}
-		return errors.Join(e.rollbackIndependentRollback(ctx, plan), err)
-	}
-	return e.Rollback(ctx, plan)
+	return e.rollbackIndependentRollback(ctx, plan)
 }
 
 func (e DNSAwareTunExecutor) rollbackIndependentRollback(ctx context.Context, plan planner.TunPlan) error {
