@@ -37,12 +37,14 @@ func TestResolvedScopedQueryVerifierRejectsAnswerWithoutExpectedLinkEvidence(t *
 
 func TestTunDNSReadinessVerifierRejectsReplacementDuringScopedQuery(t *testing.T) {
 	plan := boundAddressPlanForTest()
-	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: addressLineForTest(7, planner.DefaultTunIPv4CIDR)}},
-		{want: []string{"resolvectl", "--cache=no", "--interface=7", "-4", "query", "example.com"}, result: CommandResult{Stdout: "example.com: 93.184.216.34 -- link: podlaz0\n"}},
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(8, true)}},
-	}}
+	steps := successfulAddressVerifyCommands(7)
+	steps = append(steps, commandResult(
+		[]string{"resolvectl", "--cache=no", "--interface=7", "-4", "query", "example.com"},
+		CommandResult{Stdout: "example.com: 93.184.216.34 -- link: podlaz0\n"},
+		nil,
+	))
+	steps = append(steps, linkCommandResult(8, "", nil))
+	runner := &scriptedRunner{t: t, steps: steps}
 
 	_, err := (TunDNSReadinessVerifier{Runner: runner}).VerifyScoped(context.Background(), plan, "example.com")
 	if err == nil || !errors.Is(err, ErrResolvedLinkQueryFailure) || !errors.Is(err, ErrTunLinkIdentityMismatch) {
@@ -54,8 +56,9 @@ func TestTunDNSReadinessVerifierRejectsReplacementDuringScopedQuery(t *testing.T
 func TestTunDNSReadinessVerifierRequiresExactAddressBeforeScopedQuery(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(""),
+		linkCommandResult(7, "", nil),
 	}}
 
 	_, err := (TunDNSReadinessVerifier{Runner: runner}).VerifyScoped(context.Background(), plan, "example.com")
@@ -67,13 +70,14 @@ func TestTunDNSReadinessVerifierRequiresExactAddressBeforeScopedQuery(t *testing
 
 func TestTunDNSReadinessVerifierRevalidatesIdentityThenQueriesResolved(t *testing.T) {
 	plan := boundAddressPlanForTest()
-	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: "7: podlaz0    inet " + planner.DefaultTunIPv4CIDR + " scope global podlaz0"}},
-		{want: []string{"resolvectl", "--cache=no", "--interface=7", "-4", "query", "example.com"}, result: CommandResult{Stdout: "example.com: 93.184.216.34 -- link: podlaz0\n"}},
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: "7: podlaz0    inet " + planner.DefaultTunIPv4CIDR + " scope global podlaz0"}},
-	}}
+	steps := successfulAddressVerifyCommands(7)
+	steps = append(steps, commandResult(
+		[]string{"resolvectl", "--cache=no", "--interface=7", "-4", "query", "example.com"},
+		CommandResult{Stdout: "example.com: 93.184.216.34 -- link: podlaz0\n"},
+		nil,
+	))
+	steps = append(steps, successfulAddressVerifyCommands(7)...)
+	runner := &scriptedRunner{t: t, steps: steps}
 
 	addresses, err := (TunDNSReadinessVerifier{Runner: runner}).VerifyScoped(context.Background(), plan, "example.com")
 	if err != nil {
@@ -83,4 +87,29 @@ func TestTunDNSReadinessVerifierRevalidatesIdentityThenQueriesResolved(t *testin
 		t.Fatalf("unexpected scoped answers: %#v", addresses)
 	}
 	runner.assertDone()
+}
+
+func successfulAddressVerifyCommands(index int) []scriptedCommand {
+	return []scriptedCommand{
+		linkCommandResult(index, "", nil),
+		addressCommandResult(addressLineForTest(index, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(index, "", nil),
+		linkCommandResult(index, "", nil),
+	}
+}
+
+func linkCommandResult(index int, stderr string, err error) scriptedCommand {
+	result := CommandResult{Stdout: tunLinkDetailsForAddressTest(index, true)}
+	if stderr != "" || err != nil {
+		result = CommandResult{ExitCode: 1, Stderr: stderr, RawStderr: stderr}
+	}
+	return commandResult([]string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result, err)
+}
+
+func addressCommandResult(stdout string) scriptedCommand {
+	return commandResult([]string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, CommandResult{Stdout: stdout}, nil)
+}
+
+func commandResult(want []string, result CommandResult, err error) scriptedCommand {
+	return scriptedCommand{want: want, result: result, err: err}
 }
