@@ -98,11 +98,15 @@ func rawAppliedStepLooksNetworkOwned(step txstate.AppliedStep) bool {
 	if knownNetworkAppliedStepKind(kind) {
 		return true
 	}
-	switch strings.TrimSpace(step.Owner) {
+	owner := strings.TrimSpace(step.Owner)
+	if owner == txstate.TransactionOwner {
+		return true
+	}
+	switch owner {
 	case netexecutor.OwnerTunDevice, netexecutor.OwnerTunAddress, netexecutor.OwnerRoute, netexecutor.OwnerPolicyRule, netexecutor.OwnerDNS, netexecutor.OwnerFirewall:
 		return true
 	default:
-		return false
+		return strings.HasPrefix(owner, txstate.TransactionOwner+":")
 	}
 }
 
