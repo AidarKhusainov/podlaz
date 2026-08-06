@@ -18,19 +18,37 @@ const managedTunInterfaceName = "podlaz0"
 // transaction/config/child evidence until the link-scoped subset converges.
 func (e DNSAwareTunExecutor) RollbackResourceScoped(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
-		var errs []error
-		if e.Firewall != nil && strings.TrimSpace(plan.Firewall.Table) != "" {
-			if rollbackErr := e.Firewall.Rollback(ctx, plan.Firewall); rollbackErr != nil {
-				errs = append(errs, rollbackErr)
-			}
-		}
-		if rollbackErr := e.Base.RollbackIndependent(ctx, plan); rollbackErr != nil {
-			errs = append(errs, rollbackErr)
-		}
-		errs = append(errs, err)
-		return errors.Join(errs...)
+		return errors.Join(e.rollbackIndependentRollback(ctx, plan), err)
 	}
 	return e.Rollback(ctx, plan)
+}
+
+// RollbackResourceScopedChildAbsent is the lifecycle-boundary variant for the
+// typed decision "link absent + tracked child absent". Missing link is accepted
+// only here, because the caller has already proven the tracked child cannot
+// recreate the transaction-bound link. DNS/address/link name-scoped mutations
+// are still skipped; only independent exact resources are converged.
+func (e DNSAwareTunExecutor) RollbackResourceScopedChildAbsent(ctx context.Context, plan planner.TunPlan) error {
+	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
+		if resourceMissing(err) {
+			return e.rollbackIndependentRollback(ctx, plan)
+		}
+		return errors.Join(e.rollbackIndependentRollback(ctx, plan), err)
+	}
+	return e.Rollback(ctx, plan)
+}
+
+func (e DNSAwareTunExecutor) rollbackIndependentRollback(ctx context.Context, plan planner.TunPlan) error {
+	var errs []error
+	if e.Firewall != nil && strings.TrimSpace(plan.Firewall.Table) != "" {
+		if rollbackErr := e.Firewall.Rollback(ctx, plan.Firewall); rollbackErr != nil {
+			errs = append(errs, rollbackErr)
+		}
+	}
+	if rollbackErr := e.Base.RollbackIndependent(ctx, plan); rollbackErr != nil {
+		errs = append(errs, rollbackErr)
+	}
+	return errors.Join(errs...)
 }
 
 // RollbackIndependent removes only exact resources whose mutation does not rely
