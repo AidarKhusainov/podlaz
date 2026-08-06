@@ -23,7 +23,7 @@ func (e tunRollbackLinkAbsentError) Error() string {
 	return e.err.Error()
 }
 
-func (e tunRollbackLinkAbsentError) Unwrap() error { return e.err }
+func (e tunRollbackLinkAbsentError) Unwrap() error                 { return e.err }
 func (e tunRollbackLinkAbsentError) IsTunRollbackLinkAbsent() bool { return true }
 
 // IsTunRollbackLinkAbsent reports whether err is the typed rollback decision
@@ -75,8 +75,8 @@ func strictRollbackTunLinkAbsent(err error) bool {
 	if cmdErr.result.RawStderr == "" || len(cmdErr.result.RawStderr) > maxTunRollbackMissingStderrSize {
 		return false
 	}
-	return exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Device "podlaz0" does not exist.`) ||
-		exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Cannot find device "podlaz0"`)
+	return exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Device \"podlaz0\" does not exist.`) ||
+		exactTerminatedProtocolLine(cmdErr.result.RawStderr, `Cannot find device \"podlaz0\"`)
 }
 
 func commandErrorMatchesArgv(cmdErr commandError, want ...string) bool {
