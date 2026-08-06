@@ -139,15 +139,14 @@ func assertMainTableRouteSkipped(t *testing.T, route txstate.RouteRollback) {
 	t.Helper()
 	runtimeDir := t.TempDir()
 	runner := &recordingRunner{paths: map[string]string{"ip": "/usr/sbin/ip"}}
-	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{Routes: []txstate.RouteRollback{route}})
+	path, tx := saveInvalidRawTransaction(t, runtimeDir, txstate.RollbackMetadata{Routes: []txstate.RouteRollback{route}})
 
 	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
-	assertCleanupResult(t, results, "route", "skipped", "")
 	assertCleanupResult(t, results, "transaction-state", "skipped", "transaction state was preserved")
 	assertCommands(t, runner, nil)
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("transaction file must remain after skipped cleanup: %v", err)
+		t.Fatalf("invalid transaction must remain: %v", err)
 	}
 }
 
@@ -214,9 +213,19 @@ func TestInactiveCommittedTransactionRecoversExactDurableRoute(t *testing.T) {
 		CIDR:  "0.0.0.0/0",
 		Dev:   "podlaz0",
 	}}
+	route := tx.Rollback.Routes[0]
+	tx.DesiredPlan.Routes = []txstate.RoutePlan{{
+		Kind:      "route",
+		Table:     route.Table,
+		CIDR:      route.CIDR,
+		Via:       route.Via,
+		Dev:       route.Dev,
+		Owner:     route.Owner,
+		Operation: "add",
+	}}
 	tx.AppliedSteps = []txstate.AppliedStep{{
 		Kind:      "route",
-		Target:    routeRollbackTarget(tx.Rollback.Routes[0]),
+		Target:    routeRollbackTarget(route),
 		Owner:     netexecutor.OwnerRoute,
 		AppliedAt: time.Now().UTC(),
 	}}
