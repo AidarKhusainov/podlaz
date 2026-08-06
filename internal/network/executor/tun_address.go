@@ -134,11 +134,11 @@ func (e IPTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddress
 	if exact > 1 {
 		return Step{}, fmt.Errorf("%w: exact address %s appears %d times", ErrTunAddressConflict, plan.CIDR, exact)
 	}
-	step = tunAddressStep(plan)
 	if exact == 0 {
 		if err := e.verifyBoundIdentityFence(ctx, plan, "immediately before address apply", false); err != nil {
-			return step, err
+			return Step{}, err
 		}
+		step = tunAddressStep(plan)
 		if err := runCommand(ctx, e.Runner, "ip", "-4", "address", "replace", plan.CIDR, "dev", plan.Interface); err != nil {
 			return step, fmt.Errorf("assign TUN address %s to %s: %w", plan.CIDR, plan.Interface, err)
 		}
