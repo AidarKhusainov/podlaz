@@ -7,6 +7,8 @@ import (
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
+const productionLocalTunRouteRawForTest = "local 198.18.0.1 dev podlaz0 table local proto kernel scope host"
+
 func TestSnapshotWithoutAllowedTunAddressConflictsKeepsSameInterfaceForeignOverlap(t *testing.T) {
 	allowed := []tunAddressPreflightAllowance{exactPodlazTunAddressAllowance(planner.DefaultTunIPv4CIDR)}
 	snapshot := netsnapshot.Snapshot{
@@ -18,7 +20,7 @@ func TestSnapshotWithoutAllowedTunAddressConflictsKeepsSameInterfaceForeignOverl
 		},
 		IPv4Routes: netsnapshot.RouteInventory{
 			Routes: []netsnapshot.Route{
-				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: "local 198.18.0.1 dev podlaz0 proto kernel scope host"},
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: productionLocalTunRouteRawForTest},
 				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: "198.18.0.0/24", Table: "main", Raw: "198.18.0.0/24 dev podlaz0"},
 			},
 		},
@@ -50,7 +52,7 @@ func TestSnapshotWithoutAllowedTunAddressConflictsAllowsExactLocalRouteOnly(t *t
 		},
 		IPv4Routes: netsnapshot.RouteInventory{
 			Routes: []netsnapshot.Route{
-				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: "local 198.18.0.1 dev podlaz0 proto kernel scope host"},
+				{Family: "ipv4", Interface: netsnapshot.DefaultTunName, Destination: planner.DefaultTunIPv4CIDR, Table: "local", Raw: productionLocalTunRouteRawForTest},
 			},
 		},
 	}
