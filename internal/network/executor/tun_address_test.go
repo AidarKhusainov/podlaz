@@ -49,9 +49,9 @@ func (r *scriptedRunner) assertDone() {
 func TestIPTunAddressBindWaitsForTrackedXrayLinkAndRecordsIdentity(t *testing.T) {
 	missing := errors.New("exit status 1")
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{ExitCode: 1, Stderr: `Device "podlaz0" does not exist.`}, err: missing},
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		linkCommandResult(1, `Device "podlaz0" does not exist.`, missing),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
 	}}
 	exec := IPTunAddressExecutor{Runner: runner, BindAttempts: 2, BindPollInterval: time.Nanosecond, Sleep: func(context.Context, time.Duration) error { return nil }}
 
@@ -67,8 +67,8 @@ func TestIPTunAddressBindWaitsForTrackedXrayLinkAndRecordsIdentity(t *testing.T)
 
 func TestIPTunAddressBindAcceptsFirstProbeExistingOnlyWithPreStartAbsenceProof(t *testing.T) {
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
 	}}
 	bound, err := (IPTunAddressExecutor{Runner: runner, BindAttempts: 1}).Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR}, liveTunLinkProofForTest())
 	if err != nil {
@@ -92,8 +92,8 @@ func TestIPTunAddressBindRejectsMissingPreStartAbsenceProof(t *testing.T) {
 
 func TestIPTunAddressBindRejectsReplacementDuringIdentityConfirmation(t *testing.T) {
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(8, true)}},
+		linkCommandResult(7, "", nil),
+		linkCommandResult(8, "", nil),
 	}}
 	_, err := (IPTunAddressExecutor{Runner: runner, BindAttempts: 1}).Bind(context.Background(), planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR}, liveTunLinkProofForTest())
 	if err == nil || !errors.Is(err, ErrTunLinkIdentityMismatch) {
@@ -105,10 +105,20 @@ func TestIPTunAddressBindRejectsReplacementDuringIdentityConfirmation(t *testing
 func TestIPTunAddressApplyUsesExactArgvAndReturnsOwnership(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}},
-		{want: []string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}},
-		{want: []string{"ip", "link", "set", "dev", "podlaz0", "up"}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(""),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
+		commandResult([]string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}, CommandResult{}, nil),
+		linkCommandResult(7, "", nil),
+		addressCommandResult(addressLineForTest(7, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
+		commandResult([]string{"ip", "link", "set", "dev", "podlaz0", "up"}, CommandResult{}, nil),
+		linkCommandResult(7, "", nil),
+		addressCommandResult(addressLineForTest(7, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
 	}}
 
 	step, err := (IPTunAddressExecutor{Runner: runner}).Apply(context.Background(), plan)
@@ -124,8 +134,9 @@ func TestIPTunAddressApplyUsesExactArgvAndReturnsOwnership(t *testing.T) {
 func TestIPTunAddressApplyRefusesPreExistingExactAddressWithoutOwnedRetry(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: addressLineForTest(7, planner.DefaultTunIPv4CIDR)}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(addressLineForTest(7, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(7, "", nil),
 	}}
 
 	step, err := (IPTunAddressExecutor{Runner: runner}).Apply(context.Background(), plan)
@@ -142,10 +153,16 @@ func TestIPTunAddressApplyReturnsPartialOwnershipAfterReplace(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	upErr := errors.New("link set failed")
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}},
-		{want: []string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}},
-		{want: []string{"ip", "link", "set", "dev", "podlaz0", "up"}, result: CommandResult{ExitCode: 2, Stderr: upErr.Error()}, err: upErr},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(""),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
+		commandResult([]string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}, CommandResult{}, nil),
+		linkCommandResult(7, "", nil),
+		addressCommandResult(addressLineForTest(7, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
+		commandResult([]string{"ip", "link", "set", "dev", "podlaz0", "up"}, CommandResult{ExitCode: 2, Stderr: upErr.Error()}, upErr),
 	}}
 
 	step, err := (IPTunAddressExecutor{Runner: runner}).Apply(context.Background(), plan)
@@ -159,9 +176,11 @@ func TestIPTunAddressApplyReturnsOwnershipWhenReplaceCompletionIsAmbiguous(t *te
 	plan := boundAddressPlanForTest()
 	timeoutErr := context.DeadlineExceeded
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}},
-		{want: []string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}, result: CommandResult{ExitCode: -1}, err: timeoutErr},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(""),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
+		commandResult([]string{"ip", "-4", "address", "replace", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}, CommandResult{ExitCode: -1}, timeoutErr),
 	}}
 
 	step, err := (IPTunAddressExecutor{Runner: runner}).Apply(context.Background(), plan)
@@ -178,8 +197,9 @@ func TestIPTunAddressVerifyRejectsAdditionalForeignIPv4Address(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	inventory := addressLineForTest(7, planner.DefaultTunIPv4CIDR) + "\n" + addressLineForTest(7, "198.51.100.25/32")
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: inventory}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(inventory),
+		linkCommandResult(7, "", nil),
 	}}
 
 	err := (IPTunAddressExecutor{Runner: runner}).Verify(context.Background(), plan)
@@ -192,8 +212,10 @@ func TestIPTunAddressVerifyRejectsAdditionalForeignIPv4Address(t *testing.T) {
 func TestIPTunAddressVerifyRequiresExactSingleAddressAndUpIdentity(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: addressLineForTest(7, planner.DefaultTunIPv4CIDR)}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(addressLineForTest(7, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
 	}}
 	if err := (IPTunAddressExecutor{Runner: runner}).Verify(context.Background(), plan); err != nil {
 		t.Fatalf("verify exact TUN address: %v", err)
@@ -205,8 +227,9 @@ func TestIPTunAddressVerifyRejectsDuplicateAddress(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	line := addressLineForTest(7, planner.DefaultTunIPv4CIDR)
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: line + "\n" + line}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(line + "\n" + line),
+		linkCommandResult(7, "", nil),
 	}}
 	if err := (IPTunAddressExecutor{Runner: runner}).Verify(context.Background(), plan); err == nil || !errors.Is(err, ErrTunAddressVerify) || !strings.Contains(err.Error(), "exactly once") {
 		t.Fatalf("expected duplicate address verification failure, got %v", err)
@@ -217,9 +240,14 @@ func TestIPTunAddressVerifyRejectsDuplicateAddress(t *testing.T) {
 func TestIPTunAddressRollbackDeletesOnlyExactAddressFromBoundLink(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(7, true)}},
-		{want: []string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: addressLineForTest(7, planner.DefaultTunIPv4CIDR)}},
-		{want: []string{"ip", "-4", "address", "del", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}},
+		linkCommandResult(7, "", nil),
+		addressCommandResult(addressLineForTest(7, planner.DefaultTunIPv4CIDR)),
+		linkCommandResult(7, "", nil),
+		linkCommandResult(7, "", nil),
+		commandResult([]string{"ip", "-4", "address", "del", planner.DefaultTunIPv4CIDR, "dev", "podlaz0"}, CommandResult{}, nil),
+		linkCommandResult(7, "", nil),
+		addressCommandResult(""),
+		linkCommandResult(7, "", nil),
 	}}
 	if err := (IPTunAddressExecutor{Runner: runner}).Rollback(context.Background(), plan); err != nil {
 		t.Fatalf("rollback exact TUN address: %v", err)
@@ -230,12 +258,28 @@ func TestIPTunAddressRollbackDeletesOnlyExactAddressFromBoundLink(t *testing.T) 
 func TestIPTunAddressRollbackRefusesReplacementLink(t *testing.T) {
 	plan := boundAddressPlanForTest()
 	runner := &scriptedRunner{t: t, steps: []scriptedCommand{
-		{want: []string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result: CommandResult{Stdout: tunLinkDetailsForAddressTest(8, true)}},
+		linkCommandResult(8, "", nil),
 	}}
 	if err := (IPTunAddressExecutor{Runner: runner}).Rollback(context.Background(), plan); err == nil || !errors.Is(err, ErrTunLinkIdentityMismatch) {
 		t.Fatalf("expected replacement-link refusal, got %v", err)
 	}
 	runner.assertDone()
+}
+
+func commandResult(want []string, result CommandResult, err error) scriptedCommand {
+	return scriptedCommand{want: want, result: result, err: err}
+}
+
+func linkCommandResult(index int, stderr string, err error) scriptedCommand {
+	result := CommandResult{Stdout: tunLinkDetailsForAddressTest(index, true)}
+	if err != nil {
+		result = CommandResult{ExitCode: 1, Stderr: stderr}
+	}
+	return commandResult([]string{"ip", "-details", "-o", "link", "show", "dev", "podlaz0"}, result, err)
+}
+
+func addressCommandResult(stdout string) scriptedCommand {
+	return commandResult([]string{"ip", "-4", "-o", "address", "show", "dev", "podlaz0"}, CommandResult{Stdout: stdout}, nil)
 }
 
 func boundAddressPlanForTest() planner.TunAddressPlan {
