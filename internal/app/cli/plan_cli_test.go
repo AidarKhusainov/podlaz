@@ -64,9 +64,10 @@ func TestRunCLIPlanTunRendersCompactHumanSummaryByDefault(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"podlaz plan", "Profile", "Name       my-vless-profile", "Mode       Full tunnel", "What will happen", "Create TUN interface", "podlaz0, MTU 1500", "Route traffic through VPN", "Keep VPN server reachable", "203.0.113.10/32 via 192.0.2.1 dev wlp0s20f3", "Configure DNS", "Configure kill switch", "Safety", "No changes were applied.", "Next steps", "Run: plz connect --mode tun", "Details: plz plan --mode tun", "--verbose"} {
+	for _, want := range []string{"podlaz plan", "Profile", "Name       my-vless-profile", "Mode       Full tunnel", "What will happen", "Verify Xray TUN link", "podlaz0, MTU 1500, Xray-owned", "Route traffic through VPN", "Keep VPN server reachable", "203.0.113.10/32 via 192.0.2.1 dev wlp0s20f3", "Configure DNS", "Configure kill switch", "Safety", "No changes were applied.", "Next steps", "Run: plz connect --mode tun", "Details: plz plan --mode tun", "--verbose"} {
 		assertContains(t, got, want)
 	}
+	assertNotContains(t, got, "Create TUN interface")
 	for _, forbidden := range []string{"Policy rules:", "Routes:", "DNS plan:", "Firewall rules:", "owner=podlaz:firewall:", "rollback=inet/podlaz"} {
 		assertNotContains(t, got, forbidden)
 	}
@@ -83,7 +84,8 @@ func TestRunCLIPlanTunPlainOutputUsesASCIIStatusMarkers(t *testing.T) {
 		t.Fatalf("plan --mode tun --plain failed: %v", err)
 	}
 	got := out.String()
-	assertContains(t, got, "OK Create TUN interface")
+	assertContains(t, got, "OK Verify Xray TUN link")
+	assertNotContains(t, got, "OK Create TUN interface")
 	assertNotContains(t, got, "✓")
 	assertNotContains(t, got, "✗")
 }
@@ -218,7 +220,7 @@ func assertNotContains(t *testing.T, got, forbidden string) {
 }
 
 func assertNoPlanSecretLeak(t *testing.T, got string) {
-	t.Helper()
+	t.Helper()	
 	assertNotContains(t, got, "00000000-0000-0000-0000-000000000001")
 	assertNotContains(t, got, "public-key")
 }
