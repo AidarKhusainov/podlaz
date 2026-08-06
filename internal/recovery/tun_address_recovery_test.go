@@ -60,7 +60,8 @@ func TestDaemonRecoveryRefusesTunAddressOnReplacementLink(t *testing.T) {
 
 	results := (DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: runner}).CleanupMany(context.Background(), transactionCandidate(path, tx))
 
-	assertCleanupResult(t, results, "tun-address", "failed", "identity mismatch")
+	assertCleanupResult(t, results, "tun-link-identity", "failed", "does not match transaction-bound identity")
+	assertCleanupResult(t, results, "tun-address", "failed", "link identity was not proven")
 	assertCleanupResult(t, results, "transaction-state", "failed", "preserved")
 	assertCommands(t, runner, []string{"ip -details -o link show dev podlaz0"})
 	if _, err := os.Stat(path); err != nil {
@@ -125,7 +126,13 @@ func ownedTunAddressRollback(index int) txstate.TUNAddressRollback {
 }
 
 func recoveryTunLink(index int) string {
-	return fmt.Sprintf("%d: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 500\n    link/none promiscuity 0 allmulti 0\n    tun type tun pi off", index)
+	return fmt.Sprintf(
+		"%d: podlaz0: <POINTOPOINT,NOARP,UP,LOWER_UP> "+
+			"mtu 1500 qdisc fq_codel state UP mode DEFAULT "+
+			"group default qlen 500 link/none "+
+			"tun type tun pi off vnet_hdr on persist off",
+		index,
+	)
 }
 
 func recoveryTunAddress(index int, cidr string) string {
