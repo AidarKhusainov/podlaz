@@ -38,7 +38,27 @@ func (e TunExecutor) VerifyRollbackIdentity(ctx context.Context, plan planner.Tu
 }
 
 func rollbackNeedsTUNLinkIdentity(plan planner.TunPlan) bool {
-	return strings.TrimSpace(plan.DNS.TargetLink) != "" || strings.TrimSpace(plan.TunDevice.Name) != ""
+	if strings.TrimSpace(plan.DNS.TargetLink) != "" || strings.TrimSpace(plan.TunDevice.Name) != "" {
+		return true
+	}
+	for _, route := range plan.Routes {
+		if rollbackRouteRequiresTunIdentity(route.Table, route.Interface) {
+			return true
+		}
+	}
+	return false
+}
+
+func rollbackRouteRequiresTunIdentity(table, dev string) bool {
+	if strings.TrimSpace(dev) == managedTunInterfaceName {
+		return true
+	}
+	switch strings.TrimSpace(table) {
+	case planner.TunRoutingTable, "51820":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e IPTunAddressExecutor) VerifyRollbackIdentity(ctx context.Context, plan planner.TunAddressPlan) error {
