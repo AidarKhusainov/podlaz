@@ -187,9 +187,13 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 		}
 	}
 	switch tunDeviceAction(plan.TunDevice.Action) {
-	case "", "create":
-		errs = append(errs, errors.New("daemon-created TUN link rollback is unsupported without typed creation proof"))
+	case "":
+		// Rollback plan has no owned TUN-link mutation. Xray owns podlaz0
+		// creation and lifetime, so there is no link rollback to perform.
 	case "verify", "use-existing":
+		// Xray-owned link. Link rollback is intentionally skipped.
+	case "create":
+		errs = append(errs, errors.New("daemon-created TUN link rollback is unsupported without typed creation proof"))
 	default:
 		errs = append(errs, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action))
 	}
