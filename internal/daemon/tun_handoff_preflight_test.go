@@ -100,14 +100,14 @@ func TestPrepareTunHandoffReplacePodlazBlocksStaleStateAfterRecoveryRefresh(t *t
 	assertStalePodlazBlockerContains(t, err, "tun-device podlaz0", "nftables-table inet podlaz")
 }
 
-func TestPreflightTunOwnershipBlocksStalePodlazStateBeforeCreatePlan(t *testing.T) {
+func TestPreflightTunOwnershipBlocksStalePodlazStateBeforeExecutionPlan(t *testing.T) {
 	snapshot := netsnapshot.FakeDesktopWithStalepodlazResources()
 	plan, err := planner.PlanTun(profileFromSnapshot(connectRequestForTest().Profile), snapshot)
 	if err != nil {
-		t.Fatalf("fixture should still be plannable to expose the raw create risk: %v", err)
+		t.Fatalf("fixture should still be plannable to expose stale-state risk: %v", err)
 	}
-	if plan.TunDevice.Action != "create" || plan.TunDevice.Name != netsnapshot.DefaultTunName {
-		t.Fatalf("expected fixture to plan raw TUN create without preflight, got %#v", plan.TunDevice)
+	if plan.TunDevice.Action != "verify" || plan.TunDevice.Name != netsnapshot.DefaultTunName {
+		t.Fatalf("expected fixture to plan Xray-owned TUN verification, got %#v", plan.TunDevice)
 	}
 	if plan.Firewall.TableAction != planner.FirewallActionValidate {
 		t.Fatalf("expected fixture to expose stale nftables table validation risk, got %#v", plan.Firewall)
