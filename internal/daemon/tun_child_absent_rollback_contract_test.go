@@ -88,6 +88,6 @@ type fakeTunRollbackLinkAbsentError struct {
 	err error
 }
 
-func (e fakeTunRollbackLinkAbsentError) Error() string { return e.err.Error() }
-func (e fakeTunRollbackLinkAbsentError) Unwrap() error { return e.err }
+func (e fakeTunRollbackLinkAbsentError) Error() string                 { return e.err.Error() }
+func (e fakeTunRollbackLinkAbsentError) Unwrap() error                 { return e.err }
 func (e fakeTunRollbackLinkAbsentError) IsTunRollbackLinkAbsent() bool { return true }
