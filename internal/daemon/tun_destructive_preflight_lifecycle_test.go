@@ -298,16 +298,18 @@ func tunLifecycleSnapshotWithExactActiveOwnedState() netsnapshot.Snapshot {
 	return s
 }
 
-func persistActiveOwnedTunTransactionForPreflight(t *testing.T, runtimeDir, transactionID, configPath string, snapshot netsnapshot.Snapshot) {
+func persistActiveOwnedTunTransactionForPreflight(t *testing.T, runtimeDir, transactionID, configPath string, activeSnapshot netsnapshot.Snapshot) {
 	t.Helper()
 	p := profileFromSnapshot(connectRequestForTest().Profile)
-	plan, err := planner.PlanTun(p, snapshot)
+	clean := netsnapshot.FakeResolvedDesktop()
+	plan, err := planner.PlanTun(p, clean)
 	if err != nil {
-		t.Fatalf("plan active-owned fixture: %v", err)
+		t.Fatalf("plan active-owned fixture from clean snapshot: %v", err)
 	}
 	plan.TunAddress.LinkIndex = 7
 	plan.TunAddress.LinkKind = "tun"
 	plan.TunAddress.AppearedAfterCore = true
+	plan.TunAddress.Action = planner.TunAddressActionAssign
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: fixedClock()}
 	tx := txstate.NewTransaction(transactionID, p.ID, planner.ModeTun, store.Now())
 	tx.State = txstate.TransactionCommitted
@@ -319,6 +321,9 @@ func persistActiveOwnedTunTransactionForPreflight(t *testing.T, runtimeDir, tran
 		Owner: txstate.TransactionOwner,
 	})
 	tx.AppliedSteps = appliedStepsFromRollbackMetadataForTest(tx.Rollback, store.Now())
+	if len(tx.Rollback.TUNAddresses) != 1 || len(tx.Rollback.NFTables) != 1 {
+		t.Fatalf("active-owned fixture must have durable address and nftables ownership: rollback=%#v active=%#v", tx.Rollback, activeSnapshot)
+	}
 	if _, err := store.Save(tx); err != nil {
 		t.Fatalf("save active-owned transaction: %v", err)
 	}
