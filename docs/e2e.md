@@ -28,10 +28,11 @@ The general E2E workflow runs:
 4. Maximum server coverage
 5. Gated TUN fault-injection coverage
 
-The dedicated convergence workflow is the required gate for issue #236 and equivalent changes to TUN rollback convergence. A single successful run must cover both packaged acceptance cases:
+The dedicated convergence workflow is the required gate for issue #236, issue #243, and equivalent changes when their acceptance criteria require installed-package TUN/resolver convergence. A single successful run covers the applicable packaged acceptance cases:
 
 1. valid per-link DNS with all planned servers, `~.`, `+DefaultRoute`, and synthetic `Current Scopes: none` is accepted through the installed production daemon;
-2. removing real `podlaz0` after DNS apply produces the exact supported result from the daemon-owned production `resolvectl revert podlaz0` rollback call, diagnostics are persisted before that call, cleanup converges, and an immediate packaged retry succeeds. No preliminary manual revert is permitted. Strictly gated instrumentation captures the production call's exit code and raw stdout/stderr in the private hook directory; the gate accepts only exit code `1`, empty raw stdout, and the documented marker followed by one `LF` or one `CRLF`, without newline deletion or whitespace normalization.
+2. removing real `podlaz0` after DNS apply produces the exact supported result from the daemon-owned production `resolvectl revert podlaz0` rollback call, diagnostics are persisted before that call, cleanup converges, and an immediate packaged retry succeeds. No preliminary manual revert is permitted. Strictly gated instrumentation captures the production call's exit code and raw stdout/stderr in the private hook directory; the gate accepts only exit code `1`, empty raw stdout, and the documented marker followed by one `LF` or one `CRLF`, without newline deletion or whitespace normalization;
+3. issue #243 verifies the separate read-only `resolvectl status podlaz0 --no-pager` absence protocol on Ubuntu 24.04/systemd 255. The initial inactive boundary first must publish healthy `podlaz status` and clean `recover --json`. The gate then boundedly waits for the exact supported exit-`0`, empty-stdout, byte-exact missing-device stderr envelope; during that wait only the already-supported proven-empty transient Link shape may be treated as an intermediate state, and any other raw process/result shape fails closed. The scenario then verifies clean `recover --execute --yes --json` followed by a fresh clean scan, performs two consecutive healthy active status reads, normal disconnect, immediate clean inactive status/recovery publication, immediate reconnect, and a repeated lifecycle without restarting `podlazd` or `systemd-resolved`. Post-disconnect success is defined by the product's semantic absence contract and does not require a particular raw resolver representation. Raw resolver/profile/host evidence stays in the private E2E temporary area; uploaded evidence contains only normalized structural verdicts and remains subject to the workflow redaction scan.
 
 A green result from only the general E2E workflow does not replace this dedicated gate.
 
@@ -80,6 +81,7 @@ The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or 
 | Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
 | TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Gated apply/verify failures, pre-rollback diagnostics, resolved subprocess edge cases, immediate retry, unrelated-state preservation, and pre-commit interruption. |
 | Installed-package TUN convergence | `scripts/e2e/tun-package-convergence.sh` | Release-like `.deb`, packaged inactive-scope verification, byte-exact capture of the actual production missing-link rollback, private exact route/rule manifests, provenance, tri-state resource absence, unrelated host-state preservation, restart reconciliation, and immediate retry. |
+| Issue #243 resolver acceptance | `scripts/e2e/issue243-package-acceptance.sh` | Installed-package clean inactive baseline, bounded convergence to the read-only exit-0 resolver envelope, recover-execute refresh, repeated active status, disconnect convergence, immediate reconnect, and normalized safe evidence. |
 | Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | State-aware pre-release verification obligations, post-quiescence authoritative mutation snapshot, exact metadata-driven cleanup, ownership-union verification, identity-material-preserving package purge gate, sentinel removal, and tri-state post-cleanup assertions. |
 
 ## Manual script order
@@ -159,6 +161,8 @@ absence and no cleanup-required transaction before any restart or explicit
 recovery, then reconnects and disconnects on the same `podlazd` and
 `systemd-resolved` lifecycle and proves clean state again. Capture is enabled only for the rollback delegate, remains outside uploaded artifacts, and fails rollback closed if capture cannot be persisted. The scenario persists only normalized summaries and delegates failure-path cleanup to the same conservative teardown helper used by the workflow's `always` step.
 
+The issue #243 acceptance step runs after the base package-convergence scenario and the issue #241 acceptance on the same installed branch package. It first requires the daemon-published inactive state and dry-run recovery view to be clean. Because the preceding lifecycle may still leave the already-supported proven-empty `systemd-resolved` Link record, the step then uses a bounded raw-status convergence loop: the exact exit-0 missing-device envelope completes the proof, the strict proven-empty transient shape is the only retryable intermediate result, and every other process/output shape fails closed. After normal disconnect, the step immediately checks clean inactive `podlaz status` and clean `recover --json` without requiring the same raw representation, then reconnects and repeats the lifecycle without restarting `podlazd` or `systemd-resolved`.
+
 The hook event log contains only fixed lifecycle markers used to prove diagnostic/rollback ordering. It must not contain profile material, command output, addresses, or generated configuration. Raw production rollback capture files remain in the private hook directory and are removed before artifact scanning.
 
 The hook environment variables are E2E-only implementation details:
@@ -182,6 +186,8 @@ Record only non-sensitive evidence in the PR or issue:
 - bounded diagnostic classifications and lifecycle phases.
 
 Raw public or local IP addresses, gateways, interface names, DNS server/domain output, complete routes, `ip link` output, resolver status, provider URLs, subscription links, credentials, generated configs, private exact network manifests, private production process-result capture files, and unredacted logs must stay outside the artifact directory. The dedicated workflow scans the artifact directory against configured secrets and network values collected from the host. Evidence is uploaded only when both the teardown assertions and pre-upload scan pass.
+
+For issue #243, the raw initial `resolvectl status podlaz0 --no-pager` stdout/stderr capture is part of that private evidence boundary and must be deleted before artifact scanning. Public evidence may record only normalized facts such as exact-envelope convergence, clean inactive publication, clean recover dry-run/execute refresh, repeated active-status stability, disconnect convergence, and immediate reconnect success.
 
 ## Non-goals
 

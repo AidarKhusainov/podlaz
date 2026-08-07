@@ -363,14 +363,27 @@ func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err 
 }
 
 func resolvedStatusResourceMissing(ctx context.Context, result CommandResult, err error) bool {
-	if ctx == nil || ctx.Err() != nil || err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if ctx == nil || ctx.Err() != nil {
 		return false
 	}
+	if result.RawStdout != "" || result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
+		return false
+	}
+
+	// Ubuntu 24.04/systemd 255 may report a read-only status lookup for a
+	// disappeared link as a normal exit while writing this exact diagnostic to
+	// stderr. This is a status-only absence protocol; it must not broaden the
+	// mutating resolvectl revert contract in resolvedMissingDeviceResult.
+	if err == nil {
+		return result.ExitCode == 0 &&
+			exactTerminatedRecoveryProtocolLine(result.RawStderr, resolvedMissingDeviceIgnoringStderr)
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
 	var exitErr interface{ ExitCode() int }
-	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 || result.RawStdout != "" {
-		return false
-	}
-	if result.RawStderr == "" || len(result.RawStderr) > maxResolvedMissingStderrSize {
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || result.ExitCode != 1 {
 		return false
 	}
 	return exactTerminatedRecoveryProtocolLine(result.RawStderr, `Link podlaz0 does not exist.`) ||
