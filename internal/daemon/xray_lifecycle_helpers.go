@@ -75,7 +75,12 @@ type coreLogWriter struct {
 	outputLogged   bool
 }
 
-func newCoreLogWriter(_ string, streamName string) *coreLogWriter {
+func newCoreLogWriter(streamName string) *coreLogWriter {
+	switch streamName {
+	case "stdout", "stderr":
+	default:
+		streamName = "unknown"
+	}
 	return &coreLogWriter{streamName: streamName}
 }
 
