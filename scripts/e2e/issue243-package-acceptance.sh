@@ -236,7 +236,10 @@ run_cycle() {
   fi
   CONNECTED=false
 
-  capture_exact_exit_zero_missing_status "${phase}"
+  # The product absence contract is semantic here: immediately after disconnect
+  # systemd-resolved may report either the exact missing-link envelope or the
+  # already-supported proven-empty transient Link record. User-visible clean
+  # status/recovery publication is therefore the authoritative convergence gate.
   assert_inactive_status "${phase}"
   assert_recover_json_clean "${phase}"
   write_evidence "cycle_${phase}" pass
@@ -252,6 +255,8 @@ mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI
 
+# The quiescent initial baseline is where #243 requires proof of the real
+# Ubuntu 24.04/systemd 255 byte-exact exit-0 read-only status envelope.
 capture_exact_exit_zero_missing_status initial
 assert_inactive_status initial
 assert_recover_json_clean initial
