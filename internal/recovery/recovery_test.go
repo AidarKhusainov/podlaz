@@ -28,10 +28,12 @@ type fakeRunner struct {
 }
 
 type fakeCommand struct {
-	stdout   string
-	stderr   string
-	exitCode int
-	err      error
+	stdout    string
+	stderr    string
+	rawStdout string
+	rawStderr string
+	exitCode  int
+	err       error
 }
 
 func (r fakeRunner) LookPath(file string) (string, error) {
@@ -49,9 +51,11 @@ func (r fakeRunner) Run(_ context.Context, name string, args ...string) (Command
 		return CommandResult{ExitCode: -1}, errors.New("unexpected command: " + key)
 	}
 	return CommandResult{
-		Stdout:   command.stdout,
-		Stderr:   command.stderr,
-		ExitCode: command.exitCode,
+		Stdout:    command.stdout,
+		Stderr:    command.stderr,
+		RawStdout: command.rawStdout,
+		RawStderr: command.rawStderr,
+		ExitCode:  command.exitCode,
 	}, command.err
 }
 
@@ -210,12 +214,16 @@ func TestOSScannerDetectsOwnedResources(t *testing.T) {
 		RuntimeDir: runtimeDir,
 		Runner: fakeRunner{
 			paths: map[string]string{
-				"ip":  "/usr/sbin/ip",
-				"nft": "/usr/sbin/nft",
+				"ip":         "/usr/sbin/ip",
+				"nft":        "/usr/sbin/nft",
+				"resolvectl": "/usr/bin/resolvectl",
 			},
 			commands: map[string]fakeCommand{
 				"ip link show dev podlaz0": {
 					stdout: "2: podlaz0: <POINTOPOINT,UP> mtu 1500",
+				},
+				"resolvectl status podlaz0 --no-pager": {
+					stdout: "Link 2 (podlaz0)",
 				},
 				"nft list table inet podlaz": {
 					stdout: "table inet podlaz {}",
@@ -291,8 +299,9 @@ func TestOSScannerPreservesInspectionWarnings(t *testing.T) {
 		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
 		Runner: fakeRunner{
 			paths: map[string]string{
-				"ip":  "/usr/sbin/ip",
-				"nft": "/usr/sbin/nft",
+				"ip":         "/usr/sbin/ip",
+				"nft":        "/usr/sbin/nft",
+				"resolvectl": "/usr/bin/resolvectl",
 			},
 			commands: map[string]fakeCommand{
 				"ip link show dev podlaz0": {
@@ -300,6 +309,7 @@ func TestOSScannerPreservesInspectionWarnings(t *testing.T) {
 					exitCode: 1,
 					err:      errors.New("exit status 1"),
 				},
+				"resolvectl status podlaz0 --no-pager": resolvedLinkAbsentCommand(),
 				"nft list table inet podlaz": {
 					stderr:   "Error: No such file or directory",
 					exitCode: 1,
@@ -324,8 +334,9 @@ func TestOSScannerPreservesInspectionWarnings(t *testing.T) {
 func fakeMissingResourcesRunner() fakeRunner {
 	return fakeRunner{
 		paths: map[string]string{
-			"ip":  "/usr/sbin/ip",
-			"nft": "/usr/sbin/nft",
+			"ip":         "/usr/sbin/ip",
+			"nft":        "/usr/sbin/nft",
+			"resolvectl": "/usr/bin/resolvectl",
 		},
 		commands: map[string]fakeCommand{
 			"ip link show dev podlaz0": {
@@ -333,12 +344,23 @@ func fakeMissingResourcesRunner() fakeRunner {
 				exitCode: 1,
 				err:      errors.New("exit status 1"),
 			},
+			"resolvectl status podlaz0 --no-pager": resolvedLinkAbsentCommand(),
 			"nft list table inet podlaz": {
 				stderr:   "Error: No such file or directory",
 				exitCode: 1,
 				err:      errors.New("exit status 1"),
 			},
 		},
+	}
+}
+
+func resolvedLinkAbsentCommand() fakeCommand {
+	const raw = "Link podlaz0 does not exist.\n"
+	return fakeCommand{
+		stderr:    strings.TrimSpace(raw),
+		rawStderr: raw,
+		exitCode:  1,
+		err:       resolvedTestExitError{code: 1},
 	}
 }
 
