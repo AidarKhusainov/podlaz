@@ -86,12 +86,13 @@ jobs:
             "${host_needles[@]}"
 
       - name: Remove private E2E temp state
+        id: private_cleanup
         if: always()
         shell: bash
-        run: rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
 
       - name: Upload package convergence evidence
-        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' }}
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: podlaz-tun-package-convergence-e2e-evidence
