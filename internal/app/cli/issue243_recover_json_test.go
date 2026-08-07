@@ -18,7 +18,7 @@ import (
 	statuspkg "github.com/AidarKhusainov/podlaz/internal/status"
 )
 
-func TestIssue243ExitZeroResolvedMissingComposesThroughDaemonStatusAndRecoveryExecute(t *testing.T) {
+func TestIssue243ExitZeroResolvedMissingComposesThroughDaemonStatusRecoverDryRunAndRecoveryExecute(t *testing.T) {
 	runtimeDir := t.TempDir()
 	fakeBinDir := t.TempDir()
 	resolvedCallsPath := filepath.Join(t.TempDir(), "resolved-status-calls")
@@ -45,6 +45,7 @@ exit 0
 
 	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ISSUE243_RESOLVED_CALLS", resolvedCallsPath)
+	t.Setenv(api.RuntimeDirEnv, runtimeDir)
 	t.Setenv(api.ServiceEnv, api.ServiceManual)
 
 	serverCtx, cancelServer := context.WithCancel(context.Background())
@@ -82,6 +83,13 @@ exit 0
 		},
 	}
 	assertIssue243StatusCommandClean(t, statusOpts)
+
+	var dryRunOut bytes.Buffer
+	err = runRecoverCommand(context.Background(), []string{"--json"}, &dryRunOut, options{})
+	if got := ExitCode(err); got != 0 {
+		t.Fatalf("recover --json must exit 0 for exact exit-0 missing-link state: code=%d err=%v output=%q", got, err, dryRunOut.String())
+	}
+	assertIssue243RecoverDryRunJSONClean(t, dryRunOut.Bytes())
 
 	beforeRecovery := issue243ResolvedStatusCallCount(t, resolvedCallsPath)
 	if beforeRecovery < 1 {
@@ -155,6 +163,27 @@ func assertIssue243StatusCommandClean(t *testing.T, opts options) {
 	}
 	if strings.Contains(out.String(), "Inspection warnings:") || strings.Contains(out.String(), "Recovery candidates:") {
 		t.Fatalf("clean inactive status must not publish recovery or inspection warnings: %q", out.String())
+	}
+}
+
+func assertIssue243RecoverDryRunJSONClean(t *testing.T, data []byte) {
+	t.Helper()
+	var payload struct {
+		Status   string            `json:"status"`
+		Warnings []string          `json:"warnings"`
+		Recovery struct {
+			Candidates []json.RawMessage `json:"candidates"`
+			Warnings   []json.RawMessage `json:"warnings"`
+		} `json:"recovery"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode recover dry-run JSON: %v; output=%q", err, string(data))
+	}
+	if payload.Status != "ok" {
+		t.Fatalf("clean recover --json must report status ok, got %q", payload.Status)
+	}
+	if len(payload.Warnings) != 0 || len(payload.Recovery.Candidates) != 0 || len(payload.Recovery.Warnings) != 0 {
+		t.Fatalf("clean recover --json must have no warnings or candidates, got %s", string(data))
 	}
 }
 
