@@ -125,7 +125,10 @@ func observeResolvedLink(ctx context.Context, result CommandResult, err error) r
 	if resolvedLinkHasConcreteDNSConfiguration(link) {
 		return resolvedLinkUnknown
 	}
-	return resolvedLinkAbsent
+	if resolvedLinkIsProvenEmptyTransient(link) {
+		return resolvedLinkAbsent
+	}
+	return resolvedLinkUnknown
 }
 
 // parseManagedResolvedLinkStatus accepts the Ubuntu 24.04 single-link status
@@ -277,6 +280,14 @@ func resolvedLinkHasConcreteDNSConfiguration(link netsnapshot.ResolvedLink) bool
 		len(link.DNSServers) > 0 ||
 		len(link.DNSDomains) > 0 ||
 		containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol)
+}
+
+func resolvedLinkIsProvenEmptyTransient(link netsnapshot.ResolvedLink) bool {
+	return len(link.CurrentScopes) == 1 && link.CurrentScopes[0] == "none" &&
+		strings.TrimSpace(link.CurrentDNSServer) == "" &&
+		len(link.DNSServers) == 0 &&
+		len(link.DNSDomains) == 0 &&
+		!containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol)
 }
 
 func containsResolvedValue(values []string, want string) bool {
