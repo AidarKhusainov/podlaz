@@ -114,14 +114,14 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 // not merely the lifetime of resolved's transient Link record. A successful
 // status command may briefly retain an empty record after revert/link removal;
 // that record contains no DNS mutation to recover and is therefore absent.
-// Recovery authority uses a strict target-section parser: malformed, partial,
-// duplicate, or unsupported successful output remains unknown rather than being
-// downgraded to absence.
+// Recovery authority requires a clean command envelope plus a strict target-
+// section parse: stderr, malformed, partial, duplicate, or unsupported output
+// remains unknown rather than being downgraded to absence.
 func observeResolvedLink(ctx context.Context, result CommandResult, err error) resolvedLinkObservation {
 	switch {
 	case resolvedStatusResourceMissing(ctx, result, err):
 		return resolvedLinkAbsent
-	case !commandSucceeded(result, err):
+	case !resolvedStatusSucceededWithoutStderr(result, err):
 		return resolvedLinkUnknown
 	}
 
@@ -139,6 +139,10 @@ func observeResolvedLink(ctx context.Context, result CommandResult, err error) r
 		return resolvedLinkAbsent
 	}
 	return resolvedLinkUnknown
+}
+
+func resolvedStatusSucceededWithoutStderr(result CommandResult, err error) bool {
+	return commandSucceeded(result, err) && result.RawStderr == "" && result.Stderr == ""
 }
 
 // parseManagedResolvedLinkStatus accepts the Ubuntu 24.04 single-link status
