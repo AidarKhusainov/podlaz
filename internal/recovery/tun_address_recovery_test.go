@@ -22,7 +22,9 @@ func TestDaemonRecoveryRemovesOnlyExactOwnedTunAddress(t *testing.T) {
 	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
 		TUNAddresses: []txstate.TUNAddressRollback{ownedTunAddressRollback(7)},
 		ChildProcesses: []txstate.ChildProcessRollback{{
-			Label: "xray", PID: missingPID, Owner: txstate.TransactionOwner,
+			Label: "xray",
+			PID:   missingPID,
+			Owner: txstate.TransactionOwner,
 		}},
 	})
 
@@ -70,7 +72,9 @@ func TestDaemonRecoveryAcceptsMissingTunAddressOnlyAfterTrackedChildAbsence(t *t
 		{
 			name: "tracked child absent",
 			processes: []txstate.ChildProcessRollback{{
-				Label: "xray", PID: 1 << 30, Owner: txstate.TransactionOwner,
+				Label: "xray",
+				PID:   1 << 30,
+				Owner: txstate.TransactionOwner,
 			}},
 			want: "recovered",
 		},
@@ -83,7 +87,9 @@ func TestDaemonRecoveryAcceptsMissingTunAddressOnlyAfterTrackedChildAbsence(t *t
 				paths: map[string]string{"ip": "/usr/sbin/ip"},
 				commands: map[string]fakeCommand{
 					"ip -details -o link show dev podlaz0": {
-						stderr: `Device \"podlaz0\" does not exist.`, exitCode: 1, err: missingErr,
+						stderr:   `Device "podlaz0" does not exist.`,
+						exitCode: 1,
+						err:      missingErr,
 					},
 				},
 			}
@@ -146,8 +152,14 @@ func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testin
 	tx.DesiredPlan.TUN.Owner = "xray:tun-inbound"
 	tx.DesiredPlan.TUN.InterfaceName = managedInterface
 	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
-		Family: "ipv4", InterfaceName: managedInterface, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
-		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
+		Family:            "ipv4",
+		InterfaceName:     managedInterface,
+		CIDR:              planner.DefaultTunIPv4CIDR,
+		Scope:             "global",
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             "podlaz:tun-address",
 	}
 	path, err := store.Save(tx)
 	if err != nil {
@@ -166,8 +178,14 @@ func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent
 	tx := txstate.NewTransaction("tx-address-route-crash", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
 	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
-		Family: "ipv4", InterfaceName: managedInterface, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
-		LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: "podlaz:tun-address",
+		Family:            "ipv4",
+		InterfaceName:     managedInterface,
+		CIDR:              planner.DefaultTunIPv4CIDR,
+		Scope:             "global",
+		LinkIndex:         7,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             "podlaz:tun-address",
 	}
 	tx.DesiredPlan.Routes = []txstate.RoutePlan{{
 		Table: "podlaz", CIDR: "default", Dev: managedInterface, Owner: "podlaz:route", Operation: "add",
