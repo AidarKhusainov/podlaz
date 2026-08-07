@@ -38,6 +38,18 @@ func TestObserveResolvedLinkFailsClosedForMalformedTargetSection(t *testing.T) {
          Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
 		},
 		{
+			name: "missing DefaultRoute polarity",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+         Protocols: +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
+		},
+		{
+			name: "conflicting DefaultRoute polarity",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+         Protocols: +DefaultRoute -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
+		},
+		{
 			name: "unknown target field",
 			stdout: `Link 7 (podlaz0)
     Current Scopes: none
