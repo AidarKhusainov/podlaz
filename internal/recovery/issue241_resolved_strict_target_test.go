@@ -37,6 +37,37 @@ func TestObserveResolvedLinkFailsClosedForMalformedTargetSection(t *testing.T) {
     Current Scopes: DNS
          Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
 		},
+		{
+			name: "unknown target field",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+         Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+        DNS Mystery: fixture`,
+		},
+		{
+			name: "duplicate DNS servers field",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+       DNS Servers: 192.0.2.53
+       DNS Servers: 192.0.2.54
+        DNS Domain: ~.`,
+		},
+		{
+			name: "duplicate target header",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+         Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+Link 8 (podlaz0)
+    Current Scopes: none
+         Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
+		},
+		{
+			name: "malformed target header",
+			stdout: `Link x (podlaz0)
+    Current Scopes: none
+         Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
+		},
 	}
 
 	for _, tt := range tests {
