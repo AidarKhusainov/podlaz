@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"testing"
 )
@@ -19,9 +18,10 @@ func TestCoreLogWriterNeverPersistsUntrustedChildOutput(t *testing.T) {
 		idSentinel      = "123e4567-e89b-12d3-a456-426614174000"
 		pathSentinel    = "/private/fixture/runtime.json"
 	)
-	writer := newCoreLogWriter(profileSentinel, "stderr")
+	writer := newCoreLogWriter("stderr")
 	writer.setPID(42)
 	payload := strings.Join([]string{
+		"profile=" + profileSentinel,
 		"accepted tcp:" + ipSentinel + ":443",
 		"host=" + domainSentinel + " id=" + idSentinel,
 		"config=" + pathSentinel,
@@ -45,26 +45,39 @@ func TestCoreLogWriterNeverPersistsUntrustedChildOutput(t *testing.T) {
 	}
 }
 
-func TestCoreLifecycleLogsNeverPersistProfileOrRawErrorText(t *testing.T) {
+func TestCoreLogWriterSanitizesUnexpectedStreamName(t *testing.T) {
 	var out bytes.Buffer
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	const profileSentinel = "profile-private-fixture.example.invalid"
-	const errorSentinel = "dial 203.0.113.88 token=fixture-secret-value"
-
-	logCoreStarted(43, profileSentinel)
-	logCoreStartFailed(profileSentinel, errors.New(errorSentinel))
-	logCoreStopped(43, profileSentinel)
-	logCoreExited(43, profileSentinel, errorSentinel)
+	const streamSentinel = "private-fixture.example.invalid"
+	writer := newCoreLogWriter(streamSentinel)
+	writer.setPID(41)
+	if _, err := writer.Write([]byte("opaque child output")); err != nil {
+		t.Fatalf("write child output: %v", err)
+	}
 
 	got := out.String()
-	for _, forbidden := range []string{profileSentinel, "203.0.113.88", "fixture-secret-value", errorSentinel} {
-		if strings.Contains(got, forbidden) {
-			t.Fatalf("daemon lifecycle log leaked %q in %q", forbidden, got)
-		}
+	if strings.Contains(got, streamSentinel) || strings.Contains(got, "opaque child output") {
+		t.Fatalf("unexpected stream input or child payload crossed journal privacy boundary: %q", got)
 	}
-	for _, want := range []string{"core xray started", "core xray start failed", "core xray stopped", "core xray exited"} {
+	if !strings.Contains(got, "core xray unknown output received pid=41") {
+		t.Fatalf("expected low-cardinality fallback stream label, got %q", got)
+	}
+}
+
+func TestCoreLifecycleLogsExposeOnlyStructuralFacts(t *testing.T) {
+	var out bytes.Buffer
+	restoreLog := captureLogOutput(&out)
+	defer restoreLog()
+
+	logCoreStarted(43)
+	logCoreStartFailed()
+	logCoreStopped(43)
+	logCoreExited(43)
+
+	got := out.String()
+	for _, want := range []string{"core xray started pid=43", "core xray start failed", "core xray stopped pid=43", "core xray exited pid=43"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected safe structural lifecycle event %q in %q", want, got)
 		}
