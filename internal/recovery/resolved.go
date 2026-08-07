@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 const (
@@ -13,6 +16,8 @@ const (
 	maxResolvedMissingStderrSize        = 512
 	resolvedMissingDeviceStderr         = `Failed to resolve interface "podlaz0": No such device`
 	resolvedMissingDeviceIgnoringStderr = `Failed to resolve interface "podlaz0", ignoring: No such device`
+	resolvedRouteOnlyDomain             = "~."
+	resolvedDefaultRouteProtocol        = "+DefaultRoute"
 )
 
 type resolvedLinkObservation uint8
@@ -34,7 +39,7 @@ func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner Command
 	case resolvedLinkAbsent:
 		return
 	case resolvedLinkUnknown:
-		r.Warnings = append(r.Warnings, Warning{Target: managedDNSTarget, Message: commandFailureMessage(status, statusErr)})
+		r.Warnings = append(r.Warnings, Warning{Target: managedDNSTarget, Message: resolvedObservationFailureMessage(status, statusErr)})
 		return
 	case resolvedLinkPresent:
 	}
@@ -89,21 +94,72 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 	case resolvedLinkAbsent:
 		return recovered(candidate)
 	case resolvedLinkPresent:
-		return skipped(candidate, "systemd-resolved link record persisted after revert; restart systemd-resolved manually")
+		return skipped(candidate, "systemd-resolved link configuration persisted after revert; restart systemd-resolved manually")
 	default:
-		return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", commandFailureMessage(status, statusErr)))
+		return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", resolvedObservationFailureMessage(status, statusErr)))
 	}
 }
 
+// observeResolvedLink classifies actionable per-link systemd-resolved state,
+// not merely the lifetime of resolved's transient Link record. A successful
+// status command may briefly retain an empty record after revert/link removal;
+// that record contains no DNS mutation to recover and is therefore absent.
+// Ambiguous, malformed, or non-podlaz concrete DNS state remains unknown.
 func observeResolvedLink(ctx context.Context, result CommandResult, err error) resolvedLinkObservation {
 	switch {
 	case resolvedStatusResourceMissing(ctx, result, err):
 		return resolvedLinkAbsent
-	case commandSucceeded(result, err):
-		return resolvedLinkPresent
-	default:
+	case !commandSucceeded(result, err):
 		return resolvedLinkUnknown
 	}
+
+	links := netsnapshot.ParseResolvedLinks(result.Stdout)
+	matches := make([]netsnapshot.ResolvedLink, 0, 1)
+	for _, link := range links {
+		if link.Name == managedInterface {
+			matches = append(matches, link)
+		}
+	}
+	if len(matches) != 1 {
+		return resolvedLinkUnknown
+	}
+	link := matches[0]
+	if resolvedLinkHasPodlazConfiguration(link) {
+		return resolvedLinkPresent
+	}
+	if resolvedLinkHasConcreteDNSConfiguration(link) {
+		return resolvedLinkUnknown
+	}
+	return resolvedLinkAbsent
+}
+
+func resolvedLinkHasPodlazConfiguration(link netsnapshot.ResolvedLink) bool {
+	return containsResolvedValue(link.DNSDomains, resolvedRouteOnlyDomain) &&
+		containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol) &&
+		(strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0)
+}
+
+func resolvedLinkHasConcreteDNSConfiguration(link netsnapshot.ResolvedLink) bool {
+	return strings.TrimSpace(link.CurrentDNSServer) != "" ||
+		len(link.DNSServers) > 0 ||
+		len(link.DNSDomains) > 0 ||
+		containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol)
+}
+
+func containsResolvedValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvedObservationFailureMessage(result CommandResult, err error) string {
+	if commandSucceeded(result, err) {
+		return "systemd-resolved link status is ambiguous or contains non-podlaz DNS configuration"
+	}
+	return commandFailureMessage(result, err)
 }
 
 func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err error) bool {
