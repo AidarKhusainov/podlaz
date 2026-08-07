@@ -22,7 +22,7 @@ func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	report := runStatus(ctx, opts)
 	fmt.Fprint(stdout, report.String())
 	if statusCommandShouldFail(report) {
-		return exitError{code: 3, err: errors.New("status found stale or incomplete local state")}
+		return exitError{code: 3, err: errors.New("status found unhealthy lifecycle, stale, or incomplete state")}
 	}
 	return nil
 }
@@ -81,5 +81,5 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 }
 
 func statusCommandShouldFail(report status.Report) bool {
-	return report.HasUnhealthyState()
+	return report.Health() == status.LifecycleHealthUnhealthy || report.HasUnhealthyState()
 }
