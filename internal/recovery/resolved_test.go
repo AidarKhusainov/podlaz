@@ -129,8 +129,10 @@ func newResolvedRecoveryRunner(ipLinkResults, resolvedStatusResults []resolvedRe
 
 func resolvedLinkExists() resolvedRecoveryCommand {
 	return resolvedRecoveryCommand{stdout: `Link 7 (podlaz0)
-    Current Scopes: none
-       DNS Servers: 1.1.1.1`}
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`}
 }
 
 func missingResolvedLink() resolvedRecoveryCommand {
