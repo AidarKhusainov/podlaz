@@ -327,25 +327,55 @@ PY
   append_sensitive_value "${resolved_values}"
 }
 
-assert_active_status() {
-  local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-status.XXXXXX")"
-  if ! run_installed_podlaz status >"${output}" 2>&1; then
-    fail "${phase}: active status returned non-zero"
-  fi
-  grep -Fx "Connection: active" "${output}" >/dev/null || fail "${phase}: status is not active"
-  grep -Fx "Stale state: none" "${output}" >/dev/null || fail "${phase}: active status did not prove clean stale state"
-  grep -Fx "Startup recovery scan: clean for active connection" "${output}" >/dev/null || fail "${phase}: active scan semantics are inconsistent"
-  grep -Fx "Transaction: committed" "${output}" >/dev/null || fail "${phase}: committed transaction is not visible"
+assert_active_status_output() {
+  local phase="$1" read_name="$2" output="$3"
+  grep -Fx "Connection: active" "${output}" >/dev/null || fail "${phase}/${read_name}: status is not active"
+  grep -Fx "Stale state: none" "${output}" >/dev/null || fail "${phase}/${read_name}: active status did not prove clean stale state"
+  grep -Fx "Startup recovery scan: clean for active connection" "${output}" >/dev/null || fail "${phase}/${read_name}: active scan semantics are inconsistent"
+  grep -Fx "Transaction: committed" "${output}" >/dev/null || fail "${phase}/${read_name}: committed transaction is not visible"
   if grep -F "Inspection warnings:" "${output}" >/dev/null; then
-    fail "${phase}: normal active status contains inspection warnings"
+    fail "${phase}/${read_name}: normal active status contains inspection warnings"
   fi
   if grep -F "clean inactive state" "${output}" >/dev/null || grep -F "Stale state: unknown" "${output}" >/dev/null; then
-    fail "${phase}: active status contains inactive or unknown recovery semantics"
+    fail "${phase}/${read_name}: active status contains inactive or unknown recovery semantics"
   fi
-  collect_active_sensitive_values "${output}"
-  rm -f -- "${output}"
+}
+
+active_status_stable_fields() {
+  local output="$1"
+  grep -E '^(Connection|Mode|Stale state|Startup recovery scan|Transaction|Rollback available|State path): ' "${output}"
+}
+
+assert_active_status() {
+  local phase="$1" first second first_state second_state first_fields second_fields
+  first="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-status-first.XXXXXX")"
+  second="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-status-second.XXXXXX")"
+
+  if ! run_installed_podlaz status >"${first}" 2>&1; then
+    fail "${phase}/first: active status returned non-zero"
+  fi
+  assert_active_status_output "${phase}" first "${first}"
+
+  if ! run_installed_podlaz status >"${second}" 2>&1; then
+    fail "${phase}/second: repeated active status returned non-zero"
+  fi
+  assert_active_status_output "${phase}" second "${second}"
+
+  first_state="$(sed -n 's/^State path: //p' "${first}" | head -n 1)"
+  second_state="$(sed -n 's/^State path: //p' "${second}" | head -n 1)"
+  assert_nonempty "${first_state}" "${phase} first active transaction identity"
+  assert_nonempty "${second_state}" "${phase} second active transaction identity"
+  [[ "${first_state}" == "${second_state}" ]] || fail "${phase}: active transaction identity changed between status reads"
+
+  first_fields="$(active_status_stable_fields "${first}")"
+  second_fields="$(active_status_stable_fields "${second}")"
+  [[ "${first_fields}" == "${second_fields}" ]] || fail "${phase}: active lifecycle/recovery semantics changed between status reads"
+
+  collect_active_sensitive_values "${first}"
+  collect_active_sensitive_values "${second}"
+  rm -f -- "${first}" "${second}"
   write_evidence "active_status_${phase}" pass
+  write_evidence "active_status_stability_${phase}" pass
 }
 
 assert_inactive_status() {
