@@ -18,7 +18,7 @@ import (
 func TestDaemonRecoveryRemovesOnlyExactOwnedTunAddress(t *testing.T) {
 	runtimeDir := t.TempDir()
 	missingPID := 1 << 30
-	runner := &tunAddressRecoveryRunner{addressPresent: true}
+	runner := &statefulTunAddressRecoveryRunner{addressPresent: true}
 	path, tx := saveTransaction(t, runtimeDir, txstate.RollbackMetadata{
 		TUNAddresses: []txstate.TUNAddressRollback{ownedTunAddressRollback(7)},
 		ChildProcesses: []txstate.ChildProcessRollback{{
@@ -83,7 +83,7 @@ func TestDaemonRecoveryAcceptsMissingTunAddressOnlyAfterTrackedChildAbsence(t *t
 				paths: map[string]string{"ip": "/usr/sbin/ip"},
 				commands: map[string]fakeCommand{
 					"ip -details -o link show dev podlaz0": {
-						stderr: `Device "podlaz0" does not exist.`, exitCode: 1, err: missingErr,
+						stderr: `Device \"podlaz0\" does not exist.`, exitCode: 1, err: missingErr,
 					},
 				},
 			}
@@ -139,7 +139,7 @@ func TestOwnedTunAddressRollbackFixtureUsesDocumentationSafePolicy(t *testing.T)
 
 func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testing.T) {
 	runtimeDir := t.TempDir()
-	runner := &tunAddressRecoveryRunner{addressPresent: true}
+	runner := &statefulTunAddressRecoveryRunner{addressPresent: true}
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	tx := txstate.NewTransaction("tx-address-syscall-crash", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
@@ -162,7 +162,7 @@ func TestDaemonRecoveryClosesAddressCrashWindowFromBoundApplyingIntent(t *testin
 
 func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent(t *testing.T) {
 	runtimeDir := t.TempDir()
-	runner := &tunAddressRecoveryRunner{addressPresent: true}
+	runner := &statefulTunAddressRecoveryRunner{addressPresent: true}
 	tx := txstate.NewTransaction("tx-address-route-crash", "profile-1", "tun", time.Now().UTC())
 	tx.State = txstate.TransactionApplying
 	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
@@ -187,19 +187,19 @@ func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent
 	}
 }
 
-type tunAddressRecoveryRunner struct {
+type statefulTunAddressRecoveryRunner struct {
 	addressPresent bool
 	commands       []string
 }
 
-func (r *tunAddressRecoveryRunner) LookPath(file string) (string, error) {
+func (r *statefulTunAddressRecoveryRunner) LookPath(file string) (string, error) {
 	if file == "ip" {
 		return "/usr/sbin/ip", nil
 	}
 	return "", errors.New("command not found")
 }
 
-func (r *tunAddressRecoveryRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
+func (r *statefulTunAddressRecoveryRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
 	command := filepath.Base(name) + " " + strings.Join(args, " ")
 	r.commands = append(r.commands, command)
 
@@ -222,7 +222,7 @@ func (r *tunAddressRecoveryRunner) Run(_ context.Context, name string, args ...s
 	}
 }
 
-func assertTunAddressRecoveryCommands(t *testing.T, runner *tunAddressRecoveryRunner) {
+func assertTunAddressRecoveryCommands(t *testing.T, runner *statefulTunAddressRecoveryRunner) {
 	t.Helper()
 	want := []string{
 		"ip -details -o link show dev podlaz0",
