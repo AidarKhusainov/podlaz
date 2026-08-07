@@ -9,19 +9,19 @@ import (
 	"syscall"
 )
 
-func logCoreStarted(pid int, _ string) {
+func logCoreStarted(pid int) {
 	log.Printf("podlazd: core xray started pid=%d", pid)
 }
 
-func logCoreStartFailed(_ string, _ error) {
+func logCoreStartFailed() {
 	log.Printf("podlazd: core xray start failed")
 }
 
-func logCoreStopped(pid int, _ string) {
+func logCoreStopped(pid int) {
 	log.Printf("podlazd: core xray stopped pid=%d", pid)
 }
 
-func logCoreExited(pid int, _, _ string) {
+func logCoreExited(pid int) {
 	log.Printf("podlazd: core xray exited pid=%d", pid)
 }
 
