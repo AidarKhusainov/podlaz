@@ -7,24 +7,22 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-
-	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
-func logCoreStarted(pid int, profileID string) {
-	log.Printf("podlazd: core xray started pid=%d profile=%s", pid, render.Redact(profileID))
+func logCoreStarted(pid int, _ string) {
+	log.Printf("podlazd: core xray started pid=%d", pid)
 }
 
-func logCoreStartFailed(profileID string, err error) {
-	log.Printf("podlazd: core xray start failed profile=%s error=%s", render.Redact(profileID), render.Redact(err.Error()))
+func logCoreStartFailed(_ string, _ error) {
+	log.Printf("podlazd: core xray start failed")
 }
 
-func logCoreStopped(pid int, profileID string) {
-	log.Printf("podlazd: core xray stopped pid=%d profile=%s", pid, render.Redact(profileID))
+func logCoreStopped(pid int, _ string) {
+	log.Printf("podlazd: core xray stopped pid=%d", pid)
 }
 
-func logCoreExited(pid int, profileID, message string) {
-	log.Printf("podlazd: core xray exited pid=%d profile=%s error=%s", pid, render.Redact(profileID), render.Redact(message))
+func logCoreExited(pid int, _, _ string) {
+	log.Printf("podlazd: core xray exited pid=%d", pid)
 }
 
 func writeRuntimeConfig(path string, content []byte, permissions runtimeConfigPermissions) error {
