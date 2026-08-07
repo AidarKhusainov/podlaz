@@ -130,7 +130,7 @@ func TestObserveResolvedLinkFailsClosedForSuccessfulStatusWithStderr(t *testing.
 	}
 }
 
-func TestObserveResolvedLinkFailsClosedAfterContextTermination(t *testing.T) {
+func TestObserveResolvedLinkRequiresLiveCallerContext(t *testing.T) {
 	outputs := []struct {
 		name   string
 		stdout string
@@ -155,6 +155,12 @@ func TestObserveResolvedLinkFailsClosedAfterContextTermination(t *testing.T) {
 		new  func(t *testing.T) context.Context
 	}{
 		{
+			name: "nil",
+			new: func(t *testing.T) context.Context {
+				return nil
+			},
+		},
+		{
 			name: "cancelled",
 			new: func(t *testing.T) context.Context {
 				ctx, cancel := context.WithCancel(context.Background())
@@ -178,7 +184,7 @@ func TestObserveResolvedLinkFailsClosedAfterContextTermination(t *testing.T) {
 			t.Run(contextCase.name+"/"+outputCase.name, func(t *testing.T) {
 				got := observeResolvedLink(contextCase.new(t), CommandResult{Stdout: outputCase.stdout}, nil)
 				if got != resolvedLinkUnknown {
-					t.Fatalf("terminated context must make successful resolved status unknown, got %v", got)
+					t.Fatalf("missing or terminated context must make successful resolved status unknown, got %v", got)
 				}
 			})
 		}
