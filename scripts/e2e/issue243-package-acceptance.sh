@@ -84,21 +84,24 @@ import_profile_privately() {
 }
 
 assert_active_status() {
-  local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-active-status.XXXXXX")"
-  if ! run_installed_podlaz status >"${output}" 2>&1; then
+  local phase="$1" read_name output
+  for read_name in first second; do
+    output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-${read_name}-active-status.XXXXXX")"
+    if ! run_installed_podlaz status >"${output}" 2>&1; then
+      rm -f -- "${output}"
+      fail "${phase}/${read_name}: active status returned non-zero"
+    fi
+    grep -Fx "Connection: active" "${output}" >/dev/null || fail "${phase}/${read_name}: connection is not active"
+    grep -Fx "Transaction: committed" "${output}" >/dev/null || fail "${phase}/${read_name}: TUN transaction is not committed"
+    grep -Fx "Stale state: none" "${output}" >/dev/null || fail "${phase}/${read_name}: active status reports stale state"
+    grep -Fx "Startup recovery scan: clean for active connection" "${output}" >/dev/null || fail "${phase}/${read_name}: active startup scan is not clean"
+    if grep -F "Inspection warnings:" "${output}" >/dev/null; then
+      fail "${phase}/${read_name}: active status contains inspection warnings"
+    fi
     rm -f -- "${output}"
-    fail "${phase}: active status returned non-zero"
-  fi
-  grep -Fx "Connection: active" "${output}" >/dev/null || fail "${phase}: connection is not active"
-  grep -Fx "Transaction: committed" "${output}" >/dev/null || fail "${phase}: TUN transaction is not committed"
-  grep -Fx "Stale state: none" "${output}" >/dev/null || fail "${phase}: active status reports stale state"
-  grep -Fx "Startup recovery scan: clean for active connection" "${output}" >/dev/null || fail "${phase}: active startup scan is not clean"
-  if grep -F "Inspection warnings:" "${output}" >/dev/null; then
-    fail "${phase}: active status contains inspection warnings"
-  fi
-  rm -f -- "${output}"
+  done
   write_evidence "active_status_${phase}" pass
+  write_evidence "active_status_stability_${phase}" pass
 }
 
 capture_exact_exit_zero_missing_status() {
@@ -218,6 +221,11 @@ assert_nonempty "${PROFILE_URI}" "issue 243 profile URI"
 mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI
+
+capture_exact_exit_zero_missing_status initial
+assert_inactive_status initial
+assert_recover_json_clean initial
+write_evidence initial_inactive pass
 
 run_cycle first
 run_cycle immediate-reconnect
