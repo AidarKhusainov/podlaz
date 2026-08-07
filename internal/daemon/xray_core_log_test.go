@@ -7,46 +7,51 @@ import (
 	"testing"
 )
 
-func TestCoreLogWriterFlushesFinalLineWithoutTrailingNewline(t *testing.T) {
+func TestCoreLogWriterSuppressesFinalPayloadWithoutTrailingNewline(t *testing.T) {
 	var out bytes.Buffer
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	writer := newCoreLogWriter("test-profile", "stderr")
+	writer := newCoreLogWriter("stderr")
 	writer.setPID(42)
-	if _, err := writer.Write([]byte("final crash line without newline")); err != nil {
+	if _, err := writer.Write([]byte("profile=test-profile final crash line without newline")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	writer.Flush()
 
 	got := out.String()
-	for _, text := range []string{"podlazd: core xray stderr", "pid=42", "profile=test-profile", "final crash line without newline"} {
-		if !strings.Contains(got, text) {
-			t.Fatalf("expected core log output to contain %q, got %q", text, got)
+	for _, want := range []string{"podlazd: core xray stderr output received", "pid=42"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected structural core log output to contain %q, got %q", want, got)
+		}
+	}
+	for _, forbidden := range []string{"test-profile", "final crash line without newline"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("core journal must not contain child payload or profile metadata %q: %q", forbidden, got)
 		}
 	}
 }
 
-func TestCoreLogWriterSplitsCompleteLinesAndFlushesTail(t *testing.T) {
+func TestCoreLogWriterCoalescesArbitraryPayloadIntoOneStructuralEvent(t *testing.T) {
 	var out bytes.Buffer
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	writer := newCoreLogWriter("test-profile", "stdout")
+	writer := newCoreLogWriter("stdout")
 	writer.setPID(43)
-	if _, err := writer.Write([]byte("first line\nsecond line without newline")); err != nil {
+	if _, err := writer.Write([]byte("profile=test-profile\nfirst line\nsecond line without newline")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	writer.Flush()
 
 	got := out.String()
-	for _, text := range []string{"first line", "second line without newline"} {
-		if !strings.Contains(got, text) {
-			t.Fatalf("expected core log output to contain %q, got %q", text, got)
-		}
+	if count := strings.Count(got, "podlazd: core xray stdout output received"); count != 1 {
+		t.Fatalf("expected one structural core stdout event, got %d: %q", count, got)
 	}
-	if count := strings.Count(got, "podlazd: core xray stdout"); count != 2 {
-		t.Fatalf("expected two core stdout log lines, got %d: %q", count, got)
+	for _, forbidden := range []string{"test-profile", "first line", "second line without newline"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("core journal must not contain child payload or profile metadata %q: %q", forbidden, got)
+		}
 	}
 }
 
@@ -55,8 +60,8 @@ func TestCoreLogWriterDoesNotEmitPIDZeroForOutputBeforePIDIsKnown(t *testing.T) 
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	writer := newCoreLogWriter("test-profile", "stderr")
-	if _, err := writer.Write([]byte("early line\n")); err != nil {
+	writer := newCoreLogWriter("stderr")
+	if _, err := writer.Write([]byte("profile=test-profile early line\n")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	if got := out.String(); got != "" {
@@ -66,13 +71,15 @@ func TestCoreLogWriterDoesNotEmitPIDZeroForOutputBeforePIDIsKnown(t *testing.T) 
 	writer.setPID(44)
 	writer.Flush()
 	got := out.String()
-	for _, text := range []string{"podlazd: core xray stderr", "pid=44", "profile=test-profile", "early line"} {
-		if !strings.Contains(got, text) {
-			t.Fatalf("expected core log output to contain %q, got %q", text, got)
+	for _, want := range []string{"podlazd: core xray stderr output received", "pid=44"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected structural core log output to contain %q, got %q", want, got)
 		}
 	}
-	if strings.Contains(got, "pid=0") {
-		t.Fatalf("expected no pid=0 in core log output, got %q", got)
+	for _, forbidden := range []string{"pid=0", "test-profile", "early line"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("unexpected unsafe or invalid core journal value %q in %q", forbidden, got)
+		}
 	}
 }
 

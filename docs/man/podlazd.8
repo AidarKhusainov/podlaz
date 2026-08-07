@@ -274,7 +274,7 @@ candidate must not reject an immediate subsequent TUN connect. The runtime root
 .I /run/podlaz
 is not removed wholesale.
 .SH LOGS
-The packaged service writes stdout and stderr to journald:
+The packaged service writes daemon operational events to journald:
 .EX
 journalctl -u podlazd -n 50 --no-pager
 journalctl -u podlazd -f
@@ -286,7 +286,9 @@ uses
 .BR journalctl (1)
 to read recent daemon logs, and
 .BR "podlaz logs --core"
-filters daemon-forwarded Xray lifecycle and stdout/stderr lines.
+filters structural Xray lifecycle and child-output-observed events. Raw Xray
+stdout/stderr payloads, profile identifiers, endpoints, and arbitrary child text
+are not persisted to journald.
 .SH TROUBLESHOOTING
 .TP
 .B Daemon is not reachable

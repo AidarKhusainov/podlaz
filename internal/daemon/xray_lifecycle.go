@@ -224,25 +224,24 @@ func (m *XrayManager) Status(context.Context) api.StatusResponse {
 	if state.Connection == "" {
 		state = inactiveXrayState()
 	}
-	transactions, transactionWarnings := transactionStatuses(m.runtimeDir())
-	warnings := append([]string(nil), state.Warnings...)
-	warnings = append(warnings, transactionWarnings...)
+	transactions, inspectionWarnings := transactionStatuses(m.runtimeDir())
 	return api.StatusResponse{
-		Daemon:            "running",
-		Service:           api.ServiceFromEnv(),
-		Connection:        state.Connection,
-		Mode:              state.Mode,
-		ProfileID:         state.ProfileID,
-		ProfileName:       state.ProfileName,
-		RuntimeDirectory:  "present",
-		RuntimeConfigPath: state.RuntimeConfigPath,
-		Proxy:             state.Proxy,
-		TUN:               state.TUN,
-		Routes:            state.Routes,
-		DNS:               state.DNS,
-		Firewall:          state.Firewall,
-		Transactions:      transactions,
-		Warnings:          warnings,
+		Daemon:             "running",
+		Service:            api.ServiceFromEnv(),
+		Connection:         state.Connection,
+		Mode:               state.Mode,
+		ProfileID:          state.ProfileID,
+		ProfileName:        state.ProfileName,
+		RuntimeDirectory:   "present",
+		RuntimeConfigPath:  state.RuntimeConfigPath,
+		Proxy:              state.Proxy,
+		TUN:                state.TUN,
+		Routes:             state.Routes,
+		DNS:                state.DNS,
+		Firewall:           state.Firewall,
+		Transactions:       transactions,
+		Warnings:           append([]string(nil), state.Warnings...),
+		InspectionWarnings: inspectionWarnings,
 	}
 }
 
@@ -294,7 +293,7 @@ func (m *XrayManager) lifecycleDoctorChecks(ctx context.Context) []doctor.Check 
 	return checks
 }
 
-func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, coreLogs []*coreLogWriter, runtimeConfigPath, profileID string) {
+func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, coreLogs []*coreLogWriter, runtimeConfigPath string) {
 	err := cmd.Wait()
 	for _, coreLog := range coreLogs {
 		coreLog.Flush()
@@ -317,14 +316,14 @@ func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, coreLogs []
 		m.stopping = false
 		m.state = inactiveXrayState()
 		removeGeneratedConfig(runtimeConfigPath)
-		logCoreStopped(pid, profileID)
+		logCoreStopped(pid)
 		return
 	}
 	exitMessage := processExitMessage(err)
 	m.state.Connection = "error (core exited)"
 	m.state.Proxy = "inactive"
 	m.state.Warnings = append(m.state.Warnings, exitMessage)
-	logCoreExited(pid, profileID, exitMessage)
+	logCoreExited(pid)
 }
 
 func (m *XrayManager) runtimeDir() string {
@@ -334,7 +333,7 @@ func (m *XrayManager) runtimeDir() string {
 	return api.RuntimeDirFromEnv()
 }
 
-func transactionStatuses(runtimeDir string) ([]api.TransactionStatus, []string) {
+func transactionStatuses(runtimeDir string) ([]api.TransactionStatus, []api.RecoveryWarning) {
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	statuses := make([]api.TransactionStatus, 0, len(summaries))
 	for _, summary := range summaries {
@@ -346,7 +345,11 @@ func transactionStatuses(runtimeDir string) ([]api.TransactionStatus, []string) 
 			Path:              summary.Path,
 		})
 	}
-	return statuses, warnings
+	inspectionWarnings := make([]api.RecoveryWarning, 0, len(warnings))
+	for _, warning := range warnings {
+		inspectionWarnings = append(inspectionWarnings, api.RecoveryWarning{Target: "transaction state", Message: warning})
+	}
+	return statuses, inspectionWarnings
 }
 
 func (m *XrayManager) resolveXrayPath() (string, error) {
@@ -387,27 +390,27 @@ func (m *XrayManager) startXrayLocked(p profile.Profile, xrayPath, runtimeConfig
 	}
 
 	cmd := exec.Command(xrayPath, "run", "-config", runtimeConfigPath)
-	stdoutLog := newCoreLogWriter(p.ID, "stdout")
-	stderrLog := newCoreLogWriter(p.ID, "stderr")
+	stdoutLog := newCoreLogWriter("stdout")
+	stderrLog := newCoreLogWriter("stderr")
 	cmd.Stdout = stdoutLog
 	cmd.Stderr = stderrLog
 	configureCoreCommandCredential(cmd, identity)
 	if err := cmd.Start(); err != nil {
 		removeGeneratedConfig(runtimeConfigPath)
-		logCoreStartFailed(p.ID, err)
+		logCoreStartFailed()
 		return nil, nil, fmt.Errorf("start Xray: %w", err)
 	}
 
 	pid := cmd.Process.Pid
 	stdoutLog.setPID(pid)
 	stderrLog.setPID(pid)
-	logCoreStarted(pid, p.ID)
+	logCoreStarted(pid)
 
 	done := make(chan struct{})
 	m.cmd = cmd
 	m.done = done
 	m.stopping = false
-	go m.waitForExit(cmd, done, []*coreLogWriter{stdoutLog, stderrLog}, runtimeConfigPath, p.ID)
+	go m.waitForExit(cmd, done, []*coreLogWriter{stdoutLog, stderrLog}, runtimeConfigPath)
 	return cmd, done, nil
 }
 

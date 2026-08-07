@@ -46,6 +46,10 @@ Rules:
   transaction, route, resolver, and ownership evidence belongs to the daemon.
   The diagnostic handler is read-only apart from atomically replacing the
   private latest-report file.
+- Status keeps lifecycle state, runtime warnings, recovery-scan evidence, and
+  inspection failures as separate concepts. A runtime warning does not become an
+  inspection failure merely because it is transported through daemon status, and
+  a clean active scan must not be described as an inactive lifecycle state.
 
 Packaged daemon access has two local socket boundaries. The filesystem socket is tried first. A transport-level permission failure may fall back to the packaged abstract socket, where the daemon can enforce peer-credential/polkit authorization without widening filesystem socket access. Once the daemon returns an HTTP, authorization, JSON, or schema error, that response is authoritative and must not be downgraded to a generic daemon-unavailable error.
 
@@ -92,6 +96,24 @@ query bound to the persisted numeric link index, revalidates that same identity
 after the query, performs a separate normal system resolution, and checks a
 bounded, deduplicated set of returned IPv4 addresses until at least one is
 proven to route through the planned TUN path.
+
+Recovery observation of the same `systemd-resolved` state is tri-state and
+configuration-aware. An exact supported missing-link result is `absent`. A
+successful status is authoritative only after a normal exit with completely
+empty stderr and a strict, unique `podlaz0` target-section parse. It is `present`
+only when that section proves the concrete podlaz per-link DNS shape: a DNS
+server, route-only `~.`, and explicit `+DefaultRoute` without `-DefaultRoute`.
+A transient link record is `absent` only when `Current Scopes` is exactly `none`,
+current/server/domain DNS state is empty, and `Protocols` contains explicit
+`-DefaultRoute` without `+DefaultRoute`. Missing DefaultRoute polarity or
+simultaneous `+DefaultRoute -DefaultRoute` is `unknown`, as are unexpected
+stderr, malformed or partial output, duplicate target sections, operational
+command failure, and concrete DNS state that does not prove the podlaz shape.
+`Current Scopes` is not ownership evidence for `present`; it participates only
+in proving the narrow empty-transient `absent` state. This same classifier is
+used for the read-only scanner and post-`revert` cleanup verification so a
+successful cleanup cannot immediately republish an empty transient link record
+as stale state.
 
 Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
 
@@ -204,6 +226,13 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
 - Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty raw stdout, and the supported `No such device` raw stderr followed by exactly one `LF` or one `CRLF`. Unterminated stderr, embedded or additional line endings, caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup, persisted transaction DNS rollback, and the installed-package acceptance gate; trimming is permitted only for human-readable error rendering.
+- A successful post-`revert` transient `systemd-resolved` record is converged
+  only when it satisfies the same proven-empty contract: clean stderr,
+  `Current Scopes: none`, no current/server/domain DNS state, and explicit
+  `-DefaultRoute` without `+DefaultRoute`. Missing or conflicting DefaultRoute
+  polarity, unexpected stderr, concrete non-podlaz DNS configuration, and
+  malformed, partial, or duplicate observations remain unknown and must not be
+  cleaned by assumption.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
 - The daemon recovery scan is refreshed after every connect attempt, after
   disconnect, and after recovery execution, including failed operations. A
@@ -241,6 +270,14 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 Human and JSON output must redact secrets and generated runtime configuration.
 This applies to `status`, `doctor`, `logs`, `plan`, `recover`, validation output,
 and all JSON responses.
+
+The daemon journal has a stricter child-process boundary: raw Xray stdout/stderr
+bytes are untrusted sensitive input and are never persisted. Core journal events
+may record only low-cardinality structural facts such as lifecycle event, stream
+name, and child PID. They must not include profile IDs/names, endpoints, domains,
+IP addresses, UUIDs, runtime-config paths, raw child payload, or raw child error
+text. User-visible diagnostics may retain separately redacted runtime warnings;
+that does not authorize copying their raw source payload into journald.
 
 The generic secret redactor is not a sufficient privacy boundary for TUN
 diagnostics. Before persistence and before human or JSON rendering, the complete

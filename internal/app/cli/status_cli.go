@@ -22,7 +22,7 @@ func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	report := runStatus(ctx, opts)
 	fmt.Fprint(stdout, report.String())
 	if statusCommandShouldFail(report) {
-		return exitError{code: 3, err: errors.New("status found stale or incomplete local state")}
+		return exitError{code: 3, err: errors.New("status found unhealthy lifecycle, stale, or incomplete state")}
 	}
 	return nil
 }
@@ -81,28 +81,5 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 }
 
 func statusCommandShouldFail(report status.Report) bool {
-	if !report.HasUnhealthyState() {
-		return false
-	}
-	return !activeDaemonWarningOnlyStatus(report)
-}
-
-func activeDaemonWarningOnlyStatus(report status.Report) bool {
-	if report.Daemon != "running" || report.Connection != "active" || len(report.Candidates) > 0 {
-		return false
-	}
-	if report.StartupScan != nil && (len(report.StartupScan.Candidates) > 0 || len(report.StartupScan.Warnings) > 0) {
-		return false
-	}
-	for _, tx := range report.Transactions {
-		if tx.RequiresCleanup {
-			return false
-		}
-	}
-	for _, warning := range report.Warnings {
-		if warning.Target != "daemon" {
-			return false
-		}
-	}
-	return len(report.Warnings) > 0
+	return report.Health() == status.LifecycleHealthUnhealthy || report.HasUnhealthyState()
 }

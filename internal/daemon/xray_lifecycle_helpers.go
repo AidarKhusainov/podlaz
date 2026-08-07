@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
-	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 func profileFromSnapshot(p api.ProfileSnapshot) profile.Profile {
@@ -64,64 +62,75 @@ func emptyAs(value, fallback string) string {
 	return value
 }
 
-// coreLogWriter buffers core output until the child PID is known so every log
-// line can include stable process context while still redacting sensitive values.
+// coreLogWriter is a privacy boundary for untrusted child stdout/stderr.
+// It deliberately discards payload bytes and emits at most one low-cardinality
+// structural event per stream after the child PID is known. Profile metadata,
+// endpoints, identifiers, paths, and opaque child text never cross into journald.
 type coreLogWriter struct {
-	mu         sync.Mutex
-	pid        int
-	pidKnown   bool
-	profileID  string
-	streamName string
-	pending    []byte
+	mu             sync.Mutex
+	pid            int
+	pidKnown       bool
+	streamName     string
+	outputObserved bool
+	outputLogged   bool
 }
 
-func newCoreLogWriter(profileID, streamName string) *coreLogWriter {
-	return &coreLogWriter{profileID: profileID, streamName: streamName}
+func newCoreLogWriter(streamName string) *coreLogWriter {
+	switch streamName {
+	case "stdout", "stderr":
+	default:
+		streamName = "unknown"
+	}
+	return &coreLogWriter{streamName: streamName}
 }
 
 func (w *coreLogWriter) setPID(pid int) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.pid = pid
 	w.pidKnown = true
-	w.flushCompleteLinesLocked()
+	shouldLog := w.outputObserved && !w.outputLogged
+	if shouldLog {
+		w.outputLogged = true
+	}
+	w.mu.Unlock()
+	if shouldLog {
+		w.logOutputObserved(pid)
+	}
 }
 
 func (w *coreLogWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
 	written := len(p)
-	w.pending = append(w.pending, p...)
-	if w.pidKnown {
-		w.flushCompleteLinesLocked()
+	if written == 0 {
+		return 0, nil
+	}
+
+	w.mu.Lock()
+	w.outputObserved = true
+	shouldLog := w.pidKnown && !w.outputLogged
+	pid := w.pid
+	if shouldLog {
+		w.outputLogged = true
+	}
+	w.mu.Unlock()
+	if shouldLog {
+		w.logOutputObserved(pid)
 	}
 	return written, nil
 }
 
 func (w *coreLogWriter) Flush() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.flushCompleteLinesLocked()
-	if len(w.pending) == 0 {
-		return
+	shouldLog := w.outputObserved && w.pidKnown && !w.outputLogged
+	pid := w.pid
+	if shouldLog {
+		w.outputLogged = true
 	}
-	w.logLineLocked(w.pending)
-	w.pending = w.pending[:0]
-}
-
-func (w *coreLogWriter) flushCompleteLinesLocked() {
-	for {
-		idx := bytes.IndexByte(w.pending, '\n')
-		if idx < 0 {
-			return
-		}
-		w.logLineLocked(w.pending[:idx])
-		copy(w.pending, w.pending[idx+1:])
-		w.pending = w.pending[:len(w.pending)-idx-1]
+	w.mu.Unlock()
+	if shouldLog {
+		w.logOutputObserved(pid)
 	}
 }
 
-func (w *coreLogWriter) logLineLocked(line []byte) {
-	cleanLine := strings.TrimRight(string(line), "\r")
-	log.Printf("podlazd: core xray %s pid=%d profile=%s: %s", w.streamName, w.pid, render.Redact(w.profileID), render.Redact(cleanLine))
+func (w *coreLogWriter) logOutputObserved(pid int) {
+	log.Printf("podlazd: core xray %s output received pid=%d", w.streamName, pid)
 }

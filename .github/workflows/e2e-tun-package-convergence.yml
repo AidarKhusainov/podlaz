@@ -15,7 +15,7 @@ jobs:
     name: Installed package TUN convergence
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
-    timeout-minutes: 150
+    timeout-minutes: 180
     env:
       PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
       PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
@@ -38,9 +38,16 @@ jobs:
       - name: Run installed-package convergence scenario
         timeout-minutes: 115
         shell: bash
+        env:
+          PODLAZ_E2E_KEEP_PACKAGE: 'true'
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/tun-package-convergence.sh
+
+      - name: Run issue 241 installed-package acceptance
+        timeout-minutes: 30
+        shell: bash
+        run: bash scripts/e2e/issue241-package-acceptance.sh
 
       - name: Recover and verify clean host state
         id: cleanup
@@ -78,8 +85,14 @@ jobs:
             "${PODLAZ_E2E_PROFILE_URI_LIST}" \
             "${host_needles[@]}"
 
+      - name: Remove private E2E temp state
+        id: private_cleanup
+        if: always()
+        shell: bash
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+
       - name: Upload package convergence evidence
-        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' }}
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: podlaz-tun-package-convergence-e2e-evidence

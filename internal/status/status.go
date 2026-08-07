@@ -92,6 +92,7 @@ type Report struct {
 	Transactions      []txstate.TransactionSummary
 	StartupScan       *api.StartupScanStatus
 	Candidates        []Candidate
+	RuntimeWarnings   []string
 	Warnings          []Warning
 }
 
@@ -207,7 +208,8 @@ func FromDaemon(s api.StatusResponse) Report {
 		DNS:               s.DNS,
 		Firewall:          s.Firewall,
 		Transactions:      transactionsFromAPI(s.Transactions),
-		Warnings:          warningsFromStrings("daemon", s.Warnings),
+		RuntimeWarnings:   append([]string(nil), s.Warnings...),
+		Warnings:          warningsFromAPI(s.InspectionWarnings),
 	}
 	if s.StartupScan != nil {
 		scan := *s.StartupScan
@@ -224,7 +226,7 @@ func WithDaemonUnavailable(base Report, message string) Report {
 	return base
 }
 
-// HasUnhealthyState reports whether status found recovery candidates, warnings, or cleanup state.
+// HasUnhealthyState reports whether status found recovery candidates, incomplete inspection, or cleanup state.
 func (r Report) HasUnhealthyState() bool {
 	if len(r.Candidates) > 0 || len(r.Warnings) > 0 {
 		return true
@@ -268,9 +270,15 @@ func (r Report) String() string {
 	if r.Firewall != "" {
 		fmt.Fprintf(&b, "Firewall: %s\n", render.Redact(r.Firewall))
 	}
+	if len(r.RuntimeWarnings) > 0 {
+		b.WriteString("Runtime warnings:\n")
+		for _, warning := range r.RuntimeWarnings {
+			fmt.Fprintf(&b, "  - %s\n", render.Redact(warning))
+		}
+	}
 	fmt.Fprintf(&b, "Stale state: %s\n", render.Redact(staleStateLine(r.Candidates, r.Warnings)))
 	if r.StartupScan != nil {
-		fmt.Fprintf(&b, "Startup recovery scan: %s\n", render.Redact(startupScanStatusLine(r.StartupScan.Status)))
+		fmt.Fprintf(&b, "Startup recovery scan: %s\n", render.Redact(startupScanStatusLine(r.StartupScan.Status, r.Connection)))
 		if txID := firstStartupTransactionID(r.StartupScan.Candidates); txID != "" {
 			fmt.Fprintf(&b, "Pending transaction: %s\n", render.Redact(txID))
 		}
@@ -452,7 +460,7 @@ func staleStateLine(candidates []Candidate, warnings []Warning) string {
 	}
 }
 
-func startupScanStatusLine(status string) string {
+func startupScanStatusLine(status, connection string) string {
 	switch status {
 	case api.StartupScanStatusStale:
 		return "stale state found"
@@ -460,9 +468,14 @@ func startupScanStatusLine(status string) string {
 		return "inspection incomplete"
 	case api.StartupScanStatusStaleIncomplete:
 		return "stale state found (inspection incomplete)"
-	default:
+	}
+	if connection == "active" {
+		return "clean for active connection"
+	}
+	if connection == "inactive" {
 		return "clean inactive state"
 	}
+	return "clean for current lifecycle state"
 }
 
 func firstStartupTransactionID(candidates []api.RecoveryCandidate) string {

@@ -45,7 +45,11 @@ type StatusResponse struct {
 	Firewall            string              `json:"firewall,omitempty"`
 	Transactions        []TransactionStatus `json:"transactions,omitempty"`
 	StartupScan         *StartupScanStatus  `json:"startup_scan,omitempty"`
-	Warnings            []string            `json:"warnings,omitempty"`
+	// Warnings is retained as the runtime/lifecycle warning transport for
+	// compatibility. Inspection failures use InspectionWarnings so clients do
+	// not have to infer semantics from warning text.
+	Warnings           []string          `json:"warnings,omitempty"`
+	InspectionWarnings []RecoveryWarning `json:"inspection_warnings,omitempty"`
 }
 
 // TransactionStatus is the daemon API's redacted transaction summary. It
@@ -100,6 +104,14 @@ func ValidateStatusResponse(s StatusResponse) error {
 	if s.StartupScan != nil {
 		if err := ValidateStartupScanStatus(*s.StartupScan); err != nil {
 			return err
+		}
+	}
+	for _, warning := range s.InspectionWarnings {
+		if warning.Target == "" {
+			return errors.New("missing inspection warning target")
+		}
+		if warning.Message == "" {
+			return errors.New("missing inspection warning message")
 		}
 	}
 	return nil

@@ -69,6 +69,36 @@ func TestValidateStatusResponseRestrictsActiveTransactionID(t *testing.T) {
 	}
 }
 
+func TestValidateStatusResponseValidatesInspectionWarnings(t *testing.T) {
+	base := StatusResponse{
+		Daemon:           "running",
+		Service:          ServiceSystemd,
+		Connection:       "inactive",
+		RuntimeDirectory: "present",
+		Proxy:            "inactive",
+		TUN:              "disabled",
+		InspectionWarnings: []RecoveryWarning{{
+			Target:  "transaction state",
+			Message: "cannot inspect transaction fixture",
+		}},
+	}
+	if err := ValidateStatusResponse(base); err != nil {
+		t.Fatalf("valid inspection warning failed validation: %v", err)
+	}
+
+	missingTarget := base
+	missingTarget.InspectionWarnings = []RecoveryWarning{{Message: "cannot inspect transaction fixture"}}
+	if err := ValidateStatusResponse(missingTarget); err == nil || !strings.Contains(err.Error(), "missing inspection warning target") {
+		t.Fatalf("expected inspection warning target validation error, got %v", err)
+	}
+
+	missingMessage := base
+	missingMessage.InspectionWarnings = []RecoveryWarning{{Target: "transaction state"}}
+	if err := ValidateStatusResponse(missingMessage); err == nil || !strings.Contains(err.Error(), "missing inspection warning message") {
+		t.Fatalf("expected inspection warning message validation error, got %v", err)
+	}
+}
+
 func TestValidateTransactionStatusRequiresKnownState(t *testing.T) {
 	valid := TransactionStatus{
 		ID:                "tx-1",

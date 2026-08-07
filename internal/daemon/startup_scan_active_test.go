@@ -161,11 +161,15 @@ func (activeCommittedOSScanRunner) Run(_ context.Context, name string, args ...s
 	key := filepath.Base(name) + " " + strings.Join(args, " ")
 	switch key {
 	case "ip link show dev podlaz0":
-		return recovery.CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 state UNKNOWN mode DEFAULT group default qlen 500\\n    link/none"}, nil
+		return recovery.CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 state UNKNOWN mode DEFAULT group default qlen 500\n    link/none"}, nil
 	case "nft list table inet podlaz":
 		return recovery.CommandResult{Stdout: "table inet podlaz {}"}, nil
 	case "resolvectl status podlaz0 --no-pager":
-		return recovery.CommandResult{Stdout: "Link 7 (podlaz0)\\n    Current Scopes: DNS"}, nil
+		return recovery.CommandResult{Stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`}, nil
 	default:
 		return recovery.CommandResult{ExitCode: -1}, errors.New("unexpected command: " + key)
 	}
