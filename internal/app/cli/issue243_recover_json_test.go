@@ -169,8 +169,8 @@ func assertIssue243StatusCommandClean(t *testing.T, opts options) {
 func assertIssue243RecoverDryRunJSONClean(t *testing.T, data []byte) {
 	t.Helper()
 	var payload struct {
-		Status   string            `json:"status"`
-		Warnings []string          `json:"warnings"`
+		Status   string   `json:"status"`
+		Warnings []string `json:"warnings"`
 		Recovery struct {
 			Candidates []json.RawMessage `json:"candidates"`
 			Warnings   []json.RawMessage `json:"warnings"`
