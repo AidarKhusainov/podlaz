@@ -15,18 +15,28 @@ const (
 	resolvedMissingDeviceIgnoringStderr = `Failed to resolve interface "podlaz0", ignoring: No such device`
 )
 
+type resolvedLinkObservation uint8
+
+const (
+	resolvedLinkUnknown resolvedLinkObservation = iota
+	resolvedLinkPresent
+	resolvedLinkAbsent
+)
+
 func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner CommandRunner) {
 	resolvectlPath, err := runner.LookPath("resolvectl")
 	if err != nil {
+		r.Warnings = append(r.Warnings, Warning{Target: managedDNSTarget, Message: "resolvectl command is unavailable; resolved link state is unknown"})
 		return
 	}
 	status, statusErr := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedStatusResourceMissing(ctx, status, statusErr) {
+	switch observeResolvedLink(ctx, status, statusErr) {
+	case resolvedLinkAbsent:
 		return
-	}
-	if !commandSucceeded(status, statusErr) {
+	case resolvedLinkUnknown:
 		r.Warnings = append(r.Warnings, Warning{Target: managedDNSTarget, Message: commandFailureMessage(status, statusErr)})
 		return
+	case resolvedLinkPresent:
 	}
 
 	ipPath, err := runner.LookPath("ip")
@@ -75,13 +85,25 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 	}
 
 	status, statusErr := runCommand(ctx, e.Runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedStatusResourceMissing(ctx, status, statusErr) {
+	switch observeResolvedLink(ctx, status, statusErr) {
+	case resolvedLinkAbsent:
 		return recovered(candidate)
-	}
-	if commandSucceeded(status, statusErr) {
+	case resolvedLinkPresent:
 		return skipped(candidate, "systemd-resolved link record persisted after revert; restart systemd-resolved manually")
+	default:
+		return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", commandFailureMessage(status, statusErr)))
 	}
-	return failed(candidate, fmt.Errorf("verify systemd-resolved cleanup: %s", commandFailureMessage(status, statusErr)))
+}
+
+func observeResolvedLink(ctx context.Context, result CommandResult, err error) resolvedLinkObservation {
+	switch {
+	case resolvedStatusResourceMissing(ctx, result, err):
+		return resolvedLinkAbsent
+	case commandSucceeded(result, err):
+		return resolvedLinkPresent
+	default:
+		return resolvedLinkUnknown
+	}
 }
 
 func resolvedMissingDeviceResult(ctx context.Context, result CommandResult, err error) bool {
