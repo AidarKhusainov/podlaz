@@ -8,9 +8,13 @@ import (
 )
 
 func TestPlanWithOptionsReportsResolvedInspectionUnknownWhenResolvectlUnavailable(t *testing.T) {
+	runner := fakeMissingResourcesRunner()
+	delete(runner.paths, "resolvectl")
+	delete(runner.commands, "resolvectl status podlaz0 --no-pager")
+
 	plan := PlanWithOptions(context.Background(), Options{
 		RuntimeDir: filepath.Join(t.TempDir(), "podlaz"),
-		Runner:     fakeMissingResourcesRunner(),
+		Runner:     runner,
 	})
 
 	assertNoCandidateKind(t, plan, managedDNSCandidateKind)
