@@ -93,3 +93,38 @@ Link 8 (podlaz0)
 		})
 	}
 }
+
+func TestObserveResolvedLinkFailsClosedForSuccessfulStatusWithStderr(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdout string
+	}{
+		{
+			name: "valid empty transient record",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: none
+         Protocols: -DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported`,
+		},
+		{
+			name: "valid podlaz configuration",
+			stdout: `Link 7 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := observeResolvedLink(context.Background(), CommandResult{
+				Stdout:    tt.stdout,
+				Stderr:    "unexpected diagnostic",
+				RawStderr: "unexpected diagnostic\n",
+			}, nil)
+			if got != resolvedLinkUnknown {
+				t.Fatalf("successful status with unexpected stderr must fail closed as unknown, got %v", got)
+			}
+		})
+	}
+}
