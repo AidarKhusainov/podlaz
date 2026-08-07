@@ -188,7 +188,11 @@ func TestApplyingAddressCrashWindowCleansAddressButPreservesAmbiguousRouteIntent
 		Owner:             "podlaz:tun-address",
 	}
 	tx.DesiredPlan.Routes = []txstate.RoutePlan{{
-		Table: "podlaz", CIDR: "default", Dev: managedInterface, Owner: "podlaz:route", Operation: "add",
+		Table:     "podlaz",
+		CIDR:      "default",
+		Dev:       managedInterface,
+		Owner:     "podlaz:route",
+		Operation: "add",
 	}}
 	path, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx)
 	if err != nil {
@@ -244,9 +248,14 @@ func assertTunAddressRecoveryCommands(t *testing.T, runner *statefulTunAddressRe
 	t.Helper()
 	want := []string{
 		"ip -details -o link show dev podlaz0",
+		"ip -details -o link show dev podlaz0",
 		"ip -4 -o address show dev podlaz0",
+		"ip -details -o link show dev podlaz0",
+		"ip -details -o link show dev podlaz0",
 		"ip -4 address del " + planner.DefaultTunIPv4CIDR + " dev podlaz0",
+		"ip -details -o link show dev podlaz0",
 		"ip -4 -o address show dev podlaz0",
+		"ip -details -o link show dev podlaz0",
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
