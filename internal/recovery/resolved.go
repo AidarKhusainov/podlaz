@@ -18,6 +18,7 @@ const (
 	resolvedMissingDeviceIgnoringStderr = `Failed to resolve interface "podlaz0", ignoring: No such device`
 	resolvedRouteOnlyDomain             = "~."
 	resolvedDefaultRouteProtocol        = "+DefaultRoute"
+	resolvedNoDefaultRouteProtocol      = "-DefaultRoute"
 )
 
 type resolvedLinkObservation uint8
@@ -26,6 +27,15 @@ const (
 	resolvedLinkUnknown resolvedLinkObservation = iota
 	resolvedLinkPresent
 	resolvedLinkAbsent
+)
+
+type resolvedDefaultRoutePolarity uint8
+
+const (
+	resolvedDefaultRouteUnknown resolvedDefaultRoutePolarity = iota
+	resolvedDefaultRoutePositive
+	resolvedDefaultRouteNegative
+	resolvedDefaultRouteConflicting
 )
 
 func (r *ScanResult) scanManagedResolvedLink(ctx context.Context, runner CommandRunner) {
@@ -271,15 +281,17 @@ func appendResolvedTokens(values []string, text string) []string {
 
 func resolvedLinkHasPodlazConfiguration(link netsnapshot.ResolvedLink) bool {
 	return containsResolvedValue(link.DNSDomains, resolvedRouteOnlyDomain) &&
-		containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol) &&
+		resolvedDefaultRoutePolarityOf(link.Protocols) == resolvedDefaultRoutePositive &&
 		(strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0)
 }
 
 func resolvedLinkHasConcreteDNSConfiguration(link netsnapshot.ResolvedLink) bool {
+	polarity := resolvedDefaultRoutePolarityOf(link.Protocols)
 	return strings.TrimSpace(link.CurrentDNSServer) != "" ||
 		len(link.DNSServers) > 0 ||
 		len(link.DNSDomains) > 0 ||
-		containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol)
+		polarity == resolvedDefaultRoutePositive ||
+		polarity == resolvedDefaultRouteConflicting
 }
 
 func resolvedLinkIsProvenEmptyTransient(link netsnapshot.ResolvedLink) bool {
@@ -287,7 +299,22 @@ func resolvedLinkIsProvenEmptyTransient(link netsnapshot.ResolvedLink) bool {
 		strings.TrimSpace(link.CurrentDNSServer) == "" &&
 		len(link.DNSServers) == 0 &&
 		len(link.DNSDomains) == 0 &&
-		!containsResolvedValue(link.Protocols, resolvedDefaultRouteProtocol)
+		resolvedDefaultRoutePolarityOf(link.Protocols) == resolvedDefaultRouteNegative
+}
+
+func resolvedDefaultRoutePolarityOf(protocols []string) resolvedDefaultRoutePolarity {
+	positive := containsResolvedValue(protocols, resolvedDefaultRouteProtocol)
+	negative := containsResolvedValue(protocols, resolvedNoDefaultRouteProtocol)
+	switch {
+	case positive && negative:
+		return resolvedDefaultRouteConflicting
+	case positive:
+		return resolvedDefaultRoutePositive
+	case negative:
+		return resolvedDefaultRouteNegative
+	default:
+		return resolvedDefaultRouteUnknown
+	}
 }
 
 func containsResolvedValue(values []string, want string) bool {
