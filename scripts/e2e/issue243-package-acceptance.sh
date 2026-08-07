@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd awk git grep mktemp python3 resolvectl runuser sudo systemctl
+require_cmd awk git grep mktemp python3 resolvectl runuser sleep sudo systemctl timeout
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -104,43 +104,162 @@ assert_active_status() {
   write_evidence "active_status_stability_${phase}" pass
 }
 
-capture_exact_exit_zero_missing_status() {
-  local phase="$1" stdout_file stderr_file exit_code
+wait_for_exact_exit_zero_missing_status() {
+  local phase="$1" stdout_file stderr_file exit_code classification attempt
   stdout_file="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-resolved.stdout.XXXXXX")"
   stderr_file="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-resolved.stderr.XXXXXX")"
 
-  set +e
-  resolvectl status podlaz0 --no-pager >"${stdout_file}" 2>"${stderr_file}"
-  exit_code=$?
-  set -e
+  for attempt in {1..100}; do
+    set +e
+    timeout --signal=TERM --kill-after=1s 3s \
+      resolvectl status podlaz0 --no-pager >"${stdout_file}" 2>"${stderr_file}"
+    exit_code=$?
+    set -e
 
-  if ! python3 - "${exit_code}" "${stdout_file}" "${stderr_file}" <<'PY'
+    classification="$(python3 - "${exit_code}" "${stdout_file}" "${stderr_file}" <<'PY'
+import re
 import sys
 
 exit_code = int(sys.argv[1])
 stdout_path = sys.argv[2]
 stderr_path = sys.argv[3]
-expected = b'Failed to resolve interface "podlaz0", ignoring: No such device'
+expected_missing = b'Failed to resolve interface "podlaz0", ignoring: No such device'
 
 with open(stdout_path, "rb") as handle:
     stdout = handle.read()
 with open(stderr_path, "rb") as handle:
     stderr = handle.read()
 
-if exit_code != 0:
-    raise SystemExit("read-only resolvectl status did not return the required exit-0 envelope")
-if stdout != b"":
-    raise SystemExit("read-only resolvectl status produced unexpected stdout")
-if stderr not in (expected + b"\n", expected + b"\r\n"):
-    raise SystemExit("read-only resolvectl status stderr did not match the supported exact missing-device envelope")
+if exit_code == 0 and stdout == b"" and stderr in (
+    expected_missing + b"\n",
+    expected_missing + b"\r\n",
+):
+    print("exact")
+    raise SystemExit(0)
+
+if exit_code != 0 or stderr != b"":
+    print("unexpected")
+    raise SystemExit(0)
+
+try:
+    text = stdout.decode("utf-8")
+except UnicodeDecodeError:
+    print("unexpected")
+    raise SystemExit(0)
+
+
+def unique_tokens(value):
+    out = []
+    seen = set()
+    for token in value.split():
+        if token and token not in seen:
+            seen.add(token)
+            out.append(token)
+    return out
+
+
+def reject():
+    print("unexpected")
+    raise SystemExit(0)
+
+seen_header = False
+seen_fields = set()
+last_field = ""
+current_scopes = []
+protocols = []
+current_dns_server = ""
+dns_servers = []
+dns_domains = []
+
+for raw_line in text.split("\n"):
+    line = raw_line.strip()
+    if not line:
+        continue
+    if line.startswith("Link "):
+        if seen_header or re.fullmatch(r"Link [0-9]+ \(podlaz0\)", line) is None:
+            reject()
+        seen_header = True
+        last_field = ""
+        continue
+    if not seen_header:
+        reject()
+    if ":" not in line:
+        if last_field == "DNS Servers":
+            for token in unique_tokens(line):
+                if token not in dns_servers:
+                    dns_servers.append(token)
+            continue
+        if last_field == "DNS Domain":
+            for token in unique_tokens(line):
+                if token not in dns_domains:
+                    dns_domains.append(token)
+            continue
+        reject()
+
+    key, value = (part.strip() for part in line.split(":", 1))
+    if not key or key in seen_fields:
+        reject()
+    if key == "Current Scopes":
+        if not value:
+            reject()
+        current_scopes = unique_tokens(value)
+    elif key == "Protocols":
+        if not value:
+            reject()
+        protocols = unique_tokens(value)
+    elif key == "Current DNS Server":
+        fields = value.split()
+        if len(fields) != 1:
+            reject()
+        current_dns_server = fields[0]
+    elif key == "DNS Servers":
+        if not value:
+            reject()
+        dns_servers = unique_tokens(value)
+    elif key == "DNS Domain":
+        if not value:
+            reject()
+        dns_domains = unique_tokens(value)
+    else:
+        reject()
+    seen_fields.add(key)
+    last_field = key
+
+if not seen_header or "Current Scopes" not in seen_fields or "Protocols" not in seen_fields:
+    reject()
+
+is_proven_empty = (
+    current_scopes == ["none"]
+    and current_dns_server == ""
+    and not dns_servers
+    and not dns_domains
+    and "-DefaultRoute" in protocols
+    and "+DefaultRoute" not in protocols
+)
+print("transient" if is_proven_empty else "unexpected")
 PY
-  then
-    rm -f -- "${stdout_file}" "${stderr_file}"
-    fail "${phase}: real resolvectl status did not match the issue 243 byte contract"
-  fi
+)"
+
+    case "${classification}" in
+      exact)
+        rm -f -- "${stdout_file}" "${stderr_file}"
+        write_evidence "resolved_exit0_missing_${phase}" pass
+        return 0
+        ;;
+      transient)
+        : # Supported semantic absence while resolved removes its transient Link record.
+        ;;
+      *)
+        rm -f -- "${stdout_file}" "${stderr_file}"
+        fail "${phase}: resolver state became unexpected while waiting for the exact exit-0 missing-device envelope"
+        ;;
+    esac
+
+    sleep 0.1
+  done
 
   rm -f -- "${stdout_file}" "${stderr_file}"
-  write_evidence "resolved_exit0_missing_${phase}" pass
+  fail "${phase}: resolver did not converge from the proven-empty transient record to the exact exit-0 missing-device envelope within the bounded wait"
 }
 
 assert_inactive_status() {
@@ -179,11 +298,11 @@ if payload.get("warnings"):
     raise SystemExit("top-level recover JSON warnings remain")
 recovery = payload.get("recovery")
 if not isinstance(recovery, dict):
-    raise SystemExit("recover JSON payload is missing")
+    raise SystemExit("recovery payload is missing")
 if recovery.get("candidates"):
-    raise SystemExit("recover JSON candidates remain")
+    raise SystemExit("recovery candidates remain")
 if recovery.get("warnings"):
-    raise SystemExit("recover JSON inspection warnings remain")
+    raise SystemExit("recovery inspection warnings remain")
 PY
   then
     rm -f -- "${output}"
@@ -255,11 +374,13 @@ mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI
 
-# The quiescent initial baseline is where #243 requires proof of the real
-# Ubuntu 24.04/systemd 255 byte-exact exit-0 read-only status envelope.
-capture_exact_exit_zero_missing_status initial
+# The preceding package acceptance may leave a short-lived proven-empty resolved
+# Link record. First prove the product-level inactive state is already clean,
+# then boundedly wait only through that supported transient representation until
+# the real Ubuntu 24.04/systemd 255 byte-exact exit-0 envelope is observable.
 assert_inactive_status initial
 assert_recover_json_clean initial
+wait_for_exact_exit_zero_missing_status initial
 assert_recover_execute_clean initial
 assert_inactive_status after-recover-execute
 assert_recover_json_clean after-recover-execute
