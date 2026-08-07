@@ -99,15 +99,21 @@ proven to route through the planned TUN path.
 
 Recovery observation of the same `systemd-resolved` state is tri-state and
 configuration-aware. An exact supported missing-link result is `absent`. A
-successful status containing one `podlaz0` section is `present` only when it
-proves the concrete podlaz per-link DNS shape: a DNS server, route-only `~.`, and
-`+DefaultRoute`. A successful transient link record with no concrete DNS
-configuration is also `absent`; the record itself and `Current Scopes` are not
-recovery ownership evidence. Malformed output, duplicate target sections,
-operational command failure, or concrete DNS state that does not prove the
-podlaz shape is `unknown` and fails closed. This same classifier is used for the
-read-only scanner and post-`revert` cleanup verification so a successful cleanup
-cannot immediately republish an empty transient link record as stale state.
+successful status is authoritative only after a normal exit with completely
+empty stderr and a strict, unique `podlaz0` target-section parse. It is `present`
+only when that section proves the concrete podlaz per-link DNS shape: a DNS
+server, route-only `~.`, and explicit `+DefaultRoute` without `-DefaultRoute`.
+A transient link record is `absent` only when `Current Scopes` is exactly `none`,
+current/server/domain DNS state is empty, and `Protocols` contains explicit
+`-DefaultRoute` without `+DefaultRoute`. Missing DefaultRoute polarity or
+simultaneous `+DefaultRoute -DefaultRoute` is `unknown`, as are unexpected
+stderr, malformed or partial output, duplicate target sections, operational
+command failure, and concrete DNS state that does not prove the podlaz shape.
+`Current Scopes` is not ownership evidence for `present`; it participates only
+in proving the narrow empty-transient `absent` state. This same classifier is
+used for the read-only scanner and post-`revert` cleanup verification so a
+successful cleanup cannot immediately republish an empty transient link record
+as stale state.
 
 Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
 
@@ -220,10 +226,13 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
 - Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty raw stdout, and the supported `No such device` raw stderr followed by exactly one `LF` or one `CRLF`. Unterminated stderr, embedded or additional line endings, caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup, persisted transaction DNS rollback, and the installed-package acceptance gate; trimming is permitted only for human-readable error rendering.
-- An empty successful `systemd-resolved` link record after `revert` is converged
-  state, not a recovery candidate. Concrete non-podlaz DNS configuration and
-  malformed or duplicate observations remain unknown and must not be cleaned by
-  assumption.
+- A successful post-`revert` transient `systemd-resolved` record is converged
+  only when it satisfies the same proven-empty contract: clean stderr,
+  `Current Scopes: none`, no current/server/domain DNS state, and explicit
+  `-DefaultRoute` without `+DefaultRoute`. Missing or conflicting DefaultRoute
+  polarity, unexpected stderr, concrete non-podlaz DNS configuration, and
+  malformed, partial, or duplicate observations remain unknown and must not be
+  cleaned by assumption.
 - Unexpected cleanup errors, foreign ownership, invalid transaction files, incomplete transaction recovery, and unrecorded existing main-table bypass state remain blockers.
 - The daemon recovery scan is refreshed after every connect attempt, after
   disconnect, and after recovery execution, including failed operations. A
