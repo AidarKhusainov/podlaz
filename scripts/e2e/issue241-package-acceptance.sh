@@ -235,7 +235,7 @@ verify_package_provenance() {
 capture_journal_cursor() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/issue241-journal-cursor.XXXXXX")"
-  sudo -n journalctl -u podlazd -n 1 --show-cursor --no-pager >"${output}" 2>/dev/null || fail "failed to capture journal cursor"
+  sudo -n journalctl -u podlazd -n 1 --show-cursor --no-pager -o cat >"${output}" 2>/dev/null || fail "failed to capture journal cursor"
   JOURNAL_CURSOR="$(sed -n 's/^-- cursor: //p' "${output}" | tail -n 1)"
   rm -f -- "${output}"
   assert_nonempty "${JOURNAL_CURSOR}" "issue 241 journal cursor"
@@ -428,7 +428,7 @@ verify_journal_privacy() {
   journal_file="${scan_dir}/journal.log"
   report="${scan_dir}/redaction-scan.txt"
 
-  sudo -n journalctl -u podlazd --after-cursor="${JOURNAL_CURSOR}" --no-pager >"${journal_file}" 2>/dev/null || fail "issue 241 bounded journal capture failed"
+  sudo -n journalctl -u podlazd --after-cursor="${JOURNAL_CURSOR}" --no-pager -o cat >"${journal_file}" 2>/dev/null || fail "issue 241 bounded journal capture failed"
 
   python3 - "${journal_file}" <<'PY'
 import re
