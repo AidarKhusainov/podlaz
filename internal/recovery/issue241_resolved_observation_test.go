@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,6 +66,66 @@ func TestResolvedCleanupTreatsEmptyPostRevertRecordAsRecovered(t *testing.T) {
 
 	if result.Status != "recovered" {
 		t.Fatalf("empty post-revert resolved record must converge as recovered, got %#v", result)
+	}
+}
+
+func TestResolvedRecoveryDoesNotRediscoverEmptyPostRevertRecord(t *testing.T) {
+	runner := newResolvedRecoveryRunner(
+		[]resolvedRecoveryCommand{missingPodlazLink(), missingPodlazLink(), missingPodlazLink(), missingPodlazLink()},
+		[]resolvedRecoveryCommand{resolvedLinkExists(), emptyResolvedLinkRecord(), emptyResolvedLinkRecord()},
+	)
+	runner.commands["resolvectl revert podlaz0"] = []resolvedRecoveryCommand{{}}
+	runner.commands["nft list table inet podlaz"] = []resolvedRecoveryCommand{missingNFTTable(), missingNFTTable()}
+	runtimeDir := filepath.Join(t.TempDir(), "podlaz")
+
+	executed := ExecuteWithOptions(context.Background(), Options{
+		Runner:     runner,
+		RuntimeDir: runtimeDir,
+		Executor:   DaemonCleanupExecutor{Runner: runner, RuntimeDir: runtimeDir},
+	})
+	if executed.HasFailures() || executed.HasIncompleteCleanup() {
+		t.Fatalf("expected resolved recovery to converge, got %#v", executed)
+	}
+
+	postMutation := PlanWithOptions(context.Background(), Options{Runner: runner, RuntimeDir: runtimeDir})
+	assertNoCandidateKind(t, postMutation, managedDNSCandidateKind)
+	if len(postMutation.Candidates) != 0 || len(postMutation.Warnings) != 0 {
+		t.Fatalf("post-recovery authoritative scan rediscovered stale state: %#v", postMutation)
+	}
+}
+
+func TestObserveResolvedLinkFailsClosedForOperationalAndAmbiguousResults(t *testing.T) {
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	exactMissing := CommandResult{
+		RawStderr: resolvedMissingDeviceStderr + "\n",
+		Stderr:    resolvedMissingDeviceStderr,
+		ExitCode:  1,
+	}
+
+	tests := []struct {
+		name   string
+		ctx    context.Context
+		result CommandResult
+		err    error
+	}{
+		{name: "permission denied", ctx: context.Background(), result: CommandResult{RawStderr: "Access denied\n", Stderr: "Access denied", ExitCode: 1}, err: resolvedTestExitError{code: 1}},
+		{name: "cancelled exact missing", ctx: cancelledCtx, result: exactMissing, err: resolvedTestExitError{code: 1}},
+		{name: "launch error", ctx: context.Background(), result: CommandResult{ExitCode: -1}, err: errors.New("fork/exec resolvectl: executable file not found")},
+		{name: "signal termination", ctx: context.Background(), result: CommandResult{ExitCode: -1}, err: errors.New("signal: killed")},
+		{name: "unexpected exit code", ctx: context.Background(), result: CommandResult{RawStderr: "unexpected\n", Stderr: "unexpected", ExitCode: 2}, err: resolvedTestExitError{code: 2}},
+		{name: "malformed success", ctx: context.Background(), result: CommandResult{Stdout: "unexpected successful output"}},
+		{name: "duplicate target sections", ctx: context.Background(), result: CommandResult{Stdout: resolvedLinkExists().stdout + "\n" + resolvedLinkExists().stdout}},
+		{name: "concrete non-podlaz dns", ctx: context.Background(), result: CommandResult{Stdout: `Link 7 (podlaz0)
+       DNS Servers: 203.0.113.53`}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := observeResolvedLink(tt.ctx, tt.result, tt.err); got != resolvedLinkUnknown {
+				t.Fatalf("expected fail-closed unknown observation, got %v", got)
+			}
+		})
 	}
 }
 
