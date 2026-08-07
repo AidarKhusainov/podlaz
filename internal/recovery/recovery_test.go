@@ -223,7 +223,11 @@ func TestOSScannerDetectsOwnedResources(t *testing.T) {
 					stdout: "2: podlaz0: <POINTOPOINT,UP> mtu 1500",
 				},
 				"resolvectl status podlaz0 --no-pager": {
-					stdout: "Link 2 (podlaz0)",
+					stdout: `Link 2 (podlaz0)
+    Current Scopes: DNS
+         Protocols: +DefaultRoute +LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported
+       DNS Servers: 192.0.2.53
+        DNS Domain: ~.`,
 				},
 				"nft list table inet podlaz": {
 					stdout: "table inet podlaz {}",
