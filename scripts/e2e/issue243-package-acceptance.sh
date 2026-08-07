@@ -193,6 +193,36 @@ PY
   write_evidence "recover_json_${phase}" pass
 }
 
+assert_recover_execute_clean() {
+  local phase="$1" output
+  output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-recover-execute.XXXXXX")"
+  if ! run_installed_podlaz recover --execute --yes --json >"${output}" 2>/dev/null; then
+    rm -f -- "${output}"
+    fail "${phase}: recover --execute --yes --json returned non-zero"
+  fi
+  if ! python3 - "${output}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("status") != "ok":
+    raise SystemExit("recover execute JSON status is not ok")
+if payload.get("warnings"):
+    raise SystemExit("recover execute JSON warnings remain")
+if payload.get("errors"):
+    raise SystemExit("recover execute JSON errors remain")
+if payload.get("recovery"):
+    raise SystemExit("recover execute JSON unexpectedly contains cleanup results")
+PY
+  then
+    rm -f -- "${output}"
+    fail "${phase}: recover execute result is not clean"
+  fi
+  rm -f -- "${output}"
+  write_evidence "recover_execute_${phase}" pass
+}
+
 run_cycle() {
   local phase="$1"
   if ! run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1; then
@@ -225,6 +255,9 @@ unset PROFILE_URI
 capture_exact_exit_zero_missing_status initial
 assert_inactive_status initial
 assert_recover_json_clean initial
+assert_recover_execute_clean initial
+assert_inactive_status after-recover-execute
+assert_recover_json_clean after-recover-execute
 write_evidence initial_inactive pass
 
 run_cycle first
