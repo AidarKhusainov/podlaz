@@ -85,6 +85,11 @@ jobs:
             "${PODLAZ_E2E_PROFILE_URI_LIST}" \
             "${host_needles[@]}"
 
+      - name: Remove private E2E temp state
+        if: always()
+        shell: bash
+        run: rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+
       - name: Upload package convergence evidence
         if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' }}
         uses: actions/upload-artifact@v7
