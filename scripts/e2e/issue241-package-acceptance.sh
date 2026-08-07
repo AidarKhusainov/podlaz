@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
-require_cmd awk bash curl dpkg dpkg-deb getent grep ip journalctl mktemp python3 readlink resolvectl runuser sed sha256sum sudo systemctl
+require_cmd awk bash curl dpkg dpkg-deb dpkg-query getent git grep head hostname ip journalctl mktemp python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl tail
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -118,6 +118,7 @@ collect_uri_sensitive_values() {
   local uri="$1" values
   values="$(python3 - "${uri}" <<'PY'
 import base64
+import ipaddress
 import json
 import re
 import sys
@@ -127,11 +128,25 @@ uri = sys.argv[1].strip()
 out = set()
 
 
+def useful(value):
+    text = urllib.parse.unquote(str(value or "")).strip()
+    if not text:
+        return False
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        pass
+    if re.fullmatch(r"(?i)[0-9a-f]{8}-[0-9a-f-]{27,}", text):
+        return True
+    if len(text) >= 8 and ("." in text or ":" in text or "/" in text):
+        return True
+    return len(text) >= 16
+
+
 def add(value):
-    if value is None:
-        return
-    text = urllib.parse.unquote(str(value)).strip()
-    if text:
+    text = urllib.parse.unquote(str(value or "")).strip()
+    if useful(text):
         out.add(text)
 
 
@@ -143,9 +158,7 @@ def walk(value):
         for child in value:
             walk(child)
     elif isinstance(value, str):
-        text = value.strip()
-        if len(text) >= 8 or "." in text or ":" in text or "/" in text:
-            add(text)
+        add(value)
 
 try:
     parsed = urllib.parse.urlsplit(uri)
@@ -154,12 +167,9 @@ except ValueError:
 if parsed is not None:
     add(parsed.hostname)
     add(parsed.username)
-    fragment = urllib.parse.unquote(parsed.fragment).strip()
-    if len(fragment) >= 8:
-        add(fragment)
+    add(parsed.fragment)
     for _, value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=False):
-        if len(value) >= 8 or "." in value or ":" in value or "/" in value:
-            add(value)
+        add(value)
 
 if uri.lower().startswith("vmess://"):
     opaque = uri.split("://", 1)[1].split("#", 1)[0].split("?", 1)[0]
@@ -172,8 +182,6 @@ if uri.lower().startswith("vmess://"):
         pass
 
 for value in sorted(out):
-    if re.fullmatch(r"(?i)(tcp|udp|tls|none|auto|http|https|socks|reality|grpc|ws)", value):
-        continue
     print(value)
 PY
 )"
@@ -254,6 +262,19 @@ uuid_re = re.compile(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 common = {"freedom", "blackhole", "direct", "block", "vless", "vmess", "trojan", "shadowsocks", "tcp", "udp", "tls", "none", "reality"}
 
 
+def useful(text):
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        pass
+    if uuid_re.fullmatch(text):
+        return True
+    if len(text) >= 8 and ("." in text or ":" in text or "/" in text):
+        return True
+    return len(text) >= 16
+
+
 def walk(value):
     if isinstance(value, dict):
         for child in value.values():
@@ -268,13 +289,7 @@ def walk(value):
     text = value.strip()
     if not text or text.lower() in common:
         return
-    is_ip = False
-    try:
-        ipaddress.ip_address(text)
-        is_ip = True
-    except ValueError:
-        pass
-    if is_ip or uuid_re.fullmatch(text) or len(text) >= 8 or "." in text or ":" in text or "/" in text:
+    if useful(text):
         values.add(text)
 
 walk(payload)
@@ -292,7 +307,8 @@ import ipaddress
 import re
 import sys
 
-text = open(sys.argv[1], encoding="utf-8").read()
+with open(sys.argv[1], encoding="utf-8") as handle:
+    text = handle.read()
 values = set()
 for token in re.split(r"[\s,]+", text):
     token = token.strip("[]()")
