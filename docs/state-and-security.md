@@ -98,12 +98,20 @@ bounded, deduplicated set of returned IPv4 addresses until at least one is
 proven to route through the planned TUN path.
 
 Recovery observation of the same `systemd-resolved` state is tri-state and
-configuration-aware. An exact supported missing-link result is `absent`. A
-successful status is authoritative only after a normal exit with completely
-empty stderr and a strict, unique `podlaz0` target-section parse. It is `present`
-only when that section proves the concrete podlaz per-link DNS shape: a DNS
-server, route-only `~.`, and explicit `+DefaultRoute` without `-DefaultRoute`.
-A transient link record is `absent` only when `Current Scopes` is exactly `none`,
+configuration-aware. Missing-link absence is accepted only through explicit,
+bounded command envelopes. Existing supported nonzero missing-link status
+results remain byte-exact. On Ubuntu 24.04/systemd 255, the read-only
+`resolvectl status podlaz0 --no-pager` lookup may instead complete normally with
+exit status `0`, empty raw stdout, and raw stderr equal to
+`Failed to resolve interface "podlaz0", ignoring: No such device` followed by
+exactly one `LF` or one `CRLF`; that dedicated status-only envelope is also
+`absent`. It is not a generic successful-status rule: any other successful
+status carrying stderr is `unknown`. A successful status outside that dedicated
+missing-link envelope is authoritative only with completely empty stderr and a
+strict, unique `podlaz0` target-section parse. It is `present` only when that
+section proves the concrete podlaz per-link DNS shape: a DNS server, route-only
+`~.`, and explicit `+DefaultRoute` without `-DefaultRoute`. A transient link
+record is `absent` only when `Current Scopes` is exactly `none`,
 current/server/domain DNS state is empty, and `Protocols` contains explicit
 `-DefaultRoute` without `+DefaultRoute`. Missing DefaultRoute polarity or
 simultaneous `+DefaultRoute -DefaultRoute` is `unknown`, as are unexpected
@@ -113,7 +121,9 @@ command failure, and concrete DNS state that does not prove the podlaz shape.
 in proving the narrow empty-transient `absent` state. This same classifier is
 used for the read-only scanner and post-`revert` cleanup verification so a
 successful cleanup cannot immediately republish an empty transient link record
-as stale state.
+as stale state. The read-only exit-`0` status envelope does not broaden the
+mutating `resolvectl revert podlaz0` contract; mutation idempotence remains the
+separate exit-`1` cleanup contract defined below.
 
 Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
 
