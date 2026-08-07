@@ -209,6 +209,7 @@ func FromDaemon(s api.StatusResponse) Report {
 		Firewall:          s.Firewall,
 		Transactions:      transactionsFromAPI(s.Transactions),
 		RuntimeWarnings:   append([]string(nil), s.Warnings...),
+		Warnings:          warningsFromAPI(s.InspectionWarnings),
 	}
 	if s.StartupScan != nil {
 		scan := *s.StartupScan
