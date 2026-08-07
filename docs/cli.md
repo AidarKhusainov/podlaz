@@ -313,18 +313,21 @@ daemon. The CLI must not perform privileged host cleanup directly. Ambiguous
 resources are skipped. Non-interactive execution requires `--yes`. For the
 validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
 with one exact supported bounded `No such device` result is accepted as
-idempotent success. A successful `resolvectl status` that contains only a
-transient empty `podlaz0` link record is also clean: `Current Scopes` or the
-record itself is not proof of actionable DNS configuration. A stale `dns-link`
-candidate requires concrete podlaz per-link DNS configuration; malformed,
-duplicate, operationally failed, or concrete non-podlaz status remains unknown
-and fail-closed. The supported Ubuntu 24.04 missing-link form is `Failed to
-resolve interface "podlaz0", ignoring: No such device`; the older exact form
-without `, ignoring` remains supported. Timeout, cancellation, signals, launch
-or permission errors, other exit codes, extra output, and unrelated exit `1`
-results remain failures. A successful daemon scan is authoritative over older
-local evidence; a failed refresh is reported as incomplete rather than reusing
-stale candidates or top-level `ok`.
+idempotent success. A successful `resolvectl status` is accepted as a clean
+transient record only when it has no stderr, its unique target section passes
+strict parsing, `Current Scopes` is exactly `none`, current/server/domain DNS
+state is empty, and `Protocols` contains explicit `-DefaultRoute` without
+`+DefaultRoute`. A stale `dns-link` candidate requires concrete podlaz per-link
+DNS configuration. Missing or conflicting DefaultRoute polarity, unexpected
+stderr, malformed or partial output, duplicate target sections, operational
+failure, or concrete non-podlaz DNS state remains unknown and fail-closed. The
+supported Ubuntu 24.04 missing-link form is `Failed to resolve interface
+"podlaz0", ignoring: No such device`; the older exact form without `, ignoring`
+remains supported. Timeout, cancellation, signals, launch or permission errors,
+other exit codes, extra output, and unrelated exit `1` results remain failures.
+A successful daemon scan is authoritative over older local evidence; a failed
+refresh is reported as incomplete rather than reusing stale candidates or
+top-level `ok`.
 
 ## Files
 
