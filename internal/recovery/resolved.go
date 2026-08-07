@@ -119,7 +119,7 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 // partial, duplicate, or unsupported output remains unknown rather than being
 // downgraded to absence.
 func observeResolvedLink(ctx context.Context, result CommandResult, err error) resolvedLinkObservation {
-	if ctx != nil && ctx.Err() != nil {
+	if ctx == nil || ctx.Err() != nil {
 		return resolvedLinkUnknown
 	}
 	switch {
