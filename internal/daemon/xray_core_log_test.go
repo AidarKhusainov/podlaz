@@ -12,9 +12,9 @@ func TestCoreLogWriterSuppressesFinalPayloadWithoutTrailingNewline(t *testing.T)
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	writer := newCoreLogWriter("test-profile", "stderr")
+	writer := newCoreLogWriter("stderr")
 	writer.setPID(42)
-	if _, err := writer.Write([]byte("final crash line without newline")); err != nil {
+	if _, err := writer.Write([]byte("profile=test-profile final crash line without newline")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	writer.Flush()
@@ -37,9 +37,9 @@ func TestCoreLogWriterCoalescesArbitraryPayloadIntoOneStructuralEvent(t *testing
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	writer := newCoreLogWriter("test-profile", "stdout")
+	writer := newCoreLogWriter("stdout")
 	writer.setPID(43)
-	if _, err := writer.Write([]byte("first line\nsecond line without newline")); err != nil {
+	if _, err := writer.Write([]byte("profile=test-profile\nfirst line\nsecond line without newline")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	writer.Flush()
@@ -60,8 +60,8 @@ func TestCoreLogWriterDoesNotEmitPIDZeroForOutputBeforePIDIsKnown(t *testing.T) 
 	restoreLog := captureLogOutput(&out)
 	defer restoreLog()
 
-	writer := newCoreLogWriter("test-profile", "stderr")
-	if _, err := writer.Write([]byte("early line\n")); err != nil {
+	writer := newCoreLogWriter("stderr")
+	if _, err := writer.Write([]byte("profile=test-profile early line\n")); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	if got := out.String(); got != "" {
