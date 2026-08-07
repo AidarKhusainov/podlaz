@@ -45,3 +45,27 @@ func TestFromDaemonRendersActiveRuntimeWarningWithoutInspectionFailure(t *testin
 		t.Fatalf("active status must not describe its recovery scan as inactive: %q", got)
 	}
 }
+
+func TestFromDaemonKeepsTransactionInspectionFailureUnhealthy(t *testing.T) {
+	report := FromDaemon(api.StatusResponse{
+		Daemon:           "running",
+		Service:          api.ServiceSystemd,
+		Connection:       "active",
+		Mode:             "tun",
+		RuntimeDirectory: "present",
+		Proxy:            "active",
+		TUN:              "active",
+		InspectionWarnings: []api.RecoveryWarning{{
+			Target:  "transaction state",
+			Message: "cannot decode transaction fixture",
+		}},
+	})
+
+	if !report.HasUnhealthyState() {
+		t.Fatalf("transaction inspection failure must remain unhealthy: %#v", report)
+	}
+	got := report.String()
+	if !strings.Contains(got, "Inspection warnings:\n") || !strings.Contains(got, "could not inspect transaction state: cannot decode transaction fixture") {
+		t.Fatalf("transaction inspection failure must render as inspection evidence: %q", got)
+	}
+}
