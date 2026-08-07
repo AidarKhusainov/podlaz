@@ -104,7 +104,9 @@ func (e OSCleanupExecutor) cleanupManagedResolvedLink(ctx context.Context, candi
 // not merely the lifetime of resolved's transient Link record. A successful
 // status command may briefly retain an empty record after revert/link removal;
 // that record contains no DNS mutation to recover and is therefore absent.
-// Ambiguous, malformed, or non-podlaz concrete DNS state remains unknown.
+// Recovery authority uses a strict target-section parser: malformed, partial,
+// duplicate, or unsupported successful output remains unknown rather than being
+// downgraded to absence.
 func observeResolvedLink(ctx context.Context, result CommandResult, err error) resolvedLinkObservation {
 	switch {
 	case resolvedStatusResourceMissing(ctx, result, err):
@@ -113,17 +115,10 @@ func observeResolvedLink(ctx context.Context, result CommandResult, err error) r
 		return resolvedLinkUnknown
 	}
 
-	links := netsnapshot.ParseResolvedLinks(result.Stdout)
-	matches := make([]netsnapshot.ResolvedLink, 0, 1)
-	for _, link := range links {
-		if link.Name == managedInterface {
-			matches = append(matches, link)
-		}
-	}
-	if len(matches) != 1 {
+	link, ok := parseManagedResolvedLinkStatus(result.Stdout)
+	if !ok {
 		return resolvedLinkUnknown
 	}
-	link := matches[0]
 	if resolvedLinkHasPodlazConfiguration(link) {
 		return resolvedLinkPresent
 	}
@@ -131,6 +126,144 @@ func observeResolvedLink(ctx context.Context, result CommandResult, err error) r
 		return resolvedLinkUnknown
 	}
 	return resolvedLinkAbsent
+}
+
+// parseManagedResolvedLinkStatus accepts the Ubuntu 24.04 single-link status
+// shape used by recovery authority. It intentionally rejects unknown fields and
+// malformed/partial target sections. A future systemd-resolved format change
+// therefore becomes unknown/incomplete inspection until explicitly supported.
+func parseManagedResolvedLinkStatus(output string) (netsnapshot.ResolvedLink, bool) {
+	var link netsnapshot.ResolvedLink
+	seenHeader := false
+	seenFields := make(map[string]bool)
+	lastField := ""
+
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "Link ") {
+			if seenHeader {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			index, ok := parseManagedResolvedLinkHeader(line)
+			if !ok {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			link = netsnapshot.ResolvedLink{Index: index, Name: managedInterface}
+			seenHeader = true
+			lastField = ""
+			continue
+		}
+		if !seenHeader {
+			return netsnapshot.ResolvedLink{}, false
+		}
+
+		key, value, hasSeparator := strings.Cut(line, ":")
+		if !hasSeparator {
+			if !applyResolvedContinuation(&link, lastField, line) {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || seenFields[key] {
+			return netsnapshot.ResolvedLink{}, false
+		}
+
+		switch key {
+		case "Current Scopes":
+			if value == "" {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			link.CurrentScopes = appendResolvedTokens(nil, value)
+		case "Protocols":
+			if value == "" {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			link.Protocols = appendResolvedTokens(nil, value)
+		case "Current DNS Server":
+			fields := strings.Fields(value)
+			if len(fields) != 1 {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			link.CurrentDNSServer = fields[0]
+		case "DNS Servers":
+			if value == "" {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			link.DNSServers = appendResolvedTokens(nil, value)
+		case "DNS Domain":
+			if value == "" {
+				return netsnapshot.ResolvedLink{}, false
+			}
+			link.DNSDomains = appendResolvedTokens(nil, value)
+		default:
+			return netsnapshot.ResolvedLink{}, false
+		}
+		seenFields[key] = true
+		lastField = key
+	}
+
+	if !seenHeader || !seenFields["Current Scopes"] || !seenFields["Protocols"] {
+		return netsnapshot.ResolvedLink{}, false
+	}
+	return link, true
+}
+
+func parseManagedResolvedLinkHeader(line string) (string, bool) {
+	const prefix = "Link "
+	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, ")") {
+		return "", false
+	}
+	open := strings.LastIndex(line, " (")
+	if open <= len(prefix) {
+		return "", false
+	}
+	index := strings.TrimSpace(line[len(prefix):open])
+	name := strings.TrimSpace(line[open+2 : len(line)-1])
+	if index == "" || name != managedInterface {
+		return "", false
+	}
+	for _, r := range index {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return index, true
+}
+
+func applyResolvedContinuation(link *netsnapshot.ResolvedLink, field, line string) bool {
+	if link == nil || strings.TrimSpace(line) == "" {
+		return false
+	}
+	switch field {
+	case "DNS Servers":
+		link.DNSServers = appendResolvedTokens(link.DNSServers, line)
+		return true
+	case "DNS Domain":
+		link.DNSDomains = appendResolvedTokens(link.DNSDomains, line)
+		return true
+	default:
+		return false
+	}
+}
+
+func appendResolvedTokens(values []string, text string) []string {
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		seen[value] = true
+	}
+	for _, token := range strings.Fields(text) {
+		if token == "" || seen[token] {
+			continue
+		}
+		seen[token] = true
+		values = append(values, token)
+	}
+	return values
 }
 
 func resolvedLinkHasPodlazConfiguration(link netsnapshot.ResolvedLink) bool {
@@ -157,7 +290,7 @@ func containsResolvedValue(values []string, want string) bool {
 
 func resolvedObservationFailureMessage(result CommandResult, err error) string {
 	if commandSucceeded(result, err) {
-		return "systemd-resolved link status is ambiguous or contains non-podlaz DNS configuration"
+		return "systemd-resolved link status is malformed, ambiguous, or contains non-podlaz DNS configuration"
 	}
 	return commandFailureMessage(result, err)
 }
