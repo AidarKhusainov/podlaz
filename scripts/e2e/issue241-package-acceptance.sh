@@ -401,10 +401,21 @@ assert_no_recovery_candidates() {
   python3 - "${output}" <<'PY'
 import json
 import sys
+
 with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
-if payload.get("recovery", {}).get("candidates"):
+
+if payload.get("status") != "ok":
+    raise SystemExit("recovery inspection status is not ok")
+if payload.get("warnings"):
+    raise SystemExit("top-level recovery warnings remain")
+recovery = payload.get("recovery")
+if not isinstance(recovery, dict):
+    raise SystemExit("recovery payload is missing")
+if recovery.get("candidates"):
     raise SystemExit("recovery candidates remain")
+if recovery.get("warnings"):
+    raise SystemExit("recovery inspection warnings remain")
 PY
   rm -f -- "${output}"
   write_evidence "recovery_clean_${phase}" pass
