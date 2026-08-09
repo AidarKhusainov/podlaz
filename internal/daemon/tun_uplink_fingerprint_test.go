@@ -91,16 +91,16 @@ func TestTunUplinkFingerprintDetectsMaterialUnderlyingChanges(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			snapshot := issue245UplinkSnapshot()
-			tt.mutate(&snapshot)
+			tc.mutate(&snapshot)
 			got, err := deriveTunUplinkFingerprint(snapshot)
 			if err != nil {
 				t.Fatalf("derive changed fingerprint: %v", err)
 			}
 			if got == baseline {
-				t.Fatalf("material %s change did not change fingerprint: %+v", tt.name, got)
+				t.Fatalf("material %s change did not change fingerprint: %+v", tc.name, got)
 			}
 		})
 	}
@@ -131,10 +131,10 @@ func TestTunUplinkFingerprintFailsClosedOnAmbiguousOwnershipEvidence(t *testing.
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			snapshot := issue245UplinkSnapshot()
-			t.mutate(&snapshot)
+			tc.mutate(&snapshot)
 			if _, err := deriveTunUplinkFingerprint(snapshot); err == nil {
 				t.Fatal("expected ambiguous uplink evidence to fail closed")
 			}
