@@ -35,7 +35,6 @@ jobs:
             echo 'No classified diagnostic payload remains.'
             exit 0
           fi
-          echo '65493993904fa3f1748b3956f01d907930ec892f405361888614b6c161c45038  .github/issue-246-classification.patch.gz.b64' | sha256sum --check --strict
           base64 --decode "${payload}" > /tmp/issue-246-classification.patch.gz
           echo '193fae5a21cea320eb99aca05463e793de48108d3100641c74a83787ecbcc49d  /tmp/issue-246-classification.patch.gz' | sha256sum --check --strict
           gzip --decompress --stdout /tmp/issue-246-classification.patch.gz > /tmp/issue-246-classification.patch
