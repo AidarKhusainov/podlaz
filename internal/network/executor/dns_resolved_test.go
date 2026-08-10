@@ -119,8 +119,8 @@ func TestResolvedDNSExecutorVerifyRequiresRouteOnlyDomain(t *testing.T) {
     Current Scopes: DNS
          Protocols: +DefaultRoute
        DNS Servers: 1.1.1.1`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
-	if err == nil || !strings.Contains(err.Error(), "route-only domain ~. not found") {
-		t.Fatalf("expected route-only domain failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "DNS domains mismatch") {
+		t.Fatalf("expected exact route-only domain failure, got %v", err)
 	}
 }
 
@@ -131,8 +131,8 @@ func TestResolvedDNSExecutorVerifyRequiresPlannedDNSServer(t *testing.T) {
          Protocols: +DefaultRoute
        DNS Servers: 9.9.9.9
         DNS Domain: ~.`}, VerifyAttempts: 1}).Verify(context.Background(), plan)
-	if err == nil || !strings.Contains(err.Error(), "DNS server 1.1.1.1 not found") {
-		t.Fatalf("expected planned DNS server failure, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "DNS servers mismatch") {
+		t.Fatalf("expected exact planned DNS server failure, got %v", err)
 	}
 }
 
