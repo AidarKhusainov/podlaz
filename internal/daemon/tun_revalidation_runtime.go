@@ -87,8 +87,10 @@ func newTunRevalidationRuntime(inspect tunRevalidationInspectFunc, verify tunRev
 	return &tunRevalidationRuntime{inspect: inspect, verify: verify}
 }
 
-// Initialize captures generation 1 after connect-time verification has already
-// succeeded. It performs no repair and never treats an event as evidence.
+// Initialize establishes generation 1 from one fresh observation and verifies
+// that exact observation before publishing verified health. Connect-time
+// verification proves the pre-commit state, but it cannot authorize a later
+// fingerprint if the underlying uplink changes between commit and publication.
 func (r *tunRevalidationRuntime) Initialize(ctx context.Context) {
 	if r == nil {
 		return
@@ -102,11 +104,25 @@ func (r *tunRevalidationRuntime) Initialize(ctx context.Context) {
 		r.mu.Unlock()
 		return
 	}
+
 	r.mu.Lock()
 	r.fingerprint = observation.fingerprint
 	r.hasFingerprint = true
-	r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
+	r.health = &api.TunHealthStatus{
+		State:             api.TunHealthRevalidating,
+		NetworkGeneration: 1,
+		Classification:    api.TunHealthUplinkRevalidating,
+	}
 	r.mu.Unlock()
+
+	err = r.verify(ctx, observation)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil {
+		r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
+		return
+	}
+	r.health = healthForVerificationError(1, err)
 }
 
 func (r *tunRevalidationRuntime) Clear() {
