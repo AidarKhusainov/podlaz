@@ -158,6 +158,7 @@ type productionTunCommandRunner struct {
 	commands       []string
 	resolvedStatus string
 	nftTable       bool
+	tunAddress     bool
 }
 
 func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
@@ -168,10 +169,15 @@ func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ..
 	case name == "ip" && (strings.Contains(command, "-details link show dev podlaz0") || strings.Contains(command, "-details -o link show dev podlaz0")):
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest, ExitCode: 0}, nil
 	case name == "ip" && (strings.Contains(command, "-4 -o address show dev podlaz0") || strings.Contains(command, "-4 -o addr show dev podlaz0 scope global")):
+		if !r.tunAddress {
+			return netexecutor.CommandResult{ExitCode: 0}, nil
+		}
 		return netexecutor.CommandResult{Stdout: "7: podlaz0    inet 198.18.0.1/32 scope global podlaz0", ExitCode: 0}, nil
 	case name == "ip" && strings.Contains(command, "-4 addr add"):
+		r.tunAddress = true
 		return netexecutor.CommandResult{ExitCode: 0}, nil
 	case name == "ip" && strings.Contains(command, "-4 addr del"):
+		r.tunAddress = false
 		return netexecutor.CommandResult{ExitCode: 0}, nil
 	case name == "ip" && strings.Contains(command, "-4 route show table"):
 		return netexecutor.CommandResult{ExitCode: 0}, nil
