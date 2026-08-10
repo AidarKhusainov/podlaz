@@ -113,8 +113,22 @@ Revalidation performs no repair and no privileged networking mutation. It:
 4. collects a fresh snapshot and uplink fingerprint;
 5. runs the shared canonical TUN composition verifier against current desired
    state;
-6. runs the existing bounded connectivity verifier using the same
-   cancellation-aware probe pipeline used before commit.
+6. runs the existing bounded connectivity verifier for route selection,
+   resolved-link readiness/scoped query, normal system resolution, and routing
+   of resolved IPv4 results through the TUN;
+7. runs an explicit bounded DNS A query over UDP to a planned resolver;
+8. runs an explicit bounded DNS A query over TCP to a planned resolver;
+9. proves generic TCP/443 reachability using the shared diagnostic target catalog;
+10. performs a validated TLS handshake on TCP/443;
+11. performs a bounded HTTPS request with normal certificate validation and the
+    shared `tundiag.NetworkClient` transport.
+
+The explicit wire/data-plane stages reuse `internal/tundiag.NetworkClient`
+(`DNSUDP`, `DNSTCP`, `TCP`, `TLS`, and `HTTPS`) and the shared target catalog.
+They are not shell or `curl` probes. Every stage inherits the revalidation
+context and also has its own bounded target timeout. Cancellation or deadline at
+any layer prevents publication of `verified`; ordinary probe failures publish
+current health as `connectivity_failed`.
 
 The shared canonical verifier is exact rather than subset-based. On the
 podlaz-owned resolved link, the observed DNS-server set and route-only domain set
@@ -132,7 +146,9 @@ route used to identify the server route to inspect.
 
 No NetworkManager mutation, IPv6 firewall policy change, nftables repair, route
 repair, route-cache flush, DNS repair, or TUN recreation is performed by this
-contract. Any future repair must be justified by deterministic failure evidence
+contract. IPv6 policy/leak enforcement remains evidence-gated by the later #245
+phase; this read-only PR does not create an IPv6 bypass or change firewall
+policy. Any future repair must be justified by deterministic failure evidence
 and must preserve the existing exact-ownership and transaction boundaries.
 
 ## Serialization and cancellation
@@ -193,6 +209,13 @@ a CI host:
   `verified` publication and fails closed on verifier failure;
 - disconnect and daemon shutdown cancel an in-flight generation-1 proof before
   privileged disconnect mutation proceeds;
+- explicit DNS UDP success followed by DNS TCP failure cannot publish
+  `verified`;
+- successful DNS followed by TCP/443 failure cannot publish `verified`;
+- successful TCP/443 followed by TLS failure cannot publish `verified`;
+- successful TLS followed by HTTPS failure cannot publish `verified`;
+- cancellation and deadline propagate through every explicit DNS UDP, DNS TCP,
+  TCP/443, TLS, and HTTPS layer;
 - post-resume signal classification and same-generation reproving;
 - source failure/reconnect schedules authoritative source-resync and reproof;
 - link/address/route rtnetlink trigger classification;
@@ -222,6 +245,7 @@ A target-host suspend/resume acceptance run is still required before treating a
 packaged build as production-validated for a specific laptop/kernel/network
 stack. That run should capture before/after status, generation, daemon logs, the
 fresh route/address/DNS snapshot, watcher reconnect/resync behavior, and the
-read-only verifier result. It must also prove that disconnect after resume
-converges without waiting for an unrelated probe timeout. Public evidence must
-remain structural/redacted as defined by `e2e.md`.
+read-only verifier result. It must also prove explicit DNS UDP/TCP, TCP/443,
+TLS, and HTTPS success after the post-resume generation is invalidated and before
+that generation returns to `verified`. Public evidence must remain
+structural/redacted as defined by `e2e.md`.
