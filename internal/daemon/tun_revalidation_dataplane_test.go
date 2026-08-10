@@ -23,9 +23,9 @@ const (
 )
 
 type fakeRevalidationNetworkClient struct {
-	failStage   revalidationDataPlaneStage
+	failStage    revalidationDataPlaneStage
 	contextStage revalidationDataPlaneStage
-	calls       []revalidationDataPlaneStage
+	calls        []revalidationDataPlaneStage
 }
 
 func (c *fakeRevalidationNetworkClient) DNSUDP(ctx context.Context, _, _ string, _ uint16) (tundiag.DNSEvidence, error) {
