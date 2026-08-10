@@ -43,14 +43,32 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 			"nft":        "/usr/sbin/nft",
 		},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default": {Stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp metric 600"},
-			"/usr/sbin/ip -6 route show default": {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
-			"/usr/sbin/ip route get 203.0.113.10": {Stdout: "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000"},
-			"/usr/sbin/ip link show dev podlaz0": {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
-			"/usr/bin/resolvectl status --no-pager": {Stdout: resolvedStatusWithDesktopLinkForTest},
-			"env LC_ALL=C /usr/bin/nmcli -t -e yes -f RUNNING,STATE general": {Stdout: "running:connected"},
-			"env LC_ALL=C /usr/bin/nmcli -t -e yes -f NAME,UUID,TYPE,DEVICE,STATE connection show --active": {Stdout: "Example:11111111-2222-3333-4444-555555555555:802-11-wireless:wlp0s20f3:activated"},
-			"/usr/sbin/nft list tables": {Stdout: "table inet filter"},
+			"/usr/sbin/ip -4 route show default": {
+				Stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp metric 600",
+			},
+			"/usr/sbin/ip -6 route show default": {
+				ExitCode: 1,
+				Stderr:   "RTNETLINK answers: Network is unreachable",
+			},
+			"/usr/sbin/ip route get 203.0.113.10": {
+				Stdout: "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000",
+			},
+			"/usr/sbin/ip link show dev podlaz0": {
+				ExitCode: 1,
+				Stderr:   "Device \"podlaz0\" does not exist.",
+			},
+			"/usr/bin/resolvectl status --no-pager": {
+				Stdout: resolvedStatusWithDesktopLinkForTest,
+			},
+			"env LC_ALL=C /usr/bin/nmcli -t -e yes -f RUNNING,STATE general": {
+				Stdout: "running:connected",
+			},
+			"env LC_ALL=C /usr/bin/nmcli -t -e yes -f NAME,UUID,TYPE,DEVICE,STATE connection show --active": {
+				Stdout: "Example:11111111-2222-3333-4444-555555555555:802-11-wireless:wlp0s20f3:activated",
+			},
+			"/usr/sbin/nft list tables": {
+				Stdout: "table inet filter",
+			},
 		},
 	}
 
