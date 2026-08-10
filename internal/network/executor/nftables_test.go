@@ -38,7 +38,7 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		t.Fatalf("expected nft batch apply command, got %#v", runner.commands[0])
 	}
 	wantTail := [][]string{
-		{"nft", "list", "table", "inet", "podlaz"},
+		{"nft", "-y", "list", "table", "inet", "podlaz"},
 		{"nft", "delete", "table", "inet", "podlaz"},
 	}
 	if !reflect.DeepEqual(runner.commands[1:], wantTail) {
