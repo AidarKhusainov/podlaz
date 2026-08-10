@@ -25,7 +25,8 @@ const (
 )
 
 type tunNetworkEventNotifyFunc func(tunRevalidationTrigger)
-type tunNetworkEventSource func(context.Context, tunNetworkEventNotifyFunc) error
+type tunNetworkEventReadyFunc func()
+type tunNetworkEventSource func(context.Context, tunNetworkEventNotifyFunc, tunNetworkEventReadyFunc) error
 
 func startTunNetworkEventSources(ctx context.Context, notify tunNetworkEventNotifyFunc) {
 	if notify == nil {
@@ -36,9 +37,26 @@ func startTunNetworkEventSources(ctx context.Context, notify tunNetworkEventNoti
 }
 
 func retryTunNetworkEventSource(ctx context.Context, name string, source tunNetworkEventSource, notify tunNetworkEventNotifyFunc) {
-	backoff := time.Second
+	retryTunNetworkEventSourceWithBackoff(ctx, name, source, notify, time.Second, 30*time.Second)
+}
+
+func retryTunNetworkEventSourceWithBackoff(ctx context.Context, name string, source tunNetworkEventSource, notify tunNetworkEventNotifyFunc, initialBackoff, maxBackoff time.Duration) {
+	if source == nil || notify == nil {
+		return
+	}
+	if initialBackoff <= 0 {
+		initialBackoff = time.Second
+	}
+	if maxBackoff < initialBackoff {
+		maxBackoff = initialBackoff
+	}
+	backoff := initialBackoff
 	for ctx.Err() == nil {
-		err := source(ctx, notify)
+		var readyOnce sync.Once
+		ready := func() {
+			readyOnce.Do(func() { notify(tunRevalidationTriggerSourceResync) })
+		}
+		err := source(ctx, notify, ready)
 		if ctx.Err() != nil {
 			return
 		}
@@ -52,16 +70,16 @@ func retryTunNetworkEventSource(ctx context.Context, name string, source tunNetw
 			return
 		case <-timer.C:
 		}
-		if backoff < 30*time.Second {
+		if backoff < maxBackoff {
 			backoff *= 2
-			if backoff > 30*time.Second {
-				backoff = 30 * time.Second
+			if backoff > maxBackoff {
+				backoff = maxBackoff
 			}
 		}
 	}
 }
 
-func runLogindSleepEvents(ctx context.Context, notify tunNetworkEventNotifyFunc) error {
+func runLogindSleepEvents(ctx context.Context, notify tunNetworkEventNotifyFunc, ready tunNetworkEventReadyFunc) error {
 	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("connect system bus: %w", err)
@@ -81,6 +99,12 @@ func runLogindSleepEvents(ctx context.Context, notify tunNetworkEventNotifyFunc)
 	signals := make(chan *dbus.Signal, 8)
 	conn.Signal(signals)
 	defer conn.RemoveSignal(signals)
+	if ready != nil {
+		// Subscribe first, then schedule a fresh authoritative snapshot. Events
+		// that happened while this source was disconnected cannot otherwise be
+		// reconstructed from the edge-driven D-Bus stream.
+		ready()
+	}
 
 	for {
 		select {
@@ -104,7 +128,7 @@ func runLogindSleepEvents(ctx context.Context, notify tunNetworkEventNotifyFunc)
 	}
 }
 
-func runTunRtnetlinkEvents(ctx context.Context, notify tunNetworkEventNotifyFunc) error {
+func runTunRtnetlinkEvents(ctx context.Context, notify tunNetworkEventNotifyFunc, ready tunNetworkEventReadyFunc) error {
 	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
 	if err != nil {
 		return fmt.Errorf("open rtnetlink socket: %w", err)
@@ -126,6 +150,12 @@ func runTunRtnetlinkEvents(ctx context.Context, notify tunNetworkEventNotifyFunc
 		case <-stopCancellationWatcher:
 		}
 	}()
+	if ready != nil {
+		// Binding installs the multicast subscription. Resync only after that
+		// point so changes concurrent with the snapshot are represented either by
+		// the snapshot itself or by a queued edge on the already-bound socket.
+		ready()
+	}
 
 	buffer := make([]byte, 64*1024)
 	for {
