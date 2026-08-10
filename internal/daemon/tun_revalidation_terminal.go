@@ -13,7 +13,6 @@ type tunRevalidationTerminalHandler struct {
 	disconnect          func(context.Context) error
 	finalize            func(context.Context, tunFailureDiagnosticSummary, string)
 	markCleanupRequired func(tunRevalidationOutcome)
-	mutationPending     func() bool
 	cleanupTimeout      time.Duration
 }
 
@@ -22,9 +21,6 @@ func (h tunRevalidationTerminalHandler) Handle(ctx context.Context, outcome tunR
 		return
 	}
 	if ctx != nil && ctx.Err() != nil {
-		return
-	}
-	if h.mutationPending != nil && h.mutationPending() {
 		return
 	}
 
