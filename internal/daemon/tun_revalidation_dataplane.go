@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -26,9 +27,63 @@ type tunRevalidationNetworkClient interface {
 	HTTPS(context.Context, tundiag.Target) (tundiag.HTTPEvidence, error)
 }
 
+func newTunRevalidationNetworkClient() tundiag.NetworkClient {
+	dialer := &net.Dialer{}
+	return tundiag.NetworkClient{DialContext: tunRevalidationCancellableDial(dialer.DialContext)}
+}
+
+func tunRevalidationCancellableDial(base tundiag.DialContextFunc) tundiag.DialContextFunc {
+	if base == nil {
+		dialer := &net.Dialer{}
+		base = dialer.DialContext
+	}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := base(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		wrapped := &tunRevalidationContextConn{Conn: conn, ctx: ctx}
+		wrapped.stop = context.AfterFunc(ctx, func() { _ = conn.Close() })
+		if err := ctx.Err(); err != nil {
+			_ = wrapped.Close()
+			return nil, err
+		}
+		return wrapped, nil
+	}
+}
+
+type tunRevalidationContextConn struct {
+	net.Conn
+	ctx  context.Context
+	stop func() bool
+}
+
+func (c *tunRevalidationContextConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if err != nil && c.ctx.Err() != nil {
+		return n, c.ctx.Err()
+	}
+	return n, err
+}
+
+func (c *tunRevalidationContextConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if err != nil && c.ctx.Err() != nil {
+		return n, c.ctx.Err()
+	}
+	return n, err
+}
+
+func (c *tunRevalidationContextConn) Close() error {
+	if c.stop != nil {
+		c.stop()
+	}
+	return c.Conn.Close()
+}
+
 func verifyTunRevalidationDataPlane(ctx context.Context, plan planner.TunPlan, client tunRevalidationNetworkClient) error {
 	if client == nil {
-		client = tundiag.NetworkClient{}
+		client = newTunRevalidationNetworkClient()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
