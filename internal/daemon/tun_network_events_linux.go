@@ -48,9 +48,7 @@ func retryTunNetworkEventSource(ctx context.Context, name string, source tunNetw
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 			return
 		case <-timer.C:
 		}
@@ -119,9 +117,14 @@ func runTunRtnetlinkEvents(ctx context.Context, notify tunNetworkEventNotifyFunc
 	if err := unix.Bind(fd, &unix.SockaddrNetlink{Family: unix.AF_NETLINK, Groups: groups}); err != nil {
 		return fmt.Errorf("bind rtnetlink event groups: %w", err)
 	}
+	stopCancellationWatcher := make(chan struct{})
+	defer close(stopCancellationWatcher)
 	go func() {
-		<-ctx.Done()
-		closeSocket()
+		select {
+		case <-ctx.Done():
+			closeSocket()
+		case <-stopCancellationWatcher:
+		}
 	}()
 
 	buffer := make([]byte, 64*1024)
