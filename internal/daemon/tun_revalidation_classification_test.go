@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ func TestTunRevalidationRuntimeClassifiesMaterialGenerationChange(t *testing.T) 
 	inspectCalls := 0
 	verificationStarted := make(chan struct{})
 	releaseVerification := make(chan struct{})
+	var verifyCalls atomic.Int32
 
 	runtime := newTunRevalidationRuntime(
 		func(context.Context) (tunRevalidationObservation, error) {
@@ -26,12 +28,18 @@ func TestTunRevalidationRuntimeClassifiesMaterialGenerationChange(t *testing.T) 
 			return tunRevalidationObservation{fingerprint: fingerprint}, nil
 		},
 		func(context.Context, tunRevalidationObservation) error {
+			if verifyCalls.Add(1) == 1 {
+				// Generation-one initialization now verifies the exact fresh
+				// post-commit observation before publishing verified health.
+				return nil
+			}
 			close(verificationStarted)
 			<-releaseVerification
 			return nil
 		},
 	)
 	runtime.Initialize(context.Background())
+	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 1, "")
 
 	done := make(chan struct{})
 	go func() {
@@ -49,5 +57,8 @@ func TestTunRevalidationRuntimeClassifiesMaterialGenerationChange(t *testing.T) 
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("changed-generation verification did not complete")
+	}
+	if got := verifyCalls.Load(); got != 2 {
+		t.Fatalf("verification calls=%d, want generation-one plus changed-generation verification", got)
 	}
 }
