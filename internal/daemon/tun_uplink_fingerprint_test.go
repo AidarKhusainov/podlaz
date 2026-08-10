@@ -122,8 +122,9 @@ func issue245UplinkSnapshot() netsnapshot.Snapshot {
 		},
 		DNS: netsnapshot.DNS{Mode: "systemd-resolved", Resolved: netsnapshot.Finding{Status: netsnapshot.StatusDetected}},
 		NetworkManager: netsnapshot.NetworkManager{
-			Finding: netsnapshot.Finding{Status: netsnapshot.StatusDetected},
-			State:   "connected",
+			Finding:                     netsnapshot.Finding{Status: netsnapshot.StatusDetected},
+			State:                       "connected",
+			ActiveConnectionsInspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "active connection inventory available"},
 			ActiveConnections: []netsnapshot.NetworkManagerConnection{{
 				Name: "ExampleNetwork", UUID: "11111111-2222-3333-4444-555555555555", Type: "802-11-wireless", Device: "wlan0", State: "activated",
 			}},
