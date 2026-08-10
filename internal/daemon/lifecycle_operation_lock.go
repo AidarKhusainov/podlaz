@@ -3,12 +3,15 @@ package daemon
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 type lifecycleOperationLock struct {
 	token chan struct{}
+
+	pendingMutations atomic.Int32
 
 	cancelMu           sync.RWMutex
 	cancelRevalidation context.CancelFunc
@@ -48,6 +51,25 @@ func (l *lifecycleOperationLock) interruptRevalidation() {
 	}
 }
 
+// beginMutation declares mutation intent before cancelling any active probe.
+// This closes the race where a newly queued revalidation could otherwise start
+// after cancellation but before connect/disconnect/recovery acquired the shared
+// lifecycle token. The returned function must be called after the mutation has
+// released the token.
+func (l *lifecycleOperationLock) beginMutation() func() {
+	if l == nil {
+		return func() {}
+	}
+	l.pendingMutations.Add(1)
+	l.interruptRevalidation()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.pendingMutations.Add(-1)
+		})
+	}
+}
+
 func (l *lifecycleOperationLock) acquire(ctx context.Context) error {
 	if l == nil {
 		return nil
@@ -75,10 +97,23 @@ func (l *lifecycleOperationLock) runRevalidation(ctx context.Context, fn func())
 		fn()
 		return nil
 	}
+	if l.pendingMutations.Load() > 0 {
+		return nil
+	}
 	if err := l.acquire(ctx); err != nil {
 		return err
 	}
 	defer l.release()
+	// A mutation may have declared intent while this revalidation was waiting
+	// for the token. Yield the token without starting new probes in that case.
+	if l.pendingMutations.Load() > 0 {
+		return nil
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	fn()
 	return nil
 }
@@ -87,7 +122,8 @@ func (l *lifecycleOperationLock) runRecovery(ctx context.Context, fn func() api.
 	if l == nil {
 		return fn()
 	}
-	l.interruptRevalidation()
+	finishMutation := l.beginMutation()
+	defer finishMutation()
 	if err := l.acquire(ctx); err != nil {
 		return api.RecoveryResponse{
 			Mode: "execute",
@@ -107,7 +143,8 @@ type operationLockedLifecycle struct {
 }
 
 func (l operationLockedLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
-	l.lock.interruptRevalidation()
+	finishMutation := l.lock.beginMutation()
+	defer finishMutation()
 	if err := l.lock.acquire(ctx); err != nil {
 		return api.LifecycleResponse{}, err
 	}
@@ -116,7 +153,8 @@ func (l operationLockedLifecycle) Connect(ctx context.Context, request api.Conne
 }
 
 func (l operationLockedLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
-	l.lock.interruptRevalidation()
+	finishMutation := l.lock.beginMutation()
+	defer finishMutation()
 	if err := l.lock.acquire(ctx); err != nil {
 		return api.LifecycleResponse{}, err
 	}
