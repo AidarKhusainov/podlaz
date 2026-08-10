@@ -2,13 +2,12 @@ package daemon
 
 import (
 	"context"
-	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const tunRevalidationInitializeTimeout = 15 * time.Second
+const tunRevalidationInitializeTimeout = defaultTunRevalidationTimeout
 
 type tunRevalidationLifecycle struct {
 	lifecycle lifecycleService
@@ -39,9 +38,10 @@ func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.Conne
 		return response, nil
 	}
 
-	// Once a committed session exists, capture its baseline even if the client
-	// request context is cancelled immediately after commit. The bounded context
-	// prevents this publication step from delaying a lifecycle operation forever.
+	// Once a committed session exists, capture and verify its generation-one
+	// observation even if the client request context is cancelled immediately
+	// after commit. Use the same bounded budget as ordinary revalidation because
+	// Initialize now executes the same canonical state/connectivity verifier.
 	initializeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRevalidationInitializeTimeout)
 	l.runtime.Initialize(initializeCtx)
 	cancel()
