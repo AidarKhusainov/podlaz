@@ -16,11 +16,19 @@ type tunRevalidationLifecycle struct {
 }
 
 func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	var previousHealth *api.TunHealthStatus
+	if l.runtime != nil && request.Mode == planner.ModeTun {
+		previousHealth = l.runtime.beginLifecycleTransition()
+	}
+
 	response, err := l.lifecycle.Connect(ctx, request)
 	if err != nil {
 		// A failed replace-podlaz attempt may leave the previously active TUN
-		// session untouched. Preserve its current-health evidence until the
-		// underlying lifecycle actually transitions away from that session.
+		// session untouched. Restore the exact previous current-health evidence;
+		// beginLifecycleTransition intentionally did not modify its fingerprint.
+		if l.runtime != nil && request.Mode == planner.ModeTun {
+			l.runtime.restoreHealth(previousHealth)
+		}
 		return response, err
 	}
 	if l.runtime == nil {
