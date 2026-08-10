@@ -98,8 +98,8 @@ func TestTunRevalidationCleanupFailurePublishesCleanupRequired(t *testing.T) {
 		collect: func(context.Context, planner.TunPlan, error) tunFailureDiagnosticSummary {
 			return tunFailureDiagnosticSummary{ReportPath: "/run/podlaz/diagnostics/tun-latest.json", Persisted: true}
 		},
-		disconnect: func(context.Context) error { return errors.New("synthetic rollback failure") },
-		finalize: func(_ context.Context, _ tunFailureDiagnosticSummary, status string) { finalized = status },
+		disconnect:          func(context.Context) error { return errors.New("synthetic rollback failure") },
+		finalize:            func(_ context.Context, _ tunFailureDiagnosticSummary, status string) { finalized = status },
 		markCleanupRequired: runtime.MarkCleanupRequired,
 	}
 
