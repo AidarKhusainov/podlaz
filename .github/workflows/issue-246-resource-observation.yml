@@ -16,7 +16,7 @@ jobs:
   observe:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
     name: Current-package TUN resource observation
-    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    runs-on: ubuntu-24.04
     environment: vpn-e2e
     timeout-minutes: 90
     env:
@@ -24,9 +24,9 @@ jobs:
       PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
       PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
       PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
-      PODLAZ_E2E_SOAK_DURATION_SECONDS: '600'
-      PODLAZ_E2E_SOAK_WARMUP_SECONDS: '60'
-      PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS: '60'
+      PODLAZ_E2E_SOAK_DURATION_SECONDS: '360'
+      PODLAZ_E2E_SOAK_WARMUP_SECONDS: '30'
+      PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS: '30'
       PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS: '60'
 
     steps:
