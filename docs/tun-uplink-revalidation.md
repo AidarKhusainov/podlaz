@@ -2,7 +2,9 @@
 
 This document defines the current-health contract for a committed TUN session.
 It complements the durable transaction and ownership rules in
-`state-and-security.md`; it does not grant new mutation or cleanup authority.
+`state-and-security.md`; read-only verification grants no new mutation or cleanup
+authority. Terminal cleanup after a proved verification failure reuses the exact
+rollback authority already recorded by the committed transaction.
 
 ## Durable transaction state versus current health
 
@@ -19,9 +21,12 @@ The daemon therefore publishes a separate current TUN health value:
 
 - `verified`: the current network generation is proved usable;
 - `revalidating`: a changed/currently suspect generation is being reproved;
-- `degraded`: current evidence is incomplete or verification failed;
-- `cleanup-required`: active durable ownership no longer matches the live
-  runtime strongly enough to treat the session as safely owned.
+- `degraded`: current evidence is incomplete, or a terminal verification
+  failure/timeout has been published while bounded lifecycle cleanup is being
+  entered;
+- `cleanup-required`: exact lifecycle cleanup could not converge, or active
+  durable ownership no longer matches the live runtime strongly enough to treat
+  the session as safely owned.
 
 The status API exposes a positive `network_generation` together with the current
 health state and a stable classification. Human `podlaz status` output keeps the
@@ -36,7 +41,8 @@ revalidation. That proof collects a fresh observation, runs the canonical
 composition and connectivity verifier against that exact observation, and only
 then publishes `verified`. If verification fails or times out, the new
 fingerprint is never treated as healthy merely because connect previously
-committed.
+committed; the terminal failure path described below captures diagnostics and
+enters normal bounded disconnect/rollback.
 
 ## Event model
 
@@ -90,7 +96,10 @@ generation loop.
 
 If the fresh observation is ambiguous or incomplete, the previous `verified`
 health is invalidated. Inspection failure is never treated as evidence that the
-old generation is still healthy.
+old generation is still healthy. Ambiguous observation/ownership evidence also
+does not authorize automatic mutation: foreign or unproved state remains
+fail-closed for explicit recovery rather than being deleted by the terminal
+verification-failure path.
 
 For ordinary duplicate link/address/route hints, an unchanged fingerprint while
 current health is already `verified` is discarded without network probes and the
@@ -102,7 +111,7 @@ generation may be reproved again without artificially incrementing the generatio
 
 ## Read-only revalidation
 
-Revalidation performs no repair and no privileged networking mutation. It:
+Revalidation itself performs no repair and no privileged networking mutation. It:
 
 1. proves that the daemon's active runtime still names one committed TUN
    transaction;
@@ -127,8 +136,7 @@ The explicit wire/data-plane stages reuse `internal/tundiag.NetworkClient`
 (`DNSUDP`, `DNSTCP`, `TCP`, `TLS`, and `HTTPS`) and the shared target catalog.
 They are not shell or `curl` probes. Every stage inherits the revalidation
 context and also has its own bounded target timeout. Cancellation or deadline at
-any layer prevents publication of `verified`; ordinary probe failures publish
-current health as `connectivity_failed`.
+any layer prevents publication of `verified`.
 
 The shared canonical verifier is exact rather than subset-based. On the
 podlaz-owned resolved link, the observed DNS-server set and route-only domain set
@@ -145,11 +153,53 @@ creates deletion authority. The same distinction applies to the server-bypass
 route used to identify the server route to inspect.
 
 No NetworkManager mutation, IPv6 firewall policy change, nftables repair, route
-repair, route-cache flush, DNS repair, or TUN recreation is performed by this
-contract. IPv6 policy/leak enforcement remains evidence-gated by the later #245
-phase; this read-only PR does not create an IPv6 bypass or change firewall
+repair, route-cache flush, DNS repair, or TUN recreation is performed by the
+verification phase. IPv6 policy/leak enforcement remains evidence-gated by the
+later #245 phase; this PR does not create an IPv6 bypass or change firewall
 policy. Any future repair must be justified by deterministic failure evidence
 and must preserve the existing exact-ownership and transaction boundaries.
+
+## Terminal verification failure and cleanup
+
+A fresh observation whose ownership is proven but whose canonical/data-plane
+verification fails, or whose bounded verification reaches its deadline, is a
+terminal current-health failure for that committed session. The daemon does not
+leave that session indefinitely active as merely `degraded`.
+
+The required ordering is:
+
+1. the read-only verifier returns a typed terminal outcome containing the exact
+   verification cause, failed generation, current plan projection, and stable
+   health classification;
+2. the lifecycle revalidation token is released;
+3. the coordinator clears the completed active trigger so cleanup cannot cancel
+   or requeue the verification that just finished;
+4. before host cleanup, the daemon runs the existing bounded pre-rollback TUN
+   diagnostic pipeline and atomically attempts to persist the latest private,
+   redacted report with `rollback_status=pending`; a nested
+   `TunVerificationError` phase such as `dns-udp`, `dns-tcp`, `tcp-443`, `tls`,
+   or `https` is retained as the report `failure_phase`;
+5. the daemon invokes the normal lifecycle `Disconnect` path with the existing
+   bounded rollback context. That path may mutate only resources authorized by
+   exact durable transaction ownership and performs the normal supervised Xray
+   shutdown/convergence sequence;
+6. successful cleanup finalizes the report with `rollback_status=completed` and
+   the active TUN becomes inactive; failed or timed-out cleanup finalizes the
+   report with `rollback_status=failed` and current health is published as
+   `cleanup-required` so durable ownership remains actionable by recovery.
+
+Diagnostic persistence is best-effort and must never suppress cleanup. If the
+report itself cannot be persisted, the existing diagnostic contract records the
+internal diagnostic failure and exposes no false report path, while lifecycle
+cleanup still runs.
+
+A cancellation caused by a higher-priority user disconnect/recovery or daemon
+shutdown is different from a verification timeout. `context.Canceled` produces a
+non-terminal revalidation outcome: it does not schedule another automatic
+Disconnect. The lifecycle operation that published cancellation already owns the
+cleanup decision. Daemon shutdown terminally cancels event processing and then
+runs its existing bounded disconnect path. This prevents recursive/double
+lifecycle cleanup while preserving mutation precedence.
 
 ## Serialization and cancellation
 
@@ -197,8 +247,9 @@ Current TUN health uses the following machine-readable classifications:
 - `revalidation_timeout`;
 - `revalidation_interrupted`.
 
-The classification describes current evidence. It does not rewrite the durable
-transaction state or create recovery authority.
+The classification describes the current evidence/failure layer. It does not
+create cleanup authority. Automatic terminal cleanup is authorized only by the
+already-proven committed transaction and its durable exact rollback metadata.
 
 ## Test contract
 
@@ -216,6 +267,17 @@ a CI host:
 - successful TLS followed by HTTPS failure cannot publish `verified`;
 - cancellation and deadline propagate through every explicit DNS UDP, DNS TCP,
   TCP/443, TLS, and HTTPS layer;
+- verification failure returns a terminal typed outcome and enters bounded
+  normal lifecycle disconnect only after revalidation authority is released;
+- revalidation timeout returns the same terminal-cleanup outcome, while
+  `context.Canceled` from a higher-priority lifecycle operation does not schedule
+  a recursive second disconnect;
+- the bounded diagnostic report is attempted before cleanup and preserves the
+  failed verification layer;
+- cleanup failure publishes `cleanup-required` and finalizes diagnostic rollback
+  status as `failed`;
+- the coordinator clears the completed active trigger before terminal cleanup,
+  so cleanup cancellation cannot requeue the completed revalidation;
 - post-resume signal classification and same-generation reproving;
 - source failure/reconnect schedules authoritative source-resync and reproof;
 - link/address/route rtnetlink trigger classification;
@@ -231,7 +293,8 @@ a CI host:
   rather than authoritative absence, and escaped terse fields retain column
   identity;
 - Podlaz-owned state cannot alter the fingerprint;
-- ambiguous fingerprint evidence fails closed;
+- ambiguous fingerprint evidence fails closed without acquiring new mutation
+  authority;
 - changed generation reuses the canonical verifier and connectivity pipeline;
 - canonical resolved verification rejects extra DNS state and canonical
   nftables verification rejects extra rules/chain metadata drift;
@@ -247,5 +310,7 @@ stack. That run should capture before/after status, generation, daemon logs, the
 fresh route/address/DNS snapshot, watcher reconnect/resync behavior, and the
 read-only verifier result. It must also prove explicit DNS UDP/TCP, TCP/443,
 TLS, and HTTPS success after the post-resume generation is invalidated and before
-that generation returns to `verified`. Public evidence must remain
-structural/redacted as defined by `e2e.md`.
+that generation returns to `verified`; and it must exercise one controlled
+terminal verification failure or timeout to prove that the report is captured
+before bounded disconnect and that successful cleanup converges to inactive.
+Public evidence must remain structural/redacted as defined by `e2e.md`.
