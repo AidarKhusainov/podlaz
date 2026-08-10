@@ -1,4 +1,4 @@
-.TH PODLAZD 8 "July 2026" "podlaz" "System Administration"
+.TH PODLAZD 8 "August 2026" "podlaz" "System Administration"
 .SH NAME
 podlazd \- local podlaz daemon for proxy and VPN lifecycle state
 .SH SYNOPSIS
@@ -174,6 +174,19 @@ its transaction state and rollback plan. Xray-owned
 is released by stopping the Xray child, not by recording it as a podlaz-owned
 TUN rollback target. The CLI must not become a privileged or SUID networking
 mutator.
+.PP
+Current-health revalidation is read-only and grants no additional mutation or
+cleanup authority. Durable
+.B desired_plan
+may be reconstructed to verify the complete intended composition, including
+prerequisites that pre-existed connect, but cleanup remains limited to exact
+recorded rollback ownership. Ambiguous or incomplete observation fails closed.
+The canonical DNS verifier requires the exact planned DNS-server set, exact
+route-only domain set, and default-route evidence on the owned link. The
+canonical nftables verifier requires the exact owned table composition,
+including chain cardinality/name/type/hook/numeric priority/policy and ordered
+rule cardinality/content; extra or foreign state inside the owned table is not
+accepted as healthy.
 .SH RUNTIME STATE
 On startup, the daemon creates or uses the runtime directory, creates a lock
 file, removes only a stale Unix socket at the filesystem socket path, fails if
@@ -199,10 +212,13 @@ binds its name, ifindex, and TUN type, assigns the daemon-owned
 address, applies podlaz-owned host networking state, verifies connectivity, and
 commits only after those checks pass. Xray remains the only owner of link
 creation and lifetime. Resolved DNS
-verification requires every planned DNS server, the route-only domain
+verification requires the exact planned DNS-server set, exact route-only domain
 .B ~.,
-and DNS default-route evidence. It then requires the exact address on the same
-UP link identity, an uncached IPv4
+and DNS default-route evidence; extra DNS servers or route-only domains on the
+owned link fail verification. The nftables verification used by the same
+canonical composition verifier rejects extra chains/rules or base-chain metadata
+drift. It then requires the exact address on the same UP link identity, an
+uncached IPv4
 .B resolvectl
 query bound to
 .BR podlaz0 ,
@@ -210,6 +226,47 @@ a separate normal resolver lookup, and a TUN route for at least one returned
 IPv4 address.
 .B Current Scopes
 is derived resolver runtime state and is not an acceptance criterion.
+.PP
+A committed transaction is historical proof that the transaction completed; it
+is not permanent proof that the current host network still matches the verified
+generation. The daemon therefore publishes current TUN health independently as
+.BR verified ,
+.BR revalidating ,
+.BR degraded ,
+or
+.BR cleanup-required ,
+with a positive
+.B network_generation
+and stable classification when applicable. Generation 1 is published as
+.B verified
+only after a fresh post-commit observation has passed the canonical composition
+and connectivity verifier for that exact observation.
+.PP
+The daemon subscribes to systemd-logind post-resume notification and rtnetlink
+link/address/route changes. Event payloads are hints, not state of record. A
+fresh snapshot derives the underlying-uplink fingerprint from the default-route
+interface and ifindex, gateway, relevant global IPv4 addresses, authoritative
+NetworkManager active-connection identity when NetworkManager is present, and
+the VPN-server bypass next hop. Podlaz-owned TUN, policy-routing, DNS and
+nftables state is excluded so self-generated events cannot advance the network
+generation. Failure to inspect NetworkManager active connections while
+NetworkManager itself is detected is unknown evidence, not authoritative
+absence.
+.PP
+Resume and watcher resubscription force a same-generation reproof even when the
+fingerprint is unchanged. Each logind or rtnetlink source follows a
+subscribe-then-resync contract: after a successful initial subscription or
+reconnection it queues one coalesced fresh-snapshot revalidation, covering edges
+that may have occurred while the source was unavailable. Link/address/route
+storms remain bounded and coalesced.
+.PP
+Connect, disconnect and recovery retain mutation priority over current-health
+probes. Mutation intent cancels any in-flight revalidation before waiting for the
+shared lifecycle boundary. A trigger already consumed while a lifecycle mutation
+is pending waits for mutation-idle rather than being discarded; an in-flight
+trigger interrupted by mutation is requeued. After mutation, the retained hint
+causes one fresh authoritative snapshot and normal fingerprint decision. Daemon
+shutdown is terminal cancellation and does not requeue work.
 .PP
 If
 .B network-apply,
@@ -240,9 +297,10 @@ or
 Diagnostic collection and persistence are best-effort and cannot suppress or
 delay the separate bounded rollback context.
 .PP
-During graceful shutdown, the daemon stops an active Xray child, shuts down the
-HTTP server, closes the Unix socket listeners, removes the filesystem socket
-path, and removes the lock file.
+During graceful shutdown, the daemon cancels network-event delivery and active
+revalidation before waiting for the lifecycle mutation boundary, then stops an
+active Xray child, shuts down the HTTP server, closes the Unix socket listeners,
+removes the filesystem socket path, and removes the lock file.
 .PP
 On disconnect, the daemon rolls back podlaz-owned host networking state, stops
 the active Xray child, removes the generated runtime config path, and reports
@@ -336,6 +394,16 @@ podlaz doctor --tun --verbose
 The historical report identifies the stable lifecycle phase, classification,
 and final rollback status without exposing raw profile secrets or generated
 configuration.
+.TP
+.B Active TUN is committed but current health is not verified
+This is not a contradiction: commit is durable transaction history while
+current health is generation-specific evidence. Inspect
+.B podlaz status
+and
+.B podlaz doctor --tun --verbose
+for the current classification. Revalidation itself performs no repair. Do not
+treat a degraded health classification as cleanup authority for foreign or
+ambiguous state.
 .TP
 .B Stale podlaz-owned runtime state
 Inspect first:
