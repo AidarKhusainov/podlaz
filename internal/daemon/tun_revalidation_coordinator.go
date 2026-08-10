@@ -16,9 +16,13 @@ const (
 	tunRevalidationTriggerRoute        tunRevalidationTrigger = "route"
 )
 
+type tunRevalidationRunFunc func(context.Context, tunRevalidationTrigger) tunRevalidationOutcome
+type tunRevalidationTerminalFunc func(context.Context, tunRevalidationOutcome)
+
 type tunRevalidationCoordinator struct {
-	wake chan struct{}
-	run  func(context.Context, tunRevalidationTrigger)
+	wake     chan struct{}
+	run      tunRevalidationRunFunc
+	terminal tunRevalidationTerminalFunc
 
 	mu             sync.Mutex
 	pendingTrigger tunRevalidationTrigger
@@ -27,12 +31,22 @@ type tunRevalidationCoordinator struct {
 }
 
 func newTunRevalidationCoordinator(run func(context.Context, tunRevalidationTrigger)) *tunRevalidationCoordinator {
+	return newTunRevalidationOutcomeCoordinator(func(ctx context.Context, trigger tunRevalidationTrigger) tunRevalidationOutcome {
+		if run != nil {
+			run(ctx, trigger)
+		}
+		return tunRevalidationOutcome{}
+	}, nil)
+}
+
+func newTunRevalidationOutcomeCoordinator(run tunRevalidationRunFunc, terminal tunRevalidationTerminalFunc) *tunRevalidationCoordinator {
 	if run == nil {
-		run = func(context.Context, tunRevalidationTrigger) {}
+		run = func(context.Context, tunRevalidationTrigger) tunRevalidationOutcome { return tunRevalidationOutcome{} }
 	}
 	return &tunRevalidationCoordinator{
-		wake: make(chan struct{}, 1),
-		run:  run,
+		wake:     make(chan struct{}, 1),
+		run:      run,
+		terminal: terminal,
 	}
 }
 
@@ -94,9 +108,12 @@ func (c *tunRevalidationCoordinator) Run(ctx context.Context) {
 			}
 			probeCtx, cancel := context.WithCancel(ctx)
 			c.setActive(trigger, cancel)
-			c.run(probeCtx, trigger)
+			outcome := c.run(probeCtx, trigger)
 			cancel()
 			c.clearActive()
+			if c.terminal != nil && outcome.needsLifecycleCleanup() {
+				c.terminal(ctx, outcome)
+			}
 		}
 	}
 }
