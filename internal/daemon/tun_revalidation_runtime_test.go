@@ -88,7 +88,7 @@ func TestTunRevalidationRuntimeMapsCancellationAndTimeout(t *testing.T) {
 	changed.Gateway = "192.0.2.254"
 
 	for _, tc := range []struct {
-		name           string
+		name            string
 		verificationErr error
 		want            api.TunHealthClassification
 	}{
