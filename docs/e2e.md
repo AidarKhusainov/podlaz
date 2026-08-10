@@ -223,12 +223,20 @@ than the release gate.
 
 Attribution is fail-closed. `scripts/e2e/lib/tun_soak_metrics.py` identifies
 podlazd from the systemd `MainPID`, identifies the exact supervised Xray child
-from the one committed Podlaz TUN transaction, verifies executable identity and
-process start time, and requires both processes to belong to the same
-`podlazd.service` cgroup. A foreign VPN/core process aborts the clean run rather
-than contaminating accounting. Exact PIDs, transaction metadata, generated
-configuration references, process command data, and host networking evidence
-remain in the private E2E directory and are removed before artifact scanning.
+from the one committed Podlaz TUN transaction, verifies executable identity,
+process start time, and the direct child relationship to the exact daemon. Both
+processes must belong to the same `podlazd.service` cgroup. A foreign VPN/core
+process aborts the clean run rather than contaminating accounting. Exact PIDs,
+transaction metadata, generated configuration references, process command data,
+and host networking evidence remain in the private E2E directory and are
+removed before artifact scanning.
+
+The bounded current-health convergence gate runs after each connect and during
+periodic status checks. It retries only structurally valid `revalidating` or
+transient `degraded` publications. It accepts only `verified` with status exit `0`;
+`inactive`, `cleanup-required`, malformed evidence, command failure, or timeout
+fails closed. Raw status output remains private, while public failure evidence
+contains only an allowlisted structural verdict.
 
 The following observations have distinct authority and must not be conflated:
 

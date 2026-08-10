@@ -63,6 +63,7 @@ class AttributionError(RuntimeError):
 @dataclass(frozen=True)
 class ProcessIdentity:
     pid: int
+    parent_pid: int
     start_time_ticks: int
     exe: str
     cgroup_path: str
@@ -97,7 +98,7 @@ def _read_exe(proc_root: Path, pid: int) -> str:
         raise AttributionError("process executable identity is unavailable") from exc
 
 
-def _parse_proc_stat(text: str) -> tuple[int, int, int]:
+def _parse_proc_stat(text: str) -> tuple[int, int, int, int]:
     close = text.rfind(")")
     if close <= 0:
         raise AttributionError("malformed process stat record")
@@ -107,18 +108,19 @@ def _parse_proc_stat(text: str) -> tuple[int, int, int]:
     if len(fields) <= 19:
         raise AttributionError("incomplete process stat record")
     try:
+        parent_pid = int(fields[1])
         utime = int(fields[11])
         stime = int(fields[12])
         start_time = int(fields[19])
     except ValueError as exc:
         raise AttributionError("non-numeric process stat record") from exc
-    if min(utime, stime, start_time) < 0:
+    if parent_pid < 0 or min(utime, stime, start_time) < 0:
         raise AttributionError("negative process stat value")
-    return utime, stime, start_time
+    return utime, stime, start_time, parent_pid
 
 
 def _read_start_time(proc_root: Path, pid: int) -> int:
-    _, _, start_time = _parse_proc_stat(_read_text(proc_root / str(pid) / "stat"))
+    _, _, start_time, _ = _parse_proc_stat(_read_text(proc_root / str(pid) / "stat"))
     return start_time
 
 
@@ -150,9 +152,11 @@ def _process_identity(proc_root: Path, pid: int, expected_exe: str) -> ProcessId
     actual_exe = _read_exe(proc_root, pid)
     if actual_exe != expected_exe:
         raise AttributionError("process executable identity does not match the installed package")
+    _, _, start_time, parent_pid = _parse_proc_stat(_read_text(proc_root / str(pid) / "stat"))
     return ProcessIdentity(
         pid=pid,
-        start_time_ticks=_read_start_time(proc_root, pid),
+        parent_pid=parent_pid,
+        start_time_ticks=start_time,
         exe=actual_exe,
         cgroup_path=_read_unified_cgroup_path(proc_root, pid),
     )
@@ -276,6 +280,8 @@ def discover_active_identity(
     xray = _process_identity(proc_root, xray_pid, xray_exe)
     _assert_config_reference(_read_cmdline(proc_root, xray_pid), config_ref)
 
+    if xray.parent_pid != daemon.pid:
+        raise AttributionError("transaction Xray process is not parented by podlazd")
     if xray.cgroup_path != daemon.cgroup_path:
         raise AttributionError("supervised Xray child is outside the podlazd service cgroup")
 
@@ -314,8 +320,11 @@ def _parse_kib_mapping(path: Path) -> dict[str, int]:
 def _assert_identity_current(identity: ProcessIdentity, proc_root: Path) -> None:
     if _read_exe(proc_root, identity.pid) != identity.exe:
         raise AttributionError("process executable identity changed during soak")
-    if _read_start_time(proc_root, identity.pid) != identity.start_time_ticks:
+    _, _, start_time, parent_pid = _parse_proc_stat(_read_text(proc_root / str(identity.pid) / "stat"))
+    if start_time != identity.start_time_ticks:
         raise AttributionError("process identity changed during soak")
+    if parent_pid != identity.parent_pid:
+        raise AttributionError("process parent identity changed during soak")
     if _read_unified_cgroup_path(proc_root, identity.pid) != identity.cgroup_path:
         raise AttributionError("process cgroup identity changed during soak")
 
@@ -332,7 +341,7 @@ def _process_metrics(identity: ProcessIdentity, proc_root: Path) -> dict[str, in
     process = proc_root / str(identity.pid)
     status = _parse_kib_mapping(process / "status")
     smaps = _parse_kib_mapping(process / "smaps_rollup") if (process / "smaps_rollup").exists() else {}
-    utime, stime, _ = _parse_proc_stat(_read_text(process / "stat"))
+    utime, stime, _, _ = _parse_proc_stat(_read_text(process / "stat"))
     rss = smaps.get("Rss", status.get("VmRSS"))
     if rss is None:
         raise AttributionError("process RSS is unavailable")

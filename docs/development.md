@@ -53,8 +53,9 @@ The resource-soak attribution and contract helpers are deterministic Python/shel
 checks and can be exercised without privileged host mutation:
 
 ```bash
-python3 -m py_compile scripts/e2e/lib/tun_soak_metrics.py
+python3 -m py_compile scripts/e2e/lib/tun_soak_metrics.py scripts/e2e/lib/tun_soak_status.py
 python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics
+python3 -m unittest scripts.e2e.tests.test_tun_soak_status
 python3 -m unittest scripts.e2e.tests.test_tun_resource_soak_contract
 bash -n scripts/e2e/tun-resource-soak.sh
 ```

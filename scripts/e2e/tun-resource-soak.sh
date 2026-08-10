@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
+# shellcheck source=lib/tun_soak_health.sh
+source "${SCRIPT_DIR}/lib/tun_soak_health.sh"
 
 require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep hostname id ip mktemp python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
 
@@ -25,6 +27,8 @@ require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep
 : "${PODLAZ_E2E_SOAK_RECONNECT_MEMORY_TOLERANCE_BYTES:=67108864}"
 : "${PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE:=2}"
 : "${PODLAZ_E2E_SOAK_POLICY_FILE:=${SCRIPT_DIR}/tun-resource-soak-policy.json}"
+: "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:=75}"
+: "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:=1}"
 
 if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; then
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
@@ -45,7 +49,9 @@ for numeric_setting in \
   PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES \
   PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS \
   PODLAZ_E2E_SOAK_RECONNECT_SAMPLES \
-  PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS; do
+  PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS \
+  PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS \
+  PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS; do
   validate_positive_integer "${numeric_setting}" "${!numeric_setting}"
 done
 for numeric_setting in \
@@ -66,6 +72,7 @@ DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 TRANSACTION_DIR="/run/podlaz/transactions"
 METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
+TUN_SOAK_STATUS_TOOL="${SCRIPT_DIR}/lib/tun_soak_status.py"
 NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 
 setup_isolated_xdg "tun-resource-soak"
@@ -93,6 +100,7 @@ SOAK_STARTED_SECONDS=0
 SOAK_PHASE="initialization"
 SOAK_COMMAND_EXIT=""
 SOAK_COMMAND_CLASSIFICATION=""
+SOAK_STATUS_VERDICT=""
 
 append_sensitive_value() {
   local value="${1:-}"
@@ -194,7 +202,8 @@ write_configuration() {
     "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}" \
     "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}" \
     "${PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES}" \
-    "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES}" <<'PY'
+    "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES}" \
+    "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS}" <<'PY'
 import json
 import os
 import sys
@@ -205,6 +214,7 @@ keys = (
     "sample_interval_seconds",
     "doctor_every_samples",
     "reconnect_samples",
+    "tun_health_timeout_seconds",
 )
 payload = {key: int(value) for key, value in zip(keys, sys.argv[2:], strict=True)}
 temporary = path + ".tmp"
@@ -316,7 +326,7 @@ disconnect_and_sample_cleanup() {
 }
 
 run_active_soak() {
-  local sample_index=0 elapsed_seconds=0 dns_stdout dns_stderr curl_stdout curl_stderr status_stdout status_stderr doctor_stdout doctor_stderr
+  local sample_index=0 elapsed_seconds=0 dns_stdout dns_stderr curl_stdout curl_stderr doctor_stdout doctor_stderr
   SOAK_PHASE="active-soak"
   while ((elapsed_seconds < PODLAZ_E2E_SOAK_DURATION_SECONDS)); do
     dns_stdout="${SOAK_PRIVATE_DIR}/active-dns.stdout"
@@ -326,9 +336,7 @@ run_active_soak() {
     curl_stderr="${SOAK_PRIVATE_DIR}/active-https.stderr"
     curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" >"${curl_stdout}" 2>"${curl_stderr}" || fail "active soak HTTPS probe failed"
     append_sensitive_value "$(cat "${curl_stdout}")"
-    status_stdout="${SOAK_PRIVATE_DIR}/active-status.stdout"
-    status_stderr="${SOAK_PRIVATE_DIR}/active-status.stderr"
-    run_installed_podlaz status >"${status_stdout}" 2>"${status_stderr}" || fail "active soak status became unhealthy"
+    wait_for_verified_tun_status active
     if ((sample_index % PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES == 0)); then
       doctor_stdout="${SOAK_PRIVATE_DIR}/active-doctor.stdout"
       doctor_stderr="${SOAK_PRIVATE_DIR}/active-doctor.stderr"
@@ -353,6 +361,7 @@ run_reconnect_probe() {
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${SOAK_PRIVATE_DIR}/reconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect.stderr" || \
     fail "immediate reconnect failed"
   assert_tun_package_address_present reconnect || fail "reconnect TUN address is not authoritative"
+  wait_for_verified_tun_status reconnect
   SOAK_PHASE="reconnect-attribution"
   daemon_pid="$(daemon_main_pid)"
   sudo -n python3 "${METRICS_TOOL}" discover \
@@ -374,8 +383,7 @@ run_reconnect_probe() {
       --session 2 \
       --sample-index "${sample_index}" \
       --elapsed-seconds "${elapsed_seconds}" || fail "reconnect structural resource sample failed"
-    run_installed_podlaz status >"${SOAK_PRIVATE_DIR}/reconnect-status.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-status.stderr" || \
-      fail "reconnect status became unhealthy"
+    wait_for_verified_tun_status reconnect
     timeout --signal=TERM --kill-after=5s 30s sudo -n resolvectl --cache=no --interface=podlaz0 -4 query "${PODLAZ_E2E_DNS_CHECK_HOST}" >"${SOAK_PRIVATE_DIR}/reconnect-dns.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-dns.stderr" || \
       fail "reconnect DNS probe failed"
     curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" >"${SOAK_PRIVATE_DIR}/reconnect-https.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-https.stderr" || \
@@ -416,13 +424,13 @@ write_public_report() {
 
 write_failure_evidence() {
   local harness_exit_code="$1"
-  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${harness_exit_code}" <<'PY'
+  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${SOAK_STATUS_VERDICT}" "${harness_exit_code}" <<'PY'
 import json
 import os
 import re
 import sys
 
-path, phase, command_exit_text, command_classification_text, harness_exit_text = sys.argv[1:]
+path, phase, command_exit_text, command_classification_text, status_verdict_text, harness_exit_text = sys.argv[1:]
 allowed_phases = {
     "initialization",
     "cleanup-preflight",
@@ -477,12 +485,26 @@ if command_classification_text:
     if command_classification_text not in allowed_classifications:
         raise SystemExit("invalid command classification")
     command_classification = command_classification_text
+allowed_status_verdicts = {
+    "command-error",
+    "invalid-status",
+    "retry-degraded-timeout",
+    "retry-revalidating-timeout",
+    "terminal-cleanup-required",
+    "terminal-inactive",
+}
+status_verdict = None
+if status_verdict_text:
+    if status_verdict_text not in allowed_status_verdicts:
+        raise SystemExit("invalid TUN status verdict")
+    status_verdict = status_verdict_text
 payload = {
     "schema_version": 1,
     "phase": phase,
     "harness_exit_code": harness_exit_code,
     "command_exit_code": command_exit_code,
     "command_classification": command_classification,
+    "status_verdict": status_verdict,
 }
 temporary = path + ".tmp"
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
@@ -583,8 +605,7 @@ SOAK_COMMAND_EXIT=""
 run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${SOAK_PRIVATE_DIR}/session-one-connect.stdout" 2>"${SOAK_PRIVATE_DIR}/session-one-connect.stderr" || \
   fail "resource-soak TUN connect failed"
 assert_tun_package_address_present active || fail "active TUN address is not authoritative"
-run_installed_podlaz status >"${SOAK_PRIVATE_DIR}/post-connect-status.stdout" 2>"${SOAK_PRIVATE_DIR}/post-connect-status.stderr" || \
-  fail "post-connect TUN status is not healthy"
+wait_for_verified_tun_status post-connect
 SOAK_PHASE="active-attribution"
 DAEMON_PID="$(daemon_main_pid)"
 sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" discover \
@@ -621,5 +642,6 @@ assert_artifacts_do_not_contain_sensitive_values \
 SOAK_PHASE="completed"
 SOAK_COMMAND_EXIT=""
 SOAK_COMMAND_CLASSIFICATION=""
+SOAK_STATUS_VERDICT=""
 rm -f -- "${FAILURE_REPORT}"
 log "installed-package TUN resource soak completed"

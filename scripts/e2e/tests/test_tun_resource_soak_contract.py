@@ -41,10 +41,22 @@ class TunResourceSoakContractTests(unittest.TestCase):
         body = self.function_body("run_active_soak", "\n}\n\nrun_reconnect_probe")
         self.assertIn("resolvectl --cache=no --interface=podlaz0", body)
         self.assertIn("curl -4 -fsS --max-time", body)
-        self.assertIn("run_installed_podlaz status", body)
+        self.assertIn("wait_for_verified_tun_status active", body)
         self.assertIn("run_installed_podlaz doctor --tun", body)
         self.assertIn("PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES", body)
         self.assertNotIn("&", body)
+
+
+    def test_status_checks_use_bounded_verified_health_convergence(self) -> None:
+        text = self.script_text()
+        self.assertIn('source "${SCRIPT_DIR}/lib/tun_soak_health.sh"', text)
+        self.assertIn('PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS', text)
+        self.assertIn('wait_for_verified_tun_status post-connect', text)
+        self.assertIn('wait_for_verified_tun_status active', text)
+        self.assertIn('wait_for_verified_tun_status reconnect', text)
+        self.assertNotIn('run_installed_podlaz status', text)
+        writer = self.function_body("write_failure_evidence", "\n}\n\ncleanup")
+        self.assertIn('"status_verdict"', writer)
 
     def test_disconnect_proves_exact_child_gone_before_cleanup_sample(self) -> None:
         body = self.function_body("disconnect_and_sample_cleanup", "\n}\n\nrun_active_soak")
@@ -125,8 +137,11 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("peak memory", e2e)
         self.assertIn("cgroup total", e2e)
         self.assertIn("exact supervised Xray", e2e)
+        self.assertIn("direct child", e2e)
+        self.assertIn("bounded current-health convergence", e2e)
         self.assertIn("metric-specific", e2e)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
+        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_status", development)
 
 
 if __name__ == "__main__":

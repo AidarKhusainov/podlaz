@@ -302,6 +302,7 @@ PUBLIC_CONFIGURATION_FIELDS = frozenset(
         "sample_interval_seconds",
         "doctor_every_samples",
         "reconnect_samples",
+        "tun_health_timeout_seconds",
     }
 )
 

@@ -38,6 +38,7 @@ class TunSoakMetricsTests(unittest.TestCase):
         tasks: int,
         utime: int = 10,
         stime: int = 5,
+        parent_pid: int = 1,
         cmdline: tuple[str, ...] = (),
     ) -> None:
         process = self.proc / str(pid)
@@ -62,6 +63,7 @@ class TunSoakMetricsTests(unittest.TestCase):
         # fields 3..52 after the parenthesized comm; field 14/15 are CPU ticks,
         # field 22 is process start time.
         rest = ["S"] + ["0"] * 49
+        rest[1] = str(parent_pid)
         rest[11] = str(utime)
         rest[12] = str(stime)
         rest[19] = str(start_time)
@@ -69,6 +71,14 @@ class TunSoakMetricsTests(unittest.TestCase):
             f"{pid} ({comm} worker) {' '.join(rest)}\n",
             encoding="utf-8",
         )
+
+    def rewrite_parent_pid(self, pid: int, parent_pid: int) -> None:
+        stat_path = self.proc / str(pid) / "stat"
+        text = stat_path.read_text(encoding="utf-8").rstrip("\n")
+        close = text.rfind(")")
+        fields = text[close + 1 :].strip().split()
+        fields[1] = str(parent_pid)
+        stat_path.write_text(f"{text[: close + 1]} {' '.join(fields)}\n", encoding="utf-8")
 
     def write_cgroup(self, relative: str) -> None:
         path = self.cgroup / relative.lstrip("/")
@@ -165,6 +175,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             threads=27,
             fds=21,
             tasks=27,
+            parent_pid=101,
             cmdline=("/usr/lib/podlaz/xray", "run", "-config", config_ref),
         )
         self.write_transaction(202, config_ref)
@@ -198,6 +209,49 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertEqual(37, sample["cgroup"]["pids_current"])
         self.assertEqual(15, sample["podlazd"]["cpu_time_ticks"])
 
+    def test_rejects_transaction_child_not_parented_by_daemon(self) -> None:
+        cgroup_path = "/system.slice/podlazd.service"
+        config_ref = "/run/podlaz/generated/xray.json"
+        self.write_cgroup(cgroup_path)
+        self.write_process(
+            101,
+            exe="/usr/bin/podlazd",
+            comm="podlazd",
+            cgroup_path=cgroup_path,
+            start_time=1001,
+            rss_kib=32000,
+            pss_kib=30000,
+            threads=8,
+            fds=12,
+            tasks=8,
+        )
+        self.write_process(
+            202,
+            exe="/usr/lib/podlaz/xray",
+            comm="xray",
+            cgroup_path=cgroup_path,
+            start_time=2002,
+            rss_kib=180000,
+            pss_kib=170000,
+            threads=27,
+            fds=21,
+            tasks=27,
+            parent_pid=404,
+            cmdline=("/usr/lib/podlaz/xray", "run", "-config", config_ref),
+        )
+        self.write_transaction(202, config_ref)
+
+        with self.assertRaisesRegex(tun_soak_metrics.AttributionError, "not parented by podlazd"):
+            tun_soak_metrics.discover_active_identity(
+                daemon_pid=101,
+                transaction_dir=self.transactions,
+                proc_root=self.proc,
+                cgroup_root=self.cgroup,
+                daemon_exe="/usr/bin/podlazd",
+                xray_exe="/usr/lib/podlaz/xray",
+                expected_cgroup_suffix="/podlazd.service",
+            )
+
     def test_rejects_foreign_xray_before_baseline(self) -> None:
         cgroup_path = "/system.slice/podlazd.service"
         config_ref = "/run/podlaz/generated/xray.json"
@@ -225,6 +279,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             threads=27,
             fds=21,
             tasks=27,
+            parent_pid=101,
             cmdline=("/usr/lib/podlaz/xray", "run", "-config", config_ref),
         )
         self.write_process(
@@ -279,6 +334,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             threads=27,
             fds=21,
             tasks=27,
+            parent_pid=101,
             cmdline=(
                 "/usr/lib/podlaz/xray",
                 "run",
@@ -328,6 +384,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             threads=27,
             fds=21,
             tasks=27,
+            parent_pid=101,
             cmdline=("/usr/lib/podlaz/xray", "run", "-config", config_ref),
         )
         self.write_transaction(202, config_ref)
@@ -341,6 +398,60 @@ class TunSoakMetricsTests(unittest.TestCase):
                 daemon_exe="/usr/bin/podlazd",
                 xray_exe="/usr/lib/podlaz/xray",
                 expected_cgroup_suffix="/podlazd.service",
+            )
+
+    def test_sampling_rejects_supervised_child_reparenting(self) -> None:
+        cgroup_path = "/system.slice/podlazd.service"
+        config_ref = "/run/podlaz/generated/xray.json"
+        self.write_cgroup(cgroup_path)
+        self.write_process(
+            101,
+            exe="/usr/bin/podlazd",
+            comm="podlazd",
+            cgroup_path=cgroup_path,
+            start_time=1001,
+            rss_kib=32000,
+            pss_kib=30000,
+            threads=8,
+            fds=12,
+            tasks=8,
+        )
+        self.write_process(
+            202,
+            exe="/usr/lib/podlaz/xray",
+            comm="xray",
+            cgroup_path=cgroup_path,
+            start_time=2002,
+            rss_kib=180000,
+            pss_kib=170000,
+            threads=27,
+            fds=21,
+            tasks=27,
+            parent_pid=101,
+            cmdline=("/usr/lib/podlaz/xray", "run", "-config", config_ref),
+        )
+        self.write_transaction(202, config_ref)
+        identity = tun_soak_metrics.discover_active_identity(
+            daemon_pid=101,
+            transaction_dir=self.transactions,
+            proc_root=self.proc,
+            cgroup_root=self.cgroup,
+            daemon_exe="/usr/bin/podlazd",
+            xray_exe="/usr/lib/podlaz/xray",
+            expected_cgroup_suffix="/podlazd.service",
+        )
+
+        self.rewrite_parent_pid(202, 1)
+
+        with self.assertRaisesRegex(tun_soak_metrics.AttributionError, "parent identity changed"):
+            tun_soak_metrics.collect_sample(
+                identity,
+                proc_root=self.proc,
+                cgroup_root=self.cgroup,
+                phase="active",
+                session=1,
+                sample_index=0,
+                elapsed_seconds=0,
             )
 
     def test_summarizes_component_specific_sustained_growth_without_using_peak_as_a_signal(self) -> None:
@@ -389,16 +500,22 @@ class TunSoakMetricsTests(unittest.TestCase):
 
 
     def test_reconnect_requires_a_new_supervised_child_identity(self) -> None:
-        daemon = tun_soak_metrics.ProcessIdentity(101, 1001, "/usr/bin/podlazd", "/system.slice/podlazd.service")
+        daemon = tun_soak_metrics.ProcessIdentity(
+            pid=101, parent_pid=1, start_time_ticks=1001, exe="/usr/bin/podlazd", cgroup_path="/system.slice/podlazd.service"
+        )
         first = tun_soak_metrics.ActiveIdentity(
             daemon=daemon,
-            xray=tun_soak_metrics.ProcessIdentity(202, 2002, "/usr/lib/podlaz/xray", "/system.slice/podlazd.service"),
+            xray=tun_soak_metrics.ProcessIdentity(
+                pid=202, parent_pid=101, start_time_ticks=2002, exe="/usr/lib/podlaz/xray", cgroup_path="/system.slice/podlazd.service"
+            ),
             transaction_file="/run/podlaz/transactions/private-a.json",
             config_ref="/run/podlaz/generated/xray.json",
         )
         replacement = tun_soak_metrics.ActiveIdentity(
             daemon=daemon,
-            xray=tun_soak_metrics.ProcessIdentity(303, 3003, "/usr/lib/podlaz/xray", "/system.slice/podlazd.service"),
+            xray=tun_soak_metrics.ProcessIdentity(
+                pid=303, parent_pid=101, start_time_ticks=3003, exe="/usr/lib/podlaz/xray", cgroup_path="/system.slice/podlazd.service"
+            ),
             transaction_file="/run/podlaz/transactions/private-b.json",
             config_ref="/run/podlaz/generated/xray.json",
         )
@@ -582,6 +699,7 @@ class TunSoakMetricsTests(unittest.TestCase):
                 "sample_interval_seconds": 600,
                 "doctor_every_samples": 3,
                 "reconnect_samples": 1,
+                "tun_health_timeout_seconds": 75,
             },
             policy={
                 "schema_version": 1,
@@ -598,6 +716,7 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertTrue(report["lifecycle"]["cleanup"]["ok"])
         self.assertTrue(report["lifecycle"]["reconnect"]["ok"])
         self.assertIsNone(report["trend"]["reproduced_growth_candidate"])
+        self.assertEqual(75, report["configuration"]["tun_health_timeout_seconds"])
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("private-transaction-id", encoded)
         self.assertNotIn("/run/podlaz", encoded)
