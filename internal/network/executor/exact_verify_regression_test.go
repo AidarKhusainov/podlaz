@@ -32,6 +32,19 @@ func TestNftablesExecutorVerifyRejectsChainHookPriorityPolicyDrift(t *testing.T)
 	}
 }
 
+func TestNftablesExecutorVerifyAcceptsCanonicalDefaultRejectRendering(t *testing.T) {
+	plan := firewallPlanForTest()
+	output := strings.Replace(
+		nftablesListOutputForTest(),
+		`oifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"`,
+		`oifname != "podlaz0" counter packets 0 bytes 0 reject with icmpx type port-unreachable comment "podlaz:firewall:kill-switch"`,
+		1,
+	)
+	if err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan); err != nil {
+		t.Fatalf("canonical nft rendering of the default inet reject must remain semantically exact: %v", err)
+	}
+}
+
 func TestResolvedDNSExecutorVerifyRejectsExtraDNSServer(t *testing.T) {
 	plan := dnsPlanForTest()
 	output := strings.Replace(resolvedStatusForTest, "DNS Servers: 1.1.1.1", "DNS Servers: 1.1.1.1 9.9.9.9", 1)
