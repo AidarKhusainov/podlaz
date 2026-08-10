@@ -164,7 +164,7 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 
 	r.mu.Lock()
 	sameFingerprint := r.hasFingerprint && observation.fingerprint == r.fingerprint
-	mustReproveCurrentGeneration := trigger == tunRevalidationTriggerResume || r.health == nil || r.health.State != api.TunHealthVerified
+	mustReproveCurrentGeneration := trigger == tunRevalidationTriggerResume || trigger == tunRevalidationTriggerSourceResync || r.health == nil || r.health.State != api.TunHealthVerified
 	if sameFingerprint && !mustReproveCurrentGeneration {
 		r.mu.Unlock()
 		return
