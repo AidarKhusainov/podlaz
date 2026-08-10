@@ -50,15 +50,15 @@ func TestDaemonShutdownCancelsGenerationOneRevalidationBeforeDisconnect(t *testi
 }
 
 type generationOneCancellationHarness struct {
-	t              *testing.T
-	lifecycle      lifecycleService
-	base           *generationOneLifecycleFake
-	started        chan struct{}
-	cancelled      chan struct{}
-	release        chan struct{}
-	connectDone    chan struct{}
-	cancelControl  context.CancelFunc
-	cleanupOnce    sync.Once
+	t             *testing.T
+	lifecycle     lifecycleService
+	base          *generationOneLifecycleFake
+	started       chan struct{}
+	cancelled     chan struct{}
+	release       chan struct{}
+	connectDone   chan struct{}
+	cancelControl context.CancelFunc
+	cleanupOnce   sync.Once
 }
 
 func newGenerationOneCancellationHarness(t *testing.T) *generationOneCancellationHarness {
