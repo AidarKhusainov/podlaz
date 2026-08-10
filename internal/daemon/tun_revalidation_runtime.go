@@ -71,6 +71,7 @@ type tunRevalidationRuntime struct {
 	health         *api.TunHealthStatus
 	fingerprint    tunUplinkFingerprint
 	hasFingerprint bool
+	initialPending bool
 }
 
 func newTunRevalidationRuntime(inspect tunRevalidationInspectFunc, verify tunRevalidationVerifyFunc) *tunRevalidationRuntime {
@@ -87,13 +88,56 @@ func newTunRevalidationRuntime(inspect tunRevalidationInspectFunc, verify tunRev
 	return &tunRevalidationRuntime{inspect: inspect, verify: verify}
 }
 
+// PrepareInitialize invalidates any old fingerprint and publishes fail-closed
+// generation-one health synchronously with the successful connect lifecycle.
+// The expensive proof itself is scheduled through the coordinator after the
+// lifecycle mutation releases its authority token.
+func (r *tunRevalidationRuntime) PrepareInitialize() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.fingerprint = tunUplinkFingerprint{}
+	r.hasFingerprint = false
+	r.initialPending = true
+	r.health = &api.TunHealthStatus{
+		State:             api.TunHealthRevalidating,
+		NetworkGeneration: 1,
+		Classification:    api.TunHealthUplinkRevalidating,
+	}
+	r.mu.Unlock()
+}
+
+// InitializePending runs generation-one proof only while the current lifecycle
+// still requires it. Disconnect clears the pending bit before the coordinator
+// can execute a requeued stale initial trigger. Mutation cancellation keeps the
+// bit set so a failed/replaced lifecycle can obtain one fresh post-mutation proof.
+func (r *tunRevalidationRuntime) InitializePending(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	r.mu.RLock()
+	pending := r.initialPending
+	r.mu.RUnlock()
+	if !pending {
+		return
+	}
+
+	err := r.Initialize(ctx)
+	r.mu.Lock()
+	if !errors.Is(err, context.Canceled) {
+		r.initialPending = false
+	}
+	r.mu.Unlock()
+}
+
 // Initialize establishes generation 1 from one fresh observation and verifies
 // that exact observation before publishing verified health. Connect-time
 // verification proves the pre-commit state, but it cannot authorize a later
 // fingerprint if the underlying uplink changes between commit and publication.
-func (r *tunRevalidationRuntime) Initialize(ctx context.Context) {
+func (r *tunRevalidationRuntime) Initialize(ctx context.Context) error {
 	if r == nil {
-		return
+		return nil
 	}
 	observation, err := r.inspect(ctx)
 	if err != nil {
@@ -102,7 +146,7 @@ func (r *tunRevalidationRuntime) Initialize(ctx context.Context) {
 		r.hasFingerprint = false
 		r.health = healthForObservationError(1, err)
 		r.mu.Unlock()
-		return
+		return err
 	}
 
 	r.mu.Lock()
@@ -120,9 +164,10 @@ func (r *tunRevalidationRuntime) Initialize(ctx context.Context) {
 	defer r.mu.Unlock()
 	if err == nil {
 		r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
-		return
+		return nil
 	}
 	r.health = healthForVerificationError(1, err)
+	return err
 }
 
 func (r *tunRevalidationRuntime) Clear() {
@@ -133,6 +178,7 @@ func (r *tunRevalidationRuntime) Clear() {
 	r.health = nil
 	r.fingerprint = tunUplinkFingerprint{}
 	r.hasFingerprint = false
+	r.initialPending = false
 	r.mu.Unlock()
 }
 
