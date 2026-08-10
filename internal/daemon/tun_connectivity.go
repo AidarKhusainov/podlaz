@@ -171,9 +171,13 @@ func selectTunProbeHostWithConfig(plan planner.TunPlan, probe tunConnectivityPro
 	return probe.RouteHost
 }
 
+func tunRouteLookupCommand(host string) (string, []string) {
+	return "ip", []string{"-4", "route", "get", host}
+}
+
 func defaultLookupTunRouteForProbe(ctx context.Context, host, tunDevice string) error {
-	_ = runDiagnosticCommand(ctx, "ip", "-4", "route", "flush", "cache")
-	cmd := exec.CommandContext(ctx, "ip", "-4", "route", "get", host)
+	name, args := tunRouteLookupCommand(host)
+	cmd := exec.CommandContext(ctx, name, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip -4 route get %s: %w: %s%s", host, err, sanitizeConnectivityDiagnostic(string(output)), tunRouteDiagnostics(host, tunDevice))
