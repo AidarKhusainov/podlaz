@@ -124,7 +124,7 @@ func markUnsupported(s *Snapshot, tunNames []string) {
 		s.TunDevices = append(s.TunDevices, TunDevice{Name: name, Status: StatusUnsupported, Detail: detail})
 	}
 	s.IPv4 = findingWithDetail(StatusUnsupported, "IPv4 route assumptions are unsupported on this platform", detail)
-	s.IPv6 = findingWithDetail(StatusUnsupported, "IPv6 route inspection unsupported", detail)
+	s.IPv6 = findingWithDetail(StatusUnsupported, "IPv6 route assumptions are unsupported on this platform", detail)
 	s.IPv4Addresses = IPAddressInventory{Inspection: findingWithDetail(StatusUnsupported, "IPv4 address inventory unsupported", detail)}
 	s.IPv4Routes = RouteInventory{Inspection: findingWithDetail(StatusUnsupported, "IPv4 route inventory unsupported", detail)}
 }
