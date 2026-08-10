@@ -1,4 +1,4 @@
-.TH PODLAZ 1 "July 2026" "podlaz" "User Commands"
+.TH PODLAZ 1 "August 2026" "podlaz" "User Commands"
 .SH NAME
 podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .SH SYNOPSIS
@@ -246,6 +246,38 @@ concurrency limit.
 .TP
 .B status
 Print daemon-backed status when available, otherwise local read-only status.
+For an active TUN session, durable transaction state and current network health
+are separate facts. A transaction may remain
+.B committed
+while current health is
+.BR verified ,
+.BR revalidating ,
+.BR degraded ,
+or
+.BR cleanup-required .
+The daemon also publishes a positive
+.B network_generation
+for the current underlying-network generation and a stable classification while
+health is not verified. Generation 1 is published as
+.B verified
+only after the exact post-commit authoritative observation has passed the same
+canonical state and connectivity verification used for later revalidation.
+.PP
+Suspend/resume, underlying default-route interface or gateway changes, relevant
+uplink-address changes, NetworkManager connection identity changes, and server
+bypass next-hop changes invalidate or reprove current evidence. Event payloads
+are hints only; the daemon collects a fresh snapshot. Resume and event-source
+reconnect force a same-generation reproof even when the fingerprint is
+unchanged. Events consumed or probes cancelled while connect, disconnect, or
+recovery has lifecycle priority are retained for one bounded post-mutation
+revalidation instead of being treated as successful no-ops.
+.PP
+An active TUN whose current health is not
+.B verified
+is diagnostic-unhealthy and
+.B podlaz status
+returns exit status 3. This does not rewrite the durable transaction state and
+does not by itself authorize cleanup or automatic repair.
 .TP
 .B doctor [--json]
 Print environment and runtime diagnostics.
@@ -286,7 +318,7 @@ exit status 1 with empty stdout and the exact bounded supported
 .B No such device
 stderr is accepted as idempotent cleanup. This includes the exact Ubuntu 24.04
 form
-.BR "Failed to resolve interface "podlaz0", ignoring: No such device" .
+.BR "Failed to resolve interface \"podlaz0\", ignoring: No such device" .
 Cancellation, deadline expiry, process launch failure, signal termination,
 permission denial, other exit codes, extra output, unrelated exit status 1, or
 different/unbounded output remains a failure. A fresh successful daemon scan is
@@ -355,7 +387,8 @@ Pass a journalctl-compatible time expression to
 .SH EXIT STATUS
 .TP
 .B 0
-Success.
+Success. For an active TUN status check, current TUN health must be
+.BR verified .
 .TP
 .B 1
 Runtime or operation failure.
@@ -364,7 +397,8 @@ Runtime or operation failure.
 Invalid usage, invalid flags or arguments, or deferred JSON output.
 .TP
 .B 3
-Diagnostic command found an unhealthy or unavailable state.
+Diagnostic command found an unhealthy or unavailable state, including an active
+TUN whose current health is revalidating, degraded, or cleanup-required.
 .TP
 .B 4
 Permission or authorization failure.
