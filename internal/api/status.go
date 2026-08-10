@@ -40,6 +40,7 @@ type StatusResponse struct {
 	ActiveTransactionID string              `json:"active_transaction_id,omitempty"`
 	Proxy               string              `json:"proxy"`
 	TUN                 string              `json:"tun"`
+	TunHealth           *TunHealthStatus    `json:"tun_health,omitempty"`
 	Routes              string              `json:"routes,omitempty"`
 	DNS                 string              `json:"dns,omitempty"`
 	Firewall            string              `json:"firewall,omitempty"`
@@ -95,6 +96,15 @@ func ValidateStatusResponse(s StatusResponse) error {
 		return errors.New("active_transaction_id requires profile_id")
 	case s.ActiveTransactionID != "" && s.RuntimeConfigPath == "":
 		return errors.New("active_transaction_id requires runtime_config_path")
+	case s.TunHealth != nil && s.Connection != "active":
+		return fmt.Errorf("tun_health requires active connection, got %q", s.Connection)
+	case s.TunHealth != nil && s.Mode != "tun":
+		return fmt.Errorf("tun_health requires TUN mode, got %q", s.Mode)
+	}
+	if s.TunHealth != nil {
+		if err := ValidateTunHealthStatus(*s.TunHealth); err != nil {
+			return err
+		}
 	}
 	for _, tx := range s.Transactions {
 		if err := ValidateTransactionStatus(tx); err != nil {

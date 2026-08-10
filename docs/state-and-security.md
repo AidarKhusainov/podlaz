@@ -50,6 +50,9 @@ Rules:
   inspection failures as separate concepts. A runtime warning does not become an
   inspection failure merely because it is transported through daemon status, and
   a clean active scan must not be described as an inactive lifecycle state.
+- For an active TUN, durable transaction state and current network health are
+  separate. `committed` is historical transaction evidence; current TUN health
+  is generation-specific evidence and is published independently.
 
 Packaged daemon access has two local socket boundaries. The filesystem socket is tried first. A transport-level permission failure may fall back to the packaged abstract socket, where the daemon can enforce peer-credential/polkit authorization without widening filesystem socket access. Once the daemon returns an HTTP, authorization, JSON, or schema error, that response is authoritative and must not be downgraded to a generic daemon-unavailable error.
 
@@ -89,13 +92,21 @@ immediately after mutation, and verifies one exact global IPv4 address on the
 same UP link identity. Rollback removes only that exact address after identity
 revalidation; inspection failure is not absence.
 
-For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification checks the target link, planned DNS servers, `~.`, `+DefaultRoute`, and absence of a foreign active `~.` owner. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are
+For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification requires the target link to have exactly the planned DNS-server set, exactly the planned route-only domain set (`~.`), `+DefaultRoute`, and no foreign active `~.` owner. Extra DNS servers or extra domains on the podlaz-owned link are ambiguous owned state and fail closed. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are
 ambiguous and fail closed. Static configuration is not DNS readiness. Before
 commit the daemon revalidates the exact address/link, performs an uncached IPv4
 query bound to the persisted numeric link index, revalidates that same identity
 after the query, performs a separate normal system resolution, and checks a
 bounded, deduplicated set of returned IPv4 addresses until at least one is
 proven to route through the planned TUN path.
+
+The canonical nftables verifier proves the whole podlaz-owned table composition,
+not merely the presence of expected rules. It requires exact chain cardinality,
+name, type, hook, numeric priority, policy, and exact ordered rule cardinality
+and content. An extra rule, extra chain, foreign rule inside the owned table, or
+base-chain metadata drift is ambiguous owned state and fails closed. Connect-time
+verification and current-health revalidation use this same canonical verifier;
+there is no weaker revalidation-specific verifier.
 
 Recovery observation of the same `systemd-resolved` state is tri-state and
 configuration-aware. Missing-link absence is accepted only through explicit,
@@ -127,6 +138,105 @@ separate exit-`1` cleanup contract defined below.
 
 Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
 
+## Current TUN health and network generations
+
+A committed TUN transaction is immutable history that apply, exact canonical
+composition verification, connectivity verification, and commit succeeded for a
+particular observed network state. It is not permanent evidence that the same
+host networking remains valid after suspend/resume, DHCP renewal, Wi-Fi roam,
+Ethernet changes, or route replacement.
+
+For an active committed TUN session the daemon therefore publishes separate
+current health:
+
+- `verified`: the exact current generation has passed canonical composition and
+  layered connectivity verification;
+- `revalidating`: current evidence is being reproved;
+- `degraded`: current evidence is incomplete, or a proved verification
+  failure/deadline is transiently published while terminal disposition is being
+  handed off; it is not a stable active end state for such terminal failures;
+- `cleanup-required`: normal fail-safe lifecycle cleanup failed or ownership is
+  otherwise unsafe, so durable exact ownership must remain available for
+  recovery.
+
+The daemon publishes a positive `network_generation`. Generation 1 is not
+published as `verified` merely because connect committed. After commit the daemon
+collects one fresh authoritative observation and runs the canonical verifier and
+layered connectivity verifier against that exact observation. Only successful
+verification publishes generation 1 as `verified`; failure is fail-closed. This
+closes the window where the uplink can change between connect-time verification
+and current health initialization.
+
+When fresh inspection has proved the active committed session and required
+verification fails or reaches its bounded deadline, old health evidence remains
+invalid and the daemon returns a typed terminal outcome. The read-only verifier
+finishes and releases revalidation authority before any mutation. The daemon then
+runs the existing bounded redacted pre-rollback diagnostic pipeline and attempts
+to persist the report with `rollback_status=pending` while the failed layer is
+still observable. Only after that diagnostic boundary does it invoke the normal
+bounded transaction-backed lifecycle `Disconnect`. Successful rollback and Xray
+quiescence converge to inactive state and finalize the report as `completed`.
+Cleanup failure finalizes the report as `failed`, preserves durable exact
+ownership, and leaves current health `cleanup-required` for recovery.
+
+This terminal disposition is not a general repair or cleanup authorization.
+Observation ambiguity, incomplete ownership proof, or foreign resources remain
+fail-closed and are not mutated by revalidation. Cancellation caused by an
+explicit user disconnect, recovery, or daemon shutdown is also non-terminal for
+this policy: the higher-priority lifecycle operation owns cleanup, so no second
+automatic disconnect is scheduled.
+
+Underlying network events are only scheduling hints. The authoritative
+fingerprint is derived from a fresh snapshot and contains the underlying default
+route interface and kernel ifindex, gateway, relevant global IPv4 addresses, the
+active NetworkManager connection identity when NetworkManager is present, and the
+server-bypass interface/gateway. Podlaz-owned `podlaz0`, policy routing,
+`systemd-resolved` link state, and nftables state are excluded so the daemon's own
+mutations cannot advance the generation.
+
+NetworkManager evidence is explicitly two-stage. Detection of NetworkManager
+does not imply successful active-connection inspection. If `nmcli ... general`
+succeeds but `nmcli ... connection show --active` fails or is otherwise unknown,
+active-connection identity is unknown and fingerprint derivation fails closed.
+An empty NetworkManager identity is authoritative only when the active-connection
+inventory itself was successfully inspected and contains no activated connection
+for the underlying uplink. This prevents a failed inventory read from becoming
+false proof that a managed connection is absent.
+
+A material fingerprint change advances the generation and sets the in-flight
+classification to `uplink_changed`. Ordinary duplicate link/address/route hints
+on an already `verified` unchanged fingerprint are coalesced and discarded after
+fresh observation. `PrepareForSleep(false)` and event-source resubscription are
+stronger freshness hints: they reprove the same generation even when the
+fingerprint is unchanged.
+
+The logind and rtnetlink watchers use subscribe-then-resync semantics. A watcher
+first establishes the D-Bus signal subscription or rtnetlink multicast bind and
+then queues one coalesced `source-resync` hint. The same sequence runs after a
+watcher failure and reconnect, so edges that occurred during the outage are
+covered by a fresh authoritative snapshot rather than relying on a future random
+event.
+
+Lifecycle mutation has priority without dropping evidence. Connect, disconnect,
+and recovery declare mutation intent before cancelling an in-flight revalidation.
+A trigger already consumed while mutation is pending waits for the complete
+mutation queue to become idle. If a mutation interrupts an in-flight probe, its
+trigger is merged back into the bounded pending queue before cancellation. After
+mutation, one fresh authoritative observation is taken and normal fingerprint/
+generation logic decides whether verification is needed. Daemon shutdown is
+terminal cancellation for event processing and intentionally does not requeue
+work; its cancellation is not converted into a second automatic disconnect.
+
+The verification phase of current-health revalidation is read-only. It may
+reconstruct the complete durable `desired_plan` to verify state that was required
+but pre-existed connect, but this never converts desired intent into rollback
+authority. It does not apply, repair, flush route cache, change NetworkManager,
+widen firewall policy, change DNS, recreate TUN state, or mutate foreign
+resources. The only post-verification mutation described by this contract is the
+normal exact transaction-backed lifecycle disconnect after a terminal proved
+verification failure/deadline and after revalidation authority has been released.
+Any future repair remains a separate evidence-gated design.
+
 For native Xray TUN startup, durable rollback order is:
 
 1. roll back podlaz-owned nftables and systemd-resolved state;
@@ -145,25 +255,30 @@ Generated runtime config and transaction ownership metadata must not be removed
 while process absence is unproven; a failed convergence remains cleanup-required
 for recovery.
 
-If `network-apply`, `network-verify`, or later connectivity verification fails,
+If `network-apply`, `network-verify`, connect-time connectivity verification, or
+a proved post-commit revalidation fails or reaches its terminal deadline,
 `podlazd` first attempts a short bounded, cancellation-aware safe diagnostic
-subset while the failing host state still exists. The report contains a stable
-classification, lifecycle `failure_phase`, and `rollback_status`. Known network
-apply and verification failures use `network_apply_failure` and
-`network_verify_failure`; timeout, cancellation, and internal failures retain
-their existing stable classifications. Overall report status such as `unhealthy`
-is never substituted for the classification taxonomy.
+subset while the relevant failed state still exists. The report contains a
+stable classification, lifecycle `failure_phase`, and `rollback_status`. Known
+network apply and verification failures use `network_apply_failure` and
+`network_verify_failure`; terminal revalidation retains its failed layered phase
+and current-health classification, including `revalidation_timeout` for the
+bounded deadline. Overall report status such as `unhealthy` is never substituted
+for the classification taxonomy.
 
 Optional diagnostics must never delay or suppress cleanup. Normal rollback runs
 with a separate daemon-owned bounded cleanup context derived without the
 requesting HTTP client's cancellation, so a disconnected client or expired
 request deadline cannot immediately cancel DNS, route, rule, nftables, or process
-cleanup. The historical report is first persisted with rollback status `pending`
-and is finalized to `completed` only after host rollback and Xray quiescence are
-both proven; otherwise it is finalized to `failed`. The returned error and daemon
-log expose the primary TUN classification and report location as separate fields
-when persistence succeeded, and user guidance uses the canonical
-`podlaz doctor --tun --verbose` command.
+cleanup. For terminal post-commit revalidation, this cleanup begins only after the
+read-only revalidation authority is released. The historical report is first
+persisted with rollback status `pending` and is finalized to `completed` only
+after host rollback and Xray quiescence are both proven; otherwise it is finalized
+to `failed`. Explicit user/recovery/shutdown cancellation bypasses this terminal
+auto-cleanup handoff because the lifecycle operation that caused cancellation
+already owns cleanup. The returned error and daemon log expose the primary TUN
+classification and report location as separate fields when persistence succeeds,
+and user guidance uses the canonical `podlaz doctor --tun --verbose` command.
 
 The full TUN diagnostic path may perform only read-only snapshot collection,
 kernel route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private
@@ -330,6 +445,15 @@ require confirmation:
 - JSON mode: fail unless `--yes` is passed.
 
 A TUN connect is already an explicit privileged networking mutation request. It may therefore perform the narrowly scoped automatic podlaz-owned recovery described above without a second confirmation prompt. This exception does not authorize foreign VPN handoff, ambiguous cleanup, global `systemd-resolved` restart, or deletion of persistent user state.
+
+A proved active-session revalidation failure or deadline is also a fail-safe
+lifecycle condition rather than a new user cleanup request. After bounded
+redacted diagnostics and release of revalidation authority, podlazd may invoke
+the normal exact transaction-backed `Disconnect` automatically to avoid leaving
+an unproved active TUN behind the kill-switch. This does not waive ownership
+checks, does not authorize repair/foreign cleanup, and does not apply when the
+revalidation was cancelled by an explicit user lifecycle operation or daemon
+shutdown that already owns cleanup.
 
 High-impact flags such as `--execute` and `--yes` are long-only.
 

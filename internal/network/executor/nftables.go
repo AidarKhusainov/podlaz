@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -51,31 +52,27 @@ func (e NftablesExecutor) Apply(ctx context.Context, plan planner.TunFirewallPla
 	return Step{Kind: "nftables", Target: firewallTarget(plan), Description: plan.Reason, Owner: OwnerFirewall}, nil
 }
 
-// Verify checks that the podlaz-owned nftables table, chain, and rule state is visible.
+// Verify proves the complete podlaz-owned nftables composition. Because rule
+// order and base-chain metadata affect leak protection, expected-state subset
+// matching is insufficient: extra chains/rules or hook/priority/policy drift are
+// treated as ambiguous owned state and fail closed.
 func (e NftablesExecutor) Verify(ctx context.Context, plan planner.TunFirewallPlan) error {
 	if err := validateFirewallPlan(plan); err != nil {
 		return err
 	}
 	family, table := firewallFamilyTable(plan)
-	result, err := observeCommand(ctx, e.Runner, "nft", "list", "table", family, table)
+	// Numeric priority avoids aliases such as "filter" for priority 0 and keeps
+	// the verifier deterministic across nft output formatting.
+	result, err := observeCommand(ctx, e.Runner, "nft", "-y", "list", "table", family, table)
 	if err != nil {
 		return fmt.Errorf("verify nftables table %s %s: %w", family, table, err)
 	}
-	for _, chain := range plan.Chains {
-		if chain.Action != planner.FirewallTableAction && chain.Action != planner.FirewallActionAdd {
-			continue
-		}
-		if !strings.Contains(result.Stdout, "chain "+chain.Name) {
-			return fmt.Errorf("verify nftables table %s %s: chain %s not found", family, table, chain.Name)
-		}
+	observed, err := parseOwnedNftTable(result.Stdout, family, table)
+	if err != nil {
+		return fmt.Errorf("verify nftables table %s %s: %w", family, table, err)
 	}
-	for _, rule := range plan.Rules {
-		if rule.Action != planner.FirewallActionAdd {
-			continue
-		}
-		if !nftOutputContainsRule(result.Stdout, rule) {
-			return fmt.Errorf("verify nftables table %s %s: rule %s not found", family, table, rule.RollbackKey)
-		}
+	if err := verifyExactNftChains(observed, plan); err != nil {
+		return fmt.Errorf("verify nftables table %s %s: %w", family, table, err)
 	}
 	return nil
 }
@@ -94,6 +91,199 @@ func (e NftablesExecutor) Rollback(ctx context.Context, plan planner.TunFirewall
 		return fmt.Errorf("delete nftables table %s %s: %w", family, table, err)
 	}
 	return nil
+}
+
+type observedNftChain struct {
+	name     string
+	typeName string
+	hook     string
+	priority int
+	policy   string
+	rules    [][]string
+}
+
+func parseOwnedNftTable(output, family, table string) ([]observedNftChain, error) {
+	lines := nonEmptyTrimmedLines(output)
+	if len(lines) < 2 {
+		return nil, errors.New("nftables table output is incomplete")
+	}
+	if lines[0] != fmt.Sprintf("table %s %s {", family, table) {
+		return nil, fmt.Errorf("unexpected nftables table header %q", lines[0])
+	}
+
+	var chains []observedNftChain
+	var current *observedNftChain
+	tableClosed := false
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+		if tableClosed {
+			return nil, fmt.Errorf("unexpected content after nftables table close: %q", line)
+		}
+		if current == nil {
+			if line == "}" {
+				tableClosed = true
+				continue
+			}
+			if !strings.HasPrefix(line, "chain ") || !strings.HasSuffix(line, " {") {
+				return nil, fmt.Errorf("unexpected nftables table member %q", line)
+			}
+			name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "chain "), " {"))
+			if name == "" {
+				return nil, errors.New("nftables chain has empty name")
+			}
+			chains = append(chains, observedNftChain{name: name})
+			current = &chains[len(chains)-1]
+			continue
+		}
+
+		if line == "}" {
+			if current.typeName == "" || current.hook == "" || current.policy == "" {
+				return nil, fmt.Errorf("nftables chain %s has incomplete base-chain metadata", current.name)
+			}
+			current = nil
+			continue
+		}
+		if strings.HasPrefix(line, "type ") {
+			if current.typeName != "" {
+				return nil, fmt.Errorf("nftables chain %s has duplicate base-chain metadata", current.name)
+			}
+			typeName, hook, priority, policy, err := parseNftBaseChainMetadata(line)
+			if err != nil {
+				return nil, fmt.Errorf("nftables chain %s: %w", current.name, err)
+			}
+			current.typeName = typeName
+			current.hook = hook
+			current.priority = priority
+			current.policy = policy
+			continue
+		}
+		current.rules = append(current.rules, normalizeObservedNftRule(line))
+	}
+	if current != nil {
+		return nil, fmt.Errorf("nftables chain %s is not closed", current.name)
+	}
+	if !tableClosed {
+		return nil, errors.New("nftables table is not closed")
+	}
+	return chains, nil
+}
+
+func nonEmptyTrimmedLines(output string) []string {
+	var lines []string
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func parseNftBaseChainMetadata(line string) (string, string, int, string, error) {
+	parts := strings.Split(line, ";")
+	if len(parts) < 2 {
+		return "", "", 0, "", fmt.Errorf("invalid base-chain metadata %q", line)
+	}
+	fields := strings.Fields(strings.TrimSpace(parts[0]))
+	if len(fields) != 6 || fields[0] != "type" || fields[2] != "hook" || fields[4] != "priority" {
+		return "", "", 0, "", fmt.Errorf("invalid base-chain metadata %q", line)
+	}
+	priority, err := strconv.Atoi(fields[5])
+	if err != nil {
+		return "", "", 0, "", fmt.Errorf("non-numeric base-chain priority %q", fields[5])
+	}
+	policyFields := strings.Fields(strings.TrimSpace(parts[1]))
+	if len(policyFields) != 2 || policyFields[0] != "policy" {
+		return "", "", 0, "", fmt.Errorf("invalid base-chain policy %q", strings.TrimSpace(parts[1]))
+	}
+	return fields[1], fields[3], priority, policyFields[1], nil
+}
+
+func normalizeObservedNftRule(line string) []string {
+	fields := nftExpressionFields(line)
+	withoutRuntimeCounters := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "counter" && i+4 < len(fields) && fields[i+1] == "packets" && fields[i+3] == "bytes" {
+			if _, errPackets := strconv.ParseUint(fields[i+2], 10, 64); errPackets == nil {
+				if _, errBytes := strconv.ParseUint(fields[i+4], 10, 64); errBytes == nil {
+					withoutRuntimeCounters = append(withoutRuntimeCounters, "counter")
+					i += 4
+					continue
+				}
+			}
+		}
+		withoutRuntimeCounters = append(withoutRuntimeCounters, fields[i])
+	}
+	return normalizeNftDefaultReject(withoutRuntimeCounters)
+}
+
+func normalizeNftDefaultReject(fields []string) []string {
+	// `nft list` may render the shorthand `reject` used by the plan as the
+	// semantically identical default inet rejection below. Collapse only that
+	// exact expansion; any other reject parameters remain visible and fail the
+	// exact comparison.
+	const expansionLength = 5
+	out := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		if i+expansionLength-1 < len(fields) &&
+			fields[i] == "reject" &&
+			fields[i+1] == "with" &&
+			fields[i+2] == "icmpx" &&
+			fields[i+3] == "type" &&
+			fields[i+4] == "port-unreachable" {
+			out = append(out, "reject")
+			i += expansionLength - 1
+			continue
+		}
+		out = append(out, fields[i])
+	}
+	return out
+}
+
+func verifyExactNftChains(observed []observedNftChain, plan planner.TunFirewallPlan) error {
+	var expectedChains []planner.TunFirewallChainPlan
+	for _, chain := range plan.Chains {
+		if chain.Action == planner.FirewallTableAction || chain.Action == planner.FirewallActionAdd {
+			expectedChains = append(expectedChains, chain)
+		}
+	}
+	if len(observed) != len(expectedChains) {
+		return fmt.Errorf("chain cardinality=%d, want %d", len(observed), len(expectedChains))
+	}
+
+	for i, expected := range expectedChains {
+		got := observed[i]
+		if got.name != expected.Name || got.typeName != expected.Type || got.hook != expected.Hook || got.priority != expected.Priority || got.policy != expected.Policy {
+			return fmt.Errorf("chain[%d] metadata mismatch: got name=%s type=%s hook=%s priority=%d policy=%s", i, got.name, got.typeName, got.hook, got.priority, got.policy)
+		}
+		var expectedRules [][]string
+		for _, rule := range plan.Rules {
+			if rule.Action == planner.FirewallActionAdd && rule.Chain == expected.Name {
+				expectedRules = append(expectedRules, nftRuleFields(rule))
+			}
+		}
+		if len(got.rules) != len(expectedRules) {
+			return fmt.Errorf("chain %s rule cardinality=%d, want %d", expected.Name, len(got.rules), len(expectedRules))
+		}
+		for ruleIndex := range expectedRules {
+			if !equalStringFields(got.rules[ruleIndex], expectedRules[ruleIndex]) {
+				return fmt.Errorf("chain %s rule[%d] mismatch", expected.Name, ruleIndex)
+			}
+		}
+	}
+	return nil
+}
+
+func equalStringFields(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func nftablesApplyScript(plan planner.TunFirewallPlan) (string, error) {

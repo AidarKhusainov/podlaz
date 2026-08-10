@@ -34,10 +34,10 @@ plz --help
 
 | Exit | Meaning |
 | ---: | --- |
-| `0` | Success. |
+| `0` | Success. For active TUN status, current health must be `verified`. |
 | `1` | Runtime or operation failure. |
 | `2` | Invalid usage, flags, arguments, or deferred JSON. |
-| `3` | Diagnostic command found unhealthy state. |
+| `3` | Diagnostic command found unhealthy state, including active TUN health `revalidating`, transient `degraded`, or `cleanup-required`. |
 | `4` | Permission or authorization failure. |
 | `5` | Required daemon access was unavailable. |
 
@@ -154,6 +154,53 @@ unhealthy. A clean startup recovery scan is described relative to the current
 lifecycle state, so an active TUN session is never labelled as a clean inactive
 state. `status --json` is deferred.
 
+For an active TUN session, durable transaction state and current health are
+separate contracts. `committed` means the transaction completed successfully for
+the generation verified at that time; it is not permanent proof that the current
+host network is still usable. Daemon status therefore exposes `tun_health` with:
+
+- `state`: `verified`, `revalidating`, `degraded`, or `cleanup-required`;
+- positive `network_generation`;
+- a stable classification while health is not `verified`, including
+  `uplink_revalidating`, `uplink_changed`, `uplink_fingerprint_unavailable`,
+  `ownership_invalid`, `owned_state_invalid`, `connectivity_failed`,
+  `revalidation_timeout`, and `revalidation_interrupted`.
+
+`revalidating` and `degraded` can be transient active publications while the
+current generation is being proved or a terminal verification outcome is being
+handed off. A proved verification failure or revalidation deadline is not a
+stable active `degraded` state. The daemon keeps the old health proof invalid,
+persists a bounded redacted TUN diagnostic report before cleanup, releases
+revalidation authority, and automatically invokes the normal bounded lifecycle
+`Disconnect`. Successful cleanup converges to inactive status. Failed rollback
+keeps the surviving owned state fail-closed as `cleanup-required` for recovery.
+Cancellation caused by an explicit user disconnect, recovery, or daemon shutdown
+is not treated as another terminal verification failure and does not schedule a
+second automatic disconnect.
+
+Generation 1 becomes `verified` only after a fresh post-commit observation has
+passed the canonical composition verifier and connectivity verifier for that
+exact observation. `resume` and event-source resubscription force a same-generation
+reproof even when the underlying fingerprint is unchanged. Ordinary duplicate
+link/address/route hints with an unchanged already-verified fingerprint are
+coalesced and do not run redundant probes.
+
+Lifecycle mutation has priority over revalidation without losing evidence. An
+event consumed while connect, disconnect, or recovery is pending waits for the
+mutation queue to become idle. An in-flight probe interrupted by mutation is
+requeued. The post-mutation attempt always starts with a fresh authoritative
+snapshot and then applies the normal fingerprint/generation decision. The
+verification phase itself is read-only and does not repair networking or expand
+cleanup authority. Only a terminal verification failure/deadline can hand off to
+the existing exact transaction-backed lifecycle disconnect described above;
+ambiguous observation or foreign ownership never gains cleanup authority.
+
+While an active TUN is transiently `revalidating`/`degraded`, or remains
+`cleanup-required` after failed rollback, `podlaz status` returns exit code `3`.
+A successful automatic fail-safe disconnect instead publishes the normal inactive
+lifecycle state and no active `tun_health`. Current-health failure does not rewrite
+historical commit evidence.
+
 ```bash
 podlaz doctor
 podlaz doctor --tun [--verbose|-v|--json]
@@ -177,9 +224,9 @@ nftables, services, other VPNs, or browser state.
 Compact human output identifies the failed layer, primary classification, latest
 report path, and next step. `--verbose` adds bounded route, DNS, TLS, HTTP, IPv6,
 command, and timing evidence. `--json` emits the same centrally redacted model
-with `schema_version: 1`. Historical failed-connect reports also expose stable
-`failure_phase` and `rollback_status`. A report with status `unhealthy` or
-`unavailable` returns exit code `3`.
+with `schema_version: 1`. Historical failed-connect and terminal-revalidation
+reports expose stable `failure_phase` and `rollback_status`. A report with status
+`unhealthy` or `unavailable` returns exit code `3`.
 
 Stable classifications include session and ownership inconsistencies;
 `network_apply_failure` and `network_verify_failure`; server bypass, route, and
@@ -259,12 +306,18 @@ disconnect an active podlaz TUN session before starting the new transaction.
 Unsupported handoff values fail before network mutation. `disconnect` is safe
 to repeat. `connect --json` and `disconnect --json` are deferred.
 
-For failures during `network-apply`, `network-verify`, or later connectivity
-verification, podlazd runs bounded redacted diagnostics while the failed applied
-state still exists and atomically saves the report before the first rollback
-command. The report records a stable classification, `failure_phase`, and
-`rollback_status`; rollback finalizes the historical status as `completed` or
-`failed`. Diagnostic collection remains best-effort and cannot suppress cleanup.
+For failures during `network-apply`, `network-verify`, later connect-time
+connectivity verification, or a proved post-commit revalidation failure/deadline,
+podlazd runs bounded redacted diagnostics while the relevant failed state still
+exists and atomically saves the report before the first rollback command. The
+report records a stable classification, `failure_phase`, and `rollback_status`;
+rollback finalizes the historical status as `completed` or `failed`. Diagnostic
+collection remains best-effort and cannot suppress cleanup. Post-commit terminal
+revalidation cleanup is the same normal exact transaction-backed `Disconnect`
+path; it is started only after revalidation authority is released. Explicit
+user/shutdown cancellation owns its own lifecycle cleanup and therefore does not
+schedule a duplicate automatic disconnect.
+
 Before commit, static resolved ownership is followed by an uncached IPv4
 `resolvectl` query bound to the exact `podlaz0` link, a separate normal system
 resolver lookup, and route verification for at least one returned IPv4 address.

@@ -112,7 +112,10 @@ func markUnsupported(s *Snapshot, tunNames []string) {
 	s.DefaultIPv6 = Route{Status: StatusUnsupported, Family: "ipv6", Destination: "default", Detail: detail}
 	s.ServerRoute = Route{Status: StatusUnsupported, Destination: "server", Detail: detail}
 	s.DNS = DNS{Mode: "unsupported", Resolved: findingWithDetail(StatusUnsupported, "systemd-resolved is not inspected on this platform", detail)}
-	s.NetworkManager = NetworkManager{Finding: findingWithDetail(StatusUnsupported, "NetworkManager is not inspected on this platform", detail)}
+	s.NetworkManager = NetworkManager{
+		Finding:                     findingWithDetail(StatusUnsupported, "NetworkManager is not inspected on this platform", detail),
+		ActiveConnectionsInspection: findingWithDetail(StatusUnsupported, "NetworkManager active connections are not inspected on this platform", detail),
+	}
 	s.Nftables = Nftables{
 		Availability: findingWithDetail(StatusUnsupported, "nftables is not inspected on this platform", detail),
 		PodlazTable:  findingWithDetail(StatusUnsupported, "podlaz nftables table is not inspected on this platform", detail),
@@ -457,18 +460,42 @@ func firstField(value string) string {
 func networkManager(ctx context.Context, runner CommandRunner) NetworkManager {
 	path, ok := lookup(runner, "nmcli")
 	if !ok {
-		return NetworkManager{Finding: finding(StatusMissing, "nmcli not found")}
+		return NetworkManager{
+			Finding:                     finding(StatusMissing, "nmcli not found"),
+			ActiveConnectionsInspection: finding(StatusMissing, "NetworkManager active connections unavailable because nmcli is missing"),
+		}
 	}
-	result, err := runCommand(ctx, runner, path, "-t", "-f", "RUNNING,STATE", "general")
+	result, err := runNMCLI(ctx, runner, path, "-t", "-e", "yes", "-f", "RUNNING,STATE", "general")
 	if !commandSucceeded(result, err) {
-		return NetworkManager{Finding: findingWithDetail(StatusUnknown, "NetworkManager state unavailable", commandFailureMessage(result, err))}
+		detail := commandFailureMessage(result, err)
+		return NetworkManager{
+			Finding:                     findingWithDetail(StatusUnknown, "NetworkManager state unavailable", detail),
+			ActiveConnectionsInspection: findingWithDetail(StatusUnknown, "NetworkManager active connection inventory unavailable", detail),
+		}
 	}
-	nm := NetworkManager{Finding: findingWithDetail(StatusDetected, "NetworkManager state available", firstNonEmptyLine(result.Stdout)), State: parseNMState(firstNonEmptyLine(result.Stdout))}
-	active, activeErr := runCommand(ctx, runner, path, "-t", "-f", "NAME,UUID,TYPE,DEVICE,STATE", "connection", "show", "--active")
-	if commandSucceeded(active, activeErr) {
-		nm.ActiveConnections = parseNMActiveConnections(active.Stdout)
+	nm := NetworkManager{
+		Finding: findingWithDetail(StatusDetected, "NetworkManager state available", firstNonEmptyLine(result.Stdout)),
+		State:   parseNMState(firstNonEmptyLine(result.Stdout)),
 	}
+	active, activeErr := runNMCLI(ctx, runner, path, "-t", "-e", "yes", "-f", "NAME,UUID,TYPE,DEVICE,STATE", "connection", "show", "--active")
+	if !commandSucceeded(active, activeErr) {
+		nm.ActiveConnectionsInspection = findingWithDetail(StatusUnknown, "NetworkManager active connection inventory unavailable", commandFailureMessage(active, activeErr))
+		return nm
+	}
+	connections, parseErr := parseNMActiveConnectionsStrict(active.Stdout)
+	if parseErr != nil {
+		nm.ActiveConnectionsInspection = findingWithDetail(StatusUnknown, "NetworkManager active connection inventory malformed", parseErr.Error())
+		return nm
+	}
+	nm.ActiveConnectionsInspection = finding(StatusDetected, "NetworkManager active connection inventory available")
+	nm.ActiveConnections = connections
 	return nm
+}
+
+func runNMCLI(ctx context.Context, runner CommandRunner, path string, args ...string) (CommandResult, error) {
+	envArgs := []string{"LC_ALL=C", path}
+	envArgs = append(envArgs, args...)
+	return runCommand(ctx, runner, "env", envArgs...)
 }
 
 func parseNMState(line string) string {
@@ -480,19 +507,62 @@ func parseNMState(line string) string {
 }
 
 func parseNMActiveConnections(output string) []NetworkManagerConnection {
+	connections, err := parseNMActiveConnectionsStrict(output)
+	if err != nil {
+		return nil
+	}
+	return connections
+}
+
+func parseNMActiveConnectionsStrict(output string) ([]NetworkManagerConnection, error) {
 	var out []NetworkManagerConnection
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, ":")
-		for len(parts) < 5 {
-			parts = append(parts, "")
+		parts, err := parseNMTerseFields(line, 5)
+		if err != nil {
+			return nil, err
 		}
 		out = append(out, NetworkManagerConnection{Name: parts[0], UUID: parts[1], Type: parts[2], Device: parts[3], State: parts[4]})
 	}
-	return out
+	return out, nil
+}
+
+func parseNMTerseFields(line string, expected int) ([]string, error) {
+	fields := make([]string, 0, expected)
+	var field strings.Builder
+	escaped := false
+	for _, r := range line {
+		if escaped {
+			switch r {
+			case ':', '\\':
+				field.WriteRune(r)
+			default:
+				return nil, fmt.Errorf("invalid nmcli terse escape")
+			}
+			escaped = false
+			continue
+		}
+		switch r {
+		case '\\':
+			escaped = true
+		case ':':
+			fields = append(fields, field.String())
+			field.Reset()
+		default:
+			field.WriteRune(r)
+		}
+	}
+	if escaped {
+		return nil, fmt.Errorf("unterminated nmcli terse escape")
+	}
+	fields = append(fields, field.String())
+	if len(fields) != expected {
+		return nil, fmt.Errorf("nmcli active connection field count=%d, want %d", len(fields), expected)
+	}
+	return fields, nil
 }
 
 func nftables(ctx context.Context, runner CommandRunner) Nftables {

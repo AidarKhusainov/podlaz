@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -226,12 +227,11 @@ func (e ResolvedDNSExecutor) runResolvedApplyCommand(ctx context.Context, args .
 	return lastErr
 }
 
-// Verify checks that the target link keeps the planned DNS servers, route-only
-// domain, and DNS default-route setting after apply. Current Scopes is not an
-// ownership or configuration check: systemd-resolved derives it from active
-// lookup scope state and may report none while the per-link configuration is
-// already present. Transient missing link/server/domain/default-route observations
-// are polled for a bounded period instead of failing immediately.
+// Verify checks the exact Podlaz-owned per-link DNS configuration: the DNS
+// server set, route-only default domain and default-route flag. Current Scopes
+// remains system-derived and is not an ownership/configuration field. Transient
+// propagation gaps are polled for a bounded period instead of failing
+// immediately.
 func (e ResolvedDNSExecutor) Verify(ctx context.Context, plan planner.TunDNSPlan) error {
 	if err := validateDNSPlan(plan); err != nil {
 		return err
@@ -287,18 +287,51 @@ func (e ResolvedDNSExecutor) verifyResolvedDNSOnce(ctx context.Context, link str
 }
 
 func resolvedLinkMismatch(link netsnapshot.ResolvedLink, plan planner.TunDNSPlan) string {
-	for _, server := range plan.Servers {
-		if !containsDNSValue(link.DNSServers, server) {
-			return fmt.Sprintf("DNS server %s not found", server)
-		}
+	if !sameNormalizedDNSValues(link.DNSServers, plan.Servers) {
+		return fmt.Sprintf("DNS servers mismatch: got %s want %s", strings.Join(normalizedDNSValues(link.DNSServers), ","), strings.Join(normalizedDNSValues(plan.Servers), ","))
 	}
-	if !containsDNSValue(link.DNSDomains, resolvedRouteOnlyDomain) {
-		return fmt.Sprintf("route-only domain %s not found", resolvedRouteOnlyDomain)
+	if current := strings.TrimSpace(link.CurrentDNSServer); current != "" && !containsDNSValue(plan.Servers, current) {
+		return fmt.Sprintf("current DNS server %s is outside the planned server set", current)
+	}
+	if !sameNormalizedDNSValues(link.DNSDomains, []string{resolvedRouteOnlyDomain}) {
+		return fmt.Sprintf("DNS domains mismatch: got %s want %s", strings.Join(normalizedDNSValues(link.DNSDomains), ","), resolvedRouteOnlyDomain)
 	}
 	if !containsDNSValue(link.Protocols, "+DefaultRoute") {
 		return "DNS default route is not enabled"
 	}
 	return ""
+}
+
+func sameNormalizedDNSValues(left, right []string) bool {
+	left = normalizedDNSValues(left)
+	right = normalizedDNSValues(right)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedDNSValues(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type resolvedDNSVerifyError struct {
