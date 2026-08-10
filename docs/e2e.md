@@ -42,6 +42,7 @@ Run E2E validation when a change touches:
 
 - TUN devices or native Xray TUN inbound behavior;
 - route, DNS, nftables, firewall, or resolver behavior;
+- current TUN health, suspend/resume, network-generation tracking, or event-source resynchronization;
 - daemon privilege boundaries;
 - systemd service behavior;
 - package install, reinstall, purge, or service lifecycle;
@@ -95,7 +96,7 @@ bash scripts/e2e/tun-fault-injection.sh
 bash scripts/e2e/tun-package-convergence.sh
 ```
 
-Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, or generated runtime configuration requires the installed-package convergence script.
+Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, or event-source resynchronization requires installed-package/target-host TUN validation.
 
 ## Native Xray TUN validation
 
@@ -108,11 +109,30 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 5. A failing `xray test -config` preflight leaves no host-networking mutation and recovery can remove any tracked generated config.
 6. A failure after host-networking apply captures a bounded public-safe report before rollback, then rolls back nftables/DNS/routes/rules before Xray is stopped. A composition executor must return partial applied ownership with the error and must not perform hidden cleanup before the transaction boundary records diagnostics.
 7. The report exposes a stable `failure_phase`, stable primary classification, safe report path, and `rollback_status`; `completed` is permitted only after host rollback and bounded supervised Xray stop both succeed. A TERM-ignoring child must be escalated to KILL and reaped. Any stop/force-stop error must produce `rollback_status=failed` and retain cleanup-required transaction ownership. After successful rollback and daemon restart, `podlaz doctor --tun --verbose` can read the historical report. Persisted JSON, human output, and JSON client output must independently exclude every injected profile name/ID, transaction ID, endpoint/domain, IPv4/IPv6 address, DNS server, SSID, physical interface, route/rule token, and command-output marker while retaining safe structural verdict evidence.
-8. A complete `systemd-resolved` link with all planned DNS servers, `~.`, `+DefaultRoute`, and `Current Scopes: none` passes through the packaged production transaction path. Removing planned server/domain/default-route evidence or returning duplicate target-link sections fails closed and rolls back.
+8. A complete `systemd-resolved` link with exactly all planned DNS servers, exactly `~.`, `+DefaultRoute`, and `Current Scopes: none` passes through the packaged production transaction path. Removing planned server/domain/default-route evidence, adding an extra DNS server/domain, or returning duplicate target-link sections fails closed and rolls back.
 9. Removing `podlaz0` after packaged DNS apply and before rollback makes only the actual daemon-owned `resolvectl revert podlaz0` result with exit status `1`, empty raw stdout, and raw stderr equal to the supported marker plus one `LF` or one `CRLF` an idempotent success. The gate must not issue an earlier manual revert. Extra blank lines, embedded newlines, unterminated stderr, repeated or mixed line terminators, non-empty stdout, exit status `2`, unrelated exit status `1`, permission denial, launch failure, signal termination, oversized stderr, timeout, cancellation, and capture failure remain failures. Unit regressions verify the same production capture and byte contract used by the package script.
 10. A generated runtime config removal failure keeps the transaction cleanup-required and preserves rollback metadata for recovery.
 11. `podlaz status`, `podlaz doctor`, and `podlaz recover` agree after rollback/recovery; no cleanup-required transaction or stale startup-scan candidate blocks an immediate subsequent TUN connect.
 12. `podlaz recover --execute --yes` after daemon interruption cleans transaction-owned state without deleting `/run/podlaz` wholesale or changing unrelated host networking.
+13. The podlaz-owned nftables table is accepted only when chain cardinality/name/type/hook/numeric priority/policy and ordered rule cardinality/content exactly match the canonical plan; an added foreign/extra rule or chain metadata drift must fail closed.
+
+## Issue #245 suspend/resume and revalidation acceptance
+
+Changes to current TUN health require target-host evidence that cannot be replaced by unit tests alone. The packaged acceptance run must use an active committed TUN session and exercise a real suspend/resume or equivalent controlled underlying-uplink transition while preserving the daemon process where practical.
+
+The run must prove all of the following:
+
+1. Immediately after connect, generation 1 is `verified` only after a fresh post-commit authoritative observation has itself passed canonical composition and connectivity verification. There must be no publication interval where a new unverified fingerprint is exposed as `verified`.
+2. A real post-resume signal forces reproof even when interface, ifindex, gateway, address, and NetworkManager identity are unchanged. `committed` may remain the durable transaction state, but active status returns exit `0` only after current health returns to `verified`.
+3. A material change to underlying interface/ifindex, gateway, relevant IPv4 address, active NetworkManager connection identity, or server-bypass next hop advances `network_generation`; ordinary unchanged event bursts do not create repeated generations or unbounded probes.
+4. If NetworkManager itself is detected but active-connection inspection fails, the fingerprint is unavailable/fail-closed. The run must not treat that observation as authoritative unmanaged/empty identity.
+5. Events that occur while connect, disconnect, or recovery owns the lifecycle mutation boundary are not lost. A consumed pending trigger waits for mutation-idle; an in-flight revalidation cancelled by mutation is requeued; the post-mutation attempt takes a fresh authoritative snapshot before making the fingerprint decision.
+6. Both logind and rtnetlink event sources follow subscribe-then-resync semantics. A controlled source reconnect must queue one coalesced authoritative resync, so a transition during the watcher outage cannot leave stale `verified` health until an unrelated future event.
+7. Revalidation remains read-only: it may execute snapshot/status/route-get, canonical verify, and bounded connectivity probes, but must not apply/rollback routes, flush route cache, mutate DNS/nftables/NetworkManager, recreate TUN state, or broaden cleanup authority.
+8. `podlaz disconnect` and daemon shutdown cancel in-flight revalidation before waiting for lifecycle mutation and converge within their own bound rather than the full probe timeout.
+9. Public evidence records only structural health state, generation transitions, stable classifications, timing bounds, and pass/fail verdicts. Raw host addresses, gateways, physical interface names, NetworkManager UUIDs/names, server endpoints, resolver output, or other host-specific values remain in private E2E evidence and are removed before artifact scanning.
+
+A successful target-host run is evidence for the read-only revalidation phase only. It does not authorize speculative automatic repair; firewall/DNS/route repair remains separately evidence-gated by issue #245.
 
 ## Installed-package convergence safety
 
@@ -183,9 +203,10 @@ Record only non-sensitive evidence in the PR or issue:
 - hashes of the built package and its installed binaries;
 - workflow run URL and result;
 - normalized pass/fail verdicts;
-- bounded diagnostic classifications and lifecycle phases.
+- bounded diagnostic classifications and lifecycle phases;
+- for current-health validation, only structural generation transitions and health-state transitions.
 
-Raw public or local IP addresses, gateways, interface names, DNS server/domain output, complete routes, `ip link` output, resolver status, provider URLs, subscription links, credentials, generated configs, private exact network manifests, private production process-result capture files, and unredacted logs must stay outside the artifact directory. The dedicated workflow scans the artifact directory against configured secrets and network values collected from the host. Evidence is uploaded only when both the teardown assertions and pre-upload scan pass.
+Raw public or local IP addresses, gateways, interface names, DNS server/domain output, complete routes, `ip link` output, resolver status, NetworkManager connection identities, provider URLs, subscription links, credentials, generated configs, private exact network manifests, private production process-result capture files, and unredacted logs must stay outside the artifact directory. The dedicated workflow scans the artifact directory against configured secrets and network values collected from the host. Evidence is uploaded only when both the teardown assertions and pre-upload scan pass.
 
 For issue #243, the raw initial `resolvectl status podlaz0 --no-pager` stdout/stderr capture is part of that private evidence boundary and must be deleted before artifact scanning. Public evidence may record only normalized facts such as exact-envelope convergence, clean inactive publication, clean recover dry-run/execute refresh, repeated active-status stability, disconnect convergence, and immediate reconnect success.
 
