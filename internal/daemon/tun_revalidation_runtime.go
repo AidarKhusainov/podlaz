@@ -133,7 +133,7 @@ func (r *tunRevalidationRuntime) Health() *api.TunHealthStatus {
 	return &copy
 }
 
-func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, _ tunRevalidationTrigger) {
+func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunRevalidationTrigger) {
 	if r == nil {
 		return
 	}
@@ -148,7 +148,8 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, _ tunRevalidati
 
 	r.mu.Lock()
 	sameFingerprint := r.hasFingerprint && observation.fingerprint == r.fingerprint
-	if sameFingerprint && r.health != nil && r.health.State == api.TunHealthVerified {
+	mustReproveCurrentGeneration := trigger == tunRevalidationTriggerResume || r.health == nil || r.health.State != api.TunHealthVerified
+	if sameFingerprint && !mustReproveCurrentGeneration {
 		r.mu.Unlock()
 		return
 	}
