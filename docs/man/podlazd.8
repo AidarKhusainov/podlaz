@@ -67,7 +67,7 @@ and
 should not require adding the current user to the
 .B podlaz
 group. If authentication is required, the system polkit agent prompts for an
-admin password.
+administrator credential.
 .PP
 After manually installing the repository unit for development, reload systemd
 before starting the service:
@@ -123,8 +123,9 @@ transaction.
 .TP
 .I /run/podlaz/diagnostics/tun-last.json
 Daemon-owned latest TUN diagnostic report. It is centrally redacted, bounded,
-atomically replaced, and stored with mode 0600. Failed-connect history may
-remain readable after rollback and daemon restart for the lifetime of
+atomically replaced, and stored with mode 0600. Failed-connect and terminal
+revalidation history may remain readable after rollback and daemon restart for
+the lifetime of
 .IR /run .
 .TP
 .I /var/lib/podlaz/
@@ -175,8 +176,8 @@ is released by stopping the Xray child, not by recording it as a podlaz-owned
 TUN rollback target. The CLI must not become a privileged or SUID networking
 mutator.
 .PP
-Current-health revalidation is read-only and grants no additional mutation or
-cleanup authority. Durable
+The verification phase of current-health revalidation is read-only and grants
+no new mutation or repair authority. Durable
 .B desired_plan
 may be reconstructed to verify the complete intended composition, including
 prerequisites that pre-existed connect, but cleanup remains limited to exact
@@ -187,6 +188,15 @@ canonical nftables verifier requires the exact owned table composition,
 including chain cardinality/name/type/hook/numeric priority/policy and ordered
 rule cardinality/content; extra or foreign state inside the owned table is not
 accepted as healthy.
+.PP
+A proved active-session verification failure or revalidation deadline has a
+separate fail-safe disposition. After the read-only verifier releases
+revalidation authority, podlazd may persist bounded redacted pre-cleanup
+diagnostics and invoke only the normal exact transaction-backed lifecycle
+.B Disconnect
+path. This does not expand rollback ownership and is not a repair mechanism.
+Explicit user disconnect/recovery or daemon-shutdown cancellation already owns
+cleanup and therefore does not schedule a second automatic disconnect.
 .SH RUNTIME STATE
 On startup, the daemon creates or uses the runtime directory, creates a lock
 file, removes only a stale Unix socket at the filesystem socket path, fails if
@@ -239,8 +249,25 @@ with a positive
 .B network_generation
 and stable classification when applicable. Generation 1 is published as
 .B verified
-only after a fresh post-commit observation has passed the canonical composition
-and connectivity verifier for that exact observation.
+only after a fresh post-commit observation has passed canonical composition and
+layered connectivity verification for that exact observation.
+.PP
+.B revalidating
+and
+.B degraded
+may be transient active publications while proof is in progress or a terminal
+verification outcome is being handed off. A proved verification failure or
+revalidation deadline is not a stable active degraded state. The daemon keeps
+old health evidence invalid, releases revalidation authority, captures bounded
+redacted diagnostics before cleanup, and invokes the normal bounded lifecycle
+.BR Disconnect .
+Successful cleanup converges to inactive state and finalizes the saved report as
+.BR completed .
+Failed rollback finalizes it as
+.B failed
+and leaves the surviving owned state
+.B cleanup-required
+for recovery.
 .PP
 The daemon subscribes to systemd-logind post-resume notification and rtnetlink
 link/address/route changes. Event payloads are hints, not state of record. A
@@ -266,14 +293,20 @@ shared lifecycle boundary. A trigger already consumed while a lifecycle mutation
 is pending waits for mutation-idle rather than being discarded; an in-flight
 trigger interrupted by mutation is requeued. After mutation, the retained hint
 causes one fresh authoritative snapshot and normal fingerprint decision. Daemon
-shutdown is terminal cancellation and does not requeue work.
+shutdown is terminal cancellation for event processing and does not requeue
+work. Cancellation caused by explicit disconnect/recovery or shutdown is not
+converted into terminal verification failure and does not start duplicate
+cleanup.
 .PP
 If
 .B network-apply,
 .B network-verify,
-or later connectivity verification fails after host mutation, the daemon runs a
-short bounded redacted diagnostic subset before the first rollback command.
-The report records a stable primary classification,
+connect-time connectivity verification, or proved post-commit revalidation
+fails or reaches its terminal deadline, the daemon runs a short bounded redacted
+diagnostic subset while the relevant failed state still exists. For terminal
+revalidation this happens only after revalidation authority is released and
+before the first automatic rollback command. The report records a stable primary
+classification,
 .B failure_phase,
 and
 .B rollback_status.
@@ -288,19 +321,26 @@ are never used as classifications. Address-specific failures use
 .BR tun_address_apply_failure ,
 or
 .BR tun_address_verify_failure ;
-resolved readiness, scoped-query, and normal resolver failures remain separate. The report is saved with rollback status
+layered revalidation retains the concrete failed verification phase and
+.B revalidation_timeout
+for a terminal deadline. The report is saved with rollback status
 .B pending
 and finalized atomically to
 .B completed
 or
 .BR failed .
 Diagnostic collection and persistence are best-effort and cannot suppress or
-delay the separate bounded rollback context.
+delay the separate bounded rollback context. A failed automatic rollback leaves
+current health
+.B cleanup-required
+and preserves durable exact ownership for recovery.
 .PP
 During graceful shutdown, the daemon cancels network-event delivery and active
 revalidation before waiting for the lifecycle mutation boundary, then stops an
 active Xray child, shuts down the HTTP server, closes the Unix socket listeners,
-removes the filesystem socket path, and removes the lock file.
+removes the filesystem socket path, and removes the lock file. Shutdown
+cancellation owns this lifecycle cleanup and never schedules a second automatic
+disconnect from the cancelled revalidation.
 .PP
 On disconnect, the daemon rolls back podlaz-owned host networking state, stops
 the active Xray child, removes the generated runtime config path, and reports
@@ -386,24 +426,31 @@ podlaz logs --core
 journalctl -u podlazd -n 100 --no-pager
 .EE
 .TP
-.B Failed TUN connect with a saved diagnostic report
+.B Failed TUN connect or terminal revalidation with a saved diagnostic report
 Use the canonical read-only diagnostic command:
 .EX
 podlaz doctor --tun --verbose
 .EE
-The historical report identifies the stable lifecycle phase, classification,
-and final rollback status without exposing raw profile secrets or generated
-configuration.
+The historical report identifies the stable lifecycle or verification phase,
+classification, and final rollback status without exposing raw profile secrets
+or generated configuration.
 .TP
 .B Active TUN is committed but current health is not verified
-This is not a contradiction: commit is durable transaction history while
-current health is generation-specific evidence. Inspect
+This can be a transient publication while a generation is being reproved. A
+proved verification failure or deadline does not remain active indefinitely as
+.B degraded;
+podlazd captures bounded redacted diagnostics and automatically attempts normal
+bounded disconnect. If cleanup succeeds, status becomes inactive. If cleanup
+fails, inspect the
+.B cleanup-required
+state and the saved report with
 .B podlaz status
 and
 .B podlaz doctor --tun --verbose
-for the current classification. Revalidation itself performs no repair. Do not
-treat a degraded health classification as cleanup authority for foreign or
-ambiguous state.
+before running recovery. Explicit user disconnect/recovery or shutdown
+cancellation does not trigger a second automatic disconnect. Do not treat
+revalidation failure as authority to repair or delete foreign or ambiguous
+state.
 .TP
 .B Stale podlaz-owned runtime state
 Inspect first:
