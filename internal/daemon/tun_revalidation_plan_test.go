@@ -40,7 +40,7 @@ func TestTunRevalidationPlanRestoresExactOwnedFirewallRules(t *testing.T) {
 		t.Fatalf("unexpected firewall plan: %#v", plan.Firewall)
 	}
 	rule := plan.Firewall.Rules[0]
-	if rule.Chain != "output" || rule.Expr != "oifname podlaz0" || rule.Verdict != "accept" || rule.Ownership != "podlaz:firewall:tun-egress" {
+	if rule.Chain != "output" || rule.Expr != "oifname podlaz0" || rule.Verdict != "accept" || rule.Ownership != "podlaz:firewall:tun-egress" || rule.RollbackKey != planner.FirewallTunEgressKey {
 		t.Fatalf("firewall rule was not restored exactly: %#v", rule)
 	}
 }
