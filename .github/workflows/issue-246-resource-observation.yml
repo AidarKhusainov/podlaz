@@ -16,7 +16,7 @@ jobs:
   observe:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
     name: Current-package TUN resource observation
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
     timeout-minutes: 90
     env:
