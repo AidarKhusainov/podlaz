@@ -17,6 +17,18 @@ type tunRevalidationObservation struct {
 type tunRevalidationInspectFunc func(context.Context) (tunRevalidationObservation, error)
 type tunRevalidationVerifyFunc func(context.Context, tunRevalidationObservation) error
 
+type tunRevalidationOutcome struct {
+	terminal       bool
+	cause          error
+	plan           planner.TunPlan
+	generation     uint64
+	classification api.TunHealthClassification
+}
+
+func (o tunRevalidationOutcome) needsLifecycleCleanup() bool {
+	return o.terminal && o.cause != nil
+}
+
 type tunRevalidationObservationError struct {
 	classification api.TunHealthClassification
 	cause          error
@@ -112,23 +124,24 @@ func (r *tunRevalidationRuntime) PrepareInitialize() {
 // still requires it. Disconnect clears the pending bit before the coordinator
 // can execute a requeued stale initial trigger. Mutation cancellation keeps the
 // bit set so a failed/replaced lifecycle can obtain one fresh post-mutation proof.
-func (r *tunRevalidationRuntime) InitializePending(ctx context.Context) {
+func (r *tunRevalidationRuntime) InitializePending(ctx context.Context) tunRevalidationOutcome {
 	if r == nil {
-		return
+		return tunRevalidationOutcome{}
 	}
 	r.mu.RLock()
 	pending := r.initialPending
 	r.mu.RUnlock()
 	if !pending {
-		return
+		return tunRevalidationOutcome{}
 	}
 
-	err := r.Initialize(ctx)
+	outcome := r.initialize(ctx)
 	r.mu.Lock()
-	if !errors.Is(err, context.Canceled) {
+	if !errors.Is(outcome.cause, context.Canceled) {
 		r.initialPending = false
 	}
 	r.mu.Unlock()
+	return outcome
 }
 
 // Initialize establishes generation 1 from one fresh observation and verifies
@@ -136,8 +149,12 @@ func (r *tunRevalidationRuntime) InitializePending(ctx context.Context) {
 // verification proves the pre-commit state, but it cannot authorize a later
 // fingerprint if the underlying uplink changes between commit and publication.
 func (r *tunRevalidationRuntime) Initialize(ctx context.Context) error {
+	return r.initialize(ctx).cause
+}
+
+func (r *tunRevalidationRuntime) initialize(ctx context.Context) tunRevalidationOutcome {
 	if r == nil {
-		return nil
+		return tunRevalidationOutcome{}
 	}
 	observation, err := r.inspect(ctx)
 	if err != nil {
@@ -146,7 +163,7 @@ func (r *tunRevalidationRuntime) Initialize(ctx context.Context) error {
 		r.hasFingerprint = false
 		r.health = healthForObservationError(1, err)
 		r.mu.Unlock()
-		return err
+		return tunRevalidationOutcome{cause: err}
 	}
 
 	r.mu.Lock()
@@ -161,13 +178,15 @@ func (r *tunRevalidationRuntime) Initialize(ctx context.Context) error {
 
 	err = r.verify(ctx, observation)
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if err == nil {
 		r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
-		return nil
+		r.mu.Unlock()
+		return tunRevalidationOutcome{}
 	}
-	r.health = healthForVerificationError(1, err)
-	return err
+	health := healthForVerificationError(1, err)
+	r.health = health
+	r.mu.Unlock()
+	return terminalTunRevalidationOutcome(observation.plan, health, err)
 }
 
 func (r *tunRevalidationRuntime) Clear() {
@@ -195,9 +214,9 @@ func (r *tunRevalidationRuntime) Health() *api.TunHealthStatus {
 	return &copy
 }
 
-func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunRevalidationTrigger) {
+func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunRevalidationTrigger) tunRevalidationOutcome {
 	if r == nil {
-		return
+		return tunRevalidationOutcome{}
 	}
 	observation, err := r.inspect(ctx)
 	if err != nil {
@@ -205,7 +224,7 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 		generation := currentTunGeneration(r.health)
 		r.health = healthForObservationError(generation, err)
 		r.mu.Unlock()
-		return
+		return tunRevalidationOutcome{cause: err}
 	}
 
 	r.mu.Lock()
@@ -213,7 +232,7 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 	mustReproveCurrentGeneration := trigger == tunRevalidationTriggerResume || trigger == tunRevalidationTriggerSourceResync || r.health == nil || r.health.State != api.TunHealthVerified
 	if sameFingerprint && !mustReproveCurrentGeneration {
 		r.mu.Unlock()
-		return
+		return tunRevalidationOutcome{}
 	}
 	generation := currentTunGeneration(r.health)
 	classification := api.TunHealthUplinkRevalidating
@@ -235,12 +254,55 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 
 	err = r.verify(ctx, observation)
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if err == nil {
 		r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: generation}
+		r.mu.Unlock()
+		return tunRevalidationOutcome{}
+	}
+	health := healthForVerificationError(generation, err)
+	r.health = health
+	r.mu.Unlock()
+	return terminalTunRevalidationOutcome(observation.plan, health, err)
+}
+
+func (r *tunRevalidationRuntime) MarkCleanupRequired(outcome tunRevalidationOutcome) {
+	if r == nil || !outcome.needsLifecycleCleanup() {
 		return
 	}
-	r.health = healthForVerificationError(generation, err)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	generation := outcome.generation
+	if generation == 0 {
+		generation = currentTunGeneration(r.health)
+	}
+	classification := outcome.classification
+	if classification == "" && r.health != nil {
+		classification = r.health.Classification
+	}
+	if classification == "" {
+		classification = api.TunHealthOwnedStateInvalid
+	}
+	r.health = &api.TunHealthStatus{
+		State:             api.TunHealthCleanupRequired,
+		NetworkGeneration: generation,
+		Classification:    classification,
+	}
+}
+
+func terminalTunRevalidationOutcome(plan planner.TunPlan, health *api.TunHealthStatus, err error) tunRevalidationOutcome {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return tunRevalidationOutcome{cause: err}
+	}
+	outcome := tunRevalidationOutcome{
+		terminal: true,
+		cause:    err,
+		plan:     plan,
+	}
+	if health != nil {
+		outcome.generation = health.NetworkGeneration
+		outcome.classification = health.Classification
+	}
+	return outcome
 }
 
 func currentTunGeneration(health *api.TunHealthStatus) uint64 {
