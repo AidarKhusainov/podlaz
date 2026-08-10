@@ -93,9 +93,24 @@ func deriveTunUplinkFingerprint(s netsnapshot.Snapshot, indexLookup tunUplinkInt
 }
 
 func activeNetworkManagerConnectionID(nm netsnapshot.NetworkManager, uplink string) (string, error) {
-	if nm.Finding.Status != netsnapshot.StatusDetected {
+	switch nm.Finding.Status {
+	case netsnapshot.StatusMissing, netsnapshot.StatusUnsupported:
 		return "", nil
+	case netsnapshot.StatusDetected:
+		// Continue below: once NetworkManager itself is known to be present, an
+		// unavailable active-connection inventory is unknown evidence, not proof
+		// that the uplink is unmanaged.
+	default:
+		return "", fmt.Errorf("NetworkManager state inspection is %s", nm.Finding.Status)
 	}
+	if nm.ActiveConnectionsInspection.Status != netsnapshot.StatusDetected {
+		detail := strings.TrimSpace(nm.ActiveConnectionsInspection.Detail)
+		if detail == "" {
+			return "", fmt.Errorf("NetworkManager active-connection inspection is %s", nm.ActiveConnectionsInspection.Status)
+		}
+		return "", fmt.Errorf("NetworkManager active-connection inspection is %s: %s", nm.ActiveConnectionsInspection.Status, detail)
+	}
+
 	var matches []netsnapshot.NetworkManagerConnection
 	for _, connection := range nm.ActiveConnections {
 		if strings.TrimSpace(connection.Device) == uplink && strings.EqualFold(strings.TrimSpace(connection.State), "activated") {
