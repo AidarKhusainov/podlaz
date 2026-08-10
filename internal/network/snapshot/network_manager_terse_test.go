@@ -22,7 +22,8 @@ func TestParseNMActiveConnectionsHonorsTerseEscaping(t *testing.T) {
 }
 
 type localeRecordingNMRunner struct {
-	commands [][]string
+	commands     [][]string
+	activeOutput string
 }
 
 func (r *localeRecordingNMRunner) LookPath(file string) (string, error) {
@@ -38,7 +39,11 @@ func (r *localeRecordingNMRunner) Run(_ context.Context, name string, args ...st
 		return CommandResult{Stdout: "running:connected", ExitCode: 0}, nil
 	}
 	if args[len(args)-1] == "--active" {
-		return CommandResult{Stdout: "Example:11111111-2222-3333-4444-555555555555:802-11-wireless:wlan0:activated", ExitCode: 0}, nil
+		output := r.activeOutput
+		if output == "" {
+			output = "Example:11111111-2222-3333-4444-555555555555:802-11-wireless:wlan0:activated"
+		}
+		return CommandResult{Stdout: output, ExitCode: 0}, nil
 	}
 	return CommandResult{ExitCode: 1}, errors.New("unexpected command")
 }
@@ -56,5 +61,21 @@ func TestNetworkManagerRunsNMCLIWithCLocale(t *testing.T) {
 		if len(command) < 4 || command[0] != "env" || command[1] != "LC_ALL=C" || command[2] != "/usr/bin/nmcli" {
 			t.Fatalf("NetworkManager command is locale-dependent: %#v", command)
 		}
+	}
+}
+
+func TestNetworkManagerMalformedActiveInventoryFailsClosed(t *testing.T) {
+	runner := &localeRecordingNMRunner{
+		activeOutput: `Broken\`,
+	}
+	nm := networkManager(context.Background(), runner)
+	if nm.Finding.Status != StatusDetected {
+		t.Fatalf("NetworkManager detection=%q, want detected", nm.Finding.Status)
+	}
+	if nm.ActiveConnectionsInspection.Status != StatusUnknown {
+		t.Fatalf("malformed active inventory status=%q, want unknown", nm.ActiveConnectionsInspection.Status)
+	}
+	if len(nm.ActiveConnections) != 0 {
+		t.Fatalf("malformed active inventory became authoritative connections: %#v", nm.ActiveConnections)
 	}
 }
