@@ -140,7 +140,6 @@ func (s Server) Run(ctx context.Context) error {
 		},
 		finalize:            lifecycle.finalizeTunFailureDiagnosticRollback,
 		markCleanupRequired: revalidationRuntime.MarkCleanupRequired,
-		mutationPending:     operationLock.mutationPending,
 		cleanupTimeout:      tunRollbackCleanupTimeout,
 	}
 
