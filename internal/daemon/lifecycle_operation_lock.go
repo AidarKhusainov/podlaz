@@ -36,15 +36,6 @@ func (l *lifecycleOperationLock) setRevalidationCancel(cancel context.CancelFunc
 	l.cancelMu.Unlock()
 }
 
-func (l *lifecycleOperationLock) clearRevalidationCancel() {
-	if l == nil {
-		return
-	}
-	l.cancelMu.Lock()
-	l.cancelRevalidation = nil
-	l.cancelMu.Unlock()
-}
-
 func (l *lifecycleOperationLock) interruptRevalidation() {
 	if l == nil {
 		return
@@ -98,7 +89,13 @@ func (l *lifecycleOperationLock) runRecovery(ctx context.Context, fn func() api.
 	}
 	l.interruptRevalidation()
 	if err := l.acquire(ctx); err != nil {
-		return api.RecoveryResponse{Warnings: []api.RecoveryWarning{{Target: "lifecycle operation", Message: err.Error()}}}
+		return api.RecoveryResponse{
+			Mode: "execute",
+			Warnings: []api.RecoveryWarning{{
+				Target:  "lifecycle operation",
+				Message: err.Error(),
+			}},
+		}
 	}
 	defer l.release()
 	return fn()
