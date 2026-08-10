@@ -22,6 +22,7 @@ func TestTunRevalidationPlanRestoresExactOwnedFirewallRules(t *testing.T) {
 					Name: "output", Type: "filter", Hook: "output", Priority: 0, Policy: "accept", Owner: netexecutor.OwnerFirewall,
 					Rules: []string{"oifname podlaz0 accept owner podlaz:firewall:tun-egress"},
 				}},
+			},
 		},
 		Rollback: txstate.RollbackMetadata{
 			NFTables: []txstate.NFTablesRollback{{Family: "inet", Table: "podlaz", Owner: netexecutor.OwnerFirewall}},
