@@ -53,6 +53,17 @@ func decorateTunHealth(status api.StatusResponse, runtime *tunRevalidationRuntim
 		status.TunHealth = nil
 		return status
 	}
-	status.TunHealth = runtime.Health()
+	health := runtime.Health()
+	if health == nil {
+		// XrayManager can publish active immediately after commit while baseline
+		// fingerprint initialization is still in progress. Missing evidence must
+		// never be interpreted as implicit healthy current state.
+		health = &api.TunHealthStatus{
+			State:             api.TunHealthRevalidating,
+			NetworkGeneration: 1,
+			Classification:    api.TunHealthUplinkRevalidating,
+		}
+	}
+	status.TunHealth = health
 	return status
 }
