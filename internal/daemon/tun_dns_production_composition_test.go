@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,7 +33,7 @@ func TestProductionTunExecutorTransactionFlowAcceptsInactiveScopeAndConverges(t 
 	t.Setenv(e2eTunHookPhaseEnv, "")
 
 	runtimeDir := t.TempDir()
-	runner := &productionTunCommandRunner{resolvedStatus: productionResolvedInactiveScopeForTest}
+	runner := newProductionTunCommandRunner(productionResolvedInactiveScopeForTest)
 	executor := newProductionTunPlanExecutor(runner)
 	plan := productionDNSPlanForTest()
 	p := profile.Profile{ID: "example-profile", Name: "Example Profile"}
@@ -69,6 +70,14 @@ func TestProductionTunExecutorTransactionFlowAcceptsInactiveScopeAndConverges(t 
 	}
 }
 
+func TestProductionTunCommandRunnerRejectsUnexpectedCommand(t *testing.T) {
+	runner := newProductionTunCommandRunner(productionResolvedInactiveScopeForTest)
+	result, err := runner.Run(context.Background(), "ip", "-4", "unexpected")
+	if err == nil || result.ExitCode == 0 {
+		t.Fatalf("unexpected production command must fail closed: result=%#v err=%v", result, err)
+	}
+}
+
 func beginAndApplyProductionTunTransaction(t *testing.T, runtimeDir string, p profile.Profile, plan planner.TunPlan, executor tunPlanExecutor) tunTransactionResult {
 	t.Helper()
 	result, err := beginTunTransaction(context.Background(), runtimeDir, p, plan, fixedClock())
@@ -101,7 +110,7 @@ func assertNoProductionTunTransactionBlocker(t *testing.T, runtimeDir string) {
 }
 
 func productionDNSPlanForTest() planner.TunPlan {
-	plan := planner.TunPlan{
+	return planner.TunPlan{
 		Mode:      planner.ModeTun,
 		ProfileID: "example-profile",
 		TunDevice: planner.TunDevicePlan{Name: netsnapshot.DefaultTunName, MTU: planner.DefaultTunMTU, Action: "verify"},
@@ -134,7 +143,6 @@ func productionDNSPlanForTest() planner.TunPlan {
 		},
 		Firewall: productionFirewallPlanForTest(),
 	}
-	return plan
 }
 
 func productionFirewallPlanForTest() planner.TunFirewallPlan {
@@ -159,60 +167,190 @@ type productionTunCommandRunner struct {
 	resolvedStatus string
 	nftTable       bool
 	tunAddress     bool
+	routes         map[string]string
+	rules          map[int]string
+}
+
+func newProductionTunCommandRunner(resolvedStatus string) *productionTunCommandRunner {
+	return &productionTunCommandRunner{
+		resolvedStatus: resolvedStatus,
+		routes:         make(map[string]string),
+		rules:          make(map[int]string),
+	}
 }
 
 func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
 	command := strings.TrimSpace(name + " " + strings.Join(args, " "))
 	r.commands = append(r.commands, command)
 
-	switch {
-	case name == "ip" && (strings.Contains(command, "-details link show dev podlaz0") || strings.Contains(command, "-details -o link show dev podlaz0")):
+	if name == "ip" {
+		return r.runIP(args, command)
+	}
+	if name == "resolvectl" {
+		return r.runResolvectl(args, command)
+	}
+	if name == "nft" {
+		return r.runNFT(args, command)
+	}
+	return unexpectedProductionCommand(command)
+}
+
+func (r *productionTunCommandRunner) runIP(args []string, command string) (netexecutor.CommandResult, error) {
+	switch command {
+	case "ip -details link show dev podlaz0", "ip -details -o link show dev podlaz0":
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest, ExitCode: 0}, nil
-	case name == "ip" && (strings.Contains(command, "-4 -o address show dev podlaz0") || strings.Contains(command, "-4 -o addr show dev podlaz0 scope global")):
+	case "ip -4 -o address show dev podlaz0":
 		if !r.tunAddress {
 			return netexecutor.CommandResult{ExitCode: 0}, nil
 		}
 		return netexecutor.CommandResult{Stdout: "7: podlaz0    inet 198.18.0.1/32 scope global podlaz0", ExitCode: 0}, nil
-	case name == "ip" && (strings.Contains(command, "-4 address add") || strings.Contains(command, "-4 addr add")):
+	case "ip -4 address replace 198.18.0.1/32 dev podlaz0":
 		r.tunAddress = true
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && (strings.Contains(command, "-4 address del") || strings.Contains(command, "-4 addr del")):
+	case "ip -4 address del 198.18.0.1/32 dev podlaz0":
 		r.tunAddress = false
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 route show table"):
+	case "ip link set dev podlaz0 up", "ip -4 route flush cache":
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 route add"):
+	}
+
+	if len(args) >= 6 && args[0] == "-4" && args[1] == "route" {
+		return r.runIPRoute(args, command)
+	}
+	if len(args) >= 5 && args[0] == "-4" && args[1] == "rule" {
+		return r.runIPRule(args, command)
+	}
+	return unexpectedProductionCommand(command)
+}
+
+func (r *productionTunCommandRunner) runIPRoute(args []string, command string) (netexecutor.CommandResult, error) {
+	op := args[2]
+	switch op {
+	case "show":
+		if len(args) != 6 || args[3] != "table" {
+			return unexpectedProductionCommand(command)
+		}
+		key := args[4] + " " + args[5]
+		return netexecutor.CommandResult{Stdout: r.routes[key], ExitCode: 0}, nil
+	case "add", "del":
+		key, line, ok := productionRouteState(args)
+		if !ok {
+			return unexpectedProductionCommand(command)
+		}
+		if op == "add" {
+			r.routes[key] = line
+		} else {
+			delete(r.routes, key)
+		}
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 route del"):
-		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 route flush cache"):
-		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 rule show priority"):
-		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 rule add"):
-		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 rule del"):
-		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "resolvectl" && strings.HasPrefix(strings.Join(args, " "), "status --no-pager"):
+	default:
+		return unexpectedProductionCommand(command)
+	}
+}
+
+func productionRouteState(args []string) (key, line string, ok bool) {
+	if len(args) < 7 || args[0] != "-4" || args[1] != "route" || (args[2] != "add" && args[2] != "del") {
+		return "", "", false
+	}
+	destination := args[3]
+	table := ""
+	gateway := ""
+	device := ""
+	for i := 4; i+1 < len(args); i += 2 {
+		switch args[i] {
+		case "via":
+			gateway = args[i+1]
+		case "dev":
+			device = args[i+1]
+		case "table":
+			table = args[i+1]
+		default:
+			return "", "", false
+		}
+	}
+	if table == "" || device == "" {
+		return "", "", false
+	}
+	fields := []string{destination}
+	if gateway != "" {
+		fields = append(fields, "via", gateway)
+	}
+	fields = append(fields, "dev", device)
+	return table + " " + destination, strings.Join(fields, " "), true
+}
+
+func (r *productionTunCommandRunner) runIPRule(args []string, command string) (netexecutor.CommandResult, error) {
+	op := args[2]
+	if op == "show" {
+		if len(args) != 5 || args[3] != "priority" {
+			return unexpectedProductionCommand(command)
+		}
+		priority, err := strconv.Atoi(args[4])
+		if err != nil {
+			return unexpectedProductionCommand(command)
+		}
+		return netexecutor.CommandResult{Stdout: r.rules[priority], ExitCode: 0}, nil
+	}
+	if op != "add" && op != "del" || len(args) < 8 || args[3] != "priority" {
+		return unexpectedProductionCommand(command)
+	}
+	priority, err := strconv.Atoi(args[4])
+	if err != nil {
+		return unexpectedProductionCommand(command)
+	}
+	lookup := -1
+	for i := 5; i < len(args); i++ {
+		if args[i] == "lookup" {
+			lookup = i
+			break
+		}
+	}
+	if lookup <= 5 || lookup+1 != len(args)-1 {
+		return unexpectedProductionCommand(command)
+	}
+	if op == "add" {
+		r.rules[priority] = fmt.Sprintf("%d: %s lookup %s", priority, strings.Join(args[5:lookup], " "), args[lookup+1])
+	} else {
+		delete(r.rules, priority)
+	}
+	return netexecutor.CommandResult{ExitCode: 0}, nil
+}
+
+func (r *productionTunCommandRunner) runResolvectl(args []string, command string) (netexecutor.CommandResult, error) {
+	switch command {
+	case "resolvectl status --no-pager":
 		return netexecutor.CommandResult{Stdout: r.resolvedStatus, ExitCode: 0}, nil
-	case name == "resolvectl" && strings.HasPrefix(strings.Join(args, " "), "revert podlaz0"):
+	case "resolvectl revert podlaz0",
+		"resolvectl dns podlaz0 1.1.1.1 9.9.9.9",
+		"resolvectl domain podlaz0 ~.",
+		"resolvectl default-route podlaz0 yes":
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "resolvectl":
-		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "nft" && len(args) == 2 && args[0] == "-f":
+	default:
+		return unexpectedProductionCommand(command)
+	}
+}
+
+func (r *productionTunCommandRunner) runNFT(args []string, command string) (netexecutor.CommandResult, error) {
+	if len(args) == 2 && args[0] == "-f" && strings.TrimSpace(args[1]) != "" {
 		r.nftTable = true
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "nft" && strings.HasPrefix(strings.Join(args, " "), "-y list table inet podlaz"):
+	}
+	switch command {
+	case "nft -y list table inet podlaz":
 		if !r.nftTable {
 			return netexecutor.CommandResult{ExitCode: 1, Stderr: "No such file or directory"}, fmt.Errorf("nft table absent")
 		}
 		return netexecutor.CommandResult{Stdout: productionNFTListOutputForTest(), ExitCode: 0}, nil
-	case name == "nft" && strings.HasPrefix(strings.Join(args, " "), "delete table inet podlaz"):
+	case "nft delete table inet podlaz":
 		r.nftTable = false
 		return netexecutor.CommandResult{ExitCode: 0}, nil
 	default:
-		return netexecutor.CommandResult{ExitCode: 0}, nil
+		return unexpectedProductionCommand(command)
 	}
+}
+
+func unexpectedProductionCommand(command string) (netexecutor.CommandResult, error) {
+	return netexecutor.CommandResult{ExitCode: 127, Stderr: "unexpected command"}, fmt.Errorf("unexpected production command %q", command)
 }
 
 func (r *productionTunCommandRunner) count(command string) int {
