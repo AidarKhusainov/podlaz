@@ -110,10 +110,11 @@ func TestTunRevalidationCleanupFailurePublishesCleanupRequired(t *testing.T) {
 	}
 }
 
-func TestTunRevalidationTerminalHandlerSkipsCleanupWhenLifecycleMutationAlreadyPending(t *testing.T) {
+func TestTunRevalidationTerminalHandlerDoesNotRunAfterShutdownCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 	calls := 0
 	handler := tunRevalidationTerminalHandler{
-		mutationPending: func() bool { return true },
 		collect: func(context.Context, planner.TunPlan, error) tunFailureDiagnosticSummary {
 			calls++
 			return tunFailureDiagnosticSummary{}
@@ -123,9 +124,39 @@ func TestTunRevalidationTerminalHandlerSkipsCleanupWhenLifecycleMutationAlreadyP
 			return nil
 		},
 	}
-	handler.Handle(context.Background(), tunRevalidationOutcome{terminal: true, cause: errors.New("failure")})
+	handler.Handle(ctx, tunRevalidationOutcome{terminal: true, cause: errors.New("failure")})
 	if calls != 0 {
-		t.Fatalf("terminal handler ran %d steps while a user lifecycle mutation already had precedence", calls)
+		t.Fatalf("shutdown-cancelled terminal handler ran %d cleanup steps", calls)
+	}
+}
+
+func TestTunRevalidationCoordinatorReleasesActiveTriggerBeforeTerminalCleanup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var coordinator *tunRevalidationCoordinator
+	coordinator = newTunRevalidationOutcomeCoordinator(
+		func(context.Context, tunRevalidationTrigger) tunRevalidationOutcome {
+			return tunRevalidationOutcome{terminal: true, cause: errors.New("failure")}
+		},
+		func(context.Context, tunRevalidationOutcome) {
+			coordinator.InterruptForMutation()
+			if trigger := coordinator.takePendingTrigger(); trigger != "" {
+				t.Fatalf("terminal cleanup requeued completed trigger %q", trigger)
+			}
+			cancel()
+		},
+	)
+	coordinator.Notify(tunRevalidationTriggerResume)
+	coordinator.Run(ctx)
+}
+
+func TestTunRevalidationDiagnosticFailurePhasePreservesFailedLayer(t *testing.T) {
+	cause := newTunRevalidationVerificationError(
+		api.TunHealthConnectivityFailed,
+		newTunVerificationError("https", "HTTPS revalidation failed", errors.New("synthetic HTTPS failure")),
+	)
+	if got := tunRevalidationDiagnosticFailurePhase(cause); got != "https" {
+		t.Fatalf("failure phase=%q, want https", got)
 	}
 }
 
