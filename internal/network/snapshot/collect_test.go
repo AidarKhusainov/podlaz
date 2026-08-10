@@ -43,13 +43,14 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 			"nft":        "/usr/sbin/nft",
 		},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":         {Stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp metric 600"},
-			"/usr/sbin/ip -6 route show default":         {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
-			"/usr/sbin/ip route get 203.0.113.10":        {Stdout: "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000"},
-			"/usr/sbin/ip link show dev podlaz0":         {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
-			"/usr/bin/resolvectl status --no-pager":      {Stdout: resolvedStatusWithDesktopLinkForTest},
-			"/usr/bin/nmcli -t -f RUNNING,STATE general": {Stdout: "running:connected"},
-			"/usr/sbin/nft list tables":                  {Stdout: "table inet filter"},
+			"/usr/sbin/ip -4 route show default": {Stdout: "default via 192.0.2.1 dev wlp0s20f3 proto dhcp metric 600"},
+			"/usr/sbin/ip -6 route show default": {ExitCode: 1, Stderr: "RTNETLINK answers: Network is unreachable"},
+			"/usr/sbin/ip route get 203.0.113.10": {Stdout: "203.0.113.10 via 192.0.2.1 dev wlp0s20f3 src 192.0.2.55 uid 1000"},
+			"/usr/sbin/ip link show dev podlaz0": {ExitCode: 1, Stderr: "Device \"podlaz0\" does not exist."},
+			"/usr/bin/resolvectl status --no-pager": {Stdout: resolvedStatusWithDesktopLinkForTest},
+			"env LC_ALL=C /usr/bin/nmcli -t -e yes -f RUNNING,STATE general": {Stdout: "running:connected"},
+			"env LC_ALL=C /usr/bin/nmcli -t -e yes -f NAME,UUID,TYPE,DEVICE,STATE connection show --active": {Stdout: "Example:11111111-2222-3333-4444-555555555555:802-11-wireless:wlp0s20f3:activated"},
+			"/usr/sbin/nft list tables": {Stdout: "table inet filter"},
 		},
 	}
 
@@ -66,6 +67,9 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 	}
 	if s.DNS.Mode != "systemd-resolved" || s.NetworkManager.State != "connected" {
 		t.Fatalf("unexpected DNS/NM snapshot: %#v %#v", s.DNS, s.NetworkManager)
+	}
+	if s.NetworkManager.ActiveConnectionsInspection.Status != StatusDetected || len(s.NetworkManager.ActiveConnections) != 1 || s.NetworkManager.ActiveConnections[0].Device != "wlp0s20f3" {
+		t.Fatalf("expected authoritative active NetworkManager inventory, got %#v", s.NetworkManager)
 	}
 	if len(s.DNS.ResolvedLinks) != 1 || s.DNS.ResolvedLinks[0].Name != "wlp0s20f3" || !containsValue(s.DNS.ResolvedLinks[0].CurrentScopes, "DNS") {
 		t.Fatalf("expected parsed resolved link DNS scope, got %#v", s.DNS.ResolvedLinks)
