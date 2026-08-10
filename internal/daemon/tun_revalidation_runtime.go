@@ -6,10 +6,12 @@ import (
 	"sync"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 type tunRevalidationObservation struct {
 	fingerprint tunUplinkFingerprint
+	plan        planner.TunPlan
 }
 
 type tunRevalidationInspectFunc func(context.Context) (tunRevalidationObservation, error)
@@ -145,12 +147,13 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, _ tunRevalidati
 	}
 
 	r.mu.Lock()
-	if r.hasFingerprint && observation.fingerprint == r.fingerprint {
+	sameFingerprint := r.hasFingerprint && observation.fingerprint == r.fingerprint
+	if sameFingerprint && r.health != nil && r.health.State == api.TunHealthVerified {
 		r.mu.Unlock()
 		return
 	}
 	generation := currentTunGeneration(r.health)
-	if r.hasFingerprint {
+	if r.hasFingerprint && !sameFingerprint {
 		generation++
 	}
 	if generation == 0 {
@@ -161,7 +164,7 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, _ tunRevalidati
 	r.health = &api.TunHealthStatus{
 		State:             api.TunHealthRevalidating,
 		NetworkGeneration: generation,
-		Classification:    api.TunHealthUplinkChanged,
+		Classification:    api.TunHealthUplinkRevalidating,
 	}
 	r.mu.Unlock()
 
