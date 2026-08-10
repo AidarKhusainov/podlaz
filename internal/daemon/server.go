@@ -104,29 +104,51 @@ func (s Server) Run(ctx context.Context) error {
 	}
 
 	operationLock := newLifecycleOperationLock()
-	coordinator := newTunRevalidationCoordinator(func(revalidationCtx context.Context, trigger tunRevalidationTrigger) {
+	var lockedLifecycle lifecycleService
+	var terminalHandler tunRevalidationTerminalHandler
+	coordinator := newTunRevalidationOutcomeCoordinator(func(revalidationCtx context.Context, trigger tunRevalidationTrigger) tunRevalidationOutcome {
+		var outcome tunRevalidationOutcome
 		if err := operationLock.runRevalidation(revalidationCtx, func() {
 			if trigger == tunRevalidationTriggerInitial {
-				revalidationRuntime.InitializePending(revalidationCtx)
+				outcome = revalidationRuntime.InitializePending(revalidationCtx)
 				return
 			}
-			revalidationRuntime.Revalidate(revalidationCtx, trigger)
-		}); err != nil && revalidationCtx.Err() == nil {
-			log.Printf("podlazd: TUN revalidation serialization failed")
+			outcome = revalidationRuntime.Revalidate(revalidationCtx, trigger)
+		}); err != nil {
+			if revalidationCtx.Err() == nil {
+				log.Printf("podlazd: TUN revalidation serialization failed")
+			}
+			return tunRevalidationOutcome{}
 		}
+		return outcome
+	}, func(terminalCtx context.Context, outcome tunRevalidationOutcome) {
+		terminalHandler.Handle(terminalCtx, outcome)
 	})
 	operationLock.setRevalidationCancel(coordinator.InterruptForMutation)
-	eventCtx, cancelEvents := context.WithCancel(ctx)
-	defer cancelEvents()
-	go coordinator.Run(eventCtx)
-	startTunNetworkEventSources(eventCtx, coordinator.Notify)
 
 	healthLifecycle := tunRevalidationLifecycle{
 		lifecycle: startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: forceRefreshStartupScan},
 		runtime:   revalidationRuntime,
 		schedule:  coordinator.Notify,
 	}
-	lockedLifecycle := operationLock.wrap(healthLifecycle)
+	lockedLifecycle = operationLock.wrap(healthLifecycle)
+	terminalHandler = tunRevalidationTerminalHandler{
+		collect: lifecycle.collectTunRevalidationFailureDiagnostics,
+		disconnect: func(cleanupCtx context.Context) error {
+			_, err := lockedLifecycle.Disconnect(cleanupCtx)
+			return err
+		},
+		finalize:            lifecycle.finalizeTunFailureDiagnosticRollback,
+		markCleanupRequired: revalidationRuntime.MarkCleanupRequired,
+		mutationPending:     operationLock.mutationPending,
+		cleanupTimeout:      tunRollbackCleanupTimeout,
+	}
+
+	eventCtx, cancelEvents := context.WithCancel(ctx)
+	defer cancelEvents()
+	go coordinator.Run(eventCtx)
+	startTunNetworkEventSources(eventCtx, coordinator.Notify)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: status request method=%s path=%s", r.Method, r.URL.Path)
