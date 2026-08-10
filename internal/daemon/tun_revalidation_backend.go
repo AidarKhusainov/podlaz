@@ -13,17 +13,23 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
+	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
 const defaultTunRevalidationTimeout = 45 * time.Second
 
 type productionTunRevalidationBackend struct {
-	manager *XrayManager
-	timeout time.Duration
+	manager       *XrayManager
+	timeout       time.Duration
+	networkClient tunRevalidationNetworkClient
 }
 
 func newProductionTunRevalidationRuntime(manager *XrayManager) *tunRevalidationRuntime {
-	backend := &productionTunRevalidationBackend{manager: manager, timeout: defaultTunRevalidationTimeout}
+	backend := &productionTunRevalidationBackend{
+		manager:       manager,
+		timeout:       defaultTunRevalidationTimeout,
+		networkClient: tundiag.NetworkClient{},
+	}
 	return newTunRevalidationRuntime(backend.inspect, backend.verify)
 }
 
@@ -86,6 +92,12 @@ func (b *productionTunRevalidationBackend) verify(ctx context.Context, observati
 			return err
 		}
 		return newTunRevalidationVerificationError(api.TunHealthConnectivityFailed, fmt.Errorf("verify committed TUN connectivity: %w", err))
+	}
+	if err := verifyTunRevalidationDataPlane(verifyCtx, observation.plan, b.networkClient); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return newTunRevalidationVerificationError(api.TunHealthConnectivityFailed, fmt.Errorf("verify committed TUN layered data plane: %w", err))
 	}
 	return nil
 }
