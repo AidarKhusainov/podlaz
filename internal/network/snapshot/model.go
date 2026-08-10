@@ -77,9 +77,10 @@ type NetworkManagerConnection struct {
 }
 
 type NetworkManager struct {
-	Finding           Finding                    `json:"finding"`
-	State             string                     `json:"state,omitempty"`
-	ActiveConnections []NetworkManagerConnection `json:"active_connections,omitempty"`
+	Finding                     Finding                    `json:"finding"`
+	State                       string                     `json:"state,omitempty"`
+	ActiveConnectionsInspection Finding                    `json:"active_connections_inspection"`
+	ActiveConnections           []NetworkManagerConnection `json:"active_connections,omitempty"`
 }
 
 type Nftables struct {
