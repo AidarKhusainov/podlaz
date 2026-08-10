@@ -8,6 +8,7 @@ import (
 type tunRevalidationTrigger string
 
 const (
+	tunRevalidationTriggerInitial      tunRevalidationTrigger = "initial"
 	tunRevalidationTriggerResume       tunRevalidationTrigger = "resume"
 	tunRevalidationTriggerSourceResync tunRevalidationTrigger = "source-resync"
 	tunRevalidationTriggerLink         tunRevalidationTrigger = "link"
@@ -36,9 +37,10 @@ func newTunRevalidationCoordinator(run func(context.Context, tunRevalidationTrig
 }
 
 // Notify is edge-triggered. The one-element wake channel bounds queued work,
-// while pendingTrigger merges event semantics under a mutex. Resume and source
-// resync dominate ordinary link/address/route hints because they invalidate
-// proof freshness even when the resulting uplink fingerprint is unchanged.
+// while pendingTrigger merges event semantics under a mutex. Generation-one
+// proof dominates all other hints because a just-committed TUN must establish
+// its first current-health proof before ordinary fingerprint decisions apply.
+// Resume and source resync then dominate ordinary link/address/route hints.
 func (c *tunRevalidationCoordinator) Notify(trigger tunRevalidationTrigger) {
 	if c == nil || trigger == "" {
 		return
@@ -57,6 +59,9 @@ func (c *tunRevalidationCoordinator) signalWake() {
 }
 
 func mergeTunRevalidationTrigger(current, next tunRevalidationTrigger) tunRevalidationTrigger {
+	if current == tunRevalidationTriggerInitial || next == tunRevalidationTriggerInitial {
+		return tunRevalidationTriggerInitial
+	}
 	if current == tunRevalidationTriggerResume || next == tunRevalidationTriggerResume {
 		return tunRevalidationTriggerResume
 	}
