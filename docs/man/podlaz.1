@@ -247,21 +247,35 @@ concurrency limit.
 .B status
 Print daemon-backed status when available, otherwise local read-only status.
 For an active TUN session, durable transaction state and current network health
-are separate facts. A transaction may remain
-.B committed
-while current health is
-.BR verified ,
-.BR revalidating ,
-.BR degraded ,
+are separate facts. A committed transaction may be published temporarily as
+.BR revalidating
 or
-.BR cleanup-required .
-The daemon also publishes a positive
+.BR degraded
+while fresh generation-specific evidence is being established or a terminal
+verification outcome is being handed off. These are not stable end states after
+a proved verification failure or revalidation deadline.
+.PP
+The daemon publishes a positive
 .B network_generation
-for the current underlying-network generation and a stable classification while
-health is not verified. Generation 1 is published as
+and a stable classification while current health is not verified. Generation 1
+becomes
 .B verified
 only after the exact post-commit authoritative observation has passed the same
-canonical state and connectivity verification used for later revalidation.
+canonical state and layered connectivity verification used for later
+revalidation.
+.PP
+If a fresh owned session fails required verification or reaches the bounded
+revalidation deadline, podlazd keeps the old health proof invalid, records a
+bounded redacted TUN diagnostic report before cleanup, releases revalidation
+authority, and automatically invokes the normal bounded lifecycle disconnect.
+Successful rollback converges to inactive state, so active
+.B tun_health
+is no longer published. Failed rollback keeps the surviving session or owned
+state fail-closed as
+.B cleanup-required
+for explicit recovery. Cancellation caused by an explicit user disconnect,
+recovery, or daemon shutdown is not treated as a second terminal failure and
+does not schedule another automatic disconnect.
 .PP
 Suspend/resume, underlying default-route interface or gateway changes, relevant
 uplink-address changes, NetworkManager connection identity changes, and server
@@ -272,12 +286,19 @@ unchanged. Events consumed or probes cancelled while connect, disconnect, or
 recovery has lifecycle priority are retained for one bounded post-mutation
 revalidation instead of being treated as successful no-ops.
 .PP
-An active TUN whose current health is not
-.B verified
-is diagnostic-unhealthy and
+While an active TUN is transiently
+.BR revalidating
+or
+.BR degraded ,
+or remains
+.B cleanup-required
+after failed rollback, it is diagnostic-unhealthy and
 .B podlaz status
-returns exit status 3. This does not rewrite the durable transaction state and
-does not by itself authorize cleanup or automatic repair.
+returns exit status 3. A successful automatic fail-safe disconnect instead
+publishes the normal inactive lifecycle state. Current-health failure does not
+rewrite historical commit evidence, but terminal verification failure does
+authorize only the existing exact transaction-backed disconnect path; it does
+not authorize speculative repair or cleanup of foreign or ambiguous state.
 .TP
 .B doctor [--json]
 Print environment and runtime diagnostics.
@@ -398,7 +419,8 @@ Invalid usage, invalid flags or arguments, or deferred JSON output.
 .TP
 .B 3
 Diagnostic command found an unhealthy or unavailable state, including an active
-TUN whose current health is revalidating, degraded, or cleanup-required.
+TUN whose current health is transiently revalidating/degraded or is
+cleanup-required after failed cleanup.
 .TP
 .B 4
 Permission or authorization failure.
