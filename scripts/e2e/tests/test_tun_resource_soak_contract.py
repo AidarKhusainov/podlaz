@@ -86,6 +86,14 @@ class TunResourceSoakContractTests(unittest.TestCase):
         private_cleanup = cleanup.index('rm -rf -- "${SOAK_PRIVATE_DIR}"')
         self.assertLess(failure, private_cleanup)
 
+    def test_failure_report_contains_only_allowlisted_cli_classification(self) -> None:
+        text = self.script_text()
+        self.assertIn("classify-cli-error", text)
+        writer = self.function_body("write_failure_evidence", "\n}\n\ncleanup")
+        self.assertIn('"command_classification"', writer)
+        self.assertNotIn('command_message', writer)
+        self.assertNotIn('raw_error', writer)
+
     def test_private_identity_and_profile_material_are_removed_before_artifact_scan(self) -> None:
         cleanup = self.function_body("cleanup", "\n}\n\ntrap cleanup EXIT")
         self.assertIn('rm -rf -- "${SOAK_PRIVATE_DIR}"', cleanup)

@@ -92,6 +92,7 @@ BUILD_COMMIT=""
 SOAK_STARTED_SECONDS=0
 SOAK_PHASE="initialization"
 SOAK_COMMAND_EXIT=""
+SOAK_COMMAND_CLASSIFICATION=""
 
 append_sensitive_value() {
   local value="${1:-}"
@@ -415,13 +416,13 @@ write_public_report() {
 
 write_failure_evidence() {
   local harness_exit_code="$1"
-  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${harness_exit_code}" <<'PY'
+  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${harness_exit_code}" <<'PY'
 import json
 import os
 import re
 import sys
 
-path, phase, command_exit_text, harness_exit_text = sys.argv[1:]
+path, phase, command_exit_text, command_classification_text, harness_exit_text = sys.argv[1:]
 allowed_phases = {
     "initialization",
     "cleanup-preflight",
@@ -464,11 +465,24 @@ if command_exit_text:
     command_exit_code = int(command_exit_text)
     if not 0 <= command_exit_code <= 255:
         raise SystemExit("command exit code is out of range")
+allowed_classifications = {
+    "authorization-denied",
+    "authorization-unavailable",
+    "daemon-internal",
+    "daemon-unavailable",
+    "unclassified",
+}
+command_classification = None
+if command_classification_text:
+    if command_classification_text not in allowed_classifications:
+        raise SystemExit("invalid command classification")
+    command_classification = command_classification_text
 payload = {
     "schema_version": 1,
     "phase": phase,
     "harness_exit_code": harness_exit_code,
     "command_exit_code": command_exit_code,
+    "command_classification": command_classification,
 }
 temporary = path + ".tmp"
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
@@ -539,9 +553,14 @@ if run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/preconnect-disconnect.s
   :
 else
   SOAK_COMMAND_EXIT="$?"
+  SOAK_COMMAND_CLASSIFICATION="$(
+    python3 "${METRICS_TOOL}" classify-cli-error \
+      --stderr-file "${SOAK_PRIVATE_DIR}/preconnect-disconnect.stderr"
+  )" || SOAK_COMMAND_CLASSIFICATION="unclassified"
   fail "clean inactive preflight disconnect failed with exit code ${SOAK_COMMAND_EXIT}"
 fi
 SOAK_COMMAND_EXIT=""
+SOAK_COMMAND_CLASSIFICATION=""
 SOAK_PHASE="inactive-recovery"
 assert_no_recovery_candidates preconnect
 SOAK_PHASE="inactive-network"
@@ -601,5 +620,6 @@ assert_artifacts_do_not_contain_sensitive_values \
 
 SOAK_PHASE="completed"
 SOAK_COMMAND_EXIT=""
+SOAK_COMMAND_CLASSIFICATION=""
 rm -f -- "${FAILURE_REPORT}"
 log "installed-package TUN resource soak completed"

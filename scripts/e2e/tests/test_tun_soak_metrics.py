@@ -605,6 +605,32 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertNotIn("transaction_file", encoded)
         self.assertNotIn("config_ref", encoded)
 
+    def test_classifies_private_cli_errors_without_returning_raw_text(self) -> None:
+        cases = {
+            "podlaz: authorization denied: polkit denied io.github.example.disconnect\n": "authorization-denied",
+            "podlaz: authorization unavailable: polkit is unavailable\n": "authorization-unavailable",
+            "podlaz: daemon disconnect request failed: unexpected HTTP status 500 Internal Server Error\n": "daemon-internal",
+            "podlaz: daemon is unavailable\n": "daemon-unavailable",
+            "private-host.example invalid-profile-token\n": "unclassified",
+        }
+        for raw, expected in cases.items():
+            with self.subTest(expected=expected):
+                classification = tun_soak_metrics.classify_cli_failure(raw)
+                self.assertEqual(expected, classification)
+                self.assertNotIn("example", classification)
+                self.assertNotIn("token", classification)
+
+    def test_classify_cli_error_command_emits_only_allowlisted_value(self) -> None:
+        stderr_file = self.root / "private.stderr"
+        stderr_file.write_text(
+            "podlaz: authorization unavailable: polkit is unavailable for disconnect\n",
+            encoding="utf-8",
+        )
+        parser = tun_soak_metrics.build_parser()
+        args = parser.parse_args(["classify-cli-error", "--stderr-file", str(stderr_file)])
+        self.assertEqual("classify-cli-error", args.command)
+        self.assertEqual("authorization-unavailable", tun_soak_metrics.classify_cli_failure(stderr_file.read_text()))
+
     def test_build_report_rejects_unknown_public_metadata_fields(self) -> None:
         sample = {
             "schema_version": 1,

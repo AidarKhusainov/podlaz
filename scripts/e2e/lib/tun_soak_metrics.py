@@ -57,6 +57,31 @@ except ImportError:
         discover_daemon_identity,
     )
 
+CLI_FAILURE_CLASSIFICATIONS = frozenset(
+    {
+        "authorization-denied",
+        "authorization-unavailable",
+        "daemon-internal",
+        "daemon-unavailable",
+        "unclassified",
+    }
+)
+
+
+def classify_cli_failure(raw_error: str) -> str:
+    """Map private CLI stderr to one public-safe structural classification."""
+    normalized = raw_error.casefold()
+    if "authorization denied" in normalized or "polkit denied" in normalized:
+        return "authorization-denied"
+    if "authorization unavailable" in normalized or "polkit is unavailable" in normalized:
+        return "authorization-unavailable"
+    if "daemon is unavailable" in normalized or "daemon access is unavailable" in normalized:
+        return "daemon-unavailable"
+    if "unexpected http status 500" in normalized or "500 internal server error" in normalized:
+        return "daemon-internal"
+    return "unclassified"
+
+
 def _process_identity_to_json(identity: ProcessIdentity) -> dict[str, Any]:
     return {"schema_version": SCHEMA_VERSION, "daemon": asdict(identity)}
 
@@ -219,6 +244,15 @@ def _command_summarize(args: argparse.Namespace) -> int:
 
 
 
+def _command_classify_cli_error(args: argparse.Namespace) -> int:
+    try:
+        raw_error = args.stderr_file.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise AttributionError("read private CLI error failed") from exc
+    print(classify_cli_failure(raw_error))
+    return 0
+
+
 def _command_report(args: argparse.Namespace) -> int:
     baseline = _load_json(args.baseline_boundary)
     cleanup = _load_json(args.cleanup_boundary)
@@ -303,6 +337,13 @@ def build_parser() -> argparse.ArgumentParser:
     summarize.add_argument("--samples", type=Path, required=True)
     summarize.add_argument("--output", type=Path, required=True)
     summarize.set_defaults(handler=_command_summarize)
+
+    classify = subparsers.add_parser(
+        "classify-cli-error",
+        help="map private CLI stderr to one public-safe structural classification",
+    )
+    classify.add_argument("--stderr-file", type=Path, required=True)
+    classify.set_defaults(handler=_command_classify_cli_error)
 
     report = subparsers.add_parser("report", help="write one sanitized soak trend and lifecycle verdict")
     report.add_argument("--samples", type=Path, required=True)
