@@ -6,9 +6,9 @@ It complements the durable transaction and ownership rules in
 
 ## Durable transaction state versus current health
 
-`committed` remains a historical transaction fact: network apply, exact owned
+`committed` remains a historical transaction fact: network apply, exact canonical
 state verification, connectivity verification, and active-state commit all
-succeeded for the network generation that existed at commit time.
+succeeded for the network state verified before commit.
 
 A committed transaction is not permanent proof that the same host networking is
 still valid. Suspend/resume, DHCP renewal, Wi-Fi roaming, Ethernet changes, or
@@ -28,6 +28,14 @@ health state and a stable classification. Human `podlaz status` output keeps the
 transaction state separate and returns the diagnostic unhealthy exit code when
 an active TUN is no longer `verified`.
 
+Generation 1 has its own TOCTOU boundary. Connect-time verification proves the
+pre-commit observation only. After commit, the daemon collects a fresh
+observation, publishes generation 1 as `revalidating`, runs the canonical
+composition and connectivity verifier against that exact observation, and only
+then publishes `verified`. If that verification fails or times out, the new
+fingerprint is never treated as healthy merely because connect previously
+committed.
+
 ## Event model
 
 Events are hints to collect new authoritative evidence. Their payload is never
@@ -44,6 +52,12 @@ Event bursts are coalesced. At most one revalidation runs at a time and a burst
 that arrives while it is running schedules one fresh follow-up observation.
 This prevents event storms from creating an unbounded probe queue.
 
+Both edge-driven sources use subscribe-then-resync behavior. Once the logind
+subscription or rtnetlink multicast bind is successfully established, the source
+queues one `source-resync` hint. The same happens after a source failure and
+successful reconnect. This fresh snapshot closes the gap for resume/DHCP/route
+changes that may have occurred while the watcher was unavailable.
+
 ## Uplink fingerprint
 
 A fresh snapshot is reduced to an underlying-uplink fingerprint containing only
@@ -56,6 +70,13 @@ state that can invalidate the committed generation:
   authoritative evidence for that interface;
 - the server-bypass route interface and gateway.
 
+NetworkManager detection and active-connection inspection are distinct evidence.
+If NetworkManager itself is detected but `connection show --active` cannot be
+inspected successfully, the active connection identity is unknown and fingerprint
+derivation fails closed. An empty identity is authoritative only when the active
+connection inventory was successfully inspected and contains no activated
+connection for the underlying uplink.
+
 Podlaz-owned `podlaz0`, policy-routing, `systemd-resolved` link state, and
 nftables state are deliberately excluded. Those resources can change as a
 result of Podlaz itself and therefore must not create a self-triggered network
@@ -67,11 +88,11 @@ old generation is still healthy.
 
 For ordinary duplicate link/address/route hints, an unchanged fingerprint while
 current health is already `verified` is discarded without network probes and the
-generation does not advance. Post-resume is deliberately different: resume
-invalidates the freshness of the old proof, so the same fingerprint is reproved
-without incrementing the generation. A material fingerprint change advances the
-generation once and starts read-only verification. A degraded generation may be
-reproved again without artificially incrementing the generation.
+generation does not advance. Post-resume and source-resync are deliberately
+different: they invalidate freshness of the old proof, so the same fingerprint
+is reproved without incrementing the generation. A material fingerprint change
+advances the generation once and starts read-only verification. A degraded
+generation may be reproved again without artificially incrementing the generation.
 
 ## Read-only revalidation
 
@@ -84,9 +105,18 @@ Revalidation performs no repair and no privileged networking mutation. It:
 3. reconstructs the complete persisted desired verification plan while keeping
    cleanup authority limited to exact rollback ownership;
 4. collects a fresh snapshot and uplink fingerprint;
-5. runs the existing TUN composition verifier against current desired state;
+5. runs the shared canonical TUN composition verifier against current desired
+   state;
 6. runs the existing bounded connectivity verifier using the same
    cancellation-aware probe pipeline used before commit.
+
+The shared canonical verifier is exact rather than subset-based. On the
+podlaz-owned resolved link, the observed DNS-server set and route-only domain set
+must exactly match the plan and `+DefaultRoute` must be present; extra DNS
+servers/domains are not accepted. For the podlaz-owned nftables table, chain
+cardinality/name/type/hook/numeric priority/policy and ordered rule cardinality/
+content must exactly match the plan; extra rules/chains or base-chain drift fail
+closed. Connect-time verification and revalidation use this same verifier.
 
 A route or policy rule that was already present before Podlaz connected remains
 part of the read-only desired verification projection even when it correctly has
@@ -95,9 +125,9 @@ creates deletion authority. The same distinction applies to the server-bypass
 route used to identify the server route to inspect.
 
 No NetworkManager mutation, IPv6 firewall policy change, nftables repair, route
-repair, DNS repair, or TUN recreation is performed by this contract. Any future
-repair must be justified by deterministic failure evidence and must preserve the
-existing exact-ownership and transaction boundaries.
+repair, route-cache flush, DNS repair, or TUN recreation is performed by this
+contract. Any future repair must be justified by deterministic failure evidence
+and must preserve the existing exact-ownership and transaction boundaries.
 
 ## Serialization and cancellation
 
@@ -105,16 +135,23 @@ Revalidation is serialized with connect, disconnect, and recovery through the
 same lifecycle operation boundary. Cancellation is intentionally outside that
 boundary.
 
-Before a lifecycle mutation waits for the operation lock it cancels the active
-revalidation context. The existing verifier and connectivity probes observe that
-context and stop. The caller's own context bounds how long it can wait for an
-uncooperative revalidation to release the lock. Daemon shutdown first stops new
-event delivery/cancels active probes and then performs disconnect using a bounded
-shutdown context.
+A lifecycle mutation declares mutation intent before cancelling an active
+revalidation. A trigger already consumed while mutation is pending waits for the
+complete mutation queue to become idle instead of returning success and being
+lost. If mutation interrupts an already-running revalidation, the active trigger
+is merged back into the bounded pending queue before its context is cancelled.
+After mutation, the retained trigger produces one fresh authoritative snapshot
+and the normal fingerprint/generation decision.
+
+The caller's own context bounds how long it can wait for an uncooperative
+revalidation to release the lock. Daemon shutdown first stops new event delivery
+and terminally cancels active probes, then performs disconnect using a bounded
+shutdown context; shutdown cancellation intentionally does not requeue work.
 
 This ordering prevents a long network probe from making disconnect or shutdown
 wait for the full probe timeout, while still preventing revalidation from racing
-with privileged lifecycle mutations.
+with privileged lifecycle mutations or losing network evidence that arrived at
+the mutation boundary.
 
 ## Stable failure classifications
 
@@ -137,17 +174,26 @@ transaction state or create recovery authority.
 Unit tests cover the properties that can be made deterministic without sleeping
 a CI host:
 
+- generation 1 verifies the exact fresh post-commit observation before
+  `verified` publication and fails closed on verifier failure;
 - post-resume signal classification and same-generation reproving;
+- source failure/reconnect schedules authoritative source-resync and reproof;
 - link/address/route rtnetlink trigger classification;
 - duplicate event-storm coalescing;
+- a trigger consumed during lifecycle mutation runs after mutation;
+- an in-flight trigger cancelled by lifecycle mutation is requeued;
 - cancellation before lifecycle-lock acquisition;
 - bounded mutation wait when a probe ignores cancellation;
 - unchanged ordinary uplink hints do not advance the generation;
 - gateway/address/interface/ifindex/NetworkManager identity changes alter the
   fingerprint;
+- failed NetworkManager active-connection inspection is unknown rather than
+  authoritative absence;
 - Podlaz-owned state cannot alter the fingerprint;
 - ambiguous fingerprint evidence fails closed;
-- changed generation reuses the verifier and connectivity pipeline;
+- changed generation reuses the canonical verifier and connectivity pipeline;
+- canonical resolved verification rejects extra DNS state and canonical
+  nftables verification rejects extra rules/chain metadata drift;
 - timeout/cancellation remove stale `verified` health;
 - ownership mismatch is represented as cleanup-required rather than repaired;
 - complete desired routes/rules remain verifiable even when pre-existing state
@@ -157,6 +203,7 @@ a CI host:
 A target-host suspend/resume acceptance run is still required before treating a
 packaged build as production-validated for a specific laptop/kernel/network
 stack. That run should capture before/after status, generation, daemon logs, the
-fresh route/address/DNS snapshot, and the read-only verifier result. It must also
-prove that disconnect after resume converges without waiting for an unrelated
-probe timeout.
+fresh route/address/DNS snapshot, watcher reconnect/resync behavior, and the
+read-only verifier result. It must also prove that disconnect after resume
+converges without waiting for an unrelated probe timeout. Public evidence must
+remain structural/redacted as defined by `e2e.md`.
