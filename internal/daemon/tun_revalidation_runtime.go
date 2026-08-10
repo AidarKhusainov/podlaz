@@ -154,8 +154,10 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 		return
 	}
 	generation := currentTunGeneration(r.health)
+	classification := api.TunHealthUplinkRevalidating
 	if r.hasFingerprint && !sameFingerprint {
 		generation++
+		classification = api.TunHealthUplinkChanged
 	}
 	if generation == 0 {
 		generation = 1
@@ -165,7 +167,7 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 	r.health = &api.TunHealthStatus{
 		State:             api.TunHealthRevalidating,
 		NetworkGeneration: generation,
-		Classification:    api.TunHealthUplinkRevalidating,
+		Classification:    classification,
 	}
 	r.mu.Unlock()
 
