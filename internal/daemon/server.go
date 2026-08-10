@@ -111,7 +111,7 @@ func (s Server) Run(ctx context.Context) error {
 			log.Printf("podlazd: TUN revalidation serialization failed")
 		}
 	})
-	operationLock.setRevalidationCancel(coordinator.CancelActive)
+	operationLock.setRevalidationCancel(coordinator.InterruptForMutation)
 	eventCtx, cancelEvents := context.WithCancel(ctx)
 	defer cancelEvents()
 	go coordinator.Run(eventCtx)
