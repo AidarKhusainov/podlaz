@@ -77,7 +77,8 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 	if err != nil {
 		return status.Report{}, err
 	}
-	return status.FromDaemon(response), nil
+	report := status.FromDaemon(response)
+	return status.WithTunHealth(report, response.TunHealth), nil
 }
 
 func statusCommandShouldFail(report status.Report) bool {
