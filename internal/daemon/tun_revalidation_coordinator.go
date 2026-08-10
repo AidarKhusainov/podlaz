@@ -15,11 +15,12 @@ const (
 )
 
 type tunRevalidationCoordinator struct {
-	pending chan tunRevalidationTrigger
-	run     func(context.Context, tunRevalidationTrigger)
+	wake chan struct{}
+	run  func(context.Context, tunRevalidationTrigger)
 
-	mu           sync.Mutex
-	activeCancel context.CancelFunc
+	mu             sync.Mutex
+	pendingTrigger tunRevalidationTrigger
+	activeCancel   context.CancelFunc
 }
 
 func newTunRevalidationCoordinator(run func(context.Context, tunRevalidationTrigger)) *tunRevalidationCoordinator {
@@ -27,22 +28,36 @@ func newTunRevalidationCoordinator(run func(context.Context, tunRevalidationTrig
 		run = func(context.Context, tunRevalidationTrigger) {}
 	}
 	return &tunRevalidationCoordinator{
-		pending: make(chan tunRevalidationTrigger, 1),
-		run:     run,
+		wake: make(chan struct{}, 1),
+		run:  run,
 	}
 }
 
-// Notify is edge-triggered. A one-element queue deliberately collapses event
-// storms because events are only hints to collect a fresh authoritative
-// fingerprint; the event payload itself is never treated as state.
+// Notify is edge-triggered. The one-element wake channel bounds queued work,
+// while pendingTrigger merges event semantics under a mutex. Resume dominates
+// ordinary link/address/route hints because suspend invalidates proof freshness
+// even when the resulting uplink fingerprint is unchanged.
 func (c *tunRevalidationCoordinator) Notify(trigger tunRevalidationTrigger) {
 	if c == nil || trigger == "" {
 		return
 	}
+	c.mu.Lock()
+	c.pendingTrigger = mergeTunRevalidationTrigger(c.pendingTrigger, trigger)
+	c.mu.Unlock()
 	select {
-	case c.pending <- trigger:
+	case c.wake <- struct{}{}:
 	default:
 	}
+}
+
+func mergeTunRevalidationTrigger(current, next tunRevalidationTrigger) tunRevalidationTrigger {
+	if current == tunRevalidationTriggerResume || next == tunRevalidationTriggerResume {
+		return tunRevalidationTriggerResume
+	}
+	if current != "" {
+		return current
+	}
+	return next
 }
 
 func (c *tunRevalidationCoordinator) Run(ctx context.Context) {
@@ -54,12 +69,20 @@ func (c *tunRevalidationCoordinator) Run(ctx context.Context) {
 		case <-ctx.Done():
 			c.CancelActive()
 			return
-		case trigger := <-c.pending:
+		case <-c.wake:
+			if ctx.Err() != nil {
+				c.CancelActive()
+				return
+			}
+			trigger := c.takePendingTrigger()
+			if trigger == "" {
+				continue
+			}
 			probeCtx, cancel := context.WithCancel(ctx)
 			c.setActiveCancel(cancel)
 			c.run(probeCtx, trigger)
 			cancel()
-			c.clearActiveCancel(cancel)
+			c.clearActiveCancel()
 		}
 	}
 }
@@ -79,17 +102,23 @@ func (c *tunRevalidationCoordinator) CancelActive() {
 	}
 }
 
+func (c *tunRevalidationCoordinator) takePendingTrigger() tunRevalidationTrigger {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	trigger := c.pendingTrigger
+	c.pendingTrigger = ""
+	return trigger
+}
+
 func (c *tunRevalidationCoordinator) setActiveCancel(cancel context.CancelFunc) {
 	c.mu.Lock()
 	c.activeCancel = cancel
 	c.mu.Unlock()
 }
 
-func (c *tunRevalidationCoordinator) clearActiveCancel(cancel context.CancelFunc) {
+func (c *tunRevalidationCoordinator) clearActiveCancel() {
 	c.mu.Lock()
-	if c.activeCancel != nil {
-		c.activeCancel = nil
-	}
+	c.activeCancel = nil
 	c.mu.Unlock()
 }
 
