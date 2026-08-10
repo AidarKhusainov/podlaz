@@ -2,7 +2,7 @@
 
 Manual host validation for behavior that is not suitable for the default pull-request gate.
 
-The repository keeps `.github/workflows/e2e.yml` and `.github/workflows/e2e-tun-package-convergence.yml` as `workflow_dispatch` workflows for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure in general, but an issue or pull request may require a particular E2E result before completion. Record unavailable infrastructure or completed evidence in the related pull request, issue, or release notes.
+The repository keeps `.github/workflows/e2e.yml`, `.github/workflows/e2e-tun-package-convergence.yml`, and `.github/workflows/e2e-tun-resource-soak.yml` as `workflow_dispatch` workflows for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure in general, but an issue or pull request may require a particular E2E result before completion. Record unavailable infrastructure or completed evidence in the related pull request, issue, or release notes.
 
 The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results are manually requested validation and release evidence, not an automatic default gate. When an issue explicitly requires package-level disposable-host validation, the corresponding pull request must remain draft until that workflow passes and safe evidence is published.
 
@@ -18,6 +18,12 @@ Installed-package TUN convergence gate:
 
 ```text
 Actions -> TUN Package Convergence E2E -> Run workflow
+```
+
+Installed-package TUN resource-lifecycle gate:
+
+```text
+Actions -> TUN Resource Soak E2E -> Run workflow
 ```
 
 The general E2E workflow runs:
@@ -47,11 +53,12 @@ Run E2E validation when a change touches:
 - systemd service behavior;
 - package install, reinstall, purge, or service lifecycle;
 - provider-backed proxy/TUN data-plane behavior;
-- crash, rollback, fault-injection, diagnostics-before-rollback, or recovery behavior.
+- crash, rollback, fault-injection, diagnostics-before-rollback, or recovery behavior;
+- long-lived process, goroutine, thread, file-descriptor, task, timer, cache, or memory lifecycle behavior.
 
 ## Runner and host requirements
 
-Required runner labels for both workflows:
+Required runner labels for the dedicated self-hosted workflows:
 
 ```text
 self-hosted
@@ -65,12 +72,13 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 
 - systemd;
 - `/dev/net/tun`;
+- a unified cgroup v2 hierarchy and readable root-level procfs/cgroup structural metrics;
 - `iproute2`, `nftables`, `resolvectl`, `journalctl`;
 - Go from the workflow setup step, or Go 1.26.5 for manual script runs;
 - package build tools from `docs/development.md`;
 - provider/profile configuration supplied through the runner environment, not committed to the repository.
 
-The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or `PODLAZ_E2E_PROFILE_URI_LIST` in the `vpn-e2e` environment. Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
+The dedicated package convergence and resource-soak workflows require `PODLAZ_E2E_PROFILE_URI` or `PODLAZ_E2E_PROFILE_URI_LIST` in the `vpn-e2e` environment. Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
 
 ## Scripts
 
@@ -82,6 +90,7 @@ The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or 
 | Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
 | TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Gated apply/verify failures, pre-rollback diagnostics, resolved subprocess edge cases, immediate retry, unrelated-state preservation, and pre-commit interruption. |
 | Installed-package TUN convergence | `scripts/e2e/tun-package-convergence.sh` | Release-like `.deb`, packaged inactive-scope verification, byte-exact capture of the actual production missing-link rollback, private exact route/rule manifests, provenance, tri-state resource absence, unrelated host-state preservation, restart reconciliation, and immediate retry. |
+| Installed-package TUN resource soak | `scripts/e2e/tun-resource-soak.sh` | Exact package/Xray provenance, cgroup-v2 and procfs attribution for podlazd plus its exact supervised Xray child, bounded active traffic/health sampling, strict disconnect cleanup, immediate reconnect non-accumulation, and sanitized trend evidence. |
 | Issue #243 resolver acceptance | `scripts/e2e/issue243-package-acceptance.sh` | Installed-package clean inactive baseline, bounded convergence to the read-only exit-0 resolver envelope, recover-execute refresh, repeated active status, disconnect convergence, immediate reconnect, and normalized safe evidence. |
 | Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | State-aware pre-release verification obligations, post-quiescence authoritative mutation snapshot, exact metadata-driven cleanup, ownership-union verification, identity-material-preserving package purge gate, sentinel removal, and tri-state post-cleanup assertions. |
 
@@ -94,9 +103,10 @@ bash scripts/e2e/data-plane.sh
 bash scripts/e2e/server-coverage.sh
 bash scripts/e2e/tun-fault-injection.sh
 bash scripts/e2e/tun-package-convergence.sh
+bash scripts/e2e/tun-resource-soak.sh
 ```
 
-Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, or event-source resynchronization requires installed-package/target-host TUN validation.
+Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, or event-source resynchronization requires installed-package/target-host TUN validation. A change that can retain session-owned processes, workers, timers, file descriptors, reports, buffers, or other resources requires the dedicated installed-package resource soak.
 
 ## Native Xray TUN validation
 
@@ -198,6 +208,73 @@ The hook environment variables are E2E-only implementation details:
 - `PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS` bounds the pause probe.
 
 Do not set these variables in packaged or production service operation.
+
+
+## Installed-package TUN resource soak
+
+`TUN Resource Soak E2E` is the manual, self-hosted gate for long-lived TUN
+resource-lifecycle changes. It builds and reinstalls the exact branch package,
+proves the running daemon and bundled Xray hashes match that package, starts from
+a clean inactive lifecycle boundary, and establishes exact process attribution
+before warm-up. The release gate is a **three-hour post-warm-up** sampling window
+with a 120-second warm-up and 60-second default interval. A shorter run may be
+used to develop or reproduce a signal, but it is observation evidence rather
+than the release gate.
+
+Attribution is fail-closed. `scripts/e2e/lib/tun_soak_metrics.py` identifies
+podlazd from the systemd `MainPID`, identifies the exact supervised Xray child
+from the one committed Podlaz TUN transaction, verifies executable identity and
+process start time, and requires both processes to belong to the same
+`podlazd.service` cgroup. A foreign VPN/core process aborts the clean run rather
+than contaminating accounting. Exact PIDs, transaction metadata, generated
+configuration references, process command data, and host networking evidence
+remain in the private E2E directory and are removed before artifact scanning.
+
+The following observations have distinct authority and must not be conflated:
+
+- cgroup total `memory.current`, optional `memory.peak`, `pids.current`, and CPU
+  time describe the whole service cgroup, not either process individually;
+- podlazd and Xray RSS, PSS where available, thread/task count, file-descriptor
+  count, and CPU time come from the exact process identity in procfs;
+- current memory is a point-in-time footprint, while peak memory is a historical
+  high-water mark and is never treated as a sustained-growth signal;
+- warm-up/cache movement is allowed, while a materially sustained trend after
+  warm-up is evaluated separately for each component and metric.
+
+Trend analysis uses all first-session active samples after warm-up. It records a
+robust Theil-Sen slope, net growth, early/late medians, positive-delta fraction,
+and a metric-specific noise floor. At least six samples are required. One generic
+RSS ceiling or one generic slope is not applied to cgroup total, podlazd, and
+Xray. `scripts/e2e/tun-resource-soak-policy.json` has two modes:
+
+- `observe` attributes a reproduced growth candidate without pretending that an
+  uncalibrated threshold is a release assertion;
+- `accept` requires a named reproduced growth signal plus explicit
+  metric-specific slope, net-growth, and sustained-trend rules. Any other
+  sustained candidate without its own rule fails closed.
+
+An `observe` result is not sufficient to close a resource-retention defect. The
+final release gate for such a fix must use `accept` after repeated clean
+baselines identify the responsible metric and justify its envelope.
+
+Lifecycle assertions remain stricter than trend tolerance. Normal disconnect
+must terminate the exact supervised Xray child, leave no packaged Xray orphan,
+remove exact transaction-owned routes/rules and all Podlaz TUN/DNS/nftables,
+generated-config, and transaction state, and publish clean recovery state.
+Post-cleanup podlazd/cgroup thread, task, file-descriptor, and PID counts may not
+increase over the equivalent inactive baseline. Current-memory comparisons use
+only the documented cleanup tolerance; that tolerance is a test envelope, not a
+production memory limit. Immediate reconnect must keep the same daemon, create a
+new exact supervised Xray identity, remain within the documented per-metric
+reconnect tolerance, and pass a second strict disconnect cleanup.
+
+The public artifact contains only sanitized structural samples and one compact
+JSON report with exact package/Xray provenance, configuration, component-specific
+trend summaries, lifecycle verdicts, and policy verdict. It never contains
+profile identifiers, provider domains, addresses, SSIDs, gateways, resolver
+values, process identities, generated configuration, or raw health output. The
+harness adds no production pprof listener or debug endpoint; any future Go
+runtime profiling boundary requires separate security review.
 
 ## Evidence
 

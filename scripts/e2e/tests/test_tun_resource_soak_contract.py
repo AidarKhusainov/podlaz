@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parents[1] / "tun-resource-soak.sh"
+WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "e2e-tun-resource-soak.yml"
+
+
+class TunResourceSoakContractTests(unittest.TestCase):
+    def script_text(self) -> str:
+        return SCRIPT.read_text(encoding="utf-8")
+
+    def function_body(self, name: str, next_marker: str) -> str:
+        text = self.script_text()
+        start = text.index(f"{name}() {{")
+        end = text.index(next_marker, start)
+        return text[start:end]
+
+    def test_attribution_precedes_warmup_and_first_active_sample(self) -> None:
+        text = self.script_text()
+        connect = text.index('run_installed_podlaz connect --mode tun "${PROFILE_ID}"')
+        discover = text.index('tun_soak_metrics.py" discover', connect)
+        warmup = text.index('sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"', discover)
+        sample = text.index('tun_soak_metrics.py" sample', warmup)
+        self.assertLess(connect, discover)
+        self.assertLess(discover, warmup)
+        self.assertLess(warmup, sample)
+
+    def test_samples_exact_cgroup_daemon_and_supervised_xray_without_ps_parsing(self) -> None:
+        text = self.script_text()
+        self.assertIn('tun_soak_metrics.py" discover', text)
+        self.assertIn('tun_soak_metrics.py" sample', text)
+        self.assertNotIn("ps -", text)
+        self.assertNotIn("/proc/${", text)
+        process_metrics = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_process.py").read_text(encoding="utf-8")
+        self.assertIn("memory.current", process_metrics)
+        self.assertIn("smaps_rollup", process_metrics)
+
+    def test_active_loop_generates_bounded_traffic_and_read_only_health(self) -> None:
+        body = self.function_body("run_active_soak", "\n}\n\nrun_reconnect_probe")
+        self.assertIn("resolvectl --cache=no --interface=podlaz0", body)
+        self.assertIn("curl -4 -fsS --max-time", body)
+        self.assertIn("run_installed_podlaz status", body)
+        self.assertIn("run_installed_podlaz doctor --tun", body)
+        self.assertIn("PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES", body)
+        self.assertNotIn("&", body)
+
+    def test_disconnect_proves_exact_child_gone_before_cleanup_sample(self) -> None:
+        body = self.function_body("disconnect_and_sample_cleanup", "\n}\n\nrun_active_soak")
+        disconnect = body.index("run_installed_podlaz disconnect")
+        gone = body.index('tun_soak_metrics.py" assert-gone')
+        sample = body.index('tun_soak_metrics.py" boundary-sample')
+        self.assertLess(disconnect, gone)
+        self.assertLess(gone, sample)
+
+    def test_reconnect_proves_new_child_and_non_cumulative_resources(self) -> None:
+        body = self.function_body("run_reconnect_probe", "\n}\n\nwrite_public_report")
+        self.assertIn('tun_soak_metrics.py" assert-replaced', body)
+        self.assertIn('--phase reconnect', body)
+        self.assertIn('tun_soak_metrics.py" assert-gone', body)
+        report = self.function_body("write_public_report", "\n}\n\ncleanup")
+        self.assertIn('tun_soak_metrics.py" report', report)
+        self.assertIn("--reconnect-samples", report)
+        self.assertIn("--cleanup-boundary", report)
+
+    def test_private_identity_and_profile_material_are_removed_before_artifact_scan(self) -> None:
+        cleanup = self.function_body("cleanup", "\n}\n\ntrap cleanup EXIT")
+        self.assertIn('rm -rf -- "${SOAK_PRIVATE_DIR}"', cleanup)
+        text = self.script_text()
+        scan = text.index("assert_artifacts_do_not_contain_sensitive_values")
+        report = text.index("write_public_report")
+        self.assertLess(report, scan)
+        self.assertNotIn("cmdline", text)
+        self.assertNotIn("transaction_id", text)
+
+    def test_workflow_is_manual_self_hosted_and_does_not_block_ordinary_ci(self) -> None:
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("self-hosted", text)
+        self.assertIn("vpn-e2e", text)
+        self.assertIn("ubuntu-24.04", text)
+        self.assertNotIn("pull_request:", text)
+        self.assertIn("tun-resource-soak.sh", text)
+        self.assertIn("PODLAZ_E2E_SOAK_DURATION_SECONDS", text)
+
+
+    def test_canonical_docs_define_release_gate_and_metric_semantics(self) -> None:
+        docs_root = Path(__file__).resolve().parents[3] / "docs"
+        e2e = (docs_root / "e2e.md").read_text(encoding="utf-8")
+        development = (docs_root / "development.md").read_text(encoding="utf-8")
+        self.assertIn("TUN Resource Soak E2E", e2e)
+        self.assertIn("three-hour post-warm-up", e2e)
+        self.assertIn("current memory", e2e)
+        self.assertIn("peak memory", e2e)
+        self.assertIn("cgroup total", e2e)
+        self.assertIn("exact supervised Xray", e2e)
+        self.assertIn("metric-specific", e2e)
+        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
+
+
+if __name__ == "__main__":
+    unittest.main()

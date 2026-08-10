@@ -48,6 +48,31 @@ sudo apt purge -y podlaz
 
 The CI helper scripts under `scripts/ci/` are the executable source of truth for hosted package validation. Prefer updating those scripts instead of adding large inline shell blocks to workflow YAML.
 
+
+The resource-soak attribution and contract helpers are deterministic Python/shell
+checks and can be exercised without privileged host mutation:
+
+```bash
+python3 -m py_compile scripts/e2e/lib/tun_soak_metrics.py
+python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics
+python3 -m unittest scripts.e2e.tests.test_tun_resource_soak_contract
+bash -n scripts/e2e/tun-resource-soak.sh
+```
+
+The real installed-package run remains a controlled Ubuntu 24.04 host operation:
+
+```bash
+PODLAZ_E2E_PROFILE_URI='<private-profile-uri>' \
+PODLAZ_E2E_SOAK_DURATION_SECONDS=10800 \
+bash scripts/e2e/tun-resource-soak.sh
+```
+
+Exact process identities and raw network/health evidence stay in the private E2E
+temporary directory. Only sanitized cgroup/procfs counters and the compact report
+belong in artifacts. The helper does not enable pprof or add a production debug
+listener.
+
+
 ## CI/CD gates
 
 The default PR and `master` push gate is intentionally limited to checks that are deterministic on GitHub-hosted Linux runners:
