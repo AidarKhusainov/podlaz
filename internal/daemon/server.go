@@ -39,6 +39,7 @@ func (s Server) Run(ctx context.Context) error {
 	} else if lifecycle.RuntimeDir == "" {
 		lifecycle.RuntimeDir = runtimeDir
 	}
+	revalidationRuntime := newProductionTunRevalidationRuntime(lifecycle)
 	authorizer := s.Authorizer
 	if authorizer == nil {
 		authorizer = authorizerFromEnv()
@@ -48,7 +49,8 @@ func (s Server) Run(ctx context.Context) error {
 		if s.Status != nil {
 			statusFn = s.Status
 		}
-		return lifecycle.statusForPublicationFrom(statusCtx, statusFn)
+		status := lifecycle.statusForPublicationFrom(statusCtx, statusFn)
+		return decorateTunHealth(status, revalidationRuntime)
 	}
 
 	lockPath := api.LockPath(runtimeDir)
@@ -102,7 +104,24 @@ func (s Server) Run(ctx context.Context) error {
 	}
 
 	operationLock := newLifecycleOperationLock()
-	lockedLifecycle := operationLock.wrap(startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: forceRefreshStartupScan})
+	coordinator := newTunRevalidationCoordinator(func(revalidationCtx context.Context, trigger tunRevalidationTrigger) {
+		if err := operationLock.runRevalidation(revalidationCtx, func() {
+			revalidationRuntime.Revalidate(revalidationCtx, trigger)
+		}); err != nil && revalidationCtx.Err() == nil {
+			log.Printf("podlazd: TUN revalidation serialization failed")
+		}
+	})
+	operationLock.setRevalidationCancel(coordinator.CancelActive)
+	eventCtx, cancelEvents := context.WithCancel(ctx)
+	defer cancelEvents()
+	go coordinator.Run(eventCtx)
+	startTunNetworkEventSources(eventCtx, coordinator.Notify)
+
+	healthLifecycle := tunRevalidationLifecycle{
+		lifecycle: startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: forceRefreshStartupScan},
+		runtime:   revalidationRuntime,
+	}
+	lockedLifecycle := operationLock.wrap(healthLifecycle)
 	mux := http.NewServeMux()
 	mux.HandleFunc(api.StatusPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: status request method=%s path=%s", r.Method, r.URL.Path)
@@ -146,7 +165,7 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		response := operationLock.runRecovery(func() api.RecoveryResponse {
+		response := operationLock.runRecovery(r.Context(), func() api.RecoveryResponse {
 			response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
 			refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 			forceRefreshStartupScan(refreshCtx)
@@ -181,17 +200,19 @@ func (s Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		_, _ = lockedLifecycle.Disconnect(context.Background())
+		cancelEvents()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		_, _ = lockedLifecycle.Disconnect(shutdownCtx)
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown daemon API: %w", err)
 		}
 		return collectServeErrors(errc, len(listeners))
 	case err := <-errc:
-		_, _ = lockedLifecycle.Disconnect(context.Background())
+		cancelEvents()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		_, _ = lockedLifecycle.Disconnect(shutdownCtx)
 		_ = httpServer.Shutdown(shutdownCtx)
 		return err
 	}
