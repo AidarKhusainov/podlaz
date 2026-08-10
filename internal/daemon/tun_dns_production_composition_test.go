@@ -49,8 +49,8 @@ func TestProductionTunExecutorTransactionFlowAcceptsInactiveScopeAndConverges(t 
 		t.Fatalf("begin mismatched production transaction: %v", err)
 	}
 	err = applyVerifyTunTransaction(context.Background(), failed, executor)
-	if err == nil || !strings.Contains(err.Error(), "DNS server 9.9.9.9 not found") {
-		t.Fatalf("production composition must fail closed on DNS mismatch, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "DNS servers mismatch") {
+		t.Fatalf("production composition must fail closed on exact DNS mismatch, got %v", err)
 	}
 	assertNoProductionTunTransactionBlocker(t, runtimeDir)
 
@@ -101,73 +101,111 @@ func assertNoProductionTunTransactionBlocker(t *testing.T, runtimeDir string) {
 }
 
 func productionDNSPlanForTest() planner.TunPlan {
-	return planner.TunPlan{
-		Mode:        planner.ModeTun,
-		ProfileID:   "example-profile",
-		ProfileName: "Example Profile",
-		TunDevice: planner.TunDevicePlan{
-			Name:   "podlaz0",
-			MTU:    1500,
-			Action: "verify",
-		},
+	plan := planner.TunPlan{
+		Mode:      planner.ModeTun,
+		ProfileID: "example-profile",
+		TunDevice: planner.TunDevicePlan{Name: netsnapshot.DefaultTunName, MTU: planner.DefaultTunMTU, Action: "verify"},
 		TunAddress: planner.TunAddressPlan{
 			Family:            "ipv4",
-			Interface:         "podlaz0",
+			Interface:         netsnapshot.DefaultTunName,
 			CIDR:              planner.DefaultTunIPv4CIDR,
 			Scope:             "global",
 			Action:            planner.TunAddressActionAssign,
-			Owner:             planner.TunAddressOwner,
-			RollbackKey:       "podlaz0/" + planner.DefaultTunIPv4CIDR,
+			Owner:             netexecutor.OwnerTunAddress,
+			RollbackKey:       netsnapshot.DefaultTunName + "/" + planner.DefaultTunIPv4CIDR,
 			LinkIndex:         7,
 			LinkKind:          "tun",
 			AppearedAfterCore: true,
 		},
+		Routes: []planner.TunRoutePlan{
+			{Family: "ipv4", Destination: planner.IPv4DefaultRoute, Table: planner.TunRoutingTable, Interface: netsnapshot.DefaultTunName, Action: "add"},
+			{Family: "ipv4", Destination: "203.0.113.10/32", Table: planner.MainRoutingTable, Interface: "eth0", Gateway: "192.0.2.1", Action: "add"},
+		},
+		PolicyRules: []planner.TunPolicyRulePlan{
+			{Family: "ipv4", Priority: planner.ServerRulePriority, Selector: "to 203.0.113.10/32", Table: planner.MainRoutingTable, Action: "add"},
+			{Family: "ipv4", Priority: planner.TunRulePriority, Selector: planner.IPv4DefaultSelector, Table: planner.TunRoutingTable, Action: "add"},
+		},
+		ServerBypass: planner.TunRoutePlan{Family: "ipv4", Destination: "203.0.113.10/32", Table: planner.MainRoutingTable, Interface: "eth0", Gateway: "192.0.2.1", Action: "add"},
 		DNS: planner.TunDNSPlan{
 			Backend:    planner.DNSBackendSystemdResolved,
-			TargetLink: "podlaz0",
+			TargetLink: netsnapshot.DefaultTunName,
 			Servers:    []string{"1.1.1.1", "9.9.9.9"},
 			Action:     planner.DNSActionConfigure,
-			Reason:     "use systemd-resolved per-link DNS",
+		},
+		Firewall: productionFirewallPlanForTest(),
+	}
+	return plan
+}
+
+func productionFirewallPlanForTest() planner.TunFirewallPlan {
+	return planner.TunFirewallPlan{
+		Backend:     planner.FirewallBackendNftables,
+		Family:      netsnapshot.DefaultNFTFamily,
+		Table:       netsnapshot.DefaultNFTTable,
+		TableAction: planner.FirewallTableAction,
+		Chains: []planner.TunFirewallChainPlan{{
+			Name: planner.FirewallOutputChain, Type: planner.FirewallChainTypeFilter, Hook: planner.FirewallOutputHook, Priority: planner.FirewallOutputPriority, Policy: planner.FirewallDefaultChainPolicy, Action: planner.FirewallTableAction,
+		}},
+		Rules: []planner.TunFirewallRulePlan{
+			{Chain: planner.FirewallOutputChain, Expr: "ip daddr 203.0.113.10", Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallServerBypassOwner, RollbackKey: planner.FirewallServerBypassKey},
+			{Chain: planner.FirewallOutputChain, Expr: `oifname "lo"`, Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallLoopbackOwner, RollbackKey: planner.FirewallLoopbackKey},
+			{Chain: planner.FirewallOutputChain, Expr: `oifname "podlaz0"`, Verdict: planner.FirewallVerdictAccept, Action: planner.FirewallActionAdd, Ownership: planner.FirewallTunEgressOwner, RollbackKey: planner.FirewallTunEgressKey},
 		},
 	}
 }
 
 type productionTunCommandRunner struct {
-	resolvedStatus string
 	commands       []string
-	addressPresent bool
+	resolvedStatus string
+	nftTable       bool
 }
 
 func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ...string) (netexecutor.CommandResult, error) {
 	command := strings.TrimSpace(name + " " + strings.Join(args, " "))
 	r.commands = append(r.commands, command)
-	switch command {
-	case "ip -details link show dev podlaz0":
-		return netexecutor.CommandResult{Stdout: productionTunLinkForTest}, nil
-	case "ip -details -o link show dev podlaz0":
-		return netexecutor.CommandResult{Stdout: productionTunLinkOnelineForTest}, nil
-	case "ip -4 -o address show dev podlaz0":
-		if r.addressPresent {
-			return netexecutor.CommandResult{Stdout: "7: podlaz0    inet " + planner.DefaultTunIPv4CIDR + " scope global podlaz0"}, nil
+
+	switch {
+	case name == "ip" && strings.Contains(command, "-details -o link show dev podlaz0"):
+		return netexecutor.CommandResult{Stdout: productionTunLinkForTest, ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 -o addr show dev podlaz0 scope global"):
+		return netexecutor.CommandResult{Stdout: "7: podlaz0    inet 198.18.0.1/32 scope global podlaz0", ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 addr add"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 addr del"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 route show table"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 route add"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 route del"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 route flush cache"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 rule show priority"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 rule add"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "ip" && strings.Contains(command, "-4 rule del"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "resolvectl" && strings.HasPrefix(strings.Join(args, " "), "status --no-pager"):
+		return netexecutor.CommandResult{Stdout: r.resolvedStatus, ExitCode: 0}, nil
+	case name == "resolvectl" && strings.HasPrefix(strings.Join(args, " "), "revert podlaz0"):
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "resolvectl":
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "nft" && len(args) == 2 && args[0] == "-f":
+		r.nftTable = true
+		return netexecutor.CommandResult{ExitCode: 0}, nil
+	case name == "nft" && strings.HasPrefix(strings.Join(args, " "), "-y list table inet podlaz"):
+		if !r.nftTable {
+			return netexecutor.CommandResult{ExitCode: 1, Stderr: "No such file or directory"}, fmt.Errorf("nft table absent")
 		}
-		return netexecutor.CommandResult{}, nil
-	case "ip -4 address replace 198.18.0.1/32 dev podlaz0":
-		r.addressPresent = true
-		return netexecutor.CommandResult{}, nil
-	case "ip link set dev podlaz0 up":
-		return netexecutor.CommandResult{}, nil
-	case "ip -4 address del 198.18.0.1/32 dev podlaz0":
-		r.addressPresent = false
-		return netexecutor.CommandResult{}, nil
-	case "resolvectl status --no-pager":
-		return netexecutor.CommandResult{Stdout: r.resolvedStatus}, nil
-	case "resolvectl revert podlaz0",
-		"resolvectl dns podlaz0 1.1.1.1 9.9.9.9",
-		"resolvectl domain podlaz0 ~.",
-		"resolvectl default-route podlaz0 yes":
-		return netexecutor.CommandResult{}, nil
+		return netexecutor.CommandResult{Stdout: productionNFTListOutputForTest(), ExitCode: 0}, nil
+	case name == "nft" && strings.HasPrefix(strings.Join(args, " "), "delete table inet podlaz"):
+		r.nftTable = false
+		return netexecutor.CommandResult{ExitCode: 0}, nil
 	default:
-		return netexecutor.CommandResult{ExitCode: 2, Stderr: "unexpected command"}, fmt.Errorf("unexpected command: %s", command)
+		return netexecutor.CommandResult{ExitCode: 0}, nil
 	}
 }
 
@@ -179,4 +217,15 @@ func (r *productionTunCommandRunner) count(command string) int {
 		}
 	}
 	return count
+}
+
+func productionNFTListOutputForTest() string {
+	return `table inet podlaz {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"
+		oifname "lo" counter accept comment "podlaz:firewall:loopback"
+		oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"
+	}
+}`
 }
