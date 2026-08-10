@@ -90,24 +90,25 @@ func (b *productionTunRevalidationBackend) verify(ctx context.Context, observati
 	return nil
 }
 
-func (m *XrayManager) activeTunRuntimeIdentity() (xrayState, *netRuntimeProcess) {
+func (m *XrayManager) activeTunRuntimeIdentity() (xrayState, *tunRuntimeProcessIdentity) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	state := m.state
-	var runtimeProcess *netRuntimeProcess
+	var runtimeProcess *tunRuntimeProcessIdentity
 	if m.cmd != nil && m.cmd.Process != nil {
-		runtimeProcess = &netRuntimeProcess{PID: m.cmd.Process.Pid}
+		runtimeProcess = &tunRuntimeProcessIdentity{PID: m.cmd.Process.Pid}
 	}
 	return state, runtimeProcess
 }
 
-// netRuntimeProcess is the minimal process identity needed for durable
-// ownership comparison. It intentionally exposes no os.Process mutation API.
-type netRuntimeProcess struct {
+// tunRuntimeProcessIdentity is the minimum supervised-process evidence needed
+// for durable ownership comparison. It intentionally exposes no os.Process
+// mutation API.
+type tunRuntimeProcessIdentity struct {
 	PID int
 }
 
-func verifyCommittedTunRuntimeIdentity(state xrayState, process *netRuntimeProcess, tx txstate.Transaction) error {
+func verifyCommittedTunRuntimeIdentity(state xrayState, process *tunRuntimeProcessIdentity, tx txstate.Transaction) error {
 	if tx.State != txstate.TransactionCommitted {
 		return fmt.Errorf("active TUN transaction state is %s, want committed", tx.State)
 	}
@@ -139,25 +140,31 @@ func verifyCommittedTunRuntimeIdentity(state xrayState, process *netRuntimeProce
 }
 
 func tunRevalidationServerAddress(tx txstate.Transaction) (string, error) {
-	var server string
+	candidates := make(map[string]struct{})
 	for _, route := range tx.Rollback.Routes {
-		if !strings.EqualFold(strings.TrimSpace(route.Table), "main") || strings.TrimSpace(route.Dev) == "" || route.Dev == netsnapshot.DefaultTunName {
-			continue
-		}
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(route.CIDR))
-		if err != nil || !prefix.IsValid() || !prefix.Addr().Is4() || prefix.Bits() != 32 {
-			continue
-		}
-		candidate := prefix.Addr().String()
-		if server != "" && server != candidate {
-			return "", errors.New("multiple persisted server bypass destinations are ambiguous")
-		}
-		server = candidate
+		addTunServerBypassCandidate(candidates, route.Table, route.CIDR, route.Dev)
 	}
-	if server == "" {
-		return "", errors.New("persisted server bypass destination is unavailable")
+	for _, route := range tx.DesiredPlan.Routes {
+		addTunServerBypassCandidate(candidates, route.Table, route.CIDR, route.Dev)
 	}
-	return server, nil
+	if len(candidates) != 1 {
+		return "", fmt.Errorf("persisted server bypass destination cardinality=%d, want 1", len(candidates))
+	}
+	for server := range candidates {
+		return server, nil
+	}
+	return "", errors.New("persisted server bypass destination is unavailable")
+}
+
+func addTunServerBypassCandidate(candidates map[string]struct{}, table, cidr, device string) {
+	if !strings.EqualFold(strings.TrimSpace(table), "main") || strings.TrimSpace(device) == "" || strings.TrimSpace(device) == netsnapshot.DefaultTunName {
+		return
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+	if err != nil || !prefix.IsValid() || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return
+	}
+	candidates[prefix.Addr().String()] = struct{}{}
 }
 
 func operatingSystemInterfaceIndex(name string) (int, error) {
