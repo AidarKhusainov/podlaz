@@ -116,7 +116,7 @@ Low-level address/route/rule/DNS/firewall composition executors do not perform h
 
 This is the boundary that guarantees `network-apply` diagnostics precede the first DNS, nftables, route, rule, or TUN rollback command. A child executor that did not mutate state returns a zero `Step`, which is not added to rollback ownership.
 
-When a failed connect successfully rolls back every podlaz-owned mutation it applied, the transaction is first persisted as terminal `rolled_back` and then removed in a separate filesystem operation. A surviving `rolled_back` file is therefore stale lifecycle metadata only: rollback has already relinquished route and policy-rule ownership, and its historical tuples must never authorize another deletion. Cleanup validates only the stale record's schema, owner, and terminal state before removing the metadata after host/process safety checks. A terminal `committed` record remains a restart-recovery candidate because it may represent an interrupted active session after daemon restart. A committed transaction that is proven to be the exact current live lifecycle transaction is not cleanup-required: read-only status and doctor filter its exact transaction candidate, and explicit recovery performs no mutation against it. Current health is separate from this durable commit fact.
+When a failed connect successfully rolls back every podlaz-owned mutation it applied, the transaction is first persisted as terminal `rolled_back` and then removed in a separate filesystem operation. A surviving `rolled_back` file is therefore stale lifecycle metadata only: rollback has already relinquished route and policy-rule ownership, and its historical tuples must never authorize another deletion. Cleanup validates only the stale record's schema, owner, and terminal state before removing the metadata after host/process safety checks. A terminal `committed` record remains a restart-recovery candidate because it may represent an interrupted active session after daemon restart. A committed transaction that is proven to be the exact current live lifecycle transaction is not cleanup-required merely because it exists: read-only status and doctor filter its exact transaction candidate, and explicit recovery performs no mutation against it while current health remains valid or revalidation is in progress. Terminal current-health verification failure is handled separately by the exact lifecycle disconnect contract below.
 
 Transaction files in cleanup-required states such as `planned`, `applying`, `applied`, `verifying`, `rolling_back`, or `failed` continue to block connect until automatic or explicit daemon-owned recovery completes. An inactive committed transaction also blocks as a restart-recovery candidate; a proven live committed transaction does not. Invalid or unreadable transaction files are blockers because their ownership and cleanup state cannot be proven safely.
 
@@ -140,6 +140,10 @@ The packaged daemon must not treat a committed TUN transaction as permanent
 current-health proof. It publishes current TUN health independently as
 `verified`, `revalidating`, `degraded`, or `cleanup-required`, together with a
 positive `network_generation` and stable failure classification where applicable.
+`revalidating` and `degraded` are transient active states while proof is in
+progress or a terminal verification outcome is being handed off; a proved
+verification failure or deadline is not allowed to leave an active committed
+session indefinitely in `degraded`.
 
 After commit, generation 1 is initialized from a fresh authoritative snapshot and
 the exact captured observation is run through the same canonical composition and
@@ -168,12 +172,29 @@ pending waits for mutation-idle; an in-flight trigger cancelled by mutation is
 requeued before cancellation. The post-mutation pass always starts with a fresh
 authoritative snapshot. Shutdown cancellation is terminal and does not requeue.
 
-Revalidation is strictly read-only. It reuses the canonical verifier, which
-requires exact per-link resolved DNS state and exact podlaz-owned nftables table
-composition, including chain metadata and ordered rule cardinality. It does not
-apply or repair routes, DNS, firewall, NetworkManager, TUN state, or foreign
-resources, and it does not expand rollback authority beyond durable applied/
-rollback ownership.
+The verification phase of revalidation is strictly read-only. It reuses the
+canonical verifier, which requires exact per-link resolved DNS state and exact
+podlaz-owned nftables table composition, including chain metadata and ordered
+rule cardinality. It does not apply or repair routes, DNS, firewall,
+NetworkManager, TUN state, or foreign resources, and it does not expand rollback
+authority beyond durable applied/rollback ownership.
+
+When that read-only proof has established the current owned session but required
+verification fails or reaches its bounded deadline, the daemon returns a typed
+terminal outcome instead of restoring old evidence. After revalidation authority
+is released, it first runs the existing bounded redacted pre-rollback diagnostic
+pipeline and attempts to persist the report with `rollback_status=pending`, then
+invokes the normal transaction-backed lifecycle `Disconnect` under the existing
+bounded rollback timeout. Successful cleanup converges to inactive state and
+finalizes the report as `completed`. Cleanup failure finalizes it as `failed` and
+leaves current health `cleanup-required` with durable ownership available for
+recovery. This is fail-safe disposition, not repair: ambiguous observation or
+foreign ownership never gains cleanup authority.
+
+`context.Canceled` from an explicit user disconnect/recovery or daemon shutdown is
+not a terminal verification outcome. The higher-priority lifecycle operation owns
+cleanup, so cancellation does not schedule a recursive second automatic
+disconnect.
 
 ## DNS verification contract
 
@@ -187,7 +208,21 @@ Rollback uses `resolvectl revert <link>` for the podlaz-owned link. The exact mi
 
 ## Diagnostics and logs
 
-Failures during `network-apply`, `network-verify`, or later connectivity verification run a short bounded redacted diagnostic subset while the failed applied state still exists. The latest report is atomically persisted before the first rollback command when persistence succeeds. Diagnostic collection and persistence are best-effort: they never replace the original failure and never prevent the separate bounded rollback context from running.
+Failures during `network-apply`, `network-verify`, connect-time connectivity
+verification, or terminal post-commit revalidation run a short bounded redacted
+diagnostic subset while the relevant failed state still exists. The latest
+report is atomically persisted before the first rollback command when persistence
+succeeds. Diagnostic collection and persistence are best-effort: they never
+replace the original failure and never prevent the separate bounded rollback
+context from running.
+
+For terminal post-commit revalidation specifically, diagnostic capture happens
+after read-only revalidation authority is released and before automatic lifecycle
+`Disconnect`. The nested verification phase identifies the failed layer, while
+`rollback_status` starts as `pending` and is finalized only after normal cleanup.
+Explicit user/shutdown cancellation does not enter this terminal diagnostic-plus-
+disconnect path because that cancellation is owned by the lifecycle operation
+already in progress.
 
 The report keeps `schema_version`, stable `failure_phase`, primary classification, bounded evidence, warnings/errors, safe report path, and `rollback_status`. It is first written with `rollback_status: pending`, then atomically finalized to `completed` or `failed`. After rollback and daemon restart, `doctor --tun` may read this replacement-only report as historical evidence according to the `/run` retention contract.
 
@@ -203,6 +238,6 @@ The issue-specific installed-package convergence gate performs a clean purge, bu
 
 The same dedicated run must accept packaged `Current Scopes: none` and complete the real missing-link rollback scenario. Before every disconnect or fault-release boundary it snapshots a private exact route/policy-rule manifest from the active transaction, including arbitrary main-table bypass tuples. Immediately after production rollback or disconnect it runs strict tri-state verification against that manifest; route/rule residue or an inspection error prevents `resources_absent=pass`. The private manifest remains outside the artifact directory.
 
-For current-health changes, target-host acceptance must additionally prove that a packaged active TUN survives a real suspend/resume boundary without silently retaining stale `verified` evidence: status must show the same or advanced generation only after post-resume revalidation, watcher reconnect/resync must not lose the transition, and disconnect after resume must cancel probes and converge without waiting for an unrelated full probe timeout. Evidence must remain redacted and structural.
+For current-health changes, target-host acceptance must additionally prove that a packaged active TUN survives a real suspend/resume boundary without silently retaining stale `verified` evidence: status must show the same or advanced generation only after post-resume revalidation, watcher reconnect/resync must not lose the transition, and a controlled verification failure/deadline must persist bounded redacted diagnostics before automatic bounded disconnect. Successful cleanup must converge to inactive; forced cleanup failure must remain `cleanup-required`; explicit user/shutdown cancellation must not produce duplicate cleanup. Evidence must remain redacted and structural.
 
 The scenario timeout leaves a separate cleanup window. On every outcome the workflow attempts daemon recovery, runs strictly scoped fallback cleanup, removes E2E sentinels, and purges the package only after daemon/Xray absence is proven. It directly verifies no podlaz-owned state remains. Artifacts contain only normalized verdicts, classifications, lifecycle events, commit identity, and hashes; upload occurs only after cleanup assertions and scanning against configured secrets and actual host network values succeed.
