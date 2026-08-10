@@ -60,18 +60,30 @@ type tunRevalidationContextConn struct {
 
 func (c *tunRevalidationContextConn) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
-	if err != nil && c.ctx.Err() != nil {
-		return n, c.ctx.Err()
-	}
-	return n, err
+	return n, tunRevalidationContextIOError(c.ctx, err)
 }
 
 func (c *tunRevalidationContextConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	if err != nil && c.ctx.Err() != nil {
-		return n, c.ctx.Err()
+	return n, tunRevalidationContextIOError(c.ctx, err)
+}
+
+func tunRevalidationContextIOError(ctx context.Context, err error) error {
+	if err == nil || ctx == nil {
+		return err
 	}
-	return n, err
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline || time.Now().Before(deadline) {
+		return err
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return context.DeadlineExceeded
+	}
+	return err
 }
 
 func (c *tunRevalidationContextConn) Close() error {
