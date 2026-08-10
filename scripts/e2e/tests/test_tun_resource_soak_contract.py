@@ -64,6 +64,28 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("--reconnect-samples", report)
         self.assertIn("--cleanup-boundary", report)
 
+    def test_host_sensitive_inventory_is_never_emitted_to_workflow_commands(self) -> None:
+        text = self.script_text()
+        self.assertNotIn("mask_multiline_sensitive", text)
+        self.assertNotIn("mask_value", text)
+        append = self.function_body("append_sensitive_value", "\n}\n\ncollect_host_sensitive_values")
+        self.assertNotIn("::", append)
+
+    def test_failure_evidence_is_structural_and_written_before_private_cleanup(self) -> None:
+        text = self.script_text()
+        self.assertIn("tun-resource-failure.json", text)
+        writer = self.function_body("write_failure_evidence", "\n}\n\ncleanup")
+        self.assertIn('"phase"', writer)
+        self.assertIn('"harness_exit_code"', writer)
+        self.assertIn('"command_exit_code"', writer)
+        self.assertNotIn('stdout', writer)
+        self.assertNotIn('stderr', writer)
+        self.assertNotIn('cmdline', writer)
+        cleanup = self.function_body("cleanup", "\n}\n\ntrap cleanup EXIT")
+        failure = cleanup.index("write_failure_evidence")
+        private_cleanup = cleanup.index('rm -rf -- "${SOAK_PRIVATE_DIR}"')
+        self.assertLess(failure, private_cleanup)
+
     def test_private_identity_and_profile_material_are_removed_before_artifact_scan(self) -> None:
         cleanup = self.function_body("cleanup", "\n}\n\ntrap cleanup EXIT")
         self.assertIn('rm -rf -- "${SOAK_PRIVATE_DIR}"', cleanup)

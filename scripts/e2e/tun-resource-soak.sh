@@ -76,6 +76,7 @@ RECONNECT_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-reconnect-samples.ndjson"
 BASELINE_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-inactive-baseline.json"
 CLEANUP_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-post-cleanup.json"
 PUBLIC_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-soak-report.json"
+FAILURE_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-failure.json"
 PROVENANCE_JSON="${SOAK_PRIVATE_DIR}/provenance.json"
 CONFIGURATION_JSON="${SOAK_PRIVATE_DIR}/configuration.json"
 DAEMON_BASELINE_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-baseline.json"
@@ -89,30 +90,14 @@ PROFILE_ID=""
 HOST_SENSITIVE_VALUES=""
 BUILD_COMMIT=""
 SOAK_STARTED_SECONDS=0
-
-mask_multiline_sensitive() {
-  local value="${1:-}"
-  [[ -n "${value}" ]] || return 0
-  mask_value "${value}"
-  while IFS= read -r line; do
-    [[ -n "${line}" ]] && mask_value "${line}"
-  done <<<"${value}"
-}
+SOAK_PHASE="initialization"
+SOAK_COMMAND_EXIT=""
 
 append_sensitive_value() {
   local value="${1:-}"
   [[ -n "${value}" ]] || return 0
   HOST_SENSITIVE_VALUES+="${value}"$'\n'
-  mask_multiline_sensitive "${value}"
 }
-
-for sensitive in \
-  "${PODLAZ_E2E_PROFILE_URI}" \
-  "${PODLAZ_E2E_PROFILE_URI_LIST}" \
-  "${PODLAZ_E2E_DNS_CHECK_HOST}" \
-  "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}"; do
-  mask_multiline_sensitive "${sensitive}"
-done
 
 collect_host_sensitive_values() {
   local values
@@ -306,12 +291,14 @@ PY
 }
 
 disconnect_and_sample_cleanup() {
+  SOAK_PHASE="session-one-disconnect"
   snapshot_network_manifest "${SESSION_ONE_NETWORK_MANIFEST}"
   run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/session-one-disconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/session-one-disconnect.stderr" || \
     fail "normal disconnect failed after the active soak"
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" assert-gone \
     --identity "${SESSION_ONE_IDENTITY}" || fail "exact supervised child did not terminate"
   sleep "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS}"
+  SOAK_PHASE="post-cleanup"
   assert_resources_absent post-cleanup "${SESSION_ONE_NETWORK_MANIFEST}"
   assert_no_recovery_candidates post-cleanup
   local daemon_pid
@@ -329,6 +316,7 @@ disconnect_and_sample_cleanup() {
 
 run_active_soak() {
   local sample_index=0 elapsed_seconds=0 dns_stdout dns_stderr curl_stdout curl_stderr status_stdout status_stderr doctor_stdout doctor_stderr
+  SOAK_PHASE="active-soak"
   while ((elapsed_seconds < PODLAZ_E2E_SOAK_DURATION_SECONDS)); do
     dns_stdout="${SOAK_PRIVATE_DIR}/active-dns.stdout"
     dns_stderr="${SOAK_PRIVATE_DIR}/active-dns.stderr"
@@ -360,9 +348,11 @@ run_active_soak() {
 
 run_reconnect_probe() {
   local daemon_pid sample_index elapsed_seconds
+  SOAK_PHASE="reconnect-connect"
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${SOAK_PRIVATE_DIR}/reconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect.stderr" || \
     fail "immediate reconnect failed"
   assert_tun_package_address_present reconnect || fail "reconnect TUN address is not authoritative"
+  SOAK_PHASE="reconnect-attribution"
   daemon_pid="$(daemon_main_pid)"
   sudo -n python3 "${METRICS_TOOL}" discover \
     --daemon-pid "${daemon_pid}" \
@@ -371,7 +361,9 @@ run_reconnect_probe() {
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" assert-replaced \
     --before "${SESSION_ONE_IDENTITY}" \
     --after "${SESSION_TWO_IDENTITY}" || fail "reconnect did not replace the exact supervised child"
+  SOAK_PHASE="reconnect-warmup"
   sleep "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}"
+  SOAK_PHASE="reconnect-sampling"
   for sample_index in $(seq 0 $((PODLAZ_E2E_SOAK_RECONNECT_SAMPLES - 1))); do
     elapsed_seconds=$((sample_index * PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS))
     sudo -n python3 "${METRICS_TOOL}" sample \
@@ -392,17 +384,20 @@ run_reconnect_probe() {
       sleep "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}"
     fi
   done
+  SOAK_PHASE="reconnect-disconnect"
   snapshot_network_manifest "${SESSION_TWO_NETWORK_MANIFEST}"
   run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/reconnect-disconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-disconnect.stderr" || \
     fail "normal disconnect failed after reconnect"
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" assert-gone \
     --identity "${SESSION_TWO_IDENTITY}" || fail "replacement supervised child did not terminate"
   sleep "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS}"
+  SOAK_PHASE="reconnect-cleanup"
   assert_resources_absent reconnect-cleanup "${SESSION_TWO_NETWORK_MANIFEST}"
   assert_no_recovery_candidates reconnect-cleanup
 }
 
 write_public_report() {
+  SOAK_PHASE="report"
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" report \
     --samples "${ACTIVE_SAMPLES}" \
     --reconnect-samples "${RECONNECT_SAMPLES}" \
@@ -418,11 +413,81 @@ write_public_report() {
   assert_json_file "${PUBLIC_REPORT}"
 }
 
+write_failure_evidence() {
+  local harness_exit_code="$1"
+  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${harness_exit_code}" <<'PY'
+import json
+import os
+import re
+import sys
+
+path, phase, command_exit_text, harness_exit_text = sys.argv[1:]
+allowed_phases = {
+    "initialization",
+    "cleanup-preflight",
+    "configuration",
+    "package-build",
+    "package-install",
+    "package-provenance",
+    "profile-import",
+    "inactive-disconnect",
+    "inactive-recovery",
+    "inactive-network",
+    "inactive-baseline",
+    "session-one-connect",
+    "active-attribution",
+    "warmup",
+    "active-soak",
+    "session-one-disconnect",
+    "post-cleanup",
+    "reconnect-connect",
+    "reconnect-attribution",
+    "reconnect-warmup",
+    "reconnect-sampling",
+    "reconnect-disconnect",
+    "reconnect-cleanup",
+    "report",
+    "redaction",
+    "completed",
+}
+if phase not in allowed_phases:
+    raise SystemExit("unrecognized resource-soak phase")
+if re.fullmatch(r"[0-9]+", harness_exit_text) is None:
+    raise SystemExit("invalid harness exit code")
+harness_exit_code = int(harness_exit_text)
+if not 0 <= harness_exit_code <= 255:
+    raise SystemExit("harness exit code is out of range")
+command_exit_code = None
+if command_exit_text:
+    if re.fullmatch(r"[0-9]+", command_exit_text) is None:
+        raise SystemExit("invalid command exit code")
+    command_exit_code = int(command_exit_text)
+    if not 0 <= command_exit_code <= 255:
+        raise SystemExit("command exit code is out of range")
+payload = {
+    "schema_version": 1,
+    "phase": phase,
+    "harness_exit_code": harness_exit_code,
+    "command_exit_code": command_exit_code,
+}
+temporary = path + ".tmp"
+os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+with open(temporary, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+os.chmod(temporary, 0o644)
+os.replace(temporary, path)
+PY
+}
+
 cleanup() {
   local code=$? cleanup_code=0
   set +e
   if [[ -x /usr/bin/podlaz && -n "${XDG_CONFIG_HOME:-}" ]]; then
     run_installed_podlaz disconnect >/dev/null 2>/dev/null
+  fi
+  if [[ "${code}" != "0" ]]; then
+    write_failure_evidence "${code}" || cleanup_code=1
   fi
   sudo -n rm -rf -- "${SOAK_PRIVATE_DIR}" || cleanup_code=1
   PODLAZ_E2E_PURGE_PACKAGE=true bash "${SCRIPT_DIR}/tun-package-cleanup.sh" || cleanup_code=1
@@ -435,10 +500,13 @@ cleanup() {
 trap cleanup EXIT
 
 collect_host_sensitive_values
+SOAK_PHASE="cleanup-preflight"
 PODLAZ_E2E_PURGE_PACKAGE=true bash "${SCRIPT_DIR}/tun-package-cleanup.sh"
-rm -f -- "${ACTIVE_SAMPLES}" "${RECONNECT_SAMPLES}" "${BASELINE_BOUNDARY}" "${CLEANUP_BOUNDARY}" "${PUBLIC_REPORT}"
+rm -f -- "${ACTIVE_SAMPLES}" "${RECONNECT_SAMPLES}" "${BASELINE_BOUNDARY}" "${CLEANUP_BOUNDARY}" "${PUBLIC_REPORT}" "${FAILURE_REPORT}"
+SOAK_PHASE="configuration"
 write_configuration
 
+SOAK_PHASE="package-build"
 log "build exact release-like package for resource soak"
 # shellcheck disable=SC1091
 . packaging/package-toolchain.env
@@ -451,22 +519,35 @@ PODLAZ_COMMIT="${BUILD_COMMIT}" \
   bash scripts/build-deb.sh >"${E2E_ARTIFACT_DIR}/tun-resource-build-deb.log" 2>&1
 test -f "${DEV_DEB}" || fail "expected resource-soak package was not built"
 
+SOAK_PHASE="package-install"
 sudo -n apt install -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/tun-resource-apt-install.log" 2>&1
 sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/tun-resource-apt-reinstall.log" 2>&1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
 wait_for_daemon_socket
+SOAK_PHASE="package-provenance"
 verify_package_provenance
 
+SOAK_PHASE="profile-import"
 PRIMARY_URI="$(first_profile_uri)"
 assert_nonempty "${PRIMARY_URI}" "primary profile URI"
 capture_secret_import "${PRIMARY_URI}"
 
-run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/preconnect-disconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/preconnect-disconnect.stderr" || \
-  fail "clean inactive preflight disconnect failed"
+SOAK_PHASE="inactive-disconnect"
+SOAK_COMMAND_EXIT=""
+if run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/preconnect-disconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/preconnect-disconnect.stderr"; then
+  :
+else
+  SOAK_COMMAND_EXIT="$?"
+  fail "clean inactive preflight disconnect failed with exit code ${SOAK_COMMAND_EXIT}"
+fi
+SOAK_COMMAND_EXIT=""
+SOAK_PHASE="inactive-recovery"
 assert_no_recovery_candidates preconnect
+SOAK_PHASE="inactive-network"
 snapshot_network_manifest "${PRECONNECT_NETWORK_MANIFEST}"
 assert_resources_absent preconnect "${PRECONNECT_NETWORK_MANIFEST}"
+SOAK_PHASE="inactive-baseline"
 DAEMON_PID="$(daemon_main_pid)"
 sudo -n python3 "${METRICS_TOOL}" discover-daemon \
   --daemon-pid "${DAEMON_PID}" \
@@ -478,16 +559,20 @@ sudo -n python3 "${METRICS_TOOL}" boundary-sample \
   --sample-index 0 \
   --elapsed-seconds 0 || fail "inactive resource baseline failed"
 
+SOAK_PHASE="session-one-connect"
+SOAK_COMMAND_EXIT=""
 run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${SOAK_PRIVATE_DIR}/session-one-connect.stdout" 2>"${SOAK_PRIVATE_DIR}/session-one-connect.stderr" || \
   fail "resource-soak TUN connect failed"
 assert_tun_package_address_present active || fail "active TUN address is not authoritative"
 run_installed_podlaz status >"${SOAK_PRIVATE_DIR}/post-connect-status.stdout" 2>"${SOAK_PRIVATE_DIR}/post-connect-status.stderr" || \
   fail "post-connect TUN status is not healthy"
+SOAK_PHASE="active-attribution"
 DAEMON_PID="$(daemon_main_pid)"
 sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" discover \
   --daemon-pid "${DAEMON_PID}" \
   --transaction-dir "${TRANSACTION_DIR}" \
   --output "${SESSION_ONE_IDENTITY}" || fail "exact process attribution failed before warm-up"
+SOAK_PHASE="warmup"
 sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"
 SOAK_STARTED_SECONDS="${SECONDS}"
 sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" sample \
@@ -502,6 +587,7 @@ run_active_soak
 disconnect_and_sample_cleanup
 run_reconnect_probe
 write_public_report
+SOAK_PHASE="redaction"
 collect_host_sensitive_values
 sudo -n rm -rf -- "${SOAK_PRIVATE_DIR}"
 assert_artifacts_do_not_contain_sensitive_values \
@@ -513,4 +599,7 @@ assert_artifacts_do_not_contain_sensitive_values \
   "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" \
   "${HOST_SENSITIVE_VALUES}"
 
+SOAK_PHASE="completed"
+SOAK_COMMAND_EXIT=""
+rm -f -- "${FAILURE_REPORT}"
 log "installed-package TUN resource soak completed"
