@@ -224,6 +224,13 @@ func tunRevalidationFirewallPlan(tx txstate.Transaction) (planner.TunFirewallPla
 	if len(nft.Chains) == 0 {
 		return planner.TunFirewallPlan{}, fmt.Errorf("persisted nftables desired state has no chains")
 	}
+	if len(nft.Chains) > 1 {
+		for _, chain := range nft.Chains {
+			if len(chain.Rules) > 0 {
+				return planner.TunFirewallPlan{}, fmt.Errorf("persisted nftables rule-to-chain mapping is ambiguous across %d chains", len(nft.Chains))
+			}
+		}
+	}
 
 	firewall := planner.TunFirewallPlan{
 		Backend:     planner.FirewallBackendNftables,
