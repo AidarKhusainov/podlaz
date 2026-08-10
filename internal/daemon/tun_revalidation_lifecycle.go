@@ -7,11 +7,10 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-const tunRevalidationInitializeTimeout = defaultTunRevalidationTimeout
-
 type tunRevalidationLifecycle struct {
 	lifecycle lifecycleService
 	runtime   *tunRevalidationRuntime
+	schedule  func(tunRevalidationTrigger)
 }
 
 func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
@@ -38,13 +37,15 @@ func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.Conne
 		return response, nil
 	}
 
-	// Once a committed session exists, capture and verify its generation-one
-	// observation even if the client request context is cancelled immediately
-	// after commit. Use the same bounded budget as ordinary revalidation because
-	// Initialize now executes the same canonical state/connectivity verifier.
-	initializeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRevalidationInitializeTimeout)
-	l.runtime.Initialize(initializeCtx)
-	cancel()
+	// Publish generation one as unverified while lifecycle mutation authority is
+	// still held, but do not run network probes here. The coordinator consumes
+	// the initial trigger only after the operation lock is released, so
+	// disconnect/recovery/shutdown can cancel the proof through the same external
+	// control path as every later revalidation.
+	l.runtime.PrepareInitialize()
+	if l.schedule != nil {
+		l.schedule(tunRevalidationTriggerInitial)
+	}
 	return response, nil
 }
 
