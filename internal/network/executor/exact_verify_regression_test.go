@@ -8,12 +8,17 @@ import (
 
 func TestNftablesExecutorVerifyRejectsExtraRuleInOwnedTable(t *testing.T) {
 	plan := firewallPlanForTest()
+	needle := `oifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"`
 	output := strings.Replace(
 		nftablesListOutputForTest(),
-		`\t\toifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"`,
-		`\t\tmeta l4proto tcp counter accept comment "foreign-extra"\n\t\toifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"`,
+		needle,
+		`meta l4proto tcp counter accept comment "foreign-extra"
+		`+needle,
 		1,
 	)
+	if output == nftablesListOutputForTest() {
+		t.Fatal("test fixture did not inject the extra nftables rule")
+	}
 	if err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan); err == nil {
 		t.Fatal("expected exact nftables verification to reject an extra rule in the podlaz-owned table")
 	}
