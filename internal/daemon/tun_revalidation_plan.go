@@ -53,13 +53,6 @@ func tunRevalidationFirewallPlan(tx txstate.Transaction) (planner.TunFirewallPla
 	if len(nft.Chains) == 0 {
 		return planner.TunFirewallPlan{}, fmt.Errorf("persisted nftables desired state has no chains")
 	}
-	if len(nft.Chains) > 1 {
-		for _, chain := range nft.Chains {
-			if len(chain.Rules) > 0 {
-				return planner.TunFirewallPlan{}, fmt.Errorf("persisted nftables rule-to-chain ownership is ambiguous across %d chains", len(nft.Chains))
-			}
-		}
-	}
 
 	firewall := planner.TunFirewallPlan{
 		Backend:     planner.FirewallBackendNftables,
@@ -81,7 +74,7 @@ func tunRevalidationFirewallPlan(tx txstate.Transaction) (planner.TunFirewallPla
 		}
 		firewall.Chains = append(firewall.Chains, chain)
 		for _, rawRule := range persisted.Rules {
-			rule, err := parsePersistedTunFirewallRule(persisted.Name, rawRule)
+			rule, err := parsePersistedTunFirewallRule(nft.Family, nft.Table, persisted.Name, rawRule)
 			if err != nil {
 				return planner.TunFirewallPlan{}, err
 			}
@@ -91,14 +84,19 @@ func tunRevalidationFirewallPlan(tx txstate.Transaction) (planner.TunFirewallPla
 	return firewall, nil
 }
 
-func parsePersistedTunFirewallRule(chain, raw string) (planner.TunFirewallRulePlan, error) {
+func parsePersistedTunFirewallRule(family, table, chain, raw string) (planner.TunFirewallRulePlan, error) {
 	fields := strings.Fields(raw)
 	if len(fields) < 4 || fields[len(fields)-2] != "owner" {
 		return planner.TunFirewallRulePlan{}, fmt.Errorf("persisted nftables rule on %s has no exact ownership marker", chain)
 	}
 	ownership := fields[len(fields)-1]
-	if !strings.HasPrefix(ownership, "podlaz:firewall:") {
+	const ownershipPrefix = "podlaz:firewall:"
+	if !strings.HasPrefix(ownership, ownershipPrefix) {
 		return planner.TunFirewallRulePlan{}, fmt.Errorf("persisted nftables rule on %s has unsupported owner %q", chain, ownership)
+	}
+	ownerKey := strings.TrimPrefix(ownership, ownershipPrefix)
+	if ownerKey == "" {
+		return planner.TunFirewallRulePlan{}, fmt.Errorf("persisted nftables rule on %s has empty ownership key", chain)
 	}
 	verdictIndex := len(fields) - 3
 	if verdictIndex <= 0 {
@@ -117,6 +115,6 @@ func parsePersistedTunFirewallRule(chain, raw string) (planner.TunFirewallRulePl
 		Verdict:     verdict,
 		Action:      planner.FirewallActionAdd,
 		Ownership:   ownership,
-		RollbackKey: strings.Join([]string{"inet", "podlaz", chain, ownership}, "/"),
+		RollbackKey: strings.Join([]string{family, table, chain, ownerKey}, "/"),
 	}, nil
 }
