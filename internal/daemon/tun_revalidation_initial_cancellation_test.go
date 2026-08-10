@@ -90,13 +90,17 @@ func newGenerationOneCancellationHarness(t *testing.T) *generationOneCancellatio
 	controlCtx, cancelControl := context.WithCancel(context.Background())
 	coordinator := newTunRevalidationCoordinator(func(ctx context.Context, trigger tunRevalidationTrigger) {
 		_ = lock.runRevalidation(ctx, func() {
+			if trigger == tunRevalidationTriggerInitial {
+				runtime.InitializePending(ctx)
+				return
+			}
 			runtime.Revalidate(ctx, trigger)
 		})
 	})
 	lock.setRevalidationCancel(coordinator.InterruptForMutation)
 	go coordinator.Run(controlCtx)
 
-	health := tunRevalidationLifecycle{lifecycle: base, runtime: runtime}
+	health := tunRevalidationLifecycle{lifecycle: base, runtime: runtime, schedule: coordinator.Notify}
 	return &generationOneCancellationHarness{
 		t: t, lifecycle: lock.wrap(health), base: base, started: started, cancelled: cancelled,
 		release: release, connectDone: make(chan struct{}), cancelControl: cancelControl,
