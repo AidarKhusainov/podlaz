@@ -185,7 +185,7 @@ func parseNftBaseChainMetadata(line string) (string, string, int, string, error)
 		return "", "", 0, "", fmt.Errorf("invalid base-chain metadata %q", line)
 	}
 	fields := strings.Fields(strings.TrimSpace(parts[0]))
-	if len(fields) != 7 || fields[0] != "type" || fields[2] != "hook" || fields[4] != "priority" {
+	if len(fields) != 6 || fields[0] != "type" || fields[2] != "hook" || fields[4] != "priority" {
 		return "", "", 0, "", fmt.Errorf("invalid base-chain metadata %q", line)
 	}
 	priority, err := strconv.Atoi(fields[5])
