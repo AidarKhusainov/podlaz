@@ -13,7 +13,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
-	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
 const defaultTunRevalidationTimeout = 45 * time.Second
@@ -28,7 +27,7 @@ func newProductionTunRevalidationRuntime(manager *XrayManager) *tunRevalidationR
 	backend := &productionTunRevalidationBackend{
 		manager:       manager,
 		timeout:       defaultTunRevalidationTimeout,
-		networkClient: tundiag.NetworkClient{},
+		networkClient: newTunRevalidationNetworkClient(),
 	}
 	return newTunRevalidationRuntime(backend.inspect, backend.verify)
 }
