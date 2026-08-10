@@ -88,3 +88,17 @@ func TestLifecycleMutationBoundedWhenRevalidationIgnoresCancellation(t *testing.
 	}
 	close(release)
 }
+
+func TestPendingLifecycleMutationSuppressesNewRevalidation(t *testing.T) {
+	lock := newLifecycleOperationLock()
+	finishMutation := lock.beginMutation()
+	defer finishMutation()
+
+	ran := false
+	if err := lock.runRevalidation(context.Background(), func() { ran = true }); err != nil {
+		t.Fatalf("suppressed revalidation returned error: %v", err)
+	}
+	if ran {
+		t.Fatal("revalidation ran while a lifecycle mutation was pending")
+	}
+}
