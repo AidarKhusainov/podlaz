@@ -29,15 +29,18 @@ func TestTunRevalidationRuntimeAdvancesOnlyForChangedFingerprint(t *testing.T) {
 
 	runtime.Initialize(context.Background())
 	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 1, "")
+	if verifyCalls != 1 {
+		t.Fatalf("generation-one initialization ran %d verifications, want 1", verifyCalls)
+	}
 	runtime.Revalidate(context.Background(), tunRevalidationTriggerRoute)
 	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 1, "")
-	if verifyCalls != 0 {
-		t.Fatalf("unchanged fingerprint ran %d verifications, want 0", verifyCalls)
+	if verifyCalls != 1 {
+		t.Fatalf("unchanged fingerprint changed verification count to %d, want 1", verifyCalls)
 	}
 	runtime.Revalidate(context.Background(), tunRevalidationTriggerAddress)
 	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 2, "")
-	if verifyCalls != 1 {
-		t.Fatalf("changed fingerprint ran %d verifications, want 1", verifyCalls)
+	if verifyCalls != 2 {
+		t.Fatalf("changed fingerprint total verifications=%d, want 2", verifyCalls)
 	}
 }
 
@@ -57,8 +60,8 @@ func TestTunRevalidationRuntimeReprovesUnchangedGenerationAfterResume(t *testing
 	runtime.Initialize(context.Background())
 	runtime.Revalidate(context.Background(), tunRevalidationTriggerResume)
 	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 1, "")
-	if verifyCalls != 1 {
-		t.Fatalf("resume ran %d verifications, want 1", verifyCalls)
+	if verifyCalls != 2 {
+		t.Fatalf("initialize+resume ran %d verifications, want 2", verifyCalls)
 	}
 }
 
