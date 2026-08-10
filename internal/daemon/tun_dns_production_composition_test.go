@@ -165,7 +165,7 @@ func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ..
 	r.commands = append(r.commands, command)
 
 	switch {
-	case name == "ip" && strings.Contains(command, "-details -o link show dev podlaz0"):
+	case name == "ip" && (strings.Contains(command, "-details link show dev podlaz0") || strings.Contains(command, "-details -o link show dev podlaz0")):
 		return netexecutor.CommandResult{Stdout: productionTunLinkForTest, ExitCode: 0}, nil
 	case name == "ip" && strings.Contains(command, "-4 -o addr show dev podlaz0 scope global"):
 		return netexecutor.CommandResult{Stdout: "7: podlaz0    inet 198.18.0.1/32 scope global podlaz0", ExitCode: 0}, nil
