@@ -201,16 +201,39 @@ func parseNftBaseChainMetadata(line string) (string, string, int, string, error)
 
 func normalizeObservedNftRule(line string) []string {
 	fields := nftExpressionFields(line)
-	out := make([]string, 0, len(fields))
+	withoutRuntimeCounters := make([]string, 0, len(fields))
 	for i := 0; i < len(fields); i++ {
 		if fields[i] == "counter" && i+4 < len(fields) && fields[i+1] == "packets" && fields[i+3] == "bytes" {
 			if _, errPackets := strconv.ParseUint(fields[i+2], 10, 64); errPackets == nil {
 				if _, errBytes := strconv.ParseUint(fields[i+4], 10, 64); errBytes == nil {
-					out = append(out, "counter")
+					withoutRuntimeCounters = append(withoutRuntimeCounters, "counter")
 					i += 4
 					continue
 				}
 			}
+		}
+		withoutRuntimeCounters = append(withoutRuntimeCounters, fields[i])
+	}
+	return normalizeNftDefaultReject(withoutRuntimeCounters)
+}
+
+func normalizeNftDefaultReject(fields []string) []string {
+	// `nft list` may render the shorthand `reject` used by the plan as the
+	// semantically identical default inet rejection below. Collapse only that
+	// exact expansion; any other reject parameters remain visible and fail the
+	// exact comparison.
+	const expansionLength = 5
+	out := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); i++ {
+		if i+expansionLength-1 < len(fields) &&
+			fields[i] == "reject" &&
+			fields[i+1] == "with" &&
+			fields[i+2] == "icmpx" &&
+			fields[i+3] == "type" &&
+			fields[i+4] == "port-unreachable" {
+			out = append(out, "reject")
+			i += expansionLength - 1
+			continue
 		}
 		out = append(out, fields[i])
 	}
