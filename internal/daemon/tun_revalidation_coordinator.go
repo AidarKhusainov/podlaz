@@ -8,10 +8,11 @@ import (
 type tunRevalidationTrigger string
 
 const (
-	tunRevalidationTriggerResume  tunRevalidationTrigger = "resume"
-	tunRevalidationTriggerLink    tunRevalidationTrigger = "link"
-	tunRevalidationTriggerAddress tunRevalidationTrigger = "address"
-	tunRevalidationTriggerRoute   tunRevalidationTrigger = "route"
+	tunRevalidationTriggerResume       tunRevalidationTrigger = "resume"
+	tunRevalidationTriggerSourceResync tunRevalidationTrigger = "source-resync"
+	tunRevalidationTriggerLink         tunRevalidationTrigger = "link"
+	tunRevalidationTriggerAddress      tunRevalidationTrigger = "address"
+	tunRevalidationTriggerRoute        tunRevalidationTrigger = "route"
 )
 
 type tunRevalidationCoordinator struct {
@@ -20,6 +21,7 @@ type tunRevalidationCoordinator struct {
 
 	mu             sync.Mutex
 	pendingTrigger tunRevalidationTrigger
+	activeTrigger  tunRevalidationTrigger
 	activeCancel   context.CancelFunc
 }
 
@@ -34,9 +36,9 @@ func newTunRevalidationCoordinator(run func(context.Context, tunRevalidationTrig
 }
 
 // Notify is edge-triggered. The one-element wake channel bounds queued work,
-// while pendingTrigger merges event semantics under a mutex. Resume dominates
-// ordinary link/address/route hints because suspend invalidates proof freshness
-// even when the resulting uplink fingerprint is unchanged.
+// while pendingTrigger merges event semantics under a mutex. Resume and source
+// resync dominate ordinary link/address/route hints because they invalidate
+// proof freshness even when the resulting uplink fingerprint is unchanged.
 func (c *tunRevalidationCoordinator) Notify(trigger tunRevalidationTrigger) {
 	if c == nil || trigger == "" {
 		return
@@ -44,6 +46,10 @@ func (c *tunRevalidationCoordinator) Notify(trigger tunRevalidationTrigger) {
 	c.mu.Lock()
 	c.pendingTrigger = mergeTunRevalidationTrigger(c.pendingTrigger, trigger)
 	c.mu.Unlock()
+	c.signalWake()
+}
+
+func (c *tunRevalidationCoordinator) signalWake() {
 	select {
 	case c.wake <- struct{}{}:
 	default:
@@ -53,6 +59,9 @@ func (c *tunRevalidationCoordinator) Notify(trigger tunRevalidationTrigger) {
 func mergeTunRevalidationTrigger(current, next tunRevalidationTrigger) tunRevalidationTrigger {
 	if current == tunRevalidationTriggerResume || next == tunRevalidationTriggerResume {
 		return tunRevalidationTriggerResume
+	}
+	if current == tunRevalidationTriggerSourceResync || next == tunRevalidationTriggerSourceResync {
+		return tunRevalidationTriggerSourceResync
 	}
 	if current != "" {
 		return current
@@ -79,17 +88,36 @@ func (c *tunRevalidationCoordinator) Run(ctx context.Context) {
 				continue
 			}
 			probeCtx, cancel := context.WithCancel(ctx)
-			c.setActiveCancel(cancel)
+			c.setActive(trigger, cancel)
 			c.run(probeCtx, trigger)
 			cancel()
-			c.clearActiveCancel()
+			c.clearActive()
 		}
 	}
 }
 
-// CancelActive never acquires the lifecycle mutation lock. Disconnect and
-// daemon shutdown can therefore interrupt long-running probes before waiting
-// for the serialized mutation boundary.
+// InterruptForMutation publishes cancellation without acquiring lifecycle
+// mutation authority and requeues the active trigger before cancelling it. The
+// fresh attempt therefore survives connect/disconnect/recovery precedence and
+// will run only after the mutation queue becomes idle.
+func (c *tunRevalidationCoordinator) InterruptForMutation() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	cancel := c.activeCancel
+	if cancel != nil && c.activeTrigger != "" {
+		c.pendingTrigger = mergeTunRevalidationTrigger(c.pendingTrigger, c.activeTrigger)
+	}
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		c.signalWake()
+	}
+}
+
+// CancelActive is for terminal cancellation such as daemon shutdown. Unlike a
+// lifecycle mutation it intentionally does not requeue the current trigger.
 func (c *tunRevalidationCoordinator) CancelActive() {
 	if c == nil {
 		return
@@ -110,14 +138,16 @@ func (c *tunRevalidationCoordinator) takePendingTrigger() tunRevalidationTrigger
 	return trigger
 }
 
-func (c *tunRevalidationCoordinator) setActiveCancel(cancel context.CancelFunc) {
+func (c *tunRevalidationCoordinator) setActive(trigger tunRevalidationTrigger, cancel context.CancelFunc) {
 	c.mu.Lock()
+	c.activeTrigger = trigger
 	c.activeCancel = cancel
 	c.mu.Unlock()
 }
 
-func (c *tunRevalidationCoordinator) clearActiveCancel() {
+func (c *tunRevalidationCoordinator) clearActive() {
 	c.mu.Lock()
+	c.activeTrigger = ""
 	c.activeCancel = nil
 	c.mu.Unlock()
 }
