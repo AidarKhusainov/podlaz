@@ -25,6 +25,7 @@ const (
 type fakeRevalidationNetworkClient struct {
 	failStage    revalidationDataPlaneStage
 	contextStage revalidationDataPlaneStage
+	cancel       context.CancelFunc
 	calls        []revalidationDataPlaneStage
 }
 
@@ -73,6 +74,9 @@ func (c *fakeRevalidationNetworkClient) stageError(ctx context.Context, stage re
 		return errors.New("synthetic data-plane failure")
 	}
 	if c.contextStage == stage {
+		if c.cancel != nil {
+			c.cancel()
+		}
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -90,13 +94,18 @@ func revalidationDataPlanePlanForTest() planner.TunPlan {
 	}
 }
 
-func TestTunRevalidationDataPlaneRequiresEveryLayer(t *testing.T) {
-	for _, stage := range []revalidationDataPlaneStage{
+func revalidationDataPlaneStages() []revalidationDataPlaneStage {
+	return []revalidationDataPlaneStage{
+		revalidationStageDNSUDP,
 		revalidationStageDNSTCP,
 		revalidationStageTCP443,
 		revalidationStageTLS,
 		revalidationStageHTTPS,
-	} {
+	}
+}
+
+func TestTunRevalidationDataPlaneRequiresEveryLayer(t *testing.T) {
+	for _, stage := range revalidationDataPlaneStages() {
 		t.Run(string(stage), func(t *testing.T) {
 			client := &fakeRevalidationNetworkClient{failStage: stage}
 			runtime := newTunRevalidationRuntime(
@@ -129,53 +138,40 @@ func TestTunRevalidationDataPlaneRunsRequiredLayersInOrder(t *testing.T) {
 	if err := verifyTunRevalidationDataPlane(context.Background(), revalidationDataPlanePlanForTest(), client); err != nil {
 		t.Fatalf("verify layered revalidation data plane: %v", err)
 	}
-	want := []revalidationDataPlaneStage{
-		revalidationStageDNSUDP,
-		revalidationStageDNSTCP,
-		revalidationStageTCP443,
-		revalidationStageTLS,
-		revalidationStageHTTPS,
-	}
+	want := revalidationDataPlaneStages()
 	if !reflect.DeepEqual(client.calls, want) {
 		t.Fatalf("data-plane call order=%v, want %v", client.calls, want)
 	}
 }
 
 func TestTunRevalidationDataPlaneCancellationPreemptsEveryLayer(t *testing.T) {
-	for _, stage := range []revalidationDataPlaneStage{
-		revalidationStageDNSUDP,
-		revalidationStageDNSTCP,
-		revalidationStageTCP443,
-		revalidationStageTLS,
-		revalidationStageHTTPS,
-	} {
+	for _, stage := range revalidationDataPlaneStages() {
 		t.Run(string(stage), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
-			client := &fakeRevalidationNetworkClient{contextStage: stage}
+			client := &fakeRevalidationNetworkClient{contextStage: stage, cancel: cancel}
 			err := verifyTunRevalidationDataPlane(ctx, revalidationDataPlanePlanForTest(), client)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("%s cancellation error=%v, want context.Canceled", stage, err)
+			}
+			if len(client.calls) == 0 || client.calls[len(client.calls)-1] != stage {
+				t.Fatalf("%s cancellation did not reach target layer: calls=%v", stage, client.calls)
 			}
 		})
 	}
 }
 
 func TestTunRevalidationDataPlaneDeadlinePreemptsEveryLayer(t *testing.T) {
-	for _, stage := range []revalidationDataPlaneStage{
-		revalidationStageDNSUDP,
-		revalidationStageDNSTCP,
-		revalidationStageTCP443,
-		revalidationStageTLS,
-		revalidationStageHTTPS,
-	} {
+	for _, stage := range revalidationDataPlaneStages() {
 		t.Run(string(stage), func(t *testing.T) {
-			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			client := &fakeRevalidationNetworkClient{contextStage: stage}
 			err := verifyTunRevalidationDataPlane(ctx, revalidationDataPlanePlanForTest(), client)
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("%s deadline error=%v, want context.DeadlineExceeded", stage, err)
+			}
+			if len(client.calls) == 0 || client.calls[len(client.calls)-1] != stage {
+				t.Fatalf("%s deadline did not reach target layer: calls=%v", stage, client.calls)
 			}
 		})
 	}
