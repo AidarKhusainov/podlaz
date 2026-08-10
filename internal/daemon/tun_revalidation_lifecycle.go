@@ -18,9 +18,9 @@ type tunRevalidationLifecycle struct {
 func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
 	response, err := l.lifecycle.Connect(ctx, request)
 	if err != nil {
-		if l.runtime != nil && request.Mode == planner.ModeTun {
-			l.runtime.Clear()
-		}
+		// A failed replace-podlaz attempt may leave the previously active TUN
+		// session untouched. Preserve its current-health evidence until the
+		// underlying lifecycle actually transitions away from that session.
 		return response, err
 	}
 	if l.runtime == nil {
