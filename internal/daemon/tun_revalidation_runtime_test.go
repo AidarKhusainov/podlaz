@@ -41,6 +41,27 @@ func TestTunRevalidationRuntimeAdvancesOnlyForChangedFingerprint(t *testing.T) {
 	}
 }
 
+func TestTunRevalidationRuntimeReprovesUnchangedGenerationAfterResume(t *testing.T) {
+	fingerprint := tunUplinkFingerprint{Interface: "wlan0", InterfaceIndex: 3, Gateway: "192.0.2.1", Addresses: "192.0.2.55/24"}
+	verifyCalls := 0
+	runtime := newTunRevalidationRuntime(
+		func(context.Context) (tunRevalidationObservation, error) {
+			return tunRevalidationObservation{fingerprint: fingerprint}, nil
+		},
+		func(context.Context, tunRevalidationObservation) error {
+			verifyCalls++
+			return nil
+		},
+	)
+
+	runtime.Initialize(context.Background())
+	runtime.Revalidate(context.Background(), tunRevalidationTriggerResume)
+	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 1, "")
+	if verifyCalls != 1 {
+		t.Fatalf("resume ran %d verifications, want 1", verifyCalls)
+	}
+}
+
 func TestTunRevalidationRuntimeInvalidatesHealthyStateWhenFingerprintUnavailable(t *testing.T) {
 	fingerprint := tunUplinkFingerprint{Interface: "wlan0", InterfaceIndex: 3, Gateway: "192.0.2.1", Addresses: "192.0.2.55/24"}
 	calls := 0
