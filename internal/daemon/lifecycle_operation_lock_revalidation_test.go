@@ -89,16 +89,34 @@ func TestLifecycleMutationBoundedWhenRevalidationIgnoresCancellation(t *testing.
 	close(release)
 }
 
-func TestPendingLifecycleMutationSuppressesNewRevalidation(t *testing.T) {
+func TestPendingLifecycleMutationDefersRevalidationUntilMutationIsIdle(t *testing.T) {
 	lock := newLifecycleOperationLock()
 	finishMutation := lock.beginMutation()
-	defer finishMutation()
 
-	ran := false
-	if err := lock.runRevalidation(context.Background(), func() { ran = true }); err != nil {
-		t.Fatalf("suppressed revalidation returned error: %v", err)
+	ran := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- lock.runRevalidation(context.Background(), func() { close(ran) })
+	}()
+
+	select {
+	case <-ran:
+		t.Fatal("revalidation ran while lifecycle mutation was pending")
+	case <-time.After(25 * time.Millisecond):
 	}
-	if ran {
-		t.Fatal("revalidation ran while a lifecycle mutation was pending")
+
+	finishMutation()
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		t.Fatal("revalidation did not run after lifecycle mutation became idle")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("post-mutation revalidation returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("post-mutation revalidation did not return")
 	}
 }
