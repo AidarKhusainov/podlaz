@@ -29,10 +29,12 @@ transaction state separate and returns the diagnostic unhealthy exit code when
 an active TUN is no longer `verified`.
 
 Generation 1 has its own TOCTOU boundary. Connect-time verification proves the
-pre-commit observation only. After commit, the daemon collects a fresh
-observation, publishes generation 1 as `revalidating`, runs the canonical
+pre-commit observation only. After commit, the daemon synchronously publishes
+generation 1 as `revalidating`, releases lifecycle mutation authority, then
+queues the generation-1 proof through the same coordinator used for later
+revalidation. That proof collects a fresh observation, runs the canonical
 composition and connectivity verifier against that exact observation, and only
-then publishes `verified`. If that verification fails or times out, the new
+then publishes `verified`. If verification fails or times out, the new
 fingerprint is never treated as healthy merely because connect previously
 committed.
 
@@ -71,11 +73,15 @@ state that can invalidate the committed generation:
 - the server-bypass route interface and gateway.
 
 NetworkManager detection and active-connection inspection are distinct evidence.
-If NetworkManager itself is detected but `connection show --active` cannot be
-inspected successfully, the active connection identity is unknown and fingerprint
-derivation fails closed. An empty identity is authoritative only when the active
-connection inventory was successfully inspected and contains no activated
-connection for the underlying uplink.
+`nmcli` inspection runs with `LC_ALL=C` and explicit terse escaping. Active
+connection rows are parsed with escape-aware field separation so escaped `:` and
+`\` characters inside values cannot shift `NAME,UUID,TYPE,DEVICE,STATE` columns.
+Malformed escaping or an unexpected field count makes active-connection evidence
+unknown. If NetworkManager itself is detected but `connection show --active`
+cannot be inspected or parsed successfully, the active connection identity is
+unknown and fingerprint derivation fails closed. An empty identity is
+authoritative only when the active connection inventory was successfully
+inspected and contains no activated connection for the underlying uplink.
 
 Podlaz-owned `podlaz0`, policy-routing, `systemd-resolved` link state, and
 nftables state are deliberately excluded. Those resources can change as a
@@ -135,6 +141,15 @@ Revalidation is serialized with connect, disconnect, and recovery through the
 same lifecycle operation boundary. Cancellation is intentionally outside that
 boundary.
 
+Generation-1 post-commit proof follows that rule too: connect publishes
+`revalidating` and enqueues the proof while it still owns lifecycle mutation
+authority, but the coordinator does not run the verifier until that authority is
+released. Consequently disconnect/recovery can cancel an in-flight generation-1
+proof before acquiring mutation authority, and daemon shutdown terminally
+cancels it before bounded disconnect. A successful disconnect clears pending
+initial-proof state, so a mutation-requeued `initial` trigger becomes a no-op
+instead of reproving a session that no longer exists.
+
 A lifecycle mutation declares mutation intent before cancelling an active
 revalidation. A trigger already consumed while mutation is pending waits for the
 complete mutation queue to become idle instead of returning success and being
@@ -176,6 +191,8 @@ a CI host:
 
 - generation 1 verifies the exact fresh post-commit observation before
   `verified` publication and fails closed on verifier failure;
+- disconnect and daemon shutdown cancel an in-flight generation-1 proof before
+  privileged disconnect mutation proceeds;
 - post-resume signal classification and same-generation reproving;
 - source failure/reconnect schedules authoritative source-resync and reproof;
 - link/address/route rtnetlink trigger classification;
@@ -187,8 +204,9 @@ a CI host:
 - unchanged ordinary uplink hints do not advance the generation;
 - gateway/address/interface/ifindex/NetworkManager identity changes alter the
   fingerprint;
-- failed NetworkManager active-connection inspection is unknown rather than
-  authoritative absence;
+- failed or malformed NetworkManager active-connection inspection is unknown
+  rather than authoritative absence, and escaped terse fields retain column
+  identity;
 - Podlaz-owned state cannot alter the fingerprint;
 - ambiguous fingerprint evidence fails closed;
 - changed generation reuses the canonical verifier and connectivity pipeline;
