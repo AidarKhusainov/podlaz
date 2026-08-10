@@ -65,11 +65,13 @@ If the fresh observation is ambiguous or incomplete, the previous `verified`
 health is invalidated. Inspection failure is never treated as evidence that the
 old generation is still healthy.
 
-If the fingerprint is unchanged and current health is already `verified`, the
-event is discarded without running network probes and the generation does not
-advance. A material fingerprint change advances the generation once and starts
-read-only verification. A degraded generation may be reproved again without
-artificially incrementing the generation.
+For ordinary duplicate link/address/route hints, an unchanged fingerprint while
+current health is already `verified` is discarded without network probes and the
+generation does not advance. Post-resume is deliberately different: resume
+invalidates the freshness of the old proof, so the same fingerprint is reproved
+without incrementing the generation. A material fingerprint change advances the
+generation once and starts read-only verification. A degraded generation may be
+reproved again without artificially incrementing the generation.
 
 ## Read-only revalidation
 
@@ -79,17 +81,18 @@ Revalidation performs no repair and no privileged networking mutation. It:
    transaction;
 2. proves the supervised Xray child identity against durable transaction
    metadata;
-3. reconstructs the persisted verification plan without turning desired intent
-   into cleanup authority;
+3. reconstructs the complete persisted desired verification plan while keeping
+   cleanup authority limited to exact rollback ownership;
 4. collects a fresh snapshot and uplink fingerprint;
-5. runs the existing TUN composition verifier against current owned resources;
+5. runs the existing TUN composition verifier against current desired state;
 6. runs the existing bounded connectivity verifier using the same
    cancellation-aware probe pipeline used before commit.
 
-A server-bypass route that already existed before Podlaz connected is valid
-read-only desired evidence even though it correctly has no rollback ownership.
-This is only used to identify the server route to inspect; it never authorizes
-route deletion.
+A route or policy rule that was already present before Podlaz connected remains
+part of the read-only desired verification projection even when it correctly has
+no rollback entry. Desired state can prove what must still be true; it never
+creates deletion authority. The same distinction applies to the server-bypass
+route used to identify the server route to inspect.
 
 No NetworkManager mutation, IPv6 firewall policy change, nftables repair, route
 repair, DNS repair, or TUN recreation is performed by this contract. Any future
@@ -134,12 +137,12 @@ transaction state or create recovery authority.
 Unit tests cover the properties that can be made deterministic without sleeping
 a CI host:
 
-- post-resume signal classification;
+- post-resume signal classification and same-generation reproving;
 - link/address/route rtnetlink trigger classification;
 - duplicate event-storm coalescing;
 - cancellation before lifecycle-lock acquisition;
 - bounded mutation wait when a probe ignores cancellation;
-- unchanged uplink does not advance the generation;
+- unchanged ordinary uplink hints do not advance the generation;
 - gateway/address/interface/ifindex/NetworkManager identity changes alter the
   fingerprint;
 - Podlaz-owned state cannot alter the fingerprint;
@@ -147,8 +150,8 @@ a CI host:
 - changed generation reuses the verifier and connectivity pipeline;
 - timeout/cancellation remove stale `verified` health;
 - ownership mismatch is represented as cleanup-required rather than repaired;
-- pre-existing server bypass desired intent remains inspectable without gaining
-  rollback ownership;
+- complete desired routes/rules remain verifiable even when pre-existing state
+  correctly grants no rollback ownership;
 - current health is rendered independently from transaction commit state.
 
 A target-host suspend/resume acceptance run is still required before treating a
