@@ -1,4 +1,4 @@
-name: Issue 246 Health Convergence Publish
+name: Issue 246 Resource Observation
 
 on:
   pull_request:
@@ -6,59 +6,132 @@ on:
       - master
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: issue-246-health-convergence-publish-${{ github.event.pull_request.number }}
+  group: issue-246-resource-observation-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  publish:
+  observe:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
+    name: Current-package TUN resource observation
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    environment: vpn-e2e
+    timeout-minutes: 90
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+      PODLAZ_E2E_SOAK_DURATION_SECONDS: '360'
+      PODLAZ_E2E_SOAK_WARMUP_SECONDS: '30'
+      PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS: '30'
+      PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS: '60'
+      PODLAZ_E2E_POLKIT_RULE: /etc/polkit-1/rules.d/49-podlaz-e2e-resource-soak.rules
+
     steps:
-      - name: Checkout exact payload commit
+      - name: Checkout exact PR head
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
 
-      - name: Verify, test, and publish health convergence patch
-        env:
-          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install E2E-only Polkit authorization rule
+        timeout-minutes: 5
         shell: bash
         run: |
           set -euo pipefail
-          payload=.github/issue-246-health.patch.gz.b64
-          if [[ ! -f "${payload}" ]]; then
-            echo 'No health convergence payload remains.'
-            exit 0
-          fi
+          runner_user="$(id -un)"
+          [[ "${runner_user}" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends polkitd
+          sudo tee "${PODLAZ_E2E_POLKIT_RULE}" >/dev/null <<EOF
+          polkit.addRule(function(action, subject) {
+            if (action.id.indexOf("io.github.aidarkhusainov.podlaz.") === 0 &&
+                subject.user === "${runner_user}") {
+              return polkit.Result.YES;
+            }
+          });
+          EOF
+          sudo chmod 0644 "${PODLAZ_E2E_POLKIT_RULE}"
+          sudo systemctl restart polkit.service
+          sudo systemctl is-active --quiet polkit.service
 
-          echo '8183df89531b7a1cb78f4ee239ad6212a06dd54cf58a5316e16a11c898db0544  .github/issue-246-health.patch.gz.b64' | sha256sum --check --strict
-          base64 --decode "${payload}" > /tmp/issue-246-health.patch.gz
-          echo '2fb44240c6ad6496dee61a8bf5e1325c50865d5a3460770e9c3e2adf5aa395e3  /tmp/issue-246-health.patch.gz' | sha256sum --check --strict
-          gzip --decompress --stdout /tmp/issue-246-health.patch.gz > /tmp/issue-246-health.patch
-          echo '6975c5ed6eeb458038ee8a50391c098e9ed31a274a4e43fbea6b1b4197a3c1c4  /tmp/issue-246-health.patch' | sha256sum --check --strict
-          git merge-base --is-ancestor 89256b751a2cb52f9bf3382ad50c6dee016e388d HEAD
-          git apply --check /tmp/issue-246-health.patch
-          git apply --index /tmp/issue-246-health.patch
-          git rm -- "${payload}"
+      - name: Run short installed-package observation
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/tun-resource-soak.sh
 
-          bash -n scripts/e2e/tun-resource-soak.sh
-          bash -n scripts/e2e/lib/tun_soak_health.sh
-          python3 - <<'PY'
-          from pathlib import Path
-          for root in ('scripts/e2e', 'scripts/e2e/lib', 'scripts/e2e/tests'):
-              for path in Path(root).glob('*.py'):
-                  compile(path.read_text(encoding='utf-8'), str(path), 'exec')
-          PY
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
-          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf -- {} +
-          git diff --cached --check
+      - name: Recover and verify clean host state
+        id: cleanup
+        if: always()
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          PODLAZ_E2E_PURGE_PACKAGE=true \
+            timeout --signal=TERM --kill-after=30s 900s \
+            bash scripts/e2e/tun-package-cleanup.sh
 
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'test: wait for verified TUN health before sampling'
-          git push origin "HEAD:refs/heads/${HEAD_BRANCH}"
+      - name: Remove E2E-only Polkit authorization rule
+        id: polkit_cleanup
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          sudo rm -f -- "${PODLAZ_E2E_POLKIT_RULE}"
+          sudo systemctl restart polkit.service
+          sudo systemctl is-active --quiet polkit.service
+
+      - name: Scan evidence before upload
+        id: evidence_scan
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.polkit_cleanup.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          artifact_dir="${RUNNER_TEMP}/podlaz-e2e-artifacts"
+          mkdir -p "${artifact_dir}"
+          mapfile -t host_needles < <(
+            {
+              hostname -f 2>/dev/null || true
+              ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
+              ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
+              ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
+              resolvectl status --no-pager 2>/dev/null | awk -F: '/Current DNS Server|DNS Servers|DNS Domain/ {gsub(/^[[:space:]]+/, "", $2); for (i=1; i<=split($2, values, /[[:space:]]+/); i++) print values[i]}'
+              curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" 2>/dev/null || true
+            } | sed '/^[[:space:]]*$/d' | sort -u
+          )
+          python3 scripts/e2e/lib/redaction_scan.py \
+            sensitive-values \
+            "${artifact_dir}" \
+            "${artifact_dir}/tun-resource-pre-upload-redaction-scan.txt" \
+            "${PODLAZ_E2E_PROFILE_URI}" \
+            "${PODLAZ_E2E_PROFILE_URI_LIST}" \
+            "${PODLAZ_E2E_DNS_CHECK_HOST}" \
+            "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" \
+            "${host_needles[@]}"
+
+      - name: Remove private E2E temp state
+        id: private_cleanup
+        if: always()
+        shell: bash
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+
+      - name: Upload sanitized observation evidence
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.polkit_cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: issue-246-current-package-observation
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: error
+          retention-days: 7
