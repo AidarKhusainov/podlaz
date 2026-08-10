@@ -87,6 +87,49 @@ func TestTunRevalidationEventObservedDuringLifecycleMutationRunsAfterMutation(t 
 	}
 }
 
+func TestTunRevalidationInterruptedByLifecycleMutationIsRequeued(t *testing.T) {
+	lock := newLifecycleOperationLock()
+	lifecycle := &blockingReviewLifecycle{started: make(chan struct{}), release: make(chan struct{})}
+	locked := lock.wrap(lifecycle)
+
+	firstStarted := make(chan struct{})
+	secondRan := make(chan struct{})
+	var runs atomic.Int32
+	coordinator := newTunRevalidationCoordinator(func(ctx context.Context, _ tunRevalidationTrigger) {
+		_ = lock.runRevalidation(ctx, func() {
+			if runs.Add(1) == 1 {
+				close(firstStarted)
+				<-ctx.Done()
+				return
+			}
+			close(secondRan)
+		})
+	})
+	lock.setRevalidationCancel(coordinator.InterruptForMutation)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go coordinator.Run(ctx)
+
+	coordinator.Notify(tunRevalidationTriggerRoute)
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first revalidation did not start")
+	}
+
+	if _, err := locked.Disconnect(context.Background()); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	select {
+	case <-secondRan:
+	case <-time.After(time.Second):
+		t.Fatal("revalidation interrupted by lifecycle mutation was not requeued")
+	}
+	if got := runs.Load(); got != 2 {
+		t.Fatalf("revalidation runs=%d, want exactly 2", got)
+	}
+}
+
 func TestTunRevalidationInitializeVerifiesCapturedObservationBeforePublishingVerified(t *testing.T) {
 	observation := tunRevalidationObservation{
 		fingerprint: tunUplinkFingerprint{
