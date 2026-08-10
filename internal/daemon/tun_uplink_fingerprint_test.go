@@ -113,7 +113,7 @@ func issue245InterfaceIndex(name string) (int, error) {
 
 func issue245UplinkSnapshot() netsnapshot.Snapshot {
 	return netsnapshot.Snapshot{
-		OS: "linux",
+		OS:          "linux",
 		DefaultIPv4: netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "wlan0", Gateway: "192.0.2.1"},
 		ServerRoute: netsnapshot.Route{Status: netsnapshot.StatusDetected, Destination: "203.0.113.10", Interface: "wlan0", Gateway: "192.0.2.1"},
 		IPv4Addresses: netsnapshot.IPAddressInventory{
@@ -128,7 +128,7 @@ func issue245UplinkSnapshot() netsnapshot.Snapshot {
 				Name: "ExampleNetwork", UUID: "11111111-2222-3333-4444-555555555555", Type: "802-11-wireless", Device: "wlan0", State: "activated",
 			}},
 		},
-		Nftables:  netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, PodlazTable: netsnapshot.Finding{Status: netsnapshot.StatusMissing}},
+		Nftables:   netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, PodlazTable: netsnapshot.Finding{Status: netsnapshot.StatusMissing}},
 		TunDevices: []netsnapshot.TunDevice{{Name: netsnapshot.DefaultTunName, Status: netsnapshot.StatusMissing}},
 	}
 }
