@@ -150,20 +150,41 @@ For an active committed TUN session the daemon therefore publishes separate
 current health:
 
 - `verified`: the exact current generation has passed canonical composition and
-  connectivity verification;
+  layered connectivity verification;
 - `revalidating`: current evidence is being reproved;
-- `degraded`: current observation or verification is incomplete/failed without
-  proving an ownership mismatch that requires cleanup;
-- `cleanup-required`: active durable ownership no longer matches live runtime
-  strongly enough to treat the session as safely owned.
+- `degraded`: current evidence is incomplete, or a proved verification
+  failure/deadline is transiently published while terminal disposition is being
+  handed off; it is not a stable active end state for such terminal failures;
+- `cleanup-required`: normal fail-safe lifecycle cleanup failed or ownership is
+  otherwise unsafe, so durable exact ownership must remain available for
+  recovery.
 
 The daemon publishes a positive `network_generation`. Generation 1 is not
 published as `verified` merely because connect committed. After commit the daemon
 collects one fresh authoritative observation and runs the canonical verifier and
-connectivity verifier against that exact observation. Only successful verification
-publishes generation 1 as `verified`; failure is fail-closed. This closes the
-window where the uplink can change between connect-time verification and current
-health initialization.
+layered connectivity verifier against that exact observation. Only successful
+verification publishes generation 1 as `verified`; failure is fail-closed. This
+closes the window where the uplink can change between connect-time verification
+and current health initialization.
+
+When fresh inspection has proved the active committed session and required
+verification fails or reaches its bounded deadline, old health evidence remains
+invalid and the daemon returns a typed terminal outcome. The read-only verifier
+finishes and releases revalidation authority before any mutation. The daemon then
+runs the existing bounded redacted pre-rollback diagnostic pipeline and attempts
+to persist the report with `rollback_status=pending` while the failed layer is
+still observable. Only after that diagnostic boundary does it invoke the normal
+bounded transaction-backed lifecycle `Disconnect`. Successful rollback and Xray
+quiescence converge to inactive state and finalize the report as `completed`.
+Cleanup failure finalizes the report as `failed`, preserves durable exact
+ownership, and leaves current health `cleanup-required` for recovery.
+
+This terminal disposition is not a general repair or cleanup authorization.
+Observation ambiguity, incomplete ownership proof, or foreign resources remain
+fail-closed and are not mutated by revalidation. Cancellation caused by an
+explicit user disconnect, recovery, or daemon shutdown is also non-terminal for
+this policy: the higher-priority lifecycle operation owns cleanup, so no second
+automatic disconnect is scheduled.
 
 Underlying network events are only scheduling hints. The authoritative
 fingerprint is derived from a fresh snapshot and contains the underlying default
@@ -203,14 +224,18 @@ mutation queue to become idle. If a mutation interrupts an in-flight probe, its
 trigger is merged back into the bounded pending queue before cancellation. After
 mutation, one fresh authoritative observation is taken and normal fingerprint/
 generation logic decides whether verification is needed. Daemon shutdown is
-terminal cancellation and intentionally does not requeue work.
+terminal cancellation for event processing and intentionally does not requeue
+work; its cancellation is not converted into a second automatic disconnect.
 
-Current-health revalidation is read-only. It may reconstruct the complete durable
-`desired_plan` to verify state that was required but pre-existed connect, but this
-never converts desired intent into rollback authority. Revalidation does not
-apply, repair, flush route cache, change NetworkManager, widen firewall policy,
-change DNS, recreate TUN state, or mutate foreign resources. Any future repair is
-a separate evidence-gated design and must preserve the same ownership boundary.
+The verification phase of current-health revalidation is read-only. It may
+reconstruct the complete durable `desired_plan` to verify state that was required
+but pre-existed connect, but this never converts desired intent into rollback
+authority. It does not apply, repair, flush route cache, change NetworkManager,
+widen firewall policy, change DNS, recreate TUN state, or mutate foreign
+resources. The only post-verification mutation described by this contract is the
+normal exact transaction-backed lifecycle disconnect after a terminal proved
+verification failure/deadline and after revalidation authority has been released.
+Any future repair remains a separate evidence-gated design.
 
 For native Xray TUN startup, durable rollback order is:
 
@@ -230,25 +255,30 @@ Generated runtime config and transaction ownership metadata must not be removed
 while process absence is unproven; a failed convergence remains cleanup-required
 for recovery.
 
-If `network-apply`, `network-verify`, or later connectivity verification fails,
+If `network-apply`, `network-verify`, connect-time connectivity verification, or
+a proved post-commit revalidation fails or reaches its terminal deadline,
 `podlazd` first attempts a short bounded, cancellation-aware safe diagnostic
-subset while the failing host state still exists. The report contains a stable
-classification, lifecycle `failure_phase`, and `rollback_status`. Known network
-apply and verification failures use `network_apply_failure` and
-`network_verify_failure`; timeout, cancellation, and internal failures retain
-their existing stable classifications. Overall report status such as `unhealthy`
-is never substituted for the classification taxonomy.
+subset while the relevant failed state still exists. The report contains a
+stable classification, lifecycle `failure_phase`, and `rollback_status`. Known
+network apply and verification failures use `network_apply_failure` and
+`network_verify_failure`; terminal revalidation retains its failed layered phase
+and current-health classification, including `revalidation_timeout` for the
+bounded deadline. Overall report status such as `unhealthy` is never substituted
+for the classification taxonomy.
 
 Optional diagnostics must never delay or suppress cleanup. Normal rollback runs
 with a separate daemon-owned bounded cleanup context derived without the
 requesting HTTP client's cancellation, so a disconnected client or expired
 request deadline cannot immediately cancel DNS, route, rule, nftables, or process
-cleanup. The historical report is first persisted with rollback status `pending`
-and is finalized to `completed` only after host rollback and Xray quiescence are
-both proven; otherwise it is finalized to `failed`. The returned error and daemon
-log expose the primary TUN classification and report location as separate fields
-when persistence succeeded, and user guidance uses the canonical
-`podlaz doctor --tun --verbose` command.
+cleanup. For terminal post-commit revalidation, this cleanup begins only after the
+read-only revalidation authority is released. The historical report is first
+persisted with rollback status `pending` and is finalized to `completed` only
+after host rollback and Xray quiescence are both proven; otherwise it is finalized
+to `failed`. Explicit user/recovery/shutdown cancellation bypasses this terminal
+auto-cleanup handoff because the lifecycle operation that caused cancellation
+already owns cleanup. The returned error and daemon log expose the primary TUN
+classification and report location as separate fields when persistence succeeds,
+and user guidance uses the canonical `podlaz doctor --tun --verbose` command.
 
 The full TUN diagnostic path may perform only read-only snapshot collection,
 kernel route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private
@@ -415,6 +445,15 @@ require confirmation:
 - JSON mode: fail unless `--yes` is passed.
 
 A TUN connect is already an explicit privileged networking mutation request. It may therefore perform the narrowly scoped automatic podlaz-owned recovery described above without a second confirmation prompt. This exception does not authorize foreign VPN handoff, ambiguous cleanup, global `systemd-resolved` restart, or deletion of persistent user state.
+
+A proved active-session revalidation failure or deadline is also a fail-safe
+lifecycle condition rather than a new user cleanup request. After bounded
+redacted diagnostics and release of revalidation authority, podlazd may invoke
+the normal exact transaction-backed `Disconnect` automatically to avoid leaving
+an unproved active TUN behind the kill-switch. This does not waive ownership
+checks, does not authorize repair/foreign cleanup, and does not apply when the
+revalidation was cancelled by an explicit user lifecycle operation or daemon
+shutdown that already owns cleanup.
 
 High-impact flags such as `--execute` and `--yes` are long-only.
 
