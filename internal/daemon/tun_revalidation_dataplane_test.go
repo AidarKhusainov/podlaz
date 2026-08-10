@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"io"
+	"net"
 	"reflect"
 	"testing"
 	"time"
@@ -174,5 +177,96 @@ func TestTunRevalidationDataPlaneDeadlinePreemptsEveryLayer(t *testing.T) {
 				t.Fatalf("%s deadline did not reach target layer: calls=%v", stage, client.calls)
 			}
 		})
+	}
+}
+
+func TestTunRevalidationNetworkClientDNSBlockedReadHonorsContext(t *testing.T) {
+	for _, network := range []string{"udp", "tcp"} {
+		for _, mode := range []string{"cancel", "deadline"} {
+			t.Run(network+"/"+mode, func(t *testing.T) {
+				clientConn, serverConn := net.Pipe()
+				defer clientConn.Close()
+				defer serverConn.Close()
+
+				querySeen := make(chan struct{})
+				serverDone := make(chan struct{})
+				go func() {
+					defer close(serverDone)
+					if network == "tcp" {
+						var prefix [2]byte
+						if _, err := io.ReadFull(serverConn, prefix[:]); err != nil {
+							return
+						}
+						query := make([]byte, int(binary.BigEndian.Uint16(prefix[:])))
+						if _, err := io.ReadFull(serverConn, query); err != nil {
+							return
+						}
+					} else {
+						buffer := make([]byte, 4096)
+						if _, err := serverConn.Read(buffer); err != nil {
+							return
+						}
+					}
+					close(querySeen)
+					_, _ = io.Copy(io.Discard, serverConn)
+				}()
+
+				client := tundiag.NetworkClient{
+					DialContext: tunRevalidationCancellableDial(func(context.Context, string, string) (net.Conn, error) {
+						return clientConn, nil
+					}),
+					MessageID: func() (uint16, error) { return 0x4242, nil },
+				}
+
+				var ctx context.Context
+				var cancel context.CancelFunc
+				if mode == "deadline" {
+					ctx, cancel = context.WithTimeout(context.Background(), 50*time.Millisecond)
+				} else {
+					ctx, cancel = context.WithCancel(context.Background())
+				}
+				defer cancel()
+
+				done := make(chan error, 1)
+				go func() {
+					if network == "tcp" {
+						_, err := client.DNSTCP(ctx, "192.0.2.53", "example.com", tundiag.DNSRecordTypeA)
+						done <- err
+						return
+					}
+					_, err := client.DNSUDP(ctx, "192.0.2.53", "example.com", tundiag.DNSRecordTypeA)
+					done <- err
+				}()
+
+				select {
+				case <-querySeen:
+				case <-time.After(time.Second):
+					t.Fatal("DNS fixture did not receive the query")
+				}
+				if mode == "cancel" {
+					cancel()
+				}
+
+				wantErr := context.Canceled
+				if mode == "deadline" {
+					wantErr = context.DeadlineExceeded
+				}
+				select {
+				case err := <-done:
+					if !errors.Is(err, wantErr) {
+						t.Fatalf("blocked DNS %s %s error=%v, want %v", network, mode, err, wantErr)
+					}
+				case <-time.After(250 * time.Millisecond):
+					t.Fatalf("blocked DNS %s %s did not stop promptly", network, mode)
+				}
+
+				_ = serverConn.Close()
+				select {
+				case <-serverDone:
+				case <-time.After(time.Second):
+					t.Fatal("DNS fixture goroutine did not stop")
+				}
+			})
+		}
 	}
 }
