@@ -173,10 +173,10 @@ func (r *productionTunCommandRunner) Run(_ context.Context, name string, args ..
 			return netexecutor.CommandResult{ExitCode: 0}, nil
 		}
 		return netexecutor.CommandResult{Stdout: "7: podlaz0    inet 198.18.0.1/32 scope global podlaz0", ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 addr add"):
+	case name == "ip" && (strings.Contains(command, "-4 address add") || strings.Contains(command, "-4 addr add")):
 		r.tunAddress = true
 		return netexecutor.CommandResult{ExitCode: 0}, nil
-	case name == "ip" && strings.Contains(command, "-4 addr del"):
+	case name == "ip" && (strings.Contains(command, "-4 address del") || strings.Contains(command, "-4 addr del")):
 		r.tunAddress = false
 		return netexecutor.CommandResult{ExitCode: 0}, nil
 	case name == "ip" && strings.Contains(command, "-4 route show table"):
