@@ -106,6 +106,10 @@ func (s Server) Run(ctx context.Context) error {
 	operationLock := newLifecycleOperationLock()
 	coordinator := newTunRevalidationCoordinator(func(revalidationCtx context.Context, trigger tunRevalidationTrigger) {
 		if err := operationLock.runRevalidation(revalidationCtx, func() {
+			if trigger == tunRevalidationTriggerInitial {
+				revalidationRuntime.InitializePending(revalidationCtx)
+				return
+			}
 			revalidationRuntime.Revalidate(revalidationCtx, trigger)
 		}); err != nil && revalidationCtx.Err() == nil {
 			log.Printf("podlazd: TUN revalidation serialization failed")
@@ -120,6 +124,7 @@ func (s Server) Run(ctx context.Context) error {
 	healthLifecycle := tunRevalidationLifecycle{
 		lifecycle: startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: forceRefreshStartupScan},
 		runtime:   revalidationRuntime,
+		schedule:  coordinator.Notify,
 	}
 	lockedLifecycle := operationLock.wrap(healthLifecycle)
 	mux := http.NewServeMux()
