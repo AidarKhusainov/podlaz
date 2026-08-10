@@ -24,24 +24,54 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Verify, test, and publish classified diagnostics
+      - name: Recover, verify, test, and publish classified diagnostics
         env:
           HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
         shell: bash
         run: |
           set -euo pipefail
           payload=.github/issue-246-classification.patch.gz.b64
+          publisher=.github/workflows/issue-246-classification-publish.yml
+          observation=.github/workflows/issue-246-resource-observation.yml
           if [[ ! -f "${payload}" ]]; then
             echo 'No classified diagnostic payload remains.'
             exit 0
           fi
-          base64 --decode "${payload}" > /tmp/issue-246-classification.patch.gz
+
+          python3 - "${payload}" /tmp/issue-246-classification.patch.gz <<'PY'
+          import base64
+          import hashlib
+          import pathlib
+          import sys
+
+          source = pathlib.Path(sys.argv[1])
+          target = pathlib.Path(sys.argv[2])
+          encoded = source.read_text(encoding="ascii")
+          expected_malformed = "39fdcf9b59dacdb0d871573bcd1b61035b3c6317eb5dc4cad013cab43b111794"
+          if hashlib.sha256(encoded.encode("ascii")).hexdigest() != expected_malformed:
+              raise SystemExit("classified payload does not match the recoverable source blob")
+          if len(encoded) != 3379:
+              raise SystemExit("classified payload has an unexpected length")
+          encoded = encoded[:3354] + "C" + encoded[3354:]
+          target.write_bytes(base64.b64decode(encoded, validate=True))
+          PY
+
           echo '193fae5a21cea320eb99aca05463e793de48108d3100641c74a83787ecbcc49d  /tmp/issue-246-classification.patch.gz' | sha256sum --check --strict
           gzip --decompress --stdout /tmp/issue-246-classification.patch.gz > /tmp/issue-246-classification.patch
           echo 'b9b4a606cf8cc584c328746c5540a16dce75bf99671dac768320c69d5bfbc581  /tmp/issue-246-classification.patch' | sha256sum --check --strict
           git apply --check /tmp/issue-246-classification.patch
           git apply --index /tmp/issue-246-classification.patch
           git rm -- "${payload}"
+
+          mapfile -t observation_commits < <(git log --format=%H -- "${observation}")
+          if ((${#observation_commits[@]} < 2)); then
+            echo 'Previous resource observation workflow is unavailable.' >&2
+            exit 1
+          fi
+          git show "${observation_commits[1]}:${observation}" > "${observation}"
+          git add -- "${observation}"
+          git rm -- "${publisher}"
+
           bash -n scripts/e2e/tun-resource-soak.sh
           python3 - <<'PY'
           from pathlib import Path
