@@ -21,7 +21,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Keep this temporary export tied to the exact verified harness head.
+      # Export only after equivalent post-cleanup comparison is present.
       - name: Archive tracked workspace
         shell: bash
         run: |
