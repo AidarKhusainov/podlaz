@@ -1,0 +1,39 @@
+name: Issue 246 Review Workspace Export
+
+on:
+  push:
+    branches:
+      - agent/issue-246-tun-resource-soak
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-246-review-workspace-export
+  cancel-in-progress: true
+
+jobs:
+  export:
+    name: Export exact review workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          ref: agent/issue-246-tun-resource-soak
+          fetch-depth: 0
+
+      - name: Archive tracked workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output="${RUNNER_TEMP}/podlaz-issue-246-review-workspace.tar.gz" HEAD
+
+      - name: Upload workspace
+        uses: actions/upload-artifact@v7
+        with:
+          name: podlaz-issue-246-review-workspace
+          path: ${{ runner.temp }}/podlaz-issue-246-review-workspace.tar.gz
+          if-no-files-found: error
+          retention-days: 1
