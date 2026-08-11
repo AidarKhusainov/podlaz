@@ -21,7 +21,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Export only after equivalent post-cleanup comparison is present.
+      # Export only after the raw package-log privacy boundary is enforced.
       - name: Archive tracked workspace
         shell: bash
         run: |
