@@ -28,6 +28,52 @@ DEFAULT_RULE_LAYOUT = {
 }
 DEDICATED_UPLINK_LINK_TYPE = "ether"
 
+RULE_RAW_FIELDS = frozenset(
+    {
+        "priority",
+        "table",
+        "action",
+        "src",
+        "from",
+        "dst",
+        "to",
+        "fwmark",
+        "fwmask",
+        "iif",
+        "oif",
+        "l3mdev",
+        "suppress_prefixlength",
+        "uidrange",
+    }
+)
+# The dedicated-runner gate currently ignores no rule/route JSON fields. Any
+# future iproute2 field must be classified explicitly before acceptance so a
+# new semantic selector or attribute can never disappear during normalization.
+RULE_RUNTIME_NOISE_FIELDS = frozenset()
+ROUTE_RAW_FIELDS = frozenset(
+    {
+        "table",
+        "type",
+        "dst",
+        "gateway",
+        "via",
+        "dev",
+        "protocol",
+        "scope",
+        "metric",
+        "prefsrc",
+        "src",
+        "mark",
+        "nhid",
+        "multipath",
+        "flags",
+        "pref",
+    }
+)
+ROUTE_RUNTIME_NOISE_FIELDS = frozenset()
+MULTIPATH_RAW_FIELDS = frozenset({"gateway", "via", "dev", "weight", "flags"})
+MULTIPATH_RUNTIME_NOISE_FIELDS = frozenset()
+
 
 
 class IsolationError(RuntimeError):
@@ -209,6 +255,43 @@ def _required_mapping(value: Any, label: str) -> Mapping[str, Any]:
     return value
 
 
+def _reject_unknown_raw_fields(
+    entry: Mapping[str, Any],
+    *,
+    supported: frozenset[str],
+    runtime_noise: frozenset[str],
+    label: str,
+) -> None:
+    if any(not isinstance(key, str) for key in entry):
+        raise IsolationError(f"unsupported {label} field")
+    unknown = sorted(set(entry) - supported - runtime_noise)
+    if unknown:
+        raise IsolationError(f"unsupported {label} field: {unknown[0]}")
+
+
+def _reject_ambiguous_aliases(entry: Mapping[str, Any], first: str, second: str, label: str) -> None:
+    if first in entry and second in entry:
+        raise IsolationError(f"{label} aliases are ambiguous")
+
+
+def _normalize_string_flags(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise IsolationError(f"{label} flags are malformed")
+    if len(set(value)) != len(value):
+        raise IsolationError(f"{label} flags are duplicated")
+    return sorted(value)
+
+
+def _optional_non_negative_int(value: Any, label: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise IsolationError(f"{label} is malformed")
+    return value
+
+
 def _normalize_links(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise IsolationError("link inventory is malformed")
@@ -339,10 +422,21 @@ def _normalize_rules(value: Any, family: str) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     for raw in value:
         entry = _required_mapping(raw, "policy-rule inventory entry")
+        _reject_unknown_raw_fields(
+            entry,
+            supported=RULE_RAW_FIELDS,
+            runtime_noise=RULE_RUNTIME_NOISE_FIELDS,
+            label="policy-rule",
+        )
+        _reject_ambiguous_aliases(entry, "src", "from", "policy-rule source")
+        _reject_ambiguous_aliases(entry, "dst", "to", "policy-rule destination")
         priority = entry.get("priority")
         if not isinstance(priority, int) or priority < 0:
             raise IsolationError("policy-rule priority is malformed")
         fwmark, fwmask = _split_mark(entry.get("fwmark", ""), entry.get("fwmask", ""))
+        l3mdev = entry.get("l3mdev", False)
+        if not isinstance(l3mdev, bool):
+            raise IsolationError("policy-rule l3mdev evidence is malformed")
         rule = {
             "family": family,
             "priority": priority,
@@ -354,8 +448,11 @@ def _normalize_rules(value: Any, family: str) -> list[dict[str, Any]]:
             "fwmask": fwmask,
             "iif": str(entry.get("iif", "")),
             "oif": str(entry.get("oif", "")),
-            "l3mdev": bool(entry.get("l3mdev", False)),
-            "suppress_prefixlength": entry.get("suppress_prefixlength"),
+            "l3mdev": l3mdev,
+            "suppress_prefixlength": _optional_non_negative_int(
+                entry.get("suppress_prefixlength"),
+                "policy-rule suppress_prefixlength evidence",
+            ),
             "uidrange": str(entry.get("uidrange", "")),
         }
         rules.append(rule)
@@ -370,11 +467,19 @@ def _normalize_multipath(value: Any, family: str) -> list[dict[str, Any]]:
     result = []
     for raw in value:
         entry = _required_mapping(raw, "route next-hop evidence")
+        _reject_unknown_raw_fields(
+            entry,
+            supported=MULTIPATH_RAW_FIELDS,
+            runtime_noise=MULTIPATH_RUNTIME_NOISE_FIELDS,
+            label="route next-hop",
+        )
+        _reject_ambiguous_aliases(entry, "gateway", "via", "route next-hop gateway")
         result.append(
             {
                 "gateway": _canonical_address(entry.get("gateway", entry.get("via", "")), family),
                 "dev": str(entry.get("dev", "")),
-                "weight": entry.get("weight"),
+                "weight": _optional_non_negative_int(entry.get("weight"), "route next-hop weight evidence"),
+                "flags": _normalize_string_flags(entry.get("flags", []), "route next-hop"),
             }
         )
     return sorted(result, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
@@ -386,6 +491,16 @@ def _normalize_routes(value: Any, family: str) -> list[dict[str, Any]]:
     routes: list[dict[str, Any]] = []
     for raw in value:
         entry = _required_mapping(raw, "route inventory entry")
+        _reject_unknown_raw_fields(
+            entry,
+            supported=ROUTE_RAW_FIELDS,
+            runtime_noise=ROUTE_RUNTIME_NOISE_FIELDS,
+            label="route",
+        )
+        _reject_ambiguous_aliases(entry, "gateway", "via", "route gateway")
+        preference = str(entry.get("pref", ""))
+        if preference not in {"", "low", "medium", "high"}:
+            raise IsolationError("route preference evidence is malformed")
         route = {
             "family": family,
             "table": _canonical_table(entry.get("table")),
@@ -395,12 +510,14 @@ def _normalize_routes(value: Any, family: str) -> list[dict[str, Any]]:
             "dev": str(entry.get("dev", "")),
             "protocol": str(entry.get("protocol", "")),
             "scope": str(entry.get("scope", "")),
-            "metric": entry.get("metric"),
+            "metric": _optional_non_negative_int(entry.get("metric"), "route metric evidence"),
             "prefsrc": _canonical_address(entry.get("prefsrc", ""), family),
             "src": _canonical_prefix(entry.get("src", ""), family),
             "mark": _canonical_mark_part(entry.get("mark", "")),
-            "nhid": entry.get("nhid"),
+            "nhid": _optional_non_negative_int(entry.get("nhid"), "route nexthop identity evidence"),
             "multipath": _normalize_multipath(entry.get("multipath"), family),
+            "flags": _normalize_string_flags(entry.get("flags", []), "route"),
+            "preference": preference,
         }
         routes.append(route)
     return sorted(routes, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
@@ -516,6 +633,198 @@ def _validate_canonical_default_rules(rules: Sequence[Mapping[str, Any]], family
         raise IsolationError("canonical default policy-rule set is missing, modified, or duplicated")
 
 
+def _route_shape(
+    *,
+    family: str,
+    table: str,
+    type_name: str,
+    destination: str,
+    device: str,
+    protocol: str,
+    scope: str,
+    metric: int | None,
+    preferred_source: str,
+    preference: str = "",
+) -> dict[str, Any]:
+    return {
+        "family": family,
+        "table": table,
+        "type": type_name,
+        "dst": destination,
+        "gateway": "",
+        "dev": device,
+        "protocol": protocol,
+        "scope": scope,
+        "metric": metric,
+        "prefsrc": preferred_source,
+        "src": "",
+        "mark": "",
+        "nhid": None,
+        "multipath": [],
+        "flags": [],
+        "preference": preference,
+    }
+
+
+def _route_key(route: Mapping[str, Any]) -> str:
+    return json.dumps(dict(route), sort_keys=True, separators=(",", ":"))
+
+
+def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
+    addresses = snapshot.get("addresses")
+    if not isinstance(addresses, list):
+        raise IsolationError("address inventory is unavailable")
+
+    allowed: set[str] = set()
+    ipv6_links: set[str] = set()
+    for raw_link in addresses:
+        link = _required_mapping(raw_link, "address inventory entry")
+        ifname = link.get("ifname")
+        raw_addresses = link.get("addresses")
+        if not isinstance(ifname, str) or not ifname or not isinstance(raw_addresses, list):
+            raise IsolationError("address inventory entry is malformed")
+        for raw_address in raw_addresses:
+            address = _required_mapping(raw_address, "interface address entry")
+            raw_family = address.get("family")
+            family = "ipv4" if raw_family == "inet" else "ipv6" if raw_family == "inet6" else ""
+            local = address.get("local")
+            prefixlen = address.get("prefixlen")
+            scope = address.get("scope")
+            if (
+                not family
+                or not isinstance(local, str)
+                or not local
+                or not isinstance(prefixlen, int)
+                or not isinstance(scope, str)
+            ):
+                raise IsolationError("interface address entry is malformed")
+            try:
+                interface = ipaddress.ip_interface(f"{local}/{prefixlen}")
+            except ValueError as exc:
+                raise IsolationError("interface address entry is malformed") from exc
+
+            if family == "ipv4":
+                host_destination = ipaddress.ip_network(f"{local}/32", strict=False).with_prefixlen
+                allowed.add(
+                    _route_key(
+                        _route_shape(
+                            family=family,
+                            table="local",
+                            type_name="local",
+                            destination=host_destination,
+                            device=ifname,
+                            protocol="kernel",
+                            scope="host",
+                            metric=None,
+                            preferred_source=local,
+                        )
+                    )
+                )
+                if ifname == "lo" and scope == "host":
+                    allowed.add(
+                        _route_key(
+                            _route_shape(
+                                family=family,
+                                table="local",
+                                type_name="local",
+                                destination=interface.network.with_prefixlen,
+                                device=ifname,
+                                protocol="kernel",
+                                scope="host",
+                                metric=None,
+                                preferred_source=local,
+                            )
+                        )
+                    )
+
+                broadcast_candidates: set[str] = set()
+                extras = address.get("extras")
+                if isinstance(extras, Mapping):
+                    raw_broadcast = extras.get("broadcast")
+                    if raw_broadcast:
+                        broadcast_candidates.add(_canonical_address(raw_broadcast, family))
+                if interface.network.prefixlen <= 30:
+                    broadcast_candidates.add(str(interface.network.broadcast_address))
+                    if ifname != "lo":
+                        broadcast_candidates.add(str(interface.network.network_address))
+                for broadcast in broadcast_candidates:
+                    allowed.add(
+                        _route_key(
+                            _route_shape(
+                                family=family,
+                                table="local",
+                                type_name="broadcast",
+                                destination=ipaddress.ip_network(f"{broadcast}/32", strict=False).with_prefixlen,
+                                device=ifname,
+                                protocol="kernel",
+                                scope="link",
+                                metric=None,
+                                preferred_source=local,
+                            )
+                        )
+                    )
+                continue
+
+            ipv6_links.add(ifname)
+            allowed.add(
+                _route_key(
+                    _route_shape(
+                        family=family,
+                        table="local",
+                        type_name="local",
+                        destination=ipaddress.ip_network(f"{local}/128", strict=False).with_prefixlen,
+                        device=ifname,
+                        protocol="kernel",
+                        scope="",
+                        metric=0,
+                        preferred_source="",
+                        preference="medium",
+                    )
+                )
+            )
+
+    for ifname in ipv6_links:
+        allowed.add(
+            _route_key(
+                _route_shape(
+                    family="ipv6",
+                    table="local",
+                    type_name="multicast",
+                    destination="ff00::/8",
+                    device=ifname,
+                    protocol="kernel",
+                    scope="",
+                    metric=256,
+                    preferred_source="",
+                    preference="medium",
+                )
+            )
+        )
+    return allowed
+
+
+def _validate_non_main_routes(snapshot: Mapping[str, Any]) -> None:
+    allowed_local = _allowed_local_routes(snapshot)
+    observed_local: set[str] = set()
+    for key in ("routes_v4", "routes_v6"):
+        routes = snapshot.get(key)
+        if not isinstance(routes, list):
+            raise IsolationError("route inventory is unavailable")
+        for raw in routes:
+            route = _required_mapping(raw, "route inventory entry")
+            table = route.get("table")
+            if table == "default":
+                raise IsolationError("default routing table must be empty on the dedicated runner")
+            if table != "local":
+                continue
+            identity = _route_key(route)
+            if identity in observed_local:
+                raise IsolationError("local-table route is duplicated")
+            observed_local.add(identity)
+            if identity not in allowed_local:
+                raise IsolationError("local-table route is not derived from the positive link/address baseline")
+
+
 def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:
     return (
         str(link.get("kind", "")) == ""
@@ -591,6 +900,8 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
             family,
         )
 
+    _validate_non_main_routes(snapshot)
+
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
         if not isinstance(routes, list):
@@ -602,7 +913,13 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
                 raise IsolationError("foreign routing table exists before the soak")
             if table != "main":
                 continue
-            if route.get("type") != "unicast" or route.get("mark") or route.get("multipath"):
+            if (
+                route.get("type") != "unicast"
+                or route.get("mark")
+                or route.get("multipath")
+                or route.get("flags", [])
+                or route.get("nhid") is not None
+            ):
                 raise IsolationError("foreign main-table route exists before the soak")
             if route.get("dst") == "default":
                 if not route.get("dev") or route.get("protocol") not in {"boot", "dhcp", "kernel", "ra", "static"}:
@@ -724,6 +1041,8 @@ def _load_manifest(path: Path) -> dict[str, list[dict[str, Any]]]:
                 "mark": "",
                 "nhid": None,
                 "multipath": [],
+                "flags": [],
+                "preference": "",
             }
         )
     for raw in rules:

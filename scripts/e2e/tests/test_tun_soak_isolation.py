@@ -140,6 +140,8 @@ class TunSoakIsolationTests(unittest.TestCase):
             "mark": "",
             "nhid": None,
             "multipath": [],
+            "flags": [],
+            "preference": "",
         }
         value.update(overrides)
         return value
@@ -289,6 +291,56 @@ class TunSoakIsolationTests(unittest.TestCase):
             normalized["addresses"],
         )
 
+    def test_rule_normalization_rejects_unknown_semantic_selector(self) -> None:
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "unsupported policy-rule field",
+        ):
+            tun_soak_isolation._normalize_rules(
+                [
+                    {
+                        "priority": 32766,
+                        "src": "all",
+                        "table": "main",
+                        "sport": "443",
+                    }
+                ],
+                "ipv4",
+            )
+
+    def test_route_normalization_rejects_unknown_semantic_attribute(self) -> None:
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "unsupported route field",
+        ):
+            tun_soak_isolation._normalize_routes(
+                [
+                    {
+                        "dst": "default",
+                        "gateway": "192.0.2.1",
+                        "dev": "eth0",
+                        "flags": [],
+                        "ttl-propagate": True,
+                    }
+                ],
+                "ipv4",
+            )
+
+    def test_route_normalization_preserves_semantic_flags(self) -> None:
+        normalized = tun_soak_isolation._normalize_routes(
+            [
+                {
+                    "dst": "default",
+                    "gateway": "192.0.2.1",
+                    "dev": "eth0",
+                    "flags": ["onlink"],
+                }
+            ],
+            "ipv4",
+        )
+
+        self.assertEqual(["onlink"], normalized[0]["flags"])
+
     def test_foreign_uplink_address_mutation_fails_revalidation(self) -> None:
         baseline = self.baseline()
         current = copy.deepcopy(baseline)
@@ -316,6 +368,88 @@ class TunSoakIsolationTests(unittest.TestCase):
 
     def test_clean_dedicated_host_baseline_is_accepted(self) -> None:
         tun_soak_isolation.validate_clean_baseline(self.baseline())
+
+    def test_kernel_derived_local_routes_are_accepted(self) -> None:
+        snapshot = self.baseline()
+        snapshot["addresses"][0]["addresses"].append(
+            {
+                "family": "inet6",
+                "local": "::1",
+                "prefixlen": 128,
+                "scope": "host",
+                "label": "lo",
+                "flags": [],
+                "extras": {"protocol": "kernel_lo"},
+            }
+        )
+        snapshot["routes_v4"].extend(
+            [
+                self.route(
+                    "ipv4",
+                    "local",
+                    "127.0.0.0/8",
+                    dev="lo",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="127.0.0.1",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "127.0.0.1/32",
+                    dev="lo",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="127.0.0.1",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "127.255.255.255/32",
+                    dev="lo",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="127.0.0.1",
+                    type="broadcast",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "192.0.2.20/32",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="192.0.2.20",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "192.0.2.255/32",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="192.0.2.20",
+                    type="broadcast",
+                ),
+            ]
+        )
+        snapshot["routes_v6"].append(
+            self.route(
+                "ipv6",
+                "local",
+                "::1/128",
+                dev="lo",
+                protocol="kernel",
+                metric=0,
+                preference="medium",
+                type="local",
+            )
+        )
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
 
     def test_renamed_kernel_wireguard_link_is_rejected_without_process_name_evidence(self) -> None:
         snapshot = self.baseline()
@@ -371,6 +505,38 @@ class TunSoakIsolationTests(unittest.TestCase):
         with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "foreign main-table route"):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
+    def test_preexisting_foreign_local_table_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "local",
+                "203.0.113.9/32",
+                dev="eth0",
+                protocol="static",
+                scope="host",
+            )
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "local-table route"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_preexisting_foreign_default_table_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "default",
+                "default",
+                gateway="192.0.2.1",
+                dev="eth0",
+                protocol="static",
+            )
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "default routing table"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
     def test_preexisting_nftables_packet_path_is_rejected(self) -> None:
         snapshot = self.baseline()
         snapshot["nftables"] = [{"table": {"family": "inet", "name": "custom-firewall"}}]
@@ -403,6 +569,18 @@ class TunSoakIsolationTests(unittest.TestCase):
         baseline, current, manifest = self.active_snapshot_and_manifest()
         managed_route = next(route for route in current["routes_v4"] if route["table"] == "51820")
         managed_route["metric"] = 50
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "exact Podlaz route projection"):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+                manifest=manifest,
+            )
+
+    def test_route_flag_change_is_not_subtracted_as_podlaz_owned(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        managed_route = next(route for route in current["routes_v4"] if route["table"] == "51820")
+        managed_route["flags"] = ["onlink"]
 
         with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "exact Podlaz route projection"):
             tun_soak_isolation.assert_matches_baseline(

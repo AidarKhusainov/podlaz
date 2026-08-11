@@ -266,6 +266,14 @@ each address family, including the **full canonical shape and cardinality** of
 action, selectors, marks/masks, interface selectors, `l3mdev`, suppression, and
 UID-range fields; matching only priority/table is never sufficient.
 
+The iproute2 JSON boundary is also explicit and fail-closed. Rule, route, and
+multipath next-hop normalizers accept only reviewed raw keys, preserve supported
+semantic flags and route preference in the normalized identity, reject ambiguous
+aliases, and reject every unknown key. No rule or route field is currently
+classified as ignorable runtime noise. A future iproute2 field therefore requires
+an explicit compatibility review instead of silently disappearing before the
+ownership comparison.
+
 Default-uplink authority is a positive contract rather than a denylist. The
 baseline must have exactly one default uplink backed by a positive physical uplink identity: empty virtual link kind, Ethernet link type, no master, and a
 matching global address on the same ifindex. Unknown, custom, `veth`, `dummy`,
@@ -274,11 +282,19 @@ known VPN process name is present. Foreign routing tables, ambiguous main-table
 bypass routes, pre-existing nftables packet-path state, or resolver default-route
 ownership outside that uplink also fail the baseline.
 
+The canonical `default` routing table must be empty. Entries in the higher-priority
+`local` table are accepted only when their complete normalized route identity is
+one of the kernel-generated local, broadcast, or IPv6 multicast routes positively
+derived from the exact link/address inventory. Unsupported or duplicate
+`local` routes fail closed; arbitrary content is never accepted merely because
+its table name is `local` or `default`.
+
 While Podlaz is active, the verifier subtracts only the exact transaction-backed
 Podlaz route/rule projection, the reserved `podlaz0` link, the exact Podlaz nft
 table, and the Podlaz resolver link. Route identity includes normalized type,
 destination, gateway, device, protocol, scope, metric, preferred/source address,
-mark, nexthop ID, and multipath semantics. Policy-rule identity includes action,
+mark, nexthop ID, multipath semantics, route flags, and IPv6 preference.
+Policy-rule identity includes action,
 source/destination, mark/mask, input/output interfaces, `l3mdev`, suppression,
 and UID range. Only the canonical kernel-added attributes expected for the
 persisted Podlaz plan are accepted. A metric, protocol, scope, interface selector,
