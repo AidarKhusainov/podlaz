@@ -1,0 +1,66 @@
+name: Issue 246 Publish Final Deterministic Hardening
+
+on:
+  push:
+    branches:
+      - agent/issue-246-tun-resource-soak
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-246-publish-final-deterministic
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Apply and verify final deterministic hardening
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v7
+        with:
+          ref: agent/issue-246-tun-resource-soak
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply deterministic hardening patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check .github/issue-246-final-deterministic.patch
+          git apply .github/issue-246-final-deterministic.patch
+          rm -f -- .github/issue-246-final-deterministic.patch
+
+      - name: Verify deterministic resource-soak contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            scripts/e2e/lib/tun_soak_analysis.py \
+            scripts/e2e/lib/tun_soak_metrics.py \
+            scripts/e2e/lib/tun_soak_process.py \
+            scripts/e2e/lib/tun_soak_status.py
+          python3 -m unittest \
+            scripts.e2e.tests.test_tun_resource_soak_contract \
+            scripts.e2e.tests.test_tun_soak_metrics \
+            scripts.e2e.tests.test_tun_soak_status
+          bash -n scripts/e2e/tun-resource-soak.sh
+          bash -n scripts/e2e/lib/tun_soak_health.sh
+          bash -n scripts/e2e/lib/tun_soak_cleanup.sh
+          git diff --check
+
+      - name: Commit verified changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            scripts/e2e/lib/tun_soak_analysis.py \
+            scripts/e2e/lib/tun_soak_process.py \
+            scripts/e2e/tests/test_tun_soak_metrics.py \
+            .github/issue-246-final-deterministic.patch
+          git commit -m 'test: harden bounded resource attribution'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
