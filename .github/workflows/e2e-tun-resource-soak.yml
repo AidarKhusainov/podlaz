@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       duration_seconds:
-        description: Post-warm-up sampling duration (release gate default is 3 hours)
+        description: Post-warm-up sampling duration (calibration and final-gate default is 3 hours)
         required: true
         default: '10800'
         type: string
