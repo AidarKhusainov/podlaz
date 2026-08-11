@@ -1,0 +1,418 @@
+from __future__ import annotations
+
+import copy
+import sys
+import time
+import unittest
+from unittest import mock
+
+from scripts.e2e.lib import tun_soak_isolation
+
+
+class TunSoakIsolationTests(unittest.TestCase):
+    def baseline(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "network_namespace_inode": 101,
+            "links": [
+                {
+                    "ifindex": 1,
+                    "ifname": "lo",
+                    "kind": "",
+                    "master": None,
+                    "mtu": 65536,
+                    "link_type": "loopback",
+                },
+                {
+                    "ifindex": 2,
+                    "ifname": "eth0",
+                    "kind": "",
+                    "master": None,
+                    "mtu": 1500,
+                    "link_type": "ether",
+                },
+            ],
+            "addresses": [
+                {
+                    "ifindex": 1,
+                    "ifname": "lo",
+                    "addresses": [
+                        {
+                            "family": "inet",
+                            "local": "127.0.0.1",
+                            "prefixlen": 8,
+                            "scope": "host",
+                            "label": "lo",
+                            "flags": [],
+                            "extras": {},
+                        }
+                    ],
+                },
+                {
+                    "ifindex": 2,
+                    "ifname": "eth0",
+                    "addresses": [
+                        {
+                            "family": "inet",
+                            "local": "192.0.2.20",
+                            "prefixlen": 24,
+                            "scope": "global",
+                            "label": "eth0",
+                            "flags": ["dynamic"],
+                            "extras": {},
+                        }
+                    ],
+                },
+            ],
+            "rules_v4": [
+                self.rule("ipv4", 0, "local"),
+                self.rule("ipv4", 32766, "main"),
+                self.rule("ipv4", 32767, "default"),
+            ],
+            "rules_v6": [
+                self.rule("ipv6", 0, "local"),
+                self.rule("ipv6", 32766, "main"),
+            ],
+            "routes_v4": [
+                self.route("ipv4", "main", "default", gateway="192.0.2.1", dev="eth0", protocol="dhcp"),
+                self.route("ipv4", "main", "192.0.2.0/24", dev="eth0", protocol="kernel", scope="link"),
+            ],
+            "routes_v6": [],
+            "nftables": [],
+            "resolved": {
+                "global": ["resolv.conf mode: stub"],
+                "links": [
+                    {
+                        "ifname": "eth0",
+                        "lines": [
+                            "Current Scopes: DNS",
+                            "DefaultRoute setting: yes",
+                        ],
+                    }
+                ],
+            },
+        }
+
+    @staticmethod
+    def rule(family: str, priority: int, table: str, **overrides: object) -> dict[str, object]:
+        value: dict[str, object] = {
+            "family": family,
+            "priority": priority,
+            "table": table,
+            "action": "to_tbl",
+            "source": "all",
+            "destination": "all",
+            "fwmark": "",
+            "fwmask": "",
+            "iif": "",
+            "oif": "",
+            "l3mdev": False,
+            "suppress_prefixlength": None,
+            "uidrange": "",
+        }
+        value.update(overrides)
+        return value
+
+    @staticmethod
+    def route(
+        family: str,
+        table: str,
+        dst: str,
+        *,
+        gateway: str = "",
+        dev: str = "",
+        protocol: str = "",
+        scope: str = "",
+    ) -> dict[str, object]:
+        return {
+            "family": family,
+            "table": table,
+            "type": "unicast",
+            "dst": dst,
+            "gateway": gateway,
+            "dev": dev,
+            "protocol": protocol,
+            "scope": scope,
+            "metric": None,
+            "prefsrc": "",
+            "src": "",
+            "mark": "",
+            "nhid": None,
+            "multipath": [],
+        }
+
+    def test_command_output_limit_terminates_producer_before_timeout(self) -> None:
+        started = time.monotonic()
+        with mock.patch.object(tun_soak_isolation, "MAX_COMMAND_BYTES", 1024), mock.patch.object(
+            tun_soak_isolation, "COMMAND_TIMEOUT_SECONDS", 5
+        ):
+            with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "byte limit"):
+                tun_soak_isolation._bounded_command(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import sys,time; sys.stdout.write('x'*2048); sys.stdout.flush(); time.sleep(30)",
+                    ]
+                )
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_command_timeout_terminates_hanging_inspection(self) -> None:
+        started = time.monotonic()
+        with mock.patch.object(tun_soak_isolation, "COMMAND_TIMEOUT_SECONDS", 0.2):
+            with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "did not complete"):
+                tun_soak_isolation._bounded_command([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_normalizes_link_addresses_without_lifetime_noise(self) -> None:
+        raw = {
+            "links": [
+                {
+                    "ifindex": 2,
+                    "ifname": "eth0",
+                    "mtu": 1500,
+                    "link_type": "ether",
+                }
+            ],
+            "addresses": [
+                {
+                    "ifindex": 2,
+                    "ifname": "eth0",
+                    "addr_info": [
+                        {
+                            "family": "inet",
+                            "local": "192.0.2.20",
+                            "prefixlen": 24,
+                            "scope": "global",
+                            "label": "eth0",
+                            "dynamic": True,
+                            "valid_life_time": 3456,
+                            "preferred_life_time": 1234,
+                        }
+                    ],
+                }
+            ],
+            "rules_v4": [],
+            "rules_v6": [],
+            "routes_v4": [],
+            "routes_v6": [],
+            "nftables": {"nftables": []},
+            "resolved": "Global\n",
+        }
+
+        normalized = tun_soak_isolation.normalize_snapshot(raw, network_namespace_inode=101)
+
+        self.assertEqual(
+            [
+                {
+                    "ifindex": 2,
+                    "ifname": "eth0",
+                    "addresses": [
+                        {
+                            "family": "inet",
+                            "local": "192.0.2.20",
+                            "prefixlen": 24,
+                            "scope": "global",
+                            "label": "eth0",
+                            "flags": ["dynamic"],
+                            "extras": {},
+                        }
+                    ],
+                }
+            ],
+            normalized["addresses"],
+        )
+
+    def test_foreign_uplink_address_mutation_fails_revalidation(self) -> None:
+        baseline = self.baseline()
+        current = copy.deepcopy(baseline)
+        current["addresses"][1]["addresses"].append(
+            {
+                "family": "inet",
+                "local": "198.51.100.20",
+                "prefixlen": 32,
+                "scope": "global",
+                "label": "eth0",
+                "flags": ["noprefixroute"],
+                "extras": {},
+            }
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "network state changed"):
+            tun_soak_isolation.assert_matches_baseline(baseline=baseline, current=current)
+
+    def test_rejects_inspection_outside_host_network_namespace(self) -> None:
+        host = mock.Mock(st_ino=101)
+        current = mock.Mock(st_ino=202)
+        with mock.patch.object(tun_soak_isolation.os, "stat", side_effect=[host, current]):
+            with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "outside the host network namespace"):
+                tun_soak_isolation._network_namespace_inode()
+
+    def test_clean_dedicated_host_baseline_is_accepted(self) -> None:
+        tun_soak_isolation.validate_clean_baseline(self.baseline())
+
+    def test_renamed_kernel_wireguard_link_is_rejected_without_process_name_evidence(self) -> None:
+        snapshot = self.baseline()
+        snapshot["links"].append(
+            {
+                "ifindex": 7,
+                "ifname": "ordinary-uplink-name",
+                "kind": "wireguard",
+                "master": None,
+                "mtu": 1420,
+                "link_type": "none",
+            }
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "tunnel-style link"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_unknown_policy_routing_is_rejected_without_process_name_evidence(self) -> None:
+        snapshot = self.baseline()
+        snapshot["rules_v4"].append(self.rule("ipv4", 12000, "12000"))
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "foreign policy routing"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_preexisting_main_table_bypass_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"].append(
+            self.route("ipv4", "main", "203.0.113.9/32", gateway="192.0.2.1", dev="eth0", protocol="static")
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "foreign main-table route"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_preexisting_nftables_packet_path_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["nftables"] = [{"table": {"family": "inet", "name": "custom-firewall"}}]
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "nftables"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_resolver_default_route_on_non_uplink_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["resolved"]["links"].append(
+            {
+                "ifname": "eth1",
+                "lines": ["DNS Domain: ~.", "DefaultRoute setting: yes"],
+            }
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "resolver default-route"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_exact_podlaz_projection_is_removed_before_baseline_comparison(self) -> None:
+        baseline = self.baseline()
+        current = copy.deepcopy(baseline)
+        current["links"].append(
+            {
+                "ifindex": 9,
+                "ifname": "podlaz0",
+                "kind": "tun",
+                "master": None,
+                "mtu": 1500,
+                "link_type": "none",
+            }
+        )
+        current["routes_v4"].extend(
+            [
+                self.route("ipv4", "main", "198.51.100.7/32", gateway="192.0.2.1", dev="eth0"),
+                self.route("ipv4", "51820", "default", dev="podlaz0"),
+            ]
+        )
+        current["rules_v4"].extend(
+            [
+                self.rule("ipv4", 9999, "main", destination="198.51.100.7/32"),
+                self.rule("ipv4", 10000, "51820", fwmark="51820"),
+            ]
+        )
+        current["nftables"] = [
+            {"table": {"family": "inet", "name": "podlaz"}},
+            {"chain": {"family": "inet", "table": "podlaz", "name": "output"}},
+        ]
+        current["resolved"]["links"].append(
+            {
+                "ifname": "podlaz0",
+                "lines": ["DNS Domain: ~.", "DefaultRoute setting: yes"],
+            }
+        )
+        manifest = {
+            "routes": [
+                {
+                    "family": "ipv4",
+                    "table": "main",
+                    "dst": "198.51.100.7/32",
+                    "gateway": "192.0.2.1",
+                    "dev": "eth0",
+                },
+                {
+                    "family": "ipv4",
+                    "table": "51820",
+                    "dst": "default",
+                    "gateway": "",
+                    "dev": "podlaz0",
+                },
+            ],
+            "rules": [
+                {
+                    "family": "ipv4",
+                    "priority": 9999,
+                    "table": "main",
+                    "source": "",
+                    "destination": "198.51.100.7/32",
+                    "fwmark": "",
+                },
+                {
+                    "family": "ipv4",
+                    "priority": 10000,
+                    "table": "51820",
+                    "source": "",
+                    "destination": "",
+                    "fwmark": "51820",
+                },
+            ],
+        }
+
+        tun_soak_isolation.assert_matches_baseline(
+            baseline=baseline,
+            current=current,
+            manifest=manifest,
+        )
+
+    def test_hex_manifest_mark_matches_decimal_kernel_rule_evidence(self) -> None:
+        actual = self.rule(
+            "ipv4",
+            10000,
+            "51820",
+            fwmark="51820",
+            fwmask="4294967295",
+        )
+        expected = {
+            "family": "ipv4",
+            "priority": 10000,
+            "table": "51820",
+            "source": "all",
+            "destination": "all",
+            "fwmark": "51820",
+            "fwmask": "4294967295",
+        }
+
+        self.assertTrue(tun_soak_isolation._rule_matches(actual, expected))
+        self.assertEqual(("51820", "4294967295"), tun_soak_isolation._split_mark("0xca6c/0xffffffff"))
+
+    def test_foreign_route_mutation_during_active_soak_fails_revalidation(self) -> None:
+        baseline = self.baseline()
+        current = copy.deepcopy(baseline)
+        current["routes_v4"].append(
+            self.route("ipv4", "main", "203.0.113.99/32", gateway="192.0.2.1", dev="eth0")
+        )
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "network state changed"):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

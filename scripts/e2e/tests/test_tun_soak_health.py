@@ -101,6 +101,74 @@ class TunSoakHealthTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-DOCTOR", result.stdout)
         self.assertNotIn("PRIVATE-DOCTOR", result.stderr)
 
+    def test_hanging_status_is_terminated_by_per_invocation_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            script = textwrap.dedent(
+                f"""
+                set -u
+                source {str(HEALTH_HELPER)!r}
+
+                SOAK_PRIVATE_DIR={directory!r}
+                TUN_SOAK_STATUS_TOOL={str(ROOT / 'scripts' / 'e2e' / 'lib' / 'tun_soak_status.py')!r}
+                METRICS_TOOL={str(METRICS_TOOL)!r}
+                PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS=2
+                PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS=1
+                PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS=1
+                SOAK_COMMAND_EXIT=""
+                SOAK_COMMAND_CLASSIFICATION=""
+                SOAK_STATUS_VERDICT=""
+                BOUNDED_CALLS=0
+                UNBOUNDED_CALLS=0
+
+                fail() {{
+                  printf 'FAIL:%s\n' "$*" >&2
+                  return 1
+                }}
+
+                run_installed_podlaz_bounded() {{
+                  local seconds="$1"
+                  shift
+                  BOUNDED_CALLS=$((BOUNDED_CALLS + 1))
+                  timeout --signal=TERM --kill-after=1s "${{seconds}}s" bash -c 'sleep 30'
+                }}
+
+                run_installed_podlaz() {{
+                  UNBOUNDED_CALLS=$((UNBOUNDED_CALLS + 1))
+                  return 99
+                }}
+
+                start="$(date +%s)"
+                if wait_for_verified_tun_status hanging; then
+                  result=0
+                else
+                  result=$?
+                fi
+                elapsed=$(( $(date +%s) - start ))
+                printf 'result=%s elapsed=%s bounded=%s unbounded=%s verdict=%s command_exit=%s\n' \
+                  "${{result}}" "${{elapsed}}" "${{BOUNDED_CALLS}}" "${{UNBOUNDED_CALLS}}" \
+                  "${{SOAK_STATUS_VERDICT}}" "${{SOAK_COMMAND_EXIT}}"
+                """
+            )
+            result = subprocess.run(
+                ["bash", "-c", script],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=8,
+            )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        fields = dict(item.split("=", 1) for item in result.stdout.strip().split())
+        self.assertEqual("1", fields["result"])
+        self.assertLessEqual(int(fields["elapsed"]), 4)
+        self.assertEqual("1", fields["bounded"])
+        self.assertEqual("0", fields["unbounded"])
+        self.assertEqual("command-timeout", fields["verdict"])
+        self.assertIn(fields["command_exit"], {"124", "137"})
+        self.assertIn("bounded invocation", result.stderr)
+
+
 
 if __name__ == "__main__":
     unittest.main()

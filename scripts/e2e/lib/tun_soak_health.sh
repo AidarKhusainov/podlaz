@@ -3,9 +3,14 @@
 # Wait for the exact installed CLI status contract to converge to verified TUN
 # health. Status stdout/stderr remain private; callers receive only allowlisted
 # structural verdicts through SOAK_STATUS_VERDICT.
+run_tun_status_command() {
+  local timeout_seconds="$1"
+  run_installed_podlaz_bounded "${timeout_seconds}" status
+}
+
 wait_for_verified_tun_status() {
-  local label="${1:-}" timeout_seconds poll_seconds deadline
-  local stdout_file stderr_file status_exit verdict
+  local label="${1:-}" timeout_seconds status_timeout_seconds poll_seconds deadline
+  local stdout_file stderr_file status_exit verdict remaining_seconds invocation_timeout sleep_seconds
 
   [[ "${label}" =~ ^[a-z0-9-]+$ ]] || {
     SOAK_STATUS_VERDICT="invalid-status"
@@ -14,10 +19,16 @@ wait_for_verified_tun_status() {
   }
 
   timeout_seconds="${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:-75}"
+  status_timeout_seconds="${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS:-10}"
   poll_seconds="${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:-1}"
   [[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || {
     SOAK_STATUS_VERDICT="invalid-status"
     fail "TUN health timeout is invalid"
+    return 1
+  }
+  [[ "${status_timeout_seconds}" =~ ^[1-9][0-9]*$ ]] || {
+    SOAK_STATUS_VERDICT="invalid-status"
+    fail "TUN status invocation timeout is invalid"
     return 1
   }
   [[ "${poll_seconds}" =~ ^[1-9][0-9]*$ ]] || {
@@ -36,11 +47,31 @@ wait_for_verified_tun_status() {
   deadline=$((SECONDS + timeout_seconds))
 
   while :; do
-    if run_installed_podlaz status >"${stdout_file}" 2>"${stderr_file}"; then
+    remaining_seconds=$((deadline - SECONDS))
+    if ((remaining_seconds <= 0)); then
+      SOAK_STATUS_VERDICT="command-timeout"
+      fail "${label} TUN health exceeded the bounded wait"
+      return 1
+    fi
+    invocation_timeout="${status_timeout_seconds}"
+    if ((invocation_timeout > remaining_seconds)); then
+      invocation_timeout="${remaining_seconds}"
+    fi
+
+    if run_tun_status_command "${invocation_timeout}" >"${stdout_file}" 2>"${stderr_file}"; then
       status_exit=0
     else
       status_exit=$?
     fi
+    case "${status_exit}" in
+      124 | 137)
+        SOAK_STATUS_VERDICT="command-timeout"
+        SOAK_COMMAND_EXIT="${status_exit}"
+        SOAK_COMMAND_CLASSIFICATION="unclassified"
+        fail "${label} TUN status command exceeded its bounded invocation"
+        return 1
+        ;;
+    esac
 
     if verdict="$(
       python3 "${TUN_SOAK_STATUS_TOOL}" classify \
@@ -66,7 +97,17 @@ wait_for_verified_tun_status() {
           fail "${label} TUN health did not converge within the bounded wait"
           return 1
         fi
-        sleep "${poll_seconds}"
+        remaining_seconds=$((deadline - SECONDS))
+        if ((remaining_seconds <= 0)); then
+          SOAK_STATUS_VERDICT="${verdict}-timeout"
+          fail "${label} TUN health did not converge within the bounded wait"
+          return 1
+        fi
+        sleep_seconds="${poll_seconds}"
+        if ((sleep_seconds > remaining_seconds)); then
+          sleep_seconds="${remaining_seconds}"
+        fi
+        sleep "${sleep_seconds}"
         ;;
       command-error)
         SOAK_STATUS_VERDICT="command-error"

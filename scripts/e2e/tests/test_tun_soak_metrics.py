@@ -904,13 +904,13 @@ class TunSoakMetricsTests(unittest.TestCase):
             "cgroup": {
                 **baseline["cgroup"],
                 "memory_current_bytes": 45_000_000,
-                "pids_current": 12,
+                "pids_current": 10,
             },
             "podlazd": {
                 **baseline["podlazd"],
                 "rss_bytes": 43_000_000,
-                "threads": 12,
-                "tasks": 12,
+                "threads": 10,
+                "tasks": 10,
             },
         }
         reconnect_cleanup = {
@@ -939,6 +939,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             },
             configuration={
                 "duration_seconds": 4200,
+                "precondition_warmup_seconds": 30,
                 "warmup_seconds": 120,
                 "sample_interval_seconds": 600,
                 "doctor_every_samples": 3,
@@ -947,6 +948,7 @@ class TunSoakMetricsTests(unittest.TestCase):
                 "reconnect_samples": 1,
                 "tun_diagnostic_timeout_seconds": 90,
                 "tun_health_timeout_seconds": 75,
+                "tun_status_timeout_seconds": 10,
             },
             policy={
                 "schema_version": 1,
@@ -961,10 +963,17 @@ class TunSoakMetricsTests(unittest.TestCase):
 
         self.assertEqual("observation_complete", report["verdict"])
         self.assertTrue(report["lifecycle"]["cleanup"]["ok"])
-        self.assertEqual("equivalent-post-cleanup", report["lifecycle"]["cleanup"]["comparison"])
+        self.assertEqual(
+            "warmed-inactive-baseline-to-each-measured-cleanup",
+            report["lifecycle"]["cleanup"]["comparison"],
+        )
+        self.assertTrue(report["lifecycle"]["cleanup"]["measured_session_one"]["ok"])
+        self.assertTrue(report["lifecycle"]["cleanup"]["measured_session_two"]["ok"])
         self.assertTrue(report["lifecycle"]["reconnect"]["ok"])
         self.assertIsNone(report["trend"]["reproduced_growth_candidate"])
         self.assertEqual(75, report["configuration"]["tun_health_timeout_seconds"])
+        self.assertEqual(10, report["configuration"]["tun_status_timeout_seconds"])
+        self.assertEqual(30, report["configuration"]["precondition_warmup_seconds"])
         self.assertEqual(90, report["configuration"]["tun_diagnostic_timeout_seconds"])
         self.assertEqual(2, report["configuration"]["doctor_runs"])
         self.assertEqual(1, report["configuration"]["doctor_unhealthy_runs"])
@@ -975,11 +984,120 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertNotIn("transaction_file", encoded)
         self.assertNotIn("config_ref", encoded)
 
+    def test_build_report_rejects_first_measured_cleanup_retention_even_when_second_matches_it(self) -> None:
+        def process_metrics(fds: int) -> dict[str, int]:
+            return {
+                "rss_bytes": 40_000_000,
+                "pss_bytes": 36_000_000,
+                "threads": 10,
+                "tasks": 10,
+                "fds": fds,
+                "cpu_time_ticks": 0,
+            }
+
+        active_samples = [
+            {
+                "schema_version": 1,
+                "phase": "active",
+                "session": 1,
+                "sample_index": index,
+                "elapsed_seconds": index * 600,
+                "cgroup": {
+                    "memory_current_bytes": 100_000_000,
+                    "memory_peak_bytes": 100_000_000,
+                    "pids_current": 20,
+                    "cpu_usage_usec": index,
+                },
+                "podlazd": process_metrics(10),
+                "xray": process_metrics(20),
+            }
+            for index in range(6)
+        ]
+        reconnect_samples = [
+            {
+                **active_samples[0],
+                "phase": "reconnect",
+                "session": 2,
+                "sample_index": 0,
+            }
+        ]
+        warmed = {
+            "schema_version": 1,
+            "phase": "inactive-baseline",
+            "session": 0,
+            "sample_index": 0,
+            "elapsed_seconds": 0,
+            "cgroup": {
+                "memory_current_bytes": 42_000_000,
+                "memory_peak_bytes": 42_000_000,
+                "pids_current": 10,
+                "cpu_usage_usec": 0,
+            },
+            "podlazd": process_metrics(10),
+            "xray": None,
+        }
+        retained = {
+            **warmed,
+            "phase": "post-cleanup",
+            "podlazd": process_metrics(12),
+        }
+
+        report = tun_soak_metrics.build_report(
+            active_samples=active_samples,
+            reconnect_samples=reconnect_samples,
+            baseline_boundary=warmed,
+            cleanup_boundary=retained,
+            reconnect_cleanup_boundary={**retained, "sample_index": 1},
+            provenance={
+                "podlaz_version": "0.2.26",
+                "podlaz_commit": "0123456789abcdef",
+                "xray_version": "v26.3.27",
+                "xray_artifact_sha256": "b" * 64,
+                "xray_binary_sha256": "c" * 64,
+                "kernel_release": "6.8.0-test-generic",
+                "systemd_version": "255",
+                "package_sha256": "a" * 64,
+                "package_architecture": "amd64",
+            },
+            configuration={
+                "duration_seconds": 3600,
+                "precondition_warmup_seconds": 30,
+                "warmup_seconds": 120,
+                "sample_interval_seconds": 600,
+                "doctor_every_samples": 3,
+                "doctor_runs": 1,
+                "doctor_unhealthy_runs": 0,
+                "reconnect_samples": 1,
+                "tun_diagnostic_timeout_seconds": 90,
+                "tun_health_timeout_seconds": 75,
+                "tun_status_timeout_seconds": 10,
+            },
+            policy={
+                "schema_version": 1,
+                "mode": "observe",
+                "reproduced_growth_signal": None,
+                "metric_limits": {},
+            },
+            cleanup_memory_tolerance_bytes=8 * 1024 * 1024,
+            reconnect_memory_tolerance_bytes=8 * 1024 * 1024,
+            reconnect_count_tolerance=0,
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual("lifecycle_failed", report["verdict"])
+        self.assertFalse(report["lifecycle"]["cleanup"]["measured_session_one"]["ok"])
+        self.assertFalse(report["lifecycle"]["cleanup"]["measured_session_two"]["ok"])
+        self.assertIn(
+            "podlazd.fds",
+            report["lifecycle"]["cleanup"]["measured_session_one"]["violations"],
+        )
+
     def test_public_configuration_rejects_more_unhealthy_doctor_results_than_runs(self) -> None:
         with self.assertRaisesRegex(ValueError, "doctor_unhealthy_runs"):
             tun_soak_analysis._public_configuration(
                 {
                     "duration_seconds": 3600,
+                    "precondition_warmup_seconds": 30,
                     "warmup_seconds": 120,
                     "sample_interval_seconds": 60,
                     "doctor_every_samples": 10,
@@ -988,6 +1106,7 @@ class TunSoakMetricsTests(unittest.TestCase):
                     "reconnect_samples": 3,
                     "tun_diagnostic_timeout_seconds": 90,
                     "tun_health_timeout_seconds": 75,
+                    "tun_status_timeout_seconds": 10,
                 }
             )
 

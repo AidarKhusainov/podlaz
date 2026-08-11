@@ -19,6 +19,7 @@ require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
 : "${PODLAZ_E2E_SOAK_DURATION_SECONDS:=10800}"
+: "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS:=30}"
 : "${PODLAZ_E2E_SOAK_WARMUP_SECONDS:=120}"
 : "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS:=60}"
 : "${PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES:=10}"
@@ -31,6 +32,7 @@ require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep
 : "${PODLAZ_E2E_SOAK_POLICY_FILE:=${SCRIPT_DIR}/tun-resource-soak-policy.json}"
 : "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:=75}"
 : "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:=1}"
+: "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS:=10}"
 : "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS:=90}"
 : "${PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS:=2}"
 : "${PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS:=2}"
@@ -49,6 +51,7 @@ validate_positive_integer() {
 
 for numeric_setting in \
   PODLAZ_E2E_SOAK_DURATION_SECONDS \
+  PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS \
   PODLAZ_E2E_SOAK_WARMUP_SECONDS \
   PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS \
   PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES \
@@ -57,6 +60,7 @@ for numeric_setting in \
   PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS \
   PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS \
   PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS \
+  PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS \
   PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS \
   PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS; do
   validate_positive_integer "${numeric_setting}" "${!numeric_setting}"
@@ -82,13 +86,14 @@ TRANSACTION_DIR="/run/podlaz/transactions"
 METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
 TUN_SOAK_STATUS_TOOL="${SCRIPT_DIR}/lib/tun_soak_status.py"
 NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
+ISOLATION_TOOL="${SCRIPT_DIR}/lib/tun_soak_isolation.py"
 
 setup_isolated_xdg "tun-resource-soak"
 SOAK_PRIVATE_DIR="${E2E_TMP_ROOT}/tun-resource-soak-private"
 install -d -m 0700 "${SOAK_PRIVATE_DIR}"
 ACTIVE_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-active-samples.ndjson"
 RECONNECT_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-reconnect-samples.ndjson"
-BASELINE_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-inactive-baseline.json"
+BASELINE_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-warmed-inactive-baseline.json"
 CLEANUP_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-post-cleanup.json"
 RECONNECT_CLEANUP_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-post-reconnect-cleanup.json"
 PUBLIC_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-soak-report.json"
@@ -98,7 +103,10 @@ CONFIGURATION_JSON="${SOAK_PRIVATE_DIR}/configuration.json"
 PACKAGE_BUILD_LOG="${SOAK_PRIVATE_DIR}/package-build.log"
 PACKAGE_INSTALL_LOG="${SOAK_PRIVATE_DIR}/package-install.log"
 PACKAGE_REINSTALL_LOG="${SOAK_PRIVATE_DIR}/package-reinstall.log"
-DAEMON_BASELINE_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-baseline.json"
+DAEMON_BASELINE_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-warmed-baseline.json"
+NETWORK_ISOLATION_BASELINE="${SOAK_PRIVATE_DIR}/network-isolation-baseline.json"
+PRECONDITION_IDENTITY="${SOAK_PRIVATE_DIR}/precondition-session.json"
+PRECONDITION_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/precondition-network.json"
 DAEMON_CLEANUP_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-cleanup.json"
 DAEMON_RECONNECT_CLEANUP_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-reconnect-cleanup.json"
 SESSION_ONE_IDENTITY="${SOAK_PRIVATE_DIR}/session-one.json"
@@ -116,6 +124,7 @@ SOAK_COMMAND_CLASSIFICATION=""
 SOAK_STATUS_VERDICT=""
 DOCTOR_RUNS=0
 DOCTOR_UNHEALTHY_RUNS=0
+WARMED_DAEMON_PID=""
 
 append_sensitive_value() {
   local value="${1:-}"
@@ -225,6 +234,7 @@ PY
 write_configuration() {
   python3 - "${CONFIGURATION_JSON}" \
     "${PODLAZ_E2E_SOAK_DURATION_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS}" \
     "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}" \
     "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}" \
     "${PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES}" \
@@ -232,13 +242,15 @@ write_configuration() {
     "${DOCTOR_UNHEALTHY_RUNS}" \
     "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES}" \
     "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS}" \
-    "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS}" <<'PY'
+    "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS}" \
+    "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS}" <<'PY'
 import json
 import os
 import sys
 path = sys.argv[1]
 keys = (
     "duration_seconds",
+    "precondition_warmup_seconds",
     "warmup_seconds",
     "sample_interval_seconds",
     "doctor_every_samples",
@@ -247,6 +259,7 @@ keys = (
     "reconnect_samples",
     "tun_diagnostic_timeout_seconds",
     "tun_health_timeout_seconds",
+    "tun_status_timeout_seconds",
 )
 payload = {key: int(value) for key, value in zip(keys, sys.argv[2:], strict=True)}
 temporary = path + ".tmp"
@@ -333,9 +346,95 @@ PY
   rm -rf -- "${extract_dir}" "${version_output}"
 }
 
+capture_network_isolation_baseline() {
+  local stderr_file
+  stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-capture.stderr"
+  sudo -n python3 "${ISOLATION_TOOL}" capture \
+    --output "${NETWORK_ISOLATION_BASELINE}" \
+    >/dev/null 2>"${stderr_file}" || fail "clean structural network isolation cannot be proved"
+}
+
+assert_network_isolation() {
+  local label="$1" manifest="${2:-}" stderr_file
+  local -a args
+  [[ "${label}" =~ ^[a-z0-9-]+$ ]] || fail "network isolation label is invalid"
+  stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-${label}.stderr"
+  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}")
+  if [[ -n "${manifest}" ]]; then
+    args+=(--manifest "${manifest}")
+  fi
+  sudo -n python3 "${ISOLATION_TOOL}" "${args[@]}" \
+    >/dev/null 2>"${stderr_file}" || fail "${label}: structural network isolation cannot be proved"
+}
+
+run_bounded_data_plane_probe() {
+  local label="$1" dns_stdout dns_stderr curl_stdout curl_stderr
+  [[ "${label}" =~ ^[a-z0-9-]+$ ]] || fail "data-plane probe label is invalid"
+  dns_stdout="${SOAK_PRIVATE_DIR}/${label}-dns.stdout"
+  dns_stderr="${SOAK_PRIVATE_DIR}/${label}-dns.stderr"
+  timeout --signal=TERM --kill-after=5s 30s \
+    sudo -n resolvectl --cache=no --interface=podlaz0 -4 query "${PODLAZ_E2E_DNS_CHECK_HOST}" \
+    >"${dns_stdout}" 2>"${dns_stderr}" || fail "${label}: bounded DNS probe failed"
+  curl_stdout="${SOAK_PRIVATE_DIR}/${label}-https.stdout"
+  curl_stderr="${SOAK_PRIVATE_DIR}/${label}-https.stderr"
+  curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" \
+    >"${curl_stdout}" 2>"${curl_stderr}" || fail "${label}: bounded HTTPS probe failed"
+  append_sensitive_value "$(cat "${curl_stdout}")"
+  wait_for_verified_tun_status "${label}"
+}
+
+precondition_warmed_inactive_baseline() {
+  local daemon_pid after_pid
+  SOAK_PHASE="precondition-connect"
+  run_installed_podlaz connect --mode tun "${PROFILE_ID}" \
+    >"${SOAK_PRIVATE_DIR}/precondition-connect.stdout" \
+    2>"${SOAK_PRIVATE_DIR}/precondition-connect.stderr" || fail "TUN preconditioning connect failed"
+  assert_tun_package_address_present precondition || fail "preconditioning TUN address is not authoritative"
+  wait_for_verified_tun_status precondition
+
+  SOAK_PHASE="precondition-attribution"
+  daemon_pid="$(daemon_main_pid)"
+  sudo -n python3 "${METRICS_TOOL}" discover \
+    --daemon-pid "${daemon_pid}" \
+    --transaction-dir "${TRANSACTION_DIR}" \
+    --output "${PRECONDITION_IDENTITY}" || fail "preconditioning process attribution failed"
+  snapshot_network_manifest "${PRECONDITION_NETWORK_MANIFEST}"
+  assert_network_isolation precondition-active "${PRECONDITION_NETWORK_MANIFEST}"
+
+  SOAK_PHASE="precondition-warmup"
+  sleep "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS}"
+  run_bounded_data_plane_probe precondition-probe
+  run_bounded_tun_diagnostic precondition
+  assert_network_isolation precondition-post-probes "${PRECONDITION_NETWORK_MANIFEST}"
+
+  SOAK_PHASE="precondition-disconnect"
+  run_installed_podlaz disconnect \
+    >"${SOAK_PRIVATE_DIR}/precondition-disconnect.stdout" \
+    2>"${SOAK_PRIVATE_DIR}/precondition-disconnect.stderr" || fail "TUN preconditioning disconnect failed"
+  sudo -n python3 "${METRICS_TOOL}" assert-gone \
+    --identity "${PRECONDITION_IDENTITY}" || fail "preconditioning supervised child did not terminate"
+  sleep "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS}"
+  assert_resources_absent precondition-cleanup "${PRECONDITION_NETWORK_MANIFEST}"
+  assert_no_recovery_candidates precondition-cleanup
+  assert_network_isolation precondition-cleanup
+
+  SOAK_PHASE="warmed-inactive-baseline"
+  after_pid="$(daemon_main_pid)"
+  [[ "${after_pid}" == "${daemon_pid}" ]] || fail "podlazd restarted during TUN preconditioning"
+  WARMED_DAEMON_PID="${after_pid}"
+  sudo -n python3 "${METRICS_TOOL}" discover-daemon \
+    --daemon-pid "${after_pid}" \
+    --output "${DAEMON_BASELINE_IDENTITY}" || fail "warmed inactive daemon attribution failed"
+  sudo -n python3 "${METRICS_TOOL}" boundary-sample \
+    --identity "${DAEMON_BASELINE_IDENTITY}" \
+    --output "${BASELINE_BOUNDARY}" \
+    --phase inactive-baseline \
+    --sample-index 0 \
+    --elapsed-seconds 0 || fail "warmed inactive resource baseline failed"
+}
+
 disconnect_and_sample_cleanup() {
   SOAK_PHASE="session-one-disconnect"
-  snapshot_network_manifest "${SESSION_ONE_NETWORK_MANIFEST}"
   run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/session-one-disconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/session-one-disconnect.stderr" || \
     fail "normal disconnect failed after the active soak"
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" assert-gone \
@@ -344,8 +443,10 @@ disconnect_and_sample_cleanup() {
   SOAK_PHASE="post-cleanup"
   assert_resources_absent post-cleanup "${SESSION_ONE_NETWORK_MANIFEST}"
   assert_no_recovery_candidates post-cleanup
+  assert_network_isolation post-cleanup
   local daemon_pid
   daemon_pid="$(daemon_main_pid)"
+  [[ "${daemon_pid}" == "${WARMED_DAEMON_PID}" ]] || fail "podlazd restarted during the first measured lifecycle"
   sudo -n python3 "${METRICS_TOOL}" discover-daemon \
     --daemon-pid "${daemon_pid}" \
     --output "${DAEMON_CLEANUP_IDENTITY}" || fail "post-cleanup daemon attribution failed"
@@ -358,24 +459,18 @@ disconnect_and_sample_cleanup() {
 }
 
 run_active_soak() {
-  local sample_index=0 elapsed_seconds=0 dns_stdout dns_stderr curl_stdout curl_stderr
+  local sample_index=0 elapsed_seconds=0
   SOAK_PHASE="active-soak"
   while ((elapsed_seconds < PODLAZ_E2E_SOAK_DURATION_SECONDS)); do
-    dns_stdout="${SOAK_PRIVATE_DIR}/active-dns.stdout"
-    dns_stderr="${SOAK_PRIVATE_DIR}/active-dns.stderr"
-    timeout --signal=TERM --kill-after=5s 30s sudo -n resolvectl --cache=no --interface=podlaz0 -4 query "${PODLAZ_E2E_DNS_CHECK_HOST}" >"${dns_stdout}" 2>"${dns_stderr}" || fail "active soak DNS probe failed"
-    curl_stdout="${SOAK_PRIVATE_DIR}/active-https.stdout"
-    curl_stderr="${SOAK_PRIVATE_DIR}/active-https.stderr"
-    curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" >"${curl_stdout}" 2>"${curl_stderr}" || fail "active soak HTTPS probe failed"
-    append_sensitive_value "$(cat "${curl_stdout}")"
-    wait_for_verified_tun_status active
+    run_bounded_data_plane_probe active
     if ((sample_index % PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES == 0)); then
       run_bounded_tun_diagnostic active
     fi
+    assert_network_isolation active "${SESSION_ONE_NETWORK_MANIFEST}"
     sleep "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}"
     elapsed_seconds=$((SECONDS - SOAK_STARTED_SECONDS))
     sample_index=$((sample_index + 1))
-    sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" sample \
+    sudo -n python3 "${METRICS_TOOL}" sample \
       --identity "${SESSION_ONE_IDENTITY}" \
       --output "${ACTIVE_SAMPLES}" \
       --phase active \
@@ -394,6 +489,7 @@ run_reconnect_probe() {
   wait_for_verified_tun_status reconnect
   SOAK_PHASE="reconnect-attribution"
   daemon_pid="$(daemon_main_pid)"
+  [[ "${daemon_pid}" == "${WARMED_DAEMON_PID}" ]] || fail "podlazd restarted before reconnect attribution"
   sudo -n python3 "${METRICS_TOOL}" discover \
     --daemon-pid "${daemon_pid}" \
     --transaction-dir "${TRANSACTION_DIR}" \
@@ -401,6 +497,8 @@ run_reconnect_probe() {
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" assert-replaced \
     --before "${SESSION_ONE_IDENTITY}" \
     --after "${SESSION_TWO_IDENTITY}" || fail "reconnect did not replace the exact supervised child"
+  snapshot_network_manifest "${SESSION_TWO_NETWORK_MANIFEST}"
+  assert_network_isolation reconnect-attributed "${SESSION_TWO_NETWORK_MANIFEST}"
   SOAK_PHASE="reconnect-warmup"
   sleep "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}"
   SOAK_PHASE="reconnect-sampling"
@@ -413,18 +511,13 @@ run_reconnect_probe() {
       --session 2 \
       --sample-index "${sample_index}" \
       --elapsed-seconds "${elapsed_seconds}" || fail "reconnect structural resource sample failed"
-    wait_for_verified_tun_status reconnect
-    timeout --signal=TERM --kill-after=5s 30s sudo -n resolvectl --cache=no --interface=podlaz0 -4 query "${PODLAZ_E2E_DNS_CHECK_HOST}" >"${SOAK_PRIVATE_DIR}/reconnect-dns.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-dns.stderr" || \
-      fail "reconnect DNS probe failed"
-    curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" >"${SOAK_PRIVATE_DIR}/reconnect-https.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-https.stderr" || \
-      fail "reconnect HTTPS probe failed"
-    append_sensitive_value "$(cat "${SOAK_PRIVATE_DIR}/reconnect-https.stdout")"
+    run_bounded_data_plane_probe reconnect
+    assert_network_isolation reconnect "${SESSION_TWO_NETWORK_MANIFEST}"
     if ((sample_index + 1 < PODLAZ_E2E_SOAK_RECONNECT_SAMPLES)); then
       sleep "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}"
     fi
   done
   SOAK_PHASE="reconnect-disconnect"
-  snapshot_network_manifest "${SESSION_TWO_NETWORK_MANIFEST}"
   run_installed_podlaz disconnect >"${SOAK_PRIVATE_DIR}/reconnect-disconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect-disconnect.stderr" || \
     fail "normal disconnect failed after reconnect"
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" assert-gone \
@@ -433,7 +526,9 @@ run_reconnect_probe() {
   SOAK_PHASE="reconnect-cleanup"
   assert_resources_absent reconnect-cleanup "${SESSION_TWO_NETWORK_MANIFEST}"
   assert_no_recovery_candidates reconnect-cleanup
+  assert_network_isolation reconnect-cleanup
   daemon_pid="$(daemon_main_pid)"
+  [[ "${daemon_pid}" == "${WARMED_DAEMON_PID}" ]] || fail "podlazd restarted during reconnect lifecycle"
   sudo -n python3 "${METRICS_TOOL}" discover-daemon \
     --daemon-pid "${daemon_pid}" \
     --output "${DAEMON_RECONNECT_CLEANUP_IDENTITY}" || fail "reconnect cleanup daemon attribution failed"
@@ -484,7 +579,12 @@ allowed_phases = {
     "inactive-disconnect",
     "inactive-recovery",
     "inactive-network",
-    "inactive-baseline",
+    "isolation-baseline",
+    "precondition-connect",
+    "precondition-attribution",
+    "precondition-warmup",
+    "precondition-disconnect",
+    "warmed-inactive-baseline",
     "session-one-connect",
     "active-attribution",
     "warmup",
@@ -529,6 +629,7 @@ if command_classification_text:
     command_classification = command_classification_text
 allowed_status_verdicts = {
     "command-error",
+    "command-timeout",
     "invalid-status",
     "retry-degraded-timeout",
     "retry-revalidating-timeout",
@@ -603,6 +704,7 @@ sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
 wait_for_daemon_socket
+require_cmd nft
 SOAK_PHASE="package-provenance"
 verify_package_provenance
 
@@ -630,17 +732,9 @@ assert_no_recovery_candidates preconnect
 SOAK_PHASE="inactive-network"
 snapshot_network_manifest "${PRECONNECT_NETWORK_MANIFEST}"
 assert_resources_absent preconnect "${PRECONNECT_NETWORK_MANIFEST}"
-SOAK_PHASE="inactive-baseline"
-DAEMON_PID="$(daemon_main_pid)"
-sudo -n python3 "${METRICS_TOOL}" discover-daemon \
-  --daemon-pid "${DAEMON_PID}" \
-  --output "${DAEMON_BASELINE_IDENTITY}" || fail "clean inactive daemon attribution failed"
-sudo -n python3 "${METRICS_TOOL}" boundary-sample \
-  --identity "${DAEMON_BASELINE_IDENTITY}" \
-  --output "${BASELINE_BOUNDARY}" \
-  --phase inactive-baseline \
-  --sample-index 0 \
-  --elapsed-seconds 0 || fail "inactive resource baseline failed"
+SOAK_PHASE="isolation-baseline"
+capture_network_isolation_baseline
+precondition_warmed_inactive_baseline
 
 SOAK_PHASE="session-one-connect"
 SOAK_COMMAND_EXIT=""
@@ -650,12 +744,19 @@ assert_tun_package_address_present active || fail "active TUN address is not aut
 wait_for_verified_tun_status post-connect
 SOAK_PHASE="active-attribution"
 DAEMON_PID="$(daemon_main_pid)"
-sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" discover \
+[[ "${DAEMON_PID}" == "${WARMED_DAEMON_PID}" ]] || fail "podlazd identity changed after warmed baseline"
+sudo -n python3 "${METRICS_TOOL}" discover \
   --daemon-pid "${DAEMON_PID}" \
   --transaction-dir "${TRANSACTION_DIR}" \
   --output "${SESSION_ONE_IDENTITY}" || fail "exact process attribution failed before warm-up"
+sudo -n python3 "${METRICS_TOOL}" assert-replaced \
+  --before "${PRECONDITION_IDENTITY}" \
+  --after "${SESSION_ONE_IDENTITY}" || fail "measured session did not replace the preconditioning child on the same daemon"
+snapshot_network_manifest "${SESSION_ONE_NETWORK_MANIFEST}"
+assert_network_isolation active-attributed "${SESSION_ONE_NETWORK_MANIFEST}"
 SOAK_PHASE="warmup"
 sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"
+assert_network_isolation post-warmup "${SESSION_ONE_NETWORK_MANIFEST}"
 SOAK_STARTED_SECONDS="${SECONDS}"
 sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" sample \
   --identity "${SESSION_ONE_IDENTITY}" \

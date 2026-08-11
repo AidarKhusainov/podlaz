@@ -58,6 +58,7 @@ python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics
 python3 -m unittest scripts.e2e.tests.test_tun_soak_status
 python3 -m unittest scripts.e2e.tests.test_tun_soak_health
 python3 -m unittest scripts.e2e.tests.test_tun_soak_cleanup
+python3 -m unittest scripts.e2e.tests.test_tun_soak_isolation
 python3 -m unittest scripts.e2e.tests.test_tun_resource_soak_contract
 bash -n scripts/e2e/lib/tun_soak_health.sh scripts/e2e/lib/tun_soak_cleanup.sh scripts/e2e/tun-resource-soak.sh
 ```
@@ -67,15 +68,16 @@ The real installed-package run remains a controlled Ubuntu 24.04 host operation:
 ```bash
 PODLAZ_E2E_PROFILE_URI='<private-profile-uri>' \
 PODLAZ_E2E_SOAK_DURATION_SECONDS=10800 \
+PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS=30 \
+PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS=10 \
 bash scripts/e2e/tun-resource-soak.sh
 ```
 
 Exact process identities, descriptor targets, raw package build/install logs, and
 raw network/health evidence stay in the private E2E temporary directory. Only
-sanitized cgroup/procfs counters, including protocol/state descriptor-category
-counts, and the compact report belong in artifacts. Procfs socket-table reads are
-bounded to 8 MiB and 131,072 rows per table and fail closed beyond those limits.
-The helper does not enable pprof or add a production debug listener.
+sanitized cgroup/procfs counters,
+including aggregate descriptor-category counts, and the compact report belong in
+artifacts. The helper does not enable pprof or add a production debug listener.
 
 
 ## CI/CD gates

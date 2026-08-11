@@ -142,7 +142,10 @@ fail() {
   return 1
 }
 CALL_INDEX=0
-run_installed_podlaz() {
+run_installed_podlaz_bounded() {
+  local invocation_timeout="$1"
+  shift
+  [[ "${invocation_timeout}" =~ ^[1-9][0-9]*$ && "$1" == "status" ]] || return 90
   CALL_INDEX=$((CALL_INDEX + 1))
   local selected="${CALL_INDEX}"
   if [[ ! -f "${FIXTURE_DIR}/${selected}.exit" ]]; then
@@ -159,6 +162,7 @@ SOAK_STATUS_VERDICT=""
 SOAK_COMMAND_EXIT=""
 SOAK_COMMAND_CLASSIFICATION=""
 PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT}"
+PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS=2
 PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS=1
 TUN_SOAK_STATUS_TOOL="${STATUS_TOOL}"
 METRICS_TOOL="${METRICS_TOOL_PATH}"

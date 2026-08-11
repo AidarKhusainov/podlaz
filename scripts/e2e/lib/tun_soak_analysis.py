@@ -321,6 +321,7 @@ PUBLIC_PROVENANCE_FIELDS = frozenset(
 PUBLIC_CONFIGURATION_FIELDS = frozenset(
     {
         "duration_seconds",
+        "precondition_warmup_seconds",
         "warmup_seconds",
         "sample_interval_seconds",
         "doctor_every_samples",
@@ -329,6 +330,7 @@ PUBLIC_CONFIGURATION_FIELDS = frozenset(
         "reconnect_samples",
         "tun_diagnostic_timeout_seconds",
         "tun_health_timeout_seconds",
+        "tun_status_timeout_seconds",
     }
 )
 
@@ -452,12 +454,23 @@ def build_report(
         phase="reconnect",
         session=2,
     )
-    cleanup_result = compare_cleanup_boundaries(
-        baseline=cleanup_boundary,
+    first_cleanup_result = compare_cleanup_boundaries(
+        baseline=baseline_boundary,
+        cleanup=cleanup_boundary,
+        memory_tolerance_bytes=cleanup_memory_tolerance_bytes,
+    )
+    second_cleanup_result = compare_cleanup_boundaries(
+        baseline=baseline_boundary,
         cleanup=reconnect_cleanup_boundary,
         memory_tolerance_bytes=cleanup_memory_tolerance_bytes,
     )
-    cleanup_result["comparison"] = "equivalent-post-cleanup"
+    cleanup_result = {
+        "ok": first_cleanup_result["ok"] and second_cleanup_result["ok"],
+        "comparison": "warmed-inactive-baseline-to-each-measured-cleanup",
+        "warmed_baseline": "preconditioned",
+        "measured_session_one": first_cleanup_result,
+        "measured_session_two": second_cleanup_result,
+    }
     reconnect_result = compare_reconnect_boundaries(
         initial=initial_reference,
         reconnect=reconnect_reference,

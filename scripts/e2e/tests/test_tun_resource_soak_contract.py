@@ -19,22 +19,52 @@ class TunResourceSoakContractTests(unittest.TestCase):
         end = text.index(next_marker, start)
         return text[start:end]
 
-    def test_checked_in_policy_is_calibrated_acceptance(self) -> None:
+    def test_checked_in_policy_remains_observation_until_repeated_baselines_exist(self) -> None:
         policy = json.loads(POLICY.read_text(encoding="utf-8"))
 
         self.assertEqual(1, policy["schema_version"])
-        self.assertEqual("accept", policy["mode"])
-        self.assertEqual(
-            "xray.tcp_established_socket_fds",
-            policy["reproduced_growth_signal"],
-        )
-        target = policy["metric_limits"]["xray.tcp_established_socket_fds"]
-        self.assertEqual(64, target["max_theil_sen_per_hour"])
-        self.assertEqual(128, target["max_net_growth"])
-        self.assertIs(True, target["require_no_sustained_positive"])
-        self.assertIn("xray.rss_bytes", policy["metric_limits"])
-        self.assertIn("podlazd.fds", policy["metric_limits"])
-        self.assertIn("cgroup.memory_current_bytes", policy["metric_limits"])
+        self.assertEqual("observe", policy["mode"])
+        self.assertIsNone(policy["reproduced_growth_signal"])
+        self.assertEqual({}, policy["metric_limits"])
+
+    def test_warmed_inactive_baseline_precedes_both_measured_sessions(self) -> None:
+        text = self.script_text()
+        precondition_call = text.rindex("\nprecondition_warmed_inactive_baseline\n")
+        measured_connect = text.rindex('SOAK_PHASE="session-one-connect"')
+        reconnect_call = text.rindex("\nrun_reconnect_probe\n")
+        baseline_sample = text.index('--output "${BASELINE_BOUNDARY}"', text.index("precondition_warmed_inactive_baseline() {"))
+        self.assertLess(baseline_sample, precondition_call)
+        self.assertLess(precondition_call, measured_connect)
+        self.assertLess(measured_connect, reconnect_call)
+        self.assertIn('BASELINE_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-warmed-inactive-baseline.json"', text)
+
+    def test_structural_network_isolation_is_captured_and_revalidated_throughout_soak(self) -> None:
+        text = self.script_text()
+        self.assertIn('ISOLATION_TOOL="${SCRIPT_DIR}/lib/tun_soak_isolation.py"', text)
+        self.assertIn('NETWORK_ISOLATION_BASELINE="${SOAK_PRIVATE_DIR}/network-isolation-baseline.json"', text)
+        self.assertIn('capture_network_isolation_baseline', text)
+        active = self.function_body("run_active_soak", "\n}\n\nrun_reconnect_probe")
+        reconnect = self.function_body("run_reconnect_probe", "\n}\n\nwrite_public_report")
+        cleanup = self.function_body("disconnect_and_sample_cleanup", "\n}\n\nrun_active_soak")
+        self.assertIn('assert_network_isolation active "${SESSION_ONE_NETWORK_MANIFEST}"', active)
+        self.assertIn('assert_network_isolation reconnect "${SESSION_TWO_NETWORK_MANIFEST}"', reconnect)
+        self.assertIn('assert_network_isolation post-cleanup', cleanup)
+        isolation = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_isolation.py").read_text(encoding="utf-8")
+        self.assertIn("validate_clean_baseline", isolation)
+        self.assertIn("strip_exact_podlaz_state", isolation)
+        self.assertIn("SUSPICIOUS_LINK_KINDS", isolation)
+        self.assertIn('"addresses": _json_command(("ip", "-j", "address", "show"))', isolation)
+        self.assertIn('os.stat("/proc/self/ns/net")', isolation)
+
+
+    def test_preconditioning_and_measured_sessions_keep_one_daemon_and_replace_each_child(self) -> None:
+        text = self.script_text()
+        self.assertIn('WARMED_DAEMON_PID="${after_pid}"', text)
+        self.assertIn('--before "${PRECONDITION_IDENTITY}"', text)
+        self.assertIn('--after "${SESSION_ONE_IDENTITY}"', text)
+        self.assertIn('podlazd restarted during the first measured lifecycle', text)
+        self.assertIn('podlazd restarted before reconnect attribution', text)
+        self.assertIn('podlazd restarted during reconnect lifecycle', text)
 
     def test_reconnect_records_an_equivalent_post_cleanup_boundary(self) -> None:
         text = self.script_text()
@@ -68,18 +98,18 @@ class TunResourceSoakContractTests(unittest.TestCase):
 
     def test_attribution_precedes_warmup_and_first_active_sample(self) -> None:
         text = self.script_text()
-        connect = text.index('run_installed_podlaz connect --mode tun "${PROFILE_ID}"')
-        discover = text.index('tun_soak_metrics.py" discover', connect)
+        connect = text.rindex('SOAK_PHASE="session-one-connect"')
+        discover = text.index('--output "${SESSION_ONE_IDENTITY}"', connect)
         warmup = text.index('sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"', discover)
-        sample = text.index('tun_soak_metrics.py" sample', warmup)
+        sample = text.index('--output "${ACTIVE_SAMPLES}"', warmup)
         self.assertLess(connect, discover)
         self.assertLess(discover, warmup)
         self.assertLess(warmup, sample)
 
     def test_samples_exact_cgroup_daemon_and_supervised_xray_without_ps_parsing(self) -> None:
         text = self.script_text()
-        self.assertIn('tun_soak_metrics.py" discover', text)
-        self.assertIn('tun_soak_metrics.py" sample', text)
+        self.assertIn('${METRICS_TOOL}" discover', text)
+        self.assertIn('${METRICS_TOOL}" sample', text)
         self.assertNotIn("ps -", text)
         self.assertNotIn("/proc/${", text)
         process_metrics = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_process.py").read_text(encoding="utf-8")
@@ -88,9 +118,11 @@ class TunResourceSoakContractTests(unittest.TestCase):
 
     def test_active_loop_generates_bounded_traffic_and_read_only_health(self) -> None:
         body = self.function_body("run_active_soak", "\n}\n\nrun_reconnect_probe")
-        self.assertIn("resolvectl --cache=no --interface=podlaz0", body)
-        self.assertIn("curl -4 -fsS --max-time", body)
-        self.assertIn("wait_for_verified_tun_status active", body)
+        probe = self.function_body("run_bounded_data_plane_probe", "\n}\n\nprecondition_warmed_inactive_baseline")
+        self.assertIn("run_bounded_data_plane_probe active", body)
+        self.assertIn("resolvectl --cache=no --interface=podlaz0", probe)
+        self.assertIn("curl -4 -fsS --max-time", probe)
+        self.assertIn('wait_for_verified_tun_status "${label}"', probe)
         self.assertIn("run_bounded_tun_diagnostic active", body)
         self.assertIn("PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES", body)
         self.assertNotIn("&", body)
@@ -103,11 +135,15 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn('PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS', text)
         health = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_health.sh").read_text(encoding="utf-8")
         self.assertIn("run_bounded_tun_diagnostic", health)
-        self.assertIn("run_installed_podlaz_bounded", health)
+        self.assertIn("run_tun_status_command", health)
+        status_command = health[health.index("run_tun_status_command() {"):health.index("\n}", health.index("run_tun_status_command() {"))]
+        self.assertIn("run_installed_podlaz_bounded", status_command)
+        self.assertNotIn("run_installed_podlaz status", health)
+        self.assertIn("PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS", health)
         self.assertIn('3)', health)
         self.assertIn('wait_for_verified_tun_status post-connect', text)
-        self.assertIn('wait_for_verified_tun_status active', text)
-        self.assertIn('wait_for_verified_tun_status reconnect', text)
+        self.assertIn('run_bounded_data_plane_probe active', text)
+        self.assertIn('run_bounded_data_plane_probe reconnect', text)
         self.assertNotIn('run_installed_podlaz status', text)
         writer = self.function_body("write_failure_evidence", "\n}\n\ncleanup")
         self.assertIn('"status_verdict"', writer)
@@ -208,6 +244,9 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("Diagnostic exit `0` and diagnostic exit `3`", e2e)
         self.assertIn("attempted at most twice", e2e)
         self.assertIn("metric-specific", e2e)
+        self.assertIn("warmed inactive baseline", e2e)
+        self.assertIn("structural network-isolation baseline", e2e)
+        self.assertIn("checked-in policy remains `observe`", e2e)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_status", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_health", development)
