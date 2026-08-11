@@ -72,9 +72,10 @@ bash scripts/e2e/tun-resource-soak.sh
 
 Exact process identities, descriptor targets, raw package build/install logs, and
 raw network/health evidence stay in the private E2E temporary directory. Only
-sanitized cgroup/procfs counters,
-including aggregate descriptor-category counts, and the compact report belong in
-artifacts. The helper does not enable pprof or add a production debug listener.
+sanitized cgroup/procfs counters, including protocol/state descriptor-category
+counts, and the compact report belong in artifacts. Procfs socket-table reads are
+bounded to 8 MiB and 131,072 rows per table and fail closed beyond those limits.
+The helper does not enable pprof or add a production debug listener.
 
 
 ## CI/CD gates

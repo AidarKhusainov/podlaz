@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tun-resource-soak.sh"
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "e2e-tun-resource-soak.yml"
+POLICY = Path(__file__).resolve().parents[1] / "tun-resource-soak-policy.json"
 
 
 class TunResourceSoakContractTests(unittest.TestCase):
@@ -16,6 +18,23 @@ class TunResourceSoakContractTests(unittest.TestCase):
         start = text.index(f"{name}() {{")
         end = text.index(next_marker, start)
         return text[start:end]
+
+    def test_checked_in_policy_is_calibrated_acceptance(self) -> None:
+        policy = json.loads(POLICY.read_text(encoding="utf-8"))
+
+        self.assertEqual(1, policy["schema_version"])
+        self.assertEqual("accept", policy["mode"])
+        self.assertEqual(
+            "xray.tcp_established_socket_fds",
+            policy["reproduced_growth_signal"],
+        )
+        target = policy["metric_limits"]["xray.tcp_established_socket_fds"]
+        self.assertEqual(64, target["max_theil_sen_per_hour"])
+        self.assertEqual(128, target["max_net_growth"])
+        self.assertIs(True, target["require_no_sustained_positive"])
+        self.assertIn("xray.rss_bytes", policy["metric_limits"])
+        self.assertIn("podlazd.fds", policy["metric_limits"])
+        self.assertIn("cgroup.memory_current_bytes", policy["metric_limits"])
 
     def test_reconnect_records_an_equivalent_post_cleanup_boundary(self) -> None:
         text = self.script_text()

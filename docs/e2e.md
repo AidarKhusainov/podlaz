@@ -225,7 +225,10 @@ Attribution is fail-closed. `scripts/e2e/lib/tun_soak_metrics.py` identifies
 podlazd from the systemd `MainPID`, identifies the exact supervised Xray child
 from the one committed Podlaz TUN transaction, verifies executable identity,
 process start time, and the direct child relationship to the exact daemon. Both
-processes must belong to the same `podlazd.service` cgroup. A foreign VPN/core
+processes must belong to the same `podlazd.service` cgroup. Each procfs socket
+inventory read is independently bounded to 8 MiB and 131,072 rows; exceeding
+either limit fails attribution rather than creating an unbounded diagnostic path.
+A foreign VPN/core
 process aborts the clean run rather than contaminating accounting. Exact PIDs,
 transaction metadata, generated configuration references, process command data,
 and host networking evidence remain in the private E2E directory and are
@@ -277,6 +280,18 @@ Xray. `scripts/e2e/tun-resource-soak-policy.json` has two modes:
 - `accept` requires a named reproduced growth signal plus explicit
   metric-specific slope, net-growth, and sustained-trend rules. Any other
   sustained candidate without its own rule fails closed.
+
+The checked-in acceptance policy is calibrated from repeated clean current-package
+runs. It names the exact supervised Xray child's established TCP descriptor count
+as the attributed warm-up signal, because all variable Xray descriptors in those
+runs were TCP `ESTABLISHED` while UDP, UNIX, unclassified descriptors, Xray
+threads, and Xray tasks remained stable. The three-hour gate requires no
+materially sustained positive trend and additionally caps Theil-Sen growth at 64
+TCP descriptors per hour with at most 128 descriptors of end-to-end growth. The
+matching aggregate Xray socket/FD metrics use the same count envelope. Xray
+RSS/PSS permit at most 16 MiB/hour and 64 MiB net movement; podlazd RSS/PSS permit
+8 MiB/hour and 32 MiB net movement. These are regression envelopes around
+allocator, cache, and connection-idle variance, not production resource limits.
 
 An `observe` result is not sufficient to close a resource-retention defect. The
 final release gate for such a fix must use `accept` after repeated clean
