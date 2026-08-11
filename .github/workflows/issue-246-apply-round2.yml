@@ -1,0 +1,79 @@
+name: Apply verified Issue 246 round-two fix
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-246-apply-round-two
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify, test, apply, and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          encoded="${RUNNER_TEMP}/issue-246-round2.patch.gz.b64"
+          archive="${RUNNER_TEMP}/issue-246-round2.patch.gz"
+          patch="${RUNNER_TEMP}/issue-246-round2.patch"
+          manifest="${RUNNER_TEMP}/issue-246-round2-parts.sha256"
+
+          cat >"${manifest}" <<'CHECKSUMS'
+          6286101cb7c05733c7bd05a798c166e74da5fcb7a03dca1a15b3ae9cef30164c  .github/issue246-round2/part-00
+          dfdf95abd88d60a7e2f335522ceccc07d6a8f99d75614175b3dcea4360ec0ed1  .github/issue246-round2/part-01
+          65ba993494fdb90c9413a2bff5da4b76e3f5d148559b6587773d1cb7e6957c51  .github/issue246-round2/part-02
+          9fae205be1bd8cf3f00810e7e7bcee8a30dcbbb295a7788788c668150195d978  .github/issue246-round2/part-03
+          6f256093e44773937e9208a06f376ba1aacfe5c2e56ef87ec5da4c4d271a9ab8  .github/issue246-round2/part-04
+          3e48c8dbd28c7252dfef623de47847cf45f19b52cd2fdd15f8a7f94ca1c9dfaa  .github/issue246-round2/part-05
+          844de8609f590872eed75e50803b9957eb5d78d6345b7bfe2baecefb162ddbae  .github/issue246-round2/part-06
+          9936150c54372076ab16fb3b6c237ce78fd3e275cf484651dbb1538737a6aad7  .github/issue246-round2/part-07
+          73cbd28aa5e5b9d01eb875bbd3ec6695cfb477eb91f9f3a54790d57b1b5b1d1f  .github/issue246-round2/part-08
+          CHECKSUMS
+          sha256sum --check --strict "${manifest}"
+
+          cat .github/issue246-round2/part-* >"${encoded}"
+          printf '%s  %s\n' 'fc87b78e7935c4814f591e0ca32183fd616d4eee30af75e75b1aeb3af4eb701a' "${encoded}" | sha256sum --check --strict
+          base64 --decode "${encoded}" >"${archive}"
+          printf '%s  %s\n' '61696613f38720d2493615ba8fa22396ab1086fb1bb7fa04a10350a2a8507e84' "${archive}" | sha256sum --check --strict
+          gzip --test "${archive}"
+          gzip --decompress --stdout "${archive}" >"${patch}"
+          printf '%s  %s\n' 'ad446cbb07e19258cfec98c4d34dd018c9e929955e4df500f078c516629a2ead' "${patch}" | sha256sum --check --strict
+
+          git apply --check "${patch}"
+          git apply --index "${patch}"
+          git rm -- .github/workflows/issue-246-apply-round2.yml
+          git rm -r -- .github/issue246-round2
+          git diff --cached --check
+
+          python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
+          python3 -m py_compile \
+            scripts/e2e/lib/tun_soak_*.py \
+            scripts/e2e/tests/test_tun_soak_*.py \
+            scripts/e2e/tests/test_tun_resource_soak_contract.py
+          bash -n \
+            scripts/e2e/tun-resource-soak.sh \
+            scripts/e2e/lib/tun_soak_health.sh \
+            scripts/e2e/lib/tun_soak_cleanup.sh
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+
+          git config user.name "podlaz issue 246 automation"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: compare equivalent resource cleanup boundaries"
+          git push origin HEAD:agent/issue-246-tun-resource-soak
