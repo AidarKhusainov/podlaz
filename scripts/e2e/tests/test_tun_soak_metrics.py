@@ -294,7 +294,9 @@ class TunSoakMetricsTests(unittest.TestCase):
         (net / "tcp").write_text(
             "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
             "0: 0100007F:1F90 00000000:0000 0A 0:0 00:0 0 0 0 101\n"
-            "1: 0A000001:01BB 0A000002:C001 01 0:0 00:0 0 0 0 102\n",
+            "1: 0A000001:01BB 0A000002:C001 01 0:0 00:0 0 0 0 102\n"
+            "2: 00000000:0000 00000000:0000 06 0:0 00:0 0 0 0 0\n"
+            "3: 00000000:0000 00000000:0000 06 0:0 00:0 0 0 0 0\n",
             encoding="utf-8",
         )
         (net / "tcp6").write_text(

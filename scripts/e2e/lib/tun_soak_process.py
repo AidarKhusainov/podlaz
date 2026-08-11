@@ -370,6 +370,8 @@ def _parse_inet_socket_table(path: Path) -> dict[int, str]:
         if len(fields) < 10 or not fields[9].isdigit() or re.fullmatch(r"[0-9A-Fa-f]{2}", fields[3]) is None:
             raise AttributionError("process socket inventory is malformed")
         inode = int(fields[9])
+        if inode == 0:
+            continue
         if inode in records:
             raise AttributionError("process socket inventory contains duplicate inode evidence")
         records[inode] = fields[3].upper()
@@ -385,6 +387,8 @@ def _parse_unix_socket_table(path: Path) -> set[int]:
         if len(fields) < 7 or not fields[6].isdigit():
             raise AttributionError("process UNIX socket inventory is malformed")
         inode = int(fields[6])
+        if inode == 0:
+            continue
         if inode in records:
             raise AttributionError("process UNIX socket inventory contains duplicate inode evidence")
         records.add(inode)
