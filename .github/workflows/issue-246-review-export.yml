@@ -1,19 +1,20 @@
 name: Issue 246 Review Workspace Export
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/issue-246-tun-resource-soak
+      - master
 
 permissions:
   contents: read
 
 concurrency:
-  group: issue-246-review-workspace-export
+  group: issue-246-review-workspace-export-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   export:
+    if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
     name: Export exact review workspace
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -21,7 +22,7 @@ jobs:
       - name: Checkout exact branch head
         uses: actions/checkout@v7
         with:
-          ref: agent/issue-246-tun-resource-soak
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Archive tracked workspace
