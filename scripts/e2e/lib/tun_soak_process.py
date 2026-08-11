@@ -38,6 +38,11 @@ PROCESS_METRICS = (
     "threads",
     "tasks",
     "fds",
+    "socket_fds",
+    "pipe_fds",
+    "anon_inode_fds",
+    "regular_fds",
+    "other_fds",
     "cpu_time_ticks",
 )
 CGROUP_METRICS = (
@@ -336,6 +341,44 @@ def _directory_count(path: Path, label: str) -> int:
         raise AttributionError(f"{label} inventory is unavailable") from exc
 
 
+def _file_descriptor_metrics(path: Path) -> dict[str, int]:
+    try:
+        entries = list(path.iterdir())
+    except OSError as exc:
+        raise AttributionError("process file descriptor inventory is unavailable") from exc
+
+    result = {
+        "fds": len(entries),
+        "socket_fds": 0,
+        "pipe_fds": 0,
+        "anon_inode_fds": 0,
+        "regular_fds": 0,
+        "other_fds": 0,
+    }
+    for entry in entries:
+        try:
+            target = os.readlink(entry)
+        except FileNotFoundError:
+            # The listed descriptor closed before classification. Preserve the
+            # point-in-time total and account it as structurally unknown rather
+            # than leaking its target or silently changing the total.
+            result["other_fds"] += 1
+            continue
+        except OSError as exc:
+            raise AttributionError("process file descriptor classification is unavailable") from exc
+        if target.startswith("socket:["):
+            result["socket_fds"] += 1
+        elif target.startswith("pipe:["):
+            result["pipe_fds"] += 1
+        elif target.startswith("anon_inode:"):
+            result["anon_inode_fds"] += 1
+        elif target.startswith("/"):
+            result["regular_fds"] += 1
+        else:
+            result["other_fds"] += 1
+    return result
+
+
 def _process_metrics(identity: ProcessIdentity, proc_root: Path) -> dict[str, int | None]:
     _assert_identity_current(identity, proc_root)
     process = proc_root / str(identity.pid)
@@ -348,12 +391,13 @@ def _process_metrics(identity: ProcessIdentity, proc_root: Path) -> dict[str, in
     threads = status.get("Threads")
     if threads is None:
         raise AttributionError("process thread count is unavailable")
+    fd_metrics = _file_descriptor_metrics(process / "fd")
     return {
         "rss_bytes": rss,
         "pss_bytes": smaps.get("Pss"),
         "threads": threads,
         "tasks": _directory_count(process / "task", "process task"),
-        "fds": _directory_count(process / "fd", "process file descriptor"),
+        **fd_metrics,
         "cpu_time_ticks": utime + stime,
     }
 

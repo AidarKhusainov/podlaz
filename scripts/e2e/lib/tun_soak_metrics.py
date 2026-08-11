@@ -256,16 +256,21 @@ def _command_classify_cli_error(args: argparse.Namespace) -> int:
 def _command_report(args: argparse.Namespace) -> int:
     baseline = _load_json(args.baseline_boundary)
     cleanup = _load_json(args.cleanup_boundary)
+    reconnect_cleanup = _load_json(args.reconnect_cleanup_boundary)
     provenance = _load_json(args.provenance)
     configuration = _load_json(args.configuration)
     policy = _load_json(args.policy)
-    if not all(isinstance(value, Mapping) for value in (baseline, cleanup, provenance, configuration, policy)):
+    if not all(
+        isinstance(value, Mapping)
+        for value in (baseline, cleanup, reconnect_cleanup, provenance, configuration, policy)
+    ):
         raise AttributionError("report input contains invalid JSON objects")
     report = build_report(
         active_samples=_read_ndjson(args.samples),
         reconnect_samples=_read_ndjson(args.reconnect_samples),
         baseline_boundary=baseline,
         cleanup_boundary=cleanup,
+        reconnect_cleanup_boundary=reconnect_cleanup,
         provenance=provenance,
         configuration=configuration,
         policy=policy,
@@ -350,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--reconnect-samples", type=Path, required=True)
     report.add_argument("--baseline-boundary", type=Path, required=True)
     report.add_argument("--cleanup-boundary", type=Path, required=True)
+    report.add_argument("--reconnect-cleanup-boundary", type=Path, required=True)
     report.add_argument("--provenance", type=Path, required=True)
     report.add_argument("--configuration", type=Path, required=True)
     report.add_argument("--policy", type=Path, required=True)

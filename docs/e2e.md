@@ -257,8 +257,10 @@ The following observations have distinct authority and must not be conflated:
 
 - cgroup total `memory.current`, optional `memory.peak`, `pids.current`, and CPU
   time describe the whole service cgroup, not either process individually;
-- podlazd and Xray RSS, PSS where available, thread/task count, file-descriptor
-  count, and CPU time come from the exact process identity in procfs;
+- podlazd and Xray RSS, PSS where available, thread/task count, total
+  file-descriptor count, structural descriptor-category counts (`socket`, `pipe`,
+  `anon_inode`, absolute-path-backed, and other), and CPU time come from the exact
+  process identity in procfs; descriptor targets themselves are never published;
 - current memory is a point-in-time footprint, while peak memory is a historical
   high-water mark and is never treated as a sustained-growth signal;
 - warm-up/cache movement is allowed, while a materially sustained trend after
@@ -284,12 +286,17 @@ Lifecycle assertions remain stricter than trend tolerance. Normal disconnect
 must terminate the exact supervised Xray child, leave no packaged Xray orphan,
 remove exact transaction-owned routes/rules and all Podlaz TUN/DNS/nftables,
 generated-config, and transaction state, and publish clean recovery state.
-Post-cleanup podlazd/cgroup thread, task, file-descriptor, and PID counts may not
-increase over the equivalent inactive baseline. Current-memory comparisons use
-only the documented cleanup tolerance; that tolerance is a test envelope, not a
-production memory limit. Immediate reconnect must keep the same daemon, create a
-new exact supervised Xray identity, remain within the documented per-metric
-reconnect tolerance, and pass a second strict disconnect cleanup.
+The cold daemon boundary before the first connect is retained as structural
+context, but it is not the strict worker-count comparator because Go runtime and
+daemon-global workers may warm once under the first real TUN workload. The first
+successful post-disconnect boundary establishes the warmed cleanup baseline. The
+second post-disconnect boundary, after immediate reconnect on the same daemon,
+must not increase podlazd/cgroup thread, task, file-descriptor, or PID counts over
+that equivalent post-cleanup baseline. Current-memory comparisons use only the
+documented cleanup tolerance; that tolerance is a test envelope, not a production
+memory limit. Immediate reconnect must keep the same daemon, create a new exact
+supervised Xray identity, remain within the documented per-metric reconnect
+tolerance, and pass this second strict cleanup comparison.
 
 The public artifact contains only sanitized structural samples and one compact
 JSON report with exact package/Xray provenance, configuration, component-specific

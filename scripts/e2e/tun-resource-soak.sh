@@ -90,12 +90,14 @@ ACTIVE_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-active-samples.ndjson"
 RECONNECT_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-reconnect-samples.ndjson"
 BASELINE_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-inactive-baseline.json"
 CLEANUP_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-post-cleanup.json"
+RECONNECT_CLEANUP_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-post-reconnect-cleanup.json"
 PUBLIC_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-soak-report.json"
 FAILURE_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-failure.json"
 PROVENANCE_JSON="${SOAK_PRIVATE_DIR}/provenance.json"
 CONFIGURATION_JSON="${SOAK_PRIVATE_DIR}/configuration.json"
 DAEMON_BASELINE_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-baseline.json"
 DAEMON_CLEANUP_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-cleanup.json"
+DAEMON_RECONNECT_CLEANUP_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-reconnect-cleanup.json"
 SESSION_ONE_IDENTITY="${SOAK_PRIVATE_DIR}/session-one.json"
 SESSION_TWO_IDENTITY="${SOAK_PRIVATE_DIR}/session-two.json"
 SESSION_ONE_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/session-one-network.json"
@@ -428,6 +430,16 @@ run_reconnect_probe() {
   SOAK_PHASE="reconnect-cleanup"
   assert_resources_absent reconnect-cleanup "${SESSION_TWO_NETWORK_MANIFEST}"
   assert_no_recovery_candidates reconnect-cleanup
+  daemon_pid="$(daemon_main_pid)"
+  sudo -n python3 "${METRICS_TOOL}" discover-daemon \
+    --daemon-pid "${daemon_pid}" \
+    --output "${DAEMON_RECONNECT_CLEANUP_IDENTITY}" || fail "reconnect cleanup daemon attribution failed"
+  sudo -n python3 "${METRICS_TOOL}" boundary-sample \
+    --identity "${DAEMON_RECONNECT_CLEANUP_IDENTITY}" \
+    --output "${RECONNECT_CLEANUP_BOUNDARY}" \
+    --phase post-cleanup \
+    --sample-index 1 \
+    --elapsed-seconds 0 || fail "reconnect post-cleanup resource sample failed"
 }
 
 write_public_report() {
@@ -438,6 +450,7 @@ write_public_report() {
     --reconnect-samples "${RECONNECT_SAMPLES}" \
     --baseline-boundary "${BASELINE_BOUNDARY}" \
     --cleanup-boundary "${CLEANUP_BOUNDARY}" \
+    --reconnect-cleanup-boundary "${RECONNECT_CLEANUP_BOUNDARY}" \
     --provenance "${PROVENANCE_JSON}" \
     --configuration "${CONFIGURATION_JSON}" \
     --policy "${PODLAZ_E2E_SOAK_POLICY_FILE}" \
@@ -564,7 +577,7 @@ trap cleanup EXIT
 collect_host_sensitive_values
 SOAK_PHASE="cleanup-preflight"
 run_tun_soak_cleanup preflight
-rm -f -- "${ACTIVE_SAMPLES}" "${RECONNECT_SAMPLES}" "${BASELINE_BOUNDARY}" "${CLEANUP_BOUNDARY}" "${PUBLIC_REPORT}" "${FAILURE_REPORT}"
+rm -f -- "${ACTIVE_SAMPLES}" "${RECONNECT_SAMPLES}" "${BASELINE_BOUNDARY}" "${CLEANUP_BOUNDARY}" "${RECONNECT_CLEANUP_BOUNDARY}" "${PUBLIC_REPORT}" "${FAILURE_REPORT}"
 SOAK_PHASE="configuration"
 write_configuration
 
@@ -574,7 +587,7 @@ log "build exact release-like package for resource soak"
 . packaging/package-toolchain.env
 go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
 export PATH="$(go env GOPATH)/bin:${PATH}"
-BUILD_COMMIT="${GITHUB_SHA:-$(git rev-parse HEAD)}"
+BUILD_COMMIT="$(git rev-parse HEAD)"
 PODLAZ_COMMIT="${BUILD_COMMIT}" \
   PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
   PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \

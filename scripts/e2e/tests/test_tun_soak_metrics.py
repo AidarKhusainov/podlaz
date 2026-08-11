@@ -40,12 +40,16 @@ class TunSoakMetricsTests(unittest.TestCase):
         stime: int = 5,
         parent_pid: int = 1,
         cmdline: tuple[str, ...] = (),
+        fd_targets: tuple[str, ...] | None = None,
     ) -> None:
         process = self.proc / str(pid)
         (process / "fd").mkdir(parents=True)
         (process / "task").mkdir()
-        for index in range(fds):
-            (process / "fd" / str(index)).touch()
+        targets = fd_targets if fd_targets is not None else tuple("/dev/null" for _ in range(fds))
+        if len(targets) != fds:
+            raise ValueError("fd target count does not match fds")
+        for index, target in enumerate(targets):
+            (process / "fd" / str(index)).symlink_to(target)
         for index in range(tasks):
             (process / "task" / str(index + 1)).mkdir()
         (process / "exe").symlink_to(exe)
@@ -208,6 +212,58 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertEqual(170_000 * 1024, sample["xray"]["pss_bytes"])
         self.assertEqual(37, sample["cgroup"]["pids_current"])
         self.assertEqual(15, sample["podlazd"]["cpu_time_ticks"])
+
+    def test_samples_only_structural_file_descriptor_categories(self) -> None:
+        cgroup_path = "/system.slice/podlazd.service"
+        self.write_cgroup(cgroup_path)
+        self.write_process(
+            101,
+            exe="/usr/bin/podlazd",
+            comm="podlazd",
+            cgroup_path=cgroup_path,
+            start_time=1001,
+            rss_kib=32000,
+            pss_kib=30000,
+            threads=8,
+            fds=6,
+            tasks=8,
+            fd_targets=(
+                "socket:[101]",
+                "socket:[102]",
+                "pipe:[201]",
+                "anon_inode:[eventpoll]",
+                "/private/runtime/file",
+                "unclassified-private-target",
+            ),
+        )
+
+        daemon = tun_soak_metrics.discover_daemon_identity(
+            daemon_pid=101,
+            proc_root=self.proc,
+            cgroup_root=self.cgroup,
+            daemon_exe="/usr/bin/podlazd",
+            expected_cgroup_suffix="/podlazd.service",
+        )
+        sample = tun_soak_metrics.collect_daemon_boundary_sample(
+            daemon,
+            proc_root=self.proc,
+            cgroup_root=self.cgroup,
+            phase="inactive-baseline",
+            sample_index=0,
+            elapsed_seconds=0,
+        )
+
+        metrics = sample["podlazd"]
+        self.assertEqual(6, metrics["fds"])
+        self.assertEqual(2, metrics["socket_fds"])
+        self.assertEqual(1, metrics["pipe_fds"])
+        self.assertEqual(1, metrics["anon_inode_fds"])
+        self.assertEqual(1, metrics["regular_fds"])
+        self.assertEqual(1, metrics["other_fds"])
+        encoded = json.dumps(sample, sort_keys=True)
+        self.assertNotIn("private/runtime", encoded)
+        self.assertNotIn("unclassified-private-target", encoded)
+        self.assertNotIn("socket:[", encoded)
 
     def test_rejects_transaction_child_not_parented_by_daemon(self) -> None:
         cgroup_path = "/system.slice/podlazd.service"
@@ -673,8 +729,23 @@ class TunSoakMetricsTests(unittest.TestCase):
         cleanup = {
             **baseline,
             "phase": "post-cleanup",
-            "cgroup": {**baseline["cgroup"], "memory_current_bytes": 45_000_000},
-            "podlazd": {**baseline["podlazd"], "rss_bytes": 43_000_000},
+            "cgroup": {
+                **baseline["cgroup"],
+                "memory_current_bytes": 45_000_000,
+                "pids_current": 12,
+            },
+            "podlazd": {
+                **baseline["podlazd"],
+                "rss_bytes": 43_000_000,
+                "threads": 12,
+                "tasks": 12,
+            },
+        }
+        reconnect_cleanup = {
+            **cleanup,
+            "sample_index": 1,
+            "cgroup": {**cleanup["cgroup"], "memory_current_bytes": 46_000_000},
+            "podlazd": {**cleanup["podlazd"], "rss_bytes": 44_000_000},
         }
 
         report = tun_soak_metrics.build_report(
@@ -682,6 +753,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             reconnect_samples=reconnect_samples,
             baseline_boundary=baseline,
             cleanup_boundary=cleanup,
+            reconnect_cleanup_boundary=reconnect_cleanup,
             provenance={
                 "podlaz_version": "0.2.26",
                 "podlaz_commit": "0123456789abcdef",
@@ -717,6 +789,7 @@ class TunSoakMetricsTests(unittest.TestCase):
 
         self.assertEqual("observation_complete", report["verdict"])
         self.assertTrue(report["lifecycle"]["cleanup"]["ok"])
+        self.assertEqual("equivalent-post-cleanup", report["lifecycle"]["cleanup"]["comparison"])
         self.assertTrue(report["lifecycle"]["reconnect"]["ok"])
         self.assertIsNone(report["trend"]["reproduced_growth_candidate"])
         self.assertEqual(75, report["configuration"]["tun_health_timeout_seconds"])
@@ -796,6 +869,7 @@ class TunSoakMetricsTests(unittest.TestCase):
                 reconnect_samples=[reconnect],
                 baseline_boundary=baseline,
                 cleanup_boundary={**baseline, "phase": "post-cleanup"},
+                reconnect_cleanup_boundary={**baseline, "phase": "post-cleanup", "sample_index": 1},
                 provenance={"podlaz_version": "0.2.26", "profile_id": "secret"},
                 configuration={"duration_seconds": 3600},
                 policy={"mode": "observe"},

@@ -70,10 +70,10 @@ PODLAZ_E2E_SOAK_DURATION_SECONDS=10800 \
 bash scripts/e2e/tun-resource-soak.sh
 ```
 
-Exact process identities and raw network/health evidence stay in the private E2E
-temporary directory. Only sanitized cgroup/procfs counters and the compact report
-belong in artifacts. The helper does not enable pprof or add a production debug
-listener.
+Exact process identities, descriptor targets, and raw network/health evidence
+stay in the private E2E temporary directory. Only sanitized cgroup/procfs counters,
+including aggregate descriptor-category counts, and the compact report belong in
+artifacts. The helper does not enable pprof or add a production debug listener.
 
 
 ## CI/CD gates

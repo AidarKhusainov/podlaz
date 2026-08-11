@@ -58,7 +58,8 @@ def _theil_sen_per_hour(points: Sequence[tuple[float, float]]) -> float:
 def _metric_noise_floor(metric: str, first: float) -> float:
     if metric.endswith("_bytes"):
         return max(8 * MIB, abs(first) * 0.05)
-    if metric.endswith((".fds", ".tasks", ".threads", ".pids_current")):
+    metric_name = metric.rsplit(".", 1)[-1]
+    if metric_name == "fds" or metric_name.endswith("_fds") or metric_name in {"tasks", "threads", "pids_current"}:
         return 1.0
     return 0.0
 
@@ -105,7 +106,20 @@ def _metric_summary(metric: str, points: Sequence[tuple[float, float]]) -> dict[
 
 def _candidate_priority(metric: str) -> tuple[int, float]:
     component, name = metric.split(".", 1)
-    name_priority = {"pss_bytes": 0, "rss_bytes": 1, "fds": 2, "tasks": 3, "threads": 4, "memory_current_bytes": 5, "pids_current": 6}
+    name_priority = {
+        "pss_bytes": 0,
+        "rss_bytes": 1,
+        "fds": 2,
+        "socket_fds": 3,
+        "pipe_fds": 4,
+        "anon_inode_fds": 5,
+        "regular_fds": 6,
+        "other_fds": 7,
+        "tasks": 8,
+        "threads": 9,
+        "memory_current_bytes": 10,
+        "pids_current": 11,
+    }
     component_priority = {"xray": 0, "podlazd": 1, "cgroup": 2}
     return (name_priority.get(name, 99) * 10 + component_priority.get(component, 9), 0.0)
 
@@ -395,6 +409,7 @@ def build_report(
     reconnect_samples: Sequence[Mapping[str, Any]],
     baseline_boundary: Mapping[str, Any],
     cleanup_boundary: Mapping[str, Any],
+    reconnect_cleanup_boundary: Mapping[str, Any],
     provenance: Mapping[str, Any],
     configuration: Mapping[str, Any],
     policy: Mapping[str, Any],
@@ -408,6 +423,8 @@ def build_report(
         raise ValueError("inactive baseline boundary is invalid")
     if cleanup_boundary.get("phase") != "post-cleanup" or cleanup_boundary.get("xray") is not None:
         raise ValueError("post-cleanup boundary is invalid")
+    if reconnect_cleanup_boundary.get("phase") != "post-cleanup" or reconnect_cleanup_boundary.get("xray") is not None:
+        raise ValueError("reconnect post-cleanup boundary is invalid")
 
     trend = summarize_samples(active_samples)
     policy_result = evaluate_policy(trend, policy)
@@ -427,10 +444,11 @@ def build_report(
         session=2,
     )
     cleanup_result = compare_cleanup_boundaries(
-        baseline=baseline_boundary,
-        cleanup=cleanup_boundary,
+        baseline=cleanup_boundary,
+        cleanup=reconnect_cleanup_boundary,
         memory_tolerance_bytes=cleanup_memory_tolerance_bytes,
     )
+    cleanup_result["comparison"] = "equivalent-post-cleanup"
     reconnect_result = compare_reconnect_boundaries(
         initial=initial_reference,
         reconnect=reconnect_reference,

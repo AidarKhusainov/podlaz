@@ -17,6 +17,24 @@ class TunResourceSoakContractTests(unittest.TestCase):
         end = text.index(next_marker, start)
         return text[start:end]
 
+    def test_reconnect_records_an_equivalent_post_cleanup_boundary(self) -> None:
+        text = self.script_text()
+        self.assertIn('RECONNECT_CLEANUP_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-post-reconnect-cleanup.json"', text)
+        self.assertIn('--reconnect-cleanup-boundary "${RECONNECT_CLEANUP_BOUNDARY}"', text)
+        self.assertGreater(
+            text.index('SOAK_PHASE="reconnect-cleanup"'),
+            text.index('SOAK_PHASE="post-cleanup"'),
+        )
+        self.assertGreater(
+            text.index('--output "${RECONNECT_CLEANUP_BOUNDARY}"'),
+            text.index('SOAK_PHASE="reconnect-cleanup"'),
+        )
+
+    def test_package_provenance_uses_the_exact_checked_out_head(self) -> None:
+        text = self.script_text()
+        self.assertIn('BUILD_COMMIT="$(git rev-parse HEAD)"', text)
+        self.assertNotIn('BUILD_COMMIT="${GITHUB_SHA:-$(git rev-parse HEAD)}"', text)
+
     def test_attribution_precedes_warmup_and_first_active_sample(self) -> None:
         text = self.script_text()
         connect = text.index('run_installed_podlaz connect --mode tun "${PROFILE_ID}"')
