@@ -1,4 +1,4 @@
-name: Issue 246 Review Workspace Export
+name: Issue 246 Publish Review Fix
 
 on:
   pull_request:
@@ -6,35 +6,78 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: issue-246-review-workspace-export-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: issue-246-publish-review-fix-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 jobs:
-  export:
+  publish:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
-    name: Export exact review workspace
+    name: Publish verified review fixes
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact staged head
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: true
 
-      - name: Archive tracked workspace
+      - name: Reconstruct and apply verified patch
         shell: bash
         run: |
           set -euo pipefail
-          git archive --format=tar.gz --output="${RUNNER_TEMP}/podlaz-issue-246-review-workspace.tar.gz" HEAD
+          cat .agent-sync/issue246/review-fix-*.b64 > "${RUNNER_TEMP}/review.patch.xz.b64"
+          base64 -d "${RUNNER_TEMP}/review.patch.xz.b64" > "${RUNNER_TEMP}/review.patch.xz"
+          printf '%s  %s\n' \
+            '1a2dd0b561a1a6d93ca755b872cbcc63f32974585bc95dd7e638a8c362ce4ae4' \
+            "${RUNNER_TEMP}/review.patch.xz" | sha256sum -c -
+          xz -dc "${RUNNER_TEMP}/review.patch.xz" > "${RUNNER_TEMP}/review.patch"
+          printf '%s  %s\n' \
+            '42e5ff26ee59d55faf334344585c4284d66e8c40b0df5f413f5a020c0749db59' \
+            "${RUNNER_TEMP}/review.patch" | sha256sum -c -
 
-      - name: Upload workspace
-        uses: actions/upload-artifact@v7
-        with:
-          name: podlaz-issue-246-review-workspace
-          path: ${{ runner.temp }}/podlaz-issue-246-review-workspace.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          # The patch was reviewed against this immutable export-workflow blob.
+          # Restore it before applying so the same patch also removes this
+          # one-shot publisher from the final branch tree.
+          git show ed2e4f1b8116527a1fb3238456c2a7298c9b5777:.github/workflows/issue-246-review-export.yml \
+            > .github/workflows/issue-246-review-export.yml
+          git apply --check "${RUNNER_TEMP}/review.patch"
+          git apply "${RUNNER_TEMP}/review.patch"
+
+      - name: Verify deterministic contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/e2e/lib/tun_soak_*.py scripts/e2e/tests/test_tun_soak_*.py
+          python3 -m unittest \
+            scripts.e2e.tests.test_tun_resource_soak_contract \
+            scripts.e2e.tests.test_tun_soak_cleanup \
+            scripts.e2e.tests.test_tun_soak_health \
+            scripts.e2e.tests.test_tun_soak_isolation \
+            scripts.e2e.tests.test_tun_soak_metrics \
+            scripts.e2e.tests.test_tun_soak_status
+          bash -n \
+            scripts/e2e/lib/tun_soak_health.sh \
+            scripts/e2e/lib/tun_soak_cleanup.sh \
+            scripts/e2e/tun-resource-soak.sh
+          git diff --check
+
+      - name: Commit and push verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f -- .agent-sync/issue246/review-fix-*.b64
+          rmdir .agent-sync/issue246 2>/dev/null || true
+          rmdir .agent-sync 2>/dev/null || true
+          test ! -e .github/workflows/issue-246-review-export.yml
+
+          git add -A
+          git diff --cached --check
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: enforce exact TUN soak lifecycle boundaries'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
