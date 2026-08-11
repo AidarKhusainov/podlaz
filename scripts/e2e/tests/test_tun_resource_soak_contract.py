@@ -35,6 +35,18 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn('BUILD_COMMIT="$(git rev-parse HEAD)"', text)
         self.assertNotIn('BUILD_COMMIT="${GITHUB_SHA:-$(git rev-parse HEAD)}"', text)
 
+    def test_raw_package_build_and_install_logs_stay_private(self) -> None:
+        text = self.script_text()
+        self.assertIn('PACKAGE_BUILD_LOG="${SOAK_PRIVATE_DIR}/package-build.log"', text)
+        self.assertIn('PACKAGE_INSTALL_LOG="${SOAK_PRIVATE_DIR}/package-install.log"', text)
+        self.assertIn('PACKAGE_REINSTALL_LOG="${SOAK_PRIVATE_DIR}/package-reinstall.log"', text)
+        self.assertIn('bash scripts/build-deb.sh >"${PACKAGE_BUILD_LOG}" 2>&1', text)
+        self.assertIn('apt install -y "./${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1', text)
+        self.assertIn('apt install --reinstall -y "./${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1', text)
+        self.assertNotIn('tun-resource-build-deb.log', text)
+        self.assertNotIn('tun-resource-apt-install.log', text)
+        self.assertNotIn('tun-resource-apt-reinstall.log', text)
+
     def test_attribution_precedes_warmup_and_first_active_sample(self) -> None:
         text = self.script_text()
         connect = text.index('run_installed_podlaz connect --mode tun "${PROFILE_ID}"')

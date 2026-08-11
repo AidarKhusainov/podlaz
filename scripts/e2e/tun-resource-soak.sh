@@ -95,6 +95,9 @@ PUBLIC_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-soak-report.json"
 FAILURE_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-failure.json"
 PROVENANCE_JSON="${SOAK_PRIVATE_DIR}/provenance.json"
 CONFIGURATION_JSON="${SOAK_PRIVATE_DIR}/configuration.json"
+PACKAGE_BUILD_LOG="${SOAK_PRIVATE_DIR}/package-build.log"
+PACKAGE_INSTALL_LOG="${SOAK_PRIVATE_DIR}/package-install.log"
+PACKAGE_REINSTALL_LOG="${SOAK_PRIVATE_DIR}/package-reinstall.log"
 DAEMON_BASELINE_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-baseline.json"
 DAEMON_CLEANUP_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-cleanup.json"
 DAEMON_RECONNECT_CLEANUP_IDENTITY="${SOAK_PRIVATE_DIR}/daemon-reconnect-cleanup.json"
@@ -591,12 +594,12 @@ BUILD_COMMIT="$(git rev-parse HEAD)"
 PODLAZ_COMMIT="${BUILD_COMMIT}" \
   PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
   PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
-  bash scripts/build-deb.sh >"${E2E_ARTIFACT_DIR}/tun-resource-build-deb.log" 2>&1
+  bash scripts/build-deb.sh >"${PACKAGE_BUILD_LOG}" 2>&1
 test -f "${DEV_DEB}" || fail "expected resource-soak package was not built"
 
 SOAK_PHASE="package-install"
-sudo -n apt install -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/tun-resource-apt-install.log" 2>&1
-sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/tun-resource-apt-reinstall.log" 2>&1
+sudo -n apt install -y "./${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1
+sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
 wait_for_daemon_socket

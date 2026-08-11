@@ -298,6 +298,11 @@ memory limit. Immediate reconnect must keep the same daemon, create a new exact
 supervised Xray identity, remain within the documented per-metric reconnect
 tolerance, and pass this second strict cleanup comparison.
 
+Raw package build, install, and reinstall command logs stay in the private E2E
+temporary directory and are removed before artifact scanning. Package provenance
+is published only through the compact structural report and verified hashes; raw
+package command output is not a public diagnostic surface.
+
 The public artifact contains only sanitized structural samples and one compact
 JSON report with exact package/Xray provenance, configuration, component-specific
 trend summaries, lifecycle verdicts, and policy verdict. It never contains
