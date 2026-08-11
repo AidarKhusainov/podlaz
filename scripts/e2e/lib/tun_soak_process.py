@@ -13,6 +13,8 @@ from typing import Any, Mapping, Sequence
 SCHEMA_VERSION = 1
 KIB = 1024
 MIB = 1024 * 1024
+PROC_NET_MAX_BYTES = 8 * MIB
+PROC_NET_MAX_LINES = 131_072
 
 # A process with one of these names may own or mutate VPN-relevant host state.
 # Discovery fails closed instead of publishing ambiguous attribution. The exact
@@ -354,11 +356,18 @@ def _directory_count(path: Path, label: str) -> int:
 
 def _read_optional_lines(path: Path) -> list[str]:
     try:
-        return path.read_text(encoding="utf-8").splitlines()
+        with path.open("rb") as handle:
+            payload = handle.read(PROC_NET_MAX_BYTES + 1)
     except FileNotFoundError:
         return []
     except OSError as exc:
         raise AttributionError("process socket inventory is unavailable") from exc
+    if len(payload) > PROC_NET_MAX_BYTES:
+        raise AttributionError("process socket inventory exceeds byte limit")
+    lines = payload.decode("utf-8", errors="surrogateescape").splitlines()
+    if len(lines) > PROC_NET_MAX_LINES:
+        raise AttributionError("process socket inventory exceeds line limit")
+    return lines
 
 
 def _parse_inet_socket_table(path: Path) -> dict[int, str]:

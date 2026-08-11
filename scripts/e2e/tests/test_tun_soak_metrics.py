@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.e2e.lib import tun_soak_analysis, tun_soak_metrics
+from scripts.e2e.lib import tun_soak_analysis, tun_soak_metrics, tun_soak_process
 
 
 class TunSoakMetricsTests(unittest.TestCase):
@@ -362,6 +362,26 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertNotIn("private/socket/path", encoded)
         self.assertNotIn("socket:[", encoded)
 
+    def test_rejects_socket_inventory_larger_than_bounded_byte_limit(self) -> None:
+        path = self.root / "oversized-proc-net"
+        path.write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+
+        with self.assertRaisesRegex(
+            tun_soak_metrics.AttributionError,
+            "process socket inventory exceeds byte limit",
+        ):
+            tun_soak_process._parse_inet_socket_table(path)
+
+    def test_rejects_socket_inventory_with_too_many_rows(self) -> None:
+        path = self.root / "too-many-proc-net-rows"
+        path.write_text("header\n" + "\n" * 131_072, encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            tun_soak_metrics.AttributionError,
+            "process socket inventory exceeds line limit",
+        ):
+            tun_soak_process._parse_inet_socket_table(path)
+
     def test_rejects_transaction_child_not_parented_by_daemon(self) -> None:
         cgroup_path = "/system.slice/podlazd.service"
         config_ref = "/run/podlaz/generated/xray.json"
@@ -651,6 +671,61 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertNotIn("cgroup.memory_peak_bytes", summary["growth_candidates"])
         self.assertEqual("historical_high_water_mark", summary["metrics"]["cgroup.memory_peak_bytes"]["semantics"])
 
+
+    def test_summarize_prefers_exact_tcp_established_growth_over_aggregate_fd_counts(self) -> None:
+        samples = []
+        for index in range(8):
+            xray = {name: 0 for name in tun_soak_process.PROCESS_METRICS}
+            xray.update(
+                {
+                    "rss_bytes": 48_000_000,
+                    "pss_bytes": 47_000_000,
+                    "threads": 10,
+                    "tasks": 10,
+                    "fds": 30 + index * 3,
+                    "socket_fds": 22 + index * 3,
+                    "tcp_socket_fds": 22 + index * 3,
+                    "tcp_established_socket_fds": 22 + index * 3,
+                    "cpu_time_ticks": index * 10,
+                }
+            )
+            podlazd = {name: 0 for name in tun_soak_process.PROCESS_METRICS}
+            podlazd.update(
+                {
+                    "rss_bytes": 24_000_000,
+                    "pss_bytes": 22_000_000,
+                    "threads": 12,
+                    "tasks": 12,
+                    "fds": 14,
+                    "cpu_time_ticks": index,
+                }
+            )
+            samples.append(
+                {
+                    "schema_version": 1,
+                    "phase": "active",
+                    "session": 1,
+                    "sample_index": index,
+                    "elapsed_seconds": index * 600,
+                    "cgroup": {
+                        "memory_current_bytes": 36_000_000,
+                        "memory_peak_bytes": 40_000_000,
+                        "pids_current": 22,
+                        "cpu_usage_usec": index * 10_000,
+                    },
+                    "podlazd": podlazd,
+                    "xray": xray,
+                }
+            )
+
+        summary = tun_soak_metrics.summarize_samples(samples)
+
+        self.assertEqual(
+            "xray.tcp_established_socket_fds",
+            summary["reproduced_growth_candidate"],
+        )
+        self.assertIn("xray.fds", summary["growth_candidates"])
+        self.assertIn("xray.socket_fds", summary["growth_candidates"])
 
     def test_reconnect_requires_a_new_supervised_child_identity(self) -> None:
         daemon = tun_soak_metrics.ProcessIdentity(
