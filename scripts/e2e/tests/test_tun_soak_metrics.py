@@ -265,6 +265,101 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertNotIn("unclassified-private-target", encoded)
         self.assertNotIn("socket:[", encoded)
 
+    def test_samples_socket_protocol_and_state_counts_without_network_identifiers(self) -> None:
+        cgroup_path = "/system.slice/podlazd.service"
+        self.write_cgroup(cgroup_path)
+        self.write_process(
+            101,
+            exe="/usr/bin/podlazd",
+            comm="podlazd",
+            cgroup_path=cgroup_path,
+            start_time=1001,
+            rss_kib=32000,
+            pss_kib=30000,
+            threads=8,
+            fds=7,
+            tasks=8,
+            fd_targets=(
+                "socket:[101]",
+                "socket:[102]",
+                "socket:[103]",
+                "socket:[104]",
+                "socket:[105]",
+                "socket:[106]",
+                "socket:[999]",
+            ),
+        )
+        net = self.proc / "101" / "net"
+        net.mkdir()
+        (net / "tcp").write_text(
+            "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
+            "0: 0100007F:1F90 00000000:0000 0A 0:0 00:0 0 0 0 101\n"
+            "1: 0A000001:01BB 0A000002:C001 01 0:0 00:0 0 0 0 102\n",
+            encoding="utf-8",
+        )
+        (net / "tcp6").write_text(
+            "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
+            "0: 00000000000000000000000000000001:01BB 00000000000000000000000000000002:C002 06 0:0 00:0 0 0 0 103\n",
+            encoding="utf-8",
+        )
+        (net / "udp").write_text(
+            "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
+            "0: 0100007F:C350 00000000:0000 07 0:0 00:0 0 0 0 104\n"
+            "1: 0A000001:C351 0A000003:0035 01 0:0 00:0 0 0 0 105\n",
+            encoding="utf-8",
+        )
+        (net / "udp6").write_text(
+            "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n",
+            encoding="utf-8",
+        )
+        (net / "unix").write_text(
+            "Num RefCount Protocol Flags Type St Inode Path\n"
+            "0000000000000000: 00000002 00000000 00010000 0001 01 106 /private/socket/path\n",
+            encoding="utf-8",
+        )
+
+        daemon = tun_soak_metrics.discover_daemon_identity(
+            daemon_pid=101,
+            proc_root=self.proc,
+            cgroup_root=self.cgroup,
+            daemon_exe="/usr/bin/podlazd",
+            expected_cgroup_suffix="/podlazd.service",
+        )
+        sample = tun_soak_metrics.collect_daemon_boundary_sample(
+            daemon,
+            proc_root=self.proc,
+            cgroup_root=self.cgroup,
+            phase="inactive-baseline",
+            sample_index=0,
+            elapsed_seconds=0,
+        )
+
+        metrics = sample["podlazd"]
+        self.assertEqual(3, metrics["tcp_socket_fds"])
+        self.assertEqual(1, metrics["tcp_listen_socket_fds"])
+        self.assertEqual(1, metrics["tcp_established_socket_fds"])
+        self.assertEqual(1, metrics["tcp_other_socket_fds"])
+        self.assertEqual(2, metrics["udp_socket_fds"])
+        self.assertEqual(1, metrics["udp_connected_socket_fds"])
+        self.assertEqual(1, metrics["udp_unconnected_socket_fds"])
+        self.assertEqual(0, metrics["udp_other_socket_fds"])
+        self.assertEqual(1, metrics["unix_socket_fds"])
+        self.assertEqual(1, metrics["unclassified_socket_fds"])
+        self.assertEqual(metrics["socket_fds"], sum(
+            metrics[name]
+            for name in (
+                "tcp_socket_fds",
+                "udp_socket_fds",
+                "unix_socket_fds",
+                "unclassified_socket_fds",
+            )
+        ))
+        encoded = json.dumps(sample, sort_keys=True)
+        self.assertNotIn("0100007F", encoded)
+        self.assertNotIn("0A000001", encoded)
+        self.assertNotIn("private/socket/path", encoded)
+        self.assertNotIn("socket:[", encoded)
+
     def test_rejects_transaction_child_not_parented_by_daemon(self) -> None:
         cgroup_path = "/system.slice/podlazd.service"
         config_ref = "/run/podlaz/generated/xray.json"

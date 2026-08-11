@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -39,6 +40,16 @@ PROCESS_METRICS = (
     "tasks",
     "fds",
     "socket_fds",
+    "tcp_socket_fds",
+    "tcp_listen_socket_fds",
+    "tcp_established_socket_fds",
+    "tcp_other_socket_fds",
+    "udp_socket_fds",
+    "udp_connected_socket_fds",
+    "udp_unconnected_socket_fds",
+    "udp_other_socket_fds",
+    "unix_socket_fds",
+    "unclassified_socket_fds",
     "pipe_fds",
     "anon_inode_fds",
     "regular_fds",
@@ -341,7 +352,118 @@ def _directory_count(path: Path, label: str) -> int:
         raise AttributionError(f"{label} inventory is unavailable") from exc
 
 
-def _file_descriptor_metrics(path: Path) -> dict[str, int]:
+def _read_optional_lines(path: Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise AttributionError("process socket inventory is unavailable") from exc
+
+
+def _parse_inet_socket_table(path: Path) -> dict[int, str]:
+    records: dict[int, str] = {}
+    for raw in _read_optional_lines(path)[1:]:
+        fields = raw.split()
+        if not fields:
+            continue
+        if len(fields) < 10 or not fields[9].isdigit() or re.fullmatch(r"[0-9A-Fa-f]{2}", fields[3]) is None:
+            raise AttributionError("process socket inventory is malformed")
+        inode = int(fields[9])
+        if inode in records:
+            raise AttributionError("process socket inventory contains duplicate inode evidence")
+        records[inode] = fields[3].upper()
+    return records
+
+
+def _parse_unix_socket_table(path: Path) -> set[int]:
+    records: set[int] = set()
+    for raw in _read_optional_lines(path)[1:]:
+        fields = raw.split()
+        if not fields:
+            continue
+        if len(fields) < 7 or not fields[6].isdigit():
+            raise AttributionError("process UNIX socket inventory is malformed")
+        inode = int(fields[6])
+        if inode in records:
+            raise AttributionError("process UNIX socket inventory contains duplicate inode evidence")
+        records.add(inode)
+    return records
+
+
+def _socket_protocol_metrics(net_path: Path, socket_inodes: Sequence[int | None]) -> dict[str, int]:
+    tcp = _parse_inet_socket_table(net_path / "tcp")
+    tcp6 = _parse_inet_socket_table(net_path / "tcp6")
+    udp = _parse_inet_socket_table(net_path / "udp")
+    udp6 = _parse_inet_socket_table(net_path / "udp6")
+    unix = _parse_unix_socket_table(net_path / "unix")
+
+    tcp_records = dict(tcp)
+    for inode, state in tcp6.items():
+        if inode in tcp_records:
+            raise AttributionError("process socket inventory contains ambiguous TCP inode evidence")
+        tcp_records[inode] = state
+    udp_records = dict(udp)
+    for inode, state in udp6.items():
+        if inode in udp_records:
+            raise AttributionError("process socket inventory contains ambiguous UDP inode evidence")
+        udp_records[inode] = state
+    if (set(tcp_records) & set(udp_records)) or (set(tcp_records) & unix) or (set(udp_records) & unix):
+        raise AttributionError("process socket inventory contains ambiguous protocol evidence")
+
+    result = {
+        "tcp_socket_fds": 0,
+        "tcp_listen_socket_fds": 0,
+        "tcp_established_socket_fds": 0,
+        "tcp_other_socket_fds": 0,
+        "udp_socket_fds": 0,
+        "udp_connected_socket_fds": 0,
+        "udp_unconnected_socket_fds": 0,
+        "udp_other_socket_fds": 0,
+        "unix_socket_fds": 0,
+        "unclassified_socket_fds": 0,
+    }
+    for inode in socket_inodes:
+        if inode is None:
+            result["unclassified_socket_fds"] += 1
+            continue
+        if inode in tcp_records:
+            result["tcp_socket_fds"] += 1
+            state = tcp_records[inode]
+            if state == "0A":
+                result["tcp_listen_socket_fds"] += 1
+            elif state == "01":
+                result["tcp_established_socket_fds"] += 1
+            else:
+                result["tcp_other_socket_fds"] += 1
+            continue
+        if inode in udp_records:
+            result["udp_socket_fds"] += 1
+            state = udp_records[inode]
+            if state == "01":
+                result["udp_connected_socket_fds"] += 1
+            elif state == "07":
+                result["udp_unconnected_socket_fds"] += 1
+            else:
+                result["udp_other_socket_fds"] += 1
+            continue
+        if inode in unix:
+            result["unix_socket_fds"] += 1
+            continue
+        result["unclassified_socket_fds"] += 1
+
+    classified = (
+        result["tcp_socket_fds"]
+        + result["udp_socket_fds"]
+        + result["unix_socket_fds"]
+        + result["unclassified_socket_fds"]
+    )
+    if classified != len(socket_inodes):
+        raise AttributionError("process socket descriptor classification is inconsistent")
+    return result
+
+
+def _file_descriptor_metrics(path: Path) -> tuple[dict[str, int], list[int | None]]:
     try:
         entries = list(path.iterdir())
     except OSError as exc:
@@ -355,6 +477,7 @@ def _file_descriptor_metrics(path: Path) -> dict[str, int]:
         "regular_fds": 0,
         "other_fds": 0,
     }
+    socket_inodes: list[int | None] = []
     for entry in entries:
         try:
             target = os.readlink(entry)
@@ -368,6 +491,8 @@ def _file_descriptor_metrics(path: Path) -> dict[str, int]:
             raise AttributionError("process file descriptor classification is unavailable") from exc
         if target.startswith("socket:["):
             result["socket_fds"] += 1
+            match = re.fullmatch(r"socket:\[([0-9]+)\]", target)
+            socket_inodes.append(int(match.group(1)) if match is not None else None)
         elif target.startswith("pipe:["):
             result["pipe_fds"] += 1
         elif target.startswith("anon_inode:"):
@@ -376,8 +501,7 @@ def _file_descriptor_metrics(path: Path) -> dict[str, int]:
             result["regular_fds"] += 1
         else:
             result["other_fds"] += 1
-    return result
-
+    return result, socket_inodes
 
 def _process_metrics(identity: ProcessIdentity, proc_root: Path) -> dict[str, int | None]:
     _assert_identity_current(identity, proc_root)
@@ -391,13 +515,15 @@ def _process_metrics(identity: ProcessIdentity, proc_root: Path) -> dict[str, in
     threads = status.get("Threads")
     if threads is None:
         raise AttributionError("process thread count is unavailable")
-    fd_metrics = _file_descriptor_metrics(process / "fd")
+    fd_metrics, socket_inodes = _file_descriptor_metrics(process / "fd")
+    socket_metrics = _socket_protocol_metrics(process / "net", socket_inodes)
     return {
         "rss_bytes": rss,
         "pss_bytes": smaps.get("Pss"),
         "threads": threads,
         "tasks": _directory_count(process / "task", "process task"),
         **fd_metrics,
+        **socket_metrics,
         "cpu_time_ticks": utime + stime,
     }
 
