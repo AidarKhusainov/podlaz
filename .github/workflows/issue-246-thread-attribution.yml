@@ -1,0 +1,187 @@
+name: Issue 246 NSS and Resolver Thread Attribution
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-246-nss-resolver-thread-attribution-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  observe:
+    if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
+    name: Thread attribution ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    environment: vpn-e2e
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [default, osusergo, netdns-go, osusergo-netdns-go]
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+      PODLAZ_E2E_SOAK_DURATION_SECONDS: '360'
+      PODLAZ_E2E_SOAK_WARMUP_SECONDS: '30'
+      PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS: '30'
+      PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS: '60'
+      PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS: '3'
+      PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS: '3'
+      PODLAZ_E2E_POLKIT_RULE: /etc/polkit-1/rules.d/49-podlaz-e2e-resource-soak.rules
+      PODLAZ_E2E_RESOLVER_DROPIN: /etc/systemd/system/podlazd.service.d/49-issue-246-resolver.conf
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.5'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install E2E-only authorization and experiment mode
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner_user="$(id -un)"
+          [[ "${runner_user}" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends polkitd
+          sudo tee "${PODLAZ_E2E_POLKIT_RULE}" >/dev/null <<EOF
+          polkit.addRule(function(action, subject) {
+            if (action.id.indexOf("io.github.aidarkhusainov.podlaz.") === 0 &&
+                subject.user === "${runner_user}") {
+              return polkit.Result.YES;
+            }
+          });
+          EOF
+          sudo chmod 0644 "${PODLAZ_E2E_POLKIT_RULE}"
+          sudo rm -f -- "${PODLAZ_E2E_RESOLVER_DROPIN}"
+          if [[ "${{ matrix.mode }}" == "netdns-go" || "${{ matrix.mode }}" == "osusergo-netdns-go" ]]; then
+            sudo install -d -m 0755 "$(dirname "${PODLAZ_E2E_RESOLVER_DROPIN}")"
+            sudo tee "${PODLAZ_E2E_RESOLVER_DROPIN}" >/dev/null <<'EOF'
+          [Service]
+          Environment=GODEBUG=netdns=go+2
+          EOF
+            sudo chmod 0644 "${PODLAZ_E2E_RESOLVER_DROPIN}"
+          fi
+          sudo systemctl daemon-reload
+          sudo systemctl restart polkit.service
+          sudo systemctl is-active --quiet polkit.service
+
+      - name: Run installed-package thread attribution
+        id: soak
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          set +e
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          if [[ "${{ matrix.mode }}" == "osusergo" || "${{ matrix.mode }}" == "osusergo-netdns-go" ]]; then
+            GOFLAGS='-tags=osusergo' bash scripts/e2e/tun-resource-soak.sh
+          else
+            bash scripts/e2e/tun-resource-soak.sh
+          fi
+          soak_exit=$?
+          printf 'exit_code=%s\n' "${soak_exit}" >>"${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Record structural experiment verdict
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/podlaz-e2e-artifacts"
+          mkdir -p "${artifact_dir}"
+          python3 - "${artifact_dir}/thread-attribution-experiment.json" \
+            "${{ matrix.mode }}" "${{ steps.soak.outputs.exit_code }}" <<'PY'
+          import json
+          import os
+          import sys
+
+          path, mode, exit_code = sys.argv[1:]
+          payload = {
+              "schema_version": 1,
+              "mode": mode,
+              "harness_exit_code": int(exit_code or "255"),
+          }
+          temporary = path + ".tmp"
+          with open(temporary, "w", encoding="utf-8") as handle:
+              json.dump(payload, handle, sort_keys=True)
+              handle.write("\n")
+          os.replace(temporary, path)
+          PY
+
+      - name: Recover and remove experiment configuration
+        id: cleanup
+        if: always()
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set +e
+          PODLAZ_E2E_PURGE_PACKAGE=true \
+            timeout --signal=TERM --kill-after=30s 900s \
+            bash scripts/e2e/tun-package-cleanup.sh
+          cleanup_exit=$?
+          sudo rm -f -- "${PODLAZ_E2E_RESOLVER_DROPIN}" "${PODLAZ_E2E_POLKIT_RULE}"
+          sudo systemctl daemon-reload
+          sudo systemctl restart polkit.service
+          sudo systemctl is-active --quiet polkit.service
+          exit "${cleanup_exit}"
+
+      - name: Scan evidence before upload
+        id: evidence_scan
+        if: ${{ always() && steps.cleanup.outcome == 'success' }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          artifact_dir="${RUNNER_TEMP}/podlaz-e2e-artifacts"
+          mkdir -p "${artifact_dir}"
+          mapfile -t host_needles < <(
+            {
+              hostname -f 2>/dev/null || true
+              ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
+              ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
+              ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
+              resolvectl status --no-pager 2>/dev/null | awk -F: '/Current DNS Server|DNS Servers|DNS Domain/ {gsub(/^[[:space:]]+/, "", $2); for (i=1; i<=split($2, values, /[[:space:]]+/); i++) print values[i]}'
+              curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" 2>/dev/null || true
+            } | sed '/^[[:space:]]*$/d' | sort -u
+          )
+          python3 scripts/e2e/lib/redaction_scan.py \
+            sensitive-values \
+            "${artifact_dir}" \
+            "${artifact_dir}/thread-attribution-redaction-scan.txt" \
+            "${PODLAZ_E2E_PROFILE_URI}" \
+            "${PODLAZ_E2E_PROFILE_URI_LIST}" \
+            "${PODLAZ_E2E_DNS_CHECK_HOST}" \
+            "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" \
+            "${host_needles[@]}"
+
+      - name: Remove private E2E temp state
+        id: private_cleanup
+        if: always()
+        shell: bash
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+
+      - name: Upload thread-attribution evidence
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: issue-246-thread-${{ matrix.mode }}-evidence
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: error
+          retention-days: 7
