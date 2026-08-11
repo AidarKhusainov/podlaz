@@ -1,0 +1,33 @@
+--- a/scripts/e2e/lib/tun_soak_process.py
++++ b/scripts/e2e/lib/tun_soak_process.py
+@@ -370,6 +370,8 @@
+         if len(fields) < 10 or not fields[9].isdigit() or re.fullmatch(r"[0-9A-Fa-f]{2}", fields[3]) is None:
+             raise AttributionError("process socket inventory is malformed")
+         inode = int(fields[9])
++        if inode == 0:
++            continue
+         if inode in records:
+             raise AttributionError("process socket inventory contains duplicate inode evidence")
+         records[inode] = fields[3].upper()
+@@ -385,6 +387,8 @@
+         if len(fields) < 7 or not fields[6].isdigit():
+             raise AttributionError("process UNIX socket inventory is malformed")
+         inode = int(fields[6])
++        if inode == 0:
++            continue
+         if inode in records:
+             raise AttributionError("process UNIX socket inventory contains duplicate inode evidence")
+         records.add(inode)
+--- a/scripts/e2e/tests/test_tun_soak_metrics.py
++++ b/scripts/e2e/tests/test_tun_soak_metrics.py
+@@ -294,7 +294,9 @@
+         (net / "tcp").write_text(
+             "sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
+             "0: 0100007F:1F90 00000000:0000 0A 0:0 00:0 0 0 0 101\n"
+-            "1: 0A000001:01BB 0A000002:C001 01 0:0 00:0 0 0 0 102\n",
++            "1: 0A000001:01BB 0A000002:C001 01 0:0 00:0 0 0 0 102\n"
++            "2: 00000000:0000 00000000:0000 06 0:0 00:0 0 0 0 0\n"
++            "3: 00000000:0000 00000000:0000 06 0:0 00:0 0 0 0 0\n",
+             encoding="utf-8",
+         )
+         (net / "tcp6").write_text(
