@@ -26,10 +26,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Reconstruct and apply verified patch
+      - name: Detect staged patch
+        id: staged
         shell: bash
         run: |
           set -euo pipefail
+          if compgen -G '.agent-sync/issue246/review-fix-*.b64' >/dev/null; then
+            echo 'present=true' >> "${GITHUB_OUTPUT}"
+          else
+            echo 'present=false' >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Reconstruct and apply verified patch
+        if: steps.staged.outputs.present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/workflows/issue-246-review-export.yml "${RUNNER_TEMP}/publisher.yml"
           cat .agent-sync/issue246/review-fix-*.b64 > "${RUNNER_TEMP}/review.patch.xz.b64"
           base64 -d "${RUNNER_TEMP}/review.patch.xz.b64" > "${RUNNER_TEMP}/review.patch.xz"
           printf '%s  %s\n' \
@@ -40,15 +53,19 @@ jobs:
             '42e5ff26ee59d55faf334344585c4284d66e8c40b0df5f413f5a020c0749db59' \
             "${RUNNER_TEMP}/review.patch" | sha256sum -c -
 
-          # The patch was reviewed against this immutable export-workflow blob.
-          # Restore it before applying so the same patch also removes this
-          # one-shot publisher from the final branch tree.
           git show ed2e4f1b8116527a1fb3238456c2a7298c9b5777:.github/workflows/issue-246-review-export.yml \
             > .github/workflows/issue-246-review-export.yml
           git apply --check "${RUNNER_TEMP}/review.patch"
           git apply "${RUNNER_TEMP}/review.patch"
 
+          # GitHub's workflow token may not modify workflow files. Keep both
+          # workflow paths unchanged in this push; the connected GitHub app
+          # applies their final reviewed state separately.
+          cp "${RUNNER_TEMP}/publisher.yml" .github/workflows/issue-246-review-export.yml
+          git checkout HEAD -- .github/workflows/e2e-tun-resource-soak.yml
+
       - name: Verify deterministic contracts
+        if: steps.staged.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -66,15 +83,18 @@ jobs:
             scripts/e2e/tun-resource-soak.sh
           git diff --check
 
-      - name: Commit and push verified patch
+      - name: Commit and push verified non-workflow patch
+        if: steps.staged.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf -- {} +
           rm -f -- .agent-sync/issue246/review-fix-*.b64
           rmdir .agent-sync/issue246 2>/dev/null || true
           rmdir .agent-sync 2>/dev/null || true
-          test ! -e .github/workflows/issue-246-review-export.yml
 
+          git diff --quiet -- .github/workflows/e2e-tun-resource-soak.yml
+          git diff --quiet -- .github/workflows/issue-246-review-export.yml
           git add -A
           git diff --cached --check
           git config user.name 'podlaz issue 246 automation'
