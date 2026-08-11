@@ -1,4 +1,4 @@
-name: Issue 246 Self-hosted Resource Observation
+name: Issue 246 Extended Resource Observation
 
 on:
   pull_request:
@@ -15,8 +15,8 @@ concurrency:
 jobs:
   observe:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
-    name: Self-hosted current-package TUN resource observation
-    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    name: Extended current-package TUN resource observation
+    runs-on: ubuntu-24.04
     environment: vpn-e2e
     timeout-minutes: 120
     env:
@@ -31,6 +31,7 @@ jobs:
       PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES: '5'
       PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS: '3'
       PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS: '3'
+      PODLAZ_E2E_POLKIT_RULE: /etc/polkit-1/rules.d/49-podlaz-e2e-resource-soak.rules
 
     steps:
       - name: Checkout exact PR head
@@ -46,6 +47,27 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+
+      - name: Install E2E-only Polkit authorization rule
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner_user="$(id -un)"
+          [[ "${runner_user}" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends polkitd
+          sudo tee "${PODLAZ_E2E_POLKIT_RULE}" >/dev/null <<EOF
+          polkit.addRule(function(action, subject) {
+            if (action.id.indexOf("io.github.aidarkhusainov.podlaz.") === 0 &&
+                subject.user === "${runner_user}") {
+              return polkit.Result.YES;
+            }
+          });
+          EOF
+          sudo chmod 0644 "${PODLAZ_E2E_POLKIT_RULE}"
+          sudo systemctl restart polkit.service
+          sudo systemctl is-active --quiet polkit.service
 
       - name: Run 30-minute installed-package observation
         timeout-minutes: 90
@@ -64,9 +86,19 @@ jobs:
             timeout --signal=TERM --kill-after=30s 900s \
             bash scripts/e2e/tun-package-cleanup.sh
 
+      - name: Remove E2E-only Polkit authorization rule
+        id: polkit_cleanup
+        if: always()
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          sudo rm -f -- "${PODLAZ_E2E_POLKIT_RULE}"
+          sudo systemctl restart polkit.service
+          sudo systemctl is-active --quiet polkit.service
+
       - name: Scan evidence before upload
         id: evidence_scan
-        if: ${{ always() && steps.cleanup.outcome == 'success' }}
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.polkit_cleanup.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         run: |
@@ -98,11 +130,11 @@ jobs:
         shell: bash
         run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
 
-      - name: Upload sanitized self-hosted observation evidence
-        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+      - name: Upload sanitized observation evidence
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.polkit_cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
-          name: issue-246-self-hosted-current-package-observation
+          name: issue-246-extended-current-package-observation
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: error
           retention-days: 7
