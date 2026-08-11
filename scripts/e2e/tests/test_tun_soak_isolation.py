@@ -123,8 +123,9 @@ class TunSoakIsolationTests(unittest.TestCase):
         dev: str = "",
         protocol: str = "",
         scope: str = "",
+        **overrides: object,
     ) -> dict[str, object]:
-        return {
+        value: dict[str, object] = {
             "family": family,
             "table": table,
             "type": "unicast",
@@ -140,6 +141,72 @@ class TunSoakIsolationTests(unittest.TestCase):
             "nhid": None,
             "multipath": [],
         }
+        value.update(overrides)
+        return value
+
+    def active_snapshot_and_manifest(self) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+        baseline = self.baseline()
+        current = copy.deepcopy(baseline)
+        current["links"].append(
+            {
+                "ifindex": 9,
+                "ifname": "podlaz0",
+                "kind": "tun",
+                "master": None,
+                "mtu": 1500,
+                "link_type": "none",
+            }
+        )
+        current["routes_v4"].extend(
+            [
+                self.route("ipv4", "main", "198.51.100.7/32", gateway="192.0.2.1", dev="eth0"),
+                self.route("ipv4", "51820", "default", dev="podlaz0", scope="link"),
+            ]
+        )
+        current["rules_v4"].extend(
+            [
+                self.rule("ipv4", 9999, "main", destination="198.51.100.7/32"),
+                self.rule("ipv4", 10000, "51820"),
+            ]
+        )
+        current["nftables"] = [
+            {"table": {"family": "inet", "name": "podlaz"}},
+            {"chain": {"family": "inet", "table": "podlaz", "name": "output"}},
+        ]
+        current["resolved"]["links"].append(
+            {
+                "ifname": "podlaz0",
+                "lines": ["DNS Domain: ~.", "DefaultRoute setting: yes"],
+            }
+        )
+        manifest = {
+            "routes": [
+                self.route(
+                    "ipv4",
+                    "main",
+                    "198.51.100.7/32",
+                    gateway="192.0.2.1",
+                    dev="eth0",
+                ),
+                self.route(
+                    "ipv4",
+                    "51820",
+                    "default",
+                    dev="podlaz0",
+                    scope="link",
+                ),
+            ],
+            "rules": [
+                self.rule(
+                    "ipv4",
+                    9999,
+                    "main",
+                    destination="198.51.100.7/32",
+                ),
+                self.rule("ipv4", 10000, "51820"),
+            ],
+        }
+        return baseline, current, manifest
 
     def test_command_output_limit_terminates_producer_before_timeout(self) -> None:
         started = time.monotonic()
@@ -263,14 +330,36 @@ class TunSoakIsolationTests(unittest.TestCase):
             }
         )
 
-        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "tunnel-style link"):
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "physical dedicated-runner uplink"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_modified_default_priority_rule_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["rules_v4"][1]["fwmark"] = "1"
+        snapshot["rules_v4"][1]["fwmask"] = "4294967295"
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "canonical default policy-rule set"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_duplicate_default_priority_rule_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["rules_v4"].append(copy.deepcopy(snapshot["rules_v4"][1]))
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "canonical default policy-rule set"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_virtual_default_uplink_is_rejected_without_process_name_evidence(self) -> None:
+        snapshot = self.baseline()
+        snapshot["links"][1]["kind"] = "veth"
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "physical dedicated-runner uplink"):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
     def test_unknown_policy_routing_is_rejected_without_process_name_evidence(self) -> None:
         snapshot = self.baseline()
         snapshot["rules_v4"].append(self.rule("ipv4", 12000, "12000"))
 
-        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "foreign policy routing"):
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "canonical default policy-rule set"):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
     def test_preexisting_main_table_bypass_route_is_rejected(self) -> None:
@@ -302,82 +391,37 @@ class TunSoakIsolationTests(unittest.TestCase):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
     def test_exact_podlaz_projection_is_removed_before_baseline_comparison(self) -> None:
-        baseline = self.baseline()
-        current = copy.deepcopy(baseline)
-        current["links"].append(
-            {
-                "ifindex": 9,
-                "ifname": "podlaz0",
-                "kind": "tun",
-                "master": None,
-                "mtu": 1500,
-                "link_type": "none",
-            }
-        )
-        current["routes_v4"].extend(
-            [
-                self.route("ipv4", "main", "198.51.100.7/32", gateway="192.0.2.1", dev="eth0"),
-                self.route("ipv4", "51820", "default", dev="podlaz0"),
-            ]
-        )
-        current["rules_v4"].extend(
-            [
-                self.rule("ipv4", 9999, "main", destination="198.51.100.7/32"),
-                self.rule("ipv4", 10000, "51820", fwmark="51820"),
-            ]
-        )
-        current["nftables"] = [
-            {"table": {"family": "inet", "name": "podlaz"}},
-            {"chain": {"family": "inet", "table": "podlaz", "name": "output"}},
-        ]
-        current["resolved"]["links"].append(
-            {
-                "ifname": "podlaz0",
-                "lines": ["DNS Domain: ~.", "DefaultRoute setting: yes"],
-            }
-        )
-        manifest = {
-            "routes": [
-                {
-                    "family": "ipv4",
-                    "table": "main",
-                    "dst": "198.51.100.7/32",
-                    "gateway": "192.0.2.1",
-                    "dev": "eth0",
-                },
-                {
-                    "family": "ipv4",
-                    "table": "51820",
-                    "dst": "default",
-                    "gateway": "",
-                    "dev": "podlaz0",
-                },
-            ],
-            "rules": [
-                {
-                    "family": "ipv4",
-                    "priority": 9999,
-                    "table": "main",
-                    "source": "",
-                    "destination": "198.51.100.7/32",
-                    "fwmark": "",
-                },
-                {
-                    "family": "ipv4",
-                    "priority": 10000,
-                    "table": "51820",
-                    "source": "",
-                    "destination": "",
-                    "fwmark": "51820",
-                },
-            ],
-        }
+        baseline, current, manifest = self.active_snapshot_and_manifest()
 
         tun_soak_isolation.assert_matches_baseline(
             baseline=baseline,
             current=current,
             manifest=manifest,
         )
+
+    def test_route_metric_change_is_not_subtracted_as_podlaz_owned(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        managed_route = next(route for route in current["routes_v4"] if route["table"] == "51820")
+        managed_route["metric"] = 50
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "exact Podlaz route projection"):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+                manifest=manifest,
+            )
+
+    def test_rule_iif_change_is_not_subtracted_as_podlaz_owned(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        managed_rule = next(rule for rule in current["rules_v4"] if rule["priority"] == 10000)
+        managed_rule["iif"] = "eth0"
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "exact Podlaz policy rule projection"):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+                manifest=manifest,
+            )
 
     def test_hex_manifest_mark_matches_decimal_kernel_rule_evidence(self) -> None:
         actual = self.rule(
@@ -387,15 +431,13 @@ class TunSoakIsolationTests(unittest.TestCase):
             fwmark="51820",
             fwmask="4294967295",
         )
-        expected = {
-            "family": "ipv4",
-            "priority": 10000,
-            "table": "51820",
-            "source": "all",
-            "destination": "all",
-            "fwmark": "51820",
-            "fwmask": "4294967295",
-        }
+        expected = self.rule(
+            "ipv4",
+            10000,
+            "51820",
+            fwmark="51820",
+            fwmask="4294967295",
+        )
 
         self.assertTrue(tun_soak_isolation._rule_matches(actual, expected))
         self.assertEqual(("51820", "4294967295"), tun_soak_isolation._split_mark("0xca6c/0xffffffff"))

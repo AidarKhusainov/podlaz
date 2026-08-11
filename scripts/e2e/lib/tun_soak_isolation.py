@@ -22,38 +22,12 @@ COMMAND_TIMEOUT_SECONDS = 15
 PODLAZ_LINK = "podlaz0"
 PODLAZ_NFT_FAMILY = "inet"
 PODLAZ_NFT_TABLE = "podlaz"
-DEFAULT_RULES = frozenset(
-    {
-        (0, "local"),
-        (32766, "main"),
-        (32767, "default"),
-    }
-)
-SUSPICIOUS_LINK_KINDS = frozenset(
-    {
-        "bareudp",
-        "erspan",
-        "geneve",
-        "gre",
-        "gretap",
-        "gtp",
-        "ip6gre",
-        "ip6gretap",
-        "ip6tnl",
-        "ipip",
-        "l2tpeth",
-        "macsec",
-        "rmnet",
-        "sit",
-        "tap",
-        "tun",
-        "vti",
-        "vti6",
-        "vxlan",
-        "wireguard",
-        "xfrm",
-    }
-)
+DEFAULT_RULE_LAYOUT = {
+    "ipv4": ((0, "local"), (32766, "main"), (32767, "default")),
+    "ipv6": ((0, "local"), (32766, "main")),
+}
+DEDICATED_UPLINK_LINK_TYPE = "ether"
+
 
 
 class IsolationError(RuntimeError):
@@ -506,22 +480,74 @@ def normalize_snapshot(raw: Mapping[str, Any], *, network_namespace_inode: int) 
     }
 
 
-def _default_route_devices(snapshot: Mapping[str, Any]) -> set[str]:
-    devices = set()
+def _structural_sort(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        (dict(item) for item in items),
+        key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+    )
+
+
+def _canonical_default_rule(family: str, priority: int, table: str) -> dict[str, Any]:
+    return {
+        "family": family,
+        "priority": priority,
+        "table": table,
+        "action": "to_tbl",
+        "source": "all",
+        "destination": "all",
+        "fwmark": "",
+        "fwmask": "",
+        "iif": "",
+        "oif": "",
+        "l3mdev": False,
+        "suppress_prefixlength": None,
+        "uidrange": "",
+    }
+
+
+def _validate_canonical_default_rules(rules: Sequence[Mapping[str, Any]], family: str) -> None:
+    layout = DEFAULT_RULE_LAYOUT.get(family)
+    if layout is None:
+        raise IsolationError("policy-rule family is unsupported")
+    expected = _structural_sort(
+        [_canonical_default_rule(family, priority, table) for priority, table in layout]
+    )
+    if _structural_sort(rules) != expected:
+        raise IsolationError("canonical default policy-rule set is missing, modified, or duplicated")
+
+
+def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:
+    return (
+        str(link.get("kind", "")) == ""
+        and str(link.get("link_type", "")) == DEDICATED_UPLINK_LINK_TYPE
+        and link.get("master") in {None, "", 0}
+    )
+
+
+def _default_routes(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    defaults: list[dict[str, Any]] = []
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
         if not isinstance(routes, list):
             raise IsolationError("route inventory is unavailable")
-        for route in routes:
-            if (
-                isinstance(route, Mapping)
-                and route.get("table") == "main"
-                and route.get("dst") == "default"
-                and route.get("type") == "unicast"
-                and isinstance(route.get("dev"), str)
-                and route.get("dev")
-            ):
-                devices.add(str(route["dev"]))
+        family_defaults = []
+        for raw in routes:
+            route = _required_mapping(raw, "route inventory entry")
+            if route.get("table") == "main" and route.get("dst") == "default" and route.get("type") == "unicast":
+                family_defaults.append(dict(route))
+        if len(family_defaults) > 1:
+            raise IsolationError("default-route ownership is ambiguous before the soak")
+        defaults.extend(family_defaults)
+    return defaults
+
+
+def _default_route_devices(snapshot: Mapping[str, Any]) -> set[str]:
+    devices: set[str] = set()
+    for route in _default_routes(snapshot):
+        device = route.get("dev")
+        if not isinstance(device, str) or not device:
+            raise IsolationError("default-route ownership is ambiguous before the soak")
+        devices.add(device)
     return devices
 
 
@@ -530,24 +556,40 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
     if not isinstance(links, list):
         raise IsolationError("link inventory is unavailable")
     link_by_name: dict[str, Mapping[str, Any]] = {}
+    link_indexes: set[int] = set()
+    loopback_count = 0
     for raw in links:
         link = _required_mapping(raw, "link inventory entry")
         ifname = str(link.get("ifname", ""))
-        kind = str(link.get("kind", ""))
+        ifindex = link.get("ifindex")
+        if ifname in link_by_name or not isinstance(ifindex, int) or ifindex in link_indexes:
+            raise IsolationError("link identity is duplicated or incomplete")
         link_by_name[ifname] = link
+        link_indexes.add(ifindex)
         if ifname == PODLAZ_LINK:
             raise IsolationError("reserved Podlaz link exists before the soak")
-        if kind in SUSPICIOUS_LINK_KINDS:
-            raise IsolationError("foreign tunnel-style link exists before the soak")
+        if ifname == "lo":
+            loopback_count += 1
+            if (
+                str(link.get("kind", "")) != ""
+                or str(link.get("link_type", "")) != "loopback"
+                or link.get("master") not in {None, "", 0}
+            ):
+                raise IsolationError("dedicated-runner loopback identity is ambiguous")
+            continue
+        if not _is_positive_physical_link(link):
+            raise IsolationError("link is not a positive physical dedicated-runner uplink candidate")
+    if loopback_count != 1:
+        raise IsolationError("dedicated-runner loopback cardinality is invalid")
 
-    for key in ("rules_v4", "rules_v6"):
+    for family, key in (("ipv4", "rules_v4"), ("ipv6", "rules_v6")):
         rules = snapshot.get(key)
         if not isinstance(rules, list):
             raise IsolationError("policy-rule inventory is unavailable")
-        for raw in rules:
-            rule = _required_mapping(raw, "policy-rule inventory entry")
-            if (rule.get("priority"), rule.get("table")) not in DEFAULT_RULES:
-                raise IsolationError("foreign policy routing exists before the soak")
+        _validate_canonical_default_rules(
+            [_required_mapping(rule, "policy-rule inventory entry") for rule in rules],
+            family,
+        )
 
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
@@ -580,12 +622,32 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
         raise IsolationError("pre-existing nftables packet-path state makes attribution ambiguous")
 
     default_devices = _default_route_devices(snapshot)
-    if not default_devices:
-        raise IsolationError("no authoritative default-route uplink exists before the soak")
-    for device in default_devices:
-        link = link_by_name.get(device)
-        if link is None or str(link.get("kind", "")) in SUSPICIOUS_LINK_KINDS:
-            raise IsolationError("default route uses an ambiguous tunnel-style link")
+    if len(default_devices) != 1:
+        raise IsolationError("dedicated runner must have exactly one authoritative default uplink")
+    uplink = next(iter(default_devices))
+    uplink_link = link_by_name.get(uplink)
+    if uplink_link is None or not _is_positive_physical_link(uplink_link):
+        raise IsolationError("default route does not use a positive physical dedicated-runner uplink")
+
+    addresses = snapshot.get("addresses")
+    if not isinstance(addresses, list):
+        raise IsolationError("address inventory is unavailable")
+    uplink_addresses = [
+        _required_mapping(entry, "address inventory entry")
+        for entry in addresses
+        if isinstance(entry, Mapping) and entry.get("ifname") == uplink
+    ]
+    if len(uplink_addresses) != 1 or uplink_addresses[0].get("ifindex") != uplink_link.get("ifindex"):
+        raise IsolationError("physical dedicated-runner uplink address identity is unavailable")
+    address_values = uplink_addresses[0].get("addresses")
+    if not isinstance(address_values, list) or not any(
+        isinstance(address, Mapping)
+        and address.get("scope") == "global"
+        and address.get("family") in {"inet", "inet6"}
+        and bool(address.get("local"))
+        for address in address_values
+    ):
+        raise IsolationError("physical dedicated-runner uplink has no authoritative global address")
 
     resolved = _required_mapping(snapshot.get("resolved"), "resolver inventory")
     resolved_links = resolved.get("links")
@@ -632,13 +694,36 @@ def _load_manifest(path: Path) -> dict[str, list[dict[str, Any]]]:
         family = "ipv4" if route.get("family") == "-4" else "ipv6" if route.get("family") == "-6" else ""
         if not family:
             raise IsolationError("manifest route family is unsupported")
+        table = _canonical_table(route.get("table"))
+        destination = _canonical_prefix(route.get("cidr", ""), family)
+        gateway = _canonical_address(route.get("via", ""), family)
+        device = str(route.get("dev", ""))
+        if table == "main":
+            if destination == "default" or not gateway or not device:
+                raise IsolationError("manifest main-table route is not an exact server-bypass projection")
+            scope = ""
+        elif table == "51820":
+            if destination != "default" or gateway or device != PODLAZ_LINK:
+                raise IsolationError("manifest managed-table route is not the canonical TUN projection")
+            scope = "link"
+        else:
+            raise IsolationError("manifest route table is outside the Podlaz projection")
         result["routes"].append(
             {
                 "family": family,
-                "table": _canonical_table(route.get("table")),
-                "dst": _canonical_prefix(route.get("cidr", ""), family),
-                "gateway": _canonical_address(route.get("via", ""), family),
-                "dev": str(route.get("dev", "")),
+                "table": table,
+                "type": "unicast",
+                "dst": destination,
+                "gateway": gateway,
+                "dev": device,
+                "protocol": "",
+                "scope": scope,
+                "metric": None,
+                "prefsrc": "",
+                "src": "",
+                "mark": "",
+                "nhid": None,
+                "multipath": [],
             }
         )
     for raw in rules:
@@ -647,16 +732,35 @@ def _load_manifest(path: Path) -> dict[str, list[dict[str, Any]]]:
         priority = rule.get("priority")
         if not family or not isinstance(priority, int):
             raise IsolationError("manifest rule identity is unsupported")
+        table = _canonical_table(rule.get("table"))
+        source = _canonical_prefix(rule.get("source", ""), family, allow_all=True)
+        destination = _canonical_prefix(rule.get("destination", ""), family, allow_all=True)
         fwmark, fwmask = _split_mark(rule.get("mark", ""))
+        if family != "ipv4" or fwmark or fwmask:
+            raise IsolationError("manifest policy rule is outside the current Podlaz projection")
+        if priority == 9999:
+            if table != "main" or source != "all" or destination in {"", "all", "default"}:
+                raise IsolationError("manifest server-bypass rule is not canonical")
+        elif priority == 10000:
+            if table != "51820" or source != "all" or destination != "all":
+                raise IsolationError("manifest TUN policy rule is not canonical")
+        else:
+            raise IsolationError("manifest policy-rule priority is outside the Podlaz projection")
         result["rules"].append(
             {
                 "family": family,
                 "priority": priority,
-                "table": _canonical_table(rule.get("table")),
-                "source": _canonical_prefix(rule.get("source", ""), family, allow_all=True),
-                "destination": _canonical_prefix(rule.get("destination", ""), family, allow_all=True),
-                "fwmark": fwmark,
-                "fwmask": fwmask,
+                "table": table,
+                "action": "to_tbl",
+                "source": source,
+                "destination": destination,
+                "fwmark": "",
+                "fwmask": "",
+                "iif": "",
+                "oif": "",
+                "l3mdev": False,
+                "suppress_prefixlength": None,
+                "uidrange": "",
             }
         )
     return result
@@ -670,23 +774,13 @@ def _remove_exact(items: list[dict[str, Any]], expected: Mapping[str, Any], matc
 
 
 def _route_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
-    return all(actual.get(name) == expected.get(name) for name in ("family", "table", "dst", "gateway", "dev"))
+    # Both mappings are complete normalized shapes. Dynamic iproute2 fields are
+    # removed during normalization; every remaining semantic field is exact.
+    return dict(actual) == dict(expected)
 
 
 def _rule_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
-    def canonical_selector(value: Any) -> str:
-        text = str(value or "")
-        return "all" if text in {"", "all"} else text
-
-    return (
-        actual.get("family") == expected.get("family")
-        and actual.get("priority") == expected.get("priority")
-        and actual.get("table") == expected.get("table")
-        and canonical_selector(actual.get("source")) == canonical_selector(expected.get("source"))
-        and canonical_selector(actual.get("destination")) == canonical_selector(expected.get("destination"))
-        and str(actual.get("fwmark", "")) == str(expected.get("fwmark", ""))
-        and str(actual.get("fwmask", "")) == str(expected.get("fwmask", ""))
-    )
+    return dict(actual) == dict(expected)
 
 
 def strip_exact_podlaz_state(snapshot: Mapping[str, Any], manifest: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:

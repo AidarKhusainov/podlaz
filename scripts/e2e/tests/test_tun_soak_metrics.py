@@ -761,7 +761,7 @@ class TunSoakMetricsTests(unittest.TestCase):
                     "phase": "active",
                     "session": 1,
                     "sample_index": index,
-                    "elapsed_seconds": index * 600,
+                    "elapsed_seconds": index * 1800,
                     "cgroup": {
                         "memory_current_bytes": 210_000_000 + index * 20_000_000,
                         "memory_peak_bytes": 400_000_000,
@@ -791,6 +791,12 @@ class TunSoakMetricsTests(unittest.TestCase):
             "schema_version": 1,
             "mode": "accept",
             "reproduced_growth_signal": "xray.pss_bytes",
+            "acceptance_gate": {
+                "minimum_post_warmup_duration_seconds": 10800,
+                "minimum_warmup_seconds": 120,
+                "maximum_sample_interval_seconds": 60,
+                "maximum_observed_sample_gap_seconds": 600,
+            },
             "metric_limits": {
                 "xray.pss_bytes": {
                     "max_theil_sen_per_hour": 130_000_000,
@@ -798,10 +804,259 @@ class TunSoakMetricsTests(unittest.TestCase):
                 }
             },
         }
-        result = tun_soak_metrics.evaluate_policy(trend, policy)
+        result = tun_soak_metrics.evaluate_policy(
+            trend,
+            policy,
+            configuration={
+                "duration_seconds": 10800,
+                "warmup_seconds": 120,
+                "sample_interval_seconds": 60,
+            },
+        )
         self.assertFalse(result["ok"])
         self.assertIn("xray.pss_bytes", result["violations"])
         self.assertIn("xray.rss_bytes", result["violations"])
+
+    def test_accept_policy_rejects_short_run_even_when_metric_limits_pass(self) -> None:
+        samples = []
+        for index in range(11):
+            samples.append(
+                {
+                    "schema_version": 1,
+                    "phase": "active",
+                    "session": 1,
+                    "sample_index": index,
+                    "elapsed_seconds": index * 60,
+                    "cgroup": {
+                        "memory_current_bytes": 100_000_000,
+                        "memory_peak_bytes": 100_000_000,
+                        "pids_current": 20,
+                        "cpu_usage_usec": index,
+                    },
+                    "podlazd": {
+                        "rss_bytes": 40_000_000,
+                        "pss_bytes": 36_000_000,
+                        "threads": 10,
+                        "tasks": 10,
+                        "fds": 16,
+                        "cpu_time_ticks": index,
+                    },
+                    "xray": {
+                        "rss_bytes": 80_000_000,
+                        "pss_bytes": 72_000_000,
+                        "threads": 10,
+                        "tasks": 10,
+                        "fds": 20,
+                        "cpu_time_ticks": index,
+                    },
+                }
+            )
+        trend = tun_soak_metrics.summarize_samples(samples)
+        policy = {
+            "schema_version": 1,
+            "mode": "accept",
+            "reproduced_growth_signal": "xray.fds",
+            "acceptance_gate": {
+                "minimum_post_warmup_duration_seconds": 10800,
+                "minimum_warmup_seconds": 120,
+                "maximum_sample_interval_seconds": 60,
+                "maximum_observed_sample_gap_seconds": 600,
+            },
+            "metric_limits": {
+                "xray.fds": {
+                    "max_theil_sen_per_hour": 0,
+                    "max_net_growth": 0,
+                    "require_no_sustained_positive": True,
+                }
+            },
+        }
+
+        result = tun_soak_metrics.evaluate_policy(
+            trend,
+            policy,
+            configuration={
+                "duration_seconds": 600,
+                "warmup_seconds": 120,
+                "sample_interval_seconds": 60,
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["acceptance_gate"]["ok"])
+        self.assertIn("configured_post_warmup_duration", result["acceptance_gate"]["violations"])
+        self.assertIn("observed_post_warmup_duration", result["acceptance_gate"]["violations"])
+
+    def test_accept_policy_rejects_gate_weaker_than_canonical_three_hour_contract(self) -> None:
+        trend = {
+            "metrics": {"xray.fds": {"theil_sen_per_hour": 0, "net_growth": 0, "sustained_positive": False}},
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = {
+            "schema_version": 1,
+            "mode": "accept",
+            "reproduced_growth_signal": "xray.fds",
+            "acceptance_gate": {
+                "minimum_post_warmup_duration_seconds": 600,
+                "minimum_warmup_seconds": 30,
+                "maximum_sample_interval_seconds": 600,
+                "maximum_observed_sample_gap_seconds": 3600,
+            },
+            "metric_limits": {
+                "xray.fds": {
+                    "max_theil_sen_per_hour": 0,
+                    "max_net_growth": 0,
+                }
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "weaker than the canonical three-hour gate"):
+            tun_soak_metrics.evaluate_policy(
+                trend,
+                policy,
+                configuration={
+                    "duration_seconds": 10800,
+                    "warmup_seconds": 120,
+                    "sample_interval_seconds": 60,
+                },
+            )
+
+    def test_accept_policy_passes_only_with_three_hour_observed_window_and_cadence(self) -> None:
+        samples = []
+        for index in range(181):
+            samples.append(
+                {
+                    "schema_version": 1,
+                    "phase": "active",
+                    "session": 1,
+                    "sample_index": index,
+                    "elapsed_seconds": index * 60,
+                    "cgroup": {
+                        "memory_current_bytes": 100_000_000,
+                        "memory_peak_bytes": 100_000_000,
+                        "pids_current": 20,
+                        "cpu_usage_usec": index,
+                    },
+                    "podlazd": {
+                        "rss_bytes": 40_000_000,
+                        "pss_bytes": 36_000_000,
+                        "threads": 10,
+                        "tasks": 10,
+                        "fds": 16,
+                        "cpu_time_ticks": index,
+                    },
+                    "xray": {
+                        "rss_bytes": 80_000_000,
+                        "pss_bytes": 72_000_000,
+                        "threads": 10,
+                        "tasks": 10,
+                        "fds": 20,
+                        "cpu_time_ticks": index,
+                    },
+                }
+            )
+        trend = tun_soak_metrics.summarize_samples(samples)
+        policy = {
+            "schema_version": 1,
+            "mode": "accept",
+            "reproduced_growth_signal": "xray.fds",
+            "acceptance_gate": {
+                "minimum_post_warmup_duration_seconds": 10800,
+                "minimum_warmup_seconds": 120,
+                "maximum_sample_interval_seconds": 60,
+                "maximum_observed_sample_gap_seconds": 600,
+            },
+            "metric_limits": {
+                "xray.fds": {
+                    "max_theil_sen_per_hour": 0,
+                    "max_net_growth": 0,
+                    "require_no_sustained_positive": True,
+                }
+            },
+        }
+
+        result = tun_soak_metrics.evaluate_policy(
+            trend,
+            policy,
+            configuration={
+                "duration_seconds": 10800,
+                "warmup_seconds": 120,
+                "sample_interval_seconds": 60,
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["acceptance_gate"]["ok"])
+        self.assertEqual(10800, trend["observed_duration_seconds"])
+
+    def test_accept_policy_rejects_sparse_observed_sampling_even_when_configured_cadence_is_valid(self) -> None:
+        samples = []
+        for index, elapsed in enumerate((0, 60, 120, 180, 240, 10800)):
+            samples.append(
+                {
+                    "schema_version": 1,
+                    "phase": "active",
+                    "session": 1,
+                    "sample_index": index,
+                    "elapsed_seconds": elapsed,
+                    "cgroup": {
+                        "memory_current_bytes": 100_000_000,
+                        "memory_peak_bytes": 100_000_000,
+                        "pids_current": 20,
+                        "cpu_usage_usec": index,
+                    },
+                    "podlazd": {
+                        "rss_bytes": 40_000_000,
+                        "pss_bytes": 36_000_000,
+                        "threads": 10,
+                        "tasks": 10,
+                        "fds": 16,
+                        "cpu_time_ticks": index,
+                    },
+                    "xray": {
+                        "rss_bytes": 80_000_000,
+                        "pss_bytes": 72_000_000,
+                        "threads": 10,
+                        "tasks": 10,
+                        "fds": 20,
+                        "cpu_time_ticks": index,
+                    },
+                }
+            )
+        trend = tun_soak_metrics.summarize_samples(samples)
+        policy = {
+            "schema_version": 1,
+            "mode": "accept",
+            "reproduced_growth_signal": "xray.fds",
+            "acceptance_gate": {
+                "minimum_post_warmup_duration_seconds": 10800,
+                "minimum_warmup_seconds": 120,
+                "maximum_sample_interval_seconds": 60,
+                "maximum_observed_sample_gap_seconds": 600,
+            },
+            "metric_limits": {
+                "xray.fds": {
+                    "max_theil_sen_per_hour": 0,
+                    "max_net_growth": 0,
+                    "require_no_sustained_positive": True,
+                }
+            },
+        }
+
+        result = tun_soak_metrics.evaluate_policy(
+            trend,
+            policy,
+            configuration={
+                "duration_seconds": 10800,
+                "warmup_seconds": 120,
+                "sample_interval_seconds": 60,
+            },
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("observed_sample_gap", result["acceptance_gate"]["violations"])
+        self.assertEqual(10560, trend["maximum_observed_sample_gap_seconds"])
 
     def test_cleanup_comparison_is_strict_for_counts_but_tolerant_for_memory(self) -> None:
         result = tun_soak_metrics.compare_cleanup_boundaries(

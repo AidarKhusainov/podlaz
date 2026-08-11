@@ -52,7 +52,11 @@ class TunResourceSoakContractTests(unittest.TestCase):
         isolation = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_isolation.py").read_text(encoding="utf-8")
         self.assertIn("validate_clean_baseline", isolation)
         self.assertIn("strip_exact_podlaz_state", isolation)
-        self.assertIn("SUSPICIOUS_LINK_KINDS", isolation)
+        self.assertIn("DEFAULT_RULE_LAYOUT", isolation)
+        self.assertIn("_validate_canonical_default_rules", isolation)
+        self.assertIn("DEDICATED_UPLINK_LINK_TYPE", isolation)
+        self.assertIn("_is_positive_physical_link", isolation)
+        self.assertIn("return dict(actual) == dict(expected)", isolation)
         self.assertIn('"addresses": _json_command(("ip", "-j", "address", "show"))', isolation)
         self.assertIn('os.stat("/proc/self/ns/net")', isolation)
 
@@ -218,6 +222,16 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertNotIn("cmdline", text)
         self.assertNotIn("transaction_id", text)
 
+    def test_acceptance_policy_requires_canonical_duration_warmup_and_actual_cadence(self) -> None:
+        analysis = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_analysis.py").read_text(encoding="utf-8")
+        self.assertIn("CANONICAL_ACCEPTANCE_MIN_POST_WARMUP_SECONDS = 3 * 60 * 60", analysis)
+        self.assertIn("CANONICAL_ACCEPTANCE_MIN_WARMUP_SECONDS = 120", analysis)
+        self.assertIn("CANONICAL_ACCEPTANCE_MAX_SAMPLE_INTERVAL_SECONDS = 60", analysis)
+        self.assertIn("CANONICAL_ACCEPTANCE_MAX_OBSERVED_SAMPLE_GAP_SECONDS = 10 * 60", analysis)
+        self.assertIn('"observed_duration_seconds"', analysis)
+        self.assertIn('"maximum_observed_sample_gap_seconds"', analysis)
+        self.assertIn("acceptance_gate is weaker than the canonical three-hour gate", analysis)
+
     def test_workflow_is_manual_self_hosted_and_does_not_block_ordinary_ci(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("workflow_dispatch:", text)
@@ -246,6 +260,9 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("metric-specific", e2e)
         self.assertIn("warmed inactive baseline", e2e)
         self.assertIn("structural network-isolation baseline", e2e)
+        self.assertIn("full canonical shape and cardinality", e2e)
+        self.assertIn("positive physical uplink", e2e)
+        self.assertIn("maximum observed sample gap", e2e)
         self.assertIn("checked-in policy remains `observe`", e2e)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_status", development)

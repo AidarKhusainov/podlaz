@@ -260,15 +260,32 @@ but it is not authoritative proof of foreign-VPN absence.
 
 The authoritative gate is a private **structural network-isolation baseline**
 created before preconditioning. It records the network namespace plus bounded,
-normalized link/kind, default-uplink, route, policy-rule, nftables, and resolver
-state. A clean dedicated runner fails closed on tunnel-style links, foreign
-policy routing, ambiguous main-table bypass routes, pre-existing nftables
-packet-path state, or resolver default-route ownership outside the real uplink.
+normalized link, address, route, policy-rule, nftables, and resolver state. The
+dedicated runner must expose exactly the canonical default policy-rule set for
+each address family, including the **full canonical shape and cardinality** of
+action, selectors, marks/masks, interface selectors, `l3mdev`, suppression, and
+UID-range fields; matching only priority/table is never sufficient.
+
+Default-uplink authority is a positive contract rather than a denylist. The
+baseline must have exactly one default uplink backed by a positive physical uplink identity: empty virtual link kind, Ethernet link type, no master, and a
+matching global address on the same ifindex. Unknown, custom, `veth`, `dummy`,
+tunnel, stacked, or otherwise ambiguous virtual links fail closed even when no
+known VPN process name is present. Foreign routing tables, ambiguous main-table
+bypass routes, pre-existing nftables packet-path state, or resolver default-route
+ownership outside that uplink also fail the baseline.
+
 While Podlaz is active, the verifier subtracts only the exact transaction-backed
 Podlaz route/rule projection, the reserved `podlaz0` link, the exact Podlaz nft
-table, and the Podlaz resolver link. The remaining host state must equal the
-private baseline. Missing or duplicate Podlaz projection evidence is itself an
-error.
+table, and the Podlaz resolver link. Route identity includes normalized type,
+destination, gateway, device, protocol, scope, metric, preferred/source address,
+mark, nexthop ID, and multipath semantics. Policy-rule identity includes action,
+source/destination, mark/mask, input/output interfaces, `l3mdev`, suppression,
+and UID range. Only the canonical kernel-added attributes expected for the
+persisted Podlaz plan are accepted. A metric, protocol, scope, interface selector,
+or any other semantic mutation therefore remains visible as foreign state rather
+than being stripped as Podlaz-owned. The remaining host state must equal the
+private baseline. Missing, modified, or duplicate Podlaz projection evidence is
+an error.
 
 Isolation is revalidated after active attribution, after warm-up, during every
 long-soak iteration, during reconnect sampling, and after each disconnect. This
@@ -323,9 +340,14 @@ Xray.
 
 - `observe` publishes attributed trends and enforces lifecycle correctness, but
   does not claim a calibrated release threshold;
-- `accept` requires a named reproduced signal and explicit per-metric slope, net
-  growth, and sustained-trend rules. Any unruled sustained candidate fails
-  closed.
+- `accept` requires a named reproduced signal, explicit per-metric slope/net
+  growth/sustained-trend rules, and a machine-checked `acceptance_gate`. That
+  gate may not be weaker than 10,800 seconds post-warm-up, 120 seconds of
+  measured-session warm-up, a configured sample period of at most 60 seconds,
+  and a **maximum observed sample gap** of 600 seconds. The evaluator checks both
+  run configuration and actual sample timestamps. A short or sparsely sampled
+  run therefore cannot publish `acceptance_passed`, even when every metric limit
+  happens to pass. Any unruled sustained candidate also fails closed.
 
 Normal disconnect must terminate the exact child, leave no packaged Xray orphan,
 remove exact transaction-owned routes/rules plus all Podlaz TUN/DNS/nftables,

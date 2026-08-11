@@ -23,6 +23,19 @@ except ImportError:
         SCHEMA_VERSION,
     )
 
+CANONICAL_ACCEPTANCE_MIN_POST_WARMUP_SECONDS = 3 * 60 * 60
+CANONICAL_ACCEPTANCE_MIN_WARMUP_SECONDS = 120
+CANONICAL_ACCEPTANCE_MAX_SAMPLE_INTERVAL_SECONDS = 60
+CANONICAL_ACCEPTANCE_MAX_OBSERVED_SAMPLE_GAP_SECONDS = 10 * 60
+ACCEPTANCE_GATE_FIELDS = frozenset(
+    {
+        "minimum_post_warmup_duration_seconds",
+        "minimum_warmup_seconds",
+        "maximum_sample_interval_seconds",
+        "maximum_observed_sample_gap_seconds",
+    }
+)
+
 def _flatten_samples(samples: Sequence[Mapping[str, Any]]) -> dict[str, list[tuple[float, float]]]:
     flattened: dict[str, list[tuple[float, float]]] = {}
     for sample in samples:
@@ -133,8 +146,26 @@ def _candidate_priority(metric: str) -> tuple[int, float]:
     return (name_priority.get(name, 99) * 10 + component_priority.get(component, 9), 0.0)
 
 
+def _active_elapsed_coordinates(samples: Sequence[Mapping[str, Any]]) -> list[float]:
+    coordinates: list[float] = []
+    for sample in samples:
+        if sample.get("phase") != "active" or sample.get("session") != 1:
+            continue
+        elapsed = sample.get("elapsed_seconds")
+        if not isinstance(elapsed, (int, float)) or isinstance(elapsed, bool) or elapsed < 0:
+            raise ValueError("sample elapsed_seconds is invalid")
+        coordinates.append(float(elapsed))
+    coordinates.sort()
+    if not coordinates:
+        raise ValueError("no first-session active samples")
+    if len(set(coordinates)) != len(coordinates):
+        raise ValueError("active sample elapsed_seconds is duplicated")
+    return coordinates
+
+
 def summarize_samples(samples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     flattened = _flatten_samples(samples)
+    coordinates = _active_elapsed_coordinates(samples)
     if not flattened:
         raise ValueError("no first-session active samples")
     metrics = {name: _metric_summary(name, points) for name, points in sorted(flattened.items())}
@@ -144,22 +175,128 @@ def summarize_samples(samples: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         if summary["sustained_positive"] and name not in NON_GROWTH_METRICS
     ]
     candidates.sort(key=_candidate_priority)
+    first_elapsed = coordinates[0]
+    last_elapsed = coordinates[-1]
+    observed_duration = last_elapsed - first_elapsed
+    observed_gaps = [
+        coordinates[index] - coordinates[index - 1]
+        for index in range(1, len(coordinates))
+    ]
+    maximum_observed_gap = max(observed_gaps, default=0.0)
     return {
         "schema_version": SCHEMA_VERSION,
-        "active_samples": max(summary["samples"] for summary in metrics.values()),
+        "active_samples": len(coordinates),
+        "first_elapsed_seconds": int(first_elapsed) if first_elapsed.is_integer() else first_elapsed,
+        "last_elapsed_seconds": int(last_elapsed) if last_elapsed.is_integer() else last_elapsed,
+        "observed_duration_seconds": int(observed_duration) if observed_duration.is_integer() else observed_duration,
+        "maximum_observed_sample_gap_seconds": (
+            int(maximum_observed_gap)
+            if maximum_observed_gap.is_integer()
+            else maximum_observed_gap
+        ),
         "metrics": metrics,
         "growth_candidates": candidates,
         "reproduced_growth_candidate": candidates[0] if candidates else None,
     }
 
 
-def evaluate_policy(trend: Mapping[str, Any], policy: Mapping[str, Any]) -> dict[str, Any]:
+def _acceptance_gate_result(
+    *,
+    trend: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    configuration: Mapping[str, Any],
+) -> dict[str, Any]:
+    raw_gate = policy.get("acceptance_gate")
+    if not isinstance(raw_gate, Mapping):
+        raise ValueError("acceptance policy has no acceptance_gate contract")
+    unknown = sorted(set(raw_gate) - ACCEPTANCE_GATE_FIELDS)
+    missing = sorted(ACCEPTANCE_GATE_FIELDS - set(raw_gate))
+    if unknown:
+        raise ValueError(f"unsupported acceptance_gate field: {unknown[0]}")
+    if missing:
+        raise ValueError(f"missing acceptance_gate field: {missing[0]}")
+
+    minimum_duration = raw_gate.get("minimum_post_warmup_duration_seconds")
+    minimum_warmup = raw_gate.get("minimum_warmup_seconds")
+    maximum_interval = raw_gate.get("maximum_sample_interval_seconds")
+    maximum_observed_gap = raw_gate.get("maximum_observed_sample_gap_seconds")
+    values = (minimum_duration, minimum_warmup, maximum_interval, maximum_observed_gap)
+    if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in values):
+        raise ValueError("acceptance_gate values must be positive integers")
+    if (
+        minimum_duration < CANONICAL_ACCEPTANCE_MIN_POST_WARMUP_SECONDS
+        or minimum_warmup < CANONICAL_ACCEPTANCE_MIN_WARMUP_SECONDS
+        or maximum_interval > CANONICAL_ACCEPTANCE_MAX_SAMPLE_INTERVAL_SECONDS
+        or maximum_observed_gap > CANONICAL_ACCEPTANCE_MAX_OBSERVED_SAMPLE_GAP_SECONDS
+    ):
+        raise ValueError("acceptance_gate is weaker than the canonical three-hour gate")
+
+    configured_duration = configuration.get("duration_seconds")
+    configured_warmup = configuration.get("warmup_seconds")
+    configured_interval = configuration.get("sample_interval_seconds")
+    observed_duration = trend.get("observed_duration_seconds")
+    observed_sample_gap = trend.get("maximum_observed_sample_gap_seconds")
+    if any(
+        not isinstance(value, (int, float)) or isinstance(value, bool)
+        for value in (
+            configured_duration,
+            configured_warmup,
+            configured_interval,
+            observed_duration,
+            observed_sample_gap,
+        )
+    ):
+        raise ValueError("acceptance gate evidence is invalid")
+
+    violations: list[str] = []
+    if configured_duration < minimum_duration:
+        violations.append("configured_post_warmup_duration")
+    if observed_duration < minimum_duration:
+        violations.append("observed_post_warmup_duration")
+    if configured_warmup < minimum_warmup:
+        violations.append("warmup_duration")
+    if configured_interval <= 0 or configured_interval > maximum_interval:
+        violations.append("sample_interval")
+    if observed_sample_gap < 0 or observed_sample_gap > maximum_observed_gap:
+        violations.append("observed_sample_gap")
+    return {
+        "ok": not violations,
+        "requirements": {
+            "minimum_post_warmup_duration_seconds": minimum_duration,
+            "minimum_warmup_seconds": minimum_warmup,
+            "maximum_sample_interval_seconds": maximum_interval,
+            "maximum_observed_sample_gap_seconds": maximum_observed_gap,
+        },
+        "evidence": {
+            "configured_post_warmup_duration_seconds": configured_duration,
+            "observed_post_warmup_duration_seconds": observed_duration,
+            "configured_warmup_seconds": configured_warmup,
+            "configured_sample_interval_seconds": configured_interval,
+            "maximum_observed_sample_gap_seconds": observed_sample_gap,
+        },
+        "violations": violations,
+    }
+
+
+def evaluate_policy(
+    trend: Mapping[str, Any],
+    policy: Mapping[str, Any],
+    *,
+    configuration: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     mode = policy.get("mode", "observe")
     if mode not in {"observe", "accept"}:
         raise ValueError("unsupported soak policy mode")
     if mode == "observe":
         return {"mode": mode, "ok": True, "evaluated": False, "violations": []}
+    if not isinstance(configuration, Mapping):
+        raise ValueError("acceptance policy evaluation requires run configuration")
 
+    gate_result = _acceptance_gate_result(
+        trend=trend,
+        policy=policy,
+        configuration=configuration,
+    )
     metrics = trend.get("metrics")
     candidates = trend.get("growth_candidates")
     target = policy.get("reproduced_growth_signal")
@@ -201,9 +338,10 @@ def evaluate_policy(trend: Mapping[str, Any], policy: Mapping[str, Any]) -> dict
 
     return {
         "mode": mode,
-        "ok": not violations,
+        "ok": gate_result["ok"] and not violations,
         "evaluated": True,
         "reproduced_growth_signal": target,
+        "acceptance_gate": gate_result,
         "violations": violations,
     }
 
@@ -437,8 +575,14 @@ def build_report(
     if reconnect_cleanup_boundary.get("phase") != "post-cleanup" or reconnect_cleanup_boundary.get("xray") is not None:
         raise ValueError("reconnect post-cleanup boundary is invalid")
 
+    public_provenance = _public_provenance(provenance)
+    public_configuration = _public_configuration(configuration)
     trend = summarize_samples(active_samples)
-    policy_result = evaluate_policy(trend, policy)
+    policy_result = evaluate_policy(
+        trend,
+        policy,
+        configuration=public_configuration,
+    )
     reconnect_count = len(
         [sample for sample in reconnect_samples if sample.get("phase") == "reconnect" and sample.get("session") == 2]
     )
@@ -490,8 +634,8 @@ def build_report(
         "schema_version": SCHEMA_VERSION,
         "ok": ok,
         "verdict": verdict,
-        "provenance": _public_provenance(provenance),
-        "configuration": _public_configuration(configuration),
+        "provenance": public_provenance,
+        "configuration": public_configuration,
         "trend": trend,
         "lifecycle": {
             "cleanup": cleanup_result,
