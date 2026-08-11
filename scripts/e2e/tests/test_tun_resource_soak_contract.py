@@ -42,7 +42,7 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("resolvectl --cache=no --interface=podlaz0", body)
         self.assertIn("curl -4 -fsS --max-time", body)
         self.assertIn("wait_for_verified_tun_status active", body)
-        self.assertIn("run_installed_podlaz doctor --tun", body)
+        self.assertIn("run_bounded_tun_diagnostic active", body)
         self.assertIn("PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES", body)
         self.assertNotIn("&", body)
 
@@ -51,6 +51,11 @@ class TunResourceSoakContractTests(unittest.TestCase):
         text = self.script_text()
         self.assertIn('source "${SCRIPT_DIR}/lib/tun_soak_health.sh"', text)
         self.assertIn('PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS', text)
+        self.assertIn('PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS', text)
+        health = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_health.sh").read_text(encoding="utf-8")
+        self.assertIn("run_bounded_tun_diagnostic", health)
+        self.assertIn("run_installed_podlaz_bounded", health)
+        self.assertIn('3)', health)
         self.assertIn('wait_for_verified_tun_status post-connect', text)
         self.assertIn('wait_for_verified_tun_status active', text)
         self.assertIn('wait_for_verified_tun_status reconnect', text)
@@ -98,6 +103,18 @@ class TunResourceSoakContractTests(unittest.TestCase):
         private_cleanup = cleanup.index('rm -rf -- "${SOAK_PRIVATE_DIR}"')
         self.assertLess(failure, private_cleanup)
 
+    def test_cleanup_retries_privately_before_removing_identity_state(self) -> None:
+        text = self.script_text()
+        self.assertIn('source "${SCRIPT_DIR}/lib/tun_soak_cleanup.sh"', text)
+        cleanup = self.function_body("cleanup", "\n}\n\ntrap cleanup EXIT")
+        bounded_cleanup = cleanup.index("run_tun_soak_cleanup final")
+        private_cleanup = cleanup.index('rm -rf -- "${SOAK_PRIVATE_DIR}"')
+        self.assertLess(bounded_cleanup, private_cleanup)
+        helper = (Path(__file__).resolve().parents[1] / "lib" / "tun_soak_cleanup.sh").read_text(encoding="utf-8")
+        self.assertIn("PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS", helper)
+        self.assertIn("cleanup-attempt-${attempt}.log", helper)
+        self.assertNotIn("cat ", helper)
+
     def test_failure_report_contains_only_allowlisted_cli_classification(self) -> None:
         text = self.script_text()
         self.assertIn("classify-cli-error", text)
@@ -139,9 +156,13 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("exact supervised Xray", e2e)
         self.assertIn("direct child", e2e)
         self.assertIn("bounded current-health convergence", e2e)
+        self.assertIn("Diagnostic exit `0` and diagnostic exit `3`", e2e)
+        self.assertIn("attempted at most twice", e2e)
         self.assertIn("metric-specific", e2e)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_status", development)
+        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_health", development)
+        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_cleanup", development)
 
 
 if __name__ == "__main__":

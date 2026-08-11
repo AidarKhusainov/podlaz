@@ -301,7 +301,10 @@ PUBLIC_CONFIGURATION_FIELDS = frozenset(
         "warmup_seconds",
         "sample_interval_seconds",
         "doctor_every_samples",
+        "doctor_runs",
+        "doctor_unhealthy_runs",
         "reconnect_samples",
+        "tun_diagnostic_timeout_seconds",
         "tun_health_timeout_seconds",
     }
 )
@@ -339,9 +342,16 @@ def _public_configuration(value: Mapping[str, Any]) -> dict[str, int]:
     result: dict[str, int] = {}
     for name in sorted(PUBLIC_CONFIGURATION_FIELDS):
         item = value.get(name)
-        if not isinstance(item, int) or isinstance(item, bool) or item <= 0:
+        if not isinstance(item, int) or isinstance(item, bool):
+            raise ValueError(f"invalid configuration field: {name}")
+        if name == "doctor_unhealthy_runs":
+            if item < 0:
+                raise ValueError(f"invalid configuration field: {name}")
+        elif item <= 0:
             raise ValueError(f"invalid configuration field: {name}")
         result[name] = item
+    if result["doctor_unhealthy_runs"] > result["doctor_runs"]:
+        raise ValueError("invalid configuration field: doctor_unhealthy_runs")
     return result
 
 

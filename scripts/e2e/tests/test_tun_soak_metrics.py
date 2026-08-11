@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.e2e.lib import tun_soak_metrics
+from scripts.e2e.lib import tun_soak_analysis, tun_soak_metrics
 
 
 class TunSoakMetricsTests(unittest.TestCase):
@@ -698,7 +698,10 @@ class TunSoakMetricsTests(unittest.TestCase):
                 "warmup_seconds": 120,
                 "sample_interval_seconds": 600,
                 "doctor_every_samples": 3,
+                "doctor_runs": 2,
+                "doctor_unhealthy_runs": 1,
                 "reconnect_samples": 1,
+                "tun_diagnostic_timeout_seconds": 90,
                 "tun_health_timeout_seconds": 75,
             },
             policy={
@@ -717,12 +720,31 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertTrue(report["lifecycle"]["reconnect"]["ok"])
         self.assertIsNone(report["trend"]["reproduced_growth_candidate"])
         self.assertEqual(75, report["configuration"]["tun_health_timeout_seconds"])
+        self.assertEqual(90, report["configuration"]["tun_diagnostic_timeout_seconds"])
+        self.assertEqual(2, report["configuration"]["doctor_runs"])
+        self.assertEqual(1, report["configuration"]["doctor_unhealthy_runs"])
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("private-transaction-id", encoded)
         self.assertNotIn("/run/podlaz", encoded)
         self.assertNotIn('"pid":', encoded.lower())
         self.assertNotIn("transaction_file", encoded)
         self.assertNotIn("config_ref", encoded)
+
+    def test_public_configuration_rejects_more_unhealthy_doctor_results_than_runs(self) -> None:
+        with self.assertRaisesRegex(ValueError, "doctor_unhealthy_runs"):
+            tun_soak_analysis._public_configuration(
+                {
+                    "duration_seconds": 3600,
+                    "warmup_seconds": 120,
+                    "sample_interval_seconds": 60,
+                    "doctor_every_samples": 10,
+                    "doctor_runs": 1,
+                    "doctor_unhealthy_runs": 2,
+                    "reconnect_samples": 3,
+                    "tun_diagnostic_timeout_seconds": 90,
+                    "tun_health_timeout_seconds": 75,
+                }
+            )
 
     def test_classifies_private_cli_errors_without_returning_raw_text(self) -> None:
         cases = {

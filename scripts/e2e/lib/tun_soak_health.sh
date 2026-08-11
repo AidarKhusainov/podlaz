@@ -91,3 +91,55 @@ wait_for_verified_tun_status() {
     esac
   done
 }
+
+# Run the normal installed TUN diagnostics through an explicit bounded command
+# boundary. Exit 3 is a valid diagnostic result: the soak has its own required
+# DNS/HTTPS probes and separately proves that the active lifecycle remains
+# verified after the read-only diagnostic completes.
+run_tun_diagnostic_command() {
+  run_installed_podlaz_bounded "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS:-90}" doctor --tun
+}
+
+run_bounded_tun_diagnostic() {
+  local label="${1:-}" stdout_file stderr_file diagnostic_exit
+
+  [[ "${label}" =~ ^[a-z0-9-]+$ ]] || {
+    SOAK_COMMAND_CLASSIFICATION="unclassified"
+    fail "TUN diagnostic label is invalid"
+    return 1
+  }
+  [[ -n "${SOAK_PRIVATE_DIR:-}" && -n "${METRICS_TOOL:-}" ]] || {
+    SOAK_COMMAND_CLASSIFICATION="unclassified"
+    fail "TUN diagnostic checker is not configured"
+    return 1
+  }
+
+  stdout_file="${SOAK_PRIVATE_DIR}/${label}-doctor.stdout"
+  stderr_file="${SOAK_PRIVATE_DIR}/${label}-doctor.stderr"
+  if run_tun_diagnostic_command >"${stdout_file}" 2>"${stderr_file}"; then
+    diagnostic_exit=0
+  else
+    diagnostic_exit=$?
+  fi
+
+  DOCTOR_RUNS="${DOCTOR_RUNS:-0}"
+  DOCTOR_RUNS=$((DOCTOR_RUNS + 1))
+  case "${diagnostic_exit}" in
+    0) ;;
+    3)
+      DOCTOR_UNHEALTHY_RUNS="${DOCTOR_UNHEALTHY_RUNS:-0}"
+      DOCTOR_UNHEALTHY_RUNS=$((DOCTOR_UNHEALTHY_RUNS + 1))
+      ;;
+    *)
+      SOAK_COMMAND_EXIT="${diagnostic_exit}"
+      SOAK_COMMAND_CLASSIFICATION="$(
+        python3 "${METRICS_TOOL}" classify-cli-error \
+          --stderr-file "${stderr_file}"
+      )" || SOAK_COMMAND_CLASSIFICATION="unclassified"
+      fail "${label} TUN diagnostic command failed"
+      return 1
+      ;;
+  esac
+
+  wait_for_verified_tun_status "${label}-post-doctor"
+}

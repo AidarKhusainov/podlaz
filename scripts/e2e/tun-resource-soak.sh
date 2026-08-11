@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 # shellcheck source=lib/tun_soak_health.sh
 source "${SCRIPT_DIR}/lib/tun_soak_health.sh"
+# shellcheck source=lib/tun_soak_cleanup.sh
+source "${SCRIPT_DIR}/lib/tun_soak_cleanup.sh"
 
 require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep hostname id ip mktemp python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
 
@@ -29,6 +31,9 @@ require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep
 : "${PODLAZ_E2E_SOAK_POLICY_FILE:=${SCRIPT_DIR}/tun-resource-soak-policy.json}"
 : "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:=75}"
 : "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:=1}"
+: "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS:=90}"
+: "${PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS:=2}"
+: "${PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS:=2}"
 
 if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; then
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
@@ -51,13 +56,16 @@ for numeric_setting in \
   PODLAZ_E2E_SOAK_RECONNECT_SAMPLES \
   PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS \
   PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS \
-  PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS; do
+  PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS \
+  PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS \
+  PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS; do
   validate_positive_integer "${numeric_setting}" "${!numeric_setting}"
 done
 for numeric_setting in \
   PODLAZ_E2E_SOAK_CLEANUP_MEMORY_TOLERANCE_BYTES \
   PODLAZ_E2E_SOAK_RECONNECT_MEMORY_TOLERANCE_BYTES \
-  PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE; do
+  PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE \
+  PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS; do
   [[ "${!numeric_setting}" =~ ^[0-9]+$ ]] || fail "${numeric_setting} must be a non-negative integer"
 done
 if ((PODLAZ_E2E_SOAK_DURATION_SECONDS < PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS * 5)); then
@@ -101,6 +109,8 @@ SOAK_PHASE="initialization"
 SOAK_COMMAND_EXIT=""
 SOAK_COMMAND_CLASSIFICATION=""
 SOAK_STATUS_VERDICT=""
+DOCTOR_RUNS=0
+DOCTOR_UNHEALTHY_RUNS=0
 
 append_sensitive_value() {
   local value="${1:-}"
@@ -147,6 +157,17 @@ run_installed_podlaz() {
     XDG_STATE_HOME="${XDG_STATE_HOME}" \
     XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
     /usr/bin/podlaz "$@"
+}
+
+run_installed_podlaz_bounded() {
+  local timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=5s "${timeout_seconds}s" \
+    sudo -n runuser -u "$(id -un)" -g podlaz -- env \
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+      XDG_STATE_HOME="${XDG_STATE_HOME}" \
+      XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      /usr/bin/podlaz "$@"
 }
 
 capture_secret_import() {
@@ -202,7 +223,10 @@ write_configuration() {
     "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}" \
     "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}" \
     "${PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES}" \
+    "${DOCTOR_RUNS}" \
+    "${DOCTOR_UNHEALTHY_RUNS}" \
     "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES}" \
+    "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS}" \
     "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS}" <<'PY'
 import json
 import os
@@ -213,7 +237,10 @@ keys = (
     "warmup_seconds",
     "sample_interval_seconds",
     "doctor_every_samples",
+    "doctor_runs",
+    "doctor_unhealthy_runs",
     "reconnect_samples",
+    "tun_diagnostic_timeout_seconds",
     "tun_health_timeout_seconds",
 )
 payload = {key: int(value) for key, value in zip(keys, sys.argv[2:], strict=True)}
@@ -326,7 +353,7 @@ disconnect_and_sample_cleanup() {
 }
 
 run_active_soak() {
-  local sample_index=0 elapsed_seconds=0 dns_stdout dns_stderr curl_stdout curl_stderr doctor_stdout doctor_stderr
+  local sample_index=0 elapsed_seconds=0 dns_stdout dns_stderr curl_stdout curl_stderr
   SOAK_PHASE="active-soak"
   while ((elapsed_seconds < PODLAZ_E2E_SOAK_DURATION_SECONDS)); do
     dns_stdout="${SOAK_PRIVATE_DIR}/active-dns.stdout"
@@ -338,9 +365,7 @@ run_active_soak() {
     append_sensitive_value "$(cat "${curl_stdout}")"
     wait_for_verified_tun_status active
     if ((sample_index % PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES == 0)); then
-      doctor_stdout="${SOAK_PRIVATE_DIR}/active-doctor.stdout"
-      doctor_stderr="${SOAK_PRIVATE_DIR}/active-doctor.stderr"
-      run_installed_podlaz doctor --tun >"${doctor_stdout}" 2>"${doctor_stderr}" || fail "active soak TUN diagnostics became unhealthy"
+      run_bounded_tun_diagnostic active
     fi
     sleep "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}"
     elapsed_seconds=$((SECONDS - SOAK_STARTED_SECONDS))
@@ -407,6 +432,7 @@ run_reconnect_probe() {
 
 write_public_report() {
   SOAK_PHASE="report"
+  write_configuration
   sudo -n python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" report \
     --samples "${ACTIVE_SAMPLES}" \
     --reconnect-samples "${RECONNECT_SAMPLES}" \
@@ -525,8 +551,8 @@ cleanup() {
   if [[ "${code}" != "0" ]]; then
     write_failure_evidence "${code}" || cleanup_code=1
   fi
+  run_tun_soak_cleanup final || cleanup_code=1
   sudo -n rm -rf -- "${SOAK_PRIVATE_DIR}" || cleanup_code=1
-  PODLAZ_E2E_PURGE_PACKAGE=true bash "${SCRIPT_DIR}/tun-package-cleanup.sh" || cleanup_code=1
   if [[ "${code}" == "0" && "${cleanup_code}" != "0" ]]; then
     code="${cleanup_code}"
   fi
@@ -537,7 +563,7 @@ trap cleanup EXIT
 
 collect_host_sensitive_values
 SOAK_PHASE="cleanup-preflight"
-PODLAZ_E2E_PURGE_PACKAGE=true bash "${SCRIPT_DIR}/tun-package-cleanup.sh"
+run_tun_soak_cleanup preflight
 rm -f -- "${ACTIVE_SAMPLES}" "${RECONNECT_SAMPLES}" "${BASELINE_BOUNDARY}" "${CLEANUP_BOUNDARY}" "${PUBLIC_REPORT}" "${FAILURE_REPORT}"
 SOAK_PHASE="configuration"
 write_configuration

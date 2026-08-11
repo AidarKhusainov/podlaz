@@ -238,6 +238,21 @@ transient `degraded` publications. It accepts only `verified` with status exit `
 fails closed. Raw status output remains private, while public failure evidence
 contains only an allowlisted structural verdict.
 
+The normal read-only `doctor --tun` path is also executed periodically through an
+explicit external timeout. Diagnostic exit `0` and diagnostic exit `3` are both
+valid completed observations: exit `3` is counted in the sanitized report but is
+not by itself a resource-soak failure because the harness separately requires its
+bounded DNS/HTTPS probes to pass and immediately reproves active status as
+`verified` after the diagnostic. Any other exit, timeout, or loss of verified
+lifecycle health fails the run. Doctor stdout/stderr are overwritten in private
+state so repeated diagnostics cannot create an unbounded artifact history.
+
+The ownership-safe package teardown is attempted at most twice. A transient first
+failure is retried as one complete idempotent cleanup after a bounded delay; raw
+attempt logs remain private and are removed before artifact scanning. Failure of
+both attempts emits only a structural cleanup error and leaves the workflow's
+independent `always()` cleanup as the final recovery boundary.
+
 The following observations have distinct authority and must not be conflated:
 
 - cgroup total `memory.current`, optional `memory.peak`, `pids.current`, and CPU
