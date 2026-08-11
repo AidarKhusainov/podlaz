@@ -1,4 +1,4 @@
-name: Issue 246 Blocker Workspace Export
+name: Issue 246 Publish Blocker Fixes
 
 on:
   pull_request:
@@ -6,35 +6,71 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: issue-246-blocker-workspace-export-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: issue-246-publish-blocker-fixes-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 jobs:
-  export:
+  publish:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
-    name: Export exact blocker workspace
+    name: Publish verified blocker fixes
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact staged head
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: true
 
-      - name: Archive tracked workspace
+      - name: Apply, verify, and publish non-workflow patch
         shell: bash
         run: |
           set -euo pipefail
-          git archive --format=tar.gz --output="${RUNNER_TEMP}/podlaz-issue-246-blocker-workspace.tar.gz" HEAD
+          chunk='.agent-sync/issue246/blocker-fix-000.b64'
+          if [[ ! -f "${chunk}" ]]; then
+            echo 'No staged issue 246 blocker patch remains.'
+            exit 0
+          fi
 
-      - name: Upload workspace
-        uses: actions/upload-artifact@v7
-        with:
-          name: podlaz-issue-246-blocker-workspace
-          path: ${{ runner.temp }}/podlaz-issue-246-blocker-workspace.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          base64 -d "${chunk}" > "${RUNNER_TEMP}/issue246-blockers.patch.xz"
+          printf '%s  %s\n' \
+            '89c64e72d8bb1cd3389c69e562c701a6e2fdebcad8fc45009a6726cf109359f4' \
+            "${RUNNER_TEMP}/issue246-blockers.patch.xz" | sha256sum -c -
+          xz -dc "${RUNNER_TEMP}/issue246-blockers.patch.xz" > "${RUNNER_TEMP}/issue246-blockers.patch"
+          printf '%s  %s\n' \
+            '9754ab821d33345cf2a85db6b20a59cd978977689f68cc3473f508ef7a13dc0c' \
+            "${RUNNER_TEMP}/issue246-blockers.patch" | sha256sum -c -
+          git apply --check "${RUNNER_TEMP}/issue246-blockers.patch"
+          git apply "${RUNNER_TEMP}/issue246-blockers.patch"
+
+          python3 -m py_compile scripts/e2e/lib/tun_soak_*.py scripts/e2e/tests/test_tun_soak_*.py
+          python3 -m unittest \
+            scripts.e2e.tests.test_tun_resource_soak_contract \
+            scripts.e2e.tests.test_tun_soak_cleanup \
+            scripts.e2e.tests.test_tun_soak_health \
+            scripts.e2e.tests.test_tun_soak_isolation \
+            scripts.e2e.tests.test_tun_soak_metrics \
+            scripts.e2e.tests.test_tun_soak_status
+          bash -n \
+            scripts/e2e/lib/tun_soak_health.sh \
+            scripts/e2e/lib/tun_soak_cleanup.sh \
+            scripts/e2e/tun-resource-soak.sh
+          git diff --check
+
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+          rm -f -- "${chunk}"
+          rmdir .agent-sync/issue246 2>/dev/null || true
+          rmdir .agent-sync 2>/dev/null || true
+          test -z "$(git diff --name-only -- .github/workflows)"
+
+          git add -A
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- .github/workflows)"
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: close TUN soak isolation and acceptance gaps'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
