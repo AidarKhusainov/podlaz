@@ -1,4 +1,4 @@
-name: Issue 246 Publish Required Local Fix
+name: Issue 246 Diagnose Required Local Routes
 
 on:
   pull_request:
@@ -6,62 +6,40 @@ on:
       - master
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: issue-246-required-local-publisher-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  group: issue-246-required-local-diagnostic-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  publish:
+  diagnose:
     if: github.event.pull_request.head.ref == 'agent/issue-246-tun-resource-soak'
-    name: Publish verified required-local fix
+    name: Diagnose sanitized local-route shapes
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - name: Checkout exact staged head
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: Apply, verify, and publish fix
+      - name: Apply patch and classify host route shapes
         shell: bash
         run: |
           set -euo pipefail
           chunk='.agent-sync/issue246/required-local-fix.b64'
-          [[ -f "${chunk}" ]] || {
-            echo 'No staged required-local patch remains.'
-            exit 0
-          }
-
           base64 -d "${chunk}" > "${RUNNER_TEMP}/required-local.patch.xz"
           printf '%s  %s\n' \
             'bf68a8d5f8890669c7c0c79ecccb96b6c4d54e14671feb1c635ff1633bf3a745' \
             "${RUNNER_TEMP}/required-local.patch.xz" | sha256sum -c -
           xz -dc "${RUNNER_TEMP}/required-local.patch.xz" > "${RUNNER_TEMP}/required-local.patch"
-          printf '%s  %s\n' \
-            '5039b5a256ef8dc805663cc824f3db6b1455880c4572f2ae40d0dd423bf8c241' \
-            "${RUNNER_TEMP}/required-local.patch" | sha256sum -c -
           git apply --check "${RUNNER_TEMP}/required-local.patch"
           git apply "${RUNNER_TEMP}/required-local.patch"
 
-          python3 -m py_compile scripts/e2e/lib/tun_soak_*.py scripts/e2e/tests/test_tun_soak_*.py
-          python3 -m unittest \
-            scripts.e2e.tests.test_tun_resource_soak_contract \
-            scripts.e2e.tests.test_tun_soak_cleanup \
-            scripts.e2e.tests.test_tun_soak_health \
-            scripts.e2e.tests.test_tun_soak_isolation \
-            scripts.e2e.tests.test_tun_soak_metrics \
-            scripts.e2e.tests.test_tun_soak_status
-          bash -n \
-            scripts/e2e/lib/tun_soak_health.sh \
-            scripts/e2e/lib/tun_soak_cleanup.sh \
-            scripts/e2e/tun-resource-soak.sh
-          git diff --check
-
           python3 - <<'PY'
+          import collections
           import json
           import subprocess
           from scripts.e2e.lib import tun_soak_isolation as isolation
@@ -83,20 +61,38 @@ jobs:
               for route in routes_v4 + routes_v6
               if route['table'] == 'local'
           }
-          if required - observed or observed - required - optional:
-              raise SystemExit('real iproute2 local-route consistency smoke failed')
+          missing = required - observed
+          unknown = observed - required - optional
+
+          def signature(encoded: str) -> tuple[object, ...]:
+              route = json.loads(encoded)
+              return (
+                  route.get('family'),
+                  route.get('type'),
+                  route.get('protocol'),
+                  route.get('scope'),
+                  route.get('metric'),
+                  route.get('preference'),
+                  tuple(route.get('flags', [])),
+                  route.get('dev') == 'lo',
+              )
+
+          address_shapes = collections.Counter()
+          for link in addresses:
+              for address in link['addresses']:
+                  address_shapes[
+                      (
+                          address['family'],
+                          address['scope'],
+                          tuple(address['flags']),
+                          link['ifname'] == 'lo',
+                          bool(address['extras'].get('broadcast')),
+                      )
+                  ] += 1
+          print('address_shapes=', sorted(address_shapes.items()))
+          print('required_count=', len(required), 'optional_count=', len(optional), 'observed_count=', len(observed))
+          print('missing_signatures=', sorted(collections.Counter(signature(item) for item in missing).items()))
+          print('unknown_signatures=', sorted(collections.Counter(signature(item) for item in unknown).items()))
+          if missing or unknown:
+              raise SystemExit('sanitized local-route shape mismatch')
           PY
-
-          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
-          rm -f -- "${chunk}"
-          rmdir .agent-sync/issue246 2>/dev/null || true
-          rmdir .agent-sync 2>/dev/null || true
-          test -z "$(git diff --name-only -- .github/workflows)"
-
-          git add -A
-          git diff --cached --check
-          test -z "$(git diff --cached --name-only -- .github/workflows)"
-          git config user.name 'podlaz issue 246 automation'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'test: require kernel-derived local routes'
-          git push origin HEAD:agent/issue-246-tun-resource-soak
