@@ -1,0 +1,561 @@
+name: Issue 246 Publish Main Route Fix
+
+on:
+  push:
+    branches:
+      - agent/issue-246-tun-resource-soak
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-246-main-route-fix
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish verified main-route fix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          ref: agent/issue-246-tun-resource-soak
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply tests and verify RED
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/e2e/tests/test_tun_soak_isolation.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '    def test_unrelated_kernel_onlink_main_route_is_rejected(self) -> None:\n'
+          if marker not in text:
+              old_route = '                self.route("ipv4", "main", "192.0.2.0/24", dev="eth0", protocol="kernel", scope="link"),\n'
+              new_route = '''                self.route(
+                      "ipv4",
+                      "main",
+                      "192.0.2.0/24",
+                      dev="eth0",
+                      protocol="kernel",
+                      scope="link",
+                      prefsrc="192.0.2.20",
+                  ),
+          '''
+              if old_route not in text:
+                  raise SystemExit('main connected fixture route anchor is missing')
+              text = text.replace(old_route, new_route, 1)
+
+              anchor = '    def test_preexisting_main_table_bypass_route_is_rejected(self) -> None:\n'
+              tests = '''    def test_main_connected_route_with_wrong_preferred_source_is_rejected(self) -> None:
+              snapshot = self.baseline()
+              connected = next(
+                  route
+                  for route in snapshot["routes_v4"]
+                  if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+              )
+              connected["prefsrc"] = "198.51.100.20"
+
+              with self.assertRaisesRegex(
+                  tun_soak_isolation.IsolationError,
+                  "main-table route is not derived from the positive link/address baseline",
+              ):
+                  tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          def test_main_connected_route_explicit_address_metric_is_accepted(self) -> None:
+              snapshot = self.baseline()
+              address = snapshot["addresses"][1]["addresses"][0]
+              address["extras"]["metric"] = 600
+              connected = next(
+                  route
+                  for route in snapshot["routes_v4"]
+                  if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+              )
+              connected["metric"] = 600
+
+              tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          def test_noprefixroute_makes_main_connected_route_optional(self) -> None:
+              snapshot = self.baseline()
+              address = snapshot["addresses"][1]["addresses"][0]
+              address["flags"].append("noprefixroute")
+              snapshot["routes_v4"] = [
+                  route
+                  for route in snapshot["routes_v4"]
+                  if not (route["table"] == "main" and route["dst"] == "192.0.2.0/24")
+              ]
+
+              tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          def test_kernel_derived_ipv6_main_connected_route_is_accepted(self) -> None:
+              snapshot = self.baseline()
+              snapshot["addresses"][1]["addresses"].append(
+                  {
+                      "family": "inet6",
+                      "local": "fe80::20",
+                      "prefixlen": 64,
+                      "scope": "link",
+                      "label": "eth0",
+                      "flags": [],
+                      "extras": {"protocol": "kernel_ll"},
+                  }
+              )
+              snapshot["routes_v6"].extend(
+                  [
+                      self.route(
+                          "ipv6",
+                          "local",
+                          "fe80::20/128",
+                          dev="eth0",
+                          protocol="kernel",
+                          metric=0,
+                          preference="medium",
+                          type="local",
+                      ),
+                      self.route(
+                          "ipv6",
+                          "local",
+                          "ff00::/8",
+                          dev="eth0",
+                          protocol="kernel",
+                          metric=256,
+                          preference="medium",
+                          type="multicast",
+                      ),
+                      self.route(
+                          "ipv6",
+                          "main",
+                          "fe80::/64",
+                          dev="eth0",
+                          protocol="kernel",
+                          metric=256,
+                          preference="medium",
+                      ),
+                  ]
+              )
+
+              tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          def test_missing_required_main_connected_route_is_rejected(self) -> None:
+              snapshot = self.baseline()
+              snapshot["routes_v4"] = [
+                  route
+                  for route in snapshot["routes_v4"]
+                  if not (route["table"] == "main" and route["dst"] == "192.0.2.0/24")
+              ]
+
+              with self.assertRaisesRegex(
+                  tun_soak_isolation.IsolationError,
+                  "required main-table connected route is missing",
+              ):
+                  tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          def test_duplicate_main_connected_route_is_rejected(self) -> None:
+              snapshot = self.baseline()
+              connected = next(
+                  route
+                  for route in snapshot["routes_v4"]
+                  if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+              )
+              snapshot["routes_v4"].append(copy.deepcopy(connected))
+
+              with self.assertRaisesRegex(
+                  tun_soak_isolation.IsolationError,
+                  "main-table connected route is duplicated",
+              ):
+                  tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          def test_unrelated_kernel_onlink_main_route_is_rejected(self) -> None:
+              snapshot = self.baseline()
+              snapshot["routes_v4"].append(
+                  self.route(
+                      "ipv4",
+                      "main",
+                      "203.0.113.0/24",
+                      dev="eth0",
+                      protocol="kernel",
+                      scope="link",
+                  )
+              )
+
+              with self.assertRaisesRegex(
+                  tun_soak_isolation.IsolationError,
+                  "main-table route is not derived from the positive link/address baseline",
+              ):
+                  tun_soak_isolation.validate_clean_baseline(snapshot)
+
+          '''
+              if anchor not in text:
+                  raise SystemExit('main route test insertion anchor is missing')
+              text = text.replace(anchor, tests + anchor, 1)
+              path.write_text(text, encoding='utf-8')
+          PY
+
+          if grep -q 'def _main_connected_route_expectations' scripts/e2e/lib/tun_soak_isolation.py; then
+            echo 'Production fix already exists; RED phase was verified by the originating patch run.'
+          else
+            set +e
+            python3 -m unittest \
+              scripts.e2e.tests.test_tun_soak_isolation.TunSoakIsolationTests.test_missing_required_main_connected_route_is_rejected \
+              scripts.e2e.tests.test_tun_soak_isolation.TunSoakIsolationTests.test_duplicate_main_connected_route_is_rejected \
+              scripts.e2e.tests.test_tun_soak_isolation.TunSoakIsolationTests.test_unrelated_kernel_onlink_main_route_is_rejected
+            red_exit=$?
+            set -e
+            test "${red_exit}" -ne 0
+          fi
+
+      - name: Apply production and documentation fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          code_path = Path('scripts/e2e/lib/tun_soak_isolation.py')
+          code = code_path.read_text(encoding='utf-8')
+          if 'def _main_connected_route_expectations(' not in code:
+              local_anchor = 'def _local_route_expectations(snapshot: Mapping[str, Any]) -> tuple[set[str], set[str]]:\n'
+              link_helper = '''def _link_flags_by_name(snapshot: Mapping[str, Any]) -> dict[str, frozenset[str]]:
+              links = snapshot.get("links")
+              if not isinstance(links, list):
+                  raise IsolationError("link inventory is unavailable")
+              result: dict[str, frozenset[str]] = {}
+              for raw_link in links:
+                  link = _required_mapping(raw_link, "link inventory entry")
+                  ifname = link.get("ifname")
+                  flags = link.get("flags")
+                  if (
+                      not isinstance(ifname, str)
+                      or not ifname
+                      or ifname in result
+                      or not isinstance(flags, list)
+                      or any(not isinstance(flag, str) or not flag for flag in flags)
+                  ):
+                      raise IsolationError("link flag evidence is incomplete or ambiguous")
+                  result[ifname] = frozenset(flags)
+              return result
+
+
+          '''
+              if local_anchor not in code:
+                  raise SystemExit('local-route expectation anchor is missing')
+              code = code.replace(local_anchor, link_helper + local_anchor, 1)
+
+              inline_flags = '''    links = snapshot.get("links")
+              if not isinstance(links, list):
+                  raise IsolationError("link inventory is unavailable")
+              link_flags: dict[str, frozenset[str]] = {}
+              for raw_link in links:
+                  link = _required_mapping(raw_link, "link inventory entry")
+                  ifname = link.get("ifname")
+                  flags = link.get("flags")
+                  if (
+                      not isinstance(ifname, str)
+                      or not ifname
+                      or ifname in link_flags
+                      or not isinstance(flags, list)
+                      or any(not isinstance(flag, str) or not flag for flag in flags)
+                  ):
+                      raise IsolationError("link flag evidence is incomplete or ambiguous")
+                  link_flags[ifname] = frozenset(flags)
+          '''
+              if inline_flags not in code:
+                  raise SystemExit('inline link-flag contract is missing')
+              code = code.replace(inline_flags, '    link_flags = _link_flags_by_name(snapshot)\n', 1)
+
+              main_anchor = 'def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:\n'
+              main_contract = '''def _main_connected_route_expectations(
+              snapshot: Mapping[str, Any],
+          ) -> tuple[list[frozenset[str]], list[frozenset[str]]]:
+              """Derive exact required/optional main-table connected-route variants."""
+
+              addresses = snapshot.get("addresses")
+              if not isinstance(addresses, list):
+                  raise IsolationError("address inventory is unavailable")
+              link_flags = _link_flags_by_name(snapshot)
+              grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
+              for raw_link in addresses:
+                  link = _required_mapping(raw_link, "address inventory entry")
+                  ifname = link.get("ifname")
+                  raw_addresses = link.get("addresses")
+                  if (
+                      not isinstance(ifname, str)
+                      or not ifname
+                      or ifname not in link_flags
+                      or not isinstance(raw_addresses, list)
+                  ):
+                      raise IsolationError("address inventory entry is malformed")
+                  for raw_address in raw_addresses:
+                      address = _required_mapping(raw_address, "interface address entry")
+                      raw_family = address.get("family")
+                      family = "ipv4" if raw_family == "inet" else "ipv6" if raw_family == "inet6" else ""
+                      local = address.get("local")
+                      prefixlen = address.get("prefixlen")
+                      scope = address.get("scope")
+                      flags = address.get("flags")
+                      extras = address.get("extras")
+                      if (
+                          not family
+                          or not isinstance(local, str)
+                          or not local
+                          or not isinstance(prefixlen, int)
+                          or not isinstance(scope, str)
+                          or not isinstance(flags, list)
+                          or any(not isinstance(flag, str) or not flag for flag in flags)
+                          or not isinstance(extras, Mapping)
+                      ):
+                          raise IsolationError("interface address entry is malformed")
+                      try:
+                          interface = ipaddress.ip_interface(f"{local}/{prefixlen}")
+                      except ValueError as exc:
+                          raise IsolationError("interface address entry is malformed") from exc
+                      maximum_prefix = 32 if family == "ipv4" else 128
+                      if ifname == "lo" or scope == "host" or interface.network.prefixlen == maximum_prefix:
+                          continue
+                      grouped.setdefault((family, ifname, interface.network.with_prefixlen), []).append(address)
+
+              required_groups: list[frozenset[str]] = []
+              optional_groups: list[frozenset[str]] = []
+              for (family, ifname, destination), group in sorted(grouped.items()):
+                  primary = [address for address in group if "secondary" not in address.get("flags", [])]
+                  if len(primary) != 1:
+                      raise IsolationError("connected-prefix primary address evidence is ambiguous")
+                  primary_address = primary[0]
+                  local = str(primary_address["local"])
+                  extras = _required_mapping(primary_address.get("extras"), "interface address extras")
+
+                  explicit_metric = extras.get("metric")
+                  if explicit_metric is not None:
+                      if not isinstance(explicit_metric, int) or isinstance(explicit_metric, bool) or explicit_metric < 0:
+                          raise IsolationError("interface address route metric evidence is malformed")
+                      metric = explicit_metric
+                  elif family == "ipv6":
+                      metric = 256
+                  else:
+                      metric = None
+
+                  route_flags = ["linkdown"] if "LOWER_UP" not in link_flags[ifname] else []
+                  variants = frozenset(
+                      {
+                          _route_key(
+                              _route_shape(
+                                  family=family,
+                                  table="main",
+                                  type_name="unicast",
+                                  destination=destination,
+                                  device=ifname,
+                                  protocol="kernel",
+                                  scope="link" if family == "ipv4" else "",
+                                  metric=metric,
+                                  preferred_source=local if family == "ipv4" else "",
+                                  preference="" if family == "ipv4" else "medium",
+                                  flags=route_flags,
+                              )
+                          )
+                      }
+                  )
+                  if all("noprefixroute" in address.get("flags", []) for address in group):
+                      optional_groups.append(variants)
+                  else:
+                      required_groups.append(variants)
+
+              all_groups = required_groups + optional_groups
+              for left, variants in enumerate(all_groups):
+                  for right in range(left + 1, len(all_groups)):
+                      if variants & all_groups[right]:
+                          raise IsolationError("connected-prefix route expectations are ambiguous")
+              return required_groups, optional_groups
+
+
+          def _validate_main_connected_routes(snapshot: Mapping[str, Any]) -> None:
+              required_groups, optional_groups = _main_connected_route_expectations(snapshot)
+              groups = required_groups + optional_groups
+              matches = [0] * len(groups)
+              observed: set[str] = set()
+
+              for key in ("routes_v4", "routes_v6"):
+                  routes = snapshot.get(key)
+                  if not isinstance(routes, list):
+                      raise IsolationError("route inventory is unavailable")
+                  for raw in routes:
+                      route = _required_mapping(raw, "route inventory entry")
+                      if route.get("table") != "main" or route.get("dst") == "default":
+                          continue
+                      identity = _route_key(route)
+                      if identity in observed:
+                          raise IsolationError("main-table connected route is duplicated")
+                      observed.add(identity)
+                      matching_groups = [index for index, variants in enumerate(groups) if identity in variants]
+                      if len(matching_groups) != 1:
+                          raise IsolationError(
+                              "foreign main-table route is not derived from the positive link/address baseline"
+                          )
+                      index = matching_groups[0]
+                      matches[index] += 1
+                      if matches[index] > 1:
+                          raise IsolationError("main-table connected route cardinality is ambiguous")
+
+              if any(matches[index] != 1 for index in range(len(required_groups))):
+                  raise IsolationError("required main-table connected route is missing")
+
+
+          '''
+              if main_anchor not in code:
+                  raise SystemExit('main-route contract insertion anchor is missing')
+              code = code.replace(main_anchor, main_contract + main_anchor, 1)
+
+              validation_anchor = '    _validate_non_main_routes(snapshot)\n\n    for key in ("routes_v4", "routes_v6"):\n'
+              if validation_anchor not in code:
+                  raise SystemExit('route validation call anchor is missing')
+              code = code.replace(
+                  validation_anchor,
+                  '    _validate_non_main_routes(snapshot)\n    _validate_main_connected_routes(snapshot)\n\n'
+                  '    for key in ("routes_v4", "routes_v6"):\n',
+                  1,
+              )
+
+              broad_main = '''            if (
+                  route.get("type") != "unicast"
+                  or route.get("mark")
+                  or route.get("multipath")
+                  or route.get("flags", [])
+                  or route.get("nhid") is not None
+              ):
+                  raise IsolationError("foreign main-table route exists before the soak")
+              if route.get("dst") == "default":
+                  if not route.get("dev") or route.get("protocol") not in {"boot", "dhcp", "kernel", "ra", "static"}:
+                      raise IsolationError("default-route ownership is ambiguous before the soak")
+                  continue
+              if (
+                  route.get("gateway")
+                  or route.get("scope") != "link"
+                  or route.get("protocol") not in {"dhcp", "kernel", "ra"}
+              ):
+                  raise IsolationError("foreign main-table route exists before the soak")
+          '''
+              strict_default = '''            if route.get("dst") != "default":
+                  continue
+              if (
+                  route.get("type") != "unicast"
+                  or route.get("mark")
+                  or route.get("multipath")
+                  or route.get("flags", [])
+                  or route.get("nhid") is not None
+                  or not route.get("dev")
+                  or route.get("protocol") not in {"boot", "dhcp", "kernel", "ra", "static"}
+              ):
+                  raise IsolationError("default-route ownership is ambiguous before the soak")
+          '''
+              if broad_main not in code:
+                  raise SystemExit('broad main-table validation block is missing')
+              code = code.replace(broad_main, strict_default, 1)
+              code_path.write_text(code, encoding='utf-8')
+
+          docs_path = Path('docs/e2e.md')
+          docs = docs_path.read_text(encoding='utf-8')
+          docs_marker = 'Non-default `main` routes use a separate positive connected-prefix contract.'
+          if docs_marker not in docs:
+              docs_anchor = '''and duplicates are rejected. Arbitrary content is never accepted merely because
+          its table name is `local` or `default`.
+          '''
+              docs_text = '''and duplicates are rejected. Arbitrary content is never accepted merely because
+          its table name is `local` or `default`.
+
+          Non-default `main` routes use a separate positive connected-prefix contract.
+          Normalized addresses are grouped by family, interface, and canonical prefix.
+          Every non-loopback, non-host prefix shorter than `/32` or `/128` derives one
+          exact route identity: the same prefix and device, unicast type, no gateway,
+          mark, nexthop, or multipath state, `proto kernel`, family-specific scope,
+          the primary IPv4 preferred source, the explicit address route metric when
+          present (otherwise no IPv4 metric or metric 256 for IPv6), IPv6 medium
+          preference, and `linkdown` exactly when link evidence lacks `LOWER_UP`.
+
+          A connected route is mandatory unless every address in its prefix group is
+          marked `noprefixroute`; that case permits zero or one exact route. Multiple
+          non-secondary addresses for one prefix are ambiguous and fail closed. An
+          unknown prefix, missing mandatory route, duplicate route, wrong device or
+          preferred source, or any semantic mutation is rejected. Route protocol names
+          such as `kernel`, `dhcp`, or `ra` are never accepted as ownership proof by
+          themselves.
+          '''
+              if docs_anchor not in docs:
+                  raise SystemExit('main-route documentation anchor is missing')
+              docs = docs.replace(docs_anchor, docs_text, 1)
+              docs_path.write_text(docs, encoding='utf-8')
+          PY
+
+      - name: Verify GREEN contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/e2e/lib/tun_soak_*.py scripts/e2e/tests/test_tun_soak_*.py
+          python3 -m unittest \
+            scripts.e2e.tests.test_tun_resource_soak_contract \
+            scripts.e2e.tests.test_tun_soak_cleanup \
+            scripts.e2e.tests.test_tun_soak_health \
+            scripts.e2e.tests.test_tun_soak_isolation \
+            scripts.e2e.tests.test_tun_soak_metrics \
+            scripts.e2e.tests.test_tun_soak_status
+          bash -n \
+            scripts/e2e/lib/tun_soak_health.sh \
+            scripts/e2e/lib/tun_soak_cleanup.sh \
+            scripts/e2e/tun-resource-soak.sh
+          git diff --check
+
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from scripts.e2e.lib import tun_soak_isolation as isolation
+
+          def load(*args: str):
+              return json.loads(subprocess.check_output(args, text=True))
+
+          snapshot = {
+              'links': isolation._normalize_links(load('ip', '-j', '-d', 'link', 'show')),
+              'addresses': isolation._normalize_addresses(load('ip', '-j', 'address', 'show')),
+              'routes_v4': isolation._normalize_routes(
+                  load('ip', '-j', '-4', 'route', 'show', 'table', 'all'), 'ipv4'
+              ),
+              'routes_v6': isolation._normalize_routes(
+                  load('ip', '-j', '-6', 'route', 'show', 'table', 'all'), 'ipv6'
+              ),
+          }
+          required, optional = isolation._main_connected_route_expectations(snapshot)
+          groups = required + optional
+          matches = [0] * len(groups)
+          for route in snapshot['routes_v4'] + snapshot['routes_v6']:
+              if route['table'] != 'main' or route['dst'] == 'default':
+                  continue
+              identity = isolation._route_key(route)
+              indexes = [index for index, variants in enumerate(groups) if identity in variants]
+              if len(indexes) == 1:
+                  matches[indexes[0]] += 1
+          if any(matches[index] != 1 for index in range(len(required))):
+              raise SystemExit('real kernel connected-route expectation smoke failed')
+          print('real kernel connected-route expectation smoke: OK')
+          PY
+
+      - name: Commit and push verified fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+          test -z "$(git diff --name-only -- .github/workflows)"
+          git add \
+            scripts/e2e/lib/tun_soak_isolation.py \
+            scripts/e2e/tests/test_tun_soak_isolation.py \
+            docs/e2e.md
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'Main-route fix is already published.'
+            exit 0
+          fi
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: prove main connected routes from addresses'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
