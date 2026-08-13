@@ -282,11 +282,22 @@ known VPN process name is present. Foreign routing tables, ambiguous main-table
 bypass routes, pre-existing nftables packet-path state, or resolver default-route
 ownership outside that uplink also fail the baseline.
 
-The canonical `default` routing table must be empty. Entries in the higher-priority
-`local` table are accepted only when their complete normalized route identity is
-one of the kernel-generated local, broadcast, or IPv6 multicast routes positively
-derived from the exact link/address inventory. Unsupported or duplicate
-`local` routes fail closed; arbitrary content is never accepted merely because
+The canonical `default` routing table must be empty. The higher-priority
+`local` table is validated against two disjoint sets derived from the exact
+normalized link/address inventory. The **required kernel-derived route set**
+contains every per-address local host route, the loopback network-local route,
+any primary IPv4 broadcast route explicitly advertised by the address inventory,
+and the per-link IPv6 multicast route for non-loopback IPv6 links. Every required
+entry must be present. Kernel route flag variants are not generic noise: an IPv4
+broadcast route is required with `linkdown` exactly when the independently sampled
+link flags show no `LOWER_UP` carrier, and is required without `linkdown` otherwise.
+
+The only **documented optional variants** are the low-address IPv4 broadcast
+entry emitted by some kernels, a derived high broadcast entry when the address
+dump does not advertise one explicitly, a broadcast entry shared by a secondary
+IPv4 address, and the IPv6 multicast entry on loopback. An observed `local` route
+must belong to the required or optional set, required entries may not be missing,
+and duplicates are rejected. Arbitrary content is never accepted merely because
 its table name is `local` or `default`.
 
 While Podlaz is active, the verifier subtracts only the exact transaction-backed

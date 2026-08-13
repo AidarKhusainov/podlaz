@@ -22,6 +22,7 @@ class TunSoakIsolationTests(unittest.TestCase):
                     "master": None,
                     "mtu": 65536,
                     "link_type": "loopback",
+                    "flags": ["LOOPBACK", "LOWER_UP", "UP"],
                 },
                 {
                     "ifindex": 2,
@@ -30,6 +31,7 @@ class TunSoakIsolationTests(unittest.TestCase):
                     "master": None,
                     "mtu": 1500,
                     "link_type": "ether",
+                    "flags": ["BROADCAST", "LOWER_UP", "MULTICAST", "UP"],
                 },
             ],
             "addresses": [
@@ -59,7 +61,7 @@ class TunSoakIsolationTests(unittest.TestCase):
                             "scope": "global",
                             "label": "eth0",
                             "flags": ["dynamic"],
-                            "extras": {},
+                            "extras": {"broadcast": "192.0.2.255"},
                         }
                     ],
                 },
@@ -74,6 +76,56 @@ class TunSoakIsolationTests(unittest.TestCase):
                 self.rule("ipv6", 32766, "main"),
             ],
             "routes_v4": [
+                self.route(
+                    "ipv4",
+                    "local",
+                    "127.0.0.0/8",
+                    dev="lo",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="127.0.0.1",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "127.0.0.1/32",
+                    dev="lo",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="127.0.0.1",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "127.255.255.255/32",
+                    dev="lo",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="127.0.0.1",
+                    type="broadcast",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "192.0.2.20/32",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="192.0.2.20",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "192.0.2.255/32",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="192.0.2.20",
+                    type="broadcast",
+                ),
                 self.route("ipv4", "main", "default", gateway="192.0.2.1", dev="eth0", protocol="dhcp"),
                 self.route("ipv4", "main", "192.0.2.0/24", dev="eth0", protocol="kernel", scope="link"),
             ],
@@ -240,6 +292,7 @@ class TunSoakIsolationTests(unittest.TestCase):
                     "ifname": "eth0",
                     "mtu": 1500,
                     "link_type": "ether",
+                    "flags": ["BROADCAST", "LOWER_UP", "MULTICAST", "UP"],
                 }
             ],
             "addresses": [
@@ -270,6 +323,20 @@ class TunSoakIsolationTests(unittest.TestCase):
 
         normalized = tun_soak_isolation.normalize_snapshot(raw, network_namespace_inode=101)
 
+        self.assertEqual(
+            [
+                {
+                    "ifindex": 2,
+                    "ifname": "eth0",
+                    "kind": "",
+                    "master": None,
+                    "mtu": 1500,
+                    "link_type": "ether",
+                    "flags": ["BROADCAST", "LOWER_UP", "MULTICAST", "UP"],
+                }
+            ],
+            normalized["links"],
+        )
         self.assertEqual(
             [
                 {
@@ -369,7 +436,7 @@ class TunSoakIsolationTests(unittest.TestCase):
     def test_clean_dedicated_host_baseline_is_accepted(self) -> None:
         tun_soak_isolation.validate_clean_baseline(self.baseline())
 
-    def test_kernel_derived_local_routes_are_accepted(self) -> None:
+    def test_kernel_derived_ipv6_local_route_is_accepted(self) -> None:
         snapshot = self.baseline()
         snapshot["addresses"][0]["addresses"].append(
             {
@@ -382,60 +449,6 @@ class TunSoakIsolationTests(unittest.TestCase):
                 "extras": {"protocol": "kernel_lo"},
             }
         )
-        snapshot["routes_v4"].extend(
-            [
-                self.route(
-                    "ipv4",
-                    "local",
-                    "127.0.0.0/8",
-                    dev="lo",
-                    protocol="kernel",
-                    scope="host",
-                    prefsrc="127.0.0.1",
-                    type="local",
-                ),
-                self.route(
-                    "ipv4",
-                    "local",
-                    "127.0.0.1/32",
-                    dev="lo",
-                    protocol="kernel",
-                    scope="host",
-                    prefsrc="127.0.0.1",
-                    type="local",
-                ),
-                self.route(
-                    "ipv4",
-                    "local",
-                    "127.255.255.255/32",
-                    dev="lo",
-                    protocol="kernel",
-                    scope="link",
-                    prefsrc="127.0.0.1",
-                    type="broadcast",
-                ),
-                self.route(
-                    "ipv4",
-                    "local",
-                    "192.0.2.20/32",
-                    dev="eth0",
-                    protocol="kernel",
-                    scope="host",
-                    prefsrc="192.0.2.20",
-                    type="local",
-                ),
-                self.route(
-                    "ipv4",
-                    "local",
-                    "192.0.2.255/32",
-                    dev="eth0",
-                    protocol="kernel",
-                    scope="link",
-                    prefsrc="192.0.2.20",
-                    type="broadcast",
-                ),
-            ]
-        )
         snapshot["routes_v6"].append(
             self.route(
                 "ipv6",
@@ -446,6 +459,73 @@ class TunSoakIsolationTests(unittest.TestCase):
                 metric=0,
                 preference="medium",
                 type="local",
+            )
+        )
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_missing_required_kernel_local_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"] = [
+            route
+            for route in snapshot["routes_v4"]
+            if not (route["table"] == "local" and route["dst"] == "192.0.2.20/32")
+        ]
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "required local-table route is missing"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_missing_required_explicit_broadcast_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"] = [
+            route
+            for route in snapshot["routes_v4"]
+            if not (route["table"] == "local" and route["dst"] == "192.0.2.255/32")
+        ]
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "required local-table route is missing"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_required_broadcast_linkdown_variant_is_derived_from_link_state(self) -> None:
+        snapshot = self.baseline()
+        snapshot["links"][1]["flags"] = ["BROADCAST", "MULTICAST", "UP"]
+        broadcast = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "local"
+            and route["type"] == "broadcast"
+            and route["dev"] == "eth0"
+        )
+        broadcast["flags"] = ["linkdown"]
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_linkdown_broadcast_is_rejected_when_link_has_lower_up(self) -> None:
+        snapshot = self.baseline()
+        broadcast = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "local"
+            and route["type"] == "broadcast"
+            and route["dev"] == "eth0"
+        )
+        broadcast["flags"] = ["linkdown"]
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "local-table route"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_documented_optional_subnet_network_broadcast_route_is_accepted(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "local",
+                "192.0.2.0/32",
+                dev="eth0",
+                protocol="kernel",
+                scope="link",
+                prefsrc="192.0.2.20",
+                type="broadcast",
             )
         )
 

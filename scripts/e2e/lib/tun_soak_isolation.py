@@ -316,6 +316,10 @@ def _normalize_links(value: Any) -> list[dict[str, Any]]:
         master = entry.get("master")
         if master is not None and not isinstance(master, (int, str)):
             raise IsolationError("link master evidence is malformed")
+        raw_flags = entry.get("flags")
+        if not isinstance(raw_flags, list):
+            raise IsolationError("link flag evidence is incomplete")
+        flags = _normalize_string_flags(raw_flags, "link")
         links.append(
             {
                 "ifindex": ifindex,
@@ -324,6 +328,7 @@ def _normalize_links(value: Any) -> list[dict[str, Any]]:
                 "master": master,
                 "mtu": mtu,
                 "link_type": str(entry.get("link_type", "")),
+                "flags": flags,
             }
         )
     return sorted(links, key=lambda item: (item["ifindex"], item["ifname"]))
@@ -645,6 +650,7 @@ def _route_shape(
     metric: int | None,
     preferred_source: str,
     preference: str = "",
+    flags: Sequence[str] = (),
 ) -> dict[str, Any]:
     return {
         "family": family,
@@ -661,7 +667,7 @@ def _route_shape(
         "mark": "",
         "nhid": None,
         "multipath": [],
-        "flags": [],
+        "flags": sorted(flags),
         "preference": preference,
     }
 
@@ -670,18 +676,44 @@ def _route_key(route: Mapping[str, Any]) -> str:
     return json.dumps(dict(route), sort_keys=True, separators=(",", ":"))
 
 
-def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
+def _local_route_expectations(snapshot: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Derive mandatory and explicitly optional kernel-owned local-table routes."""
+
     addresses = snapshot.get("addresses")
     if not isinstance(addresses, list):
         raise IsolationError("address inventory is unavailable")
+    links = snapshot.get("links")
+    if not isinstance(links, list):
+        raise IsolationError("link inventory is unavailable")
+    link_flags: dict[str, frozenset[str]] = {}
+    for raw_link in links:
+        link = _required_mapping(raw_link, "link inventory entry")
+        ifname = link.get("ifname")
+        flags = link.get("flags")
+        if (
+            not isinstance(ifname, str)
+            or not ifname
+            or ifname in link_flags
+            or not isinstance(flags, list)
+            or any(not isinstance(flag, str) or not flag for flag in flags)
+        ):
+            raise IsolationError("link flag evidence is incomplete or ambiguous")
+        link_flags[ifname] = frozenset(flags)
 
-    allowed: set[str] = set()
-    ipv6_links: set[str] = set()
+    required: set[str] = set()
+    optional: set[str] = set()
+    required_ipv6_multicast_links: set[str] = set()
+    optional_ipv6_multicast_links: set[str] = set()
     for raw_link in addresses:
         link = _required_mapping(raw_link, "address inventory entry")
         ifname = link.get("ifname")
         raw_addresses = link.get("addresses")
-        if not isinstance(ifname, str) or not ifname or not isinstance(raw_addresses, list):
+        if (
+            not isinstance(ifname, str)
+            or not ifname
+            or ifname not in link_flags
+            or not isinstance(raw_addresses, list)
+        ):
             raise IsolationError("address inventory entry is malformed")
         for raw_address in raw_addresses:
             address = _required_mapping(raw_address, "interface address entry")
@@ -690,12 +722,17 @@ def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
             local = address.get("local")
             prefixlen = address.get("prefixlen")
             scope = address.get("scope")
+            flags = address.get("flags")
+            extras = address.get("extras")
             if (
                 not family
                 or not isinstance(local, str)
                 or not local
                 or not isinstance(prefixlen, int)
                 or not isinstance(scope, str)
+                or not isinstance(flags, list)
+                or any(not isinstance(flag, str) or not flag for flag in flags)
+                or not isinstance(extras, Mapping)
             ):
                 raise IsolationError("interface address entry is malformed")
             try:
@@ -705,7 +742,7 @@ def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
 
             if family == "ipv4":
                 host_destination = ipaddress.ip_network(f"{local}/32", strict=False).with_prefixlen
-                allowed.add(
+                required.add(
                     _route_key(
                         _route_shape(
                             family=family,
@@ -721,7 +758,7 @@ def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
                     )
                 )
                 if ifname == "lo" and scope == "host":
-                    allowed.add(
+                    required.add(
                         _route_key(
                             _route_shape(
                                 family=family,
@@ -737,36 +774,74 @@ def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
                         )
                     )
 
-                broadcast_candidates: set[str] = set()
-                extras = address.get("extras")
-                if isinstance(extras, Mapping):
-                    raw_broadcast = extras.get("broadcast")
-                    if raw_broadcast:
-                        broadcast_candidates.add(_canonical_address(raw_broadcast, family))
-                if interface.network.prefixlen <= 30:
-                    broadcast_candidates.add(str(interface.network.broadcast_address))
-                    if ifname != "lo":
-                        broadcast_candidates.add(str(interface.network.network_address))
-                for broadcast in broadcast_candidates:
-                    allowed.add(
-                        _route_key(
-                            _route_shape(
-                                family=family,
-                                table="local",
-                                type_name="broadcast",
-                                destination=ipaddress.ip_network(f"{broadcast}/32", strict=False).with_prefixlen,
-                                device=ifname,
-                                protocol="kernel",
-                                scope="link",
-                                metric=None,
-                                preferred_source=local,
-                            )
+                # RTNH_F_LINKDOWN is a semantic route flag. It is required
+                # only when independent link evidence shows that the attached
+                # non-loopback device has no lower-layer carrier. Treating it
+                # as generic optional noise would allow a foreign route
+                # mutation to masquerade as a kernel variant.
+                broadcast_route_flags = (
+                    ["linkdown"]
+                    if ifname != "lo" and "LOWER_UP" not in link_flags[ifname]
+                    else []
+                )
+
+                explicit_broadcast = extras.get("broadcast")
+                broadcast = ""
+                if explicit_broadcast:
+                    broadcast = _canonical_address(explicit_broadcast, family)
+                elif interface.network.prefixlen <= 30:
+                    broadcast = str(interface.network.broadcast_address)
+                if broadcast:
+                    broadcast_key = _route_key(
+                        _route_shape(
+                            family=family,
+                            table="local",
+                            type_name="broadcast",
+                            destination=ipaddress.ip_network(f"{broadcast}/32", strict=False).with_prefixlen,
+                            device=ifname,
+                            protocol="kernel",
+                            scope="link",
+                            metric=None,
+                            preferred_source=local,
+                            flags=broadcast_route_flags,
                         )
                     )
+                    # The primary address' explicit broadcast route and the
+                    # loopback broadcast route are mandatory. A secondary
+                    # address can share its primary address' broadcast entry;
+                    # when the address dump contains no explicit broadcast,
+                    # kernels/configurations may omit the derived variant.
+                    if (explicit_broadcast and "secondary" not in flags) or ifname == "lo":
+                        required.add(broadcast_key)
+                    else:
+                        optional.add(broadcast_key)
+
+                # Some supported kernels expose the subnet-network address as
+                # a second RTN_BROADCAST entry while others expose only the
+                # high broadcast address. It is therefore an explicit optional
+                # variant, never a substitute for a mandatory address-local
+                # route or an explicitly advertised broadcast route.
+                if ifname != "lo" and interface.network.prefixlen <= 30:
+                    network_broadcast_key = _route_key(
+                        _route_shape(
+                            family=family,
+                            table="local",
+                            type_name="broadcast",
+                            destination=ipaddress.ip_network(
+                                f"{interface.network.network_address}/32", strict=False
+                            ).with_prefixlen,
+                            device=ifname,
+                            protocol="kernel",
+                            scope="link",
+                            metric=None,
+                            preferred_source=local,
+                            flags=broadcast_route_flags,
+                        )
+                    )
+                    optional.add(network_broadcast_key)
                 continue
 
-            ipv6_links.add(ifname)
-            allowed.add(
+            required.add(
                 _route_key(
                     _route_shape(
                         family=family,
@@ -782,29 +857,38 @@ def _allowed_local_routes(snapshot: Mapping[str, Any]) -> set[str]:
                     )
                 )
             )
+            if ifname == "lo":
+                optional_ipv6_multicast_links.add(ifname)
+            else:
+                required_ipv6_multicast_links.add(ifname)
 
-    for ifname in ipv6_links:
-        allowed.add(
-            _route_key(
-                _route_shape(
-                    family="ipv6",
-                    table="local",
-                    type_name="multicast",
-                    destination="ff00::/8",
-                    device=ifname,
-                    protocol="kernel",
-                    scope="",
-                    metric=256,
-                    preferred_source="",
-                    preference="medium",
-                )
+    for ifname in required_ipv6_multicast_links | optional_ipv6_multicast_links:
+        multicast_key = _route_key(
+            _route_shape(
+                family="ipv6",
+                table="local",
+                type_name="multicast",
+                destination="ff00::/8",
+                device=ifname,
+                protocol="kernel",
+                scope="",
+                metric=256,
+                preferred_source="",
+                preference="medium",
             )
         )
-    return allowed
+        if ifname in required_ipv6_multicast_links:
+            required.add(multicast_key)
+        else:
+            optional.add(multicast_key)
+
+    optional.difference_update(required)
+    return required, optional
 
 
 def _validate_non_main_routes(snapshot: Mapping[str, Any]) -> None:
-    allowed_local = _allowed_local_routes(snapshot)
+    required_local, optional_local = _local_route_expectations(snapshot)
+    permitted_local = required_local | optional_local
     observed_local: set[str] = set()
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
@@ -821,8 +905,11 @@ def _validate_non_main_routes(snapshot: Mapping[str, Any]) -> None:
             if identity in observed_local:
                 raise IsolationError("local-table route is duplicated")
             observed_local.add(identity)
-            if identity not in allowed_local:
+            if identity not in permitted_local:
                 raise IsolationError("local-table route is not derived from the positive link/address baseline")
+
+    if required_local - observed_local:
+        raise IsolationError("required local-table route is missing from the positive link/address baseline")
 
 
 def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:
