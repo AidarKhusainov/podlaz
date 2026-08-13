@@ -127,7 +127,15 @@ class TunSoakIsolationTests(unittest.TestCase):
                     type="broadcast",
                 ),
                 self.route("ipv4", "main", "default", gateway="192.0.2.1", dev="eth0", protocol="dhcp"),
-                self.route("ipv4", "main", "192.0.2.0/24", dev="eth0", protocol="kernel", scope="link"),
+                self.route(
+                    "ipv4",
+                    "main",
+                    "192.0.2.0/24",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="192.0.2.20",
+                ),
             ],
             "routes_v6": [],
             "nftables": [],
@@ -497,6 +505,12 @@ class TunSoakIsolationTests(unittest.TestCase):
             and route["dev"] == "eth0"
         )
         broadcast["flags"] = ["linkdown"]
+        connected = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+        )
+        connected["flags"] = ["linkdown"]
 
         tun_soak_isolation.validate_clean_baseline(snapshot)
 
@@ -574,6 +588,176 @@ class TunSoakIsolationTests(unittest.TestCase):
         snapshot["rules_v4"].append(self.rule("ipv4", 12000, "12000"))
 
         with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "canonical default policy-rule set"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_main_connected_route_with_wrong_preferred_source_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        connected = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+        )
+        connected["prefsrc"] = "198.51.100.20"
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "main-table route is not derived from the positive link/address baseline",
+        ):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_main_connected_route_matching_default_metric_is_accepted(self) -> None:
+        snapshot = self.baseline()
+        default_route = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "default"
+        )
+        connected = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+        )
+        default_route["metric"] = 600
+        connected["metric"] = 600
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_noprefixroute_requires_main_connected_route_to_be_absent(self) -> None:
+        snapshot = self.baseline()
+        address = snapshot["addresses"][1]["addresses"][0]
+        address["flags"].append("noprefixroute")
+        snapshot["routes_v4"] = [
+            route
+            for route in snapshot["routes_v4"]
+            if not (route["table"] == "main" and route["dst"] == "192.0.2.0/24")
+        ]
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_noprefixroute_rejects_present_main_connected_route(self) -> None:
+        snapshot = self.baseline()
+        snapshot["addresses"][1]["addresses"][0]["flags"].append("noprefixroute")
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "noprefixroute prefix unexpectedly owns",
+        ):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_kernel_derived_ipv6_main_connected_route_is_accepted(self) -> None:
+        snapshot = self.baseline()
+        snapshot["addresses"][1]["addresses"].append(
+            {
+                "family": "inet6",
+                "local": "fe80::20",
+                "prefixlen": 64,
+                "scope": "link",
+                "label": "eth0",
+                "flags": [],
+                "extras": {"protocol": "kernel_ll"},
+            }
+        )
+        snapshot["routes_v6"].extend(
+            [
+                self.route(
+                    "ipv6",
+                    "local",
+                    "fe80::20/128",
+                    dev="eth0",
+                    protocol="kernel",
+                    metric=0,
+                    preference="medium",
+                    type="local",
+                ),
+                self.route(
+                    "ipv6",
+                    "local",
+                    "ff00::/8",
+                    dev="eth0",
+                    protocol="kernel",
+                    metric=256,
+                    preference="medium",
+                    type="multicast",
+                ),
+                self.route(
+                    "ipv6",
+                    "main",
+                    "fe80::/64",
+                    dev="eth0",
+                    protocol="kernel",
+                    metric=256,
+                    preference="medium",
+                ),
+            ]
+        )
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_missing_required_main_connected_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"] = [
+            route
+            for route in snapshot["routes_v4"]
+            if not (route["table"] == "main" and route["dst"] == "192.0.2.0/24")
+        ]
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "required main-table connected route is missing",
+        ):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_duplicate_main_connected_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        connected = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "192.0.2.0/24"
+        )
+        snapshot["routes_v4"].append(copy.deepcopy(connected))
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "main-table connected route is duplicated",
+        ):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_unrelated_kernel_onlink_main_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "main",
+                "203.0.113.0/24",
+                dev="eth0",
+                protocol="kernel",
+                scope="link",
+            )
+        )
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "main-table route is not derived from the positive link/address baseline",
+        ):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_unrelated_dhcp_onlink_main_route_is_rejected(self) -> None:
+        snapshot = self.baseline()
+        snapshot["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "main",
+                "198.51.100.0/24",
+                dev="eth0",
+                protocol="dhcp",
+                scope="link",
+            )
+        )
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "main-table route is not derived from the positive link/address baseline",
+        ):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
     def test_preexisting_main_table_bypass_route_is_rejected(self) -> None:

@@ -300,6 +300,24 @@ must belong to the required or optional set, required entries may not be missing
 and duplicates are rejected. Arbitrary content is never accepted merely because
 its table name is `local` or `default`.
 
+Every non-default `main` route is validated by a separate positive
+connected-prefix contract. Normalized addresses are grouped by family,
+interface, and canonical prefix. Each non-loopback, non-host prefix shorter than
+`/32` or `/128` requires exactly one complete connected-route identity unless
+its primary address is explicitly marked `noprefixroute`, in which case the
+route must be absent. The identity fixes the prefix, device, type, gateway,
+protocol, family-specific scope, primary IPv4 preferred source, metric variants
+derived from the address or the same-device default route, IPv6 preference,
+link-state-derived flags, source selector, mark, nexthop, and multipath fields.
+A secondary address cannot create another route, and multiple primary addresses
+for one prefix are treated as ambiguous.
+
+Unknown prefixes, missing or duplicate required routes, classless DHCP routes,
+wrong devices or preferred sources, and every unsupported semantic mutation fail
+closed. Labels such as `kernel`, `dhcp`, or `ra` are never ownership evidence by
+themselves; an accepted route must first be derived from the exact link/address
+prefix and then match one of its explicitly documented complete variants.
+
 While Podlaz is active, the verifier subtracts only the exact transaction-backed
 Podlaz route/rule projection, the reserved `podlaz0` link, the exact Podlaz nft
 table, and the Podlaz resolver link. Route identity includes normalized type,

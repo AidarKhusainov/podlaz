@@ -676,16 +676,11 @@ def _route_key(route: Mapping[str, Any]) -> str:
     return json.dumps(dict(route), sort_keys=True, separators=(",", ":"))
 
 
-def _local_route_expectations(snapshot: Mapping[str, Any]) -> tuple[set[str], set[str]]:
-    """Derive mandatory and explicitly optional kernel-owned local-table routes."""
-
-    addresses = snapshot.get("addresses")
-    if not isinstance(addresses, list):
-        raise IsolationError("address inventory is unavailable")
+def _link_flags_by_name(snapshot: Mapping[str, Any]) -> dict[str, frozenset[str]]:
     links = snapshot.get("links")
     if not isinstance(links, list):
         raise IsolationError("link inventory is unavailable")
-    link_flags: dict[str, frozenset[str]] = {}
+    result: dict[str, frozenset[str]] = {}
     for raw_link in links:
         link = _required_mapping(raw_link, "link inventory entry")
         ifname = link.get("ifname")
@@ -693,12 +688,22 @@ def _local_route_expectations(snapshot: Mapping[str, Any]) -> tuple[set[str], se
         if (
             not isinstance(ifname, str)
             or not ifname
-            or ifname in link_flags
+            or ifname in result
             or not isinstance(flags, list)
             or any(not isinstance(flag, str) or not flag for flag in flags)
         ):
             raise IsolationError("link flag evidence is incomplete or ambiguous")
-        link_flags[ifname] = frozenset(flags)
+        result[ifname] = frozenset(flags)
+    return result
+
+
+def _local_route_expectations(snapshot: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Derive mandatory and explicitly optional kernel-owned local-table routes."""
+
+    addresses = snapshot.get("addresses")
+    if not isinstance(addresses, list):
+        raise IsolationError("address inventory is unavailable")
+    link_flags = _link_flags_by_name(snapshot)
 
     required: set[str] = set()
     optional: set[str] = set()
@@ -912,6 +917,183 @@ def _validate_non_main_routes(snapshot: Mapping[str, Any]) -> None:
         raise IsolationError("required local-table route is missing from the positive link/address baseline")
 
 
+def _default_route_metrics(snapshot: Mapping[str, Any]) -> dict[tuple[str, str], int]:
+    result: dict[tuple[str, str], int] = {}
+    for key, family in (("routes_v4", "ipv4"), ("routes_v6", "ipv6")):
+        routes = snapshot.get(key)
+        if not isinstance(routes, list):
+            raise IsolationError("route inventory is unavailable")
+        for raw in routes:
+            route = _required_mapping(raw, "route inventory entry")
+            if route.get("table") != "main" or route.get("dst") != "default":
+                continue
+            device = route.get("dev")
+            metric = route.get("metric")
+            if not isinstance(device, str) or not device:
+                raise IsolationError("default-route ownership is ambiguous before the soak")
+            if metric is None:
+                continue
+            if not isinstance(metric, int) or isinstance(metric, bool) or metric < 0:
+                raise IsolationError("default-route metric evidence is malformed")
+            identity = (family, device)
+            previous = result.get(identity)
+            if previous is not None and previous != metric:
+                raise IsolationError("default-route metric evidence is ambiguous")
+            result[identity] = metric
+    return result
+
+
+def _main_connected_route_expectations(
+    snapshot: Mapping[str, Any],
+) -> tuple[list[frozenset[str]], list[frozenset[str]]]:
+    """Derive exact required and prohibited-when-absent connected-route shapes."""
+
+    addresses = snapshot.get("addresses")
+    if not isinstance(addresses, list):
+        raise IsolationError("address inventory is unavailable")
+    link_flags = _link_flags_by_name(snapshot)
+    default_metrics = _default_route_metrics(snapshot)
+    grouped: dict[tuple[str, str, str], list[Mapping[str, Any]]] = {}
+
+    for raw_link in addresses:
+        link = _required_mapping(raw_link, "address inventory entry")
+        ifname = link.get("ifname")
+        raw_addresses = link.get("addresses")
+        if (
+            not isinstance(ifname, str)
+            or not ifname
+            or ifname not in link_flags
+            or not isinstance(raw_addresses, list)
+        ):
+            raise IsolationError("address inventory entry is malformed")
+        for raw_address in raw_addresses:
+            address = _required_mapping(raw_address, "interface address entry")
+            raw_family = address.get("family")
+            family = "ipv4" if raw_family == "inet" else "ipv6" if raw_family == "inet6" else ""
+            local = address.get("local")
+            prefixlen = address.get("prefixlen")
+            scope = address.get("scope")
+            flags = address.get("flags")
+            extras = address.get("extras")
+            if (
+                not family
+                or not isinstance(local, str)
+                or not local
+                or not isinstance(prefixlen, int)
+                or not isinstance(scope, str)
+                or not isinstance(flags, list)
+                or any(not isinstance(flag, str) or not flag for flag in flags)
+                or not isinstance(extras, Mapping)
+            ):
+                raise IsolationError("interface address entry is malformed")
+            try:
+                interface = ipaddress.ip_interface(f"{local}/{prefixlen}")
+            except ValueError as exc:
+                raise IsolationError("interface address entry is malformed") from exc
+            maximum_prefix = 32 if family == "ipv4" else 128
+            if ifname == "lo" or scope == "host" or interface.network.prefixlen == maximum_prefix:
+                continue
+            grouped.setdefault((family, ifname, interface.network.with_prefixlen), []).append(address)
+
+    required_groups: list[frozenset[str]] = []
+    suppressed_groups: list[frozenset[str]] = []
+    for (family, ifname, destination), group in sorted(grouped.items()):
+        primary = [address for address in group if "secondary" not in address.get("flags", [])]
+        if len(primary) != 1:
+            raise IsolationError("connected-prefix primary address evidence is ambiguous")
+        primary_address = primary[0]
+        primary_flags = frozenset(str(flag) for flag in primary_address.get("flags", []))
+        if "noprefixroute" in primary_flags:
+            if any("noprefixroute" not in address.get("flags", []) for address in group):
+                raise IsolationError("connected-prefix noprefixroute evidence is ambiguous")
+            target = suppressed_groups
+        else:
+            target = required_groups
+
+        local = str(primary_address["local"])
+        extras = _required_mapping(primary_address.get("extras"), "interface address extras")
+        explicit_metric = extras.get("metric")
+        if explicit_metric is not None:
+            if not isinstance(explicit_metric, int) or isinstance(explicit_metric, bool) or explicit_metric < 0:
+                raise IsolationError("interface address route metric evidence is malformed")
+            metric_candidates: set[int | None] = {explicit_metric}
+        elif family == "ipv6":
+            metric_candidates = {256}
+        else:
+            metric_candidates = {None}
+            default_metric = default_metrics.get((family, ifname))
+            if default_metric is not None:
+                metric_candidates.add(default_metric)
+
+        protocol_candidates = {"kernel"}
+        if family == "ipv6" and extras.get("protocol") == "ra":
+            protocol_candidates.add("ra")
+        route_flags = ["linkdown"] if "LOWER_UP" not in link_flags[ifname] else []
+        variants = frozenset(
+            _route_key(
+                _route_shape(
+                    family=family,
+                    table="main",
+                    type_name="unicast",
+                    destination=destination,
+                    device=ifname,
+                    protocol=protocol,
+                    scope="link" if family == "ipv4" else "",
+                    metric=metric,
+                    preferred_source=local if family == "ipv4" else "",
+                    preference="" if family == "ipv4" else "medium",
+                    flags=route_flags,
+                )
+            )
+            for protocol in sorted(protocol_candidates)
+            for metric in sorted(metric_candidates, key=lambda value: -1 if value is None else value)
+        )
+        if not variants:
+            raise IsolationError("connected-prefix route expectation is empty")
+        target.append(variants)
+
+    all_groups = required_groups + suppressed_groups
+    for left, variants in enumerate(all_groups):
+        for right in range(left + 1, len(all_groups)):
+            if variants & all_groups[right]:
+                raise IsolationError("connected-prefix route expectations are ambiguous")
+    return required_groups, suppressed_groups
+
+
+def _validate_main_connected_routes(snapshot: Mapping[str, Any]) -> None:
+    required_groups, suppressed_groups = _main_connected_route_expectations(snapshot)
+    groups = required_groups + suppressed_groups
+    matches = [0] * len(groups)
+    observed: set[str] = set()
+
+    for key in ("routes_v4", "routes_v6"):
+        routes = snapshot.get(key)
+        if not isinstance(routes, list):
+            raise IsolationError("route inventory is unavailable")
+        for raw in routes:
+            route = _required_mapping(raw, "route inventory entry")
+            if route.get("table") != "main" or route.get("dst") == "default":
+                continue
+            identity = _route_key(route)
+            if identity in observed:
+                raise IsolationError("main-table connected route is duplicated")
+            observed.add(identity)
+            matching_groups = [index for index, variants in enumerate(groups) if identity in variants]
+            if len(matching_groups) != 1:
+                raise IsolationError(
+                    "foreign main-table route is not derived from the positive link/address baseline"
+                )
+            index = matching_groups[0]
+            matches[index] += 1
+            if matches[index] > 1:
+                raise IsolationError("main-table connected route cardinality is ambiguous")
+
+    if any(matches[index] != 1 for index in range(len(required_groups))):
+        raise IsolationError("required main-table connected route is missing")
+    if any(matches[index] != 0 for index in range(len(required_groups), len(groups))):
+        raise IsolationError("noprefixroute prefix unexpectedly owns a main-table connected route")
+
+
 def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:
     return (
         str(link.get("kind", "")) == ""
@@ -988,6 +1170,7 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
         )
 
     _validate_non_main_routes(snapshot)
+    _validate_main_connected_routes(snapshot)
 
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
@@ -1000,24 +1183,18 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
                 raise IsolationError("foreign routing table exists before the soak")
             if table != "main":
                 continue
+            if route.get("dst") != "default":
+                continue
             if (
                 route.get("type") != "unicast"
                 or route.get("mark")
                 or route.get("multipath")
                 or route.get("flags", [])
                 or route.get("nhid") is not None
+                or not route.get("dev")
+                or route.get("protocol") not in {"boot", "dhcp", "kernel", "ra", "static"}
             ):
-                raise IsolationError("foreign main-table route exists before the soak")
-            if route.get("dst") == "default":
-                if not route.get("dev") or route.get("protocol") not in {"boot", "dhcp", "kernel", "ra", "static"}:
-                    raise IsolationError("default-route ownership is ambiguous before the soak")
-                continue
-            if (
-                route.get("gateway")
-                or route.get("scope") != "link"
-                or route.get("protocol") not in {"dhcp", "kernel", "ra"}
-            ):
-                raise IsolationError("foreign main-table route exists before the soak")
+                raise IsolationError("default-route ownership is ambiguous before the soak")
 
     nftables = snapshot.get("nftables")
     if not isinstance(nftables, list):
