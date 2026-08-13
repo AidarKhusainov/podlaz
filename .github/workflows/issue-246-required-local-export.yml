@@ -38,3 +38,4 @@ jobs:
           path: ${{ runner.temp }}/podlaz-issue-246-required-local-workspace.tar.gz
           if-no-files-found: error
           retention-days: 1
+          compression-level: 0
