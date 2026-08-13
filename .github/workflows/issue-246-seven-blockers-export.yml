@@ -1,0 +1,42 @@
+name: Issue 246 Seven Blockers Workspace Export
+
+on:
+  push:
+    branches:
+      - agent/issue-246-tun-resource-soak
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-246-seven-blockers-export
+  cancel-in-progress: true
+
+jobs:
+  export:
+    name: Export exact review workspace
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          ref: agent/issue-246-tun-resource-soak
+          fetch-depth: 0
+
+      - name: Archive tracked workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=tar HEAD | xz -T0 -9e > "${RUNNER_TEMP}/workspace.tar.xz"
+          sha256sum "${RUNNER_TEMP}/workspace.tar.xz" > "${RUNNER_TEMP}/workspace.tar.xz.sha256"
+
+      - name: Upload workspace
+        uses: actions/upload-artifact@v4
+        with:
+          name: podlaz-issue-246-seven-blockers-workspace
+          path: |
+            ${{ runner.temp }}/workspace.tar.xz
+            ${{ runner.temp }}/workspace.tar.xz.sha256
+          if-no-files-found: error
+          retention-days: 1
