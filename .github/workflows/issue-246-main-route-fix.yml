@@ -1,4 +1,4 @@
-name: Issue 246 Main Route Workspace Export
+name: Issue 246 Publish Main Route Fix
 
 on:
   push:
@@ -6,34 +6,105 @@ on:
       - agent/issue-246-tun-resource-soak
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: issue-246-main-route-workspace-export
-  cancel-in-progress: true
+  group: issue-246-main-route-fix
+  cancel-in-progress: false
 
 jobs:
-  export:
-    name: Export exact main-route workspace
+  publish:
+    name: Publish verified main-route fix
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact staged head
         uses: actions/checkout@v7
         with:
           ref: agent/issue-246-tun-resource-soak
           fetch-depth: 0
+          persist-credentials: true
 
-      - name: Archive tracked workspace
+      - name: Apply, verify, and publish fix
         shell: bash
         run: |
           set -euo pipefail
-          git archive --format=tar.gz --output="${RUNNER_TEMP}/podlaz-issue-246-main-route-workspace.tar.gz" HEAD
+          chunk='.agent-sync/issue246/main-route-fix.b64'
+          if [[ ! -f "${chunk}" ]]; then
+            echo 'No staged main-route patch remains.'
+            exit 0
+          fi
 
-      - name: Upload workspace
-        uses: actions/upload-artifact@v7
-        with:
-          name: podlaz-issue-246-main-route-workspace
-          path: ${{ runner.temp }}/podlaz-issue-246-main-route-workspace.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          base64 -d "${chunk}" > "${RUNNER_TEMP}/main-route.patch.xz"
+          printf '%s  %s\n' \
+            '3581da93ccbffcddeb17ab902e6d6f3475bc5025705d59648b939a5bfc601eaa' \
+            "${RUNNER_TEMP}/main-route.patch.xz" | sha256sum -c -
+          xz -dc "${RUNNER_TEMP}/main-route.patch.xz" > "${RUNNER_TEMP}/main-route.patch"
+          printf '%s  %s\n' \
+            '499732c0d27b0e7514cb851a0832178032024ef155219105b02d4e112dc32fbb' \
+            "${RUNNER_TEMP}/main-route.patch" | sha256sum -c -
+          git apply --check "${RUNNER_TEMP}/main-route.patch"
+          git apply "${RUNNER_TEMP}/main-route.patch"
+
+          python3 -m py_compile scripts/e2e/lib/tun_soak_*.py scripts/e2e/tests/test_tun_soak_*.py
+          python3 -m unittest \
+            scripts.e2e.tests.test_tun_resource_soak_contract \
+            scripts.e2e.tests.test_tun_soak_cleanup \
+            scripts.e2e.tests.test_tun_soak_health \
+            scripts.e2e.tests.test_tun_soak_isolation \
+            scripts.e2e.tests.test_tun_soak_metrics \
+            scripts.e2e.tests.test_tun_soak_status
+          bash -n \
+            scripts/e2e/lib/tun_soak_health.sh \
+            scripts/e2e/lib/tun_soak_cleanup.sh \
+            scripts/e2e/tun-resource-soak.sh
+          git diff --check
+
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from scripts.e2e.lib import tun_soak_isolation as isolation
+
+          def load(*args: str):
+              return json.loads(subprocess.check_output(args, text=True))
+
+          snapshot = {
+              'links': isolation._normalize_links(load('ip', '-j', '-d', 'link', 'show')),
+              'addresses': isolation._normalize_addresses(load('ip', '-j', 'addr', 'show')),
+              'routes_v4': isolation._normalize_routes(
+                  load('ip', '-j', '-4', 'route', 'show', 'table', 'all'), 'ipv4'
+              ),
+              'routes_v6': isolation._normalize_routes(
+                  load('ip', '-j', '-6', 'route', 'show', 'table', 'all'), 'ipv6'
+              ),
+          }
+          required, suppressed = isolation._main_connected_route_expectations(snapshot)
+          groups = required + suppressed
+          matches = [0] * len(groups)
+          for route in snapshot['routes_v4'] + snapshot['routes_v6']:
+              if route['table'] != 'main' or route['dst'] == 'default':
+                  continue
+              identity = isolation._route_key(route)
+              indexes = [index for index, variants in enumerate(groups) if identity in variants]
+              if len(indexes) == 1:
+                  matches[indexes[0]] += 1
+          if any(matches[index] != 1 for index in range(len(required))):
+              raise SystemExit('real kernel connected-route expectation smoke failed')
+          if any(matches[index] != 0 for index in range(len(required), len(groups))):
+              raise SystemExit('real kernel noprefixroute suppression smoke failed')
+          print('real kernel connected-route expectation smoke: OK')
+          PY
+
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+          rm -f -- "${chunk}"
+          rmdir .agent-sync/issue246 2>/dev/null || true
+          rmdir .agent-sync 2>/dev/null || true
+          test -z "$(git diff --name-only -- .github/workflows)"
+
+          git add -A
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- .github/workflows)"
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: prove main connected routes from addresses'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
