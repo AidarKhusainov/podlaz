@@ -152,8 +152,8 @@ func parseManagedLinkIdentity(output string) (string, int, string, bool) {
 	}
 	name := strings.Split(strings.TrimSuffix(fields[1], ":"), "@")[0]
 	kind := ""
-	for i := 0; i+2 < len(fields); i++ {
-		if fields[i] == "tun" && fields[i+1] == "type" && fields[i+2] == "tun" {
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "type" && fields[i+1] == "tun" {
 			kind = "tun"
 			break
 		}
