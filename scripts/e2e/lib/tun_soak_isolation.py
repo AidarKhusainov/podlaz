@@ -33,18 +33,44 @@ DEFAULT_RULE_LAYOUT = {
     "ipv6": ((0, "local"), (32766, "main")),
 }
 DEDICATED_UPLINK_LINK_TYPE = "ether"
-TRUSTED_HOST_SCHEMA_VERSION = "podlaz.e2e.trusted-host.v1"
+TRUSTED_HOST_SCHEMA_VERSION = "podlaz.e2e.trusted-host.v2"
 MAX_TRUSTED_HOST_BYTES = 256 * 1024
 TRUSTED_HOST_FIELDS = frozenset({"schema_version", "runtime_os", "uplink", "resolved"})
 TRUSTED_UPLINK_FIELDS = frozenset(
     {
-        "ifname",
-        "ifindex",
-        "default_ipv4_gateway",
-        "global_ipv4_cidrs",
-        "network_manager_connection_id",
+        "link",
+        "default_routes",
+        "global_addresses",
+        "network_manager_connection",
     }
 )
+TRUSTED_LINK_FIELDS = frozenset(
+    {"ifindex", "ifname", "kind", "master", "mtu", "link_type", "flags"}
+)
+TRUSTED_ADDRESS_FIELDS = frozenset(
+    {"family", "local", "prefixlen", "scope", "label", "flags", "extras"}
+)
+TRUSTED_ROUTE_FIELDS = frozenset(
+    {
+        "family",
+        "table",
+        "type",
+        "dst",
+        "gateway",
+        "dev",
+        "protocol",
+        "scope",
+        "metric",
+        "prefsrc",
+        "src",
+        "mark",
+        "nhid",
+        "multipath",
+        "flags",
+        "preference",
+    }
+)
+TRUSTED_NETWORK_MANAGER_FIELDS = frozenset({"uuid", "device", "state"})
 
 RULE_RAW_FIELDS = frozenset(
     {
@@ -1252,7 +1278,162 @@ def load_trusted_host(path: Path) -> Mapping[str, Any]:
     return root
 
 
-def _global_ipv4_cidrs(snapshot: Mapping[str, Any], uplink: str) -> list[str]:
+def _validated_trusted_link(value: Any, label: str) -> dict[str, Any]:
+    root = _required_mapping(value, label)
+    if set(root) != TRUSTED_LINK_FIELDS:
+        raise IsolationError(f"{label} has an unsupported shape")
+    ifindex = root.get("ifindex")
+    ifname = root.get("ifname")
+    mtu = root.get("mtu")
+    kind = root.get("kind")
+    master = root.get("master")
+    link_type = root.get("link_type")
+    if (
+        not isinstance(ifindex, int)
+        or isinstance(ifindex, bool)
+        or ifindex <= 0
+        or not isinstance(ifname, str)
+        or not ifname
+        or not isinstance(mtu, int)
+        or isinstance(mtu, bool)
+        or mtu <= 0
+        or not isinstance(kind, str)
+        or not isinstance(link_type, str)
+        or isinstance(master, bool)
+        or (master is not None and not isinstance(master, (int, str)))
+    ):
+        raise IsolationError(f"{label} is malformed")
+    flags = _normalize_string_flags(root.get("flags"), label)
+    normalized = {
+        "ifindex": ifindex,
+        "ifname": ifname,
+        "kind": kind,
+        "master": master,
+        "mtu": mtu,
+        "link_type": link_type,
+        "flags": flags,
+    }
+    if normalized != dict(root):
+        raise IsolationError(f"{label} is not canonical")
+    return normalized
+
+
+def _validated_trusted_address(value: Any, label: str) -> dict[str, Any]:
+    root = _required_mapping(value, label)
+    if set(root) != TRUSTED_ADDRESS_FIELDS:
+        raise IsolationError(f"{label} has an unsupported shape")
+    family = root.get("family")
+    prefixlen = root.get("prefixlen")
+    scope = root.get("scope")
+    address_label = root.get("label")
+    if family not in {"inet", "inet6"} or not isinstance(prefixlen, int) or isinstance(prefixlen, bool):
+        raise IsolationError(f"{label} is malformed")
+    maximum = 32 if family == "inet" else 128
+    if not 0 <= prefixlen <= maximum or scope != "global" or not isinstance(address_label, str) or not address_label:
+        raise IsolationError(f"{label} is malformed")
+    local = _canonical_interface_address(root.get("local"), family)
+    if not local:
+        raise IsolationError(f"{label} is malformed")
+    flags = _normalize_string_flags(root.get("flags"), label)
+    extras = _required_mapping(root.get("extras"), f"{label} extras")
+    if any(not isinstance(key, str) for key in extras):
+        raise IsolationError(f"{label} extras are malformed")
+    normalized = {
+        "family": family,
+        "local": local,
+        "prefixlen": prefixlen,
+        "scope": scope,
+        "label": address_label,
+        "flags": flags,
+        "extras": copy.deepcopy(dict(extras)),
+    }
+    if normalized != dict(root):
+        raise IsolationError(f"{label} is not canonical")
+    return normalized
+
+
+def _validated_trusted_global_addresses(value: Any, label: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise IsolationError(f"{label} is malformed")
+    addresses = [
+        _validated_trusted_address(item, f"{label} entry")
+        for item in value
+    ]
+    canonical = _structural_sort(addresses)
+    if not canonical or canonical != value or len({_route_key(item) for item in canonical}) != len(canonical):
+        raise IsolationError(f"{label} is incomplete, duplicated, or not canonical")
+    if not any(address.get("family") == "inet" for address in canonical):
+        raise IsolationError(f"{label} has no authoritative global IPv4 address")
+    return canonical
+
+
+def _validated_trusted_default_route(value: Any, label: str) -> dict[str, Any]:
+    root = _required_mapping(value, label)
+    if set(root) != TRUSTED_ROUTE_FIELDS:
+        raise IsolationError(f"{label} has an unsupported shape")
+    family = root.get("family")
+    if family not in {"ipv4", "ipv6"}:
+        raise IsolationError(f"{label} family is malformed")
+    raw = dict(root)
+    raw.pop("family")
+    raw["pref"] = raw.pop("preference")
+    normalized = _normalize_routes([raw], family)[0]
+    if normalized != dict(root):
+        raise IsolationError(f"{label} is not canonical")
+    if (
+        normalized.get("table") != "main"
+        or normalized.get("type") != "unicast"
+        or normalized.get("dst") != "default"
+        or not normalized.get("dev")
+    ):
+        raise IsolationError(f"{label} is not a canonical default route")
+    return normalized
+
+
+def _validated_trusted_default_routes(value: Any, label: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        raise IsolationError(f"{label} is malformed")
+    routes = [
+        _validated_trusted_default_route(item, f"{label} entry")
+        for item in value
+    ]
+    canonical = _structural_sort(routes)
+    families = [route["family"] for route in canonical]
+    if (
+        not canonical
+        or canonical != value
+        or len(set(families)) != len(families)
+        or families.count("ipv4") != 1
+    ):
+        raise IsolationError(f"{label} is incomplete, duplicated, or not canonical")
+    return canonical
+
+
+def _validated_trusted_network_manager(value: Any, label: str) -> dict[str, str]:
+    root = _required_mapping(value, label)
+    if set(root) != TRUSTED_NETWORK_MANAGER_FIELDS:
+        raise IsolationError(f"{label} has an unsupported shape")
+    uuid = root.get("uuid")
+    device = root.get("device")
+    state_name = root.get("state")
+    if (
+        not isinstance(uuid, str)
+        or _NM_UUID.fullmatch(uuid) is None
+        or uuid != uuid.lower()
+        or not isinstance(device, str)
+        or not device
+        or state_name != "activated"
+    ):
+        raise IsolationError(f"{label} is malformed or not canonical")
+    return {"uuid": uuid, "device": device, "state": state_name}
+
+
+def _uplink_global_addresses(
+    snapshot: Mapping[str, Any],
+    *,
+    uplink: str,
+    ifindex: int,
+) -> list[dict[str, Any]]:
     addresses = snapshot.get("addresses")
     if not isinstance(addresses, list):
         raise IsolationError("address inventory is unavailable")
@@ -1261,29 +1442,19 @@ def _global_ipv4_cidrs(snapshot: Mapping[str, Any], uplink: str) -> list[str]:
         for entry in addresses
         if isinstance(entry, Mapping) and entry.get("ifname") == uplink
     ]
-    if len(matches) != 1:
+    if len(matches) != 1 or matches[0].get("ifindex") != ifindex:
         raise IsolationError("trusted uplink fingerprint cannot identify one address inventory")
     raw_addresses = matches[0].get("addresses")
     if not isinstance(raw_addresses, list):
         raise IsolationError("trusted uplink address inventory is malformed")
-    result: list[str] = []
-    for raw in raw_addresses:
-        address = _required_mapping(raw, "interface address entry")
-        if address.get("family") != "inet" or address.get("scope") != "global":
-            continue
-        local = address.get("local")
-        prefixlen = address.get("prefixlen")
-        if not isinstance(local, str) or not isinstance(prefixlen, int):
-            raise IsolationError("trusted uplink IPv4 identity is malformed")
-        try:
-            interface = ipaddress.ip_interface(f"{local}/{prefixlen}")
-        except ValueError as exc:
-            raise IsolationError("trusted uplink IPv4 identity is malformed") from exc
-        result.append(interface.with_prefixlen)
-    result.sort()
-    if not result or len(result) != len(set(result)):
-        raise IsolationError("trusted uplink global IPv4 identity is incomplete or duplicated")
-    return result
+    global_addresses = [
+        dict(_required_mapping(address, "interface address entry"))
+        for address in raw_addresses
+        if isinstance(address, Mapping)
+        and address.get("scope") == "global"
+        and address.get("family") in {"inet", "inet6"}
+    ]
+    return _structural_sort(global_addresses)
 
 
 def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any]) -> None:
@@ -1299,50 +1470,46 @@ def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any
     trusted_uplink = _required_mapping(root.get("uplink"), "trusted uplink fingerprint")
     if set(trusted_uplink) != TRUSTED_UPLINK_FIELDS:
         raise IsolationError("trusted uplink fingerprint has an unsupported shape")
-    ifname = trusted_uplink.get("ifname")
-    ifindex = trusted_uplink.get("ifindex")
-    gateway = trusted_uplink.get("default_ipv4_gateway")
-    global_ipv4 = trusted_uplink.get("global_ipv4_cidrs")
-    nm_identity = trusted_uplink.get("network_manager_connection_id")
+    trusted_link = _validated_trusted_link(trusted_uplink.get("link"), "trusted uplink link")
+    trusted_defaults = _validated_trusted_default_routes(
+        trusted_uplink.get("default_routes"),
+        "trusted uplink default routes",
+    )
+    trusted_addresses = _validated_trusted_global_addresses(
+        trusted_uplink.get("global_addresses"),
+        "trusted uplink global addresses",
+    )
+    trusted_connection = _validated_trusted_network_manager(
+        trusted_uplink.get("network_manager_connection"),
+        "trusted uplink NetworkManager connection",
+    )
+    ifname = trusted_link["ifname"]
+    ifindex = trusted_link["ifindex"]
     if (
-        not isinstance(ifname, str)
-        or not ifname
-        or not isinstance(ifindex, int)
-        or isinstance(ifindex, bool)
-        or ifindex <= 0
-        or not isinstance(gateway, str)
-        or not gateway
-        or not isinstance(global_ipv4, list)
-        or not isinstance(nm_identity, str)
-        or _NM_UUID.fullmatch(nm_identity) is None
+        ifname == "lo"
+        or not _is_positive_physical_link(trusted_link)
+        or any(route.get("dev") != ifname for route in trusted_defaults)
+        or any(address.get("label") not in {ifname, ""} for address in trusted_addresses)
+        or trusted_connection.get("device") != ifname
     ):
-        raise IsolationError("trusted uplink fingerprint is malformed")
-    try:
-        canonical_gateway = str(ipaddress.ip_address(gateway))
-        canonical_cidrs = sorted(ipaddress.ip_interface(value).with_prefixlen for value in global_ipv4)
-    except ValueError as exc:
-        raise IsolationError("trusted uplink fingerprint is malformed") from exc
-    if canonical_gateway != gateway or canonical_cidrs != global_ipv4 or len(global_ipv4) != len(set(global_ipv4)):
-        raise IsolationError("trusted uplink fingerprint is not canonical")
+        raise IsolationError("trusted uplink fingerprint is internally inconsistent")
 
-    default_v4 = [
-        route
-        for route in _default_routes(snapshot)
-        if route.get("family") == "ipv4"
-    ]
     links = snapshot.get("links")
     if not isinstance(links, list):
         raise IsolationError("link inventory is unavailable")
-    observed_link = [
-        _required_mapping(link, "link inventory entry")
+    observed_links = [
+        dict(_required_mapping(link, "link inventory entry"))
         for link in links
         if isinstance(link, Mapping) and link.get("ifname") == ifname
     ]
+    observed_defaults = _structural_sort(_default_routes(snapshot))
+    observed_addresses = _uplink_global_addresses(snapshot, uplink=ifname, ifindex=ifindex)
+
     network_manager = snapshot.get("network_manager")
     if not isinstance(network_manager, list):
         raise IsolationError("NetworkManager inventory is unavailable")
     uplink_connections = [
-        _required_mapping(connection, "NetworkManager active connection")
+        dict(_required_mapping(connection, "NetworkManager active connection"))
         for connection in network_manager
         if isinstance(connection, Mapping) and connection.get("device") == ifname
     ]
@@ -1361,14 +1528,10 @@ def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any
     if len(loopback_connections) > 1:
         raise IsolationError("NetworkManager loopback ownership is ambiguous")
     if (
-        len(default_v4) != 1
-        or default_v4[0].get("dev") != ifname
-        or default_v4[0].get("gateway") != gateway
-        or len(observed_link) != 1
-        or observed_link[0].get("ifindex") != ifindex
-        or _global_ipv4_cidrs(snapshot, ifname) != global_ipv4
-        or len(uplink_connections) != 1
-        or uplink_connections[0] != {"uuid": nm_identity.lower(), "device": ifname, "state": "activated"}
+        observed_links != [trusted_link]
+        or observed_defaults != trusted_defaults
+        or observed_addresses != trusted_addresses
+        or uplink_connections != [trusted_connection]
     ):
         raise IsolationError("trusted uplink fingerprint does not match the current host")
 

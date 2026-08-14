@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 import time
 import unittest
@@ -909,15 +910,32 @@ class TunSoakIsolationTests(unittest.TestCase):
 
 
     def trusted_host(self, snapshot: dict[str, object]) -> dict[str, object]:
+        uplink_link = copy.deepcopy(next(link for link in snapshot["links"] if link["ifname"] == "eth0"))
+        default_routes = [
+            copy.deepcopy(route)
+            for route in snapshot["routes_v4"] + snapshot["routes_v6"]
+            if route["table"] == "main" and route["dst"] == "default" and route["type"] == "unicast"
+        ]
+        default_routes.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        global_addresses = [
+            copy.deepcopy(address)
+            for inventory in snapshot["addresses"]
+            if inventory["ifname"] == "eth0"
+            for address in inventory["addresses"]
+            if address["scope"] == "global" and address["family"] in {"inet", "inet6"}
+        ]
+        global_addresses.sort(key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")))
+        network_manager_connection = copy.deepcopy(
+            next(connection for connection in snapshot["network_manager"] if connection["device"] == "eth0")
+        )
         return {
-            "schema_version": "podlaz.e2e.trusted-host.v1",
+            "schema_version": "podlaz.e2e.trusted-host.v2",
             "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
             "uplink": {
-                "ifname": "eth0",
-                "ifindex": 2,
-                "default_ipv4_gateway": "192.0.2.1",
-                "global_ipv4_cidrs": ["192.0.2.20/24"],
-                "network_manager_connection_id": "11111111-2222-3333-4444-555555555555",
+                "link": uplink_link,
+                "default_routes": default_routes,
+                "global_addresses": global_addresses,
+                "network_manager_connection": network_manager_connection,
             },
             "resolved": copy.deepcopy(snapshot["resolved"]),
         }
@@ -946,6 +964,63 @@ class TunSoakIsolationTests(unittest.TestCase):
 
         # The live snapshot remains internally consistent and would authenticate
         # itself without the independently provisioned fingerprint.
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_uplink_rejects_same_cidr_noprefixroute_without_connected_route(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        address = snapshot["addresses"][1]["addresses"][0]
+        address["flags"].append("noprefixroute")
+        address["flags"].sort()
+        snapshot["routes_v4"] = [
+            route
+            for route in snapshot["routes_v4"]
+            if not (route["table"] == "main" and route["dst"] == "192.0.2.0/24")
+        ]
+
+        # The same CIDR remains present and the route inventory is internally
+        # consistent with noprefixroute, so only the independent fingerprint
+        # can prove that this pre-capture semantic mutation is foreign.
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_uplink_rejects_same_gateway_default_route_metric_mutation(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        default_route = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "default"
+        )
+        default_route["metric"] = 600
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_uplink_rejects_same_gateway_default_route_protocol_mutation(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        default_route = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "default"
+        )
+        default_route["protocol"] = "static"
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_uplink_rejects_same_ifindex_link_mtu_mutation(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        uplink = next(link for link in snapshot["links"] if link["ifname"] == "eth0")
+        uplink["mtu"] = 1400
+
         tun_soak_isolation.validate_clean_baseline(snapshot)
         with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
             tun_soak_isolation.validate_trusted_host(snapshot, trusted)

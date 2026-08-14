@@ -244,14 +244,54 @@ The private schema records:
 
 ```json
 {
-  "schema_version": "podlaz.e2e.trusted-host.v1",
+  "schema_version": "podlaz.e2e.trusted-host.v2",
   "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
   "uplink": {
-    "ifname": "eth0",
-    "ifindex": 2,
-    "default_ipv4_gateway": "192.0.2.1",
-    "global_ipv4_cidrs": ["192.0.2.20/24"],
-    "network_manager_connection_id": "11111111-2222-3333-4444-555555555555"
+    "link": {
+      "ifindex": 2,
+      "ifname": "eth0",
+      "kind": "",
+      "master": null,
+      "mtu": 1500,
+      "link_type": "ether",
+      "flags": ["BROADCAST", "LOWER_UP", "MULTICAST", "UP"]
+    },
+    "default_routes": [
+      {
+        "family": "ipv4",
+        "table": "main",
+        "type": "unicast",
+        "dst": "default",
+        "gateway": "192.0.2.1",
+        "dev": "eth0",
+        "protocol": "dhcp",
+        "scope": "",
+        "metric": 100,
+        "prefsrc": "",
+        "src": "",
+        "mark": "",
+        "nhid": null,
+        "multipath": [],
+        "flags": [],
+        "preference": ""
+      }
+    ],
+    "global_addresses": [
+      {
+        "family": "inet",
+        "local": "192.0.2.20",
+        "prefixlen": 24,
+        "scope": "global",
+        "label": "eth0",
+        "flags": ["dynamic"],
+        "extras": {"broadcast": "192.0.2.255"}
+      }
+    ],
+    "network_manager_connection": {
+      "uuid": "11111111-2222-3333-4444-555555555555",
+      "device": "eth0",
+      "state": "activated"
+    }
   },
   "resolved": {
     "global": ["resolv.conf mode: stub"],
@@ -270,15 +310,27 @@ The private schema records:
 ```
 
 The example uses documentation-only values; the real file remains private and is
-never committed or uploaded. Uplink authority requires exact agreement on
-ifindex, default IPv4 gateway, the complete global IPv4 CIDR set, and the active
-NetworkManager connection identity. Resolver authority requires exact agreement
-on normalized global and per-link `systemd-resolved` state, including DNS servers,
-domains, route-only domains, and default-route ownership. Baseline capture and
-every later revalidation check the trusted fingerprint. During an active Podlaz
-session the exact transaction-owned Podlaz projection is removed first, then the
-remaining underlying host state is checked against the trusted fingerprint.
-Consequently, a gateway change, additional global prefix, DNS/domain takeover, or
+never committed or uploaded. Schema v2 intentionally replaces the earlier
+CIDR/gateway-only fingerprint: an existing v1 file is rejected and must be
+reprovisioned from a known-clean controlled runner.
+
+Uplink authority now requires exact agreement on the complete normalized physical
+link identity (`ifindex`, name, kind, master, MTU, link type, and flags), every
+default route on that uplink (including family, gateway, protocol, scope, metric,
+preferred/source selectors, mark, nexthop, multipath, route flags, and preference),
+the complete normalized global address set (including scope, label, address flags
+such as `noprefixroute`, and structural extras), and the full active NetworkManager
+connection identity. The lists are canonical, duplicate-free, and compared as
+complete sets rather than by selected identity fields. Resolver authority requires
+exact agreement on normalized global and per-link `systemd-resolved` state,
+including DNS servers, domains, route-only domains, and default-route ownership.
+
+Baseline capture and every later revalidation check the trusted fingerprint. During
+an active Podlaz session the exact transaction-owned Podlaz projection is removed
+first, then the remaining underlying host state is checked against the trusted
+fingerprint. Consequently, a same-CIDR `noprefixroute` mutation with removal of
+the connected route, a same-gateway default-route protocol or metric mutation, a
+link MTU/flag mutation, an additional global prefix, DNS/domain takeover, or a
 NetworkManager uplink-identity change present before capture cannot authenticate
 itself as the clean baseline.
 
