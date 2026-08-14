@@ -104,30 +104,25 @@ func TestRunCLILogsParsesCore(t *testing.T) {
 	}
 }
 
-func TestRunCLILogsAcceptsJournalctlCompatibleSinceValues(t *testing.T) {
+func TestRunCLILogsRejectsJournalctlNativeSinceValues(t *testing.T) {
 	for _, tt := range []struct {
-		name      string
-		args      []string
-		wantSince string
+		name string
+		args []string
 	}{
-		{name: "negative-relative-token", args: []string{"logs", "--since", "-1h"}, wantSince: "-1h"},
-		{name: "negative-relative-equals", args: []string{"logs", "--since=-30min"}, wantSince: "-30min"},
-		{name: "positive-relative-token", args: []string{"logs", "--since", "+5min"}, wantSince: "+5min"},
+		{name: "negative-relative-token", args: []string{"logs", "--since", "-1h"}},
+		{name: "negative-relative-equals", args: []string{"logs", "--since=-30m"}},
+		{name: "positive-relative-token", args: []string{"logs", "--since", "+5m"}},
+		{name: "date-like", args: []string{"logs", "--since", "yesterday"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotOptions logs.Options
-			err := runWithOptions(context.Background(), tt.args, &bytes.Buffer{}, options{
-				logs: func(_ context.Context, _ io.Writer, opts logs.Options) error {
-					gotOptions = opts
+			var out bytes.Buffer
+			err := runWithOptions(context.Background(), tt.args, &out, options{
+				logs: func(context.Context, io.Writer, logs.Options) error {
+					t.Fatal("invalid --since must be rejected before the logs backend")
 					return nil
 				},
 			})
-			if err != nil {
-				t.Fatalf("logs failed: %v", err)
-			}
-			if gotOptions.Since != tt.wantSince {
-				t.Fatalf("expected since %q, got %#v", tt.wantSince, gotOptions)
-			}
+			assertUsageError(t, err, out.String(), "invalid logs --since duration")
 		})
 	}
 }
