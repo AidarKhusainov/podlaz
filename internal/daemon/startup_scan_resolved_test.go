@@ -25,7 +25,7 @@ func TestStartupScanStatusDoctorAndRecoveryRenderResolvedCandidateConsistently(t
 		t.Fatalf("recovery response candidate diverged from startup status: status=%#v recovery=%#v", status.Candidates, recoveryResponse.Results)
 	}
 
-	doctorResponse := withStartupScanDoctor(api.DoctorResponse{}, scan)
+	doctorResponse := withStartupScanDoctor(api.DoctorResponse{}, scan, api.StatusResponse{Connection: "inactive"})
 	check := findDoctorCheck(doctorResponse.Checks, "startup-recovery-scan")
 	if check == nil || check.Severity != "WARN" || !strings.Contains(check.Message, "recovery candidates: 1") || !strings.Contains(check.Message, "suggested action: podlaz recover") {
 		t.Fatalf("doctor startup scan check diverged from stale recovery state: %#v", check)
