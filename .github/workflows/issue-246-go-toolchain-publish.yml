@@ -1,4 +1,4 @@
-name: Issue 246 Publish Go 1.26.6 Pin
+name: Issue 246 Current Workspace Export
 
 on:
   push:
@@ -6,15 +6,15 @@ on:
       - agent/issue-246-tun-resource-soak
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: issue-246-go-toolchain-publisher
+  group: issue-246-current-workspace-export
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Publish non-workflow Go toolchain pin
+  export:
+    name: Export exact current workspace
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -23,36 +23,20 @@ jobs:
         with:
           ref: agent/issue-246-tun-resource-soak
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: Verify and publish Go 1.26.6 pin
+      - name: Archive tracked workspace
         shell: bash
         run: |
           set -euo pipefail
+          git archive --format=tar HEAD | xz -T0 -9 > "${RUNNER_TEMP}/workspace.tar.xz"
+          sha256sum "${RUNNER_TEMP}/workspace.tar.xz" > "${RUNNER_TEMP}/workspace.tar.xz.sha256"
 
-          if grep -q 'toolchain go1\.26\.6' go.mod && \
-             grep -q 'Go 1\.26\.6' docs/development.md && \
-             grep -q 'Go 1\.26\.6' docs/e2e.md; then
-            echo 'Non-workflow toolchain pin is already published.'
-            exit 0
-          fi
-
-          sed -i 's/1\.26\.5/1.26.6/g' \
-            go.mod \
-            docs/development.md \
-            docs/e2e.md
-
-          grep -q 'toolchain go1\.26\.6' go.mod
-          grep -q 'Go 1\.26\.6' docs/development.md
-          grep -q 'Go 1\.26\.6' docs/e2e.md
-          ! grep -RIn '1\.26\.5' go.mod docs/development.md docs/e2e.md
-          git diff --check
-
-          git add -- go.mod docs/development.md docs/e2e.md
-          git diff --cached --check
-          test -n "$(git diff --cached --name-only)"
-
-          git config user.name 'podlaz issue 246 automation'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'build: update Go toolchain to 1.26.6'
-          git push origin HEAD:agent/issue-246-tun-resource-soak
+      - name: Upload workspace
+        uses: actions/upload-artifact@v7
+        with:
+          name: podlaz-issue-246-current-finalization-workspace
+          path: |
+            ${{ runner.temp }}/workspace.tar.xz
+            ${{ runner.temp }}/workspace.tar.xz.sha256
+          if-no-files-found: error
+          retention-days: 1
