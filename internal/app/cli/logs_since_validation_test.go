@@ -3,8 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/logs"
 )
 
 func TestRunCLILogsRejectsInvalidSinceBeforeJournalctl(t *testing.T) {
@@ -26,5 +30,24 @@ func TestRunCLILogsRejectsInvalidSinceBeforeJournalctl(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("invalid input wrote output: %q", out.String())
+	}
+}
+
+func TestRunCLILogsKeepsValidSinceBackendFailureAsRuntimeError(t *testing.T) {
+	backendErr := errors.New("journalctl backend failed")
+	var out bytes.Buffer
+	err := runWithOptions(context.Background(), []string{"logs", "--since", "36h"}, &out, options{
+		logs: func(context.Context, io.Writer, logs.Options) error {
+			return backendErr
+		},
+	})
+	if !errors.Is(err, backendErr) {
+		t.Fatalf("expected backend error %v, got %v", backendErr, err)
+	}
+	if got := ExitCode(err); got != 1 {
+		t.Fatalf("expected runtime exit code 1, got %d: %v", got, err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("backend failure wrote output: %q", out.String())
 	}
 }
