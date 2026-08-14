@@ -152,11 +152,7 @@ func withStartupScanStatus(status api.StatusResponse, scan recovery.PlanResult) 
 	return status
 }
 
-func withStartupScanDoctor(response api.DoctorResponse, scan recovery.PlanResult, statuses ...api.StatusResponse) api.DoctorResponse {
-	var status api.StatusResponse
-	if len(statuses) > 0 {
-		status = statuses[0]
-	}
+func withStartupScanDoctor(response api.DoctorResponse, scan recovery.PlanResult, status api.StatusResponse) api.DoctorResponse {
 	check := api.DoctorCheck{
 		Name:     "startup-recovery-scan",
 		Severity: string(doctor.SeverityOK),
