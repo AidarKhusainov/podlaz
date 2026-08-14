@@ -220,6 +220,68 @@ standard long-window run uses a **three-hour post-warm-up** sampling interval, a
 120-second measured-session warm-up, and a 60-second default sample period.
 Shorter runs are attribution evidence only.
 
+### Runtime and trusted-host attestation
+
+The `ubuntu-24.04` self-hosted runner label is scheduling metadata, not operating
+system evidence. Before package build, installation, profile import, or network
+baseline capture, the harness reads `/etc/os-release` and requires the exact
+normalized identity `ID=ubuntu` and `VERSION_ID=24.04`. The same values are
+included in sanitized provenance; a manually mislabeled runner cannot produce an
+acceptance verdict.
+
+The structural baseline is anchored to an independently provisioned private
+**trusted-host fingerprint** at
+`/etc/podlaz-e2e/tun-resource-soak-trusted-host.json`. The file must be a
+single-link regular file, root-owned, and inaccessible to group/other users. The
+verifier opens it without following symlinks, bounds the read, and rejects a file
+that changes while being read. A configuration-management or runner-provisioning
+step must create and review this file while the dedicated host is known clean,
+before Podlaz test profiles or any foreign VPN/core are started. The soak workflow
+must never generate or refresh its own trusted fingerprint from the state it is
+about to test.
+
+The private schema records:
+
+```json
+{
+  "schema_version": "podlaz.e2e.trusted-host.v1",
+  "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
+  "uplink": {
+    "ifname": "eth0",
+    "ifindex": 2,
+    "default_ipv4_gateway": "192.0.2.1",
+    "global_ipv4_cidrs": ["192.0.2.20/24"],
+    "network_manager_connection_id": "11111111-2222-3333-4444-555555555555"
+  },
+  "resolved": {
+    "global": ["resolv.conf mode: stub"],
+    "links": [
+      {
+        "ifname": "eth0",
+        "lines": [
+          "Current DNS Server: 192.0.2.53",
+          "DNS Domain: example.invalid",
+          "DefaultRoute setting: yes"
+        ]
+      }
+    ]
+  }
+}
+```
+
+The example uses documentation-only values; the real file remains private and is
+never committed or uploaded. Uplink authority requires exact agreement on
+ifindex, default IPv4 gateway, the complete global IPv4 CIDR set, and the active
+NetworkManager connection identity. Resolver authority requires exact agreement
+on normalized global and per-link `systemd-resolved` state, including DNS servers,
+domains, route-only domains, and default-route ownership. Baseline capture and
+every later revalidation check the trusted fingerprint. During an active Podlaz
+session the exact transaction-owned Podlaz projection is removed first, then the
+remaining underlying host state is checked against the trusted fingerprint.
+Consequently, a gateway change, additional global prefix, DNS/domain takeover, or
+NetworkManager uplink-identity change present before capture cannot authenticate
+itself as the clean baseline.
+
 The checked-in policy remains `observe` until repeated clean three-hour runs of
 the exact current package establish defensible component- and metric-specific
 baselines. Observation evidence and pending release verification belong in the
@@ -245,8 +307,9 @@ the harness performs one bounded preconditioning lifecycle on the same daemon:
 Both measured disconnect boundaries are compared independently with that same
 warmed inactive baseline. Therefore `10 FDs -> 12 after the first measured
 disconnect -> 12 after the second` fails even though the second lifecycle did not
-add another descriptor. Memory uses only the documented cleanup tolerance;
-thread, task, FD, and cgroup PID counts remain strict. The daemon identity must
+add another descriptor. Memory and every count/category use reviewed component- and metric-specific
+lifecycle rules; no shared cleanup/reconnect tolerance is authoritative. The
+daemon identity must
 remain unchanged from preconditioning through both measured sessions.
 
 ### Process and network attribution
@@ -258,9 +321,12 @@ identity, process start time, direct child relationship, and common `podlazd.ser
 cgroup membership. A process-name denylist remains an early additional signal,
 but it is not authoritative proof of foreign-VPN absence.
 
-The authoritative gate is a private **structural network-isolation baseline**
-created before preconditioning. It records the network namespace plus bounded,
-normalized link, address, route, policy-rule, nftables, and resolver state. The
+The runtime comparison gate is a private **structural network-isolation baseline**
+created before preconditioning and independently anchored by the
+trusted-host fingerprint described above. The baseline records the network
+namespace plus bounded, normalized link, address, route, policy-rule, nftables,
+NetworkManager, resolver, and runtime-OS state. It cannot establish its own
+uplink or DNS authority. The
 dedicated runner must expose exactly the canonical default policy-rule set for
 each address family, including the **full canonical shape and cardinality** of
 action, selectors, marks/masks, interface selectors, `l3mdev`, suppression, and
@@ -377,29 +443,53 @@ The following observations have distinct authority and are not conflated:
 Procfs socket-table reads are independently limited to 8 MiB and 131,072 rows
 per table. Trend analysis uses all first measured-session samples after warm-up
 and records Theil-Sen slope, net growth, early/late medians, positive-delta
-fraction, and a metric-specific noise floor. At least six samples are required.
-One generic RSS ceiling or slope is not applied to cgroup total, podlazd, and
-Xray.
+fraction, and a metric-specific noise floor. An `observe` run still requires at
+least six overall samples. Final `accept` evidence is stricter: every policy
+metric has its own first/last timestamp, observed duration, maximum gap, and
+per-metric sample count. `None` is absence of evidence, not a sample. One generic
+RSS ceiling or slope is not applied to cgroup total, podlazd, and Xray.
 
 `scripts/e2e/tun-resource-soak-policy.json` has two modes:
 
 - `observe` publishes attributed trends and enforces lifecycle correctness, but
   does not claim a calibrated release threshold;
-- `accept` requires a named reproduced signal, explicit per-metric slope/net
-  growth/sustained-trend rules, and a machine-checked `acceptance_gate`. That
-  gate may not be weaker than 10,800 seconds post-warm-up, 120 seconds of
-  measured-session warm-up, a configured sample period of at most 60 seconds,
-  and a **maximum observed sample gap** of 600 seconds. The evaluator checks both
-  run configuration and actual sample timestamps. A short or sparsely sampled
-  run therefore cannot publish `acceptance_passed`, even when every metric limit
-  happens to pass. Any unruled sustained candidate also fails closed.
+- `accept` requires a named reproduced signal that is a current-growth metric;
+  historical peak memory and cumulative CPU metrics cannot be the target or have
+  growth rules; every observed current-growth metric must have one reviewed
+  component/metric rule for slope, net growth, positive-delta materiality, and
+  `require_no_sustained_positive: true`; generic candidate classification is
+  diagnostic only and cannot remove a metric from acceptance coverage. The
+  machine-checked `acceptance_gate` may not be weaker than 10,800 seconds
+  post-warm-up, 120 seconds of measured-session warm-up, a configured sample
+  period of at most 60 seconds, a maximum observed sample gap of 600 seconds,
+  and the corresponding minimum per-metric sample count. These duration/gap/count
+  checks are applied separately to every limited metric, including optional PSS
+  when it is selected or ruled. A short run, sparse target metric, or slow FD leak
+  below the generic candidate heuristic cannot publish `acceptance_passed`.
+
+In `accept` mode the harness also requires the checked-in policy path and the
+canonical trusted-host path. Before any package or network operation, it copies
+the policy to a private mode-`0600` snapshot, hashes the exact snapshot bytes,
+and proves that SHA-256 against `git show HEAD:scripts/e2e/tun-resource-soak-policy.json`.
+All later evaluation reads only that immutable private snapshot, and the sanitized
+report publishes its SHA-256 so the acceptance evidence is traceable to the
+reviewed commit rather than an unreviewed runtime file.
+
+The reviewed policy pins duration, warm-ups, sample and health-poll cadence,
+diagnostic/status/health timeouts, doctor cadence, reconnect sample count,
+cleanup settling/retry behavior, and the canonical DNS/HTTPS workload. Runtime
+overrides that change this evidence envelope are rejected. The same policy owns
+a complete **metric-specific lifecycle** contract for each cleanup and reconnect
+component/metric; a single global memory or count tolerance cannot authorize
+acceptance. `observe` and local debugging may remain configurable, but their
+result is never `acceptance_passed`.
 
 Normal disconnect must terminate the exact child, leave no packaged Xray orphan,
 remove exact transaction-owned routes/rules plus all Podlaz TUN/DNS/nftables,
 generated-config, and transaction state, restore the structural isolation
 baseline, and publish clean recovery state. Reconnect must retain the same
-daemon, create a new exact Xray identity, remain within the documented
-reconnect tolerance, and return to the same warmed inactive baseline after its
+daemon, create a new exact Xray identity, satisfy every reviewed reconnect
+component/metric rule, and return to the same warmed inactive baseline after its
 own disconnect.
 
 The ownership-safe teardown is attempted at most twice. Raw attempt logs, package
@@ -417,6 +507,7 @@ Record only non-sensitive evidence in the PR or issue:
 - tested commit SHA;
 - hashes of the built package and its installed binaries;
 - workflow run URL and result;
+- SHA-256 of the exact private policy snapshot used by the report;
 - normalized pass/fail verdicts;
 - bounded diagnostic classifications and lifecycle phases;
 - for current-health validation, only structural generation transitions and health-state transitions.

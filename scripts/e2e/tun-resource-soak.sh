@@ -11,12 +11,18 @@ source "${SCRIPT_DIR}/lib/tun_soak_health.sh"
 # shellcheck source=lib/tun_soak_cleanup.sh
 source "${SCRIPT_DIR}/lib/tun_soak_cleanup.sh"
 
-require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep hostname id ip mktemp python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
+require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep hostname id install ip mktemp nmcli python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
+
+CANONICAL_DNS_CHECK_HOST="github.com"
+CANONICAL_PUBLIC_IP_CHECK_URL="https://api.ipify.org"
+CANONICAL_SOAK_POLICY_FILE="${SCRIPT_DIR}/tun-resource-soak-policy.json"
+CANONICAL_SOAK_POLICY_REPOSITORY_PATH="scripts/e2e/tun-resource-soak-policy.json"
+CANONICAL_TRUSTED_HOST_FILE="/etc/podlaz-e2e/tun-resource-soak-trusted-host.json"
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
-: "${PODLAZ_E2E_DNS_CHECK_HOST:=github.com}"
-: "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
+: "${PODLAZ_E2E_DNS_CHECK_HOST:=${CANONICAL_DNS_CHECK_HOST}}"
+: "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=${CANONICAL_PUBLIC_IP_CHECK_URL}}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
 : "${PODLAZ_E2E_SOAK_DURATION_SECONDS:=10800}"
 : "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS:=30}"
@@ -26,10 +32,8 @@ require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep
 : "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS:=120}"
 : "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES:=3}"
 : "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS:=10}"
-: "${PODLAZ_E2E_SOAK_CLEANUP_MEMORY_TOLERANCE_BYTES:=33554432}"
-: "${PODLAZ_E2E_SOAK_RECONNECT_MEMORY_TOLERANCE_BYTES:=67108864}"
-: "${PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE:=2}"
-: "${PODLAZ_E2E_SOAK_POLICY_FILE:=${SCRIPT_DIR}/tun-resource-soak-policy.json}"
+: "${PODLAZ_E2E_SOAK_POLICY_FILE:=${CANONICAL_SOAK_POLICY_FILE}}"
+: "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE:=${CANONICAL_TRUSTED_HOST_FILE}}"
 : "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:=75}"
 : "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:=1}"
 : "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS:=10}"
@@ -65,13 +69,8 @@ for numeric_setting in \
   PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS; do
   validate_positive_integer "${numeric_setting}" "${!numeric_setting}"
 done
-for numeric_setting in \
-  PODLAZ_E2E_SOAK_CLEANUP_MEMORY_TOLERANCE_BYTES \
-  PODLAZ_E2E_SOAK_RECONNECT_MEMORY_TOLERANCE_BYTES \
-  PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE \
-  PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS; do
-  [[ "${!numeric_setting}" =~ ^[0-9]+$ ]] || fail "${numeric_setting} must be a non-negative integer"
-done
+[[ "${PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS}" =~ ^[0-9]+$ ]] || \
+  fail "PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS must be a non-negative integer"
 if ((PODLAZ_E2E_SOAK_DURATION_SECONDS < PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS * 5)); then
   fail "soak duration must produce at least six post-warm-up samples"
 fi
@@ -79,6 +78,7 @@ if ((PODLAZ_E2E_SOAK_DURATION_SECONDS > 14400)); then
   fail "soak duration exceeds the bounded four-hour harness limit"
 fi
 [[ -f "${PODLAZ_E2E_SOAK_POLICY_FILE}" ]] || fail "soak policy file is missing"
+sudo -n test -f "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" || fail "trusted host fingerprint is missing"
 
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
@@ -87,10 +87,28 @@ METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
 TUN_SOAK_STATUS_TOOL="${SCRIPT_DIR}/lib/tun_soak_status.py"
 NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 ISOLATION_TOOL="${SCRIPT_DIR}/lib/tun_soak_isolation.py"
+ENVIRONMENT_TOOL="${SCRIPT_DIR}/lib/tun_soak_environment.py"
 
 setup_isolated_xdg "tun-resource-soak"
 SOAK_PRIVATE_DIR="${E2E_TMP_ROOT}/tun-resource-soak-private"
 install -d -m 0700 "${SOAK_PRIVATE_DIR}"
+SOAK_POLICY_SNAPSHOT="${SOAK_PRIVATE_DIR}/soak-policy.json"
+install -m 0600 "${PODLAZ_E2E_SOAK_POLICY_FILE}" "${SOAK_POLICY_SNAPSHOT}"
+SOAK_POLICY_SHA256="$(sha256sum "${SOAK_POLICY_SNAPSHOT}" | awk '{print $1}')"
+SOAK_POLICY_MODE="$(python3 - "${SOAK_POLICY_SNAPSHOT}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit("invalid soak policy") from exc
+if payload.get("schema_version") != 2 or payload.get("mode") not in {"observe", "accept"}:
+    raise SystemExit("unsupported soak policy")
+print(payload["mode"])
+PY
+)" || fail "soak policy preflight failed"
 ACTIVE_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-active-samples.ndjson"
 RECONNECT_SAMPLES="${E2E_ARTIFACT_DIR}/tun-resource-reconnect-samples.ndjson"
 BASELINE_BOUNDARY="${E2E_ARTIFACT_DIR}/tun-resource-warmed-inactive-baseline.json"
@@ -100,6 +118,7 @@ PUBLIC_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-soak-report.json"
 FAILURE_REPORT="${E2E_ARTIFACT_DIR}/tun-resource-failure.json"
 PROVENANCE_JSON="${SOAK_PRIVATE_DIR}/provenance.json"
 CONFIGURATION_JSON="${SOAK_PRIVATE_DIR}/configuration.json"
+RUNTIME_OS_JSON="${SOAK_PRIVATE_DIR}/runtime-os.json"
 PACKAGE_BUILD_LOG="${SOAK_PRIVATE_DIR}/package-build.log"
 PACKAGE_INSTALL_LOG="${SOAK_PRIVATE_DIR}/package-install.log"
 PACKAGE_REINSTALL_LOG="${SOAK_PRIVATE_DIR}/package-reinstall.log"
@@ -132,6 +151,70 @@ append_sensitive_value() {
   HOST_SENSITIVE_VALUES+="${value}"$'\n'
 }
 
+enforce_acceptance_inputs() {
+  [[ "${SOAK_POLICY_MODE}" == "accept" ]] || return 0
+  [[ "$(readlink -f "${PODLAZ_E2E_SOAK_POLICY_FILE}")" == "$(readlink -f "${CANONICAL_SOAK_POLICY_FILE}")" ]] ||
+    fail "accept mode requires the checked-in soak policy"
+  local checked_in_policy_sha256
+  checked_in_policy_sha256="$(git show "HEAD:${CANONICAL_SOAK_POLICY_REPOSITORY_PATH}" | sha256sum | awk '{print $1}')" ||
+    fail "accept mode could not read the checked-in HEAD policy"
+  [[ "${SOAK_POLICY_SHA256}" == "${checked_in_policy_sha256}" ]] ||
+    fail "accept mode requires the exact checked-in HEAD policy"
+  [[ "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" == "${CANONICAL_TRUSTED_HOST_FILE}" ]] ||
+    fail "accept mode requires the canonical trusted-host path"
+  [[ "${PODLAZ_E2E_DNS_CHECK_HOST}" == "${CANONICAL_DNS_CHECK_HOST}" ]] ||
+    fail "accept mode requires the reviewed DNS workload"
+  [[ "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" == "${CANONICAL_PUBLIC_IP_CHECK_URL}" ]] ||
+    fail "accept mode requires the reviewed HTTPS workload"
+
+  python3 - "${SOAK_POLICY_SNAPSHOT}" \
+    "${PODLAZ_E2E_SOAK_DURATION_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES}" \
+    "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES}" \
+    "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS}" \
+    "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS}" \
+    "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS}" \
+    "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS}" \
+    "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS}" \
+    "${PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+policy = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected = policy.get("acceptance_configuration")
+keys = (
+    "duration_seconds",
+    "precondition_warmup_seconds",
+    "warmup_seconds",
+    "sample_interval_seconds",
+    "doctor_every_samples",
+    "reconnect_warmup_seconds",
+    "reconnect_samples",
+    "cleanup_settle_seconds",
+    "tun_diagnostic_timeout_seconds",
+    "tun_health_timeout_seconds",
+    "tun_health_poll_seconds",
+    "tun_status_timeout_seconds",
+    "cleanup_attempts",
+    "cleanup_retry_seconds",
+)
+actual = {key: int(value) for key, value in zip(keys, sys.argv[2:], strict=True)}
+if expected != actual:
+    raise SystemExit("accept mode configuration differs from the reviewed policy")
+PY
+}
+
+verify_runtime_environment() {
+  python3 "${ENVIRONMENT_TOOL}" verify-os --output "${RUNTIME_OS_JSON}" ||
+    fail "runtime host is not Ubuntu 24.04"
+}
+
 collect_host_sensitive_values() {
   local values
   values="$({
@@ -139,6 +222,7 @@ collect_host_sensitive_values() {
     ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
     ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
     ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
+    nmcli --terse --escape no --fields UUID connection show --active 2>/dev/null || true
     resolvectl status --no-pager 2>/dev/null | awk -F: '/Current DNS Server|DNS Servers|DNS Domain/ {gsub(/^[[:space:]]+/, "", $2); for (i=1; i<=split($2, values, /[[:space:]]+/); i++) print values[i]}'
   } | sed '/^[[:space:]]*$/d' | sort -u)"
   append_sensitive_value "${values}"
@@ -240,10 +324,15 @@ write_configuration() {
     "${PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES}" \
     "${DOCTOR_RUNS}" \
     "${DOCTOR_UNHEALTHY_RUNS}" \
+    "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}" \
     "${PODLAZ_E2E_SOAK_RECONNECT_SAMPLES}" \
+    "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS}" \
     "${PODLAZ_E2E_TUN_DIAGNOSTIC_TIMEOUT_SECONDS}" \
     "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS}" \
-    "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS}" <<'PY'
+    "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS}" \
+    "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS}" \
+    "${PODLAZ_E2E_SOAK_CLEANUP_ATTEMPTS}" \
+    "${PODLAZ_E2E_SOAK_CLEANUP_RETRY_SECONDS}" <<'PY'
 import json
 import os
 import sys
@@ -256,10 +345,15 @@ keys = (
     "doctor_every_samples",
     "doctor_runs",
     "doctor_unhealthy_runs",
+    "reconnect_warmup_seconds",
     "reconnect_samples",
+    "cleanup_settle_seconds",
     "tun_diagnostic_timeout_seconds",
     "tun_health_timeout_seconds",
+    "tun_health_poll_seconds",
     "tun_status_timeout_seconds",
+    "cleanup_attempts",
+    "cleanup_retry_seconds",
 )
 payload = {key: int(value) for key, value in zip(keys, sys.argv[2:], strict=True)}
 temporary = path + ".tmp"
@@ -309,14 +403,14 @@ verify_package_provenance() {
   kernel_release="$(uname -r)"
   systemd_version="$(systemctl --version | awk 'NR == 1 {print $2; exit}')"
 
-  python3 - "${version_output}" "${PROVENANCE_JSON}" \
+  python3 - "${version_output}" "${PROVENANCE_JSON}" "${RUNTIME_OS_JSON}" \
     "${XRAY_VERSION}" "${xray_artifact_hash}" "${xray_binary_hash}" \
     "${kernel_release}" "${systemd_version}" "${package_hash}" "${PODLAZ_DEB_ARCH}" <<'PY'
 import json
 import os
 import re
 import sys
-version_file, target, xray_version, xray_artifact, xray_binary, kernel, systemd, package, architecture = sys.argv[1:]
+version_file, target, runtime_os_file, xray_version, xray_artifact, xray_binary, kernel, systemd, package, architecture = sys.argv[1:]
 with open(version_file, encoding="utf-8") as handle:
     lines = [line.rstrip("\n") for line in handle]
 if len(lines) < 2:
@@ -325,6 +419,10 @@ version_match = re.fullmatch(r"podlaz version ([A-Za-z0-9.+~_-]+)", lines[0])
 commit_match = re.fullmatch(r"commit: ([0-9a-f]{7,64})", lines[1])
 if version_match is None or commit_match is None:
     raise SystemExit("installed version output is malformed")
+with open(runtime_os_file, encoding="utf-8") as handle:
+    runtime_os = json.load(handle)
+if runtime_os != {"id": "ubuntu", "version_id": "24.04"}:
+    raise SystemExit("runtime OS provenance is invalid")
 payload = {
     "podlaz_version": version_match.group(1),
     "podlaz_commit": commit_match.group(1),
@@ -335,6 +433,7 @@ payload = {
     "systemd_version": systemd,
     "package_sha256": package,
     "package_architecture": architecture,
+    "runtime_os": runtime_os,
 }
 temporary = target + ".tmp"
 with open(temporary, "w", encoding="utf-8") as handle:
@@ -351,6 +450,7 @@ capture_network_isolation_baseline() {
   stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-capture.stderr"
   sudo -n python3 "${ISOLATION_TOOL}" capture \
     --output "${NETWORK_ISOLATION_BASELINE}" \
+    --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" \
     >/dev/null 2>"${stderr_file}" || fail "clean structural network isolation cannot be proved"
 }
 
@@ -359,7 +459,7 @@ assert_network_isolation() {
   local -a args
   [[ "${label}" =~ ^[a-z0-9-]+$ ]] || fail "network isolation label is invalid"
   stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-${label}.stderr"
-  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}")
+  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}" --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}")
   if [[ -n "${manifest}" ]]; then
     args+=(--manifest "${manifest}")
   fi
@@ -551,10 +651,7 @@ write_public_report() {
     --reconnect-cleanup-boundary "${RECONNECT_CLEANUP_BOUNDARY}" \
     --provenance "${PROVENANCE_JSON}" \
     --configuration "${CONFIGURATION_JSON}" \
-    --policy "${PODLAZ_E2E_SOAK_POLICY_FILE}" \
-    --cleanup-memory-tolerance-bytes "${PODLAZ_E2E_SOAK_CLEANUP_MEMORY_TOLERANCE_BYTES}" \
-    --reconnect-memory-tolerance-bytes "${PODLAZ_E2E_SOAK_RECONNECT_MEMORY_TOLERANCE_BYTES}" \
-    --reconnect-count-tolerance "${PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE}" \
+    --policy "${SOAK_POLICY_SNAPSHOT}" \
     --output "${PUBLIC_REPORT}" || fail "resource soak trend or lifecycle policy failed"
   assert_json_file "${PUBLIC_REPORT}"
 }
@@ -571,6 +668,7 @@ path, phase, command_exit_text, command_classification_text, status_verdict_text
 allowed_phases = {
     "initialization",
     "cleanup-preflight",
+    "host-attestation",
     "configuration",
     "package-build",
     "package-install",
@@ -678,6 +776,9 @@ cleanup() {
 
 trap cleanup EXIT
 
+enforce_acceptance_inputs
+SOAK_PHASE="host-attestation"
+verify_runtime_environment
 collect_host_sensitive_values
 SOAK_PHASE="cleanup-preflight"
 run_tun_soak_cleanup preflight

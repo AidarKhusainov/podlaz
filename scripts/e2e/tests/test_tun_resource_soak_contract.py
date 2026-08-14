@@ -22,7 +22,7 @@ class TunResourceSoakContractTests(unittest.TestCase):
     def test_checked_in_policy_remains_observation_until_repeated_baselines_exist(self) -> None:
         policy = json.loads(POLICY.read_text(encoding="utf-8"))
 
-        self.assertEqual(1, policy["schema_version"])
+        self.assertEqual(2, policy["schema_version"])
         self.assertEqual("observe", policy["mode"])
         self.assertIsNone(policy["reproduced_growth_signal"])
         self.assertEqual({}, policy["metric_limits"])
@@ -180,6 +180,8 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertNotIn("mask_value", text)
         append = self.function_body("append_sensitive_value", "\n}\n\ncollect_host_sensitive_values")
         self.assertNotIn("::", append)
+        inventory = self.function_body("collect_host_sensitive_values", "\n}\n\nfirst_profile_uri")
+        self.assertIn("nmcli", inventory)
 
     def test_failure_evidence_is_structural_and_written_before_private_cleanup(self) -> None:
         text = self.script_text()
@@ -274,10 +276,68 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("documented optional variants", e2e)
         self.assertIn("maximum observed sample gap", e2e)
         self.assertIn("checked-in policy remains `observe`", e2e)
+        self.assertIn("trusted-host fingerprint", e2e)
+        self.assertIn("NetworkManager connection identity", e2e)
+        self.assertIn("`/etc/os-release`", e2e)
+        self.assertIn("root-owned", e2e)
+        self.assertIn("every observed current-growth metric", e2e)
+        self.assertIn("per-metric sample count", e2e)
+        self.assertIn("checked-in policy path", e2e)
+        self.assertIn("metric-specific lifecycle", e2e)
+        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_environment", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_status", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_health", development)
         self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_cleanup", development)
+
+
+    def test_root_private_trusted_host_preflight_uses_sudo_stat_boundary(self) -> None:
+        text = self.script_text()
+        self.assertIn('sudo -n test -f "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}"', text)
+        self.assertNotIn('[[ -f "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" ]]', text)
+
+    def test_trusted_host_and_runtime_os_are_verified_before_baseline_capture(self) -> None:
+        text = self.script_text()
+        self.assertIn('PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE', text)
+        self.assertIn('ENVIRONMENT_TOOL="${SCRIPT_DIR}/lib/tun_soak_environment.py"', text)
+        self.assertIn('verify-os --output "${RUNTIME_OS_JSON}"', text)
+        capture = self.function_body("capture_network_isolation_baseline", "\n}\n\nassert_network_isolation")
+        self.assertIn('--trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}"', capture)
+        verify = self.function_body("assert_network_isolation", "\n}\n\nrun_bounded_data_plane_probe")
+        self.assertIn('--trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}"', verify)
+        self.assertIn('require_cmd', text)
+        self.assertIn('nmcli', text)
+
+    def test_accept_mode_hash_pins_private_policy_snapshot_to_checked_in_head(self) -> None:
+        text = self.script_text()
+        self.assertIn('CANONICAL_SOAK_POLICY_REPOSITORY_PATH="scripts/e2e/tun-resource-soak-policy.json"', text)
+        self.assertIn('SOAK_POLICY_SNAPSHOT="${SOAK_PRIVATE_DIR}/soak-policy.json"', text)
+        self.assertIn('install -m 0600 "${PODLAZ_E2E_SOAK_POLICY_FILE}" "${SOAK_POLICY_SNAPSHOT}"', text)
+        self.assertIn('SOAK_POLICY_SHA256="$(sha256sum "${SOAK_POLICY_SNAPSHOT}"', text)
+        self.assertIn('git show "HEAD:${CANONICAL_SOAK_POLICY_REPOSITORY_PATH}"', text)
+        self.assertIn('accept mode requires the exact checked-in HEAD policy', text)
+        report = self.function_body("write_public_report", "\n}\n\nwrite_failure_evidence")
+        self.assertIn('--policy "${SOAK_POLICY_SNAPSHOT}"', report)
+        self.assertNotIn('--policy "${PODLAZ_E2E_SOAK_POLICY_FILE}"', report)
+
+    def test_accept_mode_pins_checked_in_policy_and_removes_global_lifecycle_tolerances(self) -> None:
+        text = self.script_text()
+        self.assertIn('enforce_acceptance_inputs', text)
+        self.assertIn('tun-resource-soak-policy.json', text)
+        self.assertNotIn('PODLAZ_E2E_SOAK_CLEANUP_MEMORY_TOLERANCE_BYTES', text)
+        self.assertNotIn('PODLAZ_E2E_SOAK_RECONNECT_MEMORY_TOLERANCE_BYTES', text)
+        self.assertNotIn('PODLAZ_E2E_SOAK_RECONNECT_COUNT_TOLERANCE', text)
+        report = self.function_body("write_public_report", "\n}\n\nwrite_failure_evidence")
+        self.assertNotIn('--cleanup-memory-tolerance-bytes', report)
+        self.assertNotIn('--reconnect-memory-tolerance-bytes', report)
+        self.assertNotIn('--reconnect-count-tolerance', report)
+
+    def test_workflow_passes_canonical_private_trusted_host_path(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            'PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE: /etc/podlaz-e2e/tun-resource-soak-trusted-host.json',
+            workflow,
+        )
 
 
 if __name__ == "__main__":

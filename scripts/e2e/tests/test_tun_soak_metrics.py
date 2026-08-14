@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
@@ -22,6 +23,48 @@ class TunSoakMetricsTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def test_policy_loader_hashes_the_exact_report_input_bytes(self) -> None:
+        path = self.root / "policy.json"
+        payload = b'{"mode":"observe","schema_version":2}\n'
+        path.write_bytes(payload)
+
+        value, digest = tun_soak_metrics._load_json_with_sha256(path)
+
+        self.assertEqual({"mode": "observe", "schema_version": 2}, value)
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), digest)
+
+    @staticmethod
+    def checked_in_policy() -> dict[str, object]:
+        path = Path(__file__).resolve().parents[1] / "tun-resource-soak-policy.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def valid_provenance() -> dict[str, object]:
+        return {
+            "podlaz_version": "0.2.26",
+            "podlaz_commit": "0123456789abcdef",
+            "xray_version": "v26.3.27",
+            "xray_artifact_sha256": "b" * 64,
+            "xray_binary_sha256": "c" * 64,
+            "kernel_release": "6.8.0-test-generic",
+            "systemd_version": "255",
+            "package_sha256": "a" * 64,
+            "package_architecture": "amd64",
+            "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
+        }
+
+    def public_configuration(self, **overrides: int) -> dict[str, int]:
+        value = self.acceptance_configuration()
+        value.update({"doctor_runs": 2, "doctor_unhealthy_runs": 0})
+        value.update(overrides)
+        return value
+
+    @staticmethod
+    def complete_process_metrics(**overrides: int | None) -> dict[str, int | None]:
+        value: dict[str, int | None] = {name: 0 for name in tun_soak_process.PROCESS_METRICS}
+        value.update(overrides)
+        return value
 
     def write_process(
         self,
@@ -667,6 +710,8 @@ class TunSoakMetricsTests(unittest.TestCase):
 
         self.assertEqual("xray.pss_bytes", summary["reproduced_growth_candidate"])
         self.assertTrue(summary["metrics"]["xray.pss_bytes"]["sustained_positive"])
+        self.assertEqual(177_000_000, summary["metrics"]["xray.pss_bytes"]["early_median"])
+        self.assertEqual(381_000_000, summary["metrics"]["xray.pss_bytes"]["late_median"])
         self.assertFalse(summary["metrics"]["podlazd.pss_bytes"]["sustained_positive"])
         self.assertNotIn("cgroup.memory_peak_bytes", summary["growth_candidates"])
         self.assertEqual("historical_high_water_mark", summary["metrics"]["cgroup.memory_peak_bytes"]["semantics"])
@@ -787,35 +832,15 @@ class TunSoakMetricsTests(unittest.TestCase):
                 }
             )
         trend = tun_soak_metrics.summarize_samples(samples)
-        policy = {
-            "schema_version": 1,
-            "mode": "accept",
-            "reproduced_growth_signal": "xray.pss_bytes",
-            "acceptance_gate": {
-                "minimum_post_warmup_duration_seconds": 10800,
-                "minimum_warmup_seconds": 120,
-                "maximum_sample_interval_seconds": 60,
-                "maximum_observed_sample_gap_seconds": 600,
-            },
-            "metric_limits": {
-                "xray.pss_bytes": {
-                    "max_theil_sen_per_hour": 130_000_000,
-                    "max_net_growth": 150_000_000,
-                }
-            },
-        }
-        result = tun_soak_metrics.evaluate_policy(
-            trend,
-            policy,
-            configuration={
-                "duration_seconds": 10800,
-                "warmup_seconds": 120,
-                "sample_interval_seconds": 60,
-            },
-        )
-        self.assertFalse(result["ok"])
-        self.assertIn("xray.pss_bytes", result["violations"])
-        self.assertIn("xray.rss_bytes", result["violations"])
+        policy = self.accept_policy(trend["metrics"], "xray.pss_bytes")
+        del policy["metric_limits"]["xray.rss_bytes"]
+
+        with self.assertRaisesRegex(ValueError, "complete growth-metric rule set"):
+            tun_soak_metrics.evaluate_policy(
+                trend,
+                policy,
+                configuration=self.acceptance_configuration(),
+            )
 
     def test_accept_policy_rejects_short_run_even_when_metric_limits_pass(self) -> None:
         samples = []
@@ -852,33 +877,14 @@ class TunSoakMetricsTests(unittest.TestCase):
                 }
             )
         trend = tun_soak_metrics.summarize_samples(samples)
-        policy = {
-            "schema_version": 1,
-            "mode": "accept",
-            "reproduced_growth_signal": "xray.fds",
-            "acceptance_gate": {
-                "minimum_post_warmup_duration_seconds": 10800,
-                "minimum_warmup_seconds": 120,
-                "maximum_sample_interval_seconds": 60,
-                "maximum_observed_sample_gap_seconds": 600,
-            },
-            "metric_limits": {
-                "xray.fds": {
-                    "max_theil_sen_per_hour": 0,
-                    "max_net_growth": 0,
-                    "require_no_sustained_positive": True,
-                }
-            },
-        }
+        policy = self.accept_policy(trend["metrics"], "xray.fds")
+        configuration = self.acceptance_configuration()
+        configuration["duration_seconds"] = 600
 
         result = tun_soak_metrics.evaluate_policy(
             trend,
             policy,
-            configuration={
-                "duration_seconds": 600,
-                "warmup_seconds": 120,
-                "sample_interval_seconds": 60,
-            },
+            configuration=configuration,
         )
 
         self.assertFalse(result["ok"])
@@ -887,39 +893,28 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertIn("observed_post_warmup_duration", result["acceptance_gate"]["violations"])
 
     def test_accept_policy_rejects_gate_weaker_than_canonical_three_hour_contract(self) -> None:
+        metrics = {"xray.fds": self.metric_summary()}
         trend = {
-            "metrics": {"xray.fds": {"theil_sen_per_hour": 0, "net_growth": 0, "sustained_positive": False}},
+            "metrics": metrics,
+            "growth_metrics": ["xray.fds"],
             "growth_candidates": [],
             "observed_duration_seconds": 10800,
             "maximum_observed_sample_gap_seconds": 60,
         }
-        policy = {
-            "schema_version": 1,
-            "mode": "accept",
-            "reproduced_growth_signal": "xray.fds",
-            "acceptance_gate": {
-                "minimum_post_warmup_duration_seconds": 600,
-                "minimum_warmup_seconds": 30,
-                "maximum_sample_interval_seconds": 600,
-                "maximum_observed_sample_gap_seconds": 3600,
-            },
-            "metric_limits": {
-                "xray.fds": {
-                    "max_theil_sen_per_hour": 0,
-                    "max_net_growth": 0,
-                }
-            },
+        policy = self.accept_policy(metrics, "xray.fds")
+        policy["acceptance_gate"] = {
+            "minimum_post_warmup_duration_seconds": 600,
+            "minimum_warmup_seconds": 30,
+            "maximum_sample_interval_seconds": 600,
+            "maximum_observed_sample_gap_seconds": 3600,
+            "minimum_metric_samples": 2,
         }
 
         with self.assertRaisesRegex(ValueError, "weaker than the canonical three-hour gate"):
             tun_soak_metrics.evaluate_policy(
                 trend,
                 policy,
-                configuration={
-                    "duration_seconds": 10800,
-                    "warmup_seconds": 120,
-                    "sample_interval_seconds": 60,
-                },
+                configuration=self.acceptance_configuration(),
             )
 
     def test_accept_policy_passes_only_with_three_hour_observed_window_and_cadence(self) -> None:
@@ -957,33 +952,12 @@ class TunSoakMetricsTests(unittest.TestCase):
                 }
             )
         trend = tun_soak_metrics.summarize_samples(samples)
-        policy = {
-            "schema_version": 1,
-            "mode": "accept",
-            "reproduced_growth_signal": "xray.fds",
-            "acceptance_gate": {
-                "minimum_post_warmup_duration_seconds": 10800,
-                "minimum_warmup_seconds": 120,
-                "maximum_sample_interval_seconds": 60,
-                "maximum_observed_sample_gap_seconds": 600,
-            },
-            "metric_limits": {
-                "xray.fds": {
-                    "max_theil_sen_per_hour": 0,
-                    "max_net_growth": 0,
-                    "require_no_sustained_positive": True,
-                }
-            },
-        }
+        policy = self.accept_policy(trend["metrics"], "xray.fds")
 
         result = tun_soak_metrics.evaluate_policy(
             trend,
             policy,
-            configuration={
-                "duration_seconds": 10800,
-                "warmup_seconds": 120,
-                "sample_interval_seconds": 60,
-            },
+            configuration=self.acceptance_configuration(),
         )
 
         self.assertTrue(result["ok"])
@@ -1025,33 +999,12 @@ class TunSoakMetricsTests(unittest.TestCase):
                 }
             )
         trend = tun_soak_metrics.summarize_samples(samples)
-        policy = {
-            "schema_version": 1,
-            "mode": "accept",
-            "reproduced_growth_signal": "xray.fds",
-            "acceptance_gate": {
-                "minimum_post_warmup_duration_seconds": 10800,
-                "minimum_warmup_seconds": 120,
-                "maximum_sample_interval_seconds": 60,
-                "maximum_observed_sample_gap_seconds": 600,
-            },
-            "metric_limits": {
-                "xray.fds": {
-                    "max_theil_sen_per_hour": 0,
-                    "max_net_growth": 0,
-                    "require_no_sustained_positive": True,
-                }
-            },
-        }
+        policy = self.accept_policy(trend["metrics"], "xray.fds")
 
         result = tun_soak_metrics.evaluate_policy(
             trend,
             policy,
-            configuration={
-                "duration_seconds": 10800,
-                "warmup_seconds": 120,
-                "sample_interval_seconds": 60,
-            },
+            configuration=self.acceptance_configuration(),
         )
 
         self.assertFalse(result["ok"])
@@ -1059,6 +1012,15 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertEqual(10560, trend["maximum_observed_sample_gap_seconds"])
 
     def test_cleanup_comparison_is_strict_for_counts_but_tolerant_for_memory(self) -> None:
+        metric_limits = {
+            "cgroup.memory_current_bytes": {"max_increase": 8 * 1024 * 1024, "required": True},
+            "cgroup.pids_current": {"max_increase": 0, "required": True},
+            "podlazd.rss_bytes": {"max_increase": 8 * 1024 * 1024, "required": True},
+            "podlazd.pss_bytes": {"max_increase": 8 * 1024 * 1024, "required": False},
+            "podlazd.threads": {"max_increase": 0, "required": True},
+            "podlazd.tasks": {"max_increase": 0, "required": True},
+            "podlazd.fds": {"max_increase": 0, "required": True},
+        }
         result = tun_soak_metrics.compare_cleanup_boundaries(
             baseline={
                 "podlazd": {"rss_bytes": 40_000_000, "pss_bytes": 36_000_000, "threads": 10, "tasks": 10, "fds": 16},
@@ -1068,7 +1030,7 @@ class TunSoakMetricsTests(unittest.TestCase):
                 "podlazd": {"rss_bytes": 44_000_000, "pss_bytes": 39_000_000, "threads": 10, "tasks": 10, "fds": 16},
                 "cgroup": {"memory_current_bytes": 46_000_000, "pids_current": 10},
             },
-            memory_tolerance_bytes=8 * 1024 * 1024,
+            metric_limits=metric_limits,
         )
         self.assertTrue(result["ok"])
 
@@ -1081,12 +1043,11 @@ class TunSoakMetricsTests(unittest.TestCase):
                 "podlazd": {"rss_bytes": 44_000_000, "pss_bytes": 39_000_000, "threads": 11, "tasks": 11, "fds": 17},
                 "cgroup": {"memory_current_bytes": 46_000_000, "pids_current": 11},
             },
-            memory_tolerance_bytes=8 * 1024 * 1024,
+            metric_limits=metric_limits,
         )
         self.assertFalse(retained["ok"])
         self.assertIn("podlazd.fds", retained["violations"])
         self.assertIn("podlazd.tasks", retained["violations"])
-
 
     def test_build_report_combines_trend_policy_and_lifecycle_without_private_values(self) -> None:
         active_samples = []
@@ -1123,6 +1084,10 @@ class TunSoakMetricsTests(unittest.TestCase):
                     },
                 }
             )
+        for sample in active_samples:
+            sample["podlazd"] = self.complete_process_metrics(**sample["podlazd"])
+            sample["xray"] = self.complete_process_metrics(**sample["xray"])
+
         reconnect_samples.append(
             {
                 **active_samples[0],
@@ -1153,6 +1118,7 @@ class TunSoakMetricsTests(unittest.TestCase):
             },
             "xray": None,
         }
+        baseline["podlazd"] = self.complete_process_metrics(**baseline["podlazd"])
         cleanup = {
             **baseline,
             "phase": "post-cleanup",
@@ -1181,39 +1147,17 @@ class TunSoakMetricsTests(unittest.TestCase):
             baseline_boundary=baseline,
             cleanup_boundary=cleanup,
             reconnect_cleanup_boundary=reconnect_cleanup,
-            provenance={
-                "podlaz_version": "0.2.26",
-                "podlaz_commit": "0123456789abcdef",
-                "xray_version": "v26.3.27",
-                "xray_artifact_sha256": "b" * 64,
-                "xray_binary_sha256": "c" * 64,
-                "kernel_release": "6.8.0-test-generic",
-                "systemd_version": "255",
-                "package_sha256": "a" * 64,
-                "package_architecture": "amd64",
-            },
-            configuration={
-                "duration_seconds": 4200,
-                "precondition_warmup_seconds": 30,
-                "warmup_seconds": 120,
-                "sample_interval_seconds": 600,
-                "doctor_every_samples": 3,
-                "doctor_runs": 2,
-                "doctor_unhealthy_runs": 1,
-                "reconnect_samples": 1,
-                "tun_diagnostic_timeout_seconds": 90,
-                "tun_health_timeout_seconds": 75,
-                "tun_status_timeout_seconds": 10,
-            },
-            policy={
-                "schema_version": 1,
-                "mode": "observe",
-                "reproduced_growth_signal": None,
-                "metric_limits": {},
-            },
-            cleanup_memory_tolerance_bytes=8 * 1024 * 1024,
-            reconnect_memory_tolerance_bytes=8 * 1024 * 1024,
-            reconnect_count_tolerance=0,
+            provenance=self.valid_provenance(),
+            configuration=self.public_configuration(
+                duration_seconds=4200,
+                sample_interval_seconds=600,
+                doctor_every_samples=3,
+                doctor_runs=2,
+                doctor_unhealthy_runs=1,
+                reconnect_samples=1,
+            ),
+            policy=self.checked_in_policy(),
+            policy_sha256="a" * 64,
         )
 
         self.assertEqual("observation_complete", report["verdict"])
@@ -1232,6 +1176,7 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertEqual(90, report["configuration"]["tun_diagnostic_timeout_seconds"])
         self.assertEqual(2, report["configuration"]["doctor_runs"])
         self.assertEqual(1, report["configuration"]["doctor_unhealthy_runs"])
+        self.assertEqual("a" * 64, report["policy"]["sha256"])
         encoded = json.dumps(report, sort_keys=True)
         self.assertNotIn("private-transaction-id", encoded)
         self.assertNotIn("/run/podlaz", encoded)
@@ -1240,15 +1185,15 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertNotIn("config_ref", encoded)
 
     def test_build_report_rejects_first_measured_cleanup_retention_even_when_second_matches_it(self) -> None:
-        def process_metrics(fds: int) -> dict[str, int]:
-            return {
-                "rss_bytes": 40_000_000,
-                "pss_bytes": 36_000_000,
-                "threads": 10,
-                "tasks": 10,
-                "fds": fds,
-                "cpu_time_ticks": 0,
-            }
+        def process_metrics(fds: int) -> dict[str, int | None]:
+            return self.complete_process_metrics(
+                rss_bytes=40_000_000,
+                pss_bytes=36_000_000,
+                threads=10,
+                tasks=10,
+                fds=fds,
+                cpu_time_ticks=0,
+            )
 
         active_samples = [
             {
@@ -1303,39 +1248,17 @@ class TunSoakMetricsTests(unittest.TestCase):
             baseline_boundary=warmed,
             cleanup_boundary=retained,
             reconnect_cleanup_boundary={**retained, "sample_index": 1},
-            provenance={
-                "podlaz_version": "0.2.26",
-                "podlaz_commit": "0123456789abcdef",
-                "xray_version": "v26.3.27",
-                "xray_artifact_sha256": "b" * 64,
-                "xray_binary_sha256": "c" * 64,
-                "kernel_release": "6.8.0-test-generic",
-                "systemd_version": "255",
-                "package_sha256": "a" * 64,
-                "package_architecture": "amd64",
-            },
-            configuration={
-                "duration_seconds": 3600,
-                "precondition_warmup_seconds": 30,
-                "warmup_seconds": 120,
-                "sample_interval_seconds": 600,
-                "doctor_every_samples": 3,
-                "doctor_runs": 1,
-                "doctor_unhealthy_runs": 0,
-                "reconnect_samples": 1,
-                "tun_diagnostic_timeout_seconds": 90,
-                "tun_health_timeout_seconds": 75,
-                "tun_status_timeout_seconds": 10,
-            },
-            policy={
-                "schema_version": 1,
-                "mode": "observe",
-                "reproduced_growth_signal": None,
-                "metric_limits": {},
-            },
-            cleanup_memory_tolerance_bytes=8 * 1024 * 1024,
-            reconnect_memory_tolerance_bytes=8 * 1024 * 1024,
-            reconnect_count_tolerance=0,
+            provenance=self.valid_provenance(),
+            configuration=self.public_configuration(
+                duration_seconds=3600,
+                sample_interval_seconds=600,
+                doctor_every_samples=3,
+                doctor_runs=1,
+                doctor_unhealthy_runs=0,
+                reconnect_samples=1,
+            ),
+            policy=self.checked_in_policy(),
+            policy_sha256="a" * 64,
         )
 
         self.assertFalse(report["ok"])
@@ -1348,22 +1271,9 @@ class TunSoakMetricsTests(unittest.TestCase):
         )
 
     def test_public_configuration_rejects_more_unhealthy_doctor_results_than_runs(self) -> None:
+        configuration = self.public_configuration(doctor_runs=1, doctor_unhealthy_runs=2)
         with self.assertRaisesRegex(ValueError, "doctor_unhealthy_runs"):
-            tun_soak_analysis._public_configuration(
-                {
-                    "duration_seconds": 3600,
-                    "precondition_warmup_seconds": 30,
-                    "warmup_seconds": 120,
-                    "sample_interval_seconds": 60,
-                    "doctor_every_samples": 10,
-                    "doctor_runs": 1,
-                    "doctor_unhealthy_runs": 2,
-                    "reconnect_samples": 3,
-                    "tun_diagnostic_timeout_seconds": 90,
-                    "tun_health_timeout_seconds": 75,
-                    "tun_status_timeout_seconds": 10,
-                }
-            )
+            tun_soak_analysis._public_configuration(configuration)
 
     def test_classifies_private_cli_errors_without_returning_raw_text(self) -> None:
         cases = {
@@ -1391,6 +1301,33 @@ class TunSoakMetricsTests(unittest.TestCase):
         self.assertEqual("classify-cli-error", args.command)
         self.assertEqual("authorization-unavailable", tun_soak_metrics.classify_cli_failure(stderr_file.read_text()))
 
+    def test_build_report_rejects_invalid_policy_digest(self) -> None:
+        sample = {
+            "schema_version": 1,
+            "phase": "active",
+            "session": 1,
+            "sample_index": 0,
+            "elapsed_seconds": 0,
+            "cgroup": {"memory_current_bytes": 1, "memory_peak_bytes": 1, "pids_current": 1, "cpu_usage_usec": 1},
+            "podlazd": self.complete_process_metrics(rss_bytes=1, pss_bytes=1, threads=1, tasks=1, fds=1, cpu_time_ticks=1),
+            "xray": self.complete_process_metrics(rss_bytes=1, pss_bytes=1, threads=1, tasks=1, fds=1, cpu_time_ticks=1),
+        }
+        baseline = {**sample, "phase": "inactive-baseline", "session": 0, "xray": None}
+        reconnect = {**sample, "phase": "reconnect", "session": 2}
+
+        with self.assertRaisesRegex(ValueError, "policy digest"):
+            tun_soak_metrics.build_report(
+                active_samples=[{**sample, "sample_index": index, "elapsed_seconds": index * 60} for index in range(6)],
+                reconnect_samples=[reconnect],
+                baseline_boundary=baseline,
+                cleanup_boundary={**baseline, "phase": "post-cleanup"},
+                reconnect_cleanup_boundary={**baseline, "phase": "post-cleanup", "sample_index": 1},
+                provenance=self.valid_provenance(),
+                configuration=self.public_configuration(duration_seconds=3600),
+                policy=self.checked_in_policy(),
+                policy_sha256="not-a-digest",
+            )
+
     def test_build_report_rejects_unknown_public_metadata_fields(self) -> None:
         sample = {
             "schema_version": 1,
@@ -1416,13 +1353,223 @@ class TunSoakMetricsTests(unittest.TestCase):
                 baseline_boundary=baseline,
                 cleanup_boundary={**baseline, "phase": "post-cleanup"},
                 reconnect_cleanup_boundary={**baseline, "phase": "post-cleanup", "sample_index": 1},
-                provenance={"podlaz_version": "0.2.26", "profile_id": "secret"},
-                configuration={"duration_seconds": 3600},
-                policy={"mode": "observe"},
-                cleanup_memory_tolerance_bytes=0,
-                reconnect_memory_tolerance_bytes=0,
-                reconnect_count_tolerance=0,
+                provenance={**self.valid_provenance(), "profile_id": "secret"},
+                configuration=self.public_configuration(duration_seconds=3600),
+                policy=self.checked_in_policy(),
+            policy_sha256="a" * 64,
             )
+
+
+    @staticmethod
+    def acceptance_gate() -> dict[str, int]:
+        return {
+            "minimum_post_warmup_duration_seconds": 10800,
+            "minimum_warmup_seconds": 120,
+            "maximum_sample_interval_seconds": 60,
+            "maximum_observed_sample_gap_seconds": 600,
+            "minimum_metric_samples": 19,
+        }
+
+    @staticmethod
+    def acceptance_configuration() -> dict[str, int]:
+        return {
+            "duration_seconds": 10800,
+            "precondition_warmup_seconds": 30,
+            "warmup_seconds": 120,
+            "sample_interval_seconds": 60,
+            "doctor_every_samples": 10,
+            "reconnect_warmup_seconds": 120,
+            "reconnect_samples": 3,
+            "cleanup_settle_seconds": 10,
+            "tun_diagnostic_timeout_seconds": 90,
+            "tun_health_timeout_seconds": 75,
+            "tun_health_poll_seconds": 1,
+            "tun_status_timeout_seconds": 10,
+            "cleanup_attempts": 2,
+            "cleanup_retry_seconds": 2,
+        }
+
+    @staticmethod
+    def metric_summary(
+        *,
+        samples: int = 181,
+        duration: int = 10800,
+        maximum_gap: int = 60,
+        slope: float = 0,
+        net_growth: float = 0,
+        positive_fraction: float = 0,
+        sustained: bool = False,
+        semantics: str = "current_observation",
+    ) -> dict[str, object]:
+        return {
+            "samples": samples,
+            "first": 10,
+            "last": 10 + net_growth,
+            "minimum": 10,
+            "maximum": 10 + max(0, net_growth),
+            "net_growth": net_growth,
+            "theil_sen_per_hour": slope,
+            "positive_delta_fraction": positive_fraction,
+            "sustained_positive": sustained,
+            "noise_floor": 0,
+            "semantics": semantics,
+            "first_elapsed_seconds": 0,
+            "last_elapsed_seconds": duration,
+            "observed_duration_seconds": duration,
+            "maximum_observed_sample_gap_seconds": maximum_gap,
+        }
+
+    def accept_policy(self, metrics: dict[str, dict[str, object]], target: str) -> dict[str, object]:
+        limits = {
+            metric: {
+                "max_theil_sen_per_hour": 0,
+                "max_net_growth": 0,
+                "max_positive_delta_fraction": 0,
+                "require_no_sustained_positive": True,
+            }
+            for metric in metrics
+            if metric not in tun_soak_metrics.NON_GROWTH_METRICS
+        }
+        return {
+            "schema_version": 2,
+            "mode": "accept",
+            "reproduced_growth_signal": target,
+            "acceptance_gate": self.acceptance_gate(),
+            "acceptance_configuration": self.acceptance_configuration(),
+            "metric_limits": limits,
+            "lifecycle_limits": {
+                "cleanup": {},
+                "reconnect": {},
+            },
+        }
+
+    def test_accept_policy_rejects_non_growth_reproduced_signal(self) -> None:
+        metrics = {
+            "cgroup.memory_peak_bytes": self.metric_summary(semantics="historical_high_water_mark"),
+            "xray.fds": self.metric_summary(),
+        }
+        trend = {
+            "metrics": metrics,
+            "growth_metrics": ["xray.fds"],
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = self.accept_policy(metrics, "cgroup.memory_peak_bytes")
+        policy["metric_limits"]["cgroup.memory_peak_bytes"] = {
+            "max_theil_sen_per_hour": 0,
+            "max_net_growth": 0,
+            "max_positive_delta_fraction": 0,
+            "require_no_sustained_positive": True,
+        }
+
+        with self.assertRaisesRegex(ValueError, "non-growth metric"):
+            tun_soak_metrics.evaluate_policy(
+                trend,
+                policy,
+                configuration=self.acceptance_configuration(),
+            )
+
+    def test_accept_policy_rejects_disabled_sustained_growth_requirement(self) -> None:
+        metrics = {"xray.fds": self.metric_summary()}
+        trend = {
+            "metrics": metrics,
+            "growth_metrics": ["xray.fds"],
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = self.accept_policy(metrics, "xray.fds")
+        policy["metric_limits"]["xray.fds"]["require_no_sustained_positive"] = False
+
+        with self.assertRaisesRegex(ValueError, "require_no_sustained_positive"):
+            tun_soak_metrics.evaluate_policy(
+                trend,
+                policy,
+                configuration=self.acceptance_configuration(),
+            )
+
+    def test_accept_policy_requires_rules_for_slow_non_candidate_growth_metrics(self) -> None:
+        metrics = {
+            "podlazd.fds": self.metric_summary(),
+            "xray.fds": self.metric_summary(slope=1, net_growth=3, positive_fraction=0.02),
+        }
+        trend = {
+            "metrics": metrics,
+            "growth_metrics": sorted(metrics),
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = self.accept_policy(metrics, "podlazd.fds")
+        del policy["metric_limits"]["xray.fds"]
+
+        with self.assertRaisesRegex(ValueError, "complete growth-metric rule set"):
+            tun_soak_metrics.evaluate_policy(
+                trend,
+                policy,
+                configuration=self.acceptance_configuration(),
+            )
+
+    def test_accept_policy_rejects_sparse_target_metric_evidence(self) -> None:
+        metrics = {
+            "xray.pss_bytes": self.metric_summary(samples=2, duration=60, maximum_gap=60),
+        }
+        trend = {
+            "metrics": metrics,
+            "growth_metrics": ["xray.pss_bytes"],
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = self.accept_policy(metrics, "xray.pss_bytes")
+
+        result = tun_soak_metrics.evaluate_policy(
+            trend,
+            policy,
+            configuration=self.acceptance_configuration(),
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("metric_sample_count", result["violations"]["xray.pss_bytes"])
+        self.assertIn("metric_observed_duration", result["violations"]["xray.pss_bytes"])
+
+    def test_accept_policy_rejects_unreviewed_reconnect_configuration(self) -> None:
+        metrics = {"xray.fds": self.metric_summary()}
+        trend = {
+            "metrics": metrics,
+            "growth_metrics": ["xray.fds"],
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = self.accept_policy(metrics, "xray.fds")
+        actual = self.acceptance_configuration()
+        actual["reconnect_samples"] = 2
+
+        result = tun_soak_metrics.evaluate_policy(trend, policy, configuration=actual)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("reconnect_samples", result["configuration_contract"]["violations"])
+
+    def test_accept_policy_rejects_unreviewed_health_poll_configuration(self) -> None:
+        metrics = {"xray.fds": self.metric_summary()}
+        trend = {
+            "metrics": metrics,
+            "growth_metrics": ["xray.fds"],
+            "growth_candidates": [],
+            "observed_duration_seconds": 10800,
+            "maximum_observed_sample_gap_seconds": 60,
+        }
+        policy = self.accept_policy(metrics, "xray.fds")
+        policy["acceptance_configuration"]["tun_health_poll_seconds"] = 1
+        actual = self.acceptance_configuration()
+        actual["tun_health_poll_seconds"] = 2
+
+        result = tun_soak_metrics.evaluate_policy(trend, policy, configuration=actual)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("tun_health_poll_seconds", result["configuration_contract"]["violations"])
 
 
 if __name__ == "__main__":

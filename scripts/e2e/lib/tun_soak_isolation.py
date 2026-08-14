@@ -10,11 +10,17 @@ import json
 import os
 import re
 import selectors
+import stat
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+try:
+    from .tun_soak_environment import verify_runtime_os
+except ImportError:
+    from tun_soak_environment import verify_runtime_os
 
 SCHEMA_VERSION = 1
 MAX_COMMAND_BYTES = 8 * 1024 * 1024
@@ -27,6 +33,18 @@ DEFAULT_RULE_LAYOUT = {
     "ipv6": ((0, "local"), (32766, "main")),
 }
 DEDICATED_UPLINK_LINK_TYPE = "ether"
+TRUSTED_HOST_SCHEMA_VERSION = "podlaz.e2e.trusted-host.v1"
+MAX_TRUSTED_HOST_BYTES = 256 * 1024
+TRUSTED_HOST_FIELDS = frozenset({"schema_version", "runtime_os", "uplink", "resolved"})
+TRUSTED_UPLINK_FIELDS = frozenset(
+    {
+        "ifname",
+        "ifindex",
+        "default_ipv4_gateway",
+        "global_ipv4_cidrs",
+        "network_manager_connection_id",
+    }
+)
 
 RULE_RAW_FIELDS = frozenset(
     {
@@ -556,6 +574,61 @@ def _normalize_nftables(value: Any) -> list[Any]:
 
 
 _LINK_HEADING = re.compile(r"^Link [0-9]+ \(([^)]+)\)$")
+_NM_UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _split_nmcli_terse_line(line: str) -> list[str]:
+    fields: list[str] = []
+    current: list[str] = []
+    escaped = False
+    for character in line:
+        if escaped:
+            current.append(character)
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == ":":
+            fields.append("".join(current))
+            current = []
+        else:
+            current.append(character)
+    if escaped:
+        raise IsolationError("NetworkManager inventory contains a dangling escape")
+    fields.append("".join(current))
+    return fields
+
+
+def _normalize_network_manager(value: str) -> list[dict[str, str]]:
+    if not isinstance(value, str):
+        raise IsolationError("NetworkManager inventory is malformed")
+    result: list[dict[str, str]] = []
+    identities: set[tuple[str, str]] = set()
+    for raw in value.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        fields = _split_nmcli_terse_line(line)
+        if len(fields) != 3:
+            raise IsolationError("NetworkManager inventory entry is malformed")
+        uuid, device, state_name = (field.strip() for field in fields)
+        if _NM_UUID.fullmatch(uuid) is None or not device or not state_name:
+            raise IsolationError("NetworkManager active-connection identity is incomplete")
+        identity = (uuid.lower(), device)
+        if identity in identities:
+            raise IsolationError("NetworkManager active-connection identity is duplicated")
+        identities.add(identity)
+        result.append({"uuid": uuid.lower(), "device": device, "state": state_name.casefold()})
+    return sorted(result, key=lambda item: (item["device"], item["uuid"], item["state"]))
+
+
+def _normalize_runtime_os(value: Any) -> dict[str, str]:
+    root = _required_mapping(value, "runtime OS evidence")
+    if set(root) != {"id", "version_id"}:
+        raise IsolationError("runtime OS evidence has an unsupported shape")
+    runtime = {"id": str(root.get("id", "")), "version_id": str(root.get("version_id", ""))}
+    if runtime != {"id": "ubuntu", "version_id": "24.04"}:
+        raise IsolationError("TUN resource isolation requires Ubuntu 24.04")
+    return runtime
 
 
 def _normalize_resolved(value: str) -> dict[str, Any]:
@@ -599,6 +672,8 @@ def normalize_snapshot(raw: Mapping[str, Any], *, network_namespace_inode: int) 
         "routes_v6": _normalize_routes(raw.get("routes_v6"), "ipv6"),
         "nftables": _normalize_nftables(raw.get("nftables")),
         "resolved": _normalize_resolved(raw.get("resolved")),
+        "network_manager": _normalize_network_manager(raw.get("network_manager")),
+        "runtime_os": _normalize_runtime_os(raw.get("runtime_os")),
     }
 
 
@@ -1094,6 +1169,215 @@ def _validate_main_connected_routes(snapshot: Mapping[str, Any]) -> None:
         raise IsolationError("noprefixroute prefix unexpectedly owns a main-table connected route")
 
 
+def _validated_resolved_fingerprint(value: Any, label: str) -> dict[str, Any]:
+    root = _required_mapping(value, label)
+    if set(root) != {"global", "links"}:
+        raise IsolationError(f"{label} has an unsupported shape")
+    global_lines = root.get("global")
+    links = root.get("links")
+    if not isinstance(global_lines, list) or any(not isinstance(line, str) or not line for line in global_lines):
+        raise IsolationError(f"{label} global state is malformed")
+    if global_lines != sorted(global_lines) or len(global_lines) != len(set(global_lines)):
+        raise IsolationError(f"{label} global state is not canonical")
+    if not isinstance(links, list):
+        raise IsolationError(f"{label} link state is malformed")
+    normalized_links: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in links:
+        link = _required_mapping(raw, f"{label} link")
+        if set(link) != {"ifname", "lines"}:
+            raise IsolationError(f"{label} link has an unsupported shape")
+        ifname = link.get("ifname")
+        lines = link.get("lines")
+        if not isinstance(ifname, str) or not ifname or ifname in seen:
+            raise IsolationError(f"{label} link identity is malformed")
+        if not isinstance(lines, list) or any(not isinstance(line, str) or not line for line in lines):
+            raise IsolationError(f"{label} link lines are malformed")
+        if lines != sorted(lines) or len(lines) != len(set(lines)):
+            raise IsolationError(f"{label} link lines are not canonical")
+        seen.add(ifname)
+        normalized_links.append({"ifname": ifname, "lines": list(lines)})
+    normalized_links.sort(key=lambda item: item["ifname"])
+    if normalized_links != links:
+        raise IsolationError(f"{label} links are not canonical")
+    return {"global": list(global_lines), "links": normalized_links}
+
+
+def load_trusted_host(path: Path) -> Mapping[str, Any]:
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise IsolationError("trusted host fingerprint is unavailable") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise IsolationError("trusted host fingerprint must be a regular file")
+        if metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise IsolationError("trusted host fingerprint must be root-owned and private")
+        if metadata.st_nlink != 1:
+            raise IsolationError("trusted host fingerprint must have one filesystem link")
+        if metadata.st_size <= 0 or metadata.st_size > MAX_TRUSTED_HOST_BYTES:
+            raise IsolationError("trusted host fingerprint size is invalid")
+        chunks: list[bytes] = []
+        remaining = MAX_TRUSTED_HOST_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if (
+            len(data) != metadata.st_size
+            or len(data) > MAX_TRUSTED_HOST_BYTES
+            or after.st_dev != metadata.st_dev
+            or after.st_ino != metadata.st_ino
+            or after.st_size != metadata.st_size
+            or after.st_mtime_ns != metadata.st_mtime_ns
+        ):
+            raise IsolationError("trusted host fingerprint changed while reading")
+    except OSError as exc:
+        raise IsolationError("trusted host fingerprint cannot be read") from exc
+    finally:
+        os.close(descriptor)
+    try:
+        value = json.loads(data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise IsolationError("trusted host fingerprint is invalid JSON") from exc
+    root = _required_mapping(value, "trusted host fingerprint")
+    if set(root) != TRUSTED_HOST_FIELDS or root.get("schema_version") != TRUSTED_HOST_SCHEMA_VERSION:
+        raise IsolationError("trusted host fingerprint has an unsupported schema")
+    return root
+
+
+def _global_ipv4_cidrs(snapshot: Mapping[str, Any], uplink: str) -> list[str]:
+    addresses = snapshot.get("addresses")
+    if not isinstance(addresses, list):
+        raise IsolationError("address inventory is unavailable")
+    matches = [
+        _required_mapping(entry, "address inventory entry")
+        for entry in addresses
+        if isinstance(entry, Mapping) and entry.get("ifname") == uplink
+    ]
+    if len(matches) != 1:
+        raise IsolationError("trusted uplink fingerprint cannot identify one address inventory")
+    raw_addresses = matches[0].get("addresses")
+    if not isinstance(raw_addresses, list):
+        raise IsolationError("trusted uplink address inventory is malformed")
+    result: list[str] = []
+    for raw in raw_addresses:
+        address = _required_mapping(raw, "interface address entry")
+        if address.get("family") != "inet" or address.get("scope") != "global":
+            continue
+        local = address.get("local")
+        prefixlen = address.get("prefixlen")
+        if not isinstance(local, str) or not isinstance(prefixlen, int):
+            raise IsolationError("trusted uplink IPv4 identity is malformed")
+        try:
+            interface = ipaddress.ip_interface(f"{local}/{prefixlen}")
+        except ValueError as exc:
+            raise IsolationError("trusted uplink IPv4 identity is malformed") from exc
+        result.append(interface.with_prefixlen)
+    result.sort()
+    if not result or len(result) != len(set(result)):
+        raise IsolationError("trusted uplink global IPv4 identity is incomplete or duplicated")
+    return result
+
+
+def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any]) -> None:
+    root = _required_mapping(trusted, "trusted host fingerprint")
+    if set(root) != TRUSTED_HOST_FIELDS or root.get("schema_version") != TRUSTED_HOST_SCHEMA_VERSION:
+        raise IsolationError("trusted host fingerprint has an unsupported schema")
+
+    trusted_runtime = _normalize_runtime_os(root.get("runtime_os"))
+    observed_runtime = _normalize_runtime_os(snapshot.get("runtime_os"))
+    if observed_runtime != trusted_runtime:
+        raise IsolationError("trusted runtime OS fingerprint does not match")
+
+    trusted_uplink = _required_mapping(root.get("uplink"), "trusted uplink fingerprint")
+    if set(trusted_uplink) != TRUSTED_UPLINK_FIELDS:
+        raise IsolationError("trusted uplink fingerprint has an unsupported shape")
+    ifname = trusted_uplink.get("ifname")
+    ifindex = trusted_uplink.get("ifindex")
+    gateway = trusted_uplink.get("default_ipv4_gateway")
+    global_ipv4 = trusted_uplink.get("global_ipv4_cidrs")
+    nm_identity = trusted_uplink.get("network_manager_connection_id")
+    if (
+        not isinstance(ifname, str)
+        or not ifname
+        or not isinstance(ifindex, int)
+        or isinstance(ifindex, bool)
+        or ifindex <= 0
+        or not isinstance(gateway, str)
+        or not gateway
+        or not isinstance(global_ipv4, list)
+        or not isinstance(nm_identity, str)
+        or _NM_UUID.fullmatch(nm_identity) is None
+    ):
+        raise IsolationError("trusted uplink fingerprint is malformed")
+    try:
+        canonical_gateway = str(ipaddress.ip_address(gateway))
+        canonical_cidrs = sorted(ipaddress.ip_interface(value).with_prefixlen for value in global_ipv4)
+    except ValueError as exc:
+        raise IsolationError("trusted uplink fingerprint is malformed") from exc
+    if canonical_gateway != gateway or canonical_cidrs != global_ipv4 or len(global_ipv4) != len(set(global_ipv4)):
+        raise IsolationError("trusted uplink fingerprint is not canonical")
+
+    default_v4 = [
+        route
+        for route in _default_routes(snapshot)
+        if route.get("family") == "ipv4"
+    ]
+    links = snapshot.get("links")
+    if not isinstance(links, list):
+        raise IsolationError("link inventory is unavailable")
+    observed_link = [
+        _required_mapping(link, "link inventory entry")
+        for link in links
+        if isinstance(link, Mapping) and link.get("ifname") == ifname
+    ]
+    network_manager = snapshot.get("network_manager")
+    if not isinstance(network_manager, list):
+        raise IsolationError("NetworkManager inventory is unavailable")
+    uplink_connections = [
+        _required_mapping(connection, "NetworkManager active connection")
+        for connection in network_manager
+        if isinstance(connection, Mapping) and connection.get("device") == ifname
+    ]
+    loopback_connections = [
+        _required_mapping(connection, "NetworkManager loopback connection")
+        for connection in network_manager
+        if isinstance(connection, Mapping) and connection.get("device") == "lo"
+    ]
+    if any(
+        not isinstance(connection, Mapping)
+        or connection.get("device") not in {ifname, "lo"}
+        or connection.get("state") != "activated"
+        for connection in network_manager
+    ):
+        raise IsolationError("NetworkManager inventory contains foreign active ownership")
+    if len(loopback_connections) > 1:
+        raise IsolationError("NetworkManager loopback ownership is ambiguous")
+    if (
+        len(default_v4) != 1
+        or default_v4[0].get("dev") != ifname
+        or default_v4[0].get("gateway") != gateway
+        or len(observed_link) != 1
+        or observed_link[0].get("ifindex") != ifindex
+        or _global_ipv4_cidrs(snapshot, ifname) != global_ipv4
+        or len(uplink_connections) != 1
+        or uplink_connections[0] != {"uuid": nm_identity.lower(), "device": ifname, "state": "activated"}
+    ):
+        raise IsolationError("trusted uplink fingerprint does not match the current host")
+
+    trusted_resolved = _validated_resolved_fingerprint(root.get("resolved"), "trusted resolver fingerprint")
+    observed_resolved = _validated_resolved_fingerprint(snapshot.get("resolved"), "resolver inventory")
+    if observed_resolved != trusted_resolved:
+        raise IsolationError("trusted resolver fingerprint does not match the current host")
+
+
 def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:
     return (
         str(link.get("kind", "")) == ""
@@ -1159,6 +1443,26 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
             raise IsolationError("link is not a positive physical dedicated-runner uplink candidate")
     if loopback_count != 1:
         raise IsolationError("dedicated-runner loopback cardinality is invalid")
+    if len(link_by_name) != 2:
+        raise IsolationError("dedicated runner must expose exactly one non-loopback uplink")
+    _normalize_runtime_os(snapshot.get("runtime_os"))
+    network_manager = snapshot.get("network_manager")
+    if not isinstance(network_manager, list):
+        raise IsolationError("NetworkManager active-connection inventory is unavailable")
+    for raw_connection in network_manager:
+        connection = _required_mapping(raw_connection, "NetworkManager active connection")
+        if set(connection) != {"uuid", "device", "state"} or connection.get("state") != "activated":
+            raise IsolationError("NetworkManager active connection is not canonical")
+        if connection.get("device") not in link_by_name:
+            raise IsolationError("NetworkManager active connection owns an unknown device")
+    non_loopback_connections = [
+        connection for connection in network_manager if connection.get("device") != "lo"
+    ]
+    loopback_connections = [
+        connection for connection in network_manager if connection.get("device") == "lo"
+    ]
+    if len(non_loopback_connections) != 1 or len(loopback_connections) > 1:
+        raise IsolationError("dedicated runner NetworkManager ownership is ambiguous")
 
     for family, key in (("ipv4", "rules_v4"), ("ipv6", "rules_v6")):
         rules = snapshot.get(key)
@@ -1438,8 +1742,11 @@ def assert_matches_baseline(
     baseline: Mapping[str, Any],
     current: Mapping[str, Any],
     manifest: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    trusted: Mapping[str, Any] | None = None,
 ) -> None:
     observed = strip_exact_podlaz_state(current, manifest) if manifest is not None else dict(current)
+    if trusted is not None:
+        validate_trusted_host(observed, trusted)
     if observed != dict(baseline):
         raise IsolationError("foreign or underlying network state changed during the soak")
 
@@ -1465,6 +1772,10 @@ def collect_snapshot() -> dict[str, Any]:
         "routes_v6": _json_command(("ip", "-j", "-6", "route", "show", "table", "all")),
         "nftables": _json_command(("nft", "-j", "list", "ruleset")),
         "resolved": _text_command(("resolvectl", "status", "--no-pager")),
+        "network_manager": _text_command(
+            ("nmcli", "--terse", "--escape", "yes", "--fields", "UUID,DEVICE,STATE", "connection", "show", "--active")
+        ),
+        "runtime_os": verify_runtime_os(),
     }
     return normalize_snapshot(raw, network_namespace_inode=_network_namespace_inode())
 
@@ -1495,24 +1806,33 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     capture = subparsers.add_parser("capture")
     capture.add_argument("--output", type=Path, required=True)
+    capture.add_argument("--trusted-host", type=Path, required=True)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--baseline", type=Path, required=True)
     verify.add_argument("--manifest", type=Path)
+    verify.add_argument("--trusted-host", type=Path, required=True)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        trusted = load_trusted_host(args.trusted_host)
         if args.command == "capture":
             snapshot = collect_snapshot()
             validate_clean_baseline(snapshot)
+            validate_trusted_host(snapshot, trusted)
             _atomic_write(args.output, snapshot)
             return 0
         baseline = _load_snapshot(args.baseline)
         current = collect_snapshot()
         manifest = _load_manifest(args.manifest) if args.manifest is not None else None
-        assert_matches_baseline(baseline=baseline, current=current, manifest=manifest)
+        assert_matches_baseline(
+            baseline=baseline,
+            current=current,
+            manifest=manifest,
+            trusted=trusted,
+        )
         return 0
     except IsolationError as exc:
         print(f"network isolation verification failed: {exc}", file=sys.stderr)

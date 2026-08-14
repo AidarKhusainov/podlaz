@@ -151,6 +151,14 @@ class TunSoakIsolationTests(unittest.TestCase):
                     }
                 ],
             },
+            "network_manager": [
+                {
+                    "uuid": "11111111-2222-3333-4444-555555555555",
+                    "device": "eth0",
+                    "state": "activated",
+                }
+            ],
+            "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
         }
 
     @staticmethod
@@ -327,6 +335,8 @@ class TunSoakIsolationTests(unittest.TestCase):
             "routes_v6": [],
             "nftables": {"nftables": []},
             "resolved": "Global\n",
+            "network_manager": "11111111-2222-3333-4444-555555555555:eth0:activated\n",
+            "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
         }
 
         normalized = tun_soak_isolation.normalize_snapshot(raw, network_namespace_inode=101)
@@ -896,6 +906,149 @@ class TunSoakIsolationTests(unittest.TestCase):
                 baseline=baseline,
                 current=current,
             )
+
+
+    def trusted_host(self, snapshot: dict[str, object]) -> dict[str, object]:
+        return {
+            "schema_version": "podlaz.e2e.trusted-host.v1",
+            "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
+            "uplink": {
+                "ifname": "eth0",
+                "ifindex": 2,
+                "default_ipv4_gateway": "192.0.2.1",
+                "global_ipv4_cidrs": ["192.0.2.20/24"],
+                "network_manager_connection_id": "11111111-2222-3333-4444-555555555555",
+            },
+            "resolved": copy.deepcopy(snapshot["resolved"]),
+        }
+
+    def trusted_snapshot(self) -> dict[str, object]:
+        snapshot = self.baseline()
+        snapshot["runtime_os"] = {"id": "ubuntu", "version_id": "24.04"}
+        snapshot["network_manager"] = [
+            {
+                "uuid": "11111111-2222-3333-4444-555555555555",
+                "device": "eth0",
+                "state": "activated",
+            }
+        ]
+        return snapshot
+
+    def test_trusted_uplink_rejects_gateway_mutation_on_same_physical_link(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        default_route = next(
+            route
+            for route in snapshot["routes_v4"]
+            if route["table"] == "main" and route["dst"] == "default"
+        )
+        default_route["gateway"] = "192.0.2.254"
+
+        # The live snapshot remains internally consistent and would authenticate
+        # itself without the independently provisioned fingerprint.
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_uplink_rejects_additional_global_prefix_even_when_self_consistent(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        snapshot["addresses"][1]["addresses"].append(
+            {
+                "family": "inet",
+                "local": "198.51.100.20",
+                "prefixlen": 24,
+                "scope": "global",
+                "label": "eth0",
+                "flags": [],
+                "extras": {"broadcast": "198.51.100.255"},
+            }
+        )
+        snapshot["routes_v4"].extend(
+            [
+                self.route(
+                    "ipv4",
+                    "local",
+                    "198.51.100.20/32",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="host",
+                    prefsrc="198.51.100.20",
+                    type="local",
+                ),
+                self.route(
+                    "ipv4",
+                    "local",
+                    "198.51.100.255/32",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="198.51.100.20",
+                    type="broadcast",
+                ),
+                self.route(
+                    "ipv4",
+                    "main",
+                    "198.51.100.0/24",
+                    dev="eth0",
+                    protocol="kernel",
+                    scope="link",
+                    prefsrc="198.51.100.20",
+                ),
+            ]
+        )
+
+        # All address-derived kernel routes are deliberately self-consistent;
+        # only the independent fingerprint proves that this extra prefix is foreign.
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted uplink fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_resolver_rejects_pre_capture_global_dns_mutation(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        snapshot["resolved"]["global"].append("DNS Servers: 192.0.2.53")
+        snapshot["resolved"]["global"].sort()
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted resolver fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_trusted_resolver_rejects_pre_capture_uplink_domain_mutation(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        snapshot["resolved"]["links"][0]["lines"].append("DNS Domain: example.invalid")
+        snapshot["resolved"]["links"][0]["lines"].sort()
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "trusted resolver fingerprint"):
+            tun_soak_isolation.validate_trusted_host(snapshot, trusted)
+
+    def test_active_trusted_host_validation_runs_after_exact_podlaz_projection_is_removed(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        trusted = self.trusted_host(baseline)
+
+        tun_soak_isolation.assert_matches_baseline(
+            baseline=baseline,
+            current=current,
+            manifest=manifest,
+            trusted=trusted,
+        )
+
+    def test_canonical_loopback_networkmanager_connection_does_not_replace_uplink_identity(self) -> None:
+        snapshot = self.trusted_snapshot()
+        trusted = self.trusted_host(snapshot)
+        snapshot["network_manager"].append(
+            {
+                "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "device": "lo",
+                "state": "activated",
+            }
+        )
+        snapshot["network_manager"].sort(key=lambda item: (item["device"], item["uuid"], item["state"]))
+
+        tun_soak_isolation.validate_clean_baseline(snapshot)
+        tun_soak_isolation.validate_trusted_host(snapshot, trusted)
 
 
 if __name__ == "__main__":

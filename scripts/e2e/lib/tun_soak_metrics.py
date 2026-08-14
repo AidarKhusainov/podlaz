@@ -9,6 +9,7 @@ command lines, generated-config paths, host names, or network identifiers.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -26,6 +27,7 @@ try:
     )
     from .tun_soak_process import (
         SCHEMA_VERSION,
+        NON_GROWTH_METRICS,
         ActiveIdentity,
         AttributionError,
         ProcessIdentity,
@@ -46,6 +48,7 @@ except ImportError:
     )
     from tun_soak_process import (
         SCHEMA_VERSION,
+        NON_GROWTH_METRICS,
         ActiveIdentity,
         AttributionError,
         ProcessIdentity,
@@ -121,6 +124,15 @@ def _load_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise AttributionError(f"read JSON evidence failed: {path.name}") from exc
+
+
+def _load_json_with_sha256(path: Path) -> tuple[Any, str]:
+    try:
+        payload = path.read_bytes()
+        value = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AttributionError(f"read JSON evidence failed: {path.name}") from exc
+    return value, hashlib.sha256(payload).hexdigest()
 
 
 def _write_json(path: Path, value: Any, *, mode: int = 0o644) -> None:
@@ -259,7 +271,7 @@ def _command_report(args: argparse.Namespace) -> int:
     reconnect_cleanup = _load_json(args.reconnect_cleanup_boundary)
     provenance = _load_json(args.provenance)
     configuration = _load_json(args.configuration)
-    policy = _load_json(args.policy)
+    policy, policy_sha256 = _load_json_with_sha256(args.policy)
     if not all(
         isinstance(value, Mapping)
         for value in (baseline, cleanup, reconnect_cleanup, provenance, configuration, policy)
@@ -274,9 +286,7 @@ def _command_report(args: argparse.Namespace) -> int:
         provenance=provenance,
         configuration=configuration,
         policy=policy,
-        cleanup_memory_tolerance_bytes=args.cleanup_memory_tolerance_bytes,
-        reconnect_memory_tolerance_bytes=args.reconnect_memory_tolerance_bytes,
-        reconnect_count_tolerance=args.reconnect_count_tolerance,
+        policy_sha256=policy_sha256,
     )
     _write_json(args.output, report)
     return 0 if report["ok"] else 1
@@ -359,9 +369,6 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--provenance", type=Path, required=True)
     report.add_argument("--configuration", type=Path, required=True)
     report.add_argument("--policy", type=Path, required=True)
-    report.add_argument("--cleanup-memory-tolerance-bytes", type=int, required=True)
-    report.add_argument("--reconnect-memory-tolerance-bytes", type=int, required=True)
-    report.add_argument("--reconnect-count-tolerance", type=int, required=True)
     report.add_argument("--output", type=Path, required=True)
     report.set_defaults(handler=_command_report)
     return parser

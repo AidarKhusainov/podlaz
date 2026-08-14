@@ -1,6 +1,268 @@
 {
+  "lifecycle_limits": {
+    "cleanup": {
+      "cgroup.memory_current_bytes": {
+        "max_increase": 33554432,
+        "required": true
+      },
+      "cgroup.pids_current": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.anon_inode_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.other_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.pipe_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.pss_bytes": {
+        "max_increase": 33554432,
+        "required": false
+      },
+      "podlazd.regular_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.rss_bytes": {
+        "max_increase": 33554432,
+        "required": true
+      },
+      "podlazd.socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.tasks": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.tcp_established_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.tcp_listen_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.tcp_other_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.tcp_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.threads": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.udp_connected_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.udp_other_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.udp_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.udp_unconnected_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.unclassified_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      },
+      "podlazd.unix_socket_fds": {
+        "max_increase": 0,
+        "required": true
+      }
+    },
+    "reconnect": {
+      "cgroup.memory_current_bytes": {
+        "max_increase": 67108864,
+        "required": true
+      },
+      "cgroup.pids_current": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.anon_inode_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.other_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.pipe_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.pss_bytes": {
+        "max_increase": 67108864,
+        "required": false
+      },
+      "podlazd.regular_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.rss_bytes": {
+        "max_increase": 67108864,
+        "required": true
+      },
+      "podlazd.socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.tasks": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.tcp_established_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.tcp_listen_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.tcp_other_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.tcp_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.threads": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.udp_connected_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.udp_other_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.udp_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.udp_unconnected_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.unclassified_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "podlazd.unix_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.anon_inode_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.other_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.pipe_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.pss_bytes": {
+        "max_increase": 67108864,
+        "required": false
+      },
+      "xray.regular_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.rss_bytes": {
+        "max_increase": 67108864,
+        "required": true
+      },
+      "xray.socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.tasks": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.tcp_established_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.tcp_listen_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.tcp_other_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.tcp_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.threads": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.udp_connected_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.udp_other_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.udp_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.udp_unconnected_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.unclassified_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      },
+      "xray.unix_socket_fds": {
+        "max_increase": 2,
+        "required": true
+      }
+    }
+  },
   "metric_limits": {},
   "mode": "observe",
   "reproduced_growth_signal": null,
-  "schema_version": 1
+  "schema_version": 2
 }
