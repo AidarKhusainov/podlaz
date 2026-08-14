@@ -25,13 +25,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Apply exact patch, verify, and push clean head
+      - name: Apply exact patch, verify, and push non-workflow files
         shell: bash
         run: |
           set -euo pipefail
 
+          if [[ -f scripts/e2e/lib/tun_soak_environment.py ]]; then
+            echo 'Verified acceptance fixes are already published; connector cleanup remains.'
+            exit 0
+          fi
+
           chunk_dir='.agent-sync/issue246'
-          workflow='.github/workflows/issue-246-seven-blockers-export.yml'
+          main_workflow='.github/workflows/e2e-tun-resource-soak.yml'
           shopt -s nullglob
           chunks=("${chunk_dir}"/chunk-*)
           test "${#chunks[@]}" -eq 9
@@ -51,9 +56,6 @@ jobs:
 
           git apply --check "${RUNNER_TEMP}/seven-blockers.patch"
           git apply "${RUNNER_TEMP}/seven-blockers.patch"
-
-          git rm --force -- "${workflow}"
-          rm -rf -- .agent-sync
 
           python3 -m py_compile scripts/e2e/*.py scripts/e2e/lib/*.py scripts/e2e/tests/*.py
           python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
@@ -77,12 +79,14 @@ jobs:
 
           test -z "$(gofmt -l .)"
           find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
-          test ! -e "${workflow}"
-          test ! -e .agent-sync
 
-          git add -A
+          # The Actions token has no workflows permission. The exact reviewed
+          # workflow update and removal of temporary publisher/chunks are
+          # applied in the following connector-backed cleanup commit.
+          git restore --source=HEAD -- "${main_workflow}"
+          git add -A -- docs scripts
           git diff --cached --check
-          test "$(git diff --cached --name-status -- "${workflow}")" = $'D\t.github/workflows/issue-246-seven-blockers-export.yml'
+          test -z "$(git diff --cached --name-only -- .github/workflows .agent-sync)"
           test -n "$(git diff --cached --name-only)"
 
           git config user.name 'podlaz issue 246 automation'
