@@ -187,7 +187,7 @@ func TestRunCLILogsRunsDefaultDaemonLogs(t *testing.T) {
 
 func TestRunCLILogsParsesFollowDaemonAndSince(t *testing.T) {
 	var gotOptions logs.Options
-	err := runWithOptions(context.Background(), []string{"logs", "--daemon", "--since", "1 hour ago", "-f"}, &bytes.Buffer{}, options{
+	err := runWithOptions(context.Background(), []string{"logs", "--daemon", "--since", "36h", "-f"}, &bytes.Buffer{}, options{
 		logs: func(_ context.Context, _ io.Writer, opts logs.Options) error {
 			gotOptions = opts
 			return nil
@@ -196,7 +196,7 @@ func TestRunCLILogsParsesFollowDaemonAndSince(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logs failed: %v", err)
 	}
-	if !gotOptions.Follow || gotOptions.Since != "1 hour ago" || gotOptions.Core {
+	if !gotOptions.Follow || gotOptions.Since != "36h" || gotOptions.Core {
 		t.Fatalf("expected follow, since, and daemon log options, got %#v", gotOptions)
 	}
 }
