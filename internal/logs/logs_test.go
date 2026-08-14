@@ -18,10 +18,25 @@ func TestBuildJournalctlArgsDefaultsToRecentDaemonLogs(t *testing.T) {
 }
 
 func TestBuildJournalctlArgsSupportsFollowAndSince(t *testing.T) {
-	got := BuildJournalctlArgs(Options{Follow: true, Since: "1 hour ago"})
-	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "1 hour ago", "--follow"}
+	got := BuildJournalctlArgs(Options{Follow: true, Since: "36h"})
+	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-36h", "--follow"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)
+	}
+}
+
+func TestRunRejectsInvalidSinceBeforeJournalctlLookup(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	var out bytes.Buffer
+	err := Run(context.Background(), &out, Options{Since: "yesterday"})
+	if !errors.Is(err, ErrInvalidSinceDuration) {
+		t.Fatalf("expected product-level duration error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "journalctl is not available") {
+		t.Fatalf("invalid input reached journalctl dependency lookup: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("invalid input wrote output: %q", out.String())
 	}
 }
 

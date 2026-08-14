@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 
@@ -71,5 +72,11 @@ func runLogs(ctx context.Context, stdout io.Writer, opts options, logOptions log
 	if opts.logs != nil {
 		return opts.logs(ctx, stdout, logOptions)
 	}
-	return logs.Run(ctx, stdout, logOptions)
+	if err := logs.Run(ctx, stdout, logOptions); err != nil {
+		if errors.Is(err, logs.ErrInvalidSinceDuration) {
+			return usageError("%v", err)
+		}
+		return err
+	}
+	return nil
 }

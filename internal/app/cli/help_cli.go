@@ -81,8 +81,11 @@ func printLogsHelp(w io.Writer) {
 
 Print recent podlaz logs from the system journal using journalctl. The default
 source is daemon logs. --core filters Xray lifecycle and forwarded stdout/stderr
-lines marked by podlazd. This command is read-only and applies the standard
-podlaz output redaction policy before printing log lines.
+lines marked by podlazd. --since accepts exactly one positive decimal integer
+followed by s, m, or h (for example 30s, 15m, 2h, or 36h), up to 720h. Signed,
+fractional, compound, date-like, and journalctl-native values are rejected.
+This command is read-only and applies the standard podlaz output redaction
+policy before printing log lines.
 `)
 }
 
