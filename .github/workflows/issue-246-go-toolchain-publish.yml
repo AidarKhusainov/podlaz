@@ -1,0 +1,58 @@
+name: Issue 246 Publish Go 1.26.6 Pin
+
+on:
+  push:
+    branches:
+      - agent/issue-246-tun-resource-soak
+
+permissions:
+  contents: write
+
+concurrency:
+  group: issue-246-go-toolchain-publisher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish non-workflow Go toolchain pin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v7
+        with:
+          ref: agent/issue-246-tun-resource-soak
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Verify and publish Go 1.26.6 pin
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -q 'toolchain go1\.26\.6' go.mod && \
+             grep -q 'Go 1\.26\.6' docs/development.md && \
+             grep -q 'Go 1\.26\.6' docs/e2e.md; then
+            echo 'Non-workflow toolchain pin is already published.'
+            exit 0
+          fi
+
+          sed -i 's/1\.26\.5/1.26.6/g' \
+            go.mod \
+            docs/development.md \
+            docs/e2e.md
+
+          grep -q 'toolchain go1\.26\.6' go.mod
+          grep -q 'Go 1\.26\.6' docs/development.md
+          grep -q 'Go 1\.26\.6' docs/e2e.md
+          ! grep -RIn '1\.26\.5' go.mod docs/development.md docs/e2e.md
+          git diff --check
+
+          git add -- go.mod docs/development.md docs/e2e.md
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'build: update Go toolchain to 1.26.6'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
