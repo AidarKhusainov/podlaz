@@ -28,14 +28,6 @@ write_evidence() {
   printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
 }
 
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
-
 run_installed_podlaz_bounded() {
   local timeout_seconds="$1"
   shift
