@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ const (
 
 var (
 	ErrInvalidSinceDuration = errors.New("invalid logs --since duration")
-	sinceDurationPattern    = regexp.MustCompile(`^[1-9][0-9]*[smh]$`)
+	sinceDurationPattern    = regexp.MustCompile(`^[0-9]+[smh]$`)
 )
 
 // Options describes the read-only log stream requested by the CLI.
@@ -35,12 +36,23 @@ type Options struct {
 
 // ParseSinceDuration validates the product-owned --since grammar. The public
 // grammar is intentionally narrower than time.ParseDuration and journalctl:
-// one positive decimal integer followed by exactly one of s, m, or h.
+// one positive decimal integer followed by exactly one of s, m, or h. Decimal
+// leading zeros are accepted by the grammar and removed before backend use.
 func ParseSinceDuration(value string) (string, error) {
 	if !sinceDurationPattern.MatchString(value) {
 		return "", fmt.Errorf("%w: expected <positive integer><s|m|h>", ErrInvalidSinceDuration)
 	}
-	duration, err := time.ParseDuration(value)
+
+	amount, err := strconv.ParseUint(value[:len(value)-1], 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("%w: duration is out of range", ErrInvalidSinceDuration)
+	}
+	if amount == 0 {
+		return "", fmt.Errorf("%w: duration must be positive", ErrInvalidSinceDuration)
+	}
+
+	canonical := strconv.FormatUint(amount, 10) + value[len(value)-1:]
+	duration, err := time.ParseDuration(canonical)
 	if err != nil {
 		return "", fmt.Errorf("%w: duration is out of range", ErrInvalidSinceDuration)
 	}
@@ -50,7 +62,7 @@ func ParseSinceDuration(value string) (string, error) {
 	if duration > maxSinceDuration {
 		return "", fmt.Errorf("%w: duration must not exceed 720h", ErrInvalidSinceDuration)
 	}
-	return value, nil
+	return canonical, nil
 }
 
 // Run prints recent podlaz logs from journald.
