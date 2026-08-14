@@ -36,6 +36,17 @@ run_installed_podlaz() {
     /usr/bin/podlaz "$@"
 }
 
+run_installed_podlaz_bounded() {
+  local timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=5s "${timeout_seconds}" \
+    sudo -n runuser -u "$(id -un)" -g podlaz -- env \
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+      XDG_STATE_HOME="${XDG_STATE_HOME}" \
+      XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      /usr/bin/podlaz "$@"
+}
+
 remove_stale_test_link() {
   local current_index=""
   [[ "${STALE_LINK_CREATED}" == "true" ]] || return 0
@@ -50,7 +61,7 @@ remove_stale_test_link() {
     printf 'issue 247 cleanup refused to delete a replaced podlaz0 identity\n' >&2
     return 1
   fi
-  if ! ip tuntap show dev podlaz0 2>/dev/null | grep -Eq '^podlaz0:.*\btun\b'; then
+  if ! ip tuntap show dev podlaz0 2>/dev/null | grep -Eq '^podlaz0:[[:space:]]+tun([[:space:]]|$)'; then
     printf 'issue 247 cleanup refused to delete a non-TUN podlaz0 identity\n' >&2
     return 1
   fi
@@ -64,7 +75,7 @@ cleanup() {
   local saved=$? cleanup_failed=0
   set +e
   if [[ "${CONNECTED}" == "true" ]]; then
-    run_installed_podlaz disconnect >/dev/null 2>&1 || cleanup_failed=1
+    run_installed_podlaz_bounded 60s disconnect >/dev/null 2>&1 || cleanup_failed=1
     CONNECTED=false
   fi
   remove_stale_test_link || cleanup_failed=1
@@ -103,7 +114,7 @@ import_profile_privately() {
   local uri="$1" output error_output
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-profile-import.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-profile-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz profile import "${uri}" >"${output}" 2>"${error_output}"; then
+  if ! run_installed_podlaz_bounded 30s profile import "${uri}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "issue 247 profile import failed"
   fi
@@ -118,7 +129,7 @@ assert_inactive_doctor_clean() {
   local phase="$1" output exit_code
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-${phase}-inactive-doctor.XXXXXX")"
   set +e
-  timeout --signal=TERM --kill-after=2s 20s run_installed_podlaz doctor >"${output}" 2>&1
+  run_installed_podlaz_bounded 20s doctor >"${output}" 2>&1
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
@@ -145,7 +156,7 @@ assert_active_doctor_clean() {
   local output exit_code
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-doctor.XXXXXX")"
   set +e
-  timeout --signal=TERM --kill-after=2s 30s run_installed_podlaz doctor >"${output}" 2>&1
+  run_installed_podlaz_bounded 30s doctor >"${output}" 2>&1
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
@@ -171,7 +182,7 @@ assert_active_doctor_clean() {
 assert_active_status() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-status.XXXXXX")"
-  if ! timeout --signal=TERM --kill-after=2s 20s run_installed_podlaz status >"${output}" 2>&1; then
+  if ! run_installed_podlaz_bounded 20s status >"${output}" 2>&1; then
     rm -f -- "${output}"
     fail "issue 247 active status returned non-zero"
   fi
@@ -195,7 +206,7 @@ assert_inactive_foreign_link_warns() {
 
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-inactive-stale-doctor.XXXXXX")"
   set +e
-  timeout --signal=TERM --kill-after=2s 20s run_installed_podlaz doctor >"${output}" 2>&1
+  run_installed_podlaz_bounded 20s doctor >"${output}" 2>&1
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
@@ -217,7 +228,7 @@ assert_logs_since_valid() {
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-logs-since.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-logs-since.stderr.XXXXXX")"
   set +e
-  timeout --signal=TERM --kill-after=2s 20s run_installed_podlaz logs --since 36h >"${output}" 2>"${error_output}"
+  run_installed_podlaz_bounded 20s logs --since 36h >"${output}" 2>"${error_output}"
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
@@ -237,7 +248,7 @@ assert_logs_since_invalid() {
   output="$(mktemp "${E2E_TMP_ROOT}/issue247-invalid-since.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-invalid-since.stderr.XXXXXX")"
   set +e
-  timeout --signal=TERM --kill-after=2s 10s run_installed_podlaz logs --since "${value}" >"${output}" 2>"${error_output}"
+  run_installed_podlaz_bounded 10s logs --since "${value}" >"${output}" 2>"${error_output}"
   exit_code=$?
   set -e
   if (( exit_code != 2 )); then
@@ -263,14 +274,14 @@ mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI
 
-if ! timeout --signal=TERM --kill-after=5s 90s run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1; then
+if ! run_installed_podlaz_bounded 90s connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1; then
   fail "issue 247 TUN connect failed"
 fi
 CONNECTED=true
 assert_active_status
 assert_active_doctor_clean
 
-if ! timeout --signal=TERM --kill-after=5s 60s run_installed_podlaz disconnect >/dev/null 2>&1; then
+if ! run_installed_podlaz_bounded 60s disconnect >/dev/null 2>&1; then
   fail "issue 247 disconnect failed"
 fi
 CONNECTED=false
