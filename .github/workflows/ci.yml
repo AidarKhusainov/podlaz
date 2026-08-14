@@ -26,7 +26,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version-file: 'go.mod'
           cache: true
           cache-dependency-path: |
             go.mod
@@ -63,7 +63,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version-file: 'go.mod'
           cache: true
           cache-dependency-path: |
             go.mod
@@ -112,7 +112,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.5'
+          go-version-file: 'go.mod'
           cache: true
           cache-dependency-path: |
             go.mod
