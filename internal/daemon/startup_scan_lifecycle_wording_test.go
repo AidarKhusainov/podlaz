@@ -12,12 +12,12 @@ import (
 
 func TestStartupScanDoctorUsesActiveConnectionWordingForCleanCommittedTUN(t *testing.T) {
 	status := api.StatusResponse{
-		Connection: "active",
-		Mode: planner.ModeTun,
+		Connection:          "active",
+		Mode:                planner.ModeTun,
 		ActiveTransactionID: "tx-active",
 		Transactions: []api.TransactionStatus{{
-			ID: "tx-active",
-			State: string(txstate.TransactionCommitted),
+			ID:              "tx-active",
+			State:           string(txstate.TransactionCommitted),
 			RequiresCleanup: false,
 		}},
 	}
