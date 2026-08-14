@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"io"
 	"strings"
 
@@ -69,14 +68,13 @@ func isLogsOption(arg string) bool {
 }
 
 func runLogs(ctx context.Context, stdout io.Writer, opts options, logOptions logs.Options) error {
+	if logOptions.Since != "" {
+		if _, err := logs.ParseSinceDuration(logOptions.Since); err != nil {
+			return usageError("%v", err)
+		}
+	}
 	if opts.logs != nil {
 		return opts.logs(ctx, stdout, logOptions)
 	}
-	if err := logs.Run(ctx, stdout, logOptions); err != nil {
-		if errors.Is(err, logs.ErrInvalidSinceDuration) {
-			return usageError("%v", err)
-		}
-		return err
-	}
-	return nil
+	return logs.Run(ctx, stdout, logOptions)
 }
