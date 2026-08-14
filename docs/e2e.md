@@ -74,7 +74,7 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 - `/dev/net/tun`;
 - a unified cgroup v2 hierarchy and readable root-level procfs/cgroup structural metrics;
 - `iproute2`, `nftables`, `resolvectl`, `journalctl`;
-- Go from the workflow setup step, or Go 1.26.5 for manual script runs;
+- Go from the workflow setup step, or Go 1.26.6 for manual script runs;
 - package build tools from `docs/development.md`;
 - provider/profile configuration supplied through the runner environment, not committed to the repository.
 

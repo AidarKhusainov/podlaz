@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Go 1.26.5, as pinned in `go.mod`.
+- Go 1.26.6, as pinned in `go.mod`.
 - Linux for networking work.
 - Debian/Ubuntu for package checks.
 - `iproute2`, `nftables`, `systemd`, `systemd-resolved`, and NetworkManager for full TUN testing.
