@@ -135,7 +135,11 @@ func severityRank(severity Severity) int {
 func FromDaemon(d api.DoctorResponse) Report {
 	checks := make([]Check, 0, len(d.Checks))
 	for _, check := range d.Checks {
-		checks = append(checks, Check{Name: check.Name, Severity: Severity(check.Severity), Message: check.Message})
+		checks = append(checks, Check{
+			Name:     check.Name,
+			Severity: Severity(check.Severity),
+			Message:  check.Message,
+		})
 	}
 	return Report{Source: d.Source, Checks: checks}
 }
@@ -144,7 +148,11 @@ func FromDaemon(d api.DoctorResponse) Report {
 func ToDaemon(r Report) api.DoctorResponse {
 	checks := make([]api.DoctorCheck, 0, len(r.Checks))
 	for _, check := range r.Checks {
-		checks = append(checks, api.DoctorCheck{Name: check.Name, Severity: string(check.Severity), Message: check.Message})
+		checks = append(checks, api.DoctorCheck{
+			Name:     check.Name,
+			Severity: string(check.Severity),
+			Message:  check.Message,
+		})
 	}
 	return api.DoctorResponse{Source: r.normalizedSource(), Checks: checks}
 }
