@@ -246,7 +246,18 @@ func (m *XrayManager) Status(context.Context) api.StatusResponse {
 }
 
 func (m *XrayManager) Doctor(ctx context.Context) api.DoctorResponse {
-	report := doctor.RunWithOptions(ctx, doctor.Options{RuntimeDir: m.runtimeDir(), RuntimeDirOwnedByDaemon: true})
+	m.mu.Lock()
+	state := m.state
+	m.mu.Unlock()
+	if state.Connection == "" {
+		state = inactiveXrayState()
+	}
+	runtimeDir := m.runtimeDir()
+	report := doctor.RunWithOptions(ctx, doctor.Options{
+		RuntimeDir:              runtimeDir,
+		RuntimeDirOwnedByDaemon: true,
+		Lifecycle:               lifecycleDiagnosticContext(runtimeDir, state),
+	})
 	report = doctor.WithSource(report, doctor.SourceDaemon)
 	report = doctor.WithDaemonCheck(report, doctor.SeverityOK, "running")
 	report.Checks = append(report.Checks, m.lifecycleDoctorChecks(ctx)...)

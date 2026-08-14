@@ -172,11 +172,11 @@ func (s Server) Run(ctx context.Context) error {
 		if doctorFn == nil {
 			doctorFn = lifecycle.Doctor
 		}
-		_, scan := startupScanForPublication(
+		status, scan := startupScanForPublication(
 			r.Context(), currentStatus, lifecycle, startupScan, runtimeDir, unexpectedCoreExitRefreshTimeout,
 		)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), scan))
+		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), scan, status))
 		log.Printf("podlazd: doctor request handled")
 	})
 	registerTunDiagnosticsHandler(mux, lifecycle)
