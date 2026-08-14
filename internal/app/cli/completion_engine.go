@@ -268,7 +268,7 @@ func completionRegistry() *completionCommand {
 				{Name: "--follow", Shorthand: "-f", Description: "Follow logs", NonRepeatable: true},
 				longBoolFlag("--daemon", "Daemon logs"),
 				longBoolFlag("--core", "Core logs"),
-				longValueFlag("--since", "Journal time filter"),
+				longValueFlag("--since", "Duration <integer><s|m|h>, max 720h"),
 			},
 		},
 		{Name: "recover", Description: "Inspect recovery", Flags: []completionFlag{longBoolFlag("--execute", "Execute cleanup"), yesFlag, jsonFlag}},
