@@ -1,4 +1,4 @@
-name: Issue 246 Final Exact-Head Export
+name: Issue 246 Publish Final Toolchain Alignment
 
 on:
   push:
@@ -6,39 +6,181 @@ on:
       - agent/issue-246-tun-resource-soak
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: issue-246-final-exact-head-export
+  group: issue-246-final-toolchain-publisher
   cancel-in-progress: false
 
 jobs:
-  export:
-    name: Export exact branch head
+  publish:
+    name: Verify and publish final Go 1.26.6 alignment
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 35
+    env:
+      GOTOOLCHAIN: local
     steps:
       - name: Checkout exact branch head
         uses: actions/checkout@v7
         with:
           ref: agent/issue-246-tun-resource-soak
           fetch-depth: 0
+          persist-credentials: true
 
-      - name: Archive tracked workspace
+      - name: Setup exact fixed Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.6'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install verification tools
         shell: bash
         run: |
           set -euo pipefail
-          git archive --format=tar HEAD | xz -T0 -9 > "${RUNNER_TEMP}/workspace.tar.xz"
-          sha256sum "${RUNNER_TEMP}/workspace.tar.xz" > "${RUNNER_TEMP}/workspace.tar.xz.sha256"
-          git rev-parse HEAD > "${RUNNER_TEMP}/workspace.head"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck zsh fish
+          bash scripts/ci/install-go-tool.sh actionlint
+          bash scripts/ci/install-go-tool.sh govulncheck
 
-      - name: Upload exact workspace
-        uses: actions/upload-artifact@v7
-        with:
-          name: podlaz-issue-246-final-exact-head
-          path: |
-            ${{ runner.temp }}/workspace.tar.xz
-            ${{ runner.temp }}/workspace.tar.xz.sha256
-            ${{ runner.temp }}/workspace.head
-          if-no-files-found: error
-          retention-days: 1
+      - name: Apply exact source-of-truth alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          readonly expected_parent='839310bb28698ea1c0de7050910f2f659a2e45f1'
+          readonly publisher_path='.github/workflows/issue-246-final-export.yml'
+
+          [[ "$(git rev-parse HEAD^)" == "${expected_parent}" ]] || {
+            echo 'publisher parent is not the reviewed exact head' >&2
+            exit 1
+          }
+          mapfile -t publisher_changes < <(git diff-tree --no-commit-id --name-only -r HEAD)
+          [[ "${#publisher_changes[@]}" -eq 1 && "${publisher_changes[0]}" == "${publisher_path}" ]] || {
+            printf 'unexpected publisher commit paths: %s\n' "${publisher_changes[*]}" >&2
+            exit 1
+          }
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          go_mod = Path('go.mod')
+          content = go_mod.read_text(encoding='utf-8')
+          old = 'toolchain go1.26.5\n'
+          new = 'toolchain go1.26.6\n'
+          if content.count(old) != 1 or new in content:
+              raise SystemExit('go.mod does not contain the exact expected stale toolchain pin')
+          go_mod.write_text(content.replace(old, new), encoding='utf-8')
+
+          expected_counts = {
+              Path('.github/workflows/ci.yml'): 3,
+              Path('.github/workflows/e2e.yml'): 5,
+              Path('.github/workflows/e2e-tun-package-convergence.yml'): 1,
+              Path('.github/workflows/e2e-tun-resource-soak.yml'): 1,
+              Path('.github/workflows/release.yml'): 2,
+          }
+          old_workflow_pin = "go-version: '1.26.5'"
+          new_workflow_pin = "go-version-file: 'go.mod'"
+          for path, expected_count in expected_counts.items():
+              text = path.read_text(encoding='utf-8')
+              actual_count = text.count(old_workflow_pin)
+              if actual_count != expected_count:
+                  raise SystemExit(
+                      f'{path}: expected {expected_count} stale Go pins, found {actual_count}'
+                  )
+              if new_workflow_pin in text:
+                  raise SystemExit(f'{path}: source-of-truth alignment is already partially present')
+              path.write_text(text.replace(old_workflow_pin, new_workflow_pin), encoding='utf-8')
+
+          Path('.github/workflows/issue-246-final-export.yml').unlink()
+          PY
+
+          grep -Fx 'toolchain go1.26.6' go.mod
+          ! grep -RIn '1\.26\.5' .github/workflows go.mod docs packaging scripts
+          [[ "$(grep -Rhc 'uses: actions/setup-go@v7' .github/workflows/*.yml | awk '{total += $1} END {print total + 0}')" -eq 12 ]]
+          [[ "$(grep -Rhc "go-version-file: 'go.mod'" .github/workflows/*.yml | awk '{total += $1} END {print total + 0}')" -eq 12 ]]
+          ! grep -RIn '^[[:space:]]*go-version:' .github/workflows
+          test ! -e "${publisher_path}"
+
+          mapfile -t actual_paths < <(git diff --name-only | sort)
+          mapfile -t expected_paths <<'PATHS'
+          .github/workflows/ci.yml
+          .github/workflows/e2e-tun-package-convergence.yml
+          .github/workflows/e2e-tun-resource-soak.yml
+          .github/workflows/e2e.yml
+          .github/workflows/issue-246-final-export.yml
+          .github/workflows/release.yml
+          go.mod
+          PATHS
+          mapfile -t expected_paths < <(printf '%s\n' "${expected_paths[@]}" | sort)
+          diff -u \
+            <(printf '%s\n' "${expected_paths[@]}") \
+            <(printf '%s\n' "${actual_paths[@]}")
+          git diff --check
+
+      - name: Verify deterministic Python and shell contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/e2e/*.py scripts/e2e/lib/*.py scripts/e2e/tests/*.py
+          python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
+          while IFS= read -r -d '' script; do
+            bash -n "${script}"
+          done < <(find scripts/e2e -type f -name '*.sh' -print0)
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+
+      - name: Verify Go, vulnerability, workflow, and CLI contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          go version | grep -F 'go version go1.26.6 '
+          bash scripts/ci/go-core.sh
+          govulncheck ./...
+          bash scripts/ci/workflow-lint.sh
+          bash scripts/ci/cli-smoke.sh
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+          git diff --check
+
+      - name: Commit and publish exact verified changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_head="$(git ls-remote --heads origin refs/heads/agent/issue-246-tun-resource-soak | awk '{print $1}')"
+          [[ -n "${remote_head}" && "${remote_head}" == "$(git rev-parse HEAD)" ]] || {
+            echo 'branch head changed while final verification was running' >&2
+            exit 1
+          }
+
+          git add -- \
+            .github/workflows/ci.yml \
+            .github/workflows/e2e-tun-package-convergence.yml \
+            .github/workflows/e2e-tun-resource-soak.yml \
+            .github/workflows/e2e.yml \
+            .github/workflows/issue-246-final-export.yml \
+            .github/workflows/release.yml \
+            go.mod
+          git diff --cached --check
+
+          mapfile -t staged_paths < <(git diff --cached --name-only | sort)
+          mapfile -t expected_paths <<'PATHS'
+          .github/workflows/ci.yml
+          .github/workflows/e2e-tun-package-convergence.yml
+          .github/workflows/e2e-tun-resource-soak.yml
+          .github/workflows/e2e.yml
+          .github/workflows/issue-246-final-export.yml
+          .github/workflows/release.yml
+          go.mod
+          PATHS
+          mapfile -t expected_paths < <(printf '%s\n' "${expected_paths[@]}" | sort)
+          diff -u \
+            <(printf '%s\n' "${expected_paths[@]}") \
+            <(printf '%s\n' "${staged_paths[@]}")
+          [[ -z "$(git status --short | grep '^??' || true)" ]]
+
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'build: source CI Go version from go.mod'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
