@@ -22,9 +22,24 @@ func TestParseSinceDurationAcceptsDocumentedGrammar(t *testing.T) {
 	}
 }
 
+func TestParseSinceDurationCanonicalizesLeadingZeros(t *testing.T) {
+	since, err := ParseSinceDuration("0001h")
+	if err != nil {
+		t.Fatalf("ParseSinceDuration with leading zeros failed: %v", err)
+	}
+	if since != "1h" {
+		t.Fatalf("expected canonical duration 1h, got %q", since)
+	}
+	got := BuildJournalctlArgs(Options{Since: "0001h"})
+	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-1h"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)
+	}
+}
+
 func TestParseSinceDurationRejectsUndocumentedOrUnsafeForms(t *testing.T) {
 	tests := []string{
-		"", "0s", "0m", "0h", "-1h", "+1h", "1.5h", "1h30m", "01h",
+		"", "0s", "0m", "0h", "00h", "-1h", "+1h", "1.5h", "1h30m",
 		"1d", "1ms", "1us", "1µs", "1ns", "yesterday", "721h", "999999999999999999999h",
 	}
 	for _, input := range tests {
