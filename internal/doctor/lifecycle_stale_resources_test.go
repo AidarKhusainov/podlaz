@@ -17,13 +17,13 @@ func TestStaleResourcesTreatsExactActiveOwnedResourcesAsExpected(t *testing.T) {
 		nftPath: "/usr/sbin/nft", nftOK: true,
 		runtimeDir: t.TempDir(), runtimeDirOwnedByDaemon: true,
 		lifecycle: LifecycleDiagnosticContext{
-			State: LifecycleActiveTUN,
-			TransactionID: "tx-active",
-			TransactionState: txstate.TransactionCommitted,
-			Interface: ManagedResourceExactOwned,
+			State:              LifecycleActiveTUN,
+			TransactionID:      "tx-active",
+			TransactionState:   txstate.TransactionCommitted,
+			Interface:          ManagedResourceExactOwned,
 			InterfaceLinkIndex: 7,
-			InterfaceLinkKind: "tun",
-			NFTTable: ManagedResourceExactOwned,
+			InterfaceLinkKind:  "tun",
+			NFTTable:           ManagedResourceExactOwned,
 		},
 	})
 	if check.Severity != SeverityOK {
@@ -40,13 +40,13 @@ func TestStaleResourcesWarnsWhenActiveOwnedResourceIsMissing(t *testing.T) {
 		nftPath: "/usr/sbin/nft", nftOK: true,
 		runtimeDir: t.TempDir(), runtimeDirOwnedByDaemon: true,
 		lifecycle: LifecycleDiagnosticContext{
-			State: LifecycleActiveTUN,
-			TransactionID: "tx-active",
-			TransactionState: txstate.TransactionCommitted,
-			Interface: ManagedResourceExactOwned,
+			State:              LifecycleActiveTUN,
+			TransactionID:      "tx-active",
+			TransactionState:   txstate.TransactionCommitted,
+			Interface:          ManagedResourceExactOwned,
 			InterfaceLinkIndex: 7,
-			InterfaceLinkKind: "tun",
-			NFTTable: ManagedResourceExactOwned,
+			InterfaceLinkKind:  "tun",
+			NFTTable:           ManagedResourceExactOwned,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "expected interface podlaz0 is missing") {
@@ -71,11 +71,11 @@ func TestStaleResourcesDoesNotTrustUnprovenActiveOwnership(t *testing.T) {
 		nftPath: "/usr/sbin/nft", nftOK: true,
 		runtimeDir: t.TempDir(), runtimeDirOwnedByDaemon: true,
 		lifecycle: LifecycleDiagnosticContext{
-			State: LifecycleActiveTUN,
-			TransactionID: "tx-active",
+			State:            LifecycleActiveTUN,
+			TransactionID:    "tx-active",
 			TransactionState: txstate.TransactionCommitted,
-			Interface: ManagedResourceUnproven,
-			NFTTable: ManagedResourceExactOwned,
+			Interface:        ManagedResourceUnproven,
+			NFTTable:         ManagedResourceExactOwned,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "cannot prove interface podlaz0 belongs to the active transaction") {
@@ -89,13 +89,13 @@ func TestStaleResourcesRejectsMismatchedActiveLinkIdentity(t *testing.T) {
 		nftPath: "/usr/sbin/nft", nftOK: true,
 		runtimeDir: t.TempDir(), runtimeDirOwnedByDaemon: true,
 		lifecycle: LifecycleDiagnosticContext{
-			State: LifecycleActiveTUN,
-			TransactionID: "tx-active",
-			TransactionState: txstate.TransactionCommitted,
-			Interface: ManagedResourceExactOwned,
+			State:              LifecycleActiveTUN,
+			TransactionID:      "tx-active",
+			TransactionState:   txstate.TransactionCommitted,
+			Interface:          ManagedResourceExactOwned,
 			InterfaceLinkIndex: 7,
-			InterfaceLinkKind: "tun",
-			NFTTable: ManagedResourceExactOwned,
+			InterfaceLinkKind:  "tun",
+			NFTTable:           ManagedResourceExactOwned,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "cannot prove interface podlaz0 belongs to the active transaction") {
@@ -109,12 +109,12 @@ func TestStaleResourcesKeepsCleanupRequiredTransactionUnhealthy(t *testing.T) {
 		nftPath: "/usr/sbin/nft", nftOK: true,
 		runtimeDir: t.TempDir(), runtimeDirOwnedByDaemon: true,
 		lifecycle: LifecycleDiagnosticContext{
-			State: LifecycleActiveTUN,
-			TransactionID: "tx-cleanup",
-			TransactionState: txstate.TransactionFailed,
+			State:                      LifecycleActiveTUN,
+			TransactionID:              "tx-cleanup",
+			TransactionState:           txstate.TransactionFailed,
 			TransactionRequiresCleanup: true,
-			Interface: ManagedResourceUnproven,
-			NFTTable: ManagedResourceUnproven,
+			Interface:                  ManagedResourceUnproven,
+			NFTTable:                   ManagedResourceUnproven,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "active transaction tx-cleanup requires cleanup") {
