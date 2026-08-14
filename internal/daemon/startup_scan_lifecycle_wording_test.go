@@ -28,6 +28,19 @@ func TestStartupScanDoctorUsesActiveConnectionWordingForCleanCommittedTUN(t *tes
 	}
 }
 
+func TestStartupScanDoctorKeepsActiveInspectionIncomplete(t *testing.T) {
+	status := api.StatusResponse{Connection: "active", Mode: planner.ModeTun}
+	scan := recovery.PlanResult{Warnings: []recovery.Warning{{Target: "recovery scan", Message: "inspection failed"}}}
+	response := withStartupScanDoctor(api.DoctorResponse{}, scan, status)
+	check := response.Checks[len(response.Checks)-1]
+	if check.Severity != "WARN" || !strings.Contains(check.Message, "inspection incomplete") {
+		t.Fatalf("active incomplete startup scan was not fail-closed: %#v", check)
+	}
+	if strings.Contains(check.Message, "clean for active connection") || strings.Contains(check.Message, "clean inactive state") {
+		t.Fatalf("active incomplete startup scan was described as clean: %#v", check)
+	}
+}
+
 func TestStartupScanDoctorKeepsInactiveWordingForCleanInactiveState(t *testing.T) {
 	response := withStartupScanDoctor(api.DoctorResponse{}, recovery.PlanResult{}, api.StatusResponse{Connection: "inactive"})
 	check := response.Checks[len(response.Checks)-1]
