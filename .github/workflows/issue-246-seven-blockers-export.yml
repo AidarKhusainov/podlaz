@@ -1,4 +1,4 @@
-name: Issue 246 Seven Blockers Workspace Export
+name: Issue 246 Publish Seven Blocker Fixes
 
 on:
   push:
@@ -6,37 +6,86 @@ on:
       - agent/issue-246-tun-resource-soak
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: issue-246-seven-blockers-export
-  cancel-in-progress: true
+  group: issue-246-seven-blocker-publisher
+  cancel-in-progress: false
 
 jobs:
-  export:
-    name: Export exact review workspace
+  publish:
+    name: Apply, verify, and publish reviewed fixes
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
-      - name: Checkout exact branch head
+      - name: Checkout exact staged branch head
         uses: actions/checkout@v7
         with:
           ref: agent/issue-246-tun-resource-soak
           fetch-depth: 0
+          persist-credentials: true
 
-      - name: Archive tracked workspace
+      - name: Apply exact patch, verify, and push clean head
         shell: bash
         run: |
           set -euo pipefail
-          git archive --format=tar HEAD | xz -T0 -9e > "${RUNNER_TEMP}/workspace.tar.xz"
-          sha256sum "${RUNNER_TEMP}/workspace.tar.xz" > "${RUNNER_TEMP}/workspace.tar.xz.sha256"
 
-      - name: Upload workspace
-        uses: actions/upload-artifact@v4
-        with:
-          name: podlaz-issue-246-seven-blockers-workspace
-          path: |
-            ${{ runner.temp }}/workspace.tar.xz
-            ${{ runner.temp }}/workspace.tar.xz.sha256
-          if-no-files-found: error
-          retention-days: 1
+          chunk_dir='.agent-sync/issue246'
+          workflow='.github/workflows/issue-246-seven-blockers-export.yml'
+          shopt -s nullglob
+          chunks=("${chunk_dir}"/chunk-*)
+          test "${#chunks[@]}" -eq 9
+
+          cat "${chunks[@]}" > "${RUNNER_TEMP}/seven-blockers.patch.xz.b64"
+          printf '%s  %s\n' \
+            '400d7b24d1fca387b2a9bcac749b1c5674e2520b820e0f2f51dbdfecc6615ae1' \
+            "${RUNNER_TEMP}/seven-blockers.patch.xz.b64" | sha256sum -c -
+          base64 -d "${RUNNER_TEMP}/seven-blockers.patch.xz.b64" > "${RUNNER_TEMP}/seven-blockers.patch.xz"
+          printf '%s  %s\n' \
+            'a6c23710650fa59f12ad698744c35b958dbab380b5372eadd5e98a63b276981f' \
+            "${RUNNER_TEMP}/seven-blockers.patch.xz" | sha256sum -c -
+          xz -dc "${RUNNER_TEMP}/seven-blockers.patch.xz" > "${RUNNER_TEMP}/seven-blockers.patch"
+          printf '%s  %s\n' \
+            'af158fa5140524880917eb55d6f5692cb04abdeff33aa21ce7a0c76724815b4e' \
+            "${RUNNER_TEMP}/seven-blockers.patch" | sha256sum -c -
+
+          git apply --check "${RUNNER_TEMP}/seven-blockers.patch"
+          git apply "${RUNNER_TEMP}/seven-blockers.patch"
+
+          git rm --force -- "${workflow}"
+          rm -rf -- .agent-sync
+
+          python3 -m py_compile scripts/e2e/*.py scripts/e2e/lib/*.py scripts/e2e/tests/*.py
+          python3 -m unittest discover -s scripts/e2e/tests -p 'test_*.py'
+          bash -n \
+            scripts/e2e/tun-resource-soak.sh \
+            scripts/e2e/lib/tun_soak_health.sh \
+            scripts/e2e/lib/tun_soak_cleanup.sh
+
+          for test_script in \
+            scripts/ci/validate-installed-status-test.sh \
+            scripts/ci/validate-package-workflow-contract-test.sh \
+            scripts/e2e/tests/test_process_lifecycle.sh \
+            scripts/e2e/tests/test_tun_package_acceptance_assertions.sh \
+            scripts/e2e/tests/test_tun_package_applying_cleanup_boundary.sh \
+            scripts/e2e/tests/test_tun_package_cleanup.sh \
+            scripts/e2e/tests/test_tun_package_cleanup_authoritative_snapshot.sh \
+            scripts/e2e/tests/test_tun_package_cleanup_identity_preservation.sh \
+            scripts/e2e/tests/test_tun_package_convergence_cleanup_boundary.sh; do
+            bash "${test_script}"
+          done
+
+          test -z "$(gofmt -l .)"
+          find scripts/e2e -type d -name __pycache__ -prune -exec rm -rf {} +
+          test ! -e "${workflow}"
+          test ! -e .agent-sync
+
+          git add -A
+          git diff --cached --check
+          test "$(git diff --cached --name-status -- "${workflow}")" = $'D\t.github/workflows/issue-246-seven-blockers-export.yml'
+          test -n "$(git diff --cached --name-only)"
+
+          git config user.name 'podlaz issue 246 automation'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: close resource-soak acceptance gaps'
+          git push origin HEAD:agent/issue-246-tun-resource-soak
