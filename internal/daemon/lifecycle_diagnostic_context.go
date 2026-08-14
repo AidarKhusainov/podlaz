@@ -13,23 +13,23 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 	switch {
 	case state.Connection != "active":
 		return doctor.LifecycleDiagnosticContext{
-			State: doctor.LifecycleInactive,
+			State:     doctor.LifecycleInactive,
 			Interface: doctor.ManagedResourceExpectedAbsent,
-			NFTTable: doctor.ManagedResourceExpectedAbsent,
+			NFTTable:  doctor.ManagedResourceExpectedAbsent,
 		}
 	case state.Mode != planner.ModeTun:
 		return doctor.LifecycleDiagnosticContext{
-			State: doctor.LifecycleActiveProxy,
+			State:     doctor.LifecycleActiveProxy,
 			Interface: doctor.ManagedResourceExpectedAbsent,
-			NFTTable: doctor.ManagedResourceExpectedAbsent,
+			NFTTable:  doctor.ManagedResourceExpectedAbsent,
 		}
 	}
 
 	ctx := doctor.LifecycleDiagnosticContext{
-		State: doctor.LifecycleActiveTUN,
+		State:         doctor.LifecycleActiveTUN,
 		TransactionID: strings.TrimSpace(state.TransactionID),
-		Interface: doctor.ManagedResourceUnproven,
-		NFTTable: doctor.ManagedResourceUnproven,
+		Interface:     doctor.ManagedResourceUnproven,
+		NFTTable:      doctor.ManagedResourceUnproven,
 	}
 	if ctx.TransactionID == "" {
 		return ctx
