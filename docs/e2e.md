@@ -2,7 +2,7 @@
 
 Manual host validation for behavior that is not suitable for the default pull-request gate.
 
-The repository keeps `.github/workflows/e2e.yml` and `.github/workflows/e2e-tun-package-convergence.yml` as `workflow_dispatch` workflows for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure in general, but an issue or pull request may require a particular E2E result before completion. Record unavailable infrastructure or completed evidence in the related pull request, issue, or release notes.
+The repository keeps `.github/workflows/e2e.yml`, `.github/workflows/e2e-tun-package-convergence.yml`, and `.github/workflows/e2e-tun-resource-soak.yml` as `workflow_dispatch` workflows for maintainers who have a compatible self-hosted runner. E2E must be started explicitly from the GitHub Actions UI or by running the relevant `scripts/e2e/*.sh` checks manually on a controlled Linux host. It is optional infrastructure in general, but an issue or pull request may require a particular E2E result before completion. Record unavailable infrastructure or completed evidence in the related pull request, issue, or release notes.
 
 The repository intentionally does not auto-dispatch E2E on `push`, `pull_request`, or `schedule`. E2E results are manually requested validation and release evidence, not an automatic default gate. When an issue explicitly requires package-level disposable-host validation, the corresponding pull request must remain draft until that workflow passes and safe evidence is published.
 
@@ -18,6 +18,12 @@ Installed-package TUN convergence gate:
 
 ```text
 Actions -> TUN Package Convergence E2E -> Run workflow
+```
+
+Installed-package TUN resource-lifecycle gate:
+
+```text
+Actions -> TUN Resource Soak E2E -> Run workflow
 ```
 
 The general E2E workflow runs:
@@ -47,11 +53,12 @@ Run E2E validation when a change touches:
 - systemd service behavior;
 - package install, reinstall, purge, or service lifecycle;
 - provider-backed proxy/TUN data-plane behavior;
-- crash, rollback, fault-injection, diagnostics-before-rollback, or recovery behavior.
+- crash, rollback, fault-injection, diagnostics-before-rollback, or recovery behavior;
+- long-lived process, goroutine, thread, file-descriptor, task, timer, cache, or memory lifecycle behavior.
 
 ## Runner and host requirements
 
-Required runner labels for both workflows:
+Required runner labels for the dedicated self-hosted workflows:
 
 ```text
 self-hosted
@@ -65,12 +72,13 @@ Use a disposable or recoverable Linux host. Full coverage expects:
 
 - systemd;
 - `/dev/net/tun`;
+- a unified cgroup v2 hierarchy and readable root-level procfs/cgroup structural metrics;
 - `iproute2`, `nftables`, `resolvectl`, `journalctl`;
-- Go from the workflow setup step, or Go 1.26.5 for manual script runs;
+- Go from the workflow setup step, or Go 1.26.6 for manual script runs;
 - package build tools from `docs/development.md`;
 - provider/profile configuration supplied through the runner environment, not committed to the repository.
 
-The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or `PODLAZ_E2E_PROFILE_URI_LIST` in the `vpn-e2e` environment. Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
+The dedicated package convergence and resource-soak workflows require `PODLAZ_E2E_PROFILE_URI` or `PODLAZ_E2E_PROFILE_URI_LIST` in the `vpn-e2e` environment. Additional Debian/Ubuntu or arm64 coverage requires dedicated runners or VMs.
 
 ## Scripts
 
@@ -82,6 +90,7 @@ The dedicated package convergence workflow requires `PODLAZ_E2E_PROFILE_URI` or 
 | Maximum server coverage | `scripts/e2e/server-coverage.sh` | Real-provider proxy/TUN probes and snapshots. |
 | TUN fault injection | `scripts/e2e/tun-fault-injection.sh` | Gated apply/verify failures, pre-rollback diagnostics, resolved subprocess edge cases, immediate retry, unrelated-state preservation, and pre-commit interruption. |
 | Installed-package TUN convergence | `scripts/e2e/tun-package-convergence.sh` | Release-like `.deb`, packaged inactive-scope verification, byte-exact capture of the actual production missing-link rollback, private exact route/rule manifests, provenance, tri-state resource absence, unrelated host-state preservation, restart reconciliation, and immediate retry. |
+| Installed-package TUN resource soak | `scripts/e2e/tun-resource-soak.sh` | Exact package/Xray provenance, cgroup-v2 and procfs attribution for podlazd plus its exact supervised Xray child, bounded active traffic/health sampling, strict disconnect cleanup, immediate reconnect non-accumulation, and sanitized trend evidence. |
 | Issue #243 resolver acceptance | `scripts/e2e/issue243-package-acceptance.sh` | Installed-package clean inactive baseline, bounded convergence to the read-only exit-0 resolver envelope, recover-execute refresh, repeated active status, disconnect convergence, immediate reconnect, and normalized safe evidence. |
 | Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | State-aware pre-release verification obligations, post-quiescence authoritative mutation snapshot, exact metadata-driven cleanup, ownership-union verification, identity-material-preserving package purge gate, sentinel removal, and tri-state post-cleanup assertions. |
 
@@ -94,9 +103,10 @@ bash scripts/e2e/data-plane.sh
 bash scripts/e2e/server-coverage.sh
 bash scripts/e2e/tun-fault-injection.sh
 bash scripts/e2e/tun-package-convergence.sh
+bash scripts/e2e/tun-resource-soak.sh
 ```
 
-Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, or event-source resynchronization requires installed-package/target-host TUN validation.
+Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, or event-source resynchronization requires installed-package/target-host TUN validation. A change that can retain session-owned processes, workers, timers, file descriptors, reports, buffers, or other resources requires the dedicated installed-package resource soak.
 
 ## Native Xray TUN validation
 
@@ -199,6 +209,348 @@ The hook environment variables are E2E-only implementation details:
 
 Do not set these variables in packaged or production service operation.
 
+
+## Installed-package TUN resource soak
+
+`TUN Resource Soak E2E` is the manual self-hosted mechanism for calibrating and
+then enforcing long-lived TUN resource-lifecycle behavior. It builds and
+reinstalls the exact branch package, proves the running daemon and bundled Xray
+hashes match that package, and samples a controlled Ubuntu 24.04 host. The
+standard long-window run uses a **three-hour post-warm-up** sampling interval, a
+120-second measured-session warm-up, and a 60-second default sample period.
+Shorter runs are attribution evidence only.
+
+### Runtime and trusted-host attestation
+
+The `ubuntu-24.04` self-hosted runner label is scheduling metadata, not operating
+system evidence. Before package build, installation, profile import, or network
+baseline capture, the harness reads `/etc/os-release` and requires the exact
+normalized identity `ID=ubuntu` and `VERSION_ID=24.04`. The same values are
+included in sanitized provenance; a manually mislabeled runner cannot produce an
+acceptance verdict.
+
+The structural baseline is anchored to an independently provisioned private
+**trusted-host fingerprint** at
+`/etc/podlaz-e2e/tun-resource-soak-trusted-host.json`. The file must be a
+single-link regular file, root-owned, and inaccessible to group/other users. The
+verifier opens it without following symlinks, bounds the read, and rejects a file
+that changes while being read. A configuration-management or runner-provisioning
+step must create and review this file while the dedicated host is known clean,
+before Podlaz test profiles or any foreign VPN/core are started. The soak workflow
+must never generate or refresh its own trusted fingerprint from the state it is
+about to test.
+
+The private schema records:
+
+```json
+{
+  "schema_version": "podlaz.e2e.trusted-host.v2",
+  "runtime_os": {"id": "ubuntu", "version_id": "24.04"},
+  "uplink": {
+    "link": {
+      "ifindex": 2,
+      "ifname": "eth0",
+      "kind": "",
+      "master": null,
+      "mtu": 1500,
+      "link_type": "ether",
+      "flags": ["BROADCAST", "LOWER_UP", "MULTICAST", "UP"]
+    },
+    "default_routes": [
+      {
+        "family": "ipv4",
+        "table": "main",
+        "type": "unicast",
+        "dst": "default",
+        "gateway": "192.0.2.1",
+        "dev": "eth0",
+        "protocol": "dhcp",
+        "scope": "",
+        "metric": 100,
+        "prefsrc": "",
+        "src": "",
+        "mark": "",
+        "nhid": null,
+        "multipath": [],
+        "flags": [],
+        "preference": ""
+      }
+    ],
+    "global_addresses": [
+      {
+        "family": "inet",
+        "local": "192.0.2.20",
+        "prefixlen": 24,
+        "scope": "global",
+        "label": "eth0",
+        "flags": ["dynamic"],
+        "extras": {"broadcast": "192.0.2.255"}
+      }
+    ],
+    "network_manager_connection": {
+      "uuid": "11111111-2222-3333-4444-555555555555",
+      "device": "eth0",
+      "state": "activated"
+    }
+  },
+  "resolved": {
+    "global": ["resolv.conf mode: stub"],
+    "links": [
+      {
+        "ifname": "eth0",
+        "lines": [
+          "Current DNS Server: 192.0.2.53",
+          "DNS Domain: example.invalid",
+          "DefaultRoute setting: yes"
+        ]
+      }
+    ]
+  }
+}
+```
+
+The example uses documentation-only values; the real file remains private and is
+never committed or uploaded. Schema v2 intentionally replaces the earlier
+CIDR/gateway-only fingerprint: an existing v1 file is rejected and must be
+reprovisioned from a known-clean controlled runner.
+
+Uplink authority now requires exact agreement on the complete normalized physical
+link identity (`ifindex`, name, kind, master, MTU, link type, and flags), every
+default route on that uplink (including family, gateway, protocol, scope, metric,
+preferred/source selectors, mark, nexthop, multipath, route flags, and preference),
+the complete normalized global address set (including scope, label, address flags
+such as `noprefixroute`, and structural extras), and the full active NetworkManager
+connection identity. The lists are canonical, duplicate-free, and compared as
+complete sets rather than by selected identity fields. Resolver authority requires
+exact agreement on normalized global and per-link `systemd-resolved` state,
+including DNS servers, domains, route-only domains, and default-route ownership.
+
+Baseline capture and every later revalidation check the trusted fingerprint. During
+an active Podlaz session the exact transaction-owned Podlaz projection is removed
+first, then the remaining underlying host state is checked against the trusted
+fingerprint. Consequently, a same-CIDR `noprefixroute` mutation with removal of
+the connected route, a same-gateway default-route protocol or metric mutation, a
+link MTU/flag mutation, an additional global prefix, DNS/domain takeover, or a
+NetworkManager uplink-identity change present before capture cannot authenticate
+itself as the clean baseline.
+
+The checked-in policy remains `observe` until repeated clean three-hour runs of
+the exact current package establish defensible component- and metric-specific
+baselines. Observation evidence and pending release verification belong in the
+PR or issue. After those runs justify explicit limits, a separate reviewed
+change may switch the policy to `accept`; the final exact-head run must then pass
+that acceptance policy before the resource-lifecycle issue can be closed.
+Canonical documentation must not claim thresholds are calibrated before that
+evidence exists.
+
+### Equivalent lifecycle baseline
+
+A cold daemon sample is not the cleanup comparator. Before measured sampling,
+the harness performs one bounded preconditioning lifecycle on the same daemon:
+
+1. connect one exact packaged TUN session;
+2. prove current health, process attribution, DNS/HTTPS, and read-only
+   diagnostics;
+3. disconnect normally;
+4. prove the exact supervised Xray child is gone, owned network state and
+   recovery candidates are absent, and structural host isolation is restored;
+5. capture the resulting **warmed inactive baseline**.
+
+Both measured disconnect boundaries are compared independently with that same
+warmed inactive baseline. Therefore `10 FDs -> 12 after the first measured
+disconnect -> 12 after the second` fails even though the second lifecycle did not
+add another descriptor. Memory and every count/category use reviewed component- and metric-specific
+lifecycle rules; no shared cleanup/reconnect tolerance is authoritative. The
+daemon identity must
+remain unchanged from preconditioning through both measured sessions.
+
+### Process and network attribution
+
+Process attribution is fail-closed. `scripts/e2e/lib/tun_soak_metrics.py`
+identifies podlazd from the systemd `MainPID`, identifies the exact supervised
+Xray child from the one committed Podlaz TUN transaction, and verifies executable
+identity, process start time, direct child relationship, and common `podlazd.service`
+cgroup membership. A process-name denylist remains an early additional signal,
+but it is not authoritative proof of foreign-VPN absence.
+
+The runtime comparison gate is a private **structural network-isolation baseline**
+created before preconditioning and independently anchored by the
+trusted-host fingerprint described above. The baseline records the network
+namespace plus bounded, normalized link, address, route, policy-rule, nftables,
+NetworkManager, resolver, and runtime-OS state. It cannot establish its own
+uplink or DNS authority. The
+dedicated runner must expose exactly the canonical default policy-rule set for
+each address family, including the **full canonical shape and cardinality** of
+action, selectors, marks/masks, interface selectors, `l3mdev`, suppression, and
+UID-range fields; matching only priority/table is never sufficient.
+
+The iproute2 JSON boundary is also explicit and fail-closed. Rule, route, and
+multipath next-hop normalizers accept only reviewed raw keys, preserve supported
+semantic flags and route preference in the normalized identity, reject ambiguous
+aliases, and reject every unknown key. No rule or route field is currently
+classified as ignorable runtime noise. A future iproute2 field therefore requires
+an explicit compatibility review instead of silently disappearing before the
+ownership comparison.
+
+Default-uplink authority is a positive contract rather than a denylist. The
+baseline must have exactly one default uplink backed by a positive physical uplink identity: empty virtual link kind, Ethernet link type, no master, and a
+matching global address on the same ifindex. Unknown, custom, `veth`, `dummy`,
+tunnel, stacked, or otherwise ambiguous virtual links fail closed even when no
+known VPN process name is present. Foreign routing tables, ambiguous main-table
+bypass routes, pre-existing nftables packet-path state, or resolver default-route
+ownership outside that uplink also fail the baseline.
+
+The canonical `default` routing table must be empty. The higher-priority
+`local` table is validated against two disjoint sets derived from the exact
+normalized link/address inventory. The **required kernel-derived route set**
+contains every per-address local host route, the loopback network-local route,
+any primary IPv4 broadcast route explicitly advertised by the address inventory,
+and the per-link IPv6 multicast route for non-loopback IPv6 links. Every required
+entry must be present. Kernel route flag variants are not generic noise: an IPv4
+broadcast route is required with `linkdown` exactly when the independently sampled
+link flags show no `LOWER_UP` carrier, and is required without `linkdown` otherwise.
+
+The only **documented optional variants** are the low-address IPv4 broadcast
+entry emitted by some kernels, a derived high broadcast entry when the address
+dump does not advertise one explicitly, a broadcast entry shared by a secondary
+IPv4 address, and the IPv6 multicast entry on loopback. An observed `local` route
+must belong to the required or optional set, required entries may not be missing,
+and duplicates are rejected. Arbitrary content is never accepted merely because
+its table name is `local` or `default`.
+
+Every non-default `main` route is validated by a separate positive
+connected-prefix contract. Normalized addresses are grouped by family,
+interface, and canonical prefix. Each non-loopback, non-host prefix shorter than
+`/32` or `/128` requires exactly one complete connected-route identity unless
+its primary address is explicitly marked `noprefixroute`, in which case the
+route must be absent. The identity fixes the prefix, device, type, gateway,
+protocol, family-specific scope, primary IPv4 preferred source, metric variants
+derived from the address or the same-device default route, IPv6 preference,
+link-state-derived flags, source selector, mark, nexthop, and multipath fields.
+A secondary address cannot create another route, and multiple primary addresses
+for one prefix are treated as ambiguous.
+
+Unknown prefixes, missing or duplicate required routes, classless DHCP routes,
+wrong devices or preferred sources, and every unsupported semantic mutation fail
+closed. Labels such as `kernel`, `dhcp`, or `ra` are never ownership evidence by
+themselves; an accepted route must first be derived from the exact link/address
+prefix and then match one of its explicitly documented complete variants.
+
+While Podlaz is active, the verifier subtracts only the exact transaction-backed
+Podlaz route/rule projection, the reserved `podlaz0` link, the exact Podlaz nft
+table, and the Podlaz resolver link. Route identity includes normalized type,
+destination, gateway, device, protocol, scope, metric, preferred/source address,
+mark, nexthop ID, multipath semantics, route flags, and IPv6 preference.
+Policy-rule identity includes action,
+source/destination, mark/mask, input/output interfaces, `l3mdev`, suppression,
+and UID range. Only the canonical kernel-added attributes expected for the
+persisted Podlaz plan are accepted. A metric, protocol, scope, interface selector,
+or any other semantic mutation therefore remains visible as foreign state rather
+than being stripped as Podlaz-owned. The remaining host state must equal the
+private baseline. Missing, modified, or duplicate Podlaz projection evidence is
+an error.
+
+Isolation is revalidated after active attribution, after warm-up, during every
+long-soak iteration, during reconnect sampling, and after each disconnect. This
+catches renamed/custom VPN clients, kernel-backed WireGuard, unknown policy
+routing, nftables-only interception, resolver takeover, and default-uplink drift
+without trusting `/proc/<pid>/comm`. A foreign process may coexist only when it
+owns none of the relevant structural state and cannot be confused with the exact
+supervised child.
+
+### Bounded health and diagnostics
+
+The bounded current-health convergence gate runs after each connect and during
+periodic probes. Every individual `podlaz status` process is executed through
+`run_installed_podlaz_bounded`; its timeout is the smaller of the configured
+per-command status timeout and the remaining overall health deadline. A hung
+status process therefore cannot inherit the workflow-step timeout. Only
+structurally valid `revalidating` or transient `degraded` publications are
+retryable. `verified` with status exit `0` succeeds; command timeout, malformed
+evidence, `inactive`, `cleanup-required`, or exhausted convergence fails closed.
+Raw status output remains private.
+
+The normal read-only `doctor --tun` path also has an explicit external timeout.
+Diagnostic exit `0` and diagnostic exit `3` are valid completed observations: exit `3` is
+counted in the sanitized report, but the harness still requires bounded
+DNS/HTTPS probes and immediately reproves active status as `verified`. Any other
+exit, timeout, or loss of verified lifecycle health fails the run. Doctor output
+is overwritten in private state so repeated diagnostics do not create an
+unbounded artifact history.
+
+### Metrics, trends, and cleanup
+
+The following observations have distinct authority and are not conflated:
+
+- cgroup `memory.current`, optional historical `memory.peak`, `pids.current`, and
+  CPU time describe the whole service cgroup;
+- podlazd and exact Xray RSS/PSS, thread/task count, total FDs, structural FD
+  categories, aggregate TCP/UDP/Unix socket-state counts, and CPU time come from
+  exact procfs identities;
+- descriptor targets, socket inodes, addresses, ports, command lines, and
+  generated configuration never enter public evidence;
+- current memory is point-in-time state, while peak memory is a historical
+  high-water mark and is never treated as a sustained-growth signal.
+
+Procfs socket-table reads are independently limited to 8 MiB and 131,072 rows
+per table. Trend analysis uses all first measured-session samples after warm-up
+and records Theil-Sen slope, net growth, early/late medians, positive-delta
+fraction, and a metric-specific noise floor. An `observe` run still requires at
+least six overall samples. Final `accept` evidence is stricter: every policy
+metric has its own first/last timestamp, observed duration, maximum gap, and
+per-metric sample count. `None` is absence of evidence, not a sample. One generic
+RSS ceiling or slope is not applied to cgroup total, podlazd, and Xray.
+
+`scripts/e2e/tun-resource-soak-policy.json` has two modes:
+
+- `observe` publishes attributed trends and enforces lifecycle correctness, but
+  does not claim a calibrated release threshold;
+- `accept` requires a named reproduced signal that is a current-growth metric;
+  historical peak memory and cumulative CPU metrics cannot be the target or have
+  growth rules; every observed current-growth metric must have one reviewed
+  component/metric rule for slope, net growth, positive-delta materiality, and
+  `require_no_sustained_positive: true`; generic candidate classification is
+  diagnostic only and cannot remove a metric from acceptance coverage. The
+  machine-checked `acceptance_gate` may not be weaker than 10,800 seconds
+  post-warm-up, 120 seconds of measured-session warm-up, a configured sample
+  period of at most 60 seconds, a maximum observed sample gap of 600 seconds,
+  and the corresponding minimum per-metric sample count. These duration/gap/count
+  checks are applied separately to every limited metric, including optional PSS
+  when it is selected or ruled. A short run, sparse target metric, or slow FD leak
+  below the generic candidate heuristic cannot publish `acceptance_passed`.
+
+In `accept` mode the harness also requires the checked-in policy path and the
+canonical trusted-host path. Before any package or network operation, it copies
+the policy to a private mode-`0600` snapshot, hashes the exact snapshot bytes,
+and proves that SHA-256 against `git show HEAD:scripts/e2e/tun-resource-soak-policy.json`.
+All later evaluation reads only that immutable private snapshot, and the sanitized
+report publishes its SHA-256 so the acceptance evidence is traceable to the
+reviewed commit rather than an unreviewed runtime file.
+
+The reviewed policy pins duration, warm-ups, sample and health-poll cadence,
+diagnostic/status/health timeouts, doctor cadence, reconnect sample count,
+cleanup settling/retry behavior, and the canonical DNS/HTTPS workload. Runtime
+overrides that change this evidence envelope are rejected. The same policy owns
+a complete **metric-specific lifecycle** contract for each cleanup and reconnect
+component/metric; a single global memory or count tolerance cannot authorize
+acceptance. `observe` and local debugging may remain configurable, but their
+result is never `acceptance_passed`.
+
+Normal disconnect must terminate the exact child, leave no packaged Xray orphan,
+remove exact transaction-owned routes/rules plus all Podlaz TUN/DNS/nftables,
+generated-config, and transaction state, restore the structural isolation
+baseline, and publish clean recovery state. Reconnect must retain the same
+daemon, create a new exact Xray identity, satisfy every reviewed reconnect
+component/metric rule, and return to the same warmed inactive baseline after its
+own disconnect.
+
+The ownership-safe teardown is attempted at most twice. Raw attempt logs, package
+build/install output, exact identities, profile material, network snapshots, and
+health output remain in the private E2E directory and are removed before artifact
+scanning. The public artifact contains only sanitized structural samples and one
+compact JSON report. The harness adds no production pprof listener, watchdog,
+restart policy, or systemd memory cap.
+
 ## Evidence
 
 Record only non-sensitive evidence in the PR or issue:
@@ -207,6 +559,7 @@ Record only non-sensitive evidence in the PR or issue:
 - tested commit SHA;
 - hashes of the built package and its installed binaries;
 - workflow run URL and result;
+- SHA-256 of the exact private policy snapshot used by the report;
 - normalized pass/fail verdicts;
 - bounded diagnostic classifications and lifecycle phases;
 - for current-health validation, only structural generation transitions and health-state transitions.
