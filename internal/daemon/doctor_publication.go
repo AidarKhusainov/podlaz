@@ -89,6 +89,11 @@ func (l *lifecycleOperationLock) doctorMutationSnapshot() doctorMutationState {
 	}
 }
 
+// doctorPublicationLifecycleStable proves that all lifecycle-derived pieces of
+// one HTTP doctor response still describe the captured lifecycle. Mutation
+// generation catches serialized connect/disconnect/recovery transitions,
+// including ABA-like transitions that complete between stages. The final manager
+// snapshot catches asynchronous state changes such as an unexpected core exit.
 func doctorPublicationLifecycleStable(before, after doctorMutationState, initial, current doctorLifecycleSnapshot, status api.StatusResponse) bool {
 	if before.pending || after.pending || before.generation != after.generation {
 		return false
