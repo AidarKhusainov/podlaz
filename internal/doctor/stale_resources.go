@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -91,13 +92,24 @@ func inspectManagedNFTTable(ctx context.Context, runner CommandRunner, opts stal
 		return
 	}
 
-	result, err := runCommand(ctx, runner, opts.nftPath, "list", "table", "inet", "podlaz")
+	args := []string{"list", "table", "inet", "podlaz"}
+	if opts.lifecycle.NFTTable == ManagedResourceExactOwned {
+		// Numeric priority keeps the exact verifier deterministic across nft
+		// aliases, matching NftablesExecutor.Verify.
+		args = []string{"-y", "list", "table", "inet", "podlaz"}
+	}
+	result, err := runCommand(ctx, runner, opts.nftPath, args...)
 	switch {
 	case commandSucceeded(result, err):
 		switch opts.lifecycle.NFTTable {
 		case ManagedResourceExactOwned:
-			// nftables table identity is the exact family/name tuple. The daemon
-			// only supplies ExactOwned when the active transaction owns this tuple.
+			if opts.lifecycle.NFTPlan == nil {
+				*warnings = append(*warnings, fmt.Sprintf("cannot prove nft table %s belongs to the active transaction because the exact expected composition is unavailable", managedNFTTable))
+				return
+			}
+			if err := netexecutor.VerifyNftablesTableOutput(*opts.lifecycle.NFTPlan, result.Stdout); err != nil {
+				*warnings = append(*warnings, fmt.Sprintf("nft table %s does not match active transaction exact composition", managedNFTTable))
+			}
 		case ManagedResourceUnproven:
 			*warnings = append(*warnings, fmt.Sprintf("cannot prove nft table %s belongs to the active transaction", managedNFTTable))
 		default:
