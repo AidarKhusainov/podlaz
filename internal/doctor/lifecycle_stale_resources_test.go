@@ -12,6 +12,7 @@ import (
 )
 
 func TestStaleResourcesTreatsExactActiveOwnedResourcesAsExpected(t *testing.T) {
+	nftPlan := lifecycleNFTPlanForTest()
 	check := staleResources(context.Background(), lifecycleResourceRunner{interfacePresent: true, nftPresent: true}, staleResourceOptions{
 		ipPath: "/usr/bin/ip", ipOK: true,
 		nftPath: "/usr/sbin/nft", nftOK: true,
@@ -24,6 +25,7 @@ func TestStaleResourcesTreatsExactActiveOwnedResourcesAsExpected(t *testing.T) {
 			InterfaceLinkIndex: 7,
 			InterfaceLinkKind:  "tun",
 			NFTTable:           ManagedResourceExactOwned,
+			NFTPlan:            &nftPlan,
 		},
 	})
 	if check.Severity != SeverityOK {
@@ -35,6 +37,7 @@ func TestStaleResourcesTreatsExactActiveOwnedResourcesAsExpected(t *testing.T) {
 }
 
 func TestStaleResourcesWarnsWhenActiveOwnedResourceIsMissing(t *testing.T) {
+	nftPlan := lifecycleNFTPlanForTest()
 	check := staleResources(context.Background(), lifecycleResourceRunner{interfacePresent: false, nftPresent: true}, staleResourceOptions{
 		ipPath: "/usr/bin/ip", ipOK: true,
 		nftPath: "/usr/sbin/nft", nftOK: true,
@@ -47,6 +50,7 @@ func TestStaleResourcesWarnsWhenActiveOwnedResourceIsMissing(t *testing.T) {
 			InterfaceLinkIndex: 7,
 			InterfaceLinkKind:  "tun",
 			NFTTable:           ManagedResourceExactOwned,
+			NFTPlan:            &nftPlan,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "expected interface podlaz0 is missing") {
@@ -66,6 +70,7 @@ func TestStaleResourcesRemainsConservativeWithoutLifecycleAuthority(t *testing.T
 }
 
 func TestStaleResourcesDoesNotTrustUnprovenActiveOwnership(t *testing.T) {
+	nftPlan := lifecycleNFTPlanForTest()
 	check := staleResources(context.Background(), lifecycleResourceRunner{interfacePresent: true, nftPresent: true}, staleResourceOptions{
 		ipPath: "/usr/bin/ip", ipOK: true,
 		nftPath: "/usr/sbin/nft", nftOK: true,
@@ -76,6 +81,7 @@ func TestStaleResourcesDoesNotTrustUnprovenActiveOwnership(t *testing.T) {
 			TransactionState: txstate.TransactionCommitted,
 			Interface:        ManagedResourceUnproven,
 			NFTTable:         ManagedResourceExactOwned,
+			NFTPlan:          &nftPlan,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "cannot prove interface podlaz0 belongs to the active transaction") {
@@ -84,6 +90,7 @@ func TestStaleResourcesDoesNotTrustUnprovenActiveOwnership(t *testing.T) {
 }
 
 func TestStaleResourcesRejectsMismatchedActiveLinkIdentity(t *testing.T) {
+	nftPlan := lifecycleNFTPlanForTest()
 	check := staleResources(context.Background(), lifecycleResourceRunner{interfacePresent: true, interfaceIndex: 8, nftPresent: true}, staleResourceOptions{
 		ipPath: "/usr/bin/ip", ipOK: true,
 		nftPath: "/usr/sbin/nft", nftOK: true,
@@ -96,6 +103,7 @@ func TestStaleResourcesRejectsMismatchedActiveLinkIdentity(t *testing.T) {
 			InterfaceLinkIndex: 7,
 			InterfaceLinkKind:  "tun",
 			NFTTable:           ManagedResourceExactOwned,
+			NFTPlan:            &nftPlan,
 		},
 	})
 	if check.Severity != SeverityWarning || !strings.Contains(check.Message, "cannot prove interface podlaz0 belongs to the active transaction") {
@@ -144,12 +152,21 @@ func (r lifecycleResourceRunner) Run(_ context.Context, name string, args ...str
 			return CommandResult{Stdout: fmt.Sprintf("%d: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun", index)}, nil
 		}
 		return CommandResult{Stderr: "Device podlaz0 does not exist", ExitCode: 1}, errors.New("exit status 1")
-	case "nft list table inet podlaz":
+	case "nft list table inet podlaz", "nft -y list table inet podlaz":
 		if r.nftPresent {
-			return CommandResult{Stdout: "table inet podlaz {}"}, nil
+			return CommandResult{Stdout: canonicalLifecycleNFTOutputForTest()}, nil
 		}
 		return CommandResult{Stderr: "No such table", ExitCode: 1}, errors.New("exit status 1")
 	default:
 		return CommandResult{ExitCode: -1}, errors.New("unexpected command: " + command)
 	}
+}
+
+func canonicalLifecycleNFTOutputForTest() string {
+	return `table inet podlaz {
+	chain output {
+		type filter hook output priority 0; policy accept;
+		oifname "podlaz0" counter packets 0 bytes 0 accept comment "podlaz:firewall:tun-egress"
+	}
+}`
 }
