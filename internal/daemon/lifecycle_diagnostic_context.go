@@ -53,7 +53,7 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 
 	plan := tunPlanFromTransaction(tx)
 	if plan.TunAddress.Interface == "podlaz0" && plan.TunAddress.LinkIndex > 0 && plan.TunAddress.LinkKind == "tun" {
-		ctx.Interface = doctor.ManagedResourceExactOwned
+		ctx.Interface = doctor.ManagedResourceExpectedOwned
 		ctx.InterfaceLinkIndex = plan.TunAddress.LinkIndex
 		ctx.InterfaceLinkKind = plan.TunAddress.LinkKind
 	}
@@ -69,7 +69,7 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 	if firewallPlan.Family != netsnapshot.DefaultNFTFamily || firewallPlan.Table != netsnapshot.DefaultNFTTable {
 		return ctx
 	}
-	ctx.NFTTable = doctor.ManagedResourceExactOwned
+	ctx.NFTTable = doctor.ManagedResourceExpectedOwned
 	ctx.NFTPlan = &firewallPlan
 	return ctx
 }
