@@ -10,6 +10,7 @@ func TestFinishExitTrapPromotesCleanupFailureAfterSuccessfulBody(t *testing.T) {
 	result := runBash(t, t.TempDir(), `
 set -Eeuo pipefail
 source ./lib/e2e.sh
+source ./lib/exit_trap.sh
 cleanup() {
   local saved=$?
   finish_exit_trap "${saved}" 1
@@ -30,6 +31,7 @@ func TestFinishExitTrapPreservesOriginalBodyFailure(t *testing.T) {
 	result := runBash(t, t.TempDir(), `
 set -Eeuo pipefail
 source ./lib/e2e.sh
+source ./lib/exit_trap.sh
 cleanup() {
   local saved=$?
   finish_exit_trap "${saved}" 1
