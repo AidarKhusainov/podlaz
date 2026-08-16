@@ -246,62 +246,11 @@ func (m *XrayManager) Status(context.Context) api.StatusResponse {
 }
 
 func (m *XrayManager) Doctor(ctx context.Context) api.DoctorResponse {
-	m.mu.Lock()
-	state := m.state
-	m.mu.Unlock()
-	if state.Connection == "" {
-		state = inactiveXrayState()
-	}
-	runtimeDir := m.runtimeDir()
-	report := doctor.RunWithOptions(ctx, doctor.Options{
-		RuntimeDir:              runtimeDir,
-		RuntimeDirOwnedByDaemon: true,
-		Lifecycle:               lifecycleDiagnosticContext(runtimeDir, state),
-	})
-	report = doctor.WithSource(report, doctor.SourceDaemon)
-	report = doctor.WithDaemonCheck(report, doctor.SeverityOK, "running")
-	report.Checks = append(report.Checks, m.lifecycleDoctorChecks(ctx)...)
-	return doctor.ToDaemon(report)
+	return m.doctorFromSnapshot(ctx, m.captureDoctorLifecycleSnapshot())
 }
 
 func (m *XrayManager) lifecycleDoctorChecks(ctx context.Context) []doctor.Check {
-	m.mu.Lock()
-	state := m.state
-	coreRunning := m.cmd != nil
-	m.mu.Unlock()
-	if state.Connection == "" {
-		state = inactiveXrayState()
-	}
-
-	coreSeverity := doctor.SeverityOK
-	coreMessage := "inactive"
-	switch {
-	case state.Connection == "error (core exited)":
-		coreSeverity = doctor.SeverityFail
-		coreMessage = "core exited unexpectedly; inspect podlaz logs --core"
-	case coreRunning:
-		coreMessage = emptyAs(state.Proxy, "core process is running")
-	case state.Connection == "active":
-		coreSeverity = doctor.SeverityWarning
-		coreMessage = "connection is active but no supervised Xray process is registered"
-	}
-
-	checks := []doctor.Check{{Name: "core", Severity: coreSeverity, Message: coreMessage}}
-	if state.Mode != planner.ModeTun && state.TransactionID == "" {
-		return checks
-	}
-
-	snapshot := m.collectTunSnapshot(ctx, tunSnapshotOptionsForState(state))
-	checks = append(checks,
-		tunDoctorCheck(state, snapshot),
-		routeDoctorCheck(state, snapshot),
-		dnsDoctorCheck(state, snapshot),
-		firewallDoctorCheck(state, snapshot),
-	)
-	if state.TransactionID != "" {
-		checks = append(checks, transactionDoctorCheck(m.runtimeDir(), state.TransactionID))
-	}
-	return checks
+	return m.lifecycleDoctorChecksFromSnapshot(ctx, m.captureDoctorLifecycleSnapshot())
 }
 
 func (m *XrayManager) waitForExit(cmd *exec.Cmd, done chan struct{}, coreLogs []*coreLogWriter, runtimeConfigPath string) {
