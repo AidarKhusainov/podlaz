@@ -1,6 +1,9 @@
 package doctor
 
-import txstate "github.com/AidarKhusainov/podlaz/internal/state"
+import (
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
+)
 
 // LifecycleState describes the daemon-authoritative connection lifecycle used
 // to interpret managed-looking resources. The zero value is intentionally
@@ -15,8 +18,10 @@ const (
 )
 
 // ManagedResourceOwnership describes what daemon-authoritative lifecycle state
-// proves about a managed-looking resource. ExactOwned is only valid when the
-// active transaction provides exact ownership metadata for that resource.
+// proves about a managed-looking resource. ExactOwned means the active
+// transaction provides exact expected ownership metadata; the resource-specific
+// inspector must still verify current identity/composition before reporting it
+// healthy.
 type ManagedResourceOwnership uint8
 
 const (
@@ -38,4 +43,5 @@ type LifecycleDiagnosticContext struct {
 	InterfaceLinkIndex int
 	InterfaceLinkKind  string
 	NFTTable           ManagedResourceOwnership
+	NFTPlan            *planner.TunFirewallPlan
 }
