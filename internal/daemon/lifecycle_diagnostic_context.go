@@ -58,10 +58,11 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 		ctx.InterfaceLinkKind = plan.TunAddress.LinkKind
 	}
 
-	if transactionExpectsNoNFTables(tx) {
-		ctx.NFTTable = doctor.ManagedResourceExpectedAbsent
-		return ctx
-	}
+	// Active TUN mode always requires the canonical nftables firewall plan.
+	// Missing desired/rollback NFT metadata therefore means incomplete
+	// transaction authority, not an explicit no-firewall mode. Keep the
+	// resource unproven unless a future typed product mode explicitly permits
+	// nftables to be absent.
 	firewallPlan, err := tunRevalidationFirewallPlan(tx)
 	if err != nil {
 		return ctx
@@ -72,13 +73,4 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 	ctx.NFTTable = doctor.ManagedResourceExpectedOwned
 	ctx.NFTPlan = &firewallPlan
 	return ctx
-}
-
-func transactionExpectsNoNFTables(tx txstate.Transaction) bool {
-	nft := tx.DesiredPlan.NFT
-	return len(tx.Rollback.NFTables) == 0 &&
-		strings.TrimSpace(nft.Family) == "" &&
-		strings.TrimSpace(nft.Table) == "" &&
-		strings.TrimSpace(nft.Owner) == "" &&
-		len(nft.Chains) == 0
 }
