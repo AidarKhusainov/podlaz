@@ -59,7 +59,7 @@ func (s Server) Run(ctx context.Context) error {
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("daemon lock %s already exists; another podlazd may be running or previous shutdown was unclean", lockPath)
 		}
-		return fmt.Errorf("create daemon lock %s: %w", lockPath, err)
+		return fmt.Errorf("create daemon lock %s: %w", runtimeDir, err)
 	}
 	defer func() { _ = lock.Close(); _ = os.Remove(lockPath) }()
 
@@ -181,11 +181,12 @@ func (s Server) Run(ctx context.Context) error {
 		} else {
 			response = lifecycle.doctorFromSnapshot(r.Context(), lifecycleSnapshot)
 		}
+		lifecycleAfter := lifecycle.captureDoctorLifecycleSnapshot()
 		mutationAfter := operationLock.doctorMutationSnapshot()
 
 		stable := !mutationBefore.pending && !mutationAfter.pending && mutationBefore.generation == mutationAfter.generation
 		if s.Doctor == nil {
-			stable = doctorPublicationLifecycleStable(mutationBefore, mutationAfter, lifecycleSnapshot, status)
+			stable = doctorPublicationLifecycleStable(mutationBefore, mutationAfter, lifecycleSnapshot, lifecycleAfter, status)
 		}
 		if stable {
 			response = withStartupScanDoctor(response, scan, status)
