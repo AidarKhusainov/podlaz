@@ -241,16 +241,18 @@ assert_active_nft_mismatch_warns() {
   if sudo -n nft list chain inet podlaz "${ACTIVE_NFT_MISMATCH_CHAIN}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "issue 247 active mismatch chain already exists"
+  else
+    exit_code=$?
   fi
-  exit_code=$?
+  if (( exit_code == 0 )); then
+    rm -f -- "${output}" "${error_output}"
+    fail "issue 247 active mismatch precheck unexpectedly succeeded"
+  fi
   if ! grep -Eqi 'No such (file|table)|does not exist' "${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "issue 247 could not prove the active mismatch chain is absent"
   fi
   rm -f -- "${output}" "${error_output}"
-  if (( exit_code == 0 )); then
-    fail "issue 247 active mismatch precheck unexpectedly succeeded"
-  fi
 
   sudo -n nft add chain inet podlaz "${ACTIVE_NFT_MISMATCH_CHAIN}"
   ACTIVE_NFT_MISMATCH_CREATED=true
