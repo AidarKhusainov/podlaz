@@ -17,17 +17,17 @@ const (
 	LifecycleActiveTUN
 )
 
-// ManagedResourceOwnership describes what daemon-authoritative lifecycle state
-// proves about a managed-looking resource. ExactOwned means the active
-// transaction provides exact expected ownership metadata; the resource-specific
-// inspector must still verify current identity/composition before reporting it
-// healthy.
+// ManagedResourceOwnership describes what daemon-authoritative persisted state
+// proves about a managed-looking resource before the current host observation.
+// ExpectedOwned means the transaction contains exact expected identity or
+// composition; it is not current ownership proof. The resource-specific doctor
+// inspector must verify the live object before reporting it healthy.
 type ManagedResourceOwnership uint8
 
 const (
 	ManagedResourceUnknown ManagedResourceOwnership = iota
 	ManagedResourceExpectedAbsent
-	ManagedResourceExactOwned
+	ManagedResourceExpectedOwned
 	ManagedResourceUnproven
 )
 
