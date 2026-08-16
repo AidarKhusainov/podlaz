@@ -10,9 +10,10 @@ import (
 type lifecycleOperationLock struct {
 	token chan struct{}
 
-	mutationMu       sync.Mutex
-	pendingMutations int
-	mutationIdle     chan struct{}
+	mutationMu         sync.Mutex
+	pendingMutations   int
+	mutationGeneration uint64
+	mutationIdle       chan struct{}
 
 	cancelMu           sync.RWMutex
 	cancelRevalidation context.CancelFunc
@@ -60,12 +61,15 @@ func (l *lifecycleOperationLock) interruptRevalidation() {
 // beginMutation declares mutation intent before cancelling any active probe.
 // New revalidation work waits for the whole mutation queue to become idle, so
 // a network event consumed while connect/disconnect/recovery is running cannot
-// disappear merely because lifecycle mutation has precedence.
+// disappear merely because lifecycle mutation has precedence. The generation is
+// advanced for every declared mutation so read-only diagnostics can detect even
+// a mutation that starts and completes between two publication stages.
 func (l *lifecycleOperationLock) beginMutation() func() {
 	if l == nil {
 		return func() {}
 	}
 	l.mutationMu.Lock()
+	l.mutationGeneration++
 	if l.pendingMutations == 0 {
 		l.mutationIdle = make(chan struct{})
 	}
