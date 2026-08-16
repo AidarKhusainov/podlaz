@@ -29,10 +29,10 @@ func TestStaleResourcesRejectsChangedActiveNFTTableWithSameFamilyAndName(t *test
 			State:              LifecycleActiveTUN,
 			TransactionID:      "tx-active",
 			TransactionState:   txstate.TransactionCommitted,
-			Interface:          ManagedResourceExactOwned,
+			Interface:          ManagedResourceExpectedOwned,
 			InterfaceLinkIndex: 7,
 			InterfaceLinkKind:  "tun",
-			NFTTable:           ManagedResourceExactOwned,
+			NFTTable:           ManagedResourceExpectedOwned,
 			NFTPlan:            &plan,
 		},
 	})
