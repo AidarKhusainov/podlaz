@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd date git grep mktemp python3 runuser sleep sudo systemctl timeout
+require_cmd date git grep journalctl mktemp python3 runuser sleep sudo systemctl timeout
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue247-log-window-acceptance.txt"
 
