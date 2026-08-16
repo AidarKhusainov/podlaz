@@ -11,7 +11,7 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestLifecycleDiagnosticContextAuthorizesOnlyExactCommittedTUNOwnership(t *testing.T) {
+func TestLifecycleDiagnosticContextProjectsExactExpectedCommittedTUNOwnership(t *testing.T) {
 	runtimeDir := t.TempDir()
 	tx := txstate.NewTransaction("tx-active", "profile-test", planner.ModeTun, time.Now().UTC())
 	tx.State = txstate.TransactionCommitted
@@ -29,11 +29,11 @@ func TestLifecycleDiagnosticContextAuthorizesOnlyExactCommittedTUNOwnership(t *t
 	if got.State != doctor.LifecycleActiveTUN || got.TransactionState != txstate.TransactionCommitted {
 		t.Fatalf("unexpected lifecycle context: %#v", got)
 	}
-	if got.Interface != doctor.ManagedResourceExactOwned || got.InterfaceLinkIndex != 7 || got.InterfaceLinkKind != "tun" {
-		t.Fatalf("exact transaction-bound TUN identity was not projected: %#v", got)
+	if got.Interface != doctor.ManagedResourceExpectedOwned || got.InterfaceLinkIndex != 7 || got.InterfaceLinkKind != "tun" {
+		t.Fatalf("exact expected transaction-bound TUN identity was not projected: %#v", got)
 	}
-	if got.NFTTable != doctor.ManagedResourceExactOwned || got.NFTPlan == nil {
-		t.Fatalf("full transaction-bound nft composition was not projected: %#v", got)
+	if got.NFTTable != doctor.ManagedResourceExpectedOwned || got.NFTPlan == nil {
+		t.Fatalf("full expected transaction-bound nft composition was not projected: %#v", got)
 	}
 	if got.NFTPlan.Family != netsnapshot.DefaultNFTFamily || got.NFTPlan.Table != netsnapshot.DefaultNFTTable || len(got.NFTPlan.Chains) != 1 || len(got.NFTPlan.Rules) != 1 {
 		t.Fatalf("projected nft composition is incomplete: %#v", got.NFTPlan)
