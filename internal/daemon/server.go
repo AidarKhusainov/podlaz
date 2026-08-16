@@ -59,7 +59,7 @@ func (s Server) Run(ctx context.Context) error {
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("daemon lock %s already exists; another podlazd may be running or previous shutdown was unclean", lockPath)
 		}
-		return fmt.Errorf("create daemon lock %s: %w", runtimeDir, err)
+		return fmt.Errorf("create daemon lock %s: %w", lockPath, err)
 	}
 	defer func() { _ = lock.Close(); _ = os.Remove(lockPath) }()
 
