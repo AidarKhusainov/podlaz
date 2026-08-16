@@ -168,15 +168,33 @@ func (s Server) Run(ctx context.Context) error {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		doctorFn := s.Doctor
-		if doctorFn == nil {
-			doctorFn = lifecycle.Doctor
-		}
+
+		mutationBefore := operationLock.doctorMutationSnapshot()
+		lifecycleSnapshot := lifecycle.captureDoctorLifecycleSnapshot()
 		status, scan := startupScanForPublication(
 			r.Context(), currentStatus, lifecycle, startupScan, runtimeDir, unexpectedCoreExitRefreshTimeout,
 		)
+
+		var response api.DoctorResponse
+		if s.Doctor != nil {
+			response = s.Doctor(r.Context())
+		} else {
+			response = lifecycle.doctorFromSnapshot(r.Context(), lifecycleSnapshot)
+		}
+		mutationAfter := operationLock.doctorMutationSnapshot()
+
+		stable := !mutationBefore.pending && !mutationAfter.pending && mutationBefore.generation == mutationAfter.generation
+		if s.Doctor == nil {
+			stable = doctorPublicationLifecycleStable(mutationBefore, mutationAfter, lifecycleSnapshot, status)
+		}
+		if stable {
+			response = withStartupScanDoctor(response, scan, status)
+		} else {
+			response = withIncompleteDoctorLifecycle(response, scan)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(withStartupScanDoctor(doctorFn(r.Context()), scan, status))
+		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: doctor request handled")
 	})
 	registerTunDiagnosticsHandler(mux, lifecycle)
