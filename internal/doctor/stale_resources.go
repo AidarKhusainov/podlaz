@@ -57,14 +57,14 @@ func inspectManagedInterface(ctx context.Context, runner CommandRunner, opts sta
 	}
 
 	args := []string{"link", "show", "dev", managedInterface}
-	if opts.lifecycle.Interface == ManagedResourceExactOwned {
+	if opts.lifecycle.Interface == ManagedResourceExpectedOwned {
 		args = []string{"-details", "-o", "link", "show", "dev", managedInterface}
 	}
 	result, err := runCommand(ctx, runner, opts.ipPath, args...)
 	switch {
 	case commandSucceeded(result, err):
 		switch opts.lifecycle.Interface {
-		case ManagedResourceExactOwned:
+		case ManagedResourceExpectedOwned:
 			name, index, kind, ok := parseManagedLinkIdentity(result.Stdout)
 			if !ok || name != managedInterface || index != opts.lifecycle.InterfaceLinkIndex || kind != opts.lifecycle.InterfaceLinkKind || index <= 0 || kind != "tun" {
 				*warnings = append(*warnings, fmt.Sprintf("cannot prove interface %s belongs to the active transaction", managedInterface))
@@ -76,7 +76,7 @@ func inspectManagedInterface(ctx context.Context, runner CommandRunner, opts sta
 		}
 	case resourceMissing(result):
 		switch opts.lifecycle.Interface {
-		case ManagedResourceExactOwned:
+		case ManagedResourceExpectedOwned:
 			*warnings = append(*warnings, fmt.Sprintf("expected interface %s is missing", managedInterface))
 		case ManagedResourceUnproven:
 			*warnings = append(*warnings, fmt.Sprintf("cannot prove whether interface %s should exist for the active transaction", managedInterface))
@@ -93,7 +93,7 @@ func inspectManagedNFTTable(ctx context.Context, runner CommandRunner, opts stal
 	}
 
 	args := []string{"list", "table", "inet", "podlaz"}
-	if opts.lifecycle.NFTTable == ManagedResourceExactOwned {
+	if opts.lifecycle.NFTTable == ManagedResourceExpectedOwned {
 		// Numeric priority keeps the exact verifier deterministic across nft
 		// aliases, matching NftablesExecutor.Verify.
 		args = []string{"-y", "list", "table", "inet", "podlaz"}
@@ -102,7 +102,7 @@ func inspectManagedNFTTable(ctx context.Context, runner CommandRunner, opts stal
 	switch {
 	case commandSucceeded(result, err):
 		switch opts.lifecycle.NFTTable {
-		case ManagedResourceExactOwned:
+		case ManagedResourceExpectedOwned:
 			if opts.lifecycle.NFTPlan == nil {
 				*warnings = append(*warnings, fmt.Sprintf("cannot prove nft table %s belongs to the active transaction because the exact expected composition is unavailable", managedNFTTable))
 				return
@@ -117,7 +117,7 @@ func inspectManagedNFTTable(ctx context.Context, runner CommandRunner, opts stal
 		}
 	case resourceMissing(result):
 		switch opts.lifecycle.NFTTable {
-		case ManagedResourceExactOwned:
+		case ManagedResourceExpectedOwned:
 			*warnings = append(*warnings, fmt.Sprintf("expected nft table %s is missing", managedNFTTable))
 		case ManagedResourceUnproven:
 			*warnings = append(*warnings, fmt.Sprintf("cannot prove whether nft table %s should exist for the active transaction", managedNFTTable))
