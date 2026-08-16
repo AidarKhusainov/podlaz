@@ -89,11 +89,31 @@ func (l *lifecycleOperationLock) doctorMutationSnapshot() doctorMutationState {
 	}
 }
 
-func doctorPublicationLifecycleStable(before, after doctorMutationState, snapshot doctorLifecycleSnapshot, status api.StatusResponse) bool {
+func doctorPublicationLifecycleStable(before, after doctorMutationState, initial, current doctorLifecycleSnapshot, status api.StatusResponse) bool {
 	if before.pending || after.pending || before.generation != after.generation {
 		return false
 	}
-	return doctorSnapshotMatchesStatus(snapshot, status)
+	if !doctorLifecycleSnapshotsMatch(initial, current) {
+		return false
+	}
+	return doctorSnapshotMatchesStatus(initial, status)
+}
+
+func doctorLifecycleSnapshotsMatch(left, right doctorLifecycleSnapshot) bool {
+	leftState := left.state
+	rightState := right.state
+	return left.coreRunning == right.coreRunning &&
+		leftState.Connection == rightState.Connection &&
+		leftState.Mode == rightState.Mode &&
+		leftState.ProfileID == rightState.ProfileID &&
+		leftState.ProfileName == rightState.ProfileName &&
+		leftState.Proxy == rightState.Proxy &&
+		leftState.TUN == rightState.TUN &&
+		leftState.Routes == rightState.Routes &&
+		leftState.DNS == rightState.DNS &&
+		leftState.Firewall == rightState.Firewall &&
+		leftState.RuntimeConfigPath == rightState.RuntimeConfigPath &&
+		leftState.TransactionID == rightState.TransactionID
 }
 
 func doctorSnapshotMatchesStatus(snapshot doctorLifecycleSnapshot, status api.StatusResponse) bool {
