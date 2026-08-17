@@ -79,11 +79,13 @@ type tunRevalidationRuntime struct {
 	inspect tunRevalidationInspectFunc
 	verify  tunRevalidationVerifyFunc
 
-	mu             sync.RWMutex
-	health         *api.TunHealthStatus
-	fingerprint    tunUplinkFingerprint
-	hasFingerprint bool
-	initialPending bool
+	mu                   sync.RWMutex
+	health               *api.TunHealthStatus
+	healthPublication    tunRevalidationPublicationToken
+	hasHealthPublication bool
+	fingerprint          tunUplinkFingerprint
+	hasFingerprint       bool
+	initialPending       bool
 }
 
 func newTunRevalidationRuntime(inspect tunRevalidationInspectFunc, verify tunRevalidationVerifyFunc) *tunRevalidationRuntime {
@@ -117,6 +119,7 @@ func (r *tunRevalidationRuntime) PrepareInitialize() {
 		NetworkGeneration: 1,
 		Classification:    api.TunHealthUplinkRevalidating,
 	}
+	r.hasHealthPublication = false
 	r.mu.Unlock()
 }
 
@@ -156,12 +159,20 @@ func (r *tunRevalidationRuntime) initialize(ctx context.Context) tunRevalidation
 	if r == nil {
 		return tunRevalidationOutcome{}
 	}
+	publication, hasPublication := tunRevalidationPublicationTokenFromContext(ctx)
 	observation, err := r.inspect(ctx)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return tunRevalidationOutcome{cause: context.Canceled}
+	}
+	if hasPublication && !publication.isCurrent() {
+		return tunRevalidationOutcome{}
+	}
 	if err != nil {
 		r.mu.Lock()
 		r.fingerprint = tunUplinkFingerprint{}
 		r.hasFingerprint = false
 		r.health = healthForObservationError(1, err)
+		r.setHealthPublicationLocked(publication, hasPublication)
 		r.mu.Unlock()
 		return tunRevalidationOutcome{cause: err}
 	}
@@ -174,17 +185,26 @@ func (r *tunRevalidationRuntime) initialize(ctx context.Context) tunRevalidation
 		NetworkGeneration: 1,
 		Classification:    api.TunHealthUplinkRevalidating,
 	}
+	r.setHealthPublicationLocked(publication, hasPublication)
 	r.mu.Unlock()
 
 	err = r.verify(ctx, observation)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return tunRevalidationOutcome{cause: context.Canceled}
+	}
+	if hasPublication && !publication.isCurrent() {
+		return tunRevalidationOutcome{}
+	}
 	r.mu.Lock()
 	if err == nil {
 		r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
+		r.setHealthPublicationLocked(publication, hasPublication)
 		r.mu.Unlock()
 		return tunRevalidationOutcome{}
 	}
 	health := healthForVerificationError(1, err)
 	r.health = health
+	r.setHealthPublicationLocked(publication, hasPublication)
 	r.mu.Unlock()
 	return terminalTunRevalidationOutcome(observation.plan, health, err)
 }
@@ -195,6 +215,8 @@ func (r *tunRevalidationRuntime) Clear() {
 	}
 	r.mu.Lock()
 	r.health = nil
+	r.healthPublication = tunRevalidationPublicationToken{}
+	r.hasHealthPublication = false
 	r.fingerprint = tunUplinkFingerprint{}
 	r.hasFingerprint = false
 	r.initialPending = false
@@ -206,11 +228,25 @@ func (r *tunRevalidationRuntime) Health() *api.TunHealthStatus {
 		return nil
 	}
 	r.mu.RLock()
-	defer r.mu.RUnlock()
 	if r.health == nil {
+		r.mu.RUnlock()
 		return nil
 	}
 	copy := *r.health
+	publication := r.healthPublication
+	hasPublication := r.hasHealthPublication
+	r.mu.RUnlock()
+
+	// A result can race with Notify after its last pre-publication revision
+	// check. Keep that result private by rendering fail-closed revalidating health
+	// until the coordinator consumes the newest hint.
+	if hasPublication && !publication.isCurrent() {
+		return &api.TunHealthStatus{
+			State:             api.TunHealthRevalidating,
+			NetworkGeneration: currentTunGeneration(&copy),
+			Classification:    api.TunHealthUplinkRevalidating,
+		}
+	}
 	return &copy
 }
 
@@ -218,11 +254,19 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 	if r == nil {
 		return tunRevalidationOutcome{}
 	}
+	publication, hasPublication := tunRevalidationPublicationTokenFromContext(ctx)
 	observation, err := r.inspect(ctx)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return tunRevalidationOutcome{cause: context.Canceled}
+	}
+	if hasPublication && !publication.isCurrent() {
+		return tunRevalidationOutcome{}
+	}
 	if err != nil {
 		r.mu.Lock()
 		generation := currentTunGeneration(r.health)
 		r.health = healthForObservationError(generation, err)
+		r.setHealthPublicationLocked(publication, hasPublication)
 		r.mu.Unlock()
 		return tunRevalidationOutcome{cause: err}
 	}
@@ -250,17 +294,26 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 		NetworkGeneration: generation,
 		Classification:    classification,
 	}
+	r.setHealthPublicationLocked(publication, hasPublication)
 	r.mu.Unlock()
 
 	err = r.verify(ctx, observation)
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return tunRevalidationOutcome{cause: context.Canceled}
+	}
+	if hasPublication && !publication.isCurrent() {
+		return tunRevalidationOutcome{}
+	}
 	r.mu.Lock()
 	if err == nil {
 		r.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: generation}
+		r.setHealthPublicationLocked(publication, hasPublication)
 		r.mu.Unlock()
 		return tunRevalidationOutcome{}
 	}
 	health := healthForVerificationError(generation, err)
 	r.health = health
+	r.setHealthPublicationLocked(publication, hasPublication)
 	r.mu.Unlock()
 	return terminalTunRevalidationOutcome(observation.plan, health, err)
 }
@@ -287,6 +340,20 @@ func (r *tunRevalidationRuntime) MarkCleanupRequired(outcome tunRevalidationOutc
 		NetworkGeneration: generation,
 		Classification:    classification,
 	}
+	// Terminal cleanup has already crossed the coordinator's revision claim.
+	// A later hint cannot revoke an authoritative cleanup-required result.
+	r.healthPublication = tunRevalidationPublicationToken{}
+	r.hasHealthPublication = false
+}
+
+func (r *tunRevalidationRuntime) setHealthPublicationLocked(publication tunRevalidationPublicationToken, present bool) {
+	if !present {
+		r.healthPublication = tunRevalidationPublicationToken{}
+		r.hasHealthPublication = false
+		return
+	}
+	r.healthPublication = publication
+	r.hasHealthPublication = true
 }
 
 func terminalTunRevalidationOutcome(plan planner.TunPlan, health *api.TunHealthStatus, err error) tunRevalidationOutcome {
