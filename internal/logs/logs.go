@@ -140,9 +140,21 @@ func RunJournalctl(ctx context.Context, stdout io.Writer, opts Options) error {
 	return err
 }
 
-func runJournalctl(ctx context.Context, stdout io.Writer, args []string, core bool) (int, error) {
-	cmd := exec.CommandContext(ctx, "journalctl", args...)
+type journalctlCommand interface {
+	StdoutPipe() (io.ReadCloser, error)
+	StderrPipe() (io.ReadCloser, error)
+	Start() error
+	Wait() error
+}
 
+func runJournalctl(ctx context.Context, stdout io.Writer, args []string, core bool) (int, error) {
+	commandCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(commandCtx, "journalctl", args...)
+	return runJournalctlCommand(cmd, cancel, stdout, core)
+}
+
+func runJournalctlCommand(cmd journalctlCommand, cancel context.CancelFunc, stdout io.Writer, core bool) (int, error) {
 	outPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return 0, fmt.Errorf("prepare journalctl stdout: %w", err)
@@ -177,6 +189,7 @@ func runJournalctl(ctx context.Context, stdout io.Writer, args []string, core bo
 	for i := 0; i < 2; i++ {
 		result := <-errc
 		if result.err != nil {
+			cancel()
 			return stdoutCount, fmt.Errorf("read journalctl %s: %w", result.name, result.err)
 		}
 		if result.name == "stdout" {
