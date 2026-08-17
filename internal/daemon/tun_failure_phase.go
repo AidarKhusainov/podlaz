@@ -2,13 +2,13 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
 const noTunTransactionID = "none"
 
-// tunFailurePhaseError adds daemon-log metadata without changing user-facing
-// error text or errors.Is/errors.As behavior.
+// tunFailurePhaseError adds daemon-log metadata without changing errors.Is/errors.As behavior.
 type tunFailurePhaseError struct {
 	phase          string
 	transactionID  string
@@ -20,7 +20,28 @@ func (e tunFailurePhaseError) Error() string {
 	if e.err == nil {
 		return "podlaz: TUN connect failed"
 	}
+	var stale *tunStalePodlazStateBlocker
+	if errors.As(e.err, &stale) && orphanRoutingNeedsOwnershipEvidence(stale.Resources) {
+		return fmt.Sprintf(`podlaz: ambiguous stale routing state blocks TUN connect before network mutation.
+
+Detected:
+  - %s
+
+The remaining policy-rule/route shape matches Podlaz's reserved routing layout, but durable transaction ownership evidence is unavailable. Recovery cannot safely delete these kernel objects from reserved priorities/table numbers alone.
+
+Next step: run plz doctor and inspect the reported rules/routes as administrator. Remove them manually only after independently proving ownership, then retry connect.`, strings.Join(stale.Resources, "\n  - "))
+	}
 	return e.err.Error()
+}
+
+func orphanRoutingNeedsOwnershipEvidence(resources []string) bool {
+	for _, resource := range resources {
+		resource = strings.TrimSpace(resource)
+		if strings.HasPrefix(resource, "policy-rule ") || strings.HasPrefix(resource, "route ") {
+			return true
+		}
+	}
+	return false
 }
 
 func (e tunFailurePhaseError) Unwrap() error {
