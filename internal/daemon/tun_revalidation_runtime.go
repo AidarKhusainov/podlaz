@@ -275,6 +275,10 @@ func (r *tunRevalidationRuntime) Revalidate(ctx context.Context, trigger tunReva
 	sameFingerprint := r.hasFingerprint && observation.fingerprint == r.fingerprint
 	mustReproveCurrentGeneration := trigger == tunRevalidationTriggerResume || trigger == tunRevalidationTriggerSourceResync || r.health == nil || r.health.State != api.TunHealthVerified
 	if sameFingerprint && !mustReproveCurrentGeneration {
+		// The fresh observation proves that this ordinary link/address/route hint
+		// did not invalidate the verified generation. Advance the publication
+		// token so Health does not remain fail-closed after a harmless duplicate.
+		r.setHealthPublicationLocked(publication, hasPublication)
 		r.mu.Unlock()
 		return tunRevalidationOutcome{}
 	}
