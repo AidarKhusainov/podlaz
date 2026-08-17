@@ -269,9 +269,9 @@ run_orphan_routing_convergence_probe() {
   local output code
   assert_recovery_plan_empty orphan-precondition
   assert_reserved_priorities_absent
+  ORPHAN_STATE=1
   sudo -n ip -4 rule add priority "${ORPHAN_SERVER_PRIORITY}" to "${ORPHAN_SERVER_TARGET}/32" lookup main
   sudo -n ip -4 rule add priority "${ORPHAN_TUN_PRIORITY}" lookup "${ORPHAN_ROUTE_TABLE}"
-  ORPHAN_STATE=1
   assert_no_mutation_beyond_orphan_rules orphan-fixture
 
   output="$(mktemp "${E2E_TMP_ROOT}/issue256-orphan-connect.XXXXXX")"
