@@ -153,6 +153,16 @@ func (e *tunStalePodlazStateBlocker) Error() string {
 	if e == nil || len(e.Resources) == 0 {
 		return "podlaz: stale podlaz-owned networking state blocks TUN connect"
 	}
+	if staleResourcesAreRoutingOnly(e.Resources) {
+		return fmt.Sprintf(`podlaz: ambiguous stale routing state blocks TUN connect before network mutation.
+
+Detected:
+  - %s
+
+The remaining policy-rule/route shape matches Podlaz's reserved routing layout, but durable transaction ownership evidence is unavailable. Recovery cannot safely delete these kernel objects from reserved priorities/table numbers alone.
+
+Next step: run plz doctor and inspect the reported rules/routes as administrator. Remove them manually only after independently proving ownership, then retry connect.`, strings.Join(e.Resources, "\n  - "))
+	}
 	return fmt.Sprintf(`podlaz: stale podlaz-owned networking state blocks TUN connect.
 
 Detected:
@@ -163,6 +173,22 @@ Run daemon-owned recovery first, then retry connect.
 
 Run:
   plz recover --execute --yes`, strings.Join(e.Resources, "\n  - "))
+}
+
+func staleResourcesAreRoutingOnly(resources []string) bool {
+	sawRouting := false
+	for _, resource := range resources {
+		resource = strings.TrimSpace(resource)
+		if resource == "" {
+			continue
+		}
+		if strings.HasPrefix(resource, "policy-rule ") || strings.HasPrefix(resource, "route ") {
+			sawRouting = true
+			continue
+		}
+		return false
+	}
+	return sawRouting
 }
 
 func (m *XrayManager) prepareActivePodlazReplace(ctx context.Context, handoff string) error {
