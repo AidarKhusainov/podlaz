@@ -199,6 +199,7 @@ func (s Server) Run(ctx context.Context) error {
 		log.Printf("podlazd: doctor request handled")
 	})
 	registerTunDiagnosticsHandler(mux, lifecycle)
+	registerLogsHandler(mux)
 	mux.HandleFunc(api.RecoverPath, func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("podlazd: recover request method=%s path=%s", r.Method, r.URL.Path)
 		if r.Method != http.MethodPost {
