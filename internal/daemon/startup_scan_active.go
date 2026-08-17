@@ -25,7 +25,7 @@ func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.Stat
 	if status.Connection != "active" || !supportsActiveRuntimeOwnershipFiltering(status.Mode) {
 		return out
 	}
-	if status.Mode == planner.ModeProxyOnly {
+	if status.Mode == planner.ModeProxyOnly && strings.TrimSpace(status.ActiveTransactionID) == "" {
 		return filterStartupScanForActiveProxyOnly(out, status)
 	}
 	tx, ok, err := activeCommittedTransaction(status, runtimeDir)
