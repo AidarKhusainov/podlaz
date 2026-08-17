@@ -15,7 +15,7 @@ jobs:
     name: Installed package TUN convergence
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
-    timeout-minutes: 200
+    timeout-minutes: 260
     env:
       PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
       PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v7
@@ -43,6 +45,11 @@ jobs:
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/tun-package-convergence.sh
+
+      - name: Run issue 256 installed-package acceptance
+        timeout-minutes: 60
+        shell: bash
+        run: bash scripts/e2e/issue256-package-acceptance.sh
 
       - name: Run issue 241 installed-package acceptance
         timeout-minutes: 30
