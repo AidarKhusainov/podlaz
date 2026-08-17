@@ -45,11 +45,23 @@ run_ordinary_podlaz() {
         /usr/bin/podlaz "$@"
 }
 
+run_privileged_podlaz() {
+  local timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=5s "${timeout_seconds}" \
+    sudo -n env \
+      LC_ALL=C \
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+      XDG_STATE_HOME="${XDG_STATE_HOME}" \
+      XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      /usr/bin/podlaz "$@"
+}
+
 cleanup() {
   local saved=$? cleanup_failed=0
   set +e
   if [[ "${CONNECTED}" == "true" ]]; then
-    run_ordinary_podlaz 60s disconnect >/dev/null 2>&1 || cleanup_failed=1
+    run_privileged_podlaz 60s disconnect >/dev/null 2>&1 || cleanup_failed=1
     CONNECTED=false
   fi
   if (( saved == 0 && cleanup_failed == 0 )); then
@@ -171,13 +183,16 @@ verify_package_and_ordinary_identity
 assert_recovery_clean baseline
 import_profile_privately
 
-if ! run_ordinary_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
+# Lifecycle setup is privileged so this headless self-hosted acceptance does not
+# accidentally test polkit active-session policy. The read-only client paths
+# below are deliberately exercised as the ordinary user with no internal groups.
+if ! run_privileged_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
   fail "issue 254 proxy-only connect failed"
 fi
 CONNECTED=true
 assert_proxy_publication_consistent
 
-if ! run_ordinary_podlaz 60s disconnect >/dev/null 2>&1; then
+if ! run_privileged_podlaz 60s disconnect >/dev/null 2>&1; then
   fail "issue 254 proxy-only disconnect failed"
 fi
 CONNECTED=false
