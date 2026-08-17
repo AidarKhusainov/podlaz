@@ -3,13 +3,18 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 func TestIssue256OrphanPolicyRoutingDoesNotPromiseUnauthoritativeRecovery(t *testing.T) {
-	err := withTunFailurePhase("handoff", "", "not-started", &tunStalePodlazStateBlocker{Resources: []string{
-		"policy-rule priority-9999",
-		"policy-rule priority-10000",
-	}})
+	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
+		{Kind: "policy-rule", Name: "priority-9999", Status: netsnapshot.StatusDetected},
+		{Kind: "policy-rule", Name: "priority-10000", Status: netsnapshot.StatusDetected},
+	}}, "block")
+	if err == nil {
+		t.Fatal("expected orphan routing preflight blocker")
+	}
 	message := err.Error()
 	if strings.Contains(message, "recover --execute") {
 		t.Fatalf("orphan routing without ownership evidence must not promise recovery: %s", message)
@@ -32,11 +37,14 @@ func TestIssue256RecoverableStaleStateStillKeepsCanonicalRecoveryGuidance(t *tes
 }
 
 func TestIssue256TransactionBackedRoutingKeepsRecoveryGuidance(t *testing.T) {
-	err := withTunFailurePhase("handoff", "", "not-started", &tunStalePodlazStateBlocker{Resources: []string{
-		"transaction-file tx-recoverable",
-		"route 51820",
-		"policy-rule 10000",
-	}})
+	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
+		{Kind: "transaction-file", Name: "tx-recoverable.json", Status: netsnapshot.StatusDetected, Detail: "state=committed requires daemon-owned recovery"},
+		{Kind: "route", Name: "51820", Status: netsnapshot.StatusDetected},
+		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected},
+	}}, "block")
+	if err == nil {
+		t.Fatal("expected transaction-backed stale preflight blocker")
+	}
 	message := err.Error()
 	if !strings.Contains(message, "plz recover --execute --yes") {
 		t.Fatalf("transaction-backed routing must retain authoritative recovery guidance: %s", message)
