@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/exit_trap.sh
 source "${SCRIPT_DIR}/lib/exit_trap.sh"
 
-require_cmd awk env git grep id mktemp python3 runuser sudo systemctl timeout
+require_cmd awk env git grep id mktemp python3 sudo systemctl timeout
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -16,8 +16,6 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
 fi
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue254-remote-client-acceptance.txt"
-ORDINARY_USER="$(id -un)"
-ORDINARY_PRIMARY_GROUP="$(id -gn)"
 PROFILE_ID=""
 CONNECTED=false
 
@@ -29,20 +27,20 @@ write_evidence() {
   printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
 }
 
+# Preserve the self-hosted runner's normal login identity, including any
+# pre-existing OS-managed supplementary groups. Rewriting its groups here would
+# manufacture a different journald permission scenario instead of reproducing
+# the daemon/core subprocess regression observed on the packaged host.
 run_ordinary_podlaz() {
   local timeout_seconds="$1"
   shift
   timeout --signal=TERM --kill-after=5s "${timeout_seconds}" \
-    sudo -n runuser \
-      -u "${ORDINARY_USER}" \
-      -g "${ORDINARY_PRIMARY_GROUP}" \
-      -G "${ORDINARY_PRIMARY_GROUP}" \
-      -- env \
-        LC_ALL=C \
-        XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-        XDG_STATE_HOME="${XDG_STATE_HOME}" \
-        XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-        /usr/bin/podlaz "$@"
+    env \
+      LC_ALL=C \
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+      XDG_STATE_HOME="${XDG_STATE_HOME}" \
+      XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      /usr/bin/podlaz "$@"
 }
 
 run_privileged_podlaz() {
@@ -92,16 +90,15 @@ verify_package_and_ordinary_identity() {
   rm -f -- "${version_output}"
   systemctl is-active --quiet podlazd.service || fail "issue 254 requires the packaged podlazd service"
 
-  groups="$(sudo -n runuser \
-    -u "${ORDINARY_USER}" \
-    -g "${ORDINARY_PRIMARY_GROUP}" \
-    -G "${ORDINARY_PRIMARY_GROUP}" \
-    -- id -nG)"
-  if grep -qw -- podlaz <<<"${groups}" || grep -qw -- systemd-journal <<<"${groups}"; then
-    fail "issue 254 ordinary-user fixture must not receive internal daemon or journal group access"
+  if (( $(id -u) == 0 )); then
+    fail "issue 254 ordinary-user acceptance must not run as root"
+  fi
+  groups="$(id -nG)"
+  if grep -qw -- podlaz <<<"${groups}"; then
+    fail "issue 254 ordinary-user fixture must not rely on membership in the private podlaz service group"
   fi
   write_evidence package_provenance pass
-  write_evidence ordinary_user_without_internal_groups pass
+  write_evidence ordinary_user_without_podlaz_group pass
 }
 
 import_profile_privately() {
@@ -184,8 +181,8 @@ assert_recovery_clean baseline
 import_profile_privately
 
 # Lifecycle setup is privileged so this headless self-hosted acceptance does not
-# accidentally test polkit active-session policy. The read-only client paths
-# below are deliberately exercised as the ordinary user with no internal groups.
+# accidentally test polkit active-session policy. All read-only client paths
+# below use the runner's unchanged ordinary login identity.
 if ! run_privileged_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
   fail "issue 254 proxy-only connect failed"
 fi
