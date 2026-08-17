@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"strings"
+
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 type resolvedDNSDiagnostic struct {
@@ -12,10 +14,10 @@ type resolvedDNSDiagnostic struct {
 
 func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolvectlPath, ipPath string, ipOK bool) resolvedDNSDiagnostic {
 	result, err := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if resolvedResourceMissing(result) {
+	if recovery.ResolvedStatusResourceMissingEnvelope(ctx, result.RawStdout, result.RawStderr, result.ExitCode, err) {
 		return resolvedDNSDiagnostic{severity: SeverityOK, message: "no podlaz-owned DNS state found for " + managedInterface}
 	}
-	if !commandSucceeded(result, err) {
+	if !commandSucceeded(result, err) || result.RawStderr != "" {
 		return resolvedDNSDiagnostic{severity: SeverityWarning, message: "podlaz DNS state unknown for " + managedInterface + ": " + commandFailureMessage(result, err)}
 	}
 
