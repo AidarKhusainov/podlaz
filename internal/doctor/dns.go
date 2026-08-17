@@ -14,7 +14,7 @@ type resolvedDNSDiagnostic struct {
 
 func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolvectlPath, ipPath string, ipOK bool) resolvedDNSDiagnostic {
 	result, err := runCommand(ctx, runner, resolvectlPath, "status", managedInterface, "--no-pager")
-	if recovery.ResolvedStatusResourceMissingEnvelope(ctx, result.RawStdout, result.RawStderr, result.ExitCode, err) {
+	if recovery.ResolvedStatusResourceMissingEnvelope(ctx, result.Stdout, result.Stderr, result.RawStdout, result.RawStderr, result.ExitCode, err) {
 		return resolvedDNSDiagnostic{severity: SeverityOK, message: "no podlaz-owned DNS state found for " + managedInterface}
 	}
 	if !commandSucceeded(result, err) || result.RawStderr != "" {
