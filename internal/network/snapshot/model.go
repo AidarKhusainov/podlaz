@@ -106,10 +106,11 @@ type PolicyRoutingSignal struct {
 }
 
 type StaleResource struct {
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Status Status `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Kind               string `json:"kind"`
+	Name               string `json:"name"`
+	Status             Status `json:"status"`
+	Detail             string `json:"detail,omitempty"`
+	RecoveryAuthorized bool   `json:"-"`
 }
 
 type Snapshot struct {
