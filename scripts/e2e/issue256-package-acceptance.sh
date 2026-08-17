@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
-require_cmd apt awk bash curl dpkg dpkg-deb find getent git grep ip mktemp nft python3 readlink resolvectl runuser sed sha256sum sudo systemctl timeout tr
+require_cmd apt awk bash curl dpkg dpkg-deb find getent git grep ip mktemp nft python3 readlink resolvectl runuser sed sha256sum sleep sudo systemctl timeout tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -165,19 +165,32 @@ capture_profile_import() {
 assert_recovery_plan_empty() {
   local phase="$1" output
   output="$(mktemp "${E2E_TMP_ROOT}/issue256-recover-${phase}.XXXXXX")"
-  run_installed_podlaz recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
-  python3 - "${output}" "${phase}" <<'PY'
+  if ! run_installed_podlaz recover --json >"${output}" 2>/dev/null; then
+    rm -f -- "${output}"
+    fail "${phase}: recovery inspection failed"
+  fi
+  if ! python3 - "${output}" <<'PY'
 import json
 import sys
-path, phase = sys.argv[1:]
-with open(path, encoding="utf-8") as handle:
+
+with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
-recovery = payload.get("recovery", {})
-candidates = recovery.get("candidates", [])
-warnings = recovery.get("warnings", [])
-if candidates or warnings:
-    raise SystemExit(f"{phase}: recovery plan is not empty: candidates={candidates!r} warnings={warnings!r}")
+if payload.get("status") != "ok":
+    raise SystemExit("recover JSON status is not ok")
+if payload.get("warnings"):
+    raise SystemExit("top-level recover JSON warnings remain")
+recovery = payload.get("recovery")
+if not isinstance(recovery, dict):
+    raise SystemExit("recovery payload is missing")
+if recovery.get("candidates"):
+    raise SystemExit("recovery candidates remain")
+if recovery.get("warnings"):
+    raise SystemExit("recovery inspection warnings remain")
 PY
+  then
+    rm -f -- "${output}"
+    fail "${phase}: recover --json is not clean"
+  fi
   rm -f -- "${output}"
   write_evidence "recovery_clean_${phase}" pass
 }
@@ -291,25 +304,162 @@ verify_systemd_255() {
   write_evidence systemd_version_255 pass
 }
 
-assert_supported_exit_zero_resolved_missing_link() {
-  local phase="$1" stdout stderr code
-  stdout="$(mktemp "${E2E_TMP_ROOT}/issue256-resolved-${phase}.stdout.XXXXXX")"
-  stderr="$(mktemp "${E2E_TMP_ROOT}/issue256-resolved-${phase}.stderr.XXXXXX")"
-  set +e
-  sudo -n resolvectl status podlaz0 --no-pager >"${stdout}" 2>"${stderr}"
-  code=$?
-  set -e
-  [[ "${code}" == "0" ]] || fail "${phase}: resolvectl status podlaz0 did not return supported exit 0"
-  [[ ! -s "${stdout}" ]] || fail "${phase}: supported exit-0 missing-link stdout is not empty"
-  python3 - "${stderr}" <<'PY'
+wait_for_exact_exit_zero_missing_status() {
+  local phase="$1" stdout_file stderr_file exit_code classification attempt
+  stdout_file="$(mktemp "${E2E_TMP_ROOT}/issue256-${phase}-resolved.stdout.XXXXXX")"
+  stderr_file="$(mktemp "${E2E_TMP_ROOT}/issue256-${phase}-resolved.stderr.XXXXXX")"
+
+  for attempt in {1..100}; do
+    set +e
+    timeout --signal=TERM --kill-after=1s 3s \
+      resolvectl status podlaz0 --no-pager >"${stdout_file}" 2>"${stderr_file}"
+    exit_code=$?
+    set -e
+
+    classification="$(python3 - "${exit_code}" "${stdout_file}" "${stderr_file}" <<'PY'
+import re
 import sys
-from pathlib import Path
-raw = Path(sys.argv[1]).read_bytes()
-marker = b'Failed to resolve interface "podlaz0", ignoring: No such device'
-if raw not in (marker + b"\n", marker + b"\r\n"):
-    raise SystemExit(f"unexpected exit-0 missing-link stderr: {raw!r}")
+
+exit_code = int(sys.argv[1])
+stdout_path = sys.argv[2]
+stderr_path = sys.argv[3]
+expected_missing = b'Failed to resolve interface "podlaz0", ignoring: No such device'
+
+with open(stdout_path, "rb") as handle:
+    stdout = handle.read()
+with open(stderr_path, "rb") as handle:
+    stderr = handle.read()
+
+if exit_code == 0 and stdout == b"" and stderr in (
+    expected_missing + b"\n",
+    expected_missing + b"\r\n",
+):
+    print("exact")
+    raise SystemExit(0)
+
+if exit_code != 0 or stderr != b"":
+    print("unexpected")
+    raise SystemExit(0)
+
+try:
+    text = stdout.decode("utf-8")
+except UnicodeDecodeError:
+    print("unexpected")
+    raise SystemExit(0)
+
+
+def unique_tokens(value):
+    out = []
+    seen = set()
+    for token in value.split():
+        if token and token not in seen:
+            seen.add(token)
+            out.append(token)
+    return out
+
+
+def reject():
+    print("unexpected")
+    raise SystemExit(0)
+
+seen_header = False
+seen_fields = set()
+last_field = ""
+current_scopes = []
+protocols = []
+current_dns_server = ""
+dns_servers = []
+dns_domains = []
+
+for raw_line in text.split("\n"):
+    line = raw_line.strip()
+    if not line:
+        continue
+    if line.startswith("Link "):
+        if seen_header or re.fullmatch(r"Link [0-9]+ \(podlaz0\)", line) is None:
+            reject()
+        seen_header = True
+        last_field = ""
+        continue
+    if not seen_header:
+        reject()
+    if ":" not in line:
+        if last_field == "DNS Servers":
+            for token in unique_tokens(line):
+                if token not in dns_servers:
+                    dns_servers.append(token)
+            continue
+        if last_field == "DNS Domain":
+            for token in unique_tokens(line):
+                if token not in dns_domains:
+                    dns_domains.append(token)
+            continue
+        reject()
+
+    key, value = (part.strip() for part in line.split(":", 1))
+    if not key or key in seen_fields:
+        reject()
+    if key == "Current Scopes":
+        if not value:
+            reject()
+        current_scopes = unique_tokens(value)
+    elif key == "Protocols":
+        if not value:
+            reject()
+        protocols = unique_tokens(value)
+    elif key == "Current DNS Server":
+        fields = value.split()
+        if len(fields) != 1:
+            reject()
+        current_dns_server = fields[0]
+    elif key == "DNS Servers":
+        if not value:
+            reject()
+        dns_servers = unique_tokens(value)
+    elif key == "DNS Domain":
+        if not value:
+            reject()
+        dns_domains = unique_tokens(value)
+    else:
+        reject()
+    seen_fields.add(key)
+    last_field = key
+
+if not seen_header or "Current Scopes" not in seen_fields or "Protocols" not in seen_fields:
+    reject()
+
+is_proven_empty = (
+    current_scopes == ["none"]
+    and current_dns_server == ""
+    and not dns_servers
+    and not dns_domains
+    and "-DefaultRoute" in protocols
+    and "+DefaultRoute" not in protocols
+)
+print("transient" if is_proven_empty else "unexpected")
 PY
-  rm -f -- "${stdout}" "${stderr}"
+)"
+
+    case "${classification}" in
+      exact)
+        rm -f -- "${stdout_file}" "${stderr_file}"
+        write_evidence "resolved_exit0_missing_${phase}" pass
+        return 0
+        ;;
+      transient)
+        : # Supported semantic absence while resolved removes its transient Link record.
+        ;;
+      *)
+        rm -f -- "${stdout_file}" "${stderr_file}"
+        fail "${phase}: resolver state became unexpected while waiting for the exact exit-0 missing-device envelope"
+        ;;
+    esac
+
+    sleep 0.1
+  done
+
+  rm -f -- "${stdout_file}" "${stderr_file}"
+  fail "${phase}: resolver did not converge from the proven-empty transient record to the exact exit-0 missing-device envelope within the bounded wait"
 }
 
 assert_doctor_resolved_clean() {
@@ -339,7 +489,7 @@ run_clean_disconnect_resolved_probe() {
   run_installed_podlaz disconnect >/dev/null 2>&1 || fail "clean-disconnect: disconnect failed"
   ACTIVE_CONNECTION=0
   assert_clean_after_owned_lifecycle clean-disconnect "${manifest}"
-  assert_supported_exit_zero_resolved_missing_link clean-disconnect
+  wait_for_exact_exit_zero_missing_status clean-disconnect
   assert_doctor_resolved_clean clean-disconnect
   write_evidence clean_disconnect_resolved_doctor pass
 }
