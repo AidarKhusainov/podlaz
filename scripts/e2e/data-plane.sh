@@ -26,6 +26,7 @@ DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 ACTIVE_CONNECTION=0
+ACTIVE_RUNTIME_CONFIG_PATH=""
 
 mask_multiline_sensitive() {
   local value="${1:-}"
@@ -206,7 +207,7 @@ assert_loopback_listeners() {
   fi
 }
 
-assert_recovery_candidates_empty() {
+assert_recovery_plan_empty() {
   local phase="$1"
   python3 - "${LAST_STDOUT}" "${phase}" <<'PY'
 import json
@@ -215,12 +216,40 @@ import sys
 path, phase = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as handle:
     payload = json.load(handle)
-candidates = payload.get("recovery", {}).get("candidates", [])
-if candidates:
-    print(f"{phase}: recovery dry-run found podlaz-owned cleanup candidates", file=sys.stderr)
-    print(json.dumps(candidates, ensure_ascii=False, indent=2), file=sys.stderr)
+recovery = payload.get("recovery", {})
+candidates = recovery.get("candidates", [])
+warnings = recovery.get("warnings", [])
+if candidates or warnings:
+    print(f"{phase}: recovery plan is not empty", file=sys.stderr)
+    print(json.dumps({"candidates": candidates, "warnings": warnings}, ensure_ascii=False, indent=2), file=sys.stderr)
     sys.exit(1)
 PY
+}
+
+assert_active_proxy_only_control_plane() {
+  local phase="$1" pass
+  ACTIVE_RUNTIME_CONFIG_PATH=""
+  for pass in 1 2; do
+    expect_sensitive_success "status-${phase}-active-${pass}" run_podlaz_as_socket_user status
+    grep -F "Connection: active" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not active"
+    grep -F "Mode: proxy-only" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not proxy-only"
+    grep -F "Stale state: none" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} reports stale state"
+    if [[ "${pass}" == "1" ]]; then
+      ACTIVE_RUNTIME_CONFIG_PATH="$(awk -F': ' '/^Runtime config:/ {print $2; exit}' "${LAST_STDOUT}")"
+      assert_nonempty "${ACTIVE_RUNTIME_CONFIG_PATH}" "${phase}: active runtime config path"
+    fi
+  done
+  expect_sensitive_success "recover-${phase}-while-active-json" run_podlaz_as_socket_user recover --json
+  assert_json_file "${LAST_STDOUT}"
+  assert_recovery_plan_empty "${phase}-while-active"
+}
+
+assert_runtime_config_removed() {
+  local phase="$1" path="$2"
+  [[ -n "${path}" ]] || fail "${phase}: runtime config path was not captured before disconnect"
+  if sudo -n test -e "${path}"; then
+    fail "${phase}: generated runtime config still exists after disconnect"
+  fi
 }
 
 assert_no_stale_state() {
@@ -230,7 +259,7 @@ assert_no_stale_state() {
   grep -F "Stale state: none" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status reports stale state after disconnect"
   expect_sensitive_success "recover-${phase}-dry-run-json" run_podlaz_as_socket_user recover --json
   assert_json_file "${LAST_STDOUT}"
-  assert_recovery_candidates_empty "${phase}"
+  assert_recovery_plan_empty "${phase}"
 }
 
 assert_current_runtime_config_artifacts_safe() {
@@ -302,21 +331,27 @@ wait_for_daemon_socket
 
 log "proxy-only explicit data-plane lifecycle"
 connect_profile "proxy-only-explicit" "${PROFILE_ID}" --mode proxy-only
+assert_active_proxy_only_control_plane "proxy-only-explicit"
+PROXY_ONLY_RUNTIME_CONFIG_PATH="${ACTIVE_RUNTIME_CONFIG_PATH}"
 assert_loopback_listeners "proxy-only-explicit"
 assert_proxy_egress socks "proxy-only-explicit"
 assert_proxy_egress http "proxy-only-explicit"
 assert_current_runtime_config_artifacts_safe "proxy-only-explicit"
 disconnect_profile "proxy-only-explicit"
+assert_runtime_config_removed "proxy-only-explicit" "${PROXY_ONLY_RUNTIME_CONFIG_PATH}"
 assert_proxy_cleanup "proxy-only-explicit"
 assert_no_stale_state "proxy-only-explicit"
 
 log "default connect mode data-plane lifecycle"
 connect_profile "default-mode" "${PROFILE_ID}"
+assert_active_proxy_only_control_plane "default-mode"
+DEFAULT_RUNTIME_CONFIG_PATH="${ACTIVE_RUNTIME_CONFIG_PATH}"
 assert_loopback_listeners "default-mode"
 assert_proxy_egress socks "default-mode"
 assert_proxy_egress http "default-mode"
 assert_current_runtime_config_artifacts_safe "default-mode"
 disconnect_profile "default-mode"
+assert_runtime_config_removed "default-mode" "${DEFAULT_RUNTIME_CONFIG_PATH}"
 assert_proxy_cleanup "default-mode"
 assert_no_stale_state "default-mode"
 
