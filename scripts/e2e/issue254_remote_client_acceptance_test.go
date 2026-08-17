@@ -6,21 +6,20 @@ import (
 	"testing"
 )
 
-func TestIssue254RemoteClientAcceptanceUsesOrdinaryUserWithoutInternalGroups(t *testing.T) {
+func TestIssue254RemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testing.T) {
 	data, err := os.ReadFile("issue254-remote-client-acceptance.sh")
 	if err != nil {
 		t.Fatalf("read issue 254 remote-client acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
-		`-g "${ORDINARY_PRIMARY_GROUP}"`,
-		`-G "${ORDINARY_PRIMARY_GROUP}"`,
-		"systemd-journal",
+		"id -nG",
+		"ordinary-user acceptance must not run as root",
+		"ordinary_user_without_podlaz_group",
 		"connect --mode proxy-only",
 		"recover --json",
 		"Startup recovery scan: clean for active connection",
 		"logs \"--${mode}\" --since 36h",
-		"ordinary_user_without_internal_groups",
 		"proxy_status_doctor_recover_consistent",
 	} {
 		if !strings.Contains(script, required) {
@@ -28,12 +27,15 @@ func TestIssue254RemoteClientAcceptanceUsesOrdinaryUserWithoutInternalGroups(t *
 		}
 	}
 	for _, forbidden := range []string{
+		"runuser",
+		"usermod",
+		"gpasswd",
 		`-g podlaz`,
 		`-G podlaz`,
 		`-G "${LOG_READER_ACCESS_GROUP}"`,
 	} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("issue 254 ordinary-user acceptance must not grant internal group access: %q", forbidden)
+			t.Fatalf("issue 254 ordinary-user acceptance must preserve the login identity without granting or rewriting groups: %q", forbidden)
 		}
 	}
 }
