@@ -22,16 +22,16 @@ func (s *startupScanState) FilterForStatus(status api.StatusResponse, runtimeDir
 
 func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.StatusResponse, runtimeDir string) recovery.PlanResult {
 	out := cloneRecoveryPlan(scan)
-	if status.Connection != "active" || status.Mode != planner.ModeTun {
+	if status.Connection != "active" || !supportsActiveRuntimeOwnershipFiltering(status.Mode) {
 		return out
 	}
 	tx, ok, err := activeCommittedTransaction(status, runtimeDir)
 	if err != nil {
-		out.Warnings = append(out.Warnings, recovery.Warning{Target: "active TUN transaction", Message: err.Error()})
+		out.Warnings = append(out.Warnings, recovery.Warning{Target: "active transaction", Message: err.Error()})
 		return out
 	}
 	if !ok {
-		out.Warnings = append(out.Warnings, recovery.Warning{Target: "active TUN transaction", Message: "could not identify a committed transaction owning the active runtime"})
+		out.Warnings = append(out.Warnings, recovery.Warning{Target: "active transaction", Message: "could not identify a committed transaction owning the active runtime"})
 		return out
 	}
 	filtered := out.Candidates[:0]
@@ -43,6 +43,15 @@ func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.Stat
 	}
 	out.Candidates = filtered
 	return out
+}
+
+func supportsActiveRuntimeOwnershipFiltering(mode string) bool {
+	switch mode {
+	case planner.ModeProxyOnly, planner.ModeTun:
+		return true
+	default:
+		return false
+	}
 }
 
 func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (txstate.Transaction, bool, error) {
@@ -77,6 +86,9 @@ func activeCommittedTransaction(status api.StatusResponse, runtimeDir string) (t
 	}
 	if tx.Owner != txstate.TransactionOwner || tx.State != txstate.TransactionCommitted {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s has invalid owner or state", activeID)
+	}
+	if tx.Mode != status.Mode {
+		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s mode does not match status", activeID)
 	}
 	if status.ProfileID != "" && tx.ProfileID != status.ProfileID {
 		return txstate.Transaction{}, false, fmt.Errorf("active transaction %s profile does not match status", activeID)
