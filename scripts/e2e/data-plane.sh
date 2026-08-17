@@ -209,21 +209,28 @@ assert_loopback_listeners() {
 
 assert_recovery_plan_empty() {
   local phase="$1"
-  python3 - "${LAST_STDOUT}" "${phase}" <<'PY'
+  if ! python3 - "${LAST_STDOUT}" "${phase}" <<'PY'
 import json
 import sys
 
 path, phase = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as handle:
     payload = json.load(handle)
-recovery = payload.get("recovery", {})
-candidates = recovery.get("candidates", [])
-warnings = recovery.get("warnings", [])
-if candidates or warnings:
-    print(f"{phase}: recovery plan is not empty", file=sys.stderr)
-    print(json.dumps({"candidates": candidates, "warnings": warnings}, ensure_ascii=False, indent=2), file=sys.stderr)
-    sys.exit(1)
+if payload.get("status") != "ok":
+    raise SystemExit(f"{phase}: recover JSON status is not ok")
+if payload.get("warnings"):
+    raise SystemExit(f"{phase}: top-level recover JSON warnings remain")
+recovery = payload.get("recovery")
+if not isinstance(recovery, dict):
+    raise SystemExit(f"{phase}: recovery payload is missing")
+if recovery.get("candidates"):
+    raise SystemExit(f"{phase}: recovery candidates remain")
+if recovery.get("warnings"):
+    raise SystemExit(f"{phase}: recovery inspection warnings remain")
 PY
+  then
+    fail "${phase}: recover --json is not clean"
+  fi
 }
 
 assert_active_proxy_only_control_plane() {
