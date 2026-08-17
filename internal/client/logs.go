@@ -52,7 +52,7 @@ func (c LogsClient) Run(ctx context.Context, stdout io.Writer, opts podlogs.Opti
 		if fallbackErr == nil {
 			return nil
 		}
-		return abstractSocketFallbackError(err, fallbackErr)
+		return logsAbstractSocketFallbackError(err, fallbackErr)
 	}
 	return err
 }
@@ -95,10 +95,27 @@ func (c LogsClient) runViaSocket(ctx context.Context, stdout io.Writer, opts pod
 		}
 		return fmt.Errorf("read daemon logs stream: %w", err)
 	}
+	// A follow stream may observe a clean EOF concurrently with caller
+	// cancellation. Preserve the CLI signal contract instead of treating that
+	// race as a successful end-of-stream.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if resp.Trailer.Get(api.LogsErrorTrailer) != "" {
 		return errors.New("daemon logs backend failed")
 	}
 	return nil
+}
+
+func logsAbstractSocketFallbackError(filesystemErr, abstractErr error) error {
+	if !IsDaemonUnavailable(abstractErr) {
+		return abstractErr
+	}
+	return daemonUnavailableError{
+		detail:           "daemon logs IPC is unavailable; podlazd is not listening on the packaged abstract socket. Run `podlaz doctor` or restart podlazd",
+		cause:            errors.Join(filesystemErr, abstractErr),
+		permissionDenied: errors.Is(filesystemErr, ErrDaemonPermissionDenied),
+	}
 }
 
 func daemonLogsRequestPath(opts podlogs.Options) string {

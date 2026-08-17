@@ -3,9 +3,13 @@ package client
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -71,5 +75,67 @@ func TestIssue254LogsClientReturnsLateBackendFailure(t *testing.T) {
 	}
 	if stdout.String() != "podlaz daemon logs\n" {
 		t.Fatalf("stdout=%q", stdout.String())
+	}
+}
+
+func TestIssue254LogsClientPreservesFollowCancellation(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	started := make(chan struct{})
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(started)
+		<-r.Context().Done()
+	})}
+	go func() { _ = server.Serve(listener) }()
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- (LogsClient{SocketPath: socketPath, DialTimeout: time.Second}).Run(ctx, &bytes.Buffer{}, podlogs.Options{Follow: true})
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("follow request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("follow cancellation error=%v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("follow request did not return after cancellation")
+	}
+}
+
+func TestIssue254LogsAbstractFallbackMessageDoesNotClaimPolkitAuthorization(t *testing.T) {
+	filesystemErr := daemonUnavailableError{
+		detail:           "filesystem permission denied",
+		cause:            os.ErrPermission,
+		permissionDenied: true,
+	}
+	abstractErr := daemonUnavailableError{
+		detail: "abstract socket refused",
+		cause:  syscall.ECONNREFUSED,
+	}
+
+	err := logsAbstractSocketFallbackError(filesystemErr, abstractErr)
+	if !errors.Is(err, ErrDaemonUnavailable) {
+		t.Fatalf("fallback error=%v, want ErrDaemonUnavailable", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "polkit") {
+		t.Fatalf("read-only logs fallback must not claim polkit authorization: %v", err)
 	}
 }
