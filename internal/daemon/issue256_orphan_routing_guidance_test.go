@@ -56,3 +56,21 @@ func TestIssue256TransactionBackedRoutingKeepsRecoveryGuidance(t *testing.T) {
 		t.Fatalf("transaction-backed routing must not recommend manual cleanup: %s", message)
 	}
 }
+
+func TestIssue256InvalidTransactionDoesNotGrantRoutingRecoveryAuthority(t *testing.T) {
+	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
+		{Kind: "transaction-file", Name: "invalid-or-unreadable", Status: netsnapshot.StatusDetected},
+		{Kind: "route", Name: "51820", Status: netsnapshot.StatusDetected},
+		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected},
+	}}, "block")
+	if err == nil {
+		t.Fatal("expected invalid-transaction routing preflight blocker")
+	}
+	message := err.Error()
+	if strings.Contains(message, "recover --execute") {
+		t.Fatalf("invalid transaction evidence must not authorize routing recovery guidance: %s", message)
+	}
+	if !strings.Contains(message, "ownership evidence is unavailable") {
+		t.Fatalf("invalid transaction evidence must remain fail-closed: %s", message)
+	}
+}
