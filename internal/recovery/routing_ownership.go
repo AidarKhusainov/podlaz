@@ -10,21 +10,21 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-// TransactionOwnsObservedRoutingResource reports whether a validated transaction
-// contains rollback metadata whose exact deletion identity matches one observed
-// route or policy rule. It deliberately does not infer ownership from a reserved
-// table or priority alone.
+// TransactionOwnsObservedRoutingResource reports whether recovery's validated
+// rollback projection contains an exact deletion identity matching one observed
+// route or policy rule. Reserved tables and priorities never grant authority.
 func TransactionOwnsObservedRoutingResource(tx txstate.Transaction, kind, target, raw string) bool {
 	if !tx.RequiresRecovery() {
 		return false
 	}
+	rollback := ProjectRollbackMetadata(tx).Rollback
 	switch strings.TrimSpace(kind) {
 	case "route":
 		observed, ok := parseObservedRoute(target, raw)
 		if !ok {
 			return false
 		}
-		for _, route := range tx.Rollback.Routes {
+		for _, route := range rollback.Routes {
 			if recoverableRouteRollback(route) && routeRollbackMatchesObserved(route, observed) {
 				return true
 			}
@@ -34,7 +34,7 @@ func TransactionOwnsObservedRoutingResource(tx txstate.Transaction, kind, target
 		if !ok {
 			return false
 		}
-		for _, rule := range tx.Rollback.PolicyRules {
+		for _, rule := range rollback.PolicyRules {
 			if recoverablePolicyRuleRollback(rule) && policyRuleRollbackMatchesObserved(rule, observed) {
 				return true
 			}
@@ -72,7 +72,7 @@ func recoverableRouteRollback(route txstate.RouteRollback) bool {
 		return false
 	}
 	dev := strings.TrimSpace(route.Dev)
-	return dev == managedInterface
+	return dev == "" || dev == managedInterface
 }
 
 func recoverablePolicyRuleRollback(rule txstate.PolicyRuleRollback) bool {
@@ -95,7 +95,15 @@ func routeRollbackMatchesObserved(route txstate.RouteRollback, observed observed
 	if !ok || cidr != observed.CIDR {
 		return false
 	}
-	return strings.TrimSpace(route.Via) == observed.Via && strings.TrimSpace(route.Dev) == observed.Dev
+	via := strings.TrimSpace(route.Via)
+	dev := strings.TrimSpace(route.Dev)
+	if via != "" && via != observed.Via {
+		return false
+	}
+	if dev != "" && dev != observed.Dev {
+		return false
+	}
+	return true
 }
 
 func policyRuleRollbackMatchesObserved(rule txstate.PolicyRuleRollback, observed observedPolicyRule) bool {
@@ -166,7 +174,7 @@ func parseObservedRoute(target, raw string) (observedRoute, bool) {
 			return observedRoute{}, false
 		}
 	}
-	return out, out.Dev != ""
+	return out, true
 }
 
 func parseObservedPolicyRule(target, raw string) (observedPolicyRule, bool) {
@@ -233,8 +241,8 @@ func normalizeObservedRoutingTable(value string) (string, bool) {
 	if value == planner.MainRoutingTable {
 		return planner.MainRoutingTable, true
 	}
-	if table, ok := managedTableToken(value); ok {
-		return table, true
+	if _, ok := managedTableToken(value); ok {
+		return managedRouteTableID, true
 	}
 	return "", false
 }
