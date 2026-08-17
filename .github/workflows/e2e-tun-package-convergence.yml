@@ -64,6 +64,11 @@ jobs:
         shell: bash
         run: bash scripts/e2e/issue247-log-window-acceptance.sh
 
+      - name: Run issue 254 remote-client acceptance
+        timeout-minutes: 5
+        shell: bash
+        run: bash scripts/e2e/issue254-remote-client-acceptance.sh
+
       - name: Recover and verify clean host state
         id: cleanup
         if: always()
