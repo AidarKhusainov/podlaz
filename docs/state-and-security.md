@@ -76,6 +76,17 @@ Xray-owned link.
 
 Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. Durable `desired_plan` content validates resource shape but never grants route, policy-rule, DNS, or nftables cleanup authority. `planned` contributes no network cleanup tuples. `applying` without durable applied/rollback proof is an ambiguous crash window and performs no such mutation. Later inactive recovery states use only exact durable ownership. The sole narrow syscall/persistence fallback is the daemon-owned TUN address in `applying`, using the pre-persisted name, ifindex, TUN kind, CIDR, and tracked-child appearance evidence and still requiring fail-closed host inspection. Desired-only main-table server bypass state must never be deleted by assumption. Ambiguous host state must be skipped, not guessed.
 
+Reserved Podlaz routing identifiers are layout signals, not cleanup authority.
+Policy-rule priorities `9999` and `10000`, routing table `51820`, and otherwise
+canonical-looking Podlaz route/rule shapes must never authorize deletion without
+matching durable ownership evidence. If such kernel routing survives after exact
+transaction ownership evidence is unavailable, TUN connect must fail before host
+mutation and classify the state as ambiguous/unrecoverable rather than directing
+the user to recovery that has no authority to act. Recovery remains read-only for
+that state and must not manufacture a cleanup candidate from reserved identifiers
+alone. Manual removal is appropriate only after an administrator independently
+proves ownership.
+
 A low-level composition executor must not perform hidden cleanup after a child apply method reports that it mutated state. It returns the partial non-zero applied step together with the error and reports that step to the persistence sink before returning the error. The transaction boundary persists that ownership and controls rollback timing: direct helpers perform one immediate bounded fail-safe rollback, while the production lifecycle persists diagnostics before invoking rollback. A zero step means no owned mutation was recorded and is not added to the rollback plan. An owner or target that does not exactly match the validated plan is rejected and never grants cleanup authority.
 
 Before active replacement, controlled handoff, transaction creation, or any
@@ -386,6 +397,14 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
   profile, and runtime-config metadata must agree. A missing id, duplicate match,
   load failure, or metadata mismatch leaves every candidate visible and adds an
   inspection warning.
+- For the intentionally non-transactional active `proxy-only` lifecycle, no TUN
+  transaction id is required. Its generated-runtime candidate may be filtered as
+  owned only when live status publishes a runtime-config path in that candidate
+  directory and the directory contains exactly that one non-directory entry.
+  Missing runtime-config identity, additional files/directories, or any other
+  candidate remain visible and fail closed. If an active proxy-only status does
+  publish an explicit transaction id, the normal exact transaction-backed
+  ownership validation remains authoritative.
 - Only resources with matching durable podlaz ownership records are omitted from
   active status. Foreign resources and mixed generated-config directories remain
   visible.
