@@ -27,12 +27,15 @@ func TestIssue256OrphanPolicyRoutingDoesNotPromiseUnauthoritativeRecovery(t *tes
 	}
 }
 
-func TestIssue256RecoverableStaleStateStillKeepsCanonicalRecoveryGuidance(t *testing.T) {
-	err := withTunFailurePhase("handoff", "", "not-started", &tunStalePodlazStateBlocker{Resources: []string{
-		"tun-device podlaz0",
-	}})
+func TestIssue256RecoverableTransactionKeepsCanonicalRecoveryGuidance(t *testing.T) {
+	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
+		{Kind: "transaction-file", Name: "tx-recoverable.json", Status: netsnapshot.StatusDetected, Detail: "state=committed requires daemon-owned recovery"},
+	}}, "block")
+	if err == nil {
+		t.Fatal("expected recoverable transaction preflight blocker")
+	}
 	if !strings.Contains(err.Error(), "plz recover --execute --yes") {
-		t.Fatalf("recoverable stale state should retain canonical recovery guidance: %s", err)
+		t.Fatalf("recoverable transaction should retain canonical recovery guidance: %s", err)
 	}
 }
 
