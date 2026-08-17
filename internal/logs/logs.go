@@ -184,17 +184,28 @@ func runJournalctlCommand(cmd journalctlCommand, cancel context.CancelFunc, stdo
 		errc <- scanResult{name: "stderr", err: err}
 	}()
 
-	waitErr := cmd.Wait()
+	// StdoutPipe/StderrPipe require callers to finish reading before Wait. Wait
+	// closes the pipes after the process exits, so calling it first races the
+	// readers and disproportionately affects daemon mode because it renders every
+	// journal line while core mode filters most lines before writing them.
 	var stdoutCount int
+	var scanErr error
 	for i := 0; i < 2; i++ {
 		result := <-errc
-		if result.err != nil {
-			cancel()
-			return stdoutCount, fmt.Errorf("read journalctl %s: %w", result.name, result.err)
-		}
 		if result.name == "stdout" {
 			stdoutCount = result.count
 		}
+		if result.err != nil && scanErr == nil {
+			scanErr = fmt.Errorf("read journalctl %s: %w", result.name, result.err)
+			// A failed output reader must not leave a long-running --follow child
+			// blocked on a pipe nobody will drain.
+			cancel()
+		}
+	}
+
+	waitErr := cmd.Wait()
+	if scanErr != nil {
+		return stdoutCount, scanErr
 	}
 	if waitErr != nil {
 		message := strings.TrimSpace(stderr.String())

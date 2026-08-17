@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/podlaz/internal/client"
 	"github.com/AidarKhusainov/podlaz/internal/logs"
 )
 
@@ -77,5 +76,5 @@ func runLogs(ctx context.Context, stdout io.Writer, opts options, logOptions log
 	if opts.logs != nil {
 		return opts.logs(ctx, stdout, logOptions)
 	}
-	return (client.LogsClient{}).Run(ctx, stdout, logOptions)
+	return logs.Run(ctx, stdout, logOptions)
 }
