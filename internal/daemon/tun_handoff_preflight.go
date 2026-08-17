@@ -146,14 +146,15 @@ Run:
 }
 
 type tunStalePodlazStateBlocker struct {
-	Resources []string
+	Resources                    []string
+	TransactionRecoveryAvailable bool
 }
 
 func (e *tunStalePodlazStateBlocker) Error() string {
 	if e == nil || len(e.Resources) == 0 {
 		return "podlaz: stale podlaz-owned networking state blocks TUN connect"
 	}
-	if staleResourcesAreRoutingOnly(e.Resources) {
+	if staleResourcesContainRouting(e.Resources) && !e.TransactionRecoveryAvailable {
 		return fmt.Sprintf(`podlaz: ambiguous stale routing state blocks TUN connect before network mutation.
 
 Detected:
@@ -175,20 +176,14 @@ Run:
   plz recover --execute --yes`, strings.Join(e.Resources, "\n  - "))
 }
 
-func staleResourcesAreRoutingOnly(resources []string) bool {
-	sawRouting := false
+func staleResourcesContainRouting(resources []string) bool {
 	for _, resource := range resources {
 		resource = strings.TrimSpace(resource)
-		if resource == "" {
-			continue
-		}
 		if strings.HasPrefix(resource, "policy-rule ") || strings.HasPrefix(resource, "route ") {
-			sawRouting = true
-			continue
+			return true
 		}
-		return false
 	}
-	return sawRouting
+	return false
 }
 
 func (m *XrayManager) prepareActivePodlazReplace(ctx context.Context, handoff string) error {
@@ -349,7 +344,23 @@ func stalePodlazStateBlocker(s netsnapshot.Snapshot) *tunStalePodlazStateBlocker
 	if len(resources) == 0 {
 		return nil
 	}
-	return &tunStalePodlazStateBlocker{Resources: resources}
+	return &tunStalePodlazStateBlocker{
+		Resources:                    resources,
+		TransactionRecoveryAvailable: staleStateHasTransactionRecoveryAuthority(s),
+	}
+}
+
+func staleStateHasTransactionRecoveryAuthority(s netsnapshot.Snapshot) bool {
+	for _, resource := range s.StaleResources {
+		if resource.Status != netsnapshot.StatusDetected || strings.TrimSpace(resource.Kind) != "transaction-file" {
+			continue
+		}
+		name := strings.TrimSpace(resource.Name)
+		if name != "" && name != "invalid-or-unreadable" {
+			return true
+		}
+	}
+	return false
 }
 
 func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
