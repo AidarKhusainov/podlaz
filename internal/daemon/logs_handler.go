@@ -53,6 +53,7 @@ func registerLogsHandlerWithDeps(mux *http.ServeMux, run daemonLogsRunner, autho
 		}
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Add("Trailer", api.LogsErrorTrailer)
 		stream := &daemonLogsHTTPWriter{dst: w, flush: opts.Follow}
 		if err := run(r.Context(), stream, opts); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(r.Context().Err(), context.Canceled) {
@@ -61,7 +62,12 @@ func registerLogsHandlerWithDeps(mux *http.ServeMux, run daemonLogsRunner, autho
 			log.Printf("podlazd: daemon logs request failed")
 			if stream.written == 0 {
 				http.Error(w, "daemon logs are unavailable", http.StatusServiceUnavailable)
+				return
 			}
+			// The stream may already have committed HTTP 200 (for example after
+			// the stable logs header). A generic trailer preserves runtime failure
+			// semantics without exposing journal stderr or secrets to the client.
+			w.Header().Set(api.LogsErrorTrailer, "backend-failed")
 		}
 	})
 }

@@ -42,7 +42,19 @@ func (c LogsClient) Run(ctx context.Context, stdout io.Writer, opts podlogs.Opti
 	if dialTimeout <= 0 {
 		dialTimeout = defaultStatusTimeout
 	}
-	return c.runViaSocket(ctx, stdout, opts, socketPath, dialTimeout)
+
+	err := c.runViaSocket(ctx, stdout, opts, socketPath, dialTimeout)
+	if err == nil {
+		return nil
+	}
+	if shouldTryAbstractSocket(socketPath, err) {
+		fallbackErr := c.runViaSocket(ctx, stdout, opts, api.AbstractSocketAddress(), dialTimeout)
+		if fallbackErr == nil {
+			return nil
+		}
+		return abstractSocketFallbackError(err, fallbackErr)
+	}
+	return err
 }
 
 func (c LogsClient) runViaSocket(ctx context.Context, stdout io.Writer, opts podlogs.Options, socketPath string, dialTimeout time.Duration) error {
@@ -74,9 +86,6 @@ func (c LogsClient) runViaSocket(ctx context.Context, stdout io.Writer, opts pod
 		if message == "" {
 			message = resp.Status
 		}
-		if resp.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("%w: %s", ErrDaemonPermissionDenied, message)
-		}
 		return fmt.Errorf("daemon logs request failed: %s", message)
 	}
 
@@ -85,6 +94,9 @@ func (c LogsClient) runViaSocket(ctx context.Context, stdout io.Writer, opts pod
 			return ctx.Err()
 		}
 		return fmt.Errorf("read daemon logs stream: %w", err)
+	}
+	if resp.Trailer.Get(api.LogsErrorTrailer) != "" {
+		return errors.New("daemon logs backend failed")
 	}
 	return nil
 }

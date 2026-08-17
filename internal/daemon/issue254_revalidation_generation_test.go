@@ -86,6 +86,88 @@ func TestIssue254NewerNetworkHintPreventsOlderTerminalPublication(t *testing.T) 
 	}
 }
 
+func TestIssue254SuccessfulOlderProofCannotHideNewerFailedRevalidation(t *testing.T) {
+	fingerprint := tunUplinkFingerprint{Interface: "wlan0", InterfaceIndex: 3, Gateway: "192.0.2.1", Addresses: "192.0.2.55/24"}
+	olderStarted := make(chan struct{})
+	releaseOlder := make(chan struct{})
+	freshStarted := make(chan struct{})
+	releaseFresh := make(chan struct{})
+	var verifyCalls atomic.Int32
+
+	runtime := newTunRevalidationRuntime(
+		func(context.Context) (tunRevalidationObservation, error) {
+			return tunRevalidationObservation{fingerprint: fingerprint}, nil
+		},
+		func(context.Context, tunRevalidationObservation) error {
+			switch verifyCalls.Add(1) {
+			case 1:
+				return nil
+			case 2:
+				close(olderStarted)
+				<-releaseOlder
+				return nil
+			default:
+				close(freshStarted)
+				<-releaseFresh
+				return newTunRevalidationVerificationError(api.TunHealthConnectivityFailed, errors.New("fresh scoped DNS verification failed"))
+			}
+		},
+	)
+	if err := runtime.Initialize(context.Background()); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	assertTunHealth(t, runtime.Health(), api.TunHealthVerified, 1, "")
+
+	var terminalCalls atomic.Int32
+	coordinator := newTunRevalidationOutcomeCoordinator(
+		func(ctx context.Context, trigger tunRevalidationTrigger) tunRevalidationOutcome {
+			return runtime.Revalidate(ctx, trigger)
+		},
+		func(context.Context, tunRevalidationOutcome) {
+			terminalCalls.Add(1)
+		},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go coordinator.Run(ctx)
+
+	// Resume must re-prove even though the fingerprint is unchanged.
+	coordinator.Notify(tunRevalidationTriggerResume)
+	select {
+	case <-olderStarted:
+	case <-time.After(time.Second):
+		t.Fatal("resume revalidation did not reach verification")
+	}
+	assertTunHealth(t, runtime.Health(), api.TunHealthRevalidating, 1, api.TunHealthUplinkRevalidating)
+
+	// A second network hint is accepted before the successful older proof may
+	// return. That success is now superseded and must never become visible as
+	// verified while the fresh proof is still pending.
+	coordinator.Notify(tunRevalidationTriggerRoute)
+	close(releaseOlder)
+	select {
+	case <-freshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("fresh revalidation did not start after superseding hint")
+	}
+	assertTunHealth(t, runtime.Health(), api.TunHealthRevalidating, 1, api.TunHealthUplinkRevalidating)
+
+	close(releaseFresh)
+	deadline := time.After(time.Second)
+	for terminalCalls.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("fresh terminal outcome was not handed off")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	assertTunHealth(t, runtime.Health(), api.TunHealthDegraded, 1, api.TunHealthConnectivityFailed)
+	if got := verifyCalls.Load(); got != 3 {
+		t.Fatalf("verification calls=%d, want exactly initial + superseded + fresh", got)
+	}
+}
+
 func TestIssue254HealthHidesResultFromSupersededPublicationRevision(t *testing.T) {
 	currentRevision := uint64(2)
 	runtime := newTunRevalidationRuntime(nil, nil)

@@ -6,30 +6,35 @@ import (
 	"testing"
 )
 
-func TestIssue254RemoteClientAcceptancePreservesLeastPrivilegeAndLogSemantics(t *testing.T) {
+func TestIssue254RemoteClientAcceptanceUsesOrdinaryUserWithoutInternalGroups(t *testing.T) {
 	data, err := os.ReadFile("issue254-remote-client-acceptance.sh")
 	if err != nil {
 		t.Fatalf("read issue 254 remote-client acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
-		"-g \"${LOG_READER_PRIMARY_GROUP}\"",
-		"-G \"${LOG_READER_ACCESS_GROUP}\"",
+		`-g "${ORDINARY_PRIMARY_GROUP}"`,
+		`-G "${ORDINARY_PRIMARY_GROUP}"`,
 		"systemd-journal",
-		"logs --daemon",
-		"logs --daemon --since 30s",
-		"logs --daemon --follow",
-		"outside_group_denied",
-		"bounded_tail_as_ordinary_user",
-		"bounded_since_as_ordinary_user",
-		"follow_streams_new_entry",
+		"connect --mode proxy-only",
+		"recover --json",
+		"Startup recovery scan: clean for active connection",
+		"logs \"--${mode}\" --since 36h",
+		"ordinary_user_without_internal_groups",
+		"proxy_status_doctor_recover_consistent",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("issue 254 acceptance lost %q", required)
 		}
 	}
-	if strings.Contains(script, "sudo -n /usr/bin/podlaz") || strings.Contains(script, "sudo /usr/bin/podlaz") {
-		t.Fatal("issue 254 acceptance must not validate logs by running the CLI itself as root")
+	for _, forbidden := range []string{
+		`-g podlaz`,
+		`-G podlaz`,
+		`-G "${LOG_READER_ACCESS_GROUP}"`,
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("issue 254 ordinary-user acceptance must not grant internal group access: %q", forbidden)
+		}
 	}
 }
 

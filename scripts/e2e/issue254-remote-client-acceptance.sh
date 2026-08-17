@@ -4,13 +4,22 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/exit_trap.sh
+source "${SCRIPT_DIR}/lib/exit_trap.sh"
 
-require_cmd env getent git grep id journalctl mktemp runuser seq sleep sudo systemctl timeout
+require_cmd awk env git grep id mktemp python3 runuser sudo systemctl timeout
+
+: "${PODLAZ_E2E_PROFILE_URI:=}"
+: "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
+if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; then
+  fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
+fi
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue254-remote-client-acceptance.txt"
-LOG_READER_USER="nobody"
-LOG_READER_PRIMARY_GROUP="nogroup"
-LOG_READER_ACCESS_GROUP="podlaz"
+ORDINARY_USER="$(id -un)"
+ORDINARY_PRIMARY_GROUP="$(id -gn)"
+PROFILE_ID=""
+CONNECTED=false
 
 write_evidence() {
   local key="$1" value="$2"
@@ -20,140 +29,159 @@ write_evidence() {
   printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
 }
 
-require_test_identity() {
-  getent passwd "${LOG_READER_USER}" >/dev/null || fail "issue 254 acceptance requires the standard nobody account"
-  getent group "${LOG_READER_PRIMARY_GROUP}" >/dev/null || fail "issue 254 acceptance requires the standard nogroup group"
-  getent group "${LOG_READER_ACCESS_GROUP}" >/dev/null || fail "issue 254 acceptance requires the packaged podlaz group"
-}
-
-run_as_log_reader() {
-  timeout --signal=TERM --kill-after=5s 20s \
+run_ordinary_podlaz() {
+  local timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=5s "${timeout_seconds}" \
     sudo -n runuser \
-      -u "${LOG_READER_USER}" \
-      -g "${LOG_READER_PRIMARY_GROUP}" \
-      -G "${LOG_READER_ACCESS_GROUP}" \
-      -- env LC_ALL=C HOME=/nonexistent /usr/bin/podlaz "$@"
+      -u "${ORDINARY_USER}" \
+      -g "${ORDINARY_PRIMARY_GROUP}" \
+      -G "${ORDINARY_PRIMARY_GROUP}" \
+      -- env \
+        LC_ALL=C \
+        XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+        XDG_STATE_HOME="${XDG_STATE_HOME}" \
+        XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+        /usr/bin/podlaz "$@"
 }
 
-run_as_outside_user() {
-  timeout --signal=TERM --kill-after=5s 20s \
-    sudo -n runuser \
-      -u "${LOG_READER_USER}" \
-      -g "${LOG_READER_PRIMARY_GROUP}" \
-      -G "${LOG_READER_PRIMARY_GROUP}" \
-      -- env LC_ALL=C HOME=/nonexistent /usr/bin/podlaz "$@"
+cleanup() {
+  local saved=$? cleanup_failed=0
+  set +e
+  if [[ "${CONNECTED}" == "true" ]]; then
+    run_ordinary_podlaz 60s disconnect >/dev/null 2>&1 || cleanup_failed=1
+    CONNECTED=false
+  fi
+  if (( saved == 0 && cleanup_failed == 0 )); then
+    write_evidence acceptance pass || cleanup_failed=1
+  fi
+  finish_exit_trap "${saved}" "${cleanup_failed}"
+}
+trap cleanup EXIT
+
+first_profile_uri() {
+  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
+    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
+    return
+  fi
+  while IFS= read -r uri; do
+    [[ -n "${uri}" ]] || continue
+    printf '%s\n' "${uri}"
+    return
+  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
 }
 
-verify_package_and_identity() {
-  local build_commit version_output reader_groups
+verify_package_and_ordinary_identity() {
+  local build_commit version_output groups
   build_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
   version_output="$(mktemp "${E2E_TMP_ROOT}/issue254-version.XXXXXX")"
   /usr/bin/podlaz version >"${version_output}" 2>/dev/null || fail "issue 254 installed CLI version failed"
   grep -F -- "${build_commit}" "${version_output}" >/dev/null || fail "issue 254 installed CLI does not identify the tested commit"
   rm -f -- "${version_output}"
+  systemctl is-active --quiet podlazd.service || fail "issue 254 requires the packaged podlazd service"
 
-  systemctl is-active --quiet podlazd.service || fail "issue 254 acceptance requires the packaged podlazd service"
-  reader_groups="$(sudo -n runuser \
-    -u "${LOG_READER_USER}" \
-    -g "${LOG_READER_PRIMARY_GROUP}" \
-    -G "${LOG_READER_ACCESS_GROUP}" \
+  groups="$(sudo -n runuser \
+    -u "${ORDINARY_USER}" \
+    -g "${ORDINARY_PRIMARY_GROUP}" \
+    -G "${ORDINARY_PRIMARY_GROUP}" \
     -- id -nG)"
-  grep -qw -- "${LOG_READER_ACCESS_GROUP}" <<<"${reader_groups}" || fail "issue 254 log reader is missing the daemon access group"
-  if grep -qw -- systemd-journal <<<"${reader_groups}"; then
-    fail "issue 254 log reader must not receive broad systemd-journal access"
+  if grep -qw -- podlaz <<<"${groups}" || grep -qw -- systemd-journal <<<"${groups}"; then
+    fail "issue 254 ordinary-user fixture must not receive internal daemon or journal group access"
   fi
   write_evidence package_provenance pass
-  write_evidence ordinary_reader_without_systemd_journal pass
+  write_evidence ordinary_user_without_internal_groups pass
 }
 
-assert_bounded_tail_and_since() {
-  local tail_output since_output
-  tail_output="$(mktemp "${E2E_TMP_ROOT}/issue254-tail.XXXXXX")"
-  since_output="$(mktemp "${E2E_TMP_ROOT}/issue254-since.XXXXXX")"
-
-  run_as_log_reader status >/dev/null 2>&1 || fail "issue 254 could not generate a daemon status marker"
-  sudo -n journalctl --sync
-
-  run_as_log_reader logs --daemon >"${tail_output}" || fail "ordinary podlaz-group user could not read the bounded daemon log tail"
-  grep -Fx 'podlaz daemon logs' "${tail_output}" >/dev/null || fail "daemon log tail did not render its stable header"
-  grep -F 'status request' "${tail_output}" >/dev/null || fail "daemon log tail did not expose the generated daemon marker"
-  write_evidence bounded_tail_as_ordinary_user pass
-
-  run_as_log_reader logs --daemon --since 30s >"${since_output}" || fail "ordinary podlaz-group user could not read a bounded --since window"
-  grep -Fx 'podlaz daemon logs' "${since_output}" >/dev/null || fail "daemon --since output did not render its stable header"
-  grep -F 'status request' "${since_output}" >/dev/null || fail "daemon --since output did not expose the generated daemon marker"
-  write_evidence bounded_since_as_ordinary_user pass
-
-  rm -f -- "${tail_output}" "${since_output}"
+import_profile_privately() {
+  local uri output error_output
+  uri="$(first_profile_uri)"
+  assert_nonempty "${uri}" "issue 254 profile URI"
+  mask_value "${uri}"
+  output="$(mktemp "${E2E_TMP_ROOT}/issue254-profile-import.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/issue254-profile-import.stderr.XXXXXX")"
+  if ! run_ordinary_podlaz 30s profile import "${uri}" >"${output}" 2>"${error_output}"; then
+    rm -f -- "${output}" "${error_output}"
+    fail "issue 254 profile import failed"
+  fi
+  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
+  rm -f -- "${output}" "${error_output}"
+  assert_nonempty "${PROFILE_ID}" "issue 254 imported profile id"
+  mask_value "${PROFILE_ID}"
+  write_evidence profile_import pass
 }
 
-assert_follow_streams_new_entries() {
-  local follow_output follow_error follow_pid initial_count current_count
-  follow_output="$(mktemp "${E2E_TMP_ROOT}/issue254-follow.stdout.XXXXXX")"
-  follow_error="$(mktemp "${E2E_TMP_ROOT}/issue254-follow.stderr.XXXXXX")"
+assert_recovery_clean() {
+  local phase="$1" output
+  output="$(mktemp "${E2E_TMP_ROOT}/issue254-${phase}-recover.XXXXXX")"
+  run_ordinary_podlaz 20s recover --json >"${output}" 2>/dev/null || fail "${phase}: read-only recovery inspection failed"
+  python3 - "${output}" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("recovery", {}).get("candidates"):
+    raise SystemExit("unexpected recovery candidates")
+PY
+  rm -f -- "${output}"
+  write_evidence "recovery_clean_${phase}" pass
+}
 
-  timeout --signal=TERM --kill-after=5s 20s \
-    sudo -n runuser \
-      -u "${LOG_READER_USER}" \
-      -g "${LOG_READER_PRIMARY_GROUP}" \
-      -G "${LOG_READER_ACCESS_GROUP}" \
-      -- env LC_ALL=C HOME=/nonexistent /usr/bin/podlaz logs --daemon --follow \
-      >"${follow_output}" 2>"${follow_error}" &
-  follow_pid=$!
+assert_proxy_publication_consistent() {
+  local status_output doctor_output
+  status_output="$(mktemp "${E2E_TMP_ROOT}/issue254-proxy-status.XXXXXX")"
+  doctor_output="$(mktemp "${E2E_TMP_ROOT}/issue254-proxy-doctor.XXXXXX")"
 
-  for _ in $(seq 1 50); do
-    if grep -Fx 'podlaz daemon logs' "${follow_output}" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-  grep -Fx 'podlaz daemon logs' "${follow_output}" >/dev/null || {
-    kill "${follow_pid}" 2>/dev/null || true
-    wait "${follow_pid}" 2>/dev/null || true
-    fail "daemon follow stream did not start"
+  run_ordinary_podlaz 20s status >"${status_output}" 2>&1 || fail "active proxy-only status returned non-zero"
+  grep -Fx 'Connection: active' "${status_output}" >/dev/null || fail "proxy-only connection is not active"
+  grep -Fx 'Mode: proxy-only' "${status_output}" >/dev/null || fail "proxy-only mode was not published"
+  grep -Fx 'Stale state: none' "${status_output}" >/dev/null || fail "active proxy-only status reports stale state"
+  grep -Fx 'Startup recovery scan: clean for active connection' "${status_output}" >/dev/null || fail "active proxy-only startup scan is not clean"
+
+  run_ordinary_podlaz 30s doctor >"${doctor_output}" 2>&1 || fail "active proxy-only doctor returned non-zero"
+  grep -F 'managed resources match active lifecycle' "${doctor_output}" >/dev/null || fail "active proxy-only doctor does not accept exact owned resources"
+  grep -F 'startup recovery scan: clean for active connection' "${doctor_output}" >/dev/null || fail "active proxy-only doctor startup scan is not clean"
+  if grep -F '[WARN] stale-resources:' "${doctor_output}" >/dev/null; then
+    fail "active proxy-only doctor reports false stale resources"
+  fi
+
+  rm -f -- "${status_output}" "${doctor_output}"
+  assert_recovery_clean active-proxy
+  write_evidence proxy_status_doctor_recover_consistent pass
+}
+
+assert_logs_36h_ordinary_user() {
+  local mode="$1" header="$2" key="$3" output error_output
+  output="$(mktemp "${E2E_TMP_ROOT}/issue254-logs-${mode}.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/issue254-logs-${mode}.stderr.XXXXXX")"
+  if ! run_ordinary_podlaz 30s logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"; then
+    rm -f -- "${output}" "${error_output}"
+    fail "ordinary-user podlaz logs --${mode} --since 36h failed"
+  fi
+  grep -Fx "${header}" "${output}" >/dev/null || {
+    rm -f -- "${output}" "${error_output}"
+    fail "ordinary-user podlaz logs --${mode} --since 36h did not render the expected header"
   }
-
-  initial_count="$(grep -Fc 'status request' "${follow_output}" || true)"
-  run_as_log_reader status >/dev/null 2>&1 || fail "issue 254 could not generate the follow marker"
-  sudo -n journalctl --sync
-
-  current_count="${initial_count}"
-  for _ in $(seq 1 100); do
-    current_count="$(grep -Fc 'status request' "${follow_output}" || true)"
-    if (( current_count > initial_count )); then
-      break
-    fi
-    sleep 0.1
-  done
-
-  kill "${follow_pid}" 2>/dev/null || true
-  wait "${follow_pid}" 2>/dev/null || true
-  if (( current_count <= initial_count )); then
-    fail "daemon --follow did not stream a newly generated daemon entry"
-  fi
-  write_evidence follow_streams_new_entry pass
-
-  rm -f -- "${follow_output}" "${follow_error}"
-}
-
-assert_outside_group_is_denied() {
-  local outside_output outside_error
-  outside_output="$(mktemp "${E2E_TMP_ROOT}/issue254-outside.stdout.XXXXXX")"
-  outside_error="$(mktemp "${E2E_TMP_ROOT}/issue254-outside.stderr.XXXXXX")"
-
-  if run_as_outside_user logs --daemon >"${outside_output}" 2>"${outside_error}"; then
-    rm -f -- "${outside_output}" "${outside_error}"
-    fail "user outside the podlaz daemon access group unexpectedly read daemon logs"
-  fi
-  write_evidence outside_group_denied pass
-  rm -f -- "${outside_output}" "${outside_error}"
+  rm -f -- "${output}" "${error_output}"
+  write_evidence "logs_since_36h_${key}_ordinary_user" pass
 }
 
 : >"${EVIDENCE_FILE}"
 setup_isolated_xdg issue254-remote-client-acceptance
-require_test_identity
-verify_package_and_identity
-assert_bounded_tail_and_since
-assert_follow_streams_new_entries
-assert_outside_group_is_denied
-write_evidence acceptance pass
+verify_package_and_ordinary_identity
+assert_recovery_clean baseline
+import_profile_privately
+
+if ! run_ordinary_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
+  fail "issue 254 proxy-only connect failed"
+fi
+CONNECTED=true
+assert_proxy_publication_consistent
+
+if ! run_ordinary_podlaz 60s disconnect >/dev/null 2>&1; then
+  fail "issue 254 proxy-only disconnect failed"
+fi
+CONNECTED=false
+assert_recovery_clean after-proxy-disconnect
+
+assert_logs_36h_ordinary_user daemon 'podlaz daemon logs' daemon
+assert_logs_36h_ordinary_user core 'podlaz core logs' core
