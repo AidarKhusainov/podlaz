@@ -301,7 +301,12 @@ authorize only the existing exact transaction-backed disconnect path; it does
 not authorize speculative repair or cleanup of foreign or ambiguous state.
 .TP
 .B doctor [--json]
-Print environment and runtime diagnostics.
+Print environment and runtime diagnostics. Daemon-backed diagnostics use typed
+lifecycle and transaction ownership to distinguish exact resources expected for
+a clean active TUN session from stale state. Missing resources, link identity
+mismatch, incomplete transaction authority, cleanup-required state, and ambiguous
+ownership remain warnings. Local fallback remains conservative and does not infer
+ownership without daemon authority. Diagnostics are read-only.
 .TP
 .B doctor --tun [--verbose|-v|--json]
 Run daemon-backed, read-only diagnostics for the active TUN session or return the
@@ -324,7 +329,26 @@ other VPNs, or browser state.
 Validate an explicitly supplied Xray-compatible core binary.
 .TP
 .B logs [--follow|-f] [--daemon] [--core] [--since <duration>]
-Read recent podlaz journal entries.
+Read recent podlaz journal entries. The
+.B --since
+value is one positive decimal integer followed by exactly one of
+.BR s ,
+.BR m ,
+or
+.BR h ,
+for example
+.BR 30s ,
+.BR 15m ,
+.BR 2h ,
+or
+.BR 36h ,
+up to
+.BR 720h .
+Zero, signed, fractional, compound, unsupported-unit, date-like, and native
+journalctl expressions are rejected as invalid usage before journalctl starts.
+Valid values are translated to one relative journal argument, for example
+.BR "--since -36h" .
+The same contract applies to daemon, core, and follow modes.
 .TP
 .B recover
 Inspect stale podlaz-owned recovery candidates without changing the host.
@@ -403,8 +427,16 @@ Provide the core binary path for
 .BR "doctor --core" .
 .TP
 .B --since <duration>
-Pass a journalctl-compatible time expression to
-.BR logs .
+For
+.BR logs ,
+accept exactly one positive decimal integer plus
+.BR s ,
+.BR m ,
+or
+.BR h ,
+with a maximum of
+.BR 720h .
+Invalid values return exit status 2 before journalctl is started.
 .SH EXIT STATUS
 .TP
 .B 0

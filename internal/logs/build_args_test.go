@@ -18,7 +18,7 @@ func TestBuildJournalctlArgsIssue160FlagMatrix(t *testing.T) {
 		{
 			name: "since replaces default line limit",
 			opts: Options{Since: "1m"},
-			want: []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "1m"},
+			want: []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-1m"},
 		},
 		{
 			name: "follow appends follow flag",
@@ -28,7 +28,7 @@ func TestBuildJournalctlArgsIssue160FlagMatrix(t *testing.T) {
 		{
 			name: "since and follow compose",
 			opts: Options{Since: "1m", Follow: true},
-			want: []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "1m", "--follow"},
+			want: []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-1m", "--follow"},
 		},
 	}
 

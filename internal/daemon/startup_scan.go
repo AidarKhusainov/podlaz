@@ -152,11 +152,11 @@ func withStartupScanStatus(status api.StatusResponse, scan recovery.PlanResult) 
 	return status
 }
 
-func withStartupScanDoctor(response api.DoctorResponse, scan recovery.PlanResult) api.DoctorResponse {
+func withStartupScanDoctor(response api.DoctorResponse, scan recovery.PlanResult, status api.StatusResponse) api.DoctorResponse {
 	check := api.DoctorCheck{
 		Name:     "startup-recovery-scan",
 		Severity: string(doctor.SeverityOK),
-		Message:  startupScanDoctorMessage(scan),
+		Message:  startupScanDoctorMessage(scan, status),
 	}
 	if len(scan.Candidates) > 0 || len(scan.Warnings) > 0 {
 		check.Severity = string(doctor.SeverityWarning)
@@ -204,8 +204,12 @@ func logStartupScan(scan recovery.PlanResult) {
 	log.Printf("podlazd: %s", render.Redact(strings.Join(parts, "; ")))
 }
 
-func startupScanDoctorMessage(scan recovery.PlanResult) string {
-	parts := []string{"startup recovery scan: " + startupScanHumanStatus(startupScanStatus(scan))}
+func startupScanDoctorMessage(scan recovery.PlanResult, status api.StatusResponse) string {
+	humanStatus := startupScanHumanStatus(startupScanStatus(scan))
+	if startupScanStatus(scan) == api.StartupScanStatusClean && status.Connection == "active" {
+		humanStatus = "clean for active connection"
+	}
+	parts := []string{"startup recovery scan: " + humanStatus}
 	if txID := firstStartupTransactionID(scan); txID != "" {
 		parts = append(parts, "pending transaction: "+txID)
 	}

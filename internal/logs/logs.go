@@ -8,14 +8,23 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/render"
 )
 
 const (
-	DaemonUnit   = "podlazd.service"
-	DefaultLines = "200"
+	DaemonUnit       = "podlazd.service"
+	DefaultLines     = "200"
+	maxSinceDuration = 30 * 24 * time.Hour
+)
+
+var (
+	ErrInvalidSinceDuration = errors.New("invalid logs --since duration")
+	sinceDurationPattern    = regexp.MustCompile(`^[0-9]+[smh]$`)
 )
 
 // Options describes the read-only log stream requested by the CLI.
@@ -25,8 +34,43 @@ type Options struct {
 	Core   bool
 }
 
+// ParseSinceDuration validates the product-owned --since grammar. The public
+// grammar is intentionally narrower than time.ParseDuration and journalctl:
+// one positive decimal integer followed by exactly one of s, m, or h. Decimal
+// leading zeros are accepted by the grammar and removed before backend use.
+func ParseSinceDuration(value string) (string, error) {
+	if !sinceDurationPattern.MatchString(value) {
+		return "", fmt.Errorf("%w: expected <positive integer><s|m|h>", ErrInvalidSinceDuration)
+	}
+
+	amount, err := strconv.ParseUint(value[:len(value)-1], 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("%w: duration is out of range", ErrInvalidSinceDuration)
+	}
+	if amount == 0 {
+		return "", fmt.Errorf("%w: duration must be positive", ErrInvalidSinceDuration)
+	}
+
+	canonical := strconv.FormatUint(amount, 10) + value[len(value)-1:]
+	duration, err := time.ParseDuration(canonical)
+	if err != nil {
+		return "", fmt.Errorf("%w: duration is out of range", ErrInvalidSinceDuration)
+	}
+	if duration <= 0 {
+		return "", fmt.Errorf("%w: duration must be positive", ErrInvalidSinceDuration)
+	}
+	if duration > maxSinceDuration {
+		return "", fmt.Errorf("%w: duration must not exceed 720h", ErrInvalidSinceDuration)
+	}
+	return canonical, nil
+}
+
 // Run prints recent podlaz logs from journald.
 func Run(ctx context.Context, stdout io.Writer, opts Options) error {
+	args, err := buildJournalctlArgs(opts)
+	if err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("journalctl"); err != nil {
 		return errors.New("journalctl is not available; install systemd journal tools or run on a systemd/journald host")
 	}
@@ -38,7 +82,7 @@ func Run(ctx context.Context, stdout io.Writer, opts Options) error {
 	if _, err := fmt.Fprintln(stdout, header); err != nil {
 		return fmt.Errorf("write logs header: %w", err)
 	}
-	count, err := runJournalctl(ctx, stdout, opts)
+	count, err := runJournalctl(ctx, stdout, args, opts.Core)
 	if err != nil {
 		return err
 	}
@@ -51,8 +95,18 @@ func Run(ctx context.Context, stdout io.Writer, opts Options) error {
 	return nil
 }
 
-// BuildJournalctlArgs returns the exact journalctl argument vector for daemon logs.
+// BuildJournalctlArgs returns the exact journalctl argument vector for a valid
+// product-level log request. Invalid --since values return nil and are surfaced
+// as ErrInvalidSinceDuration by Run/RunJournalctl before journalctl is started.
 func BuildJournalctlArgs(opts Options) []string {
+	args, err := buildJournalctlArgs(opts)
+	if err != nil {
+		return nil
+	}
+	return args
+}
+
+func buildJournalctlArgs(opts Options) ([]string, error) {
 	args := []string{
 		"--system",
 		"--unit", DaemonUnit,
@@ -60,24 +114,34 @@ func BuildJournalctlArgs(opts Options) []string {
 		"--output", "short",
 	}
 	if opts.Since != "" {
-		args = append(args, "--since", opts.Since)
+		since, err := ParseSinceDuration(opts.Since)
+		if err != nil {
+			return nil, err
+		}
+		// journalctl relative timestamps require an explicit sign. Podlaz owns
+		// the input grammar and translates it to one argv value; no shell is used.
+		args = append(args, "--since", "-"+since)
 	} else {
 		args = append(args, "--lines", DefaultLines)
 	}
 	if opts.Follow {
 		args = append(args, "--follow")
 	}
-	return args
+	return args, nil
 }
 
 // RunJournalctl executes journalctl and renders redacted output lines.
 func RunJournalctl(ctx context.Context, stdout io.Writer, opts Options) error {
-	_, err := runJournalctl(ctx, stdout, opts)
+	args, err := buildJournalctlArgs(opts)
+	if err != nil {
+		return err
+	}
+	_, err = runJournalctl(ctx, stdout, args, opts.Core)
 	return err
 }
 
-func runJournalctl(ctx context.Context, stdout io.Writer, opts Options) (int, error) {
-	cmd := exec.CommandContext(ctx, "journalctl", BuildJournalctlArgs(opts)...)
+func runJournalctl(ctx context.Context, stdout io.Writer, args []string, core bool) (int, error) {
+	cmd := exec.CommandContext(ctx, "journalctl", args...)
 
 	outPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -93,7 +157,7 @@ func runJournalctl(ctx context.Context, stdout io.Writer, opts Options) (int, er
 	}
 
 	var filter func(string) bool
-	if opts.Core {
+	if core {
 		filter = isCoreLogLine
 	}
 

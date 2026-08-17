@@ -48,6 +48,7 @@ type Options struct {
 	Runner                  CommandRunner
 	RuntimeDir              string
 	RuntimeDirOwnedByDaemon bool
+	Lifecycle               LifecycleDiagnosticContext
 }
 
 // Run executes safe diagnostics. It must not mutate system state.
@@ -104,6 +105,7 @@ func RunWithOptions(ctx context.Context, opts Options) Report {
 		nftOK:                   nftOK,
 		runtimeDir:              runtimeDir,
 		runtimeDirOwnedByDaemon: opts.RuntimeDirOwnedByDaemon,
+		lifecycle:               opts.Lifecycle,
 	}))
 
 	return Report{Source: SourceLocalFallback, Checks: checks}

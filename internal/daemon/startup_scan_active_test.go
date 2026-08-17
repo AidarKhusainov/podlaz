@@ -74,7 +74,7 @@ func TestFilterStartupScanExcludesOnlyResourcesOwnedByActiveCommittedTransaction
 	if publishedStatus.StartupScan == nil || publishedStatus.StartupScan.Status != api.StartupScanStatusClean || len(publishedStatus.StartupScan.Candidates) != 0 {
 		t.Fatalf("active resources were published as stale in status: %#v", publishedStatus.StartupScan)
 	}
-	publishedDoctor := withStartupScanDoctor(api.DoctorResponse{}, activeFiltered)
+	publishedDoctor := withStartupScanDoctor(api.DoctorResponse{}, activeFiltered, status)
 	if len(publishedDoctor.Checks) == 0 || publishedDoctor.Checks[len(publishedDoctor.Checks)-1].Severity != string(doctor.SeverityOK) {
 		t.Fatalf("active resources were published as stale in doctor: %#v", publishedDoctor.Checks)
 	}

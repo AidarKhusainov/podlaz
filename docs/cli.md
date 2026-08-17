@@ -212,6 +212,15 @@ Read-only diagnostics. `doctor --core --xray <path>` is local-only and may emit
 stable JSON. The `--network`, `--dns`, `--routes`, and `--firewall` scopes remain
 deferred.
 
+Daemon-backed base diagnostics interpret managed-looking resources through typed
+lifecycle authority instead of treating mere presence as stale state. During a
+clean committed active TUN session, the exact transaction-owned `podlaz0` link
+and `inet podlaz` table are expected. Missing resources, link identity mismatch,
+missing/incomplete transaction authority, cleanup-required state, and ambiguous
+ownership remain warnings. Local fallback has no daemon lifecycle authority and
+therefore stays conservative: managed-looking resources are not assumed owned.
+The check is read-only and never repairs or removes networking state.
+
 `doctor --tun` is daemon-backed and requires an active podlaz TUN session or a
 saved latest TUN report. It runs a bounded dependency-aware sequence for active
 session/ownership metadata, the VPN server bypass, IPv4 policy routing,
@@ -247,9 +256,16 @@ podlaz logs [--follow|-f] [--daemon] [--core] [--since <duration>]
 ```
 
 Read-only journal output. `--daemon` selects daemon logs. `--core` selects
-structural Xray lifecycle and child-output-observed events. Raw Xray stdout/stderr
-payloads, profile identifiers, endpoints, UUIDs, runtime-config paths, and other
-opaque child text are not persisted to journald. `logs --json` is deferred.
+structural Xray lifecycle and child-output-observed events. `--since` accepts
+exactly one positive decimal integer followed by one unit `s`, `m`, or `h`, for
+example `30s`, `15m`, `2h`, or `36h`, with a maximum of `720h`. Zero, signed,
+fractional, compound, unsupported-unit, date-like, and journalctl-native values
+are invalid usage and return exit code `2` before `journalctl` is started. Podlaz
+translates a valid duration to one relative journal argument such as
+`--since -36h`; the same normalization is used for daemon/core and follow modes.
+Raw Xray stdout/stderr payloads, profile identifiers, endpoints, UUIDs,
+runtime-config paths, and other opaque child text are not persisted to journald.
+`logs --json` is deferred.
 
 ```bash
 podlaz plan --mode proxy-only <profile-id> [--json]

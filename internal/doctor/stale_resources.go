@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -17,37 +19,15 @@ type staleResourceOptions struct {
 	nftOK                   bool
 	runtimeDir              string
 	runtimeDirOwnedByDaemon bool
+	lifecycle               LifecycleDiagnosticContext
 }
 
 func staleResources(ctx context.Context, runner CommandRunner, opts staleResourceOptions) Check {
 	var stale []string
-	var warnings []string
+	warnings := lifecycleContextWarnings(opts.lifecycle)
 
-	if opts.ipOK {
-		result, err := runCommand(ctx, runner, opts.ipPath, "link", "show", "dev", managedInterface)
-		switch {
-		case commandSucceeded(result, err):
-			stale = append(stale, fmt.Sprintf("interface %s exists", managedInterface))
-		case resourceMissing(result):
-		case commandFailedUnexpectedly(result, err):
-			warnings = append(warnings, fmt.Sprintf("cannot inspect interface %s: %s", managedInterface, commandFailureMessage(result, err)))
-		}
-	} else {
-		warnings = append(warnings, fmt.Sprintf("cannot inspect interface %s because ip is unavailable", managedInterface))
-	}
-
-	if opts.nftOK {
-		result, err := runCommand(ctx, runner, opts.nftPath, "list", "table", "inet", "podlaz")
-		switch {
-		case commandSucceeded(result, err):
-			stale = append(stale, fmt.Sprintf("nft table %s exists", managedNFTTable))
-		case resourceMissing(result):
-		case commandFailedUnexpectedly(result, err):
-			warnings = append(warnings, fmt.Sprintf("cannot inspect nft table %s: %s", managedNFTTable, commandFailureMessage(result, err)))
-		}
-	} else {
-		warnings = append(warnings, fmt.Sprintf("cannot inspect nft table %s because nft is unavailable", managedNFTTable))
-	}
+	inspectManagedInterface(ctx, runner, opts, &stale, &warnings)
+	inspectManagedNFTTable(ctx, runner, opts, &stale, &warnings)
 
 	if stat, err := os.Stat(opts.runtimeDir); err == nil {
 		if stat.IsDir() && opts.runtimeDirOwnedByDaemon {
@@ -63,19 +43,134 @@ func staleResources(ctx context.Context, runner CommandRunner, opts staleResourc
 
 	appendTransactionState(&stale, &warnings, opts.runtimeDir)
 
-	message := staleResourceMessage(stale, warnings)
+	message := staleResourceMessage(stale, warnings, opts.lifecycle)
 	if len(stale) > 0 || len(warnings) > 0 {
-		return Check{
-			Name:     "stale-resources",
-			Severity: SeverityWarning,
-			Message:  message,
+		return Check{Name: "stale-resources", Severity: SeverityWarning, Message: message}
+	}
+	return Check{Name: "stale-resources", Severity: SeverityOK, Message: message}
+}
+
+func inspectManagedInterface(ctx context.Context, runner CommandRunner, opts staleResourceOptions, stale, warnings *[]string) {
+	if !opts.ipOK {
+		*warnings = append(*warnings, fmt.Sprintf("cannot inspect interface %s because ip is unavailable", managedInterface))
+		return
+	}
+
+	args := []string{"link", "show", "dev", managedInterface}
+	if opts.lifecycle.Interface == ManagedResourceExpectedOwned {
+		args = []string{"-details", "-o", "link", "show", "dev", managedInterface}
+	}
+	result, err := runCommand(ctx, runner, opts.ipPath, args...)
+	switch {
+	case commandSucceeded(result, err):
+		switch opts.lifecycle.Interface {
+		case ManagedResourceExpectedOwned:
+			name, index, kind, ok := parseManagedLinkIdentity(result.Stdout)
+			if !ok || name != managedInterface || index != opts.lifecycle.InterfaceLinkIndex || kind != opts.lifecycle.InterfaceLinkKind || index <= 0 || kind != "tun" {
+				*warnings = append(*warnings, fmt.Sprintf("cannot prove interface %s belongs to the active transaction", managedInterface))
+			}
+		case ManagedResourceUnproven:
+			*warnings = append(*warnings, fmt.Sprintf("cannot prove interface %s belongs to the active transaction", managedInterface))
+		default:
+			*stale = append(*stale, fmt.Sprintf("interface %s exists", managedInterface))
+		}
+	case resourceMissing(result):
+		switch opts.lifecycle.Interface {
+		case ManagedResourceExpectedOwned:
+			*warnings = append(*warnings, fmt.Sprintf("expected interface %s is missing", managedInterface))
+		case ManagedResourceUnproven:
+			*warnings = append(*warnings, fmt.Sprintf("cannot prove whether interface %s should exist for the active transaction", managedInterface))
+		}
+	case commandFailedUnexpectedly(result, err):
+		*warnings = append(*warnings, fmt.Sprintf("cannot inspect interface %s: %s", managedInterface, commandFailureMessage(result, err)))
+	}
+}
+
+func inspectManagedNFTTable(ctx context.Context, runner CommandRunner, opts staleResourceOptions, stale, warnings *[]string) {
+	if !opts.nftOK {
+		*warnings = append(*warnings, fmt.Sprintf("cannot inspect nft table %s because nft is unavailable", managedNFTTable))
+		return
+	}
+
+	args := []string{"list", "table", "inet", "podlaz"}
+	if opts.lifecycle.NFTTable == ManagedResourceExpectedOwned {
+		// Numeric priority keeps the exact verifier deterministic across nft
+		// aliases, matching NftablesExecutor.Verify.
+		args = []string{"-y", "list", "table", "inet", "podlaz"}
+	}
+	result, err := runCommand(ctx, runner, opts.nftPath, args...)
+	switch {
+	case commandSucceeded(result, err):
+		switch opts.lifecycle.NFTTable {
+		case ManagedResourceExpectedOwned:
+			if opts.lifecycle.NFTPlan == nil {
+				*warnings = append(*warnings, fmt.Sprintf("cannot prove nft table %s belongs to the active transaction because the exact expected composition is unavailable", managedNFTTable))
+				return
+			}
+			if err := netexecutor.VerifyNftablesTableOutput(*opts.lifecycle.NFTPlan, result.Stdout); err != nil {
+				*warnings = append(*warnings, fmt.Sprintf("nft table %s does not match active transaction exact composition", managedNFTTable))
+			}
+		case ManagedResourceUnproven:
+			*warnings = append(*warnings, fmt.Sprintf("cannot prove nft table %s belongs to the active transaction", managedNFTTable))
+		default:
+			*stale = append(*stale, fmt.Sprintf("nft table %s exists", managedNFTTable))
+		}
+	case resourceMissing(result):
+		switch opts.lifecycle.NFTTable {
+		case ManagedResourceExpectedOwned:
+			*warnings = append(*warnings, fmt.Sprintf("expected nft table %s is missing", managedNFTTable))
+		case ManagedResourceUnproven:
+			*warnings = append(*warnings, fmt.Sprintf("cannot prove whether nft table %s should exist for the active transaction", managedNFTTable))
+		}
+	case commandFailedUnexpectedly(result, err):
+		*warnings = append(*warnings, fmt.Sprintf("cannot inspect nft table %s: %s", managedNFTTable, commandFailureMessage(result, err)))
+	}
+}
+
+func lifecycleContextWarnings(lifecycle LifecycleDiagnosticContext) []string {
+	if lifecycle.State != LifecycleActiveTUN {
+		return nil
+	}
+	warnings := make([]string, 0, 2)
+	switch {
+	case strings.TrimSpace(lifecycle.TransactionID) == "":
+		warnings = append(warnings, "active TUN lifecycle has no transaction id")
+	case lifecycle.TransactionState == "":
+		warnings = append(warnings, fmt.Sprintf("active transaction %s could not be confirmed", lifecycle.TransactionID))
+	case lifecycle.TransactionState != txstate.TransactionCommitted:
+		warnings = append(warnings, fmt.Sprintf("active transaction %s is %s, expected committed", lifecycle.TransactionID, lifecycle.TransactionState))
+	}
+	if lifecycle.TransactionRequiresCleanup {
+		warnings = append(warnings, fmt.Sprintf("active transaction %s requires cleanup", lifecycle.TransactionID))
+	}
+	return warnings
+}
+
+func parseManagedLinkIdentity(output string) (string, int, string, bool) {
+	line := ""
+	for _, candidate := range strings.Split(strings.TrimSpace(output), "\n") {
+		if strings.TrimSpace(candidate) != "" {
+			line = strings.TrimSpace(candidate)
+			break
 		}
 	}
-	return Check{
-		Name:     "stale-resources",
-		Severity: SeverityOK,
-		Message:  message,
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return "", 0, "", false
 	}
+	index, err := strconv.Atoi(strings.TrimSuffix(fields[0], ":"))
+	if err != nil || index <= 0 {
+		return "", 0, "", false
+	}
+	name := strings.Split(strings.TrimSuffix(fields[1], ":"), "@")[0]
+	kind := ""
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "type" && fields[i+1] == "tun" {
+			kind = "tun"
+			break
+		}
+	}
+	return name, index, kind, name != "" && kind != ""
 }
 
 func appendTransactionState(stale *[]string, warnings *[]string, runtimeDir string) {
@@ -97,7 +192,7 @@ func appendTransactionState(stale *[]string, warnings *[]string, runtimeDir stri
 	}
 }
 
-func staleResourceMessage(stale []string, warnings []string) string {
+func staleResourceMessage(stale []string, warnings []string, lifecycle LifecycleDiagnosticContext) string {
 	parts := make([]string, 0, 2)
 	if len(stale) > 0 {
 		parts = append(parts, "found "+strings.Join(stale, "; "))
@@ -106,6 +201,9 @@ func staleResourceMessage(stale []string, warnings []string) string {
 		parts = append(parts, "incomplete checks: "+strings.Join(warnings, "; "))
 	}
 	if len(parts) == 0 {
+		if lifecycle.State == LifecycleActiveTUN || lifecycle.State == LifecycleActiveProxy {
+			return "managed resources match active lifecycle"
+		}
 		return "no podlaz-owned resources found"
 	}
 	return strings.Join(parts, "; ")

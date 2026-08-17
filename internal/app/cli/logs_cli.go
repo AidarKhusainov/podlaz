@@ -68,6 +68,11 @@ func isLogsOption(arg string) bool {
 }
 
 func runLogs(ctx context.Context, stdout io.Writer, opts options, logOptions logs.Options) error {
+	if logOptions.Since != "" {
+		if _, err := logs.ParseSinceDuration(logOptions.Since); err != nil {
+			return usageError("%v", err)
+		}
+	}
 	if opts.logs != nil {
 		return opts.logs(ctx, stdout, logOptions)
 	}
