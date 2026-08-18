@@ -99,10 +99,10 @@ func TestNetworkSessionLifecycleArmsBeforeConnect(t *testing.T) {
 	runtimeDir := t.TempDir()
 	store := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
 	events := []string{}
+	store.afterSave = func() { events = append(events, "continuation-saved") }
 	inner := recordingLifecycle{events: &events}
 	lifecycle := newNetworkSessionLifecycle(inner, store)
 
-	store.afterSave = func() { events = append(events, "continuation-saved") }
 	if _, err := lifecycle.Connect(context.Background(), testContinuationRequest()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
