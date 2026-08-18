@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestNetworkSessionStartupGateBlocksLifecycleMutationsUntilReleased(t *testing.T) {
@@ -43,5 +45,39 @@ func TestNetworkSessionStartupGateStartsReleased(t *testing.T) {
 	}
 	if len(events) != 1 || events[0] != "connect" {
 		t.Fatalf("released startup gate did not delegate connect: %#v", events)
+	}
+}
+
+func TestApplyNetworkSessionResumeResultReleasesGateOnlyAfterSuccessfulResume(t *testing.T) {
+	gate := newNetworkSessionStartupMutationGate(networkSessionRecordingLifecycle{events: &[]string{}})
+	gate.Block()
+	response := api.RecoveryResponse{Mode: "execute"}
+
+	got := applyNetworkSessionResumeResult(response, gate, nil)
+
+	if gate.Blocked() {
+		t.Fatal("successful resume must release startup mutation gate")
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("successful resume warnings = %#v, want none", got.Warnings)
+	}
+}
+
+func TestApplyNetworkSessionResumeResultKeepsGateBlockedAndWarnsAfterFailedResume(t *testing.T) {
+	gate := newNetworkSessionStartupMutationGate(networkSessionRecordingLifecycle{events: &[]string{}})
+	gate.Block()
+	response := api.RecoveryResponse{Mode: "execute"}
+
+	got := applyNetworkSessionResumeResult(response, gate, errors.New("resume failed"))
+
+	if !gate.Blocked() {
+		t.Fatal("failed resume must keep startup mutation gate blocked")
+	}
+	if len(got.Warnings) != 1 {
+		t.Fatalf("failed resume warnings = %#v, want one actionable warning", got.Warnings)
+	}
+	warning := got.Warnings[0]
+	if warning.Target != "network session continuation" || warning.Message != networkSessionResumeWarningMessage {
+		t.Fatalf("failed resume warning = %#v", warning)
 	}
 }
