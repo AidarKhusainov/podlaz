@@ -10,6 +10,8 @@ import (
 
 var errNetworkSessionStartupRecoveryPending = errors.New("network session startup recovery is incomplete; run podlaz recover and retry")
 
+const networkSessionResumeWarningMessage = "cleanup completed but the current-boot network session could not be resumed"
+
 type networkSessionStartupMutationGate struct {
 	lifecycle lifecycleService
 
@@ -51,4 +53,12 @@ func (g *networkSessionStartupMutationGate) Disconnect(ctx context.Context) (api
 		return api.LifecycleResponse{}, errNetworkSessionStartupRecoveryPending
 	}
 	return g.lifecycle.Disconnect(ctx)
+}
+
+func withNetworkSessionResumeWarning(response api.RecoveryResponse) api.RecoveryResponse {
+	response.Warnings = append(response.Warnings, api.RecoveryWarning{
+		Target:  "network session continuation",
+		Message: networkSessionResumeWarningMessage,
+	})
+	return response
 }
