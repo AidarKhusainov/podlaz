@@ -248,17 +248,34 @@ func newNetworkSessionLifecycle(lifecycle lifecycleService, continuation network
 }
 
 func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	previous, previousExists, err := l.continuation.LoadCurrent()
+	if err != nil {
+		return api.LifecycleResponse{}, fmt.Errorf("load existing network session continuation before connect: %w", err)
+	}
 	if err := l.continuation.Save(request); err != nil {
 		return api.LifecycleResponse{}, err
 	}
-	response, err := l.lifecycle.Connect(ctx, request)
-	if err == nil {
+	response, connectErr := l.lifecycle.Connect(ctx, request)
+	if connectErr == nil {
 		return response, nil
 	}
-	if removeErr := l.continuation.Remove(); removeErr != nil {
-		return response, errors.Join(err, fmt.Errorf("disarm failed network session continuation: %w", removeErr))
+	if restoreErr := l.restorePreviousContinuation(previous, previousExists); restoreErr != nil {
+		return response, errors.Join(connectErr, restoreErr)
 	}
-	return response, err
+	return response, connectErr
+}
+
+func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.ConnectRequest, exists bool) error {
+	if exists {
+		if err := l.continuation.Save(previous); err != nil {
+			return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
+		}
+		return nil
+	}
+	if err := l.continuation.Remove(); err != nil {
+		return fmt.Errorf("disarm failed network session continuation: %w", err)
+	}
+	return nil
 }
 
 func (l *networkSessionLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
