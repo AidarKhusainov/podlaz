@@ -4,6 +4,10 @@ set -eu
 unit=podlazd.service
 marker_dir="${PODLAZ_MAINTSCRIPT_RUN_DIR:-/run/podlaz-maintscript}"
 marker="$marker_dir/repair-helper-enable"
+runtime_dir="${PODLAZ_RUNTIME_DIR:-/run/podlaz}"
+boot_id_path="${PODLAZ_BOOT_ID_PATH:-/proc/sys/kernel/random/boot_id}"
+continuation="$runtime_dir/network-session-continuation.json"
+legacy_upgrade_marker="$runtime_dir/legacy-upgrade-continuation"
 
 start_service() {
 	deb-systemd-invoke start "$1" >/dev/null || true
@@ -25,6 +29,48 @@ is_enabled() {
 		return 0
 	fi
 	systemctl is-enabled --quiet "$1" >/dev/null 2>&1
+}
+
+is_active() {
+	if ! command -v systemctl >/dev/null 2>&1; then
+		return 1
+	fi
+	systemctl is-active --quiet "$1" >/dev/null 2>&1
+}
+
+prepare_legacy_upgrade_continuation() {
+	# Releases that predate network-session-continuation cannot preserve their
+	# connect intent across the first package restart. Authorize the new daemon
+	# to reconstruct it only from exact current-boot transaction-owned runtime
+	# state. This marker contains no profile data and is not cleanup authority.
+	if [ -e "$continuation" ] || ! is_active "$unit"; then
+		return 0
+	fi
+	if [ ! -d "$runtime_dir" ] || [ ! -r "$boot_id_path" ]; then
+		return 0
+	fi
+
+	boot_id="$(cat "$boot_id_path" 2>/dev/null || true)"
+	if [ -z "$boot_id" ]; then
+		return 0
+	fi
+
+	old_umask="$(umask)"
+	umask 077
+	tmp="$runtime_dir/.legacy-upgrade-continuation.$$"
+	trap 'rm -f "$tmp" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+	if ! printf '%s\n' "$boot_id" > "$tmp"; then
+		umask "$old_umask"
+		return 0
+	fi
+	chmod 0600 "$tmp" >/dev/null 2>&1 || {
+		rm -f "$tmp" >/dev/null 2>&1 || true
+		umask "$old_umask"
+		return 0
+	}
+	mv -f "$tmp" "$legacy_upgrade_marker"
+	trap - EXIT HUP INT TERM
+	umask "$old_umask"
 }
 
 repair_stale_enablement() {
@@ -70,6 +116,7 @@ fi
 reload_systemd
 
 if command -v deb-systemd-invoke >/dev/null 2>&1 && is_enabled "$unit"; then
+	prepare_legacy_upgrade_continuation
 	try_restart_service "$unit"
 	start_service "$unit"
 fi
