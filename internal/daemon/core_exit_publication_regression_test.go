@@ -65,6 +65,13 @@ func TestCustomServerStatusOmitsTransactionIDOutsideActiveTun(t *testing.T) {
 	if status.ActiveTransactionID != "" {
 		t.Fatalf("custom error status must not publish an active transaction id: %#v", status)
 	}
+
+	// This test injects an impossible active TUN state without a transaction
+	// solely to exercise publication. Restore a valid inactive lifecycle before
+	// the server cleanup runs: shutdown errors are now intentionally propagated.
+	manager.mu.Lock()
+	manager.state = inactiveXrayState()
+	manager.mu.Unlock()
 }
 
 func TestUnexpectedTunCoreExitRefreshesRecoverySnapshotWithBoundedContext(t *testing.T) {
