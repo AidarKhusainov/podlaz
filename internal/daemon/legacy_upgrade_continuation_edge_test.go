@@ -27,6 +27,28 @@ func TestDecodeLegacyStreamSettingsAcceptsOmittedOptionalTransportObject(t *test
 	}
 }
 
+func TestReadPrivateLegacyRuntimeConfigAcceptsOnlyDaemonGeneratedModes(t *testing.T) {
+	for _, mode := range []os.FileMode{0o600, 0o640} {
+		t.Run(mode.String(), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "runtime.json")
+			if err := os.WriteFile(path, []byte(`{"outbounds":[]}`), mode); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readPrivateLegacyRuntimeConfig(path); err != nil {
+				t.Fatalf("mode %o must match supported daemon runtime-config permissions: %v", mode, err)
+			}
+		})
+	}
+
+	path := filepath.Join(t.TempDir(), "runtime.json")
+	if err := os.WriteFile(path, []byte(`{"outbounds":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPrivateLegacyRuntimeConfig(path); err == nil {
+		t.Fatal("world-readable legacy runtime config must be rejected")
+	}
+}
+
 func TestReadPrivateLegacyRuntimeConfigRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.json")
