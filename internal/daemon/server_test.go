@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,15 +89,17 @@ func TestServerExposesDoctorOverUnixSocket(t *testing.T) {
 	}
 }
 
-func TestServerDoesNotStartupScanBeforeLock(t *testing.T) {
+func TestServerDoesNotStartupScanBeforeLiveLockOwnership(t *testing.T) {
 	runtimeDir := t.TempDir()
 	lockPath := api.LockPath(runtimeDir)
-	if err := os.WriteFile(lockPath, []byte("owned by another daemon"), 0o600); err != nil {
-		t.Fatal(err)
+	held, err := acquireDaemonLock(lockPath)
+	if err != nil {
+		t.Fatalf("acquire live daemon lock: %v", err)
 	}
+	defer held.Close()
 	var scanned bool
 
-	err := (Server{
+	err = (Server{
 		RuntimeDir: runtimeDir,
 		startupScan: func(context.Context) recovery.PlanResult {
 			scanned = true
@@ -104,8 +107,8 @@ func TestServerDoesNotStartupScanBeforeLock(t *testing.T) {
 		},
 	}).Run(context.Background())
 
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("expected lock acquisition error, got %v", err)
+	if !errors.Is(err, errDaemonLockHeld) {
+		t.Fatalf("expected live lock acquisition error, got %v", err)
 	}
 	if scanned {
 		t.Fatal("startup scan must not run before daemon lock acquisition")
