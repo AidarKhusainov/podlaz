@@ -15,7 +15,7 @@ jobs:
     name: Installed package TUN convergence
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
-    timeout-minutes: 260
+    timeout-minutes: 340
     env:
       PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
       PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
@@ -54,6 +54,33 @@ jobs:
           sudo -n systemctl reset-failed podlazd.service || true
           sudo -n systemctl start podlazd.service
           bash scripts/e2e/issue256-package-acceptance.sh
+
+      - name: Download latest released package for issue 259
+        timeout-minutes: 10
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          command -v gh >/dev/null || { echo "gh CLI is required" >&2; exit 1; }
+          arch="$(dpkg --print-architecture)"
+          release_dir="${RUNNER_TEMP}/podlaz-issue259-release"
+          rm -rf "${release_dir}"
+          mkdir -p "${release_dir}"
+          gh release download \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "podlaz_*_linux_${arch}.deb" \
+            --dir "${release_dir}"
+          mapfile -t release_debs < <(find "${release_dir}" -maxdepth 1 -type f -name "podlaz_*_linux_${arch}.deb" -print | sort)
+          if [[ "${#release_debs[@]}" -ne 1 ]]; then
+            echo "expected exactly one latest-release ${arch} Debian asset, found ${#release_debs[@]}" >&2
+            exit 1
+          fi
+          echo "PODLAZ_E2E_BASE_DEB=${release_debs[0]}" >>"${GITHUB_ENV}"
+
+      - name: Run issue 259 network-session continuity acceptance
+        timeout-minutes: 75
+        shell: bash
+        run: bash scripts/e2e/issue259-package-acceptance.sh
 
       - name: Run issue 241 installed-package acceptance
         timeout-minutes: 30
