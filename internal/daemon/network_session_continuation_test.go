@@ -11,18 +11,18 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-type recordingLifecycle struct {
+type networkSessionRecordingLifecycle struct {
 	events        *[]string
 	connectErr    error
 	disconnectErr error
 }
 
-func (l recordingLifecycle) Connect(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+func (l networkSessionRecordingLifecycle) Connect(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
 	*l.events = append(*l.events, "connect")
 	return api.LifecycleResponse{Connection: "active", Proxy: "inactive", TUN: "active"}, l.connectErr
 }
 
-func (l recordingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+func (l networkSessionRecordingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
 	*l.events = append(*l.events, "disconnect")
 	return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, l.disconnectErr
 }
@@ -100,7 +100,7 @@ func TestNetworkSessionLifecycleArmsBeforeConnect(t *testing.T) {
 	store := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
 	events := []string{}
 	store.afterSave = func() { events = append(events, "continuation-saved") }
-	inner := recordingLifecycle{events: &events}
+	inner := networkSessionRecordingLifecycle{events: &events}
 	lifecycle := newNetworkSessionLifecycle(inner, store)
 
 	if _, err := lifecycle.Connect(context.Background(), testContinuationRequest()); err != nil {
@@ -120,7 +120,7 @@ func TestNetworkSessionLifecycleReturnedConnectFailureDisarmsContinuation(t *tes
 	runtimeDir := t.TempDir()
 	store := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
 	events := []string{}
-	inner := recordingLifecycle{events: &events, connectErr: errors.New("terminal connect failure")}
+	inner := networkSessionRecordingLifecycle{events: &events, connectErr: errors.New("terminal connect failure")}
 	lifecycle := newNetworkSessionLifecycle(inner, store)
 
 	if _, err := lifecycle.Connect(context.Background(), testContinuationRequest()); err == nil {
@@ -139,7 +139,7 @@ func TestNetworkSessionLifecycleExplicitDisconnectDisarmsBeforeTeardown(t *testi
 	}
 	events := []string{}
 	store.afterRemove = func() { events = append(events, "continuation-removed") }
-	inner := recordingLifecycle{events: &events, disconnectErr: errors.New("rollback failed")}
+	inner := networkSessionRecordingLifecycle{events: &events, disconnectErr: errors.New("rollback failed")}
 	lifecycle := newNetworkSessionLifecycle(inner, store)
 
 	if _, err := lifecycle.Disconnect(context.Background()); err == nil {
@@ -161,7 +161,7 @@ func TestNetworkSessionLifecycleRestartDisconnectPreservesContinuation(t *testin
 		t.Fatal(err)
 	}
 	events := []string{}
-	inner := recordingLifecycle{events: &events}
+	inner := networkSessionRecordingLifecycle{events: &events}
 	lifecycle := newNetworkSessionLifecycle(inner, store)
 
 	if _, err := lifecycle.DisconnectForRestart(context.Background()); err != nil {
@@ -179,7 +179,7 @@ func TestResumeNetworkSessionRecoversBeforeReconnect(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := []string{}
-	lifecycle := newNetworkSessionLifecycle(recordingLifecycle{events: &events}, store)
+	lifecycle := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events}, store)
 
 	resumed, err := resumeNetworkSession(
 		context.Background(),
@@ -210,7 +210,7 @@ func TestResumeNetworkSessionDoesNotReconnectAfterFailedRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	events := []string{}
-	lifecycle := newNetworkSessionLifecycle(recordingLifecycle{events: &events}, store)
+	lifecycle := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events}, store)
 
 	resumed, err := resumeNetworkSession(
 		context.Background(),
