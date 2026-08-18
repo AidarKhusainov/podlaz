@@ -97,6 +97,24 @@ func migrateLegacyUpgradeContinuation(runtimeDir string, continuation networkSes
 		return false, nil
 	}
 
+	switch strings.TrimSpace(tx.Mode) {
+	case planner.ModeProxyOnly:
+		// The package marker predates mode-aware continuation and can be created
+		// while an old proxy-only daemon is active. Proxy-only state is not a TUN
+		// reconnect source: consume the marker and let the normal exact startup
+		// recovery path converge its transaction-owned runtime to inactive.
+		if err := removeLegacyUpgradeMarker(runtimeDir); err != nil {
+			return false, fmt.Errorf("consume non-TUN legacy upgrade continuation marker: %w", err)
+		}
+		return false, nil
+	case planner.ModeTun:
+		if strings.TrimSpace(tx.ProfileID) == "" {
+			return false, errors.New("legacy upgrade continuation requires an exact TUN transaction with profile identity")
+		}
+	default:
+		return false, fmt.Errorf("legacy upgrade continuation found unsupported transaction mode %q", tx.Mode)
+	}
+
 	request, err := reconstructLegacyTunConnectRequest(runtimeDir, tx)
 	if err != nil {
 		return false, err
@@ -187,9 +205,6 @@ func exactLegacyUpgradeTransaction(runtimeDir string) (txstate.Transaction, bool
 	tx, err := txstate.LoadTransactionFile(summary.Path)
 	if err != nil {
 		return txstate.Transaction{}, false, fmt.Errorf("load legacy upgrade transaction: %w", err)
-	}
-	if tx.Mode != planner.ModeTun || strings.TrimSpace(tx.ProfileID) == "" {
-		return txstate.Transaction{}, false, fmt.Errorf("legacy upgrade continuation requires an exact TUN transaction with profile identity")
 	}
 	return tx, true, nil
 }
