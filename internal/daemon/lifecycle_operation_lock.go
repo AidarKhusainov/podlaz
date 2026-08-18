@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
+
+var errLifecycleShuttingDown = errors.New("daemon shutdown is in progress")
 
 type lifecycleOperationLock struct {
 	token chan struct{}
@@ -14,6 +17,7 @@ type lifecycleOperationLock struct {
 	pendingMutations   int
 	mutationGeneration uint64
 	mutationIdle       chan struct{}
+	mutationsClosed    bool
 
 	cancelMu           sync.RWMutex
 	cancelRevalidation context.CancelFunc
@@ -58,17 +62,32 @@ func (l *lifecycleOperationLock) interruptRevalidation() {
 	}
 }
 
-// beginMutation declares mutation intent before cancelling any active probe.
-// New revalidation work waits for the whole mutation queue to become idle, so
-// a network event consumed while connect/disconnect/recovery is running cannot
-// disappear merely because lifecycle mutation has precedence. The generation is
-// advanced for every declared mutation so read-only diagnostics can detect even
-// a mutation that starts and completes between two publication stages.
+// beginMutation declares internal mutation intent before cancelling any active
+// probe. It deliberately bypasses the shutdown fence so deterministic internal
+// tests and shutdown-owned final teardown can still use the same accounting
+// primitive. Request-facing lifecycle paths must use beginExternalMutation.
 func (l *lifecycleOperationLock) beginMutation() func() {
+	finish, _ := l.beginMutationWithFence(false)
+	return finish
+}
+
+// beginExternalMutation atomically rejects mutations declared after the daemon
+// has entered shutdown. The fence check and pending-mutation registration share
+// mutationMu, so shutdown cannot observe the queue drained while a request has
+// already been admitted but not yet counted.
+func (l *lifecycleOperationLock) beginExternalMutation() (func(), error) {
+	return l.beginMutationWithFence(true)
+}
+
+func (l *lifecycleOperationLock) beginMutationWithFence(rejectClosed bool) (func(), error) {
 	if l == nil {
-		return func() {}
+		return func() {}, nil
 	}
 	l.mutationMu.Lock()
+	if rejectClosed && l.mutationsClosed {
+		l.mutationMu.Unlock()
+		return nil, errLifecycleShuttingDown
+	}
 	l.mutationGeneration++
 	if l.pendingMutations == 0 {
 		l.mutationIdle = make(chan struct{})
@@ -87,7 +106,29 @@ func (l *lifecycleOperationLock) beginMutation() func() {
 			}
 			l.mutationMu.Unlock()
 		})
+	}, nil
+}
+
+// fenceMutations rejects every lifecycle mutation declared after this point.
+// Already-declared mutations remain counted and are drained through
+// waitMutationIdle before shutdown runs its single final teardown.
+func (l *lifecycleOperationLock) fenceMutations() {
+	if l == nil {
+		return
 	}
+	l.mutationMu.Lock()
+	l.mutationsClosed = true
+	l.mutationMu.Unlock()
+	l.interruptRevalidation()
+}
+
+func (l *lifecycleOperationLock) mutationsFenced() bool {
+	if l == nil {
+		return false
+	}
+	l.mutationMu.Lock()
+	defer l.mutationMu.Unlock()
+	return l.mutationsClosed
 }
 
 func (l *lifecycleOperationLock) waitMutationIdle(ctx context.Context) error {
@@ -177,22 +218,49 @@ func (l *lifecycleOperationLock) runRevalidation(ctx context.Context, fn func())
 }
 
 func (l *lifecycleOperationLock) runRecovery(ctx context.Context, fn func() api.RecoveryResponse) api.RecoveryResponse {
+	return l.runRecoveryWithFollowUp(ctx, fn, nil)
+}
+
+// runRecoveryWithFollowUp keeps recovery and any startup-resume follow-up under
+// one mutation registration and one operation token. This prevents a second
+// recovery request from observing or rolling back state created by the first
+// request's automatic resume before that lifecycle transition is complete.
+func (l *lifecycleOperationLock) runRecoveryWithFollowUp(
+	ctx context.Context,
+	fn func() api.RecoveryResponse,
+	followUp func(api.RecoveryResponse) api.RecoveryResponse,
+) api.RecoveryResponse {
 	if l == nil {
-		return fn()
+		response := fn()
+		if followUp != nil {
+			return followUp(response)
+		}
+		return response
 	}
-	finishMutation := l.beginMutation()
+	finishMutation, err := l.beginExternalMutation()
+	if err != nil {
+		return lifecycleOperationRecoveryError(err)
+	}
 	defer finishMutation()
 	if err := l.acquire(ctx); err != nil {
-		return api.RecoveryResponse{
-			Mode: "execute",
-			Warnings: []api.RecoveryWarning{{
-				Target:  "lifecycle operation",
-				Message: err.Error(),
-			}},
-		}
+		return lifecycleOperationRecoveryError(err)
 	}
 	defer l.release()
-	return fn()
+	response := fn()
+	if followUp != nil {
+		return followUp(response)
+	}
+	return response
+}
+
+func lifecycleOperationRecoveryError(err error) api.RecoveryResponse {
+	return api.RecoveryResponse{
+		Mode: "execute",
+		Warnings: []api.RecoveryWarning{{
+			Target:  "lifecycle operation",
+			Message: err.Error(),
+		}},
+	}
 }
 
 type operationLockedLifecycle struct {
@@ -201,7 +269,10 @@ type operationLockedLifecycle struct {
 }
 
 func (l operationLockedLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
-	finishMutation := l.lock.beginMutation()
+	finishMutation, err := l.lock.beginExternalMutation()
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	defer finishMutation()
 	if err := l.lock.acquire(ctx); err != nil {
 		return api.LifecycleResponse{}, err
@@ -211,7 +282,10 @@ func (l operationLockedLifecycle) Connect(ctx context.Context, request api.Conne
 }
 
 func (l operationLockedLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
-	finishMutation := l.lock.beginMutation()
+	finishMutation, err := l.lock.beginExternalMutation()
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	defer finishMutation()
 	if err := l.lock.acquire(ctx); err != nil {
 		return api.LifecycleResponse{}, err
