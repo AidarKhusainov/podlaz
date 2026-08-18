@@ -308,7 +308,20 @@ func resumeNetworkSession(
 		return false, err
 	}
 	if !exists {
-		return false, nil
+		migrated, migrateErr := migrateLegacyUpgradeContinuation(continuation.runtimeDir, continuation)
+		if migrateErr != nil {
+			return false, fmt.Errorf("migrate legacy package upgrade continuation: %w", migrateErr)
+		}
+		if !migrated {
+			return false, nil
+		}
+		request, exists, err = continuation.LoadCurrent()
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return false, errors.New("legacy package upgrade migration did not persist continuation")
+		}
 	}
 	if status == nil || recover == nil {
 		return false, errors.New("network session resume requires status and recovery functions")
