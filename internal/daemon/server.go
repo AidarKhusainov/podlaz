@@ -112,6 +112,7 @@ func (s Server) Run(ctx context.Context) error {
 	continuation := newNetworkSessionContinuationStore(runtimeDir, s.bootID)
 	sessionLifecycle := newNetworkSessionLifecycle(healthLifecycle, continuation)
 	lockedLifecycle = operationLock.wrap(sessionLifecycle)
+	startupMutationGate := newNetworkSessionStartupMutationGate(lockedLifecycle)
 	terminalHandler = tunRevalidationTerminalHandler{
 		collect: lifecycle.collectTunRevalidationFailureDiagnostics,
 		disconnect: func(cleanupCtx context.Context) error {
@@ -140,8 +141,10 @@ func (s Server) Run(ctx context.Context) error {
 	case resumeErr == nil && resumed:
 		log.Printf("podlazd: current-boot network session continuation resumed")
 	case errors.Is(resumeErr, errNetworkSessionRecoveryIncomplete):
+		startupMutationGate.Block()
 		log.Printf("podlazd: current-boot network session continuation paused because exact startup recovery is incomplete")
 	case resumeErr != nil:
+		startupMutationGate.Block()
 		// The continuation record can contain profile credentials/endpoints and
 		// lifecycle errors can contain derived network details. Keep startup logs
 		// classification-only; exact diagnostics remain in private daemon state.
@@ -245,10 +248,24 @@ func (s Server) Run(ctx context.Context) error {
 			cancel()
 			return response
 		})
+		if startupMutationGate.Blocked() && networkSessionRecoveryConverged(response) {
+			_, retryErr := resumeNetworkSession(
+				r.Context(),
+				continuation,
+				lockedLifecycle,
+				currentStatus,
+				func(context.Context, api.StatusResponse) api.RecoveryResponse { return response },
+			)
+			if retryErr == nil {
+				startupMutationGate.Release()
+			} else {
+				log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
+			}
+		}
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
-	registerLifecycleHandlers(mux, lockedLifecycle, authorizer)
+	registerLifecycleHandlers(mux, startupMutationGate, authorizer)
 
 	httpServer := http.Server{
 		Handler: mux,
