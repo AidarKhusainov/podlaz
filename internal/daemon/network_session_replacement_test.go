@@ -23,7 +23,7 @@ func TestNetworkSessionLifecycleFailedReplacementRestoresPreviousContinuation(t 
 	replacement.Profile.Server = "replacement.example.test"
 	replacement.Handoff = api.HandoffReplacePodlaz
 	events := []string{}
-	lifecycle := newNetworkSessionLifecycle(recordingLifecycle{
+	lifecycle := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{
 		events:     &events,
 		connectErr: errors.New("replacement rejected"),
 	}, store)
