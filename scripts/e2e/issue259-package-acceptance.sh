@@ -172,12 +172,35 @@ connect_once_on_released_package() {
   wait_for_active_tun released_package_connected
 }
 
-install_package() {
+# Setup and cleanup may explicitly start the service because they are creating or
+# restoring the test fixture, not validating candidate package replacement.
+install_setup_package() {
   local package_path="$1"
   sudo -n apt install --allow-downgrades -y "${package_path}" >/dev/null
   sudo -n systemctl daemon-reload >/dev/null
   sudo -n systemctl start podlazd.service >/dev/null
   wait_for_daemon_socket
+}
+
+# Candidate installation must stand on the package's own service lifecycle. No
+# daemon-reload/start/restart repair is allowed here: postinstall must replace
+# the active daemon and leave the service usable itself.
+install_candidate_package() {
+  local package_path="$1" previous_pid="$2" current_pid
+  sudo -n apt install --allow-downgrades -y "${package_path}" >/dev/null
+  CANDIDATE_INSTALLED=1
+  if ! sudo -n systemctl is-active --quiet podlazd.service; then
+    fail "candidate package installation did not leave podlazd.service active"
+  fi
+  current_pid="$(main_pid)"
+  if ! [[ "${current_pid}" =~ ^[0-9]+$ ]] || (( current_pid <= 1 )); then
+    fail "candidate package installation left an invalid daemon MainPID"
+  fi
+  if [[ "${current_pid}" == "${previous_pid}" ]]; then
+    fail "candidate package installation did not replace the released daemon process"
+  fi
+  wait_for_daemon_socket
+  write_evidence candidate_package_replaced_daemon
 }
 
 main_pid() {
@@ -308,7 +331,7 @@ check_direct_connectivity() {
 
 restore_candidate() {
   [[ -f "${DEV_DEB}" ]] || return 1
-  install_package "./${DEV_DEB}" || return 1
+  install_setup_package "./${DEV_DEB}" || return 1
   CANDIDATE_INSTALLED=1
   if daemon_status_matches active active; then
     run_installed_podlaz disconnect >/dev/null 2>&1 || return 1
@@ -342,14 +365,17 @@ setup_isolated_xdg "issue259-package"
 # Enter the lower released package from a deliberately disconnected service
 # boundary so the only connection action in this acceptance belongs to it.
 sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-install_package "${PODLAZ_E2E_BASE_DEB}"
+install_setup_package "${PODLAZ_E2E_BASE_DEB}"
 run_private_profile_import
 connect_once_on_released_package
 
 # Upgrade to the PR package while the released TUN session is active. No CLI
-# connect is issued after this point.
-install_package "./${DEV_DEB}"
-CANDIDATE_INSTALLED=1
+# connect or service-start repair is issued after this point.
+candidate_previous_pid="$(main_pid)"
+if ! [[ "${candidate_previous_pid}" =~ ^[0-9]+$ ]] || (( candidate_previous_pid <= 1 )); then
+  fail "invalid released daemon MainPID before candidate package upgrade"
+fi
+install_candidate_package "./${DEV_DEB}" "${candidate_previous_pid}"
 wait_for_active_tun released_to_candidate_upgrade_reconnected
 
 # Graceful restart must preserve intent and automatically converge/reconnect.
