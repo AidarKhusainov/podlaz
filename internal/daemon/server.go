@@ -241,26 +241,37 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		response := operationLock.runRecovery(r.Context(), func() api.RecoveryResponse {
-			response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
-			refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
-			forceRefreshStartupScan(refreshCtx)
-			cancel()
-			return response
-		})
-		if startupMutationGate.Blocked() && networkSessionRecoveryConverged(response) {
-			_, retryErr := resumeNetworkSession(
-				r.Context(),
-				continuation,
-				lockedLifecycle,
-				currentStatus,
-				func(context.Context, api.StatusResponse) api.RecoveryResponse { return response },
-			)
-			response = applyNetworkSessionResumeResult(response, startupMutationGate, retryErr)
-			if retryErr != nil {
-				log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
-			}
-		}
+		response := operationLock.runRecoveryWithFollowUp(
+			r.Context(),
+			func() api.RecoveryResponse {
+				response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
+				forceRefreshStartupScan(refreshCtx)
+				cancel()
+				return response
+			},
+			func(response api.RecoveryResponse) api.RecoveryResponse {
+				if !startupMutationGate.Blocked() || !networkSessionRecoveryConverged(response) {
+					return response
+				}
+				// runRecoveryWithFollowUp already owns the operation token. Resume
+				// through the underlying session lifecycle rather than the locked
+				// wrapper so recovery -> resume remains one non-reentrant critical
+				// section.
+				_, retryErr := resumeNetworkSession(
+					r.Context(),
+					continuation,
+					sessionLifecycle,
+					currentStatus,
+					func(context.Context, api.StatusResponse) api.RecoveryResponse { return response },
+				)
+				response = applyNetworkSessionResumeResult(response, startupMutationGate, retryErr)
+				if retryErr != nil {
+					log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
+				}
+				return response
+			},
+		)
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
@@ -323,15 +334,19 @@ func shutdownDaemonServer(
 	shutdownCtx, cancel := context.WithTimeout(ctx, daemonShutdownTimeout)
 	defer cancel()
 
+	// Fence first. Handlers already admitted to a lifecycle mutation remain in
+	// pendingMutations and must drain; handlers that reach mutation declaration
+	// after this point fail closed. Only then may the final teardown mutate host
+	// networking.
+	operationLock.fenceMutations()
 	apiShutdownResult := make(chan error, 1)
 	go func() { apiShutdownResult <- httpServer.Shutdown(shutdownCtx) }()
 
 	var lifecycleErr error
-	if intent == ShutdownRestart {
-		_, lifecycleErr = operationLock.disconnectForRestart(shutdownCtx, sessionLifecycle)
+	if drainErr := operationLock.waitMutationIdle(shutdownCtx); drainErr != nil {
+		lifecycleErr = fmt.Errorf("drain lifecycle mutations before final teardown: %w", drainErr)
 	} else {
-		locked := operationLock.wrap(sessionLifecycle)
-		_, lifecycleErr = locked.Disconnect(shutdownCtx)
+		lifecycleErr = finalShutdownDisconnect(shutdownCtx, operationLock, sessionLifecycle, intent)
 	}
 	apiShutdownErr := <-apiShutdownResult
 	serveErr := errors.Join(initialServeErr, collectServeErrors(errc, remainingServeResults))
@@ -345,6 +360,26 @@ func shutdownDaemonServer(
 		wrappedAPIErr = fmt.Errorf("shutdown daemon API: %w", apiShutdownErr)
 	}
 	return errors.Join(wrappedLifecycleErr, wrappedAPIErr, serveErr)
+}
+
+func finalShutdownDisconnect(
+	ctx context.Context,
+	operationLock *lifecycleOperationLock,
+	sessionLifecycle *networkSessionLifecycle,
+	intent ShutdownIntent,
+) error {
+	if operationLock != nil {
+		if err := operationLock.acquire(ctx); err != nil {
+			return err
+		}
+		defer operationLock.release()
+	}
+	if intent == ShutdownRestart {
+		_, err := sessionLifecycle.DisconnectForRestart(ctx)
+		return err
+	}
+	_, err := sessionLifecycle.Disconnect(ctx)
+	return err
 }
 
 func shouldListenOnAbstractSocket(authorizer Authorizer) bool {
