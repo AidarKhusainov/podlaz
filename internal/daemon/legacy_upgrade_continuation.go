@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	legacyUpgradeMarkerFileName    = "legacy-upgrade-continuation"
-	maxLegacyRuntimeConfigBytes    = 256 * 1024
-	recoveredLegacyProfileName     = "Recovered active session"
+	legacyUpgradeMarkerFileName = "legacy-upgrade-continuation"
+	maxLegacyRuntimeConfigBytes = 256 * 1024
+	recoveredLegacyProfileName  = "Recovered active session"
 )
 
 type legacyXrayTunConfig struct {
@@ -301,6 +301,17 @@ func exactLegacyGeneratedConfigPath(runtimeDir string, tx txstate.Transaction) (
 }
 
 func readPrivateLegacyRuntimeConfig(path string) ([]byte, error) {
+	linkInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("lstat legacy TUN runtime config: %w", err)
+	}
+	if linkInfo.Mode()&os.ModeSymlink != 0 || !linkInfo.Mode().IsRegular() {
+		return nil, errors.New("legacy TUN runtime config must be a regular non-symlink file")
+	}
+	if linkInfo.Mode().Perm() != 0o600 {
+		return nil, fmt.Errorf("legacy TUN runtime config permissions are %o, want 600", linkInfo.Mode().Perm())
+	}
+
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open legacy TUN runtime config: %w", err)
@@ -309,6 +320,9 @@ func readPrivateLegacyRuntimeConfig(path string) ([]byte, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("stat legacy TUN runtime config: %w", err)
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(linkInfo, info) {
+		return nil, errors.New("legacy TUN runtime config changed during validation")
 	}
 	if info.Mode().Perm() != 0o600 {
 		return nil, fmt.Errorf("legacy TUN runtime config permissions are %o, want 600", info.Mode().Perm())
@@ -358,7 +372,7 @@ func decodeLegacyStreamSettings(settings map[string]json.RawMessage, p *api.Prof
 			Path string `json:"path"`
 			Host string `json:"host"`
 		}
-		if err := requiredRawObject(settings, "wsSettings", &ws); err != nil {
+		if err := optionalRawObject(settings, "wsSettings", &ws); err != nil {
 			return err
 		}
 		p.Path, p.HostHeader = ws.Path, ws.Host
@@ -367,7 +381,7 @@ func decodeLegacyStreamSettings(settings map[string]json.RawMessage, p *api.Prof
 			ServiceName string `json:"serviceName"`
 			Authority   string `json:"authority"`
 		}
-		if err := requiredRawObject(settings, "grpcSettings", &grpc); err != nil {
+		if err := optionalRawObject(settings, "grpcSettings", &grpc); err != nil {
 			return err
 		}
 		p.ServiceName, p.HostHeader = grpc.ServiceName, grpc.Authority
@@ -376,7 +390,7 @@ func decodeLegacyStreamSettings(settings map[string]json.RawMessage, p *api.Prof
 			Path string `json:"path"`
 			Host string `json:"host"`
 		}
-		if err := requiredRawObject(settings, "httpupgradeSettings", &upgrade); err != nil {
+		if err := optionalRawObject(settings, "httpupgradeSettings", &upgrade); err != nil {
 			return err
 		}
 		p.Path, p.HostHeader = upgrade.Path, upgrade.Host
@@ -433,6 +447,17 @@ func requiredRawString(values map[string]json.RawMessage, key string) (string, e
 		return "", fmt.Errorf("empty %s", key)
 	}
 	return strings.TrimSpace(value), nil
+}
+
+func optionalRawObject(values map[string]json.RawMessage, key string, target any) error {
+	raw, ok := values[key]
+	if !ok {
+		return nil
+	}
+	if err := json.Unmarshal(raw, target); err != nil {
+		return fmt.Errorf("decode legacy %s: %w", key, err)
+	}
+	return nil
 }
 
 func requiredRawObject(values map[string]json.RawMessage, key string, target any) error {
