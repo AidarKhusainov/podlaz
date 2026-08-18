@@ -256,9 +256,8 @@ func (s Server) Run(ctx context.Context) error {
 				currentStatus,
 				func(context.Context, api.StatusResponse) api.RecoveryResponse { return response },
 			)
-			if retryErr == nil {
-				startupMutationGate.Release()
-			} else {
+			response = applyNetworkSessionResumeResult(response, startupMutationGate, retryErr)
+			if retryErr != nil {
 				log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
 			}
 		}
