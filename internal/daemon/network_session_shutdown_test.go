@@ -94,7 +94,7 @@ func TestExplicitStopDisarmsBeforeTeardownAndPropagatesFailure(t *testing.T) {
 	}
 	events := []string{}
 	store.afterRemove = func() { events = append(events, "continuation-removed") }
-	inner := recordingLifecycle{events: &events, disconnectErr: errors.New("exact rollback failed")}
+	inner := networkSessionRecordingLifecycle{events: &events, disconnectErr: errors.New("exact rollback failed")}
 	session := newNetworkSessionLifecycle(inner, store)
 
 	err := shutdownDaemonServer(
