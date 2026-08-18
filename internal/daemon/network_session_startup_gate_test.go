@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-
-	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
 func TestNetworkSessionStartupGateBlocksLifecycleMutationsUntilReleased(t *testing.T) {
@@ -40,10 +38,10 @@ func TestNetworkSessionStartupGateStartsReleased(t *testing.T) {
 	events := []string{}
 	gate := newNetworkSessionStartupMutationGate(networkSessionRecordingLifecycle{events: &events})
 
-	if _, err := gate.Connect(context.Background(), api.ConnectRequest{}); err == nil || errors.Is(err, errNetworkSessionStartupRecoveryPending) {
-		// Empty request is intentionally invalid only inside the real lifecycle;
-		// the recording double accepts it, so this branch protects against a
-		// future wrapper that starts blocked by default.
+	if _, err := gate.Connect(context.Background(), testContinuationRequest()); err != nil {
 		t.Fatalf("startup gate unexpectedly blocked: %v", err)
+	}
+	if len(events) != 1 || events[0] != "connect" {
+		t.Fatalf("released startup gate did not delegate connect: %#v", events)
 	}
 }
