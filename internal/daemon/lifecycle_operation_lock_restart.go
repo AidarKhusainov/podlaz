@@ -10,7 +10,10 @@ func (l *lifecycleOperationLock) disconnectForRestart(ctx context.Context, lifec
 	if l == nil {
 		return lifecycle.DisconnectForRestart(ctx)
 	}
-	finishMutation := l.beginMutation()
+	finishMutation, err := l.beginExternalMutation()
+	if err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	defer finishMutation()
 	if err := l.acquire(ctx); err != nil {
 		return api.LifecycleResponse{}, err
