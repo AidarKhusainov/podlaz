@@ -239,7 +239,7 @@ func syncFilesystemDirectory(path string) error {
 }
 
 type networkSessionLifecycle struct {
-	lifecycle     lifecycleService
+	lifecycle    lifecycleService
 	continuation networkSessionContinuationStore
 }
 
