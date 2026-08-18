@@ -33,6 +33,32 @@ func TestSystemdUnitDocumentsSocketAccessModel(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitPreservesExactAuthorityAndOrdersSupervisedShutdown(t *testing.T) {
+	content := readSystemdUnit(t)
+
+	for _, want := range []string{
+		"KillSignal=SIGTERM",
+		"RestartKillSignal=SIGUSR1",
+		"KillMode=mixed",
+		"RuntimeDirectoryPreserve=yes",
+		"TimeoutStopSec=40s",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("restart-safe service contract must contain %q:\n%s", want, content)
+		}
+	}
+	for _, forbidden := range []string{
+		"KillMode=control-group",
+		"KillMode=process",
+		"KillMode=none",
+		"RuntimeDirectoryPreserve=no",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("restart-safe service contract must not contain %q:\n%s", forbidden, content)
+		}
+	}
+}
+
 func TestSystemdUnitRequiresPolkitAuthorizationForPackagedAccess(t *testing.T) {
 	content := readSystemdUnit(t)
 
