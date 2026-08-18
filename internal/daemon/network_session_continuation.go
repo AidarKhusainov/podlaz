@@ -320,6 +320,7 @@ func resumeNetworkSession(
 			if !exists {
 				return false, errors.New("legacy package upgrade migration did not persist continuation")
 			}
+		}
 	}
 
 	exactRecovery := recoverExactNetworkSessionTransactions(ctx, continuation.runtimeDir)
