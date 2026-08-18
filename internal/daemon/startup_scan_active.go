@@ -25,6 +25,9 @@ func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.Stat
 	if status.Connection != "active" || !supportsActiveRuntimeOwnershipFiltering(status.Mode) {
 		return out
 	}
+	if status.Mode == planner.ModeProxyOnly && strings.TrimSpace(status.ActiveTransactionID) == "" {
+		return filterStartupScanForActiveProxyOnly(out, status)
+	}
 	tx, ok, err := activeCommittedTransaction(status, runtimeDir)
 	if err != nil {
 		out.Warnings = append(out.Warnings, recovery.Warning{Target: "active transaction", Message: err.Error()})
@@ -43,6 +46,39 @@ func filterStartupScanForActiveRuntime(scan recovery.PlanResult, status api.Stat
 	}
 	out.Candidates = filtered
 	return out
+}
+
+func filterStartupScanForActiveProxyOnly(scan recovery.PlanResult, status api.StatusResponse) recovery.PlanResult {
+	out := cloneRecoveryPlan(scan)
+	filtered := out.Candidates[:0]
+	for _, candidate := range out.Candidates {
+		if activeProxyOnlyOwnsGeneratedDirectory(status, candidate) {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	out.Candidates = filtered
+	return out
+}
+
+func activeProxyOnlyOwnsGeneratedDirectory(status api.StatusResponse, candidate recovery.Candidate) bool {
+	if candidate.Kind != "generated-runtime-configs" {
+		return false
+	}
+	runtimeConfigPath := strings.TrimSpace(status.RuntimeConfigPath)
+	if runtimeConfigPath == "" {
+		return false
+	}
+	target := filepath.Clean(candidate.Target)
+	configPath := filepath.Clean(runtimeConfigPath)
+	if filepath.Dir(configPath) != target {
+		return false
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil || len(entries) != 1 || entries[0].IsDir() {
+		return false
+	}
+	return filepath.Join(target, entries[0].Name()) == configPath
 }
 
 func supportsActiveRuntimeOwnershipFiltering(mode string) bool {

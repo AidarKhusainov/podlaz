@@ -146,12 +146,23 @@ Run:
 }
 
 type tunStalePodlazStateBlocker struct {
-	Resources []string
+	Resources                []string
+	RoutingRecoveryAvailable bool
 }
 
 func (e *tunStalePodlazStateBlocker) Error() string {
 	if e == nil || len(e.Resources) == 0 {
 		return "podlaz: stale podlaz-owned networking state blocks TUN connect"
+	}
+	if staleResourcesContainRouting(e.Resources) && !e.RoutingRecoveryAvailable {
+		return fmt.Sprintf(`podlaz: ambiguous stale routing state blocks TUN connect before network mutation.
+
+Detected:
+  - %s
+
+The remaining policy-rule/route shape matches Podlaz's reserved routing layout, but exact durable rollback ownership evidence is unavailable for every observed routing object. Recovery cannot safely delete unmatched kernel objects from reserved priorities/table numbers alone.
+
+Next step: run plz doctor and inspect the reported rules/routes as administrator. Remove them manually only after independently proving ownership, then retry connect.`, strings.Join(e.Resources, "\n  - "))
 	}
 	return fmt.Sprintf(`podlaz: stale podlaz-owned networking state blocks TUN connect.
 
@@ -163,6 +174,16 @@ Run daemon-owned recovery first, then retry connect.
 
 Run:
   plz recover --execute --yes`, strings.Join(e.Resources, "\n  - "))
+}
+
+func staleResourcesContainRouting(resources []string) bool {
+	for _, resource := range resources {
+		resource = strings.TrimSpace(resource)
+		if strings.HasPrefix(resource, "policy-rule ") || strings.HasPrefix(resource, "route ") {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *XrayManager) prepareActivePodlazReplace(ctx context.Context, handoff string) error {
@@ -215,18 +236,27 @@ func (m *XrayManager) prepareTunHandoff(ctx context.Context, s netsnapshot.Snaps
 }
 
 func (m *XrayManager) withPodlazRuntimeStaleState(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
-	s.StaleResources = append(s.StaleResources, podlazRuntimeRoutingStaleResources(ctx)...)
-	s.StaleResources = append(s.StaleResources, m.transactionFileStaleResources()...)
+	routingResources := podlazRuntimeRoutingStaleResources(ctx)
+	transactionResources, transactions := m.transactionFileStaleState()
+	markRoutingRecoveryAuthority(routingResources, transactions)
+	s.StaleResources = append(s.StaleResources, routingResources...)
+	s.StaleResources = append(s.StaleResources, transactionResources...)
 	return s
 }
 
 func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResource {
+	resources, _ := m.transactionFileStaleState()
+	return resources
+}
+
+func (m *XrayManager) transactionFileStaleState() ([]netsnapshot.StaleResource, []txstate.Transaction) {
 	runtimeDir := strings.TrimSpace(m.runtimeDir())
 	if runtimeDir == "" {
-		return nil
+		return nil, nil
 	}
 	summaries, warnings := txstate.ScanTransactions(runtimeDir)
 	resources := make([]netsnapshot.StaleResource, 0, len(summaries)+len(warnings))
+	transactions := make([]txstate.Transaction, 0, len(summaries))
 	for _, summary := range summaries {
 		if !summary.RequiresRecovery {
 			continue
@@ -241,6 +271,10 @@ func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResourc
 			Status: netsnapshot.StatusDetected,
 			Detail: fmt.Sprintf("state=%s requires daemon-owned recovery", summary.State),
 		})
+		tx, err := txstate.LoadTransactionFile(summary.Path)
+		if err == nil && tx.RequiresRecovery() {
+			transactions = append(transactions, tx)
+		}
 	}
 	for range warnings {
 		resources = append(resources, netsnapshot.StaleResource{
@@ -250,7 +284,27 @@ func (m *XrayManager) transactionFileStaleResources() []netsnapshot.StaleResourc
 			Detail: "validated transaction scan failed; run daemon-owned recovery or inspect the transaction directory as administrator",
 		})
 	}
-	return resources
+	return resources, transactions
+}
+
+func markRoutingRecoveryAuthority(resources []netsnapshot.StaleResource, transactions []txstate.Transaction) {
+	for i := range resources {
+		resource := &resources[i]
+		if resource.Status != netsnapshot.StatusDetected || !routingStaleResourceKind(resource.Kind) {
+			continue
+		}
+		for _, tx := range transactions {
+			if recovery.TransactionOwnsObservedRoutingResource(tx, resource.Kind, resource.Name, resource.Detail) {
+				resource.RecoveryAuthorized = true
+				break
+			}
+		}
+	}
+}
+
+func routingStaleResourceKind(kind string) bool {
+	kind = strings.TrimSpace(kind)
+	return kind == "route" || kind == "policy-rule"
 }
 
 func (m *XrayManager) runControlledPodlazRecover(ctx context.Context) error {
@@ -323,7 +377,57 @@ func stalePodlazStateBlocker(s netsnapshot.Snapshot) *tunStalePodlazStateBlocker
 	if len(resources) == 0 {
 		return nil
 	}
-	return &tunStalePodlazStateBlocker{Resources: resources}
+	return &tunStalePodlazStateBlocker{
+		Resources:                resources,
+		RoutingRecoveryAvailable: staleStateHasRoutingRecoveryAuthority(s),
+	}
+}
+
+func staleStateHasRoutingRecoveryAuthority(s netsnapshot.Snapshot) bool {
+	authorized := map[string]bool{}
+	sawRouting := false
+	for _, resource := range s.StaleResources {
+		if resource.Status != netsnapshot.StatusDetected && resource.Status != netsnapshot.StatusUnknown {
+			continue
+		}
+		if !routingStaleResourceKind(resource.Kind) {
+			continue
+		}
+		sawRouting = true
+		if resource.Status != netsnapshot.StatusDetected || !resource.RecoveryAuthorized {
+			return false
+		}
+		authorized[routingStaleResourceKey(resource.Kind, resource.Name)] = true
+	}
+	for _, signal := range s.PolicyRouting {
+		if !podlazPolicyRoutingSignal(signal) {
+			continue
+		}
+		kind, name := policyRoutingSignalResourceIdentity(signal)
+		if kind == "" || name == "" {
+			return false
+		}
+		sawRouting = true
+		if !authorized[routingStaleResourceKey(kind, name)] {
+			return false
+		}
+	}
+	return sawRouting
+}
+
+func policyRoutingSignalResourceIdentity(signal netsnapshot.PolicyRoutingSignal) (string, string) {
+	switch signal.Kind {
+	case "route":
+		return "route", firstNonEmpty(staleRouteResourceName(signal.Raw), signal.Table, netsnapshot.DefaultRouteTableID)
+	case "rule":
+		return "policy-rule", firstNonEmpty(signal.Priority, signal.Table, netsnapshot.DefaultRouteTableID)
+	default:
+		return "", ""
+	}
+}
+
+func routingStaleResourceKey(kind, name string) string {
+	return strings.TrimSpace(kind) + "\x00" + strings.TrimSpace(name)
 }
 
 func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
@@ -359,12 +463,8 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 		if !podlazPolicyRoutingSignal(signal) {
 			continue
 		}
-		switch signal.Kind {
-		case "route":
-			add("route", firstNonEmpty(staleRouteResourceName(signal.Raw), signal.Table, netsnapshot.DefaultRouteTableID))
-		case "rule":
-			add("policy-rule", firstNonEmpty(signal.Priority, signal.Table, netsnapshot.DefaultRouteTableID))
-		}
+		kind, name := policyRoutingSignalResourceIdentity(signal)
+		add(kind, name)
 	}
 	return resources
 }

@@ -14,9 +14,11 @@ const defaultCommandTimeout = 3 * time.Second
 
 // CommandResult contains a completed command's observable output.
 type CommandResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
+	Stdout    string
+	Stderr    string
+	RawStdout string
+	RawStderr string
+	ExitCode  int
 }
 
 // CommandRunner is the read-only command execution abstraction used by doctor.
@@ -43,10 +45,14 @@ func (OSRunner) Run(ctx context.Context, name string, args ...string) (CommandRe
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	rawStdout := stdout.String()
+	rawStderr := stderr.String()
 	result := CommandResult{
-		Stdout:   strings.TrimSpace(stdout.String()),
-		Stderr:   strings.TrimSpace(stderr.String()),
-		ExitCode: 0,
+		Stdout:    strings.TrimSpace(rawStdout),
+		Stderr:    strings.TrimSpace(rawStderr),
+		RawStdout: rawStdout,
+		RawStderr: rawStderr,
+		ExitCode:  0,
 	}
 	if err == nil {
 		return result, nil
