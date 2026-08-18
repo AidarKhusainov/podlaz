@@ -308,8 +308,8 @@ func readPrivateLegacyRuntimeConfig(path string) ([]byte, error) {
 	if linkInfo.Mode()&os.ModeSymlink != 0 || !linkInfo.Mode().IsRegular() {
 		return nil, errors.New("legacy TUN runtime config must be a regular non-symlink file")
 	}
-	if linkInfo.Mode().Perm() != 0o600 {
-		return nil, fmt.Errorf("legacy TUN runtime config permissions are %o, want 600", linkInfo.Mode().Perm())
+	if !legacyRuntimeConfigModeSupported(linkInfo.Mode().Perm()) {
+		return nil, fmt.Errorf("legacy TUN runtime config permissions are %o, want 600 or 640", linkInfo.Mode().Perm())
 	}
 
 	file, err := os.Open(path)
@@ -324,8 +324,8 @@ func readPrivateLegacyRuntimeConfig(path string) ([]byte, error) {
 	if !info.Mode().IsRegular() || !os.SameFile(linkInfo, info) {
 		return nil, errors.New("legacy TUN runtime config changed during validation")
 	}
-	if info.Mode().Perm() != 0o600 {
-		return nil, fmt.Errorf("legacy TUN runtime config permissions are %o, want 600", info.Mode().Perm())
+	if !legacyRuntimeConfigModeSupported(info.Mode().Perm()) {
+		return nil, fmt.Errorf("legacy TUN runtime config permissions are %o, want 600 or 640", info.Mode().Perm())
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxLegacyRuntimeConfigBytes+1))
 	if err != nil {
@@ -335,6 +335,10 @@ func readPrivateLegacyRuntimeConfig(path string) ([]byte, error) {
 		return nil, fmt.Errorf("legacy TUN runtime config exceeds %d bytes", maxLegacyRuntimeConfigBytes)
 	}
 	return data, nil
+}
+
+func legacyRuntimeConfigModeSupported(mode os.FileMode) bool {
+	return mode == 0o600 || mode == 0o640
 }
 
 func exactLegacyServerEndpoint(tx txstate.Transaction) (string, uint16, error) {
