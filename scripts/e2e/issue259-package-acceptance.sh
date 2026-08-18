@@ -271,7 +271,9 @@ force_kill_inside_durable_rollback() {
   sudo -n sh -c 'umask 077; printf "%s\n" armed > "$1"' sh "${HOOK_DIR}/rollback-pause.arm"
 
   old_pid="$(main_pid)"
-  [[ "${old_pid}" =~ ^[0-9]+$ ]] && (( old_pid > 1 )) || fail "invalid daemon PID before forced rollback interruption"
+  if ! [[ "${old_pid}" =~ ^[0-9]+$ ]] || (( old_pid <= 1 )); then
+    fail "invalid daemon PID before forced rollback interruption"
+  fi
   restart_log="$(mktemp "${E2E_TMP_ROOT}/issue259-forced-restart.XXXXXX")"
   sudo -n systemctl restart podlazd.service >"${restart_log}" 2>&1 &
   restart_pid=$!
@@ -356,7 +358,9 @@ wait_for_active_tun graceful_restart_reconnected
 
 # Unexpected main-process death must be recovered by Restart=on-failure.
 old_pid="$(main_pid)"
-[[ "${old_pid}" =~ ^[0-9]+$ ]] && (( old_pid > 1 )) || fail "invalid daemon PID before crash test"
+if ! [[ "${old_pid}" =~ ^[0-9]+$ ]] || (( old_pid <= 1 )); then
+  fail "invalid daemon PID before crash test"
+fi
 sudo -n kill -KILL "${old_pid}"
 wait_for_new_main_pid "${old_pid}"
 wait_for_active_tun daemon_crash_reconnected
