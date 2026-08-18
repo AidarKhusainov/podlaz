@@ -312,16 +312,22 @@ func resumeNetworkSession(
 		if migrateErr != nil {
 			return false, fmt.Errorf("migrate legacy package upgrade continuation: %w", migrateErr)
 		}
-		if !migrated {
-			return false, nil
-		}
-		request, exists, err = continuation.LoadCurrent()
-		if err != nil {
-			return false, err
-		}
-		if !exists {
-			return false, errors.New("legacy package upgrade migration did not persist continuation")
-		}
+		if migrated {
+			request, exists, err = continuation.LoadCurrent()
+			if err != nil {
+				return false, err
+			}
+			if !exists {
+				return false, errors.New("legacy package upgrade migration did not persist continuation")
+			}
+	}
+
+	exactRecovery := recoverExactNetworkSessionTransactions(ctx, continuation.runtimeDir)
+	if !networkSessionRecoveryConverged(exactRecovery) {
+		return false, errNetworkSessionRecoveryIncomplete
+	}
+	if !exists {
+		return false, nil
 	}
 	if status == nil || recover == nil {
 		return false, errors.New("network session resume requires status and recovery functions")
