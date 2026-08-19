@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func removeRecoveryFixtures(t *testing.T, runtimeDir string) {
 		t.Fatalf("scan recovery fixtures: %v", warnings)
 	}
 	for _, summary := range summaries {
-		if err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Remove(summary.ID); err != nil {
+		if err := os.Remove(summary.Path); err != nil && !os.IsNotExist(err) {
 			t.Fatal(err)
 		}
 	}
