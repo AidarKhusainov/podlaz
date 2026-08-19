@@ -48,7 +48,7 @@ func persistedTunResourceAllocation(tx txstate.Transaction) (planner.TunResource
 		case table == planner.MainRoutingTable && strings.TrimSpace(rule.To) != "":
 			serverMatches++
 			allocation.ServerRulePriority = rule.Priority
-		case table == strconv.Itoa(allocation.RoutingTableID) && strings.TrimSpace(rule.From) == planner.IPv4DefaultSelector:
+		case table == strconv.Itoa(allocation.RoutingTableID) && strings.TrimSpace(rule.From) == "all":
 			tunnelMatches++
 			allocation.TunnelRulePriority = rule.Priority
 		}
