@@ -14,6 +14,7 @@ func TestExclusiveTunAddressDetectsForeignRaceAndRollsBackOnlyOwnedAddress(t *te
 	runner := &tunAddressAllocationRaceRunner{}
 	exec := IPTunAddressExecutor{Runner: runner}
 	plan := rollbackIdentityAddressPlanForTest()
+	plan.Action = planner.TunAddressActionAssignExclusive
 
 	step, err := exec.Apply(context.Background(), plan)
 	if err == nil || !errors.Is(err, ErrTunAddressConflict) {
