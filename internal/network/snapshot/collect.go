@@ -701,7 +701,7 @@ func isTunLikeInterfaceName(name string) bool {
 
 func isForeignTunLikeName(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") || strings.HasPrefix(name, "wg") || strings.HasPrefix(name, "tailscale") || strings.HasPrefix(name, "zt") || strings.HasPrefix(name, "ppp") || strings.HasPrefix(name, "ipsec") || strings.HasPrefix(name, "proton") || strings.HasPrefix(name, "nord")
+	return strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") || strings.HasPrefix(name, "wg") || strings.HasPrefix(name, "ppp") || strings.HasPrefix(name, "ipsec")
 }
 
 func missingTunDevices(tunNames []string, detail string) []TunDevice {
