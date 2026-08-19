@@ -10,10 +10,8 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-const (
-	tunAddressAllocationLastHost   = 254
-	tunRoutingTableAllocationLast = TunRoutingTableID + 99
-)
+const tunAddressAllocationLastHost = 254
+const tunRoutingTableAllocationLast = TunRoutingTableID + 99
 
 // TunResourceAllocation is the immutable set of collision-sensitive identities
 // selected for one new TUN Network Session. It is derived from one read-only
