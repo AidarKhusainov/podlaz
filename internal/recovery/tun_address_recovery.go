@@ -74,8 +74,8 @@ func validateTunAddressRollback(entry txstate.TUNAddressRollback) string {
 		return "ambiguous or incomplete TUN address link identity"
 	}
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(entry.CIDR))
-	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 || prefix.String() != planner.DefaultTunIPv4CIDR {
-		return "TUN address does not match the deterministic podlaz ownership policy"
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 || !planner.IsAllocatedTunIPv4CIDR(prefix.String()) {
+		return "TUN address is outside the bounded Podlaz session allocation namespace"
 	}
 	if entry.Family != "" && entry.Family != "ipv4" {
 		return "unsupported TUN address family"
