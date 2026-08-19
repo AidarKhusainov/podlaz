@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
@@ -241,6 +242,9 @@ func syncFilesystemDirectory(path string) error {
 type networkSessionLifecycle struct {
 	lifecycle    lifecycleService
 	continuation networkSessionContinuationStore
+
+	continuationMu sync.Mutex
+	explicitStop   bool
 }
 
 func newNetworkSessionLifecycle(lifecycle lifecycleService, continuation networkSessionContinuationStore) *networkSessionLifecycle {
@@ -248,13 +252,22 @@ func newNetworkSessionLifecycle(lifecycle lifecycleService, continuation network
 }
 
 func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	l.continuationMu.Lock()
+	if l.explicitStop {
+		l.continuationMu.Unlock()
+		return api.LifecycleResponse{}, errLifecycleShuttingDown
+	}
 	previous, previousExists, err := l.continuation.LoadCurrent()
 	if err != nil {
+		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, fmt.Errorf("load existing network session continuation before connect: %w", err)
 	}
 	if err := l.continuation.Save(request); err != nil {
+		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, err
 	}
+	l.continuationMu.Unlock()
+
 	response, connectErr := l.lifecycle.Connect(ctx, request)
 	if connectErr == nil {
 		return response, nil
@@ -266,6 +279,11 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 }
 
 func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.ConnectRequest, exists bool) error {
+	l.continuationMu.Lock()
+	defer l.continuationMu.Unlock()
+	if l.explicitStop {
+		return nil
+	}
 	if exists {
 		if err := l.continuation.Save(previous); err != nil {
 			return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
@@ -278,8 +296,25 @@ func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.Conne
 	return nil
 }
 
-func (l *networkSessionLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
+// disarmForExplicitStop makes service-stop intent terminal for this daemon
+// instance before waiting for admitted lifecycle mutations to drain. Once set,
+// a connect admitted before the shutdown fence cannot save or restore reconnect
+// intent after the stop has been declared. Exact transaction state is untouched.
+func (l *networkSessionLifecycle) disarmForExplicitStop() error {
+	l.continuationMu.Lock()
+	defer l.continuationMu.Unlock()
+	l.explicitStop = true
 	if err := l.continuation.Remove(); err != nil {
+		return fmt.Errorf("disarm network session continuation for explicit stop: %w", err)
+	}
+	return nil
+}
+
+func (l *networkSessionLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
+	l.continuationMu.Lock()
+	err := l.continuation.Remove()
+	l.continuationMu.Unlock()
+	if err != nil {
 		return api.LifecycleResponse{}, fmt.Errorf("disarm network session continuation before disconnect: %w", err)
 	}
 	return l.lifecycle.Disconnect(ctx)
