@@ -12,7 +12,10 @@ import (
 // the complete policy-rule inventory required for collision-free allocation.
 // Allocation itself remains pure and does not execute host commands.
 func (m *XrayManager) collectTunResourceSnapshot(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
-	s := m.collectTunSnapshot(ctx, opts)
+	return m.ensureTunPolicyRuleInventory(ctx, m.collectTunSnapshot(ctx, opts))
+}
+
+func (m *XrayManager) ensureTunPolicyRuleInventory(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
 	if s.IPv4PolicyRules.Inspection.Status != "" {
 		return s
 	}
