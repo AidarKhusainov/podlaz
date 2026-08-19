@@ -88,7 +88,7 @@ func TestPlanTunForSessionAllowsDegradedSoftBaselineWhenBootstrapAndAllocationEv
 	s.DefaultIPv4.Status = snapshot.StatusUnknown
 	s.DefaultIPv4.Interface = ""
 	s.DefaultIPv4.Gateway = ""
-	s.NetworkManager.Inspection.Status = snapshot.StatusUnknown
+	s.NetworkManager.ActiveConnectionsInspection.Status = snapshot.StatusUnknown
 	s.Warnings = append(s.Warnings, "synthetic unrelated baseline diagnostic is degraded")
 
 	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
