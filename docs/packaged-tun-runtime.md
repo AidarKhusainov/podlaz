@@ -23,9 +23,11 @@ Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
 
 TUN mode uses Xray packet ingestion through its native `tun` inbound. Xray
 owns creation and lifetime of `podlaz0`; the pinned helper deliberately does not
-assign the product OS address. `podlazd` owns the exact `198.18.0.1/32` address
-on the transaction-bound Xray link and the surrounding route bypass, policy
-rules, DNS, nftables, transaction files, rollback, and recovery.
+assign the product OS address. Before the first host-network mutation, `podlazd`
+selects and persists the exact collision-free session IPv4 `/32`, routing table,
+and policy-rule priorities. It owns only those exact transaction-backed
+identities plus the surrounding DNS, nftables, transaction, rollback, and
+recovery state.
 
 ## Native TUN privilege contract
 
@@ -45,18 +47,22 @@ The pinned Xray release currently accepts only native TUN packet-ingestion setti
 
 Current upstream documentation describes a newer public schema with lowercase `mtu`, `gateway`, `dns`, and automatic routing fields. This PR intentionally follows the pinned source version, not the moving documentation page. If the pinned helper is upgraded, the generated JSON tests and this contract must be updated using source evidence for the new tag.
 
-The deliberate contract for this PR is:
+The deliberate contract is:
 
 - Xray creates and owns the `podlaz0` link lifecycle and packet ingestion;
 - Xray applies only the link name and MTU supported by the pinned schema;
-- podlazd owns `198.18.0.1/32` plus Linux route, policy-rule, DNS, nftables,
-  transaction, rollback, and recovery state;
-- the fixed address is selected from non-globally-routed benchmarking space;
-  all host IPv4 addresses and routes are inspected for overlap before mutation,
-  and a conflict fails closed without a random fallback;
-- podlazd commits only after exact address/link verification, static resolved
-  verification, an uncached interface-scoped IPv4 query, normal system
-  resolution, route lookup, routed TCP, and DNS-result route verification pass;
+- podlazd selects a bounded, collision-free session IPv4 `/32`, numeric routing
+  table, and ordered policy-rule priorities from the authoritative read-only host
+  baseline, then persists those exact identities before mutation;
+- historical `198.18.0.1/32`, table `51820`, and priorities `9999`/`10000` are
+  preferred candidates only. Unrelated occupation causes deterministic
+  reallocation, not ownership inference or foreign cleanup;
+- incomplete authoritative allocation evidence, candidate exhaustion, or lack of
+  a concrete safe server bootstrap/data-plane path fails closed before mutation;
+- podlazd commits only after exact allocated address/link/routing verification,
+  static resolved verification, an uncached interface-scoped IPv4 query, normal
+  system resolution, route lookup, routed TCP, and DNS-result route verification
+  pass;
 - VM or self-hosted validation must provide evidence that this pinned-schema split works on the target Linux hosts before the PR leaves draft.
 
 If a future pinned Xray release adds supported `gateway`/`dns` fields, this contract must be revisited in the issue/PR with Xray schema evidence, generated JSON tests, and VM validation evidence.
@@ -74,23 +80,35 @@ Packaged TUN mode relies on these host components and declares them as Debian de
 
 ## Preflight contract
 
-Before active podlaz replacement, controlled handoff cleanup, opening a TUN transaction, or applying host-networking changes, daemon-side connect checks that:
+Before active Podlaz replacement, opening a TUN transaction, or applying host-networking changes, daemon-side connect checks that:
 
 - the Xray helper resolves to an executable;
 - packaged helpers under `/usr/lib/podlaz` match the running helper architecture when ELF metadata can be inspected;
 - `ip`, `nft`, and `resolvectl` are available in the daemon execution environment;
 - the pinned Xray helper accepts a minimal native `tun` inbound config through `xray test -config`;
-- the server bypass resolves to a concrete IPv4 route outside `podlaz0`;
-- `198.18.0.1/32` does not overlap any assigned host IPv4 address or route in any
-  inspected table, and no foreign or ambiguous `podlaz0` address state exists.
+- the server bypass resolves to a concrete usable IPv4 route, which may traverse unrelated host routing/TUN state;
+- authoritative IPv4 address, route, and policy-rule evidence is sufficient to
+  choose a verified-free session allocation without mutating unowned state.
 
 The unsupported-Xray preflight uses a temporary, redaction-safe config with only `protocol: tun` and pinned-schema `name`/`MTU`/`userLevel` settings. It does not use profile-derived runtime config and it runs before active replacement, automatic podlaz-owned recovery, handoff mutation, and transaction creation. Unsupported Xray TUN support must not disconnect active podlaz TUN, run recovery, stop an external VPN connection, or leave a transaction artifact.
 
-For non-interactive connect policies, the daemon first performs an ownership-aware IPv4 address/route collision classification before active-podlaz replacement, controlled handoff, transaction creation, or any host-network mutation. That early gate may disregard only an exact active podlaz address, a uniquely validated stale podlaz address routed to canonical recovery, or state on the concrete NetworkManager device explicitly authorized by `stop-known`; unrelated overlap and incomplete inventory block without disconnecting or stopping anything. The daemon then runs controlled recovery when the refreshed host snapshot contains unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, or transaction state, performs any authorized handoff, recollects the snapshot, and repeats the authoritative collision check without allowances. Foreign VPN interfaces, foreign route-only DNS owners, ambiguous resources, and failed or incomplete recovery remain blockers. `--handoff=ask` stays mutation-free.
+For non-interactive connect policies, the daemon recovers only exact durable
+Podlaz transaction state that requires cleanup, recollects the authoritative host
+snapshot, and allocates the new Network Session around the actual baseline.
+Unrelated TUN devices, custom routes/rules, route-only DNS links, NetworkManager
+VPN connections, and unrelated nftables state are not blockers merely because
+they exist and are never stopped/deleted as a prerequisite to coexistence. The
+historical address/table/priorities are reallocated when occupied. A true blocker
+exists when exact Podlaz recovery remains incomplete, required allocation evidence
+is unknown/malformed, the bounded candidate space is exhausted, or the concrete
+server bootstrap/data-plane plan cannot be installed safely without colliding
+with or mutating unowned state. `--handoff=ask` stays mutation-free; `stop-known`
+does not broaden new-session authority to deactivate a foreign NetworkManager
+VPN.
 
 The generated profile runtime config path is recorded in transaction rollback metadata after the transaction is opened and before the daemon starts Xray with the generated config. If the daemon is interrupted after generated config write, recovery knows how to remove the generated config.
 
-Missing or non-executable helpers, missing hard TUN commands, unsupported Xray TUN config, and unavailable server bypass are setup/runtime-unavailable failures. They must fail before route, DNS, nftables, firewall, handoff, active-podlaz replacement, or transaction mutation starts.
+Missing or non-executable helpers, missing hard TUN commands, unsupported Xray TUN config, unavailable server bootstrap, and incomplete/exhausted resource allocation are setup/preflight failures. They must fail before route, DNS, nftables, firewall, active-podlaz replacement, or transaction-backed host-network mutation starts.
 
 User-facing CLI output must not present these failures as a daemon crash or raw internal server error. It must state that TUN mode cannot start and that no network changes were applied.
 
@@ -98,14 +116,16 @@ User-facing CLI output must not present these failures as a daemon crash or raw 
 
 A failed TUN connect is allowed to start Xray before host network apply because
 the pinned native Xray TUN implementation owns packet ingestion and creates the
-`podlaz0` link. After start, podlazd records the link name, ifindex, TUN type,
-and appearance-after-child evidence before assigning `198.18.0.1/32`. The same
-identity is revalidated before address apply, verification, rollback, and
+`podlaz0` link. Before Xray or host-network mutation, the transaction already
+contains the immutable session allocation in desired state. After Xray start,
+podlazd records the link name, ifindex, TUN type, and appearance-after-child
+evidence before assigning the exact allocated IPv4 `/32`. The same identity and
+allocated CIDR are revalidated before address apply, verification, rollback, and
 recovery. Xray start alone is not a committed VPN connection. The connection is committed only after host network apply, host network verify, connectivity verify, and active-state commit all succeed.
 
-The transaction's structured `desired_plan` is durably written before the daemon starts Xray or mutates host networking. During apply, each exact address, route, policy-rule, DNS, and nftables ownership step is validated and atomically persisted immediately after its mutation and before the next resource executor runs. A persistence failure stops the sequence while retaining the already-mutated step in the in-memory rollback boundary. Normal in-process rollback continues to use recorded applied steps. Desired intent never creates route, policy-rule, DNS, or nftables cleanup authority. A `planned` record contributes no host-network cleanup tuples. An `applying` record without durable applied/rollback ownership is preserved as an ambiguous crash window and performs no route, rule, DNS, or nftables mutation. `applied`, `verifying`, and inactive `committed` records clean only their durable applied/rollback multiset. The sole narrow syscall/persistence fallback is the TUN address in `applying`: a previously persisted bound name, ifindex, TUN kind, exact CIDR, and appearance-after-tracked-child proof becomes only a cleanup candidate and must pass fail-closed host identity and address inspection before removal. Desired-only main-table server bypass state is never deleted by assumption.
+The transaction's structured `desired_plan` is durably written before the daemon starts Xray or mutates host networking. During apply, each exact address, route, policy-rule, DNS, and nftables ownership step is validated and atomically persisted immediately after its mutation and before the next resource executor runs. A persistence failure stops the sequence while retaining the already-mutated step in the in-memory rollback boundary. Normal in-process rollback continues to use recorded applied steps. Desired intent never creates route, policy-rule, DNS, or nftables cleanup authority. A `planned` record contributes no host-network cleanup tuples. An `applying` record without durable applied/rollback ownership is preserved as an ambiguous crash window and performs no route, rule, DNS, or nftables mutation. `applied`, `verifying`, and inactive `committed` records clean only their durable applied/rollback multiset. The sole narrow syscall/persistence fallback is the TUN address in `applying`: a previously persisted bound name, ifindex, TUN kind, exact allocated CIDR, and appearance-after-tracked-child proof becomes only a cleanup candidate and must pass fail-closed host identity and address inspection before removal. Desired-only main-table server bypass state is never deleted by assumption.
 
-`desired_plan` records intent and validates the shape of an applied target; it is not proof that podlaz created a route or policy rule. An executor that finds an exact object already present returns no ownership step, so a valid `verifying` or `committed` transaction may contain desired routes/rules while its durable network `applied_steps` and matching rollback categories are empty. Mixed transactions own only the exact objects represented by durable applied steps. For every state that permits durable ownership, rollback route and policy-rule tuples must equal those applied ownership tuples as exact multisets, including duplicate count.
+`desired_plan` records intent and validates the shape of an applied target; it is not proof that podlaz created a route or policy rule. A new-session route/rule add is exclusive: if the allocated identity became occupied after the snapshot, apply fails rather than treating the object as owned. Recovery/legacy idempotent execution may accept an already-present exact object but does not create a new ownership step from that presence alone. Mixed transactions own only the exact objects represented by durable applied steps. For every state that permits durable ownership, rollback route and policy-rule tuples must equal those applied ownership tuples as exact multisets, including duplicate count.
 
 A `planned` transaction is before host-network mutation and follows a non-mutating network path. Desired routes or rules alone contribute no cleanup tuple; a planned record that already contains network applied steps or route/rule rollback tuples is internally inconsistent and is rejected. `applying` is the fail-closed crash window: when a desired route or policy-rule category has no durable applied proof, fallback cannot distinguish a pre-mutation record from a mutation that crashed before ownership persistence and must refuse network cleanup. Later states such as `applied`, `verifying`, and `committed` use the durable applied/rollback multiset without inventing ownership from desired intent.
 
@@ -126,8 +146,8 @@ Rollback order for failed or disconnected native TUN sessions is:
 
 1. remove podlaz-owned nftables/firewall state;
 2. revert podlaz-owned systemd-resolved per-link DNS state;
-3. remove podlaz-owned routes and policy rules created by the transaction;
-4. remove the exact daemon-owned TUN address after link-name, ifindex, kind, and ownership revalidation;
+3. remove exact transaction-owned routes and policy rules for the persisted session allocation;
+4. remove the exact daemon-owned allocated TUN address after link-name, ifindex, kind, and ownership revalidation;
 5. stop the Xray child process when it was started by the transaction;
 6. remove generated runtime config;
 7. remove the terminal transaction file only after rollback succeeds.
@@ -202,7 +222,7 @@ Before applying DNS, podlaz runs a scoped `resolvectl revert podlaz0` to discard
 
 The kernel may expose the newly-created `podlaz0` before `systemd-resolved` registers it. DNS apply therefore retries only the transient missing-link response for the `dns`, `domain`, and `default-route` commands for up to roughly two seconds. Permission errors, unsupported commands, and other unexpected failures are not retried.
 
-`systemd-resolved` can expose recently applied per-link settings with a delay. DNS verification therefore polls for up to roughly two seconds before failing on transient missing target link, exact planned DNS-server set, exact `~.` route-only domain set, or `+DefaultRoute`. Extra DNS servers or domains on the owned link fail closed. `Current Scopes` is derived lookup state and is not an apply-success requirement. The target link must appear exactly once; duplicate `podlaz0` sections are ambiguous and fail closed. A foreign route-only DNS owner remains an immediate hard failure.
+`systemd-resolved` can expose recently applied per-link settings with a delay. DNS verification therefore polls for up to roughly two seconds before failing on transient missing target link, exact planned DNS-server set, exact `~.` route-only domain set, or `+DefaultRoute`. Extra DNS servers or domains on the owned link fail closed. `Current Scopes` is derived lookup state and is not an apply-success requirement. The target link must appear exactly once; duplicate `podlaz0` sections are ambiguous and fail closed. A foreign route-only DNS owner is tolerated as baseline only when the concrete Podlaz DNS plan can still be installed and verified without mutating that foreign link; otherwise it is a genuine plan/verification conflict.
 
 Rollback uses `resolvectl revert <link>` for the podlaz-owned link. The exact missing-device response is successful idempotent cleanup in runtime rollback, stale cleanup, doctor inspection, and transaction recovery. Other unexpected errors remain failures.
 
@@ -237,6 +257,15 @@ Package validation checks the Xray helper file, executable bit, architecture, se
 The issue-specific installed-package convergence gate performs a clean purge, builds the branch `.deb`, installs and reinstalls the same package, extracts the built package, and compares SHA-256 hashes of packaged, installed, and running `podlazd` plus packaged/installed `podlaz`. It verifies the running systemd `MainPID` and tested commit identity.
 
 The same dedicated run must accept packaged `Current Scopes: none` and complete the real missing-link rollback scenario. Before every disconnect or fault-release boundary it snapshots a private exact route/policy-rule manifest from the active transaction, including arbitrary main-table bypass tuples. Immediately after production rollback or disconnect it runs strict tri-state verification against that manifest; route/rule residue or an inspection error prevents `resources_absent=pass`. The private manifest remains outside the artifact directory.
+
+For collision-aware session allocation, the same self-hosted workflow runs an
+installed-package #260 coexistence scenario. It creates only sanitized synthetic
+baseline objects that occupy historical `198.18.0.1/32`, table `51820`, and
+priorities `9999`/`10000` together with unrelated TUN, DNS, and nftables state.
+The candidate must connect without product-specific foreign VPN control, persist
+a different exact allocation, verify the protected data plane, disconnect, and
+prove that the synthetic foreign baseline remained structurally present until the
+fixture itself is explicitly removed.
 
 For current-health changes, target-host acceptance must additionally prove that a packaged active TUN survives a real suspend/resume boundary without silently retaining stale `verified` evidence: status must show the same or advanced generation only after post-resume revalidation, watcher reconnect/resync must not lose the transition, and a controlled verification failure/deadline must persist bounded redacted diagnostics before automatic bounded disconnect. Successful cleanup must converge to inactive; forced cleanup failure must remain `cleanup-required`; explicit user/shutdown cancellation must not produce duplicate cleanup. Evidence must remain redacted and structural.
 
