@@ -3,120 +3,95 @@ package daemon
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
-	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
-	"github.com/AidarKhusainov/podlaz/internal/recovery"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestAutoRecoverTunOwnedStateRecoversForDefaultPolicy(t *testing.T) {
-	originalRecover := automaticPodlazRecover
-	recoverCalls := 0
+func TestAutoRecoverTunOwnedStateRunsForExactRecoveryTransaction(t *testing.T) {
+	m := NewXrayManager(t.TempDir())
+	persistApplyingRecoveryFixture(t, m.runtimeDir(), "auto-recover-exact")
+
+	previous := automaticPodlazRecover
+	calls := 0
 	automaticPodlazRecover = func(context.Context, string) error {
-		recoverCalls++
+		calls++
+		removeRecoveryFixtures(t, m.runtimeDir())
 		return nil
 	}
-	t.Cleanup(func() { automaticPodlazRecover = originalRecover })
+	t.Cleanup(func() { automaticPodlazRecover = previous })
 
-	manager := &XrayManager{RuntimeDir: t.TempDir()}
-	refreshCalls := 0
-	manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
-		refreshCalls++
-		return netsnapshot.FakeResolvedDesktop()
-	}
+	clean := snapshot.FakeResolvedDesktop()
+	m.snapshotCollector = func(context.Context, snapshot.Options) snapshot.Snapshot { return clean }
 
-	recovered, err := manager.autoRecoverTunOwnedState(context.Background(), netsnapshot.FakeDesktopWithStalepodlazResources(), api.HandoffBlock, netsnapshot.Options{})
+	got, err := m.autoRecoverTunOwnedState(context.Background(), clean, api.HandoffBlock, snapshot.Options{})
 	if err != nil {
-		t.Fatalf("default TUN connect must auto-recover unambiguous podlaz-owned stale state: %v", err)
+		t.Fatalf("autoRecoverTunOwnedState() error = %v", err)
 	}
-	if stalePodlazStateBlocker(recovered) != nil {
-		t.Fatalf("refreshed snapshot must be clean after successful automatic recovery: %#v", recovered.StaleResources)
+	if calls != 1 {
+		t.Fatalf("expected one exact transaction recovery, got %d", calls)
 	}
-	if recoverCalls != 1 {
-		t.Fatalf("automatic recovery calls = %d, want 1", recoverCalls)
-	}
-	if refreshCalls != 1 {
-		t.Fatalf("snapshot refresh calls = %d, want 1", refreshCalls)
+	if len(got.StaleResources) != 0 {
+		t.Fatalf("expected refreshed clean snapshot, got %#v", got.StaleResources)
 	}
 }
 
-func TestAutoRecoverTunOwnedStateKeepsAskMutationFree(t *testing.T) {
-	originalRecover := automaticPodlazRecover
-	recoverCalls := 0
+func TestAutoRecoverTunOwnedStateAskRemainsReadOnly(t *testing.T) {
+	m := NewXrayManager(t.TempDir())
+	persistApplyingRecoveryFixture(t, m.runtimeDir(), "auto-recover-ask")
+	previous := automaticPodlazRecover
+	called := false
 	automaticPodlazRecover = func(context.Context, string) error {
-		recoverCalls++
+		called = true
 		return nil
 	}
-	t.Cleanup(func() { automaticPodlazRecover = originalRecover })
+	t.Cleanup(func() { automaticPodlazRecover = previous })
 
-	manager := &XrayManager{RuntimeDir: t.TempDir()}
-	refreshCalls := 0
-	manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
-		refreshCalls++
-		return netsnapshot.FakeResolvedDesktop()
+	if _, err := m.autoRecoverTunOwnedState(context.Background(), snapshot.FakeResolvedDesktop(), api.HandoffAsk, snapshot.Options{}); err != nil {
+		t.Fatalf("ask preflight should remain read-only: %v", err)
 	}
-	stale := netsnapshot.FakeDesktopWithStalepodlazResources()
-
-	got, err := manager.autoRecoverTunOwnedState(context.Background(), stale, api.HandoffAsk, netsnapshot.Options{})
-	if err != nil {
-		t.Fatalf("ask policy inspection: %v", err)
-	}
-	if recoverCalls != 0 || refreshCalls != 0 {
-		t.Fatalf("ask policy must not recover or refresh: recover=%d refresh=%d", recoverCalls, refreshCalls)
-	}
-	if stalePodlazStateBlocker(got) == nil {
-		t.Fatal("ask policy must preserve stale evidence for the handoff blocker")
+	if called {
+		t.Fatal("ask policy must not execute automatic recovery")
 	}
 }
 
-func TestAutoRecoverTunOwnedStateStopsAfterRecoveryFailure(t *testing.T) {
-	originalRecover := automaticPodlazRecover
-	automaticPodlazRecover = func(context.Context, string) error {
-		return errors.New("automatic recovery failed")
-	}
-	t.Cleanup(func() { automaticPodlazRecover = originalRecover })
+func TestAutoRecoverTunOwnedStatePropagatesRecoveryFailure(t *testing.T) {
+	m := NewXrayManager(t.TempDir())
+	persistApplyingRecoveryFixture(t, m.runtimeDir(), "auto-recover-failure")
+	previous := automaticPodlazRecover
+	automaticPodlazRecover = func(context.Context, string) error { return errors.New("boom") }
+	t.Cleanup(func() { automaticPodlazRecover = previous })
 
-	manager := &XrayManager{RuntimeDir: t.TempDir()}
-	refreshCalls := 0
-	manager.snapshotCollector = func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
-		refreshCalls++
-		return netsnapshot.FakeResolvedDesktop()
-	}
-
-	_, err := manager.autoRecoverTunOwnedState(context.Background(), netsnapshot.FakeDesktopWithStalepodlazResources(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil || !strings.Contains(err.Error(), "automatic recovery failed") {
-		t.Fatalf("expected automatic recovery failure, got %v", err)
-	}
-	if refreshCalls != 0 {
-		t.Fatalf("failed recovery must not pretend to validate a refreshed snapshot, calls=%d", refreshCalls)
+	if _, err := m.autoRecoverTunOwnedState(context.Background(), snapshot.FakeResolvedDesktop(), api.HandoffBlock, snapshot.Options{}); err == nil {
+		t.Fatal("expected exact recovery failure to propagate")
 	}
 }
 
-func TestAutomaticRecoveryCompleteAllowsOnlyDeferredResolvedRecord(t *testing.T) {
-	result := recovery.ExecuteResult{Results: []recovery.CleanupResult{
-		{Candidate: recovery.Candidate{Kind: "route-table"}, Status: "recovered"},
-		{
-			Candidate: recovery.Candidate{Kind: "dns-link"},
-			Status:    "skipped",
-			Message:   "systemd-resolved link record persisted after revert; restart systemd-resolved manually",
-		},
-	}}
-	if !automaticRecoveryComplete(result) {
-		t.Fatal("persistent podlaz resolved record must be deferred until podlaz0 is recreated")
+func persistApplyingRecoveryFixture(t *testing.T, runtimeDir, id string) {
+	t.Helper()
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }}
+	tx := txstate.NewTransaction(id, "profile-1", planner.ModeTun, store.Now())
+	if _, err := store.Save(tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(tx.ID, txstate.TransactionApplying); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestAutomaticRecoveryCompleteRejectsOtherIncompleteCleanup(t *testing.T) {
-	cases := []recovery.ExecuteResult{
-		{Warnings: []recovery.Warning{{Target: "transaction state", Message: "inspection failed"}}},
-		{Results: []recovery.CleanupResult{{Candidate: recovery.Candidate{Kind: "transaction-state"}, Status: "skipped", Message: "transaction state was preserved"}}},
-		{Results: []recovery.CleanupResult{{Candidate: recovery.Candidate{Kind: "dns-link"}, Status: "failed", Message: "unexpected resolver failure"}}},
+func removeRecoveryFixtures(t *testing.T, runtimeDir string) {
+	t.Helper()
+	summaries, warnings := txstate.ScanTransactions(runtimeDir)
+	if len(warnings) != 0 {
+		t.Fatalf("scan recovery fixtures: %v", warnings)
 	}
-	for i, result := range cases {
-		if automaticRecoveryComplete(result) {
-			t.Fatalf("case %d: incomplete or failed recovery must remain blocking", i)
+	for _, summary := range summaries {
+		if err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Remove(summary.ID); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
