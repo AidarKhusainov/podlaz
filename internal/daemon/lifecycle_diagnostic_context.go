@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -47,11 +48,17 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 	if state.ProfileID != "" && tx.ProfileID != state.ProfileID {
 		return ctx
 	}
-	if err := validateTunRollbackProjection(tx); err != nil {
+
+	// Transactions created before collision-aware allocation persisted the exact
+	// fixed TUN address only in rollback metadata. Preserve diagnostic continuity
+	// for that one historical layout while requiring every new dynamic address to
+	// match its persisted desired allocation exactly.
+	diagnosticTx := legacyCompatibleDiagnosticTransaction(tx)
+	if err := validateTunRollbackProjection(diagnosticTx); err != nil {
 		return ctx
 	}
 
-	plan := tunPlanFromTransaction(tx)
+	plan := tunPlanFromTransaction(diagnosticTx)
 	if plan.TunAddress.Interface == "podlaz0" && plan.TunAddress.LinkIndex > 0 && plan.TunAddress.LinkKind == "tun" {
 		ctx.Interface = doctor.ManagedResourceExpectedOwned
 		ctx.InterfaceLinkIndex = plan.TunAddress.LinkIndex
@@ -73,4 +80,30 @@ func lifecycleDiagnosticContext(runtimeDir string, state xrayState) doctor.Lifec
 	ctx.NFTTable = doctor.ManagedResourceExpectedOwned
 	ctx.NFTPlan = &firewallPlan
 	return ctx
+}
+
+func legacyCompatibleDiagnosticTransaction(tx txstate.Transaction) txstate.Transaction {
+	if strings.TrimSpace(tx.DesiredPlan.TUNAddress.CIDR) != "" || len(tx.Rollback.TUNAddresses) != 1 {
+		return tx
+	}
+	address := tx.Rollback.TUNAddresses[0]
+	if !rollbackOwnerMatches(address.Owner, netexecutor.OwnerTunAddress) ||
+		address.InterfaceName != "podlaz0" ||
+		strings.TrimSpace(address.Family) != "ipv4" ||
+		strings.TrimSpace(address.Scope) != "global" ||
+		strings.TrimSpace(address.CIDR) != planner.DefaultTunIPv4CIDR ||
+		address.LinkIndex <= 0 || address.LinkKind != "tun" || !address.AppearedAfterCore {
+		return tx
+	}
+	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family:            address.Family,
+		InterfaceName:     address.InterfaceName,
+		CIDR:              address.CIDR,
+		Scope:             address.Scope,
+		LinkIndex:         address.LinkIndex,
+		LinkKind:          address.LinkKind,
+		AppearedAfterCore: address.AppearedAfterCore,
+		Owner:             address.Owner,
+	}
+	return tx
 }
