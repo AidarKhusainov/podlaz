@@ -103,9 +103,8 @@ func assertNoProductionTunTransactionBlocker(t *testing.T, runtimeDir string) {
 	}
 
 	manager := NewXrayManager(runtimeDir)
-	snapshot := netsnapshot.Snapshot{StaleResources: manager.transactionFileStaleResources()}
-	if err := preflightTunOwnership(snapshot, api.HandoffBlock); err != nil {
-		t.Fatalf("immediate TUN retry was blocked by stale production preflight state: %v", err)
+	if _, err := manager.prepareTunCoexistence(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{}); err != nil {
+		t.Fatalf("immediate TUN retry was blocked by stale production coexistence state: %v", err)
 	}
 }
 
