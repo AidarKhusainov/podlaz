@@ -105,8 +105,17 @@ func tunRevalidationRoutePlans(tx txstate.Transaction) ([]planner.TunRoutePlan, 
 	routes := make([]planner.TunRoutePlan, 0, len(tx.DesiredPlan.Routes))
 	var serverBypass planner.TunRoutePlan
 	for _, desired := range tx.DesiredPlan.Routes {
-		if desired.Kind != "route" || desired.Operation != "add" || !rollbackOwnerMatches(desired.Owner, netexecutor.OwnerRoute) {
+		if desired.Kind != "route" {
 			return nil, planner.TunRoutePlan{}, fmt.Errorf("persisted desired route is unsupported or incomplete")
+		}
+		action := ""
+		switch {
+		case desired.Operation == "add" && rollbackOwnerMatches(desired.Owner, netexecutor.OwnerRoute):
+			action = "add"
+		case desired.Operation == "verify" && desired.Owner == hostRoutePrerequisiteOwner:
+			action = planner.TunActionVerifyExisting
+		default:
+			return nil, planner.TunRoutePlan{}, fmt.Errorf("persisted desired route operation/owner is unsupported")
 		}
 		if strings.TrimSpace(desired.Table) == "" || strings.TrimSpace(desired.CIDR) == "" || strings.TrimSpace(desired.Dev) == "" {
 			return nil, planner.TunRoutePlan{}, fmt.Errorf("persisted desired route tuple is incomplete")
@@ -122,7 +131,7 @@ func tunRevalidationRoutePlans(tx txstate.Transaction) ([]planner.TunRoutePlan, 
 			Table:       desired.Table,
 			Interface:   desired.Dev,
 			Gateway:     desired.Via,
-			Action:      "add",
+			Action:      action,
 		}
 		routes = append(routes, route)
 		if strings.EqualFold(desired.Table, planner.MainRoutingTable) && desired.CIDR == serverCIDR && desired.Dev != deviceNameForRevalidation(tx) {
