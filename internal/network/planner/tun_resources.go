@@ -295,7 +295,7 @@ func allocatedServerBypassRoute(s snapshot.Snapshot, serverIP string) TunRoutePl
 	if serverIP == "" {
 		return TunRoutePlan{Family: "ipv4", Destination: "<server-ip>", Table: MainRoutingTable, Action: "blocked", Reason: "server route did not resolve to a concrete IP address"}
 	}
-	action := TunActionAddExclusive
+	action := "add"
 	reason := "pin VPN server traffic to the concrete bootstrap path observed before the Podlaz full-tunnel policy"
 	if exactServerBypassRouteExists(s, serverIP) {
 		action = TunActionVerifyExisting
