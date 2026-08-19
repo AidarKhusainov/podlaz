@@ -1,9 +1,6 @@
 package snapshot
 
-import (
-	"context"
-	"os/exec"
-)
+import "context"
 
 // EnsureTunAllocationEvidence replaces routing evidence used for collision-free
 // TUN session allocation with canonical numeric table identities. The normal
@@ -53,7 +50,3 @@ func numericIPv4PolicyRules(ctx context.Context, runner CommandRunner, ipPath st
 	}
 	return PolicyRuleInventory{Inspection: finding(StatusDetected, "numeric IPv4 policy-rule inventory available"), Rules: rules}
 }
-
-// Keep a compile-time reference to os/exec's package contract used by OSRunner
-// in collect.go. This file deliberately performs no shell invocation itself.
-var _ = exec.ErrNotFound
