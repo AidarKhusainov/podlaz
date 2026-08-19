@@ -19,6 +19,9 @@ func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRul
 		return Step{}, fmt.Errorf("inspect existing policy rule priority %d: %w", plan.Priority, err)
 	}
 	if line != "" {
+		if plan.Action == planner.TunActionAddExclusive {
+			return Step{}, fmt.Errorf("allocated policy rule priority %d became occupied before apply", plan.Priority)
+		}
 		return Step{}, nil
 	}
 	args := ruleArgs("add", plan)
