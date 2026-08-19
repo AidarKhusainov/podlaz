@@ -94,7 +94,7 @@ func TestPrepareTunCoexistenceBlocksInactiveCommittedTransactionFile(t *testing.
 	manager := &XrayManager{RuntimeDir: runtimeDir}
 
 	_, err := manager.prepareTunCoexistence(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	assertRuntimeStaleBlockerContains(t, err, "transaction-file committed.json", "recover --execute --yes")
+	assertRuntimeStaleBlockerContains(t, err, "exact Podlaz transaction state", "require recovery")
 }
 
 func TestPrepareTunCoexistenceBlocksCleanupRequiredTransactionFiles(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPrepareTunCoexistenceBlocksCleanupRequiredTransactionFiles(t *testing.T
 			manager := &XrayManager{RuntimeDir: runtimeDir}
 
 			_, err := manager.prepareTunCoexistence(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-			assertRuntimeStaleBlockerContains(t, err, "transaction-file stale.json", "recover --execute --yes")
+			assertRuntimeStaleBlockerContains(t, err, "exact Podlaz transaction state", "require recovery")
 		})
 	}
 }
@@ -120,7 +120,7 @@ func TestPrepareTunCoexistenceBlocksInvalidTransactionFile(t *testing.T) {
 	manager := &XrayManager{RuntimeDir: runtimeDir}
 
 	_, err := manager.prepareTunCoexistence(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	assertRuntimeStaleBlockerContains(t, err, "transaction-file invalid-or-unreadable")
+	assertRuntimeStaleBlockerContains(t, err, "exact Podlaz transaction state", "require recovery")
 }
 
 func withFakeIPCommand(t *testing.T, script string) {
