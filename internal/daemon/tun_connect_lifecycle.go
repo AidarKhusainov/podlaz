@@ -64,8 +64,8 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	}
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
-	snapshot := m.collectTunSnapshot(ctx, snapshotOpts)
-	preHandoffPlan, err := planner.PlanTun(p, snapshot)
+	snapshot := m.collectTunResourceSnapshot(ctx, snapshotOpts)
+	preHandoffPlan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
@@ -93,7 +93,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	}
 	m.mu.Unlock()
 
-	snapshot = m.collectTunSnapshot(ctx, snapshotOpts)
+	snapshot = m.collectTunResourceSnapshot(ctx, snapshotOpts)
 	snapshot, err = m.autoRecoverTunOwnedState(ctx, snapshot, req.Handoff, snapshotOpts)
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("recovery", "", "not-started", err)
@@ -102,7 +102,8 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
-	plan, err := planner.PlanTun(p, snapshot)
+	snapshot = m.ensureTunPolicyRuleInventory(ctx, snapshot)
+	plan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
