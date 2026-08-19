@@ -78,3 +78,27 @@ func TestPlanTunForSessionUsesAllocatedNumericIdentitiesAndActualServerPath(t *t
 		t.Fatalf("expected exact reallocated numeric routing table, got %#v", plan.Routes)
 	}
 }
+
+func TestPlanTunForSessionAllowsDegradedSoftBaselineWhenBootstrapAndAllocationEvidenceAreSafe(t *testing.T) {
+	s := snapshot.FakeDesktopWithServerRouteViaForeignVPN()
+	// The global/default-route diagnostic is intentionally degraded, but the
+	// server-specific bootstrap route and the exact allocation inventories remain
+	// authoritative. This is a non-pristine baseline, not proof that allocation
+	// or bootstrap is unsafe.
+	s.DefaultIPv4.Status = snapshot.StatusUnknown
+	s.DefaultIPv4.Interface = ""
+	s.DefaultIPv4.Gateway = ""
+	s.NetworkManager.Inspection.Status = snapshot.StatusUnknown
+	s.Warnings = append(s.Warnings, "synthetic unrelated baseline diagnostic is degraded")
+
+	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
+	if err != nil {
+		t.Fatalf("degraded soft baseline with safe bootstrap must remain plannable: %v", err)
+	}
+	if plan.ServerBypass.Interface != "wg0" || plan.ServerBypass.Action != "add" {
+		t.Fatalf("safe server bootstrap path was not preserved: %#v", plan.ServerBypass)
+	}
+	if plan.DNS.Action == DNSActionBlocked || plan.Firewall.TableAction == FirewallActionBlocked {
+		t.Fatalf("unrelated degraded diagnostics must not block an otherwise safe plan: DNS=%#v firewall=%#v", plan.DNS, plan.Firewall)
+	}
+}
