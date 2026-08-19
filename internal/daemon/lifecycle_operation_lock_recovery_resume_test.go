@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"reflect"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -64,10 +65,11 @@ func TestLifecycleOperationLockSerializesRecoveryThroughResumeFollowUp(t *testin
 		)
 	}()
 
+	waitForPendingMutationCount(t, lock, 2)
 	select {
 	case <-recoverBStarted:
-		t.Fatal("second recovery entered while first resume follow-up still held lifecycle authority")
-	case <-time.After(100 * time.Millisecond):
+		t.Fatal("second recovery entered after being registered while first resume follow-up still held lifecycle authority")
+	default:
 	}
 
 	close(releaseResumeA)
@@ -88,5 +90,27 @@ func TestLifecycleOperationLockSerializesRecoveryThroughResumeFollowUp(t *testin
 	want := []string{"recover-a", "resume-a", "recover-b", "resume-b"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("recovery/resume ordering = %#v, want %#v", got, want)
+	}
+}
+
+func waitForPendingMutationCount(t *testing.T, lock *lifecycleOperationLock, want int) {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+
+	for {
+		lock.mutationMu.Lock()
+		got := lock.pendingMutations
+		lock.mutationMu.Unlock()
+		if got == want {
+			return
+		}
+
+		select {
+		case <-deadline.C:
+			t.Fatalf("pending lifecycle mutations = %d, want %d before deadlock guard expired", got, want)
+		default:
+			runtime.Gosched()
+		}
 	}
 }
