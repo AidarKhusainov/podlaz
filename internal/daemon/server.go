@@ -334,19 +334,23 @@ func shutdownDaemonServer(
 	shutdownCtx, cancel := context.WithTimeout(ctx, daemonShutdownTimeout)
 	defer cancel()
 
-	// Fence first. Handlers already admitted to a lifecycle mutation remain in
-	// pendingMutations and must drain; handlers that reach mutation declaration
-	// after this point fail closed. Only then may the final teardown mutate host
-	// networking.
+	// Fence first so no new request can declare lifecycle mutation. Explicit
+	// stop then disarms reconnect intent before waiting for already-admitted
+	// mutations; restart intentionally keeps continuation armed.
 	operationLock.fenceMutations()
+	var stopIntentErr error
+	if intent == ShutdownStop {
+		stopIntentErr = sessionLifecycle.disarmForExplicitStop()
+	}
+
 	apiShutdownResult := make(chan error, 1)
 	go func() { apiShutdownResult <- httpServer.Shutdown(shutdownCtx) }()
 
 	var lifecycleErr error
 	if drainErr := operationLock.waitMutationIdle(shutdownCtx); drainErr != nil {
-		lifecycleErr = fmt.Errorf("drain lifecycle mutations before final teardown: %w", drainErr)
+		lifecycleErr = errors.Join(stopIntentErr, fmt.Errorf("drain lifecycle mutations before final teardown: %w", drainErr))
 	} else {
-		lifecycleErr = finalShutdownDisconnect(shutdownCtx, operationLock, sessionLifecycle, intent)
+		lifecycleErr = errors.Join(stopIntentErr, finalShutdownDisconnect(shutdownCtx, operationLock, sessionLifecycle, intent))
 	}
 	apiShutdownErr := <-apiShutdownResult
 	serveErr := errors.Join(initialServeErr, collectServeErrors(errc, remainingServeResults))
