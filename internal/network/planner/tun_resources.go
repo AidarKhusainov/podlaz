@@ -295,14 +295,49 @@ func allocatedServerBypassRoute(s snapshot.Snapshot, serverIP string) TunRoutePl
 	if serverIP == "" {
 		return TunRoutePlan{Family: "ipv4", Destination: "<server-ip>", Table: MainRoutingTable, Action: "blocked", Reason: "server route did not resolve to a concrete IP address"}
 	}
+	action := TunActionAddExclusive
+	reason := "pin VPN server traffic to the concrete bootstrap path observed before the Podlaz full-tunnel policy"
+	if exactServerBypassRouteExists(s, serverIP) {
+		action = TunActionVerifyExisting
+		reason = "use the exact pre-existing server bootstrap host route as a verified unowned prerequisite"
+	}
 	return TunRoutePlan{
 		Family:      "ipv4",
 		Destination: serverIP + "/32",
 		Table:       MainRoutingTable,
 		Interface:   s.ServerRoute.Interface,
 		Gateway:     s.ServerRoute.Gateway,
-		Action:      "add",
-		Reason:      "pin VPN server traffic to the concrete bootstrap path observed before the Podlaz full-tunnel policy",
+		Action:      action,
+		Reason:      reason,
+	}
+}
+
+func exactServerBypassRouteExists(s snapshot.Snapshot, serverIP string) bool {
+	if strings.TrimSpace(serverIP) == "" || s.IPv4Routes.Inspection.Status != snapshot.StatusDetected {
+		return false
+	}
+	wantDestination := serverIP + "/32"
+	for _, route := range s.IPv4Routes.Routes {
+		if route.Status != snapshot.StatusDetected || strings.TrimSpace(route.Destination) != wantDestination {
+			continue
+		}
+		if !mainTableIdentity(route.Table) {
+			continue
+		}
+		if strings.TrimSpace(route.Interface) != strings.TrimSpace(s.ServerRoute.Interface) || strings.TrimSpace(route.Gateway) != strings.TrimSpace(s.ServerRoute.Gateway) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func mainTableIdentity(table string) bool {
+	switch strings.TrimSpace(table) {
+	case "", MainRoutingTable, "254":
+		return true
+	default:
+		return false
 	}
 }
 
