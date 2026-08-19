@@ -64,6 +64,10 @@ func (e IPPolicyRuleExecutor) Verify(ctx context.Context, plan planner.TunPolicy
 }
 
 func (e IPPolicyRuleExecutor) Rollback(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	if plan.Action != planner.TunActionAddExclusive {
+		return e.rollbackLegacyPolicyRule(ctx, plan)
+	}
+
 	lines, err := e.policyRulePriorityLines(ctx, plan.Priority)
 	if err != nil {
 		return fmt.Errorf("inspect policy rule priority %d before rollback: %w", plan.Priority, err)
@@ -76,12 +80,8 @@ func (e IPPolicyRuleExecutor) Rollback(ctx context.Context, plan planner.TunPoli
 		return fmt.Errorf("refuse policy rule rollback priority %d: exact tuple appears %d times and ownership is ambiguous", plan.Priority, matches)
 	}
 
-	args := ruleArgs("del", plan)
-	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil && !resourceMissing(err) {
-		return fmt.Errorf("delete policy rule priority %d: %w", plan.Priority, err)
-	}
-	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
-		return fmt.Errorf("flush IPv4 route cache after delete policy rule priority %d: %w", plan.Priority, err)
+	if err := e.deletePolicyRule(ctx, plan); err != nil {
+		return err
 	}
 	remaining, err := e.policyRulePriorityLines(ctx, plan.Priority)
 	if err != nil {
@@ -89,6 +89,21 @@ func (e IPPolicyRuleExecutor) Rollback(ctx context.Context, plan planner.TunPoli
 	}
 	if exact := matchingPolicyRuleCount(remaining, plan); exact != 0 {
 		return fmt.Errorf("policy rule rollback priority %d left %d exact tuple(s)", plan.Priority, exact)
+	}
+	return nil
+}
+
+func (e IPPolicyRuleExecutor) rollbackLegacyPolicyRule(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	return e.deletePolicyRule(ctx, plan)
+}
+
+func (e IPPolicyRuleExecutor) deletePolicyRule(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	args := ruleArgs("del", plan)
+	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil && !resourceMissing(err) {
+		return fmt.Errorf("delete policy rule priority %d: %w", plan.Priority, err)
+	}
+	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
+		return fmt.Errorf("flush IPv4 route cache after delete policy rule priority %d: %w", plan.Priority, err)
 	}
 	return nil
 }
