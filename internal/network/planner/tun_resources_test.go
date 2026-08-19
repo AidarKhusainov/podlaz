@@ -79,6 +79,33 @@ func TestPlanTunForSessionUsesAllocatedNumericIdentitiesAndActualServerPath(t *t
 	}
 }
 
+func TestPlanTunForSessionUsesExactExistingServerRouteAsUnownedPrerequisite(t *testing.T) {
+	s := snapshot.FakeDesktopWithServerRouteViaForeignVPN()
+	s.IPv4Routes.Routes = append(s.IPv4Routes.Routes, snapshot.Route{
+		Status:      snapshot.StatusDetected,
+		Family:      "ipv4",
+		Destination: "203.0.113.10/32",
+		Table:       MainRoutingTable,
+		Interface:   "wg0",
+	})
+
+	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
+	if err != nil {
+		t.Fatalf("PlanTunForSession() error = %v", err)
+	}
+	if plan.ServerBypass.Action != TunActionVerifyExisting {
+		t.Fatalf("existing exact host route must be a verify-only prerequisite: %#v", plan.ServerBypass)
+	}
+	if plan.ServerBypass.Interface != "wg0" || plan.ServerBypass.Gateway != "" {
+		t.Fatalf("existing server prerequisite identity changed: %#v", plan.ServerBypass)
+	}
+	for _, step := range plan.RollbackSteps {
+		if step == "Delete IPv4 route 203.0.113.10/32 from table main" {
+			t.Fatalf("unowned server prerequisite leaked into rollback steps: %#v", plan.RollbackSteps)
+		}
+	}
+}
+
 func TestPlanTunForSessionAllowsDegradedSoftBaselineWhenBootstrapAndAllocationEvidenceAreSafe(t *testing.T) {
 	s := snapshot.FakeDesktopWithServerRouteViaForeignVPN()
 	// The global/default-route diagnostic is intentionally degraded, but the
