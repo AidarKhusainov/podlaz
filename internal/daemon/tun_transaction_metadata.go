@@ -26,7 +26,7 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	routes := make([]txstate.RoutePlan, 0, len(plan.Routes))
 	steps := make([]txstate.PlannedStep, 0, len(plan.Steps)+len(plan.PolicyRules)+len(plan.Firewall.Rules)+2)
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
+		if !planner.IsTunAddAction(route.Action) {
 			continue
 		}
 		routes = append(routes, txstate.RoutePlan{
@@ -36,7 +36,7 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 			Via:       route.Gateway,
 			Dev:       route.Interface,
 			Owner:     netexecutor.OwnerRoute,
-			Operation: route.Action,
+			Operation: "add",
 		})
 	}
 	for _, step := range plan.Steps {
@@ -46,6 +46,9 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		steps = append(steps, txstate.PlannedStep{Kind: "tun-address", Target: tunAddressTarget(plan.TunAddress), Description: plan.TunAddress.Reason, Owner: netexecutor.OwnerTunAddress})
 	}
 	for _, rule := range plan.PolicyRules {
+		if !planner.IsTunAddAction(rule.Action) {
+			continue
+		}
 		steps = append(steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleTarget(rule), Description: rule.Reason, Owner: netexecutor.OwnerPolicyRule})
 	}
 	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
@@ -83,14 +86,14 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata {
 	routes := make([]txstate.RouteRollback, 0, len(plan.Routes))
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
+		if !planner.IsTunAddAction(route.Action) {
 			continue
 		}
 		routes = append(routes, txstate.RouteRollback{Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute})
 	}
 	rules := make([]txstate.PolicyRuleRollback, 0, len(plan.PolicyRules))
 	for _, rule := range plan.PolicyRules {
-		if rule.Action != "add" {
+		if !planner.IsTunAddAction(rule.Action) {
 			continue
 		}
 		rules = append(rules, policyRuleRollback(rule))
