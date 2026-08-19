@@ -281,6 +281,9 @@ func (e IPTunAddressExecutor) verifyAddressPresence(ctx context.Context, plan pl
 }
 
 func (e IPTunAddressExecutor) verifyGlobalTunAddressAllocation(ctx context.Context, plan planner.TunAddressPlan, wantOwnExact int, phase string) error {
+	if !planner.IsTunAddressExclusiveAction(plan.Action) {
+		return nil
+	}
 	addresses, err := e.inspectGlobalIPv4Addresses(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: inspect global IPv4 addresses %s: %v", ErrTunAddressConflict, phase, err)
@@ -433,7 +436,7 @@ func validateBoundTunAddressPlan(plan planner.TunAddressPlan) error {
 	if err := validateTunAddressIntent(plan); err != nil {
 		return err
 	}
-	if plan.Action != planner.TunAddressActionAssign {
+	if !planner.IsTunAddressAssignAction(plan.Action) {
 		return fmt.Errorf("TUN address action %q is not mutable", plan.Action)
 	}
 	if plan.LinkIndex <= 0 || plan.LinkKind != "tun" || !plan.AppearedAfterCore {
@@ -461,12 +464,7 @@ func addressInventoryState(addresses []netsnapshot.IPAddress, plan planner.TunAd
 }
 
 func tunAddressStep(plan planner.TunAddressPlan) Step {
-	return Step{
-		Kind:        "tun-address",
-		Target:      fmt.Sprintf("%s@ifindex=%d:%s", plan.Interface, plan.LinkIndex, plan.CIDR),
-		Description: plan.Reason,
-		Owner:       OwnerTunAddress,
-	}
+	return Step{Kind: "tun-address", Target: fmt.Sprintf("%s@ifindex=%d:%s", plan.Interface, plan.LinkIndex, plan.CIDR), Description: plan.Reason, Owner: OwnerTunAddress}
 }
 
 func (e IPTunAddressExecutor) sleep(ctx context.Context, delay time.Duration) error {
