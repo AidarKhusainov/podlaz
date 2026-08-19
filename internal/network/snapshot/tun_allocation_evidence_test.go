@@ -13,7 +13,7 @@ func TestEnsureTunAllocationEvidenceUsesNumericIPOutput(t *testing.T) {
 				Stdout: "default dev test0 table 51820\n198.51.100.0/24 dev eth0 table 60000",
 			},
 			"/usr/sbin/ip -N -4 rule show": {
-				Stdout: "0: from all lookup local\n9999: from all to 203.0.113.10 lookup main\n10000: from all lookup 51820\n32766: from all lookup main\n32767: from all lookup default",
+				Stdout: "0: from all lookup 255\n9999: from all to 203.0.113.10 lookup 254\n10000: from all lookup 51820\n32766: from all lookup 254\n32767: from all lookup 253",
 			},
 		},
 	}
@@ -28,8 +28,8 @@ func TestEnsureTunAllocationEvidenceUsesNumericIPOutput(t *testing.T) {
 	if s.IPv4PolicyRules.Inspection.Status != StatusDetected || len(s.IPv4PolicyRules.Rules) != 2 {
 		t.Fatalf("unexpected numeric policy-rule inventory: %#v", s.IPv4PolicyRules)
 	}
-	if s.IPv4PolicyRules.Rules[1].Table != "51820" {
-		t.Fatalf("policy-rule table identity is not numeric: %#v", s.IPv4PolicyRules.Rules)
+	if s.IPv4PolicyRules.Rules[0].Table != "254" || s.IPv4PolicyRules.Rules[1].Table != "51820" {
+		t.Fatalf("policy-rule table identities are not numeric: %#v", s.IPv4PolicyRules.Rules)
 	}
 }
 
