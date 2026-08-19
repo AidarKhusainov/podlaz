@@ -12,6 +12,7 @@ import (
 )
 
 const xrayTunInboundOwner = "xray:tun-inbound"
+const hostRoutePrerequisiteOwner = "host:route-prerequisite"
 
 func snapshotMetadata(s netsnapshot.Snapshot, now time.Time) txstate.SnapshotMetadata {
 	summary := []string{
@@ -26,7 +27,16 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	routes := make([]txstate.RoutePlan, 0, len(plan.Routes))
 	steps := make([]txstate.PlannedStep, 0, len(plan.Steps)+len(plan.PolicyRules)+len(plan.Firewall.Rules)+2)
 	for _, route := range plan.Routes {
-		if !planner.IsTunAddAction(route.Action) {
+		owner := ""
+		operation := ""
+		switch {
+		case planner.IsTunAddAction(route.Action):
+			owner = netexecutor.OwnerRoute
+			operation = "add"
+		case planner.IsTunVerifyAction(route.Action):
+			owner = hostRoutePrerequisiteOwner
+			operation = "verify"
+		default:
 			continue
 		}
 		routes = append(routes, txstate.RoutePlan{
@@ -35,8 +45,8 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 			CIDR:      route.Destination,
 			Via:       route.Gateway,
 			Dev:       route.Interface,
-			Owner:     netexecutor.OwnerRoute,
-			Operation: "add",
+			Owner:     owner,
+			Operation: operation,
 		})
 	}
 	for _, step := range plan.Steps {
