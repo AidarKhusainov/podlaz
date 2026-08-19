@@ -7,54 +7,29 @@ import (
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 func TestXrayOwnedAllocatedTunPlanExecutesExclusiveAddressThroughCompositeLifecycle(t *testing.T) {
-	recorder := &assignExclusiveCompositeRecorder{}
-	executor := netexecutor.TunExecutor{
-		TunDevice:   assignExclusiveTunDevice{recorder: recorder},
-		TunAddress:  assignExclusiveTunAddress{recorder: recorder},
-		Routes:      assignExclusiveRoutes{recorder: recorder},
-		PolicyRules: assignExclusivePolicyRules{recorder: recorder},
+	basePlan, err := planner.PlanTunForSession(
+		profileFromSnapshot(connectRequestForTest().Profile),
+		netsnapshot.FakeResolvedDesktop(),
+		planner.TunOptions{},
+	)
+	if err != nil {
+		t.Fatalf("plan allocated TUN session: %v", err)
 	}
-	plan := xrayOwnedTunPlan(planner.TunPlan{
-		Mode: planner.ModeTun,
-		TunDevice: planner.TunDevicePlan{
-			Name:   "podlaz0",
-			Action: "verify",
-		},
-		TunAddress: planner.TunAddressPlan{
-			Family:    "ipv4",
-			Interface: "podlaz0",
-			CIDR:      "198.18.0.2/32",
-			Action:    planner.TunAddressActionAssign,
-		},
-		Routes: []planner.TunRoutePlan{{
-			Family:      "ipv4",
-			Destination: planner.IPv4DefaultRoute,
-			Table:       "51821",
-			Interface:   "podlaz0",
-			Action:      "add",
-		}},
-		PolicyRules: []planner.TunPolicyRulePlan{
-			{
-				Family:   "ipv4",
-				Priority: 9998,
-				Selector: "to 203.0.113.10/32",
-				Table:    planner.MainRoutingTable,
-				Action:   "add",
-			},
-			{
-				Family:   "ipv4",
-				Priority: 9999,
-				Selector: planner.IPv4DefaultSelector,
-				Table:    "51821",
-				Action:   "add",
-			},
-		},
-	})
+	plan := xrayOwnedTunPlan(basePlan)
 	if plan.TunAddress.Action != planner.TunAddressActionAssignExclusive {
 		t.Fatalf("xray-owned allocated plan address action = %q, want %q", plan.TunAddress.Action, planner.TunAddressActionAssignExclusive)
+	}
+
+	recorder := &assignExclusiveCompositeRecorder{}
+	executor := netexecutor.TunExecutor{
+		TunDevice:   assignExclusiveTunDevice{},
+		TunAddress:  assignExclusiveTunAddress{recorder: recorder},
+		Routes:      assignExclusiveRoutes{},
+		PolicyRules: assignExclusivePolicyRules{},
 	}
 
 	steps, err := executor.Apply(context.Background(), plan)
@@ -81,9 +56,7 @@ type assignExclusiveCompositeRecorder struct {
 	addressCalls []string
 }
 
-type assignExclusiveTunDevice struct {
-	recorder *assignExclusiveCompositeRecorder
-}
+type assignExclusiveTunDevice struct{}
 
 func (assignExclusiveTunDevice) Create(context.Context, planner.TunDevicePlan) (netexecutor.Step, error) {
 	return netexecutor.Step{}, nil
@@ -105,9 +78,9 @@ func (assignExclusiveTunAddress) Bind(_ context.Context, plan planner.TunAddress
 	return plan, nil
 }
 
-func (f assignExclusiveTunAddress) Apply(context.Context, planner.TunAddressPlan) (netexecutor.Step, error) {
+func (f assignExclusiveTunAddress) Apply(_ context.Context, plan planner.TunAddressPlan) (netexecutor.Step, error) {
 	f.recorder.addressCalls = append(f.recorder.addressCalls, "apply")
-	return netexecutor.Step{Kind: "tun-address", Target: "podlaz0:198.18.0.2/32", Owner: netexecutor.OwnerTunAddress}, nil
+	return netexecutor.Step{Kind: "tun-address", Target: plan.Interface + ":" + plan.CIDR, Owner: netexecutor.OwnerTunAddress}, nil
 }
 
 func (f assignExclusiveTunAddress) Verify(context.Context, planner.TunAddressPlan) error {
@@ -120,9 +93,7 @@ func (f assignExclusiveTunAddress) Rollback(context.Context, planner.TunAddressP
 	return nil
 }
 
-type assignExclusiveRoutes struct {
-	recorder *assignExclusiveCompositeRecorder
-}
+type assignExclusiveRoutes struct{}
 
 func (assignExclusiveRoutes) Add(_ context.Context, plan planner.TunRoutePlan) (netexecutor.Step, error) {
 	return netexecutor.Step{Kind: "route", Target: plan.Table + " " + plan.Destination, Owner: netexecutor.OwnerRoute}, nil
@@ -136,9 +107,7 @@ func (assignExclusiveRoutes) Rollback(context.Context, planner.TunRoutePlan) err
 	return nil
 }
 
-type assignExclusivePolicyRules struct {
-	recorder *assignExclusiveCompositeRecorder
-}
+type assignExclusivePolicyRules struct{}
 
 func (assignExclusivePolicyRules) Add(_ context.Context, plan planner.TunPolicyRulePlan) (netexecutor.Step, error) {
 	return netexecutor.Step{Kind: "policy-rule", Owner: netexecutor.OwnerPolicyRule}, nil
