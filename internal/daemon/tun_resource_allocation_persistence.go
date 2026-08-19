@@ -12,8 +12,8 @@ import (
 )
 
 // persistedTunResourceAllocation reconstructs the immutable allocation only
-// from exact desired/rollback identities already persisted before mutation.
-// It never consults the current host or historical constants to fill gaps.
+// from desired identities persisted before mutation. It never treats these
+// planned identities as cleanup authority; rollback remains applied-step-backed.
 func persistedTunResourceAllocation(tx txstate.Transaction) (planner.TunResourceAllocation, error) {
 	allocation := planner.TunResourceAllocation{TunIPv4CIDR: strings.TrimSpace(tx.DesiredPlan.TUNAddress.CIDR)}
 	if allocation.TunIPv4CIDR == "" {
@@ -39,22 +39,49 @@ func persistedTunResourceAllocation(tx txstate.Transaction) (planner.TunResource
 
 	serverMatches := 0
 	tunnelMatches := 0
-	for _, rule := range tx.Rollback.PolicyRules {
-		if !ownedRollbackOwner(rule.Owner, netexecutor.OwnerPolicyRule) || rule.Priority <= 0 {
+	for _, step := range tx.DesiredPlan.Steps {
+		if strings.TrimSpace(step.Kind) != "policy-rule" || strings.TrimSpace(step.Owner) != netexecutor.OwnerPolicyRule {
 			continue
 		}
-		table := strings.TrimSpace(rule.Table)
+		priority, selector, table, ok := parsePlannedPolicyRuleTarget(step.Target)
+		if !ok {
+			return planner.TunResourceAllocation{}, fmt.Errorf("persisted TUN transaction has malformed planned policy-rule identity")
+		}
 		switch {
-		case table == planner.MainRoutingTable && strings.TrimSpace(rule.To) != "":
+		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "to "):
 			serverMatches++
-			allocation.ServerRulePriority = rule.Priority
-		case table == strconv.Itoa(allocation.RoutingTableID) && strings.TrimSpace(rule.From) == "all":
+			allocation.ServerRulePriority = priority
+		case table == strconv.Itoa(allocation.RoutingTableID) && selector == planner.IPv4DefaultSelector:
 			tunnelMatches++
-			allocation.TunnelRulePriority = rule.Priority
+			allocation.TunnelRulePriority = priority
 		}
 	}
 	if serverMatches != 1 || tunnelMatches != 1 || allocation.ServerRulePriority >= allocation.TunnelRulePriority {
 		return planner.TunResourceAllocation{}, fmt.Errorf("persisted TUN transaction has incomplete or ambiguous exact policy-rule allocation")
 	}
 	return allocation, nil
+}
+
+func parsePlannedPolicyRuleTarget(target string) (priority int, selector, table string, ok bool) {
+	fields := strings.Fields(strings.TrimSpace(target))
+	if len(fields) < 5 || fields[0] != "priority" {
+		return 0, "", "", false
+	}
+	priority, err := strconv.Atoi(fields[1])
+	if err != nil || priority <= 0 {
+		return 0, "", "", false
+	}
+	lookup := -1
+	for i := 2; i+1 < len(fields); i++ {
+		if fields[i] == "lookup" {
+			lookup = i
+			break
+		}
+	}
+	if lookup <= 2 || lookup+1 != len(fields)-1 {
+		return 0, "", "", false
+	}
+	selector = strings.Join(fields[2:lookup], " ")
+	table = fields[lookup+1]
+	return priority, selector, table, selector != "" && table != ""
 }
