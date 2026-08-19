@@ -14,14 +14,13 @@ import (
 func TestNetworkSessionCleanupExecutorRecoversExactDynamicRoutingAllocation(t *testing.T) {
 	runtimeDir := t.TempDir()
 	runner := &recordingRunner{
-		paths: map[string]string{"ip": "/usr/sbin/ip"},
-		commands: map[string]fakeCommand{
-			"ip -4 rule del priority 98 to 203.0.113.10/32 lookup main": {},
-			"ip -4 rule del priority 99 from all lookup 51821":       {},
-			"ip -4 route del default dev podlaz0 table 51821":         {},
-			"ip -4 route del 203.0.113.10/32 dev wg0 table main":       {},
-		},
+		paths:    map[string]string{"ip": "/usr/sbin/ip"},
+		commands: map[string]fakeCommand{},
 	}
+	runner.commands["ip -4 rule del priority 98 to 203.0.113.10/32 lookup main"] = fakeCommand{}
+	runner.commands["ip -4 rule del priority 99 from all lookup 51821"] = fakeCommand{}
+	runner.commands["ip -4 route del default dev podlaz0 table 51821"] = fakeCommand{}
+	runner.commands["ip -4 route del 203.0.113.10/32 dev wg0 table main"] = fakeCommand{}
 
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	now := time.Unix(1_700_000_000, 0).UTC()
