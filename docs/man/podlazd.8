@@ -213,9 +213,18 @@ and generated config file mode
 .BR 0640 .
 .PP
 Proxy-only lifecycle must not mutate TUN devices, routes, policy rules, DNS
-settings, nftables, or firewall state. TUN lifecycle may mutate only the
-podlaz-owned routes, policy rules, DNS, and nftables resources represented in
-its transaction state and rollback plan. Xray-owned
+settings, nftables, or firewall state. A new TUN lifecycle first selects one
+collision-free Network Session allocation from authoritative read-only IPv4
+address, numeric route-table, and numeric policy-rule evidence. Historical
+address, table, or priority values are preferred candidates only and never prove
+ownership. The daemon may mutate only the exact allocated address, routes,
+policy rules, DNS, and nftables resources represented in its transaction state
+and durable rollback ownership. A pre-existing exact server-bootstrap host route
+may be persisted as a read-only prerequisite and reverified without becoming
+rollback authority. Unrelated TUN devices, NetworkManager VPN connections,
+routes, policy rules, DNS links, and firewall objects remain baseline state and
+are not stopped, deleted, or adopted merely because they resemble Podlaz state.
+Xray-owned
 .B podlaz0
 is released by stopping the Xray child, not by recording it as a podlaz-owned
 TUN rollback target. The CLI must not become a privileged or SUID networking
@@ -263,21 +272,35 @@ starts Xray as a supervised child process, and records active state for
 status. Proxy-only lifecycle must not mutate TUN devices, routes, policy
 rules, DNS settings, nftables, or firewall state.
 .PP
-During TUN connect, the daemon verifies native Xray TUN support before opening
-a transaction, then records generated config rollback metadata, starts Xray,
-verifies that the Xray-owned TUN link appeared after the tracked child and
-binds its name, ifindex, and TUN type, assigns the daemon-owned
-.B 198.18.0.1/32
-address, applies podlaz-owned host networking state, verifies connectivity, and
-commits only after those checks pass. Xray remains the only owner of link
-creation and lifetime. Resolved DNS
-verification requires the exact planned DNS-server set, exact route-only domain
+During TUN connect, the daemon verifies native Xray TUN support, collects the
+current host baseline, and proves a concrete server bootstrap path before host
+mutation. It obtains canonical numeric routing evidence, deterministically
+selects a free session IPv4 /32, routing-table ID, and ordered policy-rule
+priorities, and persists those exact desired identities before supervised Xray
+start or host-network mutation. Historical
+.BR 198.18.0.1/32 ,
+table
+.BR 51820 ,
+and priorities
+.B 9999/10000
+are candidates only; occupied candidates cause deterministic reallocation. Xray
+then creates the TUN link, and podlazd binds its exact name, ifindex, and TUN
+type before assigning the allocated address. An exact pre-existing main-table
+host route that already provides the planned server bootstrap path is verified
+and retained as an unowned prerequisite; otherwise the session may add the
+exact host route and records ownership only if it actually mutates that route.
+The daemon applies the remaining exact session-owned routes, policy rules, DNS,
+and nftables state, verifies connectivity, and commits only after those checks
+pass. A foreign object that races into an allocated identity causes apply to
+fail rather than being adopted. Xray remains the only owner of link creation and
+lifetime. Resolved DNS verification requires the exact planned DNS-server set,
+exact route-only domain
 .B ~.,
 and DNS default-route evidence; extra DNS servers or route-only domains on the
 owned link fail verification. The nftables verification used by the same
 canonical composition verifier rejects extra chains/rules or base-chain metadata
-drift. It then requires the exact address on the same UP link identity, an
-uncached IPv4
+drift. It then requires the exact allocated address on the same UP link identity,
+an uncached IPv4
 .B resolvectl
 query bound to
 .BR podlaz0 ,
