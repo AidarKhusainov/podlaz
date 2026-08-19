@@ -39,7 +39,8 @@ func FakeResolvedDesktop() Snapshot {
 			Availability: Finding{Status: StatusDetected, Summary: "nftables table listing available"},
 			PodlazTable:  Finding{Status: StatusMissing, Summary: "podlaz nftables table not found"},
 		},
-		TunDevices: []TunDevice{{Name: DefaultTunName, Status: StatusMissing, Detail: "device not found"}},
+		TunDevices:      []TunDevice{{Name: DefaultTunName, Status: StatusMissing, Detail: "device not found"}},
+		IPv4PolicyRules: PolicyRuleInventory{Inspection: Finding{Status: StatusDetected, Summary: "IPv4 policy-rule inventory available"}},
 		IPv4Addresses: IPAddressInventory{
 			Inspection: Finding{Status: StatusDetected, Summary: "IPv4 address inventory available"},
 			Addresses:  []IPAddress{{Family: "ipv4", Interface: "wlp0s20f3", CIDR: "192.0.2.55/24", Scope: "global"}},
@@ -78,7 +79,9 @@ func FakeDesktopWithForeignTunLikeInterface() Snapshot {
 
 func FakeDesktopWithForeignPolicyRouting() Snapshot {
 	s := FakeResolvedDesktop()
-	s.PolicyRouting = []PolicyRoutingSignal{{Kind: "rule", Priority: "100", Fwmark: "0xca6c", Table: "51821", Raw: "100: from all fwmark 0xca6c lookup 51821"}}
+	rule := PolicyRoutingSignal{Kind: "rule", Priority: "100", Fwmark: "0xca6c", Table: "51821", Raw: "100: from all fwmark 0xca6c lookup 51821"}
+	s.PolicyRouting = []PolicyRoutingSignal{rule}
+	s.IPv4PolicyRules.Rules = []PolicyRoutingSignal{rule}
 	return s
 }
 
