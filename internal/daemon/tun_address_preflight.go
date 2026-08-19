@@ -32,12 +32,11 @@ func requireTunAddressPreflight(plan planner.TunPlan) error {
 	}
 }
 
-// requireTunAddressPreflightBeforeHandoff blocks unrelated or incomplete host
-// state before active replacement, controlled recovery, or NetworkManager
-// handoff. It temporarily ignores only resources whose removal is already
-// authorized by exact active/stale transaction identity or by stop-known for a
-// concrete NetworkManager connection. The normal post-handoff preflight still
-// rechecks the fresh authoritative snapshot without allowances.
+// requireTunAddressPreflightBeforeHandoff may ignore only exact address state
+// whose removal is already authorized by the active or recoverable Podlaz
+// transaction. Handoff policy never grants authority over a foreign interface.
+// The normal post-recovery/replacement preflight still rechecks a fresh snapshot
+// without allowances.
 func (m *XrayManager) requireTunAddressPreflightBeforeHandoff(ctx context.Context, plan planner.TunPlan, handoff string) error {
 	var allowed []tunAddressPreflightAllowance
 	policy := api.NormalizeHandoffPolicy(handoff)
@@ -51,13 +50,6 @@ func (m *XrayManager) requireTunAddressPreflightBeforeHandoff(ctx context.Contex
 	}
 	if allowance, ok := validatedRecoverableTunAddressAllowance(m.runtimeDir(), plan.TunAddress.CIDR, plan.Snapshot); ok {
 		allowed = append(allowed, allowance)
-	}
-	if policy == api.HandoffStopKnown {
-		for _, connection := range activeNetworkManagerVPNConnections(plan.Snapshot) {
-			if device := strings.TrimSpace(connection.Device); device != "" {
-				allowed = append(allowed, tunAddressPreflightAllowance{Interface: device, InterfaceWide: true})
-			}
-		}
 	}
 	if len(allowed) == 0 {
 		return requireTunAddressPreflight(plan)
