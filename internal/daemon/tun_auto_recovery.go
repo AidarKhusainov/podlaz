@@ -13,7 +13,7 @@ import (
 var automaticPodlazRecover = func(ctx context.Context, runtimeDir string) error {
 	result := recovery.ExecuteWithOptions(ctx, recovery.Options{
 		RuntimeDir: runtimeDir,
-		Executor:   recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir},
+		Executor:   recovery.NetworkSessionCleanupExecutor{RuntimeDir: runtimeDir},
 	})
 	if automaticRecoveryComplete(result) {
 		return nil
