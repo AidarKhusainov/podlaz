@@ -246,6 +246,7 @@ func markRoutingRecoveryAuthority(resources []netsnapshot.StaleResource, transac
 				resource.RecoveryAuthorized = true
 				break
 			}
+		}
 	}
 }
 
