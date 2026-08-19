@@ -15,29 +15,8 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-const defaultDNSRouteDomain = "~."
 const podlazTunRulePriority = "10000"
 const podlazServerRulePriority = "9999"
-
-var nmcliConnectionDown = func(ctx context.Context, id string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return errors.New("missing NetworkManager connection id")
-	}
-	out, err := exec.CommandContext(ctx, "nmcli", "connection", "down", id).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("nmcli connection down %s: %w: %s", id, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-var controlledPodlazRecover = func(ctx context.Context, runtimeDir string) error {
-	result := recovery.ExecuteWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir, Executor: recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir}})
-	if result.HasFailures() || result.HasIncompleteCleanup() {
-		return fmt.Errorf("controlled podlaz recovery did not fully complete before replace-podlaz handoff: %s", strings.TrimSpace(result.String()))
-	}
-	return nil
-}
 
 var podlazRuntimeRoutingStaleResources = func(ctx context.Context) []netsnapshot.StaleResource {
 	ipPath, err := exec.LookPath("ip")
@@ -126,11 +105,11 @@ func (e *tunHandoffBlocker) Error() string {
 	}
 	conflicts := e.Conflicts
 	if len(conflicts) == 0 {
-		conflicts = []string{"unknown foreign VPN ownership signal"}
+		conflicts = []string{"TUN lifecycle preflight could not prove a safe operation"}
 	}
 	next := strings.TrimSpace(e.NextStep)
 	if next == "" {
-		next = "Stop the other VPN or use an explicit safe handoff policy, then retry."
+		next = "Resolve the reported Podlaz lifecycle condition and retry."
 	}
 	return fmt.Sprintf(`podlaz: TUN handoff blocked before network mutation.
 
@@ -160,7 +139,7 @@ func (e *tunStalePodlazStateBlocker) Error() string {
 Detected:
   - %s
 
-The remaining policy-rule/route shape matches Podlaz's reserved routing layout, but exact durable rollback ownership evidence is unavailable for every observed routing object. Recovery cannot safely delete unmatched kernel objects from reserved priorities/table numbers alone.
+The remaining policy-rule/route shape matches Podlaz's historical routing layout, but exact durable rollback ownership evidence is unavailable for every observed routing object. Recovery cannot safely delete unmatched kernel objects from historical priorities/table numbers alone.
 
 Next step: run plz doctor and inspect the reported rules/routes as administrator. Remove them manually only after independently proving ownership, then retry connect.`, strings.Join(e.Resources, "\n  - "))
 	}
@@ -202,37 +181,6 @@ func (m *XrayManager) prepareActivePodlazReplace(ctx context.Context, handoff st
 		return fmt.Errorf("replace active podlaz TUN connection: %w", err)
 	}
 	return nil
-}
-
-func (m *XrayManager) prepareTunHandoff(ctx context.Context, s netsnapshot.Snapshot, handoff string, opts netsnapshot.Options) (netsnapshot.Snapshot, error) {
-	policy := api.NormalizeHandoffPolicy(handoff)
-	s = m.withPodlazRuntimeStaleState(ctx, s)
-	switch policy {
-	case api.HandoffAsk:
-		return s, &tunHandoffBlocker{Policy: policy, Conflicts: []string{"--handoff=ask is interactive and is not supported by daemon/non-interactive connect"}, NextStep: "Use --handoff=block, --handoff=stop-known, or --handoff=replace-podlaz explicitly."}
-	case api.HandoffReplacePodlaz:
-		if stalePodlazStateBlocker(s) != nil {
-			if err := m.runControlledPodlazRecover(ctx); err != nil {
-				return s, err
-			}
-			s = m.withPodlazRuntimeStaleState(ctx, m.collectTunSnapshot(ctx, opts))
-		}
-	case api.HandoffStopKnown:
-		connections := activeNetworkManagerVPNConnections(s)
-		for _, connection := range connections {
-			id := firstNonEmpty(connection.UUID, connection.Name)
-			if err := nmcliConnectionDown(ctx, id); err != nil {
-				return s, &tunHandoffBlocker{Policy: policy, Conflicts: []string{"failed to stop NetworkManager VPN " + fallbackUnknown(connection.Name)}, NextStep: err.Error()}
-			}
-		}
-		if len(connections) > 0 {
-			s = m.withPodlazRuntimeStaleState(ctx, m.collectTunSnapshot(ctx, opts))
-		}
-	}
-	if err := preflightTunOwnership(s, policy); err != nil {
-		return s, err
-	}
-	return s, nil
 }
 
 func (m *XrayManager) withPodlazRuntimeStaleState(ctx context.Context, s netsnapshot.Snapshot) netsnapshot.Snapshot {
@@ -298,33 +246,12 @@ func markRoutingRecoveryAuthority(resources []netsnapshot.StaleResource, transac
 				resource.RecoveryAuthorized = true
 				break
 			}
-		}
 	}
 }
 
 func routingStaleResourceKind(kind string) bool {
 	kind = strings.TrimSpace(kind)
 	return kind == "route" || kind == "policy-rule"
-}
-
-func (m *XrayManager) runControlledPodlazRecover(ctx context.Context) error {
-	return controlledPodlazRecover(ctx, m.runtimeDir())
-}
-
-func preflightTunOwnership(s netsnapshot.Snapshot, handoff string) error {
-	policy := api.NormalizeHandoffPolicy(handoff)
-	if blocker := stalePodlazStateBlocker(s); blocker != nil {
-		return blocker
-	}
-	conflicts := foreignOwnershipConflicts(s)
-	if len(conflicts) == 0 {
-		return nil
-	}
-	next := "Use --handoff=block to keep state unchanged, --handoff=stop-known for manageable NetworkManager VPNs, or stop the foreign VPN manually."
-	if policy == api.HandoffStopKnown {
-		next = "A known NetworkManager VPN was stopped if possible, but foreign VPN ownership signals remain; inspect plz doctor."
-	}
-	return &tunHandoffBlocker{Policy: policy, Conflicts: conflicts, NextStep: next}
 }
 
 func isTunHandoffBlocker(err error) bool {
@@ -335,41 +262,6 @@ func isTunHandoffBlocker(err error) bool {
 func isTunStalePodlazStateBlocker(err error) bool {
 	var blocker *tunStalePodlazStateBlocker
 	return errors.As(err, &blocker)
-}
-
-func foreignOwnershipConflicts(s netsnapshot.Snapshot) []string {
-	var conflicts []string
-	if foreign, ok := foreignDefaultDNSOwner(s); ok {
-		conflicts = append(conflicts, fmt.Sprintf("foreign route-only DNS owner interface=%s domain=%s server=%s", fallbackUnknown(foreign.Name), firstOrDefault(foreign.DNSDomains, defaultDNSRouteDomain), firstNonEmpty(foreign.CurrentDNSServer, firstOrDefault(foreign.DNSServers, ""))))
-	}
-	for _, device := range s.TunDevices {
-		if device.Status == netsnapshot.StatusDetected && isForeignTunLikeName(device.Name) {
-			conflicts = append(conflicts, "foreign TUN-like interface "+device.Name)
-		}
-	}
-	if s.ServerRoute.Status == netsnapshot.StatusDetected && isForeignTunLikeName(s.ServerRoute.Interface) {
-		conflicts = append(conflicts, "VPN server route uses foreign VPN interface "+s.ServerRoute.Interface)
-	}
-	for _, signal := range s.PolicyRouting {
-		if podlazPolicyRoutingSignal(signal) {
-			continue
-		}
-		conflicts = append(conflicts, fmt.Sprintf("foreign policy routing %s", fallbackUnknown(signal.Raw)))
-	}
-	for _, connection := range activeNetworkManagerVPNConnections(s) {
-		conflicts = append(conflicts, fmt.Sprintf("active NetworkManager VPN connection %s on %s", fallbackUnknown(connection.Name), fallbackUnknown(connection.Device)))
-	}
-	return compactStrings(conflicts)
-}
-
-func activeNetworkManagerVPNConnections(s netsnapshot.Snapshot) []netsnapshot.NetworkManagerConnection {
-	var out []netsnapshot.NetworkManagerConnection
-	for _, connection := range s.NetworkManager.ActiveConnections {
-		if strings.EqualFold(strings.TrimSpace(connection.Type), "vpn") || isForeignTunLikeName(connection.Device) {
-			out = append(out, connection)
-		}
-	}
-	return out
 }
 
 func stalePodlazStateBlocker(s netsnapshot.Snapshot) *tunStalePodlazStateBlocker {
@@ -469,21 +361,6 @@ func stalePodlazResourceSummaries(s netsnapshot.Snapshot) []string {
 	return resources
 }
 
-func foreignDefaultDNSOwner(s netsnapshot.Snapshot) (netsnapshot.ResolvedLink, bool) {
-	for _, link := range s.DNS.ResolvedLinks {
-		if strings.TrimSpace(link.Name) == "" || link.Name == netsnapshot.DefaultTunName {
-			continue
-		}
-		if !containsToken(link.DNSDomains, defaultDNSRouteDomain) {
-			continue
-		}
-		if containsToken(link.Protocols, "+DefaultRoute") || strings.TrimSpace(link.CurrentDNSServer) != "" || len(link.DNSServers) > 0 {
-			return link, true
-		}
-	}
-	return netsnapshot.ResolvedLink{}, false
-}
-
 func podlazPolicyRoutingSignal(signal netsnapshot.PolicyRoutingSignal) bool {
 	table := strings.TrimSpace(signal.Table)
 	priority := strings.TrimSpace(signal.Priority)
@@ -541,35 +418,12 @@ func firstNonEmptyLine(text string) string {
 	return ""
 }
 
-func isForeignTunLikeName(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	return name != "" && name != netsnapshot.DefaultTunName && (strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") || strings.HasPrefix(name, "wg") || strings.HasPrefix(name, "tailscale") || strings.HasPrefix(name, "zt") || strings.HasPrefix(name, "ppp") || strings.HasPrefix(name, "ipsec") || strings.HasPrefix(name, "proton") || strings.HasPrefix(name, "nord"))
-}
-
-func containsToken(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func fallbackUnknown(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "<unknown>"
 	}
 	return value
-}
-
-func firstOrDefault(values []string, fallback string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return fallback
 }
 
 func firstNonEmpty(values ...string) string {
