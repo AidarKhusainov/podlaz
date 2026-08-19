@@ -144,12 +144,20 @@ Show a read-only proxy-only plan.
 .TP
 .B plan --mode tun <profile-id> [--json] [--verbose|-v] [--plain]
 Show a read-only full-tunnel plan before host networking changes. Default human
-output is a compact summary with profile status, the deterministic daemon-owned
-TUN IPv4 address, planned high-level changes, blockers, warnings, safety notes,
-and next-step guidance. The Linux address policy is
-.BR 198.18.0.1/32 ;
-there is no random fallback. It hides raw nftables
-rules, rollback keys, owner labels, and long command stderr. Use
+output is a compact summary with profile status, the collision-free daemon-owned
+TUN IPv4 address selected from the current read-only host snapshot, planned
+high-level changes, blockers, warnings, safety notes, and next-step guidance.
+Historical
+.BR 198.18.0.1/32 ,
+routing table
+.BR 51820 ,
+and policy priorities
+.B 9999/10000
+are preferred candidates only. An occupied candidate is replaced with another
+verified-free session identity. Incomplete allocation evidence or exhaustion of
+the bounded candidate space fails closed and renders no misleading applicable
+plan. It hides raw nftables rules, rollback keys, owner labels, and long command
+stderr. Use
 .B --verbose
 or
 .B -v
@@ -169,41 +177,43 @@ packet ingestion through its native
 inbound. Before handoff or host-networking changes, TUN mode verifies that the
 packaged Xray helper accepts a minimal pinned-schema native TUN config. The
 profile-generated Xray runtime config is written later after the TUN transaction
-starts; podlazd records durable desired state before supervised Xray start and
-then binds the exact link name, ifindex, and TUN type, assigns the
-podlazd-owned
-.B 198.18.0.1/32
-address, and applies podlaz-owned routes, policy rules, DNS, and nftables state
-around that link. Xray remains the owner of link creation and lifetime.
+starts. Before the first host-network mutation, podlazd selects a collision-free
+Network Session allocation from the authoritative host baseline and persists the
+exact TUN IPv4 /32, numeric routing table, and policy priorities in transaction
+desired state. After Xray creates the link, podlazd binds the exact link name,
+ifindex, and TUN type, assigns the allocated address, and applies only the exact
+session routes, policy rules, DNS, and nftables state. Xray remains the owner of
+link creation and lifetime.
 .PP
-For non-interactive TUN connects, podlazd automatically recovers only
-unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, and transaction
-state, then recollects the host snapshot. Stale podlaz systemd-resolved link
-state is refreshed on
-.B podlaz0
-before per-link DNS is applied. Foreign VPN interfaces, foreign route-only DNS
-owners, ambiguous resources, and incomplete recovery remain blockers. Before
-mutation, all assigned IPv4 addresses and routes are checked for overlap with
-.BR 198.18.0.1/32 .
-A foreign or ambiguous overlap reports
-.B tun_address_conflict
-and no second candidate is selected.
+For non-interactive TUN connects, podlazd automatically recovers only exact
+durable Podlaz transaction state that requires cleanup, then recollects the host
+snapshot and allocates independently around unrelated host networking. Foreign
+TUN devices, policy routing, route-only DNS owners, NetworkManager VPN
+connections, and unrelated firewall state are baseline rather than blockers
+merely because they exist. The daemon does not stop or rewrite them to make the
+host look clean. Connect fails closed when recovery remains incomplete,
+authoritative allocation evidence is insufficient, the bounded candidate space
+is exhausted, or no concrete safe server bootstrap/data-plane plan can be built
+without colliding with or mutating unowned state. If another process races into
+an already allocated identity before apply, Podlaz fails instead of adopting the
+foreign object as owned.
 .PP
 For TUN mode,
 .B --handoff
 selects an explicit handoff policy. The default
 .B block
-policy never stops a foreign VPN or removes ambiguous state; safe podlaz-owned
+policy never stops a foreign VPN or removes ambiguous state; exact Podlaz
 self-recovery remains enabled.
 .B ask
 is rejected in daemon/non-interactive connect paths and performs no recovery or
 handoff mutation.
 .B stop-known
-may additionally stop manageable NetworkManager VPN connections and then
-rechecks host ownership.
+is retained for CLI compatibility but does not broaden new-session authority to
+stop foreign NetworkManager VPN connections; collision-aware allocation treats
+them as baseline.
 .B replace-podlaz
-may additionally disconnect an active podlaz TUN session before starting the new
-transaction. Unsupported handoff values fail before network mutation.
+may disconnect the exact active Podlaz TUN session before starting a new
+allocation. Unsupported handoff values fail before network mutation.
 .PP
 If TUN
 .B network-apply,
@@ -224,7 +234,7 @@ Rollback atomically finalizes the historical status as
 or
 .BR failed .
 Static resolved ownership is not sufficient for commit. The daemon also
-requires the exact TUN address, an uncached IPv4 query bound to
+requires the exact allocated TUN address, an uncached IPv4 query bound to
 .BR podlaz0 ,
 a separate normal system resolver lookup, and a TUN route for at least one
 returned IPv4 address.
