@@ -38,7 +38,7 @@ func TestEnsureTunAllocationEvidenceFailsClosedWhenNumericInventoryFails(t *test
 		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
 			"/usr/sbin/ip -N -4 -o route show table all": {ExitCode: 1, Stderr: "synthetic route inspection failure"},
-			"/usr/sbin/ip -N -4 rule show":             {ExitCode: 1, Stderr: "synthetic rule inspection failure"},
+			"/usr/sbin/ip -N -4 rule show":               {ExitCode: 1, Stderr: "synthetic rule inspection failure"},
 		},
 	}
 
