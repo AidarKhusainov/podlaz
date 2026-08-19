@@ -123,8 +123,8 @@ func validateTunRollbackProjection(tx txstate.Transaction) error {
 			entry.InterfaceName == "podlaz0" &&
 			strings.TrimSpace(entry.Family) == "ipv4" &&
 			strings.TrimSpace(entry.Scope) == "global" &&
-			strings.TrimSpace(entry.CIDR) == planner.DefaultTunIPv4CIDR &&
-			entry.LinkIndex > 0 && entry.LinkKind == "tun" && entry.AppearedAfterCore
+			entry.LinkIndex > 0 && entry.LinkKind == "tun" && entry.AppearedAfterCore &&
+			tunAddressRollbackMatchesDesired(tx.DesiredPlan.TUNAddress, entry)
 	}); err != nil {
 		reasons = append(reasons, err.Error())
 	}
@@ -150,6 +150,18 @@ func validateTunRollbackProjection(tx txstate.Transaction) error {
 		return fmt.Errorf("ambiguous TUN rollback projection: %s", strings.Join(reasons, "; "))
 	}
 	return nil
+}
+
+func tunAddressRollbackMatchesDesired(desired txstate.TUNAddressDesiredState, rollback txstate.TUNAddressRollback) bool {
+	return strings.TrimSpace(desired.Owner) != "" &&
+		rollbackOwnerMatches(desired.Owner, netexecutor.OwnerTunAddress) &&
+		desired.InterfaceName == rollback.InterfaceName &&
+		strings.TrimSpace(desired.Family) == strings.TrimSpace(rollback.Family) &&
+		strings.TrimSpace(desired.CIDR) != "" && strings.TrimSpace(desired.CIDR) == strings.TrimSpace(rollback.CIDR) &&
+		strings.TrimSpace(desired.Scope) == strings.TrimSpace(rollback.Scope) &&
+		desired.LinkIndex == rollback.LinkIndex &&
+		desired.LinkKind == rollback.LinkKind &&
+		desired.AppearedAfterCore == rollback.AppearedAfterCore
 }
 
 func validateSingleRollbackCategory(name string, count int, valid func(int) bool) error {
@@ -290,7 +302,7 @@ func policyRuleTarget(rule planner.TunPolicyRulePlan) string {
 func appliedRoutes(plan planner.TunPlan) []planner.TunRoutePlan {
 	out := make([]planner.TunRoutePlan, 0, len(plan.Routes))
 	for _, route := range plan.Routes {
-		if route.Action == "add" {
+		if planner.IsTunAddAction(route.Action) {
 			out = append(out, route)
 		}
 	}
@@ -300,7 +312,7 @@ func appliedRoutes(plan planner.TunPlan) []planner.TunRoutePlan {
 func appliedPolicyRules(plan planner.TunPlan) []planner.TunPolicyRulePlan {
 	out := make([]planner.TunPolicyRulePlan, 0, len(plan.PolicyRules))
 	for _, rule := range plan.PolicyRules {
-		if rule.Action == "add" {
+		if planner.IsTunAddAction(rule.Action) {
 			out = append(out, rule)
 		}
 	}
