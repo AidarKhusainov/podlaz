@@ -29,26 +29,19 @@ func TestParseIPv4PolicyRulesRejectsMalformedPriority(t *testing.T) {
 	}
 }
 
-func TestCollectWithRunnerMarksPolicyRuleInventoryUnknownOnMalformedOutput(t *testing.T) {
+func TestIPv4PolicyRulesMarksInventoryUnknownOnMalformedOutput(t *testing.T) {
 	runner := fakeRunner{
-		paths: map[string]string{"ip": "/usr/sbin/ip"},
 		commands: map[string]CommandResult{
-			"/usr/sbin/ip -4 route show default":              {Stdout: "default via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip -6 route show default":              {ExitCode: 1, Stderr: "Network is unreachable"},
-			"/usr/sbin/ip route get 203.0.113.10":             {Stdout: "203.0.113.10 via 192.0.2.1 dev eth0"},
-			"/usr/sbin/ip link show dev podlaz0":              {ExitCode: 1, Stderr: "Device podlaz0 does not exist"},
-			"/usr/sbin/ip -4 rule show":                       {Stdout: "broken: from all lookup 60000"},
-			"/usr/sbin/ip -4 -o address show":                 {Stdout: "2: eth0    inet 192.0.2.10/24 scope global eth0"},
-			"/usr/sbin/ip -4 -o route show table all":         {Stdout: "default via 192.0.2.1 dev eth0 table main"},
+			"/usr/sbin/ip -4 rule show": {Stdout: "broken: from all lookup 60000"},
 		},
 	}
 
-	s := CollectWithRunner(context.Background(), runner, Options{Server: "203.0.113.10", OS: "linux"})
-	if s.IPv4PolicyRules.Inspection.Status != StatusUnknown {
-		t.Fatalf("expected malformed policy-rule inventory to be unknown, got %#v", s.IPv4PolicyRules)
+	inventory := ipv4PolicyRules(context.Background(), runner, "/usr/sbin/ip")
+	if inventory.Inspection.Status != StatusUnknown {
+		t.Fatalf("expected malformed policy-rule inventory to be unknown, got %#v", inventory)
 	}
-	if len(s.IPv4PolicyRules.Rules) != 0 {
-		t.Fatalf("malformed inventory must not expose partial authoritative rules: %#v", s.IPv4PolicyRules.Rules)
+	if len(inventory.Rules) != 0 {
+		t.Fatalf("malformed inventory must not expose partial authoritative rules: %#v", inventory.Rules)
 	}
 }
 
