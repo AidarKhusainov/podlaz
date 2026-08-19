@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	tunAddressAllocationLastHost = 254
+	tunAddressAllocationLastHost   = 254
 	tunRoutingTableAllocationLast = TunRoutingTableID + 99
 )
 
