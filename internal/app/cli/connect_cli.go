@@ -227,9 +227,9 @@ func printConnectHelp(w io.Writer) {
 Start the stored profile through the daemon-managed lifecycle. The default mode
 is proxy-only. TUN mode requires daemon networking privileges. The TUN handoff
 policy defaults to block. ask fails in non-interactive daemon contexts;
-stop-known attempts to stop manageable NetworkManager VPN connections;
-replace-podlaz performs controlled podlaz-owned disconnect/recover before the new
-TUN transaction.
+stop-known is retained for CLI compatibility but does not stop foreign VPNs;
+replace-podlaz performs controlled exact podlaz-owned disconnect/recovery before
+the new collision-aware TUN Network Session allocation.
 `)
 }
 
