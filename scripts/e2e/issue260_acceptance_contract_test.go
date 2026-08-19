@@ -20,7 +20,7 @@ func TestIssue260AcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAdapters(
 		"ip tuntap add",
 		"collision_free_allocation",
 		"protected_data_plane",
-		"foreign_baseline_after_disconnect",
+		"assert_foreign_fixture after_disconnect",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("issue 260 acceptance must contain %q", required)
@@ -39,9 +39,17 @@ func TestIssue260AcceptanceProvesPersistedAllocationAndBaselineSurvival(t *testi
 		t.Fatalf("read issue260 acceptance: %v", err)
 	}
 	script := string(data)
-	allocation := shellFunctionBody(t, script, "assert_dynamic_transaction_allocation")
-	for _, required := range []string{"desired_plan", "tun_address", "routes", "policy-rule", "51820", "9999", "10000"} {
-		if !strings.Contains(allocation, required) {
+	for _, required := range []string{
+		"assert_dynamic_transaction_allocation()",
+		"desired_plan",
+		"tun_address",
+		"routes",
+		`step.get("kind") != "policy-rule"`,
+		`address == "198.18.0.1/32"`,
+		`"51820" in tables`,
+		`value in (9999, 10000)`,
+	} {
+		if !strings.Contains(script, required) {
 			t.Fatalf("allocation proof must inspect %q", required)
 		}
 	}
