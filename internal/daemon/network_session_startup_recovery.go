@@ -17,7 +17,7 @@ func recoverExactNetworkSessionTransactionsWithOptions(ctx context.Context, runt
 	opts.RuntimeDir = runtimeDir
 	opts.Scanner = fixedDaemonRecoveryScanner{plan: plan}
 	if opts.Executor == nil {
-		opts.Executor = recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: opts.Runner}
+		opts.Executor = recovery.NetworkSessionCleanupExecutor{RuntimeDir: runtimeDir, Runner: opts.Runner}
 	}
 	return recoveryResponseToAPI(recovery.ExecuteWithOptions(ctx, opts))
 }
