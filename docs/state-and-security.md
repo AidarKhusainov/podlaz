@@ -535,3 +535,56 @@ The latest report remains bounded and must not store generated Xray
 configuration, authentication material, or unbounded command/protocol output.
 Required collection fields such as `probes`, `warnings`, and `errors` remain JSON
 arrays, including when empty; they must never change type to `null`.
+
+Self-hosted evidence follows the same rule. Raw public/local addresses, gateways, host interface names, complete routes, resolver output, provider identifiers, and generated configuration must stay outside the upload directory. Package E2E stores only normalized verdicts, bounded classifications/events, commit identity, and cryptographic hashes. The workflow scans candidate artifacts against configured secrets and current host network values and must not upload them unless both the teardown assertions and scan succeed.
+
+JSON output must include `schema_version`. Existing JSON field meanings must not
+change without an explicit compatibility note.
+
+## Confirmation
+
+Commands that remove user state or explicitly execute recovery cleanup must
+require confirmation:
+
+- interactive TTY: prompt unless `--yes` is passed;
+- non-interactive mode: fail unless `--yes` is passed;
+- JSON mode: fail unless `--yes` is passed.
+
+A TUN connect is already an explicit privileged networking mutation request. It may therefore perform the narrowly scoped automatic exact Podlaz transaction recovery and collision-aware session allocation described above without a second confirmation prompt. This exception does not authorize foreign VPN handoff, ambiguous cleanup, global `systemd-resolved` restart, or deletion of persistent user state.
+
+A proved active-session revalidation failure or deadline is also a fail-safe
+lifecycle condition rather than a new user cleanup request. After bounded
+redacted diagnostics and release of revalidation authority, podlazd may invoke
+the normal exact transaction-backed `Disconnect` automatically to avoid leaving
+an unproved active TUN behind the kill-switch. This does not waive ownership
+checks, does not authorize repair/foreign cleanup, and does not apply when the
+revalidation was cancelled by an explicit user lifecycle operation or daemon
+shutdown that already owns cleanup.
+
+High-impact flags such as `--execute` and `--yes` are long-only.
+
+## Packaged service baseline
+
+The packaged daemon runs as `root:podlaz` because TUN mode and recovery need
+privileged networking operations. The CLI remains unprivileged and uses the
+socket access boundary.
+
+Expected systemd baseline:
+
+- `User=root`
+- `Group=podlaz`
+- `RuntimeDirectory=podlaz`
+- `RuntimeDirectoryMode=0711`
+- `RuntimeDirectoryPreserve=yes`
+- `StateDirectory=podlaz`
+- `StateDirectoryMode=0700`
+- `UMask=0077`
+- `KillSignal=SIGTERM`
+- `RestartKillSignal=SIGUSR1`
+- `KillMode=mixed`
+- `TimeoutStopSec=40s`
+- `Restart=on-failure`
+- `CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN`
+- `AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN`
+- explicit systemd hardening that does not remove the networking privileges TUN
+  execution requires.
