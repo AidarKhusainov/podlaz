@@ -48,9 +48,13 @@ Initial metadata contract:
 The package depends on `libc6` because it ships dynamically linked Linux binaries. It depends on `systemd` because the installed service contract uses systemd unit, sysusers, runtime/state directory management, and journald-oriented diagnostics. It depends on `ca-certificates` because profile/subscription and packaged Xray validation rely on TLS trust roots.
 
 TUN mode requires `iproute2`, `nftables`, and `systemd-resolved` for exact
-`198.18.0.1/32` address ownership, route and policy-rule management, firewall,
-functional scoped resolver verification, rollback, and recovery around the
-Xray-owned TUN link. The package installs the pinned Xray helper under `/usr/lib/podlaz/xray` as the only bundled runtime helper.
+session-allocated IPv4 address ownership, route and policy-rule management,
+firewall, functional scoped resolver verification, rollback, and recovery around
+the Xray-owned TUN link. Historical `198.18.0.1/32`, table `51820`, and
+priorities `9999`/`10000` are preferred allocation candidates only; package
+ownership is the exact allocation persisted for the current Network Session. The
+package installs the pinned Xray helper under `/usr/lib/podlaz/xray` as the only
+bundled runtime helper.
 
 ## Service install behavior
 
@@ -123,11 +127,16 @@ dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 dist/podlaz_0.0.0~dev-1_linux_arm64.deb
 ```
 
-The dedicated Ubuntu 24.04 package-convergence gate additionally verifies
-that Xray creates `podlaz0` without the product address, podlazd assigns the
-exact address before functional DNS verification, a foreign address conflict
-blocks before mutation, disconnect removes all owned state, and immediate
-reconnect succeeds without restarting `podlazd` or `systemd-resolved`.
+The dedicated Ubuntu 24.04 package-convergence gate additionally verifies that
+Xray creates `podlaz0` without a product-selected OS address, podlazd assigns the
+exact persisted session address before functional DNS verification, and normal
+disconnect removes only the session-owned state. The issue #260 coexistence step
+then deliberately occupies historical `198.18.0.1/32`, table `51820`, and
+priorities `9999`/`10000` with synthetic unrelated state, requires the installed
+candidate to allocate different exact identities, verifies the protected data
+plane, and proves that the unrelated baseline survives both connect and
+disconnect before the E2E fixture explicitly removes itself. Immediate reconnect
+must succeed without restarting `podlazd` or `systemd-resolved`.
 
 The network-session continuity acceptance gate must additionally exercise a real installed-package lifecycle: connect an installed lower released package in TUN mode, install the candidate package without issuing a second CLI connect, and verify that the session returns active. The same candidate package must survive `systemctl restart podlazd` and an unexpected daemon death through systemd automatic restart, while explicit service stop followed by start remains disconnected. Forced teardown interruption must prove that surviving Podlaz-owned host state still has exact transaction recovery authority rather than a heuristic marker. Routine acceptance must not repair the host with manual `ip`, `resolvectl`, `nft`, or `recover --execute` commands.
 
