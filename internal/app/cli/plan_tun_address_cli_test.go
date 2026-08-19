@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -45,7 +46,7 @@ func TestRunCLIPlanTunRendersDaemonOwnedAddressInAllFormats(t *testing.T) {
 	}
 }
 
-func TestRunCLIPlanTunRendersAddressConflictAsBlocker(t *testing.T) {
+func TestRunCLIPlanTunFailsClosedWhenAddressAllocationPoolIsExhausted(t *testing.T) {
 	s := netsnapshot.FakeResolvedDesktop()
 	s.IPv4Routes.Routes = append(s.IPv4Routes.Routes, netsnapshot.Route{
 		Status:      netsnapshot.StatusDetected,
@@ -59,10 +60,14 @@ func TestRunCLIPlanTunRendersAddressConflictAsBlocker(t *testing.T) {
 	profileID := importPlanTestProfile(t, opts)
 
 	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"plan", "--mode", "tun", profileID, "--plain"}, &out, opts); err != nil {
-		t.Fatalf("blocked TUN plan: %v", err)
+	err := runWithOptions(context.Background(), []string{"plan", "--mode", "tun", profileID, "--plain"}, &out, opts)
+	if err == nil {
+		t.Fatal("exhausted TUN address allocation pool must fail closed")
 	}
-	assertContains(t, out.String(), "Status     Blocked")
-	assertContains(t, out.String(), "TUN address cannot be assigned")
-	assertContains(t, out.String(), "198.18.0.0/15")
+	if !strings.Contains(err.Error(), "no collision-free TUN IPv4 address") {
+		t.Fatalf("unexpected exhausted-allocation error: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("failed allocation must not render a misleading plan: %q", out.String())
+	}
 }
