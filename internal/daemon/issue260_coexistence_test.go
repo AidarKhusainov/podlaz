@@ -3,9 +3,12 @@ package daemon
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestPrepareTunCoexistenceTreatsForeignNetworkingAsBaseline(t *testing.T) {
@@ -44,10 +47,13 @@ func TestPrepareTunCoexistenceDoesNotInvokeLegacyForeignVPNStop(t *testing.T) {
 
 func TestPrepareTunCoexistenceStillFailsClosedOnExactRecoveryState(t *testing.T) {
 	m := NewXrayManager(t.TempDir())
-	store := transactionStoreForRuntimeDir(m.runtimeDir())
-	tx := newIncompleteIssue260Transaction()
+	store := txstate.TransactionStore{RuntimeDir: m.runtimeDir(), Now: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }}
+	tx := txstate.NewTransaction("issue260-unfinished", "example-profile", planner.ModeTun, store.Now())
 	if _, err := store.Save(tx); err != nil {
 		t.Fatalf("save exact recovery fixture: %v", err)
+	}
+	if _, _, err := store.Transition(tx.ID, txstate.TransactionApplying); err != nil {
+		t.Fatalf("mark exact recovery fixture applying: %v", err)
 	}
 
 	if _, err := m.prepareTunCoexistence(context.Background(), issue260ForeignBaseline(), api.HandoffBlock, netsnapshot.Options{}); err == nil {
@@ -70,11 +76,11 @@ func issue260ForeignBaseline() netsnapshot.Snapshot {
 	s.PolicyRouting = append(s.PolicyRouting, rule)
 	s.IPv4PolicyRules.Rules = append(s.IPv4PolicyRules.Rules, rule)
 	s.NetworkManager.ActiveConnections = []netsnapshot.NetworkManagerConnection{{
-		Name: "Existing tunnel",
-		UUID: "11111111-2222-3333-4444-555555555555",
-		Type: "vpn",
+		Name:   "Existing tunnel",
+		UUID:   "11111111-2222-3333-4444-555555555555",
+		Type:   "vpn",
 		Device: "wg0",
-		State: "activated",
+		State:  "activated",
 	}}
 	return s
 }
