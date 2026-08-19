@@ -21,7 +21,7 @@ func requireTunAddressPreflight(plan planner.TunPlan) error {
 		return errors.New("TUN plan is missing the daemon-owned IPv4 address")
 	}
 	switch address.Action {
-	case planner.TunAddressActionAssign:
+	case planner.TunAddressActionAssign, planner.TunAddressActionAssignExclusive:
 		return nil
 	case planner.TunAddressActionBlocked:
 		return fmt.Errorf("%w: %s", netexecutor.ErrTunAddressConflict, strings.TrimSpace(address.Reason))
