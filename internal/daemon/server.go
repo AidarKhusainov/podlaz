@@ -15,13 +15,17 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 )
 
+const daemonShutdownTimeout = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
+
 type Server struct {
-	RuntimeDir  string
-	Status      func(context.Context) api.StatusResponse
-	Doctor      func(context.Context) api.DoctorResponse
-	Lifecycle   *XrayManager
-	Authorizer  Authorizer
-	startupScan startupScanFunc
+	RuntimeDir     string
+	Status         func(context.Context) api.StatusResponse
+	Doctor         func(context.Context) api.DoctorResponse
+	Lifecycle      *XrayManager
+	Authorizer     Authorizer
+	ShutdownIntent func() ShutdownIntent
+	startupScan    startupScanFunc
+	bootID         bootIDReader
 }
 
 func (s Server) Run(ctx context.Context) error {
@@ -54,14 +58,14 @@ func (s Server) Run(ctx context.Context) error {
 	}
 
 	lockPath := api.LockPath(runtimeDir)
-	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	lock, err := acquireDaemonLock(lockPath)
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("daemon lock %s already exists; another podlazd may be running or previous shutdown was unclean", lockPath)
+		if errors.Is(err, errDaemonLockHeld) {
+			return fmt.Errorf("daemon lock %s is held by another podlazd process: %w", lockPath, err)
 		}
-		return fmt.Errorf("create daemon lock %s: %w", lockPath, err)
+		return err
 	}
-	defer func() { _ = lock.Close(); _ = os.Remove(lockPath) }()
+	defer lock.Close()
 
 	startupScanFn := s.startupScan
 	if startupScanFn == nil {
@@ -75,32 +79,6 @@ func (s Server) Run(ctx context.Context) error {
 	forceRefreshStartupScan := func(refreshCtx context.Context) {
 		scan := startupScan.ForceRefresh(refreshCtx)
 		logStartupScan(filterStartupScanForActiveRuntime(scan, currentStatus(refreshCtx), runtimeDir))
-	}
-	refreshStartupScan(ctx)
-
-	socketPath := api.SocketPath(runtimeDir)
-	if err := removeStaleSocket(socketPath); err != nil {
-		return err
-	}
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("listen on daemon socket %s: %w", socketPath, err)
-	}
-	listeners := []net.Listener{listener}
-	defer func() { _ = listener.Close(); _ = os.Remove(socketPath) }()
-	if err := os.Chmod(socketPath, 0o660); err != nil {
-		return fmt.Errorf("set daemon socket permissions %s: %w", socketPath, err)
-	}
-	log.Printf("podlazd: daemon API listening on Unix socket")
-
-	if shouldListenOnAbstractSocket(authorizer) {
-		abstractListener, err := net.Listen("unix", api.AbstractSocketAddress())
-		if err != nil {
-			return fmt.Errorf("listen on packaged daemon abstract socket: %w", err)
-		}
-		listeners = append(listeners, abstractListener)
-		defer abstractListener.Close()
-		log.Printf("podlazd: packaged daemon API listening on abstract Unix socket")
 	}
 
 	operationLock := newLifecycleOperationLock()
@@ -131,7 +109,10 @@ func (s Server) Run(ctx context.Context) error {
 		runtime:   revalidationRuntime,
 		schedule:  coordinator.Notify,
 	}
-	lockedLifecycle = operationLock.wrap(healthLifecycle)
+	continuation := newNetworkSessionContinuationStore(runtimeDir, s.bootID)
+	sessionLifecycle := newNetworkSessionLifecycle(healthLifecycle, continuation)
+	lockedLifecycle = operationLock.wrap(sessionLifecycle)
+	startupMutationGate := newNetworkSessionStartupMutationGate(lockedLifecycle)
 	terminalHandler = tunRevalidationTerminalHandler{
 		collect: lifecycle.collectTunRevalidationFailureDiagnostics,
 		disconnect: func(cleanupCtx context.Context) error {
@@ -146,6 +127,56 @@ func (s Server) Run(ctx context.Context) error {
 	eventCtx, cancelEvents := context.WithCancel(ctx)
 	defer cancelEvents()
 	go coordinator.Run(eventCtx)
+
+	resumed, resumeErr := resumeNetworkSession(
+		ctx,
+		continuation,
+		lockedLifecycle,
+		currentStatus,
+		func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
+			return daemonRecover(recoveryCtx, runtimeDir, status)
+		},
+	)
+	switch {
+	case resumeErr == nil && resumed:
+		log.Printf("podlazd: current-boot network session continuation resumed")
+	case errors.Is(resumeErr, errNetworkSessionRecoveryIncomplete):
+		startupMutationGate.Block()
+		log.Printf("podlazd: current-boot network session continuation paused because exact startup recovery is incomplete")
+	case resumeErr != nil:
+		startupMutationGate.Block()
+		// The continuation record can contain profile credentials/endpoints and
+		// lifecycle errors can contain derived network details. Keep startup logs
+		// classification-only; exact diagnostics remain in private daemon state.
+		log.Printf("podlazd: current-boot network session continuation could not be resumed")
+	}
+	refreshStartupScan(ctx)
+
+	socketPath := api.SocketPath(runtimeDir)
+	if err := removeStaleSocket(socketPath); err != nil {
+		return err
+	}
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("listen on daemon socket %s: %w", socketPath, err)
+	}
+	listeners := []net.Listener{listener}
+	defer func() { _ = listener.Close(); _ = os.Remove(socketPath) }()
+	if err := os.Chmod(socketPath, 0o660); err != nil {
+		return fmt.Errorf("set daemon socket permissions %s: %w", socketPath, err)
+	}
+	log.Printf("podlazd: daemon API listening on Unix socket")
+
+	if shouldListenOnAbstractSocket(authorizer) {
+		abstractListener, err := net.Listen("unix", api.AbstractSocketAddress())
+		if err != nil {
+			return fmt.Errorf("listen on packaged daemon abstract socket: %w", err)
+		}
+		listeners = append(listeners, abstractListener)
+		defer abstractListener.Close()
+		log.Printf("podlazd: packaged daemon API listening on abstract Unix socket")
+	}
+
 	startTunNetworkEventSources(eventCtx, coordinator.Notify)
 
 	mux := http.NewServeMux()
@@ -210,17 +241,41 @@ func (s Server) Run(ctx context.Context) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		response := operationLock.runRecovery(r.Context(), func() api.RecoveryResponse {
-			response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
-			refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
-			forceRefreshStartupScan(refreshCtx)
-			cancel()
-			return response
-		})
+		response := operationLock.runRecoveryWithFollowUp(
+			r.Context(),
+			func() api.RecoveryResponse {
+				response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
+				forceRefreshStartupScan(refreshCtx)
+				cancel()
+				return response
+			},
+			func(response api.RecoveryResponse) api.RecoveryResponse {
+				if !startupMutationGate.Blocked() || !networkSessionRecoveryConverged(response) {
+					return response
+				}
+				// runRecoveryWithFollowUp already owns the operation token. Resume
+				// through the underlying session lifecycle rather than the locked
+				// wrapper so recovery -> resume remains one non-reentrant critical
+				// section.
+				_, retryErr := resumeNetworkSession(
+					r.Context(),
+					continuation,
+					sessionLifecycle,
+					currentStatus,
+					func(context.Context, api.StatusResponse) api.RecoveryResponse { return response },
+				)
+				response = applyNetworkSessionResumeResult(response, startupMutationGate, retryErr)
+				if retryErr != nil {
+					log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
+				}
+				return response
+			},
+		)
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
-	registerLifecycleHandlers(mux, lockedLifecycle, authorizer)
+	registerLifecycleHandlers(mux, startupMutationGate, authorizer)
 
 	httpServer := http.Server{
 		Handler: mux,
@@ -245,22 +300,90 @@ func (s Server) Run(ctx context.Context) error {
 
 	select {
 	case <-ctx.Done():
-		cancelEvents()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = lockedLifecycle.Disconnect(shutdownCtx)
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("shutdown daemon API: %w", err)
+		return shutdownDaemonServer(
+			context.Background(), &httpServer, errc, len(listeners), cancelEvents,
+			operationLock, sessionLifecycle, normalizeShutdownIntent(s.shutdownIntent()), nil,
+		)
+	case serveErr := <-errc:
+		return shutdownDaemonServer(
+			context.Background(), &httpServer, errc, len(listeners)-1, cancelEvents,
+			operationLock, sessionLifecycle, ShutdownRestart, serveErr,
+		)
+	}
+}
+
+func (s Server) shutdownIntent() ShutdownIntent {
+	if s.ShutdownIntent == nil {
+		return ShutdownStop
+	}
+	return s.ShutdownIntent()
+}
+
+func shutdownDaemonServer(
+	ctx context.Context,
+	httpServer *http.Server,
+	errc <-chan error,
+	remainingServeResults int,
+	cancelEvents context.CancelFunc,
+	operationLock *lifecycleOperationLock,
+	sessionLifecycle *networkSessionLifecycle,
+	intent ShutdownIntent,
+	initialServeErr error,
+) error {
+	cancelEvents()
+	shutdownCtx, cancel := context.WithTimeout(ctx, daemonShutdownTimeout)
+	defer cancel()
+
+	// Fence first so no new request can declare lifecycle mutation. Explicit
+	// stop then disarms reconnect intent before waiting for already-admitted
+	// mutations; restart intentionally keeps continuation armed.
+	operationLock.fenceMutations()
+	var stopIntentErr error
+	if intent == ShutdownStop {
+		stopIntentErr = sessionLifecycle.disarmForExplicitStop()
+	}
+
+	apiShutdownResult := make(chan error, 1)
+	go func() { apiShutdownResult <- httpServer.Shutdown(shutdownCtx) }()
+
+	var lifecycleErr error
+	if drainErr := operationLock.waitMutationIdle(shutdownCtx); drainErr != nil {
+		lifecycleErr = errors.Join(stopIntentErr, fmt.Errorf("drain lifecycle mutations before final teardown: %w", drainErr))
+	} else {
+		lifecycleErr = errors.Join(stopIntentErr, finalShutdownDisconnect(shutdownCtx, operationLock, sessionLifecycle, intent))
+	}
+	apiShutdownErr := <-apiShutdownResult
+	serveErr := errors.Join(initialServeErr, collectServeErrors(errc, remainingServeResults))
+
+	var wrappedLifecycleErr error
+	if lifecycleErr != nil {
+		wrappedLifecycleErr = fmt.Errorf("shutdown network session: %w", lifecycleErr)
+	}
+	var wrappedAPIErr error
+	if apiShutdownErr != nil {
+		wrappedAPIErr = fmt.Errorf("shutdown daemon API: %w", apiShutdownErr)
+	}
+	return errors.Join(wrappedLifecycleErr, wrappedAPIErr, serveErr)
+}
+
+func finalShutdownDisconnect(
+	ctx context.Context,
+	operationLock *lifecycleOperationLock,
+	sessionLifecycle *networkSessionLifecycle,
+	intent ShutdownIntent,
+) error {
+	if operationLock != nil {
+		if err := operationLock.acquire(ctx); err != nil {
+			return err
 		}
-		return collectServeErrors(errc, len(listeners))
-	case err := <-errc:
-		cancelEvents()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = lockedLifecycle.Disconnect(shutdownCtx)
-		_ = httpServer.Shutdown(shutdownCtx)
+		defer operationLock.release()
+	}
+	if intent == ShutdownRestart {
+		_, err := sessionLifecycle.DisconnectForRestart(ctx)
 		return err
 	}
+	_, err := sessionLifecycle.Disconnect(ctx)
+	return err
 }
 
 func shouldListenOnAbstractSocket(authorizer Authorizer) bool {

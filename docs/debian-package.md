@@ -79,6 +79,24 @@ The internal `podlaz` and `podlaz-xray` system identities still exist for daemon
 
 Proxy-only Xray is started as the dedicated `podlaz-xray:podlaz-xray` identity without `CAP_NET_ADMIN`. Native TUN Xray is also started as `podlaz-xray:podlaz-xray`, but receives only `CAP_NET_ADMIN` as an ambient capability so pinned Xray can open `/dev/net/tun` and configure the Xray-owned `podlaz0` link. The unit keeps `NoNewPrivileges=yes` and does not rely on file capabilities or setuid helpers.
 
+### Active network-session continuity
+
+Package maintenance is part of the same network-session lifecycle as a daemon restart. Replacing the daemon binary while an active TUN session exists must not require the user to reconnect manually and must not discard exact recovery authority.
+
+The packaged unit therefore distinguishes three lifecycle intents:
+
+- a systemd restart job uses `RestartKillSignal=SIGUSR1`; the daemon preserves current-boot reconnect intent while it performs the normal exact transaction-backed disconnect/rollback before the replacement process starts;
+- an explicit service stop uses `KillSignal=SIGTERM`; reconnect intent is removed before teardown, so a later manual service start stays disconnected;
+- a reboot is not an implicit reconnect request. Continuation is bound to the current Linux boot ID and is stored only under `/run`, so a normal connection does not cross the reboot boundary.
+
+`KillMode=mixed` is part of this contract: the initial stop/restart signal is delivered to the daemon main process rather than indiscriminately terminating the supervised Xray child before podlazd can order rollback and child shutdown. `TimeoutStopSec` must remain longer than the daemon's bounded rollback/core-stop budget. `RuntimeDirectoryPreserve=yes` prevents systemd from deleting exact transaction evidence after a failed explicit teardown; preserving the runtime directory does not authorize reconnect because explicit stop/disconnect removes continuation first.
+
+The normal continuation file is `/run/podlaz/network-session-continuation.json`. It is daemon-private mode `0600`, atomically replaced, current-boot-only state. It contains the exact `ConnectRequest` required to reproduce the user's active connection and may therefore contain profile credentials or endpoints. It must never be logged or treated as cleanup authority. Route, DNS, nftables, TUN, generated-config, and child cleanup authority continues to come only from exact transaction state.
+
+A lower released package predating this continuation file cannot write it before its first upgrade restart. For that one compatibility boundary, `postinstall` may write `/run/podlaz/legacy-upgrade-continuation`: a mode-`0600` marker containing only the current boot ID. The marker authorizes only an attempt to reconstruct reconnect intent; it grants no network ownership. The new daemon accepts the migration only when there is exactly one recoverable committed TUN transaction, its generated Xray config is exact transaction-owned state under the Podlaz runtime directory, the original server metadata is transaction-backed, and the reconstructed profile regenerates canonically identical Xray JSON. Any ambiguity fails closed: no guessed reconnect or foreign cleanup is allowed, while existing exact transaction evidence remains available for recovery.
+
+Startup recovery for a current-boot continuation happens before the daemon exposes its mutating API. The daemon first converges transaction-backed stale state, reconnects only after recovery reports no failed or ambiguous result, and only then accepts normal requests. A teardown/recovery error is returned as a daemon failure instead of being discarded.
+
 ## Packaged daemon socket boundary
 
 Packaged installs keep the filesystem daemon socket narrow and expose an abstract Unix socket for the polkit-gated daemon boundary. CLI clients first try the filesystem socket. If that attempt fails with a transport-level permission error, the client retries the packaged abstract socket.
@@ -90,7 +108,9 @@ The fallback is not a generic error-masking layer. Daemon responses from the abs
 | Category | Location | Owner | Package behavior |
 | --- | --- | --- | --- |
 | Packaged files | `/usr/bin`, `/usr/lib/podlaz`, `/usr/lib/systemd/system`, `/usr/lib/sysusers.d`, `/usr/share/bash-completion`, `/usr/share/zsh`, `/usr/share/fish`, `/usr/share/polkit-1/actions`, `/usr/share/man`, `/usr/share/doc/podlaz` | Debian package manager | Installed, upgraded, and removed by `dpkg`/`apt`. |
-| Daemon runtime state | `/run/podlaz` | `podlazd` through systemd `RuntimeDirectory=` | Volatile; not shipped in the package. |
+| Daemon runtime state | `/run/podlaz` | `podlazd` through systemd `RuntimeDirectory=` | Volatile; not shipped in the package. Preserved across service replacement so incomplete exact recovery authority is not erased. |
+| Current-boot reconnect intent | `/run/podlaz/network-session-continuation.json` | `podlazd` | Private volatile intent; may contain profile credentials/endpoints; never cleanup authority; removed before explicit disconnect/stop and rejected after a boot-ID change. |
+| Legacy upgrade marker | `/run/podlaz/legacy-upgrade-continuation` | Debian `postinstall`, consumed by `podlazd` | Current-boot compatibility marker only; contains no profile data and grants no cleanup authority. |
 | Daemon persistent state | `/var/lib/podlaz` | systemd `StateDirectory=` and daemon | Reserved for daemon-owned persistent state; not shipped as packaged files. |
 | User intent/state | `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz` | invoking user | Not owned, modified, or removed by package lifecycle scripts. |
 
@@ -109,6 +129,8 @@ exact address before functional DNS verification, a foreign address conflict
 blocks before mutation, disconnect removes all owned state, and immediate
 reconnect succeeds without restarting `podlazd` or `systemd-resolved`.
 
-The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, required packaged polkit authorization environment, bounded daemon capabilities, the ambient `CAP_NET_ADMIN` required only for native TUN Xray, packaged Xray helper layout and architecture, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, absence of obsolete TUN helper artifacts, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
+The network-session continuity acceptance gate must additionally exercise a real installed-package lifecycle: connect an installed lower released package in TUN mode, install the candidate package without issuing a second CLI connect, and verify that the session returns active. The same candidate package must survive `systemctl restart podlazd` and an unexpected daemon death through systemd automatic restart, while explicit service stop followed by start remains disconnected. Forced teardown interruption must prove that surviving Podlaz-owned host state still has exact transaction recovery authority rather than a heuristic marker. Routine acceptance must not repair the host with manual `ip`, `resolvectl`, `nft`, or `recover --execute` commands.
+
+The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, required packaged polkit authorization environment, bounded daemon capabilities, the ambient `CAP_NET_ADMIN` required only for native TUN Xray, packaged Xray helper layout and architecture, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, restart/stop signal ordering, current-boot upgrade marker permissions, absence of obsolete TUN helper artifacts, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
 
 Pull-request CI and tagged release builds must run the same `scripts/ci/validate-package-install.sh` install/reinstall/purge validator with packaged service validation enabled. The pull-request gate must therefore exercise service enablement, service activity, daemon socket creation, `podlaz`/`plz` daemon status access, and the same purge cleanup required during release. A second reduced package-install validator is not allowed because it can let release-only failures escape the merge gate.

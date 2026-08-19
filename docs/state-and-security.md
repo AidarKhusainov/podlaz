@@ -9,6 +9,8 @@ daemon privilege boundaries, and privileged networking safety.
 | --- | --- | --- |
 | User config/state/cache | `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz` | invoking user |
 | Daemon runtime | `/run/podlaz` | `podlazd` via systemd `RuntimeDirectory=` |
+| Current-boot reconnect intent | `/run/podlaz/network-session-continuation.json` | `podlazd` |
+| Legacy package-upgrade continuation marker | `/run/podlaz/legacy-upgrade-continuation` | Debian `postinstall`, consumed by `podlazd` |
 | Daemon persistent state | `/var/lib/podlaz` | `podlazd` via systemd `StateDirectory=` |
 | Transaction files | `/run/podlaz/transactions/*.json` | `podlazd` |
 | Latest TUN diagnostic report | `/run/podlaz/diagnostics/tun-last.json` | `podlazd` |
@@ -20,6 +22,14 @@ Rules:
 - User profile/subscription state must not require root.
 - Runtime config is generated output, not persistent source of truth.
 - Transaction files must be atomic, private, versioned, and redaction-safe.
+- The current-boot continuation is a separate intent record, not cleanup
+  authority. It is atomically written mode `0600`, may contain profile
+  credentials/endpoints required to reproduce the active connect request, must
+  never be logged, and is rejected after a boot-ID change.
+- The legacy package-upgrade marker is mode `0600`, contains only the current
+  boot ID, and authorizes only a fail-closed attempt to reconstruct reconnect
+  intent from exact transaction-owned runtime state. It grants no network
+  ownership or cleanup authority.
 - The latest TUN diagnostic report is replacement-only, atomically written,
   bounded to 256 KiB, and mode `0600`; podlaz keeps no unbounded diagnostic
   history under `/run`.
@@ -42,6 +52,10 @@ Rules:
 - The active TUN transaction records the original VPN server endpoint and TLS
   server name needed to distinguish hostname/SNI semantics from resolved bypass
   addresses in diagnostics.
+- On daemon startup, exact transaction-backed recovery is converged before a
+  current-boot continuation may be replayed. If recovery or replay remains
+  incomplete, status and recovery stay available while conflicting lifecycle
+  mutations remain blocked.
 - `doctor --tun` is daemon-backed because authoritative active-session,
   transaction, route, resolver, and ownership evidence belongs to the daemon.
   The diagnostic handler is read-only apart from atomically replacing the
@@ -148,6 +162,47 @@ mutating `resolvectl revert podlaz0` contract; mutation idempotence remains the
 separate exit-`1` cleanup contract defined below.
 
 Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
+
+## Network session continuation and service replacement
+
+A normal active TUN session may continue across daemon restart, unexpected daemon
+crash followed by systemd automatic restart, and Debian package replacement
+within the same Linux boot. Reconnect intent and cleanup authority remain
+strictly separate:
+
+- `/run/podlaz/network-session-continuation.json` stores only the current-boot
+  connect intent; it never authorizes route, rule, DNS, nftables, address, child,
+  or generated-config cleanup;
+- exact transaction state remains the only host-network cleanup/recovery
+  authority;
+- explicit `podlaz disconnect` and explicit service stop remove continuation
+  before teardown mutation;
+- restart/upgrade teardown preserves continuation while it executes the normal
+  exact transaction-backed disconnect path;
+- a boot-ID mismatch discards continuation, so a normal connection cannot become
+  implicit boot autostart;
+- startup runs exact transaction recovery before replaying continuation and
+  blocks conflicting lifecycle mutations while exact recovery or replay remains
+  incomplete.
+
+The packaged systemd unit uses `KillSignal=SIGTERM` for explicit stop and
+`RestartKillSignal=SIGUSR1` for restart continuation. `KillMode=mixed` lets the
+main daemon receive the graceful lifecycle signal before systemd force-kills any
+remaining child processes. `RuntimeDirectoryPreserve=yes` retains same-boot
+exact transaction evidence after incomplete teardown; preservation of `/run`
+never grants reconnect authority after explicit stop because continuation is
+disarmed first. The daemon shutdown budget is bounded below the unit's
+`TimeoutStopSec`, and rollback/disconnect failures are returned rather than
+silently normalized to clean shutdown.
+
+For the first upgrade from a release that predates normal continuation records,
+Debian `postinstall` may create a current-boot legacy marker containing only the
+boot ID. The new daemon reconstructs reconnect intent only when exactly one
+recoverable committed TUN transaction exists, the generated Xray configuration
+is exact transaction-owned state under the runtime directory, transaction-backed
+server metadata is present, and the reconstructed profile regenerates canonically
+identical Xray JSON. Any ambiguity fails closed and leaves exact transaction
+recovery authority intact.
 
 ## Current TUN health and network generations
 
@@ -348,6 +403,15 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - The CLI must not perform privileged cleanup directly.
 - Recovery may clean only clearly podlaz-owned volatile state.
 - `/run/podlaz` must not be deleted wholesale.
+- On startup, daemon-owned exact transaction recovery runs before continuation
+  replay. A failed or ambiguous result keeps the lifecycle mutation gate closed
+  and retains exact transaction evidence; reconnect intent cannot manufacture
+  cleanup authority.
+- After an explicit recovery completes while startup is blocked, podlazd retries
+  the current-boot continuation automatically. If cleanup succeeded but resume
+  still fails, recovery output includes a `network session continuation` warning
+  and the mutation gate remains blocked instead of reporting a misleading clean
+  recovery result.
 - Stale PID metadata alone is not enough to signal a process. The current
   transaction schema does not persist the executable identity and process start
   time required for identity-safe orphan signalling, so daemon recovery never
@@ -423,6 +487,12 @@ IP addresses, UUIDs, runtime-config paths, raw child payload, or raw child error
 text. User-visible diagnostics may retain separately redacted runtime warnings;
 that does not authorize copying their raw source payload into journald.
 
+The current-boot continuation is private daemon state rather than diagnostic
+output. Because it may contain profile credentials and endpoints, neither its
+contents nor errors containing reconstructed profile/network details may be
+written to journald or copied into evidence artifacts. Startup logs use only
+low-cardinality continuation/recovery classifications.
+
 The generic secret redactor is not a sufficient privacy boundary for TUN
 diagnostics. Before persistence and before human or JSON rendering, the complete
 report passes through one fail-closed public diagnostic privacy projection.
@@ -487,9 +557,17 @@ Expected systemd baseline:
 - `User=root`
 - `Group=podlaz`
 - `RuntimeDirectory=podlaz`
+- `RuntimeDirectoryMode=0711`
+- `RuntimeDirectoryPreserve=yes`
 - `StateDirectory=podlaz`
-- `RuntimeDirectoryMode=0750`
-- `StateDirectoryMode=0750`
-- `UMask=0027`
+- `StateDirectoryMode=0700`
+- `UMask=0077`
+- `KillSignal=SIGTERM`
+- `RestartKillSignal=SIGUSR1`
+- `KillMode=mixed`
+- `TimeoutStopSec=40s`
+- `Restart=on-failure`
+- `CapabilityBoundingSet=CAP_CHOWN CAP_SETUID CAP_SETGID CAP_KILL CAP_NET_ADMIN`
+- `AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN`
 - explicit systemd hardening that does not remove the networking privileges TUN
   execution requires.

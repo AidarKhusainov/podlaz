@@ -53,6 +53,28 @@ journalctl -u podlazd -n 50 --no-pager
 sudo systemctl stop podlazd
 .EE
 .PP
+A systemd restart is a continuation boundary, not an implicit user disconnect.
+The packaged unit uses
+.B RestartKillSignal=SIGUSR1
+so podlazd preserves the current-boot reconnect intent while performing its
+normal exact transaction-backed teardown. An explicit service stop uses
+.B KillSignal=SIGTERM;
+podlazd removes reconnect intent before teardown, so a later manual start stays
+disconnected. Normal reconnect intent is stored only under
+.I /run
+and is bound to the Linux boot ID, so it does not authorize reconnect after a
+machine reboot.
+.PP
+The service uses
+.B KillMode=mixed
+so the initial stop or restart signal goes to the daemon main process before
+systemd force-terminates any remaining processes. This gives podlazd the first
+opportunity to order host-network rollback and supervised Xray shutdown.
+.B RuntimeDirectoryPreserve=yes
+keeps exact recovery evidence available after incomplete teardown, while
+.B TimeoutStopSec
+is longer than the daemon's bounded rollback and core-stop budget.
+.PP
 Packaged service access for ordinary users is polkit-mediated by default. The
 unit sets
 .B PODLAZ_SERVICE=systemd
@@ -90,14 +112,19 @@ the default packaged daemon path.
 .TP
 .I /run/podlaz/
 Daemon runtime directory. Packaged systemd units create it with
-.B RuntimeDirectory=podlaz
-and mode
-.BR 0711 .
+.B RuntimeDirectory=podlaz ,
+mode
+.BR 0711 ,
+and
+.BR RuntimeDirectoryPreserve=yes .
 The execute bits allow traversal for the daemon socket boundary and for the
 unprivileged
 .B podlaz-xray
 child identity to reach generated runtime config when required. They do not make
-daemon-private runtime state listable or writable by ordinary users.
+daemon-private runtime state listable or writable by ordinary users. Runtime
+preservation keeps same-boot exact recovery evidence across service replacement
+or incomplete stop; the directory remains volatile and is not a reboot-persistent
+connection source of truth.
 .TP
 .I /run/podlaz/podlazd.sock
 Filesystem local daemon API socket. The daemon applies socket mode
@@ -117,9 +144,27 @@ child process credentials.
 .TP
 .I /run/podlaz/transactions/
 Volatile transaction state used by status, diagnostics, rollback, disconnect,
-and recovery paths. Transaction files remain daemon-private state. Terminal
+and recovery paths. Transaction files remain daemon-private state. Exact
+transaction ownership is the cleanup authority for surviving Podlaz networking
+state; reconnect intent does not grant cleanup authority. Terminal
 cleanup-complete history may remain for inspection but must not block a new TUN
 transaction.
+.TP
+.I /run/podlaz/network-session-continuation.json
+Daemon-private, mode-0600, atomically replaced current-boot reconnect intent.
+It contains the exact connect request required to resume an active session and
+may therefore contain profile credentials or endpoints. It must not be logged,
+does not grant host-network cleanup authority, is removed before explicit
+disconnect or service stop, and is rejected when its boot ID does not match the
+current boot.
+.TP
+.I /run/podlaz/legacy-upgrade-continuation
+Mode-0600 current-boot compatibility marker used only when upgrading from a
+release that predates normal continuation records. The marker contains only the
+boot ID and grants neither profile identity nor cleanup authority. The new daemon
+accepts reconstruction only from one exact committed TUN transaction and its
+transaction-owned generated Xray configuration, with canonical config equality
+required before reconnect intent is persisted.
 .TP
 .I /run/podlaz/diagnostics/tun-last.json
 Daemon-owned latest TUN diagnostic report. It is centrally redacted, bounded,
@@ -198,13 +243,17 @@ path. This does not expand rollback ownership and is not a repair mechanism.
 Explicit user disconnect/recovery or daemon-shutdown cancellation already owns
 cleanup and therefore does not schedule a second automatic disconnect.
 .SH RUNTIME STATE
-On startup, the daemon creates or uses the runtime directory, creates a lock
-file, removes only a stale Unix socket at the filesystem socket path, fails if
-the socket path exists but is not a Unix socket, listens on the filesystem Unix
-socket, applies the socket mode, listens on the packaged abstract Unix socket
-when packaged polkit authorization is enabled, and serves local status, doctor,
-connect, disconnect, and recovery endpoints according to the current
-implementation.
+On startup, the daemon creates or uses the runtime directory and acquires an
+advisory kernel lock on the daemon lock file. A stale lock-file inode alone does
+not block crash restart; only a live kernel lock does. Before normal lifecycle
+mutations can proceed, the daemon loads current-boot continuation intent,
+converges exact transaction-backed recovery, and replays the saved connect
+request only after recovery succeeds. If exact recovery or replay remains
+incomplete, status and recovery stay available while conflicting connect and
+disconnect mutations remain blocked. The daemon then removes only a stale Unix
+socket at the filesystem socket path, fails if that path exists but is not a
+Unix socket, listens on the filesystem and packaged abstract sockets as
+configured, and serves the local API.
 .PP
 During proxy-only connect, the daemon selects the Xray execution identity,
 validates the mode and profile snapshot received from the CLI, builds a
@@ -335,12 +384,17 @@ current health
 .B cleanup-required
 and preserves durable exact ownership for recovery.
 .PP
-During graceful shutdown, the daemon cancels network-event delivery and active
-revalidation before waiting for the lifecycle mutation boundary, then stops an
-active Xray child, shuts down the HTTP server, closes the Unix socket listeners,
-removes the filesystem socket path, and removes the lock file. Shutdown
-cancellation owns this lifecycle cleanup and never schedules a second automatic
-disconnect from the cancelled revalidation.
+During shutdown, the daemon first cancels network-event delivery and active
+revalidation, then waits for the shared lifecycle mutation boundary. Restart
+intent preserves the current-boot continuation while the normal exact
+transaction-backed disconnect orders host-network rollback and Xray shutdown.
+Explicit stop intent removes continuation before teardown begins. Any teardown
+failure is returned from podlazd instead of being converted into a successful
+clean shutdown, and exact transaction evidence is retained for later recovery.
+The HTTP server is shut down within the same bounded shutdown budget, filesystem
+socket paths are removed, listeners are closed, and the advisory lock is
+released when its file descriptor closes; the inert lock file itself need not be
+unlinked.
 .PP
 On disconnect, the daemon rolls back podlaz-owned host networking state, stops
 the active Xray child, removes the generated runtime config path, and reports

@@ -74,6 +74,9 @@ func rollbackTunTransactionWithChildStopper(ctx context.Context, store txstate.T
 	if err := beginTunRollback(store, tx); err != nil {
 		return err
 	}
+	if err := maybePauseForE2ETunRollback(ctx); err != nil {
+		return err
+	}
 	if stopChildren == nil {
 		stopChildren = stopRollbackChildProcesses
 	}

@@ -8,6 +8,10 @@ Type=simple
 ExecStart=/usr/bin/podlazd
 Restart=on-failure
 RestartSec=2s
+KillSignal=SIGTERM
+RestartKillSignal=SIGUSR1
+KillMode=mixed
+TimeoutStopSec=40s
 User=root
 Group=podlaz
 UMask=0077
@@ -16,6 +20,7 @@ Environment=PODLAZ_POLKIT_AUTHORIZATION=required
 Environment=PODLAZ_XRAY_PATH=/usr/lib/podlaz/xray
 RuntimeDirectory=podlaz
 RuntimeDirectoryMode=0711
+RuntimeDirectoryPreserve=yes
 StateDirectory=podlaz
 StateDirectoryMode=0700
 NoNewPrivileges=yes
