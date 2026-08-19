@@ -45,7 +45,9 @@ func runPlanCommand(ctx context.Context, args []string, stdout io.Writer, opts o
 	}
 	collect := opts.systemSnapshot
 	if collect == nil {
-		collect = netsnapshot.Collect
+		collect = func(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
+			return netsnapshot.EnsureTunAllocationEvidence(ctx, netsnapshot.Collect(ctx, opts))
+		}
 	}
 	snapshot := collect(ctx, netsnapshot.Options{
 		Server:   p.Server,
