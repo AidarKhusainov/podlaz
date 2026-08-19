@@ -9,6 +9,18 @@ import (
 func xrayOwnedTunPlan(plan planner.TunPlan) planner.TunPlan {
 	plan.TunDevice.Action = "verify"
 	plan.TunDevice.Reason = "Xray tun inbound owns podlaz0 creation and packet ingestion; podlaz verifies the link before applying routes, DNS, and firewall state"
+	if _, err := planner.TunResourceAllocationFromPlan(plan); err == nil {
+		for i := range plan.Routes {
+			if plan.Routes[i].Action == "add" {
+				plan.Routes[i].Action = planner.TunActionAddExclusive
+			}
+		}
+		for i := range plan.PolicyRules {
+			if plan.PolicyRules[i].Action == "add" {
+				plan.PolicyRules[i].Action = planner.TunActionAddExclusive
+			}
+		}
+	}
 	plan.Steps = xrayOwnedTunSteps(plan)
 	plan.RollbackSteps = xrayOwnedTunRollbackSteps(plan)
 	return plan
