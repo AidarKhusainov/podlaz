@@ -246,7 +246,7 @@ func (e TunExecutor) validatePlan(plan planner.TunPlan) error {
 }
 
 func shouldApplyTunAddress(plan planner.TunAddressPlan) bool {
-	return strings.TrimSpace(plan.CIDR) != "" && plan.Action == planner.TunAddressActionAssign
+	return strings.TrimSpace(plan.CIDR) != "" && planner.IsTunAddressAssignAction(plan.Action)
 }
 
 func (e TunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan, proof TunLinkCreationProof) (planner.TunPlan, error) {
