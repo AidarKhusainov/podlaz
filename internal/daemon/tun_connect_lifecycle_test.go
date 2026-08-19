@@ -13,23 +13,15 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestConnectTunServerBypassFailureRunsBeforeStopKnownHandoff(t *testing.T) {
+func TestConnectTunServerBypassFailureRunsBeforeNetworkMutation(t *testing.T) {
 	oldPreflight := preflightNativeTunSupport
 	oldValidateDeps := validateTunRuntimeDependenciesHook
-	oldNMDown := nmcliConnectionDown
 	t.Cleanup(func() {
 		preflightNativeTunSupport = oldPreflight
 		validateTunRuntimeDependenciesHook = oldValidateDeps
-		nmcliConnectionDown = oldNMDown
 	})
 	preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
 	validateTunRuntimeDependenciesHook = func() error { return nil }
-
-	var stoppedConnections []string
-	nmcliConnectionDown = func(_ context.Context, id string) error {
-		stoppedConnections = append(stoppedConnections, id)
-		return nil
-	}
 
 	manager := &XrayManager{
 		RuntimeDir: t.TempDir(),
@@ -40,7 +32,7 @@ func TestConnectTunServerBypassFailureRunsBeforeStopKnownHandoff(t *testing.T) {
 				DefaultIPv4:    netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "eth0", Gateway: "192.0.2.1"},
 				ServerRoute:    netsnapshot.Route{Status: netsnapshot.StatusMissing, Family: "ipv4", Destination: "vpn.example.test"},
 				DNS:            netsnapshot.DNS{Resolved: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "systemd-resolved detected"}},
-				NetworkManager: netsnapshot.NetworkManager{ActiveConnections: []netsnapshot.NetworkManagerConnection{{Name: "Example VPN", UUID: "11111111-1111-1111-1111-111111111111", Type: "vpn", Device: "tun9", State: "activated"}}},
+				NetworkManager: netsnapshot.NetworkManager{ActiveConnections: []netsnapshot.NetworkManagerConnection{{Name: "Existing tunnel", UUID: "11111111-1111-1111-1111-111111111111", Type: "vpn", Device: "tun9", State: "activated"}}},
 				Nftables:       netsnapshot.Nftables{Availability: netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "nftables detected"}},
 				IPv4:           netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv4 detected"},
 				IPv6:           netsnapshot.Finding{Status: netsnapshot.StatusDetected, Summary: "IPv6 detected"},
@@ -61,9 +53,6 @@ func TestConnectTunServerBypassFailureRunsBeforeStopKnownHandoff(t *testing.T) {
 	if !strings.Contains(err.Error(), "VPN server bypass") || !strings.Contains(err.Error(), "No network changes were applied.") {
 		t.Fatalf("unexpected error text:\n%s", err)
 	}
-	if len(stoppedConnections) != 0 {
-		t.Fatalf("server-bypass failure must happen before stop-known handoff, stopped=%v", stoppedConnections)
-	}
 	summaries, warnings := txstate.ScanTransactions(manager.RuntimeDir)
 	if len(summaries) != 0 || len(warnings) != 0 {
 		t.Fatalf("server-bypass failure must not leave transaction artifacts: summaries=%#v warnings=%#v", summaries, warnings)
@@ -71,10 +60,6 @@ func TestConnectTunServerBypassFailureRunsBeforeStopKnownHandoff(t *testing.T) {
 }
 
 func TestPlanAndDaemonRuntimeAgreeOnHostnameServerBypass(t *testing.T) {
-	oldRouting := podlazRuntimeRoutingStaleResources
-	podlazRuntimeRoutingStaleResources = func(context.Context) []netsnapshot.StaleResource { return nil }
-	t.Cleanup(func() { podlazRuntimeRoutingStaleResources = oldRouting })
-
 	p := profile.Profile{
 		ID:               "hostname-profile",
 		Name:             "Hostname Profile",
@@ -108,7 +93,7 @@ func TestPlanAndDaemonRuntimeAgreeOnHostnameServerBypass(t *testing.T) {
 		Detail:      "server hostname vpn.example.test resolved to 203.0.113.10",
 	}
 
-	cliPlan, err := planner.PlanTun(p, snapshot)
+	cliPlan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
 	if err != nil {
 		t.Fatalf("CLI-style TUN plan: %v", err)
 	}
@@ -117,11 +102,11 @@ func TestPlanAndDaemonRuntimeAgreeOnHostnameServerBypass(t *testing.T) {
 	}
 
 	manager := &XrayManager{RuntimeDir: t.TempDir()}
-	prepared, err := manager.prepareTunHandoff(context.Background(), snapshot, api.HandoffBlock, netsnapshot.Options{Server: p.Server})
+	prepared, err := manager.prepareTunCoexistence(context.Background(), snapshot, api.HandoffBlock, netsnapshot.Options{Server: p.Server})
 	if err != nil {
-		t.Fatalf("daemon handoff preflight should accept same clean snapshot: %v", err)
+		t.Fatalf("daemon coexistence preflight should accept same snapshot: %v", err)
 	}
-	daemonPlan, err := planner.PlanTun(p, prepared)
+	daemonPlan, err := planner.PlanTunForSession(p, prepared, planner.TunOptions{})
 	if err != nil {
 		t.Fatalf("daemon TUN plan: %v", err)
 	}
