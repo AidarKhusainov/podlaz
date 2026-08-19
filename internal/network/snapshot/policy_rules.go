@@ -79,14 +79,28 @@ func policyRuleSelector(from, to string) string {
 }
 
 func defaultKernelPolicyRule(priority uint32, table string) bool {
+	table = canonicalKernelRoutingTableID(table)
 	switch priority {
 	case 0:
-		return table == "local"
+		return table == "255"
 	case 32766:
-		return table == "main"
+		return table == "254"
 	case 32767:
-		return table == "default"
+		return table == "253"
 	default:
 		return false
+	}
+}
+
+func canonicalKernelRoutingTableID(table string) string {
+	switch strings.TrimSpace(table) {
+	case "local", "255":
+		return "255"
+	case "main", "254":
+		return "254"
+	case "default", "253":
+		return "253"
+	default:
+		return strings.TrimSpace(table)
 	}
 }
