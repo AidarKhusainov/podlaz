@@ -20,6 +20,9 @@ func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (St
 			return Step{}, fmt.Errorf("inspect existing route %s table %s: %w", plan.Destination, plan.Table, err)
 		}
 		if line != "" {
+			if plan.Action == planner.TunActionAddExclusive {
+				return Step{}, fmt.Errorf("allocated route %s table %s became occupied before apply", plan.Destination, plan.Table)
+			}
 			if err := verifyRouteLine(line, plan); err != nil {
 				return Step{}, fmt.Errorf("existing route %s table %s differs from planned server bypass: %w", plan.Destination, plan.Table, err)
 			}
