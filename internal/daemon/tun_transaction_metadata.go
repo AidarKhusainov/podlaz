@@ -60,13 +60,13 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		steps = append(steps, txstate.PlannedStep{Kind: "nftables", Target: firewallTarget(plan.Firewall), Description: plan.Firewall.Reason, Owner: netexecutor.OwnerFirewall})
 	}
 	return txstate.DesiredPlan{
-		PlanID: plan.ProfileID + ":" + planner.ModeTun,
-		TUN: txstate.TUNDesiredState{InterfaceName: plan.TunDevice.Name, MTU: plan.TunDevice.MTU, Owner: tunDesiredOwner(plan.TunDevice.Action)},
+		PlanID:     plan.ProfileID + ":" + planner.ModeTun,
+		TUN:        txstate.TUNDesiredState{InterfaceName: plan.TunDevice.Name, MTU: plan.TunDevice.MTU, Owner: tunDesiredOwner(plan.TunDevice.Action)},
 		TUNAddress: tunAddressDesiredState(plan.TunAddress),
-		Routes: routes,
-		DNS: txstate.DNSPlan{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, Servers: append([]string{}, plan.DNS.Servers...), SearchDomains: dnsSearchDomains(plan.DNS), Owner: txstate.TransactionOwner},
-		NFT: txstate.NFTPlan{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Chains: nftChains(plan.Firewall), Owner: netexecutor.OwnerFirewall},
-		Steps: steps,
+		Routes:     routes,
+		DNS:        txstate.DNSPlan{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, Servers: append([]string{}, plan.DNS.Servers...), SearchDomains: dnsSearchDomains(plan.DNS), Owner: txstate.TransactionOwner},
+		NFT:        txstate.NFTPlan{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Chains: nftChains(plan.Firewall), Owner: netexecutor.OwnerFirewall},
+		Steps:      steps,
 	}
 }
 
