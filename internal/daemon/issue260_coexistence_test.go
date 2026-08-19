@@ -26,22 +26,16 @@ func TestPrepareTunCoexistenceTreatsForeignNetworkingAsBaseline(t *testing.T) {
 	}
 }
 
-func TestPrepareTunCoexistenceDoesNotInvokeLegacyForeignVPNStop(t *testing.T) {
+func TestPrepareTunCoexistenceAskRemainsMutationFreeAndUnsupported(t *testing.T) {
 	m := NewXrayManager(t.TempDir())
 	s := issue260ForeignBaseline()
-	previous := nmcliConnectionDown
-	called := false
-	nmcliConnectionDown = func(context.Context, string) error {
-		called = true
-		return nil
-	}
-	t.Cleanup(func() { nmcliConnectionDown = previous })
 
-	if _, err := m.prepareTunCoexistence(context.Background(), s, api.HandoffStopKnown, netsnapshot.Options{}); err != nil {
-		t.Fatalf("coexistence preflight failed: %v", err)
+	got, err := m.prepareTunCoexistence(context.Background(), s, api.HandoffAsk, netsnapshot.Options{})
+	if err == nil {
+		t.Fatal("non-interactive ask policy must be rejected")
 	}
-	if called {
-		t.Fatal("coexistence preflight must not stop a foreign NetworkManager VPN")
+	if len(got.TunDevices) != len(s.TunDevices) || len(got.PolicyRouting) != len(s.PolicyRouting) || len(got.DNS.ResolvedLinks) != len(s.DNS.ResolvedLinks) {
+		t.Fatalf("ask preflight mutated baseline projection: got=%#v want=%#v", got, s)
 	}
 }
 
