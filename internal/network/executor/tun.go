@@ -140,7 +140,7 @@ func (e TunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 		}
 	}
 	for _, route := range plan.Routes {
-		if !planner.IsTunAddAction(route.Action) {
+		if !planner.IsTunVerifyOrAddAction(route.Action) {
 			continue
 		}
 		if err := e.Routes.Verify(ctx, route); err != nil {
