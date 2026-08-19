@@ -1,10 +1,12 @@
 package daemon
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
 
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
@@ -28,18 +30,21 @@ func TestBeginTunTransactionPersistsExactAllocatedResourcesBeforeApplying(t *tes
 		t.Fatalf("TunResourceAllocationFromPlan() error = %v", err)
 	}
 
-	store := txstate.TransactionStore{RuntimeDir: t.TempDir(), Now: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }}
-	tx, err := beginTunTransaction(store, p, plan, "/run/podlaz/generated/xray.json", store.Now())
+	runtimeDir := t.TempDir()
+	now := func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }
+	result, err := beginTunTransaction(context.Background(), runtimeDir, p, plan, now)
 	if err != nil {
 		t.Fatalf("beginTunTransaction() error = %v", err)
 	}
-	if tx.State != txstate.TransactionPlanned {
-		t.Fatalf("transaction must be durably planned before applying, got %s", tx.State)
-	}
-
-	persisted, _, err := store.Load(tx.ID)
+	persisted, _, err := result.Store.Load(result.TransactionID)
 	if err != nil {
 		t.Fatalf("load persisted transaction: %v", err)
+	}
+	if persisted.State != txstate.TransactionApplying {
+		t.Fatalf("beginTunTransaction must persist desired allocation before applying, got state %s", persisted.State)
+	}
+	if len(persisted.AppliedSteps) != 0 || len(persisted.Rollback.PolicyRules) != 0 {
+		t.Fatalf("planned allocation must not become premature cleanup authority: steps=%#v rollback=%#v", persisted.AppliedSteps, persisted.Rollback.PolicyRules)
 	}
 	got, err := persistedTunResourceAllocation(persisted)
 	if err != nil {
@@ -50,18 +55,20 @@ func TestBeginTunTransactionPersistsExactAllocatedResourcesBeforeApplying(t *tes
 	}
 }
 
-func TestPersistedTunResourceAllocationFailsClosedOnIncompleteRuleOwnership(t *testing.T) {
+func TestPersistedTunResourceAllocationFailsClosedOnIncompletePlannedRuleIdentity(t *testing.T) {
 	tx := txstate.Transaction{
 		DesiredPlan: txstate.DesiredPlan{
 			TUNAddress: txstate.TUNAddressDesiredState{CIDR: "198.18.0.2/32"},
-			Routes: []txstate.RoutePlan{{Kind: "route", Table: "51821", CIDR: "default", Dev: netsnapshot.DefaultTunName}},
-		},
-		Rollback: txstate.RollbackMetadata{
-			PolicyRules: []txstate.PolicyRuleRollback{{Priority: 9998, To: "203.0.113.10/32", Table: "main", Owner: "podlaz:policy-rule"}},
+			Routes:     []txstate.RoutePlan{{Kind: "route", Table: "51821", CIDR: "default", Dev: netsnapshot.DefaultTunName}},
+			Steps: []txstate.PlannedStep{{
+				Kind:   "policy-rule",
+				Target: "priority 9998 to 203.0.113.10/32 lookup main",
+				Owner:  netexecutor.OwnerPolicyRule,
+			}},
 		},
 	}
 	if _, err := persistedTunResourceAllocation(tx); err == nil {
-		t.Fatal("expected incomplete exact policy-rule ownership to fail closed")
+		t.Fatal("expected incomplete planned policy-rule allocation to fail closed")
 	}
 }
 
