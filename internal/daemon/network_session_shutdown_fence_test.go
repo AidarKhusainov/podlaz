@@ -235,20 +235,3 @@ func TestExplicitStopDrainTimeoutDisarmsContinuationAndQueuedConnectCannotRearm(
 		t.Errorf("timed-out explicit stop must not start queued connect or final teardown, events=%#v", got)
 	}
 }
-
-func waitForPendingMutationCount(t *testing.T, lock *lifecycleOperationLock, want int) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		lock.mutationMu.Lock()
-		got := lock.pendingMutations
-		lock.mutationMu.Unlock()
-		if got == want {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("pending lifecycle mutations = %d, want %d", got, want)
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
