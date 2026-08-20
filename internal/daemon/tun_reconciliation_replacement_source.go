@@ -1,12 +1,15 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
@@ -24,6 +27,92 @@ type protectedTunReplacementSource struct {
 	Request     api.ConnectRequest
 	Protection  networkSessionProtection
 	Transaction txstate.Transaction
+}
+
+// loadProtectedTunReplacementForRequest recognizes a durable protected
+// replacement transition and proves the generation being replaced. It is
+// read-only: no networking or lifecycle state is mutated here.
+func (m *XrayManager) loadProtectedTunReplacementForRequest(
+	store networkSessionStateStore,
+	target api.ConnectRequest,
+) (protectedTunReplacementSource, bool, error) {
+	if m == nil || api.NormalizeHandoffPolicy(target.Handoff) != api.HandoffReplacePodlaz {
+		return protectedTunReplacementSource{}, false, nil
+	}
+	state, exists, err := store.Load()
+	if err != nil {
+		return protectedTunReplacementSource{}, false, fmt.Errorf("load protected replacement Network Session: %w", err)
+	}
+	if !exists || state.Replacement == nil || state.Protection == nil {
+		return protectedTunReplacementSource{}, false, nil
+	}
+	if state.Intent != networkSessionIntentResume {
+		return protectedTunReplacementSource{}, false, fmt.Errorf("protected replacement cancelled by Network Session intent %q", state.Intent)
+	}
+	if !reflect.DeepEqual(state.Request, target) {
+		return protectedTunReplacementSource{}, false, errors.New("protected replacement target no longer matches durable Network Session request")
+	}
+	managerState, process := m.activeTunRuntimeIdentity()
+	source, err := loadProtectedTunReplacementSource(m.runtimeDir(), managerState, process, state)
+	if err != nil {
+		return protectedTunReplacementSource{}, false, err
+	}
+	return source, true, nil
+}
+
+// prepareProtectedTunReplacement widens the exact session-wide Privacy Envelope
+// before the source generation can be cleaned up. The source proof is rechecked
+// against durable session/transaction authority immediately before the nftables
+// mutation, preventing stale automatic repair authority from widening a newer
+// session's barrier.
+func prepareProtectedTunReplacement(
+	ctx context.Context,
+	store networkSessionStateStore,
+	source protectedTunReplacementSource,
+	targetPlan planner.TunPlan,
+	executor privacyEnvelopeLifecycleExecutor,
+) (*privacyEnvelopeLifecycle, error) {
+	if executor == nil {
+		return nil, errors.New("protected replacement requires a Privacy Envelope executor")
+	}
+	state, exists, err := store.Load()
+	if err != nil {
+		return nil, fmt.Errorf("reload Network Session before protected replacement: %w", err)
+	}
+	if !exists || state.SessionID != source.SessionID || state.Intent != networkSessionIntentResume {
+		return nil, errors.New("protected replacement source was superseded before Privacy Envelope preparation")
+	}
+	if state.Replacement == nil || state.Protection == nil || state.Replacement.PreviousProtection == nil {
+		return nil, errors.New("protected replacement lost durable previous-generation authority")
+	}
+	if !reflect.DeepEqual(state.Replacement.PreviousRequest, source.Request) ||
+		!samePrivacyEnvelopeIdentity(*state.Replacement.PreviousProtection, source.Protection) ||
+		!samePrivacyEnvelopeIdentity(*state.Protection, source.Protection) {
+		return nil, errors.New("protected replacement source identity changed before Privacy Envelope preparation")
+	}
+
+	tx, _, err := (txstate.TransactionStore{RuntimeDir: store.runtimeDir}).Load(source.Transaction.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reload protected replacement source transaction: %w", err)
+	}
+	if tx.Owner != txstate.TransactionOwner || tx.ID != source.Transaction.ID || tx.ProfileID != source.Transaction.ProfileID || !tx.RequiresRecovery() {
+		return nil, errors.New("protected replacement source transaction authority changed before Privacy Envelope preparation")
+	}
+
+	lifecycle := &privacyEnvelopeLifecycle{store: store, executor: executor}
+	if err := lifecycle.PrepareReplacement(ctx, targetPlan); err != nil {
+		return nil, err
+	}
+	return lifecycle, nil
+}
+
+func productionProtectedTunReplacementLifecycle(
+	ctx context.Context,
+	store networkSessionStateStore,
+	source protectedTunReplacementSource,
+	targetPlan planner.TunPlan,
+) (*privacyEnvelopeLifecycle, error) {
+	return prepareProtectedTunReplacement(ctx, store, source, targetPlan, netexecutor.PrivacyEnvelopeExecutor{})
 }
 
 // loadProtectedTunReplacementSource proves that a rebuild belongs to the exact
