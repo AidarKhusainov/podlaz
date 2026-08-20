@@ -102,12 +102,24 @@ func (s networkSessionContinuationStore) Remove() error {
 
 func (s networkSessionContinuationStore) disarm(intent networkSessionIntent) error {
 	stateStore := s.stateStore()
-	_, exists, err := stateStore.Load()
+	state, exists, err := stateStore.Load()
 	if err != nil {
 		return err
 	}
-	if !exists {
+	if !exists || state.Intent == intent {
 		return nil
+	}
+
+	// Disarming is monotonic. Terminal intent is strongest and must never be
+	// downgraded by the ordinary Disconnect path that performs the teardown.
+	if state.Intent == networkSessionIntentTerminal {
+		return nil
+	}
+	if state.Intent == networkSessionIntentDisconnect && intent == networkSessionIntentTerminal {
+		return stateStore.SetIntent(networkSessionIntentTerminal)
+	}
+	if state.Intent != networkSessionIntentResume {
+		return fmt.Errorf("cannot change network session intent from %q to %q", state.Intent, intent)
 	}
 	if err := stateStore.SetIntent(intent); err != nil {
 		return err
