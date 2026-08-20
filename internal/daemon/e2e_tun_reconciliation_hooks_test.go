@@ -3,8 +3,9 @@ package daemon
 import "testing"
 
 func TestE2ETunReconciliationSoftFailureIsGatedAndOneShot(t *testing.T) {
-	t.Setenv(e2eTunHookGateEnv, "true")
-	t.Setenv(e2eTunHookDirEnv, t.TempDir())
+	dir := t.TempDir()
+	t.Setenv(e2eTunTerminalFailureEnv, "true")
+	t.Setenv(e2eTunTerminalFailureDirEnv, dir)
 	t.Setenv(e2eTunReconciliationSoftFailureEnv, "true")
 
 	base := []tunProbeEvidence{
@@ -30,7 +31,8 @@ func TestE2ETunReconciliationSoftFailureIsGatedAndOneShot(t *testing.T) {
 }
 
 func TestE2ETunReconciliationSoftFailureRequiresExistingGate(t *testing.T) {
-	t.Setenv(e2eTunHookGateEnv, "false")
+	t.Setenv(e2eTunTerminalFailureEnv, "false")
+	t.Setenv(e2eTunTerminalFailureDirEnv, t.TempDir())
 	t.Setenv(e2eTunReconciliationSoftFailureEnv, "true")
 	probes := []tunProbeEvidence{{Group: "tls", Provider: "cloudflare", Success: true}}
 	got := maybeInjectE2ETunReconciliationSoftFailure(probes)
