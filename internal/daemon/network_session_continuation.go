@@ -42,6 +42,14 @@ type networkSessionContinuationStore struct {
 	// cleanup authority until teardown converges.
 	afterSave   func()
 	afterRemove func()
+
+	// Test-only startup stage seams. Production leaves them nil so
+	// resumeNetworkSession selects the exact production stages below. Keeping
+	// seams on the store lets tests execute the same orchestration function the
+	// daemon uses instead of maintaining a second, drift-prone startup wrapper.
+	reconcilePrivacy networkSessionPrivacyReconcileStage
+	recoverExact     networkSessionExactRecoveryStage
+	continueTeardown networkSessionTeardownRecoveryStage
 }
 
 func newNetworkSessionContinuationStore(runtimeDir string, readBootID bootIDReader) networkSessionContinuationStore {
@@ -85,52 +93,55 @@ func (s networkSessionContinuationStore) LoadCurrent() (api.ConnectRequest, bool
 // finalization fails but the session stays terminally disarmed and recoverable.
 func (s networkSessionContinuationStore) Remove() error {
 	stateStore := s.stateStore()
-	state, exists, err := stateStore.Load()
+	disarmed := false
+	_, exists, err := stateStore.Update(func(state *networkSessionState) error {
+		if state.Intent == networkSessionIntentResume {
+			state.Intent = networkSessionIntentDisconnect
+			disarmed = true
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return nil
 	}
-	if state.Intent == networkSessionIntentResume {
-		if err := stateStore.SetIntent(networkSessionIntentDisconnect); err != nil {
-			return fmt.Errorf("disarm network session before finalization: %w", err)
-		}
-		if s.afterRemove != nil {
-			s.afterRemove()
-		}
+	if disarmed && s.afterRemove != nil {
+		s.afterRemove()
 	}
-	if err := stateStore.Remove(); err != nil {
-		return err
-	}
-	return nil
+	return stateStore.Remove()
 }
 
 func (s networkSessionContinuationStore) disarm(intent networkSessionIntent) error {
+	if err := validateNetworkSessionIntent(intent); err != nil {
+		return err
+	}
 	stateStore := s.stateStore()
-	state, exists, err := stateStore.Load()
+	changed := false
+	_, exists, err := stateStore.Update(func(state *networkSessionState) error {
+		if state.Intent == intent || state.Intent == networkSessionIntentTerminal {
+			return nil
+		}
+		if state.Intent == networkSessionIntentDisconnect && intent == networkSessionIntentTerminal {
+			state.Intent = networkSessionIntentTerminal
+			changed = true
+			return nil
+		}
+		if state.Intent != networkSessionIntentResume {
+			return fmt.Errorf("cannot change network session intent from %q to %q", state.Intent, intent)
+		}
+		state.Intent = intent
+		changed = true
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	if !exists || state.Intent == intent {
+	if !exists {
 		return nil
 	}
-
-	// Disarming is monotonic. Terminal intent is strongest and must never be
-	// downgraded by the ordinary Disconnect path that performs the teardown.
-	if state.Intent == networkSessionIntentTerminal {
-		return nil
-	}
-	if state.Intent == networkSessionIntentDisconnect && intent == networkSessionIntentTerminal {
-		return stateStore.SetIntent(networkSessionIntentTerminal)
-	}
-	if state.Intent != networkSessionIntentResume {
-		return fmt.Errorf("cannot change network session intent from %q to %q", state.Intent, intent)
-	}
-	if err := stateStore.SetIntent(intent); err != nil {
-		return err
-	}
-	if s.afterRemove != nil {
+	if changed && s.afterRemove != nil {
 		s.afterRemove()
 	}
 	return nil
@@ -324,6 +335,9 @@ type restartDisconnectLifecycle interface {
 
 type networkSessionStatusFunc func(context.Context) api.StatusResponse
 type networkSessionRecoveryFunc func(context.Context, api.StatusResponse) api.RecoveryResponse
+type networkSessionPrivacyReconcileStage func(context.Context, networkSessionStateStore) error
+type networkSessionExactRecoveryStage func(context.Context, string) api.RecoveryResponse
+type networkSessionTeardownRecoveryStage func(context.Context, networkSessionStateStore) error
 
 func resumeNetworkSession(
 	ctx context.Context,
@@ -332,7 +346,8 @@ func resumeNetworkSession(
 	status networkSessionStatusFunc,
 	recover networkSessionRecoveryFunc,
 ) (bool, error) {
-	request, exists, err := continuation.LoadCurrent()
+	stateStore := continuation.stateStore()
+	state, exists, err := stateStore.Load()
 	if err != nil {
 		return false, err
 	}
@@ -342,7 +357,7 @@ func resumeNetworkSession(
 			return false, fmt.Errorf("migrate legacy package upgrade continuation: %w", migrateErr)
 		}
 		if migrated {
-			request, exists, err = continuation.LoadCurrent()
+			state, exists, err = stateStore.Load()
 			if err != nil {
 				return false, err
 			}
@@ -352,24 +367,69 @@ func resumeNetworkSession(
 		}
 	}
 
-	exactRecovery := recoverExactNetworkSessionTransactions(ctx, continuation.runtimeDir)
-	if !networkSessionRecoveryConverged(exactRecovery) {
-		return false, errNetworkSessionRecoveryIncomplete
+	reconcilePrivacy := continuation.reconcilePrivacy
+	if reconcilePrivacy == nil {
+		reconcilePrivacy = reconcileProductionNetworkSessionProtection
 	}
+	recoverExact := continuation.recoverExact
+	if recoverExact == nil {
+		recoverExact = recoverExactNetworkSessionTransactions
+	}
+	continueTeardown := continuation.continueTeardown
+	if continueTeardown == nil {
+		continueTeardown = continuePersistedNetworkSessionTeardown
+	}
+
 	if !exists {
+		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
+		if !networkSessionRecoveryConverged(exactRecovery) {
+			return false, errNetworkSessionRecoveryIncomplete
+		}
 		return false, nil
 	}
 	if status == nil || recover == nil {
 		return false, errors.New("network session resume requires status and recovery functions")
 	}
-	recovery := recover(ctx, status(ctx))
-	if !networkSessionRecoveryConverged(recovery) {
-		return false, errNetworkSessionRecoveryIncomplete
+
+	switch state.Intent {
+	case networkSessionIntentResume:
+		if err := reconcilePrivacy(ctx, stateStore); err != nil {
+			return false, fmt.Errorf("reconcile network session privacy protection: %w", err)
+		}
+		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
+		if !networkSessionRecoveryConverged(exactRecovery) {
+			return false, errNetworkSessionRecoveryIncomplete
+		}
+		recovery := recover(ctx, status(ctx))
+		if !networkSessionRecoveryConverged(recovery) {
+			return false, errNetworkSessionRecoveryIncomplete
+		}
+		if _, err := lifecycle.Connect(ctx, state.Request); err != nil {
+			return false, fmt.Errorf("resume network session: %w", err)
+		}
+		return true, nil
+
+	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
+		// A persisted teardown decision is terminal for automatic continuation.
+		// Keep the envelope in place while every exact/generic data-plane cleanup
+		// stage converges, then deliberately remove protection, verify the
+		// remaining host network, and clear the durable session authority.
+		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
+		if !networkSessionRecoveryConverged(exactRecovery) {
+			return false, errNetworkSessionRecoveryIncomplete
+		}
+		recovery := recover(ctx, status(ctx))
+		if !networkSessionRecoveryConverged(recovery) {
+			return false, errNetworkSessionRecoveryIncomplete
+		}
+		if err := continueTeardown(ctx, stateStore); err != nil {
+			return false, fmt.Errorf("continue persisted network session teardown: %w", err)
+		}
+		return false, nil
+
+	default:
+		return false, fmt.Errorf("unsupported network session intent %q", state.Intent)
 	}
-	if _, err := lifecycle.Connect(ctx, request); err != nil {
-		return false, fmt.Errorf("resume network session: %w", err)
-	}
-	return true, nil
 }
 
 func networkSessionRecoveryConverged(response api.RecoveryResponse) bool {
