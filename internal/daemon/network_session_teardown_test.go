@@ -58,7 +58,7 @@ func TestNetworkSessionTeardownRestartKeepsEnvelopeAndResumeAuthority(t *testing
 		cleanupDataPlane: func(context.Context) (api.LifecycleResponse, error) {
 			return api.LifecycleResponse{Connection: "inactive"}, nil
 		},
-		removeProtection: func(context.Context) error { removeCalls++; return nil },
+		removeProtection:       func(context.Context) error { removeCalls++; return nil },
 		verifyRemainingNetwork: func(context.Context) error { verifyCalls++; return nil },
 	}
 
@@ -85,7 +85,7 @@ func TestNetworkSessionTeardownKeepsEnvelopeWhenDataPlaneCleanupFails(t *testing
 		cleanupDataPlane: func(context.Context) (api.LifecycleResponse, error) {
 			return api.LifecycleResponse{}, errors.New("synthetic data-plane cleanup failure")
 		},
-		removeProtection: func(context.Context) error { removeCalls++; return nil },
+		removeProtection:       func(context.Context) error { removeCalls++; return nil },
 		verifyRemainingNetwork: func(context.Context) error { return nil },
 	}
 
@@ -113,7 +113,7 @@ func TestNetworkSessionTeardownPreservesAuthorityOnEnvelopeRemovalFailure(t *tes
 		cleanupDataPlane: func(context.Context) (api.LifecycleResponse, error) {
 			return api.LifecycleResponse{Connection: "inactive"}, nil
 		},
-		removeProtection: func(context.Context) error { return errors.New("synthetic envelope removal failure") },
+		removeProtection:       func(context.Context) error { return errors.New("synthetic envelope removal failure") },
 		verifyRemainingNetwork: func(context.Context) error { verifyCalls++; return nil },
 	}
 
