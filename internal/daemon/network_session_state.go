@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
@@ -67,6 +68,7 @@ var (
 	networkSessionIDPattern      = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	privacyEnvelopeTablePattern  = regexp.MustCompile(`^podlaz_pe_[0-9a-f]{12}(?:_[1-9][0-9]{0,2})?$`)
 	networkSessionInterfaceRegex = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	networkSessionStateLocks     sync.Map
 )
 
 func newNetworkSessionStateStore(runtimeDir string, readBootID bootIDReader) networkSessionStateStore {
@@ -80,11 +82,20 @@ func (s networkSessionStateStore) path() string {
 	return newNetworkSessionContinuationStore(s.runtimeDir, s.readBootID).path()
 }
 
+func (s networkSessionStateStore) mutationLock() *sync.Mutex {
+	value, _ := networkSessionStateLocks.LoadOrStore(s.path(), &sync.Mutex{})
+	return value.(*sync.Mutex)
+}
+
 func (s networkSessionStateStore) BeginOrResume(request api.ConnectRequest) (networkSessionState, error) {
 	if err := api.ValidateConnectRequest(request); err != nil {
 		return networkSessionState{}, fmt.Errorf("validate network session request: %w", err)
 	}
-	current, exists, err := s.Load()
+	lock := s.mutationLock()
+	lock.Lock()
+	defer lock.Unlock()
+
+	current, exists, err := s.loadLocked()
 	if err != nil {
 		return networkSessionState{}, err
 	}
@@ -125,6 +136,13 @@ func (s networkSessionStateStore) BeginOrResume(request api.ConnectRequest) (net
 }
 
 func (s networkSessionStateStore) Load() (networkSessionState, bool, error) {
+	lock := s.mutationLock()
+	lock.Lock()
+	defer lock.Unlock()
+	return s.loadLocked()
+}
+
+func (s networkSessionStateStore) loadLocked() (networkSessionState, bool, error) {
 	file, err := os.Open(s.path())
 	if errors.Is(err, os.ErrNotExist) {
 		return networkSessionState{}, false, nil
@@ -185,43 +203,69 @@ func (s networkSessionStateStore) Load() (networkSessionState, bool, error) {
 	return cloneNetworkSessionState(state), true, nil
 }
 
+func (s networkSessionStateStore) Update(update func(*networkSessionState) error) (networkSessionState, bool, error) {
+	if update == nil {
+		return networkSessionState{}, false, errors.New("network session state update is nil")
+	}
+	lock := s.mutationLock()
+	lock.Lock()
+	defer lock.Unlock()
+
+	state, exists, err := s.loadLocked()
+	if err != nil || !exists {
+		return state, exists, err
+	}
+	state = cloneNetworkSessionState(state)
+	if err := update(&state); err != nil {
+		return networkSessionState{}, true, err
+	}
+	if err := s.save(state); err != nil {
+		return networkSessionState{}, true, err
+	}
+	return cloneNetworkSessionState(state), true, nil
+}
+
 func (s networkSessionStateStore) SetIntent(intent networkSessionIntent) error {
 	if err := validateNetworkSessionIntent(intent); err != nil {
 		return err
 	}
-	state, exists, err := s.Load()
-	if err != nil {
-		return err
-	}
-	if !exists {
+	_, _, err := s.Update(func(state *networkSessionState) error {
+		state.Intent = intent
 		return nil
-	}
-	state.Intent = intent
-	return s.save(state)
+	})
+	return err
 }
 
 func (s networkSessionStateStore) SetProtection(protection *networkSessionProtection) error {
-	state, exists, err := s.Load()
+	if protection != nil {
+		if err := validateNetworkSessionProtection(*protection); err != nil {
+			return err
+		}
+	}
+	_, exists, err := s.Update(func(state *networkSessionState) error {
+		if protection == nil {
+			state.Protection = nil
+			return nil
+		}
+		copyProtection := cloneNetworkSessionProtection(*protection)
+		state.Protection = &copyProtection
+		return nil
+	})
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return errors.New("cannot persist privacy protection without a network session")
 	}
-	if protection != nil {
-		if err := validateNetworkSessionProtection(*protection); err != nil {
-			return err
-		}
-		copyProtection := cloneNetworkSessionProtection(*protection)
-		state.Protection = &copyProtection
-	} else {
-		state.Protection = nil
-	}
-	return s.save(state)
+	return nil
 }
 
 func (s networkSessionStateStore) Remove() error {
-	state, exists, err := s.Load()
+	lock := s.mutationLock()
+	lock.Lock()
+	defer lock.Unlock()
+
+	state, exists, err := s.loadLocked()
 	if err != nil {
 		return err
 	}
