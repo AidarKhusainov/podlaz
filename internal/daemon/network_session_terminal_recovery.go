@@ -14,6 +14,21 @@ import (
 // exact persisted envelope, prove the remaining host network, and clear session
 // authority.
 func continuePersistedNetworkSessionTeardown(ctx context.Context, store networkSessionStateStore) error {
+	remainingNetwork := newPostPodlazNetworkVerifier()
+	return continuePersistedNetworkSessionTeardownWith(
+		ctx,
+		store,
+		netexecutor.PrivacyEnvelopeExecutor{},
+		remainingNetwork.Verify,
+	)
+}
+
+func continuePersistedNetworkSessionTeardownWith(
+	ctx context.Context,
+	store networkSessionStateStore,
+	executor privacyEnvelopeLifecycleExecutor,
+	verifyRemainingNetwork func(context.Context) error,
+) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -29,17 +44,19 @@ func continuePersistedNetworkSessionTeardown(ctx context.Context, store networkS
 	}
 
 	if state.Protection != nil {
-		protection := privacyEnvelopeLifecycle{
-			store:    store,
-			executor: netexecutor.PrivacyEnvelopeExecutor{},
+		if executor == nil {
+			return errors.New("persisted teardown has no privacy envelope executor")
 		}
+		protection := privacyEnvelopeLifecycle{store: store, executor: executor}
 		if err := protection.RemoveAfterDataPlaneCleanup(ctx); err != nil {
 			return fmt.Errorf("remove exact persisted Privacy Envelope: %w", err)
 		}
 	}
 
-	remainingNetwork := newPostPodlazNetworkVerifier()
-	if err := remainingNetwork.Verify(ctx); err != nil {
+	if verifyRemainingNetwork == nil {
+		return errors.New("persisted teardown has no remaining-network verifier")
+	}
+	if err := verifyRemainingNetwork(ctx); err != nil {
 		return fmt.Errorf("verify remaining host network after persisted teardown: %w", err)
 	}
 
