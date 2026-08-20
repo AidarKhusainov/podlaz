@@ -472,9 +472,10 @@ func validateNetworkSessionState(state networkSessionState) error {
 		}
 	}
 	if state.Replacement != nil {
-		if state.Intent != networkSessionIntentResume {
-			return errors.New("network session replacement requires resume intent")
-		}
+		// Replacement is durable rollback/cleanup authority, not reconnect
+		// authorization. Explicit/terminal teardown may change Intent before an
+		// admitted replacement operation drains; keeping this record is required
+		// to converge the exact old/union/target Privacy Envelope composition.
 		if api.NormalizeHandoffPolicy(state.Request.Handoff) != api.HandoffReplacePodlaz {
 			return errors.New("network session replacement requires replace-podlaz request")
 		}
