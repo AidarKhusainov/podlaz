@@ -43,7 +43,7 @@ func TestPostPodlazNetworkVerifierAcceptsOrdinaryAndForeignRoutedBaselines(t *te
 func TestPostPodlazNetworkVerifierRejectsMissingIncompleteAndPodlazDefaultPath(t *testing.T) {
 	tests := []struct {
 		name   string
-		status netsnapshot.FindingStatus
+		status netsnapshot.Status
 		iface  string
 	}{
 		{name: "missing", status: netsnapshot.StatusMissing},
@@ -115,7 +115,7 @@ func TestProductionPostPodlazNetworkVerifierHasReadOnlyComposition(t *testing.T)
 	}
 }
 
-func postPodlazSnapshotForTest(status netsnapshot.FindingStatus, iface string) netsnapshot.Snapshot {
+func postPodlazSnapshotForTest(status netsnapshot.Status, iface string) netsnapshot.Snapshot {
 	return netsnapshot.Snapshot{
 		OS: "linux",
 		DefaultIPv4: netsnapshot.Route{
