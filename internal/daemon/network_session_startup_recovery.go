@@ -8,6 +8,10 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
+// recoverExactNetworkSessionTransactions owns only ordinary Data Plane
+// Generation transaction recovery. Privacy Envelope/session intent convergence
+// is deliberately orchestrated by resumeNetworkSession so startup and /recover
+// share one lifecycle ordering instead of recursively reconciling protection.
 func recoverExactNetworkSessionTransactions(ctx context.Context, runtimeDir string) api.RecoveryResponse {
 	return recoverExactNetworkSessionTransactionsWithOptions(ctx, runtimeDir, recovery.Options{})
 }

@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
@@ -28,7 +30,41 @@ func (l startupScanRefreshingLifecycle) Connect(ctx context.Context, request api
 
 func (l startupScanRefreshingLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
 	defer l.refreshAfter(ctx)
-	return l.lifecycle.Disconnect(ctx)
+	if l.lifecycle == nil {
+		return api.LifecycleResponse{}, fmt.Errorf("missing lifecycle manager")
+	}
+
+	store := newNetworkSessionStateStore(l.lifecycle.runtimeDir(), nil)
+	state, exists, err := store.Load()
+	if err != nil {
+		return api.LifecycleResponse{}, fmt.Errorf("load Network Session before disconnect: %w", err)
+	}
+	if !exists {
+		return l.lifecycle.Disconnect(ctx)
+	}
+
+	reason := networkSessionTeardownExplicit
+	switch {
+	case isTerminalNetworkSessionTeardown(ctx), state.Intent == networkSessionIntentTerminal:
+		reason = networkSessionTeardownTerminal
+	case state.Intent == networkSessionIntentResume:
+		reason = networkSessionTeardownRestart
+	}
+
+	protection := privacyEnvelopeLifecycle{
+		store:    store,
+		executor: netexecutor.PrivacyEnvelopeExecutor{},
+	}
+	remainingNetwork := newPostPodlazNetworkVerifier()
+	coordinator := networkSessionTeardownCoordinator{
+		store:            store,
+		cleanupDataPlane: l.lifecycle.Disconnect,
+		removeProtection: protection.RemoveAfterDataPlaneCleanup,
+		verifyRemainingNetwork: func(ctx context.Context) error {
+			return remainingNetwork.Verify(ctx)
+		},
+	}
+	return coordinator.Teardown(ctx, reason)
 }
 
 func (l startupScanRefreshingLifecycle) Status(ctx context.Context) api.StatusResponse {

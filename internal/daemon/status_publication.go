@@ -33,6 +33,7 @@ func (m *XrayManager) statusForPublication(ctx context.Context) api.StatusRespon
 func (m *XrayManager) statusForPublicationFrom(ctx context.Context, statusFn func(context.Context) api.StatusResponse) api.StatusResponse {
 	before := m.statusPublicationIdentity()
 	status := statusFn(ctx)
+	status = guardNetworkSessionCleanupStatus(newNetworkSessionStateStore(m.runtimeDir(), nil), status)
 	after := m.statusPublicationIdentity()
 	status.ActiveTransactionID = ""
 	if before != after || !after.isActiveTun() {

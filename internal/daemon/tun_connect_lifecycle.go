@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
@@ -25,7 +28,7 @@ type tunCoreRuntimePlan struct {
 	ConnectivityProbe tunConnectivityProbeConfig
 }
 
-func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (response api.LifecycleResponse, retErr error) {
 	p := profileFromSnapshot(req.Profile)
 	if err := profile.Validate(p); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
@@ -82,6 +85,37 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 	if err := m.preflightActiveReplacementSessionOwnership(ctx, preHandoffPlan.Snapshot, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
+
+	var replacementLifecycle *privacyEnvelopeLifecycle
+	replacementPrepared := false
+	if active && policy == api.HandoffReplacePodlaz {
+		candidate := &privacyEnvelopeLifecycle{
+			store:    newNetworkSessionStateStore(runtimeDir, nil),
+			executor: netexecutor.PrivacyEnvelopeExecutor{},
+		}
+		state, exists, loadErr := candidate.store.Load()
+		if loadErr != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("privacy-envelope-replace", "", "not-started", loadErr)
+		}
+		if exists && state.Replacement != nil && state.Protection != nil {
+			if err := candidate.PrepareReplacement(ctx, preHandoffPlan); err != nil {
+				return api.LifecycleResponse{}, withTunFailurePhase("privacy-envelope-replace", "", "not-started", err)
+			}
+			replacementLifecycle = candidate
+			replacementPrepared = true
+		}
+	}
+	defer func() {
+		if retErr == nil || !replacementPrepared || replacementLifecycle == nil {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
+		defer cancel()
+		if cleanupErr := replacementLifecycle.CleanupAfterFailedDataPlane(cleanupCtx); cleanupErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("restore previous protected Network Session: %w", cleanupErr))
+		}
+	}()
+
 	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
@@ -161,9 +195,17 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 			if err := commitTunTransaction(store, transactionID); err != nil {
 				return err
 			}
+			if replacementPrepared && replacementLifecycle != nil {
+				if err := replacementLifecycle.store.CommitReplacement(); err != nil {
+					return fmt.Errorf("commit protected Network Session replacement: %w", err)
+				}
+			}
 			m.state = active
 			return nil
 		},
+	}
+	if err := m.configurePrivacyEnvelope(&runner); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("privacy-envelope-preflight", "", "not-started", err)
 	}
 	activeState, err := runner.run(ctx)
 	if err != nil {

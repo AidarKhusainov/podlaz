@@ -32,6 +32,7 @@ func startTunNetworkEventSources(ctx context.Context, notify tunNetworkEventNoti
 	if notify == nil {
 		return
 	}
+	startE2ETunTerminalFailureTrigger(ctx, notify)
 	go retryTunNetworkEventSource(ctx, "logind", runLogindSleepEvents, notify)
 	go retryTunNetworkEventSource(ctx, "rtnetlink", runTunRtnetlinkEvents, notify)
 }

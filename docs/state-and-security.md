@@ -9,7 +9,7 @@ daemon privilege boundaries, and privileged networking safety.
 | --- | --- | --- |
 | User config/state/cache | `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz` | invoking user |
 | Daemon runtime | `/run/podlaz` | `podlazd` via systemd `RuntimeDirectory=` |
-| Current-boot reconnect intent | `/run/podlaz/network-session-continuation.json` | `podlazd` |
+| Current-boot Network Session state | `/run/podlaz/network-session-continuation.json` | `podlazd` |
 | Legacy package-upgrade continuation marker | `/run/podlaz/legacy-upgrade-continuation` | Debian `postinstall`, consumed by `podlazd` |
 | Daemon persistent state | `/var/lib/podlaz` | `podlazd` via systemd `StateDirectory=` |
 | Transaction files | `/run/podlaz/transactions/*.json` | `podlazd` |
@@ -22,10 +22,24 @@ Rules:
 - User profile/subscription state must not require root.
 - Runtime config is generated output, not persistent source of truth.
 - Transaction files must be atomic, private, versioned, and redaction-safe.
-- The current-boot continuation is a separate intent record, not cleanup
-  authority. It is atomically written mode `0600`, may contain profile
-  credentials/endpoints required to reproduce the active connect request, must
-  never be logged, and is rejected after a boot-ID change.
+- The current-boot Network Session record is atomically written mode `0600`,
+  bounded, versioned, never logged, and rejected after a boot-ID change. It
+  deliberately co-locates two different kinds of state: reconnect **intent**
+  (`resume`, `disconnect`, or `terminal`) and exact session-scoped Privacy
+  Envelope cleanup authority. The record may also contain the connect request,
+  random session identity, exact envelope family/table/composition metadata,
+  bootstrap addresses, and protected-generation replacement rollback authority.
+  `disconnect` or `terminal` disables automatic continuation without discarding
+  exact cleanup authority that is still needed to converge teardown.
+- Network Session Privacy Envelope authority is narrow: it authorizes only the
+  exact persisted session-scoped envelope identity/composition. Transaction
+  files remain the cleanup/recovery authority for the replaceable TUN data-plane
+  resources (address, routes, policy rules, DNS, transaction firewall, child,
+  and generated config). A generated table name, comment, rule resemblance,
+  historical value, or connect request alone grants no cleanup authority.
+- All Network Session state transitions use one serialized atomic
+  load-transition-validate-save boundary. Concurrent intent/protection updates
+  must not overwrite one another with stale snapshots.
 - The legacy package-upgrade marker is mode `0600`, contains only the current
   boot ID, and authorizes only a fail-closed attempt to reconstruct reconnect
   intent from exact transaction-owned runtime state. It grants no network
@@ -45,17 +59,21 @@ Rules:
 - The CLI parses user intent and talks to the local daemon API.
 - The CLI must not be SUID and must not directly mutate TUN devices, routes,
   policy rules, DNS, nftables, firewall state, or system resolver files.
-- Privileged host changes belong to `podlazd` and must be transaction-backed.
+- Privileged host changes belong to `podlazd` and must be transaction-backed or,
+  for the session-scoped Privacy Envelope, backed by exact durable Network
+  Session protection authority.
 - `proxy-only` must not mutate host networking.
 - `tun` execution must record enough durable desired and applied state to recover
   after failure or daemon restart.
 - The active TUN transaction records the original VPN server endpoint and TLS
   server name needed to distinguish hostname/SNI semantics from resolved bypass
   addresses in diagnostics.
-- On daemon startup, exact transaction-backed recovery is converged before a
-  current-boot continuation may be replayed. If recovery or replay remains
-  incomplete, status and recovery stay available while conflicting lifecycle
-  mutations remain blocked.
+- On daemon startup, current-boot Privacy Envelope authority is reconciled before
+  any old Data Plane Generation is rolled back. The same single intent-aware
+  Network Session orchestration then converges exact transaction recovery and
+  either replays `resume` or finishes `disconnect`/`terminal` teardown. If any
+  stage remains incomplete, status and recovery stay available while conflicting
+  lifecycle mutations remain blocked.
 - `doctor --tun` is daemon-backed because authoritative active-session,
   transaction, route, resolver, and ownership evidence belongs to the daemon.
   The diagnostic handler is read-only apart from atomically replacing the
@@ -78,7 +96,9 @@ TUN mode may touch only podlaz-owned networking state around the Xray-owned TUN 
   persisted in its allocation before the first host-network mutation;
 - the exact session-allocated routes and policy rules;
 - podlaz-owned DNS link state;
-- podlaz-owned nftables/firewall table, chains, and rules.
+- the transaction-owned nftables/firewall table, chains, and rules;
+- the separate exact session-scoped Privacy Envelope table while the Network
+  Session is protected.
 
 The host snapshot is observation of the environment, not ownership. Before the
 first network mutation, podlazd derives one immutable collision-free session
@@ -96,7 +116,7 @@ a podlaz-owned TUN device rollback target. podlazd owns only the exact allocated
 session IPv4 `/32` on that link. Stopping Xray is the release mechanism for the
 Xray-owned link.
 
-Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and the exact session-allocated target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. Durable `desired_plan` content validates resource shape but never grants route, policy-rule, DNS, or nftables cleanup authority. `planned` contributes no network cleanup tuples. `applying` without durable applied/rollback proof is an ambiguous crash window and performs no such mutation. Later inactive recovery states use only exact durable ownership. The sole narrow syscall/persistence fallback is the daemon-owned TUN address in `applying`, using the pre-persisted name, ifindex, TUN kind, CIDR, and tracked-child appearance evidence and still requiring fail-closed host inspection. Desired-only main-table server bypass state must never be deleted by assumption. Ambiguous host state must be skipped, not guessed.
+Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and the exact session-allocated target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. Durable `desired_plan` content validates resource shape but never grants route, policy-rule, DNS, or transaction-nftables cleanup authority. `planned` contributes no network cleanup tuples. `applying` without durable applied/rollback proof is an ambiguous crash window and performs no such mutation. Later inactive recovery states use only exact durable ownership. The sole narrow syscall/persistence fallback is the daemon-owned TUN address in `applying`, using the pre-persisted name, ifindex, TUN kind, CIDR, and tracked-child appearance evidence and still requiring fail-closed host inspection. Desired-only main-table server bypass state must never be deleted by assumption. Ambiguous host state must be skipped, not guessed.
 
 Historical Podlaz routing identifiers are preferred allocation candidates and
 migration/diagnostic hints, not cleanup authority. Policy-rule priorities `9999`
@@ -136,13 +156,81 @@ after the query, performs a separate normal system resolution, and checks a
 bounded, deduplicated set of returned IPv4 addresses until at least one is
 proven to route through the planned TUN path.
 
-The canonical nftables verifier proves the whole podlaz-owned table composition,
+The canonical transaction nftables verifier proves the whole podlaz-owned data-plane table composition,
 not merely the presence of expected rules. It requires exact chain cardinality,
 name, type, hook, numeric priority, policy, and exact ordered rule cardinality
 and content. An extra rule, extra chain, foreign rule inside the owned table, or
 base-chain metadata drift is ambiguous owned state and fails closed. Connect-time
 verification and current-health revalidation use this same canonical verifier;
 there is no weaker revalidation-specific verifier.
+
+### Network Session Privacy Envelope
+
+After a TUN Network Session has been successfully protected, ordinary user
+egress must remain fail-closed across Data Plane Generation rollback,
+replacement, daemon crash/restart, and bounded recovery. Podlaz therefore owns a
+second physical nftables resource whose lifetime is the Network Session rather
+than one transaction.
+
+The Privacy Envelope uses family `inet` and a collision-safe session-derived
+name matching `podlaz_pe_<12 lowercase hex>[_N]`. Candidate observation is
+read-only. An occupied candidate is skipped and never adopted or deleted merely
+because its name or shape resembles Podlaz state. Before the first envelope
+mutation the Network Session record persists the exact family/table identity,
+composition version, TUN interface, bootstrap IPv4 set, and protection state.
+That exact durable record is the only authority to replace or remove the table.
+
+The envelope output composition allows only the narrow traffic required to keep
+the protected session/recovery path viable before a final reject:
+
+1. loopback egress;
+2. the exact Podlaz TUN interface;
+3. exact persisted VPN/bootstrap IPv4 endpoint(s);
+4. DHCPv4 client control (`UDP 68 -> 67`);
+5. DHCPv6 client control (`UDP 546 -> 547`);
+6. narrow IPv6 router/neighbor discovery control traffic.
+
+It has no generic `ct state established,related` exception, arbitrary external
+DNS exception, whole-uplink allowance, arbitrary LAN allowance, or global
+firewall normalization.
+
+A protected connect is publishable as `CONNECTED` only after the transaction
+Data Plane Generation has verified, envelope authority is durably `arming`, the
+exact envelope has been applied and verified, protection is `armed`, and the
+critical VPN connectivity proof has succeeded again with the barrier active.
+If post-envelope failure cleanup cannot completely roll back the exact data
+plane, the envelope remains armed and its authority remains durable.
+
+`handoff=replace-podlaz` is a one-shot generation transition, not a new Network
+Session. Before destructive handoff, durable `Replacement` authority captures
+the previous request/protection. If the transport endpoint changes, the exact
+envelope is atomically widened `old -> old+new` before the old generation is
+removed, then atomically narrowed `old+new -> new` only after the target
+generation is established. Every transition is exact-verified. Failure restores
+the previous exact barrier and, if destructive handoff already removed the old
+data plane, performs one bounded daemon-owned restore of the previous generation.
+That fail-safe restore does not inherit caller cancellation and is cancelled by
+an explicit daemon stop.
+
+Crash/restart replacement recovery accepts only exact persisted old/union/target
+compositions. It verifies which one is live before mutation; zero or multiple
+matches are ambiguous and fail closed. Generic transaction recovery never
+removes the session Privacy Envelope.
+
+Explicit disconnect/service stop and terminal health disposition persist a
+non-resume intent before teardown mutation. `Replacement` metadata may remain
+under `disconnect` or `terminal` because it is cleanup authority, not reconnect
+authorization. Terminal convergence orders mutation as: exact Data Plane
+Generation cleanup; exact replacement-envelope convergence if needed; exact
+envelope verify; persist `removing`; remove and verify absence of only that exact
+table; clear protection authority; verify the remaining host network; clear the
+Network Session record. If any step fails, exact authority remains and public
+status must not claim a clean `DISCONNECTED` boundary.
+
+The post-Podlaz verifier is read-only and does not require direct ISP routing: a
+foreign VPN/default route may remain the valid baseline. It rejects remaining
+`podlaz0` ownership and requires bounded route, TCP, and resolver evidence before
+clean terminal publication.
 
 Recovery observation of the same `systemd-resolved` state is tri-state and
 configuration-aware. Missing-link absence is accepted only through explicit,
@@ -172,48 +260,60 @@ as stale state. The read-only exit-`0` status envelope does not broaden the
 mutating `resolvectl revert podlaz0` contract; mutation idempotence remains the
 separate exit-`1` cleanup contract defined below.
 
-Desired network intent validates target shape but never grants route, policy-rule, DNS, or nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
+Desired network intent validates target shape but never grants route, policy-rule, DNS, or transaction-nftables cleanup authority. Planned transactions mutate no host networking. Applying transactions without durable applied/rollback ownership are preserved as ambiguous and perform no cleanup mutation; only the bound-address syscall/persistence window has a narrow identity-checked fallback. Persisted committed state is a restart-recovery candidate, but an exact committed transaction proven to be the current live lifecycle transaction is filtered from recovery/status/doctor and cannot be mutated by `recover --execute`.
 
-## Network session continuation and service replacement
+## Network Session continuation, privacy, and service replacement
 
-A normal active TUN session may continue across daemon restart, unexpected daemon
-crash followed by systemd automatic restart, and Debian package replacement
-within the same Linux boot. Reconnect intent and cleanup authority remain
-strictly separate:
+A normal active TUN Network Session may continue across daemon restart,
+unexpected daemon crash followed by systemd automatic restart, protected data
+plane replacement, and Debian package replacement within the same Linux boot.
+The single current-boot record keeps reconnect intent and exact session cleanup
+authority as separate fields:
 
-- `/run/podlaz/network-session-continuation.json` stores only the current-boot
-  connect intent; it never authorizes route, rule, DNS, nftables, address, child,
-  or generated-config cleanup;
-- exact transaction state remains the only host-network cleanup/recovery
-  authority;
-- explicit `podlaz disconnect` and explicit service stop remove continuation
-  before teardown mutation;
-- restart/upgrade teardown preserves continuation while it executes the normal
-  exact transaction-backed disconnect path;
-- a boot-ID mismatch discards continuation, so a normal connection cannot become
-  implicit boot autostart;
-- startup runs exact transaction recovery before replaying continuation and
-  blocks conflicting lifecycle mutations while exact recovery or replay remains
-  incomplete.
+- `intent=resume` authorizes current-boot automatic continuation; `disconnect`
+  and `terminal` explicitly forbid it;
+- `protection` is exact authority for only the session-scoped Privacy Envelope;
+- `replacement`, while present, keeps exact previous request/protection rollback
+  authority across generation replacement and crash boundaries;
+- exact transaction files remain the only cleanup/recovery authority for the
+  replaceable TUN Data Plane Generation;
+- explicit disconnect/service stop changes intent before teardown and retains
+  protection/replacement authority until ordered cleanup succeeds;
+- restart/upgrade teardown preserves `resume` and the Privacy Envelope while the
+  old Data Plane Generation is cleaned/recreated;
+- a boot-ID mismatch discards this volatile continuation state, so a normal
+  connection cannot become implicit boot autostart.
+
+Startup has one intent-aware Network Session convergence path. For `resume`, it
+first verifies/reconciles the exact persisted Privacy Envelope, then recovers old
+exact Data Plane Generations, runs generic recovery, reloads the durable request,
+and reconnects. For `disconnect`/`terminal`, it never invokes automatic reconnect:
+it converges exact/generic data-plane cleanup, deliberately removes the exact
+envelope, verifies the remaining host network, and only then clears authority.
+A blocked startup mutation gate remains blocked until this convergence succeeds;
+`/recover` uses the same serialized path rather than a second orchestration path.
 
 The packaged systemd unit uses `KillSignal=SIGTERM` for explicit stop and
 `RestartKillSignal=SIGUSR1` for restart continuation. `KillMode=mixed` lets the
 main daemon receive the graceful lifecycle signal before systemd force-kills any
 remaining child processes. `RuntimeDirectoryPreserve=yes` retains same-boot
-exact transaction evidence after incomplete teardown; preservation of `/run`
-never grants reconnect authority after explicit stop because continuation is
-disarmed first. The daemon shutdown budget is bounded below the unit's
-`TimeoutStopSec`, and rollback/disconnect failures are returned rather than
-silently normalized to clean shutdown.
+exact transaction and Network Session evidence after incomplete teardown;
+preservation of `/run` never grants reconnect authority after explicit stop
+because intent is disarmed first. The daemon shutdown budget is bounded below
+the unit's `TimeoutStopSec`, and rollback/disconnect failures are returned rather
+than silently normalized to clean shutdown.
 
-For the first upgrade from a release that predates normal continuation records,
-Debian `postinstall` may create a current-boot legacy marker containing only the
-boot ID. The new daemon reconstructs reconnect intent only when exactly one
-recoverable committed TUN transaction exists, the generated Xray configuration
-is exact transaction-owned state under the runtime directory, transaction-backed
-server metadata is present, and the reconstructed profile regenerates canonically
-identical Xray JSON. Any ambiguity fails closed and leaves exact transaction
-recovery authority intact.
+For the first upgrade from a release that predates normal Network Session
+records, Debian `postinstall` may create a current-boot legacy marker containing
+only the boot ID. The new daemon reconstructs reconnect intent only when exactly
+one recoverable committed TUN transaction exists, the generated Xray
+configuration is exact transaction-owned state under the runtime directory,
+transaction-backed server metadata is present, and the reconstructed profile
+regenerates canonically identical Xray JSON. A valid legacy continuation file is
+migrated to the current Network Session schema with a fresh session identity;
+neither legacy form invents Privacy Envelope authority for an existing nftables
+object. Any ambiguity fails closed and leaves exact transaction recovery
+authority intact.
 
 ## Current TUN health and network generations
 
@@ -251,10 +351,11 @@ finishes and releases revalidation authority before any mutation. The daemon the
 runs the existing bounded redacted pre-rollback diagnostic pipeline and attempts
 to persist the report with `rollback_status=pending` while the failed layer is
 still observable. Only after that diagnostic boundary does it invoke the normal
-bounded transaction-backed lifecycle `Disconnect`. Successful rollback and Xray
-quiescence converge to inactive state and finalize the report as `completed`.
-Cleanup failure finalizes the report as `failed`, preserves durable exact
-ownership, and leaves current health `cleanup-required` for recovery.
+bounded Network Session lifecycle teardown. Successful exact data-plane cleanup,
+Privacy Envelope removal, remaining-network verification, and Xray quiescence
+converge to inactive state and finalize the report as `completed`. Cleanup
+failure finalizes the report as `failed`, preserves durable exact ownership, and
+leaves current health `cleanup-required` for recovery.
 
 This terminal disposition is not a general repair or cleanup authorization.
 Observation ambiguity, incomplete ownership proof, or foreign resources remain
@@ -310,13 +411,13 @@ but pre-existed connect, but this never converts desired intent into rollback
 authority. It does not apply, repair, flush route cache, change NetworkManager,
 widen firewall policy, change DNS, recreate TUN state, or mutate foreign
 resources. The only post-verification mutation described by this contract is the
-normal exact transaction-backed lifecycle disconnect after a terminal proved
+normal exact Network Session terminal teardown after a terminal proved
 verification failure/deadline and after revalidation authority has been released.
 Any future repair remains a separate evidence-gated design.
 
 For native Xray TUN startup, durable rollback order is:
 
-1. roll back podlaz-owned nftables and systemd-resolved state;
+1. roll back podlaz-owned transaction nftables and systemd-resolved state;
 2. roll back exact policy rules and routes;
 3. remove the exact daemon-owned TUN address after link-identity revalidation;
 4. stop the transaction-owned Xray child process;
@@ -350,12 +451,13 @@ request deadline cannot immediately cancel DNS, route, rule, nftables, or proces
 cleanup. For terminal post-commit revalidation, this cleanup begins only after the
 read-only revalidation authority is released. The historical report is first
 persisted with rollback status `pending` and is finalized to `completed` only
-after host rollback and Xray quiescence are both proven; otherwise it is finalized
-to `failed`. Explicit user/recovery/shutdown cancellation bypasses this terminal
-auto-cleanup handoff because the lifecycle operation that caused cancellation
-already owns cleanup. The returned error and daemon log expose the primary TUN
-classification and report location as separate fields when persistence succeeds,
-and user guidance uses the canonical `podlaz doctor --tun --verbose` command.
+after host rollback, session Privacy Envelope convergence/removal, and Xray
+quiescence are proven; otherwise it is finalized to `failed`. Explicit
+user/recovery/shutdown cancellation bypasses this terminal auto-cleanup handoff
+because the lifecycle operation that caused cancellation already owns cleanup.
+The returned error and daemon log expose the primary TUN classification and
+report location as separate fields when persistence succeeds, and user guidance
+uses the canonical `podlaz doctor --tun --verbose` command.
 
 The full TUN diagnostic path may perform only read-only snapshot collection,
 kernel route/rule lookups, bounded DNS/TCP/TLS/HTTPS/DoH probes, and private
@@ -414,15 +516,15 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
 - The CLI must not perform privileged cleanup directly.
 - Recovery may clean only clearly podlaz-owned volatile state.
 - `/run/podlaz` must not be deleted wholesale.
-- On startup, daemon-owned exact transaction recovery runs before continuation
-  replay. A failed or ambiguous result keeps the lifecycle mutation gate closed
-  and retains exact transaction evidence; reconnect intent cannot manufacture
-  cleanup authority.
+- On startup, daemon-owned Network Session privacy reconciliation runs before
+  exact Data Plane Generation recovery. A failed or ambiguous result keeps the
+  lifecycle mutation gate closed and retains exact session/transaction evidence;
+  reconnect intent cannot manufacture cleanup authority.
 - After an explicit recovery completes while startup is blocked, podlazd retries
-  the current-boot continuation automatically. If cleanup succeeded but resume
-  still fails, recovery output includes a `network session continuation` warning
-  and the mutation gate remains blocked instead of reporting a misleading clean
-  recovery result.
+  the same intent-aware Network Session convergence automatically. If cleanup
+  succeeded but protected resume or terminal convergence still fails, recovery
+  output remains incomplete and the mutation gate stays blocked instead of
+  reporting a misleading clean result.
 - Stale PID metadata alone is not enough to signal a process. The current
   transaction schema does not persist the executable identity and process start
   time required for identity-safe orphan signalling, so daemon recovery never
@@ -504,11 +606,12 @@ IP addresses, UUIDs, runtime-config paths, raw child payload, or raw child error
 text. User-visible diagnostics may retain separately redacted runtime warnings;
 that does not authorize copying their raw source payload into journald.
 
-The current-boot continuation is private daemon state rather than diagnostic
-output. Because it may contain profile credentials and endpoints, neither its
-contents nor errors containing reconstructed profile/network details may be
-written to journald or copied into evidence artifacts. Startup logs use only
-low-cardinality continuation/recovery classifications.
+The current-boot Network Session record is private daemon state rather than
+diagnostic output. Because the request and bootstrap authority may contain
+profile credentials/endpoints, neither its contents nor errors containing
+reconstructed profile/network details may be written to journald or copied into
+evidence artifacts. Startup logs use only low-cardinality
+continuation/recovery/protection classifications.
 
 The generic secret redactor is not a sufficient privacy boundary for TUN
 diagnostics. Before persistence and before human or JSON rendering, the complete
@@ -555,8 +658,8 @@ A TUN connect is already an explicit privileged networking mutation request. It 
 A proved active-session revalidation failure or deadline is also a fail-safe
 lifecycle condition rather than a new user cleanup request. After bounded
 redacted diagnostics and release of revalidation authority, podlazd may invoke
-the normal exact transaction-backed `Disconnect` automatically to avoid leaving
-an unproved active TUN behind the kill-switch. This does not waive ownership
+the normal exact Network Session terminal teardown automatically to avoid leaving
+an unproved active TUN behind the Privacy Envelope. This does not waive ownership
 checks, does not authorize repair/foreign cleanup, and does not apply when the
 revalidation was cancelled by an explicit user lifecycle operation or daemon
 shutdown that already owns cleanup.

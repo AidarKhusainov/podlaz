@@ -86,6 +86,13 @@ func (b *productionTunRevalidationBackend) verify(ctx context.Context, observati
 		}
 		return newTunRevalidationVerificationError(api.TunHealthOwnedStateInvalid, fmt.Errorf("verify committed TUN owned state: %w", err))
 	}
+	// Installed-package acceptance can inject one ownership-invalid proof only
+	// after the real exact-owned state has verified. This exercises the normal
+	// terminal revalidation policy without corrupting or manually repairing
+	// product-owned host state.
+	if err := maybeInjectE2ETunTerminalFailure(); err != nil {
+		return err
+	}
 	if err := verifyTunConnectivity(verifyCtx, observation.plan, tunCoreRuntimePlan{}); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
