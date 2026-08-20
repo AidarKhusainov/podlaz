@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
@@ -78,6 +79,33 @@ func TestProtectedReplacementSourceAcceptsDegradedCoreExitedGeneration(t *testin
 	}
 	if source.Protection.State != networkSessionProtectionArmed {
 		t.Fatalf("degraded source lost armed Privacy Envelope authority: %#v", source.Protection)
+	}
+}
+
+func TestProtectedReplacementSourceUsesPreviousGenerationIdentityDuringReplacement(t *testing.T) {
+	runtimeDir, managerState, _, session := issue262ProtectedReplacementFixture(t, "error (core exited)", false)
+	previousRequest := session.Request
+	previousProtection := cloneNetworkSessionProtection(*session.Protection)
+	target := session.Request
+	target.Profile.ID = "profile-replacement"
+	target.Profile.Name = "Replacement profile"
+	target.Profile.Server = "replacement.example.test"
+	target.Handoff = api.HandoffReplacePodlaz
+	session.Request = target
+	session.Replacement = &networkSessionReplacement{
+		PreviousRequest:    previousRequest,
+		PreviousProtection: &previousProtection,
+	}
+
+	source, err := loadProtectedTunReplacementSource(runtimeDir, managerState, nil, session)
+	if err != nil {
+		t.Fatalf("prove previous degraded generation during target replacement: %v", err)
+	}
+	if source.Request.Profile.ID != previousRequest.Profile.ID {
+		t.Fatalf("source request profile=%q, want previous generation %q", source.Request.Profile.ID, previousRequest.Profile.ID)
+	}
+	if source.Transaction.ProfileID != previousRequest.Profile.ID {
+		t.Fatalf("source transaction profile=%q, want previous generation %q", source.Transaction.ProfileID, previousRequest.Profile.ID)
 	}
 }
 
