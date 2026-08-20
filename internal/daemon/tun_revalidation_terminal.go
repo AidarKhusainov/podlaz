@@ -40,7 +40,7 @@ func (h tunRevalidationTerminalHandler) Handle(ctx context.Context, outcome tunR
 	if cleanupTimeout <= 0 {
 		cleanupTimeout = tunRollbackCleanupTimeout
 	}
-	cleanupCtx, cancel := context.WithTimeout(baseCtx, cleanupTimeout)
+	cleanupCtx, cancel := context.WithTimeout(withTerminalNetworkSessionTeardown(baseCtx), cleanupTimeout)
 	var cleanupErr error
 	if h.disconnect == nil {
 		cleanupErr = errors.New("missing terminal revalidation disconnect")
