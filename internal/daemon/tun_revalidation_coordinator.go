@@ -98,7 +98,9 @@ func newTunAutomaticDispositionCoordinator(
 	handle tunAutomaticDispositionHandleFunc,
 ) *tunRevalidationCoordinator {
 	if run == nil {
-		run = func(context.Context, tunRevalidationTrigger) tunAutomaticDisposition { return tunAutomaticDisposition{} }
+		run = func(context.Context, tunRevalidationTrigger) tunAutomaticDisposition {
+			return tunAutomaticDisposition{}
+		}
 	}
 	coordinator := newTunRevalidationCoordinatorWithRun(func(ctx context.Context, trigger tunRevalidationTrigger) tunRevalidationCoordinatorRunResult {
 		return tunRevalidationCoordinatorRunResult{
