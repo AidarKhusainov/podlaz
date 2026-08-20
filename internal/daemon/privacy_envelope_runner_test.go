@@ -16,6 +16,7 @@ func TestFullTunnelRunnerPublishesOnlyAfterEnvelopeAndPostArmConnectivityVerific
 	var events []string
 	h.onNetworkApplied = func() { events = append(events, "network-apply-verify") }
 	runner := h.runner()
+	runner.requirePrivacyEnvelope = true
 	runner.verifyConnectivity = func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error {
 		h.connectivityVerified++
 		events = append(events, fmt.Sprintf("connectivity-%d", h.connectivityVerified))
@@ -29,6 +30,7 @@ func TestFullTunnelRunnerPublishesOnlyAfterEnvelopeAndPostArmConnectivityVerific
 		events = append(events, "envelope-verify")
 		return nil
 	}
+	runner.cleanupPrivacyEnvelope = func(context.Context) error { return nil }
 	originalCommit := runner.commitActiveState
 	runner.commitActiveState = func(store txstate.TransactionStore, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
 		events = append(events, "commit")
@@ -49,6 +51,7 @@ func TestFullTunnelRunnerPostEnvelopeFailureRollsBackDataPlaneBeforeEnvelopeClea
 	var events []string
 	h.onRollback = func() { events = append(events, "data-plane-rollback") }
 	runner := h.runner()
+	runner.requirePrivacyEnvelope = true
 	verification := 0
 	runner.verifyConnectivity = func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error {
 		verification++
@@ -80,6 +83,7 @@ func TestFullTunnelRunnerPostEnvelopeFailureRollsBackDataPlaneBeforeEnvelopeClea
 func TestFullTunnelRunnerKeepsEnvelopeWhenDataPlaneRollbackFails(t *testing.T) {
 	h := newFullTunnelRunnerHarness(t)
 	runner := h.runner()
+	runner.requirePrivacyEnvelope = true
 	verification := 0
 	runner.verifyConnectivity = func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error {
 		verification++
@@ -113,6 +117,7 @@ func TestFullTunnelRunnerEnvelopeVerificationFailureCleansAfterDataPlaneRollback
 	var events []string
 	h.onRollback = func() { events = append(events, "data-plane-rollback") }
 	runner := h.runner()
+	runner.requirePrivacyEnvelope = true
 	envelopeVerifyErr := errors.New("envelope verify failed")
 	runner.armPrivacyEnvelope = func(context.Context, planner.TunPlan) error { return nil }
 	runner.verifyPrivacyEnvelope = func(context.Context) error { return envelopeVerifyErr }
@@ -128,5 +133,20 @@ func TestFullTunnelRunnerEnvelopeVerificationFailureCleansAfterDataPlaneRollback
 	want := []string{"data-plane-rollback", "envelope-cleanup"}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("envelope verification cleanup ordering = %#v, want %#v", events, want)
+	}
+}
+
+func TestFullTunnelRunnerProtectedModeRejectsPartialEnvelopeHooksBeforeMutation(t *testing.T) {
+	h := newFullTunnelRunnerHarness(t)
+	runner := h.runner()
+	runner.requirePrivacyEnvelope = true
+	runner.armPrivacyEnvelope = func(context.Context, planner.TunPlan) error { return nil }
+
+	_, err := runner.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "complete Privacy Envelope lifecycle hooks") {
+		t.Fatalf("expected privacy lifecycle preflight failure, got %v", err)
+	}
+	if h.coreStarted != 0 || len(h.executor.calls) != 0 {
+		t.Fatalf("incomplete privacy lifecycle must fail before mutation: core=%d executor=%#v", h.coreStarted, h.executor.calls)
 	}
 }
