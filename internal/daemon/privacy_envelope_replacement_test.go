@@ -175,3 +175,8 @@ func (e *privacyEnvelopeReplacementExecutorStub) Replace(_ context.Context, from
 	e.exists = true
 	return nil
 }
+
+func (e *privacyEnvelopeExecutorStub) Replace(_ context.Context, _, _ netexecutor.PrivacyEnvelopePlan) error {
+	e.events = append(e.events, "replace")
+	return nil
+}
