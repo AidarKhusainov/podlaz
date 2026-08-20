@@ -104,6 +104,57 @@ func TestFailedProtectedReplacementNarrowingRestoresUnionThenPreviousBarrier(t *
 	}
 }
 
+func TestExplicitStopCanPersistIntentDuringProtectedReplacement(t *testing.T) {
+	store, _ := seededPrivacyReplacementState(t)
+	if err := store.SetIntent(networkSessionIntentDisconnect); err != nil {
+		t.Fatalf("persist explicit-stop intent during replacement: %v", err)
+	}
+	state, exists, err := store.Load()
+	if err != nil || !exists {
+		t.Fatalf("load stopped replacement: exists=%v err=%v", exists, err)
+	}
+	if state.Intent != networkSessionIntentDisconnect || state.Replacement == nil || state.Protection == nil {
+		t.Fatalf("explicit stop lost replacement cleanup authority: %#v", state)
+	}
+}
+
+func TestTerminalCleanupConvergesTransitionalReplacementBeforeEnvelopeRemoval(t *testing.T) {
+	store, replacementPlan := seededPrivacyReplacementState(t)
+	executor := &replacementRecoveryExecutor{exists: true, live: []string{"192.0.2.10"}}
+	lifecycle := privacyEnvelopeLifecycle{store: store, executor: executor}
+	if err := lifecycle.PrepareReplacement(context.Background(), replacementPlan); err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrowing := cloneNetworkSessionProtection(*state.Protection)
+	narrowing.State = networkSessionProtectionArming
+	narrowing.PreviousBootstrapIPv4 = append([]string(nil), state.Protection.BootstrapIPv4...)
+	narrowing.BootstrapIPv4 = []string{"192.0.2.20"}
+	if err := store.SetProtection(&narrowing); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetIntent(networkSessionIntentTerminal); err != nil {
+		t.Fatalf("persist terminal intent during replacement: %v", err)
+	}
+
+	if err := lifecycle.RemoveAfterDataPlaneCleanup(context.Background()); err != nil {
+		t.Fatalf("terminal privacy cleanup: %v", err)
+	}
+	final, exists, err := store.Load()
+	if err != nil || !exists {
+		t.Fatalf("load terminal session after envelope removal: exists=%v err=%v", exists, err)
+	}
+	if final.Intent != networkSessionIntentTerminal || final.Replacement != nil || final.Protection != nil {
+		t.Fatalf("terminal cleanup did not preserve intent and clear exact protection: %#v", final)
+	}
+	if executor.exists || len(executor.live) != 0 {
+		t.Fatalf("terminal cleanup left live privacy envelope: exists=%v live=%#v", executor.exists, executor.live)
+	}
+}
+
 func TestReconcileProtectedReplacementCrashFailsClosedOnAmbiguousEnvelope(t *testing.T) {
 	store, _ := seededPrivacyReplacementState(t)
 	state, _, err := store.Load()
