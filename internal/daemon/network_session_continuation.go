@@ -80,22 +80,28 @@ func (s networkSessionContinuationStore) LoadCurrent() (api.ConnectRequest, bool
 	return state.Request, true, nil
 }
 
-// Remove finalizes the volatile Network Session record. It deliberately fails
-// while exact Privacy Envelope authority is still present.
+// Remove disarms reconnect intent before attempting to finalize the volatile
+// Network Session record. If exact Privacy Envelope cleanup authority remains,
+// finalization fails but the session stays terminally disarmed and recoverable.
 func (s networkSessionContinuationStore) Remove() error {
 	stateStore := s.stateStore()
-	_, exists, err := stateStore.Load()
+	state, exists, err := stateStore.Load()
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return nil
 	}
+	if state.Intent == networkSessionIntentResume {
+		if err := stateStore.SetIntent(networkSessionIntentDisconnect); err != nil {
+			return fmt.Errorf("disarm network session before finalization: %w", err)
+		}
+		if s.afterRemove != nil {
+			s.afterRemove()
+		}
+	}
 	if err := stateStore.Remove(); err != nil {
 		return err
-	}
-	if s.afterRemove != nil {
-		s.afterRemove()
 	}
 	return nil
 }
