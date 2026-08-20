@@ -61,6 +61,49 @@ func TestReconcileProtectedReplacementCrashRestoresPreviousSession(t *testing.T)
 	}
 }
 
+func TestFailedProtectedReplacementNarrowingRestoresUnionThenPreviousBarrier(t *testing.T) {
+	store, replacementPlan := seededPrivacyReplacementState(t)
+	executor := &replacementRecoveryExecutor{exists: true, live: []string{"192.0.2.10"}}
+	lifecycle := privacyEnvelopeLifecycle{store: store, executor: executor}
+	if err := lifecycle.PrepareReplacement(context.Background(), replacementPlan); err != nil {
+		t.Fatalf("prepare replacement: %v", err)
+	}
+	if !reflect.DeepEqual(executor.live, []string{"192.0.2.10", "192.0.2.20"}) {
+		t.Fatalf("prepared live endpoints=%#v", executor.live)
+	}
+
+	state, _, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrowing := cloneNetworkSessionProtection(*state.Protection)
+	narrowing.State = networkSessionProtectionArming
+	narrowing.PreviousBootstrapIPv4 = append([]string(nil), state.Protection.BootstrapIPv4...)
+	narrowing.BootstrapIPv4 = []string{"192.0.2.20"}
+	if err := store.SetProtection(&narrowing); err != nil {
+		t.Fatal(err)
+	}
+
+	// This is the atomic Replace failure boundary: durable narrowing intent is
+	// written, but nft keeps the previously verified union composition.
+	if err := lifecycle.CleanupAfterFailedDataPlane(context.Background()); err != nil {
+		t.Fatalf("cleanup failed replacement after narrow Replace failure: %v", err)
+	}
+	restored, exists, err := store.Load()
+	if err != nil || !exists {
+		t.Fatalf("load restored session: exists=%v err=%v", exists, err)
+	}
+	if restored.Replacement != nil || restored.Request.Profile.ID != "profile-example" {
+		t.Fatalf("previous session metadata not restored: %#v", restored)
+	}
+	if restored.Protection == nil || restored.Protection.State != networkSessionProtectionArmed || !reflect.DeepEqual(restored.Protection.BootstrapIPv4, []string{"192.0.2.10"}) {
+		t.Fatalf("previous protection not restored: %#v", restored.Protection)
+	}
+	if !reflect.DeepEqual(executor.live, []string{"192.0.2.10"}) {
+		t.Fatalf("live endpoints=%#v, want previous endpoint", executor.live)
+	}
+}
+
 func TestReconcileProtectedReplacementCrashFailsClosedOnAmbiguousEnvelope(t *testing.T) {
 	store, _ := seededPrivacyReplacementState(t)
 	state, _, err := store.Load()
@@ -95,6 +138,10 @@ type replacementRecoveryExecutor struct {
 	applyCalls   int
 }
 
+func (e *replacementRecoveryExecutor) PrivacyEnvelopeTableExists(context.Context, string, string) (bool, error) {
+	return e.exists, nil
+}
+
 func (e *replacementRecoveryExecutor) Exists(context.Context, netexecutor.PrivacyEnvelopePlan) (bool, error) {
 	return e.exists, nil
 }
@@ -120,5 +167,11 @@ func (e *replacementRecoveryExecutor) Replace(_ context.Context, from, to netexe
 	}
 	e.replaceCalls++
 	e.live = privacyEnvelopeBootstrapRules(to)
+	return nil
+}
+
+func (e *replacementRecoveryExecutor) Remove(context.Context, netexecutor.PrivacyEnvelopePlan) error {
+	e.exists = false
+	e.live = nil
 	return nil
 }
