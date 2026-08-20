@@ -14,6 +14,7 @@ type privacyEnvelopeLifecycleExecutor interface {
 	PrivacyEnvelopeTableExists(context.Context, string, string) (bool, error)
 	Exists(context.Context, netexecutor.PrivacyEnvelopePlan) (bool, error)
 	Apply(context.Context, netexecutor.PrivacyEnvelopePlan) error
+	Replace(context.Context, netexecutor.PrivacyEnvelopePlan, netexecutor.PrivacyEnvelopePlan) error
 	Verify(context.Context, netexecutor.PrivacyEnvelopePlan) error
 	Remove(context.Context, netexecutor.PrivacyEnvelopePlan) error
 }
@@ -38,11 +39,7 @@ func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPl
 		return fmt.Errorf("privacy envelope arm requires resume intent, found %q", state.Intent)
 	}
 
-	bootstrapIP := tunRuntimeServerAddress(tunPlan)
-	if bootstrapIP == "" {
-		return errors.New("privacy envelope arm requires the exact pre-resolved VPN bootstrap IPv4 endpoint")
-	}
-	bootstrap, err := normalizePrivacyEnvelopeBootstrapIPv4([]string{bootstrapIP})
+	bootstrap, err := privacyEnvelopeBootstrapForTunPlan(tunPlan)
 	if err != nil {
 		return err
 	}
@@ -50,7 +47,13 @@ func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPl
 		if state.Protection.State == networkSessionProtectionRemoving {
 			return errors.New("privacy envelope is already being removed")
 		}
-		if state.Protection.TunInterface != tunPlan.TunDevice.Name || !reflect.DeepEqual(state.Protection.BootstrapIPv4, bootstrap) {
+		if state.Protection.TunInterface != tunPlan.TunDevice.Name {
+			return errors.New("existing privacy envelope authority does not match the reconnect TUN interface")
+		}
+		if state.Replacement != nil && !reflect.DeepEqual(state.Protection.BootstrapIPv4, bootstrap) {
+			return p.replaceProtection(ctx, *state.Protection, bootstrap, state.Protection.BootstrapIPv4)
+		}
+		if !reflect.DeepEqual(state.Protection.BootstrapIPv4, bootstrap) {
 			return errors.New("existing privacy envelope authority does not match the reconnect data plane")
 		}
 		if _, err := privacyEnvelopePlanFromAuthority(*state.Protection); err != nil {
@@ -69,6 +72,49 @@ func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPl
 	}
 	if err := p.executor.Apply(ctx, plan); err != nil {
 		return fmt.Errorf("apply privacy envelope: %w", err)
+	}
+	return nil
+}
+
+// PrepareReplacement widens an already verified session barrier to the exact
+// union of the old and target bootstrap endpoints before the old Data Plane
+// Generation is allowed to tear down. The nftables swap is one atomic batch.
+func (p privacyEnvelopeLifecycle) PrepareReplacement(ctx context.Context, tunPlan planner.TunPlan) error {
+	if p.executor == nil {
+		return errors.New("privacy envelope lifecycle has no executor")
+	}
+	state, exists, err := p.store.Load()
+	if err != nil {
+		return fmt.Errorf("load network session before privacy replacement: %w", err)
+	}
+	if !exists || state.Replacement == nil || state.Protection == nil {
+		return errors.New("privacy replacement requires durable previous session authority")
+	}
+	if state.Intent != networkSessionIntentResume {
+		return fmt.Errorf("privacy replacement requires resume intent, found %q", state.Intent)
+	}
+	if state.Protection.State != networkSessionProtectionArmed {
+		return fmt.Errorf("privacy replacement requires armed protection, found %q", state.Protection.State)
+	}
+	if state.Protection.TunInterface != tunPlan.TunDevice.Name {
+		return errors.New("privacy replacement TUN interface does not match existing protection")
+	}
+	target, err := privacyEnvelopeBootstrapForTunPlan(tunPlan)
+	if err != nil {
+		return err
+	}
+	union, err := normalizePrivacyEnvelopeBootstrapIPv4(append(append([]string(nil), state.Protection.BootstrapIPv4...), target...))
+	if err != nil {
+		return err
+	}
+	if reflect.DeepEqual(union, state.Protection.BootstrapIPv4) {
+		return nil
+	}
+	if err := p.replaceProtection(ctx, *state.Protection, union, state.Protection.BootstrapIPv4); err != nil {
+		return fmt.Errorf("widen privacy envelope for protected replacement: %w", err)
+	}
+	if err := p.Verify(ctx); err != nil {
+		return fmt.Errorf("verify widened privacy envelope for protected replacement: %w", err)
 	}
 	return nil
 }
@@ -94,15 +140,106 @@ func (p privacyEnvelopeLifecycle) Verify(ctx context.Context) error {
 	if err := p.executor.Verify(ctx, plan); err != nil {
 		return err
 	}
-	if state.Protection.State == networkSessionProtectionArmed {
+	if state.Protection.State == networkSessionProtectionArmed && len(state.Protection.PreviousBootstrapIPv4) == 0 {
 		return nil
 	}
 	protection := cloneNetworkSessionProtection(*state.Protection)
 	protection.State = networkSessionProtectionArmed
+	protection.PreviousBootstrapIPv4 = nil
 	if err := p.store.SetProtection(&protection); err != nil {
 		return fmt.Errorf("persist verified privacy envelope state: %w", err)
 	}
 	return nil
+}
+
+// CleanupAfterFailedDataPlane restores the exact previous barrier and request
+// for a failed protected generation replacement. It never removes the
+// session-wide barrier.
+func (p privacyEnvelopeLifecycle) CleanupAfterFailedDataPlane(ctx context.Context) error {
+	if p.executor == nil {
+		return errors.New("privacy envelope lifecycle has no executor")
+	}
+	state, exists, err := p.store.Load()
+	if err != nil {
+		return fmt.Errorf("load network session before replacement rollback: %w", err)
+	}
+	if !exists || state.Replacement == nil {
+		return nil
+	}
+	if state.Replacement.PreviousProtection == nil {
+		return errors.New("protected replacement rollback has no previous privacy authority")
+	}
+	previous := cloneNetworkSessionProtection(*state.Replacement.PreviousProtection)
+	previous.State = networkSessionProtectionArmed
+	previous.PreviousBootstrapIPv4 = nil
+	previousPlan, err := privacyEnvelopePlanFromAuthority(previous)
+	if err != nil {
+		return fmt.Errorf("reconstruct previous privacy envelope: %w", err)
+	}
+	if state.Protection == nil {
+		return errors.New("protected replacement rollback lost current privacy authority")
+	}
+	currentPlan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
+	if err != nil {
+		return fmt.Errorf("reconstruct current privacy envelope for rollback: %w", err)
+	}
+	present, err := p.executor.Exists(ctx, currentPlan)
+	if err != nil {
+		return fmt.Errorf("observe current privacy envelope for rollback: %w", err)
+	}
+	if present {
+		if err := p.executor.Verify(ctx, currentPlan); err != nil {
+			return fmt.Errorf("refuse to replace unverified current privacy envelope during rollback: %w", err)
+		}
+		if err := p.executor.Replace(ctx, currentPlan, previousPlan); err != nil {
+			return fmt.Errorf("restore previous privacy envelope: %w", err)
+		}
+	} else {
+		if err := p.executor.Apply(ctx, previousPlan); err != nil {
+			return fmt.Errorf("recreate previous privacy envelope: %w", err)
+		}
+	}
+	if err := p.executor.Verify(ctx, previousPlan); err != nil {
+		return fmt.Errorf("verify restored previous privacy envelope: %w", err)
+	}
+	if err := p.store.RestoreReplacement(); err != nil {
+		return fmt.Errorf("restore previous Network Session after replacement failure: %w", err)
+	}
+	return nil
+}
+
+func (p privacyEnvelopeLifecycle) replaceProtection(ctx context.Context, current networkSessionProtection, target, previous []string) error {
+	currentPlan, err := privacyEnvelopePlanFromAuthority(current)
+	if err != nil {
+		return fmt.Errorf("reconstruct current privacy envelope: %w", err)
+	}
+	next := cloneNetworkSessionProtection(current)
+	next.State = networkSessionProtectionArming
+	next.BootstrapIPv4 = append([]string(nil), target...)
+	next.PreviousBootstrapIPv4 = append([]string(nil), previous...)
+	nextPlan, err := privacyEnvelopePlanFromAuthority(next)
+	if err != nil {
+		return fmt.Errorf("reconstruct replacement privacy envelope: %w", err)
+	}
+	if err := p.store.SetProtection(&next); err != nil {
+		return fmt.Errorf("persist privacy replacement authority before nftables mutation: %w", err)
+	}
+	if err := p.executor.Replace(ctx, currentPlan, nextPlan); err != nil {
+		return fmt.Errorf("atomically replace privacy envelope: %w", err)
+	}
+	return nil
+}
+
+func privacyEnvelopeBootstrapForTunPlan(tunPlan planner.TunPlan) ([]string, error) {
+	bootstrapIP := tunRuntimeServerAddress(tunPlan)
+	if bootstrapIP == "" {
+		return nil, errors.New("privacy envelope requires the exact pre-resolved VPN bootstrap IPv4 endpoint")
+	}
+	bootstrap, err := normalizePrivacyEnvelopeBootstrapIPv4([]string{bootstrapIP})
+	if err != nil {
+		return nil, err
+	}
+	return bootstrap, nil
 }
 
 // RemoveAfterDataPlaneCleanup deliberately removes protection only after the
