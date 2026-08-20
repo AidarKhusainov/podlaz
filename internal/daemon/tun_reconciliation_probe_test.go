@@ -11,13 +11,19 @@ import (
 
 type issue262ProbeClient struct {
 	httpsTargets []string
+	dnsUDPErr    error
+	dnsTCPCalls  int
 }
 
 func (c *issue262ProbeClient) DNSUDP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
+	if c.dnsUDPErr != nil {
+		return tundiag.DNSEvidence{}, c.dnsUDPErr
+	}
 	return successfulDNSRevalidationEvidence(), nil
 }
 
 func (c *issue262ProbeClient) DNSTCP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
+	c.dnsTCPCalls++
 	return successfulDNSRevalidationEvidence(), nil
 }
 
@@ -58,6 +64,30 @@ func TestIssue262ProbeEvidenceContinuesAfterOneProviderFailure(t *testing.T) {
 	}
 	if !cloudflareFailed || !googleSucceeded {
 		t.Fatalf("provider evidence=%#v, want Cloudflare failure plus independent Google success", evidence)
+	}
+}
+
+func TestIssue262ProbeEvidenceContinuesAfterOneProbeDeadlineExceeded(t *testing.T) {
+	client := &issue262ProbeClient{dnsUDPErr: context.DeadlineExceeded}
+	evidence, err := collectTunRevalidationProbeEvidence(context.Background(), revalidationDataPlanePlanForTest(), client)
+	if err != nil {
+		t.Fatalf("one probe timeout aborted independent sampling: %v", err)
+	}
+	if client.dnsTCPCalls == 0 {
+		t.Fatal("DNS TCP probe did not run after DNS UDP timeout")
+	}
+
+	var timedOutUDP, googleSucceeded bool
+	for _, item := range evidence {
+		switch {
+		case item.Group == "dns-udp" && item.Provider == "session-resolver":
+			timedOutUDP = !item.Success && errors.Is(item.Cause, context.DeadlineExceeded)
+		case item.Group == "https" && item.Provider == "google":
+			googleSucceeded = item.Success && item.Cause == nil
+		}
+	}
+	if !timedOutUDP || !googleSucceeded {
+		t.Fatalf("probe evidence=%#v, want soft DNS UDP timeout plus later independent success", evidence)
 	}
 }
 

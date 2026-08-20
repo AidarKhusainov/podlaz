@@ -8,18 +8,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-func issue262ProvenMandatoryEvidence() tunMandatoryEvidence {
-	return tunMandatoryEvidence{
-		SessionOwnership: tunLocalProofProven,
-		CoreTUN:          tunLocalProofProven,
-		OwnedComposition: tunLocalProofProven,
-		PrivacyEnvelope:  tunLocalProofProven,
-		UplinkPath:       tunLocalProofProven,
-		NetworkManager:   tunLocalProofProven,
-		ResolvedDNS:      tunLocalProofProven,
-	}
-}
-
 func TestIssue262OneSoftProviderFailureDoesNotDisconnect(t *testing.T) {
 	supervisor := newTunReconciliationSupervisorWithPolicy(time.Now, time.Minute, 3)
 	decision := supervisor.RunRound(tunReconciliationRound{
