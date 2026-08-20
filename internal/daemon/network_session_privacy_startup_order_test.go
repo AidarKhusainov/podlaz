@@ -81,7 +81,9 @@ func TestResumeNetworkSessionReloadsRequestAfterReplacementReconciliation(t *tes
 		continuation,
 		capture,
 		func(context.Context) api.StatusResponse { return api.StatusResponse{Connection: "inactive"} },
-		func(context.Context, api.StatusResponse) api.RecoveryResponse { return api.RecoveryResponse{Mode: "execute"} },
+		func(context.Context, api.StatusResponse) api.RecoveryResponse {
+			return api.RecoveryResponse{Mode: "execute"}
+		},
 	)
 	if err != nil || !resumed {
 		t.Fatalf("resume restored session: resumed=%v err=%v", resumed, err)
