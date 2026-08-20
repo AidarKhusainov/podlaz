@@ -47,7 +47,7 @@ func tunMandatoryEvidenceFromSnapshot(snapshot netsnapshot.Snapshot) tunMandator
 	case netsnapshot.StatusMissing, netsnapshot.StatusUnsupported:
 		evidence.ResolvedDNS = tunLocalProofViolated
 	}
-	return evidence
+	return maybeInjectE2ETunReconciliationResolvedUnknown(evidence)
 }
 
 type tunProbeEvidence struct {
