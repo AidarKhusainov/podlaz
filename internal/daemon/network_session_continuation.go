@@ -426,6 +426,16 @@ func resumeNetworkSession(
 		if !networkSessionRecoveryConverged(recovery) {
 			return false, errNetworkSessionRecoveryIncomplete
 		}
+		state, exists, err = stateStore.Load()
+		if err != nil {
+			return false, fmt.Errorf("reload Network Session before startup replay: %w", err)
+		}
+		if !exists {
+			return false, errors.New("Network Session authority disappeared before startup replay")
+		}
+		if state.Intent != networkSessionIntentResume {
+			return false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent)
+		}
 		if _, err := lifecycle.Connect(ctx, state.Request); err != nil {
 			return false, fmt.Errorf("resume network session: %w", err)
 		}
