@@ -54,14 +54,60 @@ func TestNetworkSessionLifecycleFailedProtectedReplacementReconnectsPreviousData
 	}
 }
 
-type replacementRestoringLifecycle struct {
-	store     networkSessionStateStore
-	targetID  string
-	targetErr error
-	calls     []string
+func TestNetworkSessionLifecycleFailedProtectedReplacementRestoresPreviousDataPlaneAfterCallerCancellation(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	previous := testContinuationRequest()
+	if err := continuation.Save(previous); err != nil {
+		t.Fatal(err)
+	}
+	protection := testArmedPrivacyProtection()
+	if err := continuation.stateStore().SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+
+	target := previous
+	target.Handoff = api.HandoffReplacePodlaz
+	target.Profile.ID = "profile-replacement"
+	target.Profile.Name = "Replacement profile"
+	target.Profile.Server = "replacement.example.test"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	inner := &replacementRestoringLifecycle{
+		store:        continuation.stateStore(),
+		targetID:     target.Profile.ID,
+		targetErr:    context.Canceled,
+		cancelTarget: cancel,
+	}
+	lifecycle := newNetworkSessionLifecycle(inner, continuation)
+
+	_, err := lifecycle.Connect(ctx, target)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("replacement error=%v, want caller cancellation", err)
+	}
+	if inner.previousContextErr != nil {
+		t.Fatalf("previous data-plane restore inherited caller cancellation: %v", inner.previousContextErr)
+	}
+	if !inner.previousHasDeadline {
+		t.Fatal("previous data-plane restore must use a bounded daemon-owned context")
+	}
+	wantCalls := []string{"profile-replacement", "profile-example"}
+	if !reflect.DeepEqual(inner.calls, wantCalls) {
+		t.Fatalf("inner connect calls=%#v, want target then previous restore %#v", inner.calls, wantCalls)
+	}
 }
 
-func (l *replacementRestoringLifecycle) Connect(_ context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+type replacementRestoringLifecycle struct {
+	store              networkSessionStateStore
+	targetID           string
+	targetErr          error
+	cancelTarget       context.CancelFunc
+	previousContextErr error
+	previousHasDeadline bool
+	calls              []string
+}
+
+func (l *replacementRestoringLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
 	l.calls = append(l.calls, request.Profile.ID)
 	if request.Profile.ID == l.targetID {
 		// Production connectTun restores the previous barrier/request before
@@ -71,7 +117,15 @@ func (l *replacementRestoringLifecycle) Connect(_ context.Context, request api.C
 		if err := l.store.RestoreReplacement(); err != nil {
 			return api.LifecycleResponse{}, err
 		}
+		if l.cancelTarget != nil {
+			l.cancelTarget()
+		}
 		return api.LifecycleResponse{}, l.targetErr
+	}
+	l.previousContextErr = ctx.Err()
+	_, l.previousHasDeadline = ctx.Deadline()
+	if l.previousContextErr != nil {
+		return api.LifecycleResponse{}, l.previousContextErr
 	}
 	return api.LifecycleResponse{Connection: "active", Proxy: "inactive", TUN: "active"}, nil
 }
