@@ -97,11 +97,68 @@ func TestNetworkSessionLifecycleFailedProtectedReplacementRestoresPreviousDataPl
 	}
 }
 
+func TestNetworkSessionLifecycleExplicitStopCancelsInFlightPreviousDataPlaneRestore(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	previous := testContinuationRequest()
+	if err := continuation.Save(previous); err != nil {
+		t.Fatal(err)
+	}
+	protection := testArmedPrivacyProtection()
+	if err := continuation.stateStore().SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+
+	target := previous
+	target.Handoff = api.HandoffReplacePodlaz
+	target.Profile.ID = "profile-replacement"
+	target.Profile.Name = "Replacement profile"
+	target.Profile.Server = "replacement.example.test"
+	targetErr := errors.New("synthetic target generation failure")
+	previousEntered := make(chan struct{})
+	continuePrevious := make(chan struct{})
+	inner := &replacementRestoringLifecycle{
+		store:            continuation.stateStore(),
+		targetID:         target.Profile.ID,
+		targetErr:        targetErr,
+		previousEntered:  previousEntered,
+		continuePrevious: continuePrevious,
+	}
+	lifecycle := newNetworkSessionLifecycle(inner, continuation)
+
+	connectDone := make(chan error, 1)
+	go func() {
+		_, err := lifecycle.Connect(context.Background(), target)
+		connectDone <- err
+	}()
+	<-previousEntered
+
+	if err := lifecycle.disarmForExplicitStop(); err != nil {
+		t.Fatalf("persist explicit stop during previous data-plane restore: %v", err)
+	}
+	close(continuePrevious)
+	if err := <-connectDone; !errors.Is(err, targetErr) {
+		t.Fatalf("replacement result=%v, want original target failure", err)
+	}
+	if !errors.Is(inner.previousContextErr, context.Canceled) {
+		t.Fatalf("in-flight previous data-plane restore context=%v, want cancellation from explicit stop", inner.previousContextErr)
+	}
+	state, exists, err := continuation.stateStore().Load()
+	if err != nil || !exists {
+		t.Fatalf("load explicitly stopped session: exists=%v err=%v", exists, err)
+	}
+	if state.Intent != networkSessionIntentDisconnect {
+		t.Fatalf("explicit stop intent=%q, want disconnect", state.Intent)
+	}
+}
+
 type replacementRestoringLifecycle struct {
 	store               networkSessionStateStore
 	targetID            string
 	targetErr           error
 	cancelTarget        context.CancelFunc
+	previousEntered     chan struct{}
+	continuePrevious    chan struct{}
 	previousContextErr  error
 	previousHasDeadline bool
 	calls               []string
@@ -121,6 +178,12 @@ func (l *replacementRestoringLifecycle) Connect(ctx context.Context, request api
 			l.cancelTarget()
 		}
 		return api.LifecycleResponse{}, l.targetErr
+	}
+	if l.previousEntered != nil {
+		close(l.previousEntered)
+	}
+	if l.continuePrevious != nil {
+		<-l.continuePrevious
 	}
 	l.previousContextErr = ctx.Err()
 	_, l.previousHasDeadline = ctx.Deadline()
