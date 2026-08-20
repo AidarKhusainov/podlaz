@@ -41,22 +41,29 @@ const (
 )
 
 type networkSessionProtection struct {
-	State              networkSessionProtectionState `json:"state"`
-	CompositionVersion int                           `json:"composition_version"`
-	Family             string                        `json:"family"`
-	Table              string                        `json:"table"`
-	TunInterface       string                        `json:"tun_interface"`
-	BootstrapIPv4      []string                      `json:"bootstrap_ipv4"`
+	State                 networkSessionProtectionState `json:"state"`
+	CompositionVersion    int                           `json:"composition_version"`
+	Family                string                        `json:"family"`
+	Table                 string                        `json:"table"`
+	TunInterface          string                        `json:"tun_interface"`
+	BootstrapIPv4         []string                      `json:"bootstrap_ipv4"`
+	PreviousBootstrapIPv4 []string                      `json:"previous_bootstrap_ipv4,omitempty"`
+}
+
+type networkSessionReplacement struct {
+	PreviousRequest    api.ConnectRequest         `json:"previous_request"`
+	PreviousProtection *networkSessionProtection `json:"previous_protection"`
 }
 
 type networkSessionState struct {
-	SchemaVersion string                    `json:"schema_version"`
-	Owner         string                    `json:"owner"`
-	BootID        string                    `json:"boot_id"`
-	SessionID     string                    `json:"session_id"`
-	Intent        networkSessionIntent      `json:"intent"`
-	Request       api.ConnectRequest        `json:"request"`
-	Protection    *networkSessionProtection `json:"protection,omitempty"`
+	SchemaVersion string                     `json:"schema_version"`
+	Owner         string                     `json:"owner"`
+	BootID        string                     `json:"boot_id"`
+	SessionID     string                     `json:"session_id"`
+	Intent        networkSessionIntent       `json:"intent"`
+	Request       api.ConnectRequest         `json:"request"`
+	Protection    *networkSessionProtection  `json:"protection,omitempty"`
+	Replacement   *networkSessionReplacement `json:"replacement,omitempty"`
 }
 
 type networkSessionStateStore struct {
@@ -103,8 +110,31 @@ func (s networkSessionStateStore) BeginOrResume(request api.ConnectRequest) (net
 		if current.Intent != networkSessionIntentResume {
 			return networkSessionState{}, fmt.Errorf("network session is converging with intent %q", current.Intent)
 		}
-		if current.Protection != nil && !reflect.DeepEqual(current.Request, request) {
-			return networkSessionState{}, errors.New("cannot replace a protected network session before exact teardown")
+		if current.Replacement != nil {
+			if reflect.DeepEqual(current.Request, request) {
+				return cloneNetworkSessionState(current), nil
+			}
+			return networkSessionState{}, errors.New("network session replacement is already in progress")
+		}
+		if current.Protection != nil {
+			if api.NormalizeHandoffPolicy(request.Handoff) == api.HandoffReplacePodlaz {
+				if current.Request.Mode != "tun" || request.Mode != "tun" {
+					return networkSessionState{}, errors.New("protected replace-podlaz requires TUN mode")
+				}
+				previousProtection := cloneNetworkSessionProtection(*current.Protection)
+				current.Replacement = &networkSessionReplacement{
+					PreviousRequest:    current.Request,
+					PreviousProtection: &previousProtection,
+				}
+				current.Request = request
+				if err := s.save(current); err != nil {
+					return networkSessionState{}, err
+				}
+				return cloneNetworkSessionState(current), nil
+			}
+			if !networkSessionRequestsEquivalentIgnoringHandoff(current.Request, request) {
+				return networkSessionState{}, errors.New("protected Network Session change requires replace-podlaz handoff")
+			}
 		}
 		current.Request = request
 		if err := s.save(current); err != nil {
@@ -260,6 +290,51 @@ func (s networkSessionStateStore) SetProtection(protection *networkSessionProtec
 	return nil
 }
 
+func (s networkSessionStateStore) CommitReplacement() error {
+	_, exists, err := s.Update(func(state *networkSessionState) error {
+		if state.Replacement == nil {
+			return nil
+		}
+		if state.Protection == nil || state.Protection.State != networkSessionProtectionArmed || len(state.Protection.PreviousBootstrapIPv4) != 0 {
+			return errors.New("cannot commit replacement before final privacy protection is verified")
+		}
+		state.Replacement = nil
+		state.Request.Handoff = api.HandoffBlock
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("cannot commit replacement without a network session")
+	}
+	return nil
+}
+
+func (s networkSessionStateStore) RestoreReplacement() error {
+	_, exists, err := s.Update(func(state *networkSessionState) error {
+		if state.Replacement == nil {
+			return nil
+		}
+		state.Request = state.Replacement.PreviousRequest
+		if state.Replacement.PreviousProtection == nil {
+			state.Protection = nil
+		} else {
+			previous := cloneNetworkSessionProtection(*state.Replacement.PreviousProtection)
+			state.Protection = &previous
+		}
+		state.Replacement = nil
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("cannot restore replacement without a network session")
+	}
+	return nil
+}
+
 func (s networkSessionStateStore) Remove() error {
 	lock := s.mutationLock()
 	lock.Lock()
@@ -396,6 +471,26 @@ func validateNetworkSessionState(state networkSessionState) error {
 			return err
 		}
 	}
+	if state.Replacement != nil {
+		if state.Intent != networkSessionIntentResume {
+			return errors.New("network session replacement requires resume intent")
+		}
+		if api.NormalizeHandoffPolicy(state.Request.Handoff) != api.HandoffReplacePodlaz {
+			return errors.New("network session replacement requires replace-podlaz request")
+		}
+		if err := api.ValidateConnectRequest(state.Replacement.PreviousRequest); err != nil {
+			return fmt.Errorf("invalid previous replacement request: %w", err)
+		}
+		if state.Replacement.PreviousProtection == nil {
+			return errors.New("network session replacement has no previous protection authority")
+		}
+		if err := validateNetworkSessionProtection(*state.Replacement.PreviousProtection); err != nil {
+			return fmt.Errorf("invalid previous replacement protection: %w", err)
+		}
+		if state.Protection == nil || !samePrivacyEnvelopeIdentity(*state.Protection, *state.Replacement.PreviousProtection) {
+			return errors.New("network session replacement protection identity changed")
+		}
+	}
 	return nil
 }
 
@@ -426,21 +521,36 @@ func validateNetworkSessionProtection(protection networkSessionProtection) error
 	if err := validateNetworkSessionInterface(protection.TunInterface); err != nil {
 		return err
 	}
-	if len(protection.BootstrapIPv4) == 0 {
-		return errors.New("network session protection has no bootstrap IPv4 endpoint")
+	if err := validateBootstrapIPv4(protection.BootstrapIPv4, "bootstrap"); err != nil {
+		return err
 	}
-	seen := make(map[string]struct{}, len(protection.BootstrapIPv4))
-	for _, raw := range protection.BootstrapIPv4 {
+	if len(protection.PreviousBootstrapIPv4) != 0 {
+		if protection.State != networkSessionProtectionArming {
+			return errors.New("previous privacy composition is only valid while arming")
+		}
+		if err := validateBootstrapIPv4(protection.PreviousBootstrapIPv4, "previous bootstrap"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBootstrapIPv4(values []string, label string) error {
+	if len(values) == 0 {
+		return fmt.Errorf("network session protection has no %s IPv4 endpoint", label)
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
 		ip := net.ParseIP(strings.TrimSpace(raw))
 		if ip == nil || ip.To4() == nil {
-			return errors.New("network session protection has invalid bootstrap IPv4 endpoint")
+			return fmt.Errorf("network session protection has invalid %s IPv4 endpoint", label)
 		}
 		normalized := ip.To4().String()
 		if normalized != raw {
-			return errors.New("network session protection bootstrap IPv4 endpoint is not normalized")
+			return fmt.Errorf("network session protection %s IPv4 endpoint is not normalized", label)
 		}
 		if _, exists := seen[normalized]; exists {
-			return errors.New("network session protection has duplicate bootstrap IPv4 endpoint")
+			return fmt.Errorf("network session protection has duplicate %s IPv4 endpoint", label)
 		}
 		seen[normalized] = struct{}{}
 	}
@@ -454,11 +564,32 @@ func validateNetworkSessionInterface(name string) error {
 	return nil
 }
 
+func networkSessionRequestsEquivalentIgnoringHandoff(a, b api.ConnectRequest) bool {
+	a.Handoff = ""
+	b.Handoff = ""
+	return reflect.DeepEqual(a, b)
+}
+
+func samePrivacyEnvelopeIdentity(a, b networkSessionProtection) bool {
+	return a.CompositionVersion == b.CompositionVersion &&
+		a.Family == b.Family &&
+		a.Table == b.Table &&
+		a.TunInterface == b.TunInterface
+}
+
 func cloneNetworkSessionState(state networkSessionState) networkSessionState {
 	clone := state
 	if state.Protection != nil {
 		protection := cloneNetworkSessionProtection(*state.Protection)
 		clone.Protection = &protection
+	}
+	if state.Replacement != nil {
+		replacement := *state.Replacement
+		if state.Replacement.PreviousProtection != nil {
+			previousProtection := cloneNetworkSessionProtection(*state.Replacement.PreviousProtection)
+			replacement.PreviousProtection = &previousProtection
+		}
+		clone.Replacement = &replacement
 	}
 	return clone
 }
@@ -466,5 +597,6 @@ func cloneNetworkSessionState(state networkSessionState) networkSessionState {
 func cloneNetworkSessionProtection(protection networkSessionProtection) networkSessionProtection {
 	clone := protection
 	clone.BootstrapIPv4 = append([]string(nil), protection.BootstrapIPv4...)
+	clone.PreviousBootstrapIPv4 = append([]string(nil), protection.PreviousBootstrapIPv4...)
 	return clone
 }
