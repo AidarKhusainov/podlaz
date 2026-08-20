@@ -15,8 +15,9 @@ const startupScanRefreshTimeout = 5 * time.Second
 const unexpectedCoreExitRefreshTimeout = startupScanRefreshTimeout
 
 type startupScanRefreshingLifecycle struct {
-	lifecycle *XrayManager
-	refresh   func(context.Context)
+	lifecycle  *XrayManager
+	refresh    func(context.Context)
+	revalidate func(tunRevalidationTrigger)
 }
 
 func (l startupScanRefreshingLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
@@ -88,7 +89,7 @@ func boundedStartupScanRefreshContext(ctx context.Context) (context.Context, con
 }
 
 func (l startupScanRefreshingLifecycle) watchUnexpectedCoreExit() {
-	if l.lifecycle == nil || l.refresh == nil {
+	if l.lifecycle == nil || (l.refresh == nil && l.revalidate == nil) {
 		return
 	}
 	l.lifecycle.mu.Lock()
@@ -98,7 +99,7 @@ func (l startupScanRefreshingLifecycle) watchUnexpectedCoreExit() {
 
 	if state.Connection == "error (core exited)" {
 		if state.Mode == planner.ModeTun {
-			go l.refreshAfterUnexpectedCoreExit()
+			go l.handleUnexpectedCoreExit()
 		}
 		return
 	}
@@ -111,12 +112,25 @@ func (l startupScanRefreshingLifecycle) watchUnexpectedCoreExit() {
 		state := l.lifecycle.state
 		l.lifecycle.mu.Unlock()
 		if state.Connection == "error (core exited)" && state.Mode == planner.ModeTun {
-			l.refreshAfterUnexpectedCoreExit()
+			l.handleUnexpectedCoreExit()
 		}
 	}()
 }
 
+func (l startupScanRefreshingLifecycle) handleUnexpectedCoreExit() {
+	// Core exit is fresh product evidence, not merely a status-refresh concern.
+	// Wake reconciliation immediately; startup-scan refresh remains independent
+	// diagnostic publication and must not delay protected rebuild admission.
+	if l.revalidate != nil {
+		l.revalidate(tunRevalidationTriggerSourceResync)
+	}
+	l.refreshAfterUnexpectedCoreExit()
+}
+
 func (l startupScanRefreshingLifecycle) refreshAfterUnexpectedCoreExit() {
+	if l.refresh == nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), unexpectedCoreExitRefreshTimeout)
 	defer cancel()
 	l.refresh(ctx)
