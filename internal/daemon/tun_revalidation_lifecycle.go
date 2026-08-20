@@ -25,9 +25,6 @@ func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.Conne
 
 	response, err := l.lifecycle.Connect(ctx, request)
 	if err != nil {
-		// A failed replace-podlaz attempt may leave the previously active TUN
-		// session untouched. Restore the exact previous current-health evidence;
-		// beginLifecycleTransition intentionally did not modify its fingerprint.
 		if l.runtime != nil && request.Mode == planner.ModeTun {
 			l.runtime.restoreHealth(previousHealth)
 		}
@@ -41,11 +38,6 @@ func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.Conne
 		return response, nil
 	}
 
-	// Publish generation one as unverified while lifecycle mutation authority is
-	// still held, but do not run network probes here. The coordinator consumes
-	// the initial trigger only after the operation lock is released, so
-	// disconnect/recovery/shutdown can cancel the proof through the same external
-	// control path as every later revalidation.
 	l.runtime.PrepareInitialize()
 	if l.schedule != nil {
 		l.schedule(tunRevalidationTriggerInitial)
@@ -65,20 +57,42 @@ func (l tunRevalidationLifecycle) Disconnect(ctx context.Context) (api.Lifecycle
 }
 
 func decorateTunHealth(status api.StatusResponse, runtime *tunRevalidationRuntime) api.StatusResponse {
-	if runtime == nil || status.Connection != "active" || status.Mode != planner.ModeTun {
+	if runtime == nil || status.Mode != planner.ModeTun {
 		status.TunHealth = nil
 		return status
 	}
+
 	health := runtime.Health()
-	if health == nil {
-		// XrayManager can publish active immediately after commit while baseline
-		// fingerprint initialization is still in progress. Missing evidence must
-		// never be interpreted as implicit healthy current state.
-		health = &api.TunHealthStatus{
-			State:             api.TunHealthRevalidating,
-			NetworkGeneration: 1,
-			Classification:    api.TunHealthUplinkRevalidating,
+	switch status.Connection {
+	case "active":
+		if health == nil {
+			// XrayManager can publish active immediately after commit while baseline
+			// fingerprint initialization is still in progress. Missing evidence must
+			// never be interpreted as implicit healthy current state.
+			health = &api.TunHealthStatus{
+				State:             api.TunHealthRevalidating,
+				NetworkGeneration: 1,
+				Classification:    api.TunHealthUplinkRevalidating,
+			}
 		}
+	case api.ConnectionCoreExited:
+		// The durable protected TUN session still exists while the supervisor is
+		// rebuilding a degraded core. Never publish stale verified health for that
+		// window; expose the bounded repair state instead.
+		if health == nil || health.State == api.TunHealthVerified {
+			generation := currentTunGeneration(health)
+			if generation == 0 {
+				generation = 1
+			}
+			health = &api.TunHealthStatus{
+				State:             api.TunHealthRevalidating,
+				NetworkGeneration: generation,
+				Classification:    api.TunHealthOwnedStateReconciling,
+			}
+		}
+	default:
+		status.TunHealth = nil
+		return status
 	}
 	status.TunHealth = health
 	return status
