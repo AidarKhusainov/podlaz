@@ -258,6 +258,7 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		l.continuationMu.Unlock()
 		return api.LifecycleResponse{}, err
 	}
+	replacementAttempt := previousExists && api.NormalizeHandoffPolicy(request.Handoff) == api.HandoffReplacePodlaz
 	l.continuationMu.Unlock()
 
 	response, connectErr := l.lifecycle.Connect(ctx, request)
@@ -266,6 +267,11 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	}
 	if restoreErr := l.restorePreviousContinuation(previous, previousExists); restoreErr != nil {
 		return response, errors.Join(connectErr, restoreErr)
+	}
+	if replacementAttempt && l.canRestorePreviousDataPlane() {
+		if _, restoreErr := l.lifecycle.Connect(ctx, previous); restoreErr != nil && !errors.Is(restoreErr, errConnectionAlreadyActive) {
+			return response, errors.Join(connectErr, fmt.Errorf("restore previous data plane after failed replacement: %w", restoreErr))
+		}
 	}
 	return response, connectErr
 }
@@ -277,6 +283,16 @@ func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.Conne
 		return nil
 	}
 	if exists {
+		stateStore := l.continuation.stateStore()
+		state, stateExists, err := stateStore.Load()
+		if err != nil {
+			return fmt.Errorf("load network session before failed replacement restore: %w", err)
+		}
+		if stateExists && state.Replacement != nil {
+			if err := stateStore.RestoreReplacement(); err != nil {
+				return fmt.Errorf("restore previous network session transition after failed connect: %w", err)
+			}
+		}
 		if err := l.continuation.Save(previous); err != nil {
 			return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
 		}
@@ -286,6 +302,12 @@ func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.Conne
 		return fmt.Errorf("disarm failed network session continuation: %w", err)
 	}
 	return nil
+}
+
+func (l *networkSessionLifecycle) canRestorePreviousDataPlane() bool {
+	l.continuationMu.Lock()
+	defer l.continuationMu.Unlock()
+	return !l.explicitStop
 }
 
 // disarmForExplicitStop makes service-stop intent terminal for this daemon
