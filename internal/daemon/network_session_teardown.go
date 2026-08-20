@@ -56,6 +56,9 @@ func (c networkSessionTeardownCoordinator) Teardown(ctx context.Context, reason 
 	if err != nil {
 		return response, fmt.Errorf("clean exact Podlaz data plane behind privacy protection: %w", err)
 	}
+	if err := maybePauseAfterTerminalDataPlaneCleanup(ctx); err != nil {
+		return response, fmt.Errorf("pause after exact data-plane cleanup for E2E verification: %w", err)
+	}
 
 	state, exists, err = c.store.Load()
 	if err != nil {
