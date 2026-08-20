@@ -63,6 +63,32 @@ func TestE2ETunTerminalFailureVerifierConsumesMarkerAsOwnershipInvalid(t *testin
 	}
 }
 
+func TestE2ETunTerminalFailureSourceResyncProducesTerminalLifecycleOutcome(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(e2eTunTerminalFailureEnv, "true")
+	t.Setenv(e2eTunTerminalFailureDirEnv, dir)
+	marker := filepath.Join(dir, e2eTunTerminalFailureMarker)
+	if err := os.WriteFile(marker, []byte("trigger\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := newTunRevalidationRuntime(
+		func(context.Context) (tunRevalidationObservation, error) {
+			return tunRevalidationObservation{}, nil
+		},
+		func(context.Context, tunRevalidationObservation) error {
+			return maybeInjectE2ETunTerminalFailure()
+		},
+	)
+	outcome := runtime.Revalidate(context.Background(), tunRevalidationTriggerSourceResync)
+	if !outcome.needsLifecycleCleanup() {
+		t.Fatalf("injected ownership-invalid revalidation must require terminal lifecycle cleanup: %#v", outcome)
+	}
+	if outcome.classification != api.TunHealthOwnershipInvalid {
+		t.Fatalf("terminal classification=%q, want %q", outcome.classification, api.TunHealthOwnershipInvalid)
+	}
+}
+
 func TestE2ETunTerminalFailureDisabledDoesNotInject(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(e2eTunTerminalFailureEnv, "false")
