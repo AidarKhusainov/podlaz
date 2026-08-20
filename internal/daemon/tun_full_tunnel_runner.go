@@ -44,6 +44,8 @@ type fullTunnelTransactionRunner struct {
 	executor   tunPlanExecutor
 	now        func() time.Time
 
+	requirePrivacyEnvelope bool
+
 	beginNetworkTransaction     func(context.Context, string, profile.Profile, planner.TunPlan, func() time.Time) (tunTransactionResult, error)
 	applyNetworkTransaction     func(context.Context, tunTransactionResult, tunPlanExecutor) error
 	preflightCore               func(context.Context) error
@@ -65,6 +67,9 @@ type fullTunnelTransactionRunner struct {
 }
 
 func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error) {
+	if err := r.validatePrivacyEnvelopeConfiguration(); err != nil {
+		return xrayState{}, withTunFailurePhase("privacy-envelope-preflight", "", "not-started", err)
+	}
 	r.setDefaults()
 
 	if err := r.preflightCore(ctx); err != nil {
@@ -145,21 +150,22 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		return xrayState{}, withTunFailurePhase(phase, transactionID, "completed", withTunRollbackCompleted(err))
 	}
 
-	// Initial connectivity verification proves that the data plane works before
-	// the persistent privacy boundary is introduced. CONNECTED is still not
-	// publishable at this point: the same critical path is verified again after
-	// the Privacy Envelope is active.
+	// Initial connectivity verification proves the data plane before any
+	// persistent protection is armed. Protected production sessions then verify
+	// the same path again with the Privacy Envelope active before publication.
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
-		return r.failBeforePrivacyEnvelope(ctx, transactionID, core, stopCore, err)
+		return r.failBeforePrivacyEnvelope(ctx, transactionID, stopCore, err)
 	}
-	if err := r.armPrivacyEnvelope(ctx, r.plan); err != nil {
-		return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-arm", err)
-	}
-	if err := r.verifyPrivacyEnvelope(ctx); err != nil {
-		return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-verify", err)
-	}
-	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
-		return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-connectivity-verify", err)
+	if r.requirePrivacyEnvelope {
+		if err := r.armPrivacyEnvelope(ctx, r.plan); err != nil {
+			return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-arm", err)
+		}
+		if err := r.verifyPrivacyEnvelope(ctx); err != nil {
+			return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-verify", err)
+		}
+		if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
+			return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-connectivity-verify", err)
+		}
 	}
 
 	active := fullTunnelActiveState(r.profile, r.plan, r.corePlan, transactionID)
@@ -168,7 +174,13 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		if errors.Is(err, errFullTunnelCoreExitedBeforeCommit) {
 			stopChildren = nil
 		}
-		if cleanupErr := r.rollbackDataPlaneThenPrivacy(ctx, transactionID, r.plan, stopChildren); cleanupErr != nil {
+		var cleanupErr error
+		if r.requirePrivacyEnvelope {
+			cleanupErr = r.rollbackDataPlaneThenPrivacy(ctx, transactionID, r.plan, stopChildren)
+		} else {
+			cleanupErr = r.rollback(ctx, transactionID, r.plan, r.executor, stopChildren)
+		}
+		if cleanupErr != nil {
 			return xrayState{}, withTunFailurePhase("commit", transactionID, "failed", errors.Join(err, cleanupErr))
 		}
 		if errors.Is(err, errFullTunnelCoreExitedBeforeCommit) {
@@ -180,10 +192,19 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 	return active, nil
 }
 
+func (r *fullTunnelTransactionRunner) validatePrivacyEnvelopeConfiguration() error {
+	if !r.requirePrivacyEnvelope {
+		return nil
+	}
+	if r.armPrivacyEnvelope == nil || r.verifyPrivacyEnvelope == nil || r.cleanupPrivacyEnvelope == nil {
+		return errors.New("protected TUN session requires complete Privacy Envelope lifecycle hooks")
+	}
+	return nil
+}
+
 func (r *fullTunnelTransactionRunner) failBeforePrivacyEnvelope(
 	ctx context.Context,
 	transactionID string,
-	_ fullTunnelCoreHandle,
 	stopCore tunRollbackChildStopper,
 	cause error,
 ) (xrayState, error) {
@@ -334,15 +355,6 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 	}
 	if r.verifyConnectivity == nil {
 		r.verifyConnectivity = verifyTunConnectivity
-	}
-	if r.armPrivacyEnvelope == nil {
-		r.armPrivacyEnvelope = func(context.Context, planner.TunPlan) error { return nil }
-	}
-	if r.verifyPrivacyEnvelope == nil {
-		r.verifyPrivacyEnvelope = func(context.Context) error { return nil }
-	}
-	if r.cleanupPrivacyEnvelope == nil {
-		r.cleanupPrivacyEnvelope = func(context.Context) error { return nil }
 	}
 	if r.collectFailureDiagnostics == nil {
 		r.collectFailureDiagnostics = func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary {
