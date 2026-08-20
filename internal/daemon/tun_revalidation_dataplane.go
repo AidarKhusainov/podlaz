@@ -169,9 +169,9 @@ func verifyTunRevalidationDataPlane(ctx context.Context, plan planner.TunPlan, c
 }
 
 // collectTunRevalidationProbeEvidence collects soft data-plane evidence without
-// making a lifecycle disposition. Ordinary probe failures are retained as typed
-// evidence and do not prevent independent providers from being sampled. Context
-// cancellation/deadline still aborts the round immediately.
+// making a lifecycle disposition. A timeout owned by one child probe is soft
+// evidence just like any other probe failure; only cancellation/deadline of the
+// parent reconciliation round aborts the remaining independent samples.
 func collectTunRevalidationProbeEvidence(ctx context.Context, plan planner.TunPlan, client tunRevalidationNetworkClient) ([]tunProbeEvidence, error) {
 	if client == nil {
 		client = newTunRevalidationNetworkClient()
@@ -208,8 +208,8 @@ func collectTunRevalidationProbeEvidence(ctx context.Context, plan planner.TunPl
 	out := make([]tunProbeEvidence, 0, 6)
 	appendProbe := func(group, provider string, timeout time.Duration, probe func(context.Context) error) error {
 		probeErr := runProbe(ctx, timeout, probe)
-		if errors.Is(probeErr, context.Canceled) || errors.Is(probeErr, context.DeadlineExceeded) {
-			return probeErr
+		if parentErr := ctx.Err(); parentErr != nil {
+			return parentErr
 		}
 		out = append(out, tunProbeEvidence{Group: group, Provider: provider, Success: probeErr == nil, Cause: probeErr})
 		return nil
