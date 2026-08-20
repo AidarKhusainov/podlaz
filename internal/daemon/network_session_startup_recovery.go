@@ -2,6 +2,10 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
@@ -9,19 +13,54 @@ import (
 )
 
 func recoverExactNetworkSessionTransactions(ctx context.Context, runtimeDir string) api.RecoveryResponse {
-	// Privacy recovery is the first startup mutation stage. A protected Network
-	// Session must have its exact envelope present and verified before any old
-	// data-plane transaction can be rolled back.
-	if err := reconcileProductionNetworkSessionProtection(ctx, newNetworkSessionStateStore(runtimeDir, nil)); err != nil {
-		return api.RecoveryResponse{
-			Mode: "execute",
-			Warnings: []api.RecoveryWarning{{
-				Target:  "network-session privacy protection",
-				Message: "exact privacy protection reconciliation failed; data-plane recovery was not started",
-			}},
+	// Privacy recovery is the first startup mutation stage for a protected
+	// Network Session. Unprotected continuation state is intentionally ignored
+	// here so legacy/current-boot reconnect semantics remain unchanged.
+	if persistedProtection, err := hasPersistedNetworkSessionProtection(runtimeDir); err != nil || persistedProtection {
+		if reconcileErr := reconcileProductionNetworkSessionProtection(ctx, newNetworkSessionStateStore(runtimeDir, nil)); reconcileErr != nil {
+			return api.RecoveryResponse{
+				Mode: "execute",
+				Warnings: []api.RecoveryWarning{{
+					Target:  "network-session privacy protection",
+					Message: "exact privacy protection reconciliation failed; data-plane recovery was not started",
+				}},
+			}
 		}
 	}
 	return recoverExactNetworkSessionTransactionsWithOptions(ctx, runtimeDir, recovery.Options{})
+}
+
+// hasPersistedNetworkSessionProtection is recognition only, never mutation
+// authority. It lets startup decide whether the strict session-state loader must
+// reconcile a Privacy Envelope without forcing unprotected legacy continuation
+// records through a different boot-id reader. Malformed/unsupported records are
+// treated as possibly protected so the strict loader fails closed.
+func hasPersistedNetworkSessionProtection(runtimeDir string) (bool, error) {
+	data, err := os.ReadFile(newNetworkSessionContinuationStore(runtimeDir, nil).path())
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	if len(data) > maxNetworkSessionStateBytes {
+		return true, errors.New("network session state exceeds maximum size")
+	}
+	var envelope struct {
+		SchemaVersion string          `json:"schema_version"`
+		Protection    json.RawMessage `json:"protection"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return true, err
+	}
+	if envelope.SchemaVersion == networkSessionContinuationSchemaVersion {
+		return false, nil
+	}
+	if envelope.SchemaVersion != networkSessionStateSchemaVersion {
+		return true, errors.New("unsupported network session state schema")
+	}
+	protection := strings.TrimSpace(string(envelope.Protection))
+	return protection != "" && protection != "null", nil
 }
 
 func recoverExactNetworkSessionTransactionsWithOptions(ctx context.Context, runtimeDir string, opts recovery.Options) api.RecoveryResponse {
