@@ -165,6 +165,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (a
 			return nil
 		},
 	}
+	if err := m.configurePrivacyEnvelope(&runner); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("privacy-envelope-preflight", "", "not-started", err)
+	}
 	activeState, err := runner.run(ctx)
 	if err != nil {
 		return api.LifecycleResponse{}, err
