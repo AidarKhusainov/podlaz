@@ -128,9 +128,9 @@ func TestDegradedProtectedRebuildWidensEnvelopeBeforeOldGenerationCleanup(t *tes
 
 	executor := &replacementRecoveryExecutor{exists: true, live: []string{"192.0.2.10"}}
 	targetPlan := planner.TunPlan{
-		Mode: planner.ModeTun,
-		TunDevice: planner.TunDevicePlan{Name: "podlaz0"},
-		ServerBypass: planner.ServerBypassPlan{Destination: "192.0.2.20/32"},
+		Mode:         planner.ModeTun,
+		TunDevice:    planner.TunDevicePlan{Name: "podlaz0"},
+		ServerBypass: planner.TunRoutePlan{Destination: "192.0.2.20/32"},
 	}
 	lifecycle, err := prepareProtectedTunReplacement(context.Background(), store, source, targetPlan, executor)
 	if err != nil {
