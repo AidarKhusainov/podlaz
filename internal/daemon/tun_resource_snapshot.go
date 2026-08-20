@@ -11,7 +11,19 @@ import (
 // canonical numeric route/rule identities required for collision-free
 // allocation. Allocation itself remains pure and does not execute host commands.
 func (m *XrayManager) collectTunResourceSnapshot(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
-	s := m.collectTunSnapshot(ctx, opts)
+	protectedOpts, err := m.protectedSnapshotOptions(opts)
+	if err != nil {
+		// A protected continuation must never fall back to resolving the profile
+		// hostname over ordinary direct networking when exact bootstrap authority
+		// is unreadable. Return intentionally incomplete evidence so the existing
+		// planner fails closed before mutation.
+		return netsnapshot.Snapshot{
+			OS:       "linux",
+			Warnings: []string{"protected Network Session bootstrap authority is unavailable; refusing direct DNS fallback"},
+		}
+	}
+
+	s := m.collectTunSnapshot(ctx, protectedOpts)
 	if m.snapshotCollector == nil {
 		return netsnapshot.EnsureTunAllocationEvidence(ctx, s)
 	}
