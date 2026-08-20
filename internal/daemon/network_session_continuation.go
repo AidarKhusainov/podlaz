@@ -2,10 +2,8 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,8 +21,9 @@ const (
 
 var errNetworkSessionRecoveryIncomplete = errors.New("network session startup recovery is incomplete")
 
-type bootIDReader func() (string, error)
-
+// networkSessionContinuation is the legacy #259 reconnect-intent record. New
+// writes use networkSessionState, while this shape remains readable so package
+// upgrades do not lose an already-authorized same-boot continuation.
 type networkSessionContinuation struct {
 	SchemaVersion string             `json:"schema_version"`
 	Owner         string             `json:"owner"`
@@ -32,11 +31,15 @@ type networkSessionContinuation struct {
 	Request       api.ConnectRequest `json:"request"`
 }
 
+type bootIDReader func() (string, error)
+
 type networkSessionContinuationStore struct {
 	runtimeDir string
 	readBootID bootIDReader
 
-	// Test-only observation hooks. They deliberately carry no persisted data.
+	// Test-only observation hooks. afterRemove means reconnect intent has been
+	// disarmed; the durable session record may intentionally remain as exact
+	// cleanup authority until teardown converges.
 	afterSave   func()
 	afterRemove func()
 }
@@ -52,32 +55,12 @@ func (s networkSessionContinuationStore) path() string {
 	return filepath.Join(s.runtimeDir, networkSessionContinuationFileName)
 }
 
+func (s networkSessionContinuationStore) stateStore() networkSessionStateStore {
+	return newNetworkSessionStateStore(s.runtimeDir, s.readBootID)
+}
+
 func (s networkSessionContinuationStore) Save(request api.ConnectRequest) error {
-	if err := api.ValidateConnectRequest(request); err != nil {
-		return fmt.Errorf("validate network session continuation request: %w", err)
-	}
-	bootID, err := s.currentBootID()
-	if err != nil {
-		return err
-	}
-	record := networkSessionContinuation{
-		SchemaVersion: networkSessionContinuationSchemaVersion,
-		Owner:         networkSessionContinuationOwner,
-		BootID:        bootID,
-		Request:       request,
-	}
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode network session continuation: %w", err)
-	}
-	data = append(data, '\n')
-	if len(data) > maxNetworkSessionContinuationBytes {
-		return fmt.Errorf("network session continuation exceeds %d bytes", maxNetworkSessionContinuationBytes)
-	}
-	if err := os.MkdirAll(s.runtimeDir, 0o755); err != nil {
-		return fmt.Errorf("create network session runtime directory: %w", err)
-	}
-	if err := atomicWritePrivateFile(s.path(), data); err != nil {
+	if _, err := s.stateStore().BeginOrResume(request); err != nil {
 		return fmt.Errorf("persist network session continuation: %w", err)
 	}
 	if s.afterSave != nil {
@@ -87,63 +70,29 @@ func (s networkSessionContinuationStore) Save(request api.ConnectRequest) error 
 }
 
 func (s networkSessionContinuationStore) LoadCurrent() (api.ConnectRequest, bool, error) {
-	file, err := os.Open(s.path())
-	if errors.Is(err, os.ErrNotExist) {
-		return api.ConnectRequest{}, false, nil
-	}
-	if err != nil {
-		return api.ConnectRequest{}, false, fmt.Errorf("open network session continuation: %w", err)
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return api.ConnectRequest{}, false, fmt.Errorf("stat network session continuation: %w", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		return api.ConnectRequest{}, false, s.discardInvalid(fmt.Errorf("network session continuation permissions are %o, want 600", info.Mode().Perm()))
-	}
-	if info.Size() > maxNetworkSessionContinuationBytes {
-		return api.ConnectRequest{}, false, s.discardInvalid(fmt.Errorf("network session continuation exceeds %d bytes", maxNetworkSessionContinuationBytes))
-	}
-
-	data, err := io.ReadAll(io.LimitReader(file, maxNetworkSessionContinuationBytes+1))
-	if err != nil {
-		return api.ConnectRequest{}, false, fmt.Errorf("read network session continuation: %w", err)
-	}
-	if len(data) > maxNetworkSessionContinuationBytes {
-		return api.ConnectRequest{}, false, s.discardInvalid(fmt.Errorf("network session continuation exceeds %d bytes", maxNetworkSessionContinuationBytes))
-	}
-	var record networkSessionContinuation
-	if err := json.Unmarshal(data, &record); err != nil {
-		return api.ConnectRequest{}, false, s.discardInvalid(fmt.Errorf("decode network session continuation: %w", err))
-	}
-	if err := validateNetworkSessionContinuation(record); err != nil {
-		return api.ConnectRequest{}, false, s.discardInvalid(err)
-	}
-	bootID, err := s.currentBootID()
+	state, exists, err := s.stateStore().Load()
 	if err != nil {
 		return api.ConnectRequest{}, false, err
 	}
-	if record.BootID != bootID {
-		if err := s.Remove(); err != nil {
-			return api.ConnectRequest{}, false, fmt.Errorf("discard previous-boot network session continuation: %w", err)
-		}
+	if !exists || state.Intent != networkSessionIntentResume {
 		return api.ConnectRequest{}, false, nil
 	}
-	return record.Request, true, nil
+	return state.Request, true, nil
 }
 
+// Remove finalizes the volatile Network Session record. It deliberately fails
+// while exact Privacy Envelope authority is still present.
 func (s networkSessionContinuationStore) Remove() error {
-	err := os.Remove(s.path())
-	if errors.Is(err, os.ErrNotExist) {
+	stateStore := s.stateStore()
+	_, exists, err := stateStore.Load()
+	if err != nil {
+		return err
+	}
+	if !exists {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("remove network session continuation: %w", err)
-	}
-	if err := syncFilesystemDirectory(s.runtimeDir); err != nil {
-		return fmt.Errorf("sync network session runtime directory after continuation removal: %w", err)
+	if err := stateStore.Remove(); err != nil {
+		return err
 	}
 	if s.afterRemove != nil {
 		s.afterRemove()
@@ -151,12 +100,26 @@ func (s networkSessionContinuationStore) Remove() error {
 	return nil
 }
 
-func (s networkSessionContinuationStore) discardInvalid(cause error) error {
-	removeErr := s.Remove()
-	if removeErr != nil {
-		return errors.Join(cause, removeErr)
+func (s networkSessionContinuationStore) disarm(intent networkSessionIntent) error {
+	stateStore := s.stateStore()
+	_, exists, err := stateStore.Load()
+	if err != nil {
+		return err
 	}
-	return cause
+	if !exists {
+		return nil
+	}
+	if err := stateStore.SetIntent(intent); err != nil {
+		return err
+	}
+	if s.afterRemove != nil {
+		s.afterRemove()
+	}
+	return nil
+}
+
+func (s networkSessionContinuationStore) finalize() error {
+	return s.stateStore().Remove()
 }
 
 func (s networkSessionContinuationStore) currentBootID() (string, error) {
@@ -299,12 +262,13 @@ func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.Conne
 // disarmForExplicitStop makes service-stop intent terminal for this daemon
 // instance before waiting for admitted lifecycle mutations to drain. Once set,
 // a connect admitted before the shutdown fence cannot save or restore reconnect
-// intent after the stop has been declared. Exact transaction state is untouched.
+// intent after the stop has been declared. Exact transaction and Privacy
+// Envelope cleanup authority remain durable until final teardown succeeds.
 func (l *networkSessionLifecycle) disarmForExplicitStop() error {
 	l.continuationMu.Lock()
 	defer l.continuationMu.Unlock()
 	l.explicitStop = true
-	if err := l.continuation.Remove(); err != nil {
+	if err := l.continuation.disarm(networkSessionIntentDisconnect); err != nil {
 		return fmt.Errorf("disarm network session continuation for explicit stop: %w", err)
 	}
 	return nil
@@ -312,12 +276,24 @@ func (l *networkSessionLifecycle) disarmForExplicitStop() error {
 
 func (l *networkSessionLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
 	l.continuationMu.Lock()
-	err := l.continuation.Remove()
+	err := l.continuation.disarm(networkSessionIntentDisconnect)
 	l.continuationMu.Unlock()
 	if err != nil {
 		return api.LifecycleResponse{}, fmt.Errorf("disarm network session continuation before disconnect: %w", err)
 	}
-	return l.lifecycle.Disconnect(ctx)
+
+	response, disconnectErr := l.lifecycle.Disconnect(ctx)
+	if disconnectErr != nil {
+		return response, disconnectErr
+	}
+
+	l.continuationMu.Lock()
+	finalizeErr := l.continuation.finalize()
+	l.continuationMu.Unlock()
+	if finalizeErr != nil {
+		return response, fmt.Errorf("finalize network session state after disconnect: %w", finalizeErr)
+	}
+	return response, nil
 }
 
 func (l *networkSessionLifecycle) DisconnectForRestart(ctx context.Context) (api.LifecycleResponse, error) {
