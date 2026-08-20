@@ -166,3 +166,58 @@ func reconciliationTerminalFallbackCause(disposition tunAutomaticDisposition) er
 	}
 	return errors.New("bounded TUN reconciliation reached a terminal safety boundary")
 }
+
+func newProductionTunAutomaticTerminalHandler(
+	manager *XrayManager,
+	store networkSessionStateStore,
+	runtime *tunEvidenceRevalidationRuntime,
+	refresh func(context.Context),
+) tunAutomaticTerminalHandler {
+	protection := privacyEnvelopeLifecycle{
+		store:    store,
+		executor: netexecutor.PrivacyEnvelopeExecutor{},
+	}
+	remainingNetwork := newPostPodlazNetworkVerifier()
+	return tunAutomaticTerminalHandler{
+		store: store,
+		currentTransactionID: func() string {
+			if manager == nil {
+				return ""
+			}
+			state, _ := manager.activeTunRuntimeIdentity()
+			return state.TransactionID
+		},
+		collect: func(ctx context.Context, plan interfacePlan, cause error) tunFailureDiagnosticSummary {
+			return tunFailureDiagnosticSummary{}
+		},
+		teardown: func(ctx context.Context) error {
+			if manager == nil {
+				return errors.New("missing lifecycle manager for terminal teardown")
+			}
+			coordinator := networkSessionTeardownCoordinator{
+				store:                  store,
+				cleanupDataPlane:       manager.Disconnect,
+				removeProtection:       protection.RemoveAfterDataPlaneCleanup,
+				verifyRemainingNetwork: remainingNetwork.Verify,
+			}
+			_, err := coordinator.Teardown(ctx, networkSessionTeardownTerminal)
+			if refresh != nil {
+				refreshCtx, cancel := boundedStartupScanRefreshContext(ctx)
+				refresh(refreshCtx)
+				cancel()
+			}
+			return err
+		},
+		finalize: func(ctx context.Context, summary tunFailureDiagnosticSummary, status string) {
+			if manager != nil {
+				manager.finalizeTunFailureDiagnosticRollback(ctx, summary, status)
+			}
+		},
+		markCleanupRequired: func(disposition tunAutomaticDisposition) {
+			if runtime != nil {
+				runtime.MarkAutomaticCleanupRequired(disposition)
+			}
+		},
+		cleanupTimeout: tunRollbackCleanupTimeout,
+	}
+}
