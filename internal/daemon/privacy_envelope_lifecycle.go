@@ -1,0 +1,185 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+)
+
+type privacyEnvelopeLifecycleExecutor interface {
+	Exists(context.Context, netexecutor.PrivacyEnvelopePlan) (bool, error)
+	Apply(context.Context, netexecutor.PrivacyEnvelopePlan) error
+	Verify(context.Context, netexecutor.PrivacyEnvelopePlan) error
+	Remove(context.Context, netexecutor.PrivacyEnvelopePlan) error
+}
+
+type privacyEnvelopeLifecycle struct {
+	store    networkSessionStateStore
+	executor privacyEnvelopeLifecycleExecutor
+}
+
+func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPlan) error {
+	if p.executor == nil {
+		return errors.New("privacy envelope lifecycle has no executor")
+	}
+	state, exists, err := p.store.Load()
+	if err != nil {
+		return fmt.Errorf("load network session before privacy envelope arm: %w", err)
+	}
+	if !exists {
+		return errors.New("privacy envelope arm requires durable Network Session authority")
+	}
+	if state.Intent != networkSessionIntentResume {
+		return fmt.Errorf("privacy envelope arm requires resume intent, found %q", state.Intent)
+	}
+
+	bootstrapIP := tunRuntimeServerAddress(tunPlan)
+	if bootstrapIP == "" {
+		return errors.New("privacy envelope arm requires the exact pre-resolved VPN bootstrap IPv4 endpoint")
+	}
+	bootstrap, err := normalizePrivacyEnvelopeBootstrapIPv4([]string{bootstrapIP})
+	if err != nil {
+		return err
+	}
+	if state.Protection != nil {
+		if state.Protection.State == networkSessionProtectionRemoving {
+			return errors.New("privacy envelope is already being removed")
+		}
+		if state.Protection.TunInterface != tunPlan.TunDevice.Name || !reflect.DeepEqual(state.Protection.BootstrapIPv4, bootstrap) {
+			return errors.New("existing privacy envelope authority does not match the reconnect data plane")
+		}
+		if _, err := privacyEnvelopePlanFromAuthority(*state.Protection); err != nil {
+			return fmt.Errorf("reconstruct existing privacy envelope authority: %w", err)
+		}
+		return nil
+	}
+
+	observer := privacyEnvelopeLifecycleAllocationObserver{
+		executor:     p.executor,
+		tunInterface: tunPlan.TunDevice.Name,
+		bootstrap:    bootstrap,
+	}
+	protection, plan, err := allocatePrivacyEnvelope(ctx, state.SessionID, tunPlan.TunDevice.Name, bootstrap, observer)
+	if err != nil {
+		return err
+	}
+	if err := p.store.SetProtection(&protection); err != nil {
+		return fmt.Errorf("persist privacy envelope authority before nftables apply: %w", err)
+	}
+	if err := p.executor.Apply(ctx, plan); err != nil {
+		return fmt.Errorf("apply privacy envelope: %w", err)
+	}
+	return nil
+}
+
+func (p privacyEnvelopeLifecycle) Verify(ctx context.Context) error {
+	if p.executor == nil {
+		return errors.New("privacy envelope lifecycle has no executor")
+	}
+	state, exists, err := p.store.Load()
+	if err != nil {
+		return fmt.Errorf("load network session before privacy envelope verify: %w", err)
+	}
+	if !exists || state.Protection == nil {
+		return errors.New("privacy envelope verification requires durable exact authority")
+	}
+	if state.Protection.State == networkSessionProtectionRemoving || state.Protection.State == networkSessionProtectionUnarmed {
+		return fmt.Errorf("privacy envelope cannot be verified from protection state %q", state.Protection.State)
+	}
+	plan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
+	if err != nil {
+		return fmt.Errorf("reconstruct privacy envelope for verification: %w", err)
+	}
+	if err := p.executor.Verify(ctx, plan); err != nil {
+		return err
+	}
+	if state.Protection.State == networkSessionProtectionArmed {
+		return nil
+	}
+	protection := cloneNetworkSessionProtection(*state.Protection)
+	protection.State = networkSessionProtectionArmed
+	if err := p.store.SetProtection(&protection); err != nil {
+		return fmt.Errorf("persist verified privacy envelope state: %w", err)
+	}
+	return nil
+}
+
+// RemoveAfterDataPlaneCleanup deliberately removes protection only after the
+// caller has proved that exact Podlaz data-plane cleanup succeeded. The live
+// table is re-verified before deletion so stale authority cannot delete a
+// foreign replacement that merely reused the same generated name.
+func (p privacyEnvelopeLifecycle) RemoveAfterDataPlaneCleanup(ctx context.Context) error {
+	if p.executor == nil {
+		return errors.New("privacy envelope lifecycle has no executor")
+	}
+	state, exists, err := p.store.Load()
+	if err != nil {
+		return fmt.Errorf("load network session before privacy envelope removal: %w", err)
+	}
+	if !exists || state.Protection == nil {
+		return nil
+	}
+	plan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
+	if err != nil {
+		return fmt.Errorf("reconstruct privacy envelope for removal: %w", err)
+	}
+	present, err := p.executor.Exists(ctx, plan)
+	if err != nil {
+		return fmt.Errorf("observe exact privacy envelope before removal: %w", err)
+	}
+	if !present {
+		if err := p.store.SetProtection(nil); err != nil {
+			return fmt.Errorf("clear absent privacy envelope authority: %w", err)
+		}
+		return nil
+	}
+	if err := p.executor.Verify(ctx, plan); err != nil {
+		return fmt.Errorf("refuse to remove unverified privacy envelope: %w", err)
+	}
+
+	protection := cloneNetworkSessionProtection(*state.Protection)
+	protection.State = networkSessionProtectionRemoving
+	if err := p.store.SetProtection(&protection); err != nil {
+		return fmt.Errorf("persist privacy envelope removal intent: %w", err)
+	}
+	if err := p.executor.Remove(ctx, plan); err != nil {
+		return err
+	}
+	present, err = p.executor.Exists(ctx, plan)
+	if err != nil {
+		return fmt.Errorf("verify privacy envelope absence after removal: %w", err)
+	}
+	if present {
+		return errors.New("privacy envelope still exists after deliberate removal")
+	}
+	if err := p.store.SetProtection(nil); err != nil {
+		return fmt.Errorf("clear removed privacy envelope authority: %w", err)
+	}
+	return nil
+}
+
+type privacyEnvelopeLifecycleAllocationObserver struct {
+	executor     privacyEnvelopeLifecycleExecutor
+	tunInterface string
+	bootstrap    []string
+}
+
+func (o privacyEnvelopeLifecycleAllocationObserver) PrivacyEnvelopeTableExists(ctx context.Context, family, table string) (bool, error) {
+	protection := networkSessionProtection{
+		State:              networkSessionProtectionArming,
+		CompositionVersion: privacyEnvelopeCompositionVersion,
+		Family:             family,
+		Table:              table,
+		TunInterface:       o.tunInterface,
+		BootstrapIPv4:      append([]string(nil), o.bootstrap...),
+	}
+	plan, err := privacyEnvelopePlanFromAuthority(protection)
+	if err != nil {
+		return false, err
+	}
+	return o.executor.Exists(ctx, plan)
+}
