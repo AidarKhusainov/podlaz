@@ -47,6 +47,53 @@ func TestResumeNetworkSessionReconcilesProtectionBeforeDataPlaneRecovery(t *test
 	}
 }
 
+func TestResumeNetworkSessionReloadsRequestAfterReplacementReconciliation(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	store := continuation.stateStore()
+	previous := testContinuationRequest()
+	if _, err := store.BeginOrResume(previous); err != nil {
+		t.Fatal(err)
+	}
+	protection := testArmedPrivacyProtection()
+	if err := store.SetProtection(&protection); err != nil {
+		t.Fatal(err)
+	}
+	target := previous
+	target.Handoff = api.HandoffReplacePodlaz
+	target.Profile.ID = "profile-replacement"
+	target.Profile.Name = "Replacement profile"
+	target.Profile.Server = "replacement.example.test"
+	if _, err := store.BeginOrResume(target); err != nil {
+		t.Fatal(err)
+	}
+
+	continuation.reconcilePrivacy = func(_ context.Context, stateStore networkSessionStateStore) error {
+		return stateStore.RestoreReplacement()
+	}
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+		return api.RecoveryResponse{Mode: "execute"}
+	}
+	capture := &networkSessionRequestCaptureLifecycle{}
+
+	resumed, err := resumeNetworkSession(
+		context.Background(),
+		continuation,
+		capture,
+		func(context.Context) api.StatusResponse { return api.StatusResponse{Connection: "inactive"} },
+		func(context.Context, api.StatusResponse) api.RecoveryResponse { return api.RecoveryResponse{Mode: "execute"} },
+	)
+	if err != nil || !resumed {
+		t.Fatalf("resume restored session: resumed=%v err=%v", resumed, err)
+	}
+	if len(capture.requests) != 1 {
+		t.Fatalf("connect requests=%d, want 1", len(capture.requests))
+	}
+	if !reflect.DeepEqual(capture.requests[0], previous) {
+		t.Fatalf("startup replayed stale replacement request: got=%#v want=%#v", capture.requests[0], previous)
+	}
+}
+
 func TestResumeNetworkSessionStopsBeforeDataPlaneRecoveryWhenPrivacyReconcileFails(t *testing.T) {
 	runtimeDir := t.TempDir()
 	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
@@ -123,4 +170,17 @@ func TestResumeNetworkSessionTerminalConvergenceRunsExactAndGenericCleanupBefore
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("terminal startup ordering = %#v, want %#v", events, want)
 	}
+}
+
+type networkSessionRequestCaptureLifecycle struct {
+	requests []api.ConnectRequest
+}
+
+func (l *networkSessionRequestCaptureLifecycle) Connect(_ context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	l.requests = append(l.requests, request)
+	return api.LifecycleResponse{Connection: "active", Mode: request.Mode, Proxy: "inactive", TUN: "active"}, nil
+}
+
+func (l *networkSessionRequestCaptureLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, nil
 }
