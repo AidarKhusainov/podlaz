@@ -33,3 +33,31 @@ func TestWithTunHealthMakesDegradedActiveSessionUnhealthy(t *testing.T) {
 		t.Fatalf("degraded TUN health not rendered structurally: connection=%q tun=%q", report.Connection, report.TUN)
 	}
 }
+
+func TestWithTunHealthRendersNetworkConvergenceWithoutClaimingVerified(t *testing.T) {
+	report := WithTunHealth(Report{Connection: "active", TUN: "enabled (podlaz0)"}, &api.TunHealthStatus{
+		State:             api.TunHealthRevalidating,
+		NetworkGeneration: 4,
+		Classification:    api.TunHealthNetworkConverging,
+	})
+	if report.Health() != LifecycleHealthUnhealthy {
+		t.Fatalf("network convergence was rendered healthy: %#v", report)
+	}
+	if !strings.Contains(report.Connection, "network_converging") || !strings.Contains(report.TUN, "current health=revalidating") {
+		t.Fatalf("network convergence not rendered structurally: connection=%q tun=%q", report.Connection, report.TUN)
+	}
+}
+
+func TestWithTunHealthRendersOwnedStateReconciliation(t *testing.T) {
+	report := WithTunHealth(Report{Connection: "active", TUN: "enabled (podlaz0)"}, &api.TunHealthStatus{
+		State:             api.TunHealthRevalidating,
+		NetworkGeneration: 5,
+		Classification:    api.TunHealthOwnedStateReconciling,
+	})
+	if report.Health() != LifecycleHealthUnhealthy {
+		t.Fatalf("owned-state reconciliation was rendered healthy: %#v", report)
+	}
+	if !strings.Contains(report.Connection, "owned_state_reconciling") || !strings.Contains(report.TUN, "network generation=5") {
+		t.Fatalf("owned-state reconciliation not rendered structurally: connection=%q tun=%q", report.Connection, report.TUN)
+	}
+}
