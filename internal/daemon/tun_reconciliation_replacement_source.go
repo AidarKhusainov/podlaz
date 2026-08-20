@@ -112,7 +112,16 @@ func productionProtectedTunReplacementLifecycle(
 	source protectedTunReplacementSource,
 	targetPlan planner.TunPlan,
 ) (*privacyEnvelopeLifecycle, error) {
-	return prepareProtectedTunReplacement(ctx, store, source, targetPlan, netexecutor.PrivacyEnvelopeExecutor{})
+	lifecycle, err := prepareProtectedTunReplacement(ctx, store, source, targetPlan, netexecutor.PrivacyEnvelopeExecutor{})
+	if err != nil {
+		return nil, err
+	}
+	// This E2E seam is deliberately after verified old+new envelope widening and
+	// before the caller can clean the exact source generation.
+	if err := maybePauseE2ETunReconciliationRebuild(ctx); err != nil {
+		return nil, err
+	}
+	return lifecycle, nil
 }
 
 // loadProtectedTunReplacementSource proves that a rebuild belongs to the exact
