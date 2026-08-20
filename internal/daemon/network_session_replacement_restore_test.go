@@ -98,13 +98,13 @@ func TestNetworkSessionLifecycleFailedProtectedReplacementRestoresPreviousDataPl
 }
 
 type replacementRestoringLifecycle struct {
-	store              networkSessionStateStore
-	targetID           string
-	targetErr          error
-	cancelTarget       context.CancelFunc
-	previousContextErr error
+	store               networkSessionStateStore
+	targetID            string
+	targetErr           error
+	cancelTarget        context.CancelFunc
+	previousContextErr  error
 	previousHasDeadline bool
-	calls              []string
+	calls               []string
 }
 
 func (l *replacementRestoringLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
