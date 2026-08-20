@@ -263,7 +263,7 @@ func collectTunRevalidationProbeEvidence(ctx context.Context, plan planner.TunPl
 	}); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return maybeInjectE2ETunReconciliationSoftFailure(out), nil
 }
 
 func tunRevalidationTarget(id string, kind tundiag.TargetKind) (tundiag.Target, error) {
