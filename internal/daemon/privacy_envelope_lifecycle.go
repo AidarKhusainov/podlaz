@@ -11,6 +11,7 @@ import (
 )
 
 type privacyEnvelopeLifecycleExecutor interface {
+	PrivacyEnvelopeTableExists(context.Context, string, string) (bool, error)
 	Exists(context.Context, netexecutor.PrivacyEnvelopePlan) (bool, error)
 	Apply(context.Context, netexecutor.PrivacyEnvelopePlan) error
 	Verify(context.Context, netexecutor.PrivacyEnvelopePlan) error
@@ -58,11 +59,7 @@ func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPl
 		return nil
 	}
 
-	observer := privacyEnvelopeLifecycleAllocationObserver{
-		executor:     p.executor,
-		tunInterface: tunPlan.TunDevice.Name,
-		bootstrap:    bootstrap,
-	}
+	observer := privacyEnvelopeLifecycleAllocationObserver{executor: p.executor}
 	protection, plan, err := allocatePrivacyEnvelope(ctx, state.SessionID, tunPlan.TunDevice.Name, bootstrap, observer)
 	if err != nil {
 		return err
@@ -163,23 +160,9 @@ func (p privacyEnvelopeLifecycle) RemoveAfterDataPlaneCleanup(ctx context.Contex
 }
 
 type privacyEnvelopeLifecycleAllocationObserver struct {
-	executor     privacyEnvelopeLifecycleExecutor
-	tunInterface string
-	bootstrap    []string
+	executor privacyEnvelopeLifecycleExecutor
 }
 
 func (o privacyEnvelopeLifecycleAllocationObserver) PrivacyEnvelopeTableExists(ctx context.Context, family, table string) (bool, error) {
-	protection := networkSessionProtection{
-		State:              networkSessionProtectionArming,
-		CompositionVersion: privacyEnvelopeCompositionVersion,
-		Family:             family,
-		Table:              table,
-		TunInterface:       o.tunInterface,
-		BootstrapIPv4:      append([]string(nil), o.bootstrap...),
-	}
-	plan, err := privacyEnvelopePlanFromAuthority(protection)
-	if err != nil {
-		return false, err
-	}
-	return o.executor.Exists(ctx, plan)
+	return o.executor.PrivacyEnvelopeTableExists(ctx, family, table)
 }
