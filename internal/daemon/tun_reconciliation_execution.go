@@ -45,7 +45,7 @@ func (s *tunReconciliationRetryScheduler) Apply(decision tunReconciliationDecisi
 	switch decision.Kind {
 	case tunDecisionRetry:
 		s.Schedule(decision.NetworkSessionID, decision.RetryAfter)
-	case tunDecisionVerified, tunDecisionAwaitEvidence, tunDecisionReconcile, tunDecisionBlockedOwnership, tunDecisionTerminal:
+	case tunDecisionVerified, tunDecisionReconcile, tunDecisionBlockedOwnership, tunDecisionTerminal:
 		s.Cancel()
 	case tunDecisionSuperseded:
 		// A newer publication already owns the next decision. Do not let a stale
