@@ -3,6 +3,7 @@ package daemon
 import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 type tunLocalProofState uint8
@@ -21,6 +22,32 @@ type tunMandatoryEvidence struct {
 	UplinkPath       tunLocalProofState
 	NetworkManager   tunLocalProofState
 	ResolvedDNS      tunLocalProofState
+}
+
+func tunMandatoryEvidenceFromSnapshot(snapshot netsnapshot.Snapshot) tunMandatoryEvidence {
+	evidence := tunMandatoryEvidence{}
+	if snapshot.DefaultIPv4.Status == netsnapshot.StatusDetected &&
+		snapshot.ServerRoute.Status == netsnapshot.StatusDetected &&
+		snapshot.IPv4Addresses.Inspection.Status == netsnapshot.StatusDetected {
+		evidence.UplinkPath = tunLocalProofProven
+	}
+
+	switch snapshot.NetworkManager.Finding.Status {
+	case netsnapshot.StatusMissing, netsnapshot.StatusUnsupported:
+		evidence.NetworkManager = tunLocalProofProven
+	case netsnapshot.StatusDetected:
+		if snapshot.NetworkManager.ActiveConnectionsInspection.Status == netsnapshot.StatusDetected {
+			evidence.NetworkManager = tunLocalProofProven
+		}
+	}
+
+	switch snapshot.DNS.Resolved.Status {
+	case netsnapshot.StatusDetected:
+		evidence.ResolvedDNS = tunLocalProofProven
+	case netsnapshot.StatusMissing, netsnapshot.StatusUnsupported:
+		evidence.ResolvedDNS = tunLocalProofViolated
+	}
+	return evidence
 }
 
 type tunProbeEvidence struct {
