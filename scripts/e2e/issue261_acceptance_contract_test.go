@@ -19,7 +19,7 @@ func TestIssue261PackageAcceptanceCoversPrivacyAndTerminalBoundaries(t *testing.
 		"daemon_crash_recovered_without_manual_repair",
 		"PODLAZ_E2E_TUN_TERMINAL_FAILURE",
 		"terminal-failure.trigger",
-		"ip link add",
+		"terminal_failure_triggered",
 		"terminal-data-plane-clean.ready",
 		"assert_privacy_envelope_present",
 		"terminal_disconnected",
