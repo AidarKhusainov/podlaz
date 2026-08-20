@@ -103,17 +103,26 @@ func teardownIntent(reason networkSessionTeardownReason) (networkSessionIntent, 
 	}
 }
 
-func persistTeardownIntent(store networkSessionStateStore, current, desired networkSessionIntent) error {
-	if current == desired || current == networkSessionIntentTerminal {
+func persistTeardownIntent(store networkSessionStateStore, _ networkSessionIntent, desired networkSessionIntent) error {
+	if err := validateNetworkSessionIntent(desired); err != nil {
+		return err
+	}
+	_, _, err := store.Update(func(state *networkSessionState) error {
+		current := state.Intent
+		if current == desired || current == networkSessionIntentTerminal {
+			return nil
+		}
+		if current == networkSessionIntentDisconnect && desired == networkSessionIntentTerminal {
+			state.Intent = networkSessionIntentTerminal
+			return nil
+		}
+		if current != networkSessionIntentResume {
+			return fmt.Errorf("cannot change Network Session intent from %q to %q", current, desired)
+		}
+		state.Intent = desired
 		return nil
-	}
-	if current == networkSessionIntentDisconnect && desired == networkSessionIntentTerminal {
-		return store.SetIntent(networkSessionIntentTerminal)
-	}
-	if current != networkSessionIntentResume {
-		return fmt.Errorf("cannot change Network Session intent from %q to %q", current, desired)
-	}
-	return store.SetIntent(desired)
+	})
+	return err
 }
 
 func guardNetworkSessionCleanupStatus(store networkSessionStateStore, status api.StatusResponse) api.StatusResponse {
