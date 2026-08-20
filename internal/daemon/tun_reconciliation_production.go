@@ -7,6 +7,7 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
@@ -187,8 +188,11 @@ func newProductionTunAutomaticTerminalHandler(
 			state, _ := manager.activeTunRuntimeIdentity()
 			return state.TransactionID
 		},
-		collect: func(ctx context.Context, plan interfacePlan, cause error) tunFailureDiagnosticSummary {
-			return tunFailureDiagnosticSummary{}
+		collect: func(ctx context.Context, plan planner.TunPlan, cause error) tunFailureDiagnosticSummary {
+			if manager == nil {
+				return tunFailureDiagnosticSummary{}
+			}
+			return manager.collectTunRevalidationFailureDiagnostics(ctx, plan, cause)
 		},
 		teardown: func(ctx context.Context) error {
 			if manager == nil {
