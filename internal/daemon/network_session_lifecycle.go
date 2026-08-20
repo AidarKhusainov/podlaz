@@ -13,8 +13,8 @@ type networkSessionLifecycle struct {
 	lifecycle    lifecycleService
 	continuation networkSessionContinuationStore
 
-	continuationMu   sync.Mutex
-	explicitStop     bool
+	continuationMu    sync.Mutex
+	explicitStop      bool
 	restoreGeneration uint64
 	restoreCancel     context.CancelFunc
 }
