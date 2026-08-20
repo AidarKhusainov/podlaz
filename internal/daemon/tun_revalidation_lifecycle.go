@@ -8,12 +8,16 @@ import (
 )
 
 type tunRevalidationLifecycle struct {
-	lifecycle lifecycleService
-	runtime   *tunRevalidationRuntime
-	schedule  func(tunRevalidationTrigger)
+	lifecycle   lifecycleService
+	runtime     *tunRevalidationRuntime
+	schedule    func(tunRevalidationTrigger)
+	cancelRetry func()
 }
 
 func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	if l.cancelRetry != nil {
+		l.cancelRetry()
+	}
 	var previousHealth *api.TunHealthStatus
 	if l.runtime != nil && request.Mode == planner.ModeTun {
 		previousHealth = l.runtime.beginLifecycleTransition()
@@ -50,6 +54,9 @@ func (l tunRevalidationLifecycle) Connect(ctx context.Context, request api.Conne
 }
 
 func (l tunRevalidationLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
+	if l.cancelRetry != nil {
+		l.cancelRetry()
+	}
 	response, err := l.lifecycle.Disconnect(ctx)
 	if err == nil && l.runtime != nil {
 		l.runtime.Clear()
