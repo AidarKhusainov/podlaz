@@ -125,15 +125,6 @@ func newTunRevalidationCoordinatorWithRun(run tunRevalidationCoordinatorRunFunc)
 	}
 }
 
-// Notify is edge-triggered. The one-element wake channel bounds queued work,
-// while pendingTrigger merges event semantics under a mutex. Every accepted
-// hint also advances a private publication revision. An older in-flight proof
-// may finish, but it cannot become authoritative after this point.
-//
-// Generation-one proof dominates all other hints because a just-committed TUN
-// must establish its first current-health proof before ordinary fingerprint
-// decisions apply. Resume and source resync then dominate ordinary
-// link/address/route hints.
 func (c *tunRevalidationCoordinator) Notify(trigger tunRevalidationTrigger) {
 	if c == nil || trigger == "" {
 		return
@@ -195,13 +186,14 @@ func (c *tunRevalidationCoordinator) Run(ctx context.Context) {
 			c.setActive(trigger, revision, cancel)
 			result := c.run(probeCtx, trigger)
 			cancel()
-			c.clearActive()
 
 			if result.automatic {
 				if !result.disposition.needsAutomaticMutation() || ctx.Err() != nil {
+					c.clearActive()
 					continue
 				}
 				admission, disposition, ok := c.claimAndAdmitAutomaticDisposition(revision, result.disposition)
+				c.clearActive()
 				if !ok {
 					continue
 				}
@@ -213,6 +205,7 @@ func (c *tunRevalidationCoordinator) Run(ctx context.Context) {
 				continue
 			}
 
+			c.clearActive()
 			outcome := result.legacyOutcome
 			if c.terminal != nil && outcome.needsLifecycleCleanup() && c.claimTerminalPublication(revision) {
 				c.terminal(ctx, outcome)
@@ -225,10 +218,6 @@ func (d tunAutomaticDisposition) needsAutomaticMutation() bool {
 	return d.Kind == tunDecisionReconcile || d.Kind == tunDecisionTerminal
 }
 
-// claimAndAdmitAutomaticDisposition is one linearizable handoff. coordinator.mu
-// remains held from the final publication-revision claim through the lifecycle
-// admission callback, so Notify cannot advance publicationRevision between those
-// two checks. The admission callback must not call back into coordinator methods.
 func (c *tunRevalidationCoordinator) claimAndAdmitAutomaticDisposition(
 	revision uint64,
 	disposition tunAutomaticDisposition,
@@ -247,37 +236,43 @@ func (c *tunRevalidationCoordinator) claimAndAdmitAutomaticDisposition(
 	disposition.PublicationRevision = revision
 	admission, ok := c.admitAutomatic(disposition.ExpectedMutationGeneration)
 	if !ok || admission == nil {
+		// Admission can lose to an explicit lifecycle mutation after observation
+		// completed. Preserve the already-published reconciliation work while the
+		// publication/admission mutex is still held; InterruptForMutation will
+		// deliver the wake after the explicit mutation releases its token.
+		c.requeueActiveLocked()
 		return nil, disposition, false
 	}
 	return admission, disposition, true
 }
 
-// InterruptForMutation publishes cancellation without acquiring lifecycle
-// mutation authority and requeues the active trigger before cancelling it. The
-// fresh attempt therefore survives connect/disconnect/recovery precedence and
-// will run only after the mutation queue becomes idle. Requeueing is not new
-// network evidence, so it preserves the active publication revision.
+func (c *tunRevalidationCoordinator) requeueActiveLocked() {
+	if c.activeTrigger == "" {
+		return
+	}
+	c.pendingTrigger = mergeTunRevalidationTrigger(c.pendingTrigger, c.activeTrigger)
+	if c.activeRevision > c.pendingRevision {
+		c.pendingRevision = c.activeRevision
+	}
+}
+
 func (c *tunRevalidationCoordinator) InterruptForMutation() {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	cancel := c.activeCancel
-	if cancel != nil && c.activeTrigger != "" {
-		c.pendingTrigger = mergeTunRevalidationTrigger(c.pendingTrigger, c.activeTrigger)
-		if c.activeRevision > c.pendingRevision {
-			c.pendingRevision = c.activeRevision
-		}
-	}
+	c.requeueActiveLocked()
+	hasPending := c.pendingTrigger != ""
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if cancel != nil || hasPending {
 		c.signalWake()
 	}
 }
 
-// CancelActive is for terminal cancellation such as daemon shutdown. Unlike a
-// lifecycle mutation it intentionally does not requeue the current trigger.
 func (c *tunRevalidationCoordinator) CancelActive() {
 	if c == nil {
 		return
