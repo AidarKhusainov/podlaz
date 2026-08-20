@@ -7,7 +7,7 @@ import (
 
 func TestConfigurePrivacyEnvelopeBindsSessionLifecycleToProtectedRunner(t *testing.T) {
 	runtimeDir := t.TempDir()
-	store := newNetworkSessionStateStore(runtimeDir, fixedBootID("boot-a"))
+	store := newNetworkSessionStateStore(runtimeDir, nil)
 	if _, err := store.BeginOrResume(testContinuationRequest()); err != nil {
 		t.Fatalf("begin network session: %v", err)
 	}
