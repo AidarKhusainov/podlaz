@@ -51,7 +51,7 @@ type networkSessionProtection struct {
 }
 
 type networkSessionReplacement struct {
-	PreviousRequest    api.ConnectRequest          `json:"previous_request"`
+	PreviousRequest    api.ConnectRequest        `json:"previous_request"`
 	PreviousProtection *networkSessionProtection `json:"previous_protection"`
 }
 
