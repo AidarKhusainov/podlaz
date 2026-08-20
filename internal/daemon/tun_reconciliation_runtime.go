@@ -117,16 +117,18 @@ func (r *tunEvidenceRevalidationRuntime) publishEvidenceDecision(
 			state = api.TunHealthRevalidating
 		}
 		health = &api.TunHealthStatus{State: state, NetworkGeneration: generation, Classification: decision.Classification}
-	case tunDecisionAwaitEvidence:
-		state := api.TunHealthDegraded
-		if decision.Classification == api.TunHealthNetworkConverging {
-			state = api.TunHealthRevalidating
-		}
-		health = &api.TunHealthStatus{State: state, NetworkGeneration: generation, Classification: decision.Classification}
 	case tunDecisionReconcile:
 		health = &api.TunHealthStatus{State: api.TunHealthRevalidating, NetworkGeneration: generation, Classification: api.TunHealthOwnedStateReconciling}
 	case tunDecisionBlockedOwnership:
-		health = &api.TunHealthStatus{State: api.TunHealthCleanupRequired, NetworkGeneration: generation, Classification: api.TunHealthOwnershipInvalid}
+		classification := decision.Classification
+		if classification == "" {
+			classification = api.TunHealthOwnershipInvalid
+		}
+		state := api.TunHealthDegraded
+		if classification == api.TunHealthOwnershipInvalid {
+			state = api.TunHealthCleanupRequired
+		}
+		health = &api.TunHealthStatus{State: state, NetworkGeneration: generation, Classification: classification}
 		base.initialPending = false
 	case tunDecisionTerminal:
 		// Terminal is not authoritative until the coordinator has atomically
