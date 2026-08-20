@@ -12,7 +12,7 @@ func issue262AuthoritativeSnapshot() netsnapshot.Snapshot {
 		ServerRoute: netsnapshot.Route{Status: netsnapshot.StatusDetected, Interface: "wlan0", Gateway: "192.0.2.1"},
 		IPv4Addresses: netsnapshot.IPAddressInventory{
 			Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected},
-			Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: "wlan0", CIDR: "192.0.2.20/24", Scope: "global"}},
+			Addresses:  []netsnapshot.IPAddress{{Family: "ipv4", Interface: "wlan0", CIDR: "192.0.2.20/24", Scope: "global"}},
 		},
 		NetworkManager: netsnapshot.NetworkManager{
 			Finding:                     netsnapshot.Finding{Status: netsnapshot.StatusDetected},
