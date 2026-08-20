@@ -55,6 +55,9 @@ type fullTunnelTransactionRunner struct {
 	bindTunAddress              func(context.Context, planner.TunPlan, tunPlanExecutor, fullTunnelCoreHandle) (planner.TunPlan, error)
 	saveTunAddressMetadata      func(txstate.TransactionStore, string, planner.TunAddressPlan, time.Time) error
 	verifyConnectivity          func(context.Context, planner.TunPlan, tunCoreRuntimePlan) error
+	armPrivacyEnvelope          func(context.Context, planner.TunPlan) error
+	verifyPrivacyEnvelope       func(context.Context) error
+	cleanupPrivacyEnvelope      func(context.Context) error
 	collectFailureDiagnostics   func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary
 	finalizeFailureDiagnostics  func(context.Context, tunFailureDiagnosticSummary, string)
 	commitActiveState           func(txstate.TransactionStore, string, fullTunnelCoreHandle, xrayState) error
@@ -141,38 +144,107 @@ func (r *fullTunnelTransactionRunner) run(ctx context.Context) (xrayState, error
 		recordE2ETunHookEvent("rollback-completed")
 		return xrayState{}, withTunFailurePhase(phase, transactionID, "completed", withTunRollbackCompleted(err))
 	}
+
+	// Initial connectivity verification proves that the data plane works before
+	// the persistent privacy boundary is introduced. CONNECTED is still not
+	// publishable at this point: the same critical path is verified again after
+	// the Privacy Envelope is active.
 	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
-		summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, err)
-		recordFailureDiagnosticPersistenceEvent(summary)
-		err = withTunFailureDiagnosticSummary(err, summary)
-		recordE2ETunHookEvent("rollback-started")
-		if rollbackErr := r.rollback(ctx, transactionID, r.plan, r.executor, stopCore); rollbackErr != nil {
-			r.finalizeFailureDiagnostics(ctx, summary, "failed")
-			recordE2ETunHookEvent("diagnostics-finalized-failed")
-			recordE2ETunHookEvent("rollback-failed")
-			return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr)))
-		}
-		r.finalizeFailureDiagnostics(ctx, summary, "completed")
-		recordE2ETunHookEvent("diagnostics-finalized-completed")
-		recordE2ETunHookEvent("rollback-completed")
-		return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "completed", withTunRollbackCompleted(err))
+		return r.failBeforePrivacyEnvelope(ctx, transactionID, core, stopCore, err)
+	}
+	if err := r.armPrivacyEnvelope(ctx, r.plan); err != nil {
+		return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-arm", err)
+	}
+	if err := r.verifyPrivacyEnvelope(ctx); err != nil {
+		return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-envelope-verify", err)
+	}
+	if err := r.verifyConnectivity(ctx, r.plan, r.corePlan); err != nil {
+		return r.failAfterPrivacyEnvelope(ctx, transactionID, stopCore, "privacy-connectivity-verify", err)
 	}
 
 	active := fullTunnelActiveState(r.profile, r.plan, r.corePlan, transactionID)
 	if err := r.commitActiveState(result.Store, transactionID, core, active); err != nil {
+		stopChildren := stopCore
 		if errors.Is(err, errFullTunnelCoreExitedBeforeCommit) {
-			if rollbackErr := r.rollback(ctx, transactionID, r.plan, r.executor, nil); rollbackErr != nil {
-				return xrayState{}, withTunFailurePhase("commit", transactionID, "failed", errors.Join(err, rollbackErr))
-			}
-			return xrayState{}, withTunFailurePhase("commit", transactionID, "completed", fullTunnelSemanticError{msg: "Xray exited before TUN transaction commit; rollback completed", err: errFullTunnelCoreExitedBeforeCommit})
+			stopChildren = nil
 		}
-		if rollbackErr := r.rollback(ctx, transactionID, r.plan, r.executor, stopCore); rollbackErr != nil {
-			return xrayState{}, withTunFailurePhase("commit", transactionID, "failed", errors.Join(err, fmt.Errorf("rollback TUN transaction after commit failure: %w", rollbackErr)))
+		if cleanupErr := r.rollbackDataPlaneThenPrivacy(ctx, transactionID, r.plan, stopChildren); cleanupErr != nil {
+			return xrayState{}, withTunFailurePhase("commit", transactionID, "failed", errors.Join(err, cleanupErr))
+		}
+		if errors.Is(err, errFullTunnelCoreExitedBeforeCommit) {
+			return xrayState{}, withTunFailurePhase("commit", transactionID, "completed", fullTunnelSemanticError{msg: "Xray exited before TUN transaction commit; rollback completed", err: errFullTunnelCoreExitedBeforeCommit})
 		}
 		return xrayState{}, withTunFailurePhase("commit", transactionID, "completed", err)
 	}
 
 	return active, nil
+}
+
+func (r *fullTunnelTransactionRunner) failBeforePrivacyEnvelope(
+	ctx context.Context,
+	transactionID string,
+	_ fullTunnelCoreHandle,
+	stopCore tunRollbackChildStopper,
+	cause error,
+) (xrayState, error) {
+	summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, cause)
+	recordFailureDiagnosticPersistenceEvent(summary)
+	cause = withTunFailureDiagnosticSummary(cause, summary)
+	recordE2ETunHookEvent("rollback-started")
+	if rollbackErr := r.rollback(ctx, transactionID, r.plan, r.executor, stopCore); rollbackErr != nil {
+		r.finalizeFailureDiagnostics(ctx, summary, "failed")
+		recordE2ETunHookEvent("diagnostics-finalized-failed")
+		recordE2ETunHookEvent("rollback-failed")
+		return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "failed", errors.Join(cause, fmt.Errorf("rollback TUN transaction after connectivity verification failure: %w", rollbackErr)))
+	}
+	r.finalizeFailureDiagnostics(ctx, summary, "completed")
+	recordE2ETunHookEvent("diagnostics-finalized-completed")
+	recordE2ETunHookEvent("rollback-completed")
+	return xrayState{}, withTunFailurePhase("connectivity-verify", transactionID, "completed", withTunRollbackCompleted(cause))
+}
+
+func (r *fullTunnelTransactionRunner) failAfterPrivacyEnvelope(
+	ctx context.Context,
+	transactionID string,
+	stopCore tunRollbackChildStopper,
+	phase string,
+	cause error,
+) (xrayState, error) {
+	summary := r.collectFailureDiagnostics(ctx, transactionID, r.plan, cause)
+	recordFailureDiagnosticPersistenceEvent(summary)
+	cause = withTunFailureDiagnosticSummary(cause, summary)
+	recordE2ETunHookEvent("rollback-started")
+	if cleanupErr := r.rollbackDataPlaneThenPrivacy(ctx, transactionID, r.plan, stopCore); cleanupErr != nil {
+		r.finalizeFailureDiagnostics(ctx, summary, "failed")
+		recordE2ETunHookEvent("diagnostics-finalized-failed")
+		recordE2ETunHookEvent("rollback-failed")
+		return xrayState{}, withTunFailurePhase(phase, transactionID, "failed", errors.Join(cause, cleanupErr))
+	}
+	r.finalizeFailureDiagnostics(ctx, summary, "completed")
+	recordE2ETunHookEvent("diagnostics-finalized-completed")
+	recordE2ETunHookEvent("rollback-completed")
+	return xrayState{}, withTunFailurePhase(phase, transactionID, "completed", withTunRollbackCompleted(cause))
+}
+
+// rollbackDataPlaneThenPrivacy is deliberately asymmetric: an incomplete
+// exact data-plane rollback returns immediately and leaves the Privacy Envelope
+// armed. Only a fully converged data-plane teardown is allowed to remove the
+// session-wide direct-egress barrier.
+func (r *fullTunnelTransactionRunner) rollbackDataPlaneThenPrivacy(
+	ctx context.Context,
+	transactionID string,
+	plan planner.TunPlan,
+	stopChildren tunRollbackChildStopper,
+) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tunRollbackCleanupTimeout)
+	defer cancel()
+	if err := r.rollbackTransaction(cleanupCtx, transactionID, plan, r.executor, stopChildren); err != nil {
+		return fmt.Errorf("rollback TUN data plane while privacy envelope remains armed: %w", err)
+	}
+	if err := r.cleanupPrivacyEnvelope(cleanupCtx); err != nil {
+		return fmt.Errorf("remove privacy envelope after exact data-plane rollback: %w", err)
+	}
+	return nil
 }
 
 func recordFailureDiagnosticPersistenceEvent(summary tunFailureDiagnosticSummary) {
@@ -262,6 +334,15 @@ func (r *fullTunnelTransactionRunner) setDefaults() {
 	}
 	if r.verifyConnectivity == nil {
 		r.verifyConnectivity = verifyTunConnectivity
+	}
+	if r.armPrivacyEnvelope == nil {
+		r.armPrivacyEnvelope = func(context.Context, planner.TunPlan) error { return nil }
+	}
+	if r.verifyPrivacyEnvelope == nil {
+		r.verifyPrivacyEnvelope = func(context.Context) error { return nil }
+	}
+	if r.cleanupPrivacyEnvelope == nil {
+		r.cleanupPrivacyEnvelope = func(context.Context) error { return nil }
 	}
 	if r.collectFailureDiagnostics == nil {
 		r.collectFailureDiagnostics = func(context.Context, string, planner.TunPlan, error) tunFailureDiagnosticSummary {
