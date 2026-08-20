@@ -153,8 +153,11 @@ func (p privacyEnvelopeLifecycle) Verify(ctx context.Context) error {
 }
 
 // CleanupAfterFailedDataPlane restores the exact previous barrier and request
-// for a failed protected generation replacement. It never removes the
-// session-wide barrier.
+// for a failed protected generation replacement. It deliberately uses the same
+// exact-composition convergence as restart recovery because an atomic nftables
+// Replace may fail after durable narrowing intent has been persisted, leaving
+// the previously verified union composition live. No candidate is mutated until
+// one of the persisted old/union/target compositions verifies exactly.
 func (p privacyEnvelopeLifecycle) CleanupAfterFailedDataPlane(ctx context.Context) error {
 	if p.executor == nil {
 		return errors.New("privacy envelope lifecycle has no executor")
@@ -166,44 +169,9 @@ func (p privacyEnvelopeLifecycle) CleanupAfterFailedDataPlane(ctx context.Contex
 	if !exists || state.Replacement == nil {
 		return nil
 	}
-	if state.Replacement.PreviousProtection == nil {
-		return errors.New("protected replacement rollback has no previous privacy authority")
-	}
-	previous := cloneNetworkSessionProtection(*state.Replacement.PreviousProtection)
-	previous.State = networkSessionProtectionArmed
-	previous.PreviousBootstrapIPv4 = nil
-	previousPlan, err := privacyEnvelopePlanFromAuthority(previous)
+	_, _, err = reconcileProtectedNetworkSessionReplacement(ctx, p.store, state, p.executor)
 	if err != nil {
-		return fmt.Errorf("reconstruct previous privacy envelope: %w", err)
-	}
-	if state.Protection == nil {
-		return errors.New("protected replacement rollback lost current privacy authority")
-	}
-	currentPlan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
-	if err != nil {
-		return fmt.Errorf("reconstruct current privacy envelope for rollback: %w", err)
-	}
-	present, err := p.executor.Exists(ctx, currentPlan)
-	if err != nil {
-		return fmt.Errorf("observe current privacy envelope for rollback: %w", err)
-	}
-	if present {
-		if err := p.executor.Verify(ctx, currentPlan); err != nil {
-			return fmt.Errorf("refuse to replace unverified current privacy envelope during rollback: %w", err)
-		}
-		if err := p.executor.Replace(ctx, currentPlan, previousPlan); err != nil {
-			return fmt.Errorf("restore previous privacy envelope: %w", err)
-		}
-	} else {
-		if err := p.executor.Apply(ctx, previousPlan); err != nil {
-			return fmt.Errorf("recreate previous privacy envelope: %w", err)
-		}
-	}
-	if err := p.executor.Verify(ctx, previousPlan); err != nil {
-		return fmt.Errorf("verify restored previous privacy envelope: %w", err)
-	}
-	if err := p.store.RestoreReplacement(); err != nil {
-		return fmt.Errorf("restore previous Network Session after replacement failure: %w", err)
+		return fmt.Errorf("restore protected replacement after data-plane failure: %w", err)
 	}
 	return nil
 }
