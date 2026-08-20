@@ -84,7 +84,7 @@ func TestTunRevalidationCoordinatorPreservesResumeAcrossCoalescing(t *testing.T)
 	select {
 	case trigger := <-started:
 		if trigger != tunRevalidationTriggerResume {
-			t.Fatalf("coalesced trigger=%q, want resume to dominate", trigger, tunRevalidationTriggerResume)
+			t.Fatalf("coalesced trigger=%q, want %q", trigger, tunRevalidationTriggerResume)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("coalesced follow-up revalidation did not start")
