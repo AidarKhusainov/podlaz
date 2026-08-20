@@ -14,9 +14,12 @@ func TestIssue261PackageAcceptanceCoversPrivacyAndTerminalBoundaries(t *testing.
 	script := string(data)
 	for _, required := range []string{
 		"privacy_envelope_armed",
-		"systemctl kill --kill-who=main -s KILL podlazd.service",
+		"sudo -n systemctl kill --kill-who=main -s KILL podlazd.service",
 		"assert_direct_uplink_blocked",
 		"daemon_crash_recovered_without_manual_repair",
+		"PODLAZ_E2E_TUN_TERMINAL_FAILURE",
+		"terminal-failure.trigger",
+		"ip link add",
 		"terminal-data-plane-clean.ready",
 		"assert_privacy_envelope_present",
 		"terminal_disconnected",
@@ -27,6 +30,9 @@ func TestIssue261PackageAcceptanceCoversPrivacyAndTerminalBoundaries(t *testing.
 		if !strings.Contains(script, required) {
 			t.Fatalf("issue 261 acceptance must contain %q", required)
 		}
+	}
+	if strings.Contains(script, "issue261-disconnect") {
+		t.Fatal("issue 261 terminal scenario must be driven by a terminal revalidation failure, not explicit disconnect")
 	}
 }
 
