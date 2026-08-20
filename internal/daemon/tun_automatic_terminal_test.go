@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
