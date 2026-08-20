@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -14,6 +15,11 @@ type networkSessionProtectionRecoveryExecutor interface {
 	Exists(context.Context, netexecutor.PrivacyEnvelopePlan) (bool, error)
 	Apply(context.Context, netexecutor.PrivacyEnvelopePlan) error
 	Verify(context.Context, netexecutor.PrivacyEnvelopePlan) error
+}
+
+type networkSessionProtectionReplacementRecoveryExecutor interface {
+	networkSessionProtectionRecoveryExecutor
+	Replace(context.Context, netexecutor.PrivacyEnvelopePlan, netexecutor.PrivacyEnvelopePlan) error
 }
 
 // reconcileNetworkSessionProtection restores or verifies the exact persisted
@@ -42,6 +48,14 @@ func reconcileNetworkSessionProtection(
 	if state.Protection.State != networkSessionProtectionArming && state.Protection.State != networkSessionProtectionArmed {
 		return state, true, fmt.Errorf("Network Session privacy protection cannot resume from state %q", state.Protection.State)
 	}
+	if state.Replacement != nil {
+		replacementExecutor, ok := executor.(networkSessionProtectionReplacementRecoveryExecutor)
+		if !ok {
+			return state, true, errors.New("Network Session replacement recovery requires atomic Privacy Envelope replacement support")
+		}
+		return reconcileProtectedNetworkSessionReplacement(ctx, store, state, replacementExecutor)
+	}
+
 	plan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
 	if err != nil {
 		return state, true, fmt.Errorf("reconstruct exact Network Session privacy envelope: %w", err)
@@ -76,6 +90,115 @@ func reconcileNetworkSessionProtection(
 		state.Protection = &protection
 	}
 	return cloneNetworkSessionState(state), true, nil
+}
+
+func reconcileProtectedNetworkSessionReplacement(
+	ctx context.Context,
+	store networkSessionStateStore,
+	state networkSessionState,
+	executor networkSessionProtectionReplacementRecoveryExecutor,
+) (networkSessionState, bool, error) {
+	if state.Replacement == nil || state.Replacement.PreviousProtection == nil || state.Protection == nil {
+		return state, true, errors.New("protected Network Session replacement recovery lacks durable rollback authority")
+	}
+
+	previousPlan, err := privacyEnvelopePlanFromAuthority(*state.Replacement.PreviousProtection)
+	if err != nil {
+		return state, true, fmt.Errorf("reconstruct previous Privacy Envelope for replacement recovery: %w", err)
+	}
+	present, err := executor.Exists(ctx, previousPlan)
+	if err != nil {
+		return state, true, fmt.Errorf("observe Privacy Envelope during replacement recovery: %w", err)
+	}
+	if !present {
+		if err := executor.Apply(ctx, previousPlan); err != nil {
+			return state, true, fmt.Errorf("recreate previous Privacy Envelope after replacement crash: %w", err)
+		}
+		if err := executor.Verify(ctx, previousPlan); err != nil {
+			return state, true, fmt.Errorf("verify recreated previous Privacy Envelope after replacement crash: %w", err)
+		}
+		return restoreProtectedReplacementAuthority(store, state)
+	}
+
+	candidates, err := replacementRecoveryPlans(state)
+	if err != nil {
+		return state, true, err
+	}
+	var matched *netexecutor.PrivacyEnvelopePlan
+	for i := range candidates {
+		candidate := candidates[i]
+		if err := executor.Verify(ctx, candidate); err != nil {
+			continue
+		}
+		if matched != nil {
+			return state, true, errors.New("multiple persisted Privacy Envelope compositions matched during replacement recovery")
+		}
+		matched = &candidate
+	}
+	if matched == nil {
+		return state, true, errors.New("live Privacy Envelope does not match any exact persisted replacement composition")
+	}
+
+	if !reflect.DeepEqual(*matched, previousPlan) {
+		if err := executor.Replace(ctx, *matched, previousPlan); err != nil {
+			return state, true, fmt.Errorf("restore previous Privacy Envelope after replacement crash: %w", err)
+		}
+		if err := executor.Verify(ctx, previousPlan); err != nil {
+			return state, true, fmt.Errorf("verify restored previous Privacy Envelope after replacement crash: %w", err)
+		}
+	}
+	return restoreProtectedReplacementAuthority(store, state)
+}
+
+func replacementRecoveryPlans(state networkSessionState) ([]netexecutor.PrivacyEnvelopePlan, error) {
+	if state.Replacement == nil || state.Replacement.PreviousProtection == nil || state.Protection == nil {
+		return nil, errors.New("replacement recovery plans require previous and current protection authority")
+	}
+
+	authorities := []networkSessionProtection{
+		cloneNetworkSessionProtection(*state.Replacement.PreviousProtection),
+		cloneNetworkSessionProtection(*state.Protection),
+	}
+	if len(state.Protection.PreviousBootstrapIPv4) != 0 {
+		transition := cloneNetworkSessionProtection(*state.Protection)
+		transition.State = networkSessionProtectionArmed
+		transition.BootstrapIPv4 = append([]string(nil), state.Protection.PreviousBootstrapIPv4...)
+		transition.PreviousBootstrapIPv4 = nil
+		authorities = append(authorities, transition)
+	}
+
+	plans := make([]netexecutor.PrivacyEnvelopePlan, 0, len(authorities))
+	for _, authority := range authorities {
+		plan, err := privacyEnvelopePlanFromAuthority(authority)
+		if err != nil {
+			return nil, fmt.Errorf("reconstruct persisted replacement Privacy Envelope composition: %w", err)
+		}
+		duplicate := false
+		for _, existing := range plans {
+			if reflect.DeepEqual(existing, plan) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			plans = append(plans, plan)
+		}
+	}
+	return plans, nil
+}
+
+func restoreProtectedReplacementAuthority(store networkSessionStateStore, fallback networkSessionState) (networkSessionState, bool, error) {
+	if err := store.RestoreReplacement(); err != nil {
+		return fallback, true, fmt.Errorf("restore previous Network Session replacement authority: %w", err)
+	}
+	restored, exists, err := store.Load()
+	if err != nil {
+		return fallback, true, fmt.Errorf("reload restored Network Session replacement authority: %w", err)
+	}
+	if !exists || restored.Protection == nil || restored.Replacement != nil {
+		return fallback, true, errors.New("restored Network Session replacement authority is incomplete")
+	}
+	return restored, true, nil
 }
 
 func reconcileProductionNetworkSessionProtection(ctx context.Context, store networkSessionStateStore) error {
