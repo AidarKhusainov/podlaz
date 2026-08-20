@@ -244,28 +244,45 @@ func (s Server) Run(ctx context.Context) error {
 		response := operationLock.runRecoveryWithFollowUp(
 			r.Context(),
 			func() api.RecoveryResponse {
-				response := daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
-				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
-				forceRefreshStartupScan(refreshCtx)
-				cancel()
+				blocked := startupMutationGate.Blocked()
+				response := networkSessionRecoveryInitialStage(blocked, func() api.RecoveryResponse {
+					return daemonRecover(r.Context(), runtimeDir, currentStatus(r.Context()))
+				})
+				if !blocked {
+					refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
+					forceRefreshStartupScan(refreshCtx)
+					cancel()
+				}
 				return response
 			},
 			func(response api.RecoveryResponse) api.RecoveryResponse {
 				if !startupMutationGate.Blocked() || !networkSessionRecoveryConverged(response) {
 					return response
 				}
-				// runRecoveryWithFollowUp already owns the operation token. Resume
-				// through the underlying session lifecycle rather than the locked
-				// wrapper so recovery -> resume remains one non-reentrant critical
-				// section.
+
+				// runRecoveryWithFollowUp already owns the operation token. Execute
+				// the single intent-aware Network Session convergence path through
+				// the underlying lifecycle so privacy -> exact data-plane -> generic
+				// recovery -> resume/terminal-teardown remains one non-reentrant
+				// critical section.
+				var genericResponse api.RecoveryResponse
 				_, retryErr := resumeNetworkSession(
 					r.Context(),
 					continuation,
 					sessionLifecycle,
 					currentStatus,
-					func(context.Context, api.StatusResponse) api.RecoveryResponse { return response },
+					func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
+						genericResponse = daemonRecover(recoveryCtx, runtimeDir, status)
+						return genericResponse
+					},
 				)
+				if genericResponse.Mode != "" {
+					response = genericResponse
+				}
 				response = applyNetworkSessionResumeResult(response, startupMutationGate, retryErr)
+				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
+				forceRefreshStartupScan(refreshCtx)
+				cancel()
 				if retryErr != nil {
 					log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
 				}
