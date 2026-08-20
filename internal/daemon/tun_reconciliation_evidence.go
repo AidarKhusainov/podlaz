@@ -98,6 +98,7 @@ type tunReconciliationDecisionKind string
 const (
 	tunDecisionVerified         tunReconciliationDecisionKind = "verified"
 	tunDecisionRetry            tunReconciliationDecisionKind = "retry"
+	tunDecisionAwaitEvidence    tunReconciliationDecisionKind = "await-evidence"
 	tunDecisionReconcile        tunReconciliationDecisionKind = "reconcile"
 	tunDecisionBlockedOwnership tunReconciliationDecisionKind = "blocked-ownership"
 	tunDecisionTerminal         tunReconciliationDecisionKind = "terminal"
