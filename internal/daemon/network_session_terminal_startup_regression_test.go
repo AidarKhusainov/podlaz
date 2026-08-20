@@ -20,6 +20,14 @@ func TestResumeNetworkSessionConvergesPersistedTerminalIntentWithoutReconnect(t 
 			}
 
 			events := []string{}
+			continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+				events = append(events, "exact-recovery")
+				return api.RecoveryResponse{Mode: "execute"}
+			}
+			continuation.continueTeardown = func(_ context.Context, store networkSessionStateStore) error {
+				events = append(events, "teardown-converged")
+				return store.Remove()
+			}
 			lifecycle := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events}, continuation)
 			resumed, err := resumeNetworkSession(
 				context.Background(),
