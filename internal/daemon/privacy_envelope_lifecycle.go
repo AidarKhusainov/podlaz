@@ -211,9 +211,11 @@ func privacyEnvelopeBootstrapForTunPlan(tunPlan planner.TunPlan) ([]string, erro
 }
 
 // RemoveAfterDataPlaneCleanup deliberately removes protection only after the
-// caller has proved that exact Podlaz data-plane cleanup succeeded. The live
-// table is re-verified before deletion so stale authority cannot delete a
-// foreign replacement that merely reused the same generated name.
+// caller has proved that exact Podlaz data-plane cleanup succeeded. A terminal
+// decision may arrive while a replacement is between exact old/union/target
+// compositions, so that transition is first converged back to one verified
+// previous barrier. The live table is then re-verified before deletion so stale
+// authority cannot delete a foreign replacement that reused the generated name.
 func (p privacyEnvelopeLifecycle) RemoveAfterDataPlaneCleanup(ctx context.Context) error {
 	if p.executor == nil {
 		return errors.New("privacy envelope lifecycle has no executor")
@@ -225,6 +227,36 @@ func (p privacyEnvelopeLifecycle) RemoveAfterDataPlaneCleanup(ctx context.Contex
 	if !exists || state.Protection == nil {
 		return nil
 	}
+	if state.Replacement != nil {
+		identityPlan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
+		if err != nil {
+			return fmt.Errorf("reconstruct replacement privacy envelope identity before removal: %w", err)
+		}
+		present, err := p.executor.Exists(ctx, identityPlan)
+		if err != nil {
+			return fmt.Errorf("observe replacement privacy envelope before terminal removal: %w", err)
+		}
+		if !present {
+			if err := p.store.RestoreReplacement(); err != nil {
+				return fmt.Errorf("clear replacement transition after proven envelope absence: %w", err)
+			}
+			if err := p.store.SetProtection(nil); err != nil {
+				return fmt.Errorf("clear absent replacement privacy authority: %w", err)
+			}
+			return nil
+		}
+		if _, _, err := reconcileProtectedNetworkSessionReplacement(ctx, p.store, state, p.executor); err != nil {
+			return fmt.Errorf("converge protected replacement before terminal envelope removal: %w", err)
+		}
+		state, exists, err = p.store.Load()
+		if err != nil {
+			return fmt.Errorf("reload network session after replacement convergence: %w", err)
+		}
+		if !exists || state.Protection == nil {
+			return errors.New("replacement convergence lost privacy cleanup authority")
+		}
+	}
+
 	plan, err := privacyEnvelopePlanFromAuthority(*state.Protection)
 	if err != nil {
 		return fmt.Errorf("reconstruct privacy envelope for removal: %w", err)
