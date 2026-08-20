@@ -14,18 +14,31 @@ type IPPolicyRuleExecutor struct {
 }
 
 func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRulePlan) (Step, error) {
-	line, err := e.existingPolicyRuleLine(ctx, plan)
+	lines, err := e.policyRulePriorityLines(ctx, plan.Priority)
 	if err != nil {
 		return Step{}, fmt.Errorf("inspect existing policy rule priority %d: %w", plan.Priority, err)
 	}
-	if line != "" {
+	if plan.Action == planner.TunActionAddExclusive {
+		if len(lines) != 0 {
+			return Step{}, fmt.Errorf("allocated policy rule priority %d became occupied before apply", plan.Priority)
+		}
+	} else if len(lines) != 0 {
+		if _, err := matchingPolicyRuleLine(strings.Join(lines, "\n"), plan); err != nil {
+			return Step{}, fmt.Errorf("inspect existing policy rule priority %d: %w", plan.Priority, err)
+		}
 		return Step{}, nil
 	}
+
 	args := ruleArgs("add", plan)
 	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("add policy rule priority %d: %w", plan.Priority, err)
 	}
 	step := Step{Kind: "policy-rule", Target: ruleTarget(plan), Description: plan.Reason, Owner: OwnerPolicyRule}
+	if plan.Action == planner.TunActionAddExclusive {
+		if err := e.verifyExclusivePolicyRulePriority(ctx, plan); err != nil {
+			return step, fmt.Errorf("verify allocated policy rule priority %d after add: %w", plan.Priority, err)
+		}
+	}
 	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
 		return step, fmt.Errorf("flush IPv4 route cache after add policy rule priority %d: %w", plan.Priority, err)
 	}
@@ -33,6 +46,13 @@ func (e IPPolicyRuleExecutor) Add(ctx context.Context, plan planner.TunPolicyRul
 }
 
 func (e IPPolicyRuleExecutor) Verify(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	if plan.Action == planner.TunActionAddExclusive {
+		if err := e.verifyExclusivePolicyRulePriority(ctx, plan); err != nil {
+			return fmt.Errorf("verify policy rule priority %d: %w", plan.Priority, err)
+		}
+		return nil
+	}
+
 	line, err := e.existingPolicyRuleLine(ctx, plan)
 	if err != nil {
 		return fmt.Errorf("verify policy rule priority %d: %w", plan.Priority, err)
@@ -44,6 +64,40 @@ func (e IPPolicyRuleExecutor) Verify(ctx context.Context, plan planner.TunPolicy
 }
 
 func (e IPPolicyRuleExecutor) Rollback(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	if plan.Action != planner.TunActionAddExclusive {
+		return e.rollbackLegacyPolicyRule(ctx, plan)
+	}
+
+	lines, err := e.policyRulePriorityLines(ctx, plan.Priority)
+	if err != nil {
+		return fmt.Errorf("inspect policy rule priority %d before rollback: %w", plan.Priority, err)
+	}
+	matches := matchingPolicyRuleCount(lines, plan)
+	switch {
+	case matches == 0:
+		return nil
+	case matches > 1:
+		return fmt.Errorf("refuse policy rule rollback priority %d: exact tuple appears %d times and ownership is ambiguous", plan.Priority, matches)
+	}
+
+	if err := e.deletePolicyRule(ctx, plan); err != nil {
+		return err
+	}
+	remaining, err := e.policyRulePriorityLines(ctx, plan.Priority)
+	if err != nil {
+		return fmt.Errorf("inspect policy rule priority %d after rollback: %w", plan.Priority, err)
+	}
+	if exact := matchingPolicyRuleCount(remaining, plan); exact != 0 {
+		return fmt.Errorf("policy rule rollback priority %d left %d exact tuple(s)", plan.Priority, exact)
+	}
+	return nil
+}
+
+func (e IPPolicyRuleExecutor) rollbackLegacyPolicyRule(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	return e.deletePolicyRule(ctx, plan)
+}
+
+func (e IPPolicyRuleExecutor) deletePolicyRule(ctx context.Context, plan planner.TunPolicyRulePlan) error {
 	args := ruleArgs("del", plan)
 	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil && !resourceMissing(err) {
 		return fmt.Errorf("delete policy rule priority %d: %w", plan.Priority, err)
@@ -55,12 +109,34 @@ func (e IPPolicyRuleExecutor) Rollback(ctx context.Context, plan planner.TunPoli
 }
 
 func (e IPPolicyRuleExecutor) existingPolicyRuleLine(ctx context.Context, plan planner.TunPolicyRulePlan) (string, error) {
-	args := []string{"-4", "rule", "show", "priority", strconv.Itoa(plan.Priority)}
-	result, err := observeCommand(ctx, e.Runner, "ip", args...)
+	lines, err := e.policyRulePriorityLines(ctx, plan.Priority)
 	if err != nil {
 		return "", err
 	}
-	return matchingPolicyRuleLine(result.Stdout, plan)
+	return matchingPolicyRuleLine(strings.Join(lines, "\n"), plan)
+}
+
+func (e IPPolicyRuleExecutor) policyRulePriorityLines(ctx context.Context, priority int) ([]string, error) {
+	args := []string{"-4", "rule", "show", "priority", strconv.Itoa(priority)}
+	result, err := observeCommand(ctx, e.Runner, "ip", args...)
+	if err != nil {
+		return nil, err
+	}
+	return nonEmptyLines(result.Stdout), nil
+}
+
+func (e IPPolicyRuleExecutor) verifyExclusivePolicyRulePriority(ctx context.Context, plan planner.TunPolicyRulePlan) error {
+	lines, err := e.policyRulePriorityLines(ctx, plan.Priority)
+	if err != nil {
+		return err
+	}
+	if len(lines) != 1 {
+		return fmt.Errorf("priority bucket must contain exactly one session rule, found %d", len(lines))
+	}
+	if err := verifyPolicyRuleLine(lines[0], plan); err != nil {
+		return fmt.Errorf("exclusive session rule mismatch: %w", err)
+	}
+	return nil
 }
 
 func matchingPolicyRuleLine(output string, plan planner.TunPolicyRulePlan) (string, error) {
@@ -77,6 +153,16 @@ func matchingPolicyRuleLine(output string, plan planner.TunPolicyRulePlan) (stri
 		}
 	}
 	return "", fmt.Errorf("no matching rule among %d rule(s) at priority %d: %w", len(lines), plan.Priority, firstErr)
+}
+
+func matchingPolicyRuleCount(lines []string, plan planner.TunPolicyRulePlan) int {
+	matches := 0
+	for _, line := range lines {
+		if verifyPolicyRuleLine(line, plan) == nil {
+			matches++
+		}
+	}
+	return matches
 }
 
 func nonEmptyLines(output string) []string {
@@ -100,6 +186,9 @@ func ruleArgs(op string, plan planner.TunPolicyRulePlan) []string {
 
 func verifyPolicyRuleLine(line string, plan planner.TunPolicyRulePlan) error {
 	fields := normalizeRuleFields(strings.Fields(line))
+	if len(fields) == 0 || fields[0] != strconv.Itoa(plan.Priority) {
+		return fmt.Errorf("priority mismatch: expected %d in %q", plan.Priority, line)
+	}
 	for _, field := range strings.Fields(plan.Selector) {
 		if !containsField(fields, field) {
 			return fmt.Errorf("selector mismatch: expected %q in %q", plan.Selector, line)

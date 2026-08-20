@@ -107,7 +107,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 	}
 
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
+		if !planner.IsTunAddAction(route.Action) {
 			continue
 		}
 		step, applyErr := e.Routes.Add(ctx, route)
@@ -116,7 +116,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 		}
 	}
 	for _, rule := range plan.PolicyRules {
-		if rule.Action != "add" {
+		if !planner.IsTunAddAction(rule.Action) {
 			continue
 		}
 		step, applyErr := e.PolicyRules.Add(ctx, rule)
@@ -140,7 +140,7 @@ func (e TunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 		}
 	}
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
+		if !planner.IsTunVerifyOrAddAction(route.Action) {
 			continue
 		}
 		if err := e.Routes.Verify(ctx, route); err != nil {
@@ -148,7 +148,7 @@ func (e TunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 		}
 	}
 	for _, rule := range plan.PolicyRules {
-		if rule.Action != "add" {
+		if !planner.IsTunAddAction(rule.Action) {
 			continue
 		}
 		if err := e.PolicyRules.Verify(ctx, rule); err != nil {
@@ -165,7 +165,7 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	var errs []error
 	for i := len(plan.PolicyRules) - 1; i >= 0; i-- {
 		rule := plan.PolicyRules[i]
-		if rule.Action != "add" {
+		if !planner.IsTunAddAction(rule.Action) {
 			continue
 		}
 		if err := e.PolicyRules.Rollback(ctx, rule); err != nil {
@@ -174,7 +174,7 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	}
 	for i := len(plan.Routes) - 1; i >= 0; i-- {
 		route := plan.Routes[i]
-		if route.Action != "add" {
+		if !planner.IsTunAddAction(route.Action) {
 			continue
 		}
 		if err := e.Routes.Rollback(ctx, route); err != nil {
@@ -246,7 +246,7 @@ func (e TunExecutor) validatePlan(plan planner.TunPlan) error {
 }
 
 func shouldApplyTunAddress(plan planner.TunAddressPlan) bool {
-	return strings.TrimSpace(plan.CIDR) != "" && plan.Action == planner.TunAddressActionAssign
+	return strings.TrimSpace(plan.CIDR) != "" && planner.IsTunAddressAssignAction(plan.Action)
 }
 
 func (e TunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan, proof TunLinkCreationProof) (planner.TunPlan, error) {

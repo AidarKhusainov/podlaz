@@ -13,7 +13,7 @@ import (
 var automaticPodlazRecover = func(ctx context.Context, runtimeDir string) error {
 	result := recovery.ExecuteWithOptions(ctx, recovery.Options{
 		RuntimeDir: runtimeDir,
-		Executor:   recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir},
+		Executor:   recovery.NetworkSessionCleanupExecutor{RuntimeDir: runtimeDir},
 	})
 	if automaticRecoveryComplete(result) {
 		return nil
@@ -41,26 +41,25 @@ func automaticRecoveryComplete(result recovery.ExecuteResult) bool {
 	return true
 }
 
-// autoRecoverTunOwnedState removes only unambiguous podlaz-owned stale state
-// before a non-interactive TUN connect. A single stale resolved link record may
-// remain deferred until Xray recreates podlaz0; DNS Apply refreshes that record
-// immediately before writing the new per-link configuration. Foreign or
-// ambiguous resources remain governed by the handoff policy and are never
-// auto-removed.
+// autoRecoverTunOwnedState converges only durable exact transaction authority.
+// Historical routing values or foreign baseline objects are not recovery
+// candidates by numeric/name resemblance. The refreshed snapshot is returned
+// for a new independent session allocation after recovery completes.
 func (m *XrayManager) autoRecoverTunOwnedState(ctx context.Context, s netsnapshot.Snapshot, handoff string, opts netsnapshot.Options) (netsnapshot.Snapshot, error) {
 	if api.NormalizeHandoffPolicy(handoff) == api.HandoffAsk {
 		return s, nil
 	}
-	s = m.withPodlazRuntimeStaleState(ctx, s)
-	if stalePodlazStateBlocker(s) == nil {
+	resources, _ := m.transactionFileStaleState()
+	if len(resources) == 0 {
 		return s, nil
 	}
 	if err := automaticPodlazRecover(ctx, m.runtimeDir()); err != nil {
 		return s, err
 	}
-	refreshed := m.withPodlazRuntimeStaleState(ctx, m.collectTunSnapshot(ctx, opts))
-	if blocker := stalePodlazStateBlocker(refreshed); blocker != nil {
-		return refreshed, blocker
+	refreshed := m.collectTunResourceSnapshot(ctx, opts)
+	remaining, _ := m.transactionFileStaleState()
+	if len(remaining) != 0 {
+		return refreshed, fmt.Errorf("automatic podlaz recovery left %d exact transaction state item(s); refusing a new network mutation", len(remaining))
 	}
 	return refreshed, nil
 }

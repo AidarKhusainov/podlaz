@@ -31,20 +31,16 @@ func (m *XrayManager) preflightActiveReplacementOwnership(ctx context.Context, s
 		}
 	}
 
+	// Replacement authority is limited to the exact active Podlaz transaction.
+	// Subtract that transaction's proved projection, then fail only on remaining
+	// Podlaz-owned/recovery state. Unrelated TUN/DNS/routing/firewall state is the
+	// host baseline for the next collision-free allocation and is not a blocker.
 	inspected := m.withPodlazRuntimeStaleState(ctx, s)
 	inspected = snapshotWithoutActiveTransactionOwnership(inspected, tx)
 	if blocker := stalePodlazStateBlocker(inspected); blocker != nil {
 		return blocker
 	}
-	conflicts := foreignOwnershipConflicts(inspected)
-	if len(conflicts) == 0 {
-		return nil
-	}
-	return &tunHandoffBlocker{
-		Policy:    policy,
-		Conflicts: conflicts,
-		NextStep:  "Resolve unrelated foreign VPN/DNS/routing ownership before replacing the active podlaz TUN session.",
-	}
+	return nil
 }
 
 func snapshotWithoutActiveTransactionOwnership(s netsnapshot.Snapshot, tx txstate.Transaction) netsnapshot.Snapshot {

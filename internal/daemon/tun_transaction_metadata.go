@@ -12,6 +12,7 @@ import (
 )
 
 const xrayTunInboundOwner = "xray:tun-inbound"
+const hostRoutePrerequisiteOwner = "host:route-prerequisite"
 
 func snapshotMetadata(s netsnapshot.Snapshot, now time.Time) txstate.SnapshotMetadata {
 	summary := []string{
@@ -26,18 +27,19 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 	routes := make([]txstate.RoutePlan, 0, len(plan.Routes))
 	steps := make([]txstate.PlannedStep, 0, len(plan.Steps)+len(plan.PolicyRules)+len(plan.Firewall.Rules)+2)
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
+		owner := ""
+		operation := ""
+		switch {
+		case planner.IsTunAddAction(route.Action):
+			owner = netexecutor.OwnerRoute
+			operation = "add"
+		case planner.IsTunVerifyAction(route.Action):
+			owner = hostRoutePrerequisiteOwner
+			operation = "verify"
+		default:
 			continue
 		}
-		routes = append(routes, txstate.RoutePlan{
-			Kind:      "route",
-			Table:     route.Table,
-			CIDR:      route.Destination,
-			Via:       route.Gateway,
-			Dev:       route.Interface,
-			Owner:     netexecutor.OwnerRoute,
-			Operation: route.Action,
-		})
+		routes = append(routes, txstate.RoutePlan{Kind: "route", Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: owner, Operation: operation})
 	}
 	for _, step := range plan.Steps {
 		steps = append(steps, txstate.PlannedStep{Kind: "plan", Target: planner.ModeTun, Description: step, Owner: txstate.TransactionOwner})
@@ -46,6 +48,9 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		steps = append(steps, txstate.PlannedStep{Kind: "tun-address", Target: tunAddressTarget(plan.TunAddress), Description: plan.TunAddress.Reason, Owner: netexecutor.OwnerTunAddress})
 	}
 	for _, rule := range plan.PolicyRules {
+		if !planner.IsTunAddAction(rule.Action) {
+			continue
+		}
 		steps = append(steps, txstate.PlannedStep{Kind: "policy-rule", Target: policyRuleTarget(rule), Description: rule.Reason, Owner: netexecutor.OwnerPolicyRule})
 	}
 	if plan.DNS.Action == planner.DNSActionConfigure && plan.DNS.TargetLink != "" {
@@ -55,42 +60,27 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		steps = append(steps, txstate.PlannedStep{Kind: "nftables", Target: firewallTarget(plan.Firewall), Description: plan.Firewall.Reason, Owner: netexecutor.OwnerFirewall})
 	}
 	return txstate.DesiredPlan{
-		PlanID: plan.ProfileID + ":" + planner.ModeTun,
-		TUN: txstate.TUNDesiredState{
-			InterfaceName: plan.TunDevice.Name,
-			MTU:           plan.TunDevice.MTU,
-			Owner:         tunDesiredOwner(plan.TunDevice.Action),
-		},
+		PlanID:     plan.ProfileID + ":" + planner.ModeTun,
+		TUN:        txstate.TUNDesiredState{InterfaceName: plan.TunDevice.Name, MTU: plan.TunDevice.MTU, Owner: tunDesiredOwner(plan.TunDevice.Action)},
 		TUNAddress: tunAddressDesiredState(plan.TunAddress),
 		Routes:     routes,
-		DNS: txstate.DNSPlan{
-			Backend:       plan.DNS.Backend,
-			Link:          plan.DNS.TargetLink,
-			Servers:       append([]string{}, plan.DNS.Servers...),
-			SearchDomains: dnsSearchDomains(plan.DNS),
-			Owner:         txstate.TransactionOwner,
-		},
-		NFT: txstate.NFTPlan{
-			Family: plan.Firewall.Family,
-			Table:  plan.Firewall.Table,
-			Chains: nftChains(plan.Firewall),
-			Owner:  netexecutor.OwnerFirewall,
-		},
-		Steps: steps,
+		DNS:        txstate.DNSPlan{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, Servers: append([]string{}, plan.DNS.Servers...), SearchDomains: dnsSearchDomains(plan.DNS), Owner: txstate.TransactionOwner},
+		NFT:        txstate.NFTPlan{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Chains: nftChains(plan.Firewall), Owner: netexecutor.OwnerFirewall},
+		Steps:      steps,
 	}
 }
 
 func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata {
 	routes := make([]txstate.RouteRollback, 0, len(plan.Routes))
 	for _, route := range plan.Routes {
-		if route.Action != "add" {
+		if !planner.IsTunAddAction(route.Action) {
 			continue
 		}
 		routes = append(routes, txstate.RouteRollback{Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute})
 	}
 	rules := make([]txstate.PolicyRuleRollback, 0, len(plan.PolicyRules))
 	for _, rule := range plan.PolicyRules {
-		if rule.Action != "add" {
+		if !planner.IsTunAddAction(rule.Action) {
 			continue
 		}
 		rules = append(rules, policyRuleRollback(rule))
@@ -115,33 +105,15 @@ func tunAddressDesiredState(plan planner.TunAddressPlan) txstate.TUNAddressDesir
 	if strings.TrimSpace(plan.CIDR) == "" {
 		return txstate.TUNAddressDesiredState{}
 	}
-	return txstate.TUNAddressDesiredState{
-		Family:            plan.Family,
-		InterfaceName:     plan.Interface,
-		CIDR:              plan.CIDR,
-		Scope:             plan.Scope,
-		LinkIndex:         plan.LinkIndex,
-		LinkKind:          plan.LinkKind,
-		AppearedAfterCore: plan.AppearedAfterCore,
-		Owner:             netexecutor.OwnerTunAddress,
-	}
+	return txstate.TUNAddressDesiredState{Family: plan.Family, InterfaceName: plan.Interface, CIDR: plan.CIDR, Scope: plan.Scope, LinkIndex: plan.LinkIndex, LinkKind: plan.LinkKind, AppearedAfterCore: plan.AppearedAfterCore, Owner: netexecutor.OwnerTunAddress}
 }
 
 func tunAddressRollbackIsOwned(plan planner.TunAddressPlan) bool {
-	return plan.Action == planner.TunAddressActionAssign && plan.LinkIndex > 0 && plan.LinkKind == "tun" && plan.AppearedAfterCore && strings.TrimSpace(plan.CIDR) != ""
+	return planner.IsTunAddressAssignAction(plan.Action) && plan.LinkIndex > 0 && plan.LinkKind == "tun" && plan.AppearedAfterCore && strings.TrimSpace(plan.CIDR) != ""
 }
 
 func tunAddressRollbackState(plan planner.TunAddressPlan) txstate.TUNAddressRollback {
-	return txstate.TUNAddressRollback{
-		Family:            plan.Family,
-		InterfaceName:     plan.Interface,
-		CIDR:              plan.CIDR,
-		Scope:             plan.Scope,
-		LinkIndex:         plan.LinkIndex,
-		LinkKind:          plan.LinkKind,
-		AppearedAfterCore: plan.AppearedAfterCore,
-		Owner:             netexecutor.OwnerTunAddress,
-	}
+	return txstate.TUNAddressRollback{Family: plan.Family, InterfaceName: plan.Interface, CIDR: plan.CIDR, Scope: plan.Scope, LinkIndex: plan.LinkIndex, LinkKind: plan.LinkKind, AppearedAfterCore: plan.AppearedAfterCore, Owner: netexecutor.OwnerTunAddress}
 }
 
 func tunAddressTarget(plan planner.TunAddressPlan) string {

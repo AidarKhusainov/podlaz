@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AidarKhusainov/podlaz/internal/api"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
@@ -15,31 +14,33 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestTunHandoffPreflightIgnoresCurrentScopesWithoutConfigurationEvidence(t *testing.T) {
+func TestTunPlanningIgnoresCurrentScopesWithoutConfigurationEvidence(t *testing.T) {
 	for _, currentScopes := range [][]string{{"none"}, {"DNS"}} {
-		snapshot := netsnapshot.Snapshot{DNS: netsnapshot.DNS{ResolvedLinks: []netsnapshot.ResolvedLink{{
+		snapshot := netsnapshot.FakeResolvedDesktop()
+		snapshot.DNS.ResolvedLinks = append(snapshot.DNS.ResolvedLinks, netsnapshot.ResolvedLink{
 			Name:          "wg-example",
 			CurrentScopes: currentScopes,
-			DNSDomains:    []string{defaultDNSRouteDomain},
-		}}}}
+			DNSDomains:    []string{"~."},
+		})
 
-		if err := preflightTunOwnership(snapshot, api.HandoffBlock); err != nil {
-			t.Fatalf("Current Scopes %v must not change handoff verdict without stable DNS configuration: %v", currentScopes, err)
+		if _, err := planner.PlanTunForSession(profileFromSnapshot(connectRequestForTest().Profile), snapshot, planner.TunOptions{}); err != nil {
+			t.Fatalf("Current Scopes %v must not block a safe coexistence plan without conflicting critical evidence: %v", currentScopes, err)
 		}
 	}
 }
 
-func TestTunHandoffPreflightUsesStableDNSConfigurationRegardlessOfCurrentScopes(t *testing.T) {
+func TestTunPlanningTreatsForeignRouteOnlyDNSAsBaselineAtAdmission(t *testing.T) {
 	for _, currentScopes := range [][]string{{"none"}, {"DNS"}} {
-		snapshot := netsnapshot.Snapshot{DNS: netsnapshot.DNS{ResolvedLinks: []netsnapshot.ResolvedLink{{
+		snapshot := netsnapshot.FakeResolvedDesktop()
+		snapshot.DNS.ResolvedLinks = append(snapshot.DNS.ResolvedLinks, netsnapshot.ResolvedLink{
 			Name:          "wg-example",
 			CurrentScopes: currentScopes,
 			Protocols:     []string{"+DefaultRoute"},
-			DNSDomains:    []string{defaultDNSRouteDomain},
-		}}}}
+			DNSDomains:    []string{"~."},
+		})
 
-		if err := preflightTunOwnership(snapshot, api.HandoffBlock); !isTunHandoffBlocker(err) {
-			t.Fatalf("stable route-only DNS configuration must block handoff for Current Scopes %v: %v", currentScopes, err)
+		if _, err := planner.PlanTunForSession(profileFromSnapshot(connectRequestForTest().Profile), snapshot, planner.TunOptions{}); err != nil {
+			t.Fatalf("foreign route-only DNS state must remain baseline at plan admission for Current Scopes %v: %v", currentScopes, err)
 		}
 	}
 }

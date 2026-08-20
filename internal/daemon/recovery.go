@@ -29,7 +29,7 @@ func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api
 	plan = filterStartupScanForActiveRuntime(plan, status, runtimeDir)
 	opts.Scanner = fixedDaemonRecoveryScanner{plan: plan}
 	if opts.Executor == nil {
-		opts.Executor = recovery.DaemonCleanupExecutor{RuntimeDir: runtimeDir, Runner: opts.Runner}
+		opts.Executor = recovery.NetworkSessionCleanupExecutor{RuntimeDir: runtimeDir, Runner: opts.Runner}
 	}
 	result := recovery.ExecuteWithOptions(ctx, opts)
 	return recoveryResponseToAPI(result)

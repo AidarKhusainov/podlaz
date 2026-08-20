@@ -34,12 +34,13 @@ The general E2E workflow runs:
 4. Maximum server coverage
 5. Gated TUN fault-injection coverage
 
-The dedicated convergence workflow is the required gate for issue #236, issue #243, issue #247, and equivalent changes when their acceptance criteria require installed-package TUN/resolver/diagnostics convergence. A single successful run covers the applicable packaged acceptance cases:
+The dedicated convergence workflow is the required gate for issue #236, issue #243, issue #247, issue #260, and equivalent changes when their acceptance criteria require installed-package TUN/resolver/diagnostics/convergence evidence. A single successful run covers the applicable packaged acceptance cases:
 
 1. valid per-link DNS with all planned servers, `~.`, `+DefaultRoute`, and synthetic `Current Scopes: none` is accepted through the installed production daemon;
 2. removing real `podlaz0` after DNS apply produces the exact supported result from the daemon-owned production `resolvectl revert podlaz0` rollback call, diagnostics are persisted before that call, cleanup converges, and an immediate packaged retry succeeds. No preliminary manual revert is permitted. Strictly gated instrumentation captures the production call's exit code and raw stdout/stderr in the private hook directory; the gate accepts only exit code `1`, empty raw stdout, and the documented marker followed by one `LF` or one `CRLF`, without newline deletion or whitespace normalization;
 3. issue #243 verifies the separate read-only `resolvectl status podlaz0 --no-pager` absence protocol on Ubuntu 24.04/systemd 255. The initial inactive boundary first must publish healthy `podlaz status` and clean `recover --json`. The gate then boundedly waits for the exact supported exit-`0`, empty-stdout, byte-exact missing-device stderr envelope; during that wait only the already-supported proven-empty transient Link shape may be treated as an intermediate state, and any other raw process/result shape fails closed. The scenario then verifies clean `recover --execute --yes --json` followed by a fresh clean scan, performs two consecutive healthy active status reads, normal disconnect, immediate clean inactive status/recovery publication, immediate reconnect, and a repeated lifecycle without restarting `podlazd` or `systemd-resolved`. Post-disconnect success is defined by the product's semantic absence contract and does not require a particular raw resolver representation. Raw resolver/profile/host evidence stays in the private E2E temporary area; uploaded evidence contains only normalized structural verdicts and remains subject to the workflow redaction scan;
-4. issue #247 verifies lifecycle-aware base diagnostics and the product-owned journal lookback contract on the installed branch package. A committed active TUN session must pass exact live `podlaz0` identity and exact current nftables composition, then an E2E-only empty extra chain inside the same `inet podlaz` table must make base doctor warn before disconnect; after exact guarded removal the same active session must return clean. The scenario separately runs `podlaz logs --daemon --since 36h` and `podlaz logs --core --since 36h`, proves a short lookback excludes deliberately older journal entries using their actual timestamps, and proves `--follow --since` terminates on SIGINT with the expected signal status instead of reaching KILL. Malformed, signed, zero, compound, or excessive durations must still fail with usage exit code `2`. An inactive foreign-looking `podlaz0` remains actionable. The scenario may publish `acceptance=pass` only from successful EXIT cleanup; a cleanup failure changes the final script exit status. Raw doctor/log/profile/host output stays private and uploaded evidence contains normalized pass/fail verdicts only.
+4. issue #247 verifies lifecycle-aware base diagnostics and the product-owned journal lookback contract on the installed branch package. A committed active TUN session must pass exact live `podlaz0` identity and exact current nftables composition, then an E2E-only empty extra chain inside the same `inet podlaz` table must make base doctor warn before disconnect; after exact guarded removal the same active session must return clean. The scenario separately runs `podlaz logs --daemon --since 36h` and `podlaz logs --core --since 36h`, proves a short lookback excludes deliberately older journal entries using their actual timestamps, and proves `--follow --since` terminates on SIGINT with the expected signal status instead of reaching KILL. Malformed, signed, zero, compound, or excessive durations must still fail with usage exit code `2`. An inactive foreign-looking `podlaz0` remains actionable. The scenario may publish `acceptance=pass` only from successful EXIT cleanup; a cleanup failure changes the final script exit status. Raw doctor/log/profile/host output stays private and uploaded evidence contains normalized pass/fail verdicts only;
+5. issue #260 verifies coexistence rather than host cleanup. The harness creates documentation-only unrelated baseline state that occupies historical Podlaz candidates such as `198.18.0.1/32`, routing table `51820`, and policy priorities `9999`/`10000`, while preserving a safe usable server bootstrap path. The installed branch package must select different exact session identities, establish and verify its own TUN data plane without stopping NetworkManager VPN connections or deleting unrelated TUN/routes/rules/DNS/firewall state, persist the selected identities, and disconnect cleanly while the unrelated baseline remains structurally unchanged. A separate deterministic Go regression covers partially degraded soft diagnostics while the server-specific bootstrap and required allocation evidence remain authoritative. Public evidence records only structural allocation/coexistence verdicts; exact host/profile/network values remain private.
 
 A green result from only the general E2E workflow does not replace this dedicated gate.
 
@@ -94,6 +95,7 @@ The dedicated package convergence and resource-soak workflows require `PODLAZ_E2
 | Installed-package TUN resource soak | `scripts/e2e/tun-resource-soak.sh` | Exact package/Xray provenance, cgroup-v2 and procfs attribution for podlazd plus its exact supervised Xray child, bounded active traffic/health sampling, strict disconnect cleanup, immediate reconnect non-accumulation, and sanitized trend evidence. |
 | Issue #243 resolver acceptance | `scripts/e2e/issue243-package-acceptance.sh` | Installed-package clean inactive baseline, bounded convergence to the read-only exit-0 resolver envelope, recover-execute refresh, repeated active status, disconnect convergence, immediate reconnect, and normalized safe evidence. |
 | Issue #247 diagnostics acceptance | `scripts/e2e/issue247-package-acceptance.sh` | Installed-package inactive/active doctor lifecycle semantics, active same-table nftables composition mismatch, fail-closed inactive stale-resource detection, daemon/core `36h` windows, measured short-lookback enforcement, clean follow cancellation, invalid-duration usage errors, explicit cleanup-status propagation, and normalized safe evidence. |
+| Issue #260 coexistence acceptance | `scripts/e2e/issue260-package-acceptance.sh` | Installed-package collision-free address/table/rule allocation over synthetic unrelated baseline state, safe server bootstrap, protected data-plane verification, no foreign VPN teardown, exact transaction allocation evidence, and structural baseline preservation after disconnect. |
 | Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | State-aware pre-release verification obligations, post-quiescence authoritative mutation snapshot, exact metadata-driven cleanup, ownership-union verification, identity-material-preserving package purge gate, sentinel removal, and tri-state post-cleanup assertions. |
 
 ## Manual script order
@@ -105,6 +107,7 @@ bash scripts/e2e/data-plane.sh
 bash scripts/e2e/server-coverage.sh
 bash scripts/e2e/tun-fault-injection.sh
 bash scripts/e2e/tun-package-convergence.sh
+bash scripts/e2e/issue260-package-acceptance.sh
 bash scripts/e2e/issue243-package-acceptance.sh
 bash scripts/e2e/issue247-package-acceptance.sh
 bash scripts/e2e/tun-resource-soak.sh
@@ -209,16 +212,26 @@ When enabled, `scripts/e2e/tun-fault-injection.sh` installs a temporary systemd 
 
 `scripts/e2e/tun-package-convergence.sh` is a separate release-like gate. It
 builds, installs, and reinstalls the branch `.deb`; verifies package and
-running-daemon provenance; proves that a foreign `198.18.0.1/32` conflict blocks
-before podlaz mutation; verifies the exact address is present once on `podlaz0`;
-performs an uncached interface-scoped DNS query whose result identifies
-`podlaz0`; executes the inactive-scope and real missing-link acceptance cases; deletes real `podlaz0` and releases the daemon hook without issuing a manual revert; waits for the failed connect and production rollback to finish; then checks the private capture of that exact production `resolvectl revert`
-exit code and raw stdout/stderr byte-for-byte. The fault-injection scenario also
-fails immediately after real TUN address mutation, requires the exact ownership
-step and `tun_address_apply_failure`, proves address/routes/rules/DNS/nftables
-absence and no cleanup-required transaction before any restart or explicit
-recovery, then reconnects and disconnects on the same `podlazd` and
-`systemd-resolved` lifecycle and proves clean state again. Capture is enabled only for the rollback delegate, remains outside uploaded artifacts, and fails rollback closed if capture cannot be persisted. The scenario persists only normalized summaries and delegates failure-path cleanup to the same conservative teardown helper used by the workflow's `always` step.
+running-daemon provenance; verifies the allocated address is present exactly once
+on `podlaz0`; performs an uncached interface-scoped DNS query whose result
+identifies `podlaz0`; executes the inactive-scope and real missing-link acceptance
+cases; deletes real `podlaz0` and releases the daemon hook without issuing a
+manual revert; waits for the failed connect and production rollback to finish;
+then checks the private capture of that exact production `resolvectl revert` exit
+code and raw stdout/stderr byte-for-byte. The separate issue #260 acceptance step
+then overlays synthetic unrelated address/table/rule/TUN/DNS/routing state,
+requires deterministic collision-free allocation around that baseline, verifies
+the protected data plane, and proves the foreign fixture is structurally intact
+after normal disconnect before the harness removes only its own sentinels. The
+fault-injection scenario also fails immediately after real TUN address mutation,
+requires the exact ownership step and `tun_address_apply_failure`, proves
+address/routes/rules/DNS/nftables absence and no cleanup-required transaction
+before any restart or explicit recovery, then reconnects and disconnects on the
+same `podlazd` and `systemd-resolved` lifecycle and proves clean state again.
+Capture is enabled only for the rollback delegate, remains outside uploaded
+artifacts, and fails rollback closed if capture cannot be persisted. The scenario
+persists only normalized summaries and delegates failure-path cleanup to the same
+conservative teardown helper used by the workflow's `always` step.
 
 The issue #243 acceptance step runs after the base package-convergence scenario and the issue #241 acceptance on the same installed branch package. It first requires the daemon-published inactive state and dry-run recovery view to be clean. Because the preceding lifecycle may still leave the already-supported proven-empty `systemd-resolved` Link record, the step then uses a bounded raw-status convergence loop: the exact exit-0 missing-device envelope completes the proof, the strict proven-empty transient shape is the only retryable intermediate result, and every other process/output shape fails closed. After normal disconnect, the step immediately checks clean inactive `podlaz status` and clean `recover --json` without requiring the same raw representation, then reconnects and repeats the lifecycle without restarting `podlazd` or `systemd-resolved`.
 
@@ -595,6 +608,8 @@ Raw public or local IP addresses, gateways, interface names, DNS server/domain o
 For issue #243, the raw initial `resolvectl status podlaz0 --no-pager` stdout/stderr capture is part of that private evidence boundary and must be deleted before artifact scanning. Public evidence may record only normalized facts such as exact-envelope convergence, clean inactive publication, clean recover dry-run/execute refresh, repeated active-status stability, disconnect convergence, and immediate reconnect success.
 
 For issue #247, raw base-doctor output, journal output, profile URI/ID, nftables chain/table inspection, and test-link inspection remain private. Public evidence may record only normalized facts such as clean inactive doctor, clean active committed doctor, active exact-composition mismatch detection and restoration, active startup-scan wording, inactive foreign-looking stale-resource detection, successful daemon/core `36h` windows, measured short-lookback enforcement, clean follow cancellation, invalid-duration exit-2 cases, successful scenario-owned cleanup, and final acceptance pass.
+
+For issue #260, raw host addressing, exact allocated CIDR/table/priorities, foreign fixture tuples, NetworkManager identities, resolver output, profile URI/ID, and provider endpoints remain private. Public evidence may record only normalized facts such as historical-candidate collision detected, alternate allocation selected, safe bootstrap accepted, active protected data plane verified, no foreign teardown invoked, exact transaction allocation persisted, normal disconnect completed, foreign baseline preserved, and final coexistence acceptance pass.
 
 ## Non-goals
 

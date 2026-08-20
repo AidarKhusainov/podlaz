@@ -74,48 +74,59 @@ Packaged daemon access has two local socket boundaries. The filesystem socket is
 
 TUN mode may touch only podlaz-owned networking state around the Xray-owned TUN link:
 
-- the exact daemon-owned IPv4 address `198.18.0.1/32` on the transaction-bound
-  Xray-created `podlaz0` link;
-- podlaz-owned routes and policy rules;
+- the exact daemon-owned IPv4 `/32` selected for the current Network Session and
+  persisted in its allocation before the first host-network mutation;
+- the exact session-allocated routes and policy rules;
 - podlaz-owned DNS link state;
 - podlaz-owned nftables/firewall table, chains, and rules.
+
+The host snapshot is observation of the environment, not ownership. Before the
+first network mutation, podlazd derives one immutable collision-free session
+allocation from authoritative address, route, policy-rule, and server-bootstrap
+evidence. That allocation contains only identities Podlaz decided to occupy; it
+is persisted in desired transaction state before apply. Apply, verification,
+status/revalidation projection, disconnect, and recovery must use those exact
+session identities and must not silently re-run allocation after mutation begins.
 
 Xray owns `podlaz0` creation, lifetime, and packet ingestion through the native
 `tun` inbound. `podlazd` may configure only the exact link that appeared after
 the tracked Xray child started and whose name, ifindex, and TUN type still match
 the durable transaction identity. It must not recreate the link or record it as
-a podlaz-owned TUN device rollback target. podlazd owns only
-`198.18.0.1/32` on that link. Stopping Xray is the release mechanism for the
+a podlaz-owned TUN device rollback target. podlazd owns only the exact allocated
+session IPv4 `/32` on that link. Stopping Xray is the release mechanism for the
 Xray-owned link.
 
-Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. Durable `desired_plan` content validates resource shape but never grants route, policy-rule, DNS, or nftables cleanup authority. `planned` contributes no network cleanup tuples. `applying` without durable applied/rollback proof is an ambiguous crash window and performs no such mutation. Later inactive recovery states use only exact durable ownership. The sole narrow syscall/persistence fallback is the daemon-owned TUN address in `applying`, using the pre-persisted name, ifindex, TUN kind, CIDR, and tracked-child appearance evidence and still requiring fail-closed host inspection. Desired-only main-table server bypass state must never be deleted by assumption. Ambiguous host state must be skipped, not guessed.
+Apply/verify/rollback must be explicit. Normal in-process rollback must remove only what the active transaction recorded as applied. The composition executor reports every exact applied step to the transaction boundary immediately after that resource mutation and before invoking the next resource executor. The transaction boundary validates the fixed owner and the exact session-allocated target, atomically persists the matching applied step and rollback identity, and stops the apply sequence if persistence fails. Durable `desired_plan` content validates resource shape but never grants route, policy-rule, DNS, or nftables cleanup authority. `planned` contributes no network cleanup tuples. `applying` without durable applied/rollback proof is an ambiguous crash window and performs no such mutation. Later inactive recovery states use only exact durable ownership. The sole narrow syscall/persistence fallback is the daemon-owned TUN address in `applying`, using the pre-persisted name, ifindex, TUN kind, CIDR, and tracked-child appearance evidence and still requiring fail-closed host inspection. Desired-only main-table server bypass state must never be deleted by assumption. Ambiguous host state must be skipped, not guessed.
 
-Reserved Podlaz routing identifiers are layout signals, not cleanup authority.
-Policy-rule priorities `9999` and `10000`, routing table `51820`, and otherwise
-canonical-looking Podlaz route/rule shapes must never authorize deletion without
-matching durable ownership evidence. If such kernel routing survives after exact
-transaction ownership evidence is unavailable, TUN connect must fail before host
-mutation and classify the state as ambiguous/unrecoverable rather than directing
-the user to recovery that has no authority to act. Recovery remains read-only for
-that state and must not manufacture a cleanup candidate from reserved identifiers
-alone. Manual removal is appropriate only after an administrator independently
-proves ownership.
+Historical Podlaz routing identifiers are preferred allocation candidates and
+migration/diagnostic hints, not cleanup authority. Policy-rule priorities `9999`
+and `10000`, routing table `51820`, and the historical TUN address
+`198.18.0.1/32` must never authorize deletion without matching durable ownership
+evidence. Their presence in unrelated host state is not itself a connect blocker:
+a new session must choose another verified-free identity when a safe concrete
+plan remains possible. A blocker exists only when authoritative evidence is
+insufficient or the concrete server bootstrap/data-plane plan cannot be built
+without colliding with or mutating unowned state. Recovery must not manufacture a
+cleanup candidate from numeric or shape resemblance alone. Manual removal is
+appropriate only after an administrator independently proves ownership.
 
 A low-level composition executor must not perform hidden cleanup after a child apply method reports that it mutated state. It returns the partial non-zero applied step together with the error and reports that step to the persistence sink before returning the error. The transaction boundary persists that ownership and controls rollback timing: direct helpers perform one immediate bounded fail-safe rollback, while the production lifecycle persists diagnostics before invoking rollback. A zero step means no owned mutation was recorded and is not added to the rollback plan. An owner or target that does not exactly match the validated plan is rejected and never grants cleanup authority.
 
-Before active replacement, controlled handoff, transaction creation, or any
-host-network mutation, an ownership-aware daemon check rejects unrelated overlap
-and incomplete IPv4 address/route inventory. It may temporarily allow only exact
-active podlaz state, one validated stale podlaz address routed to canonical
-recovery, or state on the concrete NetworkManager device authorized by
-`stop-known`. After recovery/handoff, a second authoritative check runs without
-allowances and rejects any remaining host address or route that contains or
-overlaps `198.18.0.1/32`, as well as foreign or ambiguous `podlaz0` address
-state. The deterministic policy does not probe a
-second candidate. Address apply uses explicit argv, persists partial ownership
-immediately after mutation, and verifies one exact global IPv4 address on the
-same UP link identity. Rollback removes only that exact address after identity
-revalidation; inspection failure is not absence.
+Before active replacement, transaction creation, or any host-network mutation,
+the daemon collects authoritative read-only allocation evidence and proves a
+concrete server bootstrap path. Unrelated TUN devices, NetworkManager VPN
+connections, DNS links, routes, policy rules, and firewall objects are baseline,
+not conflicts merely because they exist. The allocator selects verified-free
+session resources around that baseline and never invokes `nmcli connection down`
+or equivalent foreign-VPN teardown as a prerequisite to connect. Incomplete
+allocation evidence, exhaustion of the bounded candidate space, or inability to
+construct a safe bootstrap/data-plane plan fails closed before mutation. After
+selection, apply treats the chosen address/table/priorities as exclusive: if an
+unowned object races into an allocated identity between snapshot and mutation,
+apply fails rather than adopting it. Address apply uses explicit argv, persists
+partial ownership immediately after mutation, and verifies one exact global IPv4
+address on the same UP link identity. Rollback removes only that exact address
+after identity revalidation; inspection failure is not absence.
 
 For `systemd-resolved`, apply first performs a scoped `resolvectl revert podlaz0` and then writes the planned DNS servers, `~.` route-only domain, and DNS default-route setting. An already-missing link is idempotent only when the command outcome matches the supported missing-link contract. If the kernel link exists before `systemd-resolved` registers it, only transient missing-link results from the `dns`, `domain`, and `default-route` commands are retried for a bounded interval of roughly two seconds. Verification requires the target link to have exactly the planned DNS-server set, exactly the planned route-only domain set (`~.`), `+DefaultRoute`, and no foreign active `~.` owner. Extra DNS servers or extra domains on the podlaz-owned link are ambiguous owned state and fail closed. `Current Scopes` is derived runtime state and must not be used as proof that the per-link configuration was or was not applied. The target `podlaz0` section must be unique; duplicate target sections are
 ambiguous and fail closed. Static configuration is not DNS readiness. Before
@@ -423,7 +434,13 @@ loopback, and non-address tokens are not reported as usable IPv6 addresses.
   failed results preserve generated config and transaction metadata. A later
   recovery run can complete after the process disappears.
 - Generated configs must be recorded in transaction rollback metadata before they are written, including Xray TUN preflight configs.
-- For non-interactive `connect --mode tun`, the connect request itself authorizes daemon-owned cleanup of unambiguous stale podlaz state. The daemon must recover, recollect the snapshot, and proceed only when owned state is clean. It must not stop foreign VPNs or remove ambiguous resources under the default `block` policy. `--handoff=ask` performs no automatic cleanup.
+- For non-interactive `connect --mode tun`, the connect request itself authorizes
+  daemon-owned cleanup only for exact durable transaction state. Recovery runs
+  before final session allocation, then the daemon recollects the authoritative
+  baseline and allocates independently around unrelated host networking. Foreign
+  TUN/routing/DNS/firewall/NetworkManager VPN state is not cleaned or stopped and
+  is blocking only when it prevents a concrete safe Podlaz plan. `--handoff=ask`
+  performs no automatic cleanup.
 - A stale `systemd-resolved` record that cannot be removed while `podlaz0` is absent must not trigger a global resolver restart. Connect may defer only that exact persistent `dns-link` result until Xray has recreated `podlaz0`, then run `resolvectl revert podlaz0` immediately before writing podlaz DNS state. Any other skipped or failed recovery result remains a blocker.
 - Missing-link cleanup is idempotent only for the validated podlaz-owned target and an exact bounded `resolvectl` process result: normal exit status `1`, empty raw stdout, and the supported `No such device` raw stderr followed by exactly one `LF` or one `CRLF`. Unterminated stderr, embedded or additional line endings, caller cancellation or deadline, process launch failure, signal termination, permission denial, another exit code, unrelated exit status `1`, unexpected stdout, or unbounded/different stderr remains a cleanup failure. The same rule applies to direct stale-link cleanup, persisted transaction DNS rollback, and the installed-package acceptance gate; trimming is permitted only for human-readable error rendering.
 - A successful post-`revert` transient `systemd-resolved` record is converged
@@ -533,7 +550,7 @@ require confirmation:
 - non-interactive mode: fail unless `--yes` is passed;
 - JSON mode: fail unless `--yes` is passed.
 
-A TUN connect is already an explicit privileged networking mutation request. It may therefore perform the narrowly scoped automatic podlaz-owned recovery described above without a second confirmation prompt. This exception does not authorize foreign VPN handoff, ambiguous cleanup, global `systemd-resolved` restart, or deletion of persistent user state.
+A TUN connect is already an explicit privileged networking mutation request. It may therefore perform the narrowly scoped automatic exact Podlaz transaction recovery and collision-aware session allocation described above without a second confirmation prompt. This exception does not authorize foreign VPN handoff, ambiguous cleanup, global `systemd-resolved` restart, or deletion of persistent user state.
 
 A proved active-session revalidation failure or deadline is also a fail-safe
 lifecycle condition rather than a new user cleanup request. After bounded

@@ -52,6 +52,11 @@ type RouteInventory struct {
 	Routes     []Route `json:"routes,omitempty"`
 }
 
+type PolicyRuleInventory struct {
+	Inspection Finding               `json:"inspection"`
+	Rules      []PolicyRoutingSignal `json:"rules,omitempty"`
+}
+
 type ResolvedLink struct {
 	Index            string   `json:"index,omitempty"`
 	Name             string   `json:"name"`
@@ -114,21 +119,22 @@ type StaleResource struct {
 }
 
 type Snapshot struct {
-	OS             string                `json:"os"`
-	DefaultIPv4    Route                 `json:"default_ipv4_route"`
-	DefaultIPv6    Route                 `json:"default_ipv6_route"`
-	ServerRoute    Route                 `json:"server_route"`
-	DNS            DNS                   `json:"dns"`
-	NetworkManager NetworkManager        `json:"network_manager"`
-	Nftables       Nftables              `json:"nftables"`
-	TunDevices     []TunDevice           `json:"tun_devices"`
-	PolicyRouting  []PolicyRoutingSignal `json:"policy_routing,omitempty"`
-	IPv4Addresses  IPAddressInventory    `json:"ipv4_addresses"`
-	IPv4Routes     RouteInventory        `json:"ipv4_routes"`
-	IPv4           Finding               `json:"ipv4"`
-	IPv6           Finding               `json:"ipv6"`
-	StaleResources []StaleResource       `json:"stale_resources"`
-	Warnings       []string              `json:"warnings,omitempty"`
+	OS              string                `json:"os"`
+	DefaultIPv4     Route                 `json:"default_ipv4_route"`
+	DefaultIPv6     Route                 `json:"default_ipv6_route"`
+	ServerRoute     Route                 `json:"server_route"`
+	DNS             DNS                   `json:"dns"`
+	NetworkManager  NetworkManager        `json:"network_manager"`
+	Nftables        Nftables              `json:"nftables"`
+	TunDevices      []TunDevice           `json:"tun_devices"`
+	PolicyRouting   []PolicyRoutingSignal `json:"policy_routing,omitempty"`
+	IPv4PolicyRules PolicyRuleInventory   `json:"ipv4_policy_rules"`
+	IPv4Addresses   IPAddressInventory    `json:"ipv4_addresses"`
+	IPv4Routes      RouteInventory        `json:"ipv4_routes"`
+	IPv4            Finding               `json:"ipv4"`
+	IPv6            Finding               `json:"ipv6"`
+	StaleResources  []StaleResource       `json:"stale_resources"`
+	Warnings        []string              `json:"warnings,omitempty"`
 }
 
 func finding(status Status, summary string) Finding {

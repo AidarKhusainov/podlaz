@@ -134,6 +134,9 @@ func (e IPTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddress
 	if exact > 1 {
 		return Step{}, fmt.Errorf("%w: exact address %s appears %d times", ErrTunAddressConflict, plan.CIDR, exact)
 	}
+	if err := e.verifyGlobalTunAddressAllocation(ctx, plan, exact, "before address apply"); err != nil {
+		return Step{}, err
+	}
 	if exact == 0 {
 		if err := e.verifyBoundIdentityFence(ctx, plan, "immediately before address apply", false); err != nil {
 			return Step{}, err
@@ -143,6 +146,9 @@ func (e IPTunAddressExecutor) Apply(ctx context.Context, plan planner.TunAddress
 			return step, fmt.Errorf("assign TUN address %s to %s: %w", plan.CIDR, plan.Interface, err)
 		}
 		if err := e.verifyAddressPresence(ctx, plan, 1, "after address apply"); err != nil {
+			return step, err
+		}
+		if err := e.verifyGlobalTunAddressAllocation(ctx, plan, 1, "after address apply"); err != nil {
 			return step, err
 		}
 	}
@@ -188,6 +194,9 @@ func (e IPTunAddressExecutor) Verify(ctx context.Context, plan planner.TunAddres
 		if address.Interface == plan.Interface && address.Family == "ipv4" && address.CIDR == plan.CIDR && plan.Scope != "" && address.Scope != plan.Scope {
 			return fmt.Errorf("TUN address %s has scope %s, expected %s", plan.CIDR, address.Scope, plan.Scope)
 		}
+	}
+	if err := e.verifyGlobalTunAddressAllocation(ctx, plan, 1, "during address verification"); err != nil {
+		return err
 	}
 	return e.verifyBoundIdentityFence(ctx, plan, "after address verification", true)
 }
@@ -271,6 +280,94 @@ func (e IPTunAddressExecutor) verifyAddressPresence(ctx context.Context, plan pl
 	return nil
 }
 
+func (e IPTunAddressExecutor) verifyGlobalTunAddressAllocation(ctx context.Context, plan planner.TunAddressPlan, wantOwnExact int, phase string) error {
+	if !planner.IsTunAddressExclusiveAction(plan.Action) {
+		return nil
+	}
+	addresses, err := e.inspectGlobalIPv4Addresses(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: inspect global IPv4 addresses %s: %v", ErrTunAddressConflict, phase, err)
+	}
+	routes, err := e.inspectGlobalIPv4Routes(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: inspect global IPv4 routes %s: %v", ErrTunAddressConflict, phase, err)
+	}
+
+	ownExact := 0
+	for _, address := range addresses {
+		if !ipv4CIDRsOverlapForAllocation(address.CIDR, plan.CIDR) {
+			continue
+		}
+		if address.Interface == plan.Interface && strings.TrimSpace(address.CIDR) == strings.TrimSpace(plan.CIDR) {
+			ownExact++
+			continue
+		}
+		return fmt.Errorf("%w: allocated TUN address %s overlaps foreign address %s on %s %s", ErrTunAddressConflict, plan.CIDR, address.CIDR, address.Interface, phase)
+	}
+	if ownExact != wantOwnExact {
+		return fmt.Errorf("%w: allocated TUN address %s has %d global owned entries %s, want %d", ErrTunAddressConflict, plan.CIDR, ownExact, phase, wantOwnExact)
+	}
+
+	for _, route := range routes {
+		if !ipv4CIDRsOverlapForAllocation(route.Destination, plan.CIDR) {
+			continue
+		}
+		if wantOwnExact == 1 && kernelLocalRouteForTunAddress(route, plan) {
+			continue
+		}
+		return fmt.Errorf("%w: allocated TUN address %s overlaps route %s table %s dev %s %s", ErrTunAddressConflict, plan.CIDR, route.Destination, route.Table, route.Interface, phase)
+	}
+	return nil
+}
+
+func (e IPTunAddressExecutor) inspectGlobalIPv4Addresses(ctx context.Context) ([]netsnapshot.IPAddress, error) {
+	result, err := observeCommand(ctx, e.Runner, "ip", "-4", "-o", "address", "show")
+	if err != nil {
+		return nil, err
+	}
+	return netsnapshot.ParseIPv4Addresses(result.Stdout)
+}
+
+func (e IPTunAddressExecutor) inspectGlobalIPv4Routes(ctx context.Context) ([]netsnapshot.Route, error) {
+	result, err := observeCommand(ctx, e.Runner, "ip", "-N", "-4", "-o", "route", "show", "table", "all")
+	if err != nil {
+		return nil, err
+	}
+	return netsnapshot.ParseIPv4Routes(result.Stdout)
+}
+
+func kernelLocalRouteForTunAddress(route netsnapshot.Route, plan planner.TunAddressPlan) bool {
+	if route.Interface != plan.Interface || strings.TrimSpace(route.Destination) != strings.TrimSpace(plan.CIDR) {
+		return false
+	}
+	switch strings.TrimSpace(route.Table) {
+	case "local", "255":
+	default:
+		return false
+	}
+	fields := strings.Fields(strings.ToLower(strings.TrimSpace(route.Raw)))
+	if len(fields) == 0 || fields[0] != "local" {
+		return false
+	}
+	return containsAdjacentFields(fields, "dev", strings.ToLower(plan.Interface)) &&
+		containsAdjacentFields(fields, "proto", "kernel") &&
+		containsAdjacentFields(fields, "scope", "host")
+}
+
+func ipv4CIDRsOverlapForAllocation(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" || left == planner.IPv4DefaultRoute || left == "0.0.0.0/0" {
+		return false
+	}
+	leftIP, leftNet, leftErr := net.ParseCIDR(left)
+	rightIP, rightNet, rightErr := net.ParseCIDR(right)
+	if leftErr != nil || rightErr != nil || leftIP.To4() == nil || rightIP.To4() == nil {
+		return false
+	}
+	return leftNet.Contains(rightIP) || rightNet.Contains(leftIP)
+}
+
 func (e IPTunAddressExecutor) inspectIdentity(ctx context.Context, link string) (tunLinkIdentity, error) {
 	result, err := observeCommand(ctx, e.Runner, "ip", "-details", "-o", "link", "show", "dev", link)
 	if err != nil {
@@ -339,7 +436,7 @@ func validateBoundTunAddressPlan(plan planner.TunAddressPlan) error {
 	if err := validateTunAddressIntent(plan); err != nil {
 		return err
 	}
-	if plan.Action != planner.TunAddressActionAssign {
+	if !planner.IsTunAddressAssignAction(plan.Action) {
 		return fmt.Errorf("TUN address action %q is not mutable", plan.Action)
 	}
 	if plan.LinkIndex <= 0 || plan.LinkKind != "tun" || !plan.AppearedAfterCore {
@@ -367,12 +464,7 @@ func addressInventoryState(addresses []netsnapshot.IPAddress, plan planner.TunAd
 }
 
 func tunAddressStep(plan planner.TunAddressPlan) Step {
-	return Step{
-		Kind:        "tun-address",
-		Target:      fmt.Sprintf("%s@ifindex=%d:%s", plan.Interface, plan.LinkIndex, plan.CIDR),
-		Description: plan.Reason,
-		Owner:       OwnerTunAddress,
-	}
+	return Step{Kind: "tun-address", Target: fmt.Sprintf("%s@ifindex=%d:%s", plan.Interface, plan.LinkIndex, plan.CIDR), Description: plan.Reason, Owner: OwnerTunAddress}
 }
 
 func (e IPTunAddressExecutor) sleep(ctx context.Context, delay time.Duration) error {

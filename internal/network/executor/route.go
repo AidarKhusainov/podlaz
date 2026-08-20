@@ -14,23 +14,40 @@ type IPRouteExecutor struct {
 }
 
 func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (Step, error) {
-	if mainServerBypassRoute(plan) {
+	if exclusiveAllocatedRouteTable(plan) {
+		lines, err := e.allocatedRouteTableLines(ctx, plan)
+		if err != nil {
+			return Step{}, fmt.Errorf("inspect allocated routing table %s before apply: %w", plan.Table, err)
+		}
+		if len(lines) != 0 {
+			return Step{}, fmt.Errorf("allocated routing table %s became occupied before apply", plan.Table)
+		}
+	} else if mainServerBypassRoute(plan) {
 		line, err := e.existingRouteLine(ctx, plan)
 		if err != nil {
 			return Step{}, fmt.Errorf("inspect existing route %s table %s: %w", plan.Destination, plan.Table, err)
 		}
 		if line != "" {
+			if plan.Action == planner.TunActionAddExclusive {
+				return Step{}, fmt.Errorf("allocated route %s table %s became occupied before apply", plan.Destination, plan.Table)
+			}
 			if err := verifyRouteLine(line, plan); err != nil {
 				return Step{}, fmt.Errorf("existing route %s table %s differs from planned server bypass: %w", plan.Destination, plan.Table, err)
 			}
 			return Step{}, nil
 		}
 	}
+
 	args := routeArgs("add", plan)
 	if err := runCommand(ctx, e.Runner, "ip", args...); err != nil {
 		return Step{}, fmt.Errorf("add route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
 	step := Step{Kind: "route", Target: routeTarget(plan), Description: plan.Reason, Owner: OwnerRoute}
+	if exclusiveAllocatedRouteTable(plan) {
+		if err := e.verifyExclusiveAllocatedRouteTable(ctx, plan); err != nil {
+			return step, fmt.Errorf("verify allocated routing table %s after add: %w", plan.Table, err)
+		}
+	}
 	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
 		return step, fmt.Errorf("flush IPv4 route cache after add route %s table %s: %w", plan.Destination, plan.Table, err)
 	}
@@ -38,6 +55,13 @@ func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (St
 }
 
 func (e IPRouteExecutor) Verify(ctx context.Context, plan planner.TunRoutePlan) error {
+	if exclusiveAllocatedRouteTable(plan) {
+		if err := e.verifyExclusiveAllocatedRouteTable(ctx, plan); err != nil {
+			return fmt.Errorf("verify route %s table %s: %w", plan.Destination, plan.Table, err)
+		}
+		return nil
+	}
+
 	args := []string{"-4", "route", "show", "table", routeTable(plan.Table), plan.Destination}
 	result, err := observeCommand(ctx, e.Runner, "ip", args...)
 	if err != nil {
@@ -60,6 +84,35 @@ func (e IPRouteExecutor) Rollback(ctx context.Context, plan planner.TunRoutePlan
 	}
 	if err := flushIPv4RouteCache(ctx, e.Runner); err != nil {
 		return fmt.Errorf("flush IPv4 route cache after delete route %s table %s: %w", plan.Destination, plan.Table, err)
+	}
+	return nil
+}
+
+func exclusiveAllocatedRouteTable(plan planner.TunRoutePlan) bool {
+	return strings.TrimSpace(plan.Action) == planner.TunActionAddExclusive && planner.IsAllocatedTunRoutingTable(routeTable(plan.Table))
+}
+
+func (e IPRouteExecutor) allocatedRouteTableLines(ctx context.Context, plan planner.TunRoutePlan) ([]string, error) {
+	result, err := observeCommand(ctx, e.Runner, "ip", "-N", "-4", "-o", "route", "show", "table", routeTable(plan.Table))
+	if err != nil {
+		if resourceMissing(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return nonEmptyLines(result.Stdout), nil
+}
+
+func (e IPRouteExecutor) verifyExclusiveAllocatedRouteTable(ctx context.Context, plan planner.TunRoutePlan) error {
+	lines, err := e.allocatedRouteTableLines(ctx, plan)
+	if err != nil {
+		return err
+	}
+	if len(lines) != 1 {
+		return fmt.Errorf("allocated routing table must contain exactly one session route, found %d", len(lines))
+	}
+	if err := verifyRouteLine(lines[0], plan); err != nil {
+		return fmt.Errorf("exclusive session route mismatch: %w", err)
 	}
 	return nil
 }

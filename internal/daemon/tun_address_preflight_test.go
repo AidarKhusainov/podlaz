@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"os/user"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ func TestRequireTunAddressPreflightRejectsConflictAndIncompleteInspection(t *tes
 		action string
 		reason string
 	}{
-		{name: "foreign conflict", action: planner.TunAddressActionBlocked, reason: "198.18.0.1/32 is already assigned on eth1"},
+		{name: "selected address conflict", action: planner.TunAddressActionBlocked, reason: "selected session address is already assigned"},
 		{name: "incomplete authoritative inspection", action: planner.TunAddressActionDaemonRecheck, reason: "IPv4 address or route inventory is incomplete"},
 	}
 	for _, tt := range tests {
@@ -40,71 +41,41 @@ func TestRequireTunAddressPreflightRejectsConflictAndIncompleteInspection(t *tes
 	}
 }
 
-func TestRequireTunAddressPreflightAcceptsDeterministicAssignment(t *testing.T) {
+func TestRequireTunAddressPreflightAcceptsSelectedAssignment(t *testing.T) {
 	plan := transactionPlanForTest()
 	plan.TunAddress = unboundTunAddressPlanForTest()
 	if err := requireTunAddressPreflight(plan); err != nil {
-		t.Fatalf("expected clean deterministic address plan, got %v", err)
+		t.Fatalf("expected selected address plan, got %v", err)
 	}
 }
 
-func TestConnectTunAddressConflictStopsBeforeTransactionOrXrayMutation(t *testing.T) {
-	oldPreflight := preflightNativeTunSupport
-	oldValidateDeps := validateTunRuntimeDependenciesHook
-	t.Cleanup(func() {
-		preflightNativeTunSupport = oldPreflight
-		validateTunRuntimeDependenciesHook = oldValidateDeps
+func TestPlanTunForSessionReallocatesUnrelatedAddressOverlap(t *testing.T) {
+	s := netsnapshot.FakeResolvedDesktop()
+	s.IPv4Addresses.Addresses = append(s.IPv4Addresses.Addresses, netsnapshot.IPAddress{
+		Family: "ipv4", Interface: "eth1", CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
 	})
-	preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
-	validateTunRuntimeDependenciesHook = func() error { return nil }
-	withCoreIdentityTestHooks(t, 0,
-		func(string) (*user.User, error) {
-			return &user.User{Uid: "997", Gid: "996", Username: "podlaz-xray"}, nil
-		},
-		func(string) (*user.Group, error) { return &user.Group{Gid: "996", Name: "podlaz-xray"}, nil },
-	)
 
-	snapshot := netsnapshot.FakeResolvedDesktop()
-	snapshot.DefaultIPv4.Interface = "wlan0"
-	snapshot.DefaultIPv4.Gateway = "192.0.2.1"
-	snapshot.ServerRoute = netsnapshot.Route{
-		Status:      netsnapshot.StatusDetected,
-		Family:      "ipv4",
-		Destination: "vpn.example.test",
-		Interface:   "wlan0",
-		Gateway:     "192.0.2.1",
-		Raw:         "203.0.113.10 via 192.0.2.1 dev wlan0",
+	plan, err := planner.PlanTunForSession(testVLESSProfile(), s, planner.TunOptions{})
+	if err != nil {
+		t.Fatalf("unrelated baseline overlap must be reallocated, got %v", err)
 	}
-	snapshot.IPv4Addresses = netsnapshot.IPAddressInventory{
-		Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected},
-		Addresses: []netsnapshot.IPAddress{{
-			Family: "ipv4", Interface: "eth1", CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
-		}},
+	if plan.TunAddress.CIDR == planner.DefaultTunIPv4CIDR {
+		t.Fatalf("allocator reused unrelated occupied address: %#v", plan.TunAddress)
 	}
-	snapshot.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}}
-
-	manager := &XrayManager{
-		RuntimeDir: t.TempDir(),
-		XrayPath:   writeFakeXray(t, "#!/bin/sh\nexit 99\n"),
-		snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
-			return snapshot
-		},
-	}
-	req := connectRequestForTest()
-	req.Mode = planner.ModeTun
-	req.Handoff = api.HandoffBlock
-
-	_, err := manager.Connect(context.Background(), req)
-	if err == nil || !errors.Is(err, netexecutor.ErrTunAddressConflict) {
-		t.Fatalf("expected pre-mutation TUN address conflict, got %v", err)
-	}
-	summaries, warnings := txstate.ScanTransactions(manager.RuntimeDir)
-	if len(summaries) != 0 || len(warnings) != 0 {
-		t.Fatalf("preflight conflict must leave no transaction state: summaries=%#v warnings=%#v", summaries, warnings)
+	if err := requireTunAddressPreflight(plan); err != nil {
+		t.Fatalf("reallocated exact address must pass daemon preflight: %v", err)
 	}
 }
 
-func TestConnectTunRecoversOwnedStaleAddressBeforeAuthoritativeConflictCheck(t *testing.T) {
+func TestPlanTunForSessionFailsClosedOnIncompleteAddressInventory(t *testing.T) {
+	s := netsnapshot.FakeResolvedDesktop()
+	s.IPv4Addresses.Inspection.Status = netsnapshot.StatusUnknown
+	if _, err := planner.PlanTunForSession(testVLESSProfile(), s, planner.TunOptions{}); err == nil {
+		t.Fatal("incomplete authoritative address inventory must fail before mutation")
+	}
+}
+
+func TestConnectTunRecoversExactTransactionBeforeFinalSessionAllocation(t *testing.T) {
 	oldPreflight := preflightNativeTunSupport
 	oldValidateDeps := validateTunRuntimeDependenciesHook
 	oldRecover := automaticPodlazRecover
@@ -122,39 +93,30 @@ func TestConnectTunRecoversOwnedStaleAddressBeforeAuthoritativeConflictCheck(t *
 		func(string) (*user.Group, error) { return &user.Group{Gid: "996", Name: "podlaz-xray"}, nil },
 	)
 
-	stale := netsnapshot.FakeDesktopWithStalepodlazResources()
-	stale.TunDevices = []netsnapshot.TunDevice{{
-		Name:   netsnapshot.DefaultTunName,
-		Status: netsnapshot.StatusDetected,
-		Raw:    "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun",
-	}}
-	stale.DefaultIPv4.Interface = "wlan0"
-	stale.DefaultIPv4.Gateway = "192.0.2.1"
-	stale.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "vpn.example.test", Interface: "wlan0", Gateway: "192.0.2.1", Raw: "203.0.113.10 via 192.0.2.1 dev wlan0"}
-	stale.IPv4Addresses = netsnapshot.IPAddressInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}}}
-	stale.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Routes: []netsnapshot.Route{{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: planner.DefaultTunIPv4CIDR, Interface: "podlaz0", Table: "local", Raw: "local 198.18.0.1 dev podlaz0 table local proto kernel scope host"}}}
+	stale := netsnapshot.FakeResolvedDesktop()
+	stale.IPv4Addresses.Addresses = append(stale.IPv4Addresses.Addresses, netsnapshot.IPAddress{
+		Family: "ipv4", Interface: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR, Scope: "global",
+	})
+	stale.TunDevices = []netsnapshot.TunDevice{{Name: netsnapshot.DefaultTunName, Status: netsnapshot.StatusDetected, Raw: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun"}}
 
 	clean := netsnapshot.FakeResolvedDesktop()
-	clean.DefaultIPv4.Interface = "wlan0"
-	clean.DefaultIPv4.Gateway = "192.0.2.1"
-	clean.ServerRoute = stale.ServerRoute
-	clean.IPv4Addresses = netsnapshot.IPAddressInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}}
-	clean.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}}
-
 	runtimeDir := t.TempDir()
-	tx := txstate.NewTransaction("tx-stale-address", "profile-1", planner.ModeTun, time.Now().UTC())
-	tx.State = txstate.TransactionApplying
-	tx.Rollback.TUNAddresses = []txstate.TUNAddressRollback{{
-		Family: "ipv4", InterfaceName: netsnapshot.DefaultTunName, CIDR: planner.DefaultTunIPv4CIDR,
-		Scope: "global", LinkIndex: 7, LinkKind: "tun", AppearedAfterCore: true, Owner: netexecutor.OwnerTunAddress,
-	}}
-	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir, Now: func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }}
+	tx := txstate.NewTransaction("tx-stale-address", "profile-1", planner.ModeTun, store.Now())
+	path, err := store.Save(tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(tx.ID, txstate.TransactionApplying); err != nil {
 		t.Fatal(err)
 	}
 
 	recoverCalls := 0
 	automaticPodlazRecover = func(context.Context, string) error {
 		recoverCalls++
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
 		return nil
 	}
 	calls := 0
@@ -173,69 +135,21 @@ func TestConnectTunRecoversOwnedStaleAddressBeforeAuthoritativeConflictCheck(t *
 	req.Mode = planner.ModeTun
 	req.Handoff = api.HandoffBlock
 
-	_, err := manager.Connect(context.Background(), req)
+	_, connectErr := manager.Connect(context.Background(), req)
 	if recoverCalls != 1 {
-		t.Fatalf("expected canonical recovery before final address preflight, calls=%d err=%v", recoverCalls, err)
+		t.Fatalf("expected exact transaction recovery before final allocation, calls=%d err=%v", recoverCalls, connectErr)
 	}
-	if errors.Is(err, netexecutor.ErrTunAddressConflict) {
-		t.Fatalf("valid owned stale address was blocked before recovery: %v", err)
-	}
-}
-
-func TestConnectTunAddressConflictBlocksBeforeActiveReplaceDisconnect(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*netsnapshot.Snapshot)
-	}{
-		{name: "unrelated overlap", mutate: func(s *netsnapshot.Snapshot) {
-			s.IPv4Addresses = netsnapshot.IPAddressInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: "eth1", CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}}}
-			s.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}}
-		}},
-		{name: "incomplete inventory", mutate: func(s *netsnapshot.Snapshot) {
-			s.IPv4Addresses = netsnapshot.IPAddressInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusUnknown}}
-			s.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}}
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			oldPreflight := preflightNativeTunSupport
-			oldValidateDeps := validateTunRuntimeDependenciesHook
-			t.Cleanup(func() { preflightNativeTunSupport = oldPreflight; validateTunRuntimeDependenciesHook = oldValidateDeps })
-			preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
-			validateTunRuntimeDependenciesHook = func() error { return nil }
-			withCoreIdentityTestHooks(t, 0,
-				func(string) (*user.User, error) {
-					return &user.User{Uid: "997", Gid: "996", Username: "podlaz-xray"}, nil
-				},
-				func(string) (*user.Group, error) { return &user.Group{Gid: "996", Name: "podlaz-xray"}, nil },
-			)
-			snapshot := netsnapshot.FakeResolvedDesktop()
-			snapshot.DefaultIPv4 = netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "wlan0", Gateway: "192.0.2.1"}
-			snapshot.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "vpn.example.test", Interface: "wlan0", Gateway: "192.0.2.1", Raw: "203.0.113.10 via 192.0.2.1 dev wlan0"}
-			test.mutate(&snapshot)
-			manager := &XrayManager{RuntimeDir: t.TempDir(), XrayPath: writeFakeXray(t, "#!/bin/sh\nexit 0\n"), snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot { return snapshot }}
-			manager.state = xrayState{Connection: "active", Mode: planner.ModeTun, ProfileID: "active-profile", TransactionID: "active-tx"}
-			req := connectRequestForTest()
-			req.Mode = planner.ModeTun
-			req.Handoff = api.HandoffReplacePodlaz
-			_, err := manager.Connect(context.Background(), req)
-			if err == nil || !errors.Is(err, netexecutor.ErrTunAddressConflict) {
-				t.Fatalf("expected early address conflict, got %v", err)
-			}
-			if manager.state.Connection != "active" || manager.state.TransactionID != "active-tx" {
-				t.Fatalf("active session was changed before collision preflight: %#v", manager.state)
-			}
-		})
+	if errors.Is(connectErr, netexecutor.ErrTunAddressConflict) {
+		t.Fatalf("stale occupied historical address should be recovered/reallocated, not treated as a foreign conflict: %v", connectErr)
 	}
 }
 
-func TestConnectTunAddressConflictBlocksBeforeStopKnownMutation(t *testing.T) {
+func TestConnectTunIncompleteInventoryBlocksBeforeActiveReplaceDisconnect(t *testing.T) {
 	oldPreflight := preflightNativeTunSupport
 	oldValidateDeps := validateTunRuntimeDependenciesHook
-	oldNMDown := nmcliConnectionDown
 	t.Cleanup(func() {
 		preflightNativeTunSupport = oldPreflight
 		validateTunRuntimeDependenciesHook = oldValidateDeps
-		nmcliConnectionDown = oldNMDown
 	})
 	preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
 	validateTunRuntimeDependenciesHook = func() error { return nil }
@@ -245,23 +159,25 @@ func TestConnectTunAddressConflictBlocksBeforeStopKnownMutation(t *testing.T) {
 		},
 		func(string) (*user.Group, error) { return &user.Group{Gid: "996", Name: "podlaz-xray"}, nil },
 	)
-	calls := 0
-	nmcliConnectionDown = func(context.Context, string) error { calls++; return nil }
-	snapshot := netsnapshot.FakeResolvedDesktop()
-	snapshot.DefaultIPv4 = netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "default", Interface: "wlan0", Gateway: "192.0.2.1"}
-	snapshot.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusDetected, Family: "ipv4", Destination: "vpn.example.test", Interface: "wlan0", Gateway: "192.0.2.1", Raw: "203.0.113.10 via 192.0.2.1 dev wlan0"}
-	snapshot.NetworkManager.ActiveConnections = []netsnapshot.NetworkManagerConnection{{Name: "Example VPN", UUID: "11111111-1111-1111-1111-111111111111", Type: "vpn", Device: "tun9", State: "activated"}}
-	snapshot.IPv4Addresses = netsnapshot.IPAddressInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}, Addresses: []netsnapshot.IPAddress{{Family: "ipv4", Interface: "eth1", CIDR: planner.DefaultTunIPv4CIDR, Scope: "global"}}}
-	snapshot.IPv4Routes = netsnapshot.RouteInventory{Inspection: netsnapshot.Finding{Status: netsnapshot.StatusDetected}}
-	manager := &XrayManager{RuntimeDir: t.TempDir(), XrayPath: writeFakeXray(t, "#!/bin/sh\nexit 0\n"), snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot { return snapshot }}
+
+	s := netsnapshot.FakeResolvedDesktop()
+	s.IPv4Addresses.Inspection.Status = netsnapshot.StatusUnknown
+	manager := &XrayManager{
+		RuntimeDir: t.TempDir(),
+		XrayPath:   writeFakeXray(t, "#!/bin/sh\nexit 0\n"),
+		snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
+			return s
+		},
+	}
+	manager.state = xrayState{Connection: "active", Mode: planner.ModeTun, ProfileID: "active-profile", TransactionID: "active-tx"}
 	req := connectRequestForTest()
 	req.Mode = planner.ModeTun
-	req.Handoff = api.HandoffStopKnown
-	_, err := manager.Connect(context.Background(), req)
-	if err == nil || !errors.Is(err, netexecutor.ErrTunAddressConflict) {
-		t.Fatalf("expected early address conflict, got %v", err)
+	req.Handoff = api.HandoffReplacePodlaz
+
+	if _, err := manager.Connect(context.Background(), req); err == nil {
+		t.Fatal("incomplete allocation evidence must fail before active replacement")
 	}
-	if calls != 0 {
-		t.Fatalf("nmcli down ran before address collision preflight: calls=%d", calls)
+	if manager.state.Connection != "active" || manager.state.TransactionID != "active-tx" {
+		t.Fatalf("active session was changed before fail-closed allocation preflight: %#v", manager.state)
 	}
 }

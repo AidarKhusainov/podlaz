@@ -2,210 +2,125 @@ package daemon
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/AidarKhusainov/podlaz/internal/api"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestIssue256OrphanPolicyRoutingDoesNotPromiseUnauthoritativeRecovery(t *testing.T) {
-	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
-		{Kind: "policy-rule", Name: "priority-9999", Status: netsnapshot.StatusDetected},
-		{Kind: "policy-rule", Name: "priority-10000", Status: netsnapshot.StatusDetected},
-	}}, "block")
-	if err == nil {
-		t.Fatal("expected orphan routing preflight blocker")
+func TestIssue256HistoricalRoutingShapeWithoutTransactionNeverGetsRecoveryAuthority(t *testing.T) {
+	resources := []netsnapshot.StaleResource{
+		{Kind: "policy-rule", Name: "9999", Status: netsnapshot.StatusDetected, Detail: "9999: from all to 203.0.113.10 lookup main"},
+		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected, Detail: "10000: from all lookup 51820"},
+		{Kind: "route", Name: "51820", Status: netsnapshot.StatusDetected, Detail: "default dev podlaz0 table 51820"},
 	}
-	assertIssue256ManualRoutingGuidance(t, err.Error())
-}
 
-func TestIssue256RecoverableTransactionKeepsCanonicalRecoveryGuidance(t *testing.T) {
-	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
-		{Kind: "transaction-file", Name: "tx-recoverable.json", Status: netsnapshot.StatusDetected, Detail: "state=committed requires daemon-owned recovery"},
-	}}, "block")
-	if err == nil {
-		t.Fatal("expected recoverable transaction preflight blocker")
-	}
-	if !strings.Contains(err.Error(), "plz recover --execute --yes") {
-		t.Fatalf("recoverable transaction should retain canonical recovery guidance: %s", err)
+	markRoutingRecoveryAuthority(resources, nil)
+
+	for _, resource := range resources {
+		if resource.RecoveryAuthorized {
+			t.Fatalf("historical routing resemblance granted cleanup authority: %#v", resource)
+		}
 	}
 }
 
-func TestIssue256PlannedTransactionWithoutRoutingRollbackDoesNotAuthorizeOrphanRules(t *testing.T) {
-	runtimeDir := t.TempDir()
-	writeIssue256Transaction(t, runtimeDir, "planned-no-routing", txstate.TransactionPlanned, txstate.RollbackMetadata{})
-	withIssue256OrphanPolicyRules(t)
+func TestIssue256NonRoutingTransactionDoesNotAuthorizeRouting(t *testing.T) {
+	tx := txstate.NewTransaction("generated-only", "test-profile", planner.ModeTun, time.Unix(1_700_000_000, 0).UTC())
+	tx.State = txstate.TransactionFailed
+	tx.FailureReason = "synthetic safe failure"
+	tx.Rollback.GeneratedConfigs = []txstate.GeneratedConfigRollback{{Path: "/run/podlaz/generated/example.json", Owner: txstate.TransactionOwner}}
+	resources := []netsnapshot.StaleResource{{
+		Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected, Detail: "10000: from all lookup 51820",
+	}}
 
-	manager := &XrayManager{RuntimeDir: runtimeDir}
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil {
-		t.Fatal("expected orphan routing blocker with planned transaction")
+	markRoutingRecoveryAuthority(resources, []txstate.Transaction{tx})
+
+	if resources[0].RecoveryAuthorized {
+		t.Fatalf("non-routing rollback granted routing cleanup authority: %#v", resources[0])
 	}
-	assertIssue256ManualRoutingGuidance(t, err.Error())
 }
 
-func TestIssue256NonRoutingRollbackDoesNotAuthorizeOrphanRules(t *testing.T) {
-	runtimeDir := t.TempDir()
-	writeIssue256Transaction(t, runtimeDir, "generated-only", txstate.TransactionFailed, txstate.RollbackMetadata{
-		GeneratedConfigs: []txstate.GeneratedConfigRollback{{
-			Path:  filepath.Join(runtimeDir, "generated", "xray.json"),
-			Owner: txstate.TransactionOwner,
-		}},
-	})
-	withIssue256OrphanPolicyRules(t)
-
-	manager := &XrayManager{RuntimeDir: runtimeDir}
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil {
-		t.Fatal("expected orphan routing blocker with non-routing rollback")
-	}
-	assertIssue256ManualRoutingGuidance(t, err.Error())
-}
-
-func TestIssue256PartialRoutingRollbackDoesNotAuthorizeUnmatchedOrphanRule(t *testing.T) {
-	runtimeDir := t.TempDir()
+func TestIssue256ExactPolicyRuleTransactionAuthorizesOnlyExactObservedTuple(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	tx := txstate.NewTransaction("exact-rule", "test-profile", planner.ModeTun, now)
+	tx.State = txstate.TransactionFailed
+	tx.FailureReason = "synthetic safe failure"
 	rule := txstate.PolicyRuleRollback{
 		Priority: planner.TunRulePriority,
 		From:     "all",
 		Table:    planner.TunRoutingTable,
 		Owner:    netexecutor.OwnerPolicyRule,
 	}
-	writeIssue256ValidatedPolicyRuleTransaction(t, runtimeDir, "partial-routing", []txstate.PolicyRuleRollback{rule})
-	withIssue256OrphanPolicyRules(t)
+	target := issue256PolicyRuleTarget(rule)
+	tx.Rollback.PolicyRules = []txstate.PolicyRuleRollback{rule}
+	tx.DesiredPlan.Steps = []txstate.PlannedStep{{Kind: "policy-rule", Target: target, Owner: netexecutor.OwnerPolicyRule}}
+	tx.AppliedSteps = []txstate.AppliedStep{{Kind: "policy-rule", Target: target, Owner: netexecutor.OwnerPolicyRule, AppliedAt: now}}
 
-	manager := &XrayManager{RuntimeDir: runtimeDir}
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil {
-		t.Fatal("expected unmatched orphan rule to keep preflight fail-closed")
+	resources := []netsnapshot.StaleResource{
+		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected, Detail: "10000: from all lookup 51820"},
+		{Kind: "policy-rule", Name: "9999", Status: netsnapshot.StatusDetected, Detail: "9999: from all to 203.0.113.10 lookup main"},
 	}
-	assertIssue256ManualRoutingGuidance(t, err.Error())
-}
+	markRoutingRecoveryAuthority(resources, []txstate.Transaction{tx})
 
-func TestIssue256ExactRoutingRollbackKeepsRecoveryGuidance(t *testing.T) {
-	runtimeDir := t.TempDir()
-	writeIssue256ValidatedPolicyRuleTransaction(t, runtimeDir, "exact-routing", []txstate.PolicyRuleRollback{
-		{Priority: planner.ServerRulePriority, To: "203.0.113.10/32", Table: planner.MainRoutingTable, Owner: netexecutor.OwnerPolicyRule},
-		{Priority: planner.TunRulePriority, From: "all", Table: planner.TunRoutingTable, Owner: netexecutor.OwnerPolicyRule},
-	})
-	withIssue256OrphanPolicyRules(t)
-
-	manager := &XrayManager{RuntimeDir: runtimeDir}
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil {
-		t.Fatal("expected transaction-backed stale preflight blocker")
+	if !resources[0].RecoveryAuthorized {
+		t.Fatalf("exact transaction-backed policy rule was not authorized: %#v", resources[0])
 	}
-	assertIssue256RecoveryGuidance(t, err.Error())
-}
-
-func TestIssue256ExactRouteRollbackKeepsRecoveryGuidance(t *testing.T) {
-	runtimeDir := t.TempDir()
-	route := txstate.RouteRollback{Table: planner.TunRoutingTable, CIDR: planner.IPv4DefaultRoute, Dev: netsnapshot.DefaultTunName, Owner: netexecutor.OwnerRoute}
-	writeIssue256ValidatedRouteTransaction(t, runtimeDir, "exact-route", route)
-	withIssue256ObservedRoute(t, "default dev podlaz0")
-
-	manager := &XrayManager{RuntimeDir: runtimeDir}
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil {
-		t.Fatal("expected exact route-backed stale preflight blocker")
-	}
-	assertIssue256RecoveryGuidance(t, err.Error())
-}
-
-func TestIssue256DifferentRouteRollbackDoesNotAuthorizeObservedRoute(t *testing.T) {
-	runtimeDir := t.TempDir()
-	route := txstate.RouteRollback{Table: planner.TunRoutingTable, CIDR: "198.51.100.0/24", Dev: netsnapshot.DefaultTunName, Owner: netexecutor.OwnerRoute}
-	writeIssue256ValidatedRouteTransaction(t, runtimeDir, "different-route", route)
-	withIssue256ObservedRoute(t, "default dev podlaz0")
-
-	manager := &XrayManager{RuntimeDir: runtimeDir}
-	_, err := manager.prepareTunHandoff(context.Background(), netsnapshot.FakeResolvedDesktop(), api.HandoffBlock, netsnapshot.Options{})
-	if err == nil {
-		t.Fatal("expected unmatched observed route to keep preflight fail-closed")
-	}
-	assertIssue256ManualRoutingGuidance(t, err.Error())
-}
-
-func TestIssue256InvalidTransactionDoesNotGrantRoutingRecoveryAuthority(t *testing.T) {
-	err := preflightTunOwnership(netsnapshot.Snapshot{StaleResources: []netsnapshot.StaleResource{
-		{Kind: "transaction-file", Name: "invalid-or-unreadable", Status: netsnapshot.StatusDetected},
-		{Kind: "route", Name: "51820", Status: netsnapshot.StatusDetected},
-		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected},
-	}}, "block")
-	if err == nil {
-		t.Fatal("expected invalid-transaction routing preflight blocker")
-	}
-	assertIssue256ManualRoutingGuidance(t, err.Error())
-}
-
-func withIssue256OrphanPolicyRules(t *testing.T) {
-	t.Helper()
-	original := podlazRuntimeRoutingStaleResources
-	podlazRuntimeRoutingStaleResources = func(context.Context) []netsnapshot.StaleResource {
-		return []netsnapshot.StaleResource{
-			{Kind: "policy-rule", Name: "9999", Status: netsnapshot.StatusDetected, Detail: "9999: from all to 203.0.113.10 lookup main"},
-			{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected, Detail: "10000: from all lookup 51820"},
-		}
-	}
-	t.Cleanup(func() { podlazRuntimeRoutingStaleResources = original })
-}
-
-func withIssue256ObservedRoute(t *testing.T, raw string) {
-	t.Helper()
-	original := podlazRuntimeRoutingStaleResources
-	podlazRuntimeRoutingStaleResources = func(context.Context) []netsnapshot.StaleResource {
-		return []netsnapshot.StaleResource{{Kind: "route", Name: netsnapshot.DefaultRouteTableID, Status: netsnapshot.StatusDetected, Detail: raw}}
-	}
-	t.Cleanup(func() { podlazRuntimeRoutingStaleResources = original })
-}
-
-func writeIssue256Transaction(t *testing.T, runtimeDir, id string, state txstate.TransactionState, rollback txstate.RollbackMetadata) {
-	t.Helper()
-	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
-	tx := txstate.NewTransaction(id, "test-profile", planner.ModeTun, now)
-	tx.State = state
-	tx.Rollback = rollback
-	if state == txstate.TransactionFailed {
-		tx.FailureReason = "synthetic safe failure"
-	}
-	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
-		t.Fatal(err)
+	if resources[1].RecoveryAuthorized {
+		t.Fatalf("unmatched historical policy rule was authorized: %#v", resources[1])
 	}
 }
 
-func writeIssue256ValidatedPolicyRuleTransaction(t *testing.T, runtimeDir, id string, rules []txstate.PolicyRuleRollback) {
-	t.Helper()
-	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
-	tx := txstate.NewTransaction(id, "test-profile", planner.ModeTun, now)
+func TestIssue256ExactRouteTransactionAuthorizesOnlyExactObservedTuple(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	tx := txstate.NewTransaction("exact-route", "test-profile", planner.ModeTun, now)
 	tx.State = txstate.TransactionFailed
 	tx.FailureReason = "synthetic safe failure"
-	tx.Rollback.PolicyRules = append([]txstate.PolicyRuleRollback(nil), rules...)
-	for _, rule := range rules {
-		target := issue256PolicyRuleTarget(rule)
-		tx.DesiredPlan.Steps = append(tx.DesiredPlan.Steps, txstate.PlannedStep{Kind: "policy-rule", Target: target, Owner: netexecutor.OwnerPolicyRule})
-		tx.AppliedSteps = append(tx.AppliedSteps, txstate.AppliedStep{Kind: "policy-rule", Target: target, Owner: netexecutor.OwnerPolicyRule, AppliedAt: now})
+	route := txstate.RouteRollback{
+		Table: planner.TunRoutingTable,
+		CIDR:  planner.IPv4DefaultRoute,
+		Dev:   netsnapshot.DefaultTunName,
+		Owner: netexecutor.OwnerRoute,
 	}
-	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func writeIssue256ValidatedRouteTransaction(t *testing.T, runtimeDir, id string, route txstate.RouteRollback) {
-	t.Helper()
-	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
-	tx := txstate.NewTransaction(id, "test-profile", planner.ModeTun, now)
-	tx.State = txstate.TransactionFailed
-	tx.FailureReason = "synthetic safe failure"
 	tx.Rollback.Routes = []txstate.RouteRollback{route}
-	tx.DesiredPlan.Routes = []txstate.RoutePlan{{Kind: "route", Table: route.Table, CIDR: route.CIDR, Via: route.Via, Dev: route.Dev, Owner: netexecutor.OwnerRoute, Operation: "add"}}
-	tx.AppliedSteps = []txstate.AppliedStep{{Kind: "route", Target: strings.TrimSpace(route.Table) + " " + strings.TrimSpace(route.CIDR), Owner: netexecutor.OwnerRoute, AppliedAt: now}}
-	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
-		t.Fatal(err)
+	tx.DesiredPlan.Routes = []txstate.RoutePlan{{
+		Kind: "route", Table: route.Table, CIDR: route.CIDR, Dev: route.Dev, Owner: netexecutor.OwnerRoute, Operation: "add",
+	}}
+	tx.AppliedSteps = []txstate.AppliedStep{{
+		Kind: "route", Target: strings.TrimSpace(route.Table) + " " + strings.TrimSpace(route.CIDR), Owner: netexecutor.OwnerRoute, AppliedAt: now,
+	}}
+
+	resources := []netsnapshot.StaleResource{
+		{Kind: "route", Name: "51820", Status: netsnapshot.StatusDetected, Detail: "default dev podlaz0 table 51820"},
+		{Kind: "route", Name: "51820", Status: netsnapshot.StatusDetected, Detail: "198.51.100.0/24 dev podlaz0 table 51820"},
+	}
+	markRoutingRecoveryAuthority(resources, []txstate.Transaction{tx})
+
+	if !resources[0].RecoveryAuthorized {
+		t.Fatalf("exact transaction-backed route was not authorized: %#v", resources[0])
+	}
+	if resources[1].RecoveryAuthorized {
+		t.Fatalf("different route in historical table was authorized: %#v", resources[1])
+	}
+}
+
+func TestIssue256HistoricalRoutingShapeDoesNotBlockNewCoexistenceSession(t *testing.T) {
+	s := netsnapshot.FakeResolvedDesktop()
+	s.PolicyRouting = []netsnapshot.PolicyRoutingSignal{
+		{Kind: "rule", Priority: "9999", Selector: "to 203.0.113.10", Table: "main", Raw: "9999: from all to 203.0.113.10 lookup main"},
+		{Kind: "rule", Priority: "10000", Selector: "from all", Table: "51820", Raw: "10000: from all lookup 51820"},
+	}
+	s.StaleResources = []netsnapshot.StaleResource{
+		{Kind: "policy-rule", Name: "9999", Status: netsnapshot.StatusDetected},
+		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected},
+	}
+
+	m := NewXrayManager(t.TempDir())
+	if _, err := m.prepareTunCoexistence(context.Background(), s, "block", netsnapshot.Options{}); err != nil {
+		t.Fatalf("historical routing shape without exact transaction state is baseline, not a connect blocker: %v", err)
 	}
 }
 
@@ -230,27 +145,4 @@ func issue256Int(value int) string {
 		value /= 10
 	}
 	return string(out[i:])
-}
-
-func assertIssue256ManualRoutingGuidance(t *testing.T, message string) {
-	t.Helper()
-	if strings.Contains(message, "recover --execute") {
-		t.Fatalf("routing without exact rollback ownership must not promise recovery: %s", message)
-	}
-	if !strings.Contains(message, "ownership evidence is unavailable") {
-		t.Fatalf("expected explicit ownership-evidence guidance, got: %s", message)
-	}
-	if !strings.Contains(message, "blocks TUN connect before network mutation") {
-		t.Fatalf("expected fail-closed preflight wording, got: %s", message)
-	}
-}
-
-func assertIssue256RecoveryGuidance(t *testing.T, message string) {
-	t.Helper()
-	if !strings.Contains(message, "plz recover --execute --yes") {
-		t.Fatalf("exact transaction-backed routing must retain authoritative recovery guidance: %s", message)
-	}
-	if strings.Contains(message, "ownership evidence is unavailable") || strings.Contains(message, "Remove them manually") {
-		t.Fatalf("exact transaction-backed routing must not be classified as orphan ownership: %s", message)
-	}
 }

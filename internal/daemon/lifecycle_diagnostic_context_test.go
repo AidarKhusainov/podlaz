@@ -40,6 +40,42 @@ func TestLifecycleDiagnosticContextProjectsExactExpectedCommittedTUNOwnership(t 
 	}
 }
 
+func TestLifecycleDiagnosticContextProjectsDynamicAllocatedTUNOwnership(t *testing.T) {
+	runtimeDir := t.TempDir()
+	tx := txstate.NewTransaction("tx-dynamic", "profile-test", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionCommitted
+	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
+		Family:            "ipv4",
+		InterfaceName:     "podlaz0",
+		CIDR:              "198.18.0.2/32",
+		Scope:             "global",
+		LinkIndex:         8,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             netexecutor.OwnerTunAddress,
+	}
+	tx.Rollback.TUNAddresses = []txstate.TUNAddressRollback{{
+		Family:            "ipv4",
+		InterfaceName:     "podlaz0",
+		CIDR:              "198.18.0.2/32",
+		Scope:             "global",
+		LinkIndex:         8,
+		LinkKind:          "tun",
+		AppearedAfterCore: true,
+		Owner:             netexecutor.OwnerTunAddress,
+	}}
+	tx.Rollback.NFTables = []txstate.NFTablesRollback{{Family: netsnapshot.DefaultNFTFamily, Table: netsnapshot.DefaultNFTTable, Owner: netexecutor.OwnerFirewall}}
+	setLifecycleDiagnosticNFTDesiredState(&tx)
+	if _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Save(tx); err != nil {
+		t.Fatal(err)
+	}
+
+	got := lifecycleDiagnosticContext(runtimeDir, xrayState{Connection: "active", Mode: planner.ModeTun, ProfileID: tx.ProfileID, TransactionID: tx.ID})
+	if got.Interface != doctor.ManagedResourceExpectedOwned || got.InterfaceLinkIndex != 8 || got.InterfaceLinkKind != "tun" {
+		t.Fatalf("dynamic transaction-bound TUN identity was not projected: %#v", got)
+	}
+}
+
 func TestLifecycleDiagnosticContextDoesNotAuthorizeNFTFromRollbackTupleAlone(t *testing.T) {
 	runtimeDir := t.TempDir()
 	tx := txstate.NewTransaction("tx-active", "profile-test", planner.ModeTun, time.Now().UTC())

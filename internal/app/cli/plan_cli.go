@@ -45,12 +45,15 @@ func runPlanCommand(ctx context.Context, args []string, stdout io.Writer, opts o
 	}
 	collect := opts.systemSnapshot
 	if collect == nil {
-		collect = netsnapshot.Collect
+		collect = func(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
+			return netsnapshot.EnsureTunAllocationEvidence(ctx, netsnapshot.Collect(ctx, opts))
+		}
 	}
-	plan, err := planner.PlanTun(p, collect(ctx, netsnapshot.Options{
+	snapshot := collect(ctx, netsnapshot.Options{
 		Server:   p.Server,
 		TunNames: []string{netsnapshot.DefaultTunName},
-	}))
+	})
+	plan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
 	if err != nil {
 		return usageError("%s", err.Error())
 	}

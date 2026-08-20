@@ -47,7 +47,7 @@ func TestConnectTunActiveReplaceBlockedPlanDoesNotDisconnect(t *testing.T) {
 	}
 }
 
-func TestConnectTunStopKnownBlockedPlanDoesNotCallNmcliDown(t *testing.T) {
+func TestConnectTunStopKnownBlockedPlanLeavesForeignBaselineUntouched(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		snapshot netsnapshot.Snapshot
@@ -66,16 +66,9 @@ func TestConnectTunStopKnownBlockedPlanDoesNotCallNmcliDown(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			installTunLifecyclePreflightTestHooks(t)
-			oldDown := nmcliConnectionDown
-			downCalls := 0
-			nmcliConnectionDown = func(context.Context, string) error {
-				downCalls++
-				return nil
-			}
-			t.Cleanup(func() { nmcliConnectionDown = oldDown })
-
+			runtimeDir := t.TempDir()
 			manager := &XrayManager{
-				RuntimeDir: t.TempDir(),
+				RuntimeDir: runtimeDir,
 				XrayPath:   writeFakeXray(t, lifecyclePreflightCoreScript()),
 				snapshotCollector: func(context.Context, netsnapshot.Options) netsnapshot.Snapshot {
 					return tt.snapshot
@@ -83,10 +76,11 @@ func TestConnectTunStopKnownBlockedPlanDoesNotCallNmcliDown(t *testing.T) {
 			}
 			_, err := manager.Connect(context.Background(), tunConnectRequestForLifecyclePreflight(api.HandoffStopKnown))
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected %q before stop-known handoff, got %v", tt.want, err)
+				t.Fatalf("expected %q before any TUN mutation, got %v", tt.want, err)
 			}
-			if downCalls != 0 {
-				t.Fatalf("blocked plan called nmcli down %d time(s)", downCalls)
+			summaries, warnings := txstate.ScanTransactions(runtimeDir)
+			if len(summaries) != 0 || len(warnings) != 0 {
+				t.Fatalf("blocked stop-known plan must not create transaction state: summaries=%#v warnings=%#v", summaries, warnings)
 			}
 		})
 	}

@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"fmt"
+	"net/netip"
 	"strings"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -181,7 +182,7 @@ func rawTUNAddressRollbackEntryValid(item txstate.TUNAddressRollback) bool {
 		strings.TrimSpace(item.InterfaceName) == managedInterface &&
 		strings.TrimSpace(item.Family) == "ipv4" &&
 		strings.TrimSpace(item.Scope) == "global" &&
-		strings.TrimSpace(item.CIDR) == planner.DefaultTunIPv4CIDR &&
+		planner.IsAllocatedTunIPv4CIDR(item.CIDR) &&
 		item.LinkIndex > 0 &&
 		strings.TrimSpace(item.LinkKind) == "tun" &&
 		item.AppearedAfterCore
@@ -192,9 +193,9 @@ func rawRouteRollbackEntryValid(item txstate.RouteRollback) bool {
 		return false
 	}
 	if strings.TrimSpace(item.Table) == planner.MainRoutingTable {
-		return safeMainServerBypassRoute(item)
+		return safeMainServerBypassRouteShape(item)
 	}
-	if _, ok := managedTableToken(item.Table); !ok {
+	if _, ok := managedTableToken(item.Table); !ok && !planner.IsAllocatedTunRoutingTable(item.Table) {
 		return false
 	}
 	dev := strings.TrimSpace(item.Dev)
@@ -202,14 +203,40 @@ func rawRouteRollbackEntryValid(item txstate.RouteRollback) bool {
 }
 
 func rawPolicyRuleRollbackEntryValid(item txstate.PolicyRuleRollback) bool {
-	if !ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) || item.Priority <= 0 || strings.TrimSpace(item.Table) == "" {
+	if !ownedRollbackMetadata(item.Owner, netexecutor.OwnerPolicyRule) || item.Priority <= 0 || item.Priority >= 32766 || strings.TrimSpace(item.Table) == "" {
 		return false
 	}
 	if strings.TrimSpace(item.Table) == planner.MainRoutingTable {
-		return safeMainServerBypassPolicyRule(item)
+		return safeMainServerBypassPolicyRuleShape(item)
 	}
-	_, ok := managedTableToken(item.Table)
-	return ok
+	if _, ok := managedTableToken(item.Table); ok {
+		return true
+	}
+	return planner.IsAllocatedTunRoutingTable(item.Table)
+}
+
+func safeMainServerBypassPolicyRuleShape(rule txstate.PolicyRuleRollback) bool {
+	if strings.TrimSpace(rule.Table) != planner.MainRoutingTable || strings.TrimSpace(rule.From) != "" || strings.TrimSpace(rule.Mark) != "" {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.To))
+	return err == nil && prefix.Addr().Is4() && prefix.Bits() == 32
+}
+
+func safeMainServerBypassRouteShape(route txstate.RouteRollback) bool {
+	if strings.TrimSpace(route.Table) != planner.MainRoutingTable || strings.TrimSpace(route.Dev) == "" {
+		return false
+	}
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(route.CIDR))
+	if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+		return false
+	}
+	via := strings.TrimSpace(route.Via)
+	if via == "" {
+		return true
+	}
+	gateway, err := netip.ParseAddr(via)
+	return err == nil && gateway.Is4()
 }
 
 func rawDNSRollbackEntryValid(item txstate.DNSRollback) bool {

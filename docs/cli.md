@@ -277,14 +277,19 @@ networking. Grouped `xray-json` profiles support `proxy-only` planning only;
 `plan --mode tun` fails before collecting a host networking snapshot.
 
 `plan --mode tun` prints a compact human summary by default: profile status,
-the deterministic daemon-owned TUN IPv4 address, planned high-level changes,
-blockers, warnings, safety notes, and next-step guidance. The Linux policy uses
-`198.18.0.1/32`; it is fixed rather than random and is never silently replaced
-with another candidate. It intentionally hides raw nftables rules, rollback keys, ownership
-labels, and long command stderr in default human output. Use `--verbose` or `-v`
-for the detailed TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump.
-`--plain` replaces Unicode status markers with ASCII status words. `--json`
-preserves the existing automation schema and is not affected by `--verbose`.
+the collision-free daemon-owned TUN IPv4 address selected from the current
+read-only host snapshot, planned high-level changes, blockers, warnings, safety
+notes, and next-step guidance. The historical `198.18.0.1/32` address, routing
+table `51820`, and priorities `9999`/`10000` are preferred candidates only. If a
+candidate is already occupied by unrelated host state, planning selects another
+verified-free session identity. If authoritative allocation evidence is
+incomplete or the bounded candidate space has no safe allocation, planning fails
+closed and renders no misleading applicable plan. It intentionally hides raw
+nftables rules, rollback keys, ownership labels, and long command stderr in
+default human output. Use `--verbose` or `-v` for the detailed
+TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump. `--plain` replaces
+Unicode status markers with ASCII status words. `--json` preserves the existing
+automation schema and is not affected by `--verbose`.
 
 ```bash
 podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
@@ -294,33 +299,38 @@ podlaz disconnect
 Requires daemon access. `connect` defaults to `proxy-only`. Proxy-only must not
 mutate host networking. TUN mode is daemon-owned and transaction-backed. Xray
 owns `podlaz0` creation, lifetime, and packet ingestion through its native
-`tun` inbound. podlazd owns the exact OS address `198.18.0.1/32` on the verified
-Xray-created link and rolls back that address, the surrounding routes, policy
-rules, DNS, nftables, generated config metadata, and child process metadata. Before handoff or host changes,
+`tun` inbound. Before the first host-network mutation, podlazd selects a
+collision-free Network Session allocation from the authoritative host baseline
+and persists the exact TUN IPv4 `/32`, routing table, and policy priorities in
+transaction desired state. It then rolls back only exact resources that acquire
+durable applied/rollback ownership evidence. Before handoff or host changes,
 `connect --mode tun` checks that the packaged Xray helper accepts a minimal
 pinned-schema native TUN config. The profile-generated Xray runtime config is
 written later after the TUN transaction starts.
 
-For non-interactive TUN connects, the daemon automatically recovers only
-unambiguous podlaz-owned stale TUN, route, policy-rule, nftables, and transaction
-state, recollects the host snapshot, and proceeds only when that owned state is
-clean. Stale podlaz `systemd-resolved` link state is refreshed on `podlaz0`
-before per-link DNS is applied. Before transaction mutation, the daemon checks
-all assigned IPv4 addresses, all routing tables, and any existing `podlaz0`
-state for overlap with `198.18.0.1/32`. Foreign or ambiguous overlap fails with
-`tun_address_conflict`; there is no random fallback. Foreign VPN interfaces,
-foreign route-only DNS owners, ambiguous resources, and incomplete recovery
-remain blockers.
+For non-interactive TUN connects, the daemon automatically recovers only exact
+durable podlaz transaction state that requires cleanup, then recollects the host
+snapshot and allocates the new session independently around unrelated host
+networking. Foreign TUN devices, policy routing, route-only DNS owners,
+NetworkManager VPN connections, and unrelated firewall state are baseline rather
+than blockers merely because they exist. The daemon does not stop or rewrite
+such foreign state to make the host look clean. A connect is blocked only when
+recovery remains incomplete, authoritative allocation evidence is insufficient,
+the bounded candidate space is exhausted, or a concrete safe server bootstrap /
+data-plane plan cannot be built without colliding with or mutating unowned state.
+If a foreign object races into an already selected session identity before apply,
+apply fails instead of adopting that object as Podlaz-owned.
 
-`connect --mode tun` supports explicit handoff policies. The default `block`
-policy never stops a foreign VPN or removes ambiguous state; podlaz-owned
-self-recovery described above is still allowed. `ask` is rejected in
-daemon/non-interactive connect paths and performs no recovery or handoff
-mutation. `stop-known` may additionally stop manageable NetworkManager VPN
-connections and then rechecks host ownership. `replace-podlaz` may additionally
-disconnect an active podlaz TUN session before starting the new transaction.
-Unsupported handoff values fail before network mutation. `disconnect` is safe
-to repeat. `connect --json` and `disconnect --json` are deferred.
+`connect --mode tun` accepts explicit handoff policies. The default `block`
+policy still permits exact Podlaz self-recovery described above but never stops a
+foreign VPN or removes ambiguous state. `ask` is rejected in daemon/non-interactive
+connect paths and performs no recovery or handoff mutation. `stop-known` remains
+accepted for CLI compatibility but does not broaden new-session authority to stop
+foreign NetworkManager VPN connections; coexistence allocation treats them as
+baseline. `replace-podlaz` may disconnect the exact active Podlaz TUN session
+before starting a new allocation. Unsupported handoff values fail before network
+mutation. `disconnect` is safe to repeat. `connect --json` and `disconnect --json`
+are deferred.
 
 For failures during `network-apply`, `network-verify`, later connect-time
 connectivity verification, or a proved post-commit revalidation failure/deadline,
