@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
 func TestFullTunnelRunnerPublishesOnlyAfterEnvelopeAndPostArmConnectivityVerification(t *testing.T) {
@@ -29,7 +30,7 @@ func TestFullTunnelRunnerPublishesOnlyAfterEnvelopeAndPostArmConnectivityVerific
 		return nil
 	}
 	originalCommit := runner.commitActiveState
-	runner.commitActiveState = func(store transactionStoreForRunner, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
+	runner.commitActiveState = func(store txstate.TransactionStore, transactionID string, core fullTunnelCoreHandle, active xrayState) error {
 		events = append(events, "commit")
 		return originalCommit(store, transactionID, core, active)
 	}
@@ -112,18 +113,17 @@ func TestFullTunnelRunnerEnvelopeVerificationFailureCleansAfterDataPlaneRollback
 	var events []string
 	h.onRollback = func() { events = append(events, "data-plane-rollback") }
 	runner := h.runner()
+	envelopeVerifyErr := errors.New("envelope verify failed")
 	runner.armPrivacyEnvelope = func(context.Context, planner.TunPlan) error { return nil }
-	runner.verifyPrivacyEnvelope = func(context.Context) error { return errors.New("envelope verify failed") }
+	runner.verifyPrivacyEnvelope = func(context.Context) error { return envelopeVerifyErr }
 	runner.cleanupPrivacyEnvelope = func(context.Context) error {
 		events = append(events, "envelope-cleanup")
 		return nil
 	}
 
 	_, err := runner.run(context.Background())
-	if err == nil || !errors.Is(err, errors.New("envelope verify failed")) {
-		if err == nil || err.Error() == "" {
-			t.Fatalf("expected envelope verification failure, got %v", err)
-		}
+	if !errors.Is(err, envelopeVerifyErr) {
+		t.Fatalf("expected envelope verification failure, got %v", err)
 	}
 	want := []string{"data-plane-rollback", "envelope-cleanup"}
 	if !reflect.DeepEqual(events, want) {
