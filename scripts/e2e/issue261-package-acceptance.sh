@@ -218,7 +218,7 @@ EOF
   sudo -n systemctl daemon-reload
 }
 
-install_terminal_pause_override() {
+install_terminal_failure_override() {
   sudo -n mkdir -p "${OVERRIDE_DIR}"
   sudo -n rm -rf -- "${HOOK_DIR}"
   sudo -n mkdir -m 0700 "${HOOK_DIR}"
@@ -227,6 +227,8 @@ install_terminal_pause_override() {
 Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE=true
 Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_DIR=${HOOK_DIR}
 Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_TIMEOUT_SECONDS=120
+Environment=PODLAZ_E2E_TUN_TERMINAL_FAILURE=true
+Environment=PODLAZ_E2E_TUN_TERMINAL_FAILURE_DIR=${HOOK_DIR}
 EOF
   sudo -n systemctl daemon-reload
   sudo -n systemctl restart podlazd.service
@@ -285,7 +287,7 @@ assert_foreign_collision_guard
 prepare_direct_probe
 
 install_restart_delay_override
-systemctl kill --kill-who=main -s KILL podlazd.service
+sudo -n systemctl kill --kill-who=main -s KILL podlazd.service
 assert_privacy_envelope_present
 assert_direct_uplink_blocked
 assert_foreign_collision_guard
@@ -294,23 +296,16 @@ remove_override
 load_envelope_identity
 assert_privacy_envelope_present
 
-install_terminal_pause_override
+install_terminal_failure_override
 load_envelope_identity
 prepare_direct_probe
-disconnect_log="$(mktemp "${E2E_TMP_ROOT}/issue261-disconnect.XXXXXX")"
-run_installed_podlaz disconnect >"${disconnect_log}" 2>&1 &
-disconnect_pid=$!
+sudo -n touch "${HOOK_DIR}/terminal-failure.trigger"
+write_evidence terminal_failure_triggered
 wait_for_marker "${HOOK_DIR}/terminal-data-plane-clean.ready"
 assert_privacy_envelope_present
 assert_direct_uplink_blocked
 assert_foreign_collision_guard
 sudo -n touch "${HOOK_DIR}/terminal-data-plane-clean.continue"
-set +e
-wait "${disconnect_pid}"
-disconnect_code=$?
-set -e
-rm -f -- "${disconnect_log}"
-[[ "${disconnect_code}" == "0" ]] || fail "terminal disconnect failed with exit ${disconnect_code}"
 CONNECTED=false
 wait_for_inactive terminal_disconnected
 if sudo -n test -e "${CONTINUATION_PATH}"; then
