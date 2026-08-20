@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 type networkSessionLifecycle struct {
@@ -54,6 +56,61 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		}
 	}
 	return response, connectErr
+}
+
+// ReconcileProtectedTun is the unwrapped automatic-repair entry point used only
+// after the lifecycle operation lock has admitted and already owns the automatic
+// mutation token. It does not acquire lifecycle serialization itself.
+//
+// The method first rechecks the durable Network Session identity and protection
+// authority, then turns the current request into a one-shot replace-podlaz
+// transition. Connect persists the exact previous request/protection as
+// replacement rollback authority before the inner lifecycle is allowed to
+// mutate the data plane.
+func (l *networkSessionLifecycle) ReconcileProtectedTun(ctx context.Context, expectedSessionID string) error {
+	if l == nil || l.lifecycle == nil {
+		return errors.New("protected TUN reconciliation requires a lifecycle service")
+	}
+	expectedSessionID = strings.TrimSpace(expectedSessionID)
+	if expectedSessionID == "" {
+		return errors.New("protected TUN reconciliation requires a Network Session identity")
+	}
+
+	l.continuationMu.Lock()
+	if l.explicitStop {
+		l.continuationMu.Unlock()
+		return errLifecycleShuttingDown
+	}
+	state, exists, err := l.continuation.stateStore().Load()
+	if err != nil {
+		l.continuationMu.Unlock()
+		return fmt.Errorf("load Network Session before protected TUN reconciliation: %w", err)
+	}
+	if !exists || state.SessionID != expectedSessionID {
+		l.continuationMu.Unlock()
+		return errors.New("protected TUN reconciliation was superseded by another Network Session")
+	}
+	if state.Intent != networkSessionIntentResume {
+		l.continuationMu.Unlock()
+		return fmt.Errorf("protected TUN reconciliation cancelled by intent %q", state.Intent)
+	}
+	if state.Request.Mode != planner.ModeTun || state.Protection == nil {
+		l.continuationMu.Unlock()
+		return errors.New("protected TUN reconciliation requires a protected TUN Network Session")
+	}
+	if state.Replacement != nil {
+		l.continuationMu.Unlock()
+		return errors.New("protected TUN reconciliation replacement is already in progress")
+	}
+	request := state.Request
+	request.Handoff = api.HandoffReplacePodlaz
+	l.continuationMu.Unlock()
+
+	_, err = l.Connect(ctx, request)
+	if err != nil {
+		return fmt.Errorf("reconcile protected TUN Network Session: %w", err)
+	}
+	return nil
 }
 
 func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.ConnectRequest, exists bool) error {
