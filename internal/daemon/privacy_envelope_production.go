@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -24,6 +25,15 @@ func configurePrivacyEnvelopeWithExecutor(runtimeDir string, runner *fullTunnelT
 	runner.requirePrivacyEnvelope = true
 	runner.armPrivacyEnvelope = lifecycle.Arm
 	runner.verifyPrivacyEnvelope = lifecycle.Verify
-	runner.cleanupPrivacyEnvelope = lifecycle.RemoveAfterDataPlaneCleanup
+	runner.cleanupPrivacyEnvelope = func(ctx context.Context) error {
+		state, exists, err := lifecycle.store.Load()
+		if err != nil {
+			return err
+		}
+		if exists && state.Replacement != nil {
+			return lifecycle.CleanupAfterFailedDataPlane(ctx)
+		}
+		return lifecycle.RemoveAfterDataPlaneCleanup(ctx)
+	}
 	return nil
 }
