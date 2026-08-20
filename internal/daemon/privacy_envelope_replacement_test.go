@@ -3,15 +3,17 @@ package daemon
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 func TestPrivacyEnvelopePrepareReplacementAddsNewEndpointBeforeDataPlaneReplacement(t *testing.T) {
 	store, replacementPlan := seededPrivacyReplacementState(t)
-	executor := &privacyEnvelopeReplacementExecutorStub{exists: true}
+	executor := newPrivacyEnvelopeReplacementExecutorStub()
 	lifecycle := privacyEnvelopeLifecycle{store: store, executor: executor}
 
 	if err := lifecycle.PrepareReplacement(context.Background(), replacementPlan); err != nil {
@@ -21,11 +23,11 @@ func TestPrivacyEnvelopePrepareReplacementAddsNewEndpointBeforeDataPlaneReplacem
 		t.Fatalf("expected one atomic envelope replacement, got %d", len(executor.replacements))
 	}
 	got := executor.replacements[0]
-	if !reflect.DeepEqual(got.from.BootstrapIPv4, []string{"192.0.2.10"}) {
-		t.Fatalf("replacement source endpoints = %#v", got.from.BootstrapIPv4)
+	if !reflect.DeepEqual(privacyEnvelopeBootstrapRules(got.from), []string{"192.0.2.10"}) {
+		t.Fatalf("replacement source endpoints = %#v", privacyEnvelopeBootstrapRules(got.from))
 	}
-	if !reflect.DeepEqual(got.to.BootstrapIPv4, []string{"192.0.2.10", "192.0.2.20"}) {
-		t.Fatalf("replacement union endpoints = %#v", got.to.BootstrapIPv4)
+	if !reflect.DeepEqual(privacyEnvelopeBootstrapRules(got.to), []string{"192.0.2.10", "192.0.2.20"}) {
+		t.Fatalf("replacement union endpoints = %#v", privacyEnvelopeBootstrapRules(got.to))
 	}
 	state, _, err := store.Load()
 	if err != nil {
@@ -47,7 +49,7 @@ func TestPrivacyEnvelopePrepareReplacementAddsNewEndpointBeforeDataPlaneReplacem
 
 func TestPrivacyEnvelopeArmNarrowsPreparedReplacementAfterNewDataPlaneProof(t *testing.T) {
 	store, replacementPlan := seededPrivacyReplacementState(t)
-	executor := &privacyEnvelopeReplacementExecutorStub{exists: true}
+	executor := newPrivacyEnvelopeReplacementExecutorStub()
 	lifecycle := privacyEnvelopeLifecycle{store: store, executor: executor}
 	if err := lifecycle.PrepareReplacement(context.Background(), replacementPlan); err != nil {
 		t.Fatal(err)
@@ -81,7 +83,7 @@ func TestPrivacyEnvelopeArmNarrowsPreparedReplacementAfterNewDataPlaneProof(t *t
 
 func TestPrivacyEnvelopeFailedReplacementRestoresPreviousBarrierAndSessionRequest(t *testing.T) {
 	store, replacementPlan := seededPrivacyReplacementState(t)
-	executor := &privacyEnvelopeReplacementExecutorStub{exists: true}
+	executor := newPrivacyEnvelopeReplacementExecutorStub()
 	lifecycle := privacyEnvelopeLifecycle{store: store, executor: executor}
 	if err := lifecycle.PrepareReplacement(context.Background(), replacementPlan); err != nil {
 		t.Fatal(err)
@@ -110,12 +112,12 @@ func TestPrivacyEnvelopeFailedReplacementRestoresPreviousBarrierAndSessionReques
 		t.Fatalf("previous barrier not restored: %#v", state.Protection)
 	}
 	last := executor.replacements[len(executor.replacements)-1]
-	if !reflect.DeepEqual(last.to.BootstrapIPv4, []string{"192.0.2.10"}) {
-		t.Fatalf("rollback replacement target = %#v", last.to.BootstrapIPv4)
+	if !reflect.DeepEqual(privacyEnvelopeBootstrapRules(last.to), []string{"192.0.2.10"}) {
+		t.Fatalf("rollback replacement target = %#v", privacyEnvelopeBootstrapRules(last.to))
 	}
 }
 
-func seededPrivacyReplacementState(t *testing.T) (networkSessionStateStore, plannerTunPlanAlias) {
+func seededPrivacyReplacementState(t *testing.T) (networkSessionStateStore, planner.TunPlan) {
 	t.Helper()
 	store := newNetworkSessionStateStore(t.TempDir(), fixedBootID("boot-a"))
 	original := testContinuationRequest()
@@ -141,19 +143,35 @@ func seededPrivacyReplacementState(t *testing.T) (networkSessionStateStore, plan
 	return store, plan
 }
 
-// Alias keeps the test signature concise while still exercising the production
-// planner.TunPlan value returned by privacyLifecycleTunPlanForTest.
-type plannerTunPlanAlias = struct {
+func privacyEnvelopeBootstrapRules(plan netexecutor.PrivacyEnvelopePlan) []string {
+	var endpoints []string
+	for _, rule := range plan.Rules {
+		const prefix = "ip daddr "
+		if strings.HasPrefix(rule.Expr, prefix) {
+			endpoints = append(endpoints, strings.TrimPrefix(rule.Expr, prefix))
+		}
+	}
+	return endpoints
 }
 
-// privacyEnvelopeReplacementExecutorStub is completed by the production GREEN
-// step; the RED contract intentionally requires an atomic Replace operation.
 type privacyEnvelopeReplacementExecutorStub struct {
-	exists       bool
+	privacyEnvelopeExecutorStub
 	replacements []privacyEnvelopeReplacementCall
 }
 
 type privacyEnvelopeReplacementCall struct {
 	from netexecutor.PrivacyEnvelopePlan
 	to   netexecutor.PrivacyEnvelopePlan
+}
+
+func newPrivacyEnvelopeReplacementExecutorStub() *privacyEnvelopeReplacementExecutorStub {
+	return &privacyEnvelopeReplacementExecutorStub{
+		privacyEnvelopeExecutorStub: privacyEnvelopeExecutorStub{exists: true},
+	}
+}
+
+func (e *privacyEnvelopeReplacementExecutorStub) Replace(_ context.Context, from, to netexecutor.PrivacyEnvelopePlan) error {
+	e.replacements = append(e.replacements, privacyEnvelopeReplacementCall{from: from, to: to})
+	e.exists = true
+	return nil
 }
