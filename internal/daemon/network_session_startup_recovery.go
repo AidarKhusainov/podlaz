@@ -9,6 +9,18 @@ import (
 )
 
 func recoverExactNetworkSessionTransactions(ctx context.Context, runtimeDir string) api.RecoveryResponse {
+	// Privacy recovery is the first startup mutation stage. A protected Network
+	// Session must have its exact envelope present and verified before any old
+	// data-plane transaction can be rolled back.
+	if err := reconcileProductionNetworkSessionProtection(ctx, newNetworkSessionStateStore(runtimeDir, nil)); err != nil {
+		return api.RecoveryResponse{
+			Mode: "execute",
+			Warnings: []api.RecoveryWarning{{
+				Target:  "network-session privacy protection",
+				Message: "exact privacy protection reconciliation failed; data-plane recovery was not started",
+			}},
+		}
+	}
 	return recoverExactNetworkSessionTransactionsWithOptions(ctx, runtimeDir, recovery.Options{})
 }
 
