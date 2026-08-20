@@ -9,17 +9,16 @@ import (
 
 func TestReconcileNetworkSessionProtectionStateMatrix(t *testing.T) {
 	tests := []struct {
-		name          string
-		state         networkSessionProtectionState
-		tableExists   bool
-		wantEvents    []string
-		wantFinal     networkSessionProtectionState
-		wantApplyCall bool
+		name        string
+		state       networkSessionProtectionState
+		tableExists bool
+		wantEvents  []string
+		wantFinal   networkSessionProtectionState
 	}{
-		{name: "arming missing recreates then verifies", state: networkSessionProtectionArming, tableExists: false, wantEvents: []string{"exists", "apply", "verify"}, wantFinal: networkSessionProtectionArmed, wantApplyCall: true},
+		{name: "arming missing recreates then verifies", state: networkSessionProtectionArming, tableExists: false, wantEvents: []string{"exists", "apply", "verify"}, wantFinal: networkSessionProtectionArmed},
 		{name: "arming present verifies then marks armed", state: networkSessionProtectionArming, tableExists: true, wantEvents: []string{"exists", "verify"}, wantFinal: networkSessionProtectionArmed},
 		{name: "armed present verifies idempotently", state: networkSessionProtectionArmed, tableExists: true, wantEvents: []string{"exists", "verify"}, wantFinal: networkSessionProtectionArmed},
-		{name: "armed missing recreates exact composition", state: networkSessionProtectionArmed, tableExists: false, wantEvents: []string{"exists", "apply", "verify"}, wantFinal: networkSessionProtectionArmed, wantApplyCall: true},
+		{name: "armed missing recreates exact composition", state: networkSessionProtectionArmed, tableExists: false, wantEvents: []string{"exists", "apply", "verify"}, wantFinal: networkSessionProtectionArmed},
 	}
 
 	for _, tt := range tests {
@@ -35,7 +34,6 @@ func TestReconcileNetworkSessionProtectionStateMatrix(t *testing.T) {
 				t.Fatalf("persist protection: %v", err)
 			}
 			executor := &privacyEnvelopeExecutorStub{exists: tt.tableExists}
-			executor.onApply = func(netexecutor.PrivacyEnvelopePlan) { executor.exists = true }
 
 			state, protected, err := reconcileNetworkSessionProtection(context.Background(), store, executor)
 			if err != nil {
@@ -67,11 +65,11 @@ func TestReconcileNetworkSessionProtectionFailsClosedOnUnexpectedLiveComposition
 	if err == nil || !protected {
 		t.Fatalf("expected fail-closed reconciliation, protected=%v err=%v", protected, err)
 	}
-	if executor.removeCalls != 0 || reflect.DeepEqual(executor.events, []string{"exists", "verify", "apply"}) {
-		t.Fatalf("ambiguous live table must not be overwritten or removed: %#v", executor.events)
+	if executor.removeCalls != 0 {
+		t.Fatalf("ambiguous live table must not be removed: calls=%d", executor.removeCalls)
 	}
 	if !reflect.DeepEqual(executor.events, []string{"exists", "verify"}) {
-		t.Fatalf("unexpected fail-closed events: %#v", executor.events)
+		t.Fatalf("ambiguous live table must not be overwritten: %#v", executor.events)
 	}
 	state, exists, loadErr := store.Load()
 	if loadErr != nil || !exists || state.Protection == nil {
