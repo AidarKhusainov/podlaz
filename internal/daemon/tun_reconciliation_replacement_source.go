@@ -52,17 +52,36 @@ func loadProtectedTunReplacementSource(
 	if err := validateNetworkSessionProtection(*sessionState.Protection); err != nil {
 		return protectedTunReplacementSource{}, fmt.Errorf("validate protected replacement Privacy Envelope: %w", err)
 	}
-	if sessionState.Protection.State != networkSessionProtectionArmed {
-		return protectedTunReplacementSource{}, fmt.Errorf("protected replacement source Privacy Envelope state is %q, want %q", sessionState.Protection.State, networkSessionProtectionArmed)
+
+	sourceRequest := sessionState.Request
+	sourceProtection := sessionState.Protection
+	if sessionState.Replacement != nil {
+		sourceRequest = sessionState.Replacement.PreviousRequest
+		sourceProtection = sessionState.Replacement.PreviousProtection
+		if sourceProtection == nil {
+			return protectedTunReplacementSource{}, errors.New("protected replacement transition has no previous Privacy Envelope authority")
+		}
+		if !samePrivacyEnvelopeIdentity(*sessionState.Protection, *sourceProtection) {
+			return protectedTunReplacementSource{}, errors.New("protected replacement source Privacy Envelope identity changed")
+		}
+	}
+	if sourceRequest.Mode != planner.ModeTun {
+		return protectedTunReplacementSource{}, errors.New("protected replacement source request is not TUN mode")
+	}
+	if err := validateNetworkSessionProtection(*sourceProtection); err != nil {
+		return protectedTunReplacementSource{}, fmt.Errorf("validate protected replacement source Privacy Envelope: %w", err)
+	}
+	if sourceProtection.State != networkSessionProtectionArmed {
+		return protectedTunReplacementSource{}, fmt.Errorf("protected replacement source Privacy Envelope state is %q, want %q", sourceProtection.State, networkSessionProtectionArmed)
 	}
 
 	transactionID := strings.TrimSpace(managerState.TransactionID)
 	if managerState.Mode != planner.ModeTun || transactionID == "" {
 		return protectedTunReplacementSource{}, errors.New("protected replacement source has no exact TUN transaction identity")
 	}
-	profileID := strings.TrimSpace(sessionState.Request.Profile.ID)
+	profileID := strings.TrimSpace(sourceRequest.Profile.ID)
 	if profileID == "" || strings.TrimSpace(managerState.ProfileID) != profileID {
-		return protectedTunReplacementSource{}, errors.New("protected replacement manager profile does not match Network Session request")
+		return protectedTunReplacementSource{}, errors.New("protected replacement manager profile does not match source Network Session request")
 	}
 
 	tx, _, err := (txstate.TransactionStore{RuntimeDir: runtimeDir}).Load(transactionID)
@@ -70,7 +89,7 @@ func loadProtectedTunReplacementSource(
 		return protectedTunReplacementSource{}, fmt.Errorf("load protected replacement transaction %s: %w", transactionID, err)
 	}
 	if tx.Owner != txstate.TransactionOwner || tx.ID != transactionID || tx.Mode != planner.ModeTun || tx.ProfileID != profileID {
-		return protectedTunReplacementSource{}, errors.New("protected replacement transaction identity does not match Network Session")
+		return protectedTunReplacementSource{}, errors.New("protected replacement transaction identity does not match source Network Session")
 	}
 	if !tx.RequiresRecovery() {
 		return protectedTunReplacementSource{}, fmt.Errorf("protected replacement transaction state %q has no recovery authority", tx.State)
@@ -83,8 +102,8 @@ func loadProtectedTunReplacementSource(
 	}
 	if tx.DesiredPlan.TUN.Owner != xrayTunInboundOwner ||
 		strings.TrimSpace(tx.DesiredPlan.TUN.InterfaceName) == "" ||
-		tx.DesiredPlan.TUN.InterfaceName != sessionState.Protection.TunInterface {
-		return protectedTunReplacementSource{}, errors.New("protected replacement TUN identity does not match Privacy Envelope")
+		tx.DesiredPlan.TUN.InterfaceName != sourceProtection.TunInterface {
+		return protectedTunReplacementSource{}, errors.New("protected replacement TUN identity does not match source Privacy Envelope")
 	}
 
 	kind, err := classifyProtectedTunReplacementSource(managerState, process, tx)
@@ -94,8 +113,8 @@ func loadProtectedTunReplacementSource(
 	return protectedTunReplacementSource{
 		Kind:        kind,
 		SessionID:   sessionState.SessionID,
-		Request:     sessionState.Request,
-		Protection:  cloneNetworkSessionProtection(*sessionState.Protection),
+		Request:     sourceRequest,
+		Protection:  cloneNetworkSessionProtection(*sourceProtection),
 		Transaction: tx,
 	}, nil
 }
