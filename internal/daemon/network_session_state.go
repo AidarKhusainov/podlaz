@@ -64,7 +64,7 @@ type networkSessionStateStore struct {
 }
 
 var (
-	networkSessionIDPattern       = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	networkSessionIDPattern      = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	privacyEnvelopeTablePattern  = regexp.MustCompile(`^podlaz_pe_[0-9a-f]{12}(?:_[1-9][0-9]{0,2})?$`)
 	networkSessionInterfaceRegex = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 )
