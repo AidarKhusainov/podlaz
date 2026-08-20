@@ -92,7 +92,7 @@ func (s *tunReconciliationSupervisor) RunRound(round tunReconciliationRound) tun
 		return s.retryOrBoundedTerminal(round, api.TunHealthNetworkConverging, false)
 	}
 	if round.NeedsReconcile || round.Evidence.mandatoryViolated() {
-		return s.automaticDecision(round, tunDecisionReconcile, api.TunHealthOwnedStateReconciling)
+		return s.reconcileOrBoundedTerminal(round)
 	}
 	if sufficientIndependentPositiveEvidence(round.Evidence.Probes) {
 		s.clearCycle(round.NetworkSessionID)
@@ -103,9 +103,36 @@ func (s *tunReconciliationSupervisor) RunRound(round tunReconciliationRound) tun
 	return s.retryOrBoundedTerminal(round, api.TunHealthConnectivityFailed, persistentExternalFailure)
 }
 
+func (s *tunReconciliationSupervisor) reconcileOrBoundedTerminal(round tunReconciliationRound) tunReconciliationDecision {
+	if s.advanceCycle(round) {
+		s.clearCycle(round.NetworkSessionID)
+		return s.automaticDecision(round, tunDecisionTerminal, terminalClassification(round))
+	}
+	return s.automaticDecision(round, tunDecisionReconcile, api.TunHealthOwnedStateReconciling)
+}
+
 func (s *tunReconciliationSupervisor) retryOrBoundedTerminal(round tunReconciliationRound, classification api.TunHealthClassification, terminalEligible bool) tunReconciliationDecision {
+	if s.advanceCycle(round) {
+		s.clearCycle(round.NetworkSessionID)
+		if terminalEligible {
+			return s.automaticDecision(round, tunDecisionTerminal, terminalClassification(round))
+		}
+		// Incomplete or single-signal evidence must never gain cleanup authority.
+		// Stop automatic retrying at the bounded boundary and wait for a real
+		// external event to provide fresh evidence.
+		return tunReconciliationDecision{Kind: tunDecisionAwaitEvidence, Classification: classification}
+	}
+	return tunReconciliationDecision{
+		Kind:           tunDecisionRetry,
+		Classification: classification,
+		RetryAfter:     defaultTunReconciliationRetry,
+	}
+}
+
+func (s *tunReconciliationSupervisor) advanceCycle(round tunReconciliationRound) bool {
 	now := s.now()
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	cycle := s.cycles[round.NetworkSessionID]
 	if cycle == nil {
 		cycle = &tunReconciliationCycle{deadline: now.Add(s.deadline)}
@@ -121,18 +148,7 @@ func (s *tunReconciliationSupervisor) retryOrBoundedTerminal(round tunReconcilia
 	}
 	cycle.progressKey = progressKey
 	cycle.hasProgressKey = true
-	boundaryReached := !now.Before(cycle.deadline) || cycle.noProgressCount >= s.maxNoProgressRounds
-	if boundaryReached && terminalEligible {
-		delete(s.cycles, round.NetworkSessionID)
-		s.mu.Unlock()
-		return s.automaticDecision(round, tunDecisionTerminal, terminalClassification(round))
-	}
-	s.mu.Unlock()
-	return tunReconciliationDecision{
-		Kind:           tunDecisionRetry,
-		Classification: classification,
-		RetryAfter:     defaultTunReconciliationRetry,
-	}
+	return !now.Before(cycle.deadline) || cycle.noProgressCount >= s.maxNoProgressRounds
 }
 
 func (s *tunReconciliationSupervisor) automaticDecision(round tunReconciliationRound, kind tunReconciliationDecisionKind, classification api.TunHealthClassification) tunReconciliationDecision {
