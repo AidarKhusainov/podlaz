@@ -22,6 +22,8 @@ const (
 	ServiceManual  = "manual"
 	ServiceSystemd = "systemd"
 
+	ConnectionCoreExited = "error (core exited)"
+
 	StartupScanStatusClean           = "clean"
 	StartupScanStatusStale           = "stale"
 	StartupScanStatusIncomplete      = "incomplete"
@@ -46,15 +48,10 @@ type StatusResponse struct {
 	Firewall            string              `json:"firewall,omitempty"`
 	Transactions        []TransactionStatus `json:"transactions,omitempty"`
 	StartupScan         *StartupScanStatus  `json:"startup_scan,omitempty"`
-	// Warnings is retained as the runtime/lifecycle warning transport for
-	// compatibility. Inspection failures use InspectionWarnings so clients do
-	// not have to infer semantics from warning text.
-	Warnings           []string          `json:"warnings,omitempty"`
-	InspectionWarnings []RecoveryWarning `json:"inspection_warnings,omitempty"`
+	Warnings           []string             `json:"warnings,omitempty"`
+	InspectionWarnings []RecoveryWarning    `json:"inspection_warnings,omitempty"`
 }
 
-// TransactionStatus is the daemon API's redacted transaction summary. It
-// exposes facts only; human-readable status text is rendered by clients.
 type TransactionStatus struct {
 	ID                string `json:"id"`
 	State             string `json:"state"`
@@ -63,8 +60,6 @@ type TransactionStatus struct {
 	Path              string `json:"path"`
 }
 
-// StartupScanStatus is the daemon API's redacted startup recovery scan summary.
-// It is captured once during daemon startup and is not an execution result.
 type StartupScanStatus struct {
 	Status          string              `json:"status"`
 	Candidates      []RecoveryCandidate `json:"candidates,omitempty"`
@@ -96,10 +91,12 @@ func ValidateStatusResponse(s StatusResponse) error {
 		return errors.New("active_transaction_id requires profile_id")
 	case s.ActiveTransactionID != "" && s.RuntimeConfigPath == "":
 		return errors.New("active_transaction_id requires runtime_config_path")
-	case s.TunHealth != nil && s.Connection != "active":
-		return fmt.Errorf("tun_health requires active connection, got %q", s.Connection)
 	case s.TunHealth != nil && s.Mode != "tun":
 		return fmt.Errorf("tun_health requires TUN mode, got %q", s.Mode)
+	case s.TunHealth != nil && s.Connection != "active" && s.Connection != ConnectionCoreExited:
+		return fmt.Errorf("tun_health requires active or bounded core-exit reconciliation, got %q", s.Connection)
+	case s.TunHealth != nil && s.Connection == ConnectionCoreExited && s.TunHealth.State == TunHealthVerified:
+		return errors.New("verified tun_health is invalid after supervised core exit")
 	}
 	if s.TunHealth != nil {
 		if err := ValidateTunHealthStatus(*s.TunHealth); err != nil {
