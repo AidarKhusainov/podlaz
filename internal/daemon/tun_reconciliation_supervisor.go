@@ -45,6 +45,7 @@ type tunReconciliationCycle struct {
 	progressKey     string
 	hasProgressKey  bool
 	noProgressCount int
+	exhausted       bool
 }
 
 type tunReconciliationSupervisor struct {
@@ -114,14 +115,19 @@ func (s *tunReconciliationSupervisor) reconcileOrBoundedTerminal(round tunReconc
 
 func (s *tunReconciliationSupervisor) retryOrBoundedTerminal(round tunReconciliationRound, classification api.TunHealthClassification, terminalEligible bool) tunReconciliationDecision {
 	if s.advanceCycle(round) {
-		s.clearCycle(round.NetworkSessionID)
 		if terminalEligible {
+			s.clearCycle(round.NetworkSessionID)
 			return s.automaticDecision(round, tunDecisionTerminal, terminalClassification(round))
 		}
-		// Incomplete or single-signal evidence must never gain cleanup authority.
-		// Stop automatic retrying at the bounded boundary and wait for a real
-		// external event to provide fresh evidence.
-		return tunReconciliationDecision{Kind: tunDecisionAwaitEvidence, Classification: classification, NetworkSessionID: round.NetworkSessionID}
+		// Exhausted incomplete/single-signal evidence does not grant cleanup
+		// authority. Keep the cycle exhausted for this Network Session so later
+		// event hints cannot silently mint a new deadline/budget. A later complete
+		// healthy observation still verifies above and clears the cycle.
+		return tunReconciliationDecision{
+			Kind:             tunDecisionBlockedOwnership,
+			Classification:   api.TunHealthRevalidationTimeout,
+			NetworkSessionID: round.NetworkSessionID,
+		}
 	}
 	return tunReconciliationDecision{
 		Kind:             tunDecisionRetry,
@@ -140,6 +146,9 @@ func (s *tunReconciliationSupervisor) advanceCycle(round tunReconciliationRound)
 		cycle = &tunReconciliationCycle{deadline: now.Add(s.deadline)}
 		s.cycles[round.NetworkSessionID] = cycle
 	}
+	if cycle.exhausted {
+		return true
+	}
 	progressKey := tunReconciliationProgressKey(round)
 	if cycle.hasProgressKey {
 		if cycle.progressKey == progressKey {
@@ -150,7 +159,8 @@ func (s *tunReconciliationSupervisor) advanceCycle(round tunReconciliationRound)
 	}
 	cycle.progressKey = progressKey
 	cycle.hasProgressKey = true
-	return !now.Before(cycle.deadline) || cycle.noProgressCount >= s.maxNoProgressRounds
+	cycle.exhausted = !now.Before(cycle.deadline) || cycle.noProgressCount >= s.maxNoProgressRounds
+	return cycle.exhausted
 }
 
 func (s *tunReconciliationSupervisor) automaticDecision(round tunReconciliationRound, kind tunReconciliationDecisionKind, classification api.TunHealthClassification) tunReconciliationDecision {
