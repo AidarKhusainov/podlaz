@@ -33,10 +33,11 @@ type tunReconciliationRound struct {
 }
 
 type tunReconciliationDecision struct {
-	Kind           tunReconciliationDecisionKind
-	Classification api.TunHealthClassification
-	RetryAfter     time.Duration
-	Disposition    *tunAutomaticDisposition
+	Kind             tunReconciliationDecisionKind
+	Classification   api.TunHealthClassification
+	RetryAfter       time.Duration
+	NetworkSessionID string
+	Disposition      *tunAutomaticDisposition
 }
 
 type tunReconciliationCycle struct {
@@ -78,11 +79,11 @@ func newTunReconciliationSupervisorWithPolicy(now func() time.Time, deadline tim
 
 func (s *tunReconciliationSupervisor) RunRound(round tunReconciliationRound) tunReconciliationDecision {
 	if s == nil {
-		return tunReconciliationDecision{Kind: tunDecisionBlockedOwnership, Classification: api.TunHealthOwnershipInvalid}
+		return tunReconciliationDecision{Kind: tunDecisionBlockedOwnership, Classification: api.TunHealthOwnershipInvalid, NetworkSessionID: round.NetworkSessionID}
 	}
 	if strings.TrimSpace(round.NetworkSessionID) == "" || round.OwnershipBlocked || round.Evidence.Mandatory.SessionOwnership == tunLocalProofViolated {
 		s.clearCycle(round.NetworkSessionID)
-		return tunReconciliationDecision{Kind: tunDecisionBlockedOwnership, Classification: api.TunHealthOwnershipInvalid}
+		return tunReconciliationDecision{Kind: tunDecisionBlockedOwnership, Classification: api.TunHealthOwnershipInvalid, NetworkSessionID: round.NetworkSessionID}
 	}
 	if round.HardUnsafe {
 		s.clearCycle(round.NetworkSessionID)
@@ -96,7 +97,7 @@ func (s *tunReconciliationSupervisor) RunRound(round tunReconciliationRound) tun
 	}
 	if sufficientIndependentPositiveEvidence(round.Evidence.Probes) {
 		s.clearCycle(round.NetworkSessionID)
-		return tunReconciliationDecision{Kind: tunDecisionVerified}
+		return tunReconciliationDecision{Kind: tunDecisionVerified, NetworkSessionID: round.NetworkSessionID}
 	}
 
 	persistentExternalFailure := independentFailedProviderCount(round.Evidence.Probes) >= 2
@@ -120,12 +121,13 @@ func (s *tunReconciliationSupervisor) retryOrBoundedTerminal(round tunReconcilia
 		// Incomplete or single-signal evidence must never gain cleanup authority.
 		// Stop automatic retrying at the bounded boundary and wait for a real
 		// external event to provide fresh evidence.
-		return tunReconciliationDecision{Kind: tunDecisionAwaitEvidence, Classification: classification}
+		return tunReconciliationDecision{Kind: tunDecisionAwaitEvidence, Classification: classification, NetworkSessionID: round.NetworkSessionID}
 	}
 	return tunReconciliationDecision{
-		Kind:           tunDecisionRetry,
-		Classification: classification,
-		RetryAfter:     defaultTunReconciliationRetry,
+		Kind:             tunDecisionRetry,
+		Classification:   classification,
+		RetryAfter:       defaultTunReconciliationRetry,
+		NetworkSessionID: round.NetworkSessionID,
 	}
 }
 
@@ -163,7 +165,7 @@ func (s *tunReconciliationSupervisor) automaticDecision(round tunReconciliationR
 		Plan:                       round.Plan,
 		Cause:                      round.Cause,
 	}
-	return tunReconciliationDecision{Kind: kind, Classification: classification, Disposition: disposition}
+	return tunReconciliationDecision{Kind: kind, Classification: classification, NetworkSessionID: round.NetworkSessionID, Disposition: disposition}
 }
 
 func (s *tunReconciliationSupervisor) clearCycle(sessionID string) {
