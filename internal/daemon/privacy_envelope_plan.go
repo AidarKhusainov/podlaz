@@ -14,11 +14,11 @@ import (
 
 const (
 	privacyEnvelopeCompositionVersion = 1
-	privacyEnvelopeCandidateLimit      = 16
-	privacyEnvelopeFamily              = "inet"
-	privacyEnvelopeOutputChain         = "output"
-	privacyEnvelopeOutputPriority      = -10
-	privacyEnvelopeReason              = "preserve a fail-closed network session privacy boundary"
+	privacyEnvelopeCandidateLimit     = 16
+	privacyEnvelopeFamily             = "inet"
+	privacyEnvelopeOutputChain        = "output"
+	privacyEnvelopeOutputPriority     = -10
+	privacyEnvelopeReason             = "preserve a fail-closed network session privacy boundary"
 )
 
 type privacyEnvelopeObserver interface {
