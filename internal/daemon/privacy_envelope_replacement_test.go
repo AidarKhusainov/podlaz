@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -157,6 +158,7 @@ func privacyEnvelopeBootstrapRules(plan netexecutor.PrivacyEnvelopePlan) []strin
 type privacyEnvelopeReplacementExecutorStub struct {
 	privacyEnvelopeExecutorStub
 	replacements []privacyEnvelopeReplacementCall
+	live         []string
 }
 
 type privacyEnvelopeReplacementCall struct {
@@ -167,12 +169,24 @@ type privacyEnvelopeReplacementCall struct {
 func newPrivacyEnvelopeReplacementExecutorStub() *privacyEnvelopeReplacementExecutorStub {
 	return &privacyEnvelopeReplacementExecutorStub{
 		privacyEnvelopeExecutorStub: privacyEnvelopeExecutorStub{exists: true},
+		live:                        []string{"192.0.2.10"},
 	}
 }
 
+func (e *privacyEnvelopeReplacementExecutorStub) Verify(_ context.Context, plan netexecutor.PrivacyEnvelopePlan) error {
+	if !e.exists || !reflect.DeepEqual(e.live, privacyEnvelopeBootstrapRules(plan)) {
+		return errors.New("synthetic exact composition mismatch")
+	}
+	return nil
+}
+
 func (e *privacyEnvelopeReplacementExecutorStub) Replace(_ context.Context, from, to netexecutor.PrivacyEnvelopePlan) error {
+	if err := e.Verify(context.Background(), from); err != nil {
+		return err
+	}
 	e.replacements = append(e.replacements, privacyEnvelopeReplacementCall{from: from, to: to})
 	e.exists = true
+	e.live = privacyEnvelopeBootstrapRules(to)
 	return nil
 }
 
