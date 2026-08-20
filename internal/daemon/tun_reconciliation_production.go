@@ -97,12 +97,15 @@ func (b *productionTunRevalidationBackend) observeReconciliation(ctx context.Con
 		if ctx.Err() != nil {
 			return round, ctx.Err()
 		}
-		// Command/inspection failure cannot prove a leak or grant cleanup
-		// authority. A positively absent envelope above is the hard-unsafe case.
 		round.Evidence.Mandatory.PrivacyEnvelope = tunLocalProofUnknown
 		round.Cause = errors.Join(round.Cause, fmt.Errorf("verify exact Privacy Envelope: %w", err))
 	} else {
 		round.Evidence.Mandatory.PrivacyEnvelope = tunLocalProofProven
+	}
+
+	if err := maybeInjectE2ETunReconciliationOwnedRouteDrift(ctx, plan); err != nil {
+		round.OwnershipBlocked = true
+		return round, fmt.Errorf("inject controlled exact owned-route drift: %w", err)
 	}
 
 	if err := b.manager.tunPlanExecutor().Verify(ctx, plan); err != nil {
@@ -179,6 +182,12 @@ func newProductionTunAutomaticTerminalHandler(
 		executor: netexecutor.PrivacyEnvelopeExecutor{},
 	}
 	remainingNetwork := newPostPodlazNetworkVerifier()
+	cleaner := tunTerminalDataPlaneCleaner{}
+	if manager != nil {
+		cleaner.current = manager.activeTunRuntimeIdentity
+		cleaner.disconnect = manager.Disconnect
+		cleaner.disconnectTransaction = manager.disconnectTun
+	}
 	return tunAutomaticTerminalHandler{
 		store: store,
 		currentTransactionID: func() string {
@@ -194,13 +203,12 @@ func newProductionTunAutomaticTerminalHandler(
 			}
 			return manager.collectTunRevalidationFailureDiagnostics(ctx, plan, cause)
 		},
-		teardown: func(ctx context.Context) error {
-			if manager == nil {
-				return errors.New("missing lifecycle manager for terminal teardown")
-			}
+		teardownDisposition: func(ctx context.Context, disposition tunAutomaticDisposition) error {
 			coordinator := networkSessionTeardownCoordinator{
-				store:                  store,
-				cleanupDataPlane:       manager.Disconnect,
+				store: store,
+				cleanupDataPlane: func(cleanupCtx context.Context) (api.LifecycleResponse, error) {
+					return cleaner.Cleanup(cleanupCtx, disposition.TransactionID)
+				},
 				removeProtection:       protection.RemoveAfterDataPlaneCleanup,
 				verifyRemainingNetwork: remainingNetwork.Verify,
 			}
