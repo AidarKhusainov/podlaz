@@ -55,6 +55,25 @@ func TestTunSupervisorInitialMandatoryUnknownCannotVerify(t *testing.T) {
 	}
 }
 
+func TestTunSupervisorPersistentMandatoryUnknownStopsAutomaticRetryWithoutTerminal(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, time.Minute, 1)
+	mandatory := issue262ProvenMandatoryEvidence()
+	mandatory.ResolvedDNS = tunLocalProofUnknown
+	round := tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       1,
+		Evidence:         tunEvidenceSet{Mandatory: mandatory, Probes: issue262HealthyProbeEvidence()},
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
+		t.Fatalf("first decision=%q, want retry", got.Kind)
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionAwaitEvidence || got.Classification != api.TunHealthNetworkConverging {
+		t.Fatalf("bounded unknown decision=%#v, want await-evidence/network_converging", got)
+	}
+}
+
 func TestTunSupervisorOneProviderFailureCanStillVerify(t *testing.T) {
 	supervisor := newTunReconciliationSupervisor(time.Now)
 	probes := issue262HealthyProbeEvidence()
@@ -93,6 +112,26 @@ func TestTunSupervisorRepeatedEquivalentFailureConsumesNoProgressBudget(t *testi
 	}
 	if got := supervisor.RunRound(round); got.Kind != tunDecisionTerminal {
 		t.Fatalf("third decision=%q, want terminal after no-progress budget", got.Kind)
+	}
+}
+
+func TestTunSupervisorRepeatedEquivalentRepairBecomesTerminal(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, time.Minute, 1)
+	mandatory := issue262ProvenMandatoryEvidence()
+	mandatory.CoreTUN = tunLocalProofViolated
+	round := tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       2,
+		NeedsReconcile:   true,
+		Evidence:         tunEvidenceSet{Mandatory: mandatory},
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionReconcile {
+		t.Fatalf("first repair decision=%q, want reconcile", got.Kind)
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionTerminal {
+		t.Fatalf("stable unrepaired decision=%q, want terminal", got.Kind)
 	}
 }
 
