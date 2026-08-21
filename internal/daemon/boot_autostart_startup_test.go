@@ -19,7 +19,14 @@ func (l *bootAutostartRecordingLifecycle) Connect(_ context.Context, request api
 	if l.err != nil {
 		return api.LifecycleResponse{}, l.err
 	}
-	return api.LifecycleResponse{Connection: "active", Mode: request.Mode, ProfileID: request.Profile.ID, ProfileName: request.Profile.Name, Proxy: "inactive", TUN: "active"}, nil
+	return api.LifecycleResponse{
+		Connection:  "active",
+		Mode:        request.Mode,
+		ProfileID:   request.Profile.ID,
+		ProfileName: request.Profile.Name,
+		Proxy:       "inactive",
+		TUN:         "active",
+	}, nil
 }
 
 func (l *bootAutostartRecordingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
@@ -32,6 +39,24 @@ func bootAutostartStores(t *testing.T, configuredBoot, currentBoot string) (boot
 	attemptStore := newBootAutostartAttemptStore(t.TempDir(), fixedBootID(currentBoot))
 	continuation := newNetworkSessionContinuationStore(t.TempDir(), fixedBootID(currentBoot))
 	return manifestStore, attemptStore, continuation
+}
+
+func successfulBootTerminalConvergence(t *testing.T) bootAutostartTerminalConvergeFunc {
+	t.Helper()
+	return func(_ context.Context, continuation networkSessionContinuationStore) error {
+		state, exists, err := continuation.stateStore().Load()
+		if err != nil {
+			return err
+		}
+		if !exists || state.Intent != networkSessionIntentTerminal {
+			t.Fatalf("terminal convergence authority = %+v exists=%v", state, exists)
+		}
+		return nil
+	}
+}
+
+func bootRequest(configuration api.AutostartConfigureRequest) api.ConnectRequest {
+	return api.ConnectRequest{Mode: configuration.Mode, Profile: configuration.Profile}
 }
 
 func TestRunBootAutostartStartupDoesNothingWhenDisabled(t *testing.T) {
@@ -84,7 +109,7 @@ func TestRunBootAutostartStartupAdmitsOneFutureBootConnectWithCanonicalDefaults(
 	if result != bootAutostartStartupConnected || len(lifecycle.requests) != 1 {
 		t.Fatalf("result=%q requests=%d", result, len(lifecycle.requests))
 	}
-	want := api.ConnectRequest{Mode: config.Mode, Profile: config.Profile}
+	want := bootRequest(config)
 	if !reflect.DeepEqual(lifecycle.requests[0], want) {
 		t.Fatalf("boot connect request = %#v, want %#v", lifecycle.requests[0], want)
 	}
@@ -94,6 +119,9 @@ func TestRunBootAutostartStartupAdmitsOneFutureBootConnectWithCanonicalDefaults(
 	attempt, exists, err := attemptStore.LoadCurrent()
 	if err != nil || !exists || attempt.State != bootAutostartAttemptSucceeded {
 		t.Fatalf("attempt after connect = %+v exists=%v err=%v", attempt, exists, err)
+	}
+	if _, exists, err := continuation.LoadCurrent(); err != nil || !exists {
+		t.Fatalf("successful boot connect did not retain same-boot continuation: exists=%v err=%v", exists, err)
 	}
 }
 
@@ -121,7 +149,7 @@ func TestRunBootAutostartStartupReplaysPinnedInProgressAttemptAfterPreContinuati
 	if err != nil || result != bootAutostartStartupConnected || len(lifecycle.requests) != 1 {
 		t.Fatalf("result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
 	}
-	want := api.ConnectRequest{Mode: attempt.Configuration.Mode, Profile: attempt.Configuration.Profile}
+	want := bootRequest(attempt.Configuration)
 	if !reflect.DeepEqual(lifecycle.requests[0], want) {
 		t.Fatalf("replay used changed manifest: got %#v want pinned %#v", lifecycle.requests[0], want)
 	}
@@ -136,7 +164,7 @@ func TestRunBootAutostartStartupContinuationAlwaysWins(t *testing.T) {
 	if _, err := attemptStore.Admit(manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := continuation.Save(testContinuationRequest()); err != nil {
+	if err := continuation.Save(bootRequest(manifest.Configuration)); err != nil {
 		t.Fatal(err)
 	}
 	lifecycle := &bootAutostartRecordingLifecycle{}
@@ -164,26 +192,32 @@ func TestRunBootAutostartStartupConvergedTerminalContinuationDoesNotFreshConnect
 	if _, err := attemptStore.Admit(manifest); err != nil {
 		t.Fatal(err)
 	}
-	if err := continuation.Save(testContinuationRequest()); err != nil {
+	if err := continuation.Save(bootRequest(manifest.Configuration)); err != nil {
 		t.Fatal(err)
 	}
 	if err := continuation.disarm(networkSessionIntentTerminal); err != nil {
 		t.Fatal(err)
 	}
 	lifecycle := &bootAutostartRecordingLifecycle{}
+	resumeCalls := 0
 
-	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) {
-		if err := continuation.finalize(); err != nil {
-			return false, err
-		}
-		return false, nil
-	})
-	if err != nil || result != bootAutostartStartupTerminal || len(lifecycle.requests) != 0 {
-		t.Fatalf("terminal continuation triggered fresh connect: result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
+	result, err := runBootAutostartStartup(
+		context.Background(), manifestStore, attemptStore, continuation, lifecycle,
+		func(context.Context) (bool, error) {
+			resumeCalls++
+			return false, nil
+		},
+		successfulBootTerminalConvergence(t),
+	)
+	if err != nil || result != bootAutostartStartupTerminal || len(lifecycle.requests) != 0 || resumeCalls != 0 {
+		t.Fatalf("terminal continuation result=%q requests=%d resume=%d err=%v", result, len(lifecycle.requests), resumeCalls, err)
 	}
 	attempt, exists, err := attemptStore.LoadCurrent()
 	if err != nil || !exists || attempt.State != bootAutostartAttemptTerminal {
 		t.Fatalf("terminal attempt = %+v exists=%v err=%v", attempt, exists, err)
+	}
+	if _, exists, err := continuation.stateStore().Load(); err != nil || exists {
+		t.Fatalf("converged terminal continuation remained: exists=%v err=%v", exists, err)
 	}
 }
 
@@ -216,19 +250,26 @@ func TestRunBootAutostartStartupCompletedAttemptNeverReconnectsSameBoot(t *testi
 	}
 }
 
-func TestRunBootAutostartStartupConnectFailureConsumesAttemptWithoutRetry(t *testing.T) {
+func TestRunBootAutostartStartupConnectFailureConsumesAttemptOnlyAfterConvergence(t *testing.T) {
 	manifestStore, attemptStore, continuation := bootAutostartStores(t, testBootConfigured, testBootAttempt)
 	if _, err := manifestStore.Enable(testBootAutostartConfig()); err != nil {
 		t.Fatal(err)
 	}
 	lifecycle := &bootAutostartRecordingLifecycle{err: errors.New("simulated terminal connect failure")}
-	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) { return false, nil })
+	result, err := runBootAutostartStartup(
+		context.Background(), manifestStore, attemptStore, continuation, lifecycle,
+		func(context.Context) (bool, error) { return false, nil },
+		successfulBootTerminalConvergence(t),
+	)
 	if err == nil || result != bootAutostartStartupTerminal || len(lifecycle.requests) != 1 {
 		t.Fatalf("connect failure result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
 	}
 	attempt, exists, loadErr := attemptStore.LoadCurrent()
 	if loadErr != nil || !exists || attempt.State != bootAutostartAttemptTerminal {
 		t.Fatalf("failed connect attempt = %+v exists=%v err=%v", attempt, exists, loadErr)
+	}
+	if _, exists, loadErr := continuation.stateStore().Load(); loadErr != nil || exists {
+		t.Fatalf("terminal completion left continuation: exists=%v err=%v", exists, loadErr)
 	}
 
 	secondLifecycle := &bootAutostartRecordingLifecycle{}
