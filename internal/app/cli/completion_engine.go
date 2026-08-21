@@ -239,6 +239,13 @@ func completionRegistry() *completionCommand {
 		{Name: "connect", Description: "Start connection", Flags: []completionFlag{modeFlag, handoffFlag}, Dynamic: completionDynamicProfileIDs},
 		{Name: "disconnect", Description: "Stop connection"},
 		{
+			Name: "autostart", Description: "Manage boot autostart", Children: []*completionCommand{
+				{Name: "enable", Description: "Enable boot autostart", Flags: []completionFlag{modeFlag}, Dynamic: completionDynamicProfileIDs},
+				{Name: "disable", Description: "Disable boot autostart"},
+				{Name: "status", Description: "Show boot autostart"},
+			},
+		},
+		{
 			Name:        "check",
 			Description: "Check profile connectivity",
 			Flags: []completionFlag{
@@ -292,6 +299,7 @@ func completionRegistry() *completionCommand {
 				{Name: "plan", Description: "Plan help"},
 				{Name: "connect", Description: "Connect help"},
 				{Name: "disconnect", Description: "Disconnect help"},
+				{Name: "autostart", Description: "Autostart help"},
 				{Name: "check", Description: "Check help"},
 				{Name: "status", Description: "Status help"},
 				{Name: "doctor", Description: "Doctor help"},
