@@ -1,0 +1,30 @@
+name: Issue 263 TDD
+
+on:
+  pull_request:
+    paths:
+      - 'internal/api/**'
+      - 'internal/daemon/**'
+      - 'internal/client/**'
+      - 'internal/app/cli/**'
+      - 'internal/status/**'
+      - '.github/workflows/issue263-tdd.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  red-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Show baseline formatting drift
+        run: |
+          gofmt -d internal/api/status.go internal/daemon/e2e_tun_reconciliation_hooks.go || true
+      - name: Test issue 263 packages
+        run: go test ./internal/api ./internal/client ./internal/daemon ./internal/app/cli ./internal/status

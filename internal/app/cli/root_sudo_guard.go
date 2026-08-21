@@ -34,6 +34,8 @@ func commandUsesUserOwnedState(command string, args []string) bool {
 	switch command {
 	case "import", "profile", "subscription", "plan", "connect", "check":
 		return true
+	case "autostart":
+		return len(args) > 0 && strings.EqualFold(args[0], "enable")
 	default:
 		return false
 	}
@@ -109,6 +111,8 @@ func sudoGuardCommandShape(command string, args []string) string {
 		return "podlaz plan --mode <mode> <profile-id>"
 	case "connect":
 		return "podlaz connect [--mode proxy-only|tun] <profile-id>"
+	case "autostart":
+		return "podlaz autostart enable [--mode proxy-only|tun] <profile-id>"
 	case "check":
 		return "podlaz check <profile-id>"
 	default:

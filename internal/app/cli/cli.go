@@ -49,6 +49,9 @@ func ExitCode(err error) int {
 type options struct {
 	connect               connectRunner
 	disconnect            disconnectRunner
+	autostartEnable       autostartEnableRunner
+	autostartDisable      autostartDisableRunner
+	autostartStatus       autostartStatusRunner
 	check                 checkRunner
 	checkProbes           checkProbeRunner
 	doctor                func(context.Context) doctor.Report
@@ -115,6 +118,8 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runConnectCommand(ctx, commandArgs, stdout, opts)
 	case "disconnect":
 		return runDisconnectCommand(ctx, commandArgs, stdout, opts)
+	case "autostart":
+		return runAutostartCommand(ctx, commandArgs, stdout, opts)
 	case "check":
 		return runCheckCommand(ctx, commandArgs, stdout, opts)
 	case "status":
@@ -156,6 +161,8 @@ func runHelp(args []string, stdout io.Writer) error {
 		printConnectHelp(stdout)
 	case "disconnect":
 		printDisconnectHelp(stdout)
+	case "autostart":
+		printAutostartHelp(stdout)
 	case "check":
 		printCheckHelp(stdout)
 	case "status":

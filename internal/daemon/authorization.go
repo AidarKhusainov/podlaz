@@ -15,10 +15,11 @@ const (
 )
 
 const (
-	ActionConnectProxyOnly AuthorizationAction = polkitActionPrefix + "connect-proxy-only"
-	ActionConnectTun       AuthorizationAction = polkitActionPrefix + "connect-tun"
-	ActionDisconnect       AuthorizationAction = polkitActionPrefix + "disconnect"
-	ActionRecoverExecute   AuthorizationAction = polkitActionPrefix + "recover-execute"
+	ActionConnectProxyOnly   AuthorizationAction = polkitActionPrefix + "connect-proxy-only"
+	ActionConnectTun         AuthorizationAction = polkitActionPrefix + "connect-tun"
+	ActionDisconnect         AuthorizationAction = polkitActionPrefix + "disconnect"
+	ActionRecoverExecute     AuthorizationAction = polkitActionPrefix + "recover-execute"
+	ActionConfigureAutostart AuthorizationAction = polkitActionPrefix + "configure-autostart"
 )
 
 var (
