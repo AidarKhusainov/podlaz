@@ -156,42 +156,17 @@ func lifecycleCommandError(err error) error {
 }
 
 func renderConnectResponse(stdout io.Writer, p profile.Profile, response api.LifecycleResponse) {
-	fmt.Fprintln(stdout, "podlaz connection started")
+	fmt.Fprintln(stdout, "Connected")
 	fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(p.Name))
-	fmt.Fprintf(stdout, "Profile ID: %s\n", render.Redact(p.ID))
-	renderLifecycleFields(stdout, response)
+	mode := response.Mode
+	if mode == "" {
+		mode = planner.ModeProxyOnly
+	}
+	fmt.Fprintf(stdout, "Mode: %s\n", productModeLabel(mode))
 }
 
-func renderDisconnectResponse(stdout io.Writer, response api.LifecycleResponse) {
-	fmt.Fprintln(stdout, "podlaz disconnected")
-	renderLifecycleFields(stdout, response)
-}
-
-func renderLifecycleFields(stdout io.Writer, response api.LifecycleResponse) {
-	fmt.Fprintf(stdout, "Connection: %s\n", render.Redact(response.Connection))
-	if response.Mode != "" {
-		fmt.Fprintf(stdout, "Mode: %s\n", render.Redact(response.Mode))
-	}
-	fmt.Fprintf(stdout, "Proxy: %s\n", render.Redact(response.Proxy))
-	fmt.Fprintf(stdout, "TUN: %s\n", render.Redact(response.TUN))
-	if response.Routes != "" {
-		fmt.Fprintf(stdout, "Routes: %s\n", render.Redact(response.Routes))
-	}
-	if response.DNS != "" {
-		fmt.Fprintf(stdout, "DNS: %s\n", render.Redact(response.DNS))
-	}
-	if response.Firewall != "" {
-		fmt.Fprintf(stdout, "Firewall: %s\n", render.Redact(response.Firewall))
-	}
-	if response.RuntimeConfigPath != "" {
-		fmt.Fprintf(stdout, "Runtime config: %s\n", render.Redact(response.RuntimeConfigPath))
-	}
-	if len(response.Warnings) > 0 {
-		fmt.Fprintf(stdout, "Warnings: %d\n", len(response.Warnings))
-		for _, warning := range response.Warnings {
-			fmt.Fprintf(stdout, "- %s\n", render.Redact(warning))
-		}
-	}
+func renderDisconnectResponse(stdout io.Writer, _ api.LifecycleResponse) {
+	fmt.Fprintln(stdout, "Disconnected")
 }
 
 func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
