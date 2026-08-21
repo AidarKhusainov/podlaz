@@ -147,10 +147,11 @@ func continueBootAutostartAttempt(
 		return bootAutostartStartupConnected, nil
 	}
 
-	if ctx.Err() != nil || errors.Is(connectErr, context.Canceled) || errors.Is(connectErr, context.DeadlineExceeded) {
-		// Daemon replacement cancels the root context. Cancellation is not a
-		// terminal VPN verdict; the pre-armed continuation is the authority for
-		// the replacement daemon to continue this exact logical attempt.
+	if ctx.Err() != nil {
+		// Only cancellation/deadline of the authoritative startup context means
+		// daemon replacement/interruption. Connect can legitimately wrap child
+		// context deadlines from route/TCP/DNS probes while this parent remains
+		// live; those are ordinary connection failures and must converge below.
 		return bootAutostartStartupContinued, connectErr
 	}
 
