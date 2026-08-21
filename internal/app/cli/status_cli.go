@@ -37,8 +37,6 @@ func productAutostartStatus(ctx context.Context, opts options) *api.AutostartSta
 		}
 		return nil
 	}
-	// Tests and other internal callers that inject the lifecycle/status source
-	// should not accidentally reach a real daemon just to decorate human output.
 	if opts.status != nil || opts.daemonStatus != nil {
 		return nil
 	}
@@ -73,10 +71,7 @@ func runStatus(ctx context.Context, opts options) status.Report {
 		return status.WithDaemonUnavailable(local, client.UnavailableMessage(err))
 	}
 
-	local.Warnings = append(local.Warnings, status.Warning{
-		Target:  "daemon status API",
-		Message: err.Error(),
-	})
+	local.Warnings = append(local.Warnings, status.Warning{Target: "daemon status API", Message: err.Error()})
 	if local.Connection == "inactive" {
 		local.Connection = "unknown (inspection incomplete)"
 	}
@@ -100,6 +95,9 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 		return status.Report{}, err
 	}
 	report := status.FromDaemon(response)
+	if response.LifecyclePhase == api.LifecycleConnecting {
+		report.Connection = "connecting"
+	}
 	return status.WithTunHealth(report, response.TunHealth), nil
 }
 
