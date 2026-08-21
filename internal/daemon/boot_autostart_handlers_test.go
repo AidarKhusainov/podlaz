@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
@@ -17,8 +19,9 @@ type recordingAutostartAuthorizer struct {
 	err    error
 }
 
-func (a *recordingAutostartAuthorizer) Authorize(context.Context, AuthorizationAction, PeerSubject) error {
+func (a *recordingAutostartAuthorizer) Authorize(_ context.Context, action AuthorizationAction, _ PeerSubject) error {
 	a.calls++
+	a.action = action
 	return a.err
 }
 
@@ -35,9 +38,8 @@ func TestBootAutostartHandlersConfigureStatusAndDisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, api.AutostartConfigurePath, bytesReader(body))
 	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, req)
+	mux.ServeHTTP(res, httptest.NewRequest(http.MethodPost, api.AutostartConfigurePath, bytes.NewReader(body)))
 	if res.Code != http.StatusOK {
 		t.Fatalf("configure status = %d, body = %q", res.Code, res.Body.String())
 	}
@@ -97,7 +99,7 @@ func TestBootAutostartConfigureAuthorizationDenialDoesNotMutatePolicy(t *testing
 		t.Fatal(err)
 	}
 	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, httptest.NewRequest(http.MethodPost, api.AutostartConfigurePath, bytesReader(body)))
+	mux.ServeHTTP(res, httptest.NewRequest(http.MethodPost, api.AutostartConfigurePath, bytes.NewReader(body)))
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("configure denial status = %d, want 403", res.Code)
 	}
@@ -142,7 +144,3 @@ func TestBootAutostartHandlersRejectUnsupportedMethods(t *testing.T) {
 		}
 	}
 }
-
-func bytesReader(data []byte) *bytes.Reader { return bytes.NewReader(data) }
-
-var _ = errors.Is
