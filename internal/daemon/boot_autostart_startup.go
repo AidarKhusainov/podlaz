@@ -20,6 +20,7 @@ const (
 )
 
 type bootAutostartResumeFunc func(context.Context) (bool, error)
+type bootAutostartTerminalConvergeFunc func(context.Context, networkSessionContinuationStore) error
 
 func runBootAutostartStartup(
 	ctx context.Context,
@@ -28,6 +29,7 @@ func runBootAutostartStartup(
 	continuation networkSessionContinuationStore,
 	lifecycle lifecycleService,
 	resume bootAutostartResumeFunc,
+	terminalConverge ...bootAutostartTerminalConvergeFunc,
 ) (bootAutostartStartupResult, error) {
 	if lifecycle == nil {
 		return bootAutostartStartupBlocked, errors.New("boot autostart requires lifecycle service")
@@ -35,30 +37,55 @@ func runBootAutostartStartup(
 	if resume == nil {
 		return bootAutostartStartupBlocked, errors.New("boot autostart requires startup continuation function")
 	}
+	if len(terminalConverge) > 1 {
+		return bootAutostartStartupBlocked, errors.New("boot autostart accepts at most one terminal convergence function")
+	}
+	var convergeTerminal bootAutostartTerminalConvergeFunc
+	if len(terminalConverge) == 1 {
+		convergeTerminal = terminalConverge[0]
+	}
 
-	_, hadSession, err := continuation.stateStore().Load()
+	state, hadSession, err := continuation.stateStore().Load()
 	if err != nil {
 		return bootAutostartStartupRecoveryFailed, fmt.Errorf("inspect current Network Session before boot autostart: %w", err)
 	}
-
-	resumed, resumeErr := resume(ctx)
-	if resumeErr != nil {
-		return bootAutostartStartupRecoveryFailed, resumeErr
-	}
-	if hadSession || resumed {
-		return completeBootAutostartAfterContinuation(attemptStore, resumed)
-	}
-
 	attempt, attemptExists, err := attemptStore.LoadCurrent()
 	if err != nil {
 		return bootAutostartStartupBlocked, fmt.Errorf("inspect boot autostart attempt: %w", err)
 	}
+
+	if hadSession {
+		if attemptExists && attempt.State == bootAutostartAttemptInProgress && state.Intent == networkSessionIntentTerminal {
+			return convergeAndCompleteBootAutostartTerminal(ctx, attemptStore, continuation, convergeTerminal, bootAutostartTerminalSessionFailure)
+		}
+		resumed, resumeErr := resume(ctx)
+		if resumeErr != nil {
+			return bootAutostartStartupRecoveryFailed, resumeErr
+		}
+		if attemptExists && attempt.State == bootAutostartAttemptInProgress && resumed {
+			if err := attemptStore.MarkSucceeded(); err != nil {
+				return bootAutostartStartupRecoveryFailed, fmt.Errorf("complete resumed boot autostart attempt: %w", err)
+			}
+		}
+		return bootAutostartStartupContinued, nil
+	}
+
+	// Even without a Network Session record, exact orphan transaction recovery
+	// from the existing lifecycle must run before any fresh boot admission.
+	resumed, resumeErr := resume(ctx)
+	if resumeErr != nil {
+		return bootAutostartStartupRecoveryFailed, resumeErr
+	}
+	if resumed {
+		return bootAutostartStartupContinued, nil
+	}
+
 	if attemptExists {
 		switch attempt.State {
 		case bootAutostartAttemptSucceeded, bootAutostartAttemptTerminal:
 			return bootAutostartStartupNoop, nil
 		case bootAutostartAttemptInProgress:
-			return continueBootAutostartAttempt(ctx, attemptStore, continuation, lifecycle, attempt)
+			return continueBootAutostartAttempt(ctx, attemptStore, continuation, lifecycle, attempt, convergeTerminal)
 		default:
 			return bootAutostartStartupBlocked, fmt.Errorf("unsupported boot autostart attempt state %q", attempt.State)
 		}
@@ -83,27 +110,7 @@ func runBootAutostartStartup(
 	if err != nil {
 		return bootAutostartStartupBlocked, fmt.Errorf("admit boot autostart attempt: %w", err)
 	}
-	return continueBootAutostartAttempt(ctx, attemptStore, continuation, lifecycle, attempt)
-}
-
-func completeBootAutostartAfterContinuation(attemptStore bootAutostartAttemptStore, resumed bool) (bootAutostartStartupResult, error) {
-	attempt, exists, err := attemptStore.LoadCurrent()
-	if err != nil {
-		return bootAutostartStartupContinued, fmt.Errorf("inspect boot attempt after Network Session continuation: %w", err)
-	}
-	if !exists || attempt.State != bootAutostartAttemptInProgress {
-		return bootAutostartStartupContinued, nil
-	}
-	if resumed {
-		if err := attemptStore.MarkSucceeded(); err != nil {
-			return bootAutostartStartupContinued, fmt.Errorf("complete resumed boot autostart attempt: %w", err)
-		}
-		return bootAutostartStartupContinued, nil
-	}
-	if err := attemptStore.MarkTerminal(bootAutostartTerminalSessionFailure); err != nil {
-		return bootAutostartStartupTerminal, fmt.Errorf("complete terminal boot autostart continuation: %w", err)
-	}
-	return bootAutostartStartupTerminal, nil
+	return continueBootAutostartAttempt(ctx, attemptStore, continuation, lifecycle, attempt, convergeTerminal)
 }
 
 func continueBootAutostartAttempt(
@@ -112,25 +119,80 @@ func continueBootAutostartAttempt(
 	continuation networkSessionContinuationStore,
 	lifecycle lifecycleService,
 	attempt bootAutostartAttempt,
+	convergeTerminal bootAutostartTerminalConvergeFunc,
 ) (bootAutostartStartupResult, error) {
 	request := api.ConnectRequest{Mode: attempt.Configuration.Mode, Profile: attempt.Configuration.Profile}
+
+	// Arm the same #259 Network Session authority before entering normal Connect.
+	// That closes both sides of the crash window: a crash before this save can
+	// replay the pinned attempt, while every crash after it is continuation work.
+	// networkSessionLifecycle.Connect treats this identical request as the
+	// existing session, so a returned Connect error restores rather than removes
+	// the authority.
+	if err := continuation.Save(request); err != nil {
+		return bootAutostartStartupRecoveryFailed, fmt.Errorf("arm Network Session before boot autostart connect: %w", err)
+	}
+
 	_, connectErr := lifecycle.Connect(ctx, request)
 	if connectErr == nil {
 		if err := attemptStore.MarkSucceeded(); err != nil {
-			return bootAutostartStartupBlocked, fmt.Errorf("complete successful boot autostart attempt: %w", err)
+			// Do not remove the resume-capable Network Session. A completion write
+			// failure must leave the next daemon fail-closed on continuation rather
+			// than replaying a fresh automatic Connect.
+			return bootAutostartStartupRecoveryFailed, fmt.Errorf("complete successful boot autostart attempt: %w", err)
 		}
 		return bootAutostartStartupConnected, nil
 	}
 
-	_, sessionExists, stateErr := continuation.stateStore().Load()
-	if stateErr != nil {
-		return bootAutostartStartupBlocked, errors.Join(connectErr, fmt.Errorf("inspect Network Session after boot autostart failure: %w", stateErr))
+	if ctx.Err() != nil || errors.Is(connectErr, context.Canceled) || errors.Is(connectErr, context.DeadlineExceeded) {
+		// Daemon replacement cancels the root context. Cancellation is not a
+		// terminal VPN verdict; the pre-armed continuation is the authority for
+		// the replacement daemon to continue this exact logical attempt.
+		return bootAutostartStartupContinued, connectErr
 	}
-	if sessionExists {
-		return bootAutostartStartupBlocked, connectErr
+
+	if err := continuation.disarm(networkSessionIntentTerminal); err != nil {
+		return bootAutostartStartupRecoveryFailed, errors.Join(connectErr, fmt.Errorf("persist terminal Network Session intent after boot connect failure: %w", err))
 	}
-	if err := attemptStore.MarkTerminal(bootAutostartTerminalConnectFailed); err != nil {
-		return bootAutostartStartupTerminal, errors.Join(connectErr, fmt.Errorf("complete failed boot autostart attempt: %w", err))
+	result, terminalErr := convergeAndCompleteBootAutostartTerminal(
+		ctx,
+		attemptStore,
+		continuation,
+		convergeTerminal,
+		bootAutostartTerminalConnectFailed,
+	)
+	if terminalErr != nil {
+		return result, errors.Join(connectErr, terminalErr)
 	}
-	return bootAutostartStartupTerminal, connectErr
+	return result, connectErr
+}
+
+func convergeAndCompleteBootAutostartTerminal(
+	ctx context.Context,
+	attemptStore bootAutostartAttemptStore,
+	continuation networkSessionContinuationStore,
+	convergeTerminal bootAutostartTerminalConvergeFunc,
+	reason bootAutostartTerminalReason,
+) (bootAutostartStartupResult, error) {
+	if convergeTerminal == nil {
+		return bootAutostartStartupRecoveryFailed, errors.New("boot autostart terminal convergence is unavailable")
+	}
+	if err := convergeTerminal(ctx, continuation); err != nil {
+		return bootAutostartStartupRecoveryFailed, fmt.Errorf("converge boot autostart terminal cleanup: %w", err)
+	}
+
+	// Terminal is publishable only after exact/generic cleanup and remaining
+	// host-network verification have converged. Keep terminal Network Session
+	// authority until this durable attempt transition succeeds, so a failed
+	// write/fsync cannot reopen same-boot automatic Connect authority.
+	if err := attemptStore.MarkTerminal(reason); err != nil {
+		return bootAutostartStartupRecoveryFailed, fmt.Errorf("persist terminal boot autostart completion: %w", err)
+	}
+	if err := continuation.finalize(); err != nil {
+		// The attempt is already terminal and therefore fail-closed. Retaining a
+		// converged terminal continuation is safe and lets normal startup recovery
+		// finish authority cleanup later.
+		return bootAutostartStartupTerminal, fmt.Errorf("clear converged boot autostart Network Session authority: %w", err)
+	}
+	return bootAutostartStartupTerminal, nil
 }
