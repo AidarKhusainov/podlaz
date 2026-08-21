@@ -36,8 +36,9 @@ const (
 type bootAutostartTerminalReason string
 
 const (
-	bootAutostartTerminalConnectFailed  bootAutostartTerminalReason = "connect_failed"
-	bootAutostartTerminalSessionFailure bootAutostartTerminalReason = "session_terminal"
+	bootAutostartTerminalConnectFailed   bootAutostartTerminalReason = "connect_failed"
+	bootAutostartTerminalSessionFailure  bootAutostartTerminalReason = "session_terminal"
+	bootAutostartTerminalNetworkNotReady bootAutostartTerminalReason = "network_not_ready"
 )
 
 type bootAutostartManifest struct {
@@ -325,7 +326,7 @@ func validateBootAutostartAttempt(attempt bootAutostartAttempt) error {
 
 func validBootAutostartTerminalReason(reason bootAutostartTerminalReason) bool {
 	switch reason {
-	case bootAutostartTerminalConnectFailed, bootAutostartTerminalSessionFailure:
+	case bootAutostartTerminalConnectFailed, bootAutostartTerminalSessionFailure, bootAutostartTerminalNetworkNotReady:
 		return true
 	default:
 		return false
