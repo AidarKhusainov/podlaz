@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	daemonShutdownTimeout  = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
-	defaultDaemonStateDir  = "/var/lib/podlaz"
+	daemonShutdownTimeout     = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
+	defaultDaemonStateDir     = "/var/lib/podlaz"
 	systemdStateDirectoryEnv = "STATE_DIRECTORY"
 )
 
@@ -156,7 +156,7 @@ func (s Server) Run(ctx context.Context) error {
 
 	manifestStore := newBootAutostartManifestStore(stateDir, s.bootID)
 	attemptStore := newBootAutostartAttemptStore(runtimeDir, s.bootID)
-	startupResult, startupErr := runBootAutostartStartup(
+	startupResult, startupErr := runBootAutostartStartupWithOptions(
 		ctx,
 		manifestStore,
 		attemptStore,
@@ -173,6 +173,7 @@ func (s Server) Run(ctx context.Context) error {
 				},
 			)
 		},
+		bootAutostartStartupOptions{waitForNetwork: newBootNetworkReadinessWaiter()},
 	)
 	switch {
 	case startupErr == nil && startupResult == bootAutostartStartupConnected:
