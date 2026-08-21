@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/client"
 	"github.com/AidarKhusainov/podlaz/internal/status"
 )
@@ -20,11 +21,32 @@ func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	}
 
 	report := runStatus(ctx, opts)
-	fmt.Fprint(stdout, report.String())
+	autostart := productAutostartStatus(ctx, opts)
+	fmt.Fprint(stdout, report.ProductView(autostart).String())
 	if statusCommandShouldFail(report) {
 		return exitError{code: 3, err: errors.New("status found unhealthy lifecycle, stale, or incomplete state")}
 	}
 	return nil
+}
+
+func productAutostartStatus(ctx context.Context, opts options) *api.AutostartStatusResponse {
+	if opts.autostartStatus != nil {
+		value, err := opts.autostartStatus(ctx)
+		if err == nil {
+			return &value
+		}
+		return nil
+	}
+	// Tests and other internal callers that inject the lifecycle/status source
+	// should not accidentally reach a real daemon just to decorate human output.
+	if opts.status != nil || opts.daemonStatus != nil {
+		return nil
+	}
+	value, err := (client.AutostartClient{}).Status(ctx)
+	if err != nil {
+		return nil
+	}
+	return &value
 }
 
 func unsupportedStatusArgument(arg string) error {
