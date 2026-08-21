@@ -15,18 +15,12 @@ import (
 // authority.
 func continuePersistedNetworkSessionTeardown(ctx context.Context, store networkSessionStateStore) error {
 	remainingNetwork := newPostPodlazNetworkVerifier()
-	if err := convergePersistedNetworkSessionTeardownWith(
+	return continuePersistedNetworkSessionTeardownWith(
 		ctx,
 		store,
 		netexecutor.PrivacyEnvelopeExecutor{},
 		remainingNetwork.Verify,
-	); err != nil {
-		return err
-	}
-	if err := store.Remove(); err != nil {
-		return fmt.Errorf("clear converged persisted teardown authority: %w", err)
-	}
-	return nil
+	)
 }
 
 // convergePersistedNetworkSessionTeardown performs the destructive and
@@ -50,6 +44,17 @@ func continuePersistedNetworkSessionTeardownWith(
 	executor privacyEnvelopeLifecycleExecutor,
 	verifyRemainingNetwork func(context.Context) error,
 ) error {
+	// Preserve the existing idempotent teardown contract. The stricter retained-
+	// authority convergence function below is used only where another durable
+	// authority transition still has to be committed before the session record
+	// may disappear.
+	_, exists, err := store.Load()
+	if err != nil {
+		return fmt.Errorf("load persisted teardown authority: %w", err)
+	}
+	if !exists {
+		return nil
+	}
 	if err := convergePersistedNetworkSessionTeardownWith(ctx, store, executor, verifyRemainingNetwork); err != nil {
 		return err
 	}
