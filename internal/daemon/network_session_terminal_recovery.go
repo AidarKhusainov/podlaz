@@ -15,7 +15,28 @@ import (
 // authority.
 func continuePersistedNetworkSessionTeardown(ctx context.Context, store networkSessionStateStore) error {
 	remainingNetwork := newPostPodlazNetworkVerifier()
-	return continuePersistedNetworkSessionTeardownWith(
+	if err := convergePersistedNetworkSessionTeardownWith(
+		ctx,
+		store,
+		netexecutor.PrivacyEnvelopeExecutor{},
+		remainingNetwork.Verify,
+	); err != nil {
+		return err
+	}
+	if err := store.Remove(); err != nil {
+		return fmt.Errorf("clear converged persisted teardown authority: %w", err)
+	}
+	return nil
+}
+
+// convergePersistedNetworkSessionTeardown performs the destructive and
+// evidentiary parts of terminal convergence but deliberately retains the
+// terminal Network Session record. Boot autostart uses this ordering so the
+// session remains durable fail-closed authority until the boot-attempt terminal
+// state itself has been persisted successfully.
+func convergePersistedNetworkSessionTeardown(ctx context.Context, store networkSessionStateStore) error {
+	remainingNetwork := newPostPodlazNetworkVerifier()
+	return convergePersistedNetworkSessionTeardownWith(
 		ctx,
 		store,
 		netexecutor.PrivacyEnvelopeExecutor{},
@@ -29,6 +50,21 @@ func continuePersistedNetworkSessionTeardownWith(
 	executor privacyEnvelopeLifecycleExecutor,
 	verifyRemainingNetwork func(context.Context) error,
 ) error {
+	if err := convergePersistedNetworkSessionTeardownWith(ctx, store, executor, verifyRemainingNetwork); err != nil {
+		return err
+	}
+	if err := store.Remove(); err != nil {
+		return fmt.Errorf("clear converged persisted teardown authority: %w", err)
+	}
+	return nil
+}
+
+func convergePersistedNetworkSessionTeardownWith(
+	ctx context.Context,
+	store networkSessionStateStore,
+	executor privacyEnvelopeLifecycleExecutor,
+	verifyRemainingNetwork func(context.Context) error,
+) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -37,7 +73,7 @@ func continuePersistedNetworkSessionTeardownWith(
 		return fmt.Errorf("load persisted teardown authority: %w", err)
 	}
 	if !exists {
-		return nil
+		return errors.New("persisted teardown authority disappeared before convergence")
 	}
 	if state.Intent != networkSessionIntentDisconnect && state.Intent != networkSessionIntentTerminal {
 		return fmt.Errorf("persisted teardown requires disconnect/terminal intent, found %q", state.Intent)
@@ -62,19 +98,16 @@ func continuePersistedNetworkSessionTeardownWith(
 
 	state, exists, err = store.Load()
 	if err != nil {
-		return fmt.Errorf("reload persisted teardown authority before clear: %w", err)
+		return fmt.Errorf("reload persisted teardown authority after verification: %w", err)
 	}
 	if !exists {
-		return nil
+		return errors.New("persisted teardown authority disappeared after verification")
 	}
 	if state.Intent != networkSessionIntentDisconnect && state.Intent != networkSessionIntentTerminal {
 		return fmt.Errorf("persisted teardown intent changed unexpectedly to %q", state.Intent)
 	}
 	if state.Protection != nil {
-		return errors.New("refuse to clear persisted teardown authority while privacy protection remains")
-	}
-	if err := store.Remove(); err != nil {
-		return fmt.Errorf("clear converged persisted teardown authority: %w", err)
+		return errors.New("persisted teardown retained privacy protection after convergence")
 	}
 	return nil
 }
