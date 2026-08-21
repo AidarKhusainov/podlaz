@@ -19,7 +19,7 @@ const (
 
 var errBootAutostartNetworkNotReady = errors.New("boot network did not become ready within the bounded autostart window")
 
-type bootNetworkReadinessWaiter struct {
+type bootAutostartReadinessWaiter struct {
 	probe    func(context.Context) (bool, error)
 	timeout  time.Duration
 	interval time.Duration
@@ -70,14 +70,10 @@ func (w bootAutostartReadinessWaiter) Wait(ctx context.Context) error {
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 			return ctx.Err()
 		case <-waitCtx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+			timer.Stop()
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
