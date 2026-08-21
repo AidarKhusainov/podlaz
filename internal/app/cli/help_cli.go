@@ -19,6 +19,7 @@ Usage:
   podlaz plan --mode proxy-only|tun <profile-id>
   podlaz connect [--mode proxy-only|tun] <profile-id>
   podlaz disconnect
+  podlaz autostart <enable|disable|status>
   podlaz check <profile-id>|--all [--target <target-id>]
   podlaz status
   podlaz doctor [--tun [--verbose|--json]]
@@ -40,13 +41,31 @@ Print the podlaz CLI version, source commit, and build date.
 `)
 }
 
+func printAutostartHelp(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  podlaz autostart enable [--mode proxy-only|tun] <profile-id>
+  podlaz autostart disable
+  podlaz autostart status
+
+Configure whether a new VPN connection should be created automatically on a
+future system boot. enable validates the selected user-owned profile and stores
+only the connection material required by the privileged daemon for the next
+boot. It does not connect immediately. disable changes future-boot policy and
+does not disconnect the current session. status is read-only.
+
+A normal podlaz connect remains current-boot only: daemon restart, crash, and
+package upgrade continue that same Network Session, while reboot ends it unless
+boot autostart has been explicitly enabled.
+`)
+}
+
 func printStatusHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   podlaz status
 
-Report local podlaz runtime state. The command uses daemon-backed status
-when the local Unix socket API is reachable and falls back to read-only local
-inspection when it is not.
+Report the product connection state using Connected, Connecting, Reconnecting,
+or Disconnected. Detailed routes, DNS, firewall, ownership, transaction, and
+recovery evidence remains available through podlaz doctor and podlaz recover.
 
 Exit code 3 means stale or incomplete local state was detected.
 `)
