@@ -17,7 +17,6 @@ const generatedDirName = "generated"
 
 var lstat = os.Lstat
 
-// RuntimeDirectoryState describes the local podlaz runtime directory state.
 type RuntimeDirectoryState string
 
 const (
@@ -27,14 +26,12 @@ const (
 	RuntimeDirectoryUnknown RuntimeDirectoryState = "unknown"
 )
 
-// RuntimeDirectory is the inspected local runtime directory summary.
 type RuntimeDirectory struct {
 	Path    string
 	State   RuntimeDirectoryState
 	Message string
 }
 
-// DaemonSocketState describes the local daemon socket path state.
 type DaemonSocketState string
 
 const (
@@ -45,7 +42,6 @@ const (
 	DaemonSocketUnknown      DaemonSocketState = "unknown"
 )
 
-// DaemonSocketAccess describes what the caller learned while attempting the daemon API.
 type DaemonSocketAccess string
 
 const (
@@ -53,62 +49,56 @@ const (
 	DaemonSocketAccessPermissionDenied DaemonSocketAccess = "permission-denied"
 )
 
-// DaemonSocket is the inspected daemon socket summary used by local fallback status.
 type DaemonSocket struct {
 	Path    string
 	State   DaemonSocketState
 	Message string
 }
 
-// Candidate describes a local stale-state recovery candidate shown by status.
 type Candidate struct {
 	Kind        string
 	Description string
 	Target      string
 }
 
-// Warning describes an incomplete local status inspection.
 type Warning struct {
 	Target  string
 	Message string
 }
 
-// Report is the user-visible podlaz status model.
 type Report struct {
-	Daemon            string
-	Service           string
-	Connection        string
-	Mode              string
-	ProfileID         string
-	ProfileName       string
-	DaemonSocket      DaemonSocket
-	RuntimeDirectory  RuntimeDirectory
-	RuntimeConfigPath string
-	Proxy             string
-	TUN               string
-	Routes            string
-	DNS               string
-	Firewall          string
-	Transactions      []txstate.TransactionSummary
-	StartupScan       *api.StartupScanStatus
-	Candidates        []Candidate
-	RuntimeWarnings   []string
-	Warnings          []Warning
+	Daemon              string
+	Service             string
+	Connection          string
+	Mode                string
+	ProfileID           string
+	ProfileName         string
+	ProductReconnecting bool
+	DaemonSocket        DaemonSocket
+	RuntimeDirectory    RuntimeDirectory
+	RuntimeConfigPath   string
+	Proxy               string
+	TUN                 string
+	Routes              string
+	DNS                 string
+	Firewall            string
+	Transactions        []txstate.TransactionSummary
+	StartupScan         *api.StartupScanStatus
+	Candidates          []Candidate
+	RuntimeWarnings     []string
+	Warnings            []Warning
 }
 
-// Options controls local status inspection. Zero values use production defaults.
 type Options struct {
 	RuntimeDir         string
 	SocketPath         string
 	DaemonSocketAccess DaemonSocketAccess
 }
 
-// Inspect returns the local fallback status report using production defaults.
 func Inspect(ctx context.Context) Report {
 	return InspectWithOptions(ctx, Options{})
 }
 
-// InspectWithOptions returns the local fallback status report with injectable options.
 func InspectWithOptions(ctx context.Context, opts Options) Report {
 	runtimeDir := opts.RuntimeDir
 	if runtimeDir == "" {
@@ -139,10 +129,7 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 		report.DaemonSocket.Message = "unknown (inspection incomplete)"
 		report.RuntimeDirectory.State = RuntimeDirectoryUnknown
 		report.RuntimeDirectory.Message = "unknown (inspection incomplete)"
-		report.Warnings = append(report.Warnings, Warning{
-			Target:  "runtime directory " + runtimeDir,
-			Message: ctx.Err().Error(),
-		})
+		report.Warnings = append(report.Warnings, Warning{Target: "runtime directory " + runtimeDir, Message: ctx.Err().Error()})
 		return report
 	default:
 	}
@@ -188,7 +175,6 @@ func InspectWithOptions(ctx context.Context, opts Options) Report {
 	return report
 }
 
-// FromDaemon converts a daemon API status response into the local status report model.
 func FromDaemon(s api.StatusResponse) Report {
 	report := Report{
 		Daemon:      s.Daemon,
@@ -220,13 +206,11 @@ func FromDaemon(s api.StatusResponse) Report {
 	return report
 }
 
-// WithDaemonUnavailable marks a local fallback report with the daemon connection failure.
 func WithDaemonUnavailable(base Report, message string) Report {
 	base.Daemon = "not reachable (" + message + "); using local fallback"
 	return base
 }
 
-// HasUnhealthyState reports whether status found recovery candidates, incomplete inspection, or cleanup state.
 func (r Report) HasUnhealthyState() bool {
 	if len(r.Candidates) > 0 || len(r.Warnings) > 0 {
 		return true
@@ -242,7 +226,6 @@ func (r Report) HasUnhealthyState() bool {
 	return false
 }
 
-// String renders the status report in a stable human-readable format.
 func (r Report) String() string {
 	var b strings.Builder
 	b.WriteString("podlaz status\n")
@@ -326,10 +309,7 @@ func inspectDaemonSocket(socketPath string, access DaemonSocketAccess) (DaemonSo
 		case err != nil && errors.Is(err, os.ErrPermission):
 			socket.State = DaemonSocketInaccessible
 			socket.Message = "inaccessible (permission denied; check podlaz group membership)"
-			return socket, &Warning{
-				Target:  "daemon socket " + socketPath,
-				Message: "permission denied while inspecting daemon socket path",
-			}
+			return socket, &Warning{Target: "daemon socket " + socketPath, Message: "permission denied while inspecting daemon socket path"}
 		}
 	}
 
