@@ -11,19 +11,16 @@ import (
 type bootAutostartStartupResult string
 
 const (
-	bootAutostartStartupNoop      bootAutostartStartupResult = "noop"
-	bootAutostartStartupContinued bootAutostartStartupResult = "continued"
-	bootAutostartStartupConnected bootAutostartStartupResult = "connected"
-	bootAutostartStartupTerminal  bootAutostartStartupResult = "terminal"
-	bootAutostartStartupBlocked   bootAutostartStartupResult = "blocked"
+	bootAutostartStartupNoop           bootAutostartStartupResult = "noop"
+	bootAutostartStartupContinued      bootAutostartStartupResult = "continued"
+	bootAutostartStartupConnected      bootAutostartStartupResult = "connected"
+	bootAutostartStartupTerminal       bootAutostartStartupResult = "terminal"
+	bootAutostartStartupBlocked        bootAutostartStartupResult = "blocked"
+	bootAutostartStartupRecoveryFailed bootAutostartStartupResult = "recovery_failed"
 )
 
 type bootAutostartResumeFunc func(context.Context) (bool, error)
 
-// runBootAutostartStartup serializes policy, not Linux networking. The supplied
-// lifecycle must be the same normal lifecycle used by explicit Connect (normally
-// the lifecycle-operation-locked Network Session lifecycle). Existing current-
-// boot Network Session authority always wins over fresh boot policy.
 func runBootAutostartStartup(
 	ctx context.Context,
 	manifestStore bootAutostartManifestStore,
@@ -39,17 +36,14 @@ func runBootAutostartStartup(
 		return bootAutostartStartupBlocked, errors.New("boot autostart requires startup continuation function")
 	}
 
-	// Capture whether startup began with current-boot Network Session authority.
-	// Even if resume/teardown removes it, this startup invocation must not then
-	// reinterpret the same boot as permission for a fresh automatic Connect.
 	_, hadSession, err := continuation.stateStore().Load()
 	if err != nil {
-		return bootAutostartStartupBlocked, fmt.Errorf("inspect current Network Session before boot autostart: %w", err)
+		return bootAutostartStartupRecoveryFailed, fmt.Errorf("inspect current Network Session before boot autostart: %w", err)
 	}
 
 	resumed, resumeErr := resume(ctx)
 	if resumeErr != nil {
-		return bootAutostartStartupBlocked, resumeErr
+		return bootAutostartStartupRecoveryFailed, resumeErr
 	}
 	if hadSession || resumed {
 		return completeBootAutostartAfterContinuation(attemptStore, resumed)
@@ -57,8 +51,6 @@ func runBootAutostartStartup(
 
 	attempt, attemptExists, err := attemptStore.LoadCurrent()
 	if err != nil {
-		// Ambiguous current-boot attempt authority cannot grant a new automatic
-		// Connect. Explicit user lifecycle remains separate from this decision.
 		return bootAutostartStartupBlocked, fmt.Errorf("inspect boot autostart attempt: %w", err)
 	}
 	if attemptExists {
@@ -121,10 +113,7 @@ func continueBootAutostartAttempt(
 	lifecycle lifecycleService,
 	attempt bootAutostartAttempt,
 ) (bootAutostartStartupResult, error) {
-	request := api.ConnectRequest{
-		Mode:    attempt.Configuration.Mode,
-		Profile: attempt.Configuration.Profile,
-	}
+	request := api.ConnectRequest{Mode: attempt.Configuration.Mode, Profile: attempt.Configuration.Profile}
 	_, connectErr := lifecycle.Connect(ctx, request)
 	if connectErr == nil {
 		if err := attemptStore.MarkSucceeded(); err != nil {
@@ -133,9 +122,6 @@ func continueBootAutostartAttempt(
 		return bootAutostartStartupConnected, nil
 	}
 
-	// A normal Network Session Connect persists exact lifecycle authority before
-	// mutation. If authority still exists after the returned failure, recovery
-	// owns the next startup and this logical attempt remains in_progress.
 	_, sessionExists, stateErr := continuation.stateStore().Load()
 	if stateErr != nil {
 		return bootAutostartStartupBlocked, errors.Join(connectErr, fmt.Errorf("inspect Network Session after boot autostart failure: %w", stateErr))
