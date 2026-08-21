@@ -35,10 +35,6 @@ func testBootAutostartConfig() api.AutostartConfigureRequest {
 	}
 }
 
-func fixedBootID(id string) bootIDReader {
-	return func() (string, error) { return id, nil }
-}
-
 func TestBootAutostartManifestEnableRoundTripsPrivateValidatedConfig(t *testing.T) {
 	stateDir := t.TempDir()
 	store := newBootAutostartManifestStore(stateDir, fixedBootID(testBootOne))
