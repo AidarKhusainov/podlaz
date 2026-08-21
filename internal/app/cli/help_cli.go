@@ -49,9 +49,9 @@ func printAutostartHelp(w io.Writer) {
 
 Configure whether a new VPN connection should be created automatically on a
 future system boot. enable validates the selected user-owned profile and stores
-only the connection material required by the privileged daemon for the next
-boot. It does not connect immediately. disable changes future-boot policy and
-does not disconnect the current session. status is read-only.
+only the connection material required by the privileged daemon for the next boot.
+It does not connect immediately. disable changes future-boot policy and does not
+disconnect the current session. status is read-only.
 
 A normal podlaz connect remains current-boot only: daemon restart, crash, and
 package upgrade continue that same Network Session, while reboot ends it unless
@@ -63,9 +63,10 @@ func printStatusHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   podlaz status
 
-Report the product connection state using Connected, Connecting, Reconnecting,
-or Disconnected. Detailed routes, DNS, firewall, ownership, transaction, and
-recovery evidence remains available through podlaz doctor and podlaz recover.
+Report local podlaz runtime state through the product connection states Connected,
+Connecting, Reconnecting, or Disconnected. Detailed routes, DNS, firewall,
+ownership, transaction, and recovery evidence remains available through podlaz
+doctor and podlaz recover.
 
 Exit code 3 means stale or incomplete local state was detected.
 `)
