@@ -9,16 +9,22 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 )
 
-const daemonShutdownTimeout = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
+const (
+	daemonShutdownTimeout  = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
+	defaultDaemonStateDir  = "/var/lib/podlaz"
+	systemdStateDirectoryEnv = "STATE_DIRECTORY"
+)
 
 type Server struct {
 	RuntimeDir     string
+	StateDir       string
 	Status         func(context.Context) api.StatusResponse
 	Doctor         func(context.Context) api.DoctorResponse
 	Lifecycle      *XrayManager
@@ -35,6 +41,10 @@ func (s Server) Run(ctx context.Context) error {
 	}
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		return fmt.Errorf("create runtime directory %s: %w", runtimeDir, err)
+	}
+	stateDir := daemonStateDir(s.StateDir, runtimeDir)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return fmt.Errorf("create daemon state directory %s: %w", stateDir, err)
 	}
 
 	lifecycle := s.Lifecycle
@@ -144,27 +154,50 @@ func (s Server) Run(ctx context.Context) error {
 	defer cancelEvents()
 	go coordinator.Run(eventCtx)
 
-	resumed, resumeErr := resumeNetworkSession(
+	manifestStore := newBootAutostartManifestStore(stateDir, s.bootID)
+	attemptStore := newBootAutostartAttemptStore(runtimeDir, s.bootID)
+	startupResult, startupErr := runBootAutostartStartup(
 		ctx,
+		manifestStore,
+		attemptStore,
 		continuation,
-		lockedLifecycle,
-		currentStatus,
-		func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
-			return daemonRecover(recoveryCtx, runtimeDir, status)
+		startupMutationGate,
+		func(resumeCtx context.Context) (bool, error) {
+			return resumeNetworkSession(
+				resumeCtx,
+				continuation,
+				lockedLifecycle,
+				currentStatus,
+				func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
+					return daemonRecover(recoveryCtx, runtimeDir, status)
+				},
+			)
 		},
 	)
 	switch {
-	case resumeErr == nil && resumed:
-		log.Printf("podlazd: current-boot network session continuation resumed")
-	case errors.Is(resumeErr, errNetworkSessionRecoveryIncomplete):
+	case startupErr == nil && startupResult == bootAutostartStartupConnected:
+		log.Printf("podlazd: boot autostart connection established")
+	case startupErr == nil && startupResult == bootAutostartStartupContinued:
+		log.Printf("podlazd: current-boot network session continuation converged")
+	case startupErr == nil && startupResult == bootAutostartStartupTerminal:
+		log.Printf("podlazd: boot autostart lifecycle reached terminal outcome")
+	case startupResult == bootAutostartStartupRecoveryFailed:
 		startupMutationGate.Block()
-		log.Printf("podlazd: current-boot network session continuation paused because exact startup recovery is incomplete")
-	case resumeErr != nil:
-		startupMutationGate.Block()
-		// The continuation record can contain profile credentials/endpoints and
-		// lifecycle errors can contain derived network details. Keep startup logs
-		// classification-only; exact diagnostics remain in private daemon state.
-		log.Printf("podlazd: current-boot network session continuation could not be resumed")
+		if errors.Is(startupErr, errNetworkSessionRecoveryIncomplete) {
+			log.Printf("podlazd: current-boot network session continuation paused because exact startup recovery is incomplete")
+		} else {
+			log.Printf("podlazd: current-boot network session continuation could not be resumed")
+		}
+	case startupErr != nil:
+		_, sessionExists, stateErr := continuation.stateStore().Load()
+		if stateErr != nil || sessionExists {
+			startupMutationGate.Block()
+		}
+		if startupResult == bootAutostartStartupTerminal {
+			log.Printf("podlazd: boot autostart lifecycle reached terminal outcome")
+		} else {
+			log.Printf("podlazd: boot autostart was not started because startup authority is unavailable")
+		}
 	}
 	refreshStartupScan(ctx)
 
@@ -276,11 +309,6 @@ func (s Server) Run(ctx context.Context) error {
 					return response
 				}
 
-				// runRecoveryWithFollowUp already owns the operation token. Execute
-				// the single intent-aware Network Session convergence path through
-				// the underlying lifecycle so privacy -> exact data-plane -> generic
-				// recovery -> resume/terminal-teardown remains one non-reentrant
-				// critical section.
 				var genericResponse api.RecoveryResponse
 				_, retryErr := resumeNetworkSession(
 					r.Context(),
@@ -308,6 +336,7 @@ func (s Server) Run(ctx context.Context) error {
 		_ = json.NewEncoder(w).Encode(response)
 		log.Printf("podlazd: recover request handled")
 	})
+	registerBootAutostartHandlers(mux, manifestStore, authorizer)
 	registerLifecycleHandlers(mux, startupMutationGate, authorizer)
 
 	httpServer := http.Server{
@@ -345,6 +374,19 @@ func (s Server) Run(ctx context.Context) error {
 	}
 }
 
+func daemonStateDir(explicit, runtimeDir string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if systemdStateDir := os.Getenv(systemdStateDirectoryEnv); systemdStateDir != "" {
+		return systemdStateDir
+	}
+	if api.ServiceFromEnv() == api.ServiceSystemd {
+		return defaultDaemonStateDir
+	}
+	return filepath.Join(runtimeDir, "state")
+}
+
 func (s Server) shutdownIntent() ShutdownIntent {
 	if s.ShutdownIntent == nil {
 		return ShutdownStop
@@ -367,9 +409,6 @@ func shutdownDaemonServer(
 	shutdownCtx, cancel := context.WithTimeout(ctx, daemonShutdownTimeout)
 	defer cancel()
 
-	// Fence first so no new request can declare lifecycle mutation. Explicit
-	// stop then disarms reconnect intent before waiting for already-admitted
-	// mutations; restart intentionally keeps continuation armed.
 	operationLock.fenceMutations()
 	var stopIntentErr error
 	if intent == ShutdownStop {
