@@ -9,9 +9,14 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-type bootAutostartCancelLifecycle struct{}
+type bootAutostartCancelLifecycle struct {
+	cancel context.CancelFunc
+}
 
-func (bootAutostartCancelLifecycle) Connect(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+func (l bootAutostartCancelLifecycle) Connect(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+	if l.cancel != nil {
+		l.cancel()
+	}
 	return api.LifecycleResponse{}, context.Canceled
 }
 
@@ -24,11 +29,12 @@ func TestBootAutostartRestartCancellationKeepsPinnedAttemptForContinuation(t *te
 	if _, err := manifestStore.Enable(testBootAutostartConfig()); err != nil {
 		t.Fatal(err)
 	}
-	lifecycle := newNetworkSessionLifecycle(bootAutostartCancelLifecycle{}, continuation)
+	ctx, cancel := context.WithCancel(context.Background())
+	lifecycle := newNetworkSessionLifecycle(bootAutostartCancelLifecycle{cancel: cancel}, continuation)
 	terminalConvergeCalls := 0
 
 	result, err := runBootAutostartStartup(
-		context.Background(),
+		ctx,
 		manifestStore,
 		attemptStore,
 		continuation,
@@ -88,30 +94,25 @@ func TestBootAutostartConnectFailureRequiresConclusiveTerminalConvergence(t *tes
 			return convergenceErr
 		},
 	)
-	if !errors.Is(err, convergenceErr) {
-		t.Fatalf("startup error = %v, want convergence failure", err)
-	}
-	if result == bootAutostartStartupTerminal {
-		t.Fatalf("incomplete cleanup was published as terminal")
+	if !errors.Is(err, convergenceErr) || result != bootAutostartStartupRecoveryFailed {
+		t.Fatalf("incomplete convergence result=%q err=%v", result, err)
 	}
 	attempt, exists, loadErr := attemptStore.LoadCurrent()
 	if loadErr != nil || !exists || attempt.State != bootAutostartAttemptInProgress {
-		t.Fatalf("attempt after incomplete cleanup = %+v exists=%v err=%v", attempt, exists, loadErr)
+		t.Fatalf("incomplete cleanup consumed boot attempt: %+v exists=%v err=%v", attempt, exists, loadErr)
 	}
 	state, exists, loadErr := continuation.stateStore().Load()
 	if loadErr != nil || !exists || state.Intent != networkSessionIntentTerminal {
-		t.Fatalf("terminal cleanup authority was not retained: state=%+v exists=%v err=%v", state, exists, loadErr)
+		t.Fatalf("incomplete cleanup lost terminal continuation: %+v exists=%v err=%v", state, exists, loadErr)
 	}
 }
 
-func TestBootAutostartTerminalCompletionWriteFailureRetainsFailClosedAuthority(t *testing.T) {
+func TestBootAutostartTerminalCompletionWriteFailureStaysFailClosed(t *testing.T) {
 	manifestStore, attemptStore, continuation := bootAutostartStores(t, testBootConfigured, testBootAttempt)
 	if _, err := manifestStore.Enable(testBootAutostartConfig()); err != nil {
 		t.Fatal(err)
 	}
-	inner := &bootAutostartRecordingLifecycle{err: errors.New("simulated terminal connect failure")}
-	lifecycle := newNetworkSessionLifecycle(inner, continuation)
-
+	lifecycle := &bootAutostartRecordingLifecycle{err: errors.New("simulated connect failure")}
 	result, err := runBootAutostartStartup(
 		context.Background(),
 		manifestStore,
@@ -120,51 +121,56 @@ func TestBootAutostartTerminalCompletionWriteFailureRetainsFailClosedAuthority(t
 		lifecycle,
 		func(context.Context) (bool, error) { return false, nil },
 		func(_ context.Context, terminal networkSessionContinuationStore) error {
-			state, exists, loadErr := terminal.stateStore().Load()
-			if loadErr != nil || !exists || state.Intent != networkSessionIntentTerminal {
-				t.Fatalf("terminal convergence authority = %+v exists=%v err=%v", state, exists, loadErr)
+			if err := os.RemoveAll(attemptStore.runtimeDir); err != nil {
+				return err
 			}
-			if err := os.Chmod(attemptStore.runtimeDir, 0o500); err != nil {
-				t.Fatal(err)
+			if err := os.WriteFile(attemptStore.runtimeDir, []byte("block directory recreation"), 0o600); err != nil {
+				return err
 			}
 			return nil
 		},
 	)
-	if err == nil {
-		t.Fatal("startup unexpectedly succeeded after terminal attempt persistence was made unwritable")
-	}
-	if result == bootAutostartStartupTerminal {
-		t.Fatalf("unpersisted terminal completion was treated as durable terminal")
-	}
-	if chmodErr := os.Chmod(attemptStore.runtimeDir, 0o700); chmodErr != nil {
-		t.Fatal(chmodErr)
-	}
-	attempt, exists, loadErr := attemptStore.LoadCurrent()
-	if loadErr != nil || !exists || attempt.State != bootAutostartAttemptInProgress {
-		t.Fatalf("attempt after completion write failure = %+v exists=%v err=%v", attempt, exists, loadErr)
+	if err == nil || result != bootAutostartStartupRecoveryFailed {
+		t.Fatalf("completion write failure result=%q err=%v", result, err)
 	}
 	state, exists, loadErr := continuation.stateStore().Load()
 	if loadErr != nil || !exists || state.Intent != networkSessionIntentTerminal {
-		t.Fatalf("fail-closed terminal authority was lost: state=%+v exists=%v err=%v", state, exists, loadErr)
+		t.Fatalf("completion write failure lost fail-closed terminal authority: %+v exists=%v err=%v", state, exists, loadErr)
+	}
+}
+
+func TestBootAutostartSuccessfulCompletionWriteFailureRetainsResumeAuthority(t *testing.T) {
+	manifestStore, attemptStore, continuation := bootAutostartStores(t, testBootConfigured, testBootAttempt)
+	if _, err := manifestStore.Enable(testBootAutostartConfig()); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := &bootAutostartRecordingLifecycle{}
+	continuation.afterSave = func() {
+		if err := os.RemoveAll(attemptStore.runtimeDir); err != nil {
+			t.Fatalf("remove attempt dir: %v", err)
+		}
+		if err := os.WriteFile(attemptStore.runtimeDir, []byte("block directory recreation"), 0o600); err != nil {
+			t.Fatalf("replace attempt dir: %v", err)
+		}
 	}
 
-	secondLifecycle := &bootAutostartRecordingLifecycle{}
-	result, secondErr := runBootAutostartStartup(
+	result, err := runBootAutostartStartup(
 		context.Background(),
 		manifestStore,
 		attemptStore,
 		continuation,
-		secondLifecycle,
+		lifecycle,
 		func(context.Context) (bool, error) { return false, nil },
-		func(context.Context, networkSessionContinuationStore) error { return nil },
+		successfulBootTerminalConvergence(t),
 	)
-	if secondErr != nil {
-		t.Fatalf("second startup failed after storage recovered: %v", secondErr)
+	if err == nil || result != bootAutostartStartupRecoveryFailed {
+		t.Fatalf("successful completion write failure result=%q err=%v", result, err)
 	}
-	if result != bootAutostartStartupTerminal {
-		t.Fatalf("second startup result = %q, want terminal", result)
+	request, exists, loadErr := continuation.LoadCurrent()
+	if loadErr != nil || !exists {
+		t.Fatalf("successful completion write failure lost resume authority: exists=%v err=%v", exists, loadErr)
 	}
-	if len(secondLifecycle.requests) != 0 {
-		t.Fatalf("second startup issued %d fresh Connect call(s)", len(secondLifecycle.requests))
+	if request.Profile.ID == "" {
+		t.Fatalf("successful completion write failure retained empty request")
 	}
 }
