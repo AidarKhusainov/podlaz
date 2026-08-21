@@ -40,8 +40,11 @@ func runBootAutostartStartup(
 	if len(terminalConverge) > 1 {
 		return bootAutostartStartupBlocked, errors.New("boot autostart accepts at most one terminal convergence function")
 	}
-	var convergeTerminal bootAutostartTerminalConvergeFunc
+	convergeTerminal := bootAutostartTerminalConvergeFunc(defaultBootAutostartTerminalConverge)
 	if len(terminalConverge) == 1 {
+		if terminalConverge[0] == nil {
+			return bootAutostartStartupBlocked, errors.New("boot autostart terminal convergence function is nil")
+		}
 		convergeTerminal = terminalConverge[0]
 	}
 
@@ -195,4 +198,26 @@ func convergeAndCompleteBootAutostartTerminal(
 		return bootAutostartStartupTerminal, fmt.Errorf("clear converged boot autostart Network Session authority: %w", err)
 	}
 	return bootAutostartStartupTerminal, nil
+}
+
+func defaultBootAutostartTerminalConverge(ctx context.Context, continuation networkSessionContinuationStore) error {
+	recoverExact := continuation.recoverExact
+	if recoverExact == nil {
+		recoverExact = recoverExactNetworkSessionTransactions
+	}
+	exactRecovery := recoverExact(ctx, continuation.runtimeDir)
+	if !networkSessionRecoveryConverged(exactRecovery) {
+		return errNetworkSessionRecoveryIncomplete
+	}
+
+	// An admitted boot attempt has already been declared terminal at this point.
+	// Generic recovery therefore operates on inactive product semantics: it may
+	// clean only scanner-proven Podlaz-owned stale resources and never preserves
+	// an active session merely because its failed Connect left runtime evidence.
+	genericRecovery := daemonRecover(ctx, continuation.runtimeDir, api.StatusResponse{Connection: "inactive"})
+	if !networkSessionRecoveryConverged(genericRecovery) {
+		return errNetworkSessionRecoveryIncomplete
+	}
+
+	return convergePersistedNetworkSessionTeardown(ctx, continuation.stateStore())
 }
