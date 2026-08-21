@@ -59,13 +59,15 @@ func (s Server) Run(ctx context.Context) error {
 	if authorizer == nil {
 		authorizer = authorizerFromEnv()
 	}
+	productPhase := &productLifecyclePhaseTracker{}
 	currentStatus := func(statusCtx context.Context) api.StatusResponse {
 		statusFn := lifecycle.Status
 		if s.Status != nil {
 			statusFn = s.Status
 		}
 		status := lifecycle.statusForPublicationFrom(statusCtx, statusFn)
-		return decorateTunHealth(status, healthRuntime)
+		status = decorateTunHealth(status, healthRuntime)
+		return productPhase.decorate(status)
 	}
 
 	lockPath := api.LockPath(runtimeDir)
@@ -338,7 +340,7 @@ func (s Server) Run(ctx context.Context) error {
 		log.Printf("podlazd: recover request handled")
 	})
 	registerBootAutostartHandlers(mux, manifestStore, authorizer)
-	registerLifecycleHandlers(mux, startupMutationGate, authorizer)
+	registerLifecycleHandlers(mux, productPhaseLifecycle{inner: startupMutationGate, tracker: productPhase}, authorizer)
 
 	httpServer := http.Server{
 		Handler: mux,
