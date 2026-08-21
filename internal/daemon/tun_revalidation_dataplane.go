@@ -17,6 +17,7 @@ const (
 	tunRevalidationTCP443TargetID      = "tcp-443-cloudflare"
 	tunRevalidationTLSTargetID         = "tls-cloudflare"
 	tunRevalidationHTTPSTargetID       = "https-cloudflare-small"
+	tunRevalidationGoogleHTTPSTargetID = "https-google-small"
 )
 
 type tunRevalidationNetworkClient interface {
@@ -165,6 +166,104 @@ func verifyTunRevalidationDataPlane(ctx context.Context, plan planner.TunPlan, c
 		return newTunVerificationError("https", "HTTPS revalidation failed", err)
 	}
 	return nil
+}
+
+// collectTunRevalidationProbeEvidence collects soft data-plane evidence without
+// making a lifecycle disposition. A timeout owned by one child probe is soft
+// evidence just like any other probe failure; only cancellation/deadline of the
+// parent reconciliation round aborts the remaining independent samples.
+func collectTunRevalidationProbeEvidence(ctx context.Context, plan planner.TunPlan, client tunRevalidationNetworkClient) ([]tunProbeEvidence, error) {
+	if client == nil {
+		client = newTunRevalidationNetworkClient()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	dnsTarget, err := tunRevalidationTarget(tunRevalidationDNSPositiveTargetID, tundiag.TargetDNS)
+	if err != nil {
+		return nil, err
+	}
+	server, err := tunRevalidationDNSServer(plan)
+	if err != nil {
+		return nil, err
+	}
+	tcpTarget, err := tunRevalidationTarget(tunRevalidationTCP443TargetID, tundiag.TargetTCP)
+	if err != nil {
+		return nil, err
+	}
+	tlsTarget, err := tunRevalidationTarget(tunRevalidationTLSTargetID, tundiag.TargetTLS)
+	if err != nil {
+		return nil, err
+	}
+	cloudflareHTTPS, err := tunRevalidationTarget(tunRevalidationHTTPSTargetID, tundiag.TargetHTTPS)
+	if err != nil {
+		return nil, err
+	}
+	googleHTTPS, err := tunRevalidationTarget(tunRevalidationGoogleHTTPSTargetID, tundiag.TargetHTTPS)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]tunProbeEvidence, 0, 6)
+	appendProbe := func(group, provider string, timeout time.Duration, probe func(context.Context) error) error {
+		probeErr := runProbe(ctx, timeout, probe)
+		if parentErr := ctx.Err(); parentErr != nil {
+			return parentErr
+		}
+		out = append(out, tunProbeEvidence{Group: group, Provider: provider, Success: probeErr == nil, Cause: probeErr})
+		return nil
+	}
+
+	var udpEvidence tundiag.DNSEvidence
+	if err := appendProbe("dns-udp", "session-resolver", dnsTarget.Timeout, func(probeCtx context.Context) error {
+		var callErr error
+		udpEvidence, callErr = client.DNSUDP(probeCtx, server, dnsTarget.Host, tundiag.DNSRecordTypeA)
+		if callErr != nil {
+			return callErr
+		}
+		return validateTunRevalidationDNSResponse(udpEvidence)
+	}); err != nil {
+		return nil, err
+	}
+
+	var tcpDNSEvidence tundiag.DNSEvidence
+	if err := appendProbe("dns-tcp", "session-resolver", dnsTarget.Timeout, func(probeCtx context.Context) error {
+		var callErr error
+		tcpDNSEvidence, callErr = client.DNSTCP(probeCtx, server, dnsTarget.Host, tundiag.DNSRecordTypeA)
+		if callErr != nil {
+			return callErr
+		}
+		return validateTunRevalidationDNSResponse(tcpDNSEvidence)
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := appendProbe("tcp", "cloudflare", tcpTarget.Timeout, func(probeCtx context.Context) error {
+		_, callErr := client.TCP(probeCtx, tcpTarget.Host, tcpTarget.Port)
+		return callErr
+	}); err != nil {
+		return nil, err
+	}
+	if err := appendProbe("tls", "cloudflare", tlsTarget.Timeout, func(probeCtx context.Context) error {
+		_, callErr := client.TLS(probeCtx, tlsTarget.Host, tlsTarget.Port)
+		return callErr
+	}); err != nil {
+		return nil, err
+	}
+	if err := appendProbe("https", "cloudflare", cloudflareHTTPS.Timeout, func(probeCtx context.Context) error {
+		_, callErr := client.HTTPS(probeCtx, cloudflareHTTPS)
+		return callErr
+	}); err != nil {
+		return nil, err
+	}
+	if err := appendProbe("https", "google", googleHTTPS.Timeout, func(probeCtx context.Context) error {
+		_, callErr := client.HTTPS(probeCtx, googleHTTPS)
+		return callErr
+	}); err != nil {
+		return nil, err
+	}
+	return maybeInjectE2ETunReconciliationSoftFailure(out), nil
 }
 
 func tunRevalidationTarget(id string, kind tundiag.TargetKind) (tundiag.Target, error) {

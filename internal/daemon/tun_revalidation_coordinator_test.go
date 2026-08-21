@@ -84,7 +84,7 @@ func TestTunRevalidationCoordinatorPreservesResumeAcrossCoalescing(t *testing.T)
 	select {
 	case trigger := <-started:
 		if trigger != tunRevalidationTriggerResume {
-			t.Fatalf("coalesced trigger=%q, want resume to dominate", trigger)
+			t.Fatalf("coalesced trigger=%q, want %q", trigger, tunRevalidationTriggerResume)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("coalesced follow-up revalidation did not start")
@@ -125,5 +125,202 @@ func TestTunRevalidationCoordinatorResumeSignalOnlyTriggersAfterWake(t *testing.
 	trigger, ok := tunSleepSignalTrigger(false)
 	if !ok || trigger != tunRevalidationTriggerResume {
 		t.Fatalf("PrepareForSleep(false) trigger = %q, %v; want %q, true", trigger, ok, tunRevalidationTriggerResume)
+	}
+}
+
+func TestAutomaticDispositionNewerPublicationSupersedesReconcileBeforeAdmission(t *testing.T) {
+	lock := newLifecycleOperationLock()
+	expectedGeneration := lock.lifecycleMutationSnapshot().generation
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	secondStarted := make(chan struct{})
+	var runs atomic.Int32
+	var admitCalls atomic.Int32
+	handled := make(chan struct{}, 1)
+
+	coordinator := newTunAutomaticDispositionCoordinator(
+		func(ctx context.Context, _ tunRevalidationTrigger) tunAutomaticDisposition {
+			if runs.Add(1) == 1 {
+				close(firstStarted)
+				select {
+				case <-ctx.Done():
+					return tunAutomaticDisposition{}
+				case <-releaseFirst:
+				}
+				return tunAutomaticDisposition{
+					Kind:                       tunDecisionReconcile,
+					ExpectedMutationGeneration: expectedGeneration,
+					NetworkSessionID:           "session-a",
+				}
+			}
+			close(secondStarted)
+			return tunAutomaticDisposition{}
+		},
+		func(expected uint64) (*lifecycleAutomaticAdmission, bool) {
+			admitCalls.Add(1)
+			return lock.tryAdmitAutomaticMutation(expected)
+		},
+		func(_ context.Context, admission *lifecycleAutomaticAdmission, _ tunAutomaticDisposition) {
+			admission.Release()
+			handled <- struct{}{}
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go coordinator.Run(ctx)
+	coordinator.Notify(tunRevalidationTriggerResume)
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first automatic-disposition round did not start")
+	}
+
+	coordinator.Notify(tunRevalidationTriggerRoute)
+	close(releaseFirst)
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("newer publication was not consumed after stale reconcile")
+	}
+	if got := admitCalls.Load(); got != 0 {
+		t.Fatalf("stale reconcile attempted automatic admission %d times, want 0", got)
+	}
+	select {
+	case <-handled:
+		t.Fatal("stale reconcile reached automatic handler")
+	default:
+	}
+}
+
+func TestStaleTerminalMutationGenerationIsSupersededBeforeAdmission(t *testing.T) {
+	lock := newLifecycleOperationLock()
+	expectedGeneration := lock.lifecycleMutationSnapshot().generation
+	runStarted := make(chan struct{})
+	releaseRun := make(chan struct{})
+	admitAttempted := make(chan struct{})
+	handled := make(chan struct{}, 1)
+
+	coordinator := newTunAutomaticDispositionCoordinator(
+		func(ctx context.Context, _ tunRevalidationTrigger) tunAutomaticDisposition {
+			close(runStarted)
+			select {
+			case <-ctx.Done():
+				return tunAutomaticDisposition{}
+			case <-releaseRun:
+				return tunAutomaticDisposition{
+					Kind:                       tunDecisionTerminal,
+					ExpectedMutationGeneration: expectedGeneration,
+					NetworkSessionID:           "session-a",
+				}
+			}
+		},
+		func(expected uint64) (*lifecycleAutomaticAdmission, bool) {
+			close(admitAttempted)
+			return lock.tryAdmitAutomaticMutation(expected)
+		},
+		func(_ context.Context, admission *lifecycleAutomaticAdmission, _ tunAutomaticDisposition) {
+			admission.Release()
+			handled <- struct{}{}
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go coordinator.Run(ctx)
+	coordinator.Notify(tunRevalidationTriggerResume)
+	select {
+	case <-runStarted:
+	case <-time.After(time.Second):
+		t.Fatal("terminal round did not start")
+	}
+
+	finishExplicit, err := lock.beginExternalMutation()
+	if err != nil {
+		t.Fatalf("declare explicit mutation: %v", err)
+	}
+	defer finishExplicit()
+	close(releaseRun)
+
+	select {
+	case <-admitAttempted:
+	case <-time.After(time.Second):
+		t.Fatal("terminal disposition did not reach lifecycle admission check")
+	}
+	select {
+	case <-handled:
+		t.Fatal("stale terminal reached automatic handler after lifecycle generation changed")
+	default:
+	}
+}
+
+func TestAutomaticDispositionPublicationClaimAndLifecycleAdmissionAreAtomic(t *testing.T) {
+	lock := newLifecycleOperationLock()
+	expectedGeneration := lock.lifecycleMutationSnapshot().generation
+	admitEntered := make(chan struct{})
+	releaseAdmit := make(chan struct{})
+	handled := make(chan tunAutomaticDisposition, 1)
+	var runs atomic.Int32
+
+	coordinator := newTunAutomaticDispositionCoordinator(
+		func(context.Context, tunRevalidationTrigger) tunAutomaticDisposition {
+			if runs.Add(1) != 1 {
+				return tunAutomaticDisposition{}
+			}
+			return tunAutomaticDisposition{
+				Kind:                       tunDecisionTerminal,
+				ExpectedMutationGeneration: expectedGeneration,
+				NetworkSessionID:           "session-a",
+			}
+		},
+		func(expected uint64) (*lifecycleAutomaticAdmission, bool) {
+			close(admitEntered)
+			<-releaseAdmit
+			return lock.tryAdmitAutomaticMutation(expected)
+		},
+		func(_ context.Context, admission *lifecycleAutomaticAdmission, disposition tunAutomaticDisposition) {
+			handled <- disposition
+			admission.Release()
+		},
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go coordinator.Run(ctx)
+	coordinator.Notify(tunRevalidationTriggerResume)
+	select {
+	case <-admitEntered:
+	case <-time.After(time.Second):
+		t.Fatal("automatic admission did not start")
+	}
+
+	notifyStarted := make(chan struct{})
+	notifyDone := make(chan struct{})
+	go func() {
+		close(notifyStarted)
+		coordinator.Notify(tunRevalidationTriggerRoute)
+		close(notifyDone)
+	}()
+	<-notifyStarted
+	select {
+	case <-notifyDone:
+		t.Fatal("new publication advanced while coordinator was between publication claim and lifecycle admission")
+	default:
+	}
+
+	close(releaseAdmit)
+	var disposition tunAutomaticDisposition
+	select {
+	case disposition = <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("admitted automatic disposition did not reach handler")
+	}
+	if disposition.PublicationRevision == 0 {
+		t.Fatal("coordinator did not stamp automatic disposition with publication revision")
+	}
+	select {
+	case <-notifyDone:
+	case <-time.After(time.Second):
+		t.Fatal("new publication remained blocked after automatic admission completed")
 	}
 }

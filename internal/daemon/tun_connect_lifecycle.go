@@ -82,15 +82,32 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err := m.requireTunAddressPreflightBeforeHandoff(ctx, preHandoffPlan, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
-	if err := m.preflightActiveReplacementSessionOwnership(ctx, preHandoffPlan.Snapshot, req.Handoff); err != nil {
+
+	sessionStore := newNetworkSessionStateStore(runtimeDir, nil)
+	replacementSource, protectedReplacement, err := m.loadProtectedTunReplacementForRequest(sessionStore, req)
+	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
+	}
+	if !protectedReplacement {
+		if err := m.preflightActiveReplacementSessionOwnership(ctx, preHandoffPlan.Snapshot, req.Handoff); err != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
+		}
 	}
 
 	var replacementLifecycle *privacyEnvelopeLifecycle
 	replacementPrepared := false
-	if active && policy == api.HandoffReplacePodlaz {
+	if protectedReplacement {
+		replacementLifecycle, err = productionProtectedTunReplacementLifecycle(ctx, sessionStore, replacementSource, preHandoffPlan)
+		if err != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("privacy-envelope-replace", "", "not-started", err)
+		}
+		replacementPrepared = true
+	} else if active && policy == api.HandoffReplacePodlaz {
+		// Compatibility for an active legacy replacement that has no durable
+		// protected source proof. This path never grants degraded cleanup
+		// authority; it only preserves the already-existing protected behavior.
 		candidate := &privacyEnvelopeLifecycle{
-			store:    newNetworkSessionStateStore(runtimeDir, nil),
+			store:    sessionStore,
 			executor: netexecutor.PrivacyEnvelopeExecutor{},
 		}
 		state, exists, loadErr := candidate.store.Load()
@@ -116,6 +133,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		}
 	}()
 
+	// Active sources use the existing controlled disconnect. A degraded source
+	// has no live core to disconnect; after its envelope has been widened, the
+	// exact persisted transaction is recovered below while the barrier remains
+	// armed. prepareActivePodlazReplace is therefore intentionally a no-op for
+	// the degraded manager state.
 	if err := m.prepareActivePodlazReplace(ctx, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}

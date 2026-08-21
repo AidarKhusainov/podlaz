@@ -23,6 +23,17 @@ type lifecycleOperationLock struct {
 	cancelRevalidation context.CancelFunc
 }
 
+type lifecycleMutationState struct {
+	generation uint64
+	pending    bool
+	fenced     bool
+}
+
+type lifecycleAutomaticAdmission struct {
+	lock *lifecycleOperationLock
+	once sync.Once
+}
+
 func newLifecycleOperationLock() *lifecycleOperationLock {
 	idle := make(chan struct{})
 	close(idle)
@@ -107,6 +118,75 @@ func (l *lifecycleOperationLock) beginMutationWithFence(rejectClosed bool) (func
 			l.mutationMu.Unlock()
 		})
 	}, nil
+}
+
+// lifecycleMutationSnapshot captures the lifecycle generation visible to a
+// caller that already holds whatever operation authority its protocol requires.
+// In particular, read-only revalidation captures this only after runRevalidation
+// owns the operation token and has rechecked that no mutation is pending.
+func (l *lifecycleOperationLock) lifecycleMutationSnapshot() lifecycleMutationState {
+	if l == nil {
+		return lifecycleMutationState{}
+	}
+	l.mutationMu.Lock()
+	defer l.mutationMu.Unlock()
+	return lifecycleMutationState{
+		generation: l.mutationGeneration,
+		pending:    l.pendingMutations > 0,
+		fenced:     l.mutationsClosed,
+	}
+}
+
+// tryAdmitAutomaticMutation is the linearization point for a post-revalidation
+// reconcile/terminal mutation. It never waits for operation authority: while
+// mutationMu is held it proves the observed lifecycle generation is still
+// current, that no earlier mutation has been declared, and atomically takes the
+// existing operation token before the admission can succeed.
+func (l *lifecycleOperationLock) tryAdmitAutomaticMutation(expectedGeneration uint64) (*lifecycleAutomaticAdmission, bool) {
+	if l == nil {
+		return &lifecycleAutomaticAdmission{}, true
+	}
+	l.mutationMu.Lock()
+	defer l.mutationMu.Unlock()
+
+	if l.mutationsClosed || l.pendingMutations != 0 || l.mutationGeneration != expectedGeneration {
+		return nil, false
+	}
+	select {
+	case <-l.token:
+		// Operation authority is now owned while mutation ordering is still
+		// serialized by mutationMu.
+	default:
+		return nil, false
+	}
+
+	l.mutationIdle = make(chan struct{})
+	l.pendingMutations = 1
+	l.mutationGeneration++
+	return &lifecycleAutomaticAdmission{lock: l}, true
+}
+
+// Release completes one automatic mutation registration and returns its already
+// owned operation token exactly once. Later explicit mutations may have declared
+// themselves while the automatic mutation was running; they remain pending and
+// can acquire the token only after it is returned here.
+func (a *lifecycleAutomaticAdmission) Release() {
+	if a == nil {
+		return
+	}
+	a.once.Do(func() {
+		if a.lock == nil {
+			return
+		}
+		l := a.lock
+		l.mutationMu.Lock()
+		l.pendingMutations--
+		if l.pendingMutations == 0 {
+			close(l.mutationIdle)
+		}
+		l.mutationMu.Unlock()
+		l.release()
+	})
 }
 
 // fenceMutations rejects every lifecycle mutation declared after this point.

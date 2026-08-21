@@ -20,11 +20,10 @@ const (
 )
 
 // startE2ETunTerminalFailureTrigger is a narrow installed-package acceptance
-// hook. When explicitly enabled, one marker schedules a normal source-resync
-// through the existing revalidation coordinator. The verifier consumes the same
-// marker and returns the same ownership-invalid classification as a real
-// unrecoverable owned-state verification failure; terminal policy and teardown
-// are otherwise the production path.
+// event source. The terminal marker ends the watcher after scheduling the
+// terminal round. Reconciliation markers remain reusable: their observer
+// consumes them, while this source only supplies the same source-resync hint a
+// real network event would supply.
 func startE2ETunTerminalFailureTrigger(ctx context.Context, notify tunNetworkEventNotifyFunc) {
 	if !e2eTunTerminalFailureEnabled() || notify == nil {
 		return
@@ -49,6 +48,9 @@ func startE2ETunTerminalFailureTrigger(ctx context.Context, notify tunNetworkEve
 					return
 				} else if !errors.Is(statErr, os.ErrNotExist) {
 					return
+				}
+				if e2eTunReconciliationTriggerPending() {
+					notify(tunRevalidationTriggerSourceResync)
 				}
 			}
 		}

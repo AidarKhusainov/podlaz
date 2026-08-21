@@ -17,6 +17,8 @@ const (
 
 	TunHealthUplinkRevalidating           TunHealthClassification = "uplink_revalidating"
 	TunHealthUplinkChanged                TunHealthClassification = "uplink_changed"
+	TunHealthNetworkConverging            TunHealthClassification = "network_converging"
+	TunHealthOwnedStateReconciling        TunHealthClassification = "owned_state_reconciling"
 	TunHealthUplinkFingerprintUnavailable TunHealthClassification = "uplink_fingerprint_unavailable"
 	TunHealthOwnershipInvalid             TunHealthClassification = "ownership_invalid"
 	TunHealthOwnedStateInvalid            TunHealthClassification = "owned_state_invalid"
@@ -45,7 +47,13 @@ func ValidateTunHealthStatus(health TunHealthStatus) error {
 			return errors.New("verified TUN health must not carry a failure classification")
 		}
 	case TunHealthRevalidating:
-		if health.Classification != TunHealthUplinkRevalidating && health.Classification != TunHealthUplinkChanged {
+		switch health.Classification {
+		case TunHealthUplinkRevalidating,
+			TunHealthUplinkChanged,
+			TunHealthNetworkConverging,
+			TunHealthOwnedStateReconciling:
+			return nil
+		default:
 			return fmt.Errorf("revalidating TUN health has invalid classification %q", health.Classification)
 		}
 	case TunHealthDegraded, TunHealthCleanupRequired:

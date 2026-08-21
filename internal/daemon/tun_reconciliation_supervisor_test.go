@@ -1,0 +1,189 @@
+package daemon
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/AidarKhusainov/podlaz/internal/api"
+)
+
+func issue262ProvenMandatoryEvidence() tunMandatoryEvidence {
+	return tunMandatoryEvidence{
+		SessionOwnership: tunLocalProofProven,
+		CoreTUN:          tunLocalProofProven,
+		OwnedComposition: tunLocalProofProven,
+		PrivacyEnvelope:  tunLocalProofProven,
+		UplinkPath:       tunLocalProofProven,
+		NetworkManager:   tunLocalProofProven,
+		ResolvedDNS:      tunLocalProofProven,
+	}
+}
+
+func TestTunSupervisorInitialSoftFailureRetriesInsteadOfTerminal(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisor(func() time.Time { return now })
+	decision := supervisor.RunRound(tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       1,
+		Evidence: tunEvidenceSet{
+			Mandatory: issue262ProvenMandatoryEvidence(),
+			Probes:    []tunProbeEvidence{{Group: "dns-udp", Provider: "session-resolver", Success: false, Cause: errors.New("timeout")}},
+		},
+	})
+	if decision.Kind != tunDecisionRetry {
+		t.Fatalf("decision=%q, want retry", decision.Kind)
+	}
+	if decision.Kind == tunDecisionTerminal {
+		t.Fatal("one soft generation-one failure must not be terminal")
+	}
+}
+
+func TestTunSupervisorInitialMandatoryUnknownCannotVerify(t *testing.T) {
+	supervisor := newTunReconciliationSupervisor(time.Now)
+	mandatory := issue262ProvenMandatoryEvidence()
+	mandatory.ResolvedDNS = tunLocalProofUnknown
+	decision := supervisor.RunRound(tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       1,
+		Evidence:         tunEvidenceSet{Mandatory: mandatory, Probes: issue262HealthyProbeEvidence()},
+	})
+	if decision.Kind != tunDecisionRetry || decision.Classification != api.TunHealthNetworkConverging {
+		t.Fatalf("decision=%#v, want retry/network_converging", decision)
+	}
+}
+
+func TestTunSupervisorPersistentMandatoryUnknownBecomesBoundedActionableFailure(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, time.Minute, 1)
+	mandatory := issue262ProvenMandatoryEvidence()
+	mandatory.ResolvedDNS = tunLocalProofUnknown
+	round := tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       1,
+		Evidence:         tunEvidenceSet{Mandatory: mandatory, Probes: issue262HealthyProbeEvidence()},
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
+		t.Fatalf("first decision=%q, want retry", got.Kind)
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionBlockedOwnership || got.Classification != api.TunHealthRevalidationTimeout {
+		t.Fatalf("bounded unknown decision=%#v, want blocked-ownership/revalidation_timeout", got)
+	}
+
+	// A later hint may supply new observation evidence, but it must not silently
+	// create a fresh deadline/no-progress budget for the already exhausted
+	// Network Session cycle.
+	round.Fingerprint = tunUplinkFingerprint{Interface: "wlan0", Gateway: "192.0.2.254"}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionBlockedOwnership || got.Classification != api.TunHealthRevalidationTimeout {
+		t.Fatalf("post-exhaustion hint restarted cycle: %#v", got)
+	}
+
+	// Fresh complete evidence can still prove the session healthy without any
+	// lifecycle mutation and closes the exhausted cycle.
+	round.Evidence.Mandatory.ResolvedDNS = tunLocalProofProven
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionVerified {
+		t.Fatalf("fresh complete evidence after bounded failure=%#v, want verified", got)
+	}
+}
+
+func TestTunSupervisorOneProviderFailureCanStillVerify(t *testing.T) {
+	supervisor := newTunReconciliationSupervisor(time.Now)
+	probes := issue262HealthyProbeEvidence()
+	probes = append(probes, tunProbeEvidence{Group: "https", Provider: "google", Success: false, Cause: errors.New("provider unavailable")})
+	decision := supervisor.RunRound(tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       2,
+		Evidence:         tunEvidenceSet{Mandatory: issue262ProvenMandatoryEvidence(), Probes: probes},
+	})
+	if decision.Kind != tunDecisionVerified {
+		t.Fatalf("decision=%#v, want verified", decision)
+	}
+}
+
+func TestTunSupervisorRepeatedEquivalentFailureConsumesNoProgressBudget(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, time.Minute, 2)
+	round := tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       2,
+		Evidence: tunEvidenceSet{
+			Mandatory: issue262ProvenMandatoryEvidence(),
+			Probes: []tunProbeEvidence{
+				{Group: "https", Provider: "cloudflare", Success: false, Cause: errors.New("unavailable")},
+				{Group: "https", Provider: "google", Success: false, Cause: errors.New("unavailable")},
+			},
+		},
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
+		t.Fatalf("first decision=%q, want retry", got.Kind)
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
+		t.Fatalf("second decision=%q, want retry", got.Kind)
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionTerminal {
+		t.Fatalf("third decision=%q, want terminal after no-progress budget", got.Kind)
+	}
+}
+
+func TestTunSupervisorRepeatedEquivalentRepairBecomesTerminal(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, time.Minute, 1)
+	mandatory := issue262ProvenMandatoryEvidence()
+	mandatory.CoreTUN = tunLocalProofViolated
+	round := tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       2,
+		NeedsReconcile:   true,
+		Evidence:         tunEvidenceSet{Mandatory: mandatory},
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionReconcile {
+		t.Fatalf("first repair decision=%q, want reconcile", got.Kind)
+	}
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionTerminal {
+		t.Fatalf("stable unrepaired decision=%q, want terminal", got.Kind)
+	}
+}
+
+func TestTunSupervisorChangingProgressDoesNotExtendOverallDeadline(t *testing.T) {
+	now := time.Unix(100, 0)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, 10*time.Second, 10)
+	base := tunReconciliationRound{
+		NetworkSessionID: "0123456789abcdef0123456789abcdef",
+		TransactionID:    "tun-1",
+		Generation:       2,
+		Evidence: tunEvidenceSet{
+			Mandatory: issue262ProvenMandatoryEvidence(),
+			Probes: []tunProbeEvidence{
+				{Group: "https", Provider: "cloudflare", Success: false, Cause: errors.New("unavailable")},
+				{Group: "https", Provider: "google", Success: false, Cause: errors.New("unavailable")},
+			},
+		},
+	}
+	base.Fingerprint = tunUplinkFingerprint{Interface: "wlan0", Gateway: "192.0.2.1"}
+	if got := supervisor.RunRound(base); got.Kind != tunDecisionRetry {
+		t.Fatalf("first decision=%q, want retry", got.Kind)
+	}
+	now = now.Add(8 * time.Second)
+	base.Fingerprint.Gateway = "192.0.2.2"
+	if got := supervisor.RunRound(base); got.Kind != tunDecisionRetry {
+		t.Fatalf("progress decision=%q, want retry", got.Kind)
+	}
+	now = now.Add(3 * time.Second)
+	base.Fingerprint.Gateway = "192.0.2.3"
+	if got := supervisor.RunRound(base); got.Kind != tunDecisionTerminal {
+		t.Fatalf("post-deadline decision=%q, want terminal despite progress", got.Kind)
+	}
+}
+
+func issue262HealthyProbeEvidence() []tunProbeEvidence {
+	return []tunProbeEvidence{
+		{Group: "dns-tcp", Provider: "session-resolver", Success: true},
+		{Group: "https", Provider: "cloudflare", Success: true},
+	}
+}

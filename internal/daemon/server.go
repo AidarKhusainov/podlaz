@@ -43,7 +43,8 @@ func (s Server) Run(ctx context.Context) error {
 	} else if lifecycle.RuntimeDir == "" {
 		lifecycle.RuntimeDir = runtimeDir
 	}
-	revalidationRuntime := newProductionTunRevalidationRuntime(lifecycle)
+	reconciliationRuntime := newProductionTunEvidenceRevalidationRuntime(lifecycle)
+	healthRuntime := reconciliationHealthRuntime(reconciliationRuntime)
 	authorizer := s.Authorizer
 	if authorizer == nil {
 		authorizer = authorizerFromEnv()
@@ -54,7 +55,7 @@ func (s Server) Run(ctx context.Context) error {
 			statusFn = s.Status
 		}
 		status := lifecycle.statusForPublicationFrom(statusCtx, statusFn)
-		return decorateTunHealth(status, revalidationRuntime)
+		return decorateTunHealth(status, healthRuntime)
 	}
 
 	lockPath := api.LockPath(runtimeDir)
@@ -82,46 +83,61 @@ func (s Server) Run(ctx context.Context) error {
 	}
 
 	operationLock := newLifecycleOperationLock()
-	var lockedLifecycle lifecycleService
-	var terminalHandler tunRevalidationTerminalHandler
-	coordinator := newTunRevalidationOutcomeCoordinator(func(revalidationCtx context.Context, trigger tunRevalidationTrigger) tunRevalidationOutcome {
-		var outcome tunRevalidationOutcome
-		if err := operationLock.runRevalidation(revalidationCtx, func() {
-			if trigger == tunRevalidationTriggerInitial {
-				outcome = revalidationRuntime.InitializePending(revalidationCtx)
-				return
-			}
-			outcome = revalidationRuntime.Revalidate(revalidationCtx, trigger)
-		}); err != nil {
-			if revalidationCtx.Err() == nil {
-				log.Printf("podlazd: TUN revalidation serialization failed")
-			}
-			return tunRevalidationOutcome{}
+	var coordinator *tunRevalidationCoordinator
+	retryScheduler := newTunReconciliationRetryScheduler(func(trigger tunRevalidationTrigger) {
+		if coordinator != nil {
+			coordinator.Notify(trigger)
 		}
-		return outcome
-	}, func(terminalCtx context.Context, outcome tunRevalidationOutcome) {
-		terminalHandler.Handle(terminalCtx, outcome)
 	})
+	var automaticExecutor tunAutomaticDispositionExecutor
+	coordinator = newTunAutomaticDispositionCoordinator(
+		func(revalidationCtx context.Context, trigger tunRevalidationTrigger) tunAutomaticDisposition {
+			var decision tunReconciliationDecision
+			if err := operationLock.runRevalidation(revalidationCtx, func() {
+				mutation := operationLock.lifecycleMutationSnapshot()
+				decision = reconciliationRuntime.RunEvidenceRound(revalidationCtx, trigger, mutation.generation)
+			}); err != nil {
+				if revalidationCtx.Err() == nil {
+					log.Printf("podlazd: TUN reconciliation serialization failed")
+				}
+				return tunAutomaticDisposition{}
+			}
+			retryScheduler.Apply(decision)
+			if decision.Disposition == nil {
+				return tunAutomaticDisposition{}
+			}
+			return *decision.Disposition
+		},
+		operationLock.tryAdmitAutomaticMutation,
+		func(automaticCtx context.Context, admission *lifecycleAutomaticAdmission, disposition tunAutomaticDisposition) {
+			automaticExecutor.Handle(automaticCtx, admission, disposition)
+		},
+	)
 	operationLock.setRevalidationCancel(coordinator.InterruptForMutation)
 
 	healthLifecycle := tunRevalidationLifecycle{
-		lifecycle: startupScanRefreshingLifecycle{lifecycle: lifecycle, refresh: forceRefreshStartupScan},
-		runtime:   revalidationRuntime,
-		schedule:  coordinator.Notify,
+		lifecycle: startupScanRefreshingLifecycle{
+			lifecycle:  lifecycle,
+			refresh:    forceRefreshStartupScan,
+			revalidate: coordinator.Notify,
+		},
+		runtime:     healthRuntime,
+		schedule:    coordinator.Notify,
+		cancelRetry: retryScheduler.Cancel,
 	}
 	continuation := newNetworkSessionContinuationStore(runtimeDir, s.bootID)
 	sessionLifecycle := newNetworkSessionLifecycle(healthLifecycle, continuation)
-	lockedLifecycle = operationLock.wrap(sessionLifecycle)
+	lockedLifecycle := operationLock.wrap(sessionLifecycle)
 	startupMutationGate := newNetworkSessionStartupMutationGate(lockedLifecycle)
-	terminalHandler = tunRevalidationTerminalHandler{
-		collect: lifecycle.collectTunRevalidationFailureDiagnostics,
-		disconnect: func(cleanupCtx context.Context) error {
-			_, err := lockedLifecycle.Disconnect(cleanupCtx)
-			return err
-		},
-		finalize:            lifecycle.finalizeTunFailureDiagnosticRollback,
-		markCleanupRequired: revalidationRuntime.MarkCleanupRequired,
-		cleanupTimeout:      tunRollbackCleanupTimeout,
+	automaticExecutor = tunAutomaticDispositionExecutor{
+		reconcile: sessionLifecycle.ReconcileProtectedTun,
+		terminal: newProductionTunAutomaticTerminalHandler(
+			lifecycle,
+			continuation.stateStore(),
+			reconciliationRuntime,
+			forceRefreshStartupScan,
+		),
+		retry: retryScheduler,
 	}
 
 	eventCtx, cancelEvents := context.WithCancel(ctx)
