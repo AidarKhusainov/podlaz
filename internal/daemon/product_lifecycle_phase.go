@@ -53,16 +53,30 @@ func (t *productLifecyclePhaseTracker) decorate(status api.StatusResponse) api.S
 }
 
 type productPhaseLifecycle struct {
-	inner   lifecycleService
-	tracker *productLifecyclePhaseTracker
+	inner           lifecycleService
+	tracker         *productLifecyclePhaseTracker
+	terminalReasons *productTerminalReasonStore
 }
 
 func (l productPhaseLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
+	if err := l.supersedeTerminalReason(); err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	l.tracker.beginConnect(request)
 	defer l.tracker.endConnect()
 	return l.inner.Connect(ctx, request)
 }
 
 func (l productPhaseLifecycle) Disconnect(ctx context.Context) (api.LifecycleResponse, error) {
+	if err := l.supersedeTerminalReason(); err != nil {
+		return api.LifecycleResponse{}, err
+	}
 	return l.inner.Disconnect(ctx)
+}
+
+func (l productPhaseLifecycle) supersedeTerminalReason() error {
+	if l.terminalReasons == nil {
+		return nil
+	}
+	return l.terminalReasons.Supersede()
 }
