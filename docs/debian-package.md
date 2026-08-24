@@ -101,6 +101,45 @@ A lower released package predating this continuation file cannot write it before
 
 Startup recovery for a current-boot continuation happens before the daemon exposes its mutating API. The daemon first converges transaction-backed stale state, reconnects only after recovery reports no failed or ambiguous result, and only then accepts normal requests. A teardown/recovery error is returned as a daemon failure instead of being discarded.
 
+### Boot autostart policy
+
+Boot autostart is a daemon-owned persistent policy, not a systemd `ExecStartPost=`,
+separate helper, GUI autostart file, or implicit reuse of ordinary connection
+state. The packaged unit keeps its normal `ExecStart=/usr/bin/podlazd` and
+`After=network.target` ordering. Fresh boot networking readiness is handled by a
+bounded dynamic observation inside the one admitted logical autostart attempt;
+the package does not weaken this by adding a second boot launcher.
+
+`StateDirectory=podlaz` and `StateDirectoryMode=0700` provide the private
+persistent directory. Enabling autostart writes only
+`/var/lib/podlaz/boot-autostart-manifest.json`, atomically and mode `0600`. The
+manifest contains a versioned minimal validated connection snapshot plus an
+opaque generation and the boot ID in which configuration was written. It does
+not contain subscription URLs, profile collections/history, UI metadata, or a
+persisted `handoff` policy. The root daemon never scans a user's home directory;
+the unprivileged CLI loads the selected user profile and submits the canonical
+snapshot through the polkit-protected daemon API.
+
+`podlaz autostart enable` affects a later boot only. A same-boot daemon restart
+after enable must remain disconnected unless another current-boot Network Session
+already authorizes continuation. `podlaz autostart disable` removes only the
+future-boot manifest and never disconnects or cancels an already-admitted
+current-boot lifecycle.
+
+The current-boot admission record is volatile
+`/run/podlaz/boot-autostart-attempt.json`, private mode `0600`. It pins the exact
+admitted request and is the one-logical-attempt/no-retry authority for that boot.
+`in_progress` may continue through daemon replacement; `succeeded` and
+conclusively `terminal` forbid a second automatic connect until a real next boot.
+An explicit disconnect, daemon restart, package upgrade, or later runtime
+terminal failure cannot reset that authority.
+
+Terminal completion is committed only after exact owned cleanup and remaining
+network verification converge. Persistence failure remains fail-closed through
+retained Network Session authority. Product terminal reason is a separate
+current-boot user-facing outcome and may be superseded by a newer admitted
+explicit lifecycle; the boot attempt itself remains intact as no-retry authority.
+
 ## Packaged daemon socket boundary
 
 Packaged installs keep the filesystem daemon socket narrow and expose an abstract Unix socket for the polkit-gated daemon boundary. CLI clients first try the filesystem socket. If that attempt fails with a transport-level permission error, the client retries the packaged abstract socket.
@@ -114,8 +153,10 @@ The fallback is not a generic error-masking layer. Daemon responses from the abs
 | Packaged files | `/usr/bin`, `/usr/lib/podlaz`, `/usr/lib/systemd/system`, `/usr/lib/sysusers.d`, `/usr/share/bash-completion`, `/usr/share/zsh`, `/usr/share/fish`, `/usr/share/polkit-1/actions`, `/usr/share/man`, `/usr/share/doc/podlaz` | Debian package manager | Installed, upgraded, and removed by `dpkg`/`apt`. |
 | Daemon runtime state | `/run/podlaz` | `podlazd` through systemd `RuntimeDirectory=` | Volatile; not shipped in the package. Preserved across service replacement so incomplete exact recovery authority is not erased. |
 | Current-boot reconnect intent | `/run/podlaz/network-session-continuation.json` | `podlazd` | Private volatile intent; may contain profile credentials/endpoints; never cleanup authority; removed before explicit disconnect/stop and rejected after a boot-ID change. |
+| Current-boot boot-autostart attempt | `/run/podlaz/boot-autostart-attempt.json` | `podlazd` | Private volatile pinned request and one-attempt/no-retry authority; rejected after a boot-ID change. |
+| Current-boot product terminal outcome | `/run/podlaz/product-terminal-reason.json` | `podlazd` | Private typed reason/supersede state for the latest relevant lifecycle; not autostart authority. |
 | Legacy upgrade marker | `/run/podlaz/legacy-upgrade-continuation` | Debian `postinstall`, consumed by `podlazd` | Current-boot compatibility marker only; contains no profile data and grants no cleanup authority. |
-| Daemon persistent state | `/var/lib/podlaz` | systemd `StateDirectory=` and daemon | Reserved for daemon-owned persistent state; not shipped as packaged files. |
+| Daemon persistent state | `/var/lib/podlaz` | systemd `StateDirectory=` and daemon | Private persistent policy state; includes `boot-autostart-manifest.json`, not packaged source files. |
 | User intent/state | `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz` | invoking user | Not owned, modified, or removed by package lifecycle scripts. |
 
 ## Inspection and validation gates
@@ -140,6 +181,17 @@ must succeed without restarting `podlazd` or `systemd-resolved`.
 
 The network-session continuity acceptance gate must additionally exercise a real installed-package lifecycle: connect an installed lower released package in TUN mode, install the candidate package without issuing a second CLI connect, and verify that the session returns active. The same candidate package must survive `systemctl restart podlazd` and an unexpected daemon death through systemd automatic restart, while explicit service stop followed by start remains disconnected. Forced teardown interruption must prove that surviving Podlaz-owned host state still has exact transaction recovery authority rather than a heuristic marker. Routine acceptance must not repair the host with manual `ip`, `resolvectl`, `nft`, or `recover --execute` commands.
 
-The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, required packaged polkit authorization environment, bounded daemon capabilities, the ambient `CAP_NET_ADMIN` required only for native TUN Xray, packaged Xray helper layout and architecture, static polkit action IDs, absence of broad polkit defaults, `plz` alias and alias completion files, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, restart/stop signal ordering, current-boot upgrade marker permissions, absence of obsolete TUN helper artifacts, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
+Issue #263 adds an installed-package acceptance on the same dedicated runner. It
+covers autostart disabled, enable-next-boot gating, one fresh boot connect,
+daemon restart while connected, package upgrade while connected, explicit
+disconnect followed by same-boot restart, a terminal autostart failure, and
+`terminal_no_same_boot_retry`. The runner cannot reboot in the middle of one
+Actions job, so the fixture changes only the private manifest boot fence while
+the daemon is inactive; all actual startup/connect/cleanup behavior still runs
+through the installed `podlazd`. The script is
+`scripts/e2e/issue263-package-acceptance.sh` and must not repair networking with
+manual `ip`, `resolvectl`, `nft`, NetworkManager, or `recover --execute` calls.
 
-Pull-request CI and tagged release builds must run the same `scripts/ci/validate-package-install.sh` install/reinstall/purge validator with packaged service validation enabled. The pull-request gate must therefore exercise service enablement, service activity, daemon socket creation, `podlaz`/`plz` daemon status access, and the same purge cleanup required during release. A second reduced package-install validator is not allowed because it can let release-only failures escape the merge gate.
+The package gate validates the declarative packaged contract: sysusers identities, service `User=`/`Group=`, `UMask=`, runtime and state directory modes, required packaged polkit authorization environment, bounded daemon capabilities, the ambient `CAP_NET_ADMIN` required only for native TUN Xray, packaged Xray helper layout and architecture, static polkit action IDs including the dedicated autostart-configuration action, absence of broad polkit defaults, `plz` alias and alias completion files, autostart completion/man-page coverage, absence of AppStream/metainfo files, Debian helper-based daemon availability hooks, restart/stop signal ordering, current-boot upgrade marker permissions, absence of obsolete TUN helper artifacts, and absence of direct `systemctl start` or `systemctl enable` maintainer-script calls. The maintainer-script regression tests validate the stale helper-state repair contract and the wider raw `systemctl start|enable` guard.
+
+Pull-request CI and tagged release builds must run the same `scripts/ci/validate-package-install.sh` install/reinstall/purge validator with packaged service validation enabled. The pull-request gate must therefore exercise service enablement, service activity, daemon socket creation, `podlaz`/`plz` daemon status access, and the same purge cleanup required during release. A second reduced package-install validator is not allowed because it can let release-only failures escape the merge gate. The deterministic non-root Issue #263 contract is exposed separately as `scripts/ci/issue263-contract.sh`; it checks service/docs/E2E wiring while the real host lifecycle remains in the manually dispatched package-convergence workflow.
