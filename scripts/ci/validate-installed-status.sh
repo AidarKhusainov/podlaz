@@ -19,17 +19,22 @@ validate_installed_daemon_status() {
     cat "${stderr_file}" >&2
   fi
 
-  case "${status_code}" in
-    0 | 3)
-      ;;
-    *)
-      echo "${binary} status returned unexpected exit code ${status_code}" >&2
-      return "${status_code}"
-      ;;
-  esac
+  if [ "${status_code}" -ne 0 ]; then
+    echo "${binary} status returned unexpected exit code ${status_code}" >&2
+    return "${status_code}"
+  fi
 
-  if ! grep -Fxq 'Daemon: running' "${stdout_file}"; then
-    echo "${binary} status did not confirm that the packaged daemon is running" >&2
+  if ! grep -Fxq 'Status: Disconnected' "${stdout_file}"; then
+    echo "${binary} status did not report a clean disconnected product state" >&2
+    return 1
+  fi
+  if ! grep -Fxq 'Autostart: Disabled' "${stdout_file}"; then
+    echo "${binary} status did not report disabled boot autostart for a fresh package" >&2
+    return 1
+  fi
+
+  if grep -Eq '^(Daemon|Service|Runtime directory|Runtime config|Proxy|TUN|Routes|DNS|Firewall|Transactions|Recovery candidates):' "${stdout_file}"; then
+    echo "${binary} status exposed operator diagnostics in the primary product view" >&2
     return 1
   fi
 }
