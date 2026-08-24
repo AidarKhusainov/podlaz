@@ -12,8 +12,9 @@ import (
 )
 
 type networkSessionLifecycle struct {
-	lifecycle    lifecycleService
-	continuation networkSessionContinuationStore
+	lifecycle       lifecycleService
+	continuation    networkSessionContinuationStore
+	terminalReasons *productTerminalReasonStore
 
 	continuationMu    sync.Mutex
 	explicitStop      bool
@@ -42,6 +43,21 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	}
 	replacementAttempt := previousExists && api.NormalizeHandoffPolicy(request.Handoff) == api.HandoffReplacePodlaz
 	l.continuationMu.Unlock()
+
+	// The durable Network Session save above is the lifecycle epoch admission
+	// point. Request-facing startup/shutdown gates and the operation coordinator
+	// reject before reaching it, so an unadmitted request cannot erase the last
+	// valid product outcome. Once admitted, the new epoch supersedes that outcome
+	// before any underlying networking mutation starts.
+	if l.terminalReasons != nil {
+		if err := l.terminalReasons.Supersede(); err != nil {
+			restoreErr := l.restorePreviousContinuation(previous, previousExists)
+			if restoreErr != nil {
+				return api.LifecycleResponse{}, errors.Join(err, restoreErr)
+			}
+			return api.LifecycleResponse{}, err
+		}
+	}
 
 	response, connectErr := l.lifecycle.Connect(ctx, request)
 	if connectErr == nil {
