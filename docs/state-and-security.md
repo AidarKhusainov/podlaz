@@ -10,8 +10,11 @@ daemon privilege boundaries, and privileged networking safety.
 | User config/state/cache | `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz` | invoking user |
 | Daemon runtime | `/run/podlaz` | `podlazd` via systemd `RuntimeDirectory=` |
 | Current-boot Network Session state | `/run/podlaz/network-session-continuation.json` | `podlazd` |
+| Current-boot boot autostart attempt | `/run/podlaz/boot-autostart-attempt.json` | `podlazd` |
+| Current-boot product terminal outcome | `/run/podlaz/product-terminal-reason.json` | `podlazd` |
 | Legacy package-upgrade continuation marker | `/run/podlaz/legacy-upgrade-continuation` | Debian `postinstall`, consumed by `podlazd` |
 | Daemon persistent state | `/var/lib/podlaz` | `podlazd` via systemd `StateDirectory=` |
+| Boot Autostart Manifest | `/var/lib/podlaz/boot-autostart-manifest.json` | `podlazd` |
 | Transaction files | `/run/podlaz/transactions/*.json` | `podlazd` |
 | Latest TUN diagnostic report | `/run/podlaz/diagnostics/tun-last.json` | `podlazd` |
 | Generated runtime config | `/run/podlaz/generated/` | `podlazd` and the dedicated core child identity |
@@ -40,6 +43,27 @@ Rules:
 - All Network Session state transitions use one serialized atomic
   load-transition-validate-save boundary. Concurrent intent/protection updates
   must not overwrite one another with stale snapshots.
+- The Boot Autostart Manifest is separate persistent policy, not a Network
+  Session and not a profile database. It is mode `0600`, strict/versioned,
+  bounded, atomically replaced with file and directory fsync, and contains only
+  the minimal validated canonical connection snapshot required for a future
+  normal `Connect`, an opaque non-secret generation, and `configured_boot_id`.
+  It excludes subscription URLs, collections/history, UI-only metadata, and a
+  persisted handoff policy. Manifest presence means enabled; absence means
+  disabled.
+- The current-boot boot autostart attempt is mode `0600`, strict/versioned,
+  bounded, atomic, and boot-ID scoped. It pins the exact admitted request and is
+  the authority for one logical autostart attempt per boot. `in_progress` may be
+  continued by a replacement daemon; `succeeded` and conclusively `terminal`
+  consume automatic-connect authority until the next boot. It is never removed
+  merely because the user later disconnects or a runtime terminal failure occurs.
+- Product terminal outcome is a separate boot-scoped typed state. It records a
+  small non-secret reason such as initial connect failure or restore failure, or
+  an explicit supersede marker for a newer admitted lifecycle. It is not cleanup
+  authority and it is not the no-retry authority. A newer request rejected before
+  admission must not erase a valid reason. A newer admitted explicit lifecycle
+  supersedes the old reason, and a conclusively terminal explicit connect writes
+  its own typed reason.
 - The legacy package-upgrade marker is mode `0600`, contains only the current
   boot ID, and authorizes only a fail-closed attempt to reconstruct reconnect
   intent from exact transaction-owned runtime state. It grants no network
@@ -74,6 +98,15 @@ Rules:
   either replays `resume` or finishes `disconnect`/`terminal` teardown. If any
   stage remains incomplete, status and recovery stay available while conflicting
   lifecycle mutations remain blocked.
+- Fresh boot autostart is evaluated only after current-boot Network Session
+  continuation/recovery has conclusively converged and no competing session
+  authority remains. An existing session observed at startup prevents a fresh
+  autostart admission in that startup invocation even if terminal cleanup removes
+  the session before startup finishes.
+- The CLI is the only component that reads the user's profile store for
+  `autostart enable`. The root daemon receives a validated minimal snapshot and
+  never scans user home/XDG profile directories. Persistent-policy mutation uses
+  a dedicated polkit action rather than reusing connect/disconnect authorization.
 - `doctor --tun` is daemon-backed because authoritative active-session,
   transaction, route, resolver, and ownership evidence belongs to the daemon.
   The diagnostic handler is read-only apart from atomically replacing the
@@ -82,6 +115,12 @@ Rules:
   inspection failures as separate concepts. A runtime warning does not become an
   inspection failure merely because it is transported through daemon status, and
   a clean active scan must not be described as an inactive lifecycle state.
+- Product status is a projection over typed evidence. `Disconnected` requires a
+  conclusively inactive lifecycle; unavailable/incomplete inspection projects to
+  `Unknown`. `Connecting` and `Reconnecting` are normal lifecycle phases and are
+  not unhealthy merely because they are in progress. Stable high-level terminal
+  reason comes from typed product outcome state, not arbitrary diagnostic/error
+  text.
 - For an active TUN, durable transaction state and current network health are
   separate. `committed` is historical transaction evidence; current TUN health
   is generation-specific evidence and is published independently.
@@ -314,6 +353,62 @@ migrated to the current Network Session schema with a fresh session identity;
 neither legacy form invents Privacy Envelope authority for an existing nftables
 object. Any ambiguity fails closed and leaves exact transaction recovery
 authority intact.
+
+## Boot autostart authority and lifecycle
+
+Boot autostart is explicit persistent policy with a separate lifetime from a
+Network Session continuation. It does not make ordinary `connect` persistent and
+it never uses a current active transaction as implicit reboot intent.
+
+The daemon-owned Boot Autostart Manifest lives under private systemd
+`StateDirectory=podlaz`, normally
+`/var/lib/podlaz/boot-autostart-manifest.json`. `autostart enable` writes it with
+`configured_boot_id` equal to the boot where the user changed policy. Therefore
+that policy cannot produce an automatic connect merely because `podlazd` restarts
+later in the same boot. A manifest is eligible only when its configuration boot
+ID differs from the authoritative current boot ID. `autostart disable` unlinks
+and fsyncs the persistent manifest; absence is the disabled state.
+
+When no current-boot Network Session exists, an eligible manifest may create one
+volatile `BootAutostartAttempt`. Admission itself is durable before network
+mutation. The attempt pins the exact minimal canonical connection request so a
+crash after admission but before Network Session creation cannot substitute a
+newly edited/disabled profile. Invalid or ambiguous current-boot attempt state
+fails closed and never grants a fresh connect. A stale valid attempt from another
+boot is discarded by boot ID before policy evaluation.
+
+A fresh admitted attempt performs bounded dynamic boot-network readiness inside
+the same logical attempt. It requires a usable non-Podlaz IPv4 default route and
+corresponding global IPv4 evidence before normal `Connect`; it does not depend on
+a second systemd boot launcher or blindly consume the attempt at
+`network.target`. Parent startup cancellation/restart leaves `in_progress` for
+replacement. Child route/TCP/DNS verification deadlines are normal connect
+failures when the parent startup context is still live.
+
+Before `Connect`, the same #259 Network Session authority is armed so every crash
+boundary after that point has exact continuation/cleanup authority. A successful
+connect marks the attempt `succeeded`. A normal failure first persists terminal
+Network Session intent, converges exact/generic owned cleanup and the Privacy
+Envelope, verifies the remaining ordinary host network, durably marks the
+attempt `terminal`, and only then clears continuation authority. If cleanup or
+completion-state persistence fails, the attempt stays `in_progress` and retained
+Network Session authority keeps startup fail-closed rather than permitting a
+second same-boot connect.
+
+The attempt survives an explicit disconnect, daemon restart, package replacement,
+and later runtime terminal disposition because its only job after completion is
+to prevent another automatic boot connect in the same boot. Product terminal
+reason is intentionally separate. A stable typed reason survives clean terminal
+teardown/daemon replacement but is superseded only after a newer explicit
+lifecycle has actually crossed durable Network Session admission. A request
+blocked by the startup gate or operation coordinator before admission cannot
+erase the previous reason. A fresh admitted explicit connect that conclusively
+fails after clean rollback replaces the supersede marker with
+`vpn_connect_failed`.
+
+This separation is the core invariant: **one logical autostart attempt per boot**
+is permanent current-boot authority, while the user-visible terminal reason
+belongs to the latest relevant admitted product lifecycle.
 
 ## Current TUN health and network generations
 
@@ -613,6 +708,14 @@ reconstructed profile/network details may be written to journald or copied into
 evidence artifacts. Startup logs use only low-cardinality
 continuation/recovery/protection classifications.
 
+The Boot Autostart Manifest and current-boot attempt may also contain the same
+minimal connection credential/endpoint material. Their contents, pinned request,
+manifest generation, profile identifiers, endpoints, and opaque snapshot data
+must never be logged or rendered. Autostart logs/status use only stable policy or
+lifecycle classifications and redacted profile display names where the normal
+CLI contract explicitly allows them. Product terminal reason stores only a small
+typed non-secret classification/supersede state.
+
 The generic secret redactor is not a sufficient privacy boundary for TUN
 diagnostics. Before persistence and before human or JSON rendering, the complete
 report passes through one fail-closed public diagnostic privacy projection.
@@ -664,6 +767,13 @@ checks, does not authorize repair/foreign cleanup, and does not apply when the
 revalidation was cancelled by an explicit user lifecycle operation or daemon
 shutdown that already owns cleanup.
 
+Persistent boot-autostart policy mutation is explicit user intent but does not by
+itself mutate networking. `autostart enable`/`disable` are authorized by the
+dedicated packaged policy action. Enable does not connect immediately and disable
+does not disconnect. Once an eligible boot has admitted its one logical attempt,
+continuation/terminal convergence follows the normal daemon-owned lifecycle and
+never broadens exact network cleanup authority.
+
 High-impact flags such as `--execute` and `--yes` are long-only.
 
 ## Packaged service baseline
@@ -691,3 +801,8 @@ Expected systemd baseline:
 - `AmbientCapabilities=CAP_SETUID CAP_KILL CAP_NET_ADMIN`
 - explicit systemd hardening that does not remove the networking privileges TUN
   execution requires.
+
+The unit intentionally does not add a second autostart command or privilege
+relaxation for Issue #263. `podlazd` itself reads the private StateDirectory,
+reconciles same-boot authority first, waits for bounded fresh uplink evidence
+inside an admitted attempt, and uses the canonical locked lifecycle.
