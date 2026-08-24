@@ -81,14 +81,14 @@ func runStatus(ctx context.Context, opts options) status.Report {
 
 func localStatusAfterDaemonError(ctx context.Context, err error) status.Report {
 	local := status.InspectWithOptions(ctx, status.Options{DaemonSocketAccess: daemonSocketAccessFromError(err)})
+	if local.Connection == "inactive" {
+		local.Connection = "unknown (inspection incomplete)"
+	}
 	if client.IsDaemonUnavailable(err) {
 		return status.WithDaemonUnavailable(local, client.UnavailableMessage(err))
 	}
 
 	local.Warnings = append(local.Warnings, status.Warning{Target: "daemon status API", Message: err.Error()})
-	if local.Connection == "inactive" {
-		local.Connection = "unknown (inspection incomplete)"
-	}
 	return local
 }
 
