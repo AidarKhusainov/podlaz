@@ -23,7 +23,9 @@ func (e *bootAutostartFailedRollbackExecutor) Apply(_ context.Context, plan plan
 	}, nil
 }
 
-func (*bootAutostartFailedRollbackExecutor) Verify(context.Context, planner.TunPlan) error { return nil }
+func (*bootAutostartFailedRollbackExecutor) Verify(context.Context, planner.TunPlan) error {
+	return nil
+}
 
 func (e *bootAutostartFailedRollbackExecutor) Rollback(context.Context, planner.TunPlan) error {
 	return e.rollbackErr
