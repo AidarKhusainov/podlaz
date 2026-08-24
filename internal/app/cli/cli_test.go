@@ -61,11 +61,8 @@ func TestRunCLIStatusRendersCleanLocalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
-	got := out.String()
-	for _, text := range []string{"podlaz status", "Daemon: not running", "Connection: inactive", "Runtime directory: missing", "Proxy: inactive", "TUN: not managed in this build", "Stale state: none"} {
-		if !strings.Contains(got, text) {
-			t.Fatalf("expected output to contain %q, got %q", text, got)
-		}
+	if got := out.String(); got != "Status: Disconnected\n" {
+		t.Fatalf("unexpected concise status output: %q", got)
 	}
 }
 
@@ -86,8 +83,12 @@ func TestRunCLIStatusReturnsDiagnosticExitCodeForStaleState(t *testing.T) {
 	if got := ExitCode(err); got != 3 {
 		t.Fatalf("expected status diagnostic exit code 3, got %d", got)
 	}
-	if got := out.String(); !strings.Contains(got, "Guidance: run `podlaz recover`") {
-		t.Fatalf("expected recovery guidance in status output, got %q", got)
+	got := out.String()
+	if !strings.Contains(got, "Status: Unknown") || !strings.Contains(got, "Reason: Connection state could not be determined") {
+		t.Fatalf("expected safe product status, got %q", got)
+	}
+	if strings.Contains(got, "Recovery candidates:") || strings.Contains(got, "/run/podlaz") {
+		t.Fatalf("primary status leaked operator detail: %q", got)
 	}
 }
 
