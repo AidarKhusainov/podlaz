@@ -22,11 +22,28 @@ func TestIssue263PackageAcceptanceCoversBootAutostartLifecycle(t *testing.T) {
 		"terminal_no_same_boot_retry",
 		"autostart disable",
 		"autostart enable --mode tun",
-		"systemctl restart podlazd.service",
+		"issue263_restart_daemon",
 		"dpkg -i",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("issue 263 acceptance must contain %q", required)
+		}
+	}
+}
+
+func TestIssue263RestartHelperUsesPackagedSystemdRestart(t *testing.T) {
+	data, err := os.ReadFile("lib/issue263.sh")
+	if err != nil {
+		t.Fatalf("read issue263 helper: %v", err)
+	}
+	helper := string(data)
+	for _, required := range []string{
+		"issue263_restart_daemon()",
+		"systemctl restart podlazd.service",
+		"issue263_wait_for_daemon",
+	} {
+		if !strings.Contains(helper, required) {
+			t.Fatalf("issue 263 restart helper must contain %q", required)
 		}
 	}
 }
