@@ -15,6 +15,7 @@ const (
 	ProductConnecting   ProductState = "Connecting"
 	ProductReconnecting ProductState = "Reconnecting"
 	ProductDisconnected ProductState = "Disconnected"
+	ProductUnknown      ProductState = "Unknown"
 )
 
 type ProductStatusView struct {
@@ -26,7 +27,7 @@ type ProductStatusView struct {
 	Autostart      bool
 }
 
-func (r Report) ProductView(autostart *api.AutostartStatusResponse) ProductStatusView {
+func (r Report) ProductView(autostart *api.AutostartStatusResponse, terminalReasons ...api.TerminalReason) ProductStatusView {
 	view := ProductStatusView{ProfileName: r.ProfileName, Mode: r.Mode}
 	switch {
 	case r.Connection == "connecting":
@@ -35,17 +36,35 @@ func (r Report) ProductView(autostart *api.AutostartStatusResponse) ProductStatu
 		view.State = ProductReconnecting
 	case r.Connection == "active":
 		view.State = ProductConnected
-	default:
+	case r.Connection == "inactive":
 		view.State = ProductDisconnected
+	default:
+		view.State = ProductUnknown
 		if r.Health() == LifecycleHealthUnhealthy || r.HasUnhealthyState() {
-			view.Reason = "Connection state requires diagnostic attention"
+			view.Reason = "Connection state could not be determined"
 		}
+	}
+	if len(terminalReasons) > 0 && view.State == ProductDisconnected {
+		view.Reason = productTerminalReasonMessage(terminalReasons[0])
 	}
 	if autostart != nil {
 		view.AutostartKnown = true
 		view.Autostart = autostart.Enabled
 	}
 	return view
+}
+
+func productTerminalReasonMessage(reason api.TerminalReason) string {
+	switch reason {
+	case api.TerminalReasonVPNConnectFailed:
+		return "VPN connection could not be established safely"
+	case api.TerminalReasonVPNRestoreFailed:
+		return "VPN connection could not be restored safely"
+	case api.TerminalReasonBootNetworkNotReady:
+		return "Network was not ready for VPN autostart"
+	default:
+		return ""
+	}
 }
 
 func (v ProductStatusView) String() string {
