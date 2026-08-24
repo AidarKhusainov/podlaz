@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -37,6 +38,18 @@ func (l *productReasonCountingLifecycle) Connect(_ context.Context, _ api.Connec
 
 func (*productReasonCountingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
 	return api.LifecycleResponse{Connection: "inactive"}, nil
+}
+
+type productReasonTerminalLifecycle struct {
+	connectErr error
+}
+
+func (l productReasonTerminalLifecycle) Connect(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, l.connectErr
+}
+
+func (productReasonTerminalLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, nil
 }
 
 func terminalBootAttemptForProductReasonTest(t *testing.T, runtimeDir string) (bootAutostartAttemptStore, productTerminalReasonStore) {
@@ -161,5 +174,38 @@ func TestRejectedBeforeLifecycleAdmissionPreservesTerminalReason(t *testing.T) {
 	}
 	if !exists || reason != api.TerminalReasonVPNRestoreFailed {
 		t.Fatalf("rejected request superseded valid reason: reason=%q exists=%v", reason, exists)
+	}
+}
+
+func TestTerminalManualConnectReplacesSupersededMarkerWithTypedReason(t *testing.T) {
+	runtimeDir := t.TempDir()
+	reasonStore := newProductTerminalReasonStore(runtimeDir, fixedBootID(testBootAttempt))
+	if err := reasonStore.Set(api.TerminalReasonVPNRestoreFailed); err != nil {
+		t.Fatal(err)
+	}
+
+	terminalErr := withTunFailurePhase(
+		"connectivity-verify",
+		"tx-example",
+		"completed",
+		errors.New("independent data-plane verification failed"),
+	)
+	lifecycle := productReasonExplicitLifecycle(
+		t,
+		runtimeDir,
+		productReasonTerminalLifecycle{connectErr: terminalErr},
+		&reasonStore,
+		false,
+	)
+	if _, err := lifecycle.Connect(context.Background(), testContinuationRequest()); err == nil {
+		t.Fatal("expected terminal connect failure")
+	}
+
+	reason, exists, err := reasonStore.LoadCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || reason != api.TerminalReasonVPNConnectFailed {
+		t.Fatalf("terminal manual connect reason=%q exists=%v, want %q", reason, exists, api.TerminalReasonVPNConnectFailed)
 	}
 }
