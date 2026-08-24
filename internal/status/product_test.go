@@ -42,11 +42,7 @@ func TestProductViewUnknownNeverClaimsDisconnected(t *testing.T) {
 }
 
 func TestProductViewKeepsStableTypedTerminalReasonAfterCleanTeardown(t *testing.T) {
-	report := Report{
-		Connection:     "inactive",
-		TerminalReason: api.TerminalReasonVPNRestoreFailed,
-	}
-	view := report.ProductView(nil)
+	view := (Report{Connection: "inactive"}).ProductView(nil, api.TerminalReasonVPNRestoreFailed)
 	if view.State != ProductDisconnected {
 		t.Fatalf("state = %q, want %q", view.State, ProductDisconnected)
 	}
