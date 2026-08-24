@@ -137,3 +137,30 @@ func TestManualLifecycleDoesNotMutateNetworkWhenSupersedeCannotPersist(t *testin
 		t.Fatalf("manual connect mutated lifecycle after supersede persistence failure: calls=%d", inner.connectCalls)
 	}
 }
+
+func TestRejectedBeforeLifecycleAdmissionPreservesTerminalReason(t *testing.T) {
+	runtimeDir := t.TempDir()
+	reasonStore := newProductTerminalReasonStore(runtimeDir, fixedBootID(testBootAttempt))
+	if err := reasonStore.Set(api.TerminalReasonVPNRestoreFailed); err != nil {
+		t.Fatal(err)
+	}
+
+	gate := newNetworkSessionStartupMutationGate(productReasonSuccessfulLifecycle{})
+	gate.Block()
+	lifecycle := productPhaseLifecycle{
+		inner:           gate,
+		tracker:         &productLifecyclePhaseTracker{},
+		terminalReasons: &reasonStore,
+	}
+	if _, err := lifecycle.Connect(context.Background(), bootRequest(testBootAutostartConfig())); err == nil {
+		t.Fatal("expected startup gate to reject explicit connect")
+	}
+
+	reason, exists, err := reasonStore.LoadCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || reason != api.TerminalReasonVPNRestoreFailed {
+		t.Fatalf("rejected request superseded valid reason: reason=%q exists=%v", reason, exists)
+	}
+}
