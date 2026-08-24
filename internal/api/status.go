@@ -36,6 +36,7 @@ type StatusResponse struct {
 	Service             string              `json:"service"`
 	Connection          string              `json:"connection"`
 	LifecyclePhase      string              `json:"lifecycle_phase,omitempty"`
+	TerminalReason      TerminalReason      `json:"terminal_reason,omitempty"`
 	Mode                string              `json:"mode,omitempty"`
 	ProfileID           string              `json:"profile_id,omitempty"`
 	ProfileName         string              `json:"profile_name,omitempty"`
@@ -85,6 +86,10 @@ func ValidateStatusResponse(s StatusResponse) error {
 		return errors.New("connecting lifecycle_phase requires mode")
 	case s.LifecyclePhase == LifecycleConnecting && s.ProfileName == "":
 		return errors.New("connecting lifecycle_phase requires profile_name")
+	case ValidateTerminalReason(s.TerminalReason) != nil:
+		return ValidateTerminalReason(s.TerminalReason)
+	case s.TerminalReason != "" && s.Connection != "inactive":
+		return fmt.Errorf("terminal_reason requires inactive connection, got %q", s.Connection)
 	case s.RuntimeDirectory == "":
 		return errors.New("missing runtime_directory field")
 	case s.Proxy == "":
