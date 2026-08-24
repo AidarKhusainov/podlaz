@@ -227,7 +227,9 @@ func TestRunBootAutostartStartupCompletedAttemptNeverReconnectsSameBoot(t *testi
 		fn   func(bootAutostartAttemptStore) error
 	}{
 		{"succeeded", func(store bootAutostartAttemptStore) error { return store.MarkSucceeded() }},
-		{"terminal", func(store bootAutostartAttemptStore) error { return store.MarkTerminal(bootAutostartTerminalConnectFailed) }},
+		{"terminal", func(store bootAutostartAttemptStore) error {
+			return store.MarkTerminal(bootAutostartTerminalConnectFailed)
+		}},
 	} {
 		t.Run(complete.name, func(t *testing.T) {
 			manifestStore, attemptStore, continuation := bootAutostartStores(t, testBootConfigured, testBootAttempt)
