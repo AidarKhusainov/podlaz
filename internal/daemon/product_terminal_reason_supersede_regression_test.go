@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
@@ -22,6 +24,19 @@ func (productReasonSuccessfulLifecycle) Connect(_ context.Context, request api.C
 
 func (productReasonSuccessfulLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
 	return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, nil
+}
+
+type productReasonCountingLifecycle struct {
+	connectCalls int
+}
+
+func (l *productReasonCountingLifecycle) Connect(_ context.Context, _ api.ConnectRequest) (api.LifecycleResponse, error) {
+	l.connectCalls++
+	return api.LifecycleResponse{Connection: "active"}, nil
+}
+
+func (*productReasonCountingLifecycle) Disconnect(context.Context) (api.LifecycleResponse, error) {
+	return api.LifecycleResponse{Connection: "inactive"}, nil
 }
 
 func terminalBootAttemptForProductReasonTest(t *testing.T, runtimeDir string) (bootAutostartAttemptStore, productTerminalReasonStore) {
@@ -99,5 +114,26 @@ func TestManualLifecycleSupersedesRuntimeTerminalReason(t *testing.T) {
 
 	if got := resolveProductTerminalReason(inactive, reasonStore, attemptStore); got != "" {
 		t.Fatalf("runtime terminal reason resurfaced after manual connect/disconnect: %q", got)
+	}
+}
+
+func TestManualLifecycleDoesNotMutateNetworkWhenSupersedeCannotPersist(t *testing.T) {
+	root := t.TempDir()
+	blockedRuntimeDir := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(blockedRuntimeDir, []byte("blocked\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reasonStore := newProductTerminalReasonStore(blockedRuntimeDir, fixedBootID(testBootAttempt))
+	inner := &productReasonCountingLifecycle{}
+	lifecycle := productPhaseLifecycle{
+		inner:           inner,
+		tracker:         &productLifecyclePhaseTracker{},
+		terminalReasons: &reasonStore,
+	}
+	if _, err := lifecycle.Connect(context.Background(), bootRequest(testBootAutostartConfig())); err == nil {
+		t.Fatal("expected supersede persistence failure to block manual connect")
+	}
+	if inner.connectCalls != 0 {
+		t.Fatalf("manual connect mutated lifecycle after supersede persistence failure: calls=%d", inner.connectCalls)
 	}
 }
