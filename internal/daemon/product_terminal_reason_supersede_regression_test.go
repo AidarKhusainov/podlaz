@@ -56,6 +56,24 @@ func terminalBootAttemptForProductReasonTest(t *testing.T, runtimeDir string) (b
 	return attemptStore, newProductTerminalReasonStore(runtimeDir, fixedBootID(testBootAttempt))
 }
 
+func productReasonExplicitLifecycle(
+	t *testing.T,
+	runtimeDir string,
+	inner lifecycleService,
+	reasonStore *productTerminalReasonStore,
+	blocked bool,
+) lifecycleService {
+	t.Helper()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID(testBootAttempt))
+	session := newNetworkSessionLifecycle(inner, continuation)
+	session.terminalReasons = reasonStore
+	gate := newNetworkSessionStartupMutationGate(session)
+	if blocked {
+		gate.Block()
+	}
+	return productPhaseLifecycle{inner: gate, tracker: &productLifecyclePhaseTracker{}}
+}
+
 func TestManualLifecycleSupersedesTerminalBootAttemptReasonWithoutMutatingAttemptAuthority(t *testing.T) {
 	runtimeDir := t.TempDir()
 	attemptStore, reasonStore := terminalBootAttemptForProductReasonTest(t, runtimeDir)
@@ -64,12 +82,7 @@ func TestManualLifecycleSupersedesTerminalBootAttemptReasonWithoutMutatingAttemp
 		t.Fatalf("initial terminal boot reason = %q", got)
 	}
 
-	tracker := &productLifecyclePhaseTracker{}
-	lifecycle := productPhaseLifecycle{
-		inner:           productReasonSuccessfulLifecycle{},
-		tracker:         tracker,
-		terminalReasons: &reasonStore,
-	}
+	lifecycle := productReasonExplicitLifecycle(t, runtimeDir, productReasonSuccessfulLifecycle{}, &reasonStore, false)
 	request := bootRequest(testBootAutostartConfig())
 	if _, err := lifecycle.Connect(context.Background(), request); err != nil {
 		t.Fatalf("manual connect failed: %v", err)
@@ -99,11 +112,7 @@ func TestManualLifecycleSupersedesRuntimeTerminalReason(t *testing.T) {
 		t.Fatalf("initial runtime terminal reason = %q", got)
 	}
 
-	lifecycle := productPhaseLifecycle{
-		inner:           productReasonSuccessfulLifecycle{},
-		tracker:         &productLifecyclePhaseTracker{},
-		terminalReasons: &reasonStore,
-	}
+	lifecycle := productReasonExplicitLifecycle(t, runtimeDir, productReasonSuccessfulLifecycle{}, &reasonStore, false)
 	request := bootRequest(testBootAutostartConfig())
 	if _, err := lifecycle.Connect(context.Background(), request); err != nil {
 		t.Fatalf("manual connect failed: %v", err)
@@ -125,11 +134,7 @@ func TestManualLifecycleDoesNotMutateNetworkWhenSupersedeCannotPersist(t *testin
 	}
 	reasonStore := newProductTerminalReasonStore(blockedRuntimeDir, fixedBootID(testBootAttempt))
 	inner := &productReasonCountingLifecycle{}
-	lifecycle := productPhaseLifecycle{
-		inner:           inner,
-		tracker:         &productLifecyclePhaseTracker{},
-		terminalReasons: &reasonStore,
-	}
+	lifecycle := productReasonExplicitLifecycle(t, t.TempDir(), inner, &reasonStore, false)
 	if _, err := lifecycle.Connect(context.Background(), bootRequest(testBootAutostartConfig())); err == nil {
 		t.Fatal("expected supersede persistence failure to block manual connect")
 	}
@@ -145,13 +150,7 @@ func TestRejectedBeforeLifecycleAdmissionPreservesTerminalReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gate := newNetworkSessionStartupMutationGate(productReasonSuccessfulLifecycle{})
-	gate.Block()
-	lifecycle := productPhaseLifecycle{
-		inner:           gate,
-		tracker:         &productLifecyclePhaseTracker{},
-		terminalReasons: &reasonStore,
-	}
+	lifecycle := productReasonExplicitLifecycle(t, runtimeDir, productReasonSuccessfulLifecycle{}, &reasonStore, true)
 	if _, err := lifecycle.Connect(context.Background(), bootRequest(testBootAutostartConfig())); err == nil {
 		t.Fatal("expected startup gate to reject explicit connect")
 	}
