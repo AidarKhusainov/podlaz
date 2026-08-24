@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	daemonShutdownTimeout     = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
-	defaultDaemonStateDir     = "/var/lib/podlaz"
+	daemonShutdownTimeout    = tunRollbackCleanupTimeout + 2*defaultStopTimeout + 5*time.Second
+	defaultDaemonStateDir    = "/var/lib/podlaz"
 	systemdStateDirectoryEnv = "STATE_DIRECTORY"
 )
 
