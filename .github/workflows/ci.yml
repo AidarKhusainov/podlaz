@@ -74,6 +74,9 @@ jobs:
           set -o pipefail
           bash scripts/ci/go-core.sh 2>&1 | tee /tmp/podlaz-go-core.txt
 
+      - name: Issue 263 deterministic contract
+        run: bash scripts/ci/issue263-contract.sh
+
       - name: Upload Go diagnostics
         if: always()
         uses: actions/upload-artifact@v7
