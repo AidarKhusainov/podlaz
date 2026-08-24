@@ -29,16 +29,12 @@ func TestRunCLIStatusUsesDaemonWhenReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
-
-	got := out.String()
-	for _, want := range []string{"Daemon: running", "Service: systemd", "Connection: inactive", "Proxy: inactive", "TUN: disabled"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected %q in %q", want, got)
-		}
+	if got := out.String(); got != "Status: Disconnected\n" {
+		t.Fatalf("unexpected product status: %q", got)
 	}
 }
 
-func TestRunCLIStatusFallsBackWhenDaemonUnavailable(t *testing.T) {
+func TestRunCLIStatusFallsBackAsUnknownWhenDaemonUnavailable(t *testing.T) {
 	var out bytes.Buffer
 
 	err := runWithOptions(context.Background(), []string{"status"}, &out, options{
@@ -46,17 +42,16 @@ func TestRunCLIStatusFallsBackWhenDaemonUnavailable(t *testing.T) {
 			return status.Report{}, client.ErrDaemonUnavailable
 		},
 	})
-	if err != nil {
-		t.Fatalf("unavailable daemon with clean fallback should not fail: %v", err)
+	if err == nil || ExitCode(err) != 3 {
+		t.Fatalf("unavailable daemon must return unknown exit 3, err=%v code=%d", err, ExitCode(err))
 	}
-
 	got := out.String()
-	if !strings.Contains(got, "Daemon: not reachable") || !strings.Contains(got, "using local fallback") {
-		t.Fatalf("expected clear fallback output, got %q", got)
+	if !strings.Contains(got, "Status: Unknown") || strings.Contains(got, "Status: Disconnected") {
+		t.Fatalf("unsafe fallback product status: %q", got)
 	}
 }
 
-func TestRunCLIStatusWarnsWhenDaemonProtocolFails(t *testing.T) {
+func TestRunCLIStatusWarnsSafelyWhenDaemonProtocolFails(t *testing.T) {
 	var out bytes.Buffer
 
 	err := runWithOptions(context.Background(), []string{"status"}, &out, options{
@@ -70,7 +65,8 @@ func TestRunCLIStatusWarnsWhenDaemonProtocolFails(t *testing.T) {
 	if got := ExitCode(err); got != 3 {
 		t.Fatalf("expected exit 3, got %d", got)
 	}
-	if got := out.String(); !strings.Contains(got, "could not inspect daemon status API") {
-		t.Fatalf("expected daemon warning, got %q", got)
+	got := out.String()
+	if !strings.Contains(got, "Status: Unknown") || !strings.Contains(got, "Reason: Connection state could not be determined") {
+		t.Fatalf("expected safe unknown status, got %q", got)
 	}
 }
