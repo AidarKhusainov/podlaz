@@ -20,13 +20,24 @@ func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts
 		return unsupportedStatusArgument(args[0])
 	}
 
-	report := runStatus(ctx, opts)
+	report, terminalReason := runProductStatus(ctx, opts)
 	autostart := productAutostartStatus(ctx, opts)
-	fmt.Fprint(stdout, report.ProductView(autostart).String())
+	fmt.Fprint(stdout, report.ProductView(autostart, terminalReason).String())
 	if statusCommandShouldFail(report) {
 		return exitError{code: 3, err: errors.New("status found unhealthy lifecycle, stale, or incomplete state")}
 	}
 	return nil
+}
+
+func runProductStatus(ctx context.Context, opts options) (status.Report, api.TerminalReason) {
+	if opts.status != nil || opts.daemonStatus != nil {
+		return runStatus(ctx, opts), ""
+	}
+	response, err := (client.StatusClient{}).Status(ctx)
+	if err == nil {
+		return statusReportFromDaemonResponse(response), response.TerminalReason
+	}
+	return localStatusAfterDaemonError(ctx, err), ""
 }
 
 func productAutostartStatus(ctx context.Context, opts options) *api.AutostartStatusResponse {
@@ -65,7 +76,10 @@ func runStatus(ctx context.Context, opts options) status.Report {
 	if err == nil {
 		return daemonStatus
 	}
+	return localStatusAfterDaemonError(ctx, err)
+}
 
+func localStatusAfterDaemonError(ctx context.Context, err error) status.Report {
 	local := status.InspectWithOptions(ctx, status.Options{DaemonSocketAccess: daemonSocketAccessFromError(err)})
 	if client.IsDaemonUnavailable(err) {
 		return status.WithDaemonUnavailable(local, client.UnavailableMessage(err))
@@ -94,11 +108,15 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 	if err != nil {
 		return status.Report{}, err
 	}
+	return statusReportFromDaemonResponse(response), nil
+}
+
+func statusReportFromDaemonResponse(response api.StatusResponse) status.Report {
 	report := status.FromDaemon(response)
 	if response.LifecyclePhase == api.LifecycleConnecting {
 		report.Connection = "connecting"
 	}
-	return status.WithTunHealth(report, response.TunHealth), nil
+	return status.WithTunHealth(report, response.TunHealth)
 }
 
 func statusCommandShouldFail(report status.Report) bool {
