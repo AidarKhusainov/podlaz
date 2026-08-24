@@ -58,40 +58,31 @@ func TestRunCLIStatusUsesAccessibleDaemonSocket(t *testing.T) {
 		t.Fatalf("status failed: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{
-		"Daemon: running\n",
-		"Service: manual\n",
-		"Connection: inactive\n",
-		"Runtime directory: present\n",
-		"Stale state: none\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected output to contain %q, got %q", want, got)
-		}
+	if got != "Status: Disconnected\n" {
+		t.Fatalf("unexpected concise daemon status: %q", got)
 	}
-	if strings.Contains(got, "using local fallback") || strings.Contains(got, "Recovery candidates:") {
-		t.Fatalf("accessible daemon status should not use local fallback, got %q", got)
+	for _, forbidden := range []string{"Daemon:", "Service:", "Runtime directory:", "Routes:", "DNS:", "Firewall:"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("product status leaked %q: %q", forbidden, got)
+		}
 	}
 }
 
-func TestRunCLIStatusReportsMissingDaemonSocketWithoutStaleState(t *testing.T) {
+func TestRunCLIStatusReportsMissingDaemonSocketAsUnknown(t *testing.T) {
 	runtimeDir := filepath.Join(t.TempDir(), "missing")
 	t.Setenv(api.RuntimeDirEnv, runtimeDir)
 
 	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"status"}, &out, options{}); err != nil {
-		t.Fatalf("missing daemon socket with no runtime state should be clean inactive, got %v", err)
+	err := runWithOptions(context.Background(), []string{"status"}, &out, options{})
+	if err == nil || ExitCode(err) != 3 {
+		t.Fatalf("missing daemon must be unknown with exit 3, err=%v code=%d", err, ExitCode(err))
 	}
 	got := out.String()
-	for _, want := range []string{
-		"Daemon: not reachable (daemon socket " + api.SocketPath(runtimeDir) + " does not exist; start podlazd); using local fallback\n",
-		"Daemon socket: missing\n",
-		"Runtime directory: missing\n",
-		"Stale state: none\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected output to contain %q, got %q", want, got)
-		}
+	if !strings.Contains(got, "Status: Unknown\n") || !strings.Contains(got, "Reason: Connection state could not be determined\n") {
+		t.Fatalf("missing daemon did not render safe unknown state: %q", got)
+	}
+	if strings.Contains(got, "Status: Disconnected") {
+		t.Fatalf("missing daemon falsely claimed disconnect: %q", got)
 	}
 }
 
@@ -118,17 +109,11 @@ func TestRunCLIStatusReportsPermissionDeniedDaemonSocketWithoutStaleRuntimeCandi
 		t.Fatalf("expected diagnostic exit 3 for inaccessible daemon socket, got err=%v code=%d", err, ExitCode(err))
 	}
 	got := out.String()
-	for _, want := range []string{
-		"Daemon socket: present but inaccessible (permission denied; check podlaz group membership)\n",
-		"Runtime directory: present (daemon socket inaccessible; stale status unknown)\n",
-		"Stale state: unknown (inspection incomplete)\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("expected output to contain %q, got %q", want, got)
-		}
+	if !strings.Contains(got, "Status: Unknown\n") || !strings.Contains(got, "Reason: Connection state could not be determined\n") {
+		t.Fatalf("permission-denied status did not render unknown: %q", got)
 	}
-	if strings.Contains(got, "Recovery candidates:") || strings.Contains(got, "generated runtime configs") || strings.Contains(got, "runtime directory: "+runtimeDir) {
-		t.Fatalf("permission-denied daemon runtime should not be reported as stale cleanup candidates, got %q", got)
+	if strings.Contains(got, "Recovery candidates:") || strings.Contains(got, "generated runtime configs") || strings.Contains(got, "Status: Disconnected") {
+		t.Fatalf("permission-denied product status leaked diagnostics or claimed disconnect: %q", got)
 	}
 }
 
