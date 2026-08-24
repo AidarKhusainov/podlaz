@@ -53,8 +53,9 @@ func (t *productLifecyclePhaseTracker) decorate(status api.StatusResponse) api.S
 }
 
 type productPhaseLifecycle struct {
-	inner   lifecycleService
-	tracker *productLifecyclePhaseTracker
+	inner           lifecycleService
+	tracker         *productLifecyclePhaseTracker
+	terminalReasons *productTerminalReasonStore
 }
 
 func (l productPhaseLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
