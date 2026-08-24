@@ -34,10 +34,10 @@ plz --help
 
 | Exit | Meaning |
 | ---: | --- |
-| `0` | Success. For active TUN status, current health must be `verified`. |
+| `0` | Success. For active TUN status, current health must not contain a confirmed unhealthy/cleanup-required condition. |
 | `1` | Runtime or operation failure. |
 | `2` | Invalid usage, flags, arguments, or deferred JSON. |
-| `3` | Diagnostic command found unhealthy state, including active TUN health `revalidating`, transient `degraded`, or `cleanup-required`. |
+| `3` | Diagnostic command found confirmed unhealthy state, such as `degraded` or `cleanup-required`; `Connecting`/`Reconnecting` alone do not imply exit `3`. |
 | `4` | Permission or authorization failure. |
 | `5` | Required daemon access was unavailable. |
 
@@ -154,6 +154,31 @@ unhealthy. A clean startup recovery scan is described relative to the current
 lifecycle state, so an active TUN session is never labelled as a clean inactive
 state. `status --json` is deferred.
 
+Default human `status` is a product view, not an operator dump. It renders one of:
+
+```text
+Status: Connected
+Status: Connecting
+Status: Reconnecting
+Status: Disconnected
+Status: Unknown
+```
+
+`Disconnected` is used only when the lifecycle is conclusively `inactive`.
+Unavailable daemon access, inaccessible socket state, stale/incomplete local
+inspection, or any other state without evidence of inactivity is `Unknown`, not
+`Disconnected`. `Connecting` is an admitted explicit or boot connect that has not
+yet established the product session. `Reconnecting` is an established protected
+session while current evidence is being revalidated/rebuilt. These transient
+product states do not by themselves imply diagnostic exit `3`.
+
+The default human view may additionally show `Profile`, `Mode`, the persistent
+autostart policy, and a short stable `Reason` after a conclusively terminal
+lifecycle. It intentionally omits service/runtime configuration, proxy listener
+details, routes, DNS, firewall, transaction identifiers, recovery candidates,
+and other operator evidence. Those details remain available through daemon status
+internals, `doctor`, `doctor --tun`, and `recover`.
+
 For an active TUN session, durable transaction state and current health are
 separate contracts. `committed` means the transaction completed successfully for
 the generation verified at that time; it is not permanent proof that the current
@@ -195,11 +220,12 @@ cleanup authority. Only a terminal verification failure/deadline can hand off to
 the existing exact transaction-backed lifecycle disconnect described above;
 ambiguous observation or foreign ownership never gains cleanup authority.
 
-While an active TUN is transiently `revalidating`/`degraded`, or remains
-`cleanup-required` after failed rollback, `podlaz status` returns exit code `3`.
-A successful automatic fail-safe disconnect instead publishes the normal inactive
-lifecycle state and no active `tun_health`. Current-health failure does not rewrite
-historical commit evidence.
+A confirmed active `degraded` or `cleanup-required` condition returns status exit
+code `3`. `Connecting`/`Reconnecting` are lifecycle phases and do not themselves
+make status unhealthy. A successful automatic fail-safe disconnect publishes the
+normal `Disconnected` state with a stable typed high-level reason when the
+terminal outcome is still the latest relevant lifecycle. Current-health failure
+does not rewrite historical commit evidence.
 
 ```bash
 podlaz doctor
@@ -332,6 +358,20 @@ before starting a new allocation. Unsupported handoff values fail before network
 mutation. `disconnect` is safe to repeat. `connect --json` and `disconnect --json`
 are deferred.
 
+Successful human lifecycle output is intentionally concise:
+
+```text
+Connected
+Profile: Example VPN
+Mode: TUN
+```
+
+and:
+
+```text
+Disconnected
+```
+
 For failures during `network-apply`, `network-verify`, later connect-time
 connectivity verification, or a proved post-commit revalidation failure/deadline,
 podlazd runs bounded redacted diagnostics while the relevant failed state still
@@ -350,6 +390,50 @@ resolver lookup, and route verification for at least one returned IPv4 address.
 `Current Scopes` remains diagnostic evidence only. The returned error includes
 the stable classification and safe report path when available and directs the
 user to `podlaz doctor --tun --verbose`.
+
+```bash
+podlaz autostart enable [--mode proxy-only|tun] <profile-id>
+podlaz autostart disable
+podlaz autostart status
+```
+
+`autostart enable` reads and validates the selected user-owned profile exactly as
+normal `connect`, then submits a minimal canonical snapshot to the daemon-owned
+persistent Boot Autostart Manifest. It does not connect immediately. Configuration
+written in boot A is eligible only on a later boot, so restarting `podlazd` in
+boot A cannot turn `enable` into an immediate connect.
+
+`autostart disable` removes only future-boot policy. It does not disconnect an
+active session, cancel an already-admitted current-boot attempt, or reset the
+one-attempt/no-retry authority. `autostart status` is read-only. Human output is:
+
+```text
+Autostart: Enabled for next boot
+```
+
+or:
+
+```text
+Autostart: Disabled
+```
+
+When enabled, profile name and mode may also be shown. `autostart --json` is not
+a public schema yet and returns deferred-JSON usage behavior.
+
+At daemon startup, current-boot Network Session continuation/recovery always has
+priority over fresh autostart. With no continuation, the daemon may admit at most
+one logical autostart attempt for the current boot. It first performs bounded
+fresh uplink-readiness observation inside that admitted attempt, then enters the
+same canonical `Connect` lifecycle as an explicit request. Daemon replacement
+continues the exact pinned attempt. `succeeded` or conclusively `terminal` consumes
+automatic-connect authority for the remainder of the boot; explicit disconnect
+or a later runtime terminal failure never causes a same-boot autostart retry.
+
+A stable terminal reason belongs to the latest relevant product lifecycle, not to
+the permanent current-boot no-retry authority. A newer admitted explicit
+lifecycle supersedes an older reason. If that new explicit connect itself reaches
+a conclusively clean terminal failure, it records a new typed reason. A request
+rejected before lifecycle admission leaves the previous valid reason unchanged.
 
 ```bash
 podlaz check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
@@ -412,6 +496,9 @@ top-level `ok`.
 
 - User state: `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz`.
 - Daemon runtime: `/run/podlaz`, `/run/podlaz/podlazd.sock`, `/run/podlaz/transactions`.
+- Persistent boot policy: `/var/lib/podlaz/boot-autostart-manifest.json` under systemd `StateDirectory=podlaz`.
+- Current-boot autostart authority: `/run/podlaz/boot-autostart-attempt.json`.
+- Current-boot product terminal outcome: `/run/podlaz/product-terminal-reason.json`.
 - Latest TUN diagnostic report: `/run/podlaz/diagnostics/tun-last.json` (daemon-owned, replacement-only, mode `0600`, bounded to 256 KiB).
 - Generated runtime config is not persistent source of truth and must not be logged in full.
 
