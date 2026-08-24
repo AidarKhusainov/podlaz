@@ -26,6 +26,13 @@ func newNetworkSessionLifecycle(lifecycle lifecycleService, continuation network
 	return &networkSessionLifecycle{lifecycle: lifecycle, continuation: continuation}
 }
 
+func (l *networkSessionLifecycle) productTerminalReasonStore() productTerminalReasonStore {
+	if l.terminalReasons != nil {
+		return *l.terminalReasons
+	}
+	return newProductTerminalReasonStore(l.continuation.runtimeDir, l.continuation.readBootID)
+}
+
 func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
 	l.continuationMu.Lock()
 	if l.explicitStop {
@@ -49,14 +56,13 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	// reject before reaching it, so an unadmitted request cannot erase the last
 	// valid product outcome. Once admitted, the new epoch supersedes that outcome
 	// before any underlying networking mutation starts.
-	if l.terminalReasons != nil {
-		if err := l.terminalReasons.Supersede(); err != nil {
-			restoreErr := l.restorePreviousContinuation(previous, previousExists)
-			if restoreErr != nil {
-				return api.LifecycleResponse{}, errors.Join(err, restoreErr)
-			}
-			return api.LifecycleResponse{}, err
+	reasonStore := l.productTerminalReasonStore()
+	if err := reasonStore.Supersede(); err != nil {
+		restoreErr := l.restorePreviousContinuation(previous, previousExists)
+		if restoreErr != nil {
+			return api.LifecycleResponse{}, errors.Join(err, restoreErr)
 		}
+		return api.LifecycleResponse{}, err
 	}
 
 	response, connectErr := l.lifecycle.Connect(ctx, request)
