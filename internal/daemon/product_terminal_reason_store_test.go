@@ -26,6 +26,54 @@ func TestProductTerminalReasonStoreRoundTripsCurrentBootPrivately(t *testing.T) 
 	}
 }
 
+func TestProductTerminalReasonStoreSupersedeBlocksOlderOutcome(t *testing.T) {
+	store := newProductTerminalReasonStore(t.TempDir(), fixedBootID(testBootAttempt))
+	if err := store.Set(api.TerminalReasonVPNConnectFailed); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Supersede(); err != nil {
+		t.Fatal(err)
+	}
+	resolution, exists, err := store.ResolveCurrent()
+	if err != nil || !exists {
+		t.Fatalf("supersede resolution exists=%v err=%v", exists, err)
+	}
+	if !resolution.Superseded || resolution.Reason != "" {
+		t.Fatalf("supersede resolution=%+v", resolution)
+	}
+	if reason, exists, err := store.LoadCurrent(); err != nil || exists || reason != "" {
+		t.Fatalf("superseded reason remained loadable: reason=%q exists=%v err=%v", reason, exists, err)
+	}
+}
+
+func TestProductTerminalReasonStoreNewTerminalOutcomeReplacesSupersede(t *testing.T) {
+	store := newProductTerminalReasonStore(t.TempDir(), fixedBootID(testBootAttempt))
+	if err := store.Supersede(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(api.TerminalReasonVPNRestoreFailed); err != nil {
+		t.Fatal(err)
+	}
+	resolution, exists, err := store.ResolveCurrent()
+	if err != nil || !exists {
+		t.Fatalf("replacement resolution exists=%v err=%v", exists, err)
+	}
+	if resolution.Superseded || resolution.Reason != api.TerminalReasonVPNRestoreFailed {
+		t.Fatalf("replacement resolution=%+v", resolution)
+	}
+}
+
+func TestProductTerminalReasonStoreRejectsReasonAndSupersedeTogether(t *testing.T) {
+	store := newProductTerminalReasonStore(t.TempDir(), fixedBootID(testBootAttempt))
+	data := []byte(`{"schema_version":"podlaz.product-terminal-reason.v1","boot_id":"boot-attempt","reason":"vpn_restore_failed","superseded":true}` + "\n")
+	if err := os.WriteFile(store.path(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.ResolveCurrent(); err == nil {
+		t.Fatal("expected ambiguous reason+superseded state to be rejected")
+	}
+}
+
 func TestProductTerminalReasonStoreDiscardsPreviousBoot(t *testing.T) {
 	dir := t.TempDir()
 	old := newProductTerminalReasonStore(dir, fixedBootID(testBootConfigured))
