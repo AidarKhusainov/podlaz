@@ -77,6 +77,9 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 			return response, errors.Join(connectErr, restoreErr)
 		}
 	}
+	if reasonErr := l.publishTerminalConnectReason(ctx, request, connectErr, previousExists); reasonErr != nil {
+		return response, errors.Join(connectErr, reasonErr)
+	}
 	return response, connectErr
 }
 
