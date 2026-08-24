@@ -48,29 +48,55 @@ func (m *XrayManager) statusForPublicationFrom(ctx context.Context, statusFn fun
 }
 
 func (m *XrayManager) withProductTerminalReason(status api.StatusResponse) api.StatusResponse {
-	if status.Connection != "inactive" {
-		return status
-	}
 	runtimeDir := m.runtimeDir()
-	reasonStore := newProductTerminalReasonStore(runtimeDir, nil)
-	if reason, exists, err := reasonStore.LoadCurrent(); err == nil && exists {
-		status.TerminalReason = reason
-		return status
+	status.TerminalReason = resolveProductTerminalReason(
+		status,
+		newProductTerminalReasonStore(runtimeDir, nil),
+		newBootAutostartAttemptStore(runtimeDir, nil),
+	)
+	return status
+}
+
+func resolveProductTerminalReason(
+	status api.StatusResponse,
+	reasonStore productTerminalReasonStore,
+	attemptStore bootAutostartAttemptStore,
+) api.TerminalReason {
+	if status.Connection != "inactive" {
+		return ""
 	}
-	attemptStore := newBootAutostartAttemptStore(runtimeDir, nil)
+
+	resolution, exists, err := reasonStore.ResolveCurrent()
+	if err != nil {
+		// An unreadable current product outcome is ambiguous. Do not bypass it by
+		// resurrecting older boot-attempt history as if the product outcome store
+		// were absent.
+		return ""
+	}
+	if exists {
+		if resolution.Superseded {
+			return ""
+		}
+		return resolution.Reason
+	}
+
+	// A terminal BootAutostartAttempt remains until reboot as one-attempt
+	// authority. It is also a valid initial product reason only while no newer
+	// explicit lifecycle has superseded that outcome.
 	attempt, exists, err := attemptStore.LoadCurrent()
 	if err != nil || !exists || attempt.State != bootAutostartAttemptTerminal {
-		return status
+		return ""
 	}
 	switch attempt.TerminalReason {
 	case bootAutostartTerminalNetworkNotReady:
-		status.TerminalReason = api.TerminalReasonBootNetworkNotReady
+		return api.TerminalReasonBootNetworkNotReady
 	case bootAutostartTerminalConnectFailed:
-		status.TerminalReason = api.TerminalReasonVPNConnectFailed
+		return api.TerminalReasonVPNConnectFailed
 	case bootAutostartTerminalSessionFailure:
-		status.TerminalReason = api.TerminalReasonVPNRestoreFailed
+		return api.TerminalReasonVPNRestoreFailed
+	default:
+		return ""
 	}
-	return status
 }
 
 func (m *XrayManager) statusPublicationIdentity() statusPublicationIdentity {
