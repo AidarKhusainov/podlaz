@@ -14,18 +14,18 @@ import (
 )
 
 const (
-	e2eTunReconciliationSoftFailureEnv       = "PODLAZ_E2E_TUN_RECONCILIATION_SOFT_FAILURE"
-	e2eTunReconciliationSoftFailureTrigger   = "reconciliation-soft-provider.trigger"
-	e2eTunReconciliationSoftFailureInjected  = "reconciliation-soft-provider.injected"
-	e2eTunReconciliationResolvedUnknownEnv   = "PODLAZ_E2E_TUN_RECONCILIATION_RESOLVED_UNKNOWN"
-	e2eTunReconciliationResolvedUnknownTrig  = "reconciliation-resolved-unknown.trigger"
-	e2eTunReconciliationResolvedUnknownDone  = "reconciliation-resolved-unknown.injected"
-	e2eTunReconciliationOwnedRouteDriftEnv   = "PODLAZ_E2E_TUN_RECONCILIATION_OWNED_ROUTE_DRIFT"
-	e2eTunReconciliationOwnedRouteDriftTrig  = "reconciliation-owned-route-drift.trigger"
-	e2eTunReconciliationOwnedRouteDriftDone  = "reconciliation-owned-route-drift.injected"
-	e2eTunReconciliationRebuildPauseEnv      = "PODLAZ_E2E_TUN_RECONCILIATION_REBUILD_PAUSE"
-	e2eTunReconciliationRebuildReady         = "reconciliation-rebuild.ready"
-	e2eTunReconciliationRebuildContinue      = "reconciliation-rebuild.continue"
+	e2eTunReconciliationSoftFailureEnv      = "PODLAZ_E2E_TUN_RECONCILIATION_SOFT_FAILURE"
+	e2eTunReconciliationSoftFailureTrigger  = "reconciliation-soft-provider.trigger"
+	e2eTunReconciliationSoftFailureInjected = "reconciliation-soft-provider.injected"
+	e2eTunReconciliationResolvedUnknownEnv  = "PODLAZ_E2E_TUN_RECONCILIATION_RESOLVED_UNKNOWN"
+	e2eTunReconciliationResolvedUnknownTrig = "reconciliation-resolved-unknown.trigger"
+	e2eTunReconciliationResolvedUnknownDone = "reconciliation-resolved-unknown.injected"
+	e2eTunReconciliationOwnedRouteDriftEnv  = "PODLAZ_E2E_TUN_RECONCILIATION_OWNED_ROUTE_DRIFT"
+	e2eTunReconciliationOwnedRouteDriftTrig = "reconciliation-owned-route-drift.trigger"
+	e2eTunReconciliationOwnedRouteDriftDone = "reconciliation-owned-route-drift.injected"
+	e2eTunReconciliationRebuildPauseEnv     = "PODLAZ_E2E_TUN_RECONCILIATION_REBUILD_PAUSE"
+	e2eTunReconciliationRebuildReady        = "reconciliation-rebuild.ready"
+	e2eTunReconciliationRebuildContinue     = "reconciliation-rebuild.continue"
 )
 
 func maybeInjectE2ETunReconciliationSoftFailure(probes []tunProbeEvidence) []tunProbeEvidence {

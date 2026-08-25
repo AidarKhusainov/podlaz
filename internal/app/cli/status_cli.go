@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/client"
 	"github.com/AidarKhusainov/podlaz/internal/status"
 )
@@ -19,12 +20,42 @@ func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts
 		return unsupportedStatusArgument(args[0])
 	}
 
-	report := runStatus(ctx, opts)
-	fmt.Fprint(stdout, report.String())
+	report, terminalReason := runProductStatus(ctx, opts)
+	autostart := productAutostartStatus(ctx, opts)
+	fmt.Fprint(stdout, report.ProductView(autostart, terminalReason).String())
 	if statusCommandShouldFail(report) {
 		return exitError{code: 3, err: errors.New("status found unhealthy lifecycle, stale, or incomplete state")}
 	}
 	return nil
+}
+
+func runProductStatus(ctx context.Context, opts options) (status.Report, api.TerminalReason) {
+	if opts.status != nil || opts.daemonStatus != nil {
+		return runStatus(ctx, opts), ""
+	}
+	response, err := (client.StatusClient{}).Status(ctx)
+	if err == nil {
+		return statusReportFromDaemonResponse(response), response.TerminalReason
+	}
+	return localStatusAfterDaemonError(ctx, err), ""
+}
+
+func productAutostartStatus(ctx context.Context, opts options) *api.AutostartStatusResponse {
+	if opts.autostartStatus != nil {
+		value, err := opts.autostartStatus(ctx)
+		if err == nil {
+			return &value
+		}
+		return nil
+	}
+	if opts.status != nil || opts.daemonStatus != nil {
+		return nil
+	}
+	value, err := (client.AutostartClient{}).Status(ctx)
+	if err != nil {
+		return nil
+	}
+	return &value
 }
 
 func unsupportedStatusArgument(arg string) error {
@@ -45,19 +76,19 @@ func runStatus(ctx context.Context, opts options) status.Report {
 	if err == nil {
 		return daemonStatus
 	}
+	return localStatusAfterDaemonError(ctx, err)
+}
 
+func localStatusAfterDaemonError(ctx context.Context, err error) status.Report {
 	local := status.InspectWithOptions(ctx, status.Options{DaemonSocketAccess: daemonSocketAccessFromError(err)})
+	if local.Connection == "inactive" {
+		local.Connection = "unknown (inspection incomplete)"
+	}
 	if client.IsDaemonUnavailable(err) {
 		return status.WithDaemonUnavailable(local, client.UnavailableMessage(err))
 	}
 
-	local.Warnings = append(local.Warnings, status.Warning{
-		Target:  "daemon status API",
-		Message: err.Error(),
-	})
-	if local.Connection == "inactive" {
-		local.Connection = "unknown (inspection incomplete)"
-	}
+	local.Warnings = append(local.Warnings, status.Warning{Target: "daemon status API", Message: err.Error()})
 	return local
 }
 
@@ -77,8 +108,15 @@ func runDaemonStatus(ctx context.Context, opts options) (status.Report, error) {
 	if err != nil {
 		return status.Report{}, err
 	}
+	return statusReportFromDaemonResponse(response), nil
+}
+
+func statusReportFromDaemonResponse(response api.StatusResponse) status.Report {
 	report := status.FromDaemon(response)
-	return status.WithTunHealth(report, response.TunHealth), nil
+	if response.LifecyclePhase == api.LifecycleConnecting {
+		report.Connection = "connecting"
+	}
+	return status.WithTunHealth(report, response.TunHealth)
 }
 
 func statusCommandShouldFail(report status.Report) bool {

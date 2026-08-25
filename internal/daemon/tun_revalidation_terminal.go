@@ -49,11 +49,6 @@ func (c tunTerminalDataPlaneCleaner) Cleanup(ctx context.Context, expectedTransa
 	}
 }
 
-// tunAutomaticTerminalHandler runs only after the coordinator has atomically
-// claimed the current publication and lifecycleOperationLock has admitted the
-// automatic terminal mutation. The supplied admission therefore already owns
-// the single lifecycle operation token; this handler must never call a wrapped
-// lifecycle method that would register/acquire the mutation a second time.
 type tunAutomaticTerminalHandler struct {
 	store                networkSessionStateStore
 	currentTransactionID func() string
@@ -122,15 +117,15 @@ func (h tunAutomaticTerminalHandler) Handle(
 		if h.markCleanupRequired != nil {
 			h.markCleanupRequired(disposition)
 		}
+	} else {
+		reasonStore := newProductTerminalReasonStore(h.store.runtimeDir, h.store.readBootID)
+		_ = reasonStore.Set(api.TerminalReasonVPNRestoreFailed)
 	}
 	if h.finalize != nil {
 		h.finalize(baseCtx, summary, status)
 	}
 }
 
-// tunRevalidationTerminalHandler is the pre-#262 compatibility path retained
-// until production wiring is moved to tunAutomaticTerminalHandler. It must not
-// be used by the final evidence-driven automatic-disposition flow.
 type tunRevalidationTerminalHandler struct {
 	collect             func(context.Context, planner.TunPlan, error) tunFailureDiagnosticSummary
 	disconnect          func(context.Context) error

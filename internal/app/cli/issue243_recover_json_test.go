@@ -152,17 +152,8 @@ func assertIssue243StatusCommandClean(t *testing.T, opts options) {
 	if got := ExitCode(err); got != 0 {
 		t.Fatalf("status must exit 0 for exact exit-0 missing-link observation: code=%d err=%v output=%q", got, err, out.String())
 	}
-	for _, want := range []string{
-		"Connection: inactive\n",
-		"Stale state: none\n",
-		"Startup recovery scan: clean inactive state\n",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("clean inactive status must contain %q, got %q", want, out.String())
-		}
-	}
-	if strings.Contains(out.String(), "Inspection warnings:") || strings.Contains(out.String(), "Recovery candidates:") {
-		t.Fatalf("clean inactive status must not publish recovery or inspection warnings: %q", out.String())
+	if got := out.String(); got != "Status: Disconnected\n" {
+		t.Fatalf("clean inactive status must use concise product output, got %q", got)
 	}
 }
 

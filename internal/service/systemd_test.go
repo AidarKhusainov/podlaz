@@ -110,6 +110,33 @@ func TestSystemdUnitDoesNotBlockTunDeviceWork(t *testing.T) {
 	}
 }
 
+func TestSystemdUnitKeepsBootAutostartInsideDaemonLifecycle(t *testing.T) {
+	content := readSystemdUnit(t)
+
+	for _, want := range []string{
+		"ExecStart=/usr/bin/podlazd",
+		"Restart=on-failure",
+		"StateDirectory=podlaz",
+		"StateDirectoryMode=0700",
+		"RuntimeDirectoryPreserve=yes",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("boot autostart service contract must contain %q:\n%s", want, content)
+		}
+	}
+	for _, forbidden := range []string{
+		"ExecStartPre=/usr/bin/podlaz",
+		"ExecStartPost=/usr/bin/podlaz",
+		"podlaz autostart enable",
+		"PODLAZ_AUTOSTART_PROFILE",
+		"PODLAZ_AUTOSTART_MODE",
+	} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("boot autostart must not use a separate systemd launcher or profile environment via %q:\n%s", forbidden, content)
+		}
+	}
+}
+
 func readSystemdUnit(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join("..", "..", "packaging", "systemd", "podlazd.service")

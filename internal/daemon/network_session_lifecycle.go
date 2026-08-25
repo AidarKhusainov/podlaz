@@ -12,8 +12,9 @@ import (
 )
 
 type networkSessionLifecycle struct {
-	lifecycle    lifecycleService
-	continuation networkSessionContinuationStore
+	lifecycle       lifecycleService
+	continuation    networkSessionContinuationStore
+	terminalReasons *productTerminalReasonStore
 
 	continuationMu    sync.Mutex
 	explicitStop      bool
@@ -23,6 +24,13 @@ type networkSessionLifecycle struct {
 
 func newNetworkSessionLifecycle(lifecycle lifecycleService, continuation networkSessionContinuationStore) *networkSessionLifecycle {
 	return &networkSessionLifecycle{lifecycle: lifecycle, continuation: continuation}
+}
+
+func (l *networkSessionLifecycle) productTerminalReasonStore() productTerminalReasonStore {
+	if l.terminalReasons != nil {
+		return *l.terminalReasons
+	}
+	return newProductTerminalReasonStore(l.continuation.runtimeDir, l.continuation.readBootID)
 }
 
 func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
@@ -43,6 +51,20 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 	replacementAttempt := previousExists && api.NormalizeHandoffPolicy(request.Handoff) == api.HandoffReplacePodlaz
 	l.continuationMu.Unlock()
 
+	// The durable Network Session save above is the lifecycle epoch admission
+	// point. Request-facing startup/shutdown gates and the operation coordinator
+	// reject before reaching it, so an unadmitted request cannot erase the last
+	// valid product outcome. Once admitted, the new epoch supersedes that outcome
+	// before any underlying networking mutation starts.
+	reasonStore := l.productTerminalReasonStore()
+	if err := reasonStore.Supersede(); err != nil {
+		restoreErr := l.restorePreviousContinuation(previous, previousExists)
+		if restoreErr != nil {
+			return api.LifecycleResponse{}, errors.Join(err, restoreErr)
+		}
+		return api.LifecycleResponse{}, err
+	}
+
 	response, connectErr := l.lifecycle.Connect(ctx, request)
 	if connectErr == nil {
 		return response, nil
@@ -54,6 +76,9 @@ func (l *networkSessionLifecycle) Connect(ctx context.Context, request api.Conne
 		if restoreErr := l.restorePreviousDataPlane(ctx, previous); restoreErr != nil {
 			return response, errors.Join(connectErr, restoreErr)
 		}
+	}
+	if reasonErr := l.publishTerminalConnectReason(ctx, request, connectErr, previousExists); reasonErr != nil {
+		return response, errors.Join(connectErr, reasonErr)
 	}
 	return response, connectErr
 }

@@ -34,6 +34,17 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .B disconnect
 .YS
 .SY podlaz
+.B autostart enable
+.OP --mode proxy-only|tun
+.I profile-id
+.YS
+.SY podlaz
+.B autostart disable
+.YS
+.SY podlaz
+.B autostart status
+.YS
+.SY podlaz
 .B check
 .I profile-id
 .OP --target target-id
@@ -67,7 +78,7 @@ podlaz \- CLI for Xray-compatible VPN and proxy profiles
 .SH DESCRIPTION
 .B podlaz
 manages user-owned profiles and subscriptions, renders plans and diagnostics,
-and sends connection or cleanup intents to the local
+and sends connection, boot-policy, or cleanup intents to the local
 .BR podlazd (8)
 daemon when runtime behavior is required.
 .PP
@@ -243,9 +254,55 @@ is diagnostic evidence only. Diagnostic failure does not suppress cleanup. The
 returned error includes the safe classification and report path when available
 and directs the user to
 .BR "podlaz doctor --tun --verbose" .
+.PP
+On success, normal human output is intentionally concise: the first line is
+.B Connected,
+followed by the redacted profile display name and selected mode. Detailed routes,
+DNS, firewall, runtime configuration, and transaction identifiers remain in
+operator diagnostics rather than the default lifecycle output.
 .TP
 .B disconnect
-Stop the active daemon-managed connection. Safe to repeat.
+Stop the active daemon-managed connection. Safe to repeat. Successful human
+output is one
+.B Disconnected
+line.
+.TP
+.B autostart enable [--mode proxy-only|tun] <profile-id>
+Enable explicit boot autostart for a future boot. The CLI reads and validates the
+user-owned profile through the same profile validation boundary as normal
+connect, then submits only the minimal canonical connection snapshot to the
+daemon. The command does not connect immediately. Policy written in the current
+boot is deliberately ineligible for an automatic connect caused only by a
+same-boot daemon restart.
+.TP
+.B autostart disable
+Remove future-boot autostart policy. This does not disconnect an active session,
+cancel an admitted current-boot attempt, or reset the consumed one-attempt/no-retry
+authority for the current boot.
+.TP
+.B autostart status
+Read boot-autostart policy without mutating networking. Disabled output is
+.BR "Autostart: Disabled" .
+Enabled output begins with
+.BR "Autostart: Enabled for next boot" ,
+and may also show the redacted profile display name and mode. Autostart JSON is
+not a public schema yet.
+.PP
+At daemon startup, an existing current-boot Network Session continuation,
+recovery, or terminal-cleanup authority always has priority over fresh autostart.
+Only when no competing Network Session remains may one logical autostart attempt
+be admitted for the current Linux boot. The admitted attempt pins the exact
+request, waits for bounded fresh uplink-readiness evidence, and enters the same
+canonical connection lifecycle as an explicit connect. Daemon replacement may
+continue an
+.B in_progress
+attempt; a
+.B succeeded
+or conclusively
+.B terminal
+attempt prevents a second automatic connect until the next boot. Explicit
+disconnect, package replacement, or a later runtime terminal failure does not
+reset that authority.
 .TP
 .B check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
 Run explicit bounded proxy-only connectivity diagnostics for one profile.
@@ -255,7 +312,29 @@ Check all stored profiles with deterministic output and a small default
 concurrency limit.
 .TP
 .B status
-Print daemon-backed status when available, otherwise local read-only status.
+Print the concise product lifecycle view. Daemon-backed detailed evidence remains
+available to doctor/recover and the daemon status model, but normal human status
+renders one of
+.BR "Status: Connected" ,
+.BR "Status: Connecting" ,
+.BR "Status: Reconnecting" ,
+.BR "Status: Disconnected" ,
+or
+.BR "Status: Unknown" .
+.PP
+.B Disconnected
+means the lifecycle is conclusively inactive. A stopped/inaccessible daemon,
+incomplete local inspection, stale/ambiguous evidence, or another state that
+does not prove inactivity is
+.B Unknown
+rather than a false disconnected claim.
+.B Connecting
+is an admitted connect that has not yet established the product session.
+.B Reconnecting
+is an established protected session while current evidence is being
+revalidated/rebuilt. These transient lifecycle phases are not diagnostic failure
+merely because they are in progress.
+.PP
 For an active TUN session, durable transaction state and current network health
 are separate facts. A committed transaction may be published temporarily as
 .BR revalidating
@@ -287,28 +366,15 @@ for explicit recovery. Cancellation caused by an explicit user disconnect,
 recovery, or daemon shutdown is not treated as a second terminal failure and
 does not schedule another automatic disconnect.
 .PP
-Suspend/resume, underlying default-route interface or gateway changes, relevant
-uplink-address changes, NetworkManager connection identity changes, and server
-bypass next-hop changes invalidate or reprove current evidence. Event payloads
-are hints only; the daemon collects a fresh snapshot. Resume and event-source
-reconnect force a same-generation reproof even when the fingerprint is
-unchanged. Events consumed or probes cancelled while connect, disconnect, or
-recovery has lifecycle priority are retained for one bounded post-mutation
-revalidation instead of being treated as successful no-ops.
-.PP
-While an active TUN is transiently
-.BR revalidating
-or
-.BR degraded ,
-or remains
-.B cleanup-required
-after failed rollback, it is diagnostic-unhealthy and
-.B podlaz status
-returns exit status 3. A successful automatic fail-safe disconnect instead
-publishes the normal inactive lifecycle state. Current-health failure does not
-rewrite historical commit evidence, but terminal verification failure does
-authorize only the existing exact transaction-backed disconnect path; it does
-not authorize speculative repair or cleanup of foreign or ambiguous state.
+A conclusively terminal lifecycle may add one short stable
+.B Reason:
+line while the terminal outcome remains the latest relevant admitted lifecycle.
+The reason is typed product state, not parsed diagnostic/error prose. A newer
+explicit request rejected before lifecycle admission leaves the previous valid
+reason unchanged. A newer admitted lifecycle supersedes it; if that new explicit
+connect itself reaches conclusively clean terminal failure, it records its own
+new connect-failure reason. The persistent boot-attempt record remains separate
+because it exists only to forbid a second automatic connect in the same boot.
 .TP
 .B doctor [--json]
 Print environment and runtime diagnostics. Daemon-backed diagnostics use typed
@@ -385,7 +451,8 @@ transaction or stale scan candidate.
 .SH OPTIONS
 .TP
 .B --json
-Print stable JSON for commands whose JSON contract is implemented.
+Print stable JSON for commands whose JSON contract is implemented. Autostart JSON
+remains deferred.
 .TP
 .B --verbose, -v
 For
@@ -403,11 +470,12 @@ such as OK, WARN, BLOCKED, and SKIP.
 Confirm destructive state removal or recovery execution.
 .TP
 .B --mode proxy-only|tun
-Select connection, planning, or validation mode.
+Select connection, autostart, planning, or validation mode.
 .TP
 .B --handoff=block|ask|stop-known|replace-podlaz
 For TUN connects, select the explicit handoff policy. Unsupported handoff values
-are rejected before network mutation.
+are rejected before network mutation. Boot autostart does not persist a handoff
+policy.
 .TP
 .B --target <target-id>
 Select a service target for
@@ -450,8 +518,11 @@ Invalid values return exit status 2 before journalctl is started.
 .SH EXIT STATUS
 .TP
 .B 0
-Success. For an active TUN status check, current TUN health must be
-.BR verified .
+Success. A normal
+.B Connecting
+or
+.B Reconnecting
+product lifecycle phase is not unhealthy merely because it is in progress.
 .TP
 .B 1
 Runtime or operation failure.
@@ -460,9 +531,9 @@ Runtime or operation failure.
 Invalid usage, invalid flags or arguments, or deferred JSON output.
 .TP
 .B 3
-Diagnostic command found an unhealthy or unavailable state, including an active
-TUN whose current health is transiently revalidating/degraded or is
-cleanup-required after failed cleanup.
+Diagnostic command found confirmed unhealthy or unavailable evidence, including
+active TUN health that is genuinely degraded/cleanup-required. A lifecycle phase
+alone is not sufficient for exit status 3.
 .TP
 .B 4
 Permission or authorization failure.
@@ -477,9 +548,22 @@ User configuration and profiles.
 .I $XDG_STATE_HOME/podlaz
 User state.
 .TP
+.I /var/lib/podlaz/boot-autostart-manifest.json
+Daemon-private persistent Boot Autostart Manifest under systemd
+.BR StateDirectory=podlaz .
+It is mode 0600 and contains only the minimal validated future-boot connection
+snapshot and boot/generation authority.
+.TP
 .I /run/podlaz
 Daemon runtime directory, socket, generated config metadata, and transaction
 state.
+.TP
+.I /run/podlaz/boot-autostart-attempt.json
+Current-boot private pinned autostart attempt and one-attempt/no-retry authority.
+.TP
+.I /run/podlaz/product-terminal-reason.json
+Current-boot private typed product terminal outcome/supersede state. It is not
+autostart retry authority.
 .TP
 .I /run/podlaz/diagnostics/tun-last.json
 Daemon-owned, atomically replaced latest TUN diagnostic report. The report is

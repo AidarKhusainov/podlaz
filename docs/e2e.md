@@ -34,13 +34,15 @@ The general E2E workflow runs:
 4. Maximum server coverage
 5. Gated TUN fault-injection coverage
 
-The dedicated convergence workflow is the required gate for issue #236, issue #243, issue #247, issue #260, and equivalent changes when their acceptance criteria require installed-package TUN/resolver/diagnostics/convergence evidence. A single successful run covers the applicable packaged acceptance cases:
+The dedicated convergence workflow is the required gate for issue #236, issue #243, issue #247, issue #260, issue #262, issue #263, and equivalent changes when their acceptance criteria require installed-package TUN/resolver/diagnostics/convergence/boot-lifecycle evidence. A single successful run covers the applicable packaged acceptance cases:
 
 1. valid per-link DNS with all planned servers, `~.`, `+DefaultRoute`, and synthetic `Current Scopes: none` is accepted through the installed production daemon;
 2. removing real `podlaz0` after DNS apply produces the exact supported result from the daemon-owned production `resolvectl revert podlaz0` rollback call, diagnostics are persisted before that call, cleanup converges, and an immediate packaged retry succeeds. No preliminary manual revert is permitted. Strictly gated instrumentation captures the production call's exit code and raw stdout/stderr in the private hook directory; the gate accepts only exit code `1`, empty raw stdout, and the documented marker followed by one `LF` or one `CRLF`, without newline deletion or whitespace normalization;
 3. issue #243 verifies the separate read-only `resolvectl status podlaz0 --no-pager` absence protocol on Ubuntu 24.04/systemd 255. The initial inactive boundary first must publish healthy `podlaz status` and clean `recover --json`. The gate then boundedly waits for the exact supported exit-`0`, empty-stdout, byte-exact missing-device stderr envelope; during that wait only the already-supported proven-empty transient Link shape may be treated as an intermediate state, and any other raw process/result shape fails closed. The scenario then verifies clean `recover --execute --yes --json` followed by a fresh clean scan, performs two consecutive healthy active status reads, normal disconnect, immediate clean inactive status/recovery publication, immediate reconnect, and a repeated lifecycle without restarting `podlazd` or `systemd-resolved`. Post-disconnect success is defined by the product's semantic absence contract and does not require a particular raw resolver representation. Raw resolver/profile/host evidence stays in the private E2E temporary area; uploaded evidence contains only normalized structural verdicts and remains subject to the workflow redaction scan;
 4. issue #247 verifies lifecycle-aware base diagnostics and the product-owned journal lookback contract on the installed branch package. A committed active TUN session must pass exact live `podlaz0` identity and exact current nftables composition, then an E2E-only empty extra chain inside the same `inet podlaz` table must make base doctor warn before disconnect; after exact guarded removal the same active session must return clean. The scenario separately runs `podlaz logs --daemon --since 36h` and `podlaz logs --core --since 36h`, proves a short lookback excludes deliberately older journal entries using their actual timestamps, and proves `--follow --since` terminates on SIGINT with the expected signal status instead of reaching KILL. Malformed, signed, zero, compound, or excessive durations must still fail with usage exit code `2`. An inactive foreign-looking `podlaz0` remains actionable. The scenario may publish `acceptance=pass` only from successful EXIT cleanup; a cleanup failure changes the final script exit status. Raw doctor/log/profile/host output stays private and uploaded evidence contains normalized pass/fail verdicts only;
-5. issue #260 verifies coexistence rather than host cleanup. The harness creates documentation-only unrelated baseline state that occupies historical Podlaz candidates such as `198.18.0.1/32`, routing table `51820`, and policy priorities `9999`/`10000`, while preserving a safe usable server bootstrap path. The installed branch package must select different exact session identities, establish and verify its own TUN data plane without stopping NetworkManager VPN connections or deleting unrelated TUN/routes/rules/DNS/firewall state, persist the selected identities, and disconnect cleanly while the unrelated baseline remains structurally unchanged. A separate deterministic Go regression covers partially degraded soft diagnostics while the server-specific bootstrap and required allocation evidence remain authoritative. Public evidence records only structural allocation/coexistence verdicts; exact host/profile/network values remain private.
+5. issue #260 verifies coexistence rather than host cleanup. The harness creates documentation-only unrelated baseline state that occupies historical Podlaz candidates such as `198.18.0.1/32`, routing table `51820`, and policy priorities `9999`/`10000`, while preserving a safe usable server bootstrap path. The installed branch package must select different exact session identities, establish and verify its own TUN data plane without stopping NetworkManager VPN connections or deleting unrelated TUN/routes/rules/DNS/firewall state, persist the selected identities, and disconnect cleanly while the unrelated baseline remains structurally unchanged. A separate deterministic Go regression covers partially degraded soft diagnostics while the server-specific bootstrap and required allocation evidence remain authoritative. Public evidence records only structural allocation/coexistence verdicts; exact host/profile/network values remain private;
+6. issue #262 verifies evidence-driven revalidation, bounded rebuild/terminal disposition, suspend/resume and controlled host churn without manual Podlaz repair;
+7. issue #263 verifies explicit boot autostart policy, one logical automatic attempt per boot, daemon/package replacement continuity, explicit-disconnect no-retry semantics, terminal failure/no-retry, concise product status and stable typed terminal reason.
 
 A green result from only the general E2E workflow does not replace this dedicated gate.
 
@@ -54,6 +56,7 @@ Run E2E validation when a change touches:
 - daemon privilege boundaries;
 - systemd service behavior;
 - package install, reinstall, purge, or service lifecycle;
+- persistent boot-autostart policy, boot attempt authority, or restart/no-retry behavior;
 - provider-backed proxy/TUN data-plane behavior;
 - crash, rollback, fault-injection, diagnostics-before-rollback, or recovery behavior;
 - long-lived process, goroutine, thread, file-descriptor, task, timer, cache, or memory lifecycle behavior.
@@ -96,6 +99,8 @@ The dedicated package convergence and resource-soak workflows require `PODLAZ_E2
 | Issue #243 resolver acceptance | `scripts/e2e/issue243-package-acceptance.sh` | Installed-package clean inactive baseline, bounded convergence to the read-only exit-0 resolver envelope, recover-execute refresh, repeated active status, disconnect convergence, immediate reconnect, and normalized safe evidence. |
 | Issue #247 diagnostics acceptance | `scripts/e2e/issue247-package-acceptance.sh` | Installed-package inactive/active doctor lifecycle semantics, active same-table nftables composition mismatch, fail-closed inactive stale-resource detection, daemon/core `36h` windows, measured short-lookback enforcement, clean follow cancellation, invalid-duration usage errors, explicit cleanup-status propagation, and normalized safe evidence. |
 | Issue #260 coexistence acceptance | `scripts/e2e/issue260-package-acceptance.sh` | Installed-package collision-free address/table/rule allocation over synthetic unrelated baseline state, safe server bootstrap, protected data-plane verification, no foreign VPN teardown, exact transaction allocation evidence, and structural baseline preservation after disconnect. |
+| Issue #262 reconciliation acceptance | `scripts/e2e/issue262-package-acceptance.sh` | Installed-package evidence-driven revalidation, controlled suspend/uplink churn, protected rebuild, terminal convergence, and no manual repair. |
+| Issue #263 boot autostart acceptance | `scripts/e2e/issue263-package-acceptance.sh` | Autostart disabled/enabled boot fences, daemon restart and package upgrade continuity, explicit disconnect no-retry, terminal autostart failure, `terminal_no_same_boot_retry`, and normalized private-safe evidence. |
 | Installed-package teardown | `scripts/e2e/tun-package-cleanup.sh` | State-aware pre-release verification obligations, post-quiescence authoritative mutation snapshot, exact metadata-driven cleanup, ownership-union verification, identity-material-preserving package purge gate, sentinel removal, and tri-state post-cleanup assertions. |
 
 ## Manual script order
@@ -108,12 +113,14 @@ bash scripts/e2e/server-coverage.sh
 bash scripts/e2e/tun-fault-injection.sh
 bash scripts/e2e/tun-package-convergence.sh
 bash scripts/e2e/issue260-package-acceptance.sh
+bash scripts/e2e/issue262-package-acceptance.sh
+bash scripts/e2e/issue263-package-acceptance.sh
 bash scripts/e2e/issue243-package-acceptance.sh
 bash scripts/e2e/issue247-package-acceptance.sh
 bash scripts/e2e/tun-resource-soak.sh
 ```
 
-Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, event-source resynchronization, or daemon lifecycle-aware diagnostics requires installed-package/target-host TUN validation. A change that can retain session-owned processes, workers, timers, file descriptors, reports, buffers, or other resources requires the dedicated installed-package resource soak.
+Run only the subset that matches the risk of the change. A CLI-only change normally does not need provider-backed data-plane coverage. A change to transaction rollback, resolved cleanup, generated runtime configuration, current TUN health, suspend/resume handling, event-source resynchronization, boot autostart, or daemon lifecycle-aware diagnostics requires installed-package/target-host TUN validation. A change that can retain session-owned processes, workers, timers, file descriptors, reports, buffers, or other resources requires the dedicated installed-package resource soak.
 
 ## Native Xray TUN validation
 
@@ -132,6 +139,58 @@ For changes that touch native Xray TUN startup, record VM or self-hosted runner 
 11. `podlaz status`, `podlaz doctor`, and `podlaz recover` agree after rollback/recovery; no cleanup-required transaction or stale startup-scan candidate blocks an immediate subsequent TUN connect.
 12. `podlaz recover --execute --yes` after daemon interruption cleans transaction-owned state without deleting `/run/podlaz` wholesale or changing unrelated host networking.
 13. The podlaz-owned nftables table is accepted only when chain cardinality/name/type/hook/numeric priority/policy and ordered rule cardinality/content exactly match the canonical plan; an added foreign/extra rule or chain metadata drift must fail closed.
+
+## Issue #263 boot autostart and product lifecycle acceptance
+
+`scripts/e2e/issue263-package-acceptance.sh` is the installed-package acceptance
+for explicit boot policy and one-attempt/no-retry lifecycle semantics. It runs in
+the manually dispatched `TUN Package Convergence E2E` workflow after the existing
+continuity/coexistence/reconciliation scenarios.
+
+The scenario proves:
+
+1. with autostart disabled, a same-boot `podlazd` restart stays conclusively
+   inactive and creates no boot attempt;
+2. `podlaz autostart enable --mode tun <profile-id>` reports
+   `Autostart: Enabled for next boot` and a restart in the configuration boot
+   still stays disconnected;
+3. the self-hosted Actions job cannot reboot in the middle of one workflow, so
+   the fixture simulates a later boot by changing only `configured_boot_id` in
+   the private mode-`0600` Boot Autostart Manifest while the daemon is inactive.
+   The real installed `podlazd` then performs normal startup, bounded dynamic
+   uplink readiness, admission, and the canonical `Connect` lifecycle;
+4. the admitted automatic lifecycle reaches verified TUN and the current-boot
+   attempt becomes `succeeded`; daemon restart must continue the same Network
+   Session and must not change/re-admit that consumed attempt;
+5. package upgrade/reinstall while connected replaces `podlazd`, returns the
+   session to verified active through current-boot continuation, and leaves the
+   consumed boot-attempt control fingerprint unchanged;
+6. explicit disconnect followed by same-boot daemon restart stays disconnected;
+   the successful boot attempt does not become retry authority again;
+7. a documentation-only unreachable example profile drives a fresh simulated-boot
+   autostart through conclusively terminal cleanup. Status must publish the stable
+   high-level initial-connect reason and the attempt must become terminal only
+   after cleanup convergence;
+8. another daemon restart must stay inactive with the same terminal attempt and
+   produce `terminal_no_same_boot_retry` evidence;
+9. disabling policy after that changes only future-boot policy and does not erase
+   the current-boot terminal no-retry authority.
+
+The scenario does not use `podlaz recover --execute`, manual `ip` deletion,
+`resolvectl revert`, `nft delete table`, NetworkManager restart, or
+`systemd-resolved` restart as a success-path repair mechanism. Normal product
+lifecycle operations own all Podlaz cleanup. The private helper
+`scripts/e2e/lib/issue263_state.py` never renders the stored connection snapshot;
+it only changes the boot fence for the simulated boundary and inspects non-secret
+attempt control fields.
+
+Public evidence for issue #263 contains only normalized pass markers such as
+`daemon_restart_preserved_session`, `package_upgrade_preserved_session`,
+`explicit_disconnect_no_restart_reconnect`, `terminal_autostart_failure`, and
+`terminal_no_same_boot_retry`. Profile URI/ID, manifest connection material,
+endpoints, addresses, resolver/route state, and raw status output remain private
+and are removed before the existing pre-upload redaction scan. A hosted contract
+check cannot replace this real installed-package scenario.
 
 ## Issue #247 diagnostics and log-filter acceptance
 
@@ -247,7 +306,6 @@ The hook environment variables are E2E-only implementation details:
 - `PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS` bounds the pause probe.
 
 Do not set these variables in packaged or production service operation.
-
 
 ## Installed-package TUN resource soak
 
@@ -610,6 +668,8 @@ For issue #243, the raw initial `resolvectl status podlaz0 --no-pager` stdout/st
 For issue #247, raw base-doctor output, journal output, profile URI/ID, nftables chain/table inspection, and test-link inspection remain private. Public evidence may record only normalized facts such as clean inactive doctor, clean active committed doctor, active exact-composition mismatch detection and restoration, active startup-scan wording, inactive foreign-looking stale-resource detection, successful daemon/core `36h` windows, measured short-lookback enforcement, clean follow cancellation, invalid-duration exit-2 cases, successful scenario-owned cleanup, and final acceptance pass.
 
 For issue #260, raw host addressing, exact allocated CIDR/table/priorities, foreign fixture tuples, NetworkManager identities, resolver output, profile URI/ID, and provider endpoints remain private. Public evidence may record only normalized facts such as historical-candidate collision detected, alternate allocation selected, safe bootstrap accepted, active protected data plane verified, no foreign teardown invoked, exact transaction allocation persisted, normal disconnect completed, foreign baseline preserved, and final coexistence acceptance pass.
+
+For issue #263, raw profile URI/ID, Boot Autostart Manifest connection snapshot, attempt request, product reason file, daemon status JSON, host addressing, resolver/routing state, and package-install command output remain private. Public evidence may record only normalized boot-policy/lifecycle verdicts and the final acceptance result.
 
 ## Non-goals
 

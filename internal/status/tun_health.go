@@ -8,9 +8,8 @@ import (
 )
 
 // WithTunHealth projects the daemon's current TUN evidence into the existing
-// human status model without changing the durable transaction state. The API
-// remains the structured source of truth; this function only controls CLI text
-// and the existing diagnostic exit-code classification.
+// diagnostic status model while also retaining a typed product-level signal.
+// The detailed API/report fields remain unchanged for doctor/recovery tooling.
 func WithTunHealth(report Report, health *api.TunHealthStatus) Report {
 	if health == nil {
 		return report
@@ -30,7 +29,8 @@ func WithTunHealth(report Report, health *api.TunHealthStatus) Report {
 		}
 	}
 	report.TUN = strings.Join(nonEmpty, "; ")
-	if report.Connection == "active" && health.State != api.TunHealthVerified {
+	report.ProductReconnecting = report.Connection == "active" && health.State != api.TunHealthVerified
+	if report.ProductReconnecting {
 		report.Connection = fmt.Sprintf("active (%s: %s)", health.State, health.Classification)
 	}
 	return report

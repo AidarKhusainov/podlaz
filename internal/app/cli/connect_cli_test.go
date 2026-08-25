@@ -29,7 +29,7 @@ func TestRunCLIConnectAcceptsHandoffPolicies(t *testing.T) {
 			profileStorePath: storePath,
 			connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
 				gotHandoff = req.Handoff
-				return api.LifecycleResponse{Connection: "active", Mode: req.Mode, Proxy: "ok", TUN: "enabled"}, nil
+				return api.LifecycleResponse{Connection: "active", Mode: req.Mode, ProfileName: p.Name, Proxy: "ok", TUN: "enabled"}, nil
 			},
 		})
 		if err != nil {
@@ -37,6 +37,42 @@ func TestRunCLIConnectAcceptsHandoffPolicies(t *testing.T) {
 		}
 		if gotHandoff != policy {
 			t.Fatalf("handoff = %q, want %q", gotHandoff, policy)
+		}
+	}
+}
+
+func TestRunCLIConnectRendersProductSuccessOnly(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	store, err := profile.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", p.ID}, &out, options{
+		profileStorePath: storePath,
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			return api.LifecycleResponse{
+				Connection: "active", Mode: req.Mode, ProfileName: p.Name,
+				Proxy: "active", TUN: "active", Routes: "private", DNS: "private", Firewall: "private", RuntimeConfigPath: "/private/config",
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("connect failed: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"Connected", "Profile: test vless", "Mode: TUN"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("connect output missing %q: %q", want, got)
+		}
+	}
+	for _, forbidden := range []string{"Proxy:", "TUN:", "Routes:", "DNS:", "Firewall:", "Runtime config:", "Profile ID:"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("connect output leaked %q: %q", forbidden, got)
 		}
 	}
 }
@@ -55,18 +91,18 @@ func TestRunCLIConnectRejectsUnsupportedHandoffPolicy(t *testing.T) {
 	}
 }
 
-func TestRunCLIDisconnectIsRenderedAsInactive(t *testing.T) {
+func TestRunCLIDisconnectRendersProductSuccessOnly(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"disconnect"}, &out, options{
 		disconnect: func(context.Context) (api.LifecycleResponse, error) {
-			return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, nil
+			return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled", Routes: "removed", DNS: "restored", Firewall: "removed"}, nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("disconnect failed: %v", err)
 	}
-	if !strings.Contains(out.String(), "podlaz disconnected") || !strings.Contains(out.String(), "Connection: inactive") {
-		t.Fatalf("unexpected disconnect output: %q", out.String())
+	if got := out.String(); got != "Disconnected\n" {
+		t.Fatalf("disconnect output = %q, want concise product output", got)
 	}
 }
 

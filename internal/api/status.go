@@ -23,6 +23,7 @@ const (
 	ServiceSystemd = "systemd"
 
 	ConnectionCoreExited = "error (core exited)"
+	LifecycleConnecting  = "connecting"
 
 	StartupScanStatusClean           = "clean"
 	StartupScanStatusStale           = "stale"
@@ -34,6 +35,8 @@ type StatusResponse struct {
 	Daemon              string              `json:"daemon"`
 	Service             string              `json:"service"`
 	Connection          string              `json:"connection"`
+	LifecyclePhase      string              `json:"lifecycle_phase,omitempty"`
+	TerminalReason      TerminalReason      `json:"terminal_reason,omitempty"`
 	Mode                string              `json:"mode,omitempty"`
 	ProfileID           string              `json:"profile_id,omitempty"`
 	ProfileName         string              `json:"profile_name,omitempty"`
@@ -48,8 +51,8 @@ type StatusResponse struct {
 	Firewall            string              `json:"firewall,omitempty"`
 	Transactions        []TransactionStatus `json:"transactions,omitempty"`
 	StartupScan         *StartupScanStatus  `json:"startup_scan,omitempty"`
-	Warnings           []string             `json:"warnings,omitempty"`
-	InspectionWarnings []RecoveryWarning    `json:"inspection_warnings,omitempty"`
+	Warnings            []string            `json:"warnings,omitempty"`
+	InspectionWarnings  []RecoveryWarning   `json:"inspection_warnings,omitempty"`
 }
 
 type TransactionStatus struct {
@@ -77,6 +80,16 @@ func ValidateStatusResponse(s StatusResponse) error {
 		return fmt.Errorf("invalid service field %q", s.Service)
 	case s.Connection == "":
 		return errors.New("missing connection field")
+	case s.LifecyclePhase != "" && s.LifecyclePhase != LifecycleConnecting:
+		return fmt.Errorf("invalid lifecycle_phase %q", s.LifecyclePhase)
+	case s.LifecyclePhase == LifecycleConnecting && s.Mode == "":
+		return errors.New("connecting lifecycle_phase requires mode")
+	case s.LifecyclePhase == LifecycleConnecting && s.ProfileName == "":
+		return errors.New("connecting lifecycle_phase requires profile_name")
+	case ValidateTerminalReason(s.TerminalReason) != nil:
+		return ValidateTerminalReason(s.TerminalReason)
+	case s.TerminalReason != "" && s.Connection != "inactive":
+		return fmt.Errorf("terminal_reason requires inactive connection, got %q", s.Connection)
 	case s.RuntimeDirectory == "":
 		return errors.New("missing runtime_directory field")
 	case s.Proxy == "":

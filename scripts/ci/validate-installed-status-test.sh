@@ -32,19 +32,23 @@ expect_status_failure() {
   fi
 }
 
-FAKE_STATUS_STDOUT='Daemon: running' \
+FAKE_STATUS_STDOUT=$'Status: Disconnected\nAutostart: Disabled' \
   FAKE_STATUS_EXIT_CODE=0 \
   validate_installed_daemon_status "${fake_status}" "${tmp_dir}/healthy"
 
-FAKE_STATUS_STDOUT='Daemon: running' \
-  FAKE_STATUS_STDERR='podlaz: status found stale or incomplete local state' \
-  FAKE_STATUS_EXIT_CODE=3 \
-  validate_installed_daemon_status "${fake_status}" "${tmp_dir}/stale"
+FAKE_STATUS_STDOUT='Status: Disconnected' \
+  FAKE_STATUS_EXIT_CODE=0 \
+  expect_status_failure "${fake_status}" "${tmp_dir}/missing-autostart"
 
-FAKE_STATUS_STDOUT='Connection: inactive' \
+FAKE_STATUS_STDOUT=$'Status: Unknown\nAutostart: Disabled' \
+  FAKE_STATUS_STDERR='podlaz: status found unhealthy lifecycle, stale, or incomplete state' \
   FAKE_STATUS_EXIT_CODE=3 \
-  expect_status_failure "${fake_status}" "${tmp_dir}/missing-daemon"
+  expect_status_failure "${fake_status}" "${tmp_dir}/unknown"
 
-FAKE_STATUS_STDOUT='Daemon: running' \
+FAKE_STATUS_STDOUT=$'Status: Disconnected\nAutostart: Disabled\nDaemon: running' \
+  FAKE_STATUS_EXIT_CODE=0 \
+  expect_status_failure "${fake_status}" "${tmp_dir}/operator-detail"
+
+FAKE_STATUS_STDOUT=$'Status: Disconnected\nAutostart: Disabled' \
   FAKE_STATUS_EXIT_CODE=2 \
   expect_status_failure "${fake_status}" "${tmp_dir}/unexpected-exit"

@@ -34,10 +34,11 @@ func TestPackagedPolkitPolicyDefinesConservativeOperationActions(t *testing.T) {
 	}
 
 	want := map[string]struct{}{
-		string(ActionConnectProxyOnly): {},
-		string(ActionConnectTun):       {},
-		string(ActionDisconnect):       {},
-		string(ActionRecoverExecute):   {},
+		string(ActionConnectProxyOnly):   {},
+		string(ActionConnectTun):         {},
+		string(ActionDisconnect):         {},
+		string(ActionRecoverExecute):     {},
+		string(ActionConfigureAutostart): {},
 	}
 	got := make(map[string]testPolkitDefaults, len(policy.Actions))
 	for _, action := range policy.Actions {

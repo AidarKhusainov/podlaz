@@ -14,8 +14,10 @@ journalctl -u podlazd -n 50 --no-pager
 .EE
 .SH DESCRIPTION
 .B podlazd
-is the local daemon for podlaz. It owns daemon runtime state, the local
-Unix socket API, generated runtime configuration, supervised Xray child
+is the local daemon for podlaz. It owns daemon runtime state, persistent boot
+autostart policy under systemd
+.BR StateDirectory ,
+the local Unix socket API, generated runtime configuration, supervised Xray child
 processes, startup recovery scan visibility, and daemon-owned cleanup or
 networking transactions where the current milestone enables them.
 .PP
@@ -75,6 +77,14 @@ keeps exact recovery evidence available after incomplete teardown, while
 .B TimeoutStopSec
 is longer than the daemon's bounded rollback and core-stop budget.
 .PP
+The service intentionally has one daemon entry point only:
+.BR ExecStart=/usr/bin/podlazd .
+Boot autostart is not implemented with a second systemd command, user autostart
+file, or helper service, and the unit does not require a separate
+.B network-online.target
+launcher. The daemon itself performs bounded dynamic uplink-readiness observation
+inside an already-admitted logical boot attempt.
+.PP
 Packaged service access for ordinary users is polkit-mediated by default. The
 unit sets
 .B PODLAZ_SERVICE=systemd
@@ -83,13 +93,15 @@ and
 so normal commands such as
 .BR "podlaz status" ,
 .BR "podlaz connect" ,
+.BR "podlaz autostart enable" ,
 .BR "podlaz disconnect" ,
 and
 .BR "podlaz recover --execute --yes"
 should not require adding the current user to the
 .B podlaz
-group. If authentication is required, the system polkit agent prompts for an
-administrator credential.
+group. Persistent autostart mutation uses its own packaged polkit action; status
+is read-only. If authentication is required, the system polkit agent prompts for
+an administrator credential.
 .PP
 After manually installing the repository unit for development, reload systemd
 before starting the service:
@@ -134,7 +146,8 @@ permission denial; this filesystem socket remains a narrow internal/admin
 fallback rather than the normal user-facing access path.
 .TP
 .I /usr/share/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy
-Packaged polkit action policy for privileged daemon operations.
+Packaged polkit action policy for privileged daemon operations, including the
+dedicated persistent boot-autostart configuration action.
 .TP
 .I /run/podlaz/generated/
 Daemon-owned generated runtime configuration directory. Generated Xray config
@@ -151,12 +164,31 @@ cleanup-complete history may remain for inspection but must not block a new TUN
 transaction.
 .TP
 .I /run/podlaz/network-session-continuation.json
-Daemon-private, mode-0600, atomically replaced current-boot reconnect intent.
-It contains the exact connect request required to resume an active session and
-may therefore contain profile credentials or endpoints. It must not be logged,
-does not grant host-network cleanup authority, is removed before explicit
-disconnect or service stop, and is rejected when its boot ID does not match the
-current boot.
+Daemon-private, mode-0600, atomically replaced current-boot reconnect intent and
+session-scoped cleanup authority. It contains the exact connect request required
+to resume an active session and may therefore contain profile credentials or
+endpoints. It must not be logged. Intent is removed/disarmed before explicit
+disconnect or service stop, and the record is rejected when its boot ID does not
+match the current boot.
+.TP
+.I /run/podlaz/boot-autostart-attempt.json
+Daemon-private mode-0600 current-boot Boot Autostart Attempt. It pins the exact
+admitted minimal request and is the authority for
+.B one logical autostart attempt per boot.
+An
+.B in_progress
+record may be continued through daemon replacement. A
+.B succeeded
+or conclusively
+.B terminal
+record prevents a second automatic connect until the next Linux boot. It remains
+separate from ordinary Network Session continuation and from product terminal
+reason.
+.TP
+.I /run/podlaz/product-terminal-reason.json
+Daemon-private mode-0600 current-boot typed product outcome. It stores a small
+stable terminal-reason classification or a supersede marker for a newer admitted
+explicit lifecycle. It does not authorize network cleanup or a new autostart.
 .TP
 .I /run/podlaz/legacy-upgrade-continuation
 Mode-0600 current-boot compatibility marker used only when upgrading from a
@@ -174,12 +206,19 @@ the lifetime of
 .IR /run .
 .TP
 .I /var/lib/podlaz/
-Reserved daemon state directory created by
+Daemon persistent state directory created by
 .BR StateDirectory=podlaz
 with mode
 .BR 0700 .
-The current packaged baseline does not use it as profile or subscription
-source of truth.
+It is not a profile/subscription database and the daemon does not scan user homes.
+.TP
+.I /var/lib/podlaz/boot-autostart-manifest.json
+Daemon-private mode-0600
+.B Boot Autostart Manifest.
+It contains a strict/versioned minimal validated connection snapshot, an opaque
+non-secret generation, and the boot ID in which policy was configured. It does
+not persist subscription URLs, profile collections/history, UI-only metadata, or
+a handoff policy. Manifest presence means enabled; absence means disabled.
 .TP
 .I packaging/systemd/podlazd.service
 Repository systemd unit source.
@@ -230,6 +269,14 @@ is released by stopping the Xray child, not by recording it as a podlaz-owned
 TUN rollback target. The CLI must not become a privileged or SUID networking
 mutator.
 .PP
+Boot-autostart policy changes do not directly mutate networking. The unprivileged
+CLI reads the selected user profile and submits a validated minimal snapshot to
+the daemon. The root daemon never scans user home/XDG profile directories. The
+persistent manifest and volatile attempt may contain endpoint/credential material
+and are therefore private state: their request/configuration contents, profile
+identifiers, endpoints, opaque generation values, and snapshot material must not
+be logged or copied into public evidence.
+.PP
 The verification phase of current-health revalidation is read-only and grants
 no new mutation or repair authority. Durable
 .B desired_plan
@@ -255,14 +302,77 @@ cleanup and therefore does not schedule a second automatic disconnect.
 On startup, the daemon creates or uses the runtime directory and acquires an
 advisory kernel lock on the daemon lock file. A stale lock-file inode alone does
 not block crash restart; only a live kernel lock does. Before normal lifecycle
-mutations can proceed, the daemon loads current-boot continuation intent,
-converges exact transaction-backed recovery, and replays the saved connect
-request only after recovery succeeds. If exact recovery or replay remains
-incomplete, status and recovery stay available while conflicting connect and
-disconnect mutations remain blocked. The daemon then removes only a stale Unix
-socket at the filesystem socket path, fails if that path exists but is not a
-Unix socket, listens on the filesystem and packaged abstract sockets as
-configured, and serves the local API.
+mutations can proceed, the daemon loads current-boot Network Session continuation
+intent, converges exact transaction-backed recovery and Privacy Envelope state,
+and replays the saved connect request only after recovery succeeds. If exact
+recovery or replay remains incomplete, status and recovery stay available while
+conflicting connect and disconnect mutations remain blocked.
+.PP
+Only after current-boot Network Session authority has conclusively converged does
+startup evaluate boot autostart. If a session was present at startup, that
+continuation/cleanup lifecycle has strict priority and startup does not admit a
+competing fresh automatic connection in the same invocation.
+.PP
+The daemon loads the current-boot Boot Autostart Attempt before considering a
+fresh manifest. Valid
+.B in_progress
+authority continues its exact pinned request; valid
+.B succeeded
+or
+.B terminal
+authority performs no automatic connect. Invalid or ambiguous current-boot
+attempt state fails closed. A valid stale attempt from another boot is discarded
+by authoritative boot ID before persistent policy is considered.
+.PP
+When no current attempt exists, the daemon loads the private Boot Autostart
+Manifest. A manifest configured in the current boot is future-boot policy only
+and creates no attempt. An eligible older manifest is durably admitted as
+.B in_progress
+before any network mutation. This record is the linearization point for one
+logical autostart attempt per boot and pins the request even if persistent policy
+is subsequently changed or disabled.
+.PP
+Fresh autostart readiness is dynamic and bounded inside that already-admitted
+logical attempt. Production waits for fresh usable non-Podlaz IPv4 default-route
+and corresponding global-address evidence before canonical Connect. A daemon
+restart/cancellation of the authoritative parent startup context leaves the
+attempt in progress for replacement. A child route/TCP/DNS verification deadline
+while the parent startup context is live is an ordinary connection failure and
+must not be classified as daemon replacement.
+.PP
+Before entering normal Connect, startup arms the same current-boot Network Session
+authority used by explicit lifecycle operations. This closes crash boundaries:
+before that save a replacement may replay the pinned attempt; after it, startup
+must converge/replay the exact Network Session first. Successful connect durably
+marks the attempt
+.BR succeeded .
+A connect failure first persists terminal Network Session intent and converges
+exact transaction recovery, generic owned recovery, Privacy Envelope teardown,
+and remaining-host route/TCP/resolver verification. Only after that proof may the
+attempt become
+.BR terminal .
+If convergence or final attempt persistence fails, the attempt remains
+.B in_progress
+and retained Network Session authority keeps startup fail-closed instead of
+allowing a second automatic connect.
+.PP
+Boot attempt and product terminal reason deliberately have different lifetimes.
+The completed attempt survives explicit disconnect, daemon restart, package
+upgrade/replacement, and later runtime terminal disposition so it can continue to
+forbid same-boot automatic retry. The user-facing typed terminal reason belongs
+to the latest relevant admitted lifecycle. A newer request rejected before
+Network Session admission cannot erase it. A newer admitted explicit lifecycle
+supersedes it; if that connect reaches a conclusively clean terminal failure, it
+writes a new
+.B vpn_connect_failed
+reason. Product status therefore never reconstructs an old terminal reason after
+a later successful manual connect/disconnect solely because the boot attempt must
+still exist.
+.PP
+After startup authority is resolved, the daemon removes only a stale Unix socket
+at the filesystem socket path, fails if that path exists but is not a Unix socket,
+listens on the filesystem and packaged abstract sockets as configured, and serves
+the local API.
 .PP
 During proxy-only connect, the daemon selects the Xray execution identity,
 validates the mode and profile snapshot received from the CLI, builds a
@@ -448,6 +558,25 @@ remain visible but is non-blocking. A cleanup-required transaction or stale scan
 candidate must not reject an immediate subsequent TUN connect. The runtime root
 .I /run/podlaz
 is not removed wholesale.
+.SH PRODUCT STATUS
+The daemon keeps detailed machine/operator evidence but also publishes the typed
+fields needed by the concise
+.BR podlaz (1)
+product view. A conclusively inactive lifecycle may be rendered
+.BR "Status: Disconnected" .
+If inspection is unavailable or incomplete, the product view must be
+.BR "Status: Unknown"
+rather than asserting that the VPN is disconnected. An admitted explicit connect
+may expose a
+.B connecting
+lifecycle phase, and protected revalidation/rebuild evidence may project to
+.BR Reconnecting .
+.PP
+Stable terminal reason is a small typed classification, not derived from current
+warning prose. It survives clean terminal teardown and daemon replacement long
+enough to explain the latest relevant lifecycle, but a later admitted explicit
+lifecycle supersedes it as described above. Detailed evidence remains in doctor,
+recover, transaction state, and the latest redacted TUN report.
 .SH LOGS
 The packaged service writes daemon operational events to journald:
 .EX
@@ -528,6 +657,17 @@ before running recovery. Explicit user disconnect/recovery or shutdown
 cancellation does not trigger a second automatic disconnect. Do not treat
 revalidation failure as authority to repair or delete foreign or ambiguous
 state.
+.TP
+.B Boot autostart did not connect after enable
+This is expected in the same Linux boot where policy was configured. Check:
+.EX
+podlaz autostart status
+podlaz status
+.EE
+.B Autostart: Enabled for next boot
+means the persistent manifest is present but is intentionally fenced from a
+same-boot daemon restart. Do not create a second systemd launcher to force an
+immediate connection.
 .TP
 .B Stale podlaz-owned runtime state
 Inspect first:
