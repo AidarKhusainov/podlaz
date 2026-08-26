@@ -143,6 +143,32 @@ For every supplied `.deb`, validate before mutation:
 
 The candidate remains installed after the run. The harness never downgrades back at finalization.
 
+### Crash-atomic explicit previous-package setup
+
+When the candidate is already installed and `--previous-deb` is used to prepare the true lower-release boundary, the temporary package downgrade is itself a persistent acceptance mutation. It participates in the same write-ahead ledger, resume, abort, and final-restoration contract as every other mutation that can survive the shell.
+
+Before invoking `dpkg -i <previous.deb>`, while Podlaz is conclusively disconnected:
+
+1. validate both supplied packages and prove `previous < candidate` with Debian version semantics;
+2. record the exact candidate path identity, SHA-256, package name/version/architecture, current installed candidate state, and conclusively observed service boundary;
+3. persist `package_setup=acquiring` with the exact intended previous-package result and exact candidate restoration target;
+4. durable-commit the checkpoint;
+5. expose the deterministic `before_previous_install` crash point;
+6. invoke exactly one `dpkg -i <previous.deb>`, without apt or dependency repair;
+7. verify the exact previous version/package state and resulting service boundary;
+8. expose the deterministic `previous_installed_before_acquired_commit` crash point;
+9. persist `package_setup=acquired` and durable-commit before starting the lower-release session.
+
+Resume/abort reconciliation is read-only first:
+
+- exact candidate installed with the recorded identity means the downgrade did not take effect or candidate restoration already completed;
+- exact supplied previous package installed means the downgrade took effect and the ledger owns restoration to the recorded candidate;
+- any other installed version, broken/partial package state, changed candidate path/digest, or ambiguous service boundary fails closed and retains checkpoint/evidence.
+
+Restoration uses the symmetric release protocol: persist `package_setup=releasing`, durable-commit, invoke exactly one `dpkg -i <candidate.deb>`, verify exact candidate version/package state and the recorded safe service boundary, expose `candidate_restored_before_released_commit`, then persist `released` and durable-commit. No apt command, dependency repair, guessed package, download, downgrade, or manual service repair is allowed. The ledger entry is removed only after the candidate identity/package state and required service boundary are conclusively verified.
+
+The normal path where a lower release is already installed does not create `package_setup`: its candidate installation is the actual Phase 1 upgrade boundary, not temporary downgrade setup.
+
 ### Debian lower-release ordering is authoritative
 
 The real upgrade scenario is eligible only when the previous installed/supplied package is strictly lower than the candidate under Debian version semantics.
@@ -426,7 +452,8 @@ This applies at least to:
 - NetworkManager down/up intent when a connection could be left down after shell death;
 - persistent autostart policy changes;
 - any temporary acceptance-owned file that changes daemon behavior across replacement;
-- the synthetic terminal-autostart profile, using the dynamic-identity protocol below.
+- the synthetic terminal-autostart profile, using the dynamic-identity protocol below;
+- explicit `--previous-deb` package setup and restoration when the candidate was initially installed.
 
 When resuming/aborting an `acquiring` entry with a deterministic planned identity, reconcile read-only before taking authority:
 
@@ -490,15 +517,16 @@ The protocol never deletes a profile merely because its name resembles the test 
 Bounded abort order:
 
 1. stop acceptance workloads/tripwires owned by the current run;
-2. if an acceptance-started Podlaz session is still active and the product API is reachable, request normal `podlaz disconnect` and wait boundedly for product convergence;
-3. restore the exact original NetworkManager connection only if the ledger proves the harness acquired the exact down/up mutation;
-4. release only exact synthetic network fixtures proven acquired by this run;
-5. release only the exact acceptance systemd drop-in and private hook markers proven acquired by this run, then `systemctl daemon-reload` when required;
-6. restore the original autostart policy through normal Podlaz CLI using checkpointed restoration material and the releasing protocol;
-7. delete only the exact temporary synthetic terminal profile proven acquired by the dynamic-identity protocol;
-8. verify ordinary route/DNS/TCP/HTTPS and direct-uplink baseline usability;
-9. revalidate report tree/checkpoint ownership and write an abort/cleanup result;
-10. remove the persistent checkpoint only after all required restoration checks pass.
+2. reconcile `package_setup` read-only and, when the ledger proves the exact supplied previous package is installed, restore the exact checkpointed candidate through the releasing protocol before relying on candidate CLI behavior;
+3. if an acceptance-started Podlaz session is still active and the product API is reachable, request normal `podlaz disconnect` and wait boundedly for product convergence;
+4. restore the exact original NetworkManager connection only if the ledger proves the harness acquired the exact down/up mutation;
+5. release only exact synthetic network fixtures proven acquired by this run;
+6. release only the exact acceptance systemd drop-in and private hook markers proven acquired by this run, then `systemctl daemon-reload` when required;
+7. restore the original autostart policy through normal Podlaz CLI using checkpointed restoration material and the releasing protocol;
+8. delete only the exact temporary synthetic terminal profile proven acquired by the dynamic-identity protocol;
+9. verify ordinary route/DNS/TCP/HTTPS and direct-uplink baseline usability;
+10. revalidate report tree/checkpoint ownership and write an abort/cleanup result;
+11. remove the persistent checkpoint only after all required restoration checks pass.
 
 If any restoration object is missing-but-ambiguous, identity has drifted, product cleanup is incomplete, original autostart cannot be reconstructed exactly, an acquiring/releasing entry cannot be reconciled, or ordinary networking cannot be verified, abort is `ABORT_CLEANUP_FAILED`:
 
@@ -536,7 +564,7 @@ Sequence:
 12. if the lower release advertised/proved privacy capability in step 4, require no direct leak across the full supported upgrade window; otherwise pre-candidate observations are diagnostic only and cannot be attributed as a candidate regression;
 13. require exact recovery authority remains actionable if convergence cannot complete.
 
-If the candidate was already installed, a true lower-release upgrade may be prepared only through explicit `--previous-deb`, after disconnected-state, Debian version-order, and compatibility preflight. That path is deliberate test setup, never an implicit downgrade. If safe setup cannot be proven, mark `NOT_EXERCISED` and cap result at `PARTIAL_PASS`.
+If the candidate was already installed, a true lower-release upgrade may be prepared only through explicit `--previous-deb`, after disconnected-state, Debian version-order, compatibility preflight, and durable acquisition of the crash-atomic `package_setup` ledger entry defined above. The previous package must be verified and committed as acquired before the lower-release session starts. After Phase 1 installs and verifies the candidate, release `package_setup` only after the exact candidate package state and required service boundary are proved; a crash before the released commit is reconciled as candidate restoration already completed. This path is deliberate test setup, never an implicit downgrade. If safe setup or exact restoration authority cannot be proven, fail the affected safety/restoration scenario, retain the checkpoint, and cap no result as successful.
 
 A same-version candidate reinstall later is additional coverage and never substitutes for this phase.
 
@@ -971,19 +999,20 @@ Finalization must leave the candidate release installed but otherwise restore th
 
 Required:
 
-1. original autostart policy restored through normal product API;
-2. synthetic terminal profile removed exactly;
-3. no acceptance systemd drop-in/marker remains;
-4. no synthetic TUN/route/rule/DNS/nft fixture remains;
-5. Wi-Fi/NM connection restored if the harness ever left it down;
-6. Podlaz cleanly disconnected;
-7. daemon service active/inactive state restored when original state was conclusively known and safe to restore;
-8. ordinary IPv4 route, DNS, TCP/HTTPS usable;
-9. direct-uplink baseline probe usable;
-10. no mutation-ledger entry remains unresolved in `acquiring` or `releasing`;
-11. run tree ownership/modes revalidated;
-12. final sanitized reports written;
-13. persistent checkpoint removed only after all required restoration checks pass.
+1. exact supplied candidate package/version/architecture installed, with any `package_setup` entry conclusively released;
+2. original autostart policy restored through normal product API;
+3. synthetic terminal profile removed exactly;
+4. no acceptance systemd drop-in/marker remains;
+5. no synthetic TUN/route/rule/DNS/nft fixture remains;
+6. Wi-Fi/NM connection restored if the harness ever left it down;
+7. Podlaz cleanly disconnected;
+8. daemon service active/inactive state restored when original state was conclusively known and safe to restore;
+9. ordinary IPv4 route, DNS, TCP/HTTPS usable;
+10. direct-uplink baseline probe usable;
+11. no mutation-ledger entry remains unresolved in `acquiring` or `releasing`;
+12. run tree ownership/modes revalidated;
+13. final sanitized reports written;
+14. persistent checkpoint removed only after all required restoration checks pass.
 
 A cleanup/restoration failure is overall `FAIL` even if product scenarios passed.
 
@@ -1167,6 +1196,7 @@ The user-facing entry point remains one shell script.
 Prove:
 
 - candidate/previous `.deb` validation;
+- explicit `--previous-deb` setup records exact candidate restoration authority before downgrade and never leaves the lower package as a clean abort/final state;
 - Debian version ordering uses `dpkg --compare-versions` semantics or an exact equivalent, never lexical comparison;
 - equal/newer previous packages cannot satisfy `lower_release_upgrade_continuity`;
 - no source-build command;
@@ -1176,7 +1206,8 @@ Prove:
 - same-version reinstall cannot satisfy lower-release upgrade continuity;
 - lower-release privacy is capability-gated and cannot be misattributed as a candidate regression when the previous release predates the feature;
 - shortened/skip/no-reboot runs cannot yield `QUALIFIED_PASS`;
-- capability skip and user skip remain distinct.
+- capability skip and user skip remain distinct;
+- package-setup reconciliation distinguishes exact candidate, exact supplied previous, and ambiguous/foreign package state without guessing or dependency repair.
 
 ### Lifecycle/privacy/durable rollback
 
@@ -1217,6 +1248,16 @@ released committed
 ```
 
 For deterministic identities prove resume/abort distinguishes exact baseline, exact planned live result, and ambiguous drift without deletion by resemblance.
+
+For explicit `--previous-deb` package setup, deterministic tests additionally cover:
+
+```text
+before previous install
+previous installed / before acquired commit
+candidate restored / before released commit
+```
+
+They prove candidate path/digest/package identity is durable before downgrade, exact supplied previous state can be adopted as acquired after a crash, exact restored candidate state can be adopted as released after a crash, and any other version/partial dpkg state/service-boundary ambiguity fails closed without apt, download, dependency repair, or manual service repair.
 
 For synthetic profile acquisition prove:
 
@@ -1276,6 +1317,7 @@ For every resumable phase prove:
 - persistent mutations use write-ahead `acquiring` state before mutation and verified `acquired` state afterward;
 - release/restoration uses `releasing` before mutation and verified `released` afterward;
 - `--abort` first reconciles in-flight ledger states rather than assuming mutation success/failure;
+- `--abort` can restore the exact supplied candidate after an interrupted explicit previous-package setup before relying on candidate CLI behavior;
 - `--abort` can restore original autostart through product API;
 - `--abort` deletes only exact synthetic profile/drop-in/fixture identities owned by the run;
 - partial/ambiguous restoration retains checkpoint/evidence and exits non-zero;
@@ -1325,7 +1367,7 @@ Implementation is complete when:
 - graceful restart, ordinary unexpected daemon death, durable `rolling_back` interruption, explicit service stop/start, and same-version reinstall are separate lifecycle scenarios;
 - durable rollback interruption proves exact transaction-owned recovery authority before injected process death and automatic convergence afterward without manual repair;
 - candidate no-direct-leak requires both functional direct-probe evidence and deterministic exact local Privacy Envelope/packet-path proof; external timeout alone can never false-pass;
-- every persistent acceptance mutation has crash-atomic write-ahead acquisition/release authority, including the product-returned synthetic profile identity;
+- every persistent acceptance mutation has crash-atomic write-ahead acquisition/release authority, including explicit previous-package setup/restoration and the product-returned synthetic profile identity;
 - checkpoint-driven `--abort` can reconcile in-flight `acquiring/releasing` states and fails closed on ambiguity;
 - a warmed candidate-inactive baseline is explicitly acquired before coexistence/soak resource comparisons;
 - laptop resource attribution uses positive exact Podlaz daemon/Xray ownership and permits unrelated foreign VPN/core processes outside the Podlaz cgroup;
