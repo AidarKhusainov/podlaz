@@ -40,7 +40,7 @@ No temporary boot service, timer, cron job, login hook, or auto-resume unit is i
 
 ## Full qualification scope
 
-A full `QUALIFIED_PASS` run exercises, where a scenario is genuinely applicable to the host:
+A full `QUALIFIED_PASS` run exercises, where a scenario is genuinely applicable to the host/release boundary:
 
 1. candidate `.deb` metadata/digest validation;
 2. real lower-release active-TUN -> candidate package upgrade continuity;
@@ -49,7 +49,7 @@ A full `QUALIFIED_PASS` run exercises, where a scenario is genuinely applicable 
 5. unexpected daemon-main-process death and automatic systemd recovery;
 6. explicit service stop -> start negative reconnect semantics;
 7. same-candidate reinstall while active as an additional package-lifecycle regression;
-8. continuous privacy/no-direct-egress verification across protected recovery windows;
+8. functional privacy/no-direct-egress verification across candidate-protected recovery windows;
 9. a single 60-minute active-session resource-soak orchestration envelope containing:
    - synthetic foreign-state coexistence and route/netlink churn;
    - controlled NetworkManager Wi-Fi reconnect/DHCP re-observation when applicable;
@@ -77,6 +77,7 @@ Scenario statuses:
 PASS
 FAIL
 SKIP_HOST_CAPABILITY
+SKIP_RELEASE_CAPABILITY
 SKIP_REMOTE_SESSION
 SKIP_USER_REQUEST
 NOT_EXERCISED
@@ -93,10 +94,11 @@ FAIL
 Rules:
 
 - any product, cleanup, restoration, or evidence-integrity `FAIL` makes the overall result `FAIL`;
-- `QUALIFIED_PASS` requires the canonical 60-minute soak, the real lower-release upgrade boundary, all mandatory lifecycle/privacy/terminal scenarios, and all three reboot phases;
+- `QUALIFIED_PASS` requires the canonical 60-minute soak, the real lower-release upgrade boundary, all mandatory candidate lifecycle/privacy/terminal scenarios, and all three reboot phases;
 - a user-forced skip, shortened soak, `--no-reboot-phases`, or missing real lower-release upgrade evidence makes the best possible result `PARTIAL_PASS`;
-- `SKIP_HOST_CAPABILITY` or `SKIP_REMOTE_SESSION` is not equivalent to a user-forced skip. A genuinely inapplicable conditional host scenario may be skipped without failing the product, but the report preserves the missing coverage explicitly;
-- core qualification scenarios such as package upgrade continuity, privacy tripwire, crash/restart semantics, terminal convergence, and boot attempt semantics are not converted into capability skips merely because they are inconvenient to run;
+- `SKIP_HOST_CAPABILITY`, `SKIP_RELEASE_CAPABILITY`, and `SKIP_REMOTE_SESSION` are not equivalent to a user-forced skip. A genuinely inapplicable conditional scenario may be skipped without failing the product, but the report preserves missing coverage explicitly;
+- a previous release cannot be required retroactively to provide a feature that did not exist in that release. In particular, privacy-envelope continuity across a legacy upgrade is gated only when the installed lower release can prove that capability; candidate-protected recovery windows are always gated;
+- core candidate scenarios such as restart/crash semantics, terminal convergence, candidate privacy tripwire, and boot attempt semantics are not converted into capability skips merely because they are inconvenient to run;
 - `PASS` is never used as an ambiguous overall result.
 
 `PARTIAL_PASS` means useful validation completed without observed failure, but the run is not a complete release qualification.
@@ -228,7 +230,7 @@ Original autostart is captured before the first `dpkg -i`. If the installed lowe
 
 Before connecting any VPN, prove a small direct-egress probe can reach a reviewed public test target while explicitly bound to the real physical/default uplink. The response body is discarded.
 
-This establishes that the later same bound-uplink probe is capable of detecting direct egress. If a qualifying direct baseline cannot be established, the no-direct-leak contract cannot be claimed as tested and the overall result cannot be `QUALIFIED_PASS`.
+This establishes that the later same bound-uplink probe is capable of detecting direct egress. If a qualifying direct baseline cannot be established, the candidate no-direct-leak contract cannot be claimed as tested and the overall result cannot be `QUALIFIED_PASS`.
 
 Public reports never expose the real interface name; they record only `direct_egress_baseline=available|unavailable`.
 
@@ -325,15 +327,21 @@ Sequence:
 1. using the installed lower release, validate/select the normal TUN profile with capabilities available in that release;
 2. connect the lower release in TUN mode;
 3. prove a real protected active baseline with version-appropriate status plus structural TUN/data-plane checks;
-4. start the continuous direct-egress tripwire before package replacement;
+4. determine whether the lower release can prove an effective Privacy Envelope/no-direct-egress contract. If yes, start the direct-egress tripwire as a gated upgrade invariant; if not, record `legacy_upgrade_privacy=SKIP_RELEASE_CAPABILITY` and do not pretend the older release had a future feature;
 5. record old daemon/core/session identities privately;
 6. run `dpkg -i <exact-candidate.deb>` while TUN is active;
 7. do not issue test-side `systemctl start/restart` and do not issue a second `connect` before the continuity verdict;
 8. require installed package version becomes the candidate and daemon PID changes through package lifecycle;
 9. require the same logical user connection returns to candidate `Connected`/verified automatically;
-10. require protected DNS/TCP/TLS/HTTPS again;
-11. require the direct-uplink tripwire observed **zero successful direct-egress samples** from protected pre-upgrade state through candidate recovery;
-12. require exact recovery authority remains actionable if convergence cannot complete.
+10. require candidate Network Session/Privacy Envelope is now effective, and from that proof onward the direct-uplink tripwire must have zero successful samples;
+11. require protected DNS/TCP/TLS/HTTPS again;
+12. if the lower release advertised/proved the privacy capability in step 4, require zero direct-egress tripwire successes across the entire protected upgrade/recovery window; otherwise any pre-candidate observation is diagnostic only and cannot be attributed as a candidate regression;
+13. require exact recovery authority remains actionable if convergence cannot complete.
+
+This deliberately separates two contracts:
+
+- the legacy lower-release -> candidate boundary qualifies #259 lifecycle/authority continuity;
+- privacy continuity is strictly gated for every candidate-protected recovery window, while legacy pre-candidate privacy is required only when the previous release actually implemented it.
 
 If the candidate was already installed, a true lower-release upgrade may be prepared only through explicit `--previous-deb`, after disconnected-state and compatibility preflight. That path is deliberate test setup, never an implicit downgrade. If safe setup cannot be proven, mark `NOT_EXERCISED` and cap result at `PARTIAL_PASS`.
 
@@ -515,7 +523,7 @@ Unsupported suspend is a capability skip. `--skip-suspend` is user-forced partia
 
 ### Privacy tripwire during the soak
 
-The direct-uplink probe remains periodically/continuously active around every recovery-prone event. While the protected session is logically established/reconciling, **any successful direct-uplink sample is an immediate privacy FAIL**.
+The direct-uplink probe remains periodically/continuously active around every recovery-prone event. While the candidate protected session is logically established/reconciling, **any successful direct-uplink sample is an immediate privacy FAIL**.
 
 The tripwire is functional evidence. Exact Privacy Envelope/firewall composition is collected as corroboration, not treated as a substitute for leak detection.
 
@@ -689,11 +697,12 @@ Release package: podlaz <version> (<arch>)
 Qualification: QUALIFIED_PASS|PARTIAL_PASS|FAIL
 
 lower_release_upgrade_continuity          PASS|NOT_EXERCISED
+legacy_upgrade_privacy                    PASS|SKIP_RELEASE_CAPABILITY
 graceful_restart_continuity               PASS
 unexpected_daemon_death_recovery          PASS
 explicit_service_stop_start               PASS
 same_candidate_reinstall_continuity       PASS
-privacy_no_direct_leak                    PASS
+candidate_privacy_no_direct_leak          PASS
 resource_soak_60m                         PASS
 foreign_state_churn                       PASS
 wifi_reconnect                            PASS|SKIP_HOST_CAPABILITY|SKIP_USER_REQUEST
@@ -758,7 +767,7 @@ Qualification effects are mandatory:
 - user `--skip-*` => at best `PARTIAL_PASS`;
 - `--no-reboot-phases` => at best `PARTIAL_PASS`;
 - no true lower-release active upgrade => at best `PARTIAL_PASS`;
-- genuine host-capability skip remains distinct and is reported structurally.
+- genuine host/release capability skip remains distinct and is reported structurally.
 
 These flags are harness controls, not Podlaz product settings.
 
@@ -801,6 +810,7 @@ Prove:
 - true lower-release active-TUN -> candidate ordering occurs before candidate disconnected install;
 - no manual service repair/second connect in upgrade continuity;
 - same-version reinstall cannot satisfy `lower_release_upgrade_continuity`;
+- lower-release privacy is capability-gated and cannot be misattributed as a candidate regression when the previous release predates the feature;
 - shortened/skip/no-reboot runs cannot yield `QUALIFIED_PASS`;
 - capability skip and user skip remain distinct.
 
@@ -810,9 +820,9 @@ Prove orchestration contains separate graceful restart, main-process SIGKILL rec
 
 Tripwire tests prove:
 
-- baseline direct-bound probe must succeed before protected qualification;
-- protected/recovery samples must all fail;
-- any successful sample is privacy FAIL;
+- baseline direct-bound probe must succeed before candidate protected qualification;
+- candidate-protected/recovery samples must all fail;
+- any successful candidate-protected sample is privacy FAIL;
 - post-terminal/disconnect direct probe must succeed;
 - Privacy Envelope metadata alone cannot satisfy privacy acceptance.
 
@@ -869,7 +879,8 @@ Implementation is complete when:
 - one release-oriented command can qualify the candidate without building Podlaz or updating the OS;
 - real lower-release active-TUN -> candidate upgrade is the canonical package continuity test;
 - restart, unexpected daemon death, explicit service stop/start, and same-version reinstall are separate lifecycle scenarios;
-- functional direct-egress evidence proves privacy across recovery, not merely barrier authority;
+- functional direct-egress evidence proves candidate privacy across recovery, not merely barrier authority;
+- legacy upgrade privacy is required only when the previous release actually supports/proves that feature;
 - one exact 60-minute soak envelope schedules coexistence churn, Wi-Fi reconnect, suspend/resume, workload, and resource sampling once;
 - controlled runtime terminal failure converges through the real production terminal path to ordinary networking with no retry;
 - three manual reboot/resume stages prove autostart-off, successful autostart/no-retry, and terminal-autostart/no-retry semantics;
