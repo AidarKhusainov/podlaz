@@ -2,6 +2,8 @@
 
 Status: approved design, revised after review for full local release qualification.
 
+> Current intended qualification path: when a lower released Podlaz version is already installed, preserve that installation until the harness itself establishes the lower-release active TUN session and upgrades it to the supplied candidate. Do not pre-install the candidate in a disconnected state and thereby erase the real upgrade boundary.
+
 ## Goal
 
 Provide one release-oriented acceptance harness that exercises a real Podlaz Debian release package on a maintainer laptop as deeply as practical without requiring a dedicated self-hosted E2E server.
