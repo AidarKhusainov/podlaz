@@ -1,26 +1,36 @@
 # Release Laptop Acceptance Harness Design
 
-Status: approved design for local release qualification on a maintainer laptop.
+Status: approved design, revised after review for full local release qualification.
 
 ## Goal
 
-Provide one release-oriented acceptance harness that exercises the installed Podlaz Debian package on a real laptop as deeply as practical without requiring a dedicated self-hosted E2E server.
+Provide one release-oriented acceptance harness that exercises a real Podlaz Debian release package on a maintainer laptop as deeply as practical without requiring a dedicated self-hosted E2E server.
 
-The harness is not another networking implementation. It is a product-validation orchestrator over the lifecycle, package, coexistence, privacy, reconciliation, and autostart contracts implemented by Issues #259-#263.
+The harness is a product-validation orchestrator over the lifecycle, package, coexistence, privacy, reconciliation, and boot-autostart contracts implemented by Issues #259-#263. It is not another networking implementation and must not repair product failures out of band.
 
 Primary invocation:
 
 ```text
-sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<version>_linux_<arch>.deb
+sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb
 ```
 
 When profile selection is ambiguous:
 
 ```text
-sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<version>_linux_<arch>.deb --profile <profile-id>
+sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb --profile <profile-id>
 ```
 
-The long first phase is followed by two explicit user-driven reboots. After each reboot the user resumes the same run with:
+If no lower release is currently installed, an explicit previous release may be supplied for the real upgrade-boundary scenario:
+
+```text
+sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb \
+  --previous-deb ./podlaz_<previous>_linux_<arch>.deb \
+  --profile <profile-id>
+```
+
+`--previous-deb` is an explicit test input. The harness never downloads or guesses a previous release and never performs an implicit downgrade.
+
+The long first run is followed by three explicit user-driven reboots for real boot behavior. After each reboot the user resumes the same run with:
 
 ```text
 sudo ./scripts/acceptance/release-laptop.sh --resume
@@ -28,60 +38,100 @@ sudo ./scripts/acceptance/release-laptop.sh --resume
 
 No temporary boot service, timer, cron job, login hook, or auto-resume unit is installed. The user remains in control of every reboot.
 
-## Validation scope
+## Full qualification scope
 
-One coordinated run should cover, where host capabilities permit:
+A full `QUALIFIED_PASS` run exercises, where a scenario is genuinely applicable to the host:
 
-1. release `.deb` validation and install/reinstall;
-2. clean TUN connect and protected data-plane verification;
-3. daemon restart continuity while connected;
-4. package replacement/reinstall continuity while connected;
-5. coexistence with unrelated synthetic TUN/routing/DNS/firewall state;
-6. safe route/netlink churn while Podlaz is active;
-7. controlled NetworkManager Wi-Fi reconnect and DHCP/uplink re-observation;
-8. one real timed suspend/resume while the protected session is active;
-9. one-hour resource-soak observation with periodic traffic and diagnostics;
-10. disconnect cleanup and ordinary-network restoration;
-11. reconnect and second-session resource comparison;
-12. a real reboot with autostart disabled;
-13. a real reboot with autostart enabled;
-14. same-boot no-retry after explicit disconnect from an autostarted session;
-15. restoration of harness-created host state and the user's pre-test autostart policy;
-16. a detailed private report plus sanitized shareable summaries.
+1. candidate `.deb` metadata/digest validation;
+2. real lower-release active-TUN -> candidate package upgrade continuity;
+3. candidate protected TUN/data-plane verification;
+4. graceful daemon restart continuity;
+5. unexpected daemon-main-process death and automatic systemd recovery;
+6. explicit service stop -> start negative reconnect semantics;
+7. same-candidate reinstall while active as an additional package-lifecycle regression;
+8. continuous privacy/no-direct-egress verification across protected recovery windows;
+9. a single 60-minute active-session resource-soak orchestration envelope containing:
+   - synthetic foreign-state coexistence and route/netlink churn;
+   - controlled NetworkManager Wi-Fi reconnect/DHCP re-observation when applicable;
+   - one real timed suspend/resume when supported;
+   - periodic protected traffic and read-only diagnostics;
+10. disconnect cleanup, ordinary-network restoration, and second-session resource comparison;
+11. controlled established-session terminal failure through the production terminal path;
+12. real reboot A with autostart disabled;
+13. real reboot B with successful autostart enabled;
+14. same-boot explicit-disconnect no-retry after successful autostart;
+15. real reboot C with a controlled terminal autostart failure;
+16. terminal-autostart same-boot no-retry after daemon restart;
+17. restoration of the original autostart policy and all harness-created state;
+18. detailed private evidence plus deterministic sanitized reports.
 
-The harness also collects environment/resource observations that can later support evidence-based system requirements. One laptop run is an observation, not universal proof of minimum requirements.
+The harness also records resource/environment observations that can later support evidence-based system requirements. One laptop run is an observation, not universal proof of minimum/recommended requirements.
+
+## Qualification result semantics
+
+Scenario outcomes are distinct from the overall release-qualification result.
+
+Scenario statuses:
+
+```text
+PASS
+FAIL
+SKIP_HOST_CAPABILITY
+SKIP_REMOTE_SESSION
+SKIP_USER_REQUEST
+NOT_EXERCISED
+```
+
+Overall result:
+
+```text
+QUALIFIED_PASS
+PARTIAL_PASS
+FAIL
+```
+
+Rules:
+
+- any product, cleanup, restoration, or evidence-integrity `FAIL` makes the overall result `FAIL`;
+- `QUALIFIED_PASS` requires the canonical 60-minute soak, the real lower-release upgrade boundary, all mandatory lifecycle/privacy/terminal scenarios, and all three reboot phases;
+- a user-forced skip, shortened soak, `--no-reboot-phases`, or missing real lower-release upgrade evidence makes the best possible result `PARTIAL_PASS`;
+- `SKIP_HOST_CAPABILITY` or `SKIP_REMOTE_SESSION` is not equivalent to a user-forced skip. A genuinely inapplicable conditional host scenario may be skipped without failing the product, but the report preserves the missing coverage explicitly;
+- core qualification scenarios such as package upgrade continuity, privacy tripwire, crash/restart semantics, terminal convergence, and boot attempt semantics are not converted into capability skips merely because they are inconvenient to run;
+- `PASS` is never used as an ambiguous overall result.
+
+`PARTIAL_PASS` means useful validation completed without observed failure, but the run is not a complete release qualification.
 
 ## Hard safety constraints
 
-### Release package only
+### Release packages only
 
-The harness tests only the `.deb` supplied by the user.
+The harness tests prebuilt `.deb` packages only.
 
 It must not:
 
-- run `go build`, `go test`, `go install`, `make`, `goreleaser`, or another Podlaz build path;
+- run `go build`, `go test`, `go install`, `make`, `goreleaser`, or any Podlaz build path;
 - substitute Podlaz binaries from the repository working tree;
-- build or install a development package from source;
-- modify the release package to make validation pass.
+- build a development package from source;
+- modify a package to make validation pass.
 
-The product under test is the installed release package: `/usr/bin/podlaz`, `/usr/bin/podlazd`, `/usr/lib/podlaz/xray`, the packaged service, policy, and package maintainer scripts.
+The product under test after candidate installation is `/usr/bin/podlaz`, `/usr/bin/podlazd`, `/usr/lib/podlaz/xray`, the packaged systemd unit/polkit policy, and Debian maintainer scripts from the exact candidate `.deb`.
 
-Before installation the harness validates:
+For every supplied `.deb`, validate before mutation:
 
-- input path is a regular file;
-- package name is `podlaz`;
-- package architecture matches `dpkg --print-architecture`;
-- package version is readable;
-- SHA-256 is recorded;
-- when a sibling `SHA256SUMS` exists and contains the exact package entry, that digest is verified.
+- regular file, no symlink;
+- package name `podlaz`;
+- native architecture equals `dpkg --print-architecture`;
+- readable version;
+- SHA-256 recorded;
+- sibling `SHA256SUMS`, when present and containing the exact filename, must match.
 
-The tested release remains installed after acceptance. The harness does not downgrade back to the previously installed Podlaz version.
+The candidate remains installed after the run. The harness never downgrades back at finalization.
 
 ### No operating-system updates or dependency repair
 
-The harness must not update the laptop or opportunistically modify its software environment.
+The harness must not update or opportunistically modify the laptop software environment.
 
-It must not invoke:
+Forbidden include:
 
 ```text
 apt update
@@ -97,15 +147,13 @@ apt --fix-broken install
 
 It must not install/update Go, Xray, NetworkManager, systemd, nftables, iproute2, Python, curl, or another system tool.
 
-The only package mutation is installation/reinstallation of the exact supplied Podlaz `.deb` via `dpkg -i`.
-
-Unsatisfied dependencies are a test-environment failure. The harness reports them and stops; it never repairs them automatically.
+The only package-manager mutations are explicit `dpkg -i` operations for the supplied previous/candidate Podlaz release packages. Unsatisfied dependencies are an environment failure; the harness reports them and stops without repair.
 
 ### No generic network repair
 
-A failed product scenario remains failed. The harness must not make a test pass by repairing Podlaz or the host out-of-band.
+A failed product scenario remains failed.
 
-The success path must never invoke:
+The success path never invokes:
 
 ```text
 podlaz recover --execute
@@ -116,680 +164,687 @@ systemctl restart NetworkManager
 systemctl restart systemd-resolved
 ```
 
-Normal product commands such as `podlaz connect`, `disconnect`, `status`, `doctor --tun`, and `autostart ...` are allowed.
+Normal product operations such as `podlaz connect`, `disconnect`, `status`, `doctor --tun`, and `autostart ...` are allowed.
 
-If Podlaz does not self-heal after a scenario expected to self-heal, that scenario is FAIL. Final cleanup may still make a bounded attempt to return the laptop to normal operation, but cleanup cannot rewrite the verdict to PASS.
+Final cleanup may make bounded attempts to return the laptop to a usable state, but cleanup is recorded separately and cannot change a failed scenario to PASS.
 
-### Exact ownership for synthetic fixtures
+### Exact ownership for test fixtures
 
-The harness may create unrelated synthetic network state, but it owns only exact objects it created after proving each candidate free immediately before mutation.
+Synthetic network objects are owned only when the harness proved the candidate identity free immediately before creation and persisted the exact created tuple in its private fixture manifest.
 
-No cleanup operation may delete a route, table, rule, interface, address, resolved link, or nftables object because it merely looks like a test value.
+Never delete by numeric/name resemblance. In particular:
 
-In particular:
-
-- no `ip route flush table N` for an unproven namespace;
+- no `ip route flush table N`;
 - no `ip rule flush`;
 - no `nft flush ruleset`;
-- no deletion of pre-existing historical Podlaz-looking values.
+- no deletion of pre-existing historical Podlaz-looking resources.
 
-The private fixture manifest records enough identity to delete only the exact created object. If live state later becomes ambiguous, cleanup fails closed and reports the ambiguity rather than deleting by resemblance.
+Every exact delete rechecks current identity/type/composition first. Ambiguity fails closed and preserves the object for diagnosis.
 
-### Local laptop only for disruptive stages
+### Local laptop requirement for disruptive stages
 
-Wi-Fi reconnect and suspend/resume must not run over SSH.
+Wi-Fi reconnect and suspend/resume are not run through SSH/remote sessions. Remote detection occurs before mutation.
 
-If a remote/SSH session is detected, disruptive stages are skipped before mutation and reported as `SKIP_REMOTE_SESSION`/`SKIP_HOST_CAPABILITY` rather than attempted.
+A genuinely unsupported local capability is `SKIP_HOST_CAPABILITY`; an explicit user suppression is `SKIP_USER_REQUEST` and prevents `QUALIFIED_PASS`.
 
-## Original user and state boundary
+## Original user, profiles, and user-owned state
 
-The harness starts under `sudo`, but normal Podlaz CLI operations run as the original `SUDO_USER`, not root.
+The entry script runs with `sudo`, but normal Podlaz CLI operations run as `SUDO_USER`, not root. The harness resolves UID/GID/home/state paths from the account database rather than root's environment.
 
-It derives the original user's home/state paths from the account database, not root's `$HOME`.
+The normal test profile is an existing user profile. No real profile URI, endpoint, identity, or subscription is copied into repository fixtures or shareable reports.
 
-The harness never imports a profile URI. It uses a profile already present in the user's Podlaz profile store.
+Selection:
 
-Profile selection:
+- `--profile <id>` is preferred;
+- otherwise auto-select only when exactly one profile is usable for the required TUN scenario under the current release phase;
+- zero/multiple valid choices fail before networking mutation.
 
-- `--profile <profile-id>` is preferred and unambiguous;
-- without it, auto-selection is allowed only when exactly one profile in the installed release client validates for `--mode tun`;
-- zero valid TUN profiles is failure;
-- multiple valid TUN profiles is failure with guidance to rerun using `--profile`.
+For a real lower-release upgrade scenario, the selected profile must be usable by the installed lower release before candidate installation. After upgrade, the candidate validates the same user profile again with its own CLI before later candidate-only scenarios.
 
-Profile IDs/names, endpoints, user identities, subscription URLs, runtime configs, transaction IDs, and other sensitive lifecycle material are private evidence only.
+A separate temporary documentation-only profile may be created through the normal user CLI solely for terminal-autostart failure testing. It uses only reserved/example endpoint and credential values, its exact returned profile identity is kept private, and finalization deletes only that exact synthetic profile. If exact deletion/restoration authority is lost, overall result is FAIL.
 
 ## Pre-mutation baseline
 
-The first run has two preflight layers.
+### Layer A — before any package mutation
 
-### Layer A — before package mutation
+Record privately:
 
-Before `dpkg -i` the harness records what can be established safely from the currently installed environment:
+- installed Podlaz version/package state;
+- service active/inactive state when conclusive;
+- current lifecycle state when the installed CLI supports it;
+- original persistent autostart state/material when present;
+- current Linux `boot_id`;
+- ordinary IPv4 route, DNS, TCP/HTTPS usability;
+- exact host uplink identity needed for private recovery/tripwire checks;
+- required already-installed host tools;
+- candidate package metadata/digest;
+- previous package metadata/digest if supplied.
 
-- current installed Podlaz version, if any;
-- current daemon service active/inactive state when conclusively observable;
-- current Podlaz lifecycle state when the installed CLI is available;
-- original autostart policy when the currently installed release supports it;
-- ordinary host IPv4 route, DNS, and HTTPS usability;
-- required host tools already present;
-- supplied `.deb` package metadata and digest.
+If Podlaz is active or lifecycle state is ambiguous at this initial boundary, stop before mutation and ask the user to reach a clean disconnected state. The one exception is that the harness itself later creates the lower-release active session for the upgrade test.
 
-If the currently installed Podlaz can prove an active or ambiguous session, the harness stops before package mutation and asks the user to reach clean `Disconnected` first. It does not silently replace an existing session.
+Original autostart is captured before the first `dpkg -i`. If the installed lower release predates autostart and no persistent manifest exists, baseline policy is absent/disabled.
 
-If Podlaz is not installed, absence is considered clean only if read-only inspection does not find obvious Podlaz runtime/process state that would make first install unsafe to classify.
+### Layer B — privacy tripwire baseline
 
-Original autostart must be captured before package mutation whenever it exists, so package install/reinstall itself cannot silently erase policy without the test noticing. If the preinstalled version predates autostart and no persistent manifest exists, original policy is treated as disabled/absent.
+Before connecting any VPN, prove a small direct-egress probe can reach a reviewed public test target while explicitly bound to the real physical/default uplink. The response body is discarded.
 
-### Layer B — after the release package is installed, before networking mutation
+This establishes that the later same bound-uplink probe is capable of detecting direct egress. If a qualifying direct baseline cannot be established, the no-direct-leak contract cannot be claimed as tested and the overall result cannot be `QUALIFIED_PASS`.
 
-Using only the installed supplied release client:
+Public reports never expose the real interface name; they record only `direct_egress_baseline=available|unavailable`.
 
-- require product status to be conclusively `Disconnected`/inactive;
-- require no cleanup-required Network Session authority;
-- select/validate the test profile for TUN mode;
-- prove daemon/socket/package health;
-- capture warmed inactive resource baseline.
+## Evidence and path ownership
 
-The selected profile is therefore validated by the exact release being qualified, not by an older installed client.
-
-## Persistent acceptance checkpoint
-
-Real reboot validation uses a small root-owned checkpoint that survives reboot, outside Podlaz daemon runtime/state, for example:
+Default run directory is inside the original user's state tree:
 
 ```text
-/var/lib/podlaz-release-acceptance/
+$XDG_STATE_HOME/podlaz/release-acceptance/<run-id>/
 ```
 
-Requirements:
+or the documented default state path when `XDG_STATE_HOME` is unset.
 
-- root-owned directory mode `0700`;
-- files mode `0600`;
-- versioned strict schema and bounded size;
-- atomic writes;
-- no automatic startup integration;
-- deleted after successful finalization or explicit abort cleanup.
-
-Checkpoint content includes only resume authority for this acceptance run:
-
-- schema version/run ID/current phase;
-- package name/version/architecture/SHA-256;
-- recorded Linux `boot_id` transitions;
-- original user identity and selected profile ID, private only;
-- accumulated structural results;
-- original autostart restoration material;
-- report directory;
-- no synthetic networking fixture survives into reboot phases.
-
-`--resume` is valid only when exactly one supported active checkpoint exists. It does not accept a new package/profile and cannot start a different run.
-
-## Evidence layout and privacy
-
-Create reports under the original user's state area, conceptually:
+Conceptual layout:
 
 ```text
-~/.local/state/podlaz/release-acceptance/<run-id>/
+<run>/
   summary.txt
   report.json
   requirements-observation.json
   private/
     raw command output
-    exact process/session identities
+    package/process/session identities
     network baseline and fixture manifests
     soak samples
-    diagnostic output
+    diagnostics
 ```
 
-`private/` is `0700`, private files `0600`. No evidence is uploaded automatically.
+Ownership/modes:
 
-Shareable reports must not contain:
+- the run tree and shareable/private artifacts are owned by the original user UID/GID even though orchestration runs as root;
+- run/private directories are `0700`;
+- private files are `0600`;
+- shareable files are user-owned and never world-writable;
+- the separate reboot checkpoint under `/var/lib/podlaz-release-acceptance` remains root-owned `0700`/`0600`.
 
-- profile ID/name;
-- VPN endpoint/domain/IP;
-- credential/user identity;
-- egress public IP;
-- local/private IP;
-- SSID/BSSID;
-- physical interface name when host-identifying;
-- NetworkManager UUID;
-- transaction/session ID;
-- hostname/machine ID;
-- generated config content.
+`--artifact-dir` is fail-closed:
 
-Private raw evidence may contain host-specific values because it exists specifically for local diagnosis, but remains local and restrictive.
+- path must resolve to an allowed user-owned location;
+- no final target or existing path component may be an unexpected symlink;
+- existing parents must have acceptable owner/type/permissions;
+- reject `/`, `/etc`, `/run`, `/var/lib/podlaz`, another user's home/state tree, device/proc/sys filesystems, or any path that crosses an unsafe ownership boundary;
+- creation uses the original user's ownership explicitly;
+- resume must prove the path identity still matches the checkpoint.
 
-## Phase 1 — release package install/update
+### Deterministic public redaction
 
-Record the previous installed version for context, then run exactly:
+Shareable output never decides subjectively whether a real interface name is identifying. All host-real interfaces are mapped to structural roles, for example:
 
 ```text
-dpkg -i <exact-input-deb>
+wifi_uplink
+wired_uplink
+other_uplink
+podlaz_tun
 ```
 
-Do not run a dependency repair command.
+Only documentation-safe harness-created interface/table labels may be emitted literally.
 
-Prove:
+Shareable reports must not contain real profile IDs/names, endpoints, credentials, public egress IP, local/private IPs, SSID/BSSID, physical interface names, NM UUIDs, transaction/session IDs, hostname/machine IDs, boot IDs, generated config contents, or private checkpoint values.
 
-- installed package version equals input version;
-- installed product files come from the package;
-- packaged service loads and reaches its daemon socket;
-- daemon PID is valid;
-- release CLI can read/validate the selected user profile;
-- status is cleanly inactive before TUN mutation.
+Private evidence may contain host-specific values and remains local. The harness never uploads evidence automatically.
 
-If the same candidate was already installed, this is a reinstall. If an older version was installed, it also tests normal disconnected upgrade.
+## Persistent reboot checkpoint
 
-## Phase 2 — initial protected TUN connection
+Use a dedicated root-owned acceptance directory outside Podlaz daemon state, for example:
 
-Run installed `podlaz connect --mode tun <profile>` as the original user.
+```text
+/var/lib/podlaz-release-acceptance/
+```
 
-Require bounded convergence to product `Connected` plus verified TUN evidence through available daemon/operator surfaces.
+Checkpoint requirements:
 
-Validate, where supported:
+- strict/versioned/bounded schema;
+- atomic replace + restrictive permissions;
+- exactly one active run;
+- package digest/version/arch;
+- current phase and expected `boot_id` transition;
+- original user identity and private selected/synthetic profile IDs;
+- original autostart restoration material;
+- report path identity;
+- accumulated structural outcomes;
+- no synthetic networking fixture survives into reboot phases.
 
-- active exact TUN/transaction lifecycle;
-- Network Session authority;
-- Privacy Envelope authority/presence without exposing identity publicly;
-- protected DNS resolution;
-- normal system resolution through the protected session;
-- IPv4 TCP/TLS/HTTPS egress;
-- read-only `doctor --tun` health;
-- no cleanup-required state.
+`--resume` accepts no new package/profile arguments and fails closed on absent, stale, corrupt, ambiguous, permission-invalid, or path-identity-mismatched checkpoint state.
 
-Probe response bodies such as public egress IP are discarded.
+## Phase 1 — real lower-release -> candidate package continuity
 
-## Phase 3 — daemon replacement continuity
+This is the canonical #259 package boundary and is required for `QUALIFIED_PASS`.
 
-While connected/verified:
+Preferred path: a lower released Podlaz package is already installed. Do **not** install the candidate while disconnected first.
 
-1. privately record daemon and session identity;
-2. `systemctl restart podlazd.service`;
-3. prove daemon PID changed;
-4. do not call a second `connect`;
-5. wait for the same logical Network Session to return `Connected`/verified;
-6. require protection authority not to disappear across continuation;
-7. recheck protected DNS/HTTPS;
-8. require no manual recovery command.
+Sequence:
 
-Failure is a product failure even if explicit reconnect would work.
+1. using the installed lower release, validate/select the normal TUN profile with capabilities available in that release;
+2. connect the lower release in TUN mode;
+3. prove a real protected active baseline with version-appropriate status plus structural TUN/data-plane checks;
+4. start the continuous direct-egress tripwire before package replacement;
+5. record old daemon/core/session identities privately;
+6. run `dpkg -i <exact-candidate.deb>` while TUN is active;
+7. do not issue test-side `systemctl start/restart` and do not issue a second `connect` before the continuity verdict;
+8. require installed package version becomes the candidate and daemon PID changes through package lifecycle;
+9. require the same logical user connection returns to candidate `Connected`/verified automatically;
+10. require protected DNS/TCP/TLS/HTTPS again;
+11. require the direct-uplink tripwire observed **zero successful direct-egress samples** from protected pre-upgrade state through candidate recovery;
+12. require exact recovery authority remains actionable if convergence cannot complete.
 
-## Phase 4 — package replacement continuity
+If the candidate was already installed, a true lower-release upgrade may be prepared only through explicit `--previous-deb`, after disconnected-state and compatibility preflight. That path is deliberate test setup, never an implicit downgrade. If safe setup cannot be proven, mark `NOT_EXERCISED` and cap result at `PARTIAL_PASS`.
 
-While still connected, reinstall the exact same supplied `.deb` using `dpkg -i`.
+A same-version candidate reinstall later is additional coverage and never substitutes for this phase.
+
+## Phase 2 — candidate protected baseline
+
+After the upgrade boundary, require the candidate itself to validate the selected profile and expose clean current candidate semantics.
 
 Require:
 
-- package command succeeds;
-- daemon PID changes as part of package lifecycle;
-- no test-side service restart/start before the package-continuity verdict;
-- no second `connect`;
-- current Network Session returns verified;
-- protected DNS/HTTPS work;
-- exact recovery authority remains available if convergence is incomplete.
+- `Connected` and TUN health `verified`;
+- exact Network Session/transaction authority;
+- effective Privacy Envelope composition;
+- protected DNS and system resolution;
+- IPv4 TCP/TLS/HTTPS;
+- read-only `doctor --tun` healthy evidence;
+- no cleanup-required state;
+- direct-uplink tripwire fails while the protected session is established.
 
-This tests actual release package lifecycle, not a source-built candidate.
+If Phase 1 was not exercised, install the candidate while disconnected, then explicitly connect it here; such a run is necessarily `PARTIAL_PASS` at best.
 
-## Phase 5 — synthetic foreign-state coexistence
+## Phase 3 — candidate lifecycle intent matrix
 
-Create product-neutral unrelated baseline state using documentation-only network values and exact ownership.
+### 3A — graceful restart
 
-Possible fixture elements:
+While protected/verified:
 
-- one unrelated TUN device and point address;
-- one verified-free numeric routing table with one exact documentation-prefix route;
-- one/two selective policy rules;
-- one unrelated nftables table;
-- one dummy resolved link with documentation-only DNS/domain state when safe.
+1. run continuous direct-uplink tripwire;
+2. `systemctl restart podlazd.service`;
+3. prove daemon PID changed;
+4. no second `connect`;
+5. require same logical session returns verified;
+6. require zero successful direct-egress tripwire samples throughout protected recovery;
+7. recheck protected DNS/HTTPS.
 
-Rules:
+This exercises restart intent (`RestartKillSignal=SIGUSR1`).
 
-- inventory before allocation;
-- historical Podlaz candidate values may be occupied only if currently free and useful for collision coverage;
-- if already occupied, preserve the pre-existing object and treat it as baseline;
-- otherwise allocate another verified-free fixture identity;
-- live collision check immediately before mutation;
-- record exactly which objects this run created;
-- never install a fixture default route carrying ordinary user traffic.
+### 3B — unexpected daemon death
 
-After fixture creation require Podlaz to remain/return verified. Perform safe fixture churn such as exact route replacement and fixture link down/up, then require fresh product convergence without foreign cleanup.
+While protected/verified:
 
-Store a normalized private structural fixture manifest. Prove the fixture remains structurally preserved after Podlaz disconnect and after a fresh Podlaz reconnect while the fixture still exists.
+1. start tripwire;
+2. kill only the service main daemon process with controlled `SIGKILL`/systemd main-process kill semantics, leaving systemd `Restart=on-failure` responsible for recovery;
+3. prove a replacement daemon starts automatically without test-side service start;
+4. no second `connect`;
+5. require protected session returns verified;
+6. require zero direct-egress successes during recovery;
+7. verify protected data plane again.
 
-## Phase 6 — Wi-Fi / DHCP churn
+This is intentionally different from graceful restart.
 
-If the underlying default uplink is a NetworkManager-managed Wi-Fi connection and the session is local, run one controlled reconnect.
+### 3C — explicit service stop -> start
 
-Privately record:
+While protected/verified:
 
-- exact active NM connection UUID;
-- interface identity;
-- IPv4 address/gateway/default-route fingerprint;
-- relevant NetworkManager/uplink identity.
+1. `systemctl stop podlazd.service`;
+2. require deliberate product teardown converges and ordinary host networking works;
+3. direct-uplink probe must become usable only after protection/session teardown is complete;
+4. `systemctl start podlazd.service`;
+5. require daemon becomes ready but remains `Disconnected`;
+6. prove no continuation/autoconnect from the prior ordinary session.
 
-Then:
+Then explicitly reconnect the candidate TUN session for later phases.
 
-```text
-nmcli connection down <exact-original-uuid>
-wait for down transition
-nmcli connection up <exact-original-uuid>
-```
+This exercises explicit-stop (`SIGTERM`) semantics and must not be conflated with restart/crash continuation.
 
-Never restart NetworkManager or systemd-resolved.
+### 3D — same-candidate reinstall
 
-After reconnect:
+While the reconnected candidate session is verified, reinstall the exact same candidate `.deb` with `dpkg -i`.
 
-- require the original connection restored or explicitly fail cleanup;
-- require an ordinary default route;
-- require Podlaz to self-converge to verified;
-- require protected DNS/HTTPS;
-- record whether address/gateway/DHCP identity actually changed.
+Require daemon replacement through package lifecycle, no second connect, automatic return to verified, protected data plane, and zero direct-egress tripwire successes during recovery.
 
-If the same lease returns, report Wi-Fi reconnect PASS but `dhcp_identity_changed=false`; do not fabricate a DHCP change or invoke a different DHCP client.
+This is an additional regression only; Phase 1 remains the real upgrade qualification.
 
-If suitable Wi-Fi is unavailable, report a host-capability skip.
+## Phase 4 — 60-minute active resource-soak orchestration envelope
 
-## Phase 7 — one-hour resource soak
+All scheduled network-change sub-scenarios execute **inside one measured active-session envelope**. They are not run once before the soak and then repeated inside it.
 
-Reuse existing exact process/cgroup attribution concepts from the TUN resource-soak tooling, but remove dev-build/trusted-runner assumptions. The installed release package is the only product under test.
-
-Default timing:
+Canonical total primary active interval is exactly 60 wall-clock minutes:
 
 ```text
-warm-up:                    5 minutes
-primary active observation: 60 minutes
-sample interval:            60 seconds
-doctor cadence:             10 minutes
-post-disconnect settle:     bounded 1-2 minutes
-reconnect observation:      5-10 minutes
+00-05 min  warm-up (samples retained but excluded from steady-state trend)
+05-20 min  steady protected workload
+~20 min    synthetic foreign-state appearance + route/netlink churn
+~30 min    Wi-Fi/NM reconnect when applicable
+~40 min    real timed suspend/resume when supported
+40-60 min  post-resume/post-churn stability
 ```
 
-The primary hour includes network events rather than only idle operation:
+The five-minute warm-up is included in the 60-minute interval; canonical qualification is not 65 minutes.
 
-```text
-00-05 min  warm-up
-05-20 min  steady protected traffic/sampling
-~20 min    synthetic foreign route/netlink churn
-~30 min    Wi-Fi reconnect when supported
-~40 min    real suspend/resume
-40-60 min  post-resume stability/sampling
-```
+`--soak-minutes N` may exist for debugging, but any value other than the canonical 60 makes the overall result at best `PARTIAL_PASS`.
 
-Every active sample attributes resources to the exact `podlazd` and its exact supervised Xray child.
+### Continuous workload and sampling
 
-Collect where available:
+Default sample interval: 60 seconds. Read-only `doctor --tun` cadence: about every 10 minutes.
 
-For `podlazd` and Xray:
+Generate bounded low-volume traffic:
 
-- RSS;
-- PSS;
-- CPU time/derived utilization;
+- protected DNS resolution;
+- small HTTPS request with body discarded;
+- product status;
+- periodic `doctor --tun`.
+
+Attribute resources to exact current `podlazd` and exact supervised Xray child, not same-name processes.
+
+Collect, where available:
+
+For daemon and Xray:
+
+- RSS/PSS;
+- CPU time and derived utilization;
 - threads/tasks;
 - total FDs;
 - regular/pipe/anon-inode FDs;
 - socket FDs;
 - TCP listen/established/other;
 - UDP connected/unconnected/other;
-- UNIX sockets;
-- unclassified sockets.
+- UNIX/unclassified sockets.
 
-For the service cgroup:
+For `podlazd.service` cgroup:
 
 - `memory.current`;
 - `memory.peak` when available;
 - `pids.current`;
 - CPU counters where available.
 
-Shareable lifecycle context is structural only:
+Record min/median/max/last, warm-up-to-end delta, simple trend/slope where meaningful, and later post-disconnect/reconnect deltas. Existing conservative non-accumulation invariants may remain pass/fail checks; new thresholds are observations until justified by repeated evidence.
 
-- connected/reconnecting/verified classification;
-- daemon replacement count;
-- Xray generation replacement count;
-- transaction count;
-- Network Session authority present/absent;
-- Privacy Envelope authority present/absent.
+### 4A — synthetic foreign-state coexistence/churn at ~20 min
 
-### Bounded workload
+Create product-neutral synthetic state using only verified-free documentation-safe identities, for example one unrelated TUN, point address, exact route in a private numeric table, selective policy rule(s), unrelated nftables table, and optional dummy resolved link.
 
-Generate low-volume real traffic, not a throughput benchmark:
+Rules:
 
-- periodic DNS resolution;
-- periodic small HTTPS request with response body discarded;
-- periodic status;
-- read-only `doctor --tun` every ten minutes.
+- inventory/read-only allocation first;
+- live collision check immediately before every mutation;
+- no fixture default route carrying ordinary traffic;
+- exact fixture manifest persisted privately;
+- no foreign/global cleanup.
 
-### Resource output
+After appearance/churn require Podlaz remains or returns verified automatically. Perform one exact fixture route replacement/link transition to trigger fresh observation.
 
-For key metrics record:
+Keep the fixture through the later disconnect/reconnect coexistence proof. Structural fixture state must remain unchanged except for harness-declared churn.
 
-- min/median/max/last;
-- warm-up-to-end delta;
-- simple time slope/trend where meaningful;
-- post-disconnect retained delta vs warmed inactive baseline;
-- reconnect delta first vs second session;
-- peak cgroup memory;
-- peak RSS/PSS/tasks/threads/FDs/sockets.
+### 4B — Wi-Fi / DHCP reconnect at ~30 min
 
-Existing conservative lifecycle non-accumulation limits may remain pass/fail checks where they already represent tested invariants, especially cleanup and reconnect. Otherwise metrics are observations/warnings, not invented requirements.
+Only on a local NetworkManager-managed Wi-Fi uplink.
 
-`requirements-observation.json` records tested environment and resource high-water marks. It explicitly labels them observations so later runs across machines/releases can support real minimum/recommended requirements.
+Privately record exact NM connection/uplink/address/gateway identity, then perform controlled down/up of the exact original connection. Never restart NetworkManager or resolved.
 
-## Phase 8 — real suspend/resume
+After reconnect require:
 
-Around minute forty, when supported, perform one timed suspend with RTC wake for roughly 60-120 seconds.
+- original NM connection restored;
+- ordinary default route available;
+- Podlaz self-converges to verified;
+- protected DNS/HTTPS;
+- report whether DHCP/address/gateway identity actually changed.
 
-Before suspend:
+Returning the same lease is still a Wi-Fi reconnect PASS with `dhcp_identity_changed=false`; do not fabricate renewal.
 
-- prove protected verified state;
-- record private session/daemon/Xray identities;
-- flush private evidence to disk;
-- ensure fixture mutation is not mid-operation.
+Unsupported Wi-Fi is `SKIP_HOST_CAPABILITY`; `--skip-wifi-churn` is `SKIP_USER_REQUEST` and prevents `QUALIFIED_PASS`.
+
+### 4C — timed suspend/resume at ~40 min
+
+Before suspend prove verified state and flush private evidence. Use a bounded RTC/timed suspend for roughly 60-120 seconds only when local host capability supports it.
 
 After resume:
 
-- confirm a meaningful suspend interval occurred;
-- allow normal uplink/NM convergence without restarting services;
-- require Podlaz to revalidate/reconcile and return verified automatically;
+- prove a meaningful suspend interval occurred;
+- allow normal NM/uplink convergence without restarting services;
+- require Podlaz returns verified automatically;
 - require protected DNS/HTTPS;
-- collect immediate and later resource samples;
-- record natural daemon/Xray generation replacement if it occurred.
+- collect immediate/post-settle resource samples;
+- record natural daemon/Xray generation changes.
 
-If the host cannot safely provide timed suspend/wake, report capability skip. If suspend occurred and Podlaz fails to recover automatically, record product failure.
+Unsupported suspend is a capability skip. `--skip-suspend` is user-forced partial coverage.
 
-## Phase 9 — disconnect, cleanup proof, reconnect
+### Privacy tripwire during the soak
 
-After the primary hour:
+The direct-uplink probe remains periodically/continuously active around every recovery-prone event. While the protected session is logically established/reconciling, **any successful direct-uplink sample is an immediate privacy FAIL**.
+
+The tripwire is functional evidence. Exact Privacy Envelope/firewall composition is collected as corroboration, not treated as a substitute for leak detection.
+
+## Phase 5 — disconnect, resource cleanup, and coexistence reconnect
+
+After the 60-minute envelope:
 
 1. normal `podlaz disconnect`;
-2. require clean `Disconnected`/inactive state;
-3. require exact Network Session/Privacy Envelope cleanup convergence;
-4. require ordinary host DNS/TCP/HTTPS;
-5. prove synthetic foreign fixture still exists unchanged;
-6. collect post-disconnect resource boundary after settle;
-7. compare against warmed inactive baseline.
+2. require clean `Disconnected`/inactive;
+3. require Network Session/Privacy Envelope cleanup convergence;
+4. direct-uplink probe now succeeds again;
+5. ordinary DNS/TCP/HTTPS works;
+6. synthetic foreign fixture remains unchanged;
+7. collect post-disconnect daemon/cgroup boundary after bounded settle;
+8. compare against warmed inactive baseline.
 
-Reconnect the selected profile while the foreign fixture remains.
+Reconnect the candidate while the foreign fixture already exists.
 
 Require:
 
-- collision-safe new session allocation;
-- protected verified data plane;
+- collision-safe new allocation;
+- verified protected data plane;
 - foreign fixture preserved;
 - 5-10 minute second-session resource observation;
-- no unexpected resource accumulation.
+- no unexpected resource accumulation relative to first session.
 
-Disconnect again, repeat clean boundary checks, then remove only exact test fixture objects.
+Disconnect again, prove clean boundary, then remove only exact fixture objects in reverse dependency order. No synthetic networking fixture may survive into terminal/reboot phases.
 
-## Exact fixture cleanup
+## Phase 6 — controlled established-session terminal failure
 
-Cleanup uses only exact tuples created by this run, for example:
+This phase proves #261/#262 terminal semantics rather than using explicit disconnect as a proxy.
 
-```text
-ip route del <exact-destination> table <exact-test-table>
-ip rule del <full-exact-selector/table/priority tuple>
-ip address del <exact-cidr> dev <exact-test-interface>
-ip link del <exact-test-interface after identity/kind recheck>
-nft delete table <exact-family> <exact-test-table after exact identity check>
-resolvectl revert <exact-dummy-link> before deleting that exact dummy link
-```
+Use only a narrow, already-existing release-built E2E/fault-injection seam that drives the normal production reconciliation/terminal lifecycle. Do not add a second terminal implementation to the harness.
 
-Authoritative already-absent state may be idempotent success. Drifted/ambiguous identity is preserved and reported, not deleted by similarity.
+If the candidate release does not contain the required reviewed gated seam, this mandatory scenario is `NOT_EXERCISED` and the run cannot be `QUALIFIED_PASS`.
 
-The harness never manually removes Podlaz Privacy Envelope or product routing. Product state is cleaned through product lifecycle; product cleanup failure remains visible.
+Safe orchestration:
 
-## Phase 10 — prepare real reboot A, autostart disabled
+1. while disconnected, prove the exact temporary acceptance systemd drop-in path is absent/free;
+2. install one exact root-owned drop-in enabling only the required terminal/reconciliation/privacy-pause hooks and a private `/run` marker directory;
+3. `systemctl daemon-reload` and restart daemon while disconnected;
+4. connect the normal profile and require verified protected state;
+5. start the direct-egress tripwire;
+6. trigger the controlled unrecoverable terminal evidence;
+7. at the supported post-data-plane-clean/pre-envelope-remove pause, require direct egress is still blocked and effective Privacy Envelope evidence remains;
+8. release the pause and require normal production terminal teardown completes;
+9. require `Disconnected`, ordinary DNS/TCP/HTTPS, and direct-uplink egress restored;
+10. require no automatic reconnect after a same-boot daemon restart;
+11. remove only the exact acceptance drop-in/marker state, `daemon-reload`, and leave daemon cleanly disconnected.
 
-No synthetic fixture may survive into reboot phases.
+Any leak, incomplete cleanup, false clean status, retry, or drop-in restoration failure is FAIL.
 
-Original autostart policy was captured in Layer A. Before changing it the harness proves restoration material is usable. If original policy is enabled, private material may read only the necessary daemon-owned manifest fields (profile ID/mode/generation context) and prove the profile still exists. Restoration later is performed through normal `podlaz autostart` CLI, never by overwriting the manifest file.
+## Phase 7 — reboot A: autostart disabled
 
-If restoration cannot be proven, abort before changing policy.
+Before touching persistent boot policy:
 
-Prepare reboot A:
-
-- Podlaz cleanly disconnected;
-- disable autostart via CLI;
+- prove all synthetic networking/fault-injection fixtures are gone;
+- prove original autostart restoration material is usable;
+- create/persist strict root-owned checkpoint;
+- disable autostart through normal CLI;
 - confirm disabled;
-- record current `boot_id`;
-- persist checkpoint `awaiting-autostart-off-reboot`;
-- instruct the user to reboot and rerun `--resume`.
+- record current boot identity privately;
+- checkpoint `awaiting-autostart-off-reboot`;
+- instruct the user to reboot manually.
 
-The harness itself does not invoke reboot.
+The harness never invokes reboot itself.
 
-## Phase 11 — resume after reboot A
+### Resume A
 
-On `--resume`:
+Require a new `boot_id`, same candidate package, normally started daemon, conclusively `Disconnected`, no fresh VPN attempt, ordinary network, and autostart disabled.
 
-- strictly load checkpoint;
-- require changed `boot_id`;
-- require the same tested release package still installed;
-- prove packaged daemon started normally;
-- require Podlaz remains conclusively disconnected;
-- require no fresh automatic VPN connection;
-- require ordinary DNS/HTTPS;
-- require autostart disabled.
+Then enable autostart for the normal test profile, confirm `Enabled for next boot`, checkpoint `awaiting-autostart-on-reboot`, and instruct reboot B.
 
-Then enable TUN autostart for the selected test profile via normal CLI, confirm `Enabled for next boot`, record current `boot_id`, persist `awaiting-autostart-on-reboot`, and instruct another reboot.
+## Phase 8 — reboot B: successful autostart and same-boot no retry
 
-## Phase 12 — resume after reboot B
+On resume B require another new `boot_id`, same candidate, bounded network readiness, exactly one logical automatic attempt, `Connected`/verified, and protected data plane.
 
-On second `--resume`:
+Restart daemon once and prove:
 
-- require another new `boot_id`;
-- require same release package installed;
-- boundedly wait for daemon startup/network readiness;
-- require one automatic TUN lifecycle reaches `Connected`/verified;
-- require protected DNS/HTTPS;
-- privately prove current-boot attempt authority represents one consumed logical attempt.
+- daemon PID changes;
+- same Network Session resumes;
+- no second boot attempt is admitted;
+- direct-egress tripwire has zero successes through protected recovery.
 
-Restart `podlazd.service` once and prove:
+Then explicit `podlaz disconnect`, wait clean inactive, restart daemon, and prove it stays disconnected in the same boot.
 
-- daemon PID changed;
-- current Network Session returned verified;
-- boot-attempt authority was not replaced/duplicated;
-- no manual connect occurred.
+Next, create the exact temporary documentation-only terminal-autostart profile through normal user-owned profile CLI, set autostart to that profile for the **next boot**, record its exact private identity for cleanup, checkpoint `awaiting-terminal-autostart-reboot`, and instruct reboot C.
 
-Then explicit `podlaz disconnect`, wait clean inactive, restart daemon again, and prove it stays disconnected in the same boot. This is the real no-same-boot-retry proof.
+## Phase 9 — reboot C: terminal autostart failure and no retry
 
-## Restore original policy and final host state
+On resume C require another new `boot_id` and same candidate package.
 
-At finalization:
+The synthetic autostart request must enter the canonical boot attempt/connect lifecycle and converge to a conclusively terminal outcome, not an endless retry.
 
-1. restore original autostart through normal CLI;
-2. if originally disabled, leave disabled;
-3. if originally enabled, re-enable the exact saved profile/mode after proving it remains valid;
-4. verify resulting policy structurally matches the baseline;
-5. keep Podlaz cleanly disconnected (the first-run precondition was disconnected);
-6. restore daemon service active/inactive runtime state when the original state was conclusively known and restoration is safe;
-7. verify ordinary networking;
-8. verify no synthetic TUN/routing/DNS/nft fixture remains;
-9. remove acceptance checkpoint;
-10. write final reports.
+Require:
 
-The release package remains installed.
+- attempt reaches terminal only after cleanup convergence;
+- product ends `Disconnected` with the stable high-level terminal connect reason;
+- ordinary network/direct-uplink egress is usable;
+- no Network Session/Privacy Envelope cleanup remains pending;
+- same-boot `systemctl restart podlazd.service` does not start another automatic connect and does not replace the consumed terminal attempt authority.
 
-Failure to restore original policy or fixture state makes the overall result FAIL. Do not silently claim success while the laptop differs from the captured non-package baseline.
+Then restore original autostart policy through normal CLI and delete only the exact synthetic terminal profile created by the harness.
 
-## Failure/finalizer semantics
+## Final restoration
 
-Register a finalizer only after each harness mutation succeeds. Finalize approximately in reverse acquisition order while respecting product lifecycle:
+Finalization must leave the candidate release installed but otherwise restore the captured non-package baseline where the harness changed it.
+
+Required:
+
+1. original autostart policy restored through normal product API;
+2. synthetic terminal profile removed exactly;
+3. no acceptance systemd drop-in/marker remains;
+4. no synthetic TUN/route/rule/DNS/nft fixture remains;
+5. Wi-Fi/NM connection restored if the harness ever left it down;
+6. Podlaz cleanly disconnected;
+7. daemon service active/inactive state restored when original state was conclusively known and safe to restore;
+8. ordinary IPv4 route, DNS, TCP/HTTPS usable;
+9. direct-uplink baseline probe usable;
+10. checkpoint removed;
+11. run tree ownership/modes revalidated;
+12. final sanitized reports written.
+
+A cleanup/restoration failure is overall `FAIL` even if product scenarios passed.
+
+## Finalizer semantics
+
+Register cleanup authority incrementally only after each mutation succeeds. Finalize in reverse dependency order while preserving lifecycle semantics:
 
 ```text
-stop acceptance workload
-attempt normal Podlaz disconnect if acceptance session active
+stop acceptance workload/tripwire
+attempt normal Podlaz disconnect if acceptance session is active
 wait bounded product convergence
-restore Wi-Fi connection if harness left it down
-remove exact synthetic fixture
-verify ordinary network
-restore changed autostart policy when phase permits
-write failure report
+restore exact NM connection if left down
+remove exact synthetic network objects
+remove exact acceptance fault-injection drop-in/markers
+restore original autostart when phase permits
+remove exact temporary synthetic profile
+verify ordinary networking and direct-uplink baseline
+write failure/cleanup evidence
 ```
 
-Cleanup activity never changes a scenario's FAIL to PASS.
+Cleanup never changes a FAIL to PASS and never uses broad host repair.
 
-A cleanup failure itself makes the overall run fail.
+## Resource and system-requirement observations
 
-## Requirements/environment observation
-
-Sanitized requirements evidence includes non-identifying facts useful for future support policy:
+Sanitized environment evidence may include:
 
 - distribution/version;
 - kernel version family;
 - architecture;
-- logical CPU count and safe model class;
+- logical CPU count and non-identifying CPU class;
 - total RAM/swap;
-- systemd version;
-- NetworkManager version;
-- nft/iproute2 versions;
-- Podlaz package version;
-- availability of `/dev/net/tun`, unified cgroup v2, systemd-resolved, NM Wi-Fi, RTC wake, and suspend;
-- measured peak/steady Podlaz resources.
+- systemd/NetworkManager/nft/iproute2 versions;
+- candidate Podlaz version;
+- availability of `/dev/net/tun`, unified cgroup v2, systemd-resolved, Wi-Fi, RTC wake, suspend;
+- median/peak/last resource metrics and deltas from the canonical run.
 
-The harness does not update the system when versions differ from preferred test hosts. Missing optional host capabilities become explicit skips/observations; fundamental TUN prerequisites fail preflight.
+Do not update the system when versions differ from preferred environments.
+
+`requirements-observation.json` explicitly calls every measured value an observation. Minimum/recommended requirements are derived later from multiple successful runs plus engineering margin, not asserted from one laptop.
 
 ## Reports
 
 ### `summary.txt`
 
-Short, sanitized and shareable:
+Sanitized/shareable example:
 
 ```text
 Release package: podlaz <version> (<arch>)
-Result: PASS|FAIL
+Qualification: QUALIFIED_PASS|PARTIAL_PASS|FAIL
 
-package_install                         PASS
-autostart_baseline_preserved            PASS
-initial_tun_connect                     PASS
-daemon_restart_continuity               PASS
-package_reinstall_continuity            PASS
-foreign_coexistence                     PASS
-safe_route_netlink_churn                PASS
-wifi_reconnect                          PASS|SKIP
-suspend_resume                          PASS|SKIP
-resource_soak_60m                       PASS
-post_disconnect_cleanup                 PASS
-reconnect_resource_nonaccumulation      PASS
-real_boot_autostart_off                 PASS
-real_boot_autostart_on                  PASS
-same_boot_disconnect_no_retry           PASS
-original_autostart_policy_restored      PASS
-final_ordinary_network                  PASS
+lower_release_upgrade_continuity          PASS|NOT_EXERCISED
+graceful_restart_continuity               PASS
+unexpected_daemon_death_recovery          PASS
+explicit_service_stop_start               PASS
+same_candidate_reinstall_continuity       PASS
+privacy_no_direct_leak                    PASS
+resource_soak_60m                         PASS
+foreign_state_churn                       PASS
+wifi_reconnect                            PASS|SKIP_HOST_CAPABILITY|SKIP_USER_REQUEST
+suspend_resume                            PASS|SKIP_HOST_CAPABILITY|SKIP_USER_REQUEST
+post_disconnect_cleanup                   PASS
+coexistence_reconnect                     PASS
+reconnect_resource_nonaccumulation        PASS
+runtime_terminal_convergence              PASS
+runtime_terminal_no_retry                 PASS
+real_boot_autostart_off                   PASS
+real_boot_autostart_on                    PASS
+successful_autostart_same_boot_no_retry   PASS
+terminal_autostart_failure                PASS
+terminal_autostart_same_boot_no_retry     PASS
+original_autostart_policy_restored        PASS
+final_host_restoration                    PASS
 
 Resource observations:
-  active samples: <count>
+  measured active interval: <duration>
+  samples: <count>
   daemon RSS median/peak: <values>
   Xray RSS median/peak: <values>
   cgroup memory peak: <value>
-  daemon FD start/end delta: <value>
-  Xray FD start/end delta: <value>
-  post-disconnect retained deltas: <values>
+  daemon/Xray FD start/end deltas: <values>
+  post-disconnect/reconnect deltas: <values>
 ```
 
-### `report.json`
+`report.json` contains versioned structural scenario outcomes and numeric summaries.
 
-Versioned structural scenario outcomes and numeric resource summaries for comparing runs.
+`requirements-observation.json` contains sanitized environment/resource observations suitable for later aggregation.
 
-### `requirements-observation.json`
-
-Versioned sanitized environment/resource envelope intended for later aggregation. Measurements are explicitly observations, not universal requirements.
+No report automatically uploads anywhere.
 
 ## Harness CLI
 
-Minimum forms:
+Canonical qualification:
 
 ```text
-sudo ./scripts/acceptance/release-laptop.sh <release.deb> [--profile <profile-id>]
+sudo ./scripts/acceptance/release-laptop.sh <candidate.deb> [--profile <profile-id>]
 sudo ./scripts/acceptance/release-laptop.sh --resume
 ```
 
-Useful test-tool options may include:
+Explicit previous-release setup when needed:
 
 ```text
---artifact-dir <path>
---soak-minutes <N>       # bounded developer override; default 60
+--previous-deb <release.deb>
+```
+
+Useful developer/debug overrides may include:
+
+```text
+--artifact-dir <safe-user-owned-path>
+--soak-minutes <N>
 --skip-wifi-churn
 --skip-suspend
 --no-reboot-phases
 ```
 
-Default release qualification is one-hour soak + disruptive stages where supported + two manual reboots.
+Qualification effects are mandatory:
 
-These are test tooling options, not Podlaz product settings.
+- non-60 `--soak-minutes` => at best `PARTIAL_PASS`;
+- user `--skip-*` => at best `PARTIAL_PASS`;
+- `--no-reboot-phases` => at best `PARTIAL_PASS`;
+- no true lower-release active upgrade => at best `PARTIAL_PASS`;
+- genuine host-capability skip remains distinct and is reported structurally.
+
+These flags are harness controls, not Podlaz product settings.
 
 ## Implementation boundaries
 
 Prefer reuse over duplication:
 
-- reuse safe conventions from `scripts/e2e/lib/e2e.sh`;
-- reuse resource attribution under `scripts/e2e/lib/tun_soak_*` rather than implementing another procfs/cgroup parser;
-- reuse installed product status/doctor/lifecycle commands;
-- reuse structural redaction scanning;
-- do not call existing dev-package build functions.
+- safe logging/redaction conventions from `scripts/e2e/lib/e2e.sh`;
+- existing `tun_soak_*` exact procfs/cgroup attribution and aggregation;
+- installed product status/doctor/lifecycle APIs;
+- current structural redaction scanner;
+- existing release-built E2E terminal/reconciliation hooks where explicitly required.
 
-Keep explicit boundaries between:
+Do not reuse helpers that build dev packages, install dependencies, assume a disposable trusted host, or perform broad cleanup.
 
-1. package/product lifecycle operations;
-2. synthetic fixture allocation/ownership;
-3. Wi-Fi/suspend host operations;
-4. resource sampling/report generation;
-5. reboot checkpoint management.
+Keep narrow components for:
 
-The user-facing entry point remains one shell script even if narrow internal helpers are reused.
+1. package/provenance and true-upgrade orchestration;
+2. user/profile/autostart state;
+3. direct-egress privacy tripwire;
+4. lifecycle restart/crash/stop-start scenarios;
+5. synthetic fixture allocation/exact cleanup;
+6. Wi-Fi/suspend events;
+7. soak scheduling/resource sampling;
+8. controlled terminal hooks;
+9. reboot checkpointing;
+10. report redaction/qualification evaluation.
 
-## TDD / deterministic contract tests
+The user-facing entry point remains one shell script.
 
-### Package safety
+## Deterministic TDD contract
 
-Prove:
-
-- `.deb` package/name/arch/version validation;
-- no Go/build command in production harness;
-- no apt/apt-get update/install/upgrade/fix-broken command;
-- `dpkg -i` targets only supplied release package;
-- dependency failure does not trigger repair.
-
-### User/profile boundary
+### Package/qualification
 
 Prove:
 
-- original `SUDO_USER` is resolved and Podlaz CLI runs as that user;
-- ambiguous profile selection fails before networking mutation;
-- profile validation uses installed release client;
-- active/unknown initial lifecycle fails before package/network mutation where observable;
-- original autostart is captured before package mutation.
+- candidate/previous `.deb` validation;
+- no source-build command;
+- no OS update/install/fix-broken command;
+- true lower-release active-TUN -> candidate ordering occurs before candidate disconnected install;
+- no manual service repair/second connect in upgrade continuity;
+- same-version reinstall cannot satisfy `lower_release_upgrade_continuity`;
+- shortened/skip/no-reboot runs cannot yield `QUALIFIED_PASS`;
+- capability skip and user skip remain distinct.
+
+### Lifecycle/privacy
+
+Prove orchestration contains separate graceful restart, main-process SIGKILL recovery, and explicit stop/start scenarios.
+
+Tripwire tests prove:
+
+- baseline direct-bound probe must succeed before protected qualification;
+- protected/recovery samples must all fail;
+- any successful sample is privacy FAIL;
+- post-terminal/disconnect direct probe must succeed;
+- Privacy Envelope metadata alone cannot satisfy privacy acceptance.
+
+### Soak scheduling
+
+Use fake clock/event scheduler tests to prove exactly one synthetic churn event, one Wi-Fi event when applicable, and one suspend event occur inside the canonical 60-minute envelope. Warm-up occupies minutes 0-5 of that same hour and is excluded from steady-state trend calculations.
+
+### Terminal scenarios
+
+Prove runtime terminal acceptance uses only the gated production terminal seam, validates barrier effectiveness before removal, verifies ordinary network after convergence, and checks same-boot no retry.
+
+Prove reboot checkpoint state includes terminal-autostart phase and same-boot restart cannot admit a second attempt.
+
+### User/path/privacy boundary
+
+Prove:
+
+- Podlaz CLI runs as original user;
+- report tree is user-owned;
+- root checkpoint remains root-owned;
+- unsafe/symlinked/cross-owner artifact paths fail before mutation;
+- every real host interface becomes a structural role in shareable output;
+- private identifiers never enter public reports;
+- temporary synthetic profile is exact-created/exact-deleted.
 
 ### Exact fixture ownership
 
-Prove:
+Prove occupied identities are preserved, exact tuples only are removed, broad flushes are absent, and ambiguous drift fails closed.
 
-- occupied identities are never adopted;
-- cleanup removes exact created tuples only;
-- no route/rule/ruleset flush exists;
-- pre-existing foreign objects survive deterministic models;
-- ambiguous fixture drift fails closed.
+### Resource attribution
 
-### Self-healing scenarios
-
-Prove script orchestration contains no second connect for daemon/package continuation and no `recover --execute`/NetworkManager restart/resolved restart in Wi-Fi/suspend success paths.
-
-A scenario failure remains failed even if final cleanup later restores networking.
-
-### Resource sampling
-
-Prove exact daemon/Xray attribution, default one-hour schedule, sanitized aggregation, cleanup/reconnect comparisons, and observation-vs-requirement wording.
-
-### Reboot/checkpoint safety
-
-Prove:
-
-- strict checkpoint schema/permissions;
-- `--resume` rejects absent/stale/corrupt/ambiguous state;
-- every reboot phase requires a new `boot_id`;
-- no test systemd unit/cron/login hook is created;
-- autostart restoration uses product CLI;
-- no synthetic network fixture survives into reboot phases.
-
-### Privacy
-
-Prove documentation-only repository fixtures, shareable report redaction, private evidence permissions, and no automatic upload.
+Prove exact daemon/Xray identity, 60-minute default configuration, cleanup/reconnect comparisons, and observation-vs-requirement wording.
 
 ## Validation before merge
 
@@ -803,21 +858,23 @@ govulncheck ./...
 shellcheck <new/changed shell files>
 ```
 
-Hosted CI cannot fully execute Wi-Fi, suspend, root networking, and real reboot phases. Deterministic tests therefore enforce safety/orchestration without root.
+Hosted CI cannot execute real Wi-Fi, suspend, root networking, package-upgrade-from-installed-release, and real reboot phases. Deterministic tests therefore enforce safety/orchestration without root.
 
-A full local run against an actual release `.deb` is release evidence produced by this tool, not a prerequisite for merging the harness implementation itself.
+A full local run against actual release packages is evidence produced by the harness, not a prerequisite for merging the harness implementation itself.
 
 ## Success criteria
 
 Implementation is complete when:
 
-- one command qualifies the supplied release package without building Podlaz or updating the OS;
-- lifecycle, daemon/package replacement, coexistence, churn, Wi-Fi, suspend, cleanup, reconnect, and one-hour resources are coordinated safely;
-- two manual reboots prove real autostart off/on behavior without a boot hook;
-- explicit disconnect after successful autostart does not cause same-boot reconnect after daemon restart;
-- harness-created state is exactly removed and ordinary networking is verified;
-- original autostart policy is restored through normal product API;
-- resource use is measured sufficiently for later requirement analysis;
-- failures are not hidden by manual product/network repair;
-- sanitized reports are shareable while raw evidence remains local/private;
-- deterministic tests enforce no-build, no-system-update, exact ownership, redaction, checkpoint, and cleanup contracts.
+- one release-oriented command can qualify the candidate without building Podlaz or updating the OS;
+- real lower-release active-TUN -> candidate upgrade is the canonical package continuity test;
+- restart, unexpected daemon death, explicit service stop/start, and same-version reinstall are separate lifecycle scenarios;
+- functional direct-egress evidence proves privacy across recovery, not merely barrier authority;
+- one exact 60-minute soak envelope schedules coexistence churn, Wi-Fi reconnect, suspend/resume, workload, and resource sampling once;
+- controlled runtime terminal failure converges through the real production terminal path to ordinary networking with no retry;
+- three manual reboot/resume stages prove autostart-off, successful autostart/no-retry, and terminal-autostart/no-retry semantics;
+- harness-created state is removed exactly and original autostart is restored;
+- shareable reports are deterministic and host-private identifiers are role-mapped/redacted;
+- `QUALIFIED_PASS` cannot be emitted for shortened or user-skipped coverage;
+- resource evidence is sufficient for later system-requirement analysis;
+- failures are never hidden by generic repair.
