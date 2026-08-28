@@ -4,6 +4,7 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
+import pwd
 import tempfile
 from typing import Callable
 
@@ -18,10 +19,23 @@ from .model import (
 )
 
 
+def _sudo_owner() -> UserIdentity | None:
+    name = (os.environ.get("SUDO_USER") or "").strip()
+    if not name or name == "root":
+        return None
+    try:
+        record = pwd.getpwnam(name)
+    except KeyError as error:
+        raise AmbiguousState("SUDO_USER does not resolve for checkpoint ownership") from error
+    if record.pw_uid == 0:
+        raise AmbiguousState("checkpoint owner must not be root")
+    return UserIdentity(name, record.pw_uid, record.pw_gid, Path(record.pw_dir))
+
+
 class CheckpointStore:
     def __init__(self, path: Path, owner: UserIdentity | None = None):
         self.path = path
-        self.owner = owner
+        self.owner = owner if owner is not None else _sudo_owner()
 
     def exists(self) -> bool:
         return self.path.is_file() and not self.path.is_symlink()
