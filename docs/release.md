@@ -55,6 +55,46 @@ Pull-request CI and tagged release validation must invoke the same canonical `sc
 
 The tagged workflow remains responsible for rebuilding immutable artifacts from the tag and checking their release metadata, checksums, attestations, and publication behavior. Those release-only checks may still fail after tagging, but package installation, service availability, CLI access, and purge behavior must already have passed the pull-request gate.
 
+## Maintainer laptop release qualification
+
+For a release candidate that needs real-host package, TUN, lifecycle, privacy, resource, suspend, NetworkManager, and boot evidence, use the release-laptop acceptance harness against the already-built native Debian package:
+
+```bash
+sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb --profile <profile-id>
+```
+
+If no strictly lower Podlaz release is already installed, provide the exact lower release explicitly:
+
+```bash
+sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb \
+  --previous-deb ./podlaz_<previous>_linux_<arch>.deb \
+  --profile <profile-id>
+```
+
+A full qualification deliberately crosses three real user-controlled reboot boundaries. After each requested reboot, continue the same durable run with:
+
+```bash
+sudo ./scripts/acceptance/release-laptop.sh --resume
+```
+
+Abandon a persisted run with exact owned-state restoration using:
+
+```bash
+sudo ./scripts/acceptance/release-laptop.sh --abort
+```
+
+The harness is intentionally disruptive. It may install only the explicitly supplied Podlaz `.deb` files with `dpkg -i`, create exact documentation-safe coexistence fixtures, restart/kill the Podlaz daemon for lifecycle scenarios, perform a controlled NetworkManager reconnect when applicable, suspend the local laptop with bounded RTC wake, and ask the operator to reboot. It never runs a Podlaz source build, never downloads a previous release, never installs or repairs dependencies, never performs broad route/rule/nftables cleanup, and never invokes `recover --execute` to turn a product failure into a pass.
+
+The candidate remains installed after successful finalization or clean abort restoration. Harness-owned temporary state, original autostart material, fault-injection drop-ins, synthetic terminal profile, NetworkManager boundary, and coexistence fixtures are restored or retained for diagnosis if exact cleanup cannot be proven.
+
+Result meanings are strict:
+
+- `QUALIFIED_PASS`: the canonical 60-minute soak, lower-release active upgrade boundary, mandatory candidate lifecycle/privacy/terminal cases, coexistence proof, and all three real reboot phases completed without a product or cleanup failure;
+- `PARTIAL_PASS`: useful validation completed without an observed product failure, but user-requested skips, a shortened soak, omitted reboot phases, or missing mandatory full-qualification coverage prevent a complete release qualification;
+- `FAIL`: product behavior, privacy proof, durable authority, cleanup/restoration, or evidence integrity failed or became inconclusive where positive proof was required.
+
+Evidence is written under the original user's state tree by default. Private command/host evidence is separated from sanitized public `summary.txt`, `report.json`, and `requirements-observation.json`. The harness does not upload artifacts automatically.
+
 ## Publication
 
 The workflow treats published release assets as immutable. It never uploads with `--clobber` and never replaces an already attached expected artifact.
@@ -82,5 +122,5 @@ Use read-only permissions by default. The artifact attestation job requests only
 - Public apt repository publication.
 - Repository signing.
 - Starting VPN tunnels.
-- Mutating TUN devices, routes, DNS, nftables, firewall rules, or resolver files.
+- Mutating TUN devices, routes, DNS, nftables, firewall rules, or resolver files outside explicit release-laptop qualification.
 - GUI metadata.
