@@ -7,6 +7,7 @@ from pathlib import Path
 from .checkpoint import CheckpointStore
 from .command import CommandRunner
 from .model import AmbiguousState, Checkpoint, ScenarioOutcome, ScenarioRecord
+from .persistent import restore_boot_manifest
 from .product import ProductClient, RuntimeState
 
 
@@ -100,13 +101,7 @@ class RebootCoordinator:
         if terminal:
             self.product.delete_profile(terminal)
             checkpoint.private.pop("terminal_profile", None)
-        original = checkpoint.original_autostart or {}
-        if original.get("enabled"):
-            profile = original.get("profile_id")
-            mode = original.get("mode", "tun")
-            if not profile or mode != "tun":
-                raise AmbiguousState("cannot safely restore unsupported original autostart policy")
-            self.product.autostart_enable(profile)
+        restore_boot_manifest(checkpoint.original_autostart or {"enabled": False})
         self.store.replace(checkpoint)
 
     def _verify_candidate(self, checkpoint: Checkpoint) -> None:
