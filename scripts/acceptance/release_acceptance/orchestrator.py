@@ -33,11 +33,13 @@ from .soak import SoakScheduler
 class ReleaseAcceptance:
     def __init__(self, user: UserIdentity, checkpoint_path: Path):
         self.user = user
-        self.checkpoint_store = CheckpointStore(checkpoint_path)
+        self.checkpoint_store = CheckpointStore(checkpoint_path, user)
 
     def run_new(self, config: RunConfig) -> Qualification | None:
         if self.checkpoint_store.exists():
-            raise AmbiguousState("an unfinished release acceptance checkpoint already exists; use --resume or --abort")
+            raise AmbiguousState(
+                "an unfinished release acceptance checkpoint already exists; use --resume or --abort"
+            )
         if config.candidate is None:
             raise AcceptanceError("candidate .deb is required")
 
@@ -47,7 +49,9 @@ class ReleaseAcceptance:
         previous = packages.inspect(config.previous_deb) if config.previous_deb else None
         installed_before = packages.installed_version()
         run_id = uuid.uuid4().hex
-        artifact_root = config.artifact_dir or (self.user.state_home / "podlaz" / "release-acceptance" / run_id)
+        artifact_root = config.artifact_dir or (
+            self.user.state_home / "podlaz" / "release-acceptance" / run_id
+        )
         artifacts = ArtifactStore.create(artifact_root, self.user)
         runner = CommandRunner(evidence=artifacts)
         packages = PackageInspector(runner)
@@ -58,7 +62,12 @@ class ReleaseAcceptance:
             schema_version="podlaz.release-acceptance-checkpoint.v1",
             run_id=run_id,
             phase="initializing",
-            user={"name": self.user.name, "uid": self.user.uid, "gid": self.user.gid, "home": str(self.user.home)},
+            user={
+                "name": self.user.name,
+                "uid": self.user.uid,
+                "gid": self.user.gid,
+                "home": str(self.user.home),
+            },
             candidate={
                 "path": str(candidate.path),
                 "version": candidate.version,
@@ -97,7 +106,9 @@ class ReleaseAcceptance:
         )
 
         try:
-            self._prepare_lower_release(packages, candidate, previous, installed_before, ledger)
+            self._prepare_lower_release(
+                packages, candidate, previous, installed_before, ledger
+            )
             selected_profile = product.select_profile(config.profile)
             checkpoint = self.checkpoint_store.load()
             checkpoint.private["selected_profile"] = selected_profile
@@ -114,13 +125,16 @@ class ReleaseAcceptance:
             self._release_package_setup_if_restored(packages, candidate, ledger)
             self._record("lower_release_upgrade_continuity", ScenarioOutcome.PASS)
             self._require_privacy(privacy, "candidate_protected_data_plane")
+            self._record("candidate_protected_data_plane", ScenarioOutcome.PASS)
 
             lifecycle.graceful_restart()
             self._record("graceful_daemon_restart", ScenarioOutcome.PASS)
             lifecycle.unexpected_daemon_death()
             self._record("unexpected_daemon_death", ScenarioOutcome.PASS)
 
-            lifecycle.durable_rollback_interruption(Path("/run/podlaz/release-acceptance-rollback"))
+            lifecycle.durable_rollback_interruption(
+                Path("/run/podlaz/release-acceptance-rollback")
+            )
             self._record("durable_rollback_interruption", ScenarioOutcome.PASS)
 
             lifecycle.explicit_stop_start()
@@ -130,6 +144,7 @@ class ReleaseAcceptance:
             lifecycle.reinstall_candidate(candidate)
             self._record("candidate_reinstall_continuity", ScenarioOutcome.PASS)
             self._require_privacy(privacy, "privacy_candidate_windows")
+            self._record("privacy_candidate_windows", ScenarioOutcome.PASS)
 
             soak_result = soak.run(
                 config.soak_minutes,
@@ -177,7 +192,9 @@ class ReleaseAcceptance:
                     self._record(name, ScenarioOutcome.SKIP_USER_REQUEST)
                 return self._finish_without_reboots(product, artifacts)
 
-            RebootCoordinator(self.checkpoint_store, runner, product).prepare_autostart_off()
+            RebootCoordinator(
+                self.checkpoint_store, runner, product
+            ).prepare_autostart_off()
             return None
         except Exception as error:
             self._record_failure("harness_runtime", error)
@@ -187,7 +204,9 @@ class ReleaseAcceptance:
 
     def resume(self) -> Qualification | None:
         checkpoint = self.checkpoint_store.load()
-        artifacts = ArtifactStore.create(Path(checkpoint.private["artifact_root"]), self.user)
+        artifacts = ArtifactStore.create(
+            Path(checkpoint.private["artifact_root"]), self.user
+        )
         runner = CommandRunner(evidence=artifacts)
         product = ProductClient(runner, self.user)
         reboot = RebootCoordinator(self.checkpoint_store, runner, product)
@@ -200,7 +219,9 @@ class ReleaseAcceptance:
 
     def abort(self) -> str:
         checkpoint = self.checkpoint_store.load()
-        artifacts = ArtifactStore.create(Path(checkpoint.private["artifact_root"]), self.user)
+        artifacts = ArtifactStore.create(
+            Path(checkpoint.private["artifact_root"]), self.user
+        )
         runner = CommandRunner(evidence=artifacts)
         product = ProductClient(runner, self.user)
         packages = PackageInspector(runner)
@@ -215,10 +236,14 @@ class ReleaseAcceptance:
             except AcceptanceError:
                 pass
             self._cleanup_owned_mutations(runner)
-            RebootCoordinator(self.checkpoint_store, runner, product).restore_original_policy()
+            RebootCoordinator(
+                self.checkpoint_store, runner, product
+            ).restore_original_policy()
             checkpoint = self.checkpoint_store.load()
             checkpoint.phase = "aborted-clean"
-            checkpoint.scenarios["final_restoration"] = ScenarioRecord("final_restoration", ScenarioOutcome.PASS)
+            checkpoint.scenarios["final_restoration"] = ScenarioRecord(
+                "final_restoration", ScenarioOutcome.PASS
+            )
             self.checkpoint_store.replace(checkpoint)
             self._write_current_report(artifacts)
             self.checkpoint_store.remove()
@@ -233,10 +258,19 @@ class ReleaseAcceptance:
             self._write_current_report(artifacts)
             return "ABORT_CLEANUP_FAILED"
 
-    def _prepare_lower_release(self, packages, candidate, previous, installed_before, ledger) -> None:
+    def _prepare_lower_release(
+        self, packages, candidate, previous, installed_before, ledger
+    ) -> None:
         if installed_before and installed_before != candidate.version:
             if packages.runner.run(
-                ("dpkg", "--compare-versions", installed_before, "lt", candidate.version), timeout=5
+                (
+                    "dpkg",
+                    "--compare-versions",
+                    installed_before,
+                    "lt",
+                    candidate.version,
+                ),
+                timeout=5,
             ).returncode != 0:
                 raise AmbiguousState("installed Podlaz is not strictly lower than candidate")
             return
@@ -259,29 +293,38 @@ class ReleaseAcceptance:
         packages.install_exact(previous)
         ledger.mark_acquired("package_setup")
 
-    def _release_package_setup_if_restored(self, packages, candidate, ledger: MutationLedger) -> None:
+    def _release_package_setup_if_restored(
+        self, packages, candidate, ledger: MutationLedger
+    ) -> None:
         checkpoint = self.checkpoint_store.load()
         record = checkpoint.mutations.get("package_setup")
         if record is None or record.state == MutationState.RELEASED:
             return
         if packages.installed_version() != candidate.version:
-            raise AmbiguousState("candidate is not restored while package_setup authority remains")
+            raise AmbiguousState(
+                "candidate is not restored while package_setup authority remains"
+            )
         if record.state == MutationState.ACQUIRED:
             ledger.begin_release("package_setup")
             ledger.mark_released("package_setup")
         elif record.state == MutationState.RELEASING:
             ledger.mark_released("package_setup")
         elif record.state == MutationState.ACQUIRING:
-            # Candidate installed means the downgrade either never happened or has already been restored.
             ledger.mark_released("package_setup")
         else:
-            raise AmbiguousState(f"unsupported package_setup state: {record.state.value}")
+            raise AmbiguousState(
+                f"unsupported package_setup state: {record.state.value}"
+            )
 
     def _runtime_terminal_failure(self, runner, lifecycle, ledger, privacy) -> None:
         hook_dir = Path("/run/podlaz/release-acceptance-terminal")
-        override = Path("/etc/systemd/system/podlazd.service.d/99-release-acceptance-terminal.conf")
+        override = Path(
+            "/etc/systemd/system/podlazd.service.d/99-release-acceptance-terminal.conf"
+        )
         ledger.begin_acquire(
-            "terminal_hook", "systemd_dropin", {"path": str(override), "hook_dir": str(hook_dir)}
+            "terminal_hook",
+            "systemd_dropin",
+            {"path": str(override), "hook_dir": str(hook_dir)},
         )
         hook_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
         override.parent.mkdir(parents=True, exist_ok=True)
@@ -294,21 +337,35 @@ class ReleaseAcceptance:
             "Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_TIMEOUT_SECONDS=180\n",
             encoding="utf-8",
         )
-        runner.run(("systemctl", "daemon-reload"), timeout=30).require_success("daemon-reload terminal hook")
+        runner.run(("systemctl", "daemon-reload"), timeout=30).require_success(
+            "daemon-reload terminal hook"
+        )
         ledger.mark_acquired("terminal_hook")
-        runner.run(("systemctl", "restart", "podlazd.service"), timeout=90).require_success("activate terminal hook")
+        runner.run(
+            ("systemctl", "restart", "podlazd.service"), timeout=90
+        ).require_success("activate terminal hook")
         lifecycle.wait_verified_active()
-        (hook_dir / "terminal-failure.trigger").write_text("trigger\n", encoding="utf-8")
+        (hook_dir / "terminal-failure.trigger").write_text(
+            "trigger\n", encoding="utf-8"
+        )
         lifecycle._wait_file(hook_dir / "terminal-data-plane-clean.ready", 90)
         self._require_privacy(privacy, "runtime_terminal_privacy_window")
-        (hook_dir / "terminal-data-plane-clean.continue").write_text("continue\n", encoding="utf-8")
+        (hook_dir / "terminal-data-plane-clean.continue").write_text(
+            "continue\n", encoding="utf-8"
+        )
         lifecycle.wait_inactive(timeout=120)
         lifecycle.release_systemd_hook("terminal_hook", override, hook_dir)
         if privacy.observe_ordinary().outcome != ScenarioOutcome.PASS:
-            raise AmbiguousState("ordinary network did not recover after terminal convergence")
+            raise AmbiguousState(
+                "ordinary network did not recover after terminal convergence"
+            )
 
-    def _finish_without_reboots(self, product: ProductClient, artifacts: ArtifactStore) -> Qualification:
-        RebootCoordinator(self.checkpoint_store, CommandRunner(evidence=artifacts), product).restore_original_policy()
+    def _finish_without_reboots(
+        self, product: ProductClient, artifacts: ArtifactStore
+    ) -> Qualification:
+        RebootCoordinator(
+            self.checkpoint_store, CommandRunner(evidence=artifacts), product
+        ).restore_original_policy()
         self._record("final_restoration", ScenarioOutcome.PASS)
         return self._finalize(artifacts)
 
@@ -324,7 +381,9 @@ class ReleaseAcceptance:
 
     def _write_current_report(self, artifacts: ArtifactStore) -> None:
         checkpoint = self.checkpoint_store.load()
-        ReportWriter(artifacts).write(checkpoint, QualificationEvaluator().evaluate(checkpoint))
+        ReportWriter(artifacts).write(
+            checkpoint, QualificationEvaluator().evaluate(checkpoint)
+        )
 
     def _record(
         self,
@@ -335,7 +394,9 @@ class ReleaseAcceptance:
         evidence: dict | None = None,
     ) -> None:
         checkpoint = self.checkpoint_store.load()
-        checkpoint.scenarios[name] = ScenarioRecord(name, outcome, reason, evidence or {})
+        checkpoint.scenarios[name] = ScenarioRecord(
+            name, outcome, reason, evidence or {}
+        )
         self.checkpoint_store.replace(checkpoint)
 
     def _record_failure(self, name: str, error: Exception) -> None:
@@ -354,17 +415,26 @@ class ReleaseAcceptance:
     def _require_initial_inactive(runner: CommandRunner) -> None:
         result = runner.run(
             (
-                "curl", "--fail", "--silent", "--max-time", "5",
-                "--unix-socket", "/run/podlaz/podlazd.sock", "http://localhost/v1/status",
+                "curl",
+                "--fail",
+                "--silent",
+                "--max-time",
+                "5",
+                "--unix-socket",
+                "/run/podlaz/podlazd.sock",
+                "http://localhost/v1/status",
             ),
             timeout=7,
         )
         if result.returncode != 0:
             raise AmbiguousState("podlazd status unavailable at initial boundary")
         import json
+
         payload = json.loads(result.stdout)
         if payload.get("connection") != "inactive" or payload.get("tun") != "disabled":
-            raise AmbiguousState("initial Podlaz state must be conclusively disconnected")
+            raise AmbiguousState(
+                "initial Podlaz state must be conclusively disconnected"
+            )
 
     def _cleanup_owned_mutations(self, runner: CommandRunner) -> None:
         ledger = MutationLedger(self.checkpoint_store)
@@ -378,14 +448,21 @@ class ReleaseAcceptance:
                 path = Path(record.identity["path"])
                 hook_dir = Path(record.identity["hook_dir"])
                 path.unlink(missing_ok=True)
-                runner.run(("systemctl", "daemon-reload"), timeout=30).require_success("abort daemon-reload")
+                runner.run(
+                    ("systemctl", "daemon-reload"), timeout=30
+                ).require_success("abort daemon-reload")
                 if hook_dir.exists():
                     for child in hook_dir.iterdir():
                         if child.is_symlink() or not child.is_file():
-                            raise AmbiguousState(f"ambiguous hook cleanup entry: {child.name}")
+                            raise AmbiguousState(
+                                f"ambiguous hook cleanup entry: {child.name}"
+                            )
                         child.unlink()
                     hook_dir.rmdir()
-                if self.checkpoint_store.load().mutations[name].state == MutationState.RELEASING:
+                if (
+                    self.checkpoint_store.load().mutations[name].state
+                    == MutationState.RELEASING
+                ):
                     ledger.mark_released(name)
             elif record.kind == "network_fixture":
                 spec = FIXTURE_A if name == "fixture_a" else FIXTURE_B
