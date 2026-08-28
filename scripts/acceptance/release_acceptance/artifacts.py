@@ -30,31 +30,55 @@ class ArtifactStore:
 
     @classmethod
     def create(cls, root: Path, user: UserIdentity) -> "ArtifactStore":
-        root = root.expanduser()
-        cls._validate_path(root, user)
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chown(root, user.uid, user.gid)
-        os.chmod(root, 0o700)
+        root = root.expanduser().absolute()
+        cls._create_safe_tree(root, user)
         store = cls(root, user)
         for directory in (store.private_dir, store.public_dir):
-            directory.mkdir(mode=0o700, exist_ok=True)
-            os.chown(directory, user.uid, user.gid)
-            os.chmod(directory, 0o700)
+            cls._create_child(directory, user)
         return store
 
-    @staticmethod
-    def _validate_path(path: Path, user: UserIdentity) -> None:
-        absolute = path.absolute()
-        current = Path(absolute.anchor)
-        for part in absolute.parts[1:]:
+    @classmethod
+    def _create_safe_tree(cls, root: Path, user: UserIdentity) -> None:
+        current = Path(root.anchor)
+        missing: list[Path] = []
+        for part in root.parts[1:]:
             current /= part
-            if not current.exists():
+            if current.exists():
+                st = current.lstat()
+                if current.is_symlink() or not current.is_dir():
+                    raise UnsafePath(f"artifact path has unsafe component: {current}")
+                if current == root:
+                    if st.st_uid != user.uid:
+                        raise UnsafePath("existing artifact root must be owned by original user")
+                    if st.st_mode & 0o077:
+                        raise UnsafePath("existing artifact root permissions must be 0700")
                 continue
-            st = current.lstat()
-            if os.path.islink(current):
-                raise UnsafePath(f"artifact path contains symlink: {current}")
-            if current == absolute and st.st_uid not in {0, user.uid}:
-                raise UnsafePath("artifact directory has foreign ownership")
+            missing.append(current)
+        if not missing:
+            return
+        parent = missing[0].parent
+        parent_st = parent.stat()
+        if parent_st.st_uid not in {0, user.uid}:
+            raise UnsafePath("artifact parent has foreign ownership")
+        if parent_st.st_mode & 0o022:
+            raise UnsafePath("artifact parent is group/world writable")
+        for directory in missing:
+            directory.mkdir(mode=0o700)
+            os.chown(directory, user.uid, user.gid)
+            os.chmod(directory, 0o700)
+
+    @staticmethod
+    def _create_child(directory: Path, user: UserIdentity) -> None:
+        if directory.exists():
+            if directory.is_symlink() or not directory.is_dir():
+                raise UnsafePath(f"artifact child is not a regular directory: {directory}")
+            st = directory.stat()
+            if st.st_uid != user.uid or st.st_mode & 0o077:
+                raise UnsafePath(f"artifact child has unsafe ownership/mode: {directory}")
+            return
+        directory.mkdir(mode=0o700)
+        os.chown(directory, user.uid, user.gid)
+        os.chmod(directory, 0o700)
 
     def record_command(self, result) -> None:
         payload = {
@@ -67,7 +91,11 @@ class ArtifactStore:
         self.write_private_json(name, payload)
 
     def write_private_json(self, name: str, value: Any) -> None:
-        self._atomic_write(self.private_dir / name, json.dumps(value, indent=2, sort_keys=True) + "\n", 0o600)
+        self._atomic_write(
+            self.private_dir / name,
+            json.dumps(value, indent=2, sort_keys=True) + "\n",
+            0o600,
+        )
 
     def write_public_json(self, name: str, value: Any) -> None:
         sanitized = self.sanitize(value)
@@ -99,19 +127,31 @@ class ArtifactStore:
     @staticmethod
     def _assert_public_safe(encoded: str) -> None:
         lowered = encoded.lower()
-        if any(token in lowered for token in ("vless://", "vmess://", "trojan://", "authorization:")):
+        if any(
+            token in lowered
+            for token in ("vless://", "vmess://", "trojan://", "authorization:")
+        ):
             raise UnsafePath("public artifact contains secret-shaped material")
 
     def _atomic_write(self, path: Path, text: str, mode: int) -> None:
+        if path.parent.is_symlink() or path.parent.stat().st_uid != self.user.uid:
+            raise UnsafePath("artifact destination parent is unsafe")
+        if path.exists():
+            if path.is_symlink() or not path.is_file():
+                raise UnsafePath("refuse to replace non-regular artifact")
+            if path.stat().st_uid != self.user.uid:
+                raise UnsafePath("refuse to replace foreign-owned artifact")
         fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         try:
             os.fchmod(fd, mode)
+            os.fchown(fd, self.user.uid, self.user.gid)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(text)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_name, path)
             os.chown(path, self.user.uid, self.user.gid)
+            os.chmod(path, mode)
             directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
                 os.fsync(directory_fd)
