@@ -8,6 +8,12 @@ from .command import CommandRunner, CommandResult
 from .model import AcceptanceError, AmbiguousState, UserIdentity
 
 
+TERMINAL_PROFILE_URI = (
+    "vless://00000000-0000-4000-8000-000000000001@vpn.invalid:443"
+    "?security=tls&type=tcp&sni=vpn.invalid#ReleaseAcceptanceFailure"
+)
+
+
 class ProductClient:
     def __init__(self, runner: CommandRunner, user: UserIdentity):
         self.runner = runner
@@ -22,7 +28,11 @@ class ProductClient:
         payload = json.loads(result.stdout)
         if payload.get("schema_version") != "v1":
             raise AmbiguousState("unsupported profile-list JSON schema")
-        return {str(item["id"]) for item in payload.get("profiles", []) if isinstance(item, dict) and item.get("id")}
+        return {
+            str(item["id"])
+            for item in payload.get("profiles", [])
+            if isinstance(item, dict) and item.get("id")
+        }
 
     def validate_tun_profile(self, profile_id: str) -> None:
         result = self.run("profile", "validate", profile_id, "--mode", "tun", "--json")
@@ -75,18 +85,20 @@ class ProductClient:
 
     def create_terminal_profile(self) -> str:
         baseline = self.profile_ids()
-        result = self.run(
-            "profile", "add", "--name", "Release Acceptance Failure",
-            "--server", "vpn.invalid", "--port", "443", "--protocol", "vless",
-        ).require_success("create terminal acceptance profile")
-        match = re.search(r"^Profile added:\s+(\S+)\s*$", result.stdout, re.M)
+        result = self.run("profile", "import", TERMINAL_PROFILE_URI).require_success(
+            "create terminal acceptance profile"
+        )
+        match = re.search(r"^Imported profile:\s+(\S+)\s*$", result.stdout, re.M)
         after = self.profile_ids()
         additions = after - baseline
         if match and match.group(1) in additions and len(additions) == 1:
-            return match.group(1)
-        if len(additions) == 1:
-            return next(iter(additions))
-        raise AmbiguousState("could not acquire exact terminal profile identity")
+            profile_id = match.group(1)
+        elif len(additions) == 1:
+            profile_id = next(iter(additions))
+        else:
+            raise AmbiguousState("could not acquire exact terminal profile identity")
+        self.validate_tun_profile(profile_id)
+        return profile_id
 
     def delete_profile(self, profile_id: str) -> None:
         self.run("profile", "delete", profile_id, "--yes").require_success("delete terminal acceptance profile")
