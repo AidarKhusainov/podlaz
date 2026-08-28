@@ -55,6 +55,8 @@ Pull-request CI and tagged release validation must invoke the same canonical `sc
 
 The tagged workflow remains responsible for rebuilding immutable artifacts from the tag and checking their release metadata, checksums, attestations, and publication behavior. Those release-only checks may still fail after tagging, but package installation, service availability, CLI access, and purge behavior must already have passed the pull-request gate.
 
+For manually dispatched self-hosted TUN coverage and issue-specific package scenarios, see `docs/e2e.md`. The laptop harness below complements those disposable-runner workflows with maintainer-laptop upgrade, suspend/NetworkManager, long-soak, and real reboot evidence; it does not replace CI or claim a release qualification until its own mandatory phases complete.
+
 ## Maintainer laptop release qualification
 
 For a release candidate that needs real-host package, TUN, lifecycle, privacy, resource, suspend, NetworkManager, and boot evidence, use the release-laptop acceptance harness against the already-built native Debian package:
