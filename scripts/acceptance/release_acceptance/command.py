@@ -30,6 +30,25 @@ class CommandResult:
         return self
 
 
+class RunningCommand:
+    def __init__(self, raw: tuple[str, ...], process: subprocess.Popen[str], evidence=None):
+        self.raw = raw
+        self.process = process
+        self.evidence = evidence
+
+    def wait(self, *, timeout: float) -> CommandResult:
+        try:
+            stdout, stderr = self.process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            stdout, stderr = self.process.communicate()
+            raise
+        result = CommandResult(self.raw, self.process.returncode, stdout, stderr)
+        if self.evidence is not None:
+            self.evidence.record_command(result)
+        return result
+
+
 class CommandRunner:
     def __init__(self, *, evidence=None):
         self.evidence = evidence
@@ -43,6 +62,46 @@ class CommandRunner:
         env: Mapping[str, str] | None = None,
         input_text: str | None = None,
     ) -> CommandResult:
+        raw, command, run_env = self._prepare(argv, user=user, env=env)
+        completed = subprocess.run(
+            command,
+            text=True,
+            input=input_text,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            env=run_env,
+        )
+        result = CommandResult(raw, completed.returncode, completed.stdout, completed.stderr)
+        if self.evidence is not None:
+            self.evidence.record_command(result)
+        return result
+
+    def start(
+        self,
+        argv: Sequence[str],
+        *,
+        user: UserIdentity | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> RunningCommand:
+        raw, command, run_env = self._prepare(argv, user=user, env=env)
+        process = subprocess.Popen(
+            command,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=run_env,
+        )
+        return RunningCommand(raw, process, self.evidence)
+
+    def _prepare(
+        self,
+        argv: Sequence[str],
+        *,
+        user: UserIdentity | None,
+        env: Mapping[str, str] | None,
+    ) -> tuple[tuple[str, ...], list[str], dict[str, str]]:
         if not argv:
             raise ValueError("empty command")
         raw = tuple(str(value) for value in argv)
@@ -61,19 +120,7 @@ class CommandRunner:
             if env:
                 user_env.update(env)
             command = ["runuser", "-u", user.name, "--", "env", *[f"{k}={v}" for k, v in user_env.items()], *raw]
-        completed = subprocess.run(
-            command,
-            text=True,
-            input=input_text,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-            env=run_env,
-        )
-        result = CommandResult(raw, completed.returncode, completed.stdout, completed.stderr)
-        if self.evidence is not None:
-            self.evidence.record_command(result)
-        return result
+        return raw, command, run_env
 
     @staticmethod
     def _reject_forbidden(argv: tuple[str, ...]) -> None:
