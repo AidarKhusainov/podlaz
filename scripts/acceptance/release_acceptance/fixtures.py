@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from .checkpoint import MutationLedger
 from .command import CommandRunner
@@ -42,10 +41,13 @@ class FixtureLease:
         self.runner = runner
         self.ledger = ledger
         self.spec = spec
+        self.current_route = spec.route
 
     def acquire(self) -> None:
         self._assert_free()
-        self.ledger.begin_acquire(self.spec.name, "network_fixture", self.spec.__dict__.copy())
+        identity = self.spec.__dict__.copy()
+        identity["current_route"] = self.spec.route
+        self.ledger.begin_acquire(self.spec.name, "network_fixture", identity)
         s = self.spec
         self._run("ip", "tuntap", "add", "dev", s.tun, "mode", "tun")
         self._run("ip", "link", "set", "dev", s.tun, "up")
@@ -64,15 +66,20 @@ class FixtureLease:
 
     def churn(self) -> None:
         s = self.spec
-        alternate = "203.0.113.64/32" if s is FIXTURE_B else "198.51.100.252/32"
+        alternate = "203.0.113.64/32" if s == FIXTURE_B else "198.51.100.252/32"
         self._run("ip", "-4", "route", "replace", "blackhole", alternate, "table", s.table)
-        self._run("ip", "-4", "route", "del", "blackhole", s.route, "table", s.table)
+        self._run("ip", "-4", "route", "del", "blackhole", self.current_route, "table", s.table)
+        self.current_route = alternate
+        checkpoint = self.ledger.store.load()
+        checkpoint.mutations[s.name].identity["current_route"] = alternate
+        self.ledger.store.replace(checkpoint)
 
     def verify(self) -> None:
         s = self.spec
         checks = [
             (("ip", "link", "show", "dev", s.tun), s.tun),
             (("ip", "-4", "address", "show", "dev", s.tun), s.cidr),
+            (("ip", "-4", "route", "show", "table", s.table), self.current_route.split("/", 1)[0]),
             (("nft", "list", "table", "inet", s.nft_table), s.nft_table),
             (("resolvectl", "status", s.dns_link, "--no-pager"), s.dns_server),
         ]
@@ -83,6 +90,11 @@ class FixtureLease:
 
     def release(self) -> None:
         s = self.spec
+        checkpoint = self.ledger.store.load()
+        record = checkpoint.mutations.get(s.name)
+        if record is None:
+            raise AmbiguousState(f"fixture {s.name} has no persisted authority")
+        self.current_route = str(record.identity.get("current_route") or s.route)
         self.verify()
         self.ledger.begin_release(s.name)
         commands = [
@@ -91,7 +103,7 @@ class FixtureLease:
             ("nft", "delete", "table", "inet", s.nft_table),
             ("ip", "-4", "rule", "del", "priority", str(s.priority_b), "to", s.rule_b, "lookup", s.table),
             ("ip", "-4", "rule", "del", "priority", str(s.priority_a), "to", s.rule_a, "lookup", s.table),
-            ("ip", "-4", "route", "del", "blackhole", s.route, "table", s.table),
+            ("ip", "-4", "route", "del", "blackhole", self.current_route, "table", s.table),
             ("ip", "link", "del", "dev", s.tun),
         ]
         for argv in commands:
