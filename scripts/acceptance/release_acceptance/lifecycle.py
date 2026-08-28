@@ -35,9 +35,7 @@ class LifecycleScenarios:
         if current_pid == previous_pid:
             raise AmbiguousState("candidate package did not replace podlazd MainPID")
         self.wait_verified_active()
-        verdict = self.privacy.observe_protected()
-        if verdict.outcome.value != "PASS":
-            raise AmbiguousState(verdict.reason)
+        self._require_privacy()
 
     def graceful_restart(self) -> None:
         before = self.main_pid()
@@ -48,7 +46,10 @@ class LifecycleScenarios:
 
     def unexpected_daemon_death(self) -> None:
         before = self.main_pid()
-        self.runner.run(("systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", "podlazd.service"), timeout=10).require_success("SIGKILL podlazd main")
+        self.runner.run(
+            ("systemctl", "kill", "--kill-who=main", "--signal=SIGKILL", "podlazd.service"),
+            timeout=10,
+        ).require_success("SIGKILL podlazd main")
         self.wait_new_main_pid(before)
         self.wait_verified_active()
         self._require_privacy()
@@ -81,35 +82,47 @@ class LifecycleScenarios:
         )
         self.runner.run(("systemctl", "daemon-reload"), timeout=30).require_success("daemon-reload rollback hook")
         self.ledger.mark_acquired("rollback_hook")
+
+        # First restart activates the release-built hook while preserving the active session.
         self.runner.run(("systemctl", "restart", "podlazd.service"), timeout=90).require_success("activate rollback hook")
         self.wait_verified_active()
+
+        for marker in ("rollback-pause.ready", "rollback-pause.continue"):
+            (hook_dir / marker).unlink(missing_ok=True)
         (hook_dir / "rollback-pause.arm").write_text("armed\n", encoding="utf-8")
+
         old_pid = self.main_pid()
-        restart = self.runner.run(("systemctl", "restart", "podlazd.service"), timeout=190)
+        # The restart must remain in flight while the daemon is paused after durable
+        # rolling_back authority was committed. A synchronous call would miss this seam.
+        restart = self.runner.start(("systemctl", "restart", "podlazd.service"))
         self._wait_file(hook_dir / "rollback-pause.ready", 60)
         self._require_exact_rolling_back_authority()
         self.runner.run(("kill", "-KILL", str(old_pid)), timeout=5).require_success("interrupt rolling_back daemon")
-        self.wait_new_main_pid(old_pid)
-        self.wait_verified_active()
+
+        # The client may observe a failed stop job because the exact MainPID was killed.
+        # That result is evidence only; no reset-failed/start repair is allowed here.
+        restart.wait(timeout=30)
+        self.wait_new_main_pid(old_pid, timeout=120)
+        self.wait_verified_active(timeout=180)
+        self._require_privacy()
         self.release_systemd_hook("rollback_hook", override, hook_dir)
 
     def release_systemd_hook(self, name: str, override: Path, hook_dir: Path) -> None:
         self.ledger.begin_release(name)
-        try:
-            override.unlink()
-        except FileNotFoundError:
-            pass
+        override.unlink(missing_ok=True)
         self.runner.run(("systemctl", "daemon-reload"), timeout=30).require_success("daemon-reload after hook removal")
-        for child in hook_dir.glob("*") if hook_dir.exists() else ():
-            child.unlink(missing_ok=True)
-        try:
+        if hook_dir.exists():
+            for child in hook_dir.iterdir():
+                if child.is_symlink() or not child.is_file():
+                    raise AmbiguousState(f"unexpected hook-dir entry during cleanup: {child.name}")
+                child.unlink()
             hook_dir.rmdir()
-        except FileNotFoundError:
-            pass
         self.ledger.mark_released(name)
 
     def main_pid(self) -> int:
-        result = self.runner.run(("systemctl", "show", "-p", "MainPID", "--value", "podlazd.service"), timeout=5).require_success("read podlazd MainPID")
+        result = self.runner.run(
+            ("systemctl", "show", "-p", "MainPID", "--value", "podlazd.service"), timeout=5
+        ).require_success("read podlazd MainPID")
         try:
             pid = int(result.stdout.strip())
         except ValueError as error:
@@ -148,14 +161,24 @@ class LifecycleScenarios:
     def _wait_daemon_status(self, connection: str, tun: str, *, require_verified: bool, timeout: float) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            result = self.runner.run(("curl", "--fail", "--silent", "--max-time", "5", "--unix-socket", "/run/podlaz/podlazd.sock", "http://localhost/v1/status"), timeout=7)
+            result = self.runner.run(
+                (
+                    "curl", "--fail", "--silent", "--max-time", "5",
+                    "--unix-socket", "/run/podlaz/podlazd.sock", "http://localhost/v1/status",
+                ),
+                timeout=7,
+            )
             if result.returncode == 0:
                 try:
                     payload = json.loads(result.stdout)
                 except json.JSONDecodeError:
                     payload = {}
                 health = payload.get("tun_health") or {}
-                if payload.get("connection") == connection and payload.get("tun") == tun and (not require_verified or health.get("state") == "verified"):
+                if (
+                    payload.get("connection") == connection
+                    and payload.get("tun") == tun
+                    and (not require_verified or health.get("state") == "verified")
+                ):
                     return
             time.sleep(0.2)
         raise AmbiguousState(f"daemon status did not converge to {connection}/{tun}")
@@ -175,7 +198,13 @@ class LifecycleScenarios:
             if tx.get("owner") != "podlaz" or tx.get("state") != "rolling_back":
                 continue
             rollback = tx.get("rollback") or {}
-            if any(any(isinstance(item, dict) and item.get("owner") == "podlaz" for item in rollback.get(key) or []) for key in ("tun_addresses", "routes", "policy_rules", "dns", "nftables", "generated_configs", "child_processes")):
+            if any(
+                any(isinstance(item, dict) and item.get("owner") == "podlaz" for item in rollback.get(key) or [])
+                for key in (
+                    "tun_addresses", "routes", "policy_rules", "dns", "nftables",
+                    "generated_configs", "child_processes",
+                )
+            ):
                 matches += 1
         if matches != 1:
             raise AmbiguousState(f"expected one exact rolling_back authority, found {matches}")
@@ -184,7 +213,7 @@ class LifecycleScenarios:
     def _wait_file(path: Path, timeout: float) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if path.is_file():
+            if path.is_file() and not path.is_symlink():
                 return
             time.sleep(0.1)
         raise AmbiguousState(f"expected marker did not appear: {path.name}")
