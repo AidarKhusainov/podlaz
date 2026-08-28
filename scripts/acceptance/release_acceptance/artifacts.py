@@ -39,14 +39,23 @@ class ArtifactStore:
 
     @classmethod
     def _create_safe_tree(cls, root: Path, user: UserIdentity) -> None:
+        home = user.home.resolve(strict=True)
         current = Path(root.anchor)
         missing: list[Path] = []
+        inside_home = False
         for part in root.parts[1:]:
             current /= part
+            if current == home:
+                inside_home = True
             if current.exists():
                 st = current.lstat()
                 if current.is_symlink() or not current.is_dir():
                     raise UnsafePath(f"artifact path has unsafe component: {current}")
+                if inside_home and current != home:
+                    if st.st_uid != user.uid:
+                        raise UnsafePath(f"artifact path component is not user-owned: {current}")
+                    if st.st_mode & 0o022:
+                        raise UnsafePath(f"artifact path component is group/world writable: {current}")
                 if current == root:
                     if st.st_uid != user.uid:
                         raise UnsafePath("existing artifact root must be owned by original user")
@@ -119,9 +128,8 @@ class ArtifactStore:
             return out
         if isinstance(value, list):
             return [self.sanitize(item) for item in value]
-        if isinstance(value, str):
-            if any(pattern.search(value) for pattern in _TOKEN_PATTERNS):
-                return "<redacted>"
+        if isinstance(value, str) and any(pattern.search(value) for pattern in _TOKEN_PATTERNS):
+            return "<redacted>"
         return value
 
     @staticmethod
