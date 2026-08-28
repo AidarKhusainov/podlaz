@@ -97,6 +97,8 @@ Result meanings are strict:
 
 Evidence is written under the original user's state tree by default. Private command/host evidence is separated from sanitized public `summary.txt`, `report.json`, and `requirements-observation.json`. The harness does not upload artifacts automatically.
 
+The laptop run itself is manual release evidence; source-level or CI validation of the harness implementation is separate from executing the disruptive qualification workflow.
+
 ## Publication
 
 The workflow treats published release assets as immutable. It never uploads with `--clobber` and never replaces an already attached expected artifact.
