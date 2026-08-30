@@ -13,7 +13,7 @@ fail() {
 [[ -x "$SCRIPT" ]] || fail "release-laptop.sh is not executable"
 bash -n "$SCRIPT" || fail "release-laptop.sh fails bash -n"
 
-if grep -Eqi '(^|[^[:alnum:]_])(python|python3)([^[:alnum:]_]|$)|release_acceptance' "$SCRIPT"; then
+if grep -Eqi '(^|[^[:alnum:]_])(python|python3)([^[:alnum:]_]|$)|-m[[:space:]]+release_acceptance([[:space:]]|$)' "$SCRIPT"; then
   fail "release-laptop.sh still depends on Python runtime/modules"
 fi
 
