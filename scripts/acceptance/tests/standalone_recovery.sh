@@ -13,10 +13,10 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export RELEASE_ACCEPTANCE_TEST_MODE=1
 export RELEASE_ACCEPTANCE_TEST_HOME="$TMP/home"
-export RELEASE_ACCEPTANCE_STATE_HOME="$TMP/state"
+export RELEASE_ACCEPTANCE_STATE_DIR="$TMP/state"
 export SUDO_USER=tester
 mkdir -p "$RELEASE_ACCEPTANCE_TEST_HOME"
-RA_USER=tester; RA_UID="$(id -u)"; RA_GID="$(id -g)"; RA_HOME="$RELEASE_ACCEPTANCE_TEST_HOME"; RA_ARTIFACT_DIR="$TMP/artifacts"
+RA_USER=tester; RA_UID="$(id -u)"; RA_GID="$(id -g)"; RA_HOME="$RELEASE_ACCEPTANCE_TEST_HOME"; RA_ARTIFACT_DIR="$RELEASE_ACCEPTANCE_TEST_HOME/artifacts"
 ra_init_paths
 ra_artifacts_init_new test-run
 
