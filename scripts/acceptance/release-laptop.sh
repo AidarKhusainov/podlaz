@@ -139,8 +139,8 @@ ra_state_dir_prepare() {
 
 ra_lock_acquire() {
   ra_state_dir_prepare || return 1
-  eval "exec ${RA_LOCK_FD}>\"$RA_LOCK_FILE\""
-  flock -n "$RA_LOCK_FD" || { ra_die "another release acceptance operation is already running"; return 1; }
+  exec 9>"$RA_LOCK_FILE"
+  flock -n 9 || { ra_die "another release acceptance operation is already running"; return 1; }
 }
 
 ra_validate_artifact_root() {
