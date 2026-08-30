@@ -228,9 +228,12 @@ class ReleaseAcceptance:
         ledger = MutationLedger(self.checkpoint_store)
         try:
             candidate = packages.inspect(Path(checkpoint.candidate["path"]))
-            if packages.installed_version() != candidate.version:
+            package_setup = checkpoint.mutations.get("package_setup")
+            if package_setup is not None and package_setup.state != MutationState.RELEASED:
+                previous = packages.inspect(Path(package_setup.identity["previous_path"]))
+                self._reconcile_package_setup(packages, candidate, previous, ledger)
+            elif packages.installed_version() != candidate.version:
                 packages.install_exact(candidate)
-            self._release_package_setup_if_restored(packages, candidate, ledger)
             try:
                 product.disconnect()
             except AcceptanceError:
@@ -292,6 +295,47 @@ class ReleaseAcceptance:
         )
         packages.install_exact(previous)
         ledger.mark_acquired("package_setup")
+
+    def _reconcile_package_setup(
+        self, packages, candidate, previous, ledger: MutationLedger
+    ) -> None:
+        checkpoint = self.checkpoint_store.load()
+        record = checkpoint.mutations.get("package_setup")
+        if record is None or record.state == MutationState.RELEASED:
+            return
+        if record.kind != "previous_package":
+            raise AmbiguousState("package_setup has unexpected mutation kind")
+        expected = record.identity
+        if (
+            str(candidate.path) != expected.get("candidate_path")
+            or candidate.version != expected.get("candidate_version")
+            or str(previous.path) != expected.get("previous_path")
+            or previous.version != expected.get("previous_version")
+        ):
+            raise AmbiguousState("package_setup package identity changed")
+
+        installed = packages.installed_version()
+        if installed == candidate.version:
+            if record.state == MutationState.ACQUIRED:
+                ledger.begin_release("package_setup")
+                ledger.mark_released("package_setup")
+            elif record.state in {MutationState.ACQUIRING, MutationState.RELEASING}:
+                ledger.mark_released("package_setup")
+            return
+        if installed != previous.version:
+            raise AmbiguousState("package_setup installed version is neither exact previous nor candidate")
+
+        if record.state == MutationState.ACQUIRING:
+            ledger.mark_acquired("package_setup")
+            record = self.checkpoint_store.load().mutations["package_setup"]
+        if record.state == MutationState.ACQUIRED:
+            ledger.begin_release("package_setup")
+        elif record.state != MutationState.RELEASING:
+            raise AmbiguousState(f"unsupported package_setup state: {record.state.value}")
+        packages.install_exact(candidate)
+        if packages.installed_version() != candidate.version:
+            raise AmbiguousState("candidate package did not converge during package_setup reconciliation")
+        ledger.mark_released("package_setup")
 
     def _release_package_setup_if_restored(
         self, packages, candidate, ledger: MutationLedger
@@ -459,14 +503,26 @@ class ReleaseAcceptance:
                             )
                         child.unlink()
                     hook_dir.rmdir()
-                if (
-                    self.checkpoint_store.load().mutations[name].state
-                    == MutationState.RELEASING
-                ):
+                state = self.checkpoint_store.load().mutations[name].state
+                if state in {MutationState.ACQUIRING, MutationState.RELEASING}:
                     ledger.mark_released(name)
             elif record.kind == "network_fixture":
                 spec = FIXTURE_A if name == "fixture_a" else FIXTURE_B
                 FixtureLease(runner, ledger, spec).release()
+            elif record.kind == "networkmanager_connection":
+                if record.state == MutationState.ACQUIRED:
+                    ledger.begin_release(name)
+                connection = str(record.identity.get("connection") or "")
+                if not connection:
+                    raise AmbiguousState("NetworkManager mutation lost exact connection identity")
+                runner.run(
+                    ("nmcli", "connection", "up", connection), timeout=60
+                ).require_success("restore exact NetworkManager connection")
+                state = self.checkpoint_store.load().mutations[name].state
+                if state in {MutationState.ACQUIRING, MutationState.RELEASING}:
+                    ledger.mark_released(name)
+            else:
+                raise AmbiguousState(f"unsupported owned mutation kind during cleanup: {record.kind}")
             checkpoint = self.checkpoint_store.load()
 
     @staticmethod
