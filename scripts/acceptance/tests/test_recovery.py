@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from release_acceptance.checkpoint import CheckpointStore, MutationLedger
-from release_acceptance.model import Checkpoint, MutationRecord, MutationState, UserIdentity
+from release_acceptance.model import AmbiguousState, Checkpoint, MutationRecord, MutationState, UserIdentity
 from release_acceptance.orchestrator import ReleaseAcceptance
 
 
@@ -77,6 +77,28 @@ class RecoveryTests(unittest.TestCase):
             )
         )
 
+    def package_setup(self, state: MutationState) -> tuple[Identity, Identity]:
+        candidate_path = self.root / "candidate.deb"
+        previous_path = self.root / "previous.deb"
+        candidate_path.write_bytes(b"candidate")
+        previous_path.write_bytes(b"previous")
+        self.checkpoint(
+            mutation=(
+                "package_setup",
+                MutationRecord(
+                    state,
+                    "previous_package",
+                    {
+                        "previous_path": str(previous_path),
+                        "previous_version": "1.0",
+                        "candidate_path": str(candidate_path),
+                        "candidate_version": "2.0",
+                    },
+                ),
+            )
+        )
+        return Identity(candidate_path, "2.0"), Identity(previous_path, "1.0")
+
     def test_abort_restores_acquired_networkmanager_connection(self):
         self.checkpoint(
             mutation=(
@@ -119,34 +141,49 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(self.store.load().mutations["fault_hook"].state, MutationState.RELEASED)
 
     def test_package_setup_reconciliation_restores_candidate_from_exact_previous(self):
-        candidate_path = self.root / "candidate.deb"
-        previous_path = self.root / "previous.deb"
-        candidate_path.write_bytes(b"candidate")
-        previous_path.write_bytes(b"previous")
-        self.checkpoint(
-            mutation=(
-                "package_setup",
-                MutationRecord(
-                    MutationState.ACQUIRED,
-                    "previous_package",
-                    {
-                        "previous_path": str(previous_path),
-                        "previous_version": "1.0",
-                        "candidate_path": str(candidate_path),
-                        "candidate_version": "2.0",
-                    },
-                ),
-            )
-        )
+        candidate, previous = self.package_setup(MutationState.ACQUIRED)
         packages = FakePackages("1.0")
-        candidate = Identity(candidate_path, "2.0")
-        previous = Identity(previous_path, "1.0")
 
         self.harness._reconcile_package_setup(packages, candidate, previous, MutationLedger(self.store))
 
         self.assertEqual(packages.installs, ["2.0"])
         self.assertEqual(packages.installed_version(), "2.0")
         self.assertEqual(self.store.load().mutations["package_setup"].state, MutationState.RELEASED)
+
+    def test_resume_package_setup_commits_exact_previous_without_reinstall(self):
+        candidate, previous = self.package_setup(MutationState.ACQUIRING)
+        packages = FakePackages("1.0")
+
+        ready = self.harness._reconcile_package_setup_for_resume(
+            packages, candidate, previous, MutationLedger(self.store)
+        )
+
+        self.assertTrue(ready)
+        self.assertEqual(packages.installs, [])
+        self.assertEqual(self.store.load().mutations["package_setup"].state, MutationState.ACQUIRED)
+
+    def test_resume_package_setup_restarts_setup_when_candidate_is_still_installed(self):
+        candidate, previous = self.package_setup(MutationState.ACQUIRING)
+        packages = FakePackages("2.0")
+
+        ready = self.harness._reconcile_package_setup_for_resume(
+            packages, candidate, previous, MutationLedger(self.store)
+        )
+
+        self.assertFalse(ready)
+        self.assertEqual(packages.installs, [])
+        self.assertEqual(self.store.load().mutations["package_setup"].state, MutationState.RELEASED)
+
+    def test_resume_package_setup_rejects_unexpected_installed_version(self):
+        candidate, previous = self.package_setup(MutationState.ACQUIRING)
+        packages = FakePackages("1.5")
+
+        with self.assertRaises(AmbiguousState):
+            self.harness._reconcile_package_setup_for_resume(
+                packages, candidate, previous, MutationLedger(self.store)
+            )
+
+        self.assertEqual(self.store.load().mutations["package_setup"].state, MutationState.ACQUIRING)
 
 
 if __name__ == "__main__":
