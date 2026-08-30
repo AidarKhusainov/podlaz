@@ -45,7 +45,7 @@ ra_capture() {
     *"ip -j -d link show dev podlaz-accept-adns0 "*) RA_CAPTURE=''; return 1 ;;
     *"ip -j -4 route show table 51820 "*) RA_CAPTURE='[{"type":"blackhole","dst":"198.51.100.254/32","table":51820}]'; return 0 ;;
     *"ip -4 rule show priority 9999 "*) RA_CAPTURE='9999: from all to 198.51.100.254/32 lookup 51820'; return 0 ;;
-    *"ip -4 rule show priority 10000 "*) RA_CAPTURE=''; return 1 ;;
+    *"ip -4 rule show priority 10000 "*) RA_CAPTURE=''; return 0 ;;
     *"nft -j list table inet podlaz_accept_a "*) RA_CAPTURE=''; return 1 ;;
     *) RA_CAPTURE=''; return 0 ;;
   esac
@@ -66,7 +66,7 @@ ra_capture() {
     *"ip -j -d link show dev podlaz-accept-a0 "*) RA_CAPTURE='[{"ifname":"podlaz-accept-a0","linkinfo":{"info_kind":"dummy"}}]'; return 0 ;;
     *"ip -j -d link show dev podlaz-accept-adns0 "*) RA_CAPTURE=''; return 1 ;;
     *"ip -j -4 route show table 51820 "*) RA_CAPTURE='[]'; return 0 ;;
-    *"ip -4 rule show priority "*) RA_CAPTURE=''; return 1 ;;
+    *"ip -4 rule show priority "*) RA_CAPTURE=''; return 0 ;;
     *"nft -j list table inet podlaz_accept_a "*) RA_CAPTURE=''; return 1 ;;
     *) RA_CAPTURE=''; return 0 ;;
   esac
@@ -84,7 +84,7 @@ ra_capture() {
     *"ip -j -d link show dev podlaz-accept-a0 "*) RA_CAPTURE=''; return 1 ;;
     *"ip -j -d link show dev podlaz-accept-adns0 "*) RA_CAPTURE=''; return 1 ;;
     *"ip -j -4 route show table 51820 "*) RA_CAPTURE='[]'; return 0 ;;
-    *"ip -4 rule show priority "*) RA_CAPTURE=''; return 1 ;;
+    *"ip -4 rule show priority "*) RA_CAPTURE=''; return 0 ;;
     *"nft -j list table inet podlaz_accept_a "*) RA_CAPTURE=''; return 1 ;;
     *) RA_CAPTURE=''; return 0 ;;
   esac
