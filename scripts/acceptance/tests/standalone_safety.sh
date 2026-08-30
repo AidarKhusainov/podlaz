@@ -13,6 +13,11 @@ assert_contains_file() { grep -Fq -- "$2" "$1" || fail "expected $1 to contain [
 assert_contains_file "$SCRIPT" 'RA_STATE_DIR="${RELEASE_ACCEPTANCE_STATE_DIR:-/var/lib/podlaz-release-acceptance}"'
 assert_contains_file "$SCRIPT" 'flock'
 
+# The approved standalone design explicitly forbids eval.
+if grep -Eq '(^|[;[:space:]])eval([[:space:]]|$)' "$SCRIPT"; then
+  fail "standalone harness must not use eval"
+fi
+
 # User-selected evidence paths are validated before chmod/chown/creation.
 assert_contains_file "$SCRIPT" 'ra_validate_artifact_root'
 
