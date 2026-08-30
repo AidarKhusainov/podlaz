@@ -95,6 +95,9 @@ class FixtureLease:
         record = checkpoint.mutations.get(s.name)
         if record is None:
             raise AmbiguousState(f"fixture {s.name} has no persisted authority")
+        if record.state == MutationState.ACQUIRING:
+            self.release_partial()
+            return
         self.current_route = str(record.identity.get("current_route") or s.route)
         self.verify()
         if record.state == MutationState.ACQUIRED:
@@ -119,13 +122,7 @@ class FixtureLease:
         self.ledger.mark_released(s.name)
 
     def release_partial(self) -> None:
-        """Release only components that can be proven to match an interrupted acquire.
-
-        This path is intentionally conservative.  It is valid only for write-ahead
-        ACQUIRING authority.  Any occupied identity that is not exactly one of the
-        fixture components aborts cleanup instead of deleting potentially foreign
-        network state.
-        """
+        """Release only components that can be proven to match an interrupted acquire."""
         s = self.spec
         checkpoint = self.ledger.store.load()
         record = checkpoint.mutations.get(s.name)
@@ -146,26 +143,18 @@ class FixtureLease:
 
         commands: list[tuple[str, ...]] = []
         if dns_present:
-            commands.extend(
-                [
-                    ("resolvectl", "revert", s.dns_link),
-                    ("ip", "link", "del", "dev", s.dns_link),
-                ]
-            )
+            commands.extend([
+                ("resolvectl", "revert", s.dns_link),
+                ("ip", "link", "del", "dev", s.dns_link),
+            ])
         if nft_present:
             commands.append(("nft", "delete", "table", "inet", s.nft_table))
         if rule_b_present:
-            commands.append(
-                ("ip", "-4", "rule", "del", "priority", str(s.priority_b), "to", s.rule_b, "lookup", s.table)
-            )
+            commands.append(("ip", "-4", "rule", "del", "priority", str(s.priority_b), "to", s.rule_b, "lookup", s.table))
         if rule_a_present:
-            commands.append(
-                ("ip", "-4", "rule", "del", "priority", str(s.priority_a), "to", s.rule_a, "lookup", s.table)
-            )
+            commands.append(("ip", "-4", "rule", "del", "priority", str(s.priority_a), "to", s.rule_a, "lookup", s.table))
         if route_present:
-            commands.append(
-                ("ip", "-4", "route", "del", "blackhole", self.current_route, "table", s.table)
-            )
+            commands.append(("ip", "-4", "route", "del", "blackhole", self.current_route, "table", s.table))
         if tun_present:
             commands.append(("ip", "link", "del", "dev", s.tun))
 
@@ -178,9 +167,7 @@ class FixtureLease:
         self.ledger.mark_released(s.name)
 
     def _observe_link(self, name: str, expected_kind: str) -> bool:
-        result = self.runner.run(
-            ("ip", "-j", "-d", "link", "show", "dev", name), timeout=5
-        )
+        result = self.runner.run(("ip", "-j", "-d", "link", "show", "dev", name), timeout=5)
         if result.returncode != 0:
             return False
         try:
@@ -204,9 +191,7 @@ class FixtureLease:
 
     def _observe_route(self) -> bool:
         s = self.spec
-        result = self.runner.run(
-            ("ip", "-j", "-4", "route", "show", "table", s.table), timeout=5
-        )
+        result = self.runner.run(("ip", "-j", "-4", "route", "show", "table", s.table), timeout=5)
         if result.returncode != 0:
             return False
         try:
@@ -230,9 +215,7 @@ class FixtureLease:
 
     def _observe_rule(self, priority: int, target: str) -> bool:
         s = self.spec
-        result = self.runner.run(
-            ("ip", "-4", "rule", "show", "priority", str(priority)), timeout=5
-        )
+        result = self.runner.run(("ip", "-4", "rule", "show", "priority", str(priority)), timeout=5)
         if result.returncode != 0:
             return False
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
@@ -246,9 +229,7 @@ class FixtureLease:
 
     def _observe_nft_table(self) -> bool:
         s = self.spec
-        result = self.runner.run(
-            ("nft", "-j", "list", "table", "inet", s.nft_table), timeout=5
-        )
+        result = self.runner.run(("nft", "-j", "list", "table", "inet", s.nft_table), timeout=5)
         if result.returncode != 0:
             return False
         try:
