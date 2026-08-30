@@ -46,9 +46,24 @@ class FakePackages:
 
 
 class Identity:
-    def __init__(self, path: Path, version: str):
+    def __init__(
+        self,
+        path: Path,
+        version: str,
+        *,
+        sha256: str,
+        inode: int,
+        device: int = 7,
+        package: str = "podlaz",
+        architecture: str = "amd64",
+    ):
         self.path = path
+        self.package = package
         self.version = version
+        self.architecture = architecture
+        self.sha256 = sha256
+        self.device = device
+        self.inode = inode
 
 
 class RecoveryTests(unittest.TestCase):
@@ -82,6 +97,8 @@ class RecoveryTests(unittest.TestCase):
         previous_path = self.root / "previous.deb"
         candidate_path.write_bytes(b"candidate")
         previous_path.write_bytes(b"previous")
+        candidate = Identity(candidate_path, "2.0", sha256="candidate-sha", inode=101)
+        previous = Identity(previous_path, "1.0", sha256="previous-sha", inode=102)
         self.checkpoint(
             mutation=(
                 "package_setup",
@@ -89,15 +106,25 @@ class RecoveryTests(unittest.TestCase):
                     state,
                     "previous_package",
                     {
-                        "previous_path": str(previous_path),
-                        "previous_version": "1.0",
-                        "candidate_path": str(candidate_path),
-                        "candidate_version": "2.0",
+                        "previous_path": str(previous.path),
+                        "previous_package": previous.package,
+                        "previous_version": previous.version,
+                        "previous_architecture": previous.architecture,
+                        "previous_sha256": previous.sha256,
+                        "previous_device": previous.device,
+                        "previous_inode": previous.inode,
+                        "candidate_path": str(candidate.path),
+                        "candidate_package": candidate.package,
+                        "candidate_version": candidate.version,
+                        "candidate_architecture": candidate.architecture,
+                        "candidate_sha256": candidate.sha256,
+                        "candidate_device": candidate.device,
+                        "candidate_inode": candidate.inode,
                     },
                 ),
             )
         )
-        return Identity(candidate_path, "2.0"), Identity(previous_path, "1.0")
+        return candidate, previous
 
     def test_abort_restores_acquired_networkmanager_connection(self):
         self.checkpoint(
@@ -181,6 +208,24 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(AmbiguousState):
             self.harness._reconcile_package_setup_for_resume(
                 packages, candidate, previous, MutationLedger(self.store)
+            )
+
+        self.assertEqual(self.store.load().mutations["package_setup"].state, MutationState.ACQUIRING)
+
+    def test_resume_package_setup_rejects_changed_previous_package_identity(self):
+        candidate, previous = self.package_setup(MutationState.ACQUIRING)
+        packages = FakePackages("1.0")
+        changed_previous = Identity(
+            previous.path,
+            previous.version,
+            sha256="different-sha",
+            inode=previous.inode,
+            device=previous.device,
+        )
+
+        with self.assertRaises(AmbiguousState):
+            self.harness._reconcile_package_setup_for_resume(
+                packages, candidate, changed_previous, MutationLedger(self.store)
             )
 
         self.assertEqual(self.store.load().mutations["package_setup"].state, MutationState.ACQUIRING)
