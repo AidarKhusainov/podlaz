@@ -29,7 +29,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 RA_CHECKPOINT="$TMP/current.json"
 cat >"$RA_CHECKPOINT" <<'JSON'
-{"scenarios":{"lower_release_upgrade":{"outcome":"PASS"},"privacy_active":{"outcome":"PASS"},"graceful_restart":{"outcome":"PASS"},"daemon_kill":{"outcome":"PASS"},"reinstall":{"outcome":"PASS"},"rollback_interruption":{"outcome":"PASS"},"preconnect_coexistence":{"outcome":"PASS"},"active_coexistence":{"outcome":"PASS"},"disconnect_cleanup":{"outcome":"PASS"},"runtime_terminal_convergence":{"outcome":"PASS"},"final_restoration":{"outcome":"PASS"},"reboot_autostart_off":{"outcome":"PASS"},"reboot_autostart_on":{"outcome":"PASS"},"explicit_disconnect_no_same_boot_retry":{"outcome":"PASS"},"reboot_terminal_autostart":{"outcome":"PASS"},"terminal_no_same_boot_retry":{"outcome":"PASS"},"wifi_reconnect":{"outcome":"PASS"},"suspend_resume":{"outcome":"PASS"},"resource_soak":{"outcome":"PASS"}}}
+{"scenarios":{"lower_release_upgrade":{"outcome":"PASS"},"privacy_active":{"outcome":"PASS"},"graceful_restart":{"outcome":"PASS"},"daemon_kill":{"outcome":"PASS"},"reinstall":{"outcome":"PASS"},"rollback_interruption":{"outcome":"PASS"},"stop_start_no_reconnect":{"outcome":"PASS"},"preconnect_coexistence":{"outcome":"PASS"},"active_coexistence":{"outcome":"PASS"},"resource_soak":{"outcome":"PASS"},"disconnect_cleanup":{"outcome":"PASS"},"coexistence_reconnect":{"outcome":"PASS"},"reconnect_resource_nonaccumulation":{"outcome":"PASS"},"runtime_terminal_convergence":{"outcome":"PASS"},"runtime_terminal_no_retry":{"outcome":"PASS"},"final_restoration":{"outcome":"PASS"},"reboot_autostart_off":{"outcome":"PASS"},"reboot_autostart_on":{"outcome":"PASS"},"explicit_disconnect_no_same_boot_retry":{"outcome":"PASS"},"reboot_terminal_autostart":{"outcome":"PASS"},"terminal_no_same_boot_retry":{"outcome":"PASS"},"wifi_reconnect":{"outcome":"PASS"},"suspend_resume":{"outcome":"PASS"}}}
 JSON
 RA_REBOOT_PHASES=1 RA_ALLOW_WIFI=1 RA_ALLOW_SUSPEND=1 RA_SOAK_MINUTES=61
 [[ "$(ra_qualification)" == "PARTIAL_PASS" ]] || fail "61-minute debug soak must not QUALIFIED_PASS"
@@ -39,10 +39,11 @@ RA_SOAK_MINUTES=60
 # Reboot no-retry evidence is only meaningful if the daemon is deliberately
 # restarted in the same boot after successful autostart/disconnect/terminal.
 resume_body="$(sed -n '/^ra_run_resume()/,/^ra_run_abort()/p' "$SCRIPT")"
-[[ "$(grep -c 'systemctl restart.*RA_SERVICE' <<<"$resume_body")" -ge 3 ]] || fail "reboot resume flow lacks mandatory same-boot daemon restart checks"
+grep -Fq 'ra_successful_boot_restart_continuity' <<<"$resume_body" || fail "successful autostart does not restart daemon while active"
+[[ "$(grep -c 'ra_same_boot_restart_stays_inactive' <<<"$resume_body")" -ge 2 ]] || fail "disconnect/terminal no-retry checks do not restart daemon"
 
 # Abort/finalization must prove ordinary networking before declaring clean.
 abort_body="$(sed -n '/^ra_run_abort()/,/^ra_main()/p' "$SCRIPT")"
-grep -Fq 'ra_verify_ordinary_network' <<<"$abort_body" || fail "abort can declare clean without ordinary-network verification"
+grep -Eq 'ra_verify_ordinary_network|ra_privacy_require_ordinary' <<<"$abort_body" || fail "abort can declare clean without ordinary-network verification"
 
 printf 'standalone_safety: PASS\n'
