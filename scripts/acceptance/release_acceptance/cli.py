@@ -15,8 +15,16 @@ def parse_args(argv: list[str]) -> RunConfig:
         description="Qualify an already-built Podlaz Debian release on a maintainer laptop.",
     )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--resume", action="store_true", help="resume after a user-controlled reboot")
-    mode.add_argument("--abort", action="store_true", help="abandon the current run and restore owned state")
+    mode.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume a supported persisted package-setup or post-reboot phase",
+    )
+    mode.add_argument(
+        "--abort",
+        action="store_true",
+        help="abandon the current run and restore exact harness-owned state",
+    )
     parser.add_argument("candidate", nargs="?", type=Path, help="candidate Podlaz .deb")
     parser.add_argument("--previous-deb", type=Path, help="explicit strictly-lower Podlaz release .deb")
     parser.add_argument("--profile", help="existing user profile id")
