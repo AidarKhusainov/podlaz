@@ -366,9 +366,19 @@ class ReleaseAcceptance:
             "previous_package",
             {
                 "previous_path": str(previous.path),
+                "previous_package": previous.package,
                 "previous_version": previous.version,
+                "previous_architecture": previous.architecture,
+                "previous_sha256": previous.sha256,
+                "previous_device": previous.device,
+                "previous_inode": previous.inode,
                 "candidate_path": str(candidate.path),
+                "candidate_package": candidate.package,
                 "candidate_version": candidate.version,
+                "candidate_architecture": candidate.architecture,
+                "candidate_sha256": candidate.sha256,
+                "candidate_device": candidate.device,
+                "candidate_inode": candidate.inode,
             },
         )
         packages.install_exact(previous)
@@ -378,12 +388,23 @@ class ReleaseAcceptance:
         if record.kind != "previous_package":
             raise AmbiguousState("package_setup has unexpected mutation kind")
         expected = record.identity
-        if (
-            str(candidate.path) != expected.get("candidate_path")
-            or candidate.version != expected.get("candidate_version")
-            or str(previous.path) != expected.get("previous_path")
-            or previous.version != expected.get("previous_version")
-        ):
+        actual = {
+            "previous_path": str(previous.path),
+            "previous_package": previous.package,
+            "previous_version": previous.version,
+            "previous_architecture": previous.architecture,
+            "previous_sha256": previous.sha256,
+            "previous_device": previous.device,
+            "previous_inode": previous.inode,
+            "candidate_path": str(candidate.path),
+            "candidate_package": candidate.package,
+            "candidate_version": candidate.version,
+            "candidate_architecture": candidate.architecture,
+            "candidate_sha256": candidate.sha256,
+            "candidate_device": candidate.device,
+            "candidate_inode": candidate.inode,
+        }
+        if any(expected.get(key) != value for key, value in actual.items()):
             raise AmbiguousState("package_setup package identity changed")
 
     def _reconcile_package_setup_for_resume(
