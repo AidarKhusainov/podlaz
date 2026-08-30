@@ -12,6 +12,10 @@ TERMINAL_PROFILE_URI = (
     "vless://00000000-0000-4000-8000-000000000001@vpn.invalid:443"
     "?security=tls&type=tcp&sni=vpn.invalid#ReleaseAcceptanceFailure"
 )
+TERMINAL_PROFILE_NAME = "ReleaseAcceptanceFailure"
+TERMINAL_PROFILE_SERVER = "vpn.invalid"
+TERMINAL_PROFILE_PORT = 443
+TERMINAL_PROFILE_PROTOCOL = "vless"
 
 
 class ProductClient:
@@ -97,8 +101,38 @@ class ProductClient:
             profile_id = next(iter(additions))
         else:
             raise AmbiguousState("could not acquire exact terminal profile identity")
+        if not self.is_terminal_acceptance_profile(profile_id):
+            raise AmbiguousState("created terminal profile does not match acceptance fixture")
         self.validate_tun_profile(profile_id)
         return profile_id
+
+    def is_terminal_acceptance_profile(self, profile_id: str) -> bool:
+        result = self.run("profile", "show", profile_id, "--json")
+        if result.returncode != 0:
+            return False
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return False
+        if payload.get("schema_version") != "v1" or payload.get("status") != "ok":
+            return False
+        profile = payload.get("profile")
+        if not isinstance(profile, dict):
+            return False
+
+        def value(name: str):
+            return profile.get(name, profile.get(name[:1].upper() + name[1:]))
+
+        try:
+            port = int(value("port"))
+        except (TypeError, ValueError):
+            return False
+        return (
+            str(value("name") or "") == TERMINAL_PROFILE_NAME
+            and str(value("server") or "") == TERMINAL_PROFILE_SERVER
+            and port == TERMINAL_PROFILE_PORT
+            and str(value("protocol") or "").lower() == TERMINAL_PROFILE_PROTOCOL
+        )
 
     def delete_profile(self, profile_id: str) -> None:
         self.run("profile", "delete", profile_id, "--yes").require_success("delete terminal acceptance profile")
