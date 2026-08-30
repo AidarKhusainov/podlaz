@@ -95,14 +95,14 @@ class FixtureLease:
         record = checkpoint.mutations.get(s.name)
         if record is None:
             raise AmbiguousState(f"fixture {s.name} has no persisted authority")
-        if record.state == MutationState.ACQUIRING:
+        if record.state in {MutationState.ACQUIRING, MutationState.RELEASING}:
             self.release_partial()
             return
         self.current_route = str(record.identity.get("current_route") or s.route)
         self.verify()
         if record.state == MutationState.ACQUIRED:
             self.ledger.begin_release(s.name)
-        elif record.state != MutationState.RELEASING:
+        else:
             raise AmbiguousState(
                 f"fixture {s.name} cannot use full release from {record.state.value}"
             )
@@ -122,15 +122,15 @@ class FixtureLease:
         self.ledger.mark_released(s.name)
 
     def release_partial(self) -> None:
-        """Release only components that can be proven to match an interrupted acquire."""
+        """Release exact remnants of an interrupted acquire or release."""
         s = self.spec
         checkpoint = self.ledger.store.load()
         record = checkpoint.mutations.get(s.name)
         if record is None or record.kind != "network_fixture":
             raise AmbiguousState(f"fixture {s.name} has no persisted network authority")
-        if record.state != MutationState.ACQUIRING:
+        if record.state not in {MutationState.ACQUIRING, MutationState.RELEASING}:
             raise AmbiguousState(
-                f"fixture {s.name} partial release requires acquiring authority"
+                f"fixture {s.name} partial release requires transitional authority"
             )
         self.current_route = str(record.identity.get("current_route") or s.route)
 
