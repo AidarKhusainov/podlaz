@@ -84,6 +84,25 @@ class FixtureRecoveryTests(unittest.TestCase):
         self.assertNotIn(("ip", "link", "del", "dev", s.dns_link), runner.commands)
         self.assertEqual(self.store.load().mutations[s.name].state, MutationState.RELEASED)
 
+    def test_interrupted_full_release_resumes_from_releasing_state(self):
+        s = FIXTURE_A
+        checkpoint = self.store.load()
+        checkpoint.mutations[s.name].state = MutationState.RELEASING
+        self.store.replace(checkpoint)
+        responses = {
+            ("ip", "-j", "-d", "link", "show", "dev", s.tun): Result(returncode=1),
+            ("ip", "-j", "-d", "link", "show", "dev", s.dns_link): Result(returncode=1),
+            ("ip", "-j", "-4", "route", "show", "table", s.table): Result(stdout="[]"),
+            ("ip", "-4", "rule", "show", "priority", str(s.priority_a)): Result(returncode=1),
+            ("ip", "-4", "rule", "show", "priority", str(s.priority_b)): Result(returncode=1),
+            ("nft", "-j", "list", "table", "inet", s.nft_table): Result(returncode=1),
+        }
+        runner = FixtureRunner(responses)
+
+        FixtureLease(runner, MutationLedger(self.store), s).release()
+
+        self.assertEqual(self.store.load().mutations[s.name].state, MutationState.RELEASED)
+
     def test_partial_fixture_cleanup_refuses_foreign_route_in_owned_table(self):
         s = FIXTURE_A
         responses = {
