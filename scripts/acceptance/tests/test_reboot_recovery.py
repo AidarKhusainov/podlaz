@@ -16,13 +16,17 @@ class DummyRunner:
 
 
 class FakeProduct:
-    def __init__(self, profiles: set[str]):
+    def __init__(self, profiles: set[str], *, terminal_profiles: set[str] | None = None):
         self.profiles = set(profiles)
+        self.terminal_profiles = set(terminal_profiles or set())
         self.deleted: list[str] = []
         self.disabled = 0
 
     def profile_ids(self) -> set[str]:
         return set(self.profiles)
+
+    def is_terminal_acceptance_profile(self, profile_id: str) -> bool:
+        return profile_id in self.terminal_profiles
 
     def delete_profile(self, profile_id: str) -> None:
         self.deleted.append(profile_id)
@@ -59,7 +63,10 @@ class TerminalProfileRecoveryTests(unittest.TestCase):
     @patch("release_acceptance.reboot.restore_boot_manifest")
     def test_abort_recovers_single_profile_created_after_acquiring_checkpoint(self, restore_manifest):
         self.checkpoint({"state": "acquiring", "baseline_ids": ["existing-a", "existing-b"]})
-        product = FakeProduct({"existing-a", "existing-b", "synthetic-new"})
+        product = FakeProduct(
+            {"existing-a", "existing-b", "synthetic-new"},
+            terminal_profiles={"synthetic-new"},
+        )
 
         RebootCoordinator(self.store, DummyRunner(), product).restore_original_policy()
 
@@ -70,7 +77,22 @@ class TerminalProfileRecoveryTests(unittest.TestCase):
     @patch("release_acceptance.reboot.restore_boot_manifest")
     def test_abort_refuses_ambiguous_terminal_profile_acquisition(self, restore_manifest):
         self.checkpoint({"state": "acquiring", "baseline_ids": ["existing"]})
-        product = FakeProduct({"existing", "extra-one", "extra-two"})
+        product = FakeProduct(
+            {"existing", "extra-one", "extra-two"},
+            terminal_profiles={"extra-one", "extra-two"},
+        )
+
+        with self.assertRaises(AmbiguousState):
+            RebootCoordinator(self.store, DummyRunner(), product).restore_original_policy()
+
+        self.assertEqual(product.deleted, [])
+        self.assertIn("terminal_profile_acquisition", self.store.load().private)
+        restore_manifest.assert_not_called()
+
+    @patch("release_acceptance.reboot.restore_boot_manifest")
+    def test_abort_refuses_single_foreign_profile_created_after_checkpoint(self, restore_manifest):
+        self.checkpoint({"state": "acquiring", "baseline_ids": ["existing"]})
+        product = FakeProduct({"existing", "foreign-new"}, terminal_profiles=set())
 
         with self.assertRaises(AmbiguousState):
             RebootCoordinator(self.store, DummyRunner(), product).restore_original_policy()
