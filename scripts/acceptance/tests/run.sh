@@ -2,3 +2,4 @@
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 bash "$SCRIPT_DIR/standalone_contract.sh"
+bash "$SCRIPT_DIR/standalone_recovery.sh"
