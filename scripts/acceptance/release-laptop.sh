@@ -536,7 +536,10 @@ ra_status_classify() {
       if $target=="active" or $target=="active-legacy" then
         if $cleanup>0 or $health=="cleanup-required" or $health=="degraded" or ($s.connection=="inactive" and $phase!="connecting") or $terminal!="" then "TERMINAL_IMPOSSIBLE"
         elif $s.connection=="active" and ($s.mode//"")=="tun" and $committed and (($target=="active-legacy" and ($health=="" or $health=="verified")) or ($target=="active" and $health=="verified")) then "TARGET_REACHED"
-        elif $phase=="connecting" or $health=="revalidating" or $s.connection=="active" or $s.connection=="error (core exited)" then "PROGRESS_POSSIBLE"
+        elif $phase=="connecting" then "PROGRESS_POSSIBLE"
+        elif $health=="revalidating" and $s.connection=="active" and ($s.mode//"")=="tun" and $committed then "PROGRESS_POSSIBLE"
+        elif $s.connection=="error (core exited)" and ($health=="revalidating" or $target=="active-legacy") then "PROGRESS_POSSIBLE"
+        elif $s.connection=="active" then "INCOMPATIBLE"
         else "INCOMPATIBLE" end
       elif $target=="inactive" then
         if $cleanup>0 or $health=="cleanup-required" then "TERMINAL_IMPOSSIBLE"
@@ -778,17 +781,20 @@ ra_fixture_spec() {
 }
 
 ra_fixture_assert_free() {
-  local spec="$1" tun dns nft pa pb table
+  local spec="$1" tun dns nft pa pb table count
   tun="$(jq -r '.tun' <<<"$spec")"; dns="$(jq -r '.dns_link' <<<"$spec")"; nft="$(jq -r '.nft_table' <<<"$spec")"; pa="$(jq -r '.priority_a' <<<"$spec")"; pb="$(jq -r '.priority_b' <<<"$spec")"; table="$(jq -r '.table' <<<"$spec")"
   ra_capture ip -j -d link show || return 1
-  jq -e --arg a "$tun" --arg b "$dns" 'any(.[]?; .ifname==$a or .ifname==$b)' <<<"$RA_CAPTURE" >/dev/null && return 1
+  count="$(jq --arg a "$tun" --arg b "$dns" '[.[]?|select(.ifname==$a or .ifname==$b)]|length' <<<"$RA_CAPTURE")" || return 1
+  [[ "$count" == 0 ]] || return 1
   ra_capture nft -j list tables || return 1
-  jq -e --arg n "$nft" 'any(.nftables[]?.table?; .family=="inet" and .name==$n)' <<<"$RA_CAPTURE" >/dev/null && return 1
+  count="$(jq --arg n "$nft" '[.nftables[]?.table?|select(.family=="inet" and .name==$n)]|length' <<<"$RA_CAPTURE")" || return 1
+  [[ "$count" == 0 ]] || return 1
   ra_capture ip -4 rule show || return 1
-  awk -v a="$pa" -v b="$pb" '$1==a":"||$1==b":"{found=1} END{exit !found}' <<<"$RA_CAPTURE" && return 1
+  count="$(awk -v a="$pa" -v b="$pb" '$1==a":"||$1==b":"{n++} END{print n+0}' <<<"$RA_CAPTURE")" || return 1
+  [[ "$count" == 0 ]] || return 1
   ra_capture ip -j -4 route show table all || return 1
-  jq -e --arg t "$table" 'any(.[]?; ((.table//"")|tostring)==$t)' <<<"$RA_CAPTURE" >/dev/null && return 1
-  return 0
+  count="$(jq --arg t "$table" '[.[]?|select(((.table//"")|tostring)==$t)]|length' <<<"$RA_CAPTURE")" || return 1
+  [[ "$count" == 0 ]]
 }
 
 ra_fixture_acquire() {
@@ -1232,7 +1238,7 @@ ra_package_setup_release_after_candidate() {
 
 ra_candidate_upgrade_begin() {
   local candidate="$1" installed="$2" identity
-  identity="$(jq -cn --argjson c "$candidate" --arg installed "$installed" '{candidate:$c,installed_before:$installed}')" || return 1
+  identity="$(jq -cn --argjson c "$candidate" --arg installed "$installed" '{candidate:$c,installed_before:$installed,applied:false}')" || return 1
   ra_mut_begin_acquire candidate_upgrade candidate_package "$identity"
 }
 
@@ -1245,6 +1251,7 @@ ra_candidate_upgrade_reconcile_cleanup() {
   cv="$(jq -r '.version' <<<"$candidate")" || return 1
   installed="$(ra_pkg_installed_version)" || return 1
   if [[ "$installed" == "$cv" ]]; then
+    ra_state_jq '.mutations.candidate_upgrade.identity.applied=true' || return 1
     if [[ "$state" == acquiring ]]; then ra_mut_mark_acquired candidate_upgrade || return 1; state=acquired; fi
     [[ "$state" != acquired ]] || ra_mut_begin_release candidate_upgrade || return 1
     ra_mut_mark_released candidate_upgrade
@@ -1252,6 +1259,7 @@ ra_candidate_upgrade_reconcile_cleanup() {
   fi
   if [[ "$installed" == "$before" ]]; then
     [[ "$state" == acquiring ]] || { ra_die "candidate upgrade regressed after acquisition"; return 1; }
+    ra_state_jq '.mutations.candidate_upgrade.identity.applied=false' || return 1
     ra_mut_mark_released candidate_upgrade
     return 0
   fi
@@ -1338,9 +1346,17 @@ ra_autostart_release_owned() {
   pre="$(jq -ce --arg n "$name" '.mutations[$n].identity.pre_manifest' "$RA_CHECKPOINT")" || return 1
   owned="$(jq -ce --arg n "$name" '.mutations[$n].identity.owned_manifest//empty' "$RA_CHECKPOINT" 2>/dev/null || true)"
   if [[ "$state" == acquiring ]]; then
-    ra_manifest_matches_snapshot "$pre" || { ra_die "autostart acquisition is ambiguous"; return 1; }
-    ra_mut_mark_released "$name"
-    return 0
+    if ra_manifest_matches_snapshot "$pre"; then
+      ra_mut_mark_released "$name"
+      return 0
+    fi
+    if [[ -n "$owned" ]] && ra_manifest_matches_snapshot "$owned"; then
+      ra_mut_mark_acquired "$name" || return 1
+      state=acquired
+    else
+      ra_die "autostart acquisition is ambiguous"
+      return 1
+    fi
   fi
   if [[ "$state" == acquired ]]; then
     [[ -n "$owned" ]] && ra_manifest_matches_snapshot "$owned" || { ra_die "autostart policy drifted from exact owned state"; return 1; }
@@ -1430,12 +1446,29 @@ ra_package_cleanup_reconcile() {
   return 0
 }
 
+ra_cleanup_expected_package_verify() {
+  local installed initial candidate cv require_candidate=false
+  installed="$(ra_pkg_installed_version)" || return 1
+  initial="$(jq -r '.private.installed_before//""' "$RA_CHECKPOINT")" || return 1
+  candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1
+  cv="$(jq -r '.version' <<<"$candidate")" || return 1
+  if jq -e '.mutations.package_setup' "$RA_CHECKPOINT" >/dev/null 2>&1; then require_candidate=true; fi
+  if jq -e '.mutations.reinstall_package' "$RA_CHECKPOINT" >/dev/null 2>&1; then require_candidate=true; fi
+  if [[ "$(jq -r '.mutations.candidate_upgrade.identity.applied//false' "$RA_CHECKPOINT")" == true ]]; then require_candidate=true; fi
+  if [[ "$require_candidate" == true ]]; then
+    [[ "$installed" == "$cv" ]] || { ra_die "cleanup did not retain the candidate package required by owned package authority"; return 1; }
+    return 0
+  fi
+  [[ "$installed" == "$cv" || "$installed" == "$initial" ]] || { ra_die "cleanup observed an unexpected Podlaz package version"; return 1; }
+}
+
 ra_safe_cleanup() {
   ra_privacy_watch_cancel
   ra_safe_disconnect_if_owned || return 1
   ra_cleanup_owned_mutations || return 1
   ra_restore_original_policy || return 1
   ra_package_cleanup_reconcile || return 1
+  ra_cleanup_expected_package_verify || return 1
   ra_require_mutations_released || return 1
   ra_verify_inactive_boundary || return 1
   ra_privacy_require_ordinary || return 1
@@ -1579,7 +1612,7 @@ ra_failure_finalize() {
   if ra_safe_cleanup; then
     if ! ra_state_jq '.phase="failed-clean"|.last_failure.cleanup_outcome="clean"'; then RA_FINALIZER_ACTIVE=0; return 1; fi
     if ! ra_report_write FAILED_CLEAN; then
-      ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.cleanup_outcome="report_failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true
+      ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.class="OWNERSHIP"|.last_failure.cleanup_outcome="report_failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true
       printf 'FAIL_CLEANUP_FAILED\n'
       RA_FINALIZER_ACTIVE=0
       return 1
@@ -1589,7 +1622,7 @@ ra_failure_finalize() {
     RA_FINALIZER_ACTIVE=0
     return 1
   fi
-  ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.cleanup_outcome="failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true
+  ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.class="OWNERSHIP"|.last_failure.cleanup_outcome="failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true
   ra_report_write FAIL_CLEANUP_FAILED || true
   printf 'FAIL_CLEANUP_FAILED\n'
   RA_FINALIZER_ACTIVE=0
@@ -1609,8 +1642,8 @@ ra_existing_checkpoint_classify() {
   phase="$(jq -r '.phase//""' "$RA_CHECKPOINT")"
   case "$phase" in
     await-reboot-autostart-off|await-reboot-autostart-on|await-reboot-terminal) printf 'reboot-wait'; return 0 ;;
-    fail-cleanup-failed|failure-cleanup-running) printf 'ambiguous'; return 0 ;;
-    failed-cleanable|scenario-failed) printf 'cleanup-restart'; return 0 ;;
+    fail-cleanup-failed) printf 'ambiguous'; return 0 ;;
+    failure-cleanup-running|failed-cleanable|scenario-failed) printf 'cleanup-restart'; return 0 ;;
     preparing-lower-release|verifying-reboot-autostart-off|verifying-reboot-autostart-on|verifying-reboot-terminal) printf 'replay-safe'; return 0 ;;
     running-pre-reboot)
       current="$(jq -r '.current_scenario//""' "$RA_CHECKPOINT")"
@@ -1661,23 +1694,29 @@ ra_reconcile_scenario_mutations() {
 }
 
 ra_recover_running_scenario() {
-  local name="$1" before current observed stop_completed
+  local name="$1" before current observed stop_completed service_rc fixture_state profile
   case "$name" in
     graceful_restart|daemon_kill)
-      before="$(jq -r --arg n "$name" '.scenarios[$n].private.before_pid//""' "$RA_CHECKPOINT")"
-      current="$(ra_main_pid 2>/dev/null || true)"
-      if [[ -n "$before" && -n "$current" && "$current" != "$before" ]] && ra_wait_active 10; then ra_record "$name" PASS; ra_scenario_set_state "$name" passed; return 0; fi
-      [[ -z "$before" || "$current" == "$before" ]] || return 1
+      ra_privacy_watch_cancel
+      ra_wait_active 30 || return 1
+      ra_privacy_require_protected || return 1
       ra_scenario_set_state "$name" prepared
       ;;
     stop_start_no_reconnect)
       stop_completed="$(jq -r '.scenarios.stop_start_no_reconnect.private.stop_completed//false' "$RA_CHECKPOINT")"
       if [[ "$stop_completed" == true ]]; then
-        if ra_service_is_active; then ra_verify_inactive_boundary || return 1; ra_privacy_require_ordinary || return 1; ra_record stop_start_no_reconnect PASS; ra_scenario_set_state "$name" passed; return 0
+        if ra_service_is_active; then
+          ra_verify_inactive_boundary || return 1
+          ra_privacy_require_ordinary || return 1
+          ra_record stop_start_no_reconnect PASS
+          ra_scenario_set_state "$name" passed
+          return 0
         else
-          [[ $? == 1 ]] || return 1
+          service_rc=$?
+          [[ "$service_rc" == 1 ]] || return 1
           ra_capture systemctl start "$RA_SERVICE" || return 1
           ra_wait_inactive 90 || return 1
+          ra_privacy_require_ordinary || return 1
           ra_record stop_start_no_reconnect PASS
           ra_scenario_set_state "$name" passed
           return 0
@@ -1692,8 +1731,8 @@ ra_recover_running_scenario() {
         cv="$(jq -r '.candidate.version' "$RA_CHECKPOINT")"
         if [[ "$installed" == "$cv" ]]; then
           ra_candidate_upgrade_reconcile_cleanup || return 1
-          ra_scenario_set_state "$name" verifying
-          return 0
+          ra_die "lower-release upgrade evidence was interrupted after candidate installation; restart is required"
+          return 1
         fi
       fi
       observed="$(ra_session_observe)"
@@ -1704,25 +1743,68 @@ ra_recover_running_scenario() {
     reinstall)
       if jq -e '.mutations.reinstall_package and .mutations.reinstall_package.state!="released"' "$RA_CHECKPOINT" >/dev/null 2>&1; then
         ra_reinstall_package_reconcile_cleanup || return 1
-        ra_wait_active 30 || return 1
-        ra_privacy_require_protected || return 1
-        ra_record reinstall PASS
-        ra_scenario_set_state "$name" passed
-        return 0
-      fi
-      ra_scenario_set_state "$name" prepared
-      ;;
-    rollback_interruption|preconnect_coexistence|resource_soak|disconnect_cleanup|runtime_terminal_convergence|warmed_inactive_candidate_baseline)
-      ra_privacy_watch_cancel
-      ra_reconcile_scenario_mutations "$name" || return 1
-      if [[ "$name" == rollback_interruption || "$name" == runtime_terminal_convergence || "$name" == disconnect_cleanup ]]; then
         observed="$(ra_session_observe)"
         if [[ "$observed" == active ]]; then ra_disconnect || return 1; ra_wait_inactive 120 || return 1; elif [[ "$observed" != inactive ]]; then return 1; fi
       fi
       ra_scenario_set_state "$name" prepared
       ;;
+    disconnect_cleanup)
+      fixture_state="$(jq -r '.mutations.fixture_a.state//"released"' "$RA_CHECKPOINT")"
+      if [[ "$fixture_state" == released && "$(jq -r '.scenarios.disconnect_cleanup.outcome//""' "$RA_CHECKPOINT")" == PASS && "$(jq -r '.scenarios.coexistence_reconnect.outcome//""' "$RA_CHECKPOINT")" == PASS && "$(jq -r '.scenarios.reconnect_resource_nonaccumulation.outcome//""' "$RA_CHECKPOINT")" == PASS ]]; then
+        ra_verify_inactive_boundary || return 1
+        ra_privacy_require_ordinary || return 1
+        ra_scenario_set_state "$name" passed
+        return 0
+      fi
+      [[ "$fixture_state" != released ]] || { ra_die "disconnect cleanup lost its fixture boundary before evidence completed"; return 1; }
+      observed="$(ra_session_observe)"
+      if [[ "$observed" == inactive ]]; then
+        profile="$(jq -r '.private.selected_profile' "$RA_CHECKPOINT")"
+        ra_connect "$profile" || return 1
+        ra_wait_active || return 1
+        ra_collision_require_disjoint fixture_a || return 1
+      elif [[ "$observed" != active ]]; then return 1; fi
+      ra_scenario_set_state "$name" prepared
+      ;;
+    rollback_interruption|preconnect_coexistence|resource_soak|runtime_terminal_convergence|warmed_inactive_candidate_baseline)
+      ra_privacy_watch_cancel
+      if [[ "$name" == preconnect_coexistence || "$name" == rollback_interruption || "$name" == runtime_terminal_convergence || "$name" == warmed_inactive_candidate_baseline ]]; then
+        observed="$(ra_session_observe)"
+        if [[ "$observed" == active ]]; then ra_disconnect || return 1; ra_wait_inactive 120 || return 1; elif [[ "$observed" != inactive ]]; then return 1; fi
+      fi
+      ra_reconcile_scenario_mutations "$name" || return 1
+      ra_scenario_set_state "$name" prepared
+      ;;
     *) ra_reconcile_scenario_mutations "$name" || return 1; ra_scenario_set_state "$name" prepared ;;
   esac
+}
+
+ra_finish_verifying_scenario() {
+  local name="$1"
+  case "$name" in
+    lower_release_upgrade)
+      [[ "$(jq -r '.scenarios.lower_release_upgrade.outcome//""' "$RA_CHECKPOINT")" == PASS ]] || return 1
+      [[ "$(jq -r '.scenarios.privacy_active.outcome//""' "$RA_CHECKPOINT")" == PASS ]] || return 1
+      ra_wait_active 30 || return 1
+      ra_privacy_require_protected || return 1
+      ;;
+    graceful_restart|daemon_kill|reinstall|preconnect_coexistence|resource_soak)
+      ra_wait_active 30 || return 1
+      ra_privacy_require_protected || return 1
+      ;;
+    warmed_inactive_candidate_baseline|stop_start_no_reconnect|runtime_terminal_convergence)
+      ra_verify_inactive_boundary || return 1
+      ;;
+    disconnect_cleanup)
+      ra_verify_inactive_boundary || return 1
+      ra_privacy_require_ordinary || return 1
+      ;;
+    rollback_interruption) ra_wait_active 30 || return 1; ra_privacy_require_protected || return 1 ;;
+    *) ;;
+  esac
+  ra_scenario_set_state "$name" passed || return 1
+  ra_scenario_clear_current || return 1
+  RA_CURRENT_SCENARIO=""
 }
 
 ra_scenario_run() {
@@ -1731,14 +1813,14 @@ ra_scenario_run() {
   RA_CURRENT_SCENARIO="$name"
   state="$(jq -r --arg n "$name" '.scenarios[$n].state//""' "$RA_CHECKPOINT")" || return 1
   case "$state" in
-    passed) RA_CURRENT_SCENARIO=""; return 0 ;;
+    passed) ra_scenario_clear_current || return 1; RA_CURRENT_SCENARIO=""; return 0 ;;
     failed) ra_die "scenario $name already failed"; return 1 ;;
-    verifying) ra_scenario_set_state "$name" passed || return 1; ra_scenario_clear_current || return 1; RA_CURRENT_SCENARIO=""; return 0 ;;
+    verifying) ra_finish_verifying_scenario "$name"; return $? ;;
     running)
       ra_recover_running_scenario "$name" || { ra_scenario_set_state "$name" failed || true; return 1; }
       state="$(jq -r --arg n "$name" '.scenarios[$n].state//""' "$RA_CHECKPOINT")"
-      [[ "$state" != passed ]] || { ra_scenario_clear_current || return 1; RA_CURRENT_SCENARIO=""; return 0; }
-      [[ "$state" != verifying ]] || { ra_scenario_set_state "$name" passed || return 1; ra_scenario_clear_current || return 1; RA_CURRENT_SCENARIO=""; return 0; }
+      if [[ "$state" == passed ]]; then ra_scenario_clear_current || return 1; RA_CURRENT_SCENARIO=""; return 0; fi
+      if [[ "$state" == verifying ]]; then ra_finish_verifying_scenario "$name"; return $?; fi
       ;;
     "") ra_scenario_set_state "$name" pending || return 1 ;;
     pending|prepared) ;;
@@ -1749,13 +1831,11 @@ ra_scenario_run() {
   ra_scenario_set_state "$name" running || return 1
   if ! "$action" "$@"; then ra_scenario_set_state "$name" failed || true; return 1; fi
   ra_scenario_set_state "$name" verifying || return 1
-  ra_scenario_set_state "$name" passed || return 1
-  ra_scenario_clear_current || return 1
-  RA_CURRENT_SCENARIO=""
+  ra_finish_verifying_scenario "$name"
 }
 
 ra_scenario_lower_upgrade() {
-  local candidate profile cv installed before identity
+  local candidate profile cv installed before
   candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1
   profile="$(jq -r '.private.selected_profile' "$RA_CHECKPOINT")"
   cv="$(jq -r '.version' <<<"$candidate")"
@@ -1777,6 +1857,7 @@ ra_scenario_lower_upgrade() {
   if ra_privacy_local_proof; then ra_record legacy_upgrade_privacy PASS; ra_privacy_watch_start lower_upgrade; fi
   ra_candidate_upgrade_begin "$candidate" "$installed" || return 1
   ra_pkg_install_exact "$candidate" || { ra_privacy_watch_cancel; return 1; }
+  ra_state_jq '.mutations.candidate_upgrade.identity.applied=true' || { ra_privacy_watch_cancel; return 1; }
   ra_mut_mark_acquired candidate_upgrade || { ra_privacy_watch_cancel; return 1; }
   ra_wait_new_pid "$before" >/dev/null || { ra_privacy_watch_cancel; return 1; }
   ra_wait_active || { ra_privacy_watch_cancel; return 1; }
@@ -2072,6 +2153,8 @@ ra_run_abort() {
     printf 'FAIL_CLEANUP_FAILED\n'
     return 1
   fi
+  ra_verify_inactive_boundary || return 1
+  ra_privacy_require_ordinary || return 1
   ra_set_phase aborted-clean || return 1
   ra_report_write ABORTED_CLEAN || return 1
   ra_state_remove || return 1
