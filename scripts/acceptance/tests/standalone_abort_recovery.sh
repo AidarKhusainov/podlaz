@@ -32,7 +32,7 @@ ra_set_phase running-pre-reboot
 # The candidate .deb has disappeared, but the exact candidate version is already installed.
 # Abort must not require package bytes unless it actually needs to reinstall/restore them.
 ra_pkg_installed_version() { printf '2.0'; }
-ra_status_json() { RA_CAPTURE='{"connection":"inactive","tun":"disabled"}'; printf '%s' "$RA_CAPTURE"; }
+ra_status_json() { RA_CAPTURE='{"connection":"inactive","mode":"tun","tun":"disabled"}'; printf '%s' "$RA_CAPTURE"; }
 ra_wait_inactive() { return 0; }
 ra_cleanup_owned_mutations() { return 0; }
 ra_restore_original_policy() { return 0; }
@@ -44,5 +44,28 @@ ABORT_REMOVED=0
 
 ra_run_abort >/dev/null || fail "abort rejected a missing candidate artifact even though candidate is already installed"
 [[ "$ABORT_REMOVED" == 1 ]] || fail "abort did not complete cleanup"
+
+# An active acceptance session must be disconnected before package restoration. Replacing
+# the package while the session is active can mutate/restart the daemon under a live TUN.
+rm -rf "$RELEASE_ACCEPTANCE_STATE_DIR"
+mkdir -p "$RELEASE_ACCEPTANCE_STATE_DIR"
+ra_artifacts_init_new order-run
+candidate_path="$TMP/candidate.deb"
+printf 'candidate\n' >"$candidate_path"
+candidate="$(jq -cn --arg p "$candidate_path" '{path:$p,package:"podlaz",version:"2.0",architecture:"amd64",sha256:"unused",device:1,inode:2}')"
+ra_state_init order-run "$candidate" "1.0" "$manifest" profile-a
+ra_state_jq '.mutations.package_setup={state:"acquired",kind:"previous_package",identity:{previous:{version:"1.0"},candidate:.candidate}}'
+order_file="$TMP/abort-order"
+: >"$order_file"
+ra_status_json() {
+  RA_CAPTURE='{"connection":"active","mode":"tun","tun":"enabled (podlaz0)","tun_health":{"state":"verified"},"transactions":[{"state":"committed","requires_cleanup":false}]}'
+  printf '%s' "$RA_CAPTURE"
+}
+ra_disconnect() { printf 'disconnect\n' >>"$order_file"; return 0; }
+ra_package_setup_reconcile_abort() { printf 'package\n' >>"$order_file"; return 0; }
+ra_state_remove() { return 0; }
+ra_run_abort >/dev/null || fail "abort ordering fixture failed"
+first="$(head -n1 "$order_file")"
+[[ "$first" == disconnect ]] || fail "abort restored package before disconnecting the active acceptance session"
 
 printf 'standalone_abort_recovery: PASS\n'
