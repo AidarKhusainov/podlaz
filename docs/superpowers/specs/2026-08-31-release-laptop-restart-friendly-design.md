@@ -113,6 +113,8 @@ last_failure:
   cleanup_outcome
 ```
 
+The checkpoint also stores immutable `run_started_at` and the starting boot identity so diagnostics can be bounded to this run rather than collecting an unscoped system history.
+
 No secret, endpoint, IP, user profile identifier, SSID, or host-specific address is written to shareable output.
 
 Failure classes:
@@ -144,7 +146,7 @@ The private per-run failure bundle contains, where available:
 - last successful and last observed Podlaz JSON status payloads;
 - bounded `podlaz doctor --tun` output/report when the daemon API is responsive;
 - bounded `systemctl status` for the packaged daemon;
-- journal entries for the daemon scoped to the current run start time/boot, not an unbounded system journal dump;
+- journal entries for the daemon scoped from `run_started_at` within the recorded boot, not an unbounded system journal dump;
 - installed Podlaz package version and recorded package authority;
 - exact harness-owned mutation ledger;
 - continuation, active transaction, and boot-attempt state when relevant;
@@ -233,14 +235,14 @@ The three intentional reboot phases remain special persisted boundaries and requ
 
 Fast failure does not mean shortening legitimate product convergence windows. It means proving permanent errors before entering them and ending waits when fresh evidence already determines the outcome.
 
-Before the first disruptive mutation, one consolidated preflight checks:
+Before creating a new run checkpoint, consolidated preflight must conclusively verify:
 
 - candidate/previous package existence, identity, architecture, checksum and Debian ordering;
-- full-qualification lower-release availability before creating a run checkpoint where possible;
+- full-qualification lower-release availability: if the installed version is not already strictly lower than the candidate, an exact strictly-lower `--previous-deb` must already be supplied and valid;
 - required tools;
 - candidate input compatibility with any existing checkpoint;
 - original-user and artifact path safety;
-- checkpoint ownership/schema;
+- existing checkpoint ownership/schema when present;
 - exclusive lock;
 - profile existence/validation;
 - clean initial product/network boundary;
