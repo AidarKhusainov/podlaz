@@ -59,11 +59,13 @@ For manually dispatched self-hosted TUN coverage and issue-specific package scen
 
 ## Maintainer laptop release qualification
 
-For a release candidate that needs real-host package, TUN, lifecycle, privacy, resource, suspend, NetworkManager, and boot evidence, use the release-laptop acceptance harness against the already-built native Debian package:
+For a release candidate that needs real-host package, TUN, lifecycle, privacy, resource, suspend, NetworkManager, and boot evidence, use the standalone Bash harness against the already-built native Debian package:
 
 ```bash
 sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb --profile <profile-id>
 ```
+
+The operator laptop does not need a Podlaz source checkout beyond the single copied script itself, and the harness does not require Python. The candidate package, any explicitly supplied lower package, and the selected profile are treated as immutable run inputs after preflight.
 
 If no strictly lower Podlaz release is already installed, provide the exact lower release explicitly:
 
@@ -73,29 +75,75 @@ sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.de
   --profile <profile-id>
 ```
 
+Candidate/lower package metadata, architecture, checksum/identity, Debian version ordering, artifact path safety, profile validity, required tools/capabilities, fixture availability, clean starting network boundary, and release-boundary eligibility are checked before disruptive acceptance mutation. In particular, when the candidate is already installed and no strictly lower release or `--previous-deb` is available, the run fails before creating a checkpoint.
+
 A full qualification deliberately crosses three real user-controlled reboot boundaries. After each requested reboot, continue the same durable run with:
 
 ```bash
 sudo ./scripts/acceptance/release-laptop.sh --resume
 ```
 
-Abandon a persisted run with exact owned-state restoration using:
+Reboot-wait checkpoints are intentional pauses. They are not automatically aborted by another ordinary invocation; an ordinary invocation reports that `--resume` is required. `--resume` also refuses to continue a reboot phase until the persisted `boot_id` has actually changed.
+
+For a normal non-reboot interruption, running the original command again is useful: replay-safe persisted phases are resumed from live observation plus the mutation ledger; an exactly cleanable failed run is retired and a fresh run starts only after the new inputs have been checked; ambiguous ownership fails closed without broad cleanup.
+
+To explicitly discard a prior run with exact cleanup and then start a new run, use:
+
+```bash
+sudo ./scripts/acceptance/release-laptop.sh ./podlaz_<candidate>_linux_<arch>.deb --restart --profile <profile-id>
+```
+
+`--restart` is not a broad reset. It uses the same exact-owned cleanup rules as failure recovery and starts the new run only if cleanup converges conclusively.
+
+To abandon a persisted run without starting a replacement, use:
 
 ```bash
 sudo ./scripts/acceptance/release-laptop.sh --abort
 ```
 
-The harness is intentionally disruptive. It may install only the explicitly supplied Podlaz `.deb` files with `dpkg -i`, create exact documentation-safe coexistence fixtures, restart/kill the Podlaz daemon for lifecycle scenarios, perform a controlled NetworkManager reconnect when applicable, suspend the local laptop with bounded RTC wake, and ask the operator to reboot. It never runs a Podlaz source build, never downloads a previous release, never installs or repairs dependencies, never performs broad route/rule/nftables cleanup, and never invokes `recover --execute` to turn a product failure into a pass.
+The harness is intentionally disruptive. It may install only explicitly supplied Podlaz `.deb` files with `dpkg -i`, create exact documentation-safe coexistence fixtures, restart/kill the Podlaz daemon for lifecycle scenarios, perform a controlled NetworkManager reconnect when applicable, suspend the local laptop with bounded RTC wake, and ask the operator to reboot. It never runs a Podlaz source build, never downloads a previous release, never installs or repairs dependencies, never performs broad route/rule/nftables cleanup, never automatically reboots, and never invokes broad recovery to manufacture a pass.
 
-The candidate remains installed after successful finalization or clean abort restoration. Harness-owned temporary state, original autostart material, fault-injection drop-ins, synthetic terminal profile, NetworkManager boundary, and coexistence fixtures are restored or retained for diagnosis if exact cleanup cannot be proven.
+Each disruptive scenario persists an explicit boundary and scenario state (`pending`, `prepared`, `running`, `verifying`, `passed`, or `failed`). Mutation authority is write-ahead persisted and reconciled against live state before any retry. A mutation is not repeated merely because the previous shell process disappeared; if completion cannot be proved from live state and persisted ownership, the harness fails closed instead of guessing.
 
-Result meanings are strict:
+Status waits use semantic JSON state rather than the human-readable `tun` presentation string. Active TUN requires compatible `connection`, `mode`, TUN-health, committed transaction, and non-contradictory cleanup/terminal evidence. `revalidating` is treated as bounded progress toward `verified`; already-satisfied state succeeds immediately; terminal or incompatible state fails without waiting for the entire timeout.
+
+### Automatic failure recovery
+
+After a checkpoint exists, an unexpected run failure normally enters one guarded failure finalizer. Before cleanup it captures a private failure bundle containing the checkpoint snapshot, complete command transcript, last status payload, `doctor --tun`, `systemctl status`, journal entries scoped to the current run start time, package state, mutation ledger, continuation/transaction/boot-attempt state, and network observations (`ip`, nftables, and resolved state).
+
+`SIGINT` and `SIGTERM` use the same guarded path when the checkpoint is in a normal mutable phase. Intentional reboot-wait phases and retained ambiguous cleanup states are not mutated merely because a signal arrives.
+
+Cleanup order is deliberate: an active acceptance session that can be proved to belong to the run is disconnected first; then exact harness-owned fixtures, NetworkManager state, systemd hooks, autostart state, synthetic profiles, and package authority are reconciled. Package installation/restoration is performed only when live package state proves it is required. Finally the harness proves an inactive Podlaz boundary and ordinary DNS, TCP, HTTPS, default-route, and direct-egress connectivity.
+
+If exact cleanup and ordinary connectivity are proven, the failure outcome is:
+
+```text
+FAILED_CLEAN
+```
+
+The failed run's checkpoint is then removed; the private diagnostics remain in the run artifact directory.
+
+If cleanup or ownership is ambiguous, the outcome is:
+
+```text
+FAIL_CLEANUP_FAILED
+```
+
+The checkpoint is retained as recovery authority. The harness does not perform broad cleanup in this state. Inspect the private failure bundle and resolve the ownership ambiguity before attempting an explicit abort/restart.
+
+### Result meanings
+
+Normal qualification results are strict:
 
 - `QUALIFIED_PASS`: the canonical 60-minute soak, lower-release active upgrade boundary, mandatory candidate lifecycle/privacy/terminal cases, coexistence proof, and all three real reboot phases completed without a product or cleanup failure;
 - `PARTIAL_PASS`: useful validation completed without an observed product failure, but user-requested skips, a shortened soak, omitted reboot phases, or missing mandatory full-qualification coverage prevent a complete release qualification;
-- `FAIL`: product behavior, privacy proof, durable authority, cleanup/restoration, or evidence integrity failed or became inconclusive where positive proof was required.
+- `FAIL`: a completed qualification could not satisfy the required positive product/evidence contract;
+- `FAILED_CLEAN`: an unexpected post-checkpoint failure occurred, private diagnostics were captured, and automatic exact cleanup/restoration was conclusively verified;
+- `FAIL_CLEANUP_FAILED`: an unexpected failure occurred and exact cleanup/restoration could not be proved, so the checkpoint was deliberately retained.
 
-Evidence is written under the original user's state tree by default. Private command/host evidence is separated from sanitized public `summary.txt`, `report.json`, and `requirements-observation.json`. The harness does not upload artifacts automatically.
+The candidate remains installed after successful finalization and after clean failure/abort recovery when recorded package authority requires the candidate. The harness never restores a package merely because a `.deb` path exists; it observes live package state and recorded ownership first.
+
+Evidence is written under the original user's state tree by default. Private command/host evidence is kept under the run's private directory. Shareable `summary.txt`, `report.json`, and `requirements-observation.json` are structurally generated from sanitized outcome/state data and must not contain real user IPs, domains, endpoints, SSIDs, profile IDs, credentials, or subscription data. The harness does not upload artifacts automatically.
 
 The laptop run itself is manual release evidence; source-level or CI validation of the harness implementation is separate from executing the disruptive qualification workflow.
 
@@ -125,6 +173,6 @@ Use read-only permissions by default. The artifact attestation job requests only
 
 - Public apt repository publication.
 - Repository signing.
-- Starting VPN tunnels.
+- Starting VPN tunnels outside explicit release-laptop qualification.
 - Mutating TUN devices, routes, DNS, nftables, firewall rules, or resolver files outside explicit release-laptop qualification.
 - GUI metadata.
