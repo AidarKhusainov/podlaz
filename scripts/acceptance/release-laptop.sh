@@ -2273,12 +2273,13 @@ ra_preflight_new_inputs_before_retire() {
   installed="$(ra_cleanup_expected_package_version)" || return 1
   ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?
   ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?
+  terminal="$(jq -r '.private.terminal_profile//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
   if [[ -n "$RA_PROFILE" ]]; then
+    [[ -z "$terminal" || "$RA_PROFILE" != "$terminal" ]] || { ra_preflight_die "requested profile is owned by the existing acceptance run and will be removed during cleanup"; return 2; }
     ra_profile_validate "$RA_PROFILE" || { ra_preflight_die "requested profile is not a valid TUN profile"; return 2; }
     return 0
   fi
   ids="$(ra_profile_ids_json)" || { ra_preflight_die "profile inventory is unavailable"; return 2; }
-  terminal="$(jq -r '.private.terminal_profile//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
   while IFS= read -r id; do
     [[ -n "$id" && "$id" != "$terminal" ]] || continue
     if ra_profile_validate "$id"; then ((valid_count+=1)); fi
