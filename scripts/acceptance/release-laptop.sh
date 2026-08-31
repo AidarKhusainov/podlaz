@@ -212,6 +212,7 @@ ra_pkg_installed_version() { if ! ra_capture dpkg-query -W '-f=${Status}\t${Vers
 ra_pkg_install_exact() { local identity="$1" path version installed; ra_pkg_assert_identity "$identity" || return 1; path="$(jq -r '.path' <<<"$identity")"; version="$(jq -r '.version' <<<"$identity")"; ra_capture dpkg -i "$path" || { ra_die "dpkg -i supplied Podlaz package failed"; return 1; }; installed="$(ra_pkg_installed_version)" || return 1; [[ "$installed" == "$version" ]] || { ra_die "installed package version does not match supplied package"; return 1; }; }
 ra_pkg_lt() { dpkg --compare-versions "$1" lt "$2"; }
 ra_pkg_gt() { dpkg --compare-versions "$1" gt "$2"; }
+ra_preflight_release_boundary() { local candidate="$1" previous="$2" installed="$3" cv pv; cv="$(jq -er '.version' <<<"$candidate")" || return 2; if [[ -n "$installed" ]] && ra_pkg_gt "$installed" "$cv"; then ra_preflight_die "installed Podlaz version is newer than candidate; refusing downgrade"; return 2; fi; if [[ -n "$previous" ]]; then pv="$(jq -er '.version' <<<"$previous")" || return 2; ra_pkg_lt "$pv" "$cv" || { ra_preflight_die "--previous-deb is not strictly lower than candidate"; return 2; }; fi; if [[ -n "$installed" && "$installed" != "$cv" ]] && ra_pkg_lt "$installed" "$cv"; then return 0; fi; [[ -n "$previous" ]] || { ra_preflight_die "full lower-release qualification requires an installed lower release or --previous-deb"; return 2; }; }
 
 ra_product() { if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then ra_capture podlaz "$@"; else ra_capture_user /usr/bin/podlaz "$@"; fi; }
 ra_profile_ids_json() { ra_product profile list --json || return 1; jq -ce 'select(.schema_version=="v1")|[.profiles[]?|select(type=="object" and .id)|.id]' <<<"$RA_CAPTURE"; }
@@ -220,9 +221,31 @@ ra_profile_select() { local explicit="$1" ids id valid=(); ids="$(ra_profile_ids
 ra_connect() { ra_product connect --mode tun "$1" >/dev/null || { ra_die "Podlaz TUN connect failed"; return 1; }; }
 ra_disconnect() { ra_product disconnect >/dev/null || { ra_die "Podlaz disconnect failed"; return 1; }; }
 ra_status_json() { ra_capture curl --fail --silent --max-time 5 --unix-socket "$RA_SOCKET" http://localhost/v1/status || return 1; jq -ce . <<<"$RA_CAPTURE"; }
-ra_wait_status() { local connection="$1" tun="$2" verified="$3" timeout="$4" deadline payload; deadline=$((SECONDS+timeout)); while ((SECONDS<deadline)); do if payload="$(ra_status_json 2>/dev/null)" && jq -e --arg c "$connection" --arg t "$tun" --argjson v "$verified" '.connection==$c and .tun==$t and (($v|not) or ((.tun_health.state//"")=="verified"))' <<<"$payload" >/dev/null; then return 0; fi; sleep 1; done; ra_die "daemon status did not converge to $connection/$tun"; return 1; }
-ra_wait_active() { ra_wait_status active active true "${1:-120}"; }
-ra_wait_inactive() { ra_wait_status inactive disabled false "${1:-90}"; }
+ra_status_classify() { local target="$1" payload="$2"; jq -r --arg target "$target" '
+  if type!="object" or (.connection|type)!="string" then "INCOMPATIBLE"
+  else . as $s | ($s.transactions // []) as $txs |
+    ([ $txs[]? | select(.requires_cleanup==true) ] | length) as $cleanup |
+    (($s.active_transaction_id // "") | tostring) as $active_id |
+    (if $active_id!="" then any($txs[]?; (.id//"")==$active_id and .state=="committed" and (.requires_cleanup//false)==false)
+     else any($txs[]?; .state=="committed" and (.requires_cleanup//false)==false) end) as $committed |
+    (($s.tun_health.state // "") | tostring) as $health |
+    (($s.terminal_reason // "") | tostring) as $terminal |
+    (($s.lifecycle_phase // "") | tostring) as $phase |
+    if $target=="active" then
+      if $cleanup>0 or $health=="cleanup-required" or $health=="degraded" or ($s.connection=="inactive" and $terminal!="") then "TERMINAL_IMPOSSIBLE"
+      elif $s.connection=="active" and ($s.mode//"")=="tun" and $health=="verified" and $committed then "TARGET_REACHED"
+      elif $phase=="connecting" or $health=="revalidating" or $s.connection=="active" or $s.connection=="inactive" or $s.connection=="error (core exited)" then "PROGRESS_POSSIBLE"
+      else "INCOMPATIBLE" end
+    elif $target=="inactive" then
+      if $cleanup>0 or $health=="cleanup-required" then "TERMINAL_IMPOSSIBLE"
+      elif $s.connection=="inactive" and $cleanup==0 then "TARGET_REACHED"
+      elif $phase=="connecting" or $s.connection=="active" or $s.connection=="error (core exited)" then "PROGRESS_POSSIBLE"
+      else "INCOMPATIBLE" end
+    else "INCOMPATIBLE" end
+  end' <<<"$payload" 2>/dev/null || printf 'INCOMPATIBLE\n'; }
+ra_wait_status() { local target="$1" timeout="$2" deadline payload classification; deadline=$((SECONDS+timeout)); while ((SECONDS<deadline)); do if payload="$(ra_status_json 2>/dev/null)"; then classification="$(ra_status_classify "$target" "$payload")" || classification=INCOMPATIBLE; case "$classification" in TARGET_REACHED) return 0 ;; TERMINAL_IMPOSSIBLE) ra_die "daemon status reached terminal/impossible state while waiting for $target"; return 1 ;; INCOMPATIBLE) ra_die "daemon status schema/state is incompatible while waiting for $target"; return 1 ;; PROGRESS_POSSIBLE) ;; *) ra_die "unknown status classification: $classification"; return 1 ;; esac; fi; sleep 1; done; ra_die "daemon status did not converge to $target"; return 1; }
+ra_wait_active() { ra_wait_status active "${1:-120}"; }
+ra_wait_inactive() { ra_wait_status inactive "${1:-90}"; }
 ra_main_pid() { ra_capture systemctl show -p MainPID --value "$RA_SERVICE" || return 1; [[ "$RA_CAPTURE" =~ ^[0-9]+$ && "$RA_CAPTURE" -gt 1 ]] || return 1; printf '%s' "$RA_CAPTURE"; }
 ra_wait_new_pid() { local old="$1" timeout="${2:-60}" deadline current; deadline=$((SECONDS+timeout)); while ((SECONDS<deadline)); do current="$(ra_main_pid 2>/dev/null || true)"; if [[ -n "$current" && "$current" != "$old" ]]; then printf '%s' "$current"; return; fi; sleep 1; done; return 1; }
 
@@ -321,7 +344,7 @@ ra_successful_boot_restart_continuity() { local before; before="$(ra_main_pid)" 
 ra_run_new() {
   if ra_checkpoint_exists; then ra_preflight_die "an acceptance checkpoint already exists; use --resume or --abort"; return 2; fi
   local candidate previous="" installed manifest run_id baseline profile
-  candidate="$(ra_pkg_inspect "$RA_CANDIDATE")" || return $?; [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?; installed="$(ra_pkg_installed_version)" || return 1; ra_preflight_clean_boundary "$installed" || return $?; manifest="$(ra_boot_manifest_capture)" || return 1; run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"; ra_artifacts_init_new "$run_id" || return $?; baseline="$(ra_privacy_baseline)" || return 1; profile="$(ra_profile_select "$RA_PROFILE")" || return 1; ra_state_init "$run_id" "$candidate" "$installed" "$manifest" "$profile" || return 1; ra_state_jq '.private.privacy_baseline=$baseline|.private.selected_profile=$profile|.private.run_config.previous=$previous' --argjson baseline "$baseline" --arg profile "$profile" --argjson previous "${previous:-null}" || return 1; ra_package_setup_prepare "$candidate" "$previous" "$installed" || return $?; ra_set_phase running-pre-reboot || return 1; ra_run_pre_reboot
+  candidate="$(ra_pkg_inspect "$RA_CANDIDATE")" || return $?; [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?; installed="$(ra_pkg_installed_version)" || return 1; ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?; ra_preflight_clean_boundary "$installed" || return $?; ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?; manifest="$(ra_boot_manifest_capture)" || return 1; baseline="$(ra_privacy_baseline)" || return 1; profile="$(ra_profile_select "$RA_PROFILE")" || return 1; run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"; ra_artifacts_init_new "$run_id" || return $?; ra_state_init "$run_id" "$candidate" "$installed" "$manifest" "$profile" || return 1; ra_state_jq '.private.privacy_baseline=$baseline|.private.selected_profile=$profile|.private.run_config.previous=$previous' --argjson baseline "$baseline" --arg profile "$profile" --argjson previous "${previous:-null}" || return 1; ra_package_setup_prepare "$candidate" "$previous" "$installed" || return $?; ra_set_phase running-pre-reboot || return 1; ra_run_pre_reboot
 }
 
 ra_run_resume() {
@@ -337,7 +360,7 @@ ra_run_resume() {
 }
 
 ra_run_abort() {
-  ra_checkpoint_exists || { ra_preflight_die "no acceptance checkpoint exists"; return 2; }; ra_state_require_schema || return 1; ra_artifacts_from_state || return 1; local candidate installed; candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1; ra_pkg_assert_identity "$candidate" || return 1; if jq -e '.mutations.package_setup and .mutations.package_setup.state!="released"' "$RA_CHECKPOINT" >/dev/null; then ra_package_setup_reconcile_abort || return 1; else installed="$(ra_pkg_installed_version)" || return 1; [[ "$installed" == "$(jq -r '.version' <<<"$candidate")" ]] || ra_pkg_install_exact "$candidate" || return 1; fi; if ra_status_json >/dev/null 2>&1; then if jq -e '.connection=="active" or .tun=="active"' <<<"$RA_CAPTURE" >/dev/null 2>&1; then ra_disconnect || return 1; fi; fi; ra_wait_inactive 90 || return 1; ra_cleanup_owned_mutations || return 1; ra_restore_original_policy || return 1; ra_require_mutations_released || return 1; ra_privacy_require_ordinary || return 1; ra_record final_restoration PASS || return 1; ra_set_phase aborted-clean || return 1; ra_report_write FAIL || return 1; ra_state_remove || return 1; printf 'ABORTED_CLEAN\n'
+  ra_checkpoint_exists || { ra_preflight_die "no acceptance checkpoint exists"; return 2; }; ra_state_require_schema || return 1; ra_artifacts_from_state || return 1; local candidate installed; candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1; ra_pkg_assert_identity "$candidate" || return 1; if jq -e '.mutations.package_setup and .mutations.package_setup.state!="released"' "$RA_CHECKPOINT" >/dev/null; then ra_package_setup_reconcile_abort || return 1; else installed="$(ra_pkg_installed_version)" || return 1; [[ "$installed" == "$(jq -r '.version' <<<"$candidate")" ]] || ra_pkg_install_exact "$candidate" || return 1; fi; if ra_status_json >/dev/null 2>&1; then if [[ "$(ra_status_classify active "$RA_CAPTURE")" == TARGET_REACHED ]]; then ra_disconnect || return 1; fi; fi; ra_wait_inactive 90 || return 1; ra_cleanup_owned_mutations || return 1; ra_restore_original_policy || return 1; ra_require_mutations_released || return 1; ra_privacy_require_ordinary || return 1; ra_record final_restoration PASS || return 1; ra_set_phase aborted-clean || return 1; ra_report_write FAIL || return 1; ra_state_remove || return 1; printf 'ABORTED_CLEAN\n'
 }
 
 ra_main() { ra_cli_parse "$@" || { ra_usage >&2; return 2; }; ra_require_root_and_user || return $?; ra_init_paths; ra_require_tools || return $?; ra_lock_acquire || return 1; case "$RA_MODE" in new) ra_run_new ;; resume) ra_run_resume ;; abort) ra_run_abort ;; *) return 1 ;; esac; }
