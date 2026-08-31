@@ -32,11 +32,14 @@ ra_set_phase running-pre-reboot
 # The candidate .deb has disappeared, but the exact candidate version is already installed.
 # Abort must not require package bytes unless it actually needs to reinstall/restore them.
 ra_pkg_installed_version() { printf '2.0'; }
-ra_status_json() { RA_CAPTURE='{"connection":"inactive","mode":"tun","tun":"disabled"}'; printf '%s' "$RA_CAPTURE"; }
-ra_wait_inactive() { return 0; }
+ra_failure_bundle_capture() { return 0; }
+ra_safe_disconnect_if_owned() { return 0; }
 ra_cleanup_owned_mutations() { return 0; }
 ra_restore_original_policy() { return 0; }
+ra_package_cleanup_reconcile() { return 0; }
+ra_cleanup_expected_package_verify() { return 0; }
 ra_require_mutations_released() { return 0; }
+ra_verify_inactive_boundary() { return 0; }
 ra_privacy_require_ordinary() { return 0; }
 ra_report_write() { return 0; }
 ra_state_remove() { ABORT_REMOVED=1; return 0; }
@@ -45,8 +48,7 @@ ABORT_REMOVED=0
 ra_run_abort >/dev/null || fail "abort rejected a missing candidate artifact even though candidate is already installed"
 [[ "$ABORT_REMOVED" == 1 ]] || fail "abort did not complete cleanup"
 
-# An active acceptance session must be disconnected before package restoration. Replacing
-# the package while the session is active can mutate/restart the daemon under a live TUN.
+# An active acceptance session must be disconnected before package reconciliation.
 rm -rf "$RELEASE_ACCEPTANCE_STATE_DIR"
 mkdir -p "$RELEASE_ACCEPTANCE_STATE_DIR"
 ra_artifacts_init_new order-run
@@ -57,15 +59,23 @@ ra_state_init order-run "$candidate" "1.0" "$manifest" profile-a
 ra_state_jq '.mutations.package_setup={state:"acquired",kind:"previous_package",identity:{previous:{version:"1.0"},candidate:.candidate}}'
 order_file="$TMP/abort-order"
 : >"$order_file"
-ra_status_json() {
-  RA_CAPTURE='{"connection":"active","mode":"tun","tun":"enabled (podlaz0)","tun_health":{"state":"verified"},"transactions":[{"state":"committed","requires_cleanup":false}]}'
-  printf '%s' "$RA_CAPTURE"
-}
-ra_disconnect() { printf 'disconnect\n' >>"$order_file"; return 0; }
-ra_package_setup_reconcile_abort() { printf 'package\n' >>"$order_file"; return 0; }
+session_state=active
+ra_failure_bundle_capture() { return 0; }
+ra_safe_disconnect_if_owned() { printf 'disconnect\n' >>"$order_file"; session_state=inactive; return 0; }
+ra_cleanup_owned_mutations() { return 0; }
+ra_restore_original_policy() { return 0; }
+ra_package_cleanup_reconcile() { printf 'package\n' >>"$order_file"; return 0; }
+ra_cleanup_expected_package_verify() { return 0; }
+ra_require_mutations_released() { return 0; }
+ra_verify_inactive_boundary() { [[ "$session_state" == inactive ]]; }
+ra_privacy_require_ordinary() { return 0; }
+ra_report_write() { return 0; }
 ra_state_remove() { return 0; }
 ra_run_abort >/dev/null || fail "abort ordering fixture failed"
 first="$(head -n1 "$order_file")"
-[[ "$first" == disconnect ]] || fail "abort restored package before disconnecting the active acceptance session"
+[[ "$first" == disconnect ]] || fail "abort performed cleanup before controlled disconnect: $first"
+disconnect_line="$(grep -n '^disconnect$' "$order_file" | cut -d: -f1)"
+package_line="$(grep -n '^package$' "$order_file" | cut -d: -f1)"
+[[ -n "$disconnect_line" && -n "$package_line" && "$disconnect_line" -lt "$package_line" ]] || fail "package reconciliation happened before disconnect"
 
 printf 'standalone_abort_recovery: PASS\n'
