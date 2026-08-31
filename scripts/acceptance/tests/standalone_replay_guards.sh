@@ -61,6 +61,20 @@ ra_product() { autostart_calls=$((autostart_calls+1)); return 0; }
 ra_autostart_ensure_owned autostart_enable enable profile-a
 assert_eq "$autostart_calls" 0
 
+# If an interrupted acquisition is still at the exact pre-mutation snapshot,
+# semantic similarity must not be mistaken for proof that the mutation ran.
+pre_pending='{"enabled":true,"sha256":"pre"}'
+post_pending='{"enabled":true,"sha256":"post"}'
+ra_state_jq '.mutations.autostart_pending={state:"acquiring",kind:"autostart_policy",scenario:"reboot_autostart_on",identity:{action:"enable",profile:"profile-a",pre_manifest:$pre}}' --argjson pre "$pre_pending"
+autostart_calls=0
+ra_manifest_matches_snapshot() { [[ "$1" == "$pre_pending" ]]; }
+ra_boot_manifest_semantic_matches() { return 0; }
+ra_boot_manifest_capture() { printf '%s' "$post_pending"; }
+ra_product() { autostart_calls=$((autostart_calls+1)); return 0; }
+ra_autostart_ensure_owned autostart_pending enable profile-a
+assert_eq "$autostart_calls" 1
+assert_eq "$(jq -r '.mutations.autostart_pending.state' "$RA_CHECKPOINT")" acquired
+
 # A synthetic terminal profile already discovered during an interrupted import
 # must be adopted and returned without importing a duplicate.
 ra_state_jq '.private.terminal_profile_acquisition={state:"acquiring",baseline_ids:["profile-a"]}'
@@ -73,6 +87,21 @@ id="$(ra_terminal_profile_ensure)"
 assert_eq "$id" terminal-test
 assert_eq "$import_calls" 0
 assert_eq "$(jq -r '.private.terminal_profile_acquisition.state' "$RA_CHECKPOINT")" acquired
+
+# A fresh-run preflight performed before retiring an old run must classify the
+# package version that cleanup will leave behind, not a temporary lower package
+# still installed by the old acceptance run.
+predicted_installed=''
+RA_CANDIDATE="$candidate_path"
+RA_PREVIOUS_DEB=''
+RA_PROFILE=profile-a
+ra_pkg_inspect() { printf '%s' "$candidate"; }
+ra_pkg_installed_version() { printf '1.0'; }
+ra_preflight_release_boundary() { predicted_installed="$3"; return 0; }
+ra_validate_artifact_root() { return 0; }
+ra_profile_validate() { return 0; }
+ra_preflight_new_inputs_before_retire
+assert_eq "$predicted_installed" 2.0
 
 # Unknown/invalid daemon payloads are protocol failures, not full-timeout progress.
 RA_PRIVATE_DIR="$TMP/private-status"
