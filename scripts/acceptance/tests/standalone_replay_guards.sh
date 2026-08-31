@@ -95,6 +95,31 @@ set -e
 ((observe_rc != 0)) || fail "empty failed ip lookup was treated as proven absence"
 export RELEASE_ACCEPTANCE_TEST_MODE=1
 
+# A completed disruptive daemon restart must be adopted after shell death instead
+# of issuing the mutation a second time.
+ra_set_phase running-pre-reboot
+ra_scenario_set_state graceful_restart running
+ra_state_jq '.scenarios.graceful_restart.private.before_pid=100'
+systemctl_calls=0
+ra_main_pid() { printf '200'; }
+ra_wait_active() { return 0; }
+ra_privacy_require_protected() { return 0; }
+ra_privacy_watch_cancel() { return 0; }
+ra_capture() { systemctl_calls=$((systemctl_calls+1)); return 0; }
+ra_recover_running_scenario graceful_restart
+assert_eq "$systemctl_calls" 0
+assert_eq "$(jq -r '.scenarios.graceful_restart.state' "$RA_CHECKPOINT")" passed
+
+# The reboot boundary must be durable before autostart is mutated. The ensure
+# seam observes the checkpoint at the exact point where mutation would occur.
+ra_set_phase running-pre-reboot
+observed_prepare_phase=''
+ra_autostart_ensure_owned() { observed_prepare_phase="$(jq -r '.phase' "$RA_CHECKPOINT")"; return 0; }
+ra_boot_id() { printf 'boot-a'; }
+ra_prepare_reboot_off >/dev/null
+assert_eq "$observed_prepare_phase" preparing-reboot-autostart-off
+assert_eq "$(jq -r '.phase' "$RA_CHECKPOINT")" await-reboot-autostart-off
+
 # A retained/ambiguous phase explicitly blocks generic automatic finalization.
 ra_set_phase fail-cleanup-failed
 ra_phase_blocks_auto_finalizer || fail "fail-cleanup-failed did not block generic finalizer"
