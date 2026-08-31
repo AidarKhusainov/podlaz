@@ -114,9 +114,18 @@ ra_cli_parse --restart "$TMP/candidate.deb"
 assert_eq "$RA_MODE" restart
 assert_eq "$RA_CANDIDATE" "$TMP/candidate.deb"
 
-# SIGTERM after checkpoint creation routes through the guarded finalizer.
+# A retained cleanup ambiguity must not be mutated again just because SIGTERM
+# arrives while the operator is inspecting it.
 signal_calls=0
 ra_failure_finalize() { signal_calls=$((signal_calls+1)); return 1; }
+ra_set_phase fail-cleanup-failed
+set +e
+ra_signal_handler TERM >/dev/null 2>&1
+set -e
+assert_eq "$signal_calls" 0
+
+# SIGTERM during a normal post-checkpoint run still routes through the guarded finalizer.
+ra_set_phase running-pre-reboot
 set +e
 ra_signal_handler TERM >/dev/null 2>&1
 set -e
