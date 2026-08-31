@@ -1044,7 +1044,7 @@ ra_suspend_once() {
 ra_lifecycle_graceful_restart() {
   local before
   before="$(ra_main_pid)" || return 1
-  ra_state_jq '.scenarios.graceful_restart.private.before_pid=$pid' --argjson pid "$before" || return 1
+  ra_state_jq '.scenarios.graceful_restart.private=((.scenarios.graceful_restart.private//{})+{before_pid:$pid,mutation_requested:true})' --argjson pid "$before" || return 1
   ra_privacy_watch_start graceful_restart
   ra_capture systemctl restart "$RA_SERVICE" || { ra_privacy_watch_cancel; return 1; }
   ra_wait_new_pid "$before" >/dev/null || { ra_privacy_watch_cancel; return 1; }
@@ -1055,7 +1055,7 @@ ra_lifecycle_graceful_restart() {
 ra_lifecycle_unexpected_death() {
   local before
   before="$(ra_main_pid)" || return 1
-  ra_state_jq '.scenarios.daemon_kill.private.before_pid=$pid' --argjson pid "$before" || return 1
+  ra_state_jq '.scenarios.daemon_kill.private=((.scenarios.daemon_kill.private//{})+{before_pid:$pid,mutation_requested:true})' --argjson pid "$before" || return 1
   ra_privacy_watch_start daemon_kill
   ra_capture systemctl kill --kill-who=main --signal=SIGKILL "$RA_SERVICE" || { ra_privacy_watch_cancel; return 1; }
   ra_wait_new_pid "$before" >/dev/null || { ra_privacy_watch_cancel; return 1; }
@@ -1070,11 +1070,12 @@ ra_service_is_active() {
 }
 
 ra_lifecycle_stop_start() {
-  ra_state_jq '.scenarios.stop_start_no_reconnect.private.stop_requested=true' || return 1
+  ra_state_jq '.scenarios.stop_start_no_reconnect.private=((.scenarios.stop_start_no_reconnect.private//{})+{stop_requested:true})' || return 1
   ra_capture systemctl stop "$RA_SERVICE" || return 1
   ra_state_jq '.scenarios.stop_start_no_reconnect.private.stop_completed=true' || return 1
   ra_verify_inactive_boundary || return 1
   ra_privacy_require_ordinary || return 1
+  ra_state_jq '.scenarios.stop_start_no_reconnect.private.start_requested=true' || return 1
   ra_capture systemctl start "$RA_SERVICE" || return 1
   ra_state_jq '.scenarios.stop_start_no_reconnect.private.start_completed=true' || return 1
   ra_wait_inactive 90
@@ -1252,11 +1253,12 @@ ra_package_setup_resume_prepare() {
         return $?
       fi
       pre="$(jq -r '.private.installed_before//""' "$RA_CHECKPOINT")" || return 1
-      [[ "$installed" == "$pre" ]] || { ra_die "interrupted lower-release acquisition is ambiguous"; return 1; }
-      previous="$(jq -ce '.mutations.package_setup.identity.previous' "$RA_CHECKPOINT")" || return 1
-      ra_pkg_install_exact "$previous" || return 1
-      ra_wait_inactive 90 || return 1
-      ra_mut_mark_acquired package_setup
+      if [[ "$installed" == "$pre" ]]; then
+        ra_die "cannot prove whether interrupted lower-release installation ran; refusing blind package retry"
+        return 1
+      fi
+      ra_die "interrupted lower-release acquisition is ambiguous"
+      return 1
       ;;
     acquired) [[ "$installed" == "$pv" ]] || { ra_die "acquired lower-release package drifted"; return 1; } ;;
     releasing|released) ra_die "lower-release preparation authority was already retired; restart is required"; return 1 ;;
@@ -1358,26 +1360,32 @@ ra_terminal_profile_ensure() {
   acq="$(jq -ce '.private.terminal_profile_acquisition//empty' "$RA_CHECKPOINT" 2>/dev/null || true)"
   if [[ -z "$acq" ]]; then
     baseline="$(ra_profile_ids_json)" || return 1
-    ra_state_jq '.private.terminal_profile_acquisition={state:"acquiring",baseline_ids:$ids}' --argjson ids "$baseline" || return 1
+    ra_state_jq '.private.terminal_profile_acquisition={state:"prepared",baseline_ids:$ids}' --argjson ids "$baseline" || return 1
     acq="$(jq -ce '.private.terminal_profile_acquisition' "$RA_CHECKPOINT")" || return 1
   fi
   state="$(jq -r '.state' <<<"$acq")" || return 1
   baseline="$(jq -c '.baseline_ids' <<<"$acq")" || return 1
   case "$state" in
-    acquiring)
+    prepared)
+      current="$(ra_profile_ids_json)" || return 1
+      [[ "$(jq -cS . <<<"$current")" == "$(jq -cS . <<<"$baseline")" ]] || { ra_die "terminal profile inventory drifted before import"; return 1; }
+      ra_state_jq '.private.terminal_profile_acquisition.state="acquiring"' || return 1
+      ra_product profile import "$RA_TERMINAL_URI" || return 1
+      imported="$(sed -n 's/^Imported profile:[[:space:]]*//p' <<<"$RA_CAPTURE" | head -n1)"
       current="$(ra_profile_ids_json)" || return 1
       additions="$(jq -cn --argjson a "$current" --argjson b "$baseline" '$a-$b')" || return 1
-      if [[ "$(jq length <<<"$additions")" == 0 ]]; then
-        ra_product profile import "$RA_TERMINAL_URI" || return 1
-        imported="$(sed -n 's/^Imported profile:[[:space:]]*//p' <<<"$RA_CAPTURE" | head -n1)"
-        current="$(ra_profile_ids_json)" || return 1
-        additions="$(jq -cn --argjson a "$current" --argjson b "$baseline" '$a-$b')" || return 1
-      else
-        imported=""
-      fi
       [[ "$(jq length <<<"$additions")" == 1 ]] || { ra_die "terminal profile acquisition is ambiguous"; return 1; }
       id="$(jq -r '.[0]' <<<"$additions")"
       [[ -z "$imported" || "$imported" == "$id" ]] || return 1
+      ra_terminal_profile_is_exact "$id" || return 1
+      ra_state_jq '.private.terminal_profile=$id|.private.terminal_profile_acquisition.state="acquired"|.private.terminal_profile_acquisition.profile_id=$id' --arg id "$id" || return 1
+      printf '%s' "$id"
+      ;;
+    acquiring)
+      current="$(ra_profile_ids_json)" || return 1
+      additions="$(jq -cn --argjson a "$current" --argjson b "$baseline" '$a-$b')" || return 1
+      [[ "$(jq length <<<"$additions")" == 1 ]] || { ra_die "cannot prove whether interrupted terminal profile import completed; refusing blind import retry"; return 1; }
+      id="$(jq -r '.[0]' <<<"$additions")"
       ra_terminal_profile_is_exact "$id" || return 1
       ra_state_jq '.private.terminal_profile=$id|.private.terminal_profile_acquisition.state="acquired"|.private.terminal_profile_acquisition.profile_id=$id' --arg id "$id" || return 1
       printf '%s' "$id"
@@ -1402,18 +1410,27 @@ ra_terminal_profile_reconcile() {
   [[ -n "$acq" ]] || return 0
   state="$(jq -r '.state' <<<"$acq")"; baseline="$(jq -c '.baseline_ids' <<<"$acq")"
   current="$(ra_profile_ids_json)" || return 1
-  if [[ "$state" == acquiring ]]; then
-    additions="$(jq -cn --argjson a "$current" --argjson b "$baseline" '$a-$b')" || return 1
-    if [[ "$(jq length <<<"$additions")" == 0 ]]; then ra_state_jq 'del(.private.terminal_profile_acquisition)'; return 0; fi
-    [[ "$(jq length <<<"$additions")" == 1 ]] || return 1
-    id="$(jq -r '.[0]' <<<"$additions")"
-    ra_terminal_profile_is_exact "$id" || return 1
-    ra_state_jq '.private.terminal_profile=$id|.private.terminal_profile_acquisition.state="acquired"|.private.terminal_profile_acquisition.profile_id=$id' --arg id "$id" || return 1
-  else id="$(jq -r '.profile_id' <<<"$acq")"; fi
+  case "$state" in
+    prepared)
+      [[ "$(jq -cS . <<<"$current")" == "$(jq -cS . <<<"$baseline")" ]] || { ra_die "terminal profile preparation cleanup is ambiguous"; return 1; }
+      ra_state_jq 'del(.private.terminal_profile_acquisition)'
+      return $?
+      ;;
+    acquiring)
+      additions="$(jq -cn --argjson a "$current" --argjson b "$baseline" '$a-$b')" || return 1
+      if [[ "$(jq length <<<"$additions")" == 0 ]]; then ra_state_jq 'del(.private.terminal_profile_acquisition)'; return $?; fi
+      [[ "$(jq length <<<"$additions")" == 1 ]] || { ra_die "terminal profile acquisition cleanup is ambiguous"; return 1; }
+      id="$(jq -r '.[0]' <<<"$additions")"
+      ra_terminal_profile_is_exact "$id" || return 1
+      ra_state_jq '.private.terminal_profile=$id|.private.terminal_profile_acquisition.state="acquired"|.private.terminal_profile_acquisition.profile_id=$id' --arg id "$id" || return 1
+      ;;
+    acquired|releasing) id="$(jq -r '.profile_id' <<<"$acq")" ;;
+    *) ra_die "unsupported terminal profile cleanup state: $state"; return 1 ;;
+  esac
   current="$(ra_profile_ids_json)" || return 1
   if jq -e --arg id "$id" 'index($id)!=null' <<<"$current" >/dev/null; then
     ra_terminal_profile_is_exact "$id" || return 1
-    ra_state_jq '.private.terminal_profile_acquisition.state="releasing"' || return 1
+    if [[ "$state" != releasing ]]; then ra_state_jq '.private.terminal_profile_acquisition.state="releasing"' || return 1; fi
     ra_product profile delete "$id" --yes || return 1
   fi
   ra_state_jq 'del(.private.terminal_profile,.private.terminal_profile_acquisition)'
@@ -1422,6 +1439,7 @@ ra_terminal_profile_reconcile() {
 ra_autostart_set_owned() {
   local name="$1" action="$2" profile="${3:-}" pre post identity
   pre="$(ra_boot_manifest_capture)" || return 1
+  if ra_boot_manifest_semantic_matches "$action" "$profile"; then return 0; fi
   identity="$(jq -cn --arg action "$action" --arg profile "$profile" --argjson pre "$pre" '{action:$action,profile:$profile,pre_manifest:$pre}')" || return 1
   ra_mut_begin_acquire "$name" autostart_policy "$identity" || return 1
   if [[ "$action" == disable ]]; then ra_product autostart disable >/dev/null || return 1; else ra_product autostart enable --mode tun "$profile" >/dev/null || return 1; fi
@@ -1445,17 +1463,18 @@ ra_autostart_ensure_owned() {
         ra_mut_mark_acquired "$name"
         return $?
       fi
+      if ra_manifest_matches_snapshot "$pre"; then
+        ra_die "cannot prove whether interrupted autostart mutation ran; refusing blind retry"
+        return 1
+      fi
       if ra_boot_manifest_semantic_matches "$action" "$profile"; then
         post="$(ra_boot_manifest_capture)" || return 1
         ra_state_jq '.mutations[$n].identity.owned_manifest=$post' --arg n "$name" --argjson post "$post" || return 1
         ra_mut_mark_acquired "$name"
         return $?
       fi
-      ra_manifest_matches_snapshot "$pre" || { ra_die "autostart acquisition is ambiguous"; return 1; }
-      if [[ "$action" == disable ]]; then ra_product autostart disable >/dev/null || return 1; else ra_product autostart enable --mode tun "$profile" >/dev/null || return 1; fi
-      post="$(ra_boot_manifest_capture)" || return 1
-      ra_state_jq '.mutations[$n].identity.owned_manifest=$post' --arg n "$name" --argjson post "$post" || return 1
-      ra_mut_mark_acquired "$name"
+      ra_die "autostart acquisition is ambiguous"
+      return 1
       ;;
     acquired)
       [[ -n "$owned" ]] && ra_manifest_matches_snapshot "$owned" || { ra_die "autostart policy drifted from exact owned state"; return 1; }
@@ -1540,12 +1559,18 @@ ra_require_mutations_released() {
 }
 
 ra_session_observe() {
-  local payload cleanup active_id committed rc
+  local payload cleanup active_id committed rc selected profile_id
+  selected="$(jq -r '.private.selected_profile//.private.run_config.profile//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
   if payload="$(ra_status_json 2>/dev/null)"; then
     cleanup="$(jq '[.transactions[]?|select((.requires_cleanup//false)==true)]|length' <<<"$payload" 2>/dev/null)" || { printf 'ambiguous'; return 0; }
     active_id="$(jq -r '.active_transaction_id//""' <<<"$payload" 2>/dev/null)" || { printf 'ambiguous'; return 0; }
     committed="$(jq '[.transactions[]?|select(.state=="committed" and (.requires_cleanup//false)==false)]|length' <<<"$payload" 2>/dev/null)" || { printf 'ambiguous'; return 0; }
-    if [[ "$(jq -r '.connection//""' <<<"$payload")" == active && "$(jq -r '.mode//""' <<<"$payload")" == tun && "$committed" -gt 0 ]]; then printf 'active'; return 0; fi
+    profile_id="$(jq -r '.profile_id//""' <<<"$payload" 2>/dev/null)" || { printf 'ambiguous'; return 0; }
+    if [[ "$(jq -r '.connection//""' <<<"$payload")" == active && "$(jq -r '.mode//""' <<<"$payload")" == tun && "$committed" -gt 0 ]]; then
+      [[ -n "$selected" && "$profile_id" == "$selected" ]] || { printf 'ambiguous'; return 0; }
+      printf 'active'
+      return 0
+    fi
     if [[ "$(jq -r '.connection//""' <<<"$payload")" == inactive && "$cleanup" == 0 && -z "$active_id" && "$committed" == 0 ]]; then printf 'inactive'; return 0; fi
     printf 'ambiguous'; return 0
   else
@@ -1585,7 +1610,7 @@ ra_package_cleanup_reconcile() {
   return 0
 }
 
-ra_cleanup_expected_package_verify() {
+ra_cleanup_expected_package_version() {
   local installed initial candidate cv require_candidate=false
   installed="$(ra_pkg_installed_version)" || return 1
   initial="$(jq -r '.private.installed_before//""' "$RA_CHECKPOINT")" || return 1
@@ -1594,11 +1619,16 @@ ra_cleanup_expected_package_verify() {
   if jq -e '.mutations.package_setup' "$RA_CHECKPOINT" >/dev/null 2>&1; then require_candidate=true; fi
   if jq -e '.mutations.reinstall_package' "$RA_CHECKPOINT" >/dev/null 2>&1; then require_candidate=true; fi
   if [[ "$(jq -r '.mutations.candidate_upgrade.identity.applied//false' "$RA_CHECKPOINT")" == true ]]; then require_candidate=true; fi
-  if [[ "$require_candidate" == true ]]; then
-    [[ "$installed" == "$cv" ]] || { ra_die "cleanup did not retain the candidate package required by owned package authority"; return 1; }
-    return 0
-  fi
-  [[ "$installed" == "$cv" || "$installed" == "$initial" ]] || { ra_die "cleanup observed an unexpected Podlaz package version"; return 1; }
+  if [[ "$require_candidate" == true ]]; then printf '%s' "$cv"; return 0; fi
+  [[ "$installed" == "$cv" || "$installed" == "$initial" ]] || { ra_die "cannot predict post-cleanup package version from recorded authority"; return 1; }
+  printf '%s' "$installed"
+}
+
+ra_cleanup_expected_package_verify() {
+  local installed expected
+  installed="$(ra_pkg_installed_version)" || return 1
+  expected="$(ra_cleanup_expected_package_version)" || return 1
+  [[ "$installed" == "$expected" ]] || { ra_die "cleanup did not leave the package version required by recorded authority"; return 1; }
 }
 
 ra_safe_cleanup() {
@@ -1713,7 +1743,7 @@ ra_failure_bundle_capture() {
   chmod 0700 "$bundle" 2>/dev/null || true
   cat "$RA_CHECKPOINT" >"$bundle/checkpoint-at-failure.json" 2>/dev/null || true
   chmod 0600 "$bundle/checkpoint-at-failure.json" 2>/dev/null || true
-  ra_failure_copy_private_file "$RA_TRANSCRIPT" "$bundle/commands.log"
+  if [[ -f "$RA_TRANSCRIPT" && ! -L "$RA_TRANSCRIPT" ]]; then cat "$RA_TRANSCRIPT" >"$bundle/commands.log" 2>/dev/null || true; chmod 0600 "$bundle/commands.log" 2>/dev/null || true; fi
   if [[ -f "$RA_TRANSCRIPT" ]]; then tail -n 200 "$RA_TRANSCRIPT" >"$bundle/last-commands.log" 2>/dev/null || true; chmod 0600 "$bundle/last-commands.log" 2>/dev/null || true; fi
   local status
   if status="$(ra_status_json 2>/dev/null)"; then printf '%s\n' "$status" >"$bundle/last-status.json" 2>/dev/null || true; fi
@@ -1745,6 +1775,7 @@ ra_failure_finalize() {
   local reason="${1:-unexpected_failure}" exit_code="${2:-1}"
   if ((RA_FINALIZER_ACTIVE==1)); then return 1; fi
   ra_checkpoint_exists >/dev/null 2>&1 || return 1
+  if ra_phase_blocks_auto_finalizer; then return 1; fi
   RA_FINALIZER_ACTIVE=1
   if ! ra_failure_record "$reason" "$exit_code"; then RA_FINALIZER_ACTIVE=0; return 1; fi
   ra_failure_bundle_capture "$reason" "$exit_code" || true
@@ -1770,8 +1801,9 @@ ra_failure_finalize() {
 }
 
 ra_signal_handler() {
-  local signal="$1"
-  if ra_checkpoint_exists >/dev/null 2>&1; then ra_failure_finalize "signal_${signal}" 130 || true; fi
+  local signal="$1" exit_code=130
+  [[ "$signal" != TERM ]] || exit_code=143
+  if ra_checkpoint_exists >/dev/null 2>&1 && ! ra_phase_blocks_auto_finalizer; then ra_failure_finalize "signal_${signal}" "$exit_code" || true; fi
   return 1
 }
 
@@ -1792,7 +1824,7 @@ ra_existing_checkpoint_classify() {
       case "$state" in pending|prepared|running|verifying|passed|"") printf 'replay-safe' ;; failed) printf 'cleanup-restart' ;; *) printf 'ambiguous' ;; esac
       return 0
       ;;
-    complete|aborted-clean|failed-clean|restarted-clean) printf 'cleanup-restart'; return 0 ;;
+    complete|aborted-clean|failed-clean|restarted-clean|restarted_clean) printf 'cleanup-restart'; return 0 ;;
     *) printf 'ambiguous'; return 0 ;;
   esac
 }
@@ -1834,11 +1866,12 @@ ra_reconcile_scenario_mutations() {
 }
 
 ra_recover_running_scenario() {
-  local name="$1" before current observed stop_completed service_rc fixture_state profile
+  local name="$1" before current observed stop_requested stop_completed start_requested start_completed service_rc fixture_state profile state installed cv upgrade_before requested
   case "$name" in
     graceful_restart|daemon_kill)
       ra_privacy_watch_cancel
       before="$(jq -r --arg n "$name" '.scenarios[$n].private.before_pid//""' "$RA_CHECKPOINT")" || return 1
+      requested="$(jq -r --arg n "$name" '.scenarios[$n].private.mutation_requested//false' "$RA_CHECKPOINT")" || return 1
       if [[ -n "$before" ]]; then
         current="$(ra_main_pid 2>/dev/null || true)"
         [[ -n "$current" ]] || { ra_die "$name daemon pid is unavailable during replay"; return 1; }
@@ -1849,41 +1882,68 @@ ra_recover_running_scenario() {
           ra_scenario_set_state "$name" passed
           return $?
         fi
+        if [[ "$requested" == true ]]; then ra_die "cannot prove whether interrupted $name mutation ran; refusing blind replay"; return 1; fi
       fi
       ra_scenario_set_state "$name" prepared
       ;;
     stop_start_no_reconnect)
+      stop_requested="$(jq -r '.scenarios.stop_start_no_reconnect.private.stop_requested//false' "$RA_CHECKPOINT")"
       stop_completed="$(jq -r '.scenarios.stop_start_no_reconnect.private.stop_completed//false' "$RA_CHECKPOINT")"
+      start_requested="$(jq -r '.scenarios.stop_start_no_reconnect.private.start_requested//false' "$RA_CHECKPOINT")"
+      start_completed="$(jq -r '.scenarios.stop_start_no_reconnect.private.start_completed//false' "$RA_CHECKPOINT")"
+      if [[ "$stop_requested" == true && "$stop_completed" != true ]]; then
+        if ra_service_is_active; then ra_die "cannot prove whether interrupted service stop ran; refusing blind stop replay"; return 1; else service_rc=$?; [[ "$service_rc" == 1 ]] || return 1; ra_state_jq '.scenarios.stop_start_no_reconnect.private.stop_completed=true' || return 1; stop_completed=true; fi
+      fi
       if [[ "$stop_completed" == true ]]; then
-        if ra_service_is_active; then
+        if [[ "$start_completed" == true ]]; then
+          ra_service_is_active || { service_rc=$?; [[ "$service_rc" == 1 ]] && ra_die "service stopped after completed restart boundary"; return 1; }
           ra_verify_inactive_boundary || return 1
           ra_privacy_require_ordinary || return 1
           ra_record stop_start_no_reconnect PASS
           ra_scenario_set_state "$name" passed
           return 0
-        else
+        fi
+        if [[ "$start_requested" == true ]]; then
+          if ra_service_is_active; then
+            ra_state_jq '.scenarios.stop_start_no_reconnect.private.start_completed=true' || return 1
+            ra_verify_inactive_boundary || return 1
+            ra_privacy_require_ordinary || return 1
+            ra_record stop_start_no_reconnect PASS
+            ra_scenario_set_state "$name" passed
+            return 0
+          fi
           service_rc=$?
           [[ "$service_rc" == 1 ]] || return 1
-          ra_capture systemctl start "$RA_SERVICE" || return 1
-          ra_wait_inactive 90 || return 1
-          ra_privacy_require_ordinary || return 1
-          ra_record stop_start_no_reconnect PASS
-          ra_scenario_set_state "$name" passed
-          return 0
+          ra_die "cannot prove whether interrupted service start ran; refusing blind start replay"
+          return 1
         fi
+        ra_verify_inactive_boundary || return 1
+        ra_privacy_require_ordinary || return 1
+        ra_state_jq '.scenarios.stop_start_no_reconnect.private.start_requested=true' || return 1
+        ra_capture systemctl start "$RA_SERVICE" || return 1
+        ra_state_jq '.scenarios.stop_start_no_reconnect.private.start_completed=true' || return 1
+        ra_wait_inactive 90 || return 1
+        ra_privacy_require_ordinary || return 1
+        ra_record stop_start_no_reconnect PASS
+        ra_scenario_set_state "$name" passed
+        return 0
       fi
       ra_scenario_set_state "$name" prepared
       ;;
     lower_release_upgrade)
       if jq -e '.mutations.candidate_upgrade and .mutations.candidate_upgrade.state!="released"' "$RA_CHECKPOINT" >/dev/null 2>&1; then
-        local installed cv
+        state="$(jq -r '.mutations.candidate_upgrade.state' "$RA_CHECKPOINT")" || return 1
         installed="$(ra_pkg_installed_version)" || return 1
-        cv="$(jq -r '.candidate.version' "$RA_CHECKPOINT")"
+        cv="$(jq -r '.candidate.version' "$RA_CHECKPOINT")" || return 1
+        upgrade_before="$(jq -r '.mutations.candidate_upgrade.identity.installed_before//""' "$RA_CHECKPOINT")" || return 1
+        if [[ "$state" == acquiring && "$installed" == "$upgrade_before" ]]; then ra_die "cannot prove whether interrupted candidate upgrade ran; refusing blind package replay"; return 1; fi
         if [[ "$installed" == "$cv" ]]; then
           ra_candidate_upgrade_reconcile_cleanup || return 1
           ra_die "lower-release upgrade evidence was interrupted after candidate installation; restart is required"
           return 1
         fi
+        ra_die "candidate upgrade package state is ambiguous during replay"
+        return 1
       fi
       observed="$(ra_session_observe)"
       if [[ "$observed" == active ]]; then ra_disconnect || return 1; ra_wait_inactive 120 || return 1; elif [[ "$observed" != inactive ]]; then return 1; fi
@@ -2164,28 +2224,28 @@ ra_resume_require_new_boot() { local old current; old="$(jq -r '.previous_boot_i
 ra_resume_verify_candidate() { local candidate installed; candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1; installed="$(ra_pkg_installed_version)" || return 1; [[ "$installed" == "$(jq -r '.version' <<<"$candidate")" ]] || { ra_die "installed candidate changed across reboot"; return 1; }; }
 
 ra_same_boot_restart_stays_inactive() {
-  local scenario="$1" before current
+  local scenario="$1" before current requested
   before="$(jq -r --arg n "$scenario" '.scenarios[$n].private.before_pid//""' "$RA_CHECKPOINT")" || return 1
+  requested="$(jq -r --arg n "$scenario" '.scenarios[$n].private.mutation_requested//false' "$RA_CHECKPOINT")" || return 1
   current="$(ra_main_pid)" || return 1
   if [[ -n "$before" && "$current" != "$before" ]]; then ra_wait_inactive 30; return $?; fi
-  if [[ -z "$before" ]]; then
-    before="$current"
-    ra_state_jq '.scenarios[$n]=((.scenarios[$n]//{name:$n})+{private:((.scenarios[$n].private//{})+{before_pid:$pid})})' --arg n "$scenario" --argjson pid "$before" || return 1
-  fi
+  if [[ -n "$before" && "$requested" == true ]]; then ra_die "cannot prove whether interrupted same-boot restart ran; refusing blind replay"; return 1; fi
+  before="$current"
+  ra_state_jq '.scenarios[$n]=((.scenarios[$n]//{name:$n})+{private:((.scenarios[$n].private//{})+{before_pid:$pid,mutation_requested:true})})' --arg n "$scenario" --argjson pid "$before" || return 1
   ra_capture systemctl restart "$RA_SERVICE" || return 1
   ra_wait_new_pid "$before" >/dev/null || return 1
   ra_wait_inactive 30
 }
 
 ra_successful_boot_restart_continuity() {
-  local before current
+  local before current requested
   before="$(jq -r '.scenarios.reboot_autostart_on.private.before_pid//""' "$RA_CHECKPOINT")" || return 1
+  requested="$(jq -r '.scenarios.reboot_autostart_on.private.mutation_requested//false' "$RA_CHECKPOINT")" || return 1
   current="$(ra_main_pid)" || return 1
   if [[ -n "$before" && "$current" != "$before" ]]; then ra_wait_active 30 || return 1; ra_privacy_require_protected; return $?; fi
-  if [[ -z "$before" ]]; then
-    before="$current"
-    ra_state_jq '.scenarios.reboot_autostart_on=((.scenarios.reboot_autostart_on//{name:"reboot_autostart_on"})+{private:((.scenarios.reboot_autostart_on.private//{})+{before_pid:$pid})})' --argjson pid "$before" || return 1
-  fi
+  if [[ -n "$before" && "$requested" == true ]]; then ra_die "cannot prove whether interrupted boot restart ran; refusing blind replay"; return 1; fi
+  before="$current"
+  ra_state_jq '.scenarios.reboot_autostart_on=((.scenarios.reboot_autostart_on//{name:"reboot_autostart_on"})+{private:((.scenarios.reboot_autostart_on.private//{})+{before_pid:$pid,mutation_requested:true})})' --argjson pid "$before" || return 1
   ra_privacy_watch_start reboot_active_restart
   ra_capture systemctl restart "$RA_SERVICE" || { ra_privacy_watch_cancel; return 1; }
   ra_wait_new_pid "$before" >/dev/null || { ra_privacy_watch_cancel; return 1; }
@@ -2210,7 +2270,7 @@ ra_preflight_new_inputs_before_retire() {
   local candidate previous="" installed ids id terminal valid_count=0
   candidate="$(ra_pkg_inspect "$RA_CANDIDATE")" || return $?
   [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?
-  installed="$(ra_pkg_installed_version)" || return 1
+  installed="$(ra_cleanup_expected_package_version)" || return 1
   ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?
   ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?
   if [[ -n "$RA_PROFILE" ]]; then
@@ -2247,7 +2307,7 @@ ra_run_new_fresh() {
 }
 
 ra_retire_existing_run() {
-  local result="$1"
+  local result="$1" phase
   ra_artifacts_from_state || return 1
   ra_failure_bundle_capture "retire_${result}" 1 || true
   if ! ra_safe_cleanup; then
@@ -2256,7 +2316,9 @@ ra_retire_existing_run() {
     printf 'FAIL_CLEANUP_FAILED\n'
     return 1
   fi
-  ra_set_phase "${result,,}" || return 1
+  phase="${result,,}"
+  phase="${phase//_/-}"
+  ra_set_phase "$phase" || return 1
   ra_report_write "$result" || return 1
   ra_state_remove
 }
@@ -2283,7 +2345,7 @@ ra_run_new() {
       ra_run_resume
       ;;
     cleanup-restart)
-      if ! ra_preflight_new_inputs_before_retire; then rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi
+      if ra_preflight_new_inputs_before_retire; then :; else rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi
       ra_retire_existing_run RESTARTED_CLEAN || return 1
       ra_run_new_fresh
       ;;
@@ -2347,11 +2409,11 @@ ra_resume_reboot_terminal_verify() {
 
 ra_run_resume() {
   ra_checkpoint_exists || { ra_preflight_die "no acceptance checkpoint exists"; return 2; }
-  ra_state_require_schema || return 1
-  ra_artifacts_from_state || return 1
-  ra_resume_load_config || return 1
+  ra_state_require_schema || { RA_SUPPRESS_FINALIZER=1; return 1; }
+  ra_artifacts_from_state || { RA_SUPPRESS_FINALIZER=1; return 1; }
+  ra_resume_load_config || { RA_SUPPRESS_FINALIZER=1; return 1; }
   local phase candidate previous
-  phase="$(jq -r '.phase' "$RA_CHECKPOINT")"
+  phase="$(jq -r '.phase' "$RA_CHECKPOINT")" || { RA_SUPPRESS_FINALIZER=1; return 1; }
   case "$phase" in
     preparing-lower-release)
       candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1
@@ -2381,7 +2443,7 @@ ra_run_resume() {
       ra_resume_reboot_terminal_verify
       ;;
     verifying-reboot-terminal) ra_resume_reboot_terminal_verify ;;
-    *) ra_die "unsupported persisted phase: $phase"; return 1 ;;
+    *) RA_SUPPRESS_FINALIZER=1; ra_die "unsupported persisted phase: $phase"; return 1 ;;
   esac
 }
 
@@ -2408,7 +2470,7 @@ ra_run_restart() {
   local rc
   if ra_checkpoint_exists >/dev/null 2>&1; then
     ra_state_require_schema || { RA_SUPPRESS_FINALIZER=1; return 1; }
-    if ! ra_preflight_new_inputs_before_retire; then rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi
+    if ra_preflight_new_inputs_before_retire; then :; else rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi
     ra_retire_existing_run RESTARTED_CLEAN || return 1
   fi
   RA_MODE=new
@@ -2425,7 +2487,7 @@ ra_phase_blocks_auto_finalizer() {
   local phase
   phase="$(jq -r '.phase//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
   case "$phase" in
-    await-reboot-autostart-off|await-reboot-autostart-on|await-reboot-terminal|fail-cleanup-failed|failed-clean|aborted-clean|restarted-clean|complete) return 0 ;;
+    await-reboot-autostart-off|await-reboot-autostart-on|await-reboot-terminal|fail-cleanup-failed|failed-clean|aborted-clean|restarted-clean|restarted_clean|complete) return 0 ;;
     *) return 1 ;;
   esac
 }
