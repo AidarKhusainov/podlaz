@@ -189,6 +189,27 @@ set -e
 ((restart_retry_rc != 0)) || fail "ambiguous daemon restart unexpectedly replayed"
 assert_eq "$systemctl_calls" 0
 
+# Running scenarios whose recovery would release state and then execute the same
+# disruptive scenario again are restart-required. They are retired exactly and a
+# fresh run may start; they are never replayed inside the old run.
+for nonreplay in rollback_interruption warmed_inactive_candidate_baseline preconnect_coexistence resource_soak disconnect_cleanup runtime_terminal_convergence; do
+  ra_set_phase running-pre-reboot
+  ra_state_jq '.current_scenario=$n|.scenarios[$n]=((.scenarios[$n]//{name:$n})+{state:"running"})' --arg n "$nonreplay"
+  assert_eq "$(ra_existing_checkpoint_classify)" cleanup-restart
+done
+
+# Fine-grained lifecycle/package scenarios with explicit live adoption remain
+# eligible for automatic continuation, and verifying never reruns its mutation.
+for replayable in graceful_restart daemon_kill stop_start_no_reconnect lower_release_upgrade reinstall; do
+  ra_set_phase running-pre-reboot
+  ra_state_jq '.current_scenario=$n|.scenarios[$n]=((.scenarios[$n]//{name:$n})+{state:"running"})' --arg n "$replayable"
+  assert_eq "$(ra_existing_checkpoint_classify)" replay-safe
+done
+ra_state_jq '.current_scenario="resource_soak"|.scenarios.resource_soak.state="verifying"'
+assert_eq "$(ra_existing_checkpoint_classify)" replay-safe
+ra_state_jq '.current_scenario="future_unknown"|.scenarios.future_unknown={name:"future_unknown",state:"running"}'
+assert_eq "$(ra_existing_checkpoint_classify)" ambiguous
+
 # The reboot boundary must be durable before autostart is mutated.
 ra_set_phase running-pre-reboot
 observed_prepare_phase=''
