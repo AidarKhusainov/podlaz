@@ -41,6 +41,7 @@ done
 
 # Evidence capture happens before any cleanup and a clean reconciliation removes the checkpoint.
 order_file="$TMP/finalizer-order"
+output_file="$TMP/finalizer-output"
 : >"$order_file"
 removed=0
 ra_failure_bundle_capture() { printf 'diagnostics\n' >>"$order_file"; return 0; }
@@ -48,9 +49,10 @@ ra_safe_cleanup() { printf 'cleanup\n' >>"$order_file"; return 0; }
 ra_report_write() { return 0; }
 ra_state_remove() { printf 'remove\n' >>"$order_file"; removed=1; return 0; }
 set +e
-output="$(ra_failure_finalize unexpected_test_failure 19)"
+ra_failure_finalize unexpected_test_failure 19 >"$output_file"
 rc=$?
 set -e
+output="$(cat "$output_file")"
 ((rc != 0)) || fail "failure finalizer must preserve a failing exit status"
 assert_contains "$output" FAILED_CLEAN
 assert_eq "$(head -n1 "$order_file")" diagnostics
@@ -63,9 +65,10 @@ RA_FINALIZER_ACTIVE=0
 ra_failure_bundle_capture() { printf 'diagnostics\n' >>"$order_file"; return 0; }
 ra_safe_cleanup() { printf 'cleanup\n' >>"$order_file"; return 1; }
 set +e
-output="$(ra_failure_finalize ambiguous_cleanup 23)"
+ra_failure_finalize ambiguous_cleanup 23 >"$output_file"
 rc=$?
 set -e
+output="$(cat "$output_file")"
 ((rc != 0)) || fail "ambiguous failure finalizer unexpectedly succeeded"
 assert_contains "$output" FAIL_CLEANUP_FAILED
 [[ "$removed" == 0 ]] || fail "ambiguous cleanup removed the checkpoint"
