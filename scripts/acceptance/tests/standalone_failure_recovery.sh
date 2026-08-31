@@ -58,7 +58,10 @@ assert_contains "$output" FAILED_CLEAN
 assert_eq "$(head -n1 "$order_file")" diagnostics
 [[ "$removed" == 1 ]] || fail "clean finalization did not remove checkpoint"
 
-# Ambiguous cleanup retains the checkpoint and reports cleanup failure.
+# Ambiguous cleanup retains the checkpoint and reports cleanup failure. The mocked
+# state_remove above intentionally leaves the fixture checkpoint on disk, so reset
+# the phase to model a separate post-checkpoint failure case.
+ra_set_phase running-pre-reboot
 : >"$order_file"
 removed=0
 RA_FINALIZER_ACTIVE=0
