@@ -40,8 +40,8 @@ previous="$(jq -cn --arg p "$previous_path" '{path:$p,package:"podlaz",version:"
 ra_state_init replay-run "$candidate" "2.0" '{"enabled":false}' profile-a
 ra_state_jq '.private.run_config.previous=$p' --argjson p "$previous"
 
-# An interrupted preparing-lower-release boundary with the lower package already
-# installed must adopt the live state and must not run dpkg a second time.
+# An interrupted lower-package acquisition with the exact lower version already
+# installed is adopted without invoking dpkg a second time.
 ra_state_jq '.mutations.package_setup={state:"acquiring",kind:"previous_package",scenario:"",identity:{previous:$p,candidate:$c}}' --argjson p "$previous" --argjson c "$candidate"
 install_calls=0
 ra_pkg_installed_version() { printf '1.0'; }
@@ -50,6 +50,19 @@ ra_wait_inactive() { return 0; }
 ra_package_setup_resume_prepare "$candidate" "$previous"
 assert_eq "$install_calls" 0
 assert_eq "$(jq -r '.mutations.package_setup.state' "$RA_CHECKPOINT")" acquired
+
+# Conversely, acquiring + exact pre-mutation package state is ambiguous: the
+# previous dpkg invocation might not have started or might have failed before
+# changing package state. Resume must not issue another dpkg blindly.
+ra_state_jq '.mutations.package_setup={state:"acquiring",kind:"previous_package",scenario:"",identity:{previous:$p,candidate:$c}}' --argjson p "$previous" --argjson c "$candidate"
+install_calls=0
+ra_pkg_installed_version() { printf '2.0'; }
+set +e
+ra_package_setup_resume_prepare "$candidate" "$previous" >/dev/null 2>&1
+package_retry_rc=$?
+set -e
+((package_retry_rc != 0)) || fail "ambiguous lower-package acquisition unexpectedly replayed"
+assert_eq "$install_calls" 0
 
 # An already-acquired autostart mutation must be observed, not replayed.
 owned_manifest='{"enabled":true,"sha256":"owned"}'
@@ -61,19 +74,21 @@ ra_product() { autostart_calls=$((autostart_calls+1)); return 0; }
 ra_autostart_ensure_owned autostart_enable enable profile-a
 assert_eq "$autostart_calls" 0
 
-# If an interrupted acquisition is still at the exact pre-mutation snapshot,
-# semantic similarity must not be mistaken for proof that the mutation ran.
+# An acquiring autostart mutation that is still exactly at its pre-snapshot is
+# not replay-safe, even when the pre-snapshot happens to look semantically like
+# the target. It must fail closed rather than issue the mutation again.
 pre_pending='{"enabled":true,"sha256":"pre"}'
-post_pending='{"enabled":true,"sha256":"post"}'
 ra_state_jq '.mutations.autostart_pending={state:"acquiring",kind:"autostart_policy",scenario:"reboot_autostart_on",identity:{action:"enable",profile:"profile-a",pre_manifest:$pre}}' --argjson pre "$pre_pending"
 autostart_calls=0
 ra_manifest_matches_snapshot() { [[ "$1" == "$pre_pending" ]]; }
 ra_boot_manifest_semantic_matches() { return 0; }
-ra_boot_manifest_capture() { printf '%s' "$post_pending"; }
 ra_product() { autostart_calls=$((autostart_calls+1)); return 0; }
-ra_autostart_ensure_owned autostart_pending enable profile-a
-assert_eq "$autostart_calls" 1
-assert_eq "$(jq -r '.mutations.autostart_pending.state' "$RA_CHECKPOINT")" acquired
+set +e
+ra_autostart_ensure_owned autostart_pending enable profile-a >/dev/null 2>&1
+autostart_retry_rc=$?
+set -e
+((autostart_retry_rc != 0)) || fail "ambiguous autostart acquisition unexpectedly replayed"
+assert_eq "$autostart_calls" 0
 
 # A synthetic terminal profile already discovered during an interrupted import
 # must be adopted and returned without importing a duplicate.
@@ -88,9 +103,20 @@ assert_eq "$id" terminal-test
 assert_eq "$import_calls" 0
 assert_eq "$(jq -r '.private.terminal_profile_acquisition.state' "$RA_CHECKPOINT")" acquired
 
-# A fresh-run preflight performed before retiring an old run must classify the
-# package version that cleanup will leave behind, not a temporary lower package
-# still installed by the old acceptance run.
+# Acquiring with no discovered profile is ambiguous and must not import again.
+ra_state_jq '.private.terminal_profile_acquisition={state:"acquiring",baseline_ids:["profile-a"]}'
+import_calls=0
+ra_profile_ids_json() { printf '%s\n' '["profile-a"]'; }
+ra_product() { import_calls=$((import_calls+1)); return 0; }
+set +e
+ra_terminal_profile_ensure >/dev/null 2>&1
+terminal_retry_rc=$?
+set -e
+((terminal_retry_rc != 0)) || fail "ambiguous terminal-profile import unexpectedly replayed"
+assert_eq "$import_calls" 0
+
+# Pre-retire validation must classify the package version that cleanup is proven
+# to leave behind, not a temporary lower version still installed by the old run.
 predicted_installed=''
 RA_CANDIDATE="$candidate_path"
 RA_PREVIOUS_DEB=''
@@ -128,7 +154,7 @@ export RELEASE_ACCEPTANCE_TEST_MODE=1
 # of issuing the mutation a second time.
 ra_set_phase running-pre-reboot
 ra_scenario_set_state graceful_restart running
-ra_state_jq '.scenarios.graceful_restart.private.before_pid=100'
+ra_state_jq '.scenarios.graceful_restart.private={before_pid:100,mutation_requested:true}'
 systemctl_calls=0
 ra_main_pid() { printf '200'; }
 ra_wait_active() { return 0; }
@@ -139,8 +165,20 @@ ra_recover_running_scenario graceful_restart
 assert_eq "$systemctl_calls" 0
 assert_eq "$(jq -r '.scenarios.graceful_restart.state' "$RA_CHECKPOINT")" passed
 
-# The reboot boundary must be durable before autostart is mutated. The ensure
-# seam observes the checkpoint at the exact point where mutation would occur.
+# The same persisted request with the original PID still alive is ambiguous and
+# must not issue a second restart.
+ra_scenario_set_state graceful_restart running
+ra_state_jq '.scenarios.graceful_restart.private={before_pid:100,mutation_requested:true}'
+systemctl_calls=0
+ra_main_pid() { printf '100'; }
+set +e
+ra_recover_running_scenario graceful_restart >/dev/null 2>&1
+restart_retry_rc=$?
+set -e
+((restart_retry_rc != 0)) || fail "ambiguous daemon restart unexpectedly replayed"
+assert_eq "$systemctl_calls" 0
+
+# The reboot boundary must be durable before autostart is mutated.
 ra_set_phase running-pre-reboot
 observed_prepare_phase=''
 ra_autostart_ensure_owned() { observed_prepare_phase="$(jq -r '.phase' "$RA_CHECKPOINT")"; return 0; }
