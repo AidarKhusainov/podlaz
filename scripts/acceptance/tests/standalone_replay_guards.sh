@@ -129,6 +129,17 @@ ra_profile_validate() { return 0; }
 ra_preflight_new_inputs_before_retire
 assert_eq "$predicted_installed" 2.0
 
+# An explicit profile owned by the old run would be deleted during retirement.
+# It must be rejected before old-run cleanup rather than failing only afterward.
+ra_state_jq '.private.terminal_profile="terminal-test"'
+RA_PROFILE=terminal-test
+set +e
+ra_preflight_new_inputs_before_retire >/dev/null 2>&1
+synthetic_profile_rc=$?
+set -e
+((synthetic_profile_rc != 0)) || fail "owned synthetic profile was accepted as a fresh-run input"
+RA_PROFILE=profile-a
+
 # Unknown/invalid daemon payloads are protocol failures, not full-timeout progress.
 RA_PRIVATE_DIR="$TMP/private-status"
 mkdir -p "$RA_PRIVATE_DIR"
