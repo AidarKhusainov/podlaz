@@ -22,12 +22,16 @@ fi
 assert_contains_file "$SCRIPT" 'ra_validate_artifact_root'
 
 # Candidate privacy proof must validate actual nft rule expressions/verdicts,
-# not just table/chain/comment counts.
+# not just table/chain/comment counts. IPv6 control is deliberately narrow:
+# accepting arbitrary ICMPv6 would turn ambiguous/overbroad policy into PASS.
 assert_contains_file "$SCRIPT" 'ra_privacy_verify_rule'
 assert_contains_file "$SCRIPT" 'block-direct'
 assert_contains_file "$SCRIPT" 'reject'
 assert_contains_file "$SCRIPT" 'tun-egress'
 assert_contains_file "$SCRIPT" 'bootstrap_ipv4'
+assert_contains_file "$SCRIPT" 'nd-router-solicit'
+assert_contains_file "$SCRIPT" 'nd-neighbor-solicit'
+assert_contains_file "$SCRIPT" 'nd-neighbor-advert'
 
 # Canonical qualification is exactly 60 minutes; longer debug runs are partial too.
 TMP="$(mktemp -d)"
