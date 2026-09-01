@@ -48,13 +48,13 @@ ra_pkg_assert_identity() { return 0; }
 ra_capture() {
   if [[ "$1" == dpkg-deb && "$2" == -x ]]; then
     local root="$4"
-    mkdir -p "$root/usr/lib/podlaz"
+    mkdir -p "$root/usr/bin"
     {
       printf 'PODLAZ_E2E_TUN_ROLLBACK_PAUSE\n'
       printf 'PODLAZ_E2E_TUN_TERMINAL_FAILURE\n'
       [[ "$seam_mode" == complete ]] && printf 'PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE\n'
-    } >"$root/usr/lib/podlaz/podlazd"
-    chmod +x "$root/usr/lib/podlaz/podlazd"
+    } >"$root/usr/bin/podlazd"
+    chmod +x "$root/usr/bin/podlazd"
     RA_CAPTURE=''
     RA_CAPTURE_RC=0
     return 0
