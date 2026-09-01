@@ -12,6 +12,7 @@ for fn in \
   ra_package_setup_resume_prepare \
   ra_autostart_ensure_owned \
   ra_terminal_profile_ensure \
+  ra_candidate_fault_seams_verify \
   ra_preflight_new_inputs_before_retire \
   ra_phase_blocks_auto_finalizer; do
   declare -F "$fn" >/dev/null || fail "missing replay guard seam: $fn"
@@ -39,6 +40,36 @@ candidate="$(jq -cn --arg p "$candidate_path" '{path:$p,package:"podlaz",version
 previous="$(jq -cn --arg p "$previous_path" '{path:$p,package:"podlaz",version:"1.0",architecture:"amd64",sha256:"previous",device:1,inode:3}')"
 ra_state_init replay-run "$candidate" "2.0" '{"enabled":false}' profile-a
 ra_state_jq '.private.run_config.previous=$p' --argjson p "$previous"
+
+# Candidate mandatory fault seams are proven from the package payload before any
+# checkpointed mutation. The helper inspects package bytes but never executes them.
+seam_mode=complete
+ra_pkg_assert_identity() { return 0; }
+ra_capture() {
+  if [[ "$1" == dpkg-deb && "$2" == -x ]]; then
+    local root="$4"
+    mkdir -p "$root/usr/lib/podlaz"
+    {
+      printf 'PODLAZ_E2E_TUN_ROLLBACK_PAUSE\n'
+      printf 'PODLAZ_E2E_TUN_TERMINAL_FAILURE\n'
+      [[ "$seam_mode" == complete ]] && printf 'PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE\n'
+    } >"$root/usr/lib/podlaz/podlazd"
+    chmod +x "$root/usr/lib/podlaz/podlazd"
+    RA_CAPTURE=''
+    RA_CAPTURE_RC=0
+    return 0
+  fi
+  RA_CAPTURE='unsupported stub command'
+  RA_CAPTURE_RC=1
+  return 1
+}
+ra_candidate_fault_seams_verify "$candidate"
+seam_mode=missing
+set +e
+ra_candidate_fault_seams_verify "$candidate" >/dev/null 2>&1
+missing_seam_rc=$?
+set -e
+((missing_seam_rc != 0)) || fail "candidate missing a mandatory fault seam passed preflight"
 
 # An interrupted lower-package acquisition with the exact lower version already
 # installed is adopted without invoking dpkg a second time.
@@ -126,6 +157,7 @@ ra_pkg_installed_version() { printf '1.0'; }
 ra_preflight_release_boundary() { predicted_installed="$3"; return 0; }
 ra_validate_artifact_root() { return 0; }
 ra_profile_validate() { return 0; }
+ra_candidate_fault_seams_verify() { return 0; }
 ra_preflight_new_inputs_before_retire
 assert_eq "$predicted_installed" 2.0
 
