@@ -481,6 +481,36 @@ ra_preflight_release_boundary() {
   [[ -n "$previous" ]] || { ra_preflight_die "full lower-release qualification requires an installed lower release or --previous-deb"; return 2; }
 }
 
+ra_candidate_fault_seams_verify() {
+  local candidate="$1" path tmp daemon seam missing="" rc=0
+  ra_pkg_assert_identity "$candidate" || { ra_preflight_die "candidate package identity changed before mandatory seam inspection"; return 2; }
+  path="$(jq -er '.path' <<<"$candidate")" || return 2
+  tmp="$(mktemp -d)" || { ra_preflight_die "cannot create temporary directory for candidate seam inspection"; return 2; }
+  if ! ra_capture dpkg-deb -x "$path" "$tmp"; then
+    rm -rf -- "$tmp" || true
+    ra_preflight_die "candidate package could not be extracted for mandatory fault-injection seam inspection"
+    return 2
+  fi
+  daemon="$tmp/usr/lib/podlaz/podlazd"
+  if [[ ! -f "$daemon" || -L "$daemon" || ! -x "$daemon" ]]; then
+    rm -rf -- "$tmp" || true
+    ra_preflight_die "candidate package does not contain the expected executable podlazd payload"
+    return 2
+  fi
+  for seam in PODLAZ_E2E_TUN_ROLLBACK_PAUSE PODLAZ_E2E_TUN_TERMINAL_FAILURE PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE; do
+    if ! grep -aFq -- "$seam" "$daemon"; then
+      missing="$seam"
+      rc=2
+      break
+    fi
+  done
+  rm -rf -- "$tmp" || { ra_preflight_die "cannot remove temporary candidate seam inspection directory"; return 2; }
+  if ((rc != 0)); then
+    ra_preflight_die "candidate daemon lacks mandatory release-acceptance fault-injection seam: $missing"
+    return 2
+  fi
+}
+
 ra_product() {
   if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then ra_capture podlaz "$@"; else ra_capture_user /usr/bin/podlaz "$@"; fi
 }
@@ -1821,7 +1851,19 @@ ra_existing_checkpoint_classify() {
       current="$(jq -r '.current_scenario//""' "$RA_CHECKPOINT")"
       if [[ -z "$current" ]]; then printf 'replay-safe'; return 0; fi
       state="$(jq -r --arg n "$current" '.scenarios[$n].state//""' "$RA_CHECKPOINT")"
-      case "$state" in pending|prepared|running|verifying|passed|"") printf 'replay-safe' ;; failed) printf 'cleanup-restart' ;; *) printf 'ambiguous' ;; esac
+      case "$state" in
+        pending|prepared|"") printf 'replay-safe' ;;
+        running)
+          case "$current" in
+            graceful_restart|daemon_kill|stop_start_no_reconnect|lower_release_upgrade|reinstall) printf 'replay-safe' ;;
+            rollback_interruption|warmed_inactive_candidate_baseline|preconnect_coexistence|resource_soak|disconnect_cleanup|runtime_terminal_convergence) printf 'cleanup-restart' ;;
+            *) printf 'ambiguous' ;;
+          esac
+          ;;
+        verifying|passed) printf 'replay-safe' ;;
+        failed) printf 'cleanup-restart' ;;
+        *) printf 'ambiguous' ;;
+      esac
       return 0
       ;;
     complete|aborted-clean|failed-clean|restarted-clean|restarted_clean) printf 'cleanup-restart'; return 0 ;;
@@ -2272,6 +2314,7 @@ ra_preflight_new_inputs_before_retire() {
   [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?
   installed="$(ra_cleanup_expected_package_version)" || return 1
   ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?
+  ra_candidate_fault_seams_verify "$candidate" || return $?
   ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?
   terminal="$(jq -r '.private.terminal_profile//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
   if [[ -n "$RA_PROFILE" ]]; then
@@ -2293,6 +2336,7 @@ ra_run_new_fresh() {
   [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?
   installed="$(ra_pkg_installed_version)" || return 1
   ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?
+  ra_candidate_fault_seams_verify "$candidate" || return $?
   ra_preflight_clean_boundary "$installed" || return $?
   ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?
   profile="$(ra_profile_select "$RA_PROFILE")" || { ra_preflight_die "profile selection/validation failed"; return 2; }
