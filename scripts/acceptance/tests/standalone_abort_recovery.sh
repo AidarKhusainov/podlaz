@@ -41,6 +41,8 @@ ra_cleanup_expected_package_verify() { return 0; }
 ra_require_mutations_released() { return 0; }
 ra_verify_inactive_boundary() { return 0; }
 ra_privacy_require_ordinary() { return 0; }
+ra_restore_service_state() { return 0; }
+ra_verify_run_tree() { return 0; }
 ra_report_write() { return 0; }
 ra_state_remove() { ABORT_REMOVED=1; return 0; }
 ABORT_REMOVED=0
@@ -69,6 +71,8 @@ ra_cleanup_expected_package_verify() { return 0; }
 ra_require_mutations_released() { return 0; }
 ra_verify_inactive_boundary() { [[ "$session_state" == inactive ]]; }
 ra_privacy_require_ordinary() { return 0; }
+ra_restore_service_state() { return 0; }
+ra_verify_run_tree() { return 0; }
 ra_report_write() { return 0; }
 ra_state_remove() { return 0; }
 ra_run_abort >/dev/null || fail "abort ordering fixture failed"
