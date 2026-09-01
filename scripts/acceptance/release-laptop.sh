@@ -491,7 +491,7 @@ ra_candidate_fault_seams_verify() {
     ra_preflight_die "candidate package could not be extracted for mandatory fault-injection seam inspection"
     return 2
   fi
-  daemon="$tmp/usr/lib/podlaz/podlazd"
+  daemon="$tmp/usr/bin/podlazd"
   if [[ ! -f "$daemon" || -L "$daemon" || ! -x "$daemon" ]]; then
     rm -rf -- "$tmp" || true
     ra_preflight_die "candidate package does not contain the expected executable podlazd payload"
