@@ -152,7 +152,8 @@ predicted_installed=''
 RA_CANDIDATE="$candidate_path"
 RA_PREVIOUS_DEB=''
 RA_PROFILE=profile-a
-ra_pkg_inspect() { printf '%s' "$candidate"; }
+candidate_payload="$candidate"
+ra_pkg_inspect() { printf '%s' "$candidate_payload"; }
 ra_pkg_installed_version() { printf '1.0'; }
 ra_preflight_release_boundary() { predicted_installed="$3"; return 0; }
 ra_validate_artifact_root() { return 0; }
