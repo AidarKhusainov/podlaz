@@ -41,14 +41,16 @@ RA_REBOOT_PHASES=1 RA_ALLOW_WIFI=1 RA_ALLOW_SUSPEND=1 RA_SOAK_MINUTES=61
 RA_SOAK_MINUTES=60
 [[ "$(ra_qualification)" == "QUALIFIED_PASS" ]] || fail "canonical fully-passing 60-minute run should qualify"
 
-# Reboot no-retry evidence is only meaningful if the daemon is deliberately
-# restarted in the same boot after successful autostart/disconnect/terminal.
-resume_body="$(sed -n '/^ra_run_resume()/,/^ra_run_abort()/p' "$SCRIPT")"
-grep -Fq 'ra_successful_boot_restart_continuity' <<<"$resume_body" || fail "successful autostart does not restart daemon while active"
-[[ "$(grep -c 'ra_same_boot_restart_stays_inactive' <<<"$resume_body")" -ge 2 ]] || fail "disconnect/terminal no-retry checks do not restart daemon"
+# Reboot no-retry evidence is only meaningful if the verifier deliberately
+# restarts the daemon in the same boot after successful autostart/disconnect/terminal.
+reboot_verifiers="$(sed -n '/^ra_resume_reboot_on_verify()/,/^ra_preflight_capabilities()/p' "$SCRIPT")"
+grep -Fq 'ra_successful_boot_restart_continuity' <<<"$reboot_verifiers" || fail "successful autostart does not restart daemon while active"
+[[ "$(grep -c 'ra_same_boot_restart_stays_inactive' <<<"$reboot_verifiers")" -ge 2 ]] || fail "disconnect/terminal no-retry checks do not restart daemon"
 
-# Abort/finalization must prove ordinary networking before declaring clean.
+# Abort/finalization must route through exact cleanup, which proves ordinary networking.
 abort_body="$(sed -n '/^ra_run_abort()/,/^ra_main()/p' "$SCRIPT")"
-grep -Eq 'ra_verify_ordinary_network|ra_privacy_require_ordinary' <<<"$abort_body" || fail "abort can declare clean without ordinary-network verification"
+grep -Fq 'ra_safe_cleanup' <<<"$abort_body" || fail "abort bypasses exact safe cleanup"
+cleanup_body="$(sed -n '/^ra_safe_cleanup()/,/^ra_public_resource_summary()/p' "$SCRIPT")"
+grep -Eq 'ra_verify_ordinary_network|ra_privacy_require_ordinary' <<<"$cleanup_body" || fail "safe cleanup can declare clean without ordinary-network verification"
 
 printf 'standalone_safety: PASS\n'
