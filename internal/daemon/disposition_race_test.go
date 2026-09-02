@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestIssue262AutomaticAdmissionPrecedesLaterExplicitMutation(t *testing.T) {
+func TestAutomaticAdmissionPrecedesLaterExplicitMutation(t *testing.T) {
 	lock := newLifecycleOperationLock()
 	admission, ok := lock.tryAdmitAutomaticMutation(lock.lifecycleMutationSnapshot().generation)
 	if !ok || admission == nil {
@@ -43,7 +43,7 @@ func TestIssue262AutomaticAdmissionPrecedesLaterExplicitMutation(t *testing.T) {
 	}
 }
 
-func TestIssue262StaleAutomaticGenerationCannotBeAdmitted(t *testing.T) {
+func TestStaleAutomaticGenerationCannotBeAdmitted(t *testing.T) {
 	lock := newLifecycleOperationLock()
 	staleGeneration := lock.lifecycleMutationSnapshot().generation
 	finish, err := lock.beginExternalMutation()

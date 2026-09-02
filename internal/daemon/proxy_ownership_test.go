@@ -10,7 +10,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
-func TestIssue256ActiveProxyOnlyOwnsItsGeneratedRuntimeConfigWithoutTransaction(t *testing.T) {
+func TestActiveProxyOnlyOwnsItsGeneratedRuntimeConfigWithoutTransaction(t *testing.T) {
 	runtimeDir := t.TempDir()
 	generatedDir := filepath.Join(runtimeDir, generatedDirName)
 	if err := os.MkdirAll(generatedDir, 0o700); err != nil {
@@ -40,7 +40,7 @@ func TestIssue256ActiveProxyOnlyOwnsItsGeneratedRuntimeConfigWithoutTransaction(
 	}
 }
 
-func TestIssue256ActiveProxyOnlyKeepsForeignGeneratedArtifactVisible(t *testing.T) {
+func TestActiveProxyOnlyKeepsForeignGeneratedArtifactVisible(t *testing.T) {
 	runtimeDir := t.TempDir()
 	generatedDir := filepath.Join(runtimeDir, generatedDirName)
 	if err := os.MkdirAll(generatedDir, 0o700); err != nil {

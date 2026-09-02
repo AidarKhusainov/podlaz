@@ -2,7 +2,7 @@ package api
 
 import "testing"
 
-func issue262CoreExitedStatus(health TunHealthStatus) StatusResponse {
+func coreExitedStatus(health TunHealthStatus) StatusResponse {
 	return StatusResponse{
 		Daemon:           "running",
 		Service:          ServiceManual,
@@ -15,8 +15,8 @@ func issue262CoreExitedStatus(health TunHealthStatus) StatusResponse {
 	}
 }
 
-func TestIssue262StatusAllowsBoundedTunReconciliationAfterCoreExit(t *testing.T) {
-	status := issue262CoreExitedStatus(TunHealthStatus{
+func TestStatusAllowsBoundedTunReconciliationAfterCoreExit(t *testing.T) {
+	status := coreExitedStatus(TunHealthStatus{
 		State:             TunHealthRevalidating,
 		NetworkGeneration: 4,
 		Classification:    TunHealthOwnedStateReconciling,
@@ -26,8 +26,8 @@ func TestIssue262StatusAllowsBoundedTunReconciliationAfterCoreExit(t *testing.T)
 	}
 }
 
-func TestIssue262StatusRejectsVerifiedHealthAfterCoreExit(t *testing.T) {
-	status := issue262CoreExitedStatus(TunHealthStatus{
+func TestStatusRejectsVerifiedHealthAfterCoreExit(t *testing.T) {
+	status := coreExitedStatus(TunHealthStatus{
 		State:             TunHealthVerified,
 		NetworkGeneration: 4,
 	})

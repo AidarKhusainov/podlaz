@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func TestIssue254JournalReadersDrainBeforeWait(t *testing.T) {
+func TestJournalReadersDrainBeforeWait(t *testing.T) {
 	t.Run("core filtering drains same backend without daemon output writes", func(t *testing.T) {
-		cmd := newIssue254JournalCommand("Aug 17 host podlazd[123]: daemon lifecycle line\n")
+		cmd := newJournalDrainCommand("Aug 17 host podlazd[123]: daemon lifecycle line\n")
 		var out bytes.Buffer
 
 		count, err := runJournalctlCommand(cmd, func() {}, &out, true)
@@ -28,8 +28,8 @@ func TestIssue254JournalReadersDrainBeforeWait(t *testing.T) {
 	})
 
 	t.Run("daemon output must finish draining before wait", func(t *testing.T) {
-		cmd := newIssue254JournalCommand("Aug 17 host podlazd[123]: daemon lifecycle line\n")
-		dst := &issue254GateWriter{
+		cmd := newJournalDrainCommand("Aug 17 host podlazd[123]: daemon lifecycle line\n")
+		dst := &gateWriter{
 			started: make(chan struct{}),
 			release: make(chan struct{}),
 		}
@@ -58,7 +58,7 @@ func TestIssue254JournalReadersDrainBeforeWait(t *testing.T) {
 	})
 }
 
-type issue254JournalCommand struct {
+type journalDrainCommand struct {
 	stdoutReader *io.PipeReader
 	stdoutWriter *io.PipeWriter
 	stderrReader *io.PipeReader
@@ -68,10 +68,10 @@ type issue254JournalCommand struct {
 	waitOnce     sync.Once
 }
 
-func newIssue254JournalCommand(stdout string) *issue254JournalCommand {
+func newJournalDrainCommand(stdout string) *journalDrainCommand {
 	stdoutReader, stdoutWriter := io.Pipe()
 	stderrReader, stderrWriter := io.Pipe()
-	return &issue254JournalCommand{
+	return &journalDrainCommand{
 		stdoutReader: stdoutReader,
 		stdoutWriter: stdoutWriter,
 		stderrReader: stderrReader,
@@ -81,10 +81,10 @@ func newIssue254JournalCommand(stdout string) *issue254JournalCommand {
 	}
 }
 
-func (c *issue254JournalCommand) StdoutPipe() (io.ReadCloser, error) { return c.stdoutReader, nil }
-func (c *issue254JournalCommand) StderrPipe() (io.ReadCloser, error) { return c.stderrReader, nil }
+func (c *journalDrainCommand) StdoutPipe() (io.ReadCloser, error) { return c.stdoutReader, nil }
+func (c *journalDrainCommand) StderrPipe() (io.ReadCloser, error) { return c.stderrReader, nil }
 
-func (c *issue254JournalCommand) Start() error {
+func (c *journalDrainCommand) Start() error {
 	go func() {
 		_, _ = fmt.Fprint(c.stdoutWriter, c.stdout)
 		_ = c.stdoutWriter.Close()
@@ -93,18 +93,18 @@ func (c *issue254JournalCommand) Start() error {
 	return nil
 }
 
-func (c *issue254JournalCommand) Wait() error {
+func (c *journalDrainCommand) Wait() error {
 	c.waitOnce.Do(func() { close(c.waitCalled) })
 	return nil
 }
 
-type issue254GateWriter struct {
+type gateWriter struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
 }
 
-func (w *issue254GateWriter) Write(p []byte) (int, error) {
+func (w *gateWriter) Write(p []byte) (int, error) {
 	w.once.Do(func() { close(w.started) })
 	<-w.release
 	return len(p), nil

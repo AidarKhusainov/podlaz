@@ -13,7 +13,7 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestIssue254ProxyOnlyCommittedRuntimeIsNotPublishedAsStale(t *testing.T) {
+func TestProxyOnlyCommittedRuntimeIsNotPublishedAsStale(t *testing.T) {
 	runtimeDir := t.TempDir()
 	generatedDir := filepath.Join(runtimeDir, "generated")
 	if err := os.MkdirAll(generatedDir, 0o750); err != nil {
@@ -68,7 +68,7 @@ func TestIssue254ProxyOnlyCommittedRuntimeIsNotPublishedAsStale(t *testing.T) {
 	}
 }
 
-func TestIssue254ProxyOnlyGeneratedDirectoryWithForeignArtifactRemainsStale(t *testing.T) {
+func TestProxyOnlyGeneratedDirectoryWithForeignArtifactRemainsStale(t *testing.T) {
 	runtimeDir := t.TempDir()
 	generatedDir := filepath.Join(runtimeDir, "generated")
 	if err := os.MkdirAll(generatedDir, 0o750); err != nil {
@@ -107,7 +107,7 @@ func TestIssue254ProxyOnlyGeneratedDirectoryWithForeignArtifactRemainsStale(t *t
 	}
 }
 
-func TestIssue254InactiveGeneratedRuntimeRemainsRecoveryCandidate(t *testing.T) {
+func TestInactiveGeneratedRuntimeRemainsRecoveryCandidate(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "generated")
 	candidate := recovery.Candidate{Kind: "generated-runtime-configs", Target: target}
 	filtered := filterStartupScanForActiveRuntime(
@@ -120,7 +120,7 @@ func TestIssue254InactiveGeneratedRuntimeRemainsRecoveryCandidate(t *testing.T) 
 	}
 }
 
-func TestIssue254ActiveRuntimeOwnershipFilterFailsClosedOnModeMismatch(t *testing.T) {
+func TestActiveRuntimeOwnershipFilterFailsClosedOnModeMismatch(t *testing.T) {
 	runtimeDir := t.TempDir()
 	tx := txstate.NewTransaction("tx-mode-mismatch", "profile-test", planner.ModeTun, time.Now().UTC())
 	tx.State = txstate.TransactionCommitted

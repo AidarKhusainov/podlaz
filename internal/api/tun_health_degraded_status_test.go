@@ -2,7 +2,7 @@ package api
 
 import "testing"
 
-func TestIssue262TunHealthAcceptsNetworkConvergingRevalidation(t *testing.T) {
+func TestTunHealthAcceptsNetworkConvergingRevalidation(t *testing.T) {
 	health := TunHealthStatus{
 		State:             TunHealthRevalidating,
 		NetworkGeneration: 2,
@@ -13,7 +13,7 @@ func TestIssue262TunHealthAcceptsNetworkConvergingRevalidation(t *testing.T) {
 	}
 }
 
-func TestIssue262TunHealthAcceptsOwnedStateReconcilingRevalidation(t *testing.T) {
+func TestTunHealthAcceptsOwnedStateReconcilingRevalidation(t *testing.T) {
 	health := TunHealthStatus{
 		State:             TunHealthRevalidating,
 		NetworkGeneration: 2,
@@ -24,7 +24,7 @@ func TestIssue262TunHealthAcceptsOwnedStateReconcilingRevalidation(t *testing.T)
 	}
 }
 
-func TestIssue262TunHealthRejectsReconciliationClassificationOutsideRevalidating(t *testing.T) {
+func TestTunHealthRejectsReconciliationClassificationOutsideRevalidating(t *testing.T) {
 	for _, classification := range []TunHealthClassification{
 		TunHealthNetworkConverging,
 		TunHealthOwnedStateReconciling,

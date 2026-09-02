@@ -9,33 +9,33 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
 )
 
-type issue262ProbeClient struct {
+type reconciliationProbeClient struct {
 	httpsTargets []string
 	dnsUDPErr    error
 	dnsTCPCalls  int
 }
 
-func (c *issue262ProbeClient) DNSUDP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
+func (c *reconciliationProbeClient) DNSUDP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
 	if c.dnsUDPErr != nil {
 		return tundiag.DNSEvidence{}, c.dnsUDPErr
 	}
 	return successfulDNSRevalidationEvidence(), nil
 }
 
-func (c *issue262ProbeClient) DNSTCP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
+func (c *reconciliationProbeClient) DNSTCP(context.Context, string, string, uint16) (tundiag.DNSEvidence, error) {
 	c.dnsTCPCalls++
 	return successfulDNSRevalidationEvidence(), nil
 }
 
-func (c *issue262ProbeClient) TCP(context.Context, string, uint16) (time.Duration, error) {
+func (c *reconciliationProbeClient) TCP(context.Context, string, uint16) (time.Duration, error) {
 	return time.Millisecond, nil
 }
 
-func (c *issue262ProbeClient) TLS(context.Context, string, uint16) (tundiag.TLSEvidence, error) {
+func (c *reconciliationProbeClient) TLS(context.Context, string, uint16) (tundiag.TLSEvidence, error) {
 	return tundiag.TLSEvidence{Version: "TLS 1.3"}, nil
 }
 
-func (c *issue262ProbeClient) HTTPS(_ context.Context, target tundiag.Target) (tundiag.HTTPEvidence, error) {
+func (c *reconciliationProbeClient) HTTPS(_ context.Context, target tundiag.Target) (tundiag.HTTPEvidence, error) {
 	c.httpsTargets = append(c.httpsTargets, target.ID)
 	if target.ID == "https-cloudflare-small" {
 		return tundiag.HTTPEvidence{}, errors.New("synthetic Cloudflare endpoint failure")
@@ -43,8 +43,8 @@ func (c *issue262ProbeClient) HTTPS(_ context.Context, target tundiag.Target) (t
 	return tundiag.HTTPEvidence{StatusCode: 204}, nil
 }
 
-func TestIssue262ProbeEvidenceContinuesAfterOneProviderFailure(t *testing.T) {
-	client := &issue262ProbeClient{}
+func TestProbeEvidenceContinuesAfterOneProviderFailure(t *testing.T) {
+	client := &reconciliationProbeClient{}
 	evidence, err := collectTunRevalidationProbeEvidence(context.Background(), revalidationDataPlanePlanForTest(), client)
 	if err != nil {
 		t.Fatalf("collect probe evidence: %v", err)
@@ -67,8 +67,8 @@ func TestIssue262ProbeEvidenceContinuesAfterOneProviderFailure(t *testing.T) {
 	}
 }
 
-func TestIssue262ProbeEvidenceContinuesAfterOneProbeDeadlineExceeded(t *testing.T) {
-	client := &issue262ProbeClient{dnsUDPErr: context.DeadlineExceeded}
+func TestProbeEvidenceContinuesAfterOneProbeDeadlineExceeded(t *testing.T) {
+	client := &reconciliationProbeClient{dnsUDPErr: context.DeadlineExceeded}
 	evidence, err := collectTunRevalidationProbeEvidence(context.Background(), revalidationDataPlanePlanForTest(), client)
 	if err != nil {
 		t.Fatalf("one probe timeout aborted independent sampling: %v", err)
@@ -91,8 +91,8 @@ func TestIssue262ProbeEvidenceContinuesAfterOneProbeDeadlineExceeded(t *testing.
 	}
 }
 
-func TestIssue262ProbeEvidenceDoesNotCountCloudflareStagesAsIndependentProviders(t *testing.T) {
-	client := &issue262ProbeClient{}
+func TestProbeEvidenceDoesNotCountCloudflareStagesAsIndependentProviders(t *testing.T) {
+	client := &reconciliationProbeClient{}
 	evidence, err := collectTunRevalidationProbeEvidence(context.Background(), revalidationDataPlanePlanForTest(), client)
 	if err != nil {
 		t.Fatalf("collect probe evidence: %v", err)

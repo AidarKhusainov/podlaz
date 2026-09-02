@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestIssue262ExplicitMutationBetweenRoundAndAdmissionRequeuesReconciliation(t *testing.T) {
+func TestExplicitMutationBetweenRoundAndAdmissionRequeuesReconciliation(t *testing.T) {
 	lock := newLifecycleOperationLock()
 	expectedGeneration := lock.lifecycleMutationSnapshot().generation
 	admitEntered := make(chan struct{})

@@ -12,7 +12,7 @@ import (
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
-func TestIssue256HistoricalRoutingShapeWithoutTransactionNeverGetsRecoveryAuthority(t *testing.T) {
+func TestHistoricalRoutingShapeWithoutTransactionNeverGetsRecoveryAuthority(t *testing.T) {
 	resources := []netsnapshot.StaleResource{
 		{Kind: "policy-rule", Name: "9999", Status: netsnapshot.StatusDetected, Detail: "9999: from all to 203.0.113.10 lookup main"},
 		{Kind: "policy-rule", Name: "10000", Status: netsnapshot.StatusDetected, Detail: "10000: from all lookup 51820"},
@@ -28,7 +28,7 @@ func TestIssue256HistoricalRoutingShapeWithoutTransactionNeverGetsRecoveryAuthor
 	}
 }
 
-func TestIssue256NonRoutingTransactionDoesNotAuthorizeRouting(t *testing.T) {
+func TestNonRoutingTransactionDoesNotAuthorizeRouting(t *testing.T) {
 	tx := txstate.NewTransaction("generated-only", "test-profile", planner.ModeTun, time.Unix(1_700_000_000, 0).UTC())
 	tx.State = txstate.TransactionFailed
 	tx.FailureReason = "synthetic safe failure"
@@ -44,7 +44,7 @@ func TestIssue256NonRoutingTransactionDoesNotAuthorizeRouting(t *testing.T) {
 	}
 }
 
-func TestIssue256ExactPolicyRuleTransactionAuthorizesOnlyExactObservedTuple(t *testing.T) {
+func TestExactPolicyRuleTransactionAuthorizesOnlyExactObservedTuple(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	tx := txstate.NewTransaction("exact-rule", "test-profile", planner.ModeTun, now)
 	tx.State = txstate.TransactionFailed
@@ -55,7 +55,7 @@ func TestIssue256ExactPolicyRuleTransactionAuthorizesOnlyExactObservedTuple(t *t
 		Table:    planner.TunRoutingTable,
 		Owner:    netexecutor.OwnerPolicyRule,
 	}
-	target := issue256PolicyRuleTarget(rule)
+	target := policyRuleTargetForTest(rule)
 	tx.Rollback.PolicyRules = []txstate.PolicyRuleRollback{rule}
 	tx.DesiredPlan.Steps = []txstate.PlannedStep{{Kind: "policy-rule", Target: target, Owner: netexecutor.OwnerPolicyRule}}
 	tx.AppliedSteps = []txstate.AppliedStep{{Kind: "policy-rule", Target: target, Owner: netexecutor.OwnerPolicyRule, AppliedAt: now}}
@@ -74,7 +74,7 @@ func TestIssue256ExactPolicyRuleTransactionAuthorizesOnlyExactObservedTuple(t *t
 	}
 }
 
-func TestIssue256ExactRouteTransactionAuthorizesOnlyExactObservedTuple(t *testing.T) {
+func TestExactRouteTransactionAuthorizesOnlyExactObservedTuple(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	tx := txstate.NewTransaction("exact-route", "test-profile", planner.ModeTun, now)
 	tx.State = txstate.TransactionFailed
@@ -107,7 +107,7 @@ func TestIssue256ExactRouteTransactionAuthorizesOnlyExactObservedTuple(t *testin
 	}
 }
 
-func TestIssue256HistoricalRoutingShapeDoesNotBlockNewCoexistenceSession(t *testing.T) {
+func TestHistoricalRoutingShapeDoesNotBlockNewCoexistenceSession(t *testing.T) {
 	s := netsnapshot.FakeResolvedDesktop()
 	s.PolicyRouting = []netsnapshot.PolicyRoutingSignal{
 		{Kind: "rule", Priority: "9999", Selector: "to 203.0.113.10", Table: "main", Raw: "9999: from all to 203.0.113.10 lookup main"},
@@ -124,15 +124,15 @@ func TestIssue256HistoricalRoutingShapeDoesNotBlockNewCoexistenceSession(t *test
 	}
 }
 
-func issue256PolicyRuleTarget(rule txstate.PolicyRuleRollback) string {
+func policyRuleTargetForTest(rule txstate.PolicyRuleRollback) string {
 	selector := "from " + strings.TrimSpace(rule.From)
 	if to := strings.TrimSpace(rule.To); to != "" {
 		selector = "to " + to
 	}
-	return "priority " + issue256Int(rule.Priority) + " " + selector + " lookup " + strings.TrimSpace(rule.Table)
+	return "priority " + intStringForTest(rule.Priority) + " " + selector + " lookup " + strings.TrimSpace(rule.Table)
 }
 
-func issue256Int(value int) string {
+func intStringForTest(value int) string {
 	const digits = "0123456789"
 	if value == 0 {
 		return "0"

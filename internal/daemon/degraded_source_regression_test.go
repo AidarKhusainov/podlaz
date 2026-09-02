@@ -7,7 +7,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-func TestIssue262UnexpectedTunCoreExitSchedulesProtectedReconciliation(t *testing.T) {
+func TestUnexpectedTunCoreExitSchedulesProtectedReconciliation(t *testing.T) {
 	manager := &XrayManager{}
 	manager.state = xrayState{Connection: "error (core exited)", Mode: planner.ModeTun}
 	notified := make(chan tunRevalidationTrigger, 1)
@@ -28,7 +28,7 @@ func TestIssue262UnexpectedTunCoreExitSchedulesProtectedReconciliation(t *testin
 	}
 }
 
-func TestIssue262DegradedCoreEvidenceRequestsRebuildBeforeTerminal(t *testing.T) {
+func TestDegradedCoreEvidenceRequestsRebuildBeforeTerminal(t *testing.T) {
 	mandatory := issue262ProvenMandatoryEvidence()
 	mandatory.CoreTUN = tunLocalProofViolated
 	decision := newTunReconciliationSupervisor(nil).RunRound(tunReconciliationRound{

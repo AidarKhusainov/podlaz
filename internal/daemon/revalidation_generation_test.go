@@ -10,7 +10,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-func TestIssue254NewerNetworkHintPreventsOlderTerminalPublication(t *testing.T) {
+func TestNewerNetworkHintPreventsOlderTerminalPublication(t *testing.T) {
 	baseline := tunUplinkFingerprint{Interface: "wlan0", InterfaceIndex: 3, Gateway: "192.0.2.1", Addresses: "192.0.2.55/24"}
 	changed := baseline
 	changed.Gateway = "192.0.2.254"
@@ -69,9 +69,6 @@ func TestIssue254NewerNetworkHintPreventsOlderTerminalPublication(t *testing.T) 
 	}
 	assertTunHealth(t, runtime.Health(), api.TunHealthRevalidating, 2, api.TunHealthUplinkChanged)
 
-	// Resume is newer evidence while generation 2 is still being verified.
-	// The older failure may return, but it must neither publish terminal health
-	// nor cross the terminal-cleanup handoff.
 	coordinator.Notify(tunRevalidationTriggerResume)
 	close(releaseOlder)
 
@@ -86,7 +83,7 @@ func TestIssue254NewerNetworkHintPreventsOlderTerminalPublication(t *testing.T) 
 	}
 }
 
-func TestIssue254SuccessfulOlderProofCannotHideNewerFailedRevalidation(t *testing.T) {
+func TestSuccessfulOlderProofCannotHideNewerFailedRevalidation(t *testing.T) {
 	fingerprint := tunUplinkFingerprint{Interface: "wlan0", InterfaceIndex: 3, Gateway: "192.0.2.1", Addresses: "192.0.2.55/24"}
 	olderStarted := make(chan struct{})
 	releaseOlder := make(chan struct{})
@@ -131,7 +128,6 @@ func TestIssue254SuccessfulOlderProofCannotHideNewerFailedRevalidation(t *testin
 	defer cancel()
 	go coordinator.Run(ctx)
 
-	// Resume must re-prove even though the fingerprint is unchanged.
 	coordinator.Notify(tunRevalidationTriggerResume)
 	select {
 	case <-olderStarted:
@@ -140,9 +136,6 @@ func TestIssue254SuccessfulOlderProofCannotHideNewerFailedRevalidation(t *testin
 	}
 	assertTunHealth(t, runtime.Health(), api.TunHealthRevalidating, 1, api.TunHealthUplinkRevalidating)
 
-	// A second network hint is accepted before the successful older proof may
-	// return. That success is now superseded and must never become visible as
-	// verified while the fresh proof is still pending.
 	coordinator.Notify(tunRevalidationTriggerRoute)
 	close(releaseOlder)
 	select {
@@ -168,7 +161,7 @@ func TestIssue254SuccessfulOlderProofCannotHideNewerFailedRevalidation(t *testin
 	}
 }
 
-func TestIssue254HealthHidesResultFromSupersededPublicationRevision(t *testing.T) {
+func TestHealthHidesResultFromSupersededPublicationRevision(t *testing.T) {
 	currentRevision := uint64(2)
 	runtime := newTunRevalidationRuntime(nil, nil)
 	runtime.health = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 7}

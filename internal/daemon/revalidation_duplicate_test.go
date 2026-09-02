@@ -9,7 +9,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-func TestIssue254DuplicateOrdinaryHintAdvancesPublicationWithoutExtraProof(t *testing.T) {
+func TestDuplicateOrdinaryHintAdvancesPublicationWithoutExtraProof(t *testing.T) {
 	fingerprint := tunUplinkFingerprint{Interface: "wlan0", InterfaceIndex: 3, Gateway: "192.0.2.1", Addresses: "192.0.2.55/24"}
 	secondInspectStarted := make(chan struct{})
 	releaseSecondInspect := make(chan struct{})

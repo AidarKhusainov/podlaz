@@ -2,7 +2,7 @@ package tundiag
 
 import "testing"
 
-func TestIssue238IPv4OnlyHealthyPathIsNotGloballyUnhealthyForOneProviderTimeout(t *testing.T) {
+func TestIPv4OnlyHealthyPathIsNotGloballyUnhealthyForOneProviderTimeout(t *testing.T) {
 	report := Finalize(Report{Probes: []ProbeResult{
 		{ID: "dns-system-positive", Layer: LayerDNS, Status: ProbePass},
 		{ID: "https-google-small", Layer: LayerHTTPS, Status: ProbePass},

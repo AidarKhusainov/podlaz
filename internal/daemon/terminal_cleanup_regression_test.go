@@ -8,7 +8,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
-func TestIssue262TerminalCleanupUsesExactTransactionRollbackAfterCoreExit(t *testing.T) {
+func TestTerminalCleanupUsesExactTransactionRollbackAfterCoreExit(t *testing.T) {
 	regularDisconnects := 0
 	exactTransaction := ""
 	cleaner := tunTerminalDataPlaneCleaner{
@@ -40,7 +40,7 @@ func TestIssue262TerminalCleanupUsesExactTransactionRollbackAfterCoreExit(t *tes
 	}
 }
 
-func TestIssue262TerminalCleanupRejectsStaleTransactionAuthority(t *testing.T) {
+func TestTerminalCleanupRejectsStaleTransactionAuthority(t *testing.T) {
 	mutated := false
 	cleaner := tunTerminalDataPlaneCleaner{
 		current: func() (xrayState, *tunRuntimeProcessIdentity) {

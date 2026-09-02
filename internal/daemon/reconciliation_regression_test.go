@@ -8,7 +8,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-func TestIssue262OneSoftProviderFailureDoesNotDisconnect(t *testing.T) {
+func TestOneSoftProviderFailureDoesNotDisconnect(t *testing.T) {
 	supervisor := newTunReconciliationSupervisorWithPolicy(time.Now, time.Minute, 3)
 	decision := supervisor.RunRound(tunReconciliationRound{
 		NetworkSessionID: "session-example",
@@ -26,7 +26,7 @@ func TestIssue262OneSoftProviderFailureDoesNotDisconnect(t *testing.T) {
 	}
 }
 
-func TestIssue262MandatoryLocalUnknownCannotBeOutvotedByExternalSuccess(t *testing.T) {
+func TestMandatoryLocalUnknownCannotBeOutvotedByExternalSuccess(t *testing.T) {
 	mandatory := issue262ProvenMandatoryEvidence()
 	mandatory.ResolvedDNS = tunLocalProofUnknown
 	decision := newTunReconciliationSupervisor(nil).RunRound(tunReconciliationRound{
@@ -45,7 +45,7 @@ func TestIssue262MandatoryLocalUnknownCannotBeOutvotedByExternalSuccess(t *testi
 	}
 }
 
-func TestIssue262RepairableOwnedDriftRequestsReconcileNotImmediateTerminal(t *testing.T) {
+func TestRepairableOwnedDriftRequestsReconcileNotImmediateTerminal(t *testing.T) {
 	mandatory := issue262ProvenMandatoryEvidence()
 	mandatory.OwnedComposition = tunLocalProofViolated
 	decision := newTunReconciliationSupervisor(nil).RunRound(tunReconciliationRound{
@@ -62,7 +62,7 @@ func TestIssue262RepairableOwnedDriftRequestsReconcileNotImmediateTerminal(t *te
 	}
 }
 
-func TestIssue262ConfirmedPrivacyBoundaryFailureIsTerminal(t *testing.T) {
+func TestConfirmedPrivacyBoundaryFailureIsTerminal(t *testing.T) {
 	mandatory := issue262ProvenMandatoryEvidence()
 	mandatory.PrivacyEnvelope = tunLocalProofViolated
 	decision := newTunReconciliationSupervisor(nil).RunRound(tunReconciliationRound{

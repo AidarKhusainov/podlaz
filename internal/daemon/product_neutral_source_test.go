@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestIssue260ProductionSourceHasNoForeignVPNControlAdapter(t *testing.T) {
+func TestProductionSourceHasNoForeignVPNControlAdapter(t *testing.T) {
 	files := []string{
 		"tun_handoff_preflight.go",
 		"tun_handoff_preflight_active.go",

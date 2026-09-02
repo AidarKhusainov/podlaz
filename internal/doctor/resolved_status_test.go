@@ -7,21 +7,21 @@ import (
 	"testing"
 )
 
-type issue256DoctorRunner struct {
+type resolvedStatusDoctorRunner struct {
 	result CommandResult
 	err    error
 }
 
-func (r issue256DoctorRunner) LookPath(file string) (string, error) { return "/usr/bin/" + file, nil }
-func (r issue256DoctorRunner) Run(context.Context, string, ...string) (CommandResult, error) {
+func (r resolvedStatusDoctorRunner) LookPath(file string) (string, error) { return "/usr/bin/" + file, nil }
+func (r resolvedStatusDoctorRunner) Run(context.Context, string, ...string) (CommandResult, error) {
 	return r.result, r.err
 }
 
-func TestIssue256DoctorTreatsSupportedExitZeroResolvedMissingLinkAsClean(t *testing.T) {
+func TestDoctorTreatsSupportedExitZeroResolvedMissingLinkAsClean(t *testing.T) {
 	for _, ending := range []string{"\n", "\r\n"} {
 		t.Run(strings.ReplaceAll(ending, "\r", "CR"), func(t *testing.T) {
 			raw := `Failed to resolve interface "podlaz0", ignoring: No such device` + ending
-			runner := issue256DoctorRunner{result: CommandResult{
+			runner := resolvedStatusDoctorRunner{result: CommandResult{
 				Stderr:    strings.TrimSpace(raw),
 				RawStderr: raw,
 				ExitCode:  0,
@@ -37,9 +37,9 @@ func TestIssue256DoctorTreatsSupportedExitZeroResolvedMissingLinkAsClean(t *test
 	}
 }
 
-func TestIssue256DoctorKeepsUnexpectedExitZeroStderrUnknown(t *testing.T) {
+func TestDoctorKeepsUnexpectedExitZeroStderrUnknown(t *testing.T) {
 	raw := "warning: No such device appeared in unrelated text\n"
-	runner := issue256DoctorRunner{result: CommandResult{
+	runner := resolvedStatusDoctorRunner{result: CommandResult{
 		Stderr:    strings.TrimSpace(raw),
 		RawStderr: raw,
 		ExitCode:  0,
@@ -53,8 +53,8 @@ func TestIssue256DoctorKeepsUnexpectedExitZeroStderrUnknown(t *testing.T) {
 	}
 }
 
-func TestIssue256DoctorCommandRunnerContractAcceptsErrors(t *testing.T) {
-	runner := issue256DoctorRunner{err: errors.New("boom"), result: CommandResult{ExitCode: -1}}
+func TestDoctorCommandRunnerContractAcceptsErrors(t *testing.T) {
+	runner := resolvedStatusDoctorRunner{err: errors.New("boom"), result: CommandResult{ExitCode: -1}}
 	got := resolvedDNSDiagnosticLine(context.Background(), runner, "/usr/bin/resolvectl", "/usr/bin/ip", false)
 	if got.severity != SeverityWarning {
 		t.Fatalf("expected warning for command failure, got %v", got.severity)

@@ -18,33 +18,33 @@ import (
 	statuspkg "github.com/AidarKhusainov/podlaz/internal/status"
 )
 
-func TestIssue243ExitZeroResolvedMissingComposesThroughDaemonStatusRecoverDryRunAndRecoveryExecute(t *testing.T) {
+func TestExitZeroResolvedMissingComposesThroughDaemonStatusRecoverDryRunAndRecoveryExecute(t *testing.T) {
 	runtimeDir := t.TempDir()
 	fakeBinDir := t.TempDir()
 	resolvedCallsPath := filepath.Join(t.TempDir(), "resolved-status-calls")
 
-	writeIssue243FakeCommand(t, fakeBinDir, "ip", `#!/bin/sh
+	writeRecoverJSONFakeCommand(t, fakeBinDir, "ip", `#!/bin/sh
 printf '%s\n' 'Device "podlaz0" does not exist.' >&2
 exit 1
 `)
-	writeIssue243FakeCommand(t, fakeBinDir, "nft", `#!/bin/sh
+	writeRecoverJSONFakeCommand(t, fakeBinDir, "nft", `#!/bin/sh
 printf '%s\n' 'Error: No such file or directory' >&2
 exit 1
 `)
-	writeIssue243FakeCommand(t, fakeBinDir, "resolvectl", `#!/bin/sh
+	writeRecoverJSONFakeCommand(t, fakeBinDir, "resolvectl", `#!/bin/sh
 set -eu
 if [ "$#" -ne 3 ] || [ "$1" != "status" ] || [ "$2" != "podlaz0" ] || [ "$3" != "--no-pager" ]; then
   printf '%s\n' 'unexpected resolvectl invocation' >&2
   exit 64
 fi
-: "${ISSUE243_RESOLVED_CALLS:?}"
-printf '%s\n' status >>"${ISSUE243_RESOLVED_CALLS}"
+: "${RECOVER_JSON_RESOLVED_CALLS:?}"
+printf '%s\n' status >>"${RECOVER_JSON_RESOLVED_CALLS}"
 printf '%s\n' 'Failed to resolve interface "podlaz0", ignoring: No such device' >&2
 exit 0
 `)
 
 	t.Setenv("PATH", fakeBinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ISSUE243_RESOLVED_CALLS", resolvedCallsPath)
+	t.Setenv("RECOVER_JSON_RESOLVED_CALLS", resolvedCallsPath)
 	t.Setenv(api.RuntimeDirEnv, runtimeDir)
 	t.Setenv(api.ServiceEnv, api.ServiceManual)
 
@@ -58,10 +58,10 @@ exit 0
 		select {
 		case err := <-serverDone:
 			if err != nil {
-				t.Errorf("issue 243 daemon shutdown failed: %v", err)
+				t.Errorf("recover JSON daemon shutdown failed: %v", err)
 			}
 		case <-time.After(5 * time.Second):
-			t.Error("issue 243 daemon did not stop")
+			t.Error("recover JSON daemon did not stop")
 		}
 	})
 
@@ -71,7 +71,7 @@ exit 0
 	if err != nil {
 		t.Fatalf("read initial daemon status: %v", err)
 	}
-	assertIssue243DaemonStartupScanClean(t, initial)
+	assertRecoverJSONDaemonStartupScanClean(t, initial)
 
 	statusOpts := options{
 		daemonStatus: func(ctx context.Context) (statuspkg.Report, error) {
@@ -82,16 +82,16 @@ exit 0
 			return statuspkg.FromDaemon(response), nil
 		},
 	}
-	assertIssue243StatusCommandClean(t, statusOpts)
+	assertRecoverJSONStatusCommandClean(t, statusOpts)
 
 	var dryRunOut bytes.Buffer
 	err = runRecoverCommand(context.Background(), []string{"--json"}, &dryRunOut, options{})
 	if got := ExitCode(err); got != 0 {
 		t.Fatalf("recover --json must exit 0 for exact exit-0 missing-link state: code=%d err=%v output=%q", got, err, dryRunOut.String())
 	}
-	assertIssue243RecoverDryRunJSONClean(t, dryRunOut.Bytes())
+	assertRecoverJSONDryRunClean(t, dryRunOut.Bytes())
 
-	beforeRecovery := issue243ResolvedStatusCallCount(t, resolvedCallsPath)
+	beforeRecovery := recoverJSONResolvedStatusCallCount(t, resolvedCallsPath)
 	if beforeRecovery < 1 {
 		t.Fatalf("expected startup scan to execute resolvectl status, got %d calls", beforeRecovery)
 	}
@@ -114,9 +114,9 @@ exit 0
 	if got := ExitCode(err); got != 0 {
 		t.Fatalf("recover execute must exit 0 for exact exit-0 missing-link state: code=%d err=%v output=%q", got, err, recoverOut.String())
 	}
-	assertIssue243RecoverExecuteJSONClean(t, recoverOut.Bytes())
+	assertRecoverJSONExecuteClean(t, recoverOut.Bytes())
 
-	afterRecovery := issue243ResolvedStatusCallCount(t, resolvedCallsPath)
+	afterRecovery := recoverJSONResolvedStatusCallCount(t, resolvedCallsPath)
 	if afterRecovery < beforeRecovery+2 {
 		t.Fatalf("recover execute must perform its inspection and a fresh authoritative startup-scan refresh: before=%d after=%d", beforeRecovery, afterRecovery)
 	}
@@ -125,11 +125,11 @@ exit 0
 	if err != nil {
 		t.Fatalf("read post-recovery daemon status: %v", err)
 	}
-	assertIssue243DaemonStartupScanClean(t, postRecovery)
-	assertIssue243StatusCommandClean(t, statusOpts)
+	assertRecoverJSONDaemonStartupScanClean(t, postRecovery)
+	assertRecoverJSONStatusCommandClean(t, statusOpts)
 }
 
-func assertIssue243DaemonStartupScanClean(t *testing.T, response api.StatusResponse) {
+func assertRecoverJSONDaemonStartupScanClean(t *testing.T, response api.StatusResponse) {
 	t.Helper()
 	if response.Connection != "inactive" {
 		t.Fatalf("expected inactive lifecycle, got %#v", response)
@@ -145,7 +145,7 @@ func assertIssue243DaemonStartupScanClean(t *testing.T, response api.StatusRespo
 	}
 }
 
-func assertIssue243StatusCommandClean(t *testing.T, opts options) {
+func assertRecoverJSONStatusCommandClean(t *testing.T, opts options) {
 	t.Helper()
 	var out bytes.Buffer
 	err := runStatusCommand(context.Background(), nil, &out, opts)
@@ -157,7 +157,7 @@ func assertIssue243StatusCommandClean(t *testing.T, opts options) {
 	}
 }
 
-func assertIssue243RecoverDryRunJSONClean(t *testing.T, data []byte) {
+func assertRecoverJSONDryRunClean(t *testing.T, data []byte) {
 	t.Helper()
 	var payload struct {
 		Status   string   `json:"status"`
@@ -178,7 +178,7 @@ func assertIssue243RecoverDryRunJSONClean(t *testing.T, data []byte) {
 	}
 }
 
-func assertIssue243RecoverExecuteJSONClean(t *testing.T, data []byte) {
+func assertRecoverJSONExecuteClean(t *testing.T, data []byte) {
 	t.Helper()
 	var payload struct {
 		Status   string            `json:"status"`
@@ -197,7 +197,7 @@ func assertIssue243RecoverExecuteJSONClean(t *testing.T, data []byte) {
 	}
 }
 
-func writeIssue243FakeCommand(t *testing.T, dir, name, content string) {
+func writeRecoverJSONFakeCommand(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
@@ -205,7 +205,7 @@ func writeIssue243FakeCommand(t *testing.T, dir, name, content string) {
 	}
 }
 
-func issue243ResolvedStatusCallCount(t *testing.T, path string) int {
+func recoverJSONResolvedStatusCallCount(t *testing.T, path string) int {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
