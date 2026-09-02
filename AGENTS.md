@@ -52,6 +52,7 @@ test -z "$(gofmt -l .)"
 go test ./...
 go vet ./...
 govulncheck ./...
+bash scripts/ci/repository-structure.sh --final
 ```
 
 Also run repository shell/workflow/package checks, race checks for concurrency-sensitive code (at least daemon when daemon lifecycle changes), and the relevant E2E suites. Destructive real-host E2E runs only on the dedicated runner and only when the change requires host mutation coverage.
@@ -63,7 +64,7 @@ Also run repository shell/workflow/package checks, race checks for concurrency-s
 
 Permanent prose is intentionally limited to `README.md`, `docs/cli.md`, `ARCHITECTURE.md`, and `AGENTS.md`. New prose needs a durable ownership reason that cannot fit one of those surfaces.
 
-Permanent source/test/workflow artifact names must be domain/invariant-oriented. Do not introduce `issueNNN`/`IssueNNN` names or permanent issue-number labels. Temporary plan/spec files may exist while a plan is actively being executed but must be removed when the plan explicitly requires cleanup.
+Permanent source/test/workflow artifact names must be domain/invariant-oriented. Do not introduce `issueNNN`/`IssueNNN` names or permanent issue-number labels. Temporary plan/spec files may exist while a plan is actively being executed; `repository-structure.sh --final` requires them to be removed before completion.
 
 When duplication is found, consolidate mechanics only after comparing semantics. When deleting code/fixtures, record proof: no references/runtime registration, a superseding equivalent implementation, or test-backed merge.
 

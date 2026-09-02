@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (($# > 1)); then
-  printf 'usage: %s [repository-root]\n' "${0##*/}" >&2
+final_state=false
+if (($# > 0)) && [[ "$1" == "--final" ]]; then
+  final_state=true
+  shift
+fi
+
+if (($# > 1)) || (($# == 1 && "$1" == -*)); then
+  printf 'usage: %s [--final] [repository-root]\n' "${0##*/}" >&2
   exit 2
 fi
 
@@ -69,7 +75,7 @@ for path in "${required_knowledge_surfaces[@]}"; do
 done
 
 for path in "${tracked_paths[@]}"; do
-  if [[ "${path}" == docs/superpowers/* ]]; then
+  if [[ "${final_state}" == "true" && "${path}" == docs/superpowers/* ]]; then
     violations+=("transient superpowers artifact is not allowed: ${path}")
   fi
 
@@ -86,7 +92,6 @@ for path in "${tracked_paths[@]}"; do
     && [[ "${path}" =~ [Ii][Ss][Ss][Uu][Ee][0-9]+ ]]; then
     violations+=("issue-numbered maintained path is not allowed: ${path}")
   fi
-
 done
 
 for path in "${tracked_paths[@]}"; do

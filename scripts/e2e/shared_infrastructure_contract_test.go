@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestInstalledClientWrapperPreservesNormalUserExecutionBoundary(t *testing.T) {
+func TestInstalledClientWrapperUsesPodlazServiceGroupBoundary(t *testing.T) {
 	path := filepath.Join("lib", "installed_client.sh")
 	contents, err := os.ReadFile(path)
 	if err != nil {

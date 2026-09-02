@@ -4,6 +4,19 @@ A quiet way through.
 
 Podlaz is a Linux VPN client with Xray-compatible profile management, a CLI, and a privileged local daemon. The CLI owns user intent and user-scoped profile state; `podlazd` owns privileged runtime/network mutations.
 
+## Quick start
+
+Import a profile, connect it in TUN mode, inspect status, then disconnect:
+
+```bash
+podlaz profile import '<share-uri>'
+podlaz connect --mode tun '<profile-id>'
+podlaz status
+podlaz disconnect
+```
+
+See [docs/cli.md](docs/cli.md) for profile IDs, modes, flags, outputs, and other commands.
+
 ## Build and verify
 
 ```bash
