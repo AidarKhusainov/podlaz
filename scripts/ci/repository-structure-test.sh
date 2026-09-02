@@ -91,6 +91,17 @@ git -C "${fixture}" add docs/cli.md
 expect_fail 'stale retired-doc reference' "${fixture}" 'stale retired-doc reference in docs/cli.md: state-and-security.md'
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
+mkdir -p "${fixture}/.github/workflows"
+cat > "${fixture}/.github/workflows/ci.yml" <<'YAMLEOF'
+name: CI
+jobs:
+  test:
+    name: Issue 321 regression
+YAMLEOF
+git -C "${fixture}" add .github/workflows/ci.yml
+expect_fail 'issue-oriented workflow label' "${fixture}" 'issue-oriented workflow label is not allowed:'
+
+fixture="$(new_fixture)"; fixtures+=("${fixture}")
 printf '## Checklist\n' > "${fixture}/.github/pull_request_template.md"
 mkdir -p "${fixture}/vendor/example"
 printf '# Generated vendor notes\n' > "${fixture}/vendor/example/README.md"

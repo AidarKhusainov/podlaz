@@ -107,14 +107,34 @@ retired_doc_references=(
   'tun-uplink-revalidation.md'
   'docs/man/'
 )
-canonical_docs=(README.md AGENTS.md ARCHITECTURE.md docs/cli.md)
-for path in "${canonical_docs[@]}"; do
-  [[ -f "${repo_root}/${path}" ]] || continue
+is_stale_reference_scan_exempt() {
+  case "$1" in
+    docs/superpowers/*|scripts/ci/repository-structure.sh|scripts/ci/repository-structure-test.sh)
+      return 0
+      ;;
+  esac
+  is_generated_or_vendor "$1"
+}
+
+for path in "${tracked_paths[@]}"; do
+  if is_stale_reference_scan_exempt "${path}" || [[ ! -f "${repo_root}/${path}" ]]; then
+    continue
+  fi
   for retired in "${retired_doc_references[@]}"; do
-    if grep -Fq -- "${retired}" "${repo_root}/${path}"; then
+    if grep -FIq -- "${retired}" "${repo_root}/${path}"; then
       violations+=("stale retired-doc reference in ${path}: ${retired}")
     fi
   done
+done
+
+for path in "${tracked_paths[@]}"; do
+  case "${path}" in
+    .github/workflows/*.yml|.github/workflows/*.yaml)
+      while IFS= read -r match; do
+        violations+=("issue-oriented workflow label is not allowed: ${path}:${match}")
+      done < <(grep -nI -E '^[[:space:]]*name:[[:space:]].*[Ii][Ss][Ss][Uu][Ee][[:space:]#_.:-]*[0-9]+' -- "${repo_root}/${path}" 2>/dev/null || true)
+      ;;
+  esac
 done
 
 if ((${#violations[@]} > 0)); then
