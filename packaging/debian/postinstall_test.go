@@ -57,13 +57,14 @@ func TestPostinstallRepairsConfigFilesStaleHelperEnablement(t *testing.T) {
 		"deb-systemd-helper debian-installed podlazd.service",
 		"deb-systemd-helper was-enabled podlazd.service",
 		"deb-systemd-helper reenable podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 	)
 	assertLogContainsInOrder(t, log,
 		"deb-systemd-helper reenable podlazd.service",
 		"deb-systemd-helper update-state podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 	)
+	assertLogNotContains(t, log, "deb-systemd-invoke start podlazd.service")
 
 	if _, err := os.Stat(filepath.Join(h.runDir, "repair-helper-enable")); !os.IsNotExist(err) {
 		t.Fatalf("postinstall should remove stale helper repair marker: %v", err)
@@ -84,6 +85,7 @@ func TestPostinstallDoesNotRepairOrStartAdminDisabledInstalledUnit(t *testing.T)
 		"deb-systemd-helper debian-installed podlazd.service",
 		"deb-systemd-helper was-enabled podlazd.service",
 		"deb-systemd-helper reenable podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 		"deb-systemd-invoke start podlazd.service",
 	)
 	assertLogContains(t, log, "systemctl is-enabled --quiet podlazd.service")
@@ -103,11 +105,24 @@ func TestPostinstallDoesNotReenableAlreadyEnabledUnit(t *testing.T) {
 		"deb-systemd-helper debian-installed podlazd.service",
 		"deb-systemd-helper was-enabled podlazd.service",
 		"deb-systemd-helper reenable podlazd.service",
+		"deb-systemd-invoke start podlazd.service",
 	)
 	assertLogContains(t, log,
 		"systemctl is-enabled --quiet podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 	)
+}
+
+func TestPostinstallStartsEnabledInactiveUnitWithoutRestartRetry(t *testing.T) {
+	h := newPostinstallHarness(t, postinstallOptions{
+		initiallyEnabled: true,
+		inactive:         true,
+	})
+
+	log := h.runPostinstall(t)
+
+	assertLogContains(t, log, "deb-systemd-invoke start podlazd.service")
+	assertLogNotContains(t, log, "deb-systemd-invoke try-restart podlazd.service")
 }
 
 func TestMaintainerScriptsAvoidRawSystemctlServiceMutation(t *testing.T) {
@@ -128,10 +143,13 @@ func TestMaintainerScriptsAvoidRawSystemctlServiceMutation(t *testing.T) {
 }
 
 type postinstallOptions struct {
-	marker           bool
-	initiallyEnabled bool
-	debianInstalled  bool
-	wasEnabled       bool
+	marker              bool
+	initiallyEnabled    bool
+	debianInstalled     bool
+	wasEnabled          bool
+	inactive            bool
+	loadedRestartSignal string
+	serviceResult       string
 }
 
 type postinstallHarness struct {
@@ -165,6 +183,18 @@ func newPostinstallHarness(t *testing.T, opts postinstallOptions) postinstallHar
 			t.Fatalf("write enabled flag: %v", err)
 		}
 	}
+	loadedRestartSignal := opts.loadedRestartSignal
+	if loadedRestartSignal == "" {
+		loadedRestartSignal = "SIGUSR1"
+	}
+	serviceResult := opts.serviceResult
+	if serviceResult == "" {
+		serviceResult = "success"
+	}
+	activeExit := 0
+	if opts.inactive {
+		activeExit = 1
+	}
 
 	writeStub(t, binDir, "systemd-sysusers", fmt.Sprintf(`#!/bin/sh
 printf 'systemd-sysusers %%s\n' "$*" >> %q
@@ -180,8 +210,18 @@ if [ "$1" = is-enabled ]; then
   test -e %q
   exit $?
 fi
+if [ "$1" = is-active ]; then
+  exit %d
+fi
+if [ "$1" = show ]; then
+  case "$*" in
+    *RestartKillSignal*) printf '%s\n' ;;
+    *Result*) printf '%s\n' ;;
+  esac
+  exit 0
+fi
 exit 0
-`, logPath, enabledPath))
+`, logPath, enabledPath, activeExit, loadedRestartSignal, serviceResult))
 
 	debianInstalledExit := 1
 	if opts.debianInstalled {
