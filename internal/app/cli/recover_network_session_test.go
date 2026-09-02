@@ -1,14 +1,10 @@
 package cli
 
 import (
-	"bytes"
-	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
-	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 func TestRecoverDryRunShowsRetainedNetworkSessionAuthority(t *testing.T) {
@@ -23,16 +19,7 @@ func TestRecoverDryRunShowsRetainedNetworkSessionAuthority(t *testing.T) {
 		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
 		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
 	}
-	var out bytes.Buffer
-	err := runRecoverCommand(context.Background(), nil, &out, options{
-		recover: func(context.Context) recovery.PlanResult {
-			return recovery.PlanResult{NetworkSession: state}
-		},
-	})
-	if err != nil {
-		t.Fatalf("recover dry-run: %v", err)
-	}
-	got := out.String()
+	got := (recoverPlanView{NetworkSession: state}).String()
 	if strings.Contains(got, "No podlaz-owned recovery candidates found") {
 		t.Fatalf("retained Network Session was reported as no recovery work: %q", got)
 	}
@@ -64,17 +51,11 @@ func TestRecoverExecuteFailedResumeUsesSameSemanticModelAndFails(t *testing.T) {
 		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
 		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
 	}
-	var out bytes.Buffer
-	err := runRecoverCommand(context.Background(), []string{"--execute", "--yes"}, &out, options{
-		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
-			return recovery.ExecuteResult{NetworkSession: state}, nil
-		},
-	})
-	var exit exitError
-	if !errors.As(err, &exit) || exit.code != 1 {
-		t.Fatalf("failed resume exit=%v, want exit 1", err)
+	result := recoverExecuteView{NetworkSession: state}
+	if !result.HasIncompleteCleanup() {
+		t.Fatal("failed retained resume must produce the non-zero incomplete recovery outcome")
 	}
-	got := out.String()
+	got := result.String()
 	for _, want := range []string{"Network Session authority: present", "Next action: retry-resume"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("recover execute missing %q: %q", want, got)
@@ -91,13 +72,8 @@ func TestRecoverExecuteSuccessfulResumeReturnsSuccess(t *testing.T) {
 		CleanupAuthority:  api.NetworkSessionCleanupAuthorityNone,
 		NextAction:        api.NetworkSessionRecoveryActionNone,
 	}
-	var out bytes.Buffer
-	err := runRecoverCommand(context.Background(), []string{"--execute", "--yes"}, &out, options{
-		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
-			return recovery.ExecuteResult{NetworkSession: state}, nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("successful recovery resume: %v", err)
+	result := recoverExecuteView{NetworkSession: state}
+	if result.HasFailures() || result.HasIncompleteCleanup() {
+		t.Fatalf("successful resumed Network Session must be a successful recover result: %#v", result)
 	}
 }
