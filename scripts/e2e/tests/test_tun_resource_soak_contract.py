@@ -179,7 +179,7 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertNotIn("mask_value", text)
         append = self.function_body("append_sensitive_value", "\n}\n\nenforce_acceptance_inputs")
         self.assertNotIn("::", append)
-        inventory = self.function_body("collect_host_sensitive_values", "\n}\n\nfirst_profile_uri")
+        inventory = self.function_body("collect_host_sensitive_values", "\n}\n\nrun_installed_podlaz_bounded")
         self.assertIn("nmcli", inventory)
 
     def test_failure_evidence_is_structural_and_written_before_private_cleanup(self) -> None:
