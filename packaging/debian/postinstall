@@ -9,7 +9,8 @@ boot_id_path="${PODLAZ_BOOT_ID_PATH:-/proc/sys/kernel/random/boot_id}"
 systemd_runtime_dir="${PODLAZ_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
 continuation="$runtime_dir/network-session-continuation.json"
 legacy_upgrade_marker="$runtime_dir/legacy-upgrade-continuation"
-candidate_restart_signal=SIGUSR1
+# systemctl show serializes signal properties numerically; SIGUSR1 is 10 on supported Linux arches.
+candidate_restart_signal_number=10
 legacy_override_dir="$systemd_runtime_dir/$unit.d"
 legacy_override="$legacy_override_dir/50-podlaz-legacy-replacement.conf"
 legacy_override_installed=0
@@ -203,15 +204,15 @@ if command -v deb-systemd-invoke >/dev/null 2>&1 && is_enabled "$unit"; then
 	if is_active "$unit"; then
 		service_was_active=1
 		if [ ! -e "$continuation" ]; then
-			old_restart_signal="$(loaded_restart_signal "$unit")" || {
+			old_restart_signal_number="$(loaded_restart_signal "$unit")" || {
 				echo "podlaz: cannot inspect loaded restart signal before package replacement" >&2
 				exit 1
 			}
-			if [ -z "$old_restart_signal" ]; then
+			if [ -z "$old_restart_signal_number" ]; then
 				echo "podlaz: loaded restart signal is unavailable before package replacement" >&2
 				exit 1
 			fi
-			if [ "$old_restart_signal" != "$candidate_restart_signal" ]; then
+			if [ "$old_restart_signal_number" != "$candidate_restart_signal_number" ]; then
 				prepare_legacy_upgrade_continuation
 				install_legacy_replacement_override
 				legacy_replacement=1
