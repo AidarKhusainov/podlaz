@@ -99,6 +99,11 @@ git -C "${fixture}" add docs/cli.md
 expect_fail 'stale retired-doc reference' "${fixture}" 'stale retired-doc reference in docs/cli.md: state-and-security.md'
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
+printf '\nSee [retired development guide](./docs/development.md).\n' >> "${fixture}/README.md"
+git -C "${fixture}" add README.md
+expect_fail 'stale development-doc reference' "${fixture}" 'stale retired-doc reference in README.md: development.md'
+
+fixture="$(new_fixture)"; fixtures+=("${fixture}")
 mkdir -p "${fixture}/.github/workflows"
 cat > "${fixture}/.github/workflows/ci.yml" <<'YAMLEOF'
 name: CI
