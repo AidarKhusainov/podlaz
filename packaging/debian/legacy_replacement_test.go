@@ -146,7 +146,7 @@ case "$1" in
   show)
     case "$*" in
       *RestartKillSignal*)
-        if [ ! -e %q ]; then printf 'SIGTERM\n'; elif [ -e %q ]; then printf 'SIGKILL\n'; else printf 'SIGUSR1\n'; fi
+        if [ ! -e %q ]; then printf '15\n'; elif [ -e %q ]; then printf '9\n'; else printf '10\n'; fi
         ;;
       *Result*) cat %q ;;
     esac
