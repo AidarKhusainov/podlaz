@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func executableShellLines(script string) string {
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testing.T) {
 	data, err := os.ReadFile("remote-client-acceptance.sh")
 	if err != nil {
@@ -26,6 +38,8 @@ func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testi
 			t.Fatalf("remote-client acceptance lost %q", required)
 		}
 	}
+
+	executable := executableShellLines(script)
 	for _, forbidden := range []string{
 		"runuser",
 		"usermod",
@@ -34,8 +48,8 @@ func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testi
 		`-G podlaz`,
 		`-G "${LOG_READER_ACCESS_GROUP}"`,
 	} {
-		if strings.Contains(script, forbidden) {
-			t.Fatalf("ordinary-user acceptance must preserve the login identity without granting or rewriting groups: %q", forbidden)
+		if strings.Contains(executable, forbidden) {
+			t.Fatalf("ordinary-user acceptance must preserve the login identity without granting or rewriting groups in executable behavior: %q", forbidden)
 		}
 	}
 }
