@@ -129,7 +129,7 @@ func TestObserveResolvedLinkExitZeroMissingDeviceStatusFailsClosed(t *testing.T)
 				RawStderr: resolvedMissingDeviceIgnoringStderr + "\n",
 				ExitCode:  2,
 			},
-			err: issue243ExitError{code: 2},
+			err: exitCodeError{code: 2},
 		},
 		{
 			name: "oversized stderr",
@@ -194,14 +194,14 @@ func exitZeroMissingResolvedStatus(terminator string) CommandResult {
 	}
 }
 
-type issue243ExitError struct {
+type exitCodeError struct {
 	code int
 }
 
-func (e issue243ExitError) Error() string {
+func (e exitCodeError) Error() string {
 	return "exit status"
 }
 
-func (e issue243ExitError) ExitCode() int {
+func (e exitCodeError) ExitCode() int {
 	return e.code
 }
