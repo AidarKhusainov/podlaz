@@ -24,6 +24,21 @@ function generate_completion() {
   env -u GOOS -u GOARCH -u CC -u CXX CGO_ENABLED=1 go run ./cmd/podlaz completion "${shell}" > "${target}"
 }
 
+function generate_man_page() {
+  local command_package="$1"
+  local title="$2"
+  local section="$3"
+  local target="$4"
+
+  {
+    printf '.TH "%s" "%s"\n' "${title}" "${section}"
+    printf '.SH NAME\n%s\n' "${title,,}"
+    printf '.SH DESCRIPTION\n.nf\n'
+    env -u GOOS -u GOARCH -u CC -u CXX CGO_ENABLED=1 go run "${command_package}" --help
+    printf '.fi\n'
+  } | gzip -9n -c > "${target}"
+}
+
 # shellcheck source=scripts/ci/package-obsolete-tun-gate.sh
 source scripts/ci/package-obsolete-tun-gate.sh
 
@@ -122,12 +137,12 @@ ln -s podlaz.fish "${root_dir}/usr/share/fish/vendor_completions.d/plz.fish"
 install -m 0644 packaging/systemd/podlazd.service "${root_dir}/usr/lib/systemd/system/podlazd.service"
 install -m 0644 packaging/sysusers.d/podlaz.conf "${root_dir}/usr/lib/sysusers.d/podlaz.conf"
 install -m 0644 packaging/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy "${root_dir}/usr/share/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy"
-gzip -9n -c docs/man/podlaz.1 > "${root_dir}/usr/share/man/man1/podlaz.1.gz"
-gzip -9n -c docs/man/podlazd.8 > "${root_dir}/usr/share/man/man8/podlazd.8.gz"
+generate_man_page ./cmd/podlaz PODLAZ 1 "${root_dir}/usr/share/man/man1/podlaz.1.gz"
+generate_man_page ./cmd/podlazd PODLAZD 8 "${root_dir}/usr/share/man/man8/podlazd.8.gz"
 install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/podlaz/"
 install -m 0644 LICENSE "${root_dir}/usr/share/doc/podlaz/copyright"
 printf 'podlaz (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/podlaz/changelog.Debian.gz"
-find docs -type f ! -path 'docs/man/*' -print | while IFS= read -r file; do
+find docs -type f -print | while IFS= read -r file; do
   target="${root_dir}/usr/share/doc/podlaz/${file}"
   mkdir -p "$(dirname "${target}")"
   install -m 0644 "${file}" "${target}"
