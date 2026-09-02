@@ -63,6 +63,7 @@ trap cleanup EXIT
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
 expect_pass 'allowed repository' "${fixture}"
+expect_pass 'allowed final repository' "${fixture}" --final
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
 git -C "${fixture}" rm -q -f docs/cli.md

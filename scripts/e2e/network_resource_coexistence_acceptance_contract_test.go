@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestSessionPrivacyAcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAdapters(t *testing.T) {
-	data, err := os.ReadFile("session-privacy-package-acceptance.sh")
+func TestNetworkResourceCoexistenceAcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAdapters(t *testing.T) {
+	data, err := os.ReadFile("network-resource-coexistence-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read session-privacy acceptance: %v", err)
+		t.Fatalf("read network resource coexistence acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -23,20 +23,20 @@ func TestSessionPrivacyAcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAda
 		"assert_foreign_fixture after_disconnect",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("session-privacy acceptance must contain %q", required)
+			t.Fatalf("network resource coexistence acceptance must contain %q", required)
 		}
 	}
 	for _, forbidden := range []string{"nmcli connection down", "wireguard", "openvpn", "mullvad", "protonvpn", "throne"} {
 		if strings.Contains(strings.ToLower(script), forbidden) {
-			t.Fatalf("session-privacy acceptance must not contain product-specific foreign VPN control %q", forbidden)
+			t.Fatalf("network resource coexistence acceptance must not contain product-specific foreign VPN control %q", forbidden)
 		}
 	}
 }
 
-func TestSessionPrivacyAcceptanceProvesPersistedAllocationAndBaselineSurvival(t *testing.T) {
-	data, err := os.ReadFile("session-privacy-package-acceptance.sh")
+func TestNetworkResourceCoexistenceAcceptanceProvesPersistedAllocationAndBaselineSurvival(t *testing.T) {
+	data, err := os.ReadFile("network-resource-coexistence-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read session-privacy acceptance: %v", err)
+		t.Fatalf("read network resource coexistence acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{

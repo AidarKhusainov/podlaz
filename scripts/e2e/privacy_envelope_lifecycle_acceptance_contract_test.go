@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestNetworkResourceIsolationPackageAcceptanceCoversPrivacyAndTerminalBoundaries(t *testing.T) {
-	data, err := os.ReadFile("network-resource-isolation-package-acceptance.sh")
+func TestPrivacyEnvelopeLifecycleAcceptanceCoversPrivacyAndTerminalBoundaries(t *testing.T) {
+	data, err := os.ReadFile("privacy-envelope-lifecycle-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read network-resource-isolation acceptance: %v", err)
+		t.Fatalf("read Privacy Envelope lifecycle acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -28,7 +28,7 @@ func TestNetworkResourceIsolationPackageAcceptanceCoversPrivacyAndTerminalBounda
 		"foreign_collision_survived",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("network-resource-isolation acceptance must contain %q", required)
+			t.Fatalf("Privacy Envelope lifecycle acceptance must contain %q", required)
 		}
 	}
 	if strings.Contains(script, "network-resource-isolation-disconnect") {
@@ -36,10 +36,10 @@ func TestNetworkResourceIsolationPackageAcceptanceCoversPrivacyAndTerminalBounda
 	}
 }
 
-func TestNetworkResourceIsolationPackageAcceptanceDoesNotRepairProductStateManually(t *testing.T) {
-	data, err := os.ReadFile("network-resource-isolation-package-acceptance.sh")
+func TestPrivacyEnvelopeLifecycleAcceptanceDoesNotRepairProductStateManually(t *testing.T) {
+	data, err := os.ReadFile("privacy-envelope-lifecycle-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read network-resource-isolation acceptance: %v", err)
+		t.Fatalf("read Privacy Envelope lifecycle acceptance: %v", err)
 	}
 	lower := strings.ToLower(string(data))
 	for _, forbidden := range []string{
@@ -50,24 +50,24 @@ func TestNetworkResourceIsolationPackageAcceptanceDoesNotRepairProductStateManua
 		"nft delete table inet podlaz_pe_",
 	} {
 		if strings.Contains(lower, forbidden) {
-			t.Fatalf("network-resource-isolation success path must not contain manual product-state repair %q", forbidden)
+			t.Fatalf("Privacy Envelope lifecycle success path must not contain manual product-state repair %q", forbidden)
 		}
 	}
 }
 
-func TestNetworkResourceIsolationWorkflowRunsInstalledPackageAcceptance(t *testing.T) {
+func TestPrivacyEnvelopeLifecycleWorkflowRunsInstalledPackageAcceptance(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
 	if err != nil {
 		t.Fatalf("read package convergence workflow: %v", err)
 	}
 	workflow := string(data)
 	for _, required := range []string{
-		"Run network resource isolation acceptance",
-		"bash scripts/e2e/network-resource-isolation-package-acceptance.sh",
+		"Run Privacy Envelope lifecycle acceptance",
+		"bash scripts/e2e/privacy-envelope-lifecycle-package-acceptance.sh",
 		"timeout-minutes:",
 	} {
 		if !strings.Contains(workflow, required) {
-			t.Fatalf("network-resource-isolation workflow wiring must contain %q", required)
+			t.Fatalf("Privacy Envelope lifecycle workflow wiring must contain %q", required)
 		}
 	}
 }
