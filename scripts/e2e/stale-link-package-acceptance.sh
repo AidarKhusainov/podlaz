@@ -4,8 +4,16 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/bounded_client.sh
+source "${SCRIPT_DIR}/lib/bounded_client.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
 # shellcheck source=lib/exit_trap.sh
 source "${SCRIPT_DIR}/lib/exit_trap.sh"
+# shellcheck source=lib/package_provenance.sh
+source "${SCRIPT_DIR}/lib/package_provenance.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
 
 require_cmd awk date git grep ip journalctl mktemp nft python3 runuser sleep sudo systemctl timeout
 
@@ -16,32 +24,16 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 
-EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue247-diagnostics-acceptance.txt"
+EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/stale-link-acceptance.txt"
 PROFILE_ID=""
 CONNECTED=false
 STALE_LINK_CREATED=false
 STALE_LINK_INDEX=""
 ACTIVE_NFT_MISMATCH_CREATED=false
-ACTIVE_NFT_MISMATCH_CHAIN="issue247_e2e_mismatch"
+ACTIVE_NFT_MISMATCH_CHAIN="stale_link_e2e_mismatch"
 
 write_evidence() {
-  local key="$1" value="$2"
-  case "${key}${value}" in
-    *$'\n'*|*$'\r'*) fail "invalid normalized issue 247 evidence" ;;
-  esac
-  printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
-}
-
-run_installed_podlaz_bounded() {
-  local timeout_seconds="$1"
-  shift
-  timeout --signal=TERM --kill-after=5s "${timeout_seconds}" \
-    sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-      LC_ALL=C \
-      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-      XDG_STATE_HOME="${XDG_STATE_HOME}" \
-      XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-      /usr/bin/podlaz "$@"
+  append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
 }
 
 remove_stale_test_link() {
@@ -55,11 +47,11 @@ remove_stale_test_link() {
     return 0
   fi
   if [[ "${current_index}" != "${STALE_LINK_INDEX}" ]]; then
-    printf 'issue 247 cleanup refused to delete a replaced podlaz0 identity\n' >&2
+    printf 'stale-link cleanup refused to delete a replaced podlaz0 identity\n' >&2
     return 1
   fi
   if ! ip tuntap show dev podlaz0 2>/dev/null | grep -Eq '^podlaz0:[[:space:]]+tun([[:space:]]|$)'; then
-    printf 'issue 247 cleanup refused to delete a non-TUN podlaz0 identity\n' >&2
+    printf 'stale-link cleanup refused to delete a non-TUN podlaz0 identity\n' >&2
     return 1
   fi
 
@@ -72,8 +64,8 @@ remove_active_nft_mismatch() {
   local output error_output exit_code
   [[ "${ACTIVE_NFT_MISMATCH_CREATED}" == "true" ]] || return 0
 
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-nft-cleanup.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-nft-cleanup.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-active-nft-cleanup.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-active-nft-cleanup.stderr.XXXXXX")"
   if sudo -n nft -y list chain inet podlaz "${ACTIVE_NFT_MISMATCH_CHAIN}" >"${output}" 2>"${error_output}"; then
     exit_code=0
   else
@@ -87,7 +79,7 @@ remove_active_nft_mismatch() {
       return 0
     fi
     rm -f -- "${output}" "${error_output}"
-    printf 'issue 247 cleanup could not inspect the test nftables chain\n' >&2
+    printf 'stale-link cleanup could not inspect the test nftables chain\n' >&2
     return 1
   fi
 
@@ -103,7 +95,7 @@ if lines != expected:
 PY
   then
     rm -f -- "${output}" "${error_output}"
-    printf 'issue 247 cleanup refused to delete a changed test nftables chain\n' >&2
+    printf 'stale-link cleanup refused to delete a changed test nftables chain\n' >&2
     return 1
   fi
 
@@ -128,47 +120,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
 verify_package_provenance() {
-  local build_commit version_output
+  local build_commit
   build_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
-  version_output="$(mktemp "${E2E_TMP_ROOT}/issue247-version.XXXXXX")"
-  /usr/bin/podlaz version >"${version_output}" 2>/dev/null || fail "issue 247 installed CLI version failed"
-  grep -F -- "${build_commit}" "${version_output}" >/dev/null || fail "issue 247 installed CLI does not identify the tested commit"
-  rm -f -- "${version_output}"
-  systemctl is-active --quiet podlazd.service || fail "issue 247 requires the packaged podlazd service"
+  assert_installed_podlaz_commit "${build_commit}"
+  assert_package_service_active podlazd.service
   write_evidence package_provenance pass
 }
 
 import_profile_privately() {
   local uri="$1" output error_output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-profile-import.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-profile-import.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-profile-import.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-profile-import.stderr.XXXXXX")"
   if ! run_installed_podlaz_bounded 30s profile import "${uri}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
-    fail "issue 247 profile import failed"
+    fail "stale-link profile import failed"
   fi
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
   rm -f -- "${output}" "${error_output}"
-  assert_nonempty "${PROFILE_ID}" "issue 247 imported profile id"
+  assert_nonempty "${PROFILE_ID}" "stale-link imported profile id"
   mask_value "${PROFILE_ID}"
   write_evidence profile_import pass
 }
 
 assert_inactive_doctor_clean() {
   local phase="$1" output exit_code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-${phase}-inactive-doctor.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-${phase}-inactive-doctor.XXXXXX")"
   set +e
   run_installed_podlaz_bounded 20s doctor >"${output}" 2>&1
   exit_code=$?
@@ -195,7 +172,7 @@ assert_inactive_doctor_clean() {
 
 assert_active_doctor_clean() {
   local phase="$1" output exit_code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-${phase}-active-doctor.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-${phase}-active-doctor.XXXXXX")"
   set +e
   run_installed_podlaz_bounded 30s doctor >"${output}" 2>&1
   exit_code=$?
@@ -222,7 +199,7 @@ assert_active_doctor_clean() {
 
 assert_active_status() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-${phase}-active-status.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-${phase}-active-status.XXXXXX")"
   if ! run_installed_podlaz_bounded 20s status >"${output}" 2>&1; then
     rm -f -- "${output}"
     fail "${phase}: active status returned non-zero"
@@ -236,28 +213,28 @@ assert_active_status() {
 
 assert_active_nft_mismatch_warns() {
   local output error_output exit_code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-nft-precheck.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-nft-precheck.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-active-nft-precheck.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-active-nft-precheck.stderr.XXXXXX")"
   if sudo -n nft list chain inet podlaz "${ACTIVE_NFT_MISMATCH_CHAIN}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
-    fail "issue 247 active mismatch chain already exists"
+    fail "stale-link active mismatch chain already exists"
   else
     exit_code=$?
   fi
   if (( exit_code == 0 )); then
     rm -f -- "${output}" "${error_output}"
-    fail "issue 247 active mismatch precheck unexpectedly succeeded"
+    fail "stale-link active mismatch precheck unexpectedly succeeded"
   fi
   if ! grep -Eqi 'No such (file|table)|does not exist' "${error_output}"; then
     rm -f -- "${output}" "${error_output}"
-    fail "issue 247 could not prove the active mismatch chain is absent"
+    fail "stale-link could not prove the active mismatch chain is absent"
   fi
   rm -f -- "${output}" "${error_output}"
 
   sudo -n nft add chain inet podlaz "${ACTIVE_NFT_MISMATCH_CHAIN}"
   ACTIVE_NFT_MISMATCH_CREATED=true
 
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-active-nft-mismatch-doctor.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-active-nft-mismatch-doctor.XXXXXX")"
   set +e
   run_installed_podlaz_bounded 30s doctor >"${output}" 2>&1
   exit_code=$?
@@ -276,22 +253,22 @@ assert_active_nft_mismatch_warns() {
   }
   rm -f -- "${output}"
 
-  remove_active_nft_mismatch || fail "issue 247 could not safely remove its active nftables mismatch"
+  remove_active_nft_mismatch || fail "stale-link could not safely remove its active nftables mismatch"
   write_evidence active_nft_mismatch pass
 }
 
 assert_inactive_foreign_link_warns() {
   local output exit_code
   if ip link show dev podlaz0 >/dev/null 2>&1; then
-    fail "issue 247 stale-resource acceptance requires podlaz0 to be absent before creating the test link"
+    fail "stale-link acceptance requires podlaz0 to be absent before creating the test link"
   fi
 
   sudo -n ip tuntap add dev podlaz0 mode tun
   STALE_LINK_CREATED=true
   STALE_LINK_INDEX="$(ip -o link show dev podlaz0 | awk -F: 'NR == 1 {gsub(/[[:space:]]/, "", $1); print $1}')"
-  assert_nonempty "${STALE_LINK_INDEX}" "issue 247 stale test link index"
+  assert_nonempty "${STALE_LINK_INDEX}" "stale-link test link index"
 
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-inactive-stale-doctor.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-inactive-stale-doctor.XXXXXX")"
   set +e
   run_installed_podlaz_bounded 20s doctor >"${output}" 2>&1
   exit_code=$?
@@ -306,14 +283,14 @@ assert_inactive_foreign_link_warns() {
   }
   rm -f -- "${output}"
 
-  remove_stale_test_link || fail "issue 247 could not safely remove its exact stale test link"
+  remove_stale_test_link || fail "stale-link could not safely remove its exact stale test link"
   write_evidence inactive_stale_resource pass
 }
 
 assert_logs_since_mode_36h() {
   local mode="$1" header="$2" key="$3" output error_output exit_code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-logs-${mode}-36h.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-logs-${mode}-36h.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-logs-${mode}-36h.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-logs-${mode}-36h.stderr.XXXXXX")"
   set +e
   run_installed_podlaz_bounded 20s logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"
   exit_code=$?
@@ -336,17 +313,17 @@ assert_logs_since_mode_36h() {
 
 assert_logs_lookback_is_bounded() {
   local baseline output error_output invocation_start
-  baseline="$(mktemp "${E2E_TMP_ROOT}/issue247-lookback-baseline.XXXXXX")"
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-lookback.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-lookback.stderr.XXXXXX")"
+  baseline="$(mktemp "${E2E_TMP_ROOT}/stale-link-lookback-baseline.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-lookback.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-lookback.stderr.XXXXXX")"
 
   for _ in 1 2 3; do
-    run_installed_podlaz_bounded 10s status >/dev/null 2>&1 || fail "issue 247 could not create a bounded-lookback daemon journal marker"
+    run_installed_podlaz_bounded 10s status >/dev/null 2>&1 || fail "stale-link could not create a bounded-lookback daemon journal marker"
   done
   sudo -n journalctl --sync
   sudo -n env LC_ALL=C journalctl --system --unit podlazd.service --since -10s --no-pager --output short >"${baseline}" 2>/dev/null || \
-    fail "issue 247 could not inspect the private journal baseline"
-  grep -F 'status request' "${baseline}" >/dev/null || fail "issue 247 journal baseline did not contain the generated status request"
+    fail "stale-link could not inspect the private journal baseline"
+  grep -F 'status request' "${baseline}" >/dev/null || fail "stale-link journal baseline did not contain the generated status request"
 
   sleep 5
   invocation_start="$(date +%s)"
@@ -400,8 +377,8 @@ PY
 
 assert_logs_follow_cancels_cleanly() {
   local output error_output exit_code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-follow.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-follow.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-follow.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-follow.stderr.XXXXXX")"
 
   set +e
   timeout --preserve-status --signal=INT --kill-after=3s 2s \
@@ -428,8 +405,8 @@ assert_logs_follow_cancels_cleanly() {
 
 assert_logs_since_invalid() {
   local value="$1" key="$2" output error_output exit_code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue247-invalid-since.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue247-invalid-since.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/stale-link-invalid-since.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-invalid-since.stderr.XXXXXX")"
   set +e
   run_installed_podlaz_bounded 10s logs --since "${value}" >"${output}" 2>"${error_output}"
   exit_code=$?
@@ -447,18 +424,18 @@ assert_logs_since_invalid() {
 }
 
 : >"${EVIDENCE_FILE}"
-setup_isolated_xdg issue247-package-acceptance
+setup_isolated_xdg stale-link-package-acceptance
 verify_package_provenance
 assert_inactive_doctor_clean initial
 
-PROFILE_URI="$(first_profile_uri)"
-assert_nonempty "${PROFILE_URI}" "issue 247 profile URI"
+PROFILE_URI="$(first_configured_profile_uri)"
+assert_nonempty "${PROFILE_URI}" "stale-link profile URI"
 mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI
 
 if ! run_installed_podlaz_bounded 90s connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1; then
-  fail "issue 247 TUN connect failed"
+  fail "stale-link TUN connect failed"
 fi
 CONNECTED=true
 assert_active_status initial
@@ -468,7 +445,7 @@ assert_active_status restored
 assert_active_doctor_clean restored
 
 if ! run_installed_podlaz_bounded 60s disconnect >/dev/null 2>&1; then
-  fail "issue 247 disconnect failed"
+  fail "stale-link disconnect failed"
 fi
 CONNECTED=false
 assert_inactive_doctor_clean after-disconnect

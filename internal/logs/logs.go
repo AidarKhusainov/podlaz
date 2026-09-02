@@ -95,17 +95,6 @@ func Run(ctx context.Context, stdout io.Writer, opts Options) error {
 	return nil
 }
 
-// BuildJournalctlArgs returns the exact journalctl argument vector for a valid
-// product-level log request. Invalid --since values return nil and are surfaced
-// as ErrInvalidSinceDuration by Run/RunJournalctl before journalctl is started.
-func BuildJournalctlArgs(opts Options) []string {
-	args, err := buildJournalctlArgs(opts)
-	if err != nil {
-		return nil
-	}
-	return args
-}
-
 func buildJournalctlArgs(opts Options) ([]string, error) {
 	args := []string{
 		"--system",

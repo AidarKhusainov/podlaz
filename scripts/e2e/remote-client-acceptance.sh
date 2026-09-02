@@ -6,6 +6,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/exit_trap.sh
 source "${SCRIPT_DIR}/lib/exit_trap.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/package_provenance.sh
+source "${SCRIPT_DIR}/lib/package_provenance.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
 
 require_cmd awk env git grep id mktemp python3 sudo systemctl timeout
 
@@ -15,22 +21,17 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 
-EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue254-remote-client-acceptance.txt"
+EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/remote-client-acceptance.txt"
 PROFILE_ID=""
 CONNECTED=false
 
 write_evidence() {
-  local key="$1" value="$2"
-  case "${key}${value}" in
-    *$'\n'*|*$'\r'*) fail "invalid normalized issue 254 evidence" ;;
-  esac
-  printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
+  append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
 }
 
-# Preserve the self-hosted runner's normal login identity, including any
-# pre-existing OS-managed supplementary groups. Rewriting its groups here would
-# manufacture a different journald permission scenario instead of reproducing
-# the daemon/core subprocess regression observed on the packaged host.
+# Deliberately local. This preserves the self-hosted runner's normal login
+# identity, including OS-managed supplementary groups; forcing runuser -g podlaz
+# would manufacture a different journald permission scenario.
 run_ordinary_podlaz() {
   local timeout_seconds="$1"
   shift
@@ -43,6 +44,8 @@ run_ordinary_podlaz() {
       /usr/bin/podlaz "$@"
 }
 
+# Deliberately local. Lifecycle setup is privileged and bounded, unlike the
+# shared normal-user installed-client execution contract.
 run_privileged_podlaz() {
   local timeout_seconds="$1"
   shift
@@ -69,33 +72,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
 verify_package_and_ordinary_identity() {
-  local build_commit version_output groups
+  local build_commit groups
   build_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
-  version_output="$(mktemp "${E2E_TMP_ROOT}/issue254-version.XXXXXX")"
-  /usr/bin/podlaz version >"${version_output}" 2>/dev/null || fail "issue 254 installed CLI version failed"
-  grep -F -- "${build_commit}" "${version_output}" >/dev/null || fail "issue 254 installed CLI does not identify the tested commit"
-  rm -f -- "${version_output}"
-  systemctl is-active --quiet podlazd.service || fail "issue 254 requires the packaged podlazd service"
+  assert_installed_podlaz_commit "${build_commit}"
+  assert_package_service_active podlazd.service
 
   if (( $(id -u) == 0 )); then
-    fail "issue 254 ordinary-user acceptance must not run as root"
+    fail "remote-client ordinary-user acceptance must not run as root"
   fi
   groups="$(id -nG)"
   if grep -qw -- podlaz <<<"${groups}"; then
-    fail "issue 254 ordinary-user fixture must not rely on membership in the private podlaz service group"
+    fail "remote-client ordinary-user fixture must not rely on membership in the private podlaz service group"
   fi
   write_evidence package_provenance pass
   write_evidence ordinary_user_without_podlaz_group pass
@@ -103,25 +91,25 @@ verify_package_and_ordinary_identity() {
 
 import_profile_privately() {
   local uri output error_output
-  uri="$(first_profile_uri)"
-  assert_nonempty "${uri}" "issue 254 profile URI"
+  uri="$(first_configured_profile_uri)"
+  assert_nonempty "${uri}" "remote-client profile URI"
   mask_value "${uri}"
-  output="$(mktemp "${E2E_TMP_ROOT}/issue254-profile-import.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue254-profile-import.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/remote-client-profile-import.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-profile-import.stderr.XXXXXX")"
   if ! run_ordinary_podlaz 30s profile import "${uri}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
-    fail "issue 254 profile import failed"
+    fail "remote-client profile import failed"
   fi
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
   rm -f -- "${output}" "${error_output}"
-  assert_nonempty "${PROFILE_ID}" "issue 254 imported profile id"
+  assert_nonempty "${PROFILE_ID}" "remote-client imported profile id"
   mask_value "${PROFILE_ID}"
   write_evidence profile_import pass
 }
 
 assert_recovery_clean() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue254-${phase}-recover.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/remote-client-${phase}-recover.XXXXXX")"
   run_ordinary_podlaz 20s recover --json >"${output}" 2>/dev/null || fail "${phase}: read-only recovery inspection failed"
   python3 - "${output}" <<'PY'
 import json
@@ -137,8 +125,8 @@ PY
 
 assert_proxy_publication_consistent() {
   local status_output doctor_output
-  status_output="$(mktemp "${E2E_TMP_ROOT}/issue254-proxy-status.XXXXXX")"
-  doctor_output="$(mktemp "${E2E_TMP_ROOT}/issue254-proxy-doctor.XXXXXX")"
+  status_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-proxy-status.XXXXXX")"
+  doctor_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-proxy-doctor.XXXXXX")"
 
   run_ordinary_podlaz 20s status >"${status_output}" 2>&1 || fail "active proxy-only status returned non-zero"
   grep -Fx 'Connection: active' "${status_output}" >/dev/null || fail "proxy-only connection is not active"
@@ -160,8 +148,8 @@ assert_proxy_publication_consistent() {
 
 assert_logs_36h_ordinary_user() {
   local mode="$1" header="$2" key="$3" output error_output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue254-logs-${mode}.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue254-logs-${mode}.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/remote-client-logs-${mode}.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-logs-${mode}.stderr.XXXXXX")"
   if ! run_ordinary_podlaz 30s logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "ordinary-user podlaz logs --${mode} --since 36h failed"
@@ -175,7 +163,7 @@ assert_logs_36h_ordinary_user() {
 }
 
 : >"${EVIDENCE_FILE}"
-setup_isolated_xdg issue254-remote-client-acceptance
+setup_isolated_xdg remote-client-acceptance
 verify_package_and_ordinary_identity
 assert_recovery_clean baseline
 import_profile_privately
@@ -184,13 +172,13 @@ import_profile_privately
 # accidentally test polkit active-session policy. All read-only client paths
 # below use the runner's unchanged ordinary login identity.
 if ! run_privileged_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
-  fail "issue 254 proxy-only connect failed"
+  fail "remote-client proxy-only connect failed"
 fi
 CONNECTED=true
 assert_proxy_publication_consistent
 
 if ! run_privileged_podlaz 60s disconnect >/dev/null 2>&1; then
-  fail "issue 254 proxy-only disconnect failed"
+  fail "remote-client proxy-only disconnect failed"
 fi
 CONNECTED=false
 assert_recovery_clean after-proxy-disconnect

@@ -34,10 +34,19 @@ func TestBuildJournalctlArgsIssue160FlagMatrix(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := BuildJournalctlArgs(tt.opts)
+			got := mustBuildJournalctlArgs(t, tt.opts)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("BuildJournalctlArgs(%#v) = %#v, want %#v", tt.opts, got, tt.want)
+				t.Fatalf("buildJournalctlArgs(%#v) = %#v, want %#v", tt.opts, got, tt.want)
 			}
 		})
 	}
+}
+
+func mustBuildJournalctlArgs(t *testing.T, opts Options) []string {
+	t.Helper()
+	args, err := buildJournalctlArgs(opts)
+	if err != nil {
+		t.Fatalf("buildJournalctlArgs(%#v): %v", opts, err)
+	}
+	return args
 }

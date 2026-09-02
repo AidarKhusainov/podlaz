@@ -1,4 +1,4 @@
-.PHONY: test vet deb package-inspect
+.PHONY: test vet deb package-inspect repository-check
 
 test:
 	go test ./...
@@ -14,3 +14,7 @@ package-inspect: deb
 	arch="$${PODLAZ_DEB_ARCH:-amd64}"; \
 	dpkg-deb --info "dist/podlaz_$${package_version}_linux_$${arch}.deb"; \
 	dpkg-deb --contents "dist/podlaz_$${package_version}_linux_$${arch}.deb"
+
+repository-check:
+	bash scripts/ci/repository-structure-test.sh
+	bash scripts/ci/repository-structure.sh

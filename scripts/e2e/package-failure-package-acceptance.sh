@@ -4,10 +4,20 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/host_observation.sh
+source "${SCRIPT_DIR}/lib/host_observation.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
-require_cmd awk bash curl dpkg dpkg-deb dpkg-query getent git grep head hostname ip journalctl mktemp python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl tail
+require_cmd awk bash curl dpkg dpkg-deb dpkg-query getent git grep head hostname ip journalctl mktemp python3 readlink resolvectl runuser sed sha256sum sleep sort sudo systemctl tail
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -19,24 +29,20 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 if [[ "${PODLAZ_DEB_ARCH}" != "$(dpkg --print-architecture)" ]]; then
-  fail "issue 241 package acceptance requires a native .deb"
+  fail "package-failure acceptance requires a native .deb"
 fi
 
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 TRANSACTION_DIR="/run/podlaz/transactions"
-EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue241-acceptance.txt"
+EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/package-failure-acceptance.txt"
 SENSITIVE_VALUES=""
 PROFILE_ID=""
 JOURNAL_CURSOR=""
 
 write_evidence() {
-  local key="$1" value="$2"
-  case "${key}${value}" in
-    *$'\n'*|*$'\r'*) fail "invalid normalized issue 241 evidence" ;;
-  esac
-  printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
+  append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
 }
 
 mask_multiline_sensitive() {
@@ -59,59 +65,19 @@ for sensitive in "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}"; d
   append_sensitive_value "${sensitive}"
 done
 
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-wait_for_daemon_socket() {
-  local attempt
-  for attempt in $(seq 1 150); do
-    [[ -S "${DAEMON_SOCKET}" ]] && return 0
-    sleep 0.1
-  done
-  fail "podlazd.service did not create its socket"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
-
 capture_secret_import() {
   local uri="$1" out err
-  out="$(mktemp "${E2E_TMP_ROOT}/issue241-profile-import.stdout.XXXXXX")"
-  err="$(mktemp "${E2E_TMP_ROOT}/issue241-profile-import.stderr.XXXXXX")"
+  out="$(mktemp "${E2E_TMP_ROOT}/package-failure-profile-import.stdout.XXXXXX")"
+  err="$(mktemp "${E2E_TMP_ROOT}/package-failure-profile-import.stderr.XXXXXX")"
   if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
-    fail "issue 241 profile import failed"
+    fail "package-failure profile import failed"
   fi
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
   rm -f -- "${out}" "${err}"
-  assert_nonempty "${PROFILE_ID}" "issue 241 imported profile id"
+  assert_nonempty "${PROFILE_ID}" "package-failure imported profile id"
   append_sensitive_value "${PROFILE_ID}"
   write_evidence profile_import pass
-}
-
-collect_host_sensitive_values() {
-  local values
-  values="$({
-    hostname -f 2>/dev/null || true
-    ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-    ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-    ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
-  } | sed '/^[[:space:]]*$/d' | sort -u)"
-  append_sensitive_value "${values}"
 }
 
 collect_uri_sensitive_values() {
@@ -192,8 +158,8 @@ verify_package_provenance() {
   local extract_dir expected_cli expected_daemon expected_xray installed_cli installed_daemon installed_xray
   local package_version package_arch main_pid running_exe running_hash version_output build_commit
 
-  [[ -f "${DEV_DEB}" ]] || fail "issue 241 built package is missing"
-  extract_dir="$(mktemp -d "${E2E_TMP_ROOT}/issue241-package-extract.XXXXXX")"
+  [[ -f "${DEV_DEB}" ]] || fail "package-failure built package is missing"
+  extract_dir="$(mktemp -d "${E2E_TMP_ROOT}/package-failure-package-extract.XXXXXX")"
   dpkg-deb -x "${DEV_DEB}" "${extract_dir}"
   expected_cli="$(sha256sum "${extract_dir}/usr/bin/podlaz" | awk '{print $1}')"
   expected_daemon="$(sha256sum "${extract_dir}/usr/bin/podlazd" | awk '{print $1}')"
@@ -219,7 +185,7 @@ verify_package_provenance() {
   [[ "${running_hash}" == "${expected_daemon}" ]] || fail "running daemon hash does not match built package"
 
   build_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
-  version_output="$(mktemp "${E2E_TMP_ROOT}/issue241-version.XXXXXX")"
+  version_output="$(mktemp "${E2E_TMP_ROOT}/package-failure-version.XXXXXX")"
   /usr/bin/podlaz version >"${version_output}"
   grep -F "${build_commit}" "${version_output}" >/dev/null || fail "installed CLI version does not identify the tested commit"
   rm -rf -- "${extract_dir}" "${version_output}"
@@ -234,11 +200,11 @@ verify_package_provenance() {
 
 capture_journal_cursor() {
   local output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue241-journal-cursor.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-failure-journal-cursor.XXXXXX")"
   sudo -n journalctl -u podlazd -n 1 --show-cursor --no-pager -o cat >"${output}" 2>/dev/null || fail "failed to capture journal cursor"
   JOURNAL_CURSOR="$(sed -n 's/^-- cursor: //p' "${output}" | tail -n 1)"
   rm -f -- "${output}"
-  assert_nonempty "${JOURNAL_CURSOR}" "issue 241 journal cursor"
+  assert_nonempty "${JOURNAL_CURSOR}" "package-failure journal cursor"
 }
 
 collect_active_sensitive_values() {
@@ -247,7 +213,7 @@ collect_active_sensitive_values() {
   assert_nonempty "${config_path}" "active runtime config path"
   append_sensitive_value "${config_path}"
 
-  config_copy="$(mktemp "${E2E_TMP_ROOT}/issue241-runtime-config.XXXXXX")"
+  config_copy="$(mktemp "${E2E_TMP_ROOT}/package-failure-runtime-config.XXXXXX")"
   sudo -n cat -- "${config_path}" >"${config_copy}" || fail "cannot read active generated config for privacy needles"
   runtime_values="$(python3 - "${config_copy}" <<'PY'
 import ipaddress
@@ -300,7 +266,7 @@ PY
   rm -f -- "${config_copy}"
   append_sensitive_value "${runtime_values}"
 
-  resolved_copy="$(mktemp "${E2E_TMP_ROOT}/issue241-resolved.XXXXXX")"
+  resolved_copy="$(mktemp "${E2E_TMP_ROOT}/package-failure-resolved.XXXXXX")"
   sudo -n resolvectl status podlaz0 --no-pager >"${resolved_copy}" 2>/dev/null || fail "active resolved status unavailable"
   resolved_values="$(python3 - "${resolved_copy}" <<'PY'
 import ipaddress
@@ -348,8 +314,8 @@ active_status_stable_fields() {
 
 assert_active_status() {
   local phase="$1" first second first_state second_state first_fields second_fields
-  first="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-status-first.XXXXXX")"
-  second="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-status-second.XXXXXX")"
+  first="$(mktemp "${E2E_TMP_ROOT}/package-failure-${phase}-status-first.XXXXXX")"
+  second="$(mktemp "${E2E_TMP_ROOT}/package-failure-${phase}-status-second.XXXXXX")"
 
   if ! run_installed_podlaz status >"${first}" 2>&1; then
     fail "${phase}/first: active status returned non-zero"
@@ -380,7 +346,7 @@ assert_active_status() {
 
 assert_inactive_status() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-inactive-status.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-failure-${phase}-inactive-status.XXXXXX")"
   if ! run_installed_podlaz status >"${output}" 2>&1; then
     fail "${phase}: inactive status returned non-zero"
   fi
@@ -396,7 +362,7 @@ assert_inactive_status() {
 
 assert_no_recovery_candidates() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-recover.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-failure-${phase}-recover.XXXXXX")"
   run_installed_podlaz recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
   python3 - "${output}" <<'PY'
 import json
@@ -430,7 +396,7 @@ snapshot_network_manifest() {
 
 verify_scoped_dns_query() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue241-${phase}-dns.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-failure-${phase}-dns.XXXXXX")"
   sudo -n resolvectl --cache=no --interface=podlaz0 -4 query "${PODLAZ_E2E_DNS_CHECK_HOST}" >"${output}" 2>/dev/null || fail "${phase}: scoped DNS query failed"
   grep -F -- "-- link: podlaz0" "${output}" >/dev/null || fail "${phase}: scoped DNS query did not use podlaz0"
   rm -f -- "${output}"
@@ -448,7 +414,7 @@ exercise_tun_traffic() {
 
 run_normal_cycle() {
   local phase="$1" manifest
-  manifest="${E2E_TMP_ROOT}/issue241-${phase}-network.json"
+  manifest="${E2E_TMP_ROOT}/package-failure-${phase}-network.json"
 
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "${phase}: TUN connect failed"
   assert_tun_package_address_present "${phase}"
@@ -465,11 +431,11 @@ run_normal_cycle() {
 
 verify_journal_privacy() {
   local scan_dir journal_file report
-  scan_dir="$(mktemp -d "${E2E_TMP_ROOT}/issue241-journal.XXXXXX")"
+  scan_dir="$(mktemp -d "${E2E_TMP_ROOT}/package-failure-journal.XXXXXX")"
   journal_file="${scan_dir}/journal.log"
   report="${scan_dir}/redaction-scan.txt"
 
-  sudo -n journalctl -u podlazd --after-cursor="${JOURNAL_CURSOR}" --no-pager -o cat >"${journal_file}" 2>/dev/null || fail "issue 241 bounded journal capture failed"
+  sudo -n journalctl -u podlazd --after-cursor="${JOURNAL_CURSOR}" --no-pager -o cat >"${journal_file}" 2>/dev/null || fail "package-failure bounded journal capture failed"
 
   python3 - "${journal_file}" <<'PY'
 import re
@@ -506,10 +472,10 @@ PY
     "${PODLAZ_E2E_PROFILE_URI}" \
     "${PODLAZ_E2E_PROFILE_URI_LIST}" \
     "${SENSITIVE_VALUES}"; then
-    fail "issue 241 journal contains a configured sensitive value"
+    fail "package-failure journal contains a configured sensitive value"
   fi
   if grep -F "accepted tcp:" "${journal_file}" >/dev/null || grep -F "accepted udp:" "${journal_file}" >/dev/null; then
-    fail "issue 241 journal contains raw Xray access output"
+    fail "package-failure journal contains raw Xray access output"
   fi
 
   rm -rf -- "${scan_dir}"
@@ -517,17 +483,17 @@ PY
   write_evidence journal_structural_events pass
 }
 
-setup_isolated_xdg "issue241-package-acceptance"
+setup_isolated_xdg "package-failure-package-acceptance"
 : >"${EVIDENCE_FILE}"
-collect_host_sensitive_values
+append_sensitive_value "$(observe_host_sensitive_values)"
 
-PRIMARY_URI="$(first_profile_uri)"
-assert_nonempty "${PRIMARY_URI}" "issue 241 primary profile URI"
+PRIMARY_URI="$(first_configured_profile_uri)"
+assert_nonempty "${PRIMARY_URI}" "package-failure primary profile URI"
 collect_uri_sensitive_values "${PRIMARY_URI}"
 
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
-wait_for_daemon_socket
+wait_for_daemon_socket "${DAEMON_SOCKET}" 15
 verify_package_provenance
 capture_secret_import "${PRIMARY_URI}"
 capture_journal_cursor
@@ -537,10 +503,10 @@ run_normal_cycle reconnect
 verify_journal_privacy
 
 assert_artifacts_do_not_contain_sensitive_values \
-  "issue241-package-acceptance" \
+  "package-failure-package-acceptance" \
   "${PODLAZ_E2E_PROFILE_URI}" \
   "${PODLAZ_E2E_PROFILE_URI_LIST}" \
   "${SENSITIVE_VALUES}"
 
 write_evidence installed_package_acceptance pass
-log "issue 241 installed-package acceptance completed"
+log "package-failure installed-package acceptance completed"

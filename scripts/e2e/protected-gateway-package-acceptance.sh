@@ -4,6 +4,14 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/package_provenance.sh
+source "${SCRIPT_DIR}/lib/package_provenance.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
 
 require_cmd awk git grep mktemp python3 resolvectl runuser sleep sudo systemctl timeout
 
@@ -14,24 +22,12 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 
-EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/issue243-acceptance.txt"
+EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/protected-gateway-acceptance.txt"
 PROFILE_ID=""
 CONNECTED=false
 
 write_evidence() {
-  local key="$1" value="$2"
-  case "${key}${value}" in
-    *$'\n'*|*$'\r'*) fail "invalid normalized issue 243 evidence" ;;
-  esac
-  printf '%s=%s\n' "${key}" "${value}" >>"${EVIDENCE_FILE}"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
+  append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
 }
 
 cleanup() {
@@ -45,40 +41,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
 verify_package_provenance() {
-  local build_commit version_output
+  local build_commit
   build_commit="${GITHUB_SHA:-$(git rev-parse HEAD)}"
-  version_output="$(mktemp "${E2E_TMP_ROOT}/issue243-version.XXXXXX")"
-  /usr/bin/podlaz version >"${version_output}" 2>/dev/null || fail "issue 243 installed CLI version failed"
-  grep -F -- "${build_commit}" "${version_output}" >/dev/null || fail "issue 243 installed CLI does not identify the tested commit"
-  rm -f -- "${version_output}"
-  systemctl is-active --quiet podlazd.service || fail "issue 243 requires the packaged podlazd service"
+  assert_installed_podlaz_commit "${build_commit}"
+  assert_package_service_active podlazd.service
   write_evidence package_provenance pass
 }
 
 import_profile_privately() {
   local uri="$1" output error_output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue243-profile-import.stdout.XXXXXX")"
-  error_output="$(mktemp "${E2E_TMP_ROOT}/issue243-profile-import.stderr.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-profile-import.stdout.XXXXXX")"
+  error_output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-profile-import.stderr.XXXXXX")"
   if ! run_installed_podlaz profile import "${uri}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
-    fail "issue 243 profile import failed"
+    fail "protected-gateway profile import failed"
   fi
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
   rm -f -- "${output}" "${error_output}"
-  assert_nonempty "${PROFILE_ID}" "issue 243 imported profile id"
+  assert_nonempty "${PROFILE_ID}" "protected-gateway imported profile id"
   mask_value "${PROFILE_ID}"
   write_evidence profile_import pass
 }
@@ -86,7 +67,7 @@ import_profile_privately() {
 assert_active_status() {
   local phase="$1" read_name output
   for read_name in first second; do
-    output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-${read_name}-active-status.XXXXXX")"
+    output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-${read_name}-active-status.XXXXXX")"
     if ! run_installed_podlaz status >"${output}" 2>&1; then
       rm -f -- "${output}"
       fail "${phase}/${read_name}: active status returned non-zero"
@@ -106,8 +87,8 @@ assert_active_status() {
 
 wait_for_exact_exit_zero_missing_status() {
   local phase="$1" stdout_file stderr_file exit_code classification attempt
-  stdout_file="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-resolved.stdout.XXXXXX")"
-  stderr_file="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-resolved.stderr.XXXXXX")"
+  stdout_file="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-resolved.stdout.XXXXXX")"
+  stderr_file="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-resolved.stderr.XXXXXX")"
 
   for attempt in {1..100}; do
     set +e
@@ -264,7 +245,7 @@ PY
 
 assert_inactive_status() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-inactive-status.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-inactive-status.XXXXXX")"
   if ! run_installed_podlaz status >"${output}" 2>&1; then
     rm -f -- "${output}"
     fail "${phase}: inactive status returned non-zero"
@@ -281,7 +262,7 @@ assert_inactive_status() {
 
 assert_recover_json_clean() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-recover.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-recover.XXXXXX")"
   if ! run_installed_podlaz recover --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "${phase}: recover --json returned non-zero"
@@ -314,7 +295,7 @@ PY
 
 assert_recover_execute_clean() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue243-${phase}-recover-execute.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-recover-execute.XXXXXX")"
   if ! run_installed_podlaz recover --execute --yes --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "${phase}: recover --execute --yes --json returned non-zero"
@@ -365,11 +346,11 @@ run_cycle() {
 }
 
 : >"${EVIDENCE_FILE}"
-setup_isolated_xdg issue243-package-acceptance
+setup_isolated_xdg protected-gateway-package-acceptance
 verify_package_provenance
 
-PROFILE_URI="$(first_profile_uri)"
-assert_nonempty "${PROFILE_URI}" "issue 243 profile URI"
+PROFILE_URI="$(first_configured_profile_uri)"
+assert_nonempty "${PROFILE_URI}" "protected-gateway profile URI"
 mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI

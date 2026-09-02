@@ -13,7 +13,7 @@ func TestParseSinceDurationAcceptsDocumentedGrammar(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseSinceDuration(%q) failed: %v", input, err)
 			}
-			got := BuildJournalctlArgs(Options{Since: since})
+			got := mustBuildJournalctlArgs(t, Options{Since: since})
 			want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-" + input}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)
@@ -30,7 +30,7 @@ func TestParseSinceDurationCanonicalizesLeadingZeros(t *testing.T) {
 	if since != "1h" {
 		t.Fatalf("expected canonical duration 1h, got %q", since)
 	}
-	got := BuildJournalctlArgs(Options{Since: "0001h"})
+	got := mustBuildJournalctlArgs(t, Options{Since: "0001h"})
 	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-1h"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)
@@ -56,7 +56,7 @@ func TestBuildJournalctlArgsNormalizesSinceForFollowAndCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := BuildJournalctlArgs(Options{Since: since, Follow: true, Core: true})
+	got := mustBuildJournalctlArgs(t, Options{Since: since, Follow: true, Core: true})
 	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-36h", "--follow"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)

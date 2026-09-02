@@ -4,6 +4,16 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
+# shellcheck source=lib/status_polling.sh
+source "${SCRIPT_DIR}/lib/status_polling.sh"
 
 require_cmd awk curl getent ip mktemp nft nmcli python3 rtcwake runuser sleep sudo systemctl timeout
 
@@ -17,16 +27,16 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 if [[ "${PODLAZ_E2E_ALLOW_HOST_CHURN}" != "true" ]]; then
-  fail "issue 262 acceptance requires PODLAZ_E2E_ALLOW_HOST_CHURN=true on the dedicated vpn-e2e runner"
+  fail "network-reconciliation acceptance requires PODLAZ_E2E_ALLOW_HOST_CHURN=true on the dedicated vpn-e2e runner"
 fi
 
 CONTINUATION_PATH="/run/podlaz/network-session-continuation.json"
 TRANSACTION_DIR="/run/podlaz/transactions"
 OVERRIDE_DIR="/etc/systemd/system/podlazd.service.d"
-OVERRIDE_PATH="${OVERRIDE_DIR}/99-issue262-e2e.conf"
-HOOK_DIR="/run/podlaz/issue262-e2e"
-EVIDENCE="${E2E_ARTIFACT_DIR}/issue262-acceptance.txt"
-FOREIGN_TUN="podlaz-e2e-262tun0"
+OVERRIDE_PATH="${OVERRIDE_DIR}/99-network-reconciliation-e2e.conf"
+HOOK_DIR="/run/podlaz/network-reconciliation-e2e"
+EVIDENCE="${E2E_ARTIFACT_DIR}/network-reconciliation-acceptance.txt"
+FOREIGN_TUN="pz-e2e-recon0"
 FOREIGN_TUN_CIDR="198.18.62.1/32"
 FOREIGN_TABLE="51962"
 FOREIGN_ROUTE_A="203.0.113.62/32"
@@ -51,47 +61,12 @@ mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI}"
 mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI_LIST}"
 
 write_evidence() {
-  local key="$1"
-  case "${key}" in
-    *[!A-Za-z0-9_.-]*) fail "invalid issue 262 evidence key" ;;
-  esac
-  printf '%s=pass\n' "${key}" >>"${EVIDENCE}"
-}
-
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
-
-wait_for_service() {
-  local attempt
-  for attempt in $(seq 1 400); do
-    if sudo -n systemctl is-active --quiet podlazd.service; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  fail "podlazd.service did not become active"
+  append_evidence_pass "${EVIDENCE}" "$1"
 }
 
 status_is_verified_active() {
   local output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue262-status.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/network-reconciliation-status.XXXXXX")"
   run_installed_podlaz status --json >"${output}" 2>/dev/null || true
   if python3 - "${output}" <<'PY'
 import json
@@ -119,21 +94,15 @@ PY
 }
 
 wait_for_verified_active() {
-  local phase="$1" attempt
-  wait_for_service
-  for attempt in $(seq 1 600); do
-    if status_is_verified_active; then
-      write_evidence "${phase}"
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "${phase}: protected TUN did not converge to verified active"
+  local phase="$1"
+  wait_for_service_active podlazd.service 40
+  wait_for_status_match "${phase}" 120 status_is_verified_active
+  write_evidence "${phase}"
 }
 
 status_is_inactive() {
   local output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue262-inactive.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/network-reconciliation-inactive.XXXXXX")"
   run_installed_podlaz status --json >"${output}" 2>/dev/null || true
   if python3 - "${output}" <<'PY'
 import json
@@ -155,15 +124,9 @@ PY
 }
 
 wait_for_inactive() {
-  local phase="$1" attempt
-  for attempt in $(seq 1 400); do
-    if status_is_inactive; then
-      write_evidence "${phase}"
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "${phase}: terminal teardown did not converge to clean inactive"
+  local phase="$1"
+  wait_for_status_match "${phase}" 80 status_is_inactive
+  write_evidence "${phase}"
 }
 
 wait_for_marker() {
@@ -174,17 +137,17 @@ wait_for_marker() {
     fi
     sleep 0.1
   done
-  fail "expected issue 262 E2E marker did not appear"
+  fail "expected network-reconciliation E2E marker did not appear"
 }
 
 import_profile() {
   local uri out err
-  uri="$(first_profile_uri)"
-  out="$(mktemp "${E2E_TMP_ROOT}/issue262-import.stdout.XXXXXX")"
-  err="$(mktemp "${E2E_TMP_ROOT}/issue262-import.stderr.XXXXXX")"
-  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "issue 262 profile import failed"
+  uri="$(first_configured_profile_uri)"
+  out="$(mktemp "${E2E_TMP_ROOT}/network-reconciliation-import.stdout.XXXXXX")"
+  err="$(mktemp "${E2E_TMP_ROOT}/network-reconciliation-import.stderr.XXXXXX")"
+  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "network-reconciliation profile import failed"
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${PROFILE_ID}" ]] || fail "issue 262 profile import returned no profile ID"
+  [[ -n "${PROFILE_ID}" ]] || fail "network-reconciliation profile import returned no profile ID"
   mask_multiline_sensitive "${PROFILE_ID}"
   rm -f -- "${out}" "${err}"
 }
@@ -193,7 +156,7 @@ install_reconciliation_override() {
   sudo -n mkdir -p "${OVERRIDE_DIR}"
   sudo -n rm -rf -- "${HOOK_DIR}"
   sudo -n mkdir -m 0700 "${HOOK_DIR}"
-  sudo -n tee "${OVERRIDE_PATH}" >/dev/null <<EOF
+  sudo -n tee "${OVERRIDE_PATH}" >/dev/null <<EOF2
 [Service]
 Environment=PODLAZ_E2E_TUN_TERMINAL_FAILURE=true
 Environment=PODLAZ_E2E_TUN_TERMINAL_FAILURE_DIR=${HOOK_DIR}
@@ -204,10 +167,10 @@ Environment=PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS=180
 Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE=true
 Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_DIR=${HOOK_DIR}
 Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_TIMEOUT_SECONDS=180
-EOF
+EOF2
   sudo -n systemctl daemon-reload
   sudo -n systemctl restart podlazd.service
-  wait_for_service
+  wait_for_service_active podlazd.service 40
 }
 
 remove_override() {
@@ -334,11 +297,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setup_isolated_xdg "issue262-package-acceptance"
+setup_isolated_xdg "network-reconciliation-package-acceptance"
 : >"${EVIDENCE}"
 install_reconciliation_override
 import_profile
-run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "issue 262 protected connect failed"
+run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "network-reconciliation protected connect failed"
 CONNECTED=true
 wait_for_verified_active protected_connected
 load_envelope_identity
@@ -399,4 +362,4 @@ write_evidence surrounding_tun_preserved_after_terminal
 cleanup_foreign_routing_fixture
 remove_override
 sudo -n rm -rf -- "${HOOK_DIR}"
-log "issue 262 evidence-driven reconciliation installed-package acceptance passed"
+log "network-reconciliation evidence-driven installed-package acceptance passed"

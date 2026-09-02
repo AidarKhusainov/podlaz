@@ -45,14 +45,6 @@ func resolvedDNSDiagnosticLine(ctx context.Context, runner CommandRunner, resolv
 	}
 }
 
-func resolvedResourceMissing(result CommandResult) bool {
-	if resourceMissing(result) {
-		return true
-	}
-	text := strings.ToLower(result.Stdout + " " + result.Stderr)
-	return result.ExitCode != 0 && strings.Contains(text, "no such device")
-}
-
 func podlazLinkMissing(ctx context.Context, runner CommandRunner, ipPath string, ipOK bool) bool {
 	if !ipOK {
 		return false

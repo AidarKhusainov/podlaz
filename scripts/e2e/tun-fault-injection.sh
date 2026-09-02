@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/host_state.sh
 source "${SCRIPT_DIR}/lib/host_state.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
 
 require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg nft
 
@@ -59,6 +61,8 @@ build_podlaz_binary
 setup_isolated_xdg "tun-fault-injection"
 PODLAZ=("${PODLAZ_BIN}")
 
+# Deliberately local: this scenario uses sudo's socket-user identity rather than
+# the installed-client runuser contract used by package acceptance scenarios.
 run_podlaz_as_socket_user() {
   sudo -n -u "$(id -un)" -g podlaz env \
     XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
@@ -108,18 +112,6 @@ expect_secret_exit_code() {
   [[ "${code}" == "${expected}" ]] || fail "${name} returned exit code ${code}; expected ${expected}"
 }
 
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return 0
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return 0
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
 collect_host_snapshot() {
   local name="$1" dir="${E2E_ARTIFACT_DIR}/host-${name}"
   mkdir -p "${dir}"
@@ -138,6 +130,7 @@ collect_host_snapshot() {
   sudo -n nft list ruleset >"${dir}/nft-ruleset.txt" 2>&1 || true
 }
 
+# Deliberately local: timeout diagnostics must be captured before the failure.
 wait_for_daemon_socket() {
   local attempt
   for attempt in $(seq 1 100); do
@@ -490,7 +483,7 @@ run_before_commit_probe() {
 }
 
 log "import primary profile for TUN fault-injection checks"
-PRIMARY_URI="$(first_profile_uri)"
+PRIMARY_URI="$(first_configured_profile_uri)"
 assert_nonempty "${PRIMARY_URI}" "primary real profile URI"
 expect_secret_success import-primary-profile "${PODLAZ[@]}" profile import "${PRIMARY_URI}"
 PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"

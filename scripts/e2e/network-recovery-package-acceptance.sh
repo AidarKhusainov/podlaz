@@ -4,6 +4,16 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
+# shellcheck source=lib/status_polling.sh
+source "${SCRIPT_DIR}/lib/status_polling.sh"
 
 require_cmd apt awk curl dpkg find getent grep mktemp python3 runuser sed sleep sudo systemctl timeout
 
@@ -20,17 +30,17 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 if [[ "${PODLAZ_DEB_ARCH}" != "$(dpkg --print-architecture)" ]]; then
-  fail "issue 259 package acceptance requires a native .deb"
+  fail "network-recovery package acceptance requires a native .deb"
 fi
 
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 CONTINUATION_PATH="/run/podlaz/network-session-continuation.json"
 TRANSACTION_DIR="/run/podlaz/transactions"
-HOOK_DIR="/run/podlaz/issue259-e2e"
+HOOK_DIR="/run/podlaz/network-recovery-e2e"
 OVERRIDE_DIR="/etc/systemd/system/podlazd.service.d"
-OVERRIDE_PATH="${OVERRIDE_DIR}/99-issue259-e2e.conf"
-EVIDENCE="${E2E_ARTIFACT_DIR}/issue259-acceptance.txt"
+OVERRIDE_PATH="${OVERRIDE_DIR}/99-network-recovery-e2e.conf"
+EVIDENCE="${E2E_ARTIFACT_DIR}/network-recovery-acceptance.txt"
 
 ACTIVE_CONNECTION=0
 CANDIDATE_INSTALLED=0
@@ -49,47 +59,12 @@ for sensitive in "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}"; d
 done
 
 write_evidence() {
-  local key="$1"
-  case "${key}" in
-    *[!A-Za-z0-9_.-]*) fail "invalid normalized issue 259 evidence key" ;;
-  esac
-  printf '%s=pass\n' "${key}" >>"${EVIDENCE}"
-}
-
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
-
-wait_for_daemon_socket() {
-  local attempt
-  for attempt in $(seq 1 200); do
-    if [[ -S "${DAEMON_SOCKET}" ]] && sudo -n systemctl is-active --quiet podlazd.service; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  fail "podlazd.service did not become ready"
+  append_evidence_pass "${EVIDENCE}" "$1"
 }
 
 daemon_status_matches() {
   local expected_connection="$1" expected_tun="$2" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue259-status.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/network-recovery-status.XXXXXX")"
   if ! sudo -n curl --fail --silent --show-error --max-time 5 \
       --unix-socket "${DAEMON_SOCKET}" http://localhost/v1/status >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
@@ -115,37 +90,25 @@ PY
 }
 
 wait_for_active_tun() {
-  local phase="$1" attempt
-  wait_for_daemon_socket
-  for attempt in $(seq 1 300); do
-    if daemon_status_matches active active; then
-      write_evidence "${phase}"
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "${phase}: TUN session did not return active"
+  local phase="$1"
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 20
+  wait_for_status_match "${phase}" 60 daemon_status_matches active active
+  write_evidence "${phase}"
 }
 
 wait_for_inactive() {
-  local phase="$1" attempt
-  wait_for_daemon_socket
-  for attempt in $(seq 1 150); do
-    if daemon_status_matches inactive disabled; then
-      write_evidence "${phase}"
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "${phase}: daemon did not remain disconnected"
+  local phase="$1"
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 20
+  wait_for_status_match "${phase}" 30 daemon_status_matches inactive disabled
+  write_evidence "${phase}"
 }
 
 run_private_profile_import() {
   local uri out err
-  uri="$(first_profile_uri)"
+  uri="$(first_configured_profile_uri)"
   [[ -n "${uri}" ]] || fail "no profile URI available"
-  out="$(mktemp "${E2E_TMP_ROOT}/issue259-import.stdout.XXXXXX")"
-  err="$(mktemp "${E2E_TMP_ROOT}/issue259-import.stderr.XXXXXX")"
+  out="$(mktemp "${E2E_TMP_ROOT}/network-recovery-import.stdout.XXXXXX")"
+  err="$(mktemp "${E2E_TMP_ROOT}/network-recovery-import.stderr.XXXXXX")"
   if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "released-package profile import failed"
@@ -161,8 +124,8 @@ run_private_profile_import() {
 
 connect_once_on_released_package() {
   local out err
-  out="$(mktemp "${E2E_TMP_ROOT}/issue259-connect.stdout.XXXXXX")"
-  err="$(mktemp "${E2E_TMP_ROOT}/issue259-connect.stderr.XXXXXX")"
+  out="$(mktemp "${E2E_TMP_ROOT}/network-recovery-connect.stdout.XXXXXX")"
+  err="$(mktemp "${E2E_TMP_ROOT}/network-recovery-connect.stderr.XXXXXX")"
   if ! run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "released-package TUN connect failed"
@@ -179,7 +142,7 @@ install_setup_package() {
   sudo -n apt install --allow-downgrades -y "${package_path}" >/dev/null
   sudo -n systemctl daemon-reload >/dev/null
   sudo -n systemctl start podlazd.service >/dev/null
-  wait_for_daemon_socket
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 20
 }
 
 # Candidate installation must stand on the package's own service lifecycle. No
@@ -199,7 +162,7 @@ install_candidate_package() {
   if [[ "${current_pid}" == "${previous_pid}" ]]; then
     fail "candidate package installation did not replace the released daemon process"
   fi
-  wait_for_daemon_socket
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 20
   write_evidence candidate_package_replaced_daemon
 }
 
@@ -265,12 +228,12 @@ wait_for_file() {
 
 install_rollback_pause_override() {
   sudo -n mkdir -p "${OVERRIDE_DIR}"
-  sudo -n tee "${OVERRIDE_PATH}" >/dev/null <<EOF
+  sudo -n tee "${OVERRIDE_PATH}" >/dev/null <<EOF2
 [Service]
 Environment=PODLAZ_E2E_TUN_ROLLBACK_PAUSE=true
 Environment=PODLAZ_E2E_TUN_ROLLBACK_PAUSE_DIR=${HOOK_DIR}
 Environment=PODLAZ_E2E_TUN_ROLLBACK_PAUSE_TIMEOUT_SECONDS=120
-EOF
+EOF2
   sudo -n systemctl daemon-reload >/dev/null
 }
 
@@ -297,7 +260,7 @@ force_kill_inside_durable_rollback() {
   if ! [[ "${old_pid}" =~ ^[0-9]+$ ]] || (( old_pid <= 1 )); then
     fail "invalid daemon PID before forced rollback interruption"
   fi
-  restart_log="$(mktemp "${E2E_TMP_ROOT}/issue259-forced-restart.XXXXXX")"
+  restart_log="$(mktemp "${E2E_TMP_ROOT}/network-recovery-forced-restart.XXXXXX")"
   sudo -n systemctl restart podlazd.service >"${restart_log}" 2>&1 &
   restart_pid=$!
 
@@ -357,7 +320,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setup_isolated_xdg "issue259-package"
+setup_isolated_xdg "network-recovery-package"
 : >"${EVIDENCE}"
 
 [[ -f "${DEV_DEB}" ]] || fail "candidate package is missing: ${DEV_DEB}"
@@ -409,10 +372,10 @@ sudo -n systemctl start podlazd.service >/dev/null
 wait_for_inactive explicit_stop_then_start_stays_disconnected
 
 assert_artifacts_do_not_contain_sensitive_values \
-  issue259-package \
+  network-recovery-package \
   "${PODLAZ_E2E_PROFILE_URI}" \
   "${PODLAZ_E2E_PROFILE_URI_LIST}" \
   "${PROFILE_ID}"
 
-write_evidence issue259_acceptance_complete
-log "issue 259 installed-package acceptance completed"
+write_evidence network_recovery_acceptance_complete
+log "network-recovery installed-package acceptance completed"
