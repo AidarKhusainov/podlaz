@@ -1,209 +1,74 @@
 # AGENTS.md
 
-This file defines how AI agents and automated coding assistants should work in this repository.
+This file is the repository workflow/router. Do not load historical issue/spec/plan prose by default. Keep the working set task-specific.
 
-podlaz is a Linux-first, CLI-first VPN/proxy client for Xray-compatible configurations. The project values safe networking behavior, small reliable steps, and reviewable code more than fast feature accumulation.
+## Canonical knowledge surfaces
 
-## Agent role
+Read only what the task requires:
 
-Act like a careful senior engineer working through a pull request.
+- `README.md` — repository entry point, build/package orientation, documentation map.
+- `docs/cli.md` — public CLI commands, flags, outputs, lifecycle/status semantics.
+- `ARCHITECTURE.md` — durable component, state, security, networking, recovery, package/runtime, and E2E invariants.
+- this `AGENTS.md` — workflow and routing.
 
-Default posture:
+Then read the directly relevant code/tests/scripts. Code and executable tests are canonical for implementation detail. Git history/Issues are context, not permanent runtime documentation.
 
-- prefer correctness over speed;
-- prefer small, reviewable changes over broad rewrites;
-- prefer explicit plans, tests, and failure handling over clever shortcuts;
-- preserve user trust by being honest about uncertainty;
-- keep the product safe for real Linux systems.
+## Task routing
 
-Do not treat generated code as final until it is reviewed against the repository contracts.
+| Task | Start with | Then inspect |
+| --- | --- | --- |
+| CLI command/output/status | `docs/cli.md` | `cmd/podlaz/**`, CLI/client tests |
+| daemon lifecycle/recovery/API | `ARCHITECTURE.md` | `internal/daemon/**`, recovery/session packages/tests |
+| TUN/routes/DNS/firewall/privacy | `ARCHITECTURE.md` | relevant networking/recovery/core packages and tests |
+| package/service/release | `README.md`, `ARCHITECTURE.md` | `packaging/**`, `scripts/**`, `.github/workflows/**` |
+| E2E/acceptance | `ARCHITECTURE.md` | `scripts/e2e/**`, CI workflows, neighboring contract tests |
+| documentation-only | the target canonical surface | executable source only to verify claims |
 
-## Source of truth
+Do not recursively read every document/source directory before the task requires it.
 
-`AGENTS.md` is not the source of truth for product behavior.
+## Required engineering rules
 
-Product behavior is owned by:
+- Preserve behavior unless the task explicitly changes product semantics.
+- Privileged network mutation remains fail-closed and exact-ownership-driven. Observation or historical resemblance is never cleanup authority.
+- Preserve CLI/API/state-schema/package/service compatibility unless the issue explicitly changes it.
+- Preserve error classification and lifecycle/recovery ordering; do not hide real defects with retries or presentation-only workarounds.
+- Prefer small private helpers and explicit composition over new package layers when decomposing orchestration.
+- Keep public APIs minimal. Do not create abstractions without at least two real semantic consumers or a clear domain boundary.
+- Keep tests behavior-oriented. Permanent artifact/test names describe the protected invariant, not an issue number.
+- Consolidate repeated E2E mechanics in `scripts/e2e/lib/**`; keep scenario-specific predicates/cleanup local when semantics differ.
+- Do not add real user IPs, domains, SSIDs, profile IDs, credentials, subscriptions, or endpoint data to code, tests, fixtures, docs, Issues, PRs, or logs. Use RFC-reserved/example values.
 
-- `README.md` for current product status and quick-start guidance;
-- `docs/README.md` for the documentation map;
-- `docs/cli.md` for command names, flags, exit codes, modes, JSON behavior, alias behavior, completion behavior, and CLI safety semantics;
-- `docs/state-and-security.md` for state ownership, redaction, daemon boundary, privileged networking safety, systemd hardening, and recovery rules;
-- `docs/debian-package.md` for package layout, install behavior, service behavior, and package validation gates;
-- `docs/development.md` for local checks and contribution rules;
-- `docs/release.md` for tagged release workflow and published artifacts;
-- `docs/e2e.md` for self-hosted E2E runner requirements and manual validation;
-- `docs/man/podlaz.1` and `docs/man/podlazd.8` for installed reference pages;
-- code and tests for implemented behavior.
+## Development workflow
 
-If `AGENTS.md` conflicts with documentation or code, stop and report the mismatch instead of silently choosing one.
-
-Update `AGENTS.md` only when agent workflow rules change. Update the owning canonical doc when product behavior changes.
-
-## Current milestone boundary
-
-The current foundation build is intentionally safe.
-
-Do not implement TUN, route, DNS, nftables, firewall, kill-switch, or privileged daemon behavior unless the task explicitly targets that area and updates the matching docs and tests.
-
-Prefer proxy-only behavior, read-only diagnostics, planning, and recoverability foundations unless the task explicitly requests a broader runtime behavior change.
-
-## Canonical project context
-
-Read these documents before changing behavior:
-
-- `README.md` for current product status and product principles;
-- `docs/README.md` for the documentation map;
-- `docs/cli.md` for command names, flags, exit codes, JSON behavior, alias/completion behavior, and CLI safety semantics;
-- `docs/state-and-security.md` for state ownership, redaction, confirmation behavior, daemon boundaries, systemd hardening, privileged networking safety, and recovery rules;
-- `docs/debian-package.md` for package layout, service install behavior, and package validation gates;
-- `docs/development.md` for local checks and contribution rules;
-- `docs/release.md` for release workflow and artifact expectations;
-- `docs/e2e.md` for self-hosted E2E validation when touching real-host behavior;
-- `docs/man/podlaz.1` and `docs/man/podlazd.8` when changing installed CLI or daemon reference behavior.
-
-If a document conflicts with code, do not silently choose one. Explain the mismatch in the PR and either update the code or update the documentation in the same change.
-
-## Non-negotiable engineering rules
-
-- Do not add route, rule, DNS, nftables, TUN, or process mutations without an explicit plan, verification path, and rollback or recovery path.
-- Do not add SUID binaries.
-- Do not write directly to `/etc/resolv.conf` in normal operation.
-- Do not hide networking changes behind vague helper names.
-- Do not print secrets in human output, JSON output, logs, errors, or test fixtures.
-- Do not broaden daemon privileges without documenting the reason.
-- Do not make the CLI mutate privileged networking directly.
-- Do not introduce GUI assumptions into the core product path.
-- Do not add convenience features before the reliability foundation they depend on exists.
-
-## CLI and naming rules
-
-`recover` is the canonical recovery command. Do not reintroduce old recovery names.
-
-Public CLI behavior must follow `docs/cli.md`:
-
-- command names and flags must match the contract;
-- high-impact flags such as `--execute` and `--yes` must stay long-only;
-- default recovery behavior must be read-only until explicit cleanup is requested;
-- `--json` output must include `schema_version` once JSON output is implemented;
-- errors must go to stderr and stable output must go to stdout when the implementation supports that separation.
-
-Use user-task language for public commands. Keep implementation details inside internal packages unless they are real user-facing concepts.
-
-## Architecture rules
-
-Preserve these boundaries:
-
-- CLI parses input, renders output, manages user-owned intent/state, and submits requests.
-- Daemon owns privileged runtime behavior and active connection state.
-- Planners build inspectable plans without requiring root.
-- Executors apply already-validated plans and remain narrow, explicit, and auditable.
-- Core engines are child processes, not owners of podlaz system state.
-
-Keep package dependencies narrow and explain any dependency-direction change in the PR.
-
-## State and security rules
-
-Keep these state categories separate:
-
-- user intent/state: profiles, subscriptions, preferences, selected defaults;
-- daemon runtime/state: active connection snapshot, locks, generated runtime config, process state, transaction state;
-- system networking state: TUN interfaces, routes, policy rules, DNS link config, nftables state.
-
-Generated core configs are runtime output, not persistent source of truth. Write them atomically, keep permissions restrictive, and do not log them in full.
-
-All status, diagnostics, plans, recovery output, JSON output, and logs must share the same redaction policy.
-
-## Technology selection
-
-Do not chase new tools or libraries only because they are newer.
-
-Prefer technologies that are:
-
-- actively maintained;
-- available on Tier 1 Linux targets;
-- reproducible in CI;
-- compatible with the documented architecture;
-- justified by a concrete product or maintenance benefit.
-
-## Testing and validation
-
-Before proposing a PR, run the relevant checks when possible:
-
-```bash
-test -z "$(gofmt -l .)"
-go test ./...
-go run ./cmd/podlaz version
-go run ./cmd/podlaz doctor
-go run ./cmd/podlaz recover
-```
-
-Use `gofmt -w .` only when fixing formatting, not as the validation command.
-
-For non-documentation PRs, prefer this validation ladder:
+1. Start from the requested base and work in the requested feature branch/worktree.
+2. Read the issue/plan plus only the routed canonical docs and directly relevant code/tests.
+3. For a bug/behavior change, write or identify the failing test first. For pure refactors, establish passing characterization tests before movement.
+4. Implement the smallest coherent change. Keep product behavior and failure ordering explicit.
+5. Format and run the narrow tests while iterating.
+6. Before completion run repository-level verification appropriate to the touched surface:
 
 ```bash
 test -z "$(gofmt -l .)"
 go test ./...
 go vet ./...
+govulncheck ./...
 ```
 
-Run `govulncheck ./...` when changing dependencies, parsers, process execution, networking, privilege boundaries, generated configs, or secret handling.
+Also run repository shell/workflow/package checks, race checks for concurrency-sensitive code (at least daemon when daemon lifecycle changes), and the relevant E2E suites. Destructive real-host E2E runs only on the dedicated runner and only when the change requires host mutation coverage.
 
-For code touching planning, state, CLI output, or security, add or update tests. Prefer deterministic unit tests and fixtures. Do not rely on root-only integration tests for basic correctness.
+7. Review the diff for scope, dead references, stale names, docs drift, test quality, security/privacy, and rollback/recovery semantics.
+8. Open/update one PR with acceptance-criterion evidence and explicit validation results. Do not claim a check passed without fresh evidence.
 
-If checks cannot be run, state that clearly in the PR body with the reason.
+## Repository simplification guardrails
 
-## Change-specific acceptance criteria
+Permanent prose is intentionally limited to `README.md`, `docs/cli.md`, `ARCHITECTURE.md`, and `AGENTS.md`. New prose needs a durable ownership reason that cannot fit one of those surfaces.
 
-For CLI changes, include tests or fixtures for:
+Permanent source/test/workflow artifact names must be domain/invariant-oriented. Do not introduce `issueNNN`/`IssueNNN` names or permanent issue-number labels. Temporary plan/spec files may exist while a plan is actively being executed but must be removed when the plan explicitly requires cleanup.
 
-- stdout/stderr separation;
-- exit code;
-- `--json` shape and `schema_version`;
-- redaction parity between human and JSON output.
+When duplication is found, consolidate mechanics only after comparing semantics. When deleting code/fixtures, record proof: no references/runtime registration, a superseding equivalent implementation, or test-backed merge.
 
-For Linux networking changes, the PR must state:
+## Pull requests and review
 
-- what system state can change;
-- how podlaz ownership is marked;
-- how the plan can be inspected before execution;
-- how verification works;
-- how rollback works;
-- how `recover` detects and cleans stale state.
+PRs target the requested base branch and should contain one coherent goal. The body must state what changed, what behavior is intentionally preserved, relevant migration maps/evidence, and exact validation performed/not performed.
 
-For systemd unit changes, document:
-
-- required capabilities;
-- hardening options;
-- every relaxation from the baseline;
-- why the daemon needs each privilege.
-
-## Pull request expectations
-
-Each PR should produce a real product or codebase improvement. Avoid documentation-only changes unless the documentation is the product of that task or the docs must change to keep the contract accurate.
-
-A good PR should include:
-
-- a concise summary of what changed;
-- why the change is needed now;
-- user-visible behavior changes, if any;
-- safety and rollback implications;
-- tests or checks run;
-- documentation updated in the same PR when behavior changes.
-
-Keep PRs narrow. If a task reveals a larger design issue, document it and open a follow-up issue instead of mixing unrelated work into the same PR.
-
-## Nested agent files
-
-Do not add nested `AGENTS.md` files unless a subpackage needs materially different rules.
-
-## Agent behavior rules
-
-- Inspect existing code and docs before editing.
-- Prefer extending existing patterns over inventing new ones.
-- Keep diffs minimal and easy to review.
-- Ask for clarification when product direction is genuinely ambiguous.
-- If the requested change is unsafe, explain the risk and propose a safer path.
-- Do not guess about Linux networking behavior when the repository already defines a requirement.
-- Do not silently weaken safety requirements to make implementation easier.
-- Leave the repository cleaner than you found it.
+Review comments belong on the specific changed line whenever a line-level finding exists. Prioritize correctness, security/privacy, recovery/rollback, concurrency/order, compatibility, and test gaps over stylistic preference.
