@@ -24,8 +24,8 @@ permanent_prose_file_count=29
 permanent_prose_bytes=338846
 superpowers_spec_count=6
 superpowers_spec_bytes=127375
-superpowers_plan_count=3
-superpowers_plan_bytes=64879
+superpowers_plan_count=6
+superpowers_plan_bytes=136567
 ```
 
 ## Documentation migration map
