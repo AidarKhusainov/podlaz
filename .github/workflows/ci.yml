@@ -46,7 +46,7 @@ jobs:
       - name: Repository structure contract
         run: |
           bash scripts/ci/repository-structure-test.sh
-          bash scripts/ci/repository-structure.sh
+          bash scripts/ci/repository-structure.sh --final
 
       - name: Upload workflow lint diagnostics
         if: always()
