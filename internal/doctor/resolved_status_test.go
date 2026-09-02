@@ -12,7 +12,9 @@ type resolvedStatusDoctorRunner struct {
 	err    error
 }
 
-func (r resolvedStatusDoctorRunner) LookPath(file string) (string, error) { return "/usr/bin/" + file, nil }
+func (r resolvedStatusDoctorRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
 func (r resolvedStatusDoctorRunner) Run(context.Context, string, ...string) (CommandResult, error) {
 	return r.result, r.err
 }
