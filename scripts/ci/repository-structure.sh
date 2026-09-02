@@ -60,6 +60,14 @@ is_maintained_source_test_or_script() {
   return 1
 }
 
+required_knowledge_surfaces=(README.md AGENTS.md ARCHITECTURE.md docs/cli.md)
+for path in "${required_knowledge_surfaces[@]}"; do
+  if [[ ! -f "${repo_root}/${path}" ]] \
+    || ! git -C "${repo_root}" ls-files --error-unmatch -- "${path}" >/dev/null 2>&1; then
+    violations+=("required knowledge surface is missing: ${path}")
+  fi
+done
+
 for path in "${tracked_paths[@]}"; do
   if [[ "${path}" == docs/superpowers/* ]]; then
     violations+=("transient superpowers artifact is not allowed: ${path}")

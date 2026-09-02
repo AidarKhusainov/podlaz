@@ -63,6 +63,10 @@ fixture="$(new_fixture)"; fixtures+=("${fixture}")
 expect_pass 'allowed repository' "${fixture}"
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
+git -C "${fixture}" rm -q docs/cli.md
+expect_fail 'missing required knowledge surface' "${fixture}" 'required knowledge surface is missing: docs/cli.md'
+
+fixture="$(new_fixture)"; fixtures+=("${fixture}")
 printf '# Extra prose\n' > "${fixture}/docs/operations.md"
 git -C "${fixture}" add docs/operations.md
 expect_fail 'extra permanent prose' "${fixture}" 'permanent prose is not allowed: docs/operations.md'
