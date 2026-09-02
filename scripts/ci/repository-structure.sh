@@ -7,7 +7,7 @@ if (($# > 0)) && [[ "$1" == "--final" ]]; then
   shift
 fi
 
-if (($# > 1)) || (($# == 1 && "$1" == -*)); then
+if (($# > 1)) || [[ $# -eq 1 && "$1" == -* ]]; then
   printf 'usage: %s [--final] [repository-root]\n' "${0##*/}" >&2
   exit 2
 fi
