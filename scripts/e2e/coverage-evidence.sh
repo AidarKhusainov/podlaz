@@ -84,7 +84,7 @@ check_pattern scripts/e2e/cli-contract.sh "import-local-base64-uri-list" "local 
 check_pattern scripts/e2e/package-service.sh "dpkg-deb --contents" "package contents coverage"
 check_pattern scripts/e2e/package-service.sh "same-version reinstall and purge" "package reinstall/purge coverage"
 check_pattern scripts/e2e/package-service.sh "deb-systemd-helper purge podlazd.service" "package systemd-helper cleanup coverage"
-check_pattern docs/e2e.md "Additional Debian/Ubuntu or arm64 coverage" "matrix boundary documentation"
+check_pattern .github/workflows/e2e.yml "runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]" "default self-hosted runner boundary"
 
 line 1 "new runtime probe" "SOCKS proxy egress through loopback listener."
 line 2 "new runtime probe" "HTTP proxy egress through loopback listener."
@@ -117,7 +117,7 @@ line 28 "existing test" "Duplicate import atomicity is covered; existing profile
 line 29 "existing unit evidence" "VMess, Trojan, and Shadowsocks share URI import are covered by unit tests."
 line 30 "new deterministic/runtime evidence" "Shared E2E redaction helper detects configured values plus derived UUID/token/header/path fragments without echoing matched values, and proxy data-plane now scans configured real profile URI inputs plus active runtime config contents when the file is readable by the runner; packaged least-privilege permission boundaries are recorded when it is not. Maximum server coverage subscription/header/provider-secret wiring remains a follow-up gap."
 line 31 "existing evidence" "Real-profile artifacts store profile IDs, not raw profile URIs."
-line 32 "documented evidence" "Default runner matrix boundaries are documented."
+line 32 "executable workflow evidence" "Default self-hosted runner matrix boundaries are defined by the E2E workflow."
 line 33 "existing gated probe" "Host-disruption probes require explicit host-owned wrappers."
 line 34 "existing/gated evidence" "Status is collected across inactive, active, crash, and recovery phases."
 line 35 "existing tests" "Plan JSON shape, safety flags, required fields, and redaction semantics are asserted for proxy-only and TUN modes."

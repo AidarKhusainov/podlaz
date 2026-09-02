@@ -7,6 +7,7 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[1] / "tun-resource-soak.sh"
 WORKFLOW = Path(__file__).resolve().parents[3] / ".github" / "workflows" / "e2e-tun-resource-soak.yml"
 POLICY = Path(__file__).resolve().parents[1] / "tun-resource-soak-policy.json"
+ARCHITECTURE = Path(__file__).resolve().parents[3] / "ARCHITECTURE.md"
 
 
 class TunResourceSoakContractTests(unittest.TestCase):
@@ -63,7 +64,6 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("return dict(actual) == dict(expected)", isolation)
         self.assertIn('"addresses": _json_command(("ip", "-j", "address", "show"))', isolation)
         self.assertIn('os.stat("/proc/self/ns/net")', isolation)
-
 
     def test_preconditioning_and_measured_sessions_keep_one_daemon_and_replace_each_child(self) -> None:
         text = self.script_text()
@@ -135,7 +135,6 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("PODLAZ_E2E_SOAK_DOCTOR_EVERY_SAMPLES", body)
         self.assertNotIn("&", body)
 
-
     def test_status_checks_use_bounded_verified_health_convergence(self) -> None:
         text = self.script_text()
         self.assertIn('source "${SCRIPT_DIR}/lib/tun_soak_health.sh"', text)
@@ -178,9 +177,9 @@ class TunResourceSoakContractTests(unittest.TestCase):
         text = self.script_text()
         self.assertNotIn("mask_multiline_sensitive", text)
         self.assertNotIn("mask_value", text)
-        append = self.function_body("append_sensitive_value", "\n}\n\ncollect_host_sensitive_values")
+        append = self.function_body("append_sensitive_value", "\n}\n\nenforce_acceptance_inputs")
         self.assertNotIn("::", append)
-        inventory = self.function_body("collect_host_sensitive_values", "\n}\n\nfirst_profile_uri")
+        inventory = self.function_body("collect_host_sensitive_values", "run_installed_podlaz_bounded() {")
         self.assertIn("nmcli", inventory)
 
     def test_failure_evidence_is_structural_and_written_before_private_cleanup(self) -> None:
@@ -248,48 +247,14 @@ class TunResourceSoakContractTests(unittest.TestCase):
         self.assertIn("tun-resource-soak.sh", text)
         self.assertIn("PODLAZ_E2E_SOAK_DURATION_SECONDS", text)
 
-
-    def test_canonical_docs_define_release_gate_and_metric_semantics(self) -> None:
-        docs_root = Path(__file__).resolve().parents[3] / "docs"
-        e2e = (docs_root / "e2e.md").read_text(encoding="utf-8")
-        development = (docs_root / "development.md").read_text(encoding="utf-8")
-        self.assertIn("TUN Resource Soak E2E", e2e)
-        self.assertIn("three-hour post-warm-up", e2e)
-        self.assertIn("current memory", e2e)
-        self.assertIn("peak memory", e2e)
-        self.assertIn("cgroup total", e2e)
-        self.assertIn("exact supervised Xray", e2e)
-        self.assertIn("direct child", e2e)
-        self.assertIn("bounded current-health convergence", e2e)
-        self.assertIn("Diagnostic exit `0` and diagnostic exit `3`", e2e)
-        self.assertIn("attempted at most twice", e2e)
-        self.assertIn("metric-specific", e2e)
-        self.assertIn("warmed inactive baseline", e2e)
-        self.assertIn("structural network-isolation baseline", e2e)
-        self.assertIn("full canonical shape and cardinality", e2e)
-        self.assertIn("positive physical uplink", e2e)
-        self.assertIn("accept only reviewed raw keys", e2e)
-        self.assertIn("canonical `default` routing table must be empty", e2e)
-        self.assertIn("required kernel-derived route set", e2e)
-        self.assertIn("independently sampled", e2e)
-        self.assertIn("no `LOWER_UP` carrier", e2e)
-        self.assertIn("documented optional variants", e2e)
-        self.assertIn("maximum observed sample gap", e2e)
-        self.assertIn("checked-in policy remains `observe`", e2e)
-        self.assertIn("trusted-host fingerprint", e2e)
-        self.assertIn("NetworkManager connection identity", e2e)
-        self.assertIn("`/etc/os-release`", e2e)
-        self.assertIn("root-owned", e2e)
-        self.assertIn("every observed current-growth metric", e2e)
-        self.assertIn("per-metric sample count", e2e)
-        self.assertIn("checked-in policy path", e2e)
-        self.assertIn("metric-specific lifecycle", e2e)
-        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_environment", development)
-        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_metrics", development)
-        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_status", development)
-        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_health", development)
-        self.assertIn("python3 -m unittest scripts.e2e.tests.test_tun_soak_cleanup", development)
-
+    def test_canonical_architecture_routes_soak_details_to_executable_contracts(self) -> None:
+        architecture = ARCHITECTURE.read_text(encoding="utf-8")
+        self.assertIn("scripts/**`, `.github/workflows/**`, and `packaging/**`: executable package/release/E2E contract", architecture)
+        self.assertIn("Hosted tests validate pure/unit/contract behavior without privileged host mutation", architecture)
+        self.assertIn("Dedicated package/E2E scenarios validate installed-package", architecture)
+        self.assertIn("Shared E2E infrastructure belongs in `scripts/e2e/lib/**`", architecture)
+        self.assertIn("Scenario-specific predicates and resource cleanup remain local when their semantics differ", architecture)
+        self.assertIn("Destructive host-network E2E must remain explicitly gated to the dedicated runner", architecture)
 
     def test_root_private_trusted_host_preflight_uses_sudo_stat_boundary(self) -> None:
         text = self.script_text()

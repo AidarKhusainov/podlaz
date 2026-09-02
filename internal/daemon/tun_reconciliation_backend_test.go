@@ -6,7 +6,7 @@ import (
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
-func issue262AuthoritativeSnapshot() netsnapshot.Snapshot {
+func authoritativeReconciliationSnapshot() netsnapshot.Snapshot {
 	return netsnapshot.Snapshot{
 		DefaultIPv4: netsnapshot.Route{Status: netsnapshot.StatusDetected, Interface: "wlan0", Gateway: "192.0.2.1"},
 		ServerRoute: netsnapshot.Route{Status: netsnapshot.StatusDetected, Interface: "wlan0", Gateway: "192.0.2.1"},
@@ -22,8 +22,8 @@ func issue262AuthoritativeSnapshot() netsnapshot.Snapshot {
 	}
 }
 
-func TestIssue262MandatoryEvidenceMarksNetworkManagerInspectionUnknown(t *testing.T) {
-	snapshot := issue262AuthoritativeSnapshot()
+func TestMandatoryEvidenceMarksNetworkManagerInspectionUnknown(t *testing.T) {
+	snapshot := authoritativeReconciliationSnapshot()
 	snapshot.NetworkManager.ActiveConnectionsInspection = netsnapshot.Finding{Status: netsnapshot.StatusUnknown}
 
 	evidence := tunMandatoryEvidenceFromSnapshot(snapshot)
@@ -35,8 +35,8 @@ func TestIssue262MandatoryEvidenceMarksNetworkManagerInspectionUnknown(t *testin
 	}
 }
 
-func TestIssue262MandatoryEvidenceMarksResolvedInspectionUnknown(t *testing.T) {
-	snapshot := issue262AuthoritativeSnapshot()
+func TestMandatoryEvidenceMarksResolvedInspectionUnknown(t *testing.T) {
+	snapshot := authoritativeReconciliationSnapshot()
 	snapshot.DNS.Resolved = netsnapshot.Finding{Status: netsnapshot.StatusUnknown}
 
 	evidence := tunMandatoryEvidenceFromSnapshot(snapshot)
@@ -45,8 +45,8 @@ func TestIssue262MandatoryEvidenceMarksResolvedInspectionUnknown(t *testing.T) {
 	}
 }
 
-func TestIssue262MandatoryEvidenceMarksTransientRouteGapUnknown(t *testing.T) {
-	snapshot := issue262AuthoritativeSnapshot()
+func TestMandatoryEvidenceMarksTransientRouteGapUnknown(t *testing.T) {
+	snapshot := authoritativeReconciliationSnapshot()
 	snapshot.DefaultIPv4 = netsnapshot.Route{Status: netsnapshot.StatusUnknown}
 
 	evidence := tunMandatoryEvidenceFromSnapshot(snapshot)

@@ -502,7 +502,8 @@ top-level `ok`.
 - Latest TUN diagnostic report: `/run/podlaz/diagnostics/tun-last.json` (daemon-owned, replacement-only, mode `0600`, bounded to 256 KiB).
 - Generated runtime config is not persistent source of truth and must not be logged in full.
 
-## See also
+## Related project documentation
 
-- [State and security](./state-and-security.md)
-- [Debian package](./debian-package.md)
+- [Project overview](../README.md)
+- [Architecture](../ARCHITECTURE.md)
+- [Contributor workflow](../AGENTS.md)

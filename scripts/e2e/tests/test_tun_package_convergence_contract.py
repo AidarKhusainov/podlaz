@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tun-package-convergence.sh"
+INSTALLED_CLIENT = Path(__file__).resolve().parents[1] / "lib" / "installed_client.sh"
 
 
 class TunPackageConvergenceContractTests(unittest.TestCase):
@@ -15,11 +16,12 @@ class TunPackageConvergenceContractTests(unittest.TestCase):
 
     def test_installed_cli_runs_unprivileged_with_podlaz_socket_group(self) -> None:
         text = SCRIPT.read_text(encoding="utf-8")
-        body = self.function_body("run_installed_podlaz", "\n}\n\ncapture_secret_import")
+        helper = INSTALLED_CLIENT.read_text(encoding="utf-8")
         require_line = next(line for line in text.splitlines() if line.startswith("require_cmd "))
         self.assertIn("runuser", require_line.split())
-        self.assertIn('sudo -n runuser -u "$(id -un)" -g podlaz -- env', body)
-        self.assertNotIn('sudo -n -u "$(id -un)" -g podlaz env', body)
+        self.assertIn('source "${SCRIPT_DIR}/lib/installed_client.sh"', text)
+        self.assertIn('sudo -n runuser -u "$(id -un)" -g podlaz -- env', helper)
+        self.assertNotIn('sudo -n -u "$(id -un)" -g podlaz env', helper)
 
     def test_missing_link_snapshots_before_release_and_verifies_after_rollback(self) -> None:
         body = self.function_body("run_missing_link_probe", "\n}\n\nsetup_isolated_xdg")

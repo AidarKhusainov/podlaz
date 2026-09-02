@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches:
       - master
@@ -43,6 +44,17 @@ jobs:
           set -o pipefail
           bash scripts/ci/workflow-lint.sh 2>&1 | tee /tmp/podlaz-workflow-lint.txt
 
+      - name: Repository structure contract
+        run: bash scripts/ci/repository-structure-test.sh
+
+      - name: Active repository structure
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: bash scripts/ci/repository-structure.sh
+
+      - name: Final repository structure
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash scripts/ci/repository-structure.sh --final
+
       - name: Upload workflow lint diagnostics
         if: always()
         uses: actions/upload-artifact@v7
@@ -74,8 +86,8 @@ jobs:
           set -o pipefail
           bash scripts/ci/go-core.sh 2>&1 | tee /tmp/podlaz-go-core.txt
 
-      - name: Issue 263 deterministic contract
-        run: bash scripts/ci/issue263-contract.sh
+      - name: Boot continuation contract
+        run: bash scripts/ci/boot-continuation-contract.sh
 
       - name: Upload Go diagnostics
         if: always()

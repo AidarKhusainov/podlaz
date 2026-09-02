@@ -4,6 +4,12 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 # shellcheck source=lib/tun_soak_health.sh
@@ -215,6 +221,8 @@ verify_runtime_environment() {
     fail "runtime host is not Ubuntu 24.04"
 }
 
+# Deliberately local: soak privacy needles include active NetworkManager UUIDs
+# and resolved DNS values in addition to the shared host-observation command set.
 collect_host_sensitive_values() {
   local values
   values="$({
@@ -228,35 +236,8 @@ collect_host_sensitive_values() {
   append_sensitive_value "${values}"
 }
 
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-wait_for_daemon_socket() {
-  local attempt
-  for attempt in $(seq 1 150); do
-    [[ -S "${DAEMON_SOCKET}" ]] && return 0
-    sleep 0.1
-  done
-  fail "podlazd.service did not create its socket"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
-
+# Deliberately local: this helper accepts a numeric second count and appends the
+# unit itself, and unlike bounded_client.sh it does not force LC_ALL=C.
 run_installed_podlaz_bounded() {
   local timeout_seconds="$1"
   shift
@@ -365,6 +346,8 @@ os.replace(temporary, path)
 PY
 }
 
+# Deliberately local: soak provenance additionally validates Xray artifact
+# authority, package hash, runtime OS, kernel, systemd and immutable policy data.
 verify_package_provenance() {
   local extract_dir expected_cli expected_daemon expected_xray installed_cli installed_daemon installed_xray
   local main_pid running_exe running_hash version_output package_hash xray_binary_hash xray_artifact_hash
@@ -804,13 +787,13 @@ sudo -n apt install -y "./${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1
 sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
-wait_for_daemon_socket
+wait_for_daemon_socket "${DAEMON_SOCKET}" 15
 require_cmd nft
 SOAK_PHASE="package-provenance"
 verify_package_provenance
 
 SOAK_PHASE="profile-import"
-PRIMARY_URI="$(first_profile_uri)"
+PRIMARY_URI="$(first_configured_profile_uri)"
 assert_nonempty "${PRIMARY_URI}" "primary profile URI"
 capture_secret_import "${PRIMARY_URI}"
 
