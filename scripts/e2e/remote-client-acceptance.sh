@@ -30,8 +30,8 @@ write_evidence() {
 }
 
 # Deliberately local. This preserves the self-hosted runner's normal login
-# identity, including OS-managed supplementary groups; forcing runuser -g podlaz
-# would manufacture a different journald permission scenario.
+# identity, including OS-managed supplementary groups; forcing a service-group
+# override would manufacture a different journald permission scenario.
 run_ordinary_podlaz() {
   local timeout_seconds="$1"
   shift
