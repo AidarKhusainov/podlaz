@@ -116,3 +116,9 @@ printf '# Generated vendor notes\n' > "${fixture}/vendor/example/README.md"
 printf '// Historical context: Issue #321.\npackage app\n' > "${fixture}/internal/app/app.go"
 git -C "${fixture}" add .
 expect_pass 'allow-list edge cases' "${fixture}"
+
+ci_workflow="${script_dir}/../../.github/workflows/ci.yml"
+if ! grep -Fq -- 'bash scripts/ci/repository-structure.sh --final' "${ci_workflow}"; then
+  fail 'pull-request CI must enforce repository-structure.sh --final before merge'
+fi
+printf 'PASS: pull-request CI enforces final repository structure\n'
