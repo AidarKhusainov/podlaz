@@ -4,14 +4,24 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/host_observation.sh
+source "${SCRIPT_DIR}/lib/host_observation.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
 # shellcheck source=lib/process_lifecycle.sh
 source "${SCRIPT_DIR}/lib/process_lifecycle.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
 # shellcheck source=lib/connect_lifecycle.sh
 source "${SCRIPT_DIR}/lib/connect_lifecycle.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
-require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep ip journalctl mktemp nft pgrep python3 readlink resolvectl runuser sed sha256sum sleep sudo systemctl systemd-run timeout tr
+require_cmd awk bash cmp curl dpkg dpkg-deb find getent git grep hostname ip journalctl mktemp nft pgrep python3 readlink resolvectl runuser sed sha256sum sleep sort sudo systemctl systemd-run timeout tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -73,10 +83,7 @@ done
 
 write_evidence() {
   local file="$1" key="$2" value="$3"
-  case "${key}${value}" in
-    *$'\n'*|*$'\r'*) fail "invalid normalized evidence" ;;
-  esac
-  printf '%s=%s\n' "${key}" "${value}" >>"${E2E_ARTIFACT_DIR}/${file}"
+  append_evidence_kv "${E2E_ARTIFACT_DIR}/${file}" "${key}" "${value}"
 }
 
 append_sensitive_value() {
@@ -84,46 +91,6 @@ append_sensitive_value() {
   [[ -n "${value}" ]] || return 0
   HOST_SENSITIVE_VALUES+="${value}"$'\n'
   mask_multiline_sensitive "${value}"
-}
-
-collect_host_sensitive_values() {
-  local values
-  values="$({
-    hostname -f 2>/dev/null || true
-    ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-    ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-    ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
-  } | sed '/^[[:space:]]*$/d' | sort -u)"
-  append_sensitive_value "${values}"
-}
-
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-wait_for_daemon_socket() {
-  local attempt
-  for attempt in $(seq 1 150); do
-    [[ -S "${DAEMON_SOCKET}" ]] && return 0
-    sleep 0.1
-  done
-  fail "podlazd.service did not create its socket"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
 }
 
 capture_secret_import() {
@@ -164,7 +131,7 @@ HOOK
   rm -f -- "${tmp}"
   sudo -n systemctl daemon-reload
   sudo -n systemctl restart podlazd.service
-  wait_for_daemon_socket
+  wait_for_daemon_socket "${DAEMON_SOCKET}" 15
 }
 
 cleanup() {
@@ -332,6 +299,8 @@ check_direct_connectivity() {
   write_evidence acceptance.txt direct_connectivity pass
 }
 
+# Deliberately local: convergence provenance verifies built/installed hashes and
+# the running daemon executable, which is stricter than shared package metadata.
 verify_package_provenance() {
   local extract_dir expected_cli expected_daemon installed_cli installed_daemon main_pid running_exe running_hash version_output
   extract_dir="$(mktemp -d "${E2E_TMP_ROOT}/package-extract.XXXXXX")"
@@ -414,7 +383,7 @@ run_inactive_scope_probe() {
   rm -f -- "${tmp}"
   clear_hook
   sudo -n systemctl restart podlazd.service
-  wait_for_daemon_socket
+  wait_for_daemon_socket "${DAEMON_SOCKET}" 15
   assert_no_recovery_candidates inactive-scope
   assert_podlaz_resources_absent inactive-scope "${network_manifest}"
   assert_foreign_state inactive-scope
@@ -481,7 +450,7 @@ run_missing_link_probe() {
 
   clear_hook
   sudo -n systemctl restart podlazd.service
-  wait_for_daemon_socket
+  wait_for_daemon_socket "${DAEMON_SOCKET}" 15
   doctor_output="$(mktemp "${E2E_TMP_ROOT}/historical-doctor.XXXXXX")"
   set +e
   run_installed_podlaz doctor --tun --json >"${doctor_output}" 2>/dev/null
@@ -508,7 +477,7 @@ run_missing_link_probe() {
 }
 
 setup_isolated_xdg "tun-package-convergence"
-collect_host_sensitive_values
+append_sensitive_value "$(observe_host_sensitive_values)"
 DEFAULT_ROUTE_BEFORE="$(mktemp "${E2E_TMP_ROOT}/default-route-before.XXXXXX")"
 ip -4 route show default >"${DEFAULT_ROUTE_BEFORE}"
 
@@ -528,10 +497,10 @@ sudo -n apt install -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/apt-install.log" 2>&
 sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${E2E_ARTIFACT_DIR}/apt-reinstall.log" 2>&1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
-wait_for_daemon_socket
+wait_for_daemon_socket "${DAEMON_SOCKET}" 15
 verify_package_provenance
 
-PRIMARY_URI="$(first_profile_uri)"
+PRIMARY_URI="$(first_configured_profile_uri)"
 assert_nonempty "${PRIMARY_URI}" "primary profile URI"
 capture_secret_import "${PRIMARY_URI}"
 

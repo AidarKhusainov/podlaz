@@ -2,6 +2,14 @@
 
 # Shared helpers for boot-continuation installed-package acceptance. The caller
 # must source lib/e2e.sh first and run with `set -Eeuo pipefail`.
+# shellcheck source=readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
+# shellcheck source=installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=status_polling.sh
+source "${SCRIPT_DIR}/lib/status_polling.sh"
 
 BOOT_CONTINUATION_DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 BOOT_CONTINUATION_MANIFEST_PATH="/var/lib/podlaz/boot-autostart-manifest.json"
@@ -19,34 +27,15 @@ boot_continuation_mask_multiline_sensitive() {
 }
 
 boot_continuation_first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI:-}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST:-}"
+  first_configured_profile_uri
 }
 
 boot_continuation_run_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
+  run_installed_podlaz "$@"
 }
 
 boot_continuation_wait_for_daemon() {
-  local attempt
-  for attempt in $(seq 1 300); do
-    if [[ -S "${BOOT_CONTINUATION_DAEMON_SOCKET}" ]] && sudo -n systemctl is-active --quiet podlazd.service; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  fail "podlazd.service did not become ready for boot-continuation acceptance"
+  wait_for_daemon_ready "${BOOT_CONTINUATION_DAEMON_SOCKET}" podlazd.service 30
 }
 
 boot_continuation_daemon_status_matches() {
@@ -80,27 +69,15 @@ PY
 }
 
 boot_continuation_wait_for_verified_active() {
-  local attempt
   boot_continuation_wait_for_daemon
-  for attempt in $(seq 1 600); do
-    if boot_continuation_daemon_status_matches active active true; then
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "boot-continuation TUN session did not converge to verified active"
+  wait_for_status_match "boot-continuation TUN session" 120 \
+    boot_continuation_daemon_status_matches active active true
 }
 
 boot_continuation_wait_for_inactive() {
-  local attempt
   boot_continuation_wait_for_daemon
-  for attempt in $(seq 1 400); do
-    if boot_continuation_daemon_status_matches inactive disabled false; then
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "boot-continuation daemon did not converge to clean inactive"
+  wait_for_status_match "boot-continuation daemon inactive state" 80 \
+    boot_continuation_daemon_status_matches inactive disabled false
 }
 
 boot_continuation_import_real_profile() {

@@ -4,6 +4,16 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
+# shellcheck source=lib/status_polling.sh
+source "${SCRIPT_DIR}/lib/status_polling.sh"
 
 require_cmd awk curl getent ip nft python3 runuser sed sleep sudo systemctl timeout
 
@@ -18,11 +28,11 @@ fi
 
 CONTINUATION_PATH="/run/podlaz/network-session-continuation.json"
 OVERRIDE_DIR="/etc/systemd/system/podlazd.service.d"
-OVERRIDE_PATH="${OVERRIDE_DIR}/99-issue261-e2e.conf"
-HOOK_DIR="/run/podlaz/issue261-e2e"
+OVERRIDE_PATH="${OVERRIDE_DIR}/99-network-resource-isolation-e2e.conf"
+HOOK_DIR="/run/podlaz/network-resource-isolation-e2e"
 FOREIGN_NFT_FAMILY="inet"
 FOREIGN_NFT_TABLE="podlaz_pe_ffffffffffff"
-EVIDENCE="${E2E_ARTIFACT_DIR}/issue261-acceptance.txt"
+EVIDENCE="${E2E_ARTIFACT_DIR}/network-resource-isolation-acceptance.txt"
 PROFILE_ID=""
 ENVELOPE_FAMILY=""
 ENVELOPE_TABLE=""
@@ -45,47 +55,12 @@ mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI}"
 mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI_LIST}"
 
 write_evidence() {
-  local key="$1"
-  case "${key}" in
-    *[!A-Za-z0-9_.-]*) fail "invalid issue 261 evidence key" ;;
-  esac
-  printf '%s=pass\n' "${key}" >>"${EVIDENCE}"
-}
-
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
-
-wait_for_service() {
-  local attempt
-  for attempt in $(seq 1 300); do
-    if sudo -n systemctl is-active --quiet podlazd.service; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  fail "podlazd.service did not become active"
+  append_evidence_pass "${EVIDENCE}" "$1"
 }
 
 status_matches() {
   local expected_connection="$1" expected_tun="$2" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue261-status.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/network-resource-isolation-status.XXXXXX")"
   if ! run_installed_podlaz status --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     return 1
@@ -107,39 +82,27 @@ PY
 }
 
 wait_for_active_tun() {
-  local phase="$1" attempt
-  wait_for_service
-  for attempt in $(seq 1 300); do
-    if status_matches active active; then
-      write_evidence "${phase}"
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "${phase}: protected TUN did not become active"
+  local phase="$1"
+  wait_for_service_active podlazd.service 30
+  wait_for_status_match "${phase}: protected TUN active state" 60 status_matches active active
+  write_evidence "${phase}"
 }
 
 wait_for_inactive() {
-  local phase="$1" attempt
-  wait_for_service
-  for attempt in $(seq 1 200); do
-    if status_matches inactive disabled; then
-      write_evidence "${phase}"
-      return 0
-    fi
-    sleep 0.2
-  done
-  fail "${phase}: daemon did not become clean inactive"
+  local phase="$1"
+  wait_for_service_active podlazd.service 30
+  wait_for_status_match "${phase}: clean inactive state" 40 status_matches inactive disabled
+  write_evidence "${phase}"
 }
 
 import_profile() {
   local uri out err
-  uri="$(first_profile_uri)"
-  out="$(mktemp "${E2E_TMP_ROOT}/issue261-import.stdout.XXXXXX")"
-  err="$(mktemp "${E2E_TMP_ROOT}/issue261-import.stderr.XXXXXX")"
-  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "issue 261 profile import failed"
+  uri="$(first_configured_profile_uri)"
+  out="$(mktemp "${E2E_TMP_ROOT}/network-resource-isolation-import.stdout.XXXXXX")"
+  err="$(mktemp "${E2E_TMP_ROOT}/network-resource-isolation-import.stderr.XXXXXX")"
+  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "network-resource-isolation profile import failed"
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${PROFILE_ID}" ]] || fail "issue 261 profile import returned no profile ID"
+  [[ -n "${PROFILE_ID}" ]] || fail "network-resource-isolation profile import returned no profile ID"
   mask_multiline_sensitive "${PROFILE_ID}"
   rm -f -- "${out}" "${err}"
 }
@@ -270,14 +233,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-setup_isolated_xdg "issue261-package-acceptance"
+setup_isolated_xdg "network-resource-isolation-package-acceptance"
 : >"${EVIDENCE}"
 sudo -n systemctl start podlazd.service
-wait_for_service
+wait_for_service_active podlazd.service 30
 import_profile
 create_foreign_collision_guard
 
-run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "issue 261 protected connect failed"
+run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "network-resource-isolation protected connect failed"
 CONNECTED=true
 wait_for_active_tun protected_connected
 load_envelope_identity
@@ -326,4 +289,4 @@ sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}"
 FOREIGN_CREATED=false
 remove_override
 sudo -n rm -rf -- "${HOOK_DIR}"
-log "issue 261 installed-package privacy-envelope acceptance passed"
+log "network-resource-isolation installed-package privacy-envelope acceptance passed"

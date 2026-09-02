@@ -4,6 +4,16 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/evidence.sh
+source "${SCRIPT_DIR}/lib/evidence.sh"
+# shellcheck source=lib/host_observation.sh
+source "${SCRIPT_DIR}/lib/host_observation.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
+# shellcheck source=lib/profile_input.sh
+source "${SCRIPT_DIR}/lib/profile_input.sh"
+# shellcheck source=lib/readiness.sh
+source "${SCRIPT_DIR}/lib/readiness.sh"
 # shellcheck source=lib/tun_package_assertions.sh
 source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 
@@ -19,7 +29,7 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 fi
 if [[ "${PODLAZ_DEB_ARCH}" != "$(dpkg --print-architecture)" ]]; then
-  fail "issue 256 package acceptance requires a native .deb"
+  fail "package-lifecycle package acceptance requires a native .deb"
 fi
 
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
@@ -30,7 +40,7 @@ ORPHAN_SERVER_PRIORITY="9999"
 ORPHAN_TUN_PRIORITY="10000"
 ORPHAN_SERVER_TARGET="203.0.113.10"
 ORPHAN_ROUTE_TABLE="51820"
-BASELINE_VERSION="0.0.0~0issue256base"
+BASELINE_VERSION="0.0.0~0packagelifecyclebase"
 BASELINE_DEB_VERSION="${BASELINE_VERSION}-1"
 
 ACTIVE_CONNECTION=0
@@ -54,11 +64,7 @@ for sensitive in "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}"; d
 done
 
 write_evidence() {
-  local key="$1" value="$2"
-  case "${key}${value}" in
-    *$'\n'*|*$'\r'*) fail "invalid normalized issue 256 evidence" ;;
-  esac
-  printf '%s=%s\n' "${key}" "${value}" >>"${E2E_ARTIFACT_DIR}/issue256-acceptance.txt"
+  append_evidence_kv "${E2E_ARTIFACT_DIR}/package-lifecycle-acceptance.txt" "$1" "$2"
 }
 
 append_sensitive_value() {
@@ -66,48 +72,6 @@ append_sensitive_value() {
   [[ -n "${value}" ]] || return 0
   HOST_SENSITIVE_VALUES+="${value}"$'\n'
   mask_multiline_sensitive "${value}"
-}
-
-collect_host_sensitive_values() {
-  local values
-  values="$({
-    hostname -f 2>/dev/null || true
-    ip -o -4 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-    ip -o -6 addr show scope global 2>/dev/null | awk '{split($4, value, "/"); print value[1]; print $2}'
-    ip -4 route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) {if ($i=="via" || $i=="dev") print $(i+1)}}'
-  } | sed '/^[[:space:]]*$/d' | sort -u)"
-  append_sensitive_value "${values}"
-}
-
-first_profile_uri() {
-  if [[ -n "${PODLAZ_E2E_PROFILE_URI}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
-    return
-  fi
-  while IFS= read -r uri; do
-    [[ -n "${uri}" ]] || continue
-    printf '%s\n' "${uri}"
-    return
-  done <<<"${PODLAZ_E2E_PROFILE_URI_LIST}"
-}
-
-wait_for_daemon_socket() {
-  local attempt
-  for attempt in $(seq 1 150); do
-    if [[ -S "${DAEMON_SOCKET}" ]] && sudo -n systemctl is-active --quiet podlazd.service; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  fail "podlazd.service did not become ready"
-}
-
-run_installed_podlaz() {
-  sudo -n runuser -u "$(id -un)" -g podlaz -- env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
 }
 
 remove_orphan_routing_state() {
@@ -126,7 +90,7 @@ restore_current_package() {
   sudo -n apt install --allow-downgrades -y "./${DEV_DEB}" >/dev/null 2>&1 || return 1
   sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
   sudo -n systemctl restart podlazd.service >/dev/null 2>&1 || true
-  wait_for_daemon_socket
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 15
 }
 
 cleanup() {
@@ -152,19 +116,19 @@ trap cleanup EXIT
 
 capture_profile_import() {
   local uri="$1" out err
-  out="$(mktemp "${E2E_TMP_ROOT}/issue256-profile-import.stdout.XXXXXX")"
-  err="$(mktemp "${E2E_TMP_ROOT}/issue256-profile-import.stderr.XXXXXX")"
+  out="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-profile-import.stdout.XXXXXX")"
+  err="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-profile-import.stderr.XXXXXX")"
   if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
-    fail "issue 256 profile import failed"
+    fail "package-lifecycle profile import failed"
   fi
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  assert_nonempty "${PROFILE_ID}" "issue 256 imported profile id"
+  assert_nonempty "${PROFILE_ID}" "package-lifecycle imported profile id"
   rm -f -- "${out}" "${err}"
 }
 
 assert_recovery_plan_empty() {
   local phase="$1" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue256-recover-${phase}.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-recover-${phase}.XXXXXX")"
   if ! run_installed_podlaz recover --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "${phase}: recovery inspection failed"
@@ -221,7 +185,7 @@ check_direct_connectivity() {
 
 assert_reserved_priorities_absent() {
   local rules
-  rules="$(mktemp "${E2E_TMP_ROOT}/issue256-rules-clean.XXXXXX")"
+  rules="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-rules-clean.XXXXXX")"
   sudo -n ip -4 rule show >"${rules}"
   if grep -E "^(${ORPHAN_SERVER_PRIORITY}|${ORPHAN_TUN_PRIORITY}):" "${rules}" >/dev/null; then
     fail "reserved Podlaz rule priorities are already occupied before orphan fixture"
@@ -251,8 +215,8 @@ assert_no_mutation_beyond_orphan_rules() {
   if sudo -n test -d "${TRANSACTION_DIR}" && sudo -n find "${TRANSACTION_DIR}" -type f -name '*.json' -print -quit | grep -q .; then
     fail "${phase}: transaction state was created despite preflight block"
   fi
-  routes="$(mktemp "${E2E_TMP_ROOT}/issue256-orphan-routes.XXXXXX")"
-  route_err="$(mktemp "${E2E_TMP_ROOT}/issue256-orphan-routes.stderr.XXXXXX")"
+  routes="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-orphan-routes.XXXXXX")"
+  route_err="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-orphan-routes.stderr.XXXXXX")"
   set +e
   sudo -n ip -4 route show table "${ORPHAN_ROUTE_TABLE}" >"${routes}" 2>"${route_err}"
   local route_code=$?
@@ -274,7 +238,7 @@ run_orphan_routing_convergence_probe() {
   sudo -n ip -4 rule add priority "${ORPHAN_TUN_PRIORITY}" lookup "${ORPHAN_ROUTE_TABLE}"
   assert_no_mutation_beyond_orphan_rules orphan-fixture
 
-  output="$(mktemp "${E2E_TMP_ROOT}/issue256-orphan-connect.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-orphan-connect.XXXXXX")"
   set +e
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${output}" 2>&1
   code=$?
@@ -300,14 +264,14 @@ run_orphan_routing_convergence_probe() {
 verify_systemd_255() {
   local version
   version="$(systemctl --version | awk 'NR == 1 {print $2}')"
-  [[ "${version}" == "255" ]] || fail "issue 256 resolved acceptance requires systemd 255, got ${version:-unknown}"
+  [[ "${version}" == "255" ]] || fail "package-lifecycle resolved acceptance requires systemd 255, got ${version:-unknown}"
   write_evidence systemd_version_255 pass
 }
 
 wait_for_exact_exit_zero_missing_status() {
   local phase="$1" stdout_file stderr_file exit_code classification attempt
-  stdout_file="$(mktemp "${E2E_TMP_ROOT}/issue256-${phase}-resolved.stdout.XXXXXX")"
-  stderr_file="$(mktemp "${E2E_TMP_ROOT}/issue256-${phase}-resolved.stderr.XXXXXX")"
+  stdout_file="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-${phase}-resolved.stdout.XXXXXX")"
+  stderr_file="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-${phase}-resolved.stderr.XXXXXX")"
 
   for attempt in {1..100}; do
     set +e
@@ -356,7 +320,6 @@ def unique_tokens(value):
             seen.add(token)
             out.append(token)
     return out
-
 
 def reject():
     print("unexpected")
@@ -464,7 +427,7 @@ PY
 
 assert_doctor_resolved_clean() {
   local phase="$1" output code
-  output="$(mktemp "${E2E_TMP_ROOT}/issue256-doctor-${phase}.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-doctor-${phase}.XXXXXX")"
   set +e
   run_installed_podlaz doctor >"${output}" 2>&1
   code=$?
@@ -480,7 +443,7 @@ assert_doctor_resolved_clean() {
 
 run_clean_disconnect_resolved_probe() {
   local manifest
-  manifest="${E2E_TMP_ROOT}/issue256-clean-disconnect-network.json"
+  manifest="${E2E_TMP_ROOT}/package-lifecycle-clean-disconnect-network.json"
   verify_systemd_255
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "clean-disconnect: TUN connect failed"
   ACTIVE_CONNECTION=1
@@ -496,15 +459,15 @@ run_clean_disconnect_resolved_probe() {
 
 run_service_restart_probe() {
   local manifest retry_manifest
-  manifest="${E2E_TMP_ROOT}/issue256-service-restart-network.json"
-  retry_manifest="${E2E_TMP_ROOT}/issue256-service-restart-retry-network.json"
+  manifest="${E2E_TMP_ROOT}/package-lifecycle-service-restart-network.json"
+  retry_manifest="${E2E_TMP_ROOT}/package-lifecycle-service-restart-retry-network.json"
   run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "service-restart: TUN connect failed"
   ACTIVE_CONNECTION=1
   assert_tun_package_address_present service-restart
   snapshot_tun_network_manifest service-restart "${manifest}"
   sudo -n systemctl restart podlazd.service
   ACTIVE_CONNECTION=0
-  wait_for_daemon_socket
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 15
   assert_clean_after_owned_lifecycle service-restart "${manifest}"
   check_direct_connectivity service-restart
 
@@ -521,10 +484,10 @@ run_service_restart_probe() {
 build_baseline_package() {
   local base_dist current_version base_version
   BASE_COMMIT="${PODLAZ_E2E_BASE_SHA:-$(git merge-base HEAD origin/master)}"
-  [[ -n "${BASE_COMMIT}" ]] || fail "could not resolve issue 256 baseline commit"
+  [[ -n "${BASE_COMMIT}" ]] || fail "could not resolve package-lifecycle baseline commit"
   [[ "${BASE_COMMIT}" != "${BUILD_COMMIT}" ]] || fail "baseline commit equals current head; package upgrade regression would be meaningless"
-  BASE_WORKTREE="${E2E_TMP_ROOT}/issue256-baseline-worktree"
-  base_dist="${E2E_TMP_ROOT}/issue256-baseline-dist"
+  BASE_WORKTREE="${E2E_TMP_ROOT}/package-lifecycle-baseline-worktree"
+  base_dist="${E2E_TMP_ROOT}/package-lifecycle-baseline-dist"
   rm -rf -- "${BASE_WORKTREE}" "${base_dist}"
   git worktree add --detach "${BASE_WORKTREE}" "${BASE_COMMIT}" >/dev/null
   (
@@ -534,7 +497,7 @@ build_baseline_package() {
       PODLAZ_DIST_DIR="${base_dist}" \
       PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
       PODLAZ_COMMIT="${BASE_COMMIT}" \
-      PODLAZ_BUILT="issue256-baseline" \
+      PODLAZ_BUILT="package-lifecycle-baseline" \
       bash scripts/build-deb.sh >/dev/null
   )
   git worktree remove --force "${BASE_WORKTREE}" >/dev/null
@@ -550,7 +513,7 @@ build_baseline_package() {
 
 assert_installed_commit() {
   local phase="$1" expected="$2" output
-  output="$(mktemp "${E2E_TMP_ROOT}/issue256-version-${phase}.XXXXXX")"
+  output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-version-${phase}.XXXXXX")"
   /usr/bin/podlaz version >"${output}"
   grep -F "${expected}" "${output}" >/dev/null || fail "${phase}: installed CLI does not identify expected commit"
   rm -f -- "${output}"
@@ -558,12 +521,12 @@ assert_installed_commit() {
 
 run_package_upgrade_restart_probe() {
   local manifest retry_manifest
-  manifest="${E2E_TMP_ROOT}/issue256-package-upgrade-network.json"
-  retry_manifest="${E2E_TMP_ROOT}/issue256-package-upgrade-retry-network.json"
+  manifest="${E2E_TMP_ROOT}/package-lifecycle-package-upgrade-network.json"
+  retry_manifest="${E2E_TMP_ROOT}/package-lifecycle-package-upgrade-retry-network.json"
 
   sudo -n apt install --allow-downgrades -y "${BASE_DEB}" >/dev/null
   sudo -n systemctl daemon-reload
-  wait_for_daemon_socket
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 15
   assert_installed_commit package-baseline "${BASE_COMMIT}"
   assert_recovery_plan_empty package-baseline-precondition
 
@@ -575,7 +538,7 @@ run_package_upgrade_restart_probe() {
   sudo -n apt install -y "./${DEV_DEB}" >/dev/null
   ACTIVE_CONNECTION=0
   sudo -n systemctl daemon-reload
-  wait_for_daemon_socket
+  wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 15
   assert_installed_commit package-upgraded "${BUILD_COMMIT}"
   assert_clean_after_owned_lifecycle package-upgrade "${manifest}"
   check_direct_connectivity package-upgrade
@@ -590,12 +553,12 @@ run_package_upgrade_restart_probe() {
   write_evidence active_tun_package_upgrade_restart pass
 }
 
-setup_isolated_xdg "issue256-package-acceptance"
-collect_host_sensitive_values
-: >"${E2E_ARTIFACT_DIR}/issue256-acceptance.txt"
+setup_isolated_xdg "package-lifecycle-package-acceptance"
+append_sensitive_value "$(observe_host_sensitive_values)"
+: >"${E2E_ARTIFACT_DIR}/package-lifecycle-acceptance.txt"
 
 [[ -f "${DEV_DEB}" ]] || fail "current package artifact is missing: ${DEV_DEB}"
-wait_for_daemon_socket
+wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 15
 assert_installed_commit current-precondition "${BUILD_COMMIT}"
 
 # shellcheck disable=SC1091
@@ -604,8 +567,8 @@ go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
 export PATH="$(go env GOPATH)/bin:${PATH}"
 build_baseline_package
 
-PRIMARY_URI="$(first_profile_uri)"
-assert_nonempty "${PRIMARY_URI}" "issue 256 primary profile URI"
+PRIMARY_URI="$(first_configured_profile_uri)"
+assert_nonempty "${PRIMARY_URI}" "package-lifecycle primary profile URI"
 capture_profile_import "${PRIMARY_URI}"
 
 run_orphan_routing_convergence_probe
@@ -615,10 +578,10 @@ run_package_upgrade_restart_probe
 check_direct_connectivity final
 
 assert_artifacts_do_not_contain_sensitive_values \
-  "issue256-package-acceptance" \
+  "package-lifecycle-package-acceptance" \
   "${PODLAZ_E2E_PROFILE_URI}" \
   "${PODLAZ_E2E_PROFILE_URI_LIST}" \
   "${HOST_SENSITIVE_VALUES}"
 
-write_evidence issue256_package_acceptance pass
-log "issue 256 installed-package acceptance completed"
+write_evidence package_lifecycle_package_acceptance pass
+log "package-lifecycle installed-package acceptance completed"
