@@ -27,8 +27,9 @@ new_fixture() {
 expect_pass() {
   local name="$1"
   local fixture="$2"
+  shift 2
   local output
-  if ! output="$(bash "${guard}" "${fixture}" 2>&1)"; then
+  if ! output="$(bash "${guard}" "$@" "${fixture}" 2>&1)"; then
     printf '%s\n' "${output}" >&2
     fail "${name}: expected success"
   fi
@@ -39,8 +40,9 @@ expect_fail() {
   local name="$1"
   local fixture="$2"
   local expected="$3"
+  shift 3
   local output
-  if output="$(bash "${guard}" "${fixture}" 2>&1)"; then
+  if output="$(bash "${guard}" "$@" "${fixture}" 2>&1)"; then
     printf '%s\n' "${output}" >&2
     fail "${name}: expected failure"
   fi
@@ -87,7 +89,8 @@ fixture="$(new_fixture)"; fixtures+=("${fixture}")
 mkdir -p "${fixture}/docs/superpowers/plans"
 printf '# Temporary plan\n' > "${fixture}/docs/superpowers/plans/active.md"
 git -C "${fixture}" add docs/superpowers/plans/active.md
-expect_fail 'superpowers artifacts' "${fixture}" 'transient superpowers artifact is not allowed:'
+expect_pass 'active superpowers artifacts' "${fixture}"
+expect_fail 'final superpowers artifacts' "${fixture}" 'transient superpowers artifact is not allowed:' --final
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
 printf '\nSee [retired docs](./state-and-security.md).\n' >> "${fixture}/docs/cli.md"
