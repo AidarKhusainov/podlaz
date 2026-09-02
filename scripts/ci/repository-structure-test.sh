@@ -63,7 +63,7 @@ fixture="$(new_fixture)"; fixtures+=("${fixture}")
 expect_pass 'allowed repository' "${fixture}"
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
-git -C "${fixture}" rm -q docs/cli.md
+git -C "${fixture}" rm -q -f docs/cli.md
 expect_fail 'missing required knowledge surface' "${fixture}" 'required knowledge surface is missing: docs/cli.md'
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
