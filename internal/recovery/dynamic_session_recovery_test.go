@@ -24,7 +24,7 @@ func TestNetworkSessionCleanupExecutorRecoversExactDynamicRoutingAllocation(t *t
 
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	now := time.Unix(1_700_000_000, 0).UTC()
-	tx := txstate.NewTransaction("issue260-dynamic-routing", "profile-1", planner.ModeTun, now)
+	tx := txstate.NewTransaction("dynamic-routing", "profile-1", planner.ModeTun, now)
 	tx.State = txstate.TransactionCommitted
 	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{
 		Family:        "ipv4",
@@ -81,7 +81,7 @@ func TestNetworkSessionCleanupExecutorDoesNotAuthorizeDynamicTupleWithoutApplied
 	runner := &recordingRunner{paths: map[string]string{"ip": "/usr/sbin/ip"}}
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
 	now := time.Unix(1_700_000_000, 0).UTC()
-	tx := txstate.NewTransaction("issue260-no-applied-proof", "profile-1", planner.ModeTun, now)
+	tx := txstate.NewTransaction("dynamic-routing-no-applied-proof", "profile-1", planner.ModeTun, now)
 	tx.State = txstate.TransactionCommitted
 	tx.DesiredPlan.TUNAddress = txstate.TUNAddressDesiredState{Family: "ipv4", InterfaceName: managedInterface, CIDR: "198.18.0.2/32", Scope: "global", Owner: netexecutor.OwnerTunAddress}
 	tx.DesiredPlan.Routes = []txstate.RoutePlan{{Kind: "route", Table: "51821", CIDR: planner.IPv4DefaultRoute, Dev: managedInterface, Owner: netexecutor.OwnerRoute, Operation: "add"}}
