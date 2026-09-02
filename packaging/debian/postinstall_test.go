@@ -185,7 +185,7 @@ func newPostinstallHarness(t *testing.T, opts postinstallOptions) postinstallHar
 	}
 	loadedRestartSignal := opts.loadedRestartSignal
 	if loadedRestartSignal == "" {
-		loadedRestartSignal = "SIGUSR1"
+		loadedRestartSignal = "10"
 	}
 	serviceResult := opts.serviceResult
 	if serviceResult == "" {
