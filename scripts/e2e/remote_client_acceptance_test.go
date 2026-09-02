@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue254RemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testing.T) {
-	data, err := os.ReadFile("issue254-remote-client-acceptance.sh")
+func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testing.T) {
+	data, err := os.ReadFile("remote-client-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue 254 remote-client acceptance: %v", err)
+		t.Fatalf("read remote-client acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -23,7 +23,7 @@ func TestIssue254RemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(
 		"proxy_status_doctor_recover_consistent",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("issue 254 acceptance lost %q", required)
+			t.Fatalf("remote-client acceptance lost %q", required)
 		}
 	}
 	for _, forbidden := range []string{
@@ -35,17 +35,17 @@ func TestIssue254RemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(
 		`-G "${LOG_READER_ACCESS_GROUP}"`,
 	} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("issue 254 ordinary-user acceptance must preserve the login identity without granting or rewriting groups: %q", forbidden)
+			t.Fatalf("ordinary-user acceptance must preserve the login identity without granting or rewriting groups: %q", forbidden)
 		}
 	}
 }
 
-func TestTunPackageConvergenceRunsIssue254RemoteClientAcceptance(t *testing.T) {
+func TestTunPackageConvergenceRunsRemoteClientAcceptance(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
 	if err != nil {
 		t.Fatalf("read TUN package convergence workflow: %v", err)
 	}
-	if !strings.Contains(string(data), "bash scripts/e2e/issue254-remote-client-acceptance.sh") {
-		t.Fatal("TUN package convergence must run issue 254 remote-client acceptance")
+	if !strings.Contains(string(data), "bash scripts/e2e/remote-client-acceptance.sh") {
+		t.Fatal("TUN package convergence must run remote-client acceptance")
 	}
 }

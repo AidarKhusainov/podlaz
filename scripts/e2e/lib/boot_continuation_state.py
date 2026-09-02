@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Private-state fixture helpers for Issue #263 installed-package acceptance.
+"""Private-state fixture helpers for boot-continuation package acceptance.
 
 The helper never renders profile/configuration material. It only changes the
 manifest's configured_boot_id to simulate a later boot on a self-hosted runner
@@ -14,9 +14,10 @@ import os
 import pathlib
 import sys
 import tempfile
+from typing import NoReturn
 
 
-def fail(message: str) -> "NoReturn":
+def fail(message: str) -> NoReturn:
     raise SystemExit(message)
 
 
@@ -94,7 +95,7 @@ def attempt_control_fingerprint(path: pathlib.Path) -> None:
 
 def main(argv: list[str]) -> None:
     if len(argv) < 3:
-        fail("usage: issue263_state.py <command> <path> [args]")
+        fail("usage: boot_continuation_state.py <command> <path> [args]")
     command = argv[1]
     path = pathlib.Path(argv[2])
     if command == "make-manifest-eligible" and len(argv) == 4:
@@ -107,7 +108,7 @@ def main(argv: list[str]) -> None:
     if command == "attempt-control-fingerprint" and len(argv) == 3:
         attempt_control_fingerprint(path)
         return
-    fail("invalid issue263_state.py invocation")
+    fail("invalid boot_continuation_state.py invocation")
 
 
 if __name__ == "__main__":

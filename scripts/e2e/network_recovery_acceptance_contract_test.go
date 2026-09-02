@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue259CandidateUpgradeDoesNotManuallyStartService(t *testing.T) {
-	data, err := os.ReadFile("issue259-package-acceptance.sh")
+func TestNetworkRecoveryCandidateUpgradeDoesNotManuallyStartService(t *testing.T) {
+	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue259 acceptance: %v", err)
+		t.Fatalf("read network-recovery acceptance: %v", err)
 	}
 	script := string(data)
 	candidate := shellFunctionBody(t, script, "install_candidate_package")
@@ -26,10 +26,10 @@ func TestIssue259CandidateUpgradeDoesNotManuallyStartService(t *testing.T) {
 	}
 }
 
-func TestIssue259BaselineSetupMayStartServiceExplicitly(t *testing.T) {
-	data, err := os.ReadFile("issue259-package-acceptance.sh")
+func TestNetworkRecoveryBaselineSetupMayStartServiceExplicitly(t *testing.T) {
+	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue259 acceptance: %v", err)
+		t.Fatalf("read network-recovery acceptance: %v", err)
 	}
 	baseline := shellFunctionBody(t, string(data), "install_setup_package")
 	if !strings.Contains(baseline, "systemctl start") {

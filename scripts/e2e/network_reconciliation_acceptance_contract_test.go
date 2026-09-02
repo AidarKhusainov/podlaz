@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue262PackageAcceptanceCoversEvidenceDrivenReconciliation(t *testing.T) {
-	data, err := os.ReadFile("issue262-package-acceptance.sh")
+func TestNetworkReconciliationPackageAcceptanceCoversEvidenceDrivenReconciliation(t *testing.T) {
+	data, err := os.ReadFile("network-reconciliation-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue262 acceptance: %v", err)
+		t.Fatalf("read network-reconciliation acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -30,15 +30,15 @@ func TestIssue262PackageAcceptanceCoversEvidenceDrivenReconciliation(t *testing.
 		"nmcli connection up",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("issue 262 acceptance must contain %q", required)
+			t.Fatalf("network-reconciliation acceptance must contain %q", required)
 		}
 	}
 }
 
-func TestIssue262PackageAcceptanceDoesNotRepairPodlazStateManually(t *testing.T) {
-	data, err := os.ReadFile("issue262-package-acceptance.sh")
+func TestNetworkReconciliationPackageAcceptanceDoesNotRepairPodlazStateManually(t *testing.T) {
+	data, err := os.ReadFile("network-reconciliation-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue262 acceptance: %v", err)
+		t.Fatalf("read network-reconciliation acceptance: %v", err)
 	}
 	lower := strings.ToLower(string(data))
 	for _, forbidden := range []string{
@@ -51,25 +51,25 @@ func TestIssue262PackageAcceptanceDoesNotRepairPodlazStateManually(t *testing.T)
 		"systemctl restart systemd-resolved",
 	} {
 		if strings.Contains(lower, forbidden) {
-			t.Fatalf("issue 262 success path must not contain manual Podlaz repair %q", forbidden)
+			t.Fatalf("network-reconciliation success path must not contain manual Podlaz repair %q", forbidden)
 		}
 	}
 }
 
-func TestIssue262WorkflowRunsInstalledPackageAcceptance(t *testing.T) {
+func TestNetworkReconciliationWorkflowRunsInstalledPackageAcceptance(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
 	if err != nil {
 		t.Fatalf("read package convergence workflow: %v", err)
 	}
 	workflow := string(data)
 	for _, required := range []string{
-		"Run issue 262 evidence-driven reconciliation acceptance",
+		"Run evidence-driven reconciliation acceptance",
 		"PODLAZ_E2E_ALLOW_HOST_CHURN: 'true'",
-		"bash scripts/e2e/issue262-package-acceptance.sh",
+		"bash scripts/e2e/network-reconciliation-package-acceptance.sh",
 		"timeout-minutes: 60",
 	} {
 		if !strings.Contains(workflow, required) {
-			t.Fatalf("issue 262 workflow wiring must contain %q", required)
+			t.Fatalf("network-reconciliation workflow wiring must contain %q", required)
 		}
 	}
 }

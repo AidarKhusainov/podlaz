@@ -46,16 +46,16 @@ jobs:
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/tun-package-convergence.sh
 
-      - name: Run issue 256 installed-package acceptance
+      - name: Run package lifecycle acceptance
         timeout-minutes: 60
         shell: bash
         run: |
           sudo -n systemctl daemon-reload
           sudo -n systemctl reset-failed podlazd.service || true
           sudo -n systemctl start podlazd.service
-          bash scripts/e2e/issue256-package-acceptance.sh
+          bash scripts/e2e/package-lifecycle-acceptance.sh
 
-      - name: Download latest released package for issue 259
+      - name: Download latest released package for network recovery
         timeout-minutes: 10
         shell: bash
         env:
@@ -63,7 +63,7 @@ jobs:
         run: |
           command -v gh >/dev/null || { echo "gh CLI is required" >&2; exit 1; }
           arch="$(dpkg --print-architecture)"
-          release_dir="${RUNNER_TEMP}/podlaz-issue259-release"
+          release_dir="${RUNNER_TEMP}/podlaz-network-recovery-release"
           rm -rf "${release_dir}"
           mkdir -p "${release_dir}"
           gh release download \
@@ -77,57 +77,57 @@ jobs:
           fi
           echo "PODLAZ_E2E_BASE_DEB=${release_debs[0]}" >>"${GITHUB_ENV}"
 
-      - name: Run issue 259 network-session continuity acceptance
+      - name: Run network-session continuity acceptance
         timeout-minutes: 75
         shell: bash
-        run: bash scripts/e2e/issue259-package-acceptance.sh
+        run: bash scripts/e2e/network-recovery-package-acceptance.sh
 
-      - name: Run issue 260 coexistence acceptance
+      - name: Run session privacy coexistence acceptance
         timeout-minutes: 30
         shell: bash
-        run: bash scripts/e2e/issue260-package-acceptance.sh
+        run: bash scripts/e2e/session-privacy-package-acceptance.sh
 
-      - name: Run issue 261 privacy-envelope acceptance
+      - name: Run network resource isolation acceptance
         timeout-minutes: 45
         shell: bash
-        run: bash scripts/e2e/issue261-package-acceptance.sh
+        run: bash scripts/e2e/network-resource-isolation-package-acceptance.sh
 
-      - name: Run issue 262 evidence-driven reconciliation acceptance
+      - name: Run evidence-driven reconciliation acceptance
         timeout-minutes: 60
         shell: bash
         env:
           PODLAZ_E2E_ALLOW_HOST_CHURN: 'true'
-        run: bash scripts/e2e/issue262-package-acceptance.sh
+        run: bash scripts/e2e/network-reconciliation-package-acceptance.sh
 
-      - name: Run issue 263 boot autostart acceptance
+      - name: Run boot continuation acceptance
         timeout-minutes: 90
         shell: bash
-        run: bash scripts/e2e/issue263-package-acceptance.sh
+        run: bash scripts/e2e/boot-continuation-package-acceptance.sh
 
-      - name: Run issue 241 installed-package acceptance
+      - name: Run installed-package failure acceptance
         timeout-minutes: 30
         shell: bash
-        run: bash scripts/e2e/issue241-package-acceptance.sh
+        run: bash scripts/e2e/package-failure-package-acceptance.sh
 
-      - name: Run issue 243 exit-0 resolved acceptance
+      - name: Run protected-gateway acceptance
         timeout-minutes: 15
         shell: bash
-        run: bash scripts/e2e/issue243-package-acceptance.sh
+        run: bash scripts/e2e/protected-gateway-package-acceptance.sh
 
-      - name: Run issue 247 diagnostics acceptance
+      - name: Run stale-link diagnostics acceptance
         timeout-minutes: 15
         shell: bash
-        run: bash scripts/e2e/issue247-package-acceptance.sh
+        run: bash scripts/e2e/stale-link-package-acceptance.sh
 
-      - name: Run issue 247 strict log-window acceptance
+      - name: Run strict log-window acceptance
         timeout-minutes: 5
         shell: bash
-        run: bash scripts/e2e/issue247-log-window-acceptance.sh
+        run: bash scripts/e2e/log-window-acceptance.sh
 
-      - name: Run issue 254 remote-client acceptance
+      - name: Run remote-client acceptance
         timeout-minutes: 15
         shell: bash
-        run: bash scripts/e2e/issue254-remote-client-acceptance.sh
+        run: bash scripts/e2e/remote-client-acceptance.sh
 
       - name: Recover and verify clean host state
         id: cleanup

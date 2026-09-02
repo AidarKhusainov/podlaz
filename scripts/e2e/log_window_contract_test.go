@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue247StrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *testing.T) {
-	data, err := os.ReadFile("issue247-log-window-acceptance.sh")
+func TestStrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *testing.T) {
+	data, err := os.ReadFile("log-window-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read strict issue247 log-window acceptance: %v", err)
+		t.Fatalf("read strict log-window acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -22,7 +22,7 @@ func TestIssue247StrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *tes
 		"short_window_excludes_old_visible_marker",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("strict issue247 log-window acceptance lost %q", required)
+			t.Fatalf("strict log-window acceptance lost %q", required)
 		}
 	}
 
@@ -33,13 +33,13 @@ func TestIssue247StrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *tes
 	}
 }
 
-func TestTunPackageConvergenceRunsStrictIssue247LogWindowAcceptance(t *testing.T) {
+func TestTunPackageConvergenceRunsStrictLogWindowAcceptance(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
 	if err != nil {
 		t.Fatalf("read TUN package convergence workflow: %v", err)
 	}
 	workflow := string(data)
-	if !strings.Contains(workflow, "bash scripts/e2e/issue247-log-window-acceptance.sh") {
-		t.Fatal("TUN package convergence must run the strict issue247 log-window acceptance")
+	if !strings.Contains(workflow, "bash scripts/e2e/log-window-acceptance.sh") {
+		t.Fatal("TUN package convergence must run the strict log-window acceptance")
 	}
 }

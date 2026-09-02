@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue260AcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAdapters(t *testing.T) {
-	data, err := os.ReadFile("issue260-package-acceptance.sh")
+func TestSessionPrivacyAcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAdapters(t *testing.T) {
+	data, err := os.ReadFile("session-privacy-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue260 acceptance: %v", err)
+		t.Fatalf("read session-privacy acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -23,20 +23,20 @@ func TestIssue260AcceptanceOccupiesHistoricalResourcesWithoutForeignVPNAdapters(
 		"assert_foreign_fixture after_disconnect",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("issue 260 acceptance must contain %q", required)
+			t.Fatalf("session-privacy acceptance must contain %q", required)
 		}
 	}
 	for _, forbidden := range []string{"nmcli connection down", "wireguard", "openvpn", "mullvad", "protonvpn", "throne"} {
 		if strings.Contains(strings.ToLower(script), forbidden) {
-			t.Fatalf("issue 260 acceptance must not contain product-specific foreign VPN control %q", forbidden)
+			t.Fatalf("session-privacy acceptance must not contain product-specific foreign VPN control %q", forbidden)
 		}
 	}
 }
 
-func TestIssue260AcceptanceProvesPersistedAllocationAndBaselineSurvival(t *testing.T) {
-	data, err := os.ReadFile("issue260-package-acceptance.sh")
+func TestSessionPrivacyAcceptanceProvesPersistedAllocationAndBaselineSurvival(t *testing.T) {
+	data, err := os.ReadFile("session-privacy-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue260 acceptance: %v", err)
+		t.Fatalf("read session-privacy acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{

@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue263PackageAcceptanceCoversBootAutostartLifecycle(t *testing.T) {
-	data, err := os.ReadFile("issue263-package-acceptance.sh")
+func TestBootContinuationPackageAcceptanceCoversBootAutostartLifecycle(t *testing.T) {
+	data, err := os.ReadFile("boot-continuation-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue263 acceptance: %v", err)
+		t.Fatalf("read boot-continuation acceptance: %v", err)
 	}
 	script := string(data)
 	for _, required := range []string{
@@ -22,36 +22,36 @@ func TestIssue263PackageAcceptanceCoversBootAutostartLifecycle(t *testing.T) {
 		"terminal_no_same_boot_retry",
 		"autostart disable",
 		"autostart enable --mode tun",
-		"issue263_restart_daemon",
+		"boot_continuation_restart_daemon",
 		"dpkg -i",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("issue 263 acceptance must contain %q", required)
+			t.Fatalf("boot-continuation acceptance must contain %q", required)
 		}
 	}
 }
 
-func TestIssue263RestartHelperUsesPackagedSystemdRestart(t *testing.T) {
-	data, err := os.ReadFile("lib/issue263.sh")
+func TestBootContinuationRestartHelperUsesPackagedSystemdRestart(t *testing.T) {
+	data, err := os.ReadFile("lib/boot_continuation.sh")
 	if err != nil {
-		t.Fatalf("read issue263 helper: %v", err)
+		t.Fatalf("read boot-continuation helper: %v", err)
 	}
 	helper := string(data)
 	for _, required := range []string{
-		"issue263_restart_daemon()",
+		"boot_continuation_restart_daemon()",
 		"systemctl restart podlazd.service",
-		"issue263_wait_for_daemon",
+		"boot_continuation_wait_for_daemon",
 	} {
 		if !strings.Contains(helper, required) {
-			t.Fatalf("issue 263 restart helper must contain %q", required)
+			t.Fatalf("boot-continuation restart helper must contain %q", required)
 		}
 	}
 }
 
-func TestIssue263PackageAcceptanceAvoidsManualNetworkRepair(t *testing.T) {
-	data, err := os.ReadFile("issue263-package-acceptance.sh")
+func TestBootContinuationPackageAcceptanceAvoidsManualNetworkRepair(t *testing.T) {
+	data, err := os.ReadFile("boot-continuation-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue263 acceptance: %v", err)
+		t.Fatalf("read boot-continuation acceptance: %v", err)
 	}
 	lower := strings.ToLower(string(data))
 	for _, forbidden := range []string{
@@ -64,24 +64,24 @@ func TestIssue263PackageAcceptanceAvoidsManualNetworkRepair(t *testing.T) {
 		"systemctl restart systemd-resolved",
 	} {
 		if strings.Contains(lower, forbidden) {
-			t.Fatalf("issue 263 acceptance success path must not contain manual repair %q", forbidden)
+			t.Fatalf("boot-continuation acceptance success path must not contain manual repair %q", forbidden)
 		}
 	}
 }
 
-func TestIssue263WorkflowRunsInstalledPackageAcceptance(t *testing.T) {
+func TestBootContinuationWorkflowRunsInstalledPackageAcceptance(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
 	if err != nil {
 		t.Fatalf("read package convergence workflow: %v", err)
 	}
 	workflow := string(data)
 	for _, required := range []string{
-		"Run issue 263 boot autostart acceptance",
-		"bash scripts/e2e/issue263-package-acceptance.sh",
+		"Run boot continuation acceptance",
+		"bash scripts/e2e/boot-continuation-package-acceptance.sh",
 		"timeout-minutes: 90",
 	} {
 		if !strings.Contains(workflow, required) {
-			t.Fatalf("issue 263 workflow wiring must contain %q", required)
+			t.Fatalf("boot-continuation workflow wiring must contain %q", required)
 		}
 	}
 }

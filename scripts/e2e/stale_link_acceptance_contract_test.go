@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-func TestIssue247PackageAcceptanceCoversRequiredLifecycleAndLogsCases(t *testing.T) {
-	data, err := os.ReadFile("issue247-package-acceptance.sh")
+func TestStaleLinkPackageAcceptanceCoversRequiredLifecycleAndLogsCases(t *testing.T) {
+	data, err := os.ReadFile("stale-link-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue247 acceptance: %v", err)
+		t.Fatalf("read stale-link acceptance: %v", err)
 	}
 	script := string(data)
 
@@ -26,21 +26,21 @@ func TestIssue247PackageAcceptanceCoversRequiredLifecycleAndLogsCases(t *testing
 		"finish_exit_trap",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("issue247 acceptance lost required contract %q", required)
+			t.Fatalf("stale-link acceptance lost required contract %q", required)
 		}
 	}
 
 	mismatch := strings.LastIndex(script, "assert_active_nft_mismatch_warns")
 	disconnect := strings.Index(script[mismatch:], "run_installed_podlaz_bounded 60s disconnect")
 	if mismatch < 0 || disconnect < 0 {
-		t.Fatal("issue247 acceptance must exercise active mismatch before disconnect")
+		t.Fatal("stale-link acceptance must exercise active mismatch before disconnect")
 	}
 }
 
-func TestIssue247AcceptanceWritesPassOnlyFromCleanup(t *testing.T) {
-	data, err := os.ReadFile("issue247-package-acceptance.sh")
+func TestStaleLinkAcceptanceWritesPassOnlyFromCleanup(t *testing.T) {
+	data, err := os.ReadFile("stale-link-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read issue247 acceptance: %v", err)
+		t.Fatalf("read stale-link acceptance: %v", err)
 	}
 	script := string(data)
 	if count := strings.Count(script, "write_evidence acceptance pass"); count != 1 {
