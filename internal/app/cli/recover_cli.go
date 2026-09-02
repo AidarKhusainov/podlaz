@@ -20,6 +20,16 @@ type recoverArgs struct {
 	json    bool
 }
 
+type recoverPlanView struct {
+	recovery.PlanResult
+	NetworkSession *api.NetworkSessionRecoveryState
+}
+
+type recoverExecuteView struct {
+	recovery.ExecuteResult
+	NetworkSession *api.NetworkSessionRecoveryState
+}
+
 func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
 	if isHelp(args) {
 		printRecoverHelp(stdout)
@@ -105,27 +115,30 @@ func isStdinTerminal() bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func runRecover(ctx context.Context, opts options) recovery.PlanResult {
+func runRecover(ctx context.Context, opts options) recoverPlanView {
 	if opts.recover != nil {
-		return opts.recover(ctx)
+		return recoverPlanView{PlanResult: opts.recover(ctx)}
 	}
 	startup, ok := daemonStartupRecoverPlan(ctx)
 	if ok {
 		return startup
 	}
-	return recovery.Plan(ctx)
+	return recoverPlanView{PlanResult: recovery.Plan(ctx)}
 }
 
-func daemonStartupRecoverPlan(ctx context.Context) (recovery.PlanResult, bool) {
+func daemonStartupRecoverPlan(ctx context.Context) (recoverPlanView, bool) {
 	socketPath := api.SocketPath("")
 	if _, err := os.Stat(socketPath); err != nil {
-		return recovery.PlanResult{}, false
+		return recoverPlanView{}, false
 	}
 	response, err := (client.StatusClient{SocketPath: socketPath}).Status(ctx)
 	if err != nil || response.StartupScan == nil {
-		return recovery.PlanResult{}, false
+		return recoverPlanView{}, false
 	}
-	return recoveryPlanFromStartupScan(*response.StartupScan), true
+	return recoverPlanView{
+		PlanResult:      recoveryPlanFromStartupScan(*response.StartupScan),
+		NetworkSession: api.CloneNetworkSessionRecoveryState(response.StartupScan.NetworkSession),
+	}, true
 }
 
 func recoveryPlanFromStartupScan(scan api.StartupScanStatus) recovery.PlanResult {
@@ -140,25 +153,90 @@ func recoveryPlanFromStartupScan(scan api.StartupScanStatus) recovery.PlanResult
 	return recovery.PlanResult{Candidates: candidates, Warnings: warnings}
 }
 
-func runRecoverExecute(ctx context.Context, opts options) (recovery.ExecuteResult, error) {
+func runRecoverExecute(ctx context.Context, opts options) (recoverExecuteView, error) {
 	if opts.recoverExecute != nil {
-		return opts.recoverExecute(ctx)
+		result, err := opts.recoverExecute(ctx)
+		return recoverExecuteView{ExecuteResult: result}, err
 	}
 	response, err := (client.RecoveryClient{}).Recover(ctx)
 	if err != nil {
-		return recovery.ExecuteResult{}, err
+		return recoverExecuteView{}, err
 	}
-	return recoveryResultFromAPI(response), nil
+	return recoverExecuteView{
+		ExecuteResult:  recoveryResultFromAPI(response),
+		NetworkSession: api.CloneNetworkSessionRecoveryState(response.NetworkSession),
+	}, nil
 }
 
-func recoverPlanJSON(plan recovery.PlanResult) map[string]any {
+func (p recoverPlanView) String() string {
+	base := p.PlanResult.String()
+	if p.NetworkSession == nil {
+		return base
+	}
+	base = strings.Replace(base, "No podlaz-owned recovery candidates found.\n", "", 1)
+	return strings.Replace(base, "No changes were applied.\n", networkSessionRecoveryHuman(p.NetworkSession)+"No changes were applied.\n", 1)
+}
+
+func (r recoverExecuteView) String() string {
+	base := r.ExecuteResult.String()
+	if r.NetworkSession == nil {
+		return base
+	}
+	base = strings.Replace(base, "No podlaz-owned recovery candidates found.\n", "", 1)
+	return strings.Replace(base, "No non-podlaz resources were touched.\n", networkSessionRecoveryHuman(r.NetworkSession)+"No non-podlaz resources were touched.\n", 1)
+}
+
+func (r recoverExecuteView) HasIncompleteCleanup() bool {
+	if r.ExecuteResult.HasIncompleteCleanup() {
+		return true
+	}
+	if r.NetworkSession == nil {
+		return false
+	}
+	return r.NetworkSession.StartupGate == api.NetworkSessionStartupGateBlocked ||
+		r.NetworkSession.NextAction != api.NetworkSessionRecoveryActionNone
+}
+
+func networkSessionRecoveryHuman(state *api.NetworkSessionRecoveryState) string {
+	if state == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Network Session authority: %s\n", render.Redact(state.Authority))
+	fmt.Fprintf(&b, "Intent: %s\n", render.Redact(state.Intent))
+	fmt.Fprintf(&b, "Startup gate: %s\n", render.Redact(state.StartupGate))
+	if state.ResumeStage != "" {
+		fmt.Fprintf(&b, "Resume stage: %s\n", render.Redact(state.ResumeStage))
+	}
+	fmt.Fprintf(&b, "Last resume outcome: %s\n", render.Redact(state.LastResumeOutcome))
+	if state.LastTUNFailurePhase != "" {
+		fmt.Fprintf(&b, "TUN failure phase: %s\n", render.Redact(state.LastTUNFailurePhase))
+	}
+	if state.RollbackStatus != "" {
+		fmt.Fprintf(&b, "Rollback status: %s\n", render.Redact(state.RollbackStatus))
+	}
+	fmt.Fprintf(&b, "Transaction present: %t\n", state.TransactionPresent)
+	fmt.Fprintf(&b, "Legacy migration: %t\n", state.LegacyMigration)
+	fmt.Fprintf(&b, "Cleanup authority: %s\n", render.Redact(state.CleanupAuthority))
+	fmt.Fprintf(&b, "Next action: %s\n", render.Redact(state.NextAction))
+	return b.String()
+}
+
+func recoverPlanJSON(plan recoverPlanView) map[string]any {
+	recoveryPayload := redactedRecoveryPlan(plan.PlanResult)
+	if plan.NetworkSession != nil {
+		recoveryPayload["network_session"] = redactedNetworkSessionRecoveryState(plan.NetworkSession)
+	}
 	payload := okJSON(map[string]any{
 		"mode":     "dry-run",
-		"recovery": redactedRecoveryPlan(plan),
+		"recovery": recoveryPayload,
 	})
 	var warnings []string
 	if len(plan.Candidates) > 0 {
 		warnings = append(warnings, "recovery candidates require cleanup")
+	}
+	if plan.NetworkSession != nil {
+		warnings = append(warnings, "network session recovery authority requires convergence")
 	}
 	if len(plan.Warnings) > 0 {
 		warnings = append(warnings, "recovery inspection is incomplete")
@@ -170,7 +248,7 @@ func recoverPlanJSON(plan recovery.PlanResult) map[string]any {
 	return payload
 }
 
-func recoverExecuteJSON(result recovery.ExecuteResult) map[string]any {
+func recoverExecuteJSON(result recoverExecuteView) map[string]any {
 	status := "ok"
 	errorsOut := []string{}
 	if result.HasFailures() {
@@ -180,7 +258,7 @@ func recoverExecuteJSON(result recovery.ExecuteResult) map[string]any {
 		status = "warn"
 		errorsOut = append(errorsOut, "recover completed with incomplete cleanup")
 	}
-	return map[string]any{
+	payload := map[string]any{
 		"schema_version": "v1",
 		"status":         status,
 		"warnings":       redactedRecoveryWarnings(result.Warnings),
@@ -188,6 +266,10 @@ func recoverExecuteJSON(result recovery.ExecuteResult) map[string]any {
 		"mode":           "execute",
 		"recovery":       redactedCleanupResults(result.Results),
 	}
+	if result.NetworkSession != nil {
+		payload["network_session"] = redactedNetworkSessionRecoveryState(result.NetworkSession)
+	}
+	return payload
 }
 
 func recoveryResultFromAPI(response api.RecoveryResponse) recovery.ExecuteResult {
@@ -225,6 +307,25 @@ func redactedRecoveryPlan(plan recovery.PlanResult) map[string]any {
 	return map[string]any{
 		"candidates": redactedRecoveryCandidates(plan.Candidates),
 		"warnings":   redactedRecoveryWarnings(plan.Warnings),
+	}
+}
+
+func redactedNetworkSessionRecoveryState(state *api.NetworkSessionRecoveryState) map[string]any {
+	if state == nil {
+		return nil
+	}
+	return map[string]any{
+		"authority":              render.Redact(state.Authority),
+		"intent":                 render.Redact(state.Intent),
+		"startup_gate":           render.Redact(state.StartupGate),
+		"resume_stage":           render.Redact(state.ResumeStage),
+		"last_resume_outcome":    render.Redact(state.LastResumeOutcome),
+		"last_tun_failure_phase": render.Redact(state.LastTUNFailurePhase),
+		"rollback_status":        render.Redact(state.RollbackStatus),
+		"transaction_present":    state.TransactionPresent,
+		"legacy_migration":       state.LegacyMigration,
+		"cleanup_authority":      render.Redact(state.CleanupAuthority),
+		"next_action":            render.Redact(state.NextAction),
 	}
 }
 
