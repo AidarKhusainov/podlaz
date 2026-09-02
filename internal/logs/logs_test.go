@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuildJournalctlArgsDefaultsToRecentDaemonLogs(t *testing.T) {
-	got := BuildJournalctlArgs(Options{})
+	got := mustBuildJournalctlArgs(t, Options{})
 	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--lines", DefaultLines}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)
@@ -18,7 +18,7 @@ func TestBuildJournalctlArgsDefaultsToRecentDaemonLogs(t *testing.T) {
 }
 
 func TestBuildJournalctlArgsSupportsFollowAndSince(t *testing.T) {
-	got := BuildJournalctlArgs(Options{Follow: true, Since: "36h"})
+	got := mustBuildJournalctlArgs(t, Options{Follow: true, Since: "36h"})
 	want := []string{"--system", "--unit", DaemonUnit, "--no-pager", "--output", "short", "--since", "-36h", "--follow"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("journalctl args mismatch\nwant: %#v\n got: %#v", want, got)
