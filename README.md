@@ -2,18 +2,13 @@
 
 A quiet way through.
 
-podlaz is a Linux VPN client with profile management and a privileged daemon.
+Podlaz is a Linux VPN client with Xray-compatible profile management, a CLI, and a privileged local daemon. The CLI owns user intent and user-scoped profile state; `podlazd` owns privileged runtime/network mutations.
 
-## Features
-
-- Profile management for Xray-compatible profiles.
-- Explicit, inspectable, and recoverable profile lifecycle behavior.
-- CLI-first workflow with a privileged daemon for runtime operations.
-
-## Build
+## Build and verify
 
 ```bash
 go test ./...
+go vet ./...
 go run ./cmd/podlaz version
 go run ./cmd/podlazd
 ```
@@ -25,9 +20,24 @@ bash scripts/build-deb.sh
 sudo apt install ./dist/podlaz_0.0.0~dev-1_linux_amd64.deb
 ```
 
+Repository-wide checks used before merging also include formatting, vulnerability scanning, shell/workflow/package checks, and the relevant race/E2E suites. Executable CI and `scripts/**` are the canonical source for exact automation commands.
+
 ## Documentation
 
-Start with [Documentation](docs/README.md).
+The repository intentionally keeps four permanent prose surfaces:
+
+- [README.md](README.md) — entry point, build/package/release orientation, and documentation routing.
+- [docs/cli.md](docs/cli.md) — public CLI commands, flags, outputs, lifecycle/status semantics, and user-facing behavior.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — component boundaries, state ownership, security/network invariants, recovery, packaging/runtime, and E2E architecture.
+- [AGENTS.md](AGENTS.md) — contributor/agent workflow and the minimum-context routing rules.
+
+Implementation details are documented by the code and executable tests. Historical issue/spec/plan prose is intentionally not a permanent knowledge source.
+
+## Runtime model
+
+`podlaz` is unprivileged. It parses commands, manages user-owned profile/subscription state, and calls the local daemon. `podlazd` is the privileged boundary for TUN, routes, policy rules, DNS, firewall state, recovery, diagnostics, and packaged runtime lifecycle. Host-network mutation is fail-closed and ownership-driven: observed host state is not cleanup authority.
+
+For public command behavior use [docs/cli.md](docs/cli.md). For engineering invariants use [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Repository
 
@@ -35,4 +45,4 @@ https://github.com/AidarKhusainov/podlaz
 
 ## License
 
-podlaz is licensed under the MIT License. See [LICENSE](LICENSE).
+Podlaz is licensed under the MIT License. See [LICENSE](LICENSE).
