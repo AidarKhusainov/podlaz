@@ -51,8 +51,31 @@ is_active() {
 	systemctl is-active --quiet "$1" >/dev/null 2>&1
 }
 
+systemd_property() {
+	systemctl show --property="$2" --value "$1" 2>/dev/null
+}
+
 loaded_restart_signal() {
-	systemctl show --property=RestartKillSignal --value "$1" 2>/dev/null
+	systemd_property "$1" RestartKillSignal
+}
+
+assert_legacy_replacement_contract_loaded() {
+	restart_signal="$(systemd_property "$1" RestartKillSignal)" || return 1
+	kill_mode="$(systemd_property "$1" KillMode)" || return 1
+	runtime_preserve="$(systemd_property "$1" RuntimeDirectoryPreserve)" || return 1
+	if [ "$restart_signal" != 9 ] || [ "$kill_mode" != control-group ] || [ "$runtime_preserve" != yes ]; then
+		echo "podlaz: legacy replacement systemd contract was not loaded" >&2
+		return 1
+	fi
+}
+
+assert_candidate_restart_contract_loaded() {
+	restart_signal="$(systemd_property "$1" RestartKillSignal)" || return 1
+	kill_mode="$(systemd_property "$1" KillMode)" || return 1
+	if [ "$restart_signal" != "$candidate_restart_signal_number" ] || [ "$kill_mode" != mixed ]; then
+		echo "podlaz: candidate restart systemd contract was not restored" >&2
+		return 1
+	fi
 }
 
 prepare_legacy_upgrade_continuation() {
@@ -142,6 +165,7 @@ cleanup_legacy_replacement_override() {
 	rm -f "$legacy_override"
 	rmdir "$legacy_override_dir" >/dev/null 2>&1 || true
 	reload_systemd_required
+	assert_candidate_restart_contract_loaded "$unit"
 	legacy_override_installed=0
 }
 
@@ -225,6 +249,7 @@ if [ "$legacy_replacement" -eq 1 ]; then
 	trap 'cleanup_legacy_replacement_override_best_effort' EXIT
 	trap 'cleanup_legacy_replacement_override_best_effort; exit 1' HUP INT TERM
 	reload_systemd_required
+	assert_legacy_replacement_contract_loaded "$unit"
 else
 	reload_systemd
 fi
