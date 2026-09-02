@@ -11,7 +11,7 @@ import (
 func TestPostinstallMarksCurrentBootBeforeRestartWhenLegacyDaemonIsActive(t *testing.T) {
 	h := newPostinstallHarness(t, postinstallOptions{
 		initiallyEnabled:    true,
-		loadedRestartSignal: "SIGTERM",
+		loadedRestartSignal: "15",
 	})
 	runtimeDir := filepath.Join(t.TempDir(), "podlaz-runtime")
 	if err := os.Mkdir(runtimeDir, 0o711); err != nil {
