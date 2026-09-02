@@ -72,7 +72,14 @@ func TestPostinstallLegacyReplacementPreservesAuthorityAndUsesOneExplicitCutover
 		"systemctl show --property=RestartKillSignal --value podlazd.service",
 		"sync -f "+h.runtimeDir,
 		"systemctl daemon-reload",
+		"systemctl show --property=RestartKillSignal --value podlazd.service",
+		"systemctl show --property=KillMode --value podlazd.service",
+		"systemctl show --property=RuntimeDirectoryPreserve --value podlazd.service",
 		"deb-systemd-invoke try-restart podlazd.service",
+		"systemctl show --property=Result --value podlazd.service",
+		"systemctl daemon-reload",
+		"systemctl show --property=RestartKillSignal --value podlazd.service",
+		"systemctl show --property=KillMode --value podlazd.service",
 	)
 	if strings.Count(log, "deb-systemd-invoke try-restart podlazd.service") != 1 {
 		t.Fatalf("expected exactly one restart mutation, log:\n%s", log)
@@ -148,13 +155,17 @@ case "$1" in
       *RestartKillSignal*)
         if [ ! -e %q ]; then printf '15\n'; elif [ -e %q ]; then printf '9\n'; else printf '10\n'; fi
         ;;
+      *KillMode*)
+        if [ -e %q ]; then printf 'control-group\n'; else printf 'mixed\n'; fi
+        ;;
+      *RuntimeDirectoryPreserve*) printf 'yes\n' ;;
       *Result*) cat %q ;;
     esac
     exit 0
     ;;
 esac
 exit 0
-`, h.logPath, state, state, override, resultPath))
+`, h.logPath, state, state, override, override, resultPath))
 	writeLegacyStub(t, h.binDir, "sync", fmt.Sprintf(`#!/bin/sh
 printf 'sync %%s\n' "$*" >> %q
 exit 0
