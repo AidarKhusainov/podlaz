@@ -111,6 +111,7 @@ retired_doc_references=(
   'state-and-security.md'
   'e2e.md'
   'debian-package.md'
+  'development.md'
   'release.md'
   'daemon-api.md'
   'e2e-proxy-data-plane.md'
