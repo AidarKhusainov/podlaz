@@ -24,18 +24,24 @@ function generate_completion() {
   env -u GOOS -u GOARCH -u CC -u CXX CGO_ENABLED=1 go run ./cmd/podlaz completion "${shell}" > "${target}"
 }
 
-function generate_man_page() {
-  local command_package="$1"
-  local title="$2"
-  local section="$3"
-  local target="$4"
-
+function generate_client_man_page() {
+  local target="$1"
   {
-    printf '.TH "%s" "%s"\n' "${title}" "${section}"
-    printf '.SH NAME\n%s\n' "${title,,}"
+    printf '.TH "PODLAZ" "1"\n'
+    printf '.SH NAME\npodlaz\n'
     printf '.SH DESCRIPTION\n.nf\n'
-    env -u GOOS -u GOARCH -u CC -u CXX CGO_ENABLED=1 go run "${command_package}" --help
+    env -u GOOS -u GOARCH -u CC -u CXX CGO_ENABLED=1 go run ./cmd/podlaz --help
     printf '.fi\n'
+  } | gzip -9n -c > "${target}"
+}
+
+function generate_daemon_man_page() {
+  local target="$1"
+  {
+    printf '.TH "PODLAZD" "8"\n'
+    printf '.SH NAME\npodlazd \\- privileged podlaz daemon\n'
+    printf '.SH SYNOPSIS\n.B podlazd\n'
+    printf '.SH DESCRIPTION\npodlazd is the privileged service process and accepts no command-line arguments.\n'
   } | gzip -9n -c > "${target}"
 }
 
@@ -137,8 +143,8 @@ ln -s podlaz.fish "${root_dir}/usr/share/fish/vendor_completions.d/plz.fish"
 install -m 0644 packaging/systemd/podlazd.service "${root_dir}/usr/lib/systemd/system/podlazd.service"
 install -m 0644 packaging/sysusers.d/podlaz.conf "${root_dir}/usr/lib/sysusers.d/podlaz.conf"
 install -m 0644 packaging/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy "${root_dir}/usr/share/polkit-1/actions/io.github.aidarkhusainov.podlaz.policy"
-generate_man_page ./cmd/podlaz PODLAZ 1 "${root_dir}/usr/share/man/man1/podlaz.1.gz"
-generate_man_page ./cmd/podlazd PODLAZD 8 "${root_dir}/usr/share/man/man8/podlazd.8.gz"
+generate_client_man_page "${root_dir}/usr/share/man/man1/podlaz.1.gz"
+generate_daemon_man_page "${root_dir}/usr/share/man/man8/podlazd.8.gz"
 install -m 0644 README.md LICENSE "${root_dir}/usr/share/doc/podlaz/"
 install -m 0644 LICENSE "${root_dir}/usr/share/doc/podlaz/copyright"
 printf 'podlaz (%s) unstable; urgency=medium\n\n  * Local development package build.\n\n -- Aidar Khusainov <19706697+AidarKhusainov@users.noreply.github.com>  Thu, 11 Jun 2026 00:00:00 +0000\n' "${package_version}" | gzip -9n -c > "${root_dir}/usr/share/doc/podlaz/changelog.Debian.gz"
