@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
-	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
 
 func TestNetworkSessionRecoveryPlanSurfacesBlockedResumeWithoutTransactions(t *testing.T) {
@@ -144,24 +143,25 @@ func TestNetworkSessionRecoveryPlanRepresentsTerminalIntentWithoutResume(t *test
 	}
 }
 
-func TestStartupRecoveryScanTreatsRetainedNetworkSessionAsRecoveryWork(t *testing.T) {
-	scan := recovery.PlanResult{NetworkSession: &api.NetworkSessionRecoveryState{
-		Authority:         api.NetworkSessionRecoveryAuthorityPresent,
-		Intent:            string(networkSessionIntentResume),
-		StartupGate:       api.NetworkSessionStartupGateBlocked,
-		LastResumeOutcome: api.NetworkSessionResumeOutcomeFailed,
-		NextAction:        api.NetworkSessionRecoveryActionRetryResume,
-		CleanupAuthority:  api.NetworkSessionCleanupAuthorityNone,
-	}}
-	if status := startupScanStatus(scan); status == api.StartupScanStatusClean {
-		t.Fatal("retained blocked Network Session must not publish a clean recovery scan")
+func TestPublishedStartupRecoveryTreatsRetainedNetworkSessionAsRecoveryWork(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	if err := continuation.Save(testContinuationRequest()); err != nil {
+		t.Fatal(err)
 	}
-	if action := startupScanSuggestedAction(scan); action != "podlaz recover" {
-		t.Fatalf("suggested action=%q", action)
+	gate := newNetworkSessionStartupMutationGate(networkSessionRecordingLifecycle{events: &[]string{}})
+	gate.Block()
+	status := api.StatusResponse{StartupScan: &api.StartupScanStatus{Status: api.StartupScanStatusClean}}
+
+	published := withNetworkSessionRecoveryStatus(status, continuation, gate)
+	if published.StartupScan == nil || published.StartupScan.Status == api.StartupScanStatusClean {
+		t.Fatalf("retained blocked Network Session published clean: %#v", published.StartupScan)
 	}
-	published := startupScanToAPI(scan)
-	if published.NetworkSession == nil || published.NetworkSession.NextAction != api.NetworkSessionRecoveryActionRetryResume {
-		t.Fatalf("startup scan lost Network Session plan: %#v", published)
+	if published.StartupScan.SuggestedAction != "podlaz recover" {
+		t.Fatalf("suggested action=%q", published.StartupScan.SuggestedAction)
+	}
+	if published.StartupScan.NetworkSession == nil || published.StartupScan.NetworkSession.NextAction != api.NetworkSessionRecoveryActionRetryResume {
+		t.Fatalf("startup scan lost Network Session plan: %#v", published.StartupScan)
 	}
 }
 
