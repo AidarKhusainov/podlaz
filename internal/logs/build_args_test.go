@@ -36,7 +36,7 @@ func TestBuildJournalctlArgsIssue160FlagMatrix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := mustBuildJournalctlArgs(t, tt.opts)
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("BuildJournalctlArgs(%#v) = %#v, want %#v", tt.opts, got, tt.want)
+				t.Fatalf("buildJournalctlArgs(%#v) = %#v, want %#v", tt.opts, got, tt.want)
 			}
 		})
 	}
