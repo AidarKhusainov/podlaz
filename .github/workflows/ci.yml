@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches:
       - master
@@ -44,9 +45,15 @@ jobs:
           bash scripts/ci/workflow-lint.sh 2>&1 | tee /tmp/podlaz-workflow-lint.txt
 
       - name: Repository structure contract
-        run: |
-          bash scripts/ci/repository-structure-test.sh
-          bash scripts/ci/repository-structure.sh --final
+        run: bash scripts/ci/repository-structure-test.sh
+
+      - name: Active repository structure
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: bash scripts/ci/repository-structure.sh
+
+      - name: Final repository structure
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash scripts/ci/repository-structure.sh --final
 
       - name: Upload workflow lint diagnostics
         if: always()
