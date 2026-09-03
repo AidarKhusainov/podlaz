@@ -60,6 +60,7 @@ type networkSessionState struct {
 	Owner         string                     `json:"owner"`
 	BootID        string                     `json:"boot_id"`
 	SessionID     string                     `json:"session_id"`
+	RecoveryEpoch uint64                     `json:"recovery_epoch,omitempty"`
 	Intent        networkSessionIntent       `json:"intent"`
 	Request       api.ConnectRequest         `json:"request"`
 	Protection    *networkSessionProtection  `json:"protection,omitempty"`
@@ -251,6 +252,26 @@ func (s networkSessionStateStore) Update(update func(*networkSessionState) error
 	}
 	if err := s.save(state); err != nil {
 		return networkSessionState{}, true, err
+	}
+	return cloneNetworkSessionState(state), true, nil
+}
+
+func (s networkSessionStateStore) BeginRecoveryAttempt() (networkSessionState, bool, error) {
+	lock := s.mutationLock()
+	lock.Lock()
+	defer lock.Unlock()
+
+	state, exists, err := s.loadLocked()
+	if err != nil || !exists {
+		return state, exists, err
+	}
+	state = cloneNetworkSessionState(state)
+	if state.RecoveryEpoch == ^uint64(0) {
+		return state, true, errors.New("network session recovery epoch exhausted")
+	}
+	state.RecoveryEpoch++
+	if err := s.save(state); err != nil {
+		return cloneNetworkSessionState(state), true, fmt.Errorf("persist network session recovery epoch: %w", err)
 	}
 	return cloneNetworkSessionState(state), true, nil
 }

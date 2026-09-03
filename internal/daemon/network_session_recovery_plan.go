@@ -15,6 +15,7 @@ type networkSessionAuthoritySnapshot struct {
 	intent            networkSessionIntent
 	protectionPresent bool
 	legacyMigration   bool
+	recoveryEpoch     uint64
 }
 
 func inspectNetworkSessionRecoveryPlan(
@@ -47,7 +48,7 @@ func inspectNetworkSessionRecoveryPlan(
 
 	if diagnostic, diagnosticExists, diagnosticErr := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Load(); diagnosticErr != nil {
 		return nil, diagnosticErr
-	} else if diagnosticExists {
+	} else if diagnosticExists && diagnostic.RecoveryEpoch == authority.recoveryEpoch {
 		plan.ResumeStage = diagnostic.ResumeStage
 		plan.LastResumeOutcome = diagnostic.LastResumeOutcome
 		plan.LastTUNFailurePhase = diagnostic.TUNFailurePhase
@@ -128,6 +129,7 @@ func inspectCurrentBootNetworkSessionAuthority(continuation networkSessionContin
 		return networkSessionAuthoritySnapshot{
 			intent:            state.Intent,
 			protectionPresent: state.Protection != nil,
+			recoveryEpoch:     state.RecoveryEpoch,
 		}, true, nil
 
 	case networkSessionContinuationSchemaVersion:

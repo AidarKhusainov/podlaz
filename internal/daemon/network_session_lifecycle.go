@@ -225,9 +225,10 @@ func resumeNetworkSession(
 	status networkSessionStatusFunc,
 	recover networkSessionRecoveryFunc,
 ) (bool, error) {
+	recoveryEpoch := uint64(0)
 	fail := func(stage, outcome string, legacyMigration, transactionPresent bool, err error) (bool, error) {
 		wrapped := newNetworkSessionResumeOutcomeError(stage, outcome, legacyMigration, transactionPresent, err)
-		return false, persistNetworkSessionResumeFailure(continuation, wrapped)
+		return false, persistNetworkSessionResumeFailure(continuation, recoveryEpoch, wrapped)
 	}
 
 	stateStore := continuation.stateStore()
@@ -255,6 +256,20 @@ func resumeNetworkSession(
 			if !exists {
 				return fail(api.NetworkSessionResumeStageLegacyMigration, api.NetworkSessionResumeOutcomeFailed, true, false, errors.New("legacy package upgrade migration did not persist continuation"))
 			}
+		}
+	}
+
+	if exists {
+		attemptState, attemptExists, beginErr := stateStore.BeginRecoveryAttempt()
+		if attemptExists {
+			recoveryEpoch = attemptState.RecoveryEpoch
+			state = attemptState
+		}
+		if beginErr != nil {
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("begin Network Session recovery epoch: %w", beginErr))
+		}
+		if !attemptExists {
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("Network Session authority disappeared before recovery attempt"))
 		}
 	}
 

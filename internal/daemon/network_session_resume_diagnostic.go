@@ -23,6 +23,7 @@ type networkSessionResumeDiagnostic struct {
 	SchemaVersion      string `json:"schema_version"`
 	Owner              string `json:"owner"`
 	BootID             string `json:"boot_id"`
+	RecoveryEpoch      uint64 `json:"recovery_epoch"`
 	ResumeStage        string `json:"resume_stage"`
 	LastResumeOutcome  string `json:"last_resume_outcome"`
 	TUNFailurePhase    string `json:"tun_failure_phase,omitempty"`
@@ -236,11 +237,12 @@ func networkSessionResumeFailure(err error) (networkSessionResumeDiagnostic, boo
 	}, true
 }
 
-func persistNetworkSessionResumeFailure(continuation networkSessionContinuationStore, err error) error {
+func persistNetworkSessionResumeFailure(continuation networkSessionContinuationStore, recoveryEpoch uint64, err error) error {
 	record, ok := networkSessionResumeFailure(err)
 	if !ok {
 		return err
 	}
+	record.RecoveryEpoch = recoveryEpoch
 	store := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
 	if persistErr := store.Save(record); persistErr != nil {
 		return errors.Join(err, persistErr)
