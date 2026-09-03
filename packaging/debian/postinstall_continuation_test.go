@@ -9,7 +9,10 @@ import (
 )
 
 func TestPostinstallMarksCurrentBootBeforeRestartWhenLegacyDaemonIsActive(t *testing.T) {
-	h := newPostinstallHarness(t, postinstallOptions{initiallyEnabled: true})
+	h := newPostinstallHarness(t, postinstallOptions{
+		initiallyEnabled:    true,
+		loadedRestartSignal: "15",
+	})
 	runtimeDir := filepath.Join(t.TempDir(), "podlaz-runtime")
 	if err := os.Mkdir(runtimeDir, 0o711); err != nil {
 		t.Fatal(err)
@@ -18,8 +21,12 @@ func TestPostinstallMarksCurrentBootBeforeRestartWhenLegacyDaemonIsActive(t *tes
 	if err := os.WriteFile(bootIDPath, []byte("boot-example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	systemdRuntimeDir := filepath.Join(t.TempDir(), "systemd")
+	if err := os.Mkdir(systemdRuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	log := runPostinstallWithLifecyclePaths(t, h, runtimeDir, bootIDPath)
+	log := runPostinstallWithLifecyclePaths(t, h, runtimeDir, bootIDPath, systemdRuntimeDir)
 
 	markerPath := filepath.Join(runtimeDir, "legacy-upgrade-continuation")
 	marker, err := os.ReadFile(markerPath)
@@ -37,10 +44,10 @@ func TestPostinstallMarksCurrentBootBeforeRestartWhenLegacyDaemonIsActive(t *tes
 		t.Fatalf("legacy upgrade marker mode = %o, want 600", info.Mode().Perm())
 	}
 	assertLogContainsInOrder(t, log,
-		"systemctl daemon-reload",
 		"systemctl is-active --quiet podlazd.service",
+		"systemctl show --property=RestartKillSignal --value podlazd.service",
+		"systemctl daemon-reload",
 		"deb-systemd-invoke try-restart podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
 	)
 }
 
@@ -57,19 +64,23 @@ func TestPostinstallDoesNotCreateLegacyMarkerWhenContinuationAlreadyExists(t *te
 	if err := os.WriteFile(bootIDPath, []byte("boot-example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	systemdRuntimeDir := filepath.Join(t.TempDir(), "systemd")
+	if err := os.Mkdir(systemdRuntimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	log := runPostinstallWithLifecyclePaths(t, h, runtimeDir, bootIDPath)
+	log := runPostinstallWithLifecyclePaths(t, h, runtimeDir, bootIDPath, systemdRuntimeDir)
 
 	if _, err := os.Stat(filepath.Join(runtimeDir, "legacy-upgrade-continuation")); !os.IsNotExist(err) {
 		t.Fatalf("existing continuation must suppress legacy marker: %v", err)
 	}
-	if strings.Contains(log, "systemctl is-active --quiet podlazd.service") {
-		t.Fatalf("existing continuation should not need legacy active-daemon probing; log:\n%s", log)
+	if strings.Contains(log, "systemctl show --property=RestartKillSignal") {
+		t.Fatalf("existing continuation should suppress legacy restart-signal probing; log:\n%s", log)
 	}
 	assertLogContains(t, log, "deb-systemd-invoke try-restart podlazd.service")
 }
 
-func runPostinstallWithLifecyclePaths(t *testing.T, h postinstallHarness, runtimeDir, bootIDPath string) string {
+func runPostinstallWithLifecyclePaths(t *testing.T, h postinstallHarness, runtimeDir, bootIDPath, systemdRuntimeDir string) string {
 	t.Helper()
 	cmd := exec.Command("sh", "postinstall", "configure")
 	cmd.Env = append(os.Environ(),
@@ -77,6 +88,7 @@ func runPostinstallWithLifecyclePaths(t *testing.T, h postinstallHarness, runtim
 		"PODLAZ_MAINTSCRIPT_RUN_DIR="+h.runDir,
 		"PODLAZ_RUNTIME_DIR="+runtimeDir,
 		"PODLAZ_BOOT_ID_PATH="+bootIDPath,
+		"PODLAZ_SYSTEMD_RUNTIME_DIR="+systemdRuntimeDir,
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

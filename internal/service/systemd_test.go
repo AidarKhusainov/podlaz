@@ -48,6 +48,8 @@ func TestSystemdUnitPreservesExactAuthorityAndOrdersSupervisedShutdown(t *testin
 		}
 	}
 	for _, forbidden := range []string{
+		"KillSignal=SIGKILL",
+		"RestartKillSignal=SIGKILL",
 		"KillMode=control-group",
 		"KillMode=process",
 		"KillMode=none",

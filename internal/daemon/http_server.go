@@ -58,8 +58,10 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 		status, scan := startupScanForPublication(
 			r.Context(), runtime.currentStatus, runtime.lifecycle, runtime.startupScan, runtime.runtimeDir, unexpectedCoreExitRefreshTimeout,
 		)
+		status = withStartupScanStatus(status, scan)
+		status = withNetworkSessionRecoveryStatus(status, runtime.continuation, runtime.startupMutationGate)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(withStartupScanStatus(status, scan))
+		_ = json.NewEncoder(w).Encode(status)
 		log.Printf("podlazd: status request handled")
 	})
 	mux.HandleFunc(api.DoctorPath, func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +119,15 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 				response := networkSessionRecoveryInitialStage(blocked, func() api.RecoveryResponse {
 					return daemonRecover(r.Context(), runtime.runtimeDir, runtime.currentStatus(r.Context()))
 				})
+				plan, inspectErr := inspectNetworkSessionRecoveryPlan(runtime.continuation, runtime.startupMutationGate)
+				if inspectErr != nil {
+					response.Warnings = append(response.Warnings, api.RecoveryWarning{
+						Target:  "network session authority",
+						Message: "current-boot Network Session recovery authority could not be inspected",
+					})
+				} else {
+					response.NetworkSession = plan
+				}
 				if !blocked {
 					refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 					runtime.forceRefreshStartupScan(refreshCtx)
@@ -129,6 +140,7 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 					return response
 				}
 
+				networkSessionPlan := api.CloneNetworkSessionRecoveryState(response.NetworkSession)
 				var genericResponse api.RecoveryResponse
 				_, retryErr := resumeNetworkSession(
 					r.Context(),
@@ -142,12 +154,14 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 				)
 				if genericResponse.Mode != "" {
 					response = genericResponse
+					response.NetworkSession = networkSessionPlan
 				}
 				response = applyNetworkSessionResumeResult(response, runtime.startupMutationGate, retryErr)
 				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 				runtime.forceRefreshStartupScan(refreshCtx)
 				cancel()
 				if retryErr != nil {
+					logNetworkSessionResumeFailure(retryErr)
 					log.Printf("podlazd: network session startup recovery remains incomplete after recovery request")
 				}
 				return response

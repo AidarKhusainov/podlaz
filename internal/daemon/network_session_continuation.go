@@ -30,6 +30,7 @@ type networkSessionContinuation struct {
 }
 
 type bootIDReader func() (string, error)
+type networkSessionLegacyMigrationStage func(string, networkSessionContinuationStore) (bool, error)
 
 type networkSessionContinuationStore struct {
 	runtimeDir string
@@ -45,6 +46,7 @@ type networkSessionContinuationStore struct {
 	// resumeNetworkSession selects the exact production stages below. Keeping
 	// seams on the store lets tests execute the same orchestration function the
 	// daemon uses instead of maintaining a second, drift-prone startup wrapper.
+	migrateLegacy    networkSessionLegacyMigrationStage
 	reconcilePrivacy networkSessionPrivacyReconcileStage
 	recoverExact     networkSessionExactRecoveryStage
 	continueTeardown networkSessionTeardownRecoveryStage
