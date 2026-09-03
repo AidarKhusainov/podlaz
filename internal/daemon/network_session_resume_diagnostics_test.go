@@ -208,6 +208,51 @@ func TestResumeNetworkSessionCanRetryAfterReplayFailure(t *testing.T) {
 	}
 }
 
+func TestResumeNetworkSessionSuccessfulRetryIgnoresStaleFailureDiagnostic(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	if err := continuation.Save(testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	continuation.reconcilePrivacy = func(context.Context, networkSessionStateStore) error { return nil }
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse { return api.RecoveryResponse{Mode: "execute"} }
+	lifecycle := &resumeRetryLifecycle{}
+
+	if resumed, err := resumeNetworkSession(context.Background(), continuation, lifecycle, inactiveNetworkSessionStatus, successfulNetworkSessionRecovery); err == nil || resumed {
+		t.Fatalf("first resume must fail: resumed=%v err=%v", resumed, err)
+	}
+	diagnosticStore := newNetworkSessionResumeDiagnosticStore(runtimeDir, fixedBootID("boot-a"))
+	staleDiagnostic, err := os.ReadFile(diagnosticStore.path())
+	if err != nil {
+		t.Fatalf("read first-attempt diagnostic: %v", err)
+	}
+
+	if resumed, err := resumeNetworkSession(context.Background(), continuation, lifecycle, inactiveNetworkSessionStatus, successfulNetworkSessionRecovery); err != nil || !resumed {
+		t.Fatalf("retry must resume the retained session: resumed=%v err=%v", resumed, err)
+	}
+
+	// Recreate the observable result of a best-effort diagnostic Remove failure:
+	// the old file survives after a later attempt has already succeeded.
+	if err := atomicWritePrivateFile(diagnosticStore.path(), staleDiagnostic); err != nil {
+		t.Fatalf("restore stale diagnostic: %v", err)
+	}
+	gate := newNetworkSessionStartupMutationGate(nil)
+	gate.Block()
+	plan, err := inspectNetworkSessionRecoveryPlan(continuation, gate)
+	if err != nil {
+		t.Fatalf("inspect recovery plan: %v", err)
+	}
+	if plan == nil {
+		t.Fatal("current-boot Network Session authority must still be inspectable")
+	}
+	if plan.LastResumeOutcome != api.NetworkSessionResumeOutcomeNotAttempted {
+		t.Fatalf("stale diagnostic leaked into current recovery epoch: outcome=%q stage=%q", plan.LastResumeOutcome, plan.ResumeStage)
+	}
+	if plan.ResumeStage != "" || plan.LastTUNFailurePhase != "" || plan.RollbackStatus != "" || plan.TransactionPresent {
+		t.Fatalf("stale diagnostic fields leaked into current recovery epoch: %#v", plan)
+	}
+}
+
 func successfulNetworkSessionRecovery(context.Context, api.StatusResponse) api.RecoveryResponse {
 	return api.RecoveryResponse{Mode: "execute"}
 }
