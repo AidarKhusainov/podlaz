@@ -9,8 +9,9 @@ boot_id_path="${PODLAZ_BOOT_ID_PATH:-/proc/sys/kernel/random/boot_id}"
 systemd_runtime_dir="${PODLAZ_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}"
 continuation="$runtime_dir/network-session-continuation.json"
 legacy_upgrade_marker="$runtime_dir/legacy-upgrade-continuation"
-# systemctl show serializes signal properties numerically; SIGUSR1 is 10 on supported Linux arches.
+# systemctl show serializes signal properties numerically on supported Linux arches.
 candidate_restart_signal_number=10
+legacy_restart_signal_number=15
 legacy_override_dir="$systemd_runtime_dir/$unit.d"
 legacy_override="$legacy_override_dir/50-podlaz-legacy-replacement.conf"
 legacy_override_installed=0
@@ -59,6 +60,16 @@ loaded_restart_signal() {
 	systemd_property "$1" RestartKillSignal
 }
 
+assert_legacy_source_contract_loaded() {
+	restart_signal="$2"
+	kill_mode="$(systemd_property "$1" KillMode)" || return 1
+	runtime_preserve="$(systemd_property "$1" RuntimeDirectoryPreserve)" || return 1
+	if [ "$restart_signal" != "$legacy_restart_signal_number" ] || [ "$kill_mode" != control-group ] || [ "$runtime_preserve" != no ]; then
+		echo "podlaz: active pre-continuation service does not match the supported legacy replacement contract" >&2
+		return 1
+	fi
+}
+
 assert_legacy_replacement_contract_loaded() {
 	restart_signal="$(systemd_property "$1" RestartKillSignal)" || return 1
 	kill_mode="$(systemd_property "$1" KillMode)" || return 1
@@ -72,7 +83,8 @@ assert_legacy_replacement_contract_loaded() {
 assert_candidate_restart_contract_loaded() {
 	restart_signal="$(systemd_property "$1" RestartKillSignal)" || return 1
 	kill_mode="$(systemd_property "$1" KillMode)" || return 1
-	if [ "$restart_signal" != "$candidate_restart_signal_number" ] || [ "$kill_mode" != mixed ]; then
+	runtime_preserve="$(systemd_property "$1" RuntimeDirectoryPreserve)" || return 1
+	if [ "$restart_signal" != "$candidate_restart_signal_number" ] || [ "$kill_mode" != mixed ] || [ "$runtime_preserve" != yes ]; then
 		echo "podlaz: candidate restart systemd contract was not restored" >&2
 		return 1
 	fi
@@ -122,11 +134,11 @@ prepare_legacy_upgrade_continuation() {
 }
 
 install_legacy_replacement_override() {
-	# A legacy daemon does not understand the candidate restart signal, while
-	# SIGTERM would run its ordinary disconnect path and destroy migration
-	# evidence. For this one cross-version cutover, make systemd replace the
-	# exact service cgroup (daemon + supervised Xray) immediately. Candidate
-	# RuntimeDirectoryPreserve then keeps exact transaction/runtime authority.
+	# v0.2.29 does not understand the candidate restart signal, while SIGTERM
+	# would run its ordinary disconnect path and destroy migration evidence.
+	# For this one cross-version cutover, make systemd replace the exact service
+	# cgroup (daemon + supervised Xray) immediately. The newly loaded candidate
+	# RuntimeDirectoryPreserve contract keeps exact transaction/runtime authority.
 	install -d -m 0755 "$legacy_override_dir"
 	old_umask="$(umask)"
 	umask 022
@@ -237,6 +249,7 @@ if command -v deb-systemd-invoke >/dev/null 2>&1 && is_enabled "$unit"; then
 				exit 1
 			fi
 			if [ "$old_restart_signal_number" != "$candidate_restart_signal_number" ]; then
+				assert_legacy_source_contract_loaded "$unit" "$old_restart_signal_number"
 				prepare_legacy_upgrade_continuation
 				install_legacy_replacement_override
 				legacy_replacement=1
