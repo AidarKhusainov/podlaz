@@ -248,6 +248,10 @@ if command -v deb-systemd-invoke >/dev/null 2>&1 && is_enabled "$unit"; then
 				echo "podlaz: loaded restart signal is unavailable before package replacement" >&2
 				exit 1
 			fi
+			if [ "$old_restart_signal_number" = "$candidate_restart_signal_number" ] && [ -e "$legacy_upgrade_marker" ]; then
+				echo "podlaz: unresolved legacy migration authority remains; refusing normal service restart" >&2
+				exit 1
+			fi
 			if [ "$old_restart_signal_number" != "$candidate_restart_signal_number" ]; then
 				assert_legacy_source_contract_loaded "$unit" "$old_restart_signal_number"
 				prepare_legacy_upgrade_continuation
