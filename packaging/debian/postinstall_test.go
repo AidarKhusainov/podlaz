@@ -143,15 +143,15 @@ func TestMaintainerScriptsAvoidRawSystemctlServiceMutation(t *testing.T) {
 }
 
 type postinstallOptions struct {
-	marker                 bool
-	initiallyEnabled       bool
-	debianInstalled        bool
-	wasEnabled             bool
-	inactive               bool
-	loadedRestartSignal    string
-	loadedKillMode         string
-	loadedRuntimePreserve  string
-	serviceResult          string
+	marker                bool
+	initiallyEnabled      bool
+	debianInstalled       bool
+	wasEnabled            bool
+	inactive              bool
+	loadedRestartSignal   string
+	loadedKillMode        string
+	loadedRuntimePreserve string
+	serviceResult         string
 }
 
 type postinstallHarness struct {
@@ -180,6 +180,7 @@ func newPostinstallHarness(t *testing.T, opts postinstallOptions) postinstallHar
 
 	logPath := filepath.Join(dir, "calls.log")
 	enabledPath := filepath.Join(dir, "enabled")
+	reloadedPath := filepath.Join(dir, "reloaded")
 	if opts.initiallyEnabled {
 		if err := os.WriteFile(enabledPath, []byte{}, 0o600); err != nil {
 			t.Fatalf("write enabled flag: %v", err)
@@ -222,6 +223,7 @@ exit 0
 `, logPath))
 	writeStub(t, binDir, "systemctl", fmt.Sprintf(`#!/bin/sh
 printf 'systemctl %%s\n' "$*" >> %q
+override="${PODLAZ_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}/podlazd.service.d/50-podlaz-legacy-replacement.conf"
 if [ "$1" = is-enabled ]; then
   test -e %q
   exit $?
@@ -229,17 +231,27 @@ fi
 if [ "$1" = is-active ]; then
   exit %d
 fi
+if [ "$1" = daemon-reload ]; then
+  : > %q
+  exit 0
+fi
 if [ "$1" = show ]; then
   case "$*" in
-    *RestartKillSignal*) printf '%s\n' ;;
-    *KillMode*) printf '%s\n' ;;
-    *RuntimeDirectoryPreserve*) printf '%s\n' ;;
+    *RestartKillSignal*)
+      if [ ! -e %q ]; then printf '%s\n'; elif [ -e "$override" ]; then printf '9\n'; else printf '10\n'; fi
+      ;;
+    *KillMode*)
+      if [ ! -e %q ]; then printf '%s\n'; elif [ -e "$override" ]; then printf 'control-group\n'; else printf 'mixed\n'; fi
+      ;;
+    *RuntimeDirectoryPreserve*)
+      if [ ! -e %q ]; then printf '%s\n'; else printf 'yes\n'; fi
+      ;;
     *Result*) printf '%s\n' ;;
   esac
   exit 0
 fi
 exit 0
-`, logPath, enabledPath, activeExit, loadedRestartSignal, loadedKillMode, loadedRuntimePreserve, serviceResult))
+`, logPath, enabledPath, activeExit, reloadedPath, reloadedPath, loadedRestartSignal, reloadedPath, loadedKillMode, reloadedPath, loadedRuntimePreserve, serviceResult))
 
 	debianInstalledExit := 1
 	if opts.debianInstalled {
