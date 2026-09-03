@@ -498,7 +498,10 @@ A blocked gate or any remaining next action is incomplete and makes execute retu
 exit code `1`; cleanup failure also returns `1`. JSON execute output reports
 `status: warn` for incomplete convergence and `status: fail` for cleanup failure.
 Dry-run JSON reports `status: warn` when cleanup candidates, Network Session
-authority requiring convergence, or incomplete inspection are present.
+authority requiring convergence, or incomplete inspection are present. In human
+output, `No podlaz-owned recovery candidates found.` is shown only when there are
+no ordinary cleanup candidates and no retained Network Session recovery plan; a
+retained Network Session plan is rendered instead of that empty-state message.
 
 For the validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
 with one exact supported bounded `No such device` result is accepted as
