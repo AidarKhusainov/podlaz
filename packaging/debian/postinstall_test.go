@@ -143,13 +143,15 @@ func TestMaintainerScriptsAvoidRawSystemctlServiceMutation(t *testing.T) {
 }
 
 type postinstallOptions struct {
-	marker              bool
-	initiallyEnabled    bool
-	debianInstalled     bool
-	wasEnabled          bool
-	inactive            bool
-	loadedRestartSignal string
-	serviceResult       string
+	marker                 bool
+	initiallyEnabled       bool
+	debianInstalled        bool
+	wasEnabled             bool
+	inactive               bool
+	loadedRestartSignal    string
+	loadedKillMode         string
+	loadedRuntimePreserve  string
+	serviceResult          string
 }
 
 type postinstallHarness struct {
@@ -187,6 +189,20 @@ func newPostinstallHarness(t *testing.T, opts postinstallOptions) postinstallHar
 	if loadedRestartSignal == "" {
 		loadedRestartSignal = "10"
 	}
+	loadedKillMode := opts.loadedKillMode
+	if loadedKillMode == "" {
+		loadedKillMode = "mixed"
+		if loadedRestartSignal == "15" {
+			loadedKillMode = "control-group"
+		}
+	}
+	loadedRuntimePreserve := opts.loadedRuntimePreserve
+	if loadedRuntimePreserve == "" {
+		loadedRuntimePreserve = "yes"
+		if loadedRestartSignal == "15" {
+			loadedRuntimePreserve = "no"
+		}
+	}
 	serviceResult := opts.serviceResult
 	if serviceResult == "" {
 		serviceResult = "success"
@@ -216,12 +232,14 @@ fi
 if [ "$1" = show ]; then
   case "$*" in
     *RestartKillSignal*) printf '%s\n' ;;
+    *KillMode*) printf '%s\n' ;;
+    *RuntimeDirectoryPreserve*) printf '%s\n' ;;
     *Result*) printf '%s\n' ;;
   esac
   exit 0
 fi
 exit 0
-`, logPath, enabledPath, activeExit, loadedRestartSignal, serviceResult))
+`, logPath, enabledPath, activeExit, loadedRestartSignal, loadedKillMode, loadedRuntimePreserve, serviceResult))
 
 	debianInstalledExit := 1
 	if opts.debianInstalled {
