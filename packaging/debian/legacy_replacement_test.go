@@ -159,7 +159,7 @@ case "$1" in
         if [ ! -e %q ]; then printf '15\n'; elif [ -e %q ]; then printf '9\n'; else printf '10\n'; fi
         ;;
       *KillMode*)
-        if [ -e %q ]; then printf 'control-group\n'; else printf 'mixed\n'; fi
+        if [ ! -e %q ]; then printf 'control-group\n'; elif [ -e %q ]; then printf 'control-group\n'; else printf 'mixed\n'; fi
         ;;
       *RuntimeDirectoryPreserve*)
         if [ ! -e %q ]; then printf 'no\n'; else printf 'yes\n'; fi
@@ -170,7 +170,7 @@ case "$1" in
     ;;
 esac
 exit 0
-`, h.logPath, state, state, override, override, state, resultPath))
+`, h.logPath, state, state, override, state, override, state, resultPath))
 	writeLegacyStub(t, h.binDir, "sync", fmt.Sprintf(`#!/bin/sh
 printf 'sync %%s\n' "$*" >> %q
 exit 0
