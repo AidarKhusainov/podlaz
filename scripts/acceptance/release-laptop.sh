@@ -85,10 +85,10 @@ ra_err() { printf 'release-laptop: %s\n' "$*" >&2; }
 ra_remember_failure_reason() {
   RA_LAST_FAILURE_REASON="$1"
   if [[ -n "$RA_PRIVATE_DIR" && -d "$RA_PRIVATE_DIR" ]]; then
-    printf '%s\n' "$1" >"$RA_PRIVATE_DIR/last-error-reason" 2>/dev/null || true
-    chmod 0600 "$RA_PRIVATE_DIR/last-error-reason" 2>/dev/null || true
+    printf '%s\n' "$1" | ra_artifact_file_write "$RA_PRIVATE_DIR/last-error-reason" 2>/dev/null || true
   fi
 }
+
 ra_die() { ra_remember_failure_reason "$*"; ra_err "$*"; return 1; }
 ra_preflight_die() { RA_LAST_FAILURE_REASON="input_preflight"; ra_err "$*"; return 2; }
 
@@ -230,12 +230,114 @@ ra_validate_artifact_root() {
   RA_ARTIFACT_DIR="$resolved"
 }
 
+ra_artifact_as_user() {
+  if ((EUID == 0)) && [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]] && [[ "$RA_UID" != 0 ]]; then
+    runuser -u "$RA_USER" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+ra_artifact_write_user_path() {
+  local path="$1"
+  if ((EUID == 0)) && [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]] && [[ "$RA_UID" != 0 ]]; then
+    runuser -u "$RA_USER" -- bash -c 'cat >"$1"' _ "$path"
+  else
+    cat >"$path"
+  fi
+}
+
+ra_artifact_append_user_path() {
+  local path="$1"
+  if ((EUID == 0)) && [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]] && [[ "$RA_UID" != 0 ]]; then
+    runuser -u "$RA_USER" -- bash -c 'cat >>"$1"' _ "$path"
+  else
+    cat >>"$path"
+  fi
+}
+
+ra_artifact_dir_validate() {
+  local path="$1" uid gid mode
+  [[ -d "$path" && ! -L "$path" ]] || return 1
+  uid="$(stat -Lc '%u' "$path")" || return 1
+  gid="$(stat -Lc '%g' "$path")" || return 1
+  mode="$(stat -Lc '%a' "$path")" || return 1
+  [[ "$uid" == "$RA_UID" && "$gid" == "$RA_GID" && "$mode" == 700 ]]
+}
+
+ra_artifact_file_validate() {
+  local path="$1" uid gid mode
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  uid="$(stat -Lc '%u' "$path")" || return 1
+  gid="$(stat -Lc '%g' "$path")" || return 1
+  mode="$(stat -Lc '%a' "$path")" || return 1
+  [[ "$uid" == "$RA_UID" && "$gid" == "$RA_GID" && "$mode" == 600 ]]
+}
+
+ra_artifact_parent_validate() {
+  local path="$1" root parent canonical
+  root="$(readlink -m -- "$RA_ARTIFACT_DIR")" || return 1
+  canonical="$(readlink -m -- "$path")" || return 1
+  case "$canonical" in "$root"|"$root"/*) ;; *) return 1 ;; esac
+  parent="$(dirname -- "$canonical")"
+  [[ "$canonical" != "$root" ]] || return 0
+  ra_artifact_dir_validate "$parent"
+}
+
 ra_secure_user_mkdir() {
   local path="$1"
-  [[ ! -e "$path" || ( -d "$path" && ! -L "$path" ) ]] || { ra_die "refuse unsafe artifact directory: $path"; return 1; }
-  mkdir -p -- "$path" || return 1
-  chmod 0700 "$path" || return 1
-  if ((EUID == 0)) && [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]]; then chown "$RA_UID:$RA_GID" "$path" || return 1; fi
+  if [[ -e "$path" || -L "$path" ]]; then
+    ra_artifact_dir_validate "$path" || { ra_die "refuse unsafe or drifted artifact directory: $path"; return 1; }
+    return 0
+  fi
+  ra_artifact_as_user mkdir -p -- "$path" || return 1
+  ra_artifact_as_user chmod 0700 -- "$path" || return 1
+  ra_artifact_dir_validate "$path" || { ra_die "artifact directory identity is invalid after creation: $path"; return 1; }
+}
+
+ra_artifact_dir_ensure() {
+  local path="$1"
+  ra_artifact_parent_validate "$path" || return 1
+  if [[ -e "$path" || -L "$path" ]]; then
+    ra_artifact_dir_validate "$path"
+    return $?
+  fi
+  ra_artifact_as_user mkdir -- "$path" || return 1
+  ra_artifact_as_user chmod 0700 -- "$path" || return 1
+  ra_artifact_dir_validate "$path"
+}
+
+ra_artifact_file_write() {
+  local path="$1" parent base tmp
+  ra_artifact_parent_validate "$path" || return 1
+  if [[ -e "$path" || -L "$path" ]]; then
+    ra_artifact_file_validate "$path" || return 1
+  fi
+  parent="$(dirname -- "$path")"
+  base="$(basename -- "$path")"
+  tmp="$(ra_artifact_as_user mktemp "$parent/.${base}.tmp.XXXXXX")" || return 1
+  ra_artifact_as_user chmod 0600 -- "$tmp" || { ra_artifact_as_user rm -f -- "$tmp"; return 1; }
+  ra_artifact_file_validate "$tmp" || { ra_artifact_as_user rm -f -- "$tmp"; return 1; }
+  if ! ra_artifact_write_user_path "$tmp"; then
+    ra_artifact_as_user rm -f -- "$tmp" || true
+    return 1
+  fi
+  sync -f "$tmp" 2>/dev/null || true
+  ra_artifact_as_user mv -f -- "$tmp" "$path" || { ra_artifact_as_user rm -f -- "$tmp" || true; return 1; }
+  ra_artifact_file_validate "$path" || return 1
+  sync -f "$parent" 2>/dev/null || true
+}
+
+ra_artifact_file_append() {
+  local path="$1"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    ra_artifact_file_write "$path"
+    return $?
+  fi
+  ra_artifact_parent_validate "$path" || return 1
+  ra_artifact_file_validate "$path" || return 1
+  ra_artifact_append_user_path "$path" || return 1
+  ra_artifact_file_validate "$path"
 }
 
 ra_artifacts_init_new() {
@@ -245,12 +347,10 @@ ra_artifacts_init_new() {
   RA_PUBLIC_DIR="$RA_ARTIFACT_DIR/$run_id/public"
   RA_TRANSCRIPT="$RA_PRIVATE_DIR/commands.log"
   ra_secure_user_mkdir "$RA_ARTIFACT_DIR" || return 1
-  ra_secure_user_mkdir "$RA_ARTIFACT_DIR/$run_id" || return 1
-  ra_secure_user_mkdir "$RA_PRIVATE_DIR" || return 1
-  ra_secure_user_mkdir "$RA_PUBLIC_DIR" || return 1
-  : >"$RA_TRANSCRIPT"
-  chmod 0600 "$RA_TRANSCRIPT" || return 1
-  if ((EUID == 0)) && [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]]; then chown "$RA_UID:$RA_GID" "$RA_TRANSCRIPT" || return 1; fi
+  ra_artifact_dir_ensure "$RA_ARTIFACT_DIR/$run_id" || return 1
+  ra_artifact_dir_ensure "$RA_PRIVATE_DIR" || return 1
+  ra_artifact_dir_ensure "$RA_PUBLIC_DIR" || return 1
+  printf '' | ra_artifact_file_write "$RA_TRANSCRIPT"
 }
 
 ra_artifacts_from_state() {
@@ -274,7 +374,7 @@ ra_log_command() {
     printf '%q ' "$@"
     printf '\n'
     [[ -z "$RA_CAPTURE" ]] || printf '%s\n' "$RA_CAPTURE"
-  } >>"$RA_TRANSCRIPT"
+  } | ra_artifact_file_append "$RA_TRANSCRIPT"
 }
 
 ra_capture() {
@@ -340,6 +440,13 @@ ra_boot_id() {
     return 0
   fi
   cat /proc/sys/kernel/random/boot_id
+}
+
+ra_boot_id_normalize() {
+  local raw="${1,,}" canonical
+  canonical="${raw//-/}"
+  [[ "$canonical" =~ ^[0-9a-f]{32}$ ]] || return 1
+  printf '%s' "$canonical"
 }
 
 ra_service_state_capture() {
@@ -432,7 +539,21 @@ ra_profile_select() { local explicit="$1" ids id; local valid=(); ids="$(ra_prof
 ra_connect() { ra_product connect --mode tun "$1" >/dev/null || { ra_die "product Podlaz TUN connect failed"; return 1; }; }
 ra_disconnect() { ra_product disconnect >/dev/null || { ra_die "product Podlaz disconnect failed"; return 1; }; }
 
-ra_status_json() { local payload; ra_capture curl --fail --silent --max-time 5 --unix-socket "$RA_SOCKET" http://localhost/v1/status || return 1; if [[ -n "$RA_PRIVATE_DIR" && -d "$RA_PRIVATE_DIR" ]]; then printf '%s\n' "$RA_CAPTURE" >"$RA_PRIVATE_DIR/last-status-observed.txt" 2>/dev/null || true; chmod 0600 "$RA_PRIVATE_DIR/last-status-observed.txt" 2>/dev/null || true; fi; if ! payload="$(jq -ce . <<<"$RA_CAPTURE" 2>/dev/null)"; then ra_die "status_contract_incompatible daemon status is not JSON"; return 2; fi; if [[ -n "$RA_PRIVATE_DIR" && -d "$RA_PRIVATE_DIR" ]]; then printf '%s\n' "$payload" >"$RA_PRIVATE_DIR/last-status.json" 2>/dev/null || true; chmod 0600 "$RA_PRIVATE_DIR/last-status.json" 2>/dev/null || true; fi; printf '%s' "$payload"; }
+ra_status_json() {
+  local payload
+  ra_capture curl --fail --silent --max-time 5 --unix-socket "$RA_SOCKET" http://localhost/v1/status || return 1
+  if [[ -n "$RA_PRIVATE_DIR" && -d "$RA_PRIVATE_DIR" ]]; then
+    printf '%s\n' "$RA_CAPTURE" | ra_artifact_file_write "$RA_PRIVATE_DIR/last-status-observed.txt" 2>/dev/null || true
+  fi
+  if ! payload="$(jq -ce . <<<"$RA_CAPTURE" 2>/dev/null)"; then
+    ra_die "status_contract_incompatible daemon status is not JSON"
+    return 2
+  fi
+  if [[ -n "$RA_PRIVATE_DIR" && -d "$RA_PRIVATE_DIR" ]]; then
+    printf '%s\n' "$payload" | ra_artifact_file_write "$RA_PRIVATE_DIR/last-status.json" 2>/dev/null || true
+  fi
+  printf '%s' "$payload"
+}
 
 ra_status_classify() {
   local target="$1" payload="$2"
@@ -611,15 +732,15 @@ ra_suspend_once() {
 ra_soak_run() {
   local seconds interval doctor_interval start now next next_doctor elapsed wifi_done=0 suspend_done=0 fixture_done=0 sample summary measured
   if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then seconds="${RELEASE_ACCEPTANCE_TEST_SOAK_SECONDS:-3}"; interval=1; doctor_interval=2; else seconds=$((RA_SOAK_MINUTES*60)); interval=60; doctor_interval=600; fi
-  start="$(date +%s)"; next="$start"; next_doctor="$start"; RA_SOAK_SAMPLES_FILE="$RA_PRIVATE_DIR/soak-samples.jsonl"; : >"$RA_SOAK_SAMPLES_FILE"; chmod 0600 "$RA_SOAK_SAMPLES_FILE"
-  while :; do now="$(date +%s)"; elapsed=$((now-start)); ((elapsed<seconds)) || break; if ((now>=next)); then ra_wait_active 30 || return 1; ra_privacy_require_protected || return 1; ra_capture_user getent ahostsv4 example.com || return 1; ra_capture_user curl -4 -fsS --max-time 10 "$RA_PROBE_URL" -o /dev/null || return 1; sample="$(ra_resource_sample soak)" || return 1; printf '%s\n' "$sample" >>"$RA_SOAK_SAMPLES_FILE"; next=$((now+interval)); fi; if ((now>=next_doctor)); then ra_product doctor --tun --json >/dev/null || return 1; next_doctor=$((now+doctor_interval)); fi; if ((fixture_done==0 && elapsed>=seconds/3)); then ra_fixture_acquire fixture_b || return 1; ra_fixture_churn fixture_b || return 1; ra_wait_active 60 || return 1; ra_privacy_require_protected || return 1; ra_fixture_verify fixture_b || return 1; ra_record active_coexistence PASS; fixture_done=1; fi; if ((wifi_done==0 && elapsed>=seconds/2)); then ra_wifi_reconnect_once || return 1; wifi_done=1; fi; if ((suspend_done==0 && elapsed>=(seconds*2)/3)); then ra_suspend_once || return 1; suspend_done=1; fi; sleep 1; done
+  start="$(date +%s)"; next="$start"; next_doctor="$start"; RA_SOAK_SAMPLES_FILE="$RA_PRIVATE_DIR/soak-samples.jsonl"; printf '' | ra_artifact_file_write "$RA_SOAK_SAMPLES_FILE" || return 1
+  while :; do now="$(date +%s)"; elapsed=$((now-start)); ((elapsed<seconds)) || break; if ((now>=next)); then ra_wait_active 30 || return 1; ra_privacy_require_protected || return 1; ra_capture_user getent ahostsv4 example.com || return 1; ra_capture_user curl -4 -fsS --max-time 10 "$RA_PROBE_URL" -o /dev/null || return 1; sample="$(ra_resource_sample soak)" || return 1; printf '%s\n' "$sample" | ra_artifact_file_append "$RA_SOAK_SAMPLES_FILE" || return 1; next=$((now+interval)); fi; if ((now>=next_doctor)); then ra_product doctor --tun --json >/dev/null || return 1; next_doctor=$((now+doctor_interval)); fi; if ((fixture_done==0 && elapsed>=seconds/3)); then ra_fixture_acquire fixture_b || return 1; ra_fixture_churn fixture_b || return 1; ra_wait_active 60 || return 1; ra_privacy_require_protected || return 1; ra_fixture_verify fixture_b || return 1; ra_record active_coexistence PASS; fixture_done=1; fi; if ((wifi_done==0 && elapsed>=seconds/2)); then ra_wifi_reconnect_once || return 1; wifi_done=1; fi; if ((suspend_done==0 && elapsed>=(seconds*2)/3)); then ra_suspend_once || return 1; suspend_done=1; fi; sleep 1; done
   ((fixture_done==1)) || { ra_fixture_acquire fixture_b || return 1; ra_fixture_churn fixture_b || return 1; ra_wait_active || return 1; ra_fixture_verify fixture_b || return 1; ra_record active_coexistence PASS; }
   ((wifi_done==1)) || ra_wifi_reconnect_once || return 1; ((suspend_done==1)) || ra_suspend_once || return 1; ra_fixture_release fixture_b || return 1
   now="$(date +%s)"; measured=$((now-start)); summary="$(ra_resource_summary_file "$RA_SOAK_SAMPLES_FILE")" || return 1
   ra_state_jq '.private.resource.first_session_summary=$summary|.private.resource.actual_soak_seconds=$measured' --argjson summary "$summary" --argjson measured "$measured" || return 1
   ra_record resource_soak PASS "" "$(jq -cn --argjson measured "$measured" --argjson samples "$(wc -l <"$RA_SOAK_SAMPLES_FILE")" '{measured_seconds:$measured,samples:$samples}')"; RA_SOAK_SAMPLES_FILE=""
 }
-ra_second_session_observe() { local seconds start now sample summary first baseline comparison file; if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then seconds=2; else seconds=300; fi; start="$(date +%s)"; file="$RA_PRIVATE_DIR/second-session.jsonl"; : >"$file"; chmod 0600 "$file"; while :; do now="$(date +%s)"; ((now-start<seconds)) || break; ra_wait_active 30 || return 1; ra_privacy_require_protected || return 1; sample="$(ra_resource_sample second_session)" || return 1; printf '%s\n' "$sample" >>"$file"; if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then sleep 1; else sleep 30; fi; done; summary="$(ra_resource_summary_file "$file")" || return 1; first="$(jq -ce '.private.resource.first_session_summary' "$RA_CHECKPOINT")" || return 1; baseline="$(jq -c '.private.warmed_inactive//null' "$RA_CHECKPOINT")" || return 1; comparison="$(ra_resource_compare_sessions "$first" "$summary" "$baseline")" || return 1; ra_state_jq '.private.resource.second_session_summary=$summary|.private.resource.session_comparison=$comparison' --argjson summary "$summary" --argjson comparison "$comparison" || return 1; if [[ "$(jq -r '.structural_nonaccumulation' <<<"$comparison")" == true ]]; then ra_record reconnect_resource_nonaccumulation PASS "" "$(jq -c '{compared,structural_nonaccumulation,deltas}' <<<"$comparison")"; else ra_record reconnect_resource_nonaccumulation FAIL "structural resource ownership accumulated" "$(jq -c '{compared,structural_nonaccumulation,deltas}' <<<"$comparison")"; return 1; fi; }
+ra_second_session_observe() { local seconds start now sample summary first baseline comparison file; if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then seconds=2; else seconds=300; fi; start="$(date +%s)"; file="$RA_PRIVATE_DIR/second-session.jsonl"; printf '' | ra_artifact_file_write "$file" || return 1; while :; do now="$(date +%s)"; ((now-start<seconds)) || break; ra_wait_active 30 || return 1; ra_privacy_require_protected || return 1; sample="$(ra_resource_sample second_session)" || return 1; printf '%s\n' "$sample" | ra_artifact_file_append "$file" || return 1; if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then sleep 1; else sleep 30; fi; done; summary="$(ra_resource_summary_file "$file")" || return 1; first="$(jq -ce '.private.resource.first_session_summary' "$RA_CHECKPOINT")" || return 1; baseline="$(jq -c '.private.warmed_inactive//null' "$RA_CHECKPOINT")" || return 1; comparison="$(ra_resource_compare_sessions "$first" "$summary" "$baseline")" || return 1; ra_state_jq '.private.resource.second_session_summary=$summary|.private.resource.session_comparison=$comparison' --argjson summary "$summary" --argjson comparison "$comparison" || return 1; if [[ "$(jq -r '.structural_nonaccumulation' <<<"$comparison")" == true ]]; then ra_record reconnect_resource_nonaccumulation PASS "" "$(jq -c '{compared,structural_nonaccumulation,deltas}' <<<"$comparison")"; else ra_record reconnect_resource_nonaccumulation FAIL "structural resource ownership accumulated" "$(jq -c '{compared,structural_nonaccumulation,deltas}' <<<"$comparison")"; return 1; fi; }
 
 ra_service_is_active() { if ra_capture systemctl is-active --quiet "$RA_SERVICE"; then return 0; fi; [[ "$RA_CAPTURE_RC" == 3 ]] && return 1; return 2; }
 ra_lifecycle_graceful_restart() { local before; before="$(ra_main_pid)" || return 1; ra_state_jq '.scenarios.graceful_restart.private=((.scenarios.graceful_restart.private//{})+{before_pid:$pid,mutation_requested:true})' --argjson pid "$before" || return 1; ra_privacy_watch_start graceful_restart; ra_capture systemctl restart "$RA_SERVICE" || { ra_privacy_watch_cancel; return 1; }; ra_wait_new_pid "$before" >/dev/null || { ra_privacy_watch_cancel; return 1; }; ra_wait_active || { ra_privacy_watch_cancel; return 1; }; ra_privacy_watch_stop; }
@@ -661,7 +782,7 @@ ra_package_cleanup_reconcile() { if jq -e '.mutations.candidate_upgrade and .mut
 ra_cleanup_expected_package_version() { local installed initial candidate cv require_candidate=false; installed="$(ra_pkg_installed_version)" || return 1; initial="$(jq -r '.private.installed_before//""' "$RA_CHECKPOINT")"; candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")" || return 1; cv="$(jq -r '.version' <<<"$candidate")"; if jq -e '.mutations.package_setup' "$RA_CHECKPOINT" >/dev/null 2>&1; then require_candidate=true; fi; if jq -e '.mutations.reinstall_package' "$RA_CHECKPOINT" >/dev/null 2>&1; then require_candidate=true; fi; if [[ "$(jq -r '.mutations.candidate_upgrade.identity.applied//false' "$RA_CHECKPOINT")" == true ]]; then require_candidate=true; fi; if [[ "$require_candidate" == true ]]; then printf '%s' "$cv"; return 0; fi; [[ "$installed" == "$cv" || "$installed" == "$initial" ]] || return 1; printf '%s' "$installed"; }
 ra_cleanup_expected_package_verify() { local installed expected; installed="$(ra_pkg_installed_version)" || return 1; expected="$(ra_cleanup_expected_package_version)" || return 1; [[ "$installed" == "$expected" ]] || return 1; }
 ra_restore_service_state() { local wanted rc; wanted="$(jq -r '.private.service_active_before' "$RA_CHECKPOINT")" || return 1; if ra_service_is_active; then rc=0; else rc=$?; fi; [[ "$rc" == 0 || "$rc" == 1 ]] || { ra_die "host_state service active state ambiguous"; return 1; }; if [[ "$wanted" == true && "$rc" == 1 ]]; then ra_capture systemctl start "$RA_SERVICE" || return 1; ra_service_is_active || return 1; elif [[ "$wanted" == false && "$rc" == 0 ]]; then ra_capture systemctl stop "$RA_SERVICE" || return 1; if ra_service_is_active; then return 1; else [[ "$?" == 1 ]] || return 1; fi; fi; }
-ra_verify_run_tree() { local run_root path mode uid gid; run_root="$(dirname "$RA_PRIVATE_DIR")"; [[ -d "$run_root" && ! -L "$run_root" ]] || return 1; while IFS= read -r -d '' path; do [[ ! -L "$path" ]] || return 1; uid="$(stat -Lc '%u' "$path")" || return 1; gid="$(stat -Lc '%g' "$path")" || return 1; [[ "$uid" == "$RA_UID" && "$gid" == "$RA_GID" ]] || return 1; if [[ -d "$path" ]]; then mode="$(stat -Lc '%a' "$path")" || return 1; [[ "$mode" == 700 ]] || return 1; elif [[ "$path" == "$RA_PRIVATE_DIR"/* ]]; then mode="$(stat -Lc '%a' "$path")" || return 1; [[ "$mode" == 600 ]] || return 1; else mode="$(stat -Lc '%a' "$path")" || return 1; ((8#$mode & 0022 == 0)) || return 1; fi; done < <(find "$run_root" -mindepth 0 -print0); if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]]; then [[ "$(stat -Lc '%u:%g:%a' "$RA_STATE_DIR")" == "0:0:700" ]] || return 1; [[ "$(stat -Lc '%u:%g:%a' "$RA_CHECKPOINT")" == "0:0:600" ]] || return 1; fi; }
+ra_verify_run_tree() { local run_root path mode uid gid; run_root="$(dirname "$RA_PRIVATE_DIR")"; [[ -d "$run_root" && ! -L "$run_root" ]] || return 1; while IFS= read -r -d '' path; do [[ ! -L "$path" ]] || return 1; uid="$(stat -Lc '%u' "$path")" || return 1; gid="$(stat -Lc '%g' "$path")" || return 1; [[ "$uid" == "$RA_UID" && "$gid" == "$RA_GID" ]] || return 1; if [[ -d "$path" ]]; then mode="$(stat -Lc '%a' "$path")" || return 1; [[ "$mode" == 700 ]] || return 1; elif [[ "$path" == "$RA_PRIVATE_DIR"/* ]]; then mode="$(stat -Lc '%a' "$path")" || return 1; [[ "$mode" == 600 ]] || return 1; else mode="$(stat -Lc '%a' "$path")" || return 1; (((8#$mode & 0022) == 0)) || return 1; fi; done < <(find "$run_root" -mindepth 0 -print0); if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" != 1 ]]; then [[ "$(stat -Lc '%u:%g:%a' "$RA_STATE_DIR")" == "0:0:700" ]] || return 1; [[ "$(stat -Lc '%u:%g:%a' "$RA_CHECKPOINT")" == "0:0:600" ]] || return 1; fi; }
 ra_safe_cleanup() { ra_privacy_watch_cancel; ra_safe_disconnect_if_owned || return 1; ra_cleanup_owned_mutations || return 1; ra_restore_original_policy || return 1; ra_package_cleanup_reconcile || return 1; ra_cleanup_expected_package_verify || return 1; ra_require_mutations_released || return 1; ra_verify_inactive_boundary || return 1; ra_privacy_require_ordinary || return 1; [[ ! -e "$RA_ROLLBACK_OVERRIDE" && ! -L "$RA_ROLLBACK_OVERRIDE" && ! -e "$RA_TERMINAL_OVERRIDE" && ! -L "$RA_TERMINAL_OVERRIDE" && ! -e "$RA_ROLLBACK_HOOK_DIR" && ! -e "$RA_TERMINAL_HOOK_DIR" ]] || { ra_die "ownership acceptance hooks remain after cleanup"; return 1; }; ra_restore_service_state || return 1; ra_verify_run_tree || return 1; }
 
 ra_public_resource_summary() { local v="$1"; jq -c '{sample_count,measured_seconds,daemon,xray,service,identity:{daemon_generation_count:.identity.daemon_generation_count,xray_generation_count:.identity.xray_generation_count}}' <<<"$v"; }
@@ -673,11 +794,210 @@ ra_finalize() { ra_restore_original_policy || return 1; ra_final_restoration_ver
 ra_failure_class() { case "$1" in host_capability*|*HOST_CAPABILITY*) printf HOST_CAPABILITY ;; host_state*|*HOST_STATE*) printf HOST_STATE ;; signal_*|interrupted*) printf INTERRUPTED ;; *ownership*|*ambiguous*|*cleanup*) printf OWNERSHIP ;; *schema*|*invariant*|*internal*|*contract*) printf INTERNAL ;; preflight*|input*) printf INPUT ;; *) printf PRODUCT ;; esac; }
 ra_failure_policy() { case "$1" in HOST_CAPABILITY|HOST_STATE) printf 'RETRY\tfix host capability/state and rerun' ;; INPUT) printf 'RETRY\tfix input and rerun' ;; OWNERSHIP) printf 'MANUAL_DIAGNOSIS\tinspect retained authority before mutation' ;; INTERRUPTED) printf 'RETRY\trerun the same command at the persisted boundary' ;; INTERNAL) printf 'RESTART\tfix harness/contract incompatibility, then restart qualification' ;; PRODUCT) printf 'RESTART\trestart qualification after reviewing product evidence' ;; *) printf 'MANUAL_DIAGNOSIS\tinspect evidence' ;; esac; }
 ra_failure_record() { local reason="$1" exit_code="$2" class policy retry action occurred scenario boot progress; class="$(ra_failure_class "$reason")"; policy="$(ra_failure_policy "$class")"; IFS=$'\t' read -r retry action <<<"$policy"; occurred="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; scenario="$(jq -r '.current_scenario//""' "$RA_CHECKPOINT" 2>/dev/null || true)"; boot="$(ra_boot_id 2>/dev/null || true)"; progress="$(jq -c --arg s "$scenario" '{phase:.phase,scenario_state:(if $s=="" then null else (.scenarios[$s].state//null) end)}' "$RA_CHECKPOINT" 2>/dev/null || printf '{}')"; ra_state_jq '.current_boot_id=$boot|.last_failure={step:$step,scenario:$scenario,class:$class,exit_code:$exit,retry_policy:$retry,recommended_action:$action,occurred_at:$at,boot_id:$boot,progress:$progress,cleanup_outcome:"pending"}' --arg step "$reason" --arg scenario "$scenario" --arg class "$class" --argjson exit "$exit_code" --arg retry "$retry" --arg action "$action" --arg at "$occurred" --arg boot "$boot" --argjson progress "$progress"; }
-ra_failure_capture_command() { local file="$1"; shift; local rc; if ra_capture "$@"; then rc=0; else rc="$RA_CAPTURE_RC"; fi; { printf 'rc=%s\n' "$rc"; printf '%s\n' "$RA_CAPTURE"; } >"$file" 2>/dev/null || true; chmod 0600 "$file" 2>/dev/null || true; }
-ra_failure_copy_private_file() { local source="$1" target="$2" size; [[ -f "$source" && ! -L "$source" ]] || return 0; size="$(stat -Lc '%s' "$source" 2>/dev/null || printf 0)"; [[ "$size" =~ ^[0-9]+$ && "$size" -le 1048576 ]] || return 0; cat "$source" >"$target" 2>/dev/null || return 0; chmod 0600 "$target" 2>/dev/null || true; }
-ra_failure_bundle_capture() { local reason="${1:-failure}" exit_code="${2:-1}" bundle started boot path base; [[ -n "$RA_PRIVATE_DIR" && -d "$RA_PRIVATE_DIR" ]] || return 0; bundle="$RA_PRIVATE_DIR/failure"; mkdir -p "$bundle" 2>/dev/null || return 0; chmod 0700 "$bundle"; cat "$RA_CHECKPOINT" >"$bundle/checkpoint-at-failure.json" 2>/dev/null || true; chmod 0600 "$bundle/checkpoint-at-failure.json" 2>/dev/null || true; if [[ -f "$RA_TRANSCRIPT" && ! -L "$RA_TRANSCRIPT" ]]; then cat "$RA_TRANSCRIPT" >"$bundle/commands.log" 2>/dev/null || true; chmod 0600 "$bundle/commands.log"; tail -n 200 "$RA_TRANSCRIPT" >"$bundle/last-commands.log" 2>/dev/null || true; chmod 0600 "$bundle/last-commands.log"; fi; local status; if status="$(ra_status_json 2>/dev/null)"; then printf '%s\n' "$status" >"$bundle/last-status.json" 2>/dev/null || true; chmod 0600 "$bundle/last-status.json"; fi; ra_product doctor --tun --json >/dev/null || true; { printf 'rc=%s\n%s\n' "$RA_CAPTURE_RC" "$RA_CAPTURE"; } >"$bundle/doctor-tun.txt" 2>/dev/null || true; chmod 0600 "$bundle/doctor-tun.txt"; ra_failure_capture_command "$bundle/systemctl-status.txt" systemctl status "$RA_SERVICE" --no-pager --full; started="$(jq -r '.run_started_at//""' "$RA_CHECKPOINT")"; boot="$(jq -r '.last_failure.boot_id//.current_boot_id//.starting_boot_id//""' "$RA_CHECKPOINT")"; if [[ -n "$started" && -n "$boot" ]]; then ra_failure_capture_command "$bundle/journal.txt" journalctl -u "$RA_SERVICE" --boot "$boot" --since "$started" --no-pager -o short-iso -n 2000; fi; ra_failure_capture_command "$bundle/package-state.txt" dpkg-query -W '-f=${Status}\t${Version}\t${Architecture}\n' podlaz; jq '.mutations' "$RA_CHECKPOINT" >"$bundle/mutation-ledger.json" 2>/dev/null || true; jq '{phase,current_scenario,last_failure,scenarios}' "$RA_CHECKPOINT" >"$bundle/run-state.json" 2>/dev/null || true; ra_failure_copy_private_file "$RA_CONTINUATION" "$bundle/network-session-continuation.json"; ra_failure_copy_private_file "$RA_BOOT_ATTEMPT" "$bundle/boot-autostart-attempt.json"; if [[ -d "$RA_TRANSACTIONS" ]]; then mkdir -p "$bundle/transactions"; chmod 0700 "$bundle/transactions"; while IFS= read -r -d '' path; do base="$(basename "$path")"; ra_failure_copy_private_file "$path" "$bundle/transactions/$base"; done < <(find "$RA_TRANSACTIONS" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null); fi; ra_failure_capture_command "$bundle/ip-links.json" ip -j -d link show; ra_failure_capture_command "$bundle/ip-routes.json" ip -j -4 route show table all; ra_failure_capture_command "$bundle/ip-rules.txt" ip -4 rule show; ra_failure_capture_command "$bundle/nft-ruleset.json" nft -j list ruleset; ra_failure_capture_command "$bundle/resolved-status.txt" resolvectl status --no-pager; jq '{failure:.last_failure,phase,current_scenario,progress:(.last_failure.progress//{}),recommended_action:(.last_failure.recommended_action//"")}' "$RA_CHECKPOINT" >"$bundle/failure-envelope.json" 2>/dev/null || true; chmod -R go-rwx "$bundle" 2>/dev/null || true; }
+ra_failure_component_set() {
+  local components="$1" name="$2" status="$3"
+  jq -c --arg name "$name" --arg status "$status" '.[$name]={status:$status}' <<<"$components"
+}
+
+ra_failure_capture_command() {
+  local file="$1"
+  shift
+  local rc status
+  if ra_capture "$@"; then rc=0; status=captured; else rc="$RA_CAPTURE_RC"; status=command_failed; fi
+  { printf 'rc=%s\n' "$rc"; printf '%s\n' "$RA_CAPTURE"; } | ra_artifact_file_write "$file" || return 1
+  printf '%s' "$status"
+}
+
+ra_failure_copy_private_file() {
+  local source="$1" target="$2" size
+  [[ -f "$source" && ! -L "$source" ]] || { printf unavailable; return 0; }
+  size="$(stat -Lc '%s' "$source" 2>/dev/null || printf 0)"
+  [[ "$size" =~ ^[0-9]+$ && "$size" -le 1048576 ]] || { printf unavailable; return 0; }
+  if cat "$source" | ra_artifact_file_write "$target"; then printf captured; else return 1; fi
+}
+
+ra_failure_attempts_validate() {
+  local failures="$1" path name metadata
+  ra_artifact_dir_validate "$failures" || return 1
+  while IFS= read -r -d '' path; do
+    name="$(basename -- "$path")"
+    [[ "$name" =~ ^20[0-9]{6}T[0-9]{6}\.[0-9]{9}Z-[0-9]{3}$ ]] || return 1
+    ra_artifact_dir_validate "$path" || return 1
+    metadata="$path/metadata.json"
+    ra_artifact_file_validate "$metadata" || return 1
+    jq -e --arg id "$name" '.attempt_id==$id and (.root_failure_id|type)=="string"' "$metadata" >/dev/null || return 1
+  done < <(find "$failures" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+}
+
+ra_failure_next_attempt_id() {
+  local failures="$1" stamp id
+  local -i seq
+  stamp="$(date -u +%Y%m%dT%H%M%S.%NZ)" || return 1
+  for ((seq=0; seq<=999; seq++)); do
+    printf -v id '%s-%03d' "$stamp" "$seq"
+    [[ ! -e "$failures/$id" && ! -L "$failures/$id" ]] || continue
+    printf '%s' "$id"
+    return 0
+  done
+  return 1
+}
+
+ra_failure_process_identity() {
+  local pid statline start exe cgroup
+  pid="$(ra_main_pid 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 1 && -r "/proc/$pid/stat" ]] || return 1
+  statline="$(cat "/proc/$pid/stat")" || return 1
+  start="$(awk '{print $22}' <<<"$statline")" || return 1
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  cgroup="$(awk -F: '$1==0{print $3;exit}' "/proc/$pid/cgroup" 2>/dev/null || true)"
+  jq -cn --argjson pid "$pid" --arg start "$start" --arg exe "$exe" --arg cgroup "$cgroup" '{pid:$pid,start_time_ticks:$start,exe:$exe,cgroup_path:$cgroup}'
+}
+
+ra_failure_dpkg_slice() {
+  local source="$1" since="$2" target="$3" boundary
+  [[ -f "$source" && ! -L "$source" ]] || { printf unavailable; return 0; }
+  boundary="$(date -u -d "$since" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)" || { printf unavailable; return 0; }
+  if awk -v boundary="$boundary" '$0 ~ /podlaz/ {ts=$1" "$2; if (ts>=boundary) print substr($0,1,4096)}' "$source" | tail -n 2000 | ra_artifact_file_write "$target"; then
+    printf captured
+  else
+    return 1
+  fi
+}
+
+ra_failure_bundle_capture() {
+  local reason="${1:-failure}" exit_code="${2:-1}" invocation_mode="${3:-$RA_MODE}"
+  local failures attempt_id final tmp previous_path previous_id="" root_id="" created_at scenario scenario_state phase started boot boot_canonical
+  local components='{}' status value package_identity process_identity capture_status dpkg_log_source
+  [[ -n "$RA_PRIVATE_DIR" ]] || return 1
+  ra_artifact_dir_validate "$RA_PRIVATE_DIR" || return 1
+  failures="$RA_PRIVATE_DIR/failures"
+  ra_artifact_dir_ensure "$failures" || return 1
+  ra_failure_attempts_validate "$failures" || return 1
+
+  previous_path="$(find "$failures" -mindepth 1 -maxdepth 1 -type d -name '20*' -print | sort | tail -n1)"
+  if [[ -n "$previous_path" ]]; then
+    previous_id="$(basename -- "$previous_path")"
+    root_id="$(jq -er '.root_failure_id' "$previous_path/metadata.json")" || return 1
+  fi
+  attempt_id="$(ra_failure_next_attempt_id "$failures")" || return 1
+  [[ -n "$root_id" ]] || root_id="$attempt_id"
+  final="$failures/$attempt_id"
+  tmp="$failures/.capture-$attempt_id-$$"
+  [[ ! -e "$tmp" && ! -L "$tmp" ]] || return 1
+  ra_artifact_dir_ensure "$tmp" || return 1
+
+  created_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || { ra_artifact_as_user rm -rf -- "$tmp"; return 1; }
+  scenario="$(jq -r '.current_scenario//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
+  phase="$(jq -r '.phase//""' "$RA_CHECKPOINT" 2>/dev/null || true)"
+  scenario_state="$(jq -r --arg s "$scenario" 'if $s=="" then "" else (.scenarios[$s].state//"") end' "$RA_CHECKPOINT" 2>/dev/null || true)"
+  if [[ -n "$scenario" ]]; then
+    started="$(jq -r --arg s "$scenario" '.scenarios[$s].started_at//.run_started_at//""' "$RA_CHECKPOINT")"
+  else
+    started="$(jq -r '.run_started_at//""' "$RA_CHECKPOINT")"
+  fi
+  boot="$(jq -r '.last_failure.boot_id//.current_boot_id//.starting_boot_id//""' "$RA_CHECKPOINT")"
+  boot_canonical="$(ra_boot_id_normalize "$boot" 2>/dev/null || true)"
+
+  if cat "$RA_CHECKPOINT" | ra_artifact_file_write "$tmp/checkpoint.json"; then status=captured; else status=command_failed; fi
+  components="$(ra_failure_component_set "$components" checkpoint "$status")" || return 1
+
+  if [[ -f "$RA_TRANSCRIPT" && ! -L "$RA_TRANSCRIPT" ]]; then
+    if cat "$RA_TRANSCRIPT" | ra_artifact_file_write "$tmp/commands.log" && tail -n 200 "$RA_TRANSCRIPT" | ra_artifact_file_write "$tmp/last-commands.log"; then status=captured; else status=command_failed; fi
+  else status=unavailable; fi
+  components="$(ra_failure_component_set "$components" commands "$status")" || return 1
+
+  if value="$(ra_status_json 2>/dev/null)"; then
+    printf '%s\n' "$value" | ra_artifact_file_write "$tmp/status.txt" || return 1
+    status=captured
+  else
+    printf 'status capture failed rc=%s\n' "$?" | ra_artifact_file_write "$tmp/status.txt" || return 1
+    status=command_failed
+  fi
+  components="$(ra_failure_component_set "$components" status "$status")" || return 1
+
+  if ra_product doctor --tun --json >/dev/null; then status=captured; else status=command_failed; fi
+  { printf 'rc=%s\n' "$RA_CAPTURE_RC"; printf '%s\n' "$RA_CAPTURE"; } | ra_artifact_file_write "$tmp/doctor-tun.txt" || return 1
+  components="$(ra_failure_component_set "$components" doctor "$status")" || return 1
+
+  status="$(ra_failure_capture_command "$tmp/systemd-unit-properties.txt" systemctl show "$RA_SERVICE" -p MainPID -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus -p KillSignal -p RestartKillSignal -p KillMode -p TimeoutStopUSec -p FragmentPath)" || return 1
+  components="$(ra_failure_component_set "$components" systemd_unit_properties "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/systemd-version.txt" systemd --version)" || return 1
+  components="$(ra_failure_component_set "$components" systemd_version "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/systemctl-status.txt" systemctl status "$RA_SERVICE" --no-pager --full)" || return 1
+  components="$(ra_failure_component_set "$components" systemctl_status "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/host-kernel.txt" uname -a)" || return 1
+  components="$(ra_failure_component_set "$components" host_identity "$status")" || return 1
+
+  if [[ -n "$boot_canonical" && -n "$started" ]]; then
+    status="$(ra_failure_capture_command "$tmp/journal.txt" journalctl -u "$RA_SERVICE" "_BOOT_ID=$boot_canonical" --since "$started" --no-pager -o short-iso -n 2000)" || return 1
+  else
+    printf 'rc=unavailable\ninvalid boot identity or time boundary\n' | ra_artifact_file_write "$tmp/journal.txt" || return 1
+    status=unavailable
+  fi
+  components="$(ra_failure_component_set "$components" journal "$status")" || return 1
+
+  status="$(ra_failure_capture_command "$tmp/package-state.txt" dpkg-query -W '-f=${Status}\t${Version}\t${Architecture}\n' podlaz)" || return 1
+  components="$(ra_failure_component_set "$components" package_state "$status")" || return 1
+
+  if package_identity="$(jq -ce '.candidate|{package,version,architecture,sha256}' "$RA_CHECKPOINT" 2>/dev/null)"; then
+    printf '%s\n' "$package_identity" | ra_artifact_file_write "$tmp/package-identity.json" || return 1
+    status=captured
+  else status=unavailable; fi
+  components="$(ra_failure_component_set "$components" package_identity "$status")" || return 1
+
+  dpkg_log_source="${RELEASE_ACCEPTANCE_TEST_DPKG_LOG:-/var/log/dpkg.log}"
+  status="$(ra_failure_dpkg_slice "$dpkg_log_source" "$started" "$tmp/dpkg-log.txt")" || return 1
+  components="$(ra_failure_component_set "$components" dpkg_log "$status")" || return 1
+
+  status="$(ra_failure_copy_private_file "$RA_CONTINUATION" "$tmp/network-session.json")" || return 1
+  components="$(ra_failure_component_set "$components" network_session "$status")" || return 1
+  status="$(ra_failure_copy_private_file "$RA_BOOT_ATTEMPT" "$tmp/boot-autostart-attempt.json")" || return 1
+  components="$(ra_failure_component_set "$components" boot_attempt "$status")" || return 1
+
+  if process_identity="$(ra_failure_process_identity 2>/dev/null)"; then
+    printf '%s\n' "$process_identity" | ra_artifact_file_write "$tmp/daemon-process-identity.json" || return 1
+    status=captured
+  else status=unavailable; fi
+  components="$(ra_failure_component_set "$components" daemon_process_identity "$status")" || return 1
+
+  if jq '.mutations' "$RA_CHECKPOINT" | ra_artifact_file_write "$tmp/mutation-ledger.json"; then status=captured; else status=command_failed; fi
+  components="$(ra_failure_component_set "$components" mutation_ledger "$status")" || return 1
+  if jq '{phase,current_scenario,last_failure,scenarios}' "$RA_CHECKPOINT" | ra_artifact_file_write "$tmp/run-state.json"; then status=captured; else status=command_failed; fi
+  components="$(ra_failure_component_set "$components" run_state "$status")" || return 1
+
+  status="$(ra_failure_capture_command "$tmp/ip-links.json" ip -j -d link show)" || return 1
+  components="$(ra_failure_component_set "$components" ip_links "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/ip-routes.json" ip -j -4 route show table all)" || return 1
+  components="$(ra_failure_component_set "$components" ip_routes "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/ip-rules.txt" ip -4 rule show)" || return 1
+  components="$(ra_failure_component_set "$components" ip_rules "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/nft-ruleset.json" nft -j list ruleset)" || return 1
+  components="$(ra_failure_component_set "$components" nft_ruleset "$status")" || return 1
+  status="$(ra_failure_capture_command "$tmp/resolved-status.txt" resolvectl status --no-pager)" || return 1
+  components="$(ra_failure_component_set "$components" resolved_status "$status")" || return 1
+
+  if jq -e 'to_entries|all(.value.status=="captured")' <<<"$components" >/dev/null; then capture_status=complete; else capture_status=partial; fi
+  jq -cn \
+    --arg attempt "$attempt_id" --arg root "$root_id" --arg previous "$previous_id" \
+    --arg created "$created_at" --arg mode "$invocation_mode" --arg phase "$phase" \
+    --arg scenario "$scenario" --arg scenario_state "$scenario_state" --arg reason "$reason" \
+    --arg class "$(ra_failure_class "$reason")" --argjson exit_code "$exit_code" \
+    --arg boot "$boot_canonical" --arg since "$started" --arg capture_status "$capture_status" \
+    --argjson components "$components" --argjson package "${package_identity:-null}" --argjson process "${process_identity:-null}" \
+    '{attempt_id:$attempt,root_failure_id:$root,previous_bundle_id:(if $previous=="" then null else $previous end),created_at:$created,invocation_mode:$mode,phase:$phase,current_scenario:$scenario,scenario_state:$scenario_state,failure:{reason:$reason,class:$class,exit_code:$exit_code},boot_id:$boot,time_boundary:$since,package_identity:$package,daemon_process_identity:$process,capture_status:$capture_status,components:$components}' \
+    | ra_artifact_file_write "$tmp/metadata.json" || { ra_artifact_as_user rm -rf -- "$tmp" || true; return 1; }
+
+  ra_artifact_dir_validate "$tmp" || return 1
+  [[ ! -e "$final" && ! -L "$final" ]] || return 1
+  sync -f "$tmp" 2>/dev/null || true
+  ra_artifact_as_user mv -- "$tmp" "$final" || return 1
+  ra_artifact_dir_validate "$final" || return 1
+  ra_artifact_file_validate "$final/metadata.json" || return 1
+  sync -f "$failures" 2>/dev/null || true
+}
+
 ra_failure_reason_effective() { local reason="$1"; if [[ "$reason" != operation_failed ]]; then printf '%s' "$reason"; return; fi; if [[ -n "$RA_LAST_FAILURE_REASON" ]]; then printf '%s' "$RA_LAST_FAILURE_REASON"; return; fi; if [[ -s "$RA_PRIVATE_DIR/last-error-reason" ]]; then head -n1 "$RA_PRIVATE_DIR/last-error-reason"; return; fi; printf 'internal_operation_failed_without_classification'; }
-ra_failure_finalize() { local reason exit_code="${2:-1}"; reason="$(ra_failure_reason_effective "${1:-unexpected_failure}")"; if ((RA_FINALIZER_ACTIVE==1)); then return 1; fi; ra_checkpoint_exists >/dev/null 2>&1 || return 1; if ra_phase_blocks_auto_finalizer; then return 1; fi; RA_FINALIZER_ACTIVE=1; ra_failure_record "$reason" "$exit_code" || { RA_FINALIZER_ACTIVE=0; return 1; }; ra_failure_bundle_capture "$reason" "$exit_code" || true; ra_state_jq '.phase="failure-cleanup-running"' || { RA_FINALIZER_ACTIVE=0; return 1; }; if ra_safe_cleanup; then ra_state_jq '.phase="failed-clean"|.last_failure.cleanup_outcome="clean"' || return 1; if ! ra_report_write FAILED_CLEAN; then ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.class="OWNERSHIP"|.last_failure.cleanup_outcome="report_failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true; printf 'FAIL_CLEANUP_FAILED\n'; RA_FINALIZER_ACTIVE=0; return 1; fi; ra_verify_run_tree || { RA_FINALIZER_ACTIVE=0; return 1; }; ra_state_remove || return 1; printf 'FAILED_CLEAN\n'; RA_FINALIZER_ACTIVE=0; return 1; fi; ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.class="OWNERSHIP"|.last_failure.cleanup_outcome="failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true; ra_report_write FAIL_CLEANUP_FAILED || true; printf 'FAIL_CLEANUP_FAILED\n'; RA_FINALIZER_ACTIVE=0; return 1; }
+ra_failure_finalize() { local reason exit_code="${2:-1}"; reason="$(ra_failure_reason_effective "${1:-unexpected_failure}")"; if ((RA_FINALIZER_ACTIVE==1)); then return 1; fi; ra_checkpoint_exists >/dev/null 2>&1 || return 1; if ra_phase_blocks_auto_finalizer; then return 1; fi; RA_FINALIZER_ACTIVE=1; ra_failure_record "$reason" "$exit_code" || { RA_FINALIZER_ACTIVE=0; return 1; }; ra_failure_bundle_capture "$reason" "$exit_code" automatic-finalizer || true; ra_state_jq '.phase="failure-cleanup-running"' || { RA_FINALIZER_ACTIVE=0; return 1; }; if ra_safe_cleanup; then ra_state_jq '.phase="failed-clean"|.last_failure.cleanup_outcome="clean"' || return 1; if ! ra_report_write FAILED_CLEAN; then ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.class="OWNERSHIP"|.last_failure.cleanup_outcome="report_failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true; printf 'FAIL_CLEANUP_FAILED\n'; RA_FINALIZER_ACTIVE=0; return 1; fi; ra_verify_run_tree || { RA_FINALIZER_ACTIVE=0; return 1; }; ra_state_remove || return 1; printf 'FAILED_CLEAN\n'; RA_FINALIZER_ACTIVE=0; return 1; fi; ra_state_jq '.phase="fail-cleanup-failed"|.last_failure.class="OWNERSHIP"|.last_failure.cleanup_outcome="failed"|.last_failure.retry_policy="MANUAL_DIAGNOSIS"' || true; ra_report_write FAIL_CLEANUP_FAILED || true; printf 'FAIL_CLEANUP_FAILED\n'; RA_FINALIZER_ACTIVE=0; return 1; }
 ra_signal_handler() { local signal="$1" exit_code=130; [[ "$signal" != TERM ]] || exit_code=143; if ra_checkpoint_exists >/dev/null 2>&1 && ! ra_phase_blocks_auto_finalizer; then ra_failure_finalize "signal_${signal}" "$exit_code" || true; fi; return 1; }
 
 # Boot attempt/session authority helpers.
@@ -910,11 +1230,11 @@ ra_checkpoint_candidate_rebind() { local candidate="$1"; jq -e --argjson c "$can
 ra_checkpoint_run_config_compatible() { local profile soak wifi suspend reboots; profile="$(jq -r '.private.selected_profile//.private.run_config.profile//""' "$RA_CHECKPOINT")"; soak="$(jq -r '.private.run_config.soak_minutes//60' "$RA_CHECKPOINT")"; wifi="$(jq -r 'if .private.run_config.allow_wifi_reconnect then 1 else 0 end' "$RA_CHECKPOINT")"; suspend="$(jq -r 'if .private.run_config.allow_suspend then 1 else 0 end' "$RA_CHECKPOINT")"; reboots="$(jq -r 'if .private.run_config.reboot_phases then 1 else 0 end' "$RA_CHECKPOINT")"; [[ -z "$RA_PROFILE" || "$RA_PROFILE" == "$profile" ]] || return 1; [[ "$RA_SOAK_MINUTES" == "$soak" && "$RA_ALLOW_WIFI" == "$wifi" && "$RA_ALLOW_SUSPEND" == "$suspend" && "$RA_REBOOT_PHASES" == "$reboots" ]] || return 1; if ((RA_ARTIFACT_DIR_EXPLICIT==1)); then [[ "$(readlink -m "$RA_ARTIFACT_DIR")" == "$(readlink -m "$(jq -r '.private.artifact_root' "$RA_CHECKPOINT")")" ]] || return 1; fi; }
 ra_preflight_new_inputs_before_retire() { local candidate previous="" installed ids id terminal valid_count=0; candidate="$(ra_pkg_inspect "$RA_CANDIDATE")" || return $?; [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?; installed="$(ra_cleanup_expected_package_version)" || return 1; ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?; ra_candidate_fault_seams_verify "$candidate" || return $?; ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?; terminal="$(jq -r '.private.terminal_profile//""' "$RA_CHECKPOINT" 2>/dev/null || true)"; if [[ -n "$RA_PROFILE" ]]; then [[ -z "$terminal" || "$RA_PROFILE" != "$terminal" ]] || return 2; ra_profile_validate "$RA_PROFILE" || return 2; return 0; fi; ids="$(ra_profile_ids_json)" || return 2; while IFS= read -r id; do [[ -n "$id" && "$id" != "$terminal" ]] || continue; if ra_profile_validate "$id"; then ((valid_count+=1)); fi; done < <(jq -r '.[]' <<<"$ids"); ((valid_count==1)) || return 2; }
 ra_run_new_fresh() { local candidate previous="" installed manifest run_id baseline profile; candidate="$(ra_pkg_inspect "$RA_CANDIDATE")" || return $?; [[ -z "$RA_PREVIOUS_DEB" ]] || previous="$(ra_pkg_inspect "$RA_PREVIOUS_DEB")" || return $?; installed="$(ra_pkg_installed_version)" || return 1; ra_preflight_release_boundary "$candidate" "$previous" "$installed" || return $?; ra_candidate_fault_seams_verify "$candidate" || return $?; ra_preflight_clean_boundary "$installed" || return $?; ra_validate_artifact_root "$RA_ARTIFACT_DIR" || return $?; profile="$(ra_profile_select "$RA_PROFILE")" || return 2; ra_preflight_capabilities || return $?; manifest="$(ra_boot_manifest_capture)" || return 2; baseline="$(ra_privacy_baseline)" || return 2; run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"; ra_artifacts_init_new "$run_id" || return $?; ra_state_init "$run_id" "$candidate" "$installed" "$manifest" "$profile" || return 1; ra_state_jq '.private.privacy_baseline=$baseline|.private.selected_profile=$profile|.private.run_config.previous=$previous' --argjson baseline "$baseline" --arg profile "$profile" --argjson previous "${previous:-null}" || return 1; ra_package_setup_prepare "$candidate" "$previous" "$installed" || return $?; ra_run_pre_reboot; }
-ra_retire_existing_run() { local result="$1" phase; ra_artifacts_from_state || return 1; ra_failure_bundle_capture "retire_${result}" 1 || true; if ! ra_safe_cleanup; then ra_state_jq '.phase="fail-cleanup-failed"' || true; ra_report_write FAIL_CLEANUP_FAILED || true; printf 'FAIL_CLEANUP_FAILED\n'; return 1; fi; phase="${result,,}"; phase="${phase//_/-}"; ra_set_phase "$phase" || return 1; ra_report_write "$result" || return 1; ra_verify_run_tree || return 1; ra_state_remove; }
+ra_retire_existing_run() { local result="$1" phase; ra_artifacts_from_state || return 1; ra_failure_bundle_capture "retire_${result}" 1 restart || true; if ! ra_safe_cleanup; then ra_state_jq '.phase="fail-cleanup-failed"' || true; ra_report_write FAIL_CLEANUP_FAILED || true; printf 'FAIL_CLEANUP_FAILED\n'; return 1; fi; phase="${result,,}"; phase="${phase//_/-}"; ra_set_phase "$phase" || return 1; ra_report_write "$result" || return 1; ra_verify_run_tree || return 1; ra_state_remove; }
 ra_run_new() { local classification candidate rc; if ! ra_checkpoint_exists >/dev/null 2>&1; then ra_run_new_fresh; return $?; fi; classification="$(ra_existing_checkpoint_classify)"; case "$classification" in reboot-wait) printf 'PAUSED: reboot required\nNext: sudo ./release-laptop.sh --resume\nTo discard this reboot evidence explicitly: sudo ./release-laptop.sh %q --restart\n' "$RA_CANDIDATE"; return "$RA_RC_PAUSED" ;; ambiguous) RA_SUPPRESS_FINALIZER=1; ra_die "ownership existing checkpoint ambiguous"; return 1 ;; replay-safe) if candidate="$(ra_pkg_inspect "$RA_CANDIDATE")"; then :; else rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi; ra_checkpoint_run_config_compatible || { RA_SUPPRESS_FINALIZER=1; return 1; }; ra_checkpoint_candidate_rebind "$candidate" || { RA_SUPPRESS_FINALIZER=1; return 1; }; ra_artifacts_from_state || return 1; ra_run_resume ;; cleanup-restart) if ra_preflight_new_inputs_before_retire; then :; else rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi; ra_retire_existing_run RESTARTED_CLEAN || return 1; ra_run_new_fresh ;; *) return 1 ;; esac; }
 ra_resume_load_config() { RA_SOAK_MINUTES="$(jq -r '.private.run_config.soak_minutes//60' "$RA_CHECKPOINT")"; RA_ALLOW_WIFI="$(jq -r 'if .private.run_config.allow_wifi_reconnect then 1 else 0 end' "$RA_CHECKPOINT")"; RA_ALLOW_SUSPEND="$(jq -r 'if .private.run_config.allow_suspend then 1 else 0 end' "$RA_CHECKPOINT")"; RA_REBOOT_PHASES="$(jq -r 'if .private.run_config.reboot_phases then 1 else 0 end' "$RA_CHECKPOINT")"; }
 ra_run_resume() { ra_checkpoint_exists || return 2; ra_state_require_schema || { RA_SUPPRESS_FINALIZER=1; return 1; }; ra_artifacts_from_state || { RA_SUPPRESS_FINALIZER=1; return 1; }; ra_resume_load_config || return 1; local phase candidate previous; phase="$(jq -r '.phase' "$RA_CHECKPOINT")" || return 1; case "$phase" in preparing-lower-release) candidate="$(jq -ce '.candidate' "$RA_CHECKPOINT")"; previous="$(jq -ce '.private.run_config.previous//empty' "$RA_CHECKPOINT" 2>/dev/null || true)"; ra_package_setup_resume_prepare "$candidate" "$previous" || return 1; ra_run_pre_reboot ;; running-pre-reboot) ra_run_pre_reboot ;; preparing-reboot-autostart-off) ra_prepare_reboot_off ;; await-reboot-autostart-off) ra_resume_require_new_boot || return 1; ra_set_phase verifying-reboot-autostart-off || return 1; ra_resume_reboot_off_verify ;; verifying-reboot-autostart-off) ra_resume_reboot_off_verify ;; preparing-reboot-autostart-on) ra_prepare_reboot_on ;; await-reboot-autostart-on) ra_resume_require_new_boot || return 1; ra_set_phase verifying-reboot-autostart-on || return 1; ra_resume_reboot_on_verify ;; verifying-reboot-autostart-on) ra_resume_reboot_on_verify ;; preparing-reboot-terminal) ra_prepare_reboot_terminal ;; await-reboot-terminal) ra_resume_require_new_boot || return 1; ra_set_phase verifying-reboot-terminal || return 1; ra_resume_reboot_terminal_verify ;; verifying-reboot-terminal) ra_resume_reboot_terminal_verify ;; *) RA_SUPPRESS_FINALIZER=1; return 1 ;; esac; }
-ra_run_abort() { ra_checkpoint_exists || return 2; ra_state_require_schema || return 1; ra_artifacts_from_state || return 1; ra_failure_bundle_capture explicit_abort 1 || true; if ! ra_safe_cleanup; then ra_set_phase fail-cleanup-failed || true; ra_report_write FAIL_CLEANUP_FAILED || true; printf 'FAIL_CLEANUP_FAILED\n'; return 1; fi; ra_set_phase aborted-clean || return 1; ra_report_write ABORTED_CLEAN || return 1; ra_verify_run_tree || return 1; ra_state_remove || return 1; printf 'ABORTED_CLEAN\n'; }
+ra_run_abort() { ra_checkpoint_exists || return 2; ra_state_require_schema || return 1; ra_artifacts_from_state || return 1; ra_failure_bundle_capture explicit_abort 1 abort || true; if ! ra_safe_cleanup; then ra_set_phase fail-cleanup-failed || true; ra_report_write FAIL_CLEANUP_FAILED || true; printf 'FAIL_CLEANUP_FAILED\n'; return 1; fi; ra_set_phase aborted-clean || return 1; ra_report_write ABORTED_CLEAN || return 1; ra_verify_run_tree || return 1; ra_state_remove || return 1; printf 'ABORTED_CLEAN\n'; }
 ra_run_restart() { local rc; if ra_checkpoint_exists >/dev/null 2>&1; then ra_state_require_schema || { RA_SUPPRESS_FINALIZER=1; return 1; }; if ra_preflight_new_inputs_before_retire; then :; else rc=$?; RA_SUPPRESS_FINALIZER=1; return "$rc"; fi; ra_retire_existing_run RESTARTED_CLEAN || return 1; fi; RA_MODE=new; ra_run_new_fresh; }
 ra_phase_blocks_auto_finalizer() { local phase; phase="$(jq -r '.phase//""' "$RA_CHECKPOINT" 2>/dev/null || true)"; case "$phase" in await-reboot-autostart-off|await-reboot-autostart-on|await-reboot-terminal|fail-cleanup-failed|failed-clean|aborted-clean|restarted-clean|restarted_clean|complete) return 0 ;; *) return 1 ;; esac; }
 

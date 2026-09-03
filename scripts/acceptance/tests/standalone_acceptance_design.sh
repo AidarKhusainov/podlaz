@@ -58,9 +58,12 @@ after_changed='{"connection":"wifi","device":"wlan0","addresses":["192.0.2.20/24
 [[ "$(ra_failure_class host_state_wifi_unavailable)" == HOST_STATE ]] || fail "HOST_STATE classification missing"
 [[ "$(ra_failure_class status_contract_incompatible)" == INTERNAL ]] || fail "INTERNAL classification missing"
 
-# The implementation must persist rollback authority before SIGKILL and scope journals to the recorded boot.
+# The implementation must persist rollback authority before SIGKILL and use exact journal boot identity semantics.
 grep -q 'rolling_back_authority' "$SCRIPT" || fail "rollback authority evidence is not persisted"
-grep -q -- '--boot' "$SCRIPT" || fail "failure journal is not boot-scoped"
+grep -q -- '_BOOT_ID=' "$SCRIPT" || fail "failure journal is not exact-boot scoped"
+if grep -Eq 'journalctl[^\n]*--boot[[:space:]]+[^[:space:]]+' "$SCRIPT"; then
+  fail "failure journal still uses raw --boot selector"
+fi
 
 # Meaningful suspend is 60-120 seconds and reports actual observed interval.
 grep -Eq 'rtcwake[^\n]*-s[[:space:]]+(60|[6-9][0-9]|1[01][0-9]|120)' "$SCRIPT" || fail "suspend duration is not meaningful"

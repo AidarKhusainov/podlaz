@@ -93,6 +93,7 @@ mkdir -m 0700 "$RA_HOME"
 RA_STATE_DIR="$TMP/state"
 mkdir -m 0700 "$RA_STATE_DIR"
 RA_CHECKPOINT="$RA_STATE_DIR/current.json"
+RA_LOCK_FILE="$RA_STATE_DIR/lock"
 RA_ARTIFACT_DIR="$RA_HOME/artifacts"
 RA_MODE=new
 RA_CONTINUATION="$TMP/missing-continuation.json"
