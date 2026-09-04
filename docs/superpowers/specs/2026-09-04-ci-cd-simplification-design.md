@@ -64,7 +64,7 @@ CI runs only checks that are deterministic, do not require private VPN credentia
 - Debian package build and metadata/content validation;
 - package install, reinstall, service validation, and purge.
 
-PR concurrency cancels superseded runs. Master runs are not required to preserve obsolete intermediate commits.
+PR concurrency cancels superseded runs. Master runs may cancel superseded runs because only the latest mainline state is relevant.
 
 `cli-contract.sh` moves into this deterministic layer because its behavior is local and fixture-driven; it does not require a privileged network lifecycle.
 
@@ -78,7 +78,7 @@ It has two execution classes inside one workflow because they share the same pro
 
 #### Deterministic installed-package integration
 
-Trigger:
+Triggers:
 
 - every push to `master`;
 - manual dispatch for diagnosis.
@@ -99,11 +99,13 @@ Contains focused installed-product scenarios that do not require real host-netwo
 
 Triggers:
 
-- scheduled daily run;
-- manual dispatch;
-- release qualification from `release.yml` or equivalent exact-tag execution.
+- scheduled daily run from `master`;
+- manual dispatch restricted to `master`;
+- exact-tag qualification from `release.yml`.
 
-It uses a protected GitHub Environment and repository/environment secrets. It must never execute for untrusted pull-request code.
+This class uses a protected GitHub Environment and environment/repository secrets. It must never execute for pull-request code or arbitrary branch code.
+
+The existing GitHub Environment named `vpn-e2e` may remain temporarily as the secret/approval boundary even after the self-hosted runner is retired. The runner label and the Environment are different concepts. If the Environment is renamed, its secrets/variables must be migrated explicitly; the implementation must not assume that renaming repository YAML migrates GitHub Environment state.
 
 This class verifies real proxy behavior through a real configured profile, including SOCKS/HTTP data plane, loopback bind scope, egress, lifecycle cleanup, and bounded reliability checks.
 
@@ -199,7 +201,7 @@ During implementation, classify tests in `scripts/e2e/**` into three groups:
 ## Security model
 
 - PR CI never receives VPN/provider secrets.
-- Real-provider integration is limited to trusted refs and a protected environment.
+- Real-provider integration is limited to `master` or an exact release tag and a protected Environment.
 - Workflows default to `contents: read` or less; publication jobs receive write/OIDC permissions only where required.
 - Third-party and GitHub Actions are pinned to immutable full commit SHAs.
 - Checkout credentials are not persisted when later authenticated Git operations are unnecessary.
@@ -212,7 +214,7 @@ During implementation, classify tests in `scripts/e2e/**` into three groups:
 2. Simplify deterministic CI and move CLI contract coverage into it.
 3. Add `integration.yml` with deterministic hosted package/runtime scenarios.
 4. Make ordinary-user integration provider-independent where feasible.
-5. Add scheduled/manual real-provider proxy data-plane execution with protected secrets.
+5. Add scheduled/master-only manual real-provider proxy data-plane execution with protected secrets.
 6. Update `release.yml` to `ubuntu-24.04`, exact-tag integration, immutable Action pins, and least privilege.
 7. Remove retired self-hosted workflows and runner-only configuration.
 8. Remove stale/meta E2E scripts and tests, including the soak subsystem when reference proof permits.
@@ -237,8 +239,8 @@ Also required:
 - shellcheck and E2E helper tests that remain applicable;
 - package build/metadata/install/reinstall/purge checks;
 - fresh `ci.yml` execution on the PR;
-- fresh deterministic `integration.yml` execution on the branch or trusted test ref before merge;
-- fresh real-provider proxy integration where credentials are available;
+- fresh deterministic hosted integration execution before merge, using a temporary trusted branch trigger or equivalent test run if the new workflow cannot yet be dispatched from the default branch;
+- fresh real-provider proxy integration where credentials are available, only from `master` or an exact release tag;
 - release workflow syntax/contract checks;
 - diff review for dead references, stale self-hosted assumptions, duplicate verification, permissions, secret exposure, and accidental TUN mutation on hosted jobs.
 
@@ -249,7 +251,8 @@ Destructive TUN acceptance is explicitly recorded as not executed unless a safe 
 The change is complete when:
 
 - exactly three active product workflows remain: `ci.yml`, `integration.yml`, `release.yml`;
-- no active workflow references `self-hosted`, `vpn-e2e`, or the retired workflows;
+- no active workflow uses `self-hosted` or the `vpn-e2e` runner label;
+- any retained `vpn-e2e` GitHub Environment reference is clearly a secret/approval boundary, not a runner dependency;
 - PR CI is deterministic and secret-free;
 - master integration distinguishes deterministic installed-product checks from scheduled real-provider checks;
 - release validates the exact tag SHA before publication;
@@ -266,4 +269,5 @@ The change is complete when:
 - Do not emulate destructive TUN qualification with unsupported nested virtualization.
 - Do not change VPN lifecycle/network semantics to make tests easier to run.
 - Do not introduce reusable-workflow layers unless implementation reveals real workflow-level duplication with at least two semantic consumers.
+- Do not silently rename or recreate the current GitHub Environment without an explicit secret/variable migration path.
 - Do not add permanent CI/CD prose outside existing canonical documentation; this spec is temporary and must be removed before final repository completion per `repository-structure.sh --final`.
