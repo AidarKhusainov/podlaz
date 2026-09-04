@@ -80,6 +80,7 @@ if [ "${validate_service}" = 1 ]; then
   for binary in podlaz plz; do
     validate_installed_daemon_status "${binary}" "/tmp/${binary}-status"
   done
+  bash scripts/e2e/installed-user-lifecycle-acceptance.sh
 fi
 
 sudo -E apt install -y --reinstall "./${package}"
