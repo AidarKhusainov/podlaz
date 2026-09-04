@@ -55,7 +55,7 @@ jobs:
           sudo -n systemctl start podlazd.service
           bash scripts/e2e/package-lifecycle-acceptance.sh
 
-      - name: Download latest released package for network recovery
+      - name: Download v0.2.29 package for network recovery
         timeout-minutes: 10
         shell: bash
         env:
@@ -66,16 +66,18 @@ jobs:
           release_dir="${RUNNER_TEMP}/podlaz-network-recovery-release"
           rm -rf "${release_dir}"
           mkdir -p "${release_dir}"
-          gh release download \
+          test "$(git rev-list -n1 v0.2.29)" = c846f5465a90a50d72f3fc393d639a402d590798 || { echo "v0.2.29 tag boundary mismatch" >&2; exit 1; }
+          gh release download v0.2.29 \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern "podlaz_*_linux_${arch}.deb" \
             --dir "${release_dir}"
           mapfile -t release_debs < <(find "${release_dir}" -maxdepth 1 -type f -name "podlaz_*_linux_${arch}.deb" -print | sort)
           if [[ "${#release_debs[@]}" -ne 1 ]]; then
-            echo "expected exactly one latest-release ${arch} Debian asset, found ${#release_debs[@]}" >&2
+            echo "expected exactly one v0.2.29 ${arch} Debian asset, found ${#release_debs[@]}" >&2
             exit 1
           fi
           echo "PODLAZ_E2E_BASE_DEB=${release_debs[0]}" >>"${GITHUB_ENV}"
+          echo "PODLAZ_E2E_BASE_VERSION=v0.2.29" >>"${GITHUB_ENV}"
 
       - name: Run network-session continuity acceptance
         timeout-minutes: 75

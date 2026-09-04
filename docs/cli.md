@@ -471,10 +471,39 @@ podlaz recover
 podlaz recover --execute --yes [--json]
 ```
 
-`recover` is read-only. `recover --execute --yes` sends cleanup intent to the
-daemon. The CLI must not perform privileged host cleanup directly. Ambiguous
-resources are skipped. Non-interactive execution requires `--yes`. For the
-validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
+`recover` is a read-only inspection of the same recovery model used by
+execution. When daemon startup evidence is available, dry-run projects the
+current startup scan plus the bounded `network_session` recovery state; otherwise
+it falls back to conservative local inspection and does not invent daemon
+authority. `recover --execute --yes` sends cleanup intent to the daemon and then
+runs the same Network Session follow-up lifecycle when startup recovery remains
+blocked. The CLI must not perform privileged host cleanup directly. Ambiguous or
+unowned resources are skipped, and non-interactive execution requires `--yes`.
+
+The stable `network_session` projection contains only semantic recovery evidence:
+`authority`, `intent`, `startup_gate`, optional `resume_stage`,
+`last_resume_outcome`, optional `last_tun_failure_phase`, optional
+`rollback_status`, `transaction_present`, `legacy_migration`,
+`cleanup_authority`, and `next_action`. It deliberately excludes profile/server
+identity, Network Session and transaction identifiers, generated config, and raw
+child output. `resume_stage` can identify state load, legacy migration, Privacy
+Envelope reconciliation, exact transaction recovery, generic recovery, connect
+replay, or terminal teardown. `last_resume_outcome` is one of `not-attempted`,
+`failed`, `incomplete`, or `succeeded`; `next_action` is `retry-resume`,
+`continue-teardown`, `manual-diagnosis`, or `none`.
+
+Execution is complete only when ordinary cleanup has no failed/incomplete result
+and Network Session recovery has an open startup gate with `next_action: none`.
+A blocked gate or any remaining next action is incomplete and makes execute return
+exit code `1`; cleanup failure also returns `1`. JSON execute output reports
+`status: warn` for incomplete convergence and `status: fail` for cleanup failure.
+Dry-run JSON reports `status: warn` when cleanup candidates, Network Session
+authority requiring convergence, or incomplete inspection are present. In human
+output, `No podlaz-owned recovery candidates found.` is shown only when there are
+no ordinary cleanup candidates and no retained Network Session recovery plan; a
+retained Network Session plan is rendered instead of that empty-state message.
+
+For the validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
 with one exact supported bounded `No such device` result is accepted as
 idempotent success. A successful `resolvectl status` is accepted as a clean
 transient record only when it has no stderr, its unique target section passes

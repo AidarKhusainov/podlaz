@@ -64,10 +64,11 @@ type TransactionStatus struct {
 }
 
 type StartupScanStatus struct {
-	Status          string              `json:"status"`
-	Candidates      []RecoveryCandidate `json:"candidates,omitempty"`
-	Warnings        []RecoveryWarning   `json:"warnings,omitempty"`
-	SuggestedAction string              `json:"suggested_action,omitempty"`
+	Status          string                       `json:"status"`
+	Candidates      []RecoveryCandidate          `json:"candidates,omitempty"`
+	Warnings        []RecoveryWarning            `json:"warnings,omitempty"`
+	NetworkSession  *NetworkSessionRecoveryState `json:"network_session,omitempty"`
+	SuggestedAction string                       `json:"suggested_action,omitempty"`
 }
 
 func ValidateStatusResponse(s StatusResponse) error {
@@ -167,6 +168,11 @@ func ValidateStartupScanStatus(scan StartupScanStatus) error {
 		}
 		if warning.Message == "" {
 			return errors.New("missing startup scan warning message")
+		}
+	}
+	if scan.NetworkSession != nil {
+		if err := ValidateNetworkSessionRecoveryState(*scan.NetworkSession); err != nil {
+			return err
 		}
 	}
 	return nil

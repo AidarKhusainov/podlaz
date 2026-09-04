@@ -45,8 +45,8 @@ func TestReadinessCallersPreserveScenarioTimeoutContracts(t *testing.T) {
 	requireScenarioFragments(t, "network-resource-coexistence-package-acceptance.sh", `wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 15`)
 	requireScenarioFragments(t, "network-recovery-package-acceptance.sh",
 		`wait_for_daemon_ready "${DAEMON_SOCKET}" podlazd.service 20`,
-		`wait_for_status_match "${phase}" 60 daemon_status_matches active active`,
-		`wait_for_status_match "${phase}" 30 daemon_status_matches inactive disabled`,
+		`wait_for_semantic_status "${phase}" 60 active`,
+		`wait_for_semantic_status "${phase}" 30 inactive`,
 	)
 	requireScenarioFragments(t, "privacy-envelope-lifecycle-package-acceptance.sh",
 		`wait_for_service_active podlazd.service 30`,
@@ -118,7 +118,7 @@ func TestScenarioSpecificAuthorityRemainsLocal(t *testing.T) {
 		name      string
 		predicate string
 	}{
-		{"network-recovery-package-acceptance.sh", "daemon_status_matches() {"},
+		{"network-recovery-package-acceptance.sh", "daemon_status_classify() {"},
 		{"privacy-envelope-lifecycle-package-acceptance.sh", "status_matches() {"},
 		{"network-reconciliation-package-acceptance.sh", "status_is_verified_active() {"},
 	} {

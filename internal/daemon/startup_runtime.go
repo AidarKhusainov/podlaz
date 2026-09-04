@@ -41,6 +41,7 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime) bootAuto
 		log.Printf("podlazd: boot autostart lifecycle reached terminal outcome")
 	case startupResult == bootAutostartStartupRecoveryFailed:
 		runtime.startupMutationGate.Block()
+		logNetworkSessionResumeFailure(startupErr)
 		if errors.Is(startupErr, errNetworkSessionRecoveryIncomplete) {
 			log.Printf("podlazd: current-boot network session continuation paused because exact startup recovery is incomplete")
 		} else {
@@ -51,6 +52,7 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime) bootAuto
 		if stateErr != nil || sessionExists {
 			runtime.startupMutationGate.Block()
 		}
+		logNetworkSessionResumeFailure(startupErr)
 		if startupResult == bootAutostartStartupTerminal {
 			log.Printf("podlazd: boot autostart lifecycle reached terminal outcome")
 		} else {
@@ -59,4 +61,28 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime) bootAuto
 	}
 	runtime.refreshStartupScan(ctx)
 	return manifestStore
+}
+
+func logNetworkSessionResumeFailure(err error) {
+	failure, ok := networkSessionResumeFailure(err)
+	if !ok {
+		return
+	}
+	phase := failure.TUNFailurePhase
+	if phase == "" {
+		phase = "none"
+	}
+	rollback := failure.RollbackStatus
+	if rollback == "" {
+		rollback = "unknown"
+	}
+	log.Printf(
+		"podlazd: event=network_session_resume_failed resume_stage=%s last_resume_outcome=%s tun_failure_phase=%s rollback_status=%s transaction_present=%t legacy_migration=%t startup_gate=blocked",
+		failure.ResumeStage,
+		failure.LastResumeOutcome,
+		phase,
+		rollback,
+		failure.TransactionPresent,
+		failure.LegacyMigration,
+	)
 }

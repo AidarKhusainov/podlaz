@@ -8,8 +8,10 @@ func applyNetworkSessionResumeResult(
 	resumeErr error,
 ) api.RecoveryResponse {
 	if resumeErr != nil {
+		response.NetworkSession = failedNetworkSessionRecoveryState(response.NetworkSession, resumeErr)
 		return withNetworkSessionResumeWarning(response)
 	}
+	response.NetworkSession = successfulNetworkSessionRecoveryState(response.NetworkSession)
 	if gate != nil {
 		gate.Release()
 	}

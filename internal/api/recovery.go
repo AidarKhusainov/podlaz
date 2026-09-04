@@ -8,9 +8,10 @@ import (
 const RecoverPath = "/v1/recover"
 
 type RecoveryResponse struct {
-	Mode     string                  `json:"mode"`
-	Results  []RecoveryCleanupResult `json:"results,omitempty"`
-	Warnings []RecoveryWarning       `json:"warnings,omitempty"`
+	Mode           string                       `json:"mode"`
+	Results        []RecoveryCleanupResult      `json:"results,omitempty"`
+	Warnings       []RecoveryWarning            `json:"warnings,omitempty"`
+	NetworkSession *NetworkSessionRecoveryState `json:"network_session,omitempty"`
 }
 
 type RecoveryCleanupResult struct {
@@ -46,6 +47,11 @@ func ValidateRecoveryResponse(r RecoveryResponse) error {
 	}
 	for _, result := range r.Results {
 		if err := ValidateRecoveryCleanupResult(result); err != nil {
+			return err
+		}
+	}
+	if r.NetworkSession != nil {
+		if err := ValidateNetworkSessionRecoveryState(*r.NetworkSession); err != nil {
 			return err
 		}
 	}

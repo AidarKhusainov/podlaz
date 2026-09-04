@@ -57,13 +57,14 @@ func TestPostinstallRepairsConfigFilesStaleHelperEnablement(t *testing.T) {
 		"deb-systemd-helper debian-installed podlazd.service",
 		"deb-systemd-helper was-enabled podlazd.service",
 		"deb-systemd-helper reenable podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 	)
 	assertLogContainsInOrder(t, log,
 		"deb-systemd-helper reenable podlazd.service",
 		"deb-systemd-helper update-state podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 	)
+	assertLogNotContains(t, log, "deb-systemd-invoke start podlazd.service")
 
 	if _, err := os.Stat(filepath.Join(h.runDir, "repair-helper-enable")); !os.IsNotExist(err) {
 		t.Fatalf("postinstall should remove stale helper repair marker: %v", err)
@@ -84,6 +85,7 @@ func TestPostinstallDoesNotRepairOrStartAdminDisabledInstalledUnit(t *testing.T)
 		"deb-systemd-helper debian-installed podlazd.service",
 		"deb-systemd-helper was-enabled podlazd.service",
 		"deb-systemd-helper reenable podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 		"deb-systemd-invoke start podlazd.service",
 	)
 	assertLogContains(t, log, "systemctl is-enabled --quiet podlazd.service")
@@ -103,11 +105,24 @@ func TestPostinstallDoesNotReenableAlreadyEnabledUnit(t *testing.T) {
 		"deb-systemd-helper debian-installed podlazd.service",
 		"deb-systemd-helper was-enabled podlazd.service",
 		"deb-systemd-helper reenable podlazd.service",
+		"deb-systemd-invoke start podlazd.service",
 	)
 	assertLogContains(t, log,
 		"systemctl is-enabled --quiet podlazd.service",
-		"deb-systemd-invoke start podlazd.service",
+		"deb-systemd-invoke try-restart podlazd.service",
 	)
+}
+
+func TestPostinstallStartsEnabledInactiveUnitWithoutRestartRetry(t *testing.T) {
+	h := newPostinstallHarness(t, postinstallOptions{
+		initiallyEnabled: true,
+		inactive:         true,
+	})
+
+	log := h.runPostinstall(t)
+
+	assertLogContains(t, log, "deb-systemd-invoke start podlazd.service")
+	assertLogNotContains(t, log, "deb-systemd-invoke try-restart podlazd.service")
 }
 
 func TestMaintainerScriptsAvoidRawSystemctlServiceMutation(t *testing.T) {
@@ -128,10 +143,15 @@ func TestMaintainerScriptsAvoidRawSystemctlServiceMutation(t *testing.T) {
 }
 
 type postinstallOptions struct {
-	marker           bool
-	initiallyEnabled bool
-	debianInstalled  bool
-	wasEnabled       bool
+	marker                bool
+	initiallyEnabled      bool
+	debianInstalled       bool
+	wasEnabled            bool
+	inactive              bool
+	loadedRestartSignal   string
+	loadedKillMode        string
+	loadedRuntimePreserve string
+	serviceResult         string
 }
 
 type postinstallHarness struct {
@@ -160,10 +180,37 @@ func newPostinstallHarness(t *testing.T, opts postinstallOptions) postinstallHar
 
 	logPath := filepath.Join(dir, "calls.log")
 	enabledPath := filepath.Join(dir, "enabled")
+	reloadedPath := filepath.Join(dir, "reloaded")
 	if opts.initiallyEnabled {
 		if err := os.WriteFile(enabledPath, []byte{}, 0o600); err != nil {
 			t.Fatalf("write enabled flag: %v", err)
 		}
+	}
+	loadedRestartSignal := opts.loadedRestartSignal
+	if loadedRestartSignal == "" {
+		loadedRestartSignal = "10"
+	}
+	loadedKillMode := opts.loadedKillMode
+	if loadedKillMode == "" {
+		loadedKillMode = "mixed"
+		if loadedRestartSignal == "15" {
+			loadedKillMode = "control-group"
+		}
+	}
+	loadedRuntimePreserve := opts.loadedRuntimePreserve
+	if loadedRuntimePreserve == "" {
+		loadedRuntimePreserve = "yes"
+		if loadedRestartSignal == "15" {
+			loadedRuntimePreserve = "no"
+		}
+	}
+	serviceResult := opts.serviceResult
+	if serviceResult == "" {
+		serviceResult = "success"
+	}
+	activeExit := 0
+	if opts.inactive {
+		activeExit = 1
 	}
 
 	writeStub(t, binDir, "systemd-sysusers", fmt.Sprintf(`#!/bin/sh
@@ -176,12 +223,35 @@ exit 0
 `, logPath))
 	writeStub(t, binDir, "systemctl", fmt.Sprintf(`#!/bin/sh
 printf 'systemctl %%s\n' "$*" >> %q
+override="${PODLAZ_SYSTEMD_RUNTIME_DIR:-/run/systemd/system}/podlazd.service.d/50-podlaz-legacy-replacement.conf"
 if [ "$1" = is-enabled ]; then
   test -e %q
   exit $?
 fi
+if [ "$1" = is-active ]; then
+  exit %d
+fi
+if [ "$1" = daemon-reload ]; then
+  : > %q
+  exit 0
+fi
+if [ "$1" = show ]; then
+  case "$*" in
+    *RestartKillSignal*)
+      if [ ! -e %q ]; then printf '%s\n'; elif [ -e "$override" ]; then printf '9\n'; else printf '10\n'; fi
+      ;;
+    *KillMode*)
+      if [ ! -e %q ]; then printf '%s\n'; elif [ -e "$override" ]; then printf 'control-group\n'; else printf 'mixed\n'; fi
+      ;;
+    *RuntimeDirectoryPreserve*)
+      if [ ! -e %q ]; then printf '%s\n'; else printf 'yes\n'; fi
+      ;;
+    *Result*) printf '%s\n' ;;
+  esac
+  exit 0
+fi
 exit 0
-`, logPath, enabledPath))
+`, logPath, enabledPath, activeExit, reloadedPath, reloadedPath, loadedRestartSignal, reloadedPath, loadedKillMode, reloadedPath, loadedRuntimePreserve, serviceResult))
 
 	debianInstalledExit := 1
 	if opts.debianInstalled {

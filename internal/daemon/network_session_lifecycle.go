@@ -225,24 +225,51 @@ func resumeNetworkSession(
 	status networkSessionStatusFunc,
 	recover networkSessionRecoveryFunc,
 ) (bool, error) {
+	recoveryEpoch := uint64(0)
+	fail := func(stage, outcome string, legacyMigration, transactionPresent bool, err error) (bool, error) {
+		wrapped := newNetworkSessionResumeOutcomeError(stage, outcome, legacyMigration, transactionPresent, err)
+		return false, persistNetworkSessionResumeFailure(continuation, recoveryEpoch, wrapped)
+	}
+
 	stateStore := continuation.stateStore()
 	state, exists, err := stateStore.Load()
 	if err != nil {
-		return false, err
+		return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, false, false, err)
 	}
+
+	legacyMigration := false
 	if !exists {
-		migrated, migrateErr := migrateLegacyUpgradeContinuation(continuation.runtimeDir, continuation)
-		if migrateErr != nil {
-			return false, fmt.Errorf("migrate legacy package upgrade continuation: %w", migrateErr)
+		migrateLegacy := continuation.migrateLegacy
+		if migrateLegacy == nil {
+			migrateLegacy = migrateLegacyUpgradeContinuation
 		}
+		migrated, migrateErr := migrateLegacy(continuation.runtimeDir, continuation)
+		if migrateErr != nil {
+			return fail(api.NetworkSessionResumeStageLegacyMigration, api.NetworkSessionResumeOutcomeFailed, true, false, fmt.Errorf("migrate legacy package upgrade continuation: %w", migrateErr))
+		}
+		legacyMigration = migrated
 		if migrated {
 			state, exists, err = stateStore.Load()
 			if err != nil {
-				return false, err
+				return fail(api.NetworkSessionResumeStageLegacyMigration, api.NetworkSessionResumeOutcomeFailed, true, false, err)
 			}
 			if !exists {
-				return false, errors.New("legacy package upgrade migration did not persist continuation")
+				return fail(api.NetworkSessionResumeStageLegacyMigration, api.NetworkSessionResumeOutcomeFailed, true, false, errors.New("legacy package upgrade migration did not persist continuation"))
 			}
+		}
+	}
+
+	if exists {
+		attemptState, attemptExists, beginErr := stateStore.BeginRecoveryAttempt()
+		if attemptExists {
+			recoveryEpoch = attemptState.RecoveryEpoch
+			state = attemptState
+		}
+		if beginErr != nil {
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("begin Network Session recovery epoch: %w", beginErr))
+		}
+		if !attemptExists {
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("Network Session authority disappeared before recovery attempt"))
 		}
 	}
 
@@ -262,40 +289,42 @@ func resumeNetworkSession(
 	if !exists {
 		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
 		if !networkSessionRecoveryConverged(exactRecovery) {
-			return false, errNetworkSessionRecoveryIncomplete
+			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
 		}
+		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return false, nil
 	}
 	if status == nil || recover == nil {
-		return false, errors.New("network session resume requires status and recovery functions")
+		return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("network session resume requires status and recovery functions"))
 	}
 
 	switch state.Intent {
 	case networkSessionIntentResume:
 		if err := reconcilePrivacy(ctx, stateStore); err != nil {
-			return false, fmt.Errorf("reconcile network session privacy protection: %w", err)
+			return fail(api.NetworkSessionResumeStagePrivacyReconcile, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("reconcile network session privacy protection: %w", err))
 		}
 		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
 		if !networkSessionRecoveryConverged(exactRecovery) {
-			return false, errNetworkSessionRecoveryIncomplete
+			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
 		}
 		recovery := recover(ctx, status(ctx))
 		if !networkSessionRecoveryConverged(recovery) {
-			return false, errNetworkSessionRecoveryIncomplete
+			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(recovery), errNetworkSessionRecoveryIncomplete)
 		}
 		state, exists, err = stateStore.Load()
 		if err != nil {
-			return false, fmt.Errorf("reload Network Session before startup replay: %w", err)
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("reload Network Session before startup replay: %w", err))
 		}
 		if !exists {
-			return false, errors.New("Network Session authority disappeared before startup replay")
+			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("Network Session authority disappeared before startup replay"))
 		}
 		if state.Intent != networkSessionIntentResume {
-			return false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent)
+			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
 		}
 		if _, err := lifecycle.Connect(ctx, state.Request); err != nil {
-			return false, fmt.Errorf("resume network session: %w", err)
+			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("resume network session: %w", err))
 		}
+		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return true, nil
 
 	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
@@ -305,19 +334,20 @@ func resumeNetworkSession(
 		// remaining host network, and clear the durable session authority.
 		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
 		if !networkSessionRecoveryConverged(exactRecovery) {
-			return false, errNetworkSessionRecoveryIncomplete
+			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
 		}
 		recovery := recover(ctx, status(ctx))
 		if !networkSessionRecoveryConverged(recovery) {
-			return false, errNetworkSessionRecoveryIncomplete
+			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(recovery), errNetworkSessionRecoveryIncomplete)
 		}
 		if err := continueTeardown(ctx, stateStore); err != nil {
-			return false, fmt.Errorf("continue persisted network session teardown: %w", err)
+			return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("continue persisted network session teardown: %w", err))
 		}
+		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return false, nil
 
 	default:
-		return false, fmt.Errorf("unsupported network session intent %q", state.Intent)
+		return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("unsupported network session intent %q", state.Intent))
 	}
 }
 

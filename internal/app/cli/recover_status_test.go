@@ -9,14 +9,14 @@ import (
 )
 
 func TestRecoverPlanJSONDoesNotReportOKWhenInspectionIsIncomplete(t *testing.T) {
-	payload := recoverPlanJSON(recovery.PlanResult{Warnings: []recovery.Warning{{Target: "systemd-resolved", Message: "permission denied"}}})
+	payload := recoverPlanJSON(recoverPlanView{PlanResult: recovery.PlanResult{Warnings: []recovery.Warning{{Target: "systemd-resolved", Message: "permission denied"}}}})
 	if got := payload["status"]; got != "warn" {
 		t.Fatalf("incomplete inspection must not report top-level ok, got %#v", got)
 	}
 }
 
 func TestRecoverPlanJSONDoesNotReportOKWhenCleanupCandidatesRemain(t *testing.T) {
-	payload := recoverPlanJSON(recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "dns-link", Description: "resolved link state", Target: "podlaz0"}}})
+	payload := recoverPlanJSON(recoverPlanView{PlanResult: recovery.PlanResult{Candidates: []recovery.Candidate{{Kind: "dns-link", Description: "resolved link state", Target: "podlaz0"}}}})
 	if got := payload["status"]; got != "warn" {
 		t.Fatalf("pending cleanup must not report top-level ok, got %#v", got)
 	}

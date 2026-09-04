@@ -114,8 +114,11 @@ func printRecoverHelp(w io.Writer) {
   podlaz recover
   podlaz recover --execute --yes [--json]
 
-Inspect clearly podlaz-owned resources and print the recovery plan. Without
---execute the command is read-only. Cleanup execution requires daemon access and
-explicit confirmation.
+Inspect clearly podlaz-owned recovery state and print one semantic plan. Without
+--execute the command is read-only. A blocked current-boot Network Session is
+reported even when no transaction cleanup candidates remain. Execute uses the
+same plan to retry resume or continue terminal teardown under daemon lifecycle
+serialization. It never treats reconnect intent as transaction cleanup authority.
+Execution requires daemon access and explicit confirmation.
 `)
 }
