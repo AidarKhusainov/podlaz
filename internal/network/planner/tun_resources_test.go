@@ -8,9 +8,9 @@ import (
 )
 
 func TestAllocateTunResourcesPrefersHistoricalValuesWhenFree(t *testing.T) {
-	evidence, err := tunAllocationEvidenceFromSnapshot(snapshot.FakeResolvedDesktop())
+	evidence, err := snapshot.TunAllocationEvidenceFromSnapshot(snapshot.FakeResolvedDesktop())
 	if err != nil {
-		t.Fatalf("tunAllocationEvidenceFromSnapshot() error = %v", err)
+		t.Fatalf("TunAllocationEvidenceFromSnapshot() error = %v", err)
 	}
 	allocation, err := AllocateTunResources(evidence)
 	if err != nil {
@@ -31,9 +31,9 @@ func TestAllocateTunResourcesAvoidsHistoricalCollisionsAndPrecedesForeignRules(t
 		{Kind: "rule", Priority: "100", Selector: "from all", Table: "60000"},
 	}
 
-	evidence, err := tunAllocationEvidenceFromSnapshot(s)
+	evidence, err := snapshot.TunAllocationEvidenceFromSnapshot(s)
 	if err != nil {
-		t.Fatalf("tunAllocationEvidenceFromSnapshot() error = %v", err)
+		t.Fatalf("TunAllocationEvidenceFromSnapshot() error = %v", err)
 	}
 	allocation, err := AllocateTunResources(evidence)
 	if err != nil {
@@ -56,7 +56,7 @@ func TestAllocateTunResourcesAvoidsHistoricalCollisionsAndPrecedesForeignRules(t
 func TestTunAllocationEvidenceFromSnapshotFailsClosedWhenRequiredInventoryIsUnknown(t *testing.T) {
 	s := snapshot.FakeResolvedDesktop()
 	s.IPv4PolicyRules.Inspection.Status = snapshot.StatusUnknown
-	if _, err := tunAllocationEvidenceFromSnapshot(s); err == nil {
+	if _, err := snapshot.TunAllocationEvidenceFromSnapshot(s); err == nil {
 		t.Fatal("expected unknown policy-rule inventory to block compatibility conversion")
 	}
 }
