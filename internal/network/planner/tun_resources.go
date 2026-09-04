@@ -183,7 +183,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		Table:       table,
 		Interface:   snapshot.DefaultTunName,
 		Action:      "add",
-		Reason:      "route default IPv4 traffic through this session's allocated routing table before pre-existing host policy rules",
+		Reason:      "route default IPv4 traffic through the Podlaz TUN interface using this session's allocated table",
 	}}
 	policyRules := []TunPolicyRulePlan{{
 		Family:   "ipv4",
