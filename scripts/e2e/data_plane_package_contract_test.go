@@ -20,8 +20,8 @@ func TestDataPlanePackageSelectionSupportsPrebuiltOrDevPackage(t *testing.T) {
 		`dpkg-deb --field "${PODLAZ_E2E_PACKAGE_PATH}" Architecture`,
 		`INSTALL_DEB="${PODLAZ_E2E_PACKAGE_PATH}"`,
 		`bash scripts/build-deb.sh`,
-		`INSTALL_DEB="${DEV_DEB}"`,
-		`apt install -y "./${INSTALL_DEB}"`,
+		`INSTALL_DEB="./${DEV_DEB}"`,
+		`apt install -y "${INSTALL_DEB}"`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("data-plane package selection lost %q", required)
