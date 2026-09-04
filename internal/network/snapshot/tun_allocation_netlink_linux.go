@@ -119,7 +119,17 @@ func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink
 		if route.Table <= 0 || uint64(route.Table) > math.MaxUint32 {
 			return TunAllocationEvidence{}, fmt.Errorf("convert IPv4 route allocation evidence: invalid routing table %d", route.Table)
 		}
-		converted := TunAllocationRoute{Table: uint32(route.Table)}
+		if route.Type < 0 || route.Type > math.MaxUint8 {
+			return TunAllocationEvidence{}, fmt.Errorf("convert IPv4 route allocation evidence: invalid route type %d", route.Type)
+		}
+		if route.LinkIndex < 0 {
+			return TunAllocationEvidence{}, fmt.Errorf("convert IPv4 route allocation evidence: invalid link index %d", route.LinkIndex)
+		}
+		converted := TunAllocationRoute{
+			Table:     uint32(route.Table),
+			Type:      route.Type,
+			LinkIndex: route.LinkIndex,
+		}
 		if route.Dst == nil {
 			converted.Default = true
 		} else {
