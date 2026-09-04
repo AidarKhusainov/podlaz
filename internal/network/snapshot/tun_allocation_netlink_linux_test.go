@@ -29,7 +29,7 @@ func TestTunAllocationEvidenceFromNetlinkPreservesKernelIdentities(t *testing.T)
 		{Priority: 32767, Table: unix.RT_TABLE_DEFAULT, Family: netlink.FAMILY_V4},
 	}
 
-	evidence, err := tunAllocationEvidenceFromNetlink(addresses, routes, rules)
+	evidence, err := tunAllocationEvidenceFromNetlink(addresses, routes, rules, nil)
 	if err != nil {
 		t.Fatalf("tunAllocationEvidenceFromNetlink() error = %v", err)
 	}
@@ -54,7 +54,7 @@ func TestTunAllocationEvidenceFromNetlinkPreservesKernelIdentities(t *testing.T)
 }
 
 func TestTunAllocationEvidenceFromNetlinkRejectsUnspecifiedRouteTable(t *testing.T) {
-	_, err := tunAllocationEvidenceFromNetlink(nil, []netlink.Route{{Dst: nil, Table: unix.RT_TABLE_UNSPEC}}, nil)
+	_, err := tunAllocationEvidenceFromNetlink(nil, []netlink.Route{{Dst: nil, Table: unix.RT_TABLE_UNSPEC}}, nil, nil)
 	if err == nil {
 		t.Fatal("unspecified route table must not become allocation authority")
 	}
