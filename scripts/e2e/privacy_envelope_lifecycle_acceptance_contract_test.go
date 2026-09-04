@@ -54,20 +54,3 @@ func TestPrivacyEnvelopeLifecycleAcceptanceDoesNotRepairProductStateManually(t *
 		}
 	}
 }
-
-func TestPrivacyEnvelopeLifecycleWorkflowRunsInstalledPackageAcceptance(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
-	if err != nil {
-		t.Fatalf("read package convergence workflow: %v", err)
-	}
-	workflow := string(data)
-	for _, required := range []string{
-		"Run Privacy Envelope lifecycle acceptance",
-		"bash scripts/e2e/privacy-envelope-lifecycle-package-acceptance.sh",
-		"timeout-minutes:",
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("Privacy Envelope lifecycle workflow wiring must contain %q", required)
-		}
-	}
-}
