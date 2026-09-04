@@ -13,6 +13,8 @@ func TestStrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *testing.T) 
 	}
 	script := string(data)
 	for _, required := range []string{
+		"run_log_reader_podlaz",
+		"sudo -n env",
 		"logs --daemon --since 30s",
 		"broad_window_marker_visible",
 		"sleep 8",
@@ -24,6 +26,10 @@ func TestStrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *testing.T) 
 		if !strings.Contains(script, required) {
 			t.Fatalf("strict log-window acceptance lost %q", required)
 		}
+	}
+
+	if strings.Contains(script, "run_installed_podlaz_bounded") {
+		t.Fatal("strict log-window acceptance must not mix lookback semantics with an ordinary-user group fixture")
 	}
 
 	broadMarker := strings.Index(script, "broad_window_marker_visible")
