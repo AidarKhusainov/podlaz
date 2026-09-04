@@ -10,28 +10,26 @@ source "${SCRIPT_DIR}/lib/exit_trap.sh"
 source "${SCRIPT_DIR}/lib/evidence.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
-# shellcheck source=lib/profile_input.sh
-source "${SCRIPT_DIR}/lib/profile_input.sh"
 
-require_cmd awk env git grep id mktemp python3 sudo systemctl timeout
-
-: "${PODLAZ_E2E_PROFILE_URI:=}"
-: "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
-if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; then
-  fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
-fi
+require_cmd awk env git grep id install mktemp python3 sudo systemctl timeout
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/remote-client-acceptance.txt"
+FIXTURE_DIR="/run/podlaz/e2e-remote-client"
+FIXTURE_XRAY="${FIXTURE_DIR}/xray"
+DROPIN_DIR="/run/systemd/system/podlazd.service.d"
+DROPIN_PATH="${DROPIN_DIR}/remote-client-acceptance.conf"
+PROFILE_URI='vless://00000000-0000-0000-0000-000000000077@remote-client.example.net:443?type=tcp&security=tls&encryption=none#remote-client'
 PROFILE_ID=""
 CONNECTED=false
+FIXTURE_INSTALLED=false
 
 write_evidence() {
   append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
 }
 
-# Deliberately local. This preserves the self-hosted runner's normal login
-# identity, including OS-managed supplementary groups; forcing a service-group
-# override would manufacture a different journald permission scenario.
+# Deliberately local. The acceptance preserves the runner's ordinary login
+# identity, including OS-managed supplementary groups. Rewriting groups would
+# manufacture a different client/journald permission boundary.
 run_ordinary_podlaz() {
   local timeout_seconds="$1"
   shift
@@ -44,8 +42,9 @@ run_ordinary_podlaz() {
       /usr/bin/podlaz "$@"
 }
 
-# Deliberately local. Lifecycle setup is privileged and bounded, unlike the
-# shared normal-user installed-client execution contract.
+# Lifecycle setup is privileged and bounded so the acceptance does not depend on
+# an interactive polkit session. All read-only client paths keep ordinary-user
+# identity unchanged.
 run_privileged_podlaz() {
   local timeout_seconds="$1"
   shift
@@ -58,12 +57,60 @@ run_privileged_podlaz() {
       /usr/bin/podlaz "$@"
 }
 
+install_xray_fixture() {
+  local tmp_xray tmp_dropin
+  tmp_xray="$(mktemp "${E2E_TMP_ROOT}/remote-client-xray.XXXXXX")"
+  tmp_dropin="$(mktemp "${E2E_TMP_ROOT}/remote-client-dropin.XXXXXX")"
+
+  cat >"${tmp_xray}" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${1:-}" != "run" || "${2:-}" != "-config" || -z "${3:-}" ]]; then
+  printf 'fake xray expected: run -config <path>\n' >&2
+  exit 2
+fi
+if [[ ! -r "${3}" ]]; then
+  printf 'fake xray cannot read config\n' >&2
+  exit 3
+fi
+trap 'exit 0' TERM INT
+while :; do
+  sleep 1 &
+  wait $!
+done
+SH
+  chmod 0755 "${tmp_xray}"
+
+  cat >"${tmp_dropin}" <<EOF
+[Service]
+Environment=PODLAZ_XRAY_PATH=${FIXTURE_XRAY}
+EOF
+
+  sudo -n install -d -m 0755 "${FIXTURE_DIR}" "${DROPIN_DIR}"
+  sudo -n install -m 0755 "${tmp_xray}" "${FIXTURE_XRAY}"
+  sudo -n install -m 0644 "${tmp_dropin}" "${DROPIN_PATH}"
+  rm -f -- "${tmp_xray}" "${tmp_dropin}"
+
+  FIXTURE_INSTALLED=true
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl restart podlazd.service
+  assert_package_service_active podlazd.service
+  write_evidence deterministic_xray_fixture pass
+}
+
 cleanup() {
   local saved=$? cleanup_failed=0
   set +e
   if [[ "${CONNECTED}" == "true" ]]; then
     run_privileged_podlaz 60s disconnect >/dev/null 2>&1 || cleanup_failed=1
     CONNECTED=false
+  fi
+  if [[ "${FIXTURE_INSTALLED}" == "true" ]]; then
+    sudo -n rm -f -- "${DROPIN_PATH}" || cleanup_failed=1
+    sudo -n rm -rf -- "${FIXTURE_DIR}" || cleanup_failed=1
+    sudo -n systemctl daemon-reload || cleanup_failed=1
+    sudo -n systemctl restart podlazd.service || cleanup_failed=1
+    FIXTURE_INSTALLED=false
   fi
   if (( saved == 0 && cleanup_failed == 0 )); then
     write_evidence acceptance pass || cleanup_failed=1
@@ -90,13 +137,11 @@ verify_package_and_ordinary_identity() {
 }
 
 import_profile_privately() {
-  local uri output error_output
-  uri="$(first_configured_profile_uri)"
-  assert_nonempty "${uri}" "remote-client profile URI"
-  mask_value "${uri}"
+  local output error_output
+  mask_value "${PROFILE_URI}"
   output="$(mktemp "${E2E_TMP_ROOT}/remote-client-profile-import.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-profile-import.stderr.XXXXXX")"
-  if ! run_ordinary_podlaz 30s profile import "${uri}" >"${output}" 2>"${error_output}"; then
+  if ! run_ordinary_podlaz 30s profile import "${PROFILE_URI}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "remote-client profile import failed"
   fi
@@ -166,11 +211,9 @@ assert_logs_36h_ordinary_user() {
 setup_isolated_xdg remote-client-acceptance
 verify_package_and_ordinary_identity
 assert_recovery_clean baseline
+install_xray_fixture
 import_profile_privately
 
-# Lifecycle setup is privileged so this headless self-hosted acceptance does not
-# accidentally test polkit active-session policy. All read-only client paths
-# below use the runner's unchanged ordinary login identity.
 if ! run_privileged_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
   fail "remote-client proxy-only connect failed"
 fi
