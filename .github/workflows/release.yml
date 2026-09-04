@@ -159,7 +159,6 @@ jobs:
       PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
       PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
       PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
-      PODLAZ_E2E_DEB_PATH: ${{ runner.temp }}/podlaz-release-smoke/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
       PODLAZ_E2E_EXPECT_COMMIT: ${{ needs.build.outputs.commit_sha }}
       PODLAZ_E2E_ENABLE_LIFECYCLE: 'true'
       PODLAZ_E2E_ENABLE_TUN: 'true'
@@ -187,6 +186,8 @@ jobs:
 
       - name: Run exact-package TUN smoke
         shell: bash
+        env:
+          PODLAZ_E2E_DEB_PATH: ${{ runner.temp }}/podlaz-release-smoke/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
         run: |
           set -euo pipefail
           test -n "${PODLAZ_E2E_PROFILE_URI}"
