@@ -13,12 +13,15 @@ type TunAllocationEvidence struct {
 	ReservedRoutingTables []uint32
 }
 
-// TunAllocationRoute carries only the route fields used by collision-sensitive
-// allocation. Default routes have Default=true and an invalid Destination.
+// TunAllocationRoute carries only route fields used by collision-sensitive
+// allocation and apply-time identity verification. Default routes have
+// Default=true and an invalid Destination.
 type TunAllocationRoute struct {
 	Destination netip.Prefix
 	Default     bool
 	Table       uint32
+	Type        int
+	LinkIndex   int
 }
 
 // TunAllocationRule carries the numeric identities that can collide with a new
