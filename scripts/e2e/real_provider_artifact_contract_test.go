@@ -2,6 +2,8 @@ package e2e_test
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,5 +32,32 @@ func TestRealProviderUploadsRequirePrivateExecutionAndFailClosedPublication(t *t
 				t.Fatalf("%s real-provider artifact gate lost %q", workflow, required)
 			}
 		}
+	}
+}
+
+func TestPublicArtifactGateRejectsUnexpectedFiles(t *testing.T) {
+	artifactDir := t.TempDir()
+	resultPath := filepath.Join(artifactDir, "real-provider-result.txt")
+	if err := os.WriteFile(resultPath, []byte("real-provider data-plane: success\n"), 0o600); err != nil {
+		t.Fatalf("write safe result: %v", err)
+	}
+
+	runGate := func() error {
+		cmd := exec.Command("bash", "scan-public-artifacts.sh")
+		cmd.Env = append(os.Environ(),
+			"E2E_ARTIFACT_DIR="+artifactDir,
+			"E2E_TMP_ROOT="+t.TempDir(),
+		)
+		return cmd.Run()
+	}
+	if err := runGate(); err != nil {
+		t.Fatalf("safe public artifact staging was rejected: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(artifactDir, "unexpected.txt"), []byte("private evidence\n"), 0o600); err != nil {
+		t.Fatalf("write unexpected artifact: %v", err)
+	}
+	if err := runGate(); err == nil {
+		t.Fatal("public artifact gate accepted an unexpected extra file")
 	}
 }
