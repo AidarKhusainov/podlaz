@@ -7,18 +7,11 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 
 require_cmd awk curl hostname ip python3 sed sort
 
-private_values_file="${E2E_TMP_ROOT}/data-plane-sensitive-values.txt"
 sensitive_values=(
   "${PODLAZ_E2E_PROFILE_URI:-}"
   "${PODLAZ_E2E_PROFILE_URI_LIST:-}"
   "${PODLAZ_E2E_EXPECTED_EGRESS_IP:-}"
 )
-
-if [[ -f "${private_values_file}" ]]; then
-  while IFS= read -r value; do
-    [[ -n "${value}" ]] && sensitive_values+=("${value}")
-  done <"${private_values_file}"
-fi
 
 while IFS= read -r value; do
   [[ -n "${value}" ]] && sensitive_values+=("${value}")
