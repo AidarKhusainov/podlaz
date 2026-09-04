@@ -71,10 +71,12 @@ func validateTunAllocationEvidence(evidence snapshot.TunAllocationEvidence) erro
 			return fmt.Errorf("allocate TUN resources: malformed IPv4 route inventory entry")
 		}
 	}
-	for _, rule := range evidence.IPv4PolicyRules {
-		if rule.Table == 0 {
-			return fmt.Errorf("allocate TUN resources: policy-rule inventory entry has no routing table")
+	for _, table := range evidence.ReservedRoutingTables {
+		if table == 0 {
+			return fmt.Errorf("allocate TUN resources: reserved routing table identity is unspecified")
 		}
+	}
+	for _, rule := range evidence.IPv4PolicyRules {
 		if rule.Priority == 0 || rule.Priority >= 32766 {
 			return fmt.Errorf("allocate TUN resources: malformed policy-rule priority")
 		}
@@ -111,8 +113,13 @@ func allocateTunRoutingTable(evidence snapshot.TunAllocationEvidence) (int, erro
 	for _, route := range evidence.IPv4Routes {
 		used[route.Table] = struct{}{}
 	}
+	for _, table := range evidence.ReservedRoutingTables {
+		used[table] = struct{}{}
+	}
 	for _, rule := range evidence.IPv4PolicyRules {
-		used[rule.Table] = struct{}{}
+		if rule.Table != 0 {
+			used[rule.Table] = struct{}{}
+		}
 	}
 	for candidate := TunRoutingTableID; candidate <= tunRoutingTableAllocationLast; candidate++ {
 		if _, occupied := used[uint32(candidate)]; !occupied {
@@ -144,113 +151,10 @@ func allocateTunRulePriorities(evidence snapshot.TunAllocationEvidence) (serverP
 	return 0, 0, fmt.Errorf("allocate TUN resources: no collision-free policy-rule priority pair can precede the existing host policy rules")
 }
 
-// tunAllocationEvidenceFromSnapshot is a compatibility adapter for read-only
-// planning and explicit in-memory fixtures. Production mutation authority is
-// collected separately from rtnetlink and must not fall back to this adapter.
-func tunAllocationEvidenceFromSnapshot(s snapshot.Snapshot) (snapshot.TunAllocationEvidence, error) {
-	if !allocationInspectionAvailable(s.IPv4Addresses.Inspection.Status) {
-		return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: IPv4 address inventory is %s", allocationInspectionStatus(s.IPv4Addresses.Inspection.Status))
-	}
-	if !allocationInspectionAvailable(s.IPv4Routes.Inspection.Status) {
-		return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: IPv4 route inventory is %s", allocationInspectionStatus(s.IPv4Routes.Inspection.Status))
-	}
-	if !allocationInspectionAvailable(s.IPv4PolicyRules.Inspection.Status) {
-		return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: IPv4 policy-rule inventory is %s", allocationInspectionStatus(s.IPv4PolicyRules.Inspection.Status))
-	}
-
-	evidence := snapshot.TunAllocationEvidence{
-		IPv4Addresses:   make([]netip.Prefix, 0, len(s.IPv4Addresses.Addresses)),
-		IPv4Routes:      make([]snapshot.TunAllocationRoute, 0, len(s.IPv4Routes.Routes)),
-		IPv4PolicyRules: make([]snapshot.TunAllocationRule, 0, len(allocationPolicyRules(s))),
-	}
-	for _, address := range s.IPv4Addresses.Addresses {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(address.CIDR))
-		if err != nil || !prefix.Addr().Is4() {
-			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed IPv4 address inventory entry")
-		}
-		evidence.IPv4Addresses = append(evidence.IPv4Addresses, prefix)
-	}
-	for _, route := range s.IPv4Routes.Routes {
-		table, ok := compatibilityRouteTable(route.Table)
-		if !ok {
-			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed routing table identity %q", route.Table)
-		}
-		converted := snapshot.TunAllocationRoute{Table: table}
-		destination := strings.TrimSpace(route.Destination)
-		if destination == "" || destination == IPv4DefaultRoute || destination == "0.0.0.0/0" {
-			converted.Default = true
-		} else {
-			prefix, err := netip.ParsePrefix(destination)
-			if err != nil || !prefix.Addr().Is4() {
-				return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed IPv4 route inventory entry")
-			}
-			converted.Destination = prefix.Masked()
-		}
-		evidence.IPv4Routes = append(evidence.IPv4Routes, converted)
-	}
-	for _, rule := range allocationPolicyRules(s) {
-		priority, err := strconv.ParseUint(strings.TrimSpace(rule.Priority), 10, 32)
-		if err != nil {
-			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule priority")
-		}
-		table, ok := compatibilityRouteTable(rule.Table)
-		if !ok {
-			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule routing table %q", rule.Table)
-		}
-		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, snapshot.TunAllocationRule{Priority: uint32(priority), Table: table})
-	}
-	if err := validateTunAllocationEvidence(evidence); err != nil {
-		return snapshot.TunAllocationEvidence{}, err
-	}
-	return evidence, nil
-}
-
-func allocationInspectionAvailable(status snapshot.Status) bool {
-	// The empty value keeps existing in-memory test/legacy snapshot producers
-	// compatible. Production mutation never uses this compatibility path.
-	return status == "" || status == snapshot.StatusDetected
-}
-
-func allocationInspectionStatus(status snapshot.Status) string {
-	if status == "" {
-		return "unspecified"
-	}
-	return string(status)
-}
-
-func allocationPolicyRules(s snapshot.Snapshot) []snapshot.PolicyRoutingSignal {
-	if s.IPv4PolicyRules.Inspection.Status == snapshot.StatusDetected || len(s.IPv4PolicyRules.Rules) > 0 {
-		return s.IPv4PolicyRules.Rules
-	}
-	if s.IPv4PolicyRules.Inspection.Status == "" {
-		var rules []snapshot.PolicyRoutingSignal
-		for _, signal := range s.PolicyRouting {
-			if signal.Kind == "rule" {
-				rules = append(rules, signal)
-			}
-		}
-		return rules
-	}
-	return nil
-}
-
-func compatibilityRouteTable(table string) (uint32, bool) {
-	switch strings.TrimSpace(table) {
-	case "", MainRoutingTable:
-		return 254, true
-	case "local":
-		return 255, true
-	case "default":
-		return 253, true
-	}
-	value, err := strconv.ParseUint(strings.TrimSpace(table), 10, 32)
-	return uint32(value), err == nil && value > 0
-}
-
 // PlanTunForSession builds a read-only plan from diagnostic snapshot evidence.
 // Production mutation callers must use PlanTunForSessionWithAllocationEvidence.
 func PlanTunForSession(p profile.Profile, s snapshot.Snapshot, opts TunOptions) (TunPlan, error) {
-	evidence, err := tunAllocationEvidenceFromSnapshot(s)
+	evidence, err := snapshot.TunAllocationEvidenceFromSnapshot(s)
 	if err != nil {
 		return TunPlan{}, err
 	}
@@ -279,7 +183,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		Table:       table,
 		Interface:   snapshot.DefaultTunName,
 		Action:      "add",
-		Reason:      "route default IPv4 traffic through the Podlaz TUN interface using this session's allocated table",
+		Reason:      "route default IPv4 traffic through this session's allocated routing table before pre-existing host policy rules",
 	}}
 	policyRules := []TunPolicyRulePlan{{
 		Family:   "ipv4",
