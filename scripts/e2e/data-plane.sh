@@ -27,6 +27,7 @@ fi
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 INSTALL_DEB=""
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
+DAEMON_RUNTIME_CONFIG_PATH="${DAEMON_SOCKET%/*}/generated/xray.json"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 ACTIVE_CONNECTION=0
@@ -231,15 +232,12 @@ PY
 
 assert_active_proxy_only_control_plane() {
   local phase="$1" pass
-  ACTIVE_RUNTIME_CONFIG_PATH=""
   for pass in 1 2; do
     expect_sensitive_success "status-${phase}-active-${pass}" run_podlaz_as_socket_user status
-    grep -F "Connection: active" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not active"
-    grep -F "Mode: proxy-only" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not proxy-only"
-    grep -F "Stale state: none" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} reports stale state"
+    grep -Fx "Status: Connected" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not connected"
+    grep -Fx "Mode: proxy-only" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not proxy-only"
     if [[ "${pass}" == "1" ]]; then
-      ACTIVE_RUNTIME_CONFIG_PATH="$(awk -F': ' '/^Runtime config:/ {print $2; exit}' "${LAST_STDOUT}")"
-      assert_nonempty "${ACTIVE_RUNTIME_CONFIG_PATH}" "${phase}: active runtime config path"
+      sudo -n test -f "${ACTIVE_RUNTIME_CONFIG_PATH}" || fail "${phase}: active runtime config is missing"
     fi
   done
   expect_sensitive_success "recover-${phase}-while-active-json" run_podlaz_as_socket_user recover --json
@@ -258,8 +256,7 @@ assert_runtime_config_removed() {
 assert_no_stale_state() {
   local phase="$1"
   expect_sensitive_success "status-${phase}-after-disconnect" run_podlaz_as_socket_user status
-  grep -F "Connection: inactive" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status is not inactive after disconnect"
-  grep -F "Stale state: none" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status reports stale state after disconnect"
+  grep -Fx "Status: Disconnected" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status is not disconnected after disconnect"
   expect_sensitive_success "recover-${phase}-dry-run-json" run_podlaz_as_socket_user recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_plan_empty "${phase}"
@@ -268,24 +265,15 @@ assert_no_stale_state() {
 assert_current_runtime_config_artifacts_safe() {
   local phase="$1"
   local status_json
-  expect_sensitive_success "status-${phase}-runtime-config-scan" run_podlaz_as_socket_user status
+  [[ -n "${ACTIVE_RUNTIME_CONFIG_PATH}" ]] || fail "${phase}: active runtime config path is empty"
+  sudo -n test -f "${ACTIVE_RUNTIME_CONFIG_PATH}" || fail "${phase}: active runtime config is missing"
   status_json="$(mktemp "${E2E_TMP_ROOT}/$(safe_name "status-${phase}").runtime-config-status.XXXXXX.json")"
   chmod 600 "${status_json}"
-  python3 - "${LAST_STDOUT}" "${status_json}" <<'PY'
+  python3 - "${ACTIVE_RUNTIME_CONFIG_PATH}" "${status_json}" <<'PY'
 import json
 import sys
 
-status_path, output_path = sys.argv[1], sys.argv[2]
-runtime_config_path = ""
-with open(status_path, encoding="utf-8") as handle:
-    for line in handle:
-        key, separator, value = line.partition(":")
-        if separator and key.strip() == "Runtime config":
-            runtime_config_path = value.strip()
-            break
-if not runtime_config_path:
-    print("active status output did not expose Runtime config path", file=sys.stderr)
-    sys.exit(1)
+runtime_config_path, output_path = sys.argv[1], sys.argv[2]
 with open(output_path, "w", encoding="utf-8") as handle:
     json.dump({"runtime_config_path": runtime_config_path}, handle)
 PY
@@ -299,6 +287,7 @@ connect_profile() {
   shift 2
   expect_sensitive_success "connect-${label}" run_podlaz_as_socket_user connect "$@" "${id}"
   ACTIVE_CONNECTION=1
+  ACTIVE_RUNTIME_CONFIG_PATH="${DAEMON_RUNTIME_CONFIG_PATH}"
   capture_sensitive_command "status-${label}" run_podlaz_as_socket_user status || true
 }
 
