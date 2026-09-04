@@ -1,0 +1,72 @@
+name: Integration
+
+on:
+  push:
+    branches:
+      - master
+      - agent/ci-cd-simplification
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installed-product:
+    name: Installed package runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Run package and service acceptance
+        env:
+          PODLAZ_E2E_KEEP_PACKAGE: 'true'
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/package-service.sh
+
+      - name: Run installed runtime acceptance
+        run: |
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl reset-failed podlazd.service || true
+          sudo -n systemctl start podlazd.service
+          bash scripts/e2e/log-window-acceptance.sh
+          bash scripts/e2e/remote-client-acceptance.sh
+
+      - name: Purge package state
+        if: always()
+        run: |
+          sudo -n rm -f /run/systemd/system/podlazd.service.d/remote-client-acceptance.conf >/dev/null 2>&1 || true
+          sudo -n rm -rf /run/podlaz/e2e-remote-client >/dev/null 2>&1 || true
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
+      - name: Upload integration diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-installed-product-integration
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
