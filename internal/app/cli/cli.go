@@ -66,6 +66,7 @@ type options struct {
 	status                func(context.Context) status.Report
 	daemonStatus          func(context.Context) (status.Report, error)
 	systemSnapshot        func(context.Context, netsnapshot.Options) netsnapshot.Snapshot
+	tunAllocationEvidence func(context.Context) (netsnapshot.TunAllocationEvidence, error)
 	stdin                 io.Reader
 	stdinIsTerminal       func() bool
 }
