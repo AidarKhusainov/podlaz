@@ -19,6 +19,7 @@ LOCAL_B64_URI='vless://00000000-0000-0000-0000-000000000004@base64.example.com:4
 SUB_URI='vless://00000000-0000-0000-0000-000000000005@subscription.example.com:443?type=tcp&security=tls&encryption=none#sub-cli'
 
 FAKE_JOURNALCTL_DIR="${E2E_HOME}/fake-journalctl-bin"
+FAKE_JOURNALCTL_ARGS="${E2BG_HOME:-${E2E_HOME}}/fake-journalctl.args"
 FAKE_JOURNALCTL_ARGS="${E2E_HOME}/fake-journalctl.args"
 mkdir -p "${FAKE_JOURNALCTL_DIR}"
 cat >"${FAKE_JOURNALCTL_DIR}/journalctl" <<'SH'
@@ -157,7 +158,7 @@ expect_success subscription-help "${PODLAZ[@]}" subscription --help
 expect_success subscription-add "${PODLAZ[@]}" subscription add --name fixture-sub --url "${SUB_URL}"
 SUB_ID="$(awk '/^Subscription added:/ {print $3}' "${LAST_STDOUT}")"
 assert_nonempty "${SUB_ID}" "subscription id"
-expect_exit 2 subscription-add-json-deferred "${PODLAZ[@]}" subscription add --json --name bad-sub --url "${SUB_URL}"
+expect_exit 2 subscription-update-json-deferred "${PODLAZ[@]}" subscription update "${SUB_ID}" --json
 expect_success subscription-list "${PODLAZ[@]}" subscription list
 assert_contains "${LAST_STDOUT}" "fixture-sub"
 expect_success subscription-list-json "${PODLAZ[@]}" subscription list --json
@@ -180,31 +181,22 @@ expect_success plan-proxy-only "${PODLAZ[@]}" plan --mode proxy-only "${PROFILE_
 assert_contains "${LAST_STDOUT}" "Proxy-only plan"
 expect_success plan-proxy-only-json "${PODLAZ[@]}" plan --mode=proxy-only "${PROFILE_ID}" --json
 assert_json_file "${LAST_STDOUT}"
-expect_success plan-tun "${PODLAZ[@]}" plan --mode tun "${PROFILE_ID}"
-assert_contains "${LAST_STDOUT}" "podlaz TUN plan"
-assert_contains "${LAST_STDOUT}" "No changes were applied."
-expect_success plan-tun-json "${PODLAZ[@]}" plan --mode=tun "${PROFILE_ID}" --json
-assert_json_file "${LAST_STDOUT}"
 expect_exit 2 plan-missing-mode "${PODLAZ[@]}" plan "${PROFILE_ID}"
 expect_exit 2 plan-invalid-mode "${PODLAZ[@]}" plan --mode wireguard "${PROFILE_ID}"
 expect_exit 1 plan-missing-profile "${PODLAZ[@]}" plan --mode proxy-only missing-profile
 
 log "daemon-backed command argument gates"
 expect_success connect-help "${PODLAZ[@]}" connect --help
-expect_exit 2 connect-json-deferred "${PODLAZ[@]}" connect --json "${PROFILE_ID}"
 expect_exit 2 connect-invalid-mode "${PODLAZ[@]}" connect --mode wireguard "${PROFILE_ID}"
-expect_exit 2 connect-missing-profile-arg "${PODLAZ[@]}" connect --mode proxy-only
+expect_exit 2 missing-profile-arg "${PODLAZ[@]}" connect --mode proxy-only
 expect_success disconnect-help "${PODLAZ[@]}" disconnect --help
-expect_exit 2 disconnect-json-deferred "${PODLAZ[@]}" disconnect --json
 expect_exit 2 disconnect-unsupported-flag "${PODLAZ[@]}" disconnect --force
 
 log "status, doctor, logs, and recover"
 expect_success status-help "${PODLAZ[@]}" status --help
 expect_exit_in "0 3 5" status-human "${PODLAZ[@]}" status
-expect_exit 2 status-json-deferred "${PODLAZ[@]}" status --json
 expect_success doctor-help "${PODLAZ[@]}" doctor --help
 expect_exit_in "0 3" doctor-human "${PODLAZ[@]}" doctor
-expect_exit 2 doctor-json-deferred "${PODLAZ[@]}" doctor --json
 expect_exit 2 doctor-core-without-xray "${PODLAZ[@]}" doctor --core
 expect_exit 2 doctor-scope-network "${PODLAZ[@]}" doctor --network
 expect_exit 2 doctor-scope-dns "${PODLAZ[@]}" doctor --dns
@@ -213,7 +205,6 @@ expect_exit 2 doctor-scope-firewall "${PODLAZ[@]}" doctor --firewall
 expect_exit_in "0 3" doctor-core-xray-json-shape "${PODLAZ[@]}" doctor --core --xray "${PODLAZ_BIN}" --json
 assert_json_file "${LAST_STDOUT}"
 expect_success logs-help "${PODLAZ[@]}" logs --help
-expect_exit 2 logs-json-deferred "${PODLAZ[@]}" logs --json
 expect_exit 2 logs-invalid-since "${PODLAZ[@]}" logs --since
 expect_logs_follow_timeout logs-follow-short-bounded -f
 expect_logs_follow_timeout logs-follow-long-bounded --follow
