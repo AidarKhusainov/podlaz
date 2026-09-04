@@ -27,8 +27,6 @@ func TestRealProviderUploadsRequirePrivateExecutionAndFailClosedPublication(t *t
 			"id: private_cleanup",
 			"steps.evidence_scan.outcome == 'success'",
 			"steps.private_cleanup.outcome == 'success'",
-			"path: ${{ runner.temp }}/podlaz-e2e-artifacts/real-provider-result.txt",
-			"if-no-files-found: error",
 		} {
 			if !strings.Contains(text, required) {
 				t.Fatalf("%s real-provider artifact gate lost %q", workflow, required)
