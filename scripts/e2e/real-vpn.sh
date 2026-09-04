@@ -79,34 +79,8 @@ fetch_daemon_status_json() {
 daemon_status_is_verified_active() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/real-tun-status-active.XXXXXX")"
-  if fetch_daemon_status_json >"${output}" 2>/dev/null && python3 - "${output}" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    status = json.load(handle)
-health = status.get("tun_health") or {}
-txs = status.get("transactions") or []
-active_id = str(status.get("active_transaction_id") or "")
-cleanup = any(bool(tx.get("requires_cleanup")) for tx in txs)
-committed = any(
-    str(tx.get("id") or "") == active_id
-    and tx.get("state") == "committed"
-    and not bool(tx.get("requires_cleanup"))
-    for tx in txs
-) if active_id else False
-ok = (
-    status.get("connection") == "active"
-    and status.get("mode") == "tun"
-    and status.get("tun") == "active"
-    and health.get("state") == "verified"
-    and active_id != ""
-    and committed
-    and not cleanup
-    and not status.get("terminal_reason")
-)
-raise SystemExit(0 if ok else 1)
-PY
-  then
+  if fetch_daemon_status_json >"${output}" 2>/dev/null && \
+    python3 "${SCRIPT_DIR}/lib/daemon_status_semantics.py" verified-active "${output}"; then
     rm -f -- "${output}"
     return 0
   fi
@@ -117,21 +91,8 @@ PY
 daemon_status_is_clean_inactive() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/real-tun-status-inactive.XXXXXX")"
-  if fetch_daemon_status_json >"${output}" 2>/dev/null && python3 - "${output}" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    status = json.load(handle)
-txs = status.get("transactions") or []
-cleanup = any(bool(tx.get("requires_cleanup")) for tx in txs)
-ok = (
-    status.get("connection") == "inactive"
-    and status.get("tun") == "disabled"
-    and not cleanup
-)
-raise SystemExit(0 if ok else 1)
-PY
-  then
+  if fetch_daemon_status_json >"${output}" 2>/dev/null && \
+    python3 "${SCRIPT_DIR}/lib/daemon_status_semantics.py" clean-inactive "${output}"; then
     rm -f -- "${output}"
     return 0
   fi
