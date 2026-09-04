@@ -15,7 +15,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve release version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.release-vars.outputs.tag }}
@@ -37,16 +37,17 @@ jobs:
   test:
     name: Test release commit
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -62,21 +63,108 @@ jobs:
           bash scripts/ci/install-go-tool.sh govulncheck
           govulncheck ./...
 
+  installed-runtime:
+    name: Qualify installed runtime
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Run installed package integration
+        run: bash scripts/e2e/installed-package-integration.sh
+
+      - name: Upload installed runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-installed-runtime-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+  real-provider:
+    name: Qualify real proxy data plane
+    needs: resolve
+    runs-on: ubuntu-24.04
+    environment: vpn-e2e
+    timeout-minutes: 90
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELIABILITY_CYCLES || '10' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Run real proxy data-plane integration
+        run: bash scripts/e2e/data-plane.sh
+
+      - name: Purge package state
+        if: always()
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemview-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
+      - name: Upload real-provider diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-real-provider-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
   build:
     name: Build and validate release artifacts
     needs:
       - resolve
       - test
-    runs-on: ubuntu-22.04
+      - installed-runtime
+      - real-provider
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     outputs:
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
       built_date: ${{ steps.release-commit.outputs.built_date }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
 
       - name: Resolve release commit
         id: release-commit
@@ -88,7 +176,7 @@ jobs:
           echo "built_date=${built_date}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -115,8 +203,8 @@ jobs:
           PODLAZ_LINKAGE_ROOT: dist/package-root
         run: |
           bash scripts/ci/validate-packages.sh \
-            "dist/podlaz_${VERSION}_linux_amd64.deb" \
-            "dist-arm64/podlaz_${VERSION}_linux_arm64.deb"
+            "dist/podlaz_${VERSION}.deb" \
+            "dist-arm64/podlaz_${VERSION}.deb"
 
       - name: Install, reinstall, and purge package locally
         env:
@@ -134,7 +222,7 @@ jobs:
         run: bash scripts/ci/create-release-artifacts.sh
 
       - name: Upload release artifacts for review
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |
@@ -151,7 +239,7 @@ jobs:
     needs:
       - resolve
       - build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
@@ -159,13 +247,13 @@ jobs:
       id-token: write
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
 
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz
