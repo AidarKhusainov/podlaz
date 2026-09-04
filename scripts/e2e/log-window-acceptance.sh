@@ -64,7 +64,7 @@ assert_visible_marker_and_bounded_window() {
   invocation_start="$(date +%s)"
   run_log_reader_podlaz 10s status >/dev/null 2>&1 || fail "log-window could not create the fresh daemon journal marker"
   sudo -n journalctl --sync
-  run_log_reader_podlaz 20s logs --daemon --since 5s >"${short_output}" 2>"${short_output}.stderr" || \
+  run_log_reader_podlaz 20s logs --daemon --since 5s >"${short_output}" 2>"${short_error}" || \
     fail "installed podlaz logs --daemon --since 5s failed"
   grep -Fx 'podlaz daemon logs' "${short_output}" >/dev/null || fail "short daemon log window did not render its stable header"
   grep -F 'status request' "${short_output}" >/dev/null || \
@@ -95,7 +95,7 @@ with open(path, encoding="utf-8") as handle:
         seen_journal_line = True
         month, day, hour, minute, second = match.groups()
         candidates = []
-        for year in (now.year - 1, now.year):
+        for year in (now.year - 1, now.year, now.year + 1):
             try:
                 value = dt.datetime(year, months[month], int(day), int(hour), int(minute), int(second))
             except ValueError:
