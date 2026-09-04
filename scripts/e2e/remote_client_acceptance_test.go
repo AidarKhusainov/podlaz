@@ -18,7 +18,7 @@ func executableShellLines(script string) string {
 	return strings.Join(lines, "\n")
 }
 
-func TestRemoteClientAcceptanceUsesDeterministicOrdinaryUserFixture(t *testing.T) {
+func TestRemoteClientAcceptanceUsesPackagedRuntimeAndOrdinaryUserIdentity(t *testing.T) {
 	data, err := os.ReadFile("remote-client-acceptance.sh")
 	if err != nil {
 		t.Fatalf("read remote-client acceptance: %v", err)
@@ -28,7 +28,6 @@ func TestRemoteClientAcceptanceUsesDeterministicOrdinaryUserFixture(t *testing.T
 		"id -nG",
 		"ordinary-user acceptance must not run as root",
 		"ordinary_user_without_podlaz_group",
-		"PODLAZ_XRAY_PATH",
 		"remote-client.example.net",
 		"connect --mode proxy-only",
 		"recover --json",
@@ -43,10 +42,13 @@ func TestRemoteClientAcceptanceUsesDeterministicOrdinaryUserFixture(t *testing.T
 	for _, forbidden := range []string{
 		"PODLAZ_E2E_PROFILE_URI",
 		"PODLAZ_E2E_PROFILE_URI_LIST",
+		"PODLAZ_XRAY_PATH",
+		"remote-client-acceptance.conf",
+		"FIXTURE_XRAY",
 		"e2e-tun-package-convergence.yml",
 	} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("remote-client acceptance must be provider/workflow independent: %q", forbidden)
+			t.Fatalf("remote-client acceptance must use the installed package without provider/workflow fixtures: %q", forbidden)
 		}
 	}
 
