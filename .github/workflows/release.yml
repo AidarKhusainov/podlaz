@@ -63,97 +63,11 @@ jobs:
           bash scripts/ci/install-go-tool.sh govulncheck
           govulncheck ./...
 
-  installed-runtime:
-    name: Qualify installed runtime
-    needs: resolve
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.resolve.outputs.tag }}
-          persist-credentials: false
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-          cache-dependency-path: |
-            go.mod
-            packaging/package-toolchain.env
-
-      - name: Run installed package integration
-        run: bash scripts/e2e/installed-package-integration.sh
-
-      - name: Upload installed runtime diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: podlaz-release-installed-runtime-${{ needs.resolve.outputs.version }}
-          path: ${{ runner.temp }}/podlaz-e2e-artifacts
-          if-no-files-found: ignore
-          retention-days: 7
-
-  real-provider:
-    name: Qualify real proxy data plane
-    needs: resolve
-    runs-on: ubuntu-24.04
-    environment: vpn-e2e
-    timeout-minutes: 90
-    env:
-      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
-      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
-      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
-      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
-      PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELIABILITY_CYCLES || '10' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ needs.resolve.outputs.tag }}
-          persist-credentials: false
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-          cache-dependency-path: |
-            go.mod
-            packaging/package-toolchain.env
-
-      - name: Run real proxy data-plane integration
-        run: bash scripts/e2e/data-plane.sh
-
-      - name: Purge package state
-        if: always()
-        run: |
-          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
-          if command -v deb-systemd-helper >/dev/null 2>&1; then
-            sudo -n deb-systemview-helper purge podlazd.service >/dev/null 2>&1 || true
-          fi
-          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
-          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
-
-      - name: Upload real-provider diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: podlaz-release-real-provider-${{ needs.resolve.outputs.version }}
-          path: ${{ runner.temp }}/podlaz-e2e-artifacts
-          if-no-files-found: ignore
-          retention-days: 7
-
   build:
     name: Build and validate release artifacts
     needs:
       - resolve
       - test
-      - installed-runtime
-      - real-provider
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     outputs:
@@ -203,8 +117,8 @@ jobs:
           PODLAZ_LINKAGE_ROOT: dist/package-root
         run: |
           bash scripts/ci/validate-packages.sh \
-            "dist/podlaz_${VERSION}.deb" \
-            "dist-arm64/podlaz_${VERSION}.deb"
+            "dist/podlaz_${VERSION}_linux_amd64.deb" \
+            "dist-arm64/podlaz_${VERSION}_linux_arm64.deb"
 
       - name: Install, reinstall, and purge package locally
         env:
@@ -221,7 +135,7 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: bash scripts/ci/create-release-artifacts.sh
 
-      - name: Upload release artifacts for review
+      - name: Upload release artifacts for qualification
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
@@ -234,11 +148,130 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  installed-runtime:
+    name: Qualify exact installed package
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Install exact release package
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          sudo -n apt install -y "./dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+          sudo -n systemctl start podlazd.service
+          sudo -n systemctl is-active --quiet podlazd.service
+
+      - name: Run exact-package runtime acceptance
+        run: |
+          bash scripts/e2e/log-window-acceptance.sh
+          bash scripts/e2e/remote-client-acceptance.sh
+
+      - name: Purge exact release package
+        if: always()
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
+      - name: Upload exact-package diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-installed-runtime-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+  real-provider:
+    name: Qualify exact real proxy data plane
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    environment: vpn-e2e
+    timeout-minutes: 90
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELEASE_RELIABILITY_CYCLES || '10' }}
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Run exact-package real proxy data-plane integration
+        env:
+          PODLAZ_E2E_PACKAGE_PATH: ${{ github.workspace }}/dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/data-plane.sh
+
+      - name: Purge package state
+        if: always()
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
+      - name: Upload exact data-plane diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-real-provider-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
   attest-and-publish:
     name: Attest and publish GitHub Release
     needs:
       - resolve
       - build
+      - installed-runtime
+      - real-provider
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -246,7 +279,7 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - name: Download release artifacts
+      - name: Download qualified release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
