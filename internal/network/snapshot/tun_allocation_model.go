@@ -7,9 +7,9 @@ import "net/netip"
 // typed kernel identities only; diagnostic presentation data belongs to
 // Snapshot.
 type TunAllocationEvidence struct {
-	IPv4Addresses        []netip.Prefix
-	IPv4Routes           []TunAllocationRoute
-	IPv4PolicyRules      []TunAllocationRule
+	IPv4Addresses         []netip.Prefix
+	IPv4Routes            []TunAllocationRoute
+	IPv4PolicyRules       []TunAllocationRule
 	ReservedRoutingTables []uint32
 }
 
