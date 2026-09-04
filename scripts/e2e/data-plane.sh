@@ -7,13 +7,14 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/profile_input.sh
 source "${SCRIPT_DIR}/lib/profile_input.sh"
 
-require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg
+require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg dpkg-deb
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
 : "${PODLAZ_E2E_EXPECTED_EGRESS_IP:=}"
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
 : "${PODLAZ_E2E_RELIABILITY_CYCLES:=0}"
+: "${PODLAZ_E2E_PACKAGE_PATH:=}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
 
 if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; then
@@ -24,6 +25,7 @@ if [[ "${PODLAZ_DEB_ARCH}" != "${HOST_DEB_ARCH}" ]]; then
   fail "data-plane e2e must install a native package: PODLAZ_DEB_ARCH=${PODLAZ_DEB_ARCH}, host=${HOST_DEB_ARCH}"
 fi
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
+INSTALL_DEB=""
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
@@ -315,14 +317,24 @@ assert_nonempty "${PROFILE_ID}" "primary profile id"
 assert_not_contains "${LAST_STDOUT}" "${PRIMARY_URI}"
 expect_success validate-primary-proxy "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
 
-log "build and install package for data-plane checks"
-# shellcheck disable=SC1091
-. packaging/package-toolchain.env
-go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
-export PATH="$(go env GOPATH)/bin:${PATH}"
-PODLAZ_COMMIT="${GITHUB_SHA:-e2e-data-plane}" PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" bash scripts/build-deb.sh 2>&1 | tee "${E2E_ARTIFACT_DIR}/data-plane-build-deb.log"
-test -f "${DEV_DEB}" || fail "expected package not found: ${DEV_DEB}"
-sudo -n apt install -y "./${DEV_DEB}" 2>&1 | tee "${E2E_ARTIFACT_DIR}/data-plane-apt-install.log"
+if [[ -n "${PODLAZ_E2E_PACKAGE_PATH}" ]]; then
+  log "use prebuilt package for data-plane checks"
+  [[ -f "${PODLAZ_E2E_PACKAGE_PATH}" ]] || fail "configured data-plane package is missing: ${PODLAZ_E2E_PACKAGE_PATH}"
+  package_arch="$(dpkg-deb --field "${PODLAZ_E2E_PACKAGE_PATH}" Architecture 2>/dev/null || true)"
+  [[ "${package_arch}" == "${HOST_DEB_ARCH}" ]] || fail "configured data-plane package architecture mismatch: package=${package_arch:-unknown}, host=${HOST_DEB_ARCH}"
+  INSTALL_DEB="${PODLAZ_E2E_PACKAGE_PATH}"
+else
+  log "build package for data-plane checks"
+  # shellcheck disable=SC1091
+  . packaging/package-toolchain.env
+  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
+  export PATH="$(go env GOPATH)/bin:${PATH}"
+  PODLAZ_COMMIT="${GITHUB_SHA:-e2e-data-plane}" PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" bash scripts/build-deb.sh 2>&1 | tee "${E2E_ARTIFACT_DIR}/data-plane-build-deb.log"
+  [[ -f "${DEV_DEB}" ]] || fail "expected package not found: ${DEV_DEB}"
+  INSTALL_DEB="./${DEV_DEB}"
+fi
+
+sudo -n apt install -y "${INSTALL_DEB}" 2>&1 | tee "${E2E_ARTIFACT_DIR}/data-plane-apt-install.log"
 PACKAGE_INSTALLED=1
 sudo -n systemctl daemon-reload
 sudo -n systemctl reset-failed podlazd.service || true
