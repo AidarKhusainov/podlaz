@@ -51,18 +51,26 @@ func TestRealVPNSupportsPrebuiltPackageProvenance(t *testing.T) {
 		`PODLAZ_E2E_DEB_PATH`,
 		`PODLAZ_E2E_EXPECT_COMMIT`,
 		`source "${SCRIPT_DIR}/lib/package_provenance.sh"`,
+		`source "${SCRIPT_DIR}/lib/status_polling.sh"`,
 		`if [[ -n "${PODLAZ_E2E_DEB_PATH}" ]]; then`,
 		`DEV_DEB="${PODLAZ_E2E_DEB_PATH}"`,
 		`assert_native_deb_arch "${DEV_DEB}" "$(dpkg --print-architecture)"`,
 		`assert_installed_package_version_matches_deb "${DEV_DEB}" podlaz`,
 		`assert_installed_podlaz_commit "${PODLAZ_E2E_EXPECT_COMMIT}"`,
 		`assert_running_podlazd_matches_deb "${DEV_DEB}"`,
+		`http://localhost/v1/status`,
+		`wait_for_status_match "real TUN verified active"`,
 		`status.get("connection") == "active"`,
+		`status.get("mode") == "tun"`,
 		`health.get("state") == "verified"`,
+		`wait_for_status_match "real TUN clean inactive"`,
 		`status.get("connection") == "inactive"`,
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("real VPN E2E missing prebuilt-package contract %q", fragment)
 		}
+	}
+	if strings.Contains(text, `run_podlaz_as_socket_user status --json`) {
+		t.Fatal("release smoke must not depend on deferred public CLI status --json")
 	}
 }
