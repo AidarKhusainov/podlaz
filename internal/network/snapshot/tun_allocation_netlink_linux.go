@@ -101,9 +101,9 @@ func tunAllocationNetlinkError(operation string, err error) error {
 
 func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink.Route, rules []netlink.Rule, links []netlink.Link) (TunAllocationEvidence, error) {
 	evidence := TunAllocationEvidence{
-		IPv4Addresses:        make([]netip.Prefix, 0, len(addresses)),
-		IPv4Routes:           make([]TunAllocationRoute, 0, len(routes)),
-		IPv4PolicyRules:      make([]TunAllocationRule, 0, len(rules)),
+		IPv4Addresses:         make([]netip.Prefix, 0, len(addresses)),
+		IPv4Routes:            make([]TunAllocationRoute, 0, len(routes)),
+		IPv4PolicyRules:       make([]TunAllocationRule, 0, len(rules)),
 		ReservedRoutingTables: make([]uint32, 0),
 	}
 
