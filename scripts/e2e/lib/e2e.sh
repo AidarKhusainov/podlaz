@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Shared helpers for podlaz E2E and package acceptance scripts.
+# Shared helpers for self-hosted podlaz e2e scripts.
 # Scripts sourcing this file are expected to run with `set -Eeuo pipefail`.
 
 E2E_ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-${RUNNER_TEMP:-/tmp}/podlaz-e2e-artifacts}"
@@ -94,6 +94,23 @@ expect_exit() {
   fi
 }
 
+expect_exit_in() {
+  local allowed="$1"
+  local name="$2"
+  shift 2
+  set +e
+  run_capture "${name}" "$@"
+  local got=$?
+  set -e
+  local code
+  for code in ${allowed}; do
+    if [[ "${got}" == "${code}" ]]; then
+      return 0
+    fi
+  done
+  fail "${name}: expected one of [${allowed}], got ${got}"
+}
+
 assert_contains() {
   local file="$1"
   local needle="$2"
@@ -108,31 +125,44 @@ assert_not_contains() {
   fi
 }
 
-assert_file_mode() {
-  local path="$1"
-  local want="$2"
-  local got
-  got="$(stat -c '%a' "${path}")"
-  [[ "${got}" == "${want}" ]] || fail "${path}: mode ${got}, want ${want}"
+assert_nonempty() {
+  local value="$1"
+  local description="$2"
+  [[ -n "${value}" ]] || fail "empty value: ${description}"
 }
 
 assert_json_file() {
-  local path="$1"
-  python3 -m json.tool "${path}" >/dev/null || fail "invalid JSON: ${path}"
+  local file="$1"
+  require_cmd python3
+  python3 -m json.tool "${file}" >/dev/null || fail "invalid JSON: ${file}"
+}
+
+build_podlaz_binary() {
+  require_cmd go
+  local out_dir="${E2E_ARTIFACT_DIR}/bin"
+  mkdir -p "${out_dir}"
+  PODLAZ_BIN="${out_dir}/podlaz"
+  log "build podlaz test binary"
+  go build -o "${PODLAZ_BIN}" ./cmd/podlaz
+  export PODLAZ_BIN
+}
+
+setup_isolated_xdg() {
+  local suite="$1"
+  E2E_HOME="$(mktemp -d "${E2E_TMP_ROOT}/${suite}.XXXXXX")"
+  export E2E_HOME
+  export XDG_CONFIG_HOME="${E2E_HOME}/config"
+  export XDG_STATE_HOME="${E2E_HOME}/state"
+  export XDG_CACHE_HOME="${E2E_HOME}/cache"
+  mkdir -p "${XDG_CONFIG_HOME}" "${XDG_STATE_HOME}" "${XDG_CACHE_HOME}"
+  log "isolated XDG state: ${E2E_HOME}"
 }
 
 mask_value() {
   local value="${1:-}"
-  [[ -n "${value}" ]] || return 0
-  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  if [[ -n "${value}" && "${GITHUB_ACTIONS:-}" == "true" ]]; then
     printf '::add-mask::%s\n' "${value}"
   fi
-}
-
-assert_nonempty() {
-  local value="$1"
-  local description="$2"
-  [[ -n "${value}" ]] || fail "${description} is empty"
 }
 
 assert_artifacts_do_not_contain_sensitive_values() {
@@ -232,17 +262,66 @@ assert_active_runtime_config_artifacts_safe() {
     fi
   done
 
-  report="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-runtime-config-redaction-scan.txt"
-  if [[ "${#source_copies[@]}" -gt 0 ]]; then
-    set +e
-    python3 "${E2E_REDACTION_SCAN}" file-contents "${E2E_ARTIFACT_DIR}" "${report}" "${source_copies[@]}"
-    scan_code=$?
-    set -e
-    rm -f -- "${source_copies[@]}"
-    if [[ "${scan_code}" != "0" ]]; then
-      fail "${label}: runtime config content appeared in e2e artifacts"
-    fi
-  else
-    printf 'runtime config content scan skipped: content not readable without privileged file reads\n' >"${report}"
+  if [[ "${#source_copies[@]}" -eq 0 ]]; then
+    log "${label}: runtime config content is not readable by the e2e runner; recorded permission-boundary evidence"
+    return 0
   fi
+
+  report="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-content-redaction-scan.txt"
+  require_cmd python3
+  if python3 "${E2E_REDACTION_SCAN}" file-contents "${E2E_ARTIFACT_DIR}" "${report}" "${source_copies[@]}"; then
+    rm -f -- "${source_copies[@]}"
+    rm -f -- "${evidence}"
+    return 0
+  fi
+  scan_code=$?
+  rm -f -- "${source_copies[@]}"
+  fail "${label}: generated runtime config appeared in e2e artifacts"
+}
+
+write_vless_fixtures() {
+  local dir="$1"
+  mkdir -p "${dir}"
+  cat >"${dir}/xray-vless.json" <<'JSON'
+{
+  "outbounds": [
+    {
+      "tag": "json-cli",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "example.com",
+            "port": 443,
+            "users": [
+              {"id": "00000000-0000-0000-0000-000000000001", "encryption": "none", "flow": "xtls-rprx-vision"}
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "example.com",
+          "fingerprint": "chrome",
+          "publicKey": "public-key",
+          "shortId": "abcd",
+          "spiderX": "/"
+        }
+      }
+    }
+  ]
+}
+JSON
+}
+
+vless_uri() {
+  local name="$1"
+  printf 'vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=tls&encryption=none#%s' "${name}"
+}
+
+vless_reality_uri() {
+  local name="$1"
+  printf 'vless://00000000-0000-0000-0000-000000000001@example.com:443?type=tcp&security=reality&encryption=none&flow=xtls-rprx-vision&sni=www.example.com&fp=chrome&pbk=public-key&sid=abcd&spx=%%2F#%s' "${name}"
 }
