@@ -40,6 +40,27 @@ func TestDaemonStatusSemanticsIgnoresTunPresentationForCleanInactive(t *testing.
 	runDaemonStatusPredicate(t, "clean-inactive", statusPath, true)
 }
 
+func TestDaemonStatusSemanticsRequiresExactCommittedActiveTransaction(t *testing.T) {
+	statusPath := writeDaemonStatusFixture(t, map[string]any{
+		"connection":            "active",
+		"mode":                  "tun",
+		"tun":                   "enabled (podlaz0)",
+		"active_transaction_id": "tx-expected",
+		"tun_health": map[string]any{
+			"state": "verified",
+		},
+		"transactions": []map[string]any{
+			{
+				"id":               "tx-other",
+				"state":            "committed",
+				"requires_cleanup": false,
+			},
+		},
+	})
+
+	runDaemonStatusPredicate(t, "verified-active", statusPath, false)
+}
+
 func TestDaemonStatusSemanticsFailsClosedOnCleanupOrUnverifiedHealth(t *testing.T) {
 	cleanupPath := writeDaemonStatusFixture(t, map[string]any{
 		"connection":            "active",
