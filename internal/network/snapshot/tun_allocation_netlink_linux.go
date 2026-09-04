@@ -67,7 +67,15 @@ func collectTunAllocationEvidenceOnce(ctx context.Context) (TunAllocationEvidenc
 		return TunAllocationEvidence{}, err
 	}
 
-	return tunAllocationEvidenceFromNetlink(addresses, routes, rules)
+	links, err := handle.LinkList()
+	if err != nil {
+		return TunAllocationEvidence{}, tunAllocationNetlinkError("dump links for reserved routing tables", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return TunAllocationEvidence{}, err
+	}
+
+	return tunAllocationEvidenceFromNetlink(addresses, routes, rules, links)
 }
 
 func netlinkTimeoutForContext(ctx context.Context) time.Duration {
@@ -91,11 +99,12 @@ func tunAllocationNetlinkError(operation string, err error) error {
 	return fmt.Errorf("%s: %w", operation, err)
 }
 
-func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink.Route, rules []netlink.Rule) (TunAllocationEvidence, error) {
+func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink.Route, rules []netlink.Rule, links []netlink.Link) (TunAllocationEvidence, error) {
 	evidence := TunAllocationEvidence{
-		IPv4Addresses:   make([]netip.Prefix, 0, len(addresses)),
-		IPv4Routes:      make([]TunAllocationRoute, 0, len(routes)),
-		IPv4PolicyRules: make([]TunAllocationRule, 0, len(rules)),
+		IPv4Addresses:        make([]netip.Prefix, 0, len(addresses)),
+		IPv4Routes:           make([]TunAllocationRoute, 0, len(routes)),
+		IPv4PolicyRules:      make([]TunAllocationRule, 0, len(rules)),
+		ReservedRoutingTables: make([]uint32, 0),
 	}
 
 	for _, address := range addresses {
@@ -124,7 +133,7 @@ func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink
 	}
 
 	for _, rule := range rules {
-		if rule.Table <= 0 || uint64(rule.Table) > math.MaxUint32 {
+		if rule.Table < 0 || uint64(rule.Table) > math.MaxUint32 {
 			return TunAllocationEvidence{}, fmt.Errorf("convert IPv4 policy-rule allocation evidence: invalid routing table %d", rule.Table)
 		}
 		if rule.Priority < 0 || uint64(rule.Priority) > math.MaxUint32 {
@@ -136,6 +145,22 @@ func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink
 			continue
 		}
 		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, TunAllocationRule{Priority: priority, Table: table})
+	}
+
+	reserved := make(map[uint32]struct{})
+	for _, link := range links {
+		vrf, ok := link.(*netlink.Vrf)
+		if !ok {
+			continue
+		}
+		if vrf.Table == 0 {
+			return TunAllocationEvidence{}, fmt.Errorf("convert VRF allocation evidence: link %q has no routing table", vrf.Attrs().Name)
+		}
+		if _, exists := reserved[vrf.Table]; exists {
+			continue
+		}
+		reserved[vrf.Table] = struct{}{}
+		evidence.ReservedRoutingTables = append(evidence.ReservedRoutingTables, vrf.Table)
 	}
 
 	return evidence, nil
