@@ -70,8 +70,8 @@ assert_status_and_doctor() {
   doctor_output="${E2E_ARTIFACT_DIR}/remote-client-doctor.txt"
 
   run_ordinary_podlaz 20s status >"${status_output}" 2>&1 || fail "ordinary-user status failed"
-  grep -Fx 'Connection: inactive' "${status_output}" >/dev/null || fail "ordinary-user status is not inactive"
-  grep -Fx 'Stale state: none' "${status_output}" >/dev/null || fail "ordinary-user status reports stale state"
+  grep -Fx 'Status: Disconnected' "${status_output}" >/dev/null || fail "ordinary-user status is not disconnected"
+  grep -Fx 'Autostart: Disabled' "${status_output}" >/dev/null || fail "ordinary-user status reports unexpected autostart state"
 
   set +e
   run_ordinary_podlaz 30s doctor >"${doctor_output}" 2>&1
