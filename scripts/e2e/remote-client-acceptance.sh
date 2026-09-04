@@ -56,10 +56,9 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     recovery = json.load(handle).get("recovery", {})
 if recovery.get("candidates"):
-    raise SystemExit("unexpected recovery candidates")
+    raise SystemError("unexpected recovery candidates")
 if recovery.get("warnings"):
-    raise_system_exit = SystemExit("unexpected recovery warnings")
-    raise raise_system_exit
+    raise SystemError("unexpected recovery warnings")
 PY
   rm -f -- "${output}"
   write_evidence recovery_clean pass
@@ -67,8 +66,8 @@ PY
 
 assert_status_and_doctor() {
   local status_output doctor_output doctor_code=0
-  status_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-status.XXXXXX")"
-  doctor_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-doctor.XXXXXX")"
+  status_output="${E2E_ARTIFACT_DIR}/remote-client-status.txt"
+  doctor_output="${E2E_ARTIFACT_DIR}/remote-client-doctor.txt"
 
   run_ordinary_podlaz 20s status >"${status_output}" 2>&1 || fail "ordinary-user status failed"
   grep -Fx 'Connection: inactive' "${status_output}" >/dev/null || fail "ordinary-user status is not inactive"
@@ -81,7 +80,6 @@ assert_status_and_doctor() {
   if [[ "${doctor_code}" != "0" && "${doctor_code}" != "3" ]]; then
     fail "ordinary-user doctor failed with unexpected exit code ${doctor_code}"
   fi
-  rm -f -- "${status_output}" "${doctor_output}"
   write_evidence status_doctor_readable pass
 }
 
