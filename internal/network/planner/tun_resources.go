@@ -236,7 +236,7 @@ func allocationPolicyRules(s snapshot.Snapshot) []snapshot.PolicyRoutingSignal {
 
 func compatibilityRouteTable(table string) (uint32, bool) {
 	switch strings.TrimSpace(table) {
-	case "", MainRoutingTable, "main":
+	case "", MainRoutingTable:
 		return 254, true
 	case "local":
 		return 255, true
