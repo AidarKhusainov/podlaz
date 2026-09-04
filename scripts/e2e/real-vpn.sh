@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
+# shellcheck source=lib/status_polling.sh
+source "${SCRIPT_DIR}/lib/status_polling.sh"
 
 require_cmd bash go python3 grep awk sed mktemp
 
@@ -55,6 +57,7 @@ fi
 
 require_cmd sudo systemctl journalctl apt curl dpkg dpkg-deb dpkg-query sha256sum readlink
 DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_amd64.deb"
+DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 ACTIVE_CONNECTION=0
@@ -65,6 +68,75 @@ run_podlaz_as_socket_user() {
     XDG_STATE_HOME="${XDG_STATE_HOME}" \
     XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
     /usr/bin/podlaz "$@"
+}
+
+fetch_daemon_status_json() {
+  sudo -n -u "$(id -un)" -g podlaz \
+    curl --fail --silent --show-error --max-time 5 \
+    --unix-socket "${DAEMON_SOCKET}" http://localhost/v1/status
+}
+
+daemon_status_is_verified_active() {
+  local output
+  output="$(mktemp "${E2E_TMP_ROOT}/real-tun-status-active.XXXXXX")"
+  if fetch_daemon_status_json >"${output}" 2>/dev/null && python3 - "${output}" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    status = json.load(handle)
+health = status.get("tun_health") or {}
+txs = status.get("transactions") or []
+active_id = str(status.get("active_transaction_id") or "")
+cleanup = any(bool(tx.get("requires_cleanup")) for tx in txs)
+committed = any(
+    str(tx.get("id") or "") == active_id
+    and tx.get("state") == "committed"
+    and not bool(tx.get("requires_cleanup"))
+    for tx in txs
+) if active_id else False
+ok = (
+    status.get("connection") == "active"
+    and status.get("mode") == "tun"
+    and status.get("tun") == "active"
+    and health.get("state") == "verified"
+    and active_id != ""
+    and committed
+    and not cleanup
+    and not status.get("terminal_reason")
+)
+raise SystemExit(0 if ok else 1)
+PY
+  then
+    rm -f -- "${output}"
+    return 0
+  fi
+  rm -f -- "${output}"
+  return 1
+}
+
+daemon_status_is_clean_inactive() {
+  local output
+  output="$(mktemp "${E2E_TMP_ROOT}/real-tun-status-inactive.XXXXXX")"
+  if fetch_daemon_status_json >"${output}" 2>/dev/null && python3 - "${output}" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    status = json.load(handle)
+txs = status.get("transactions") or []
+cleanup = any(bool(tx.get("requires_cleanup")) for tx in txs)
+ok = (
+    status.get("connection") == "inactive"
+    and status.get("tun") == "disabled"
+    and not cleanup
+)
+raise SystemExit(0 if ok else 1)
+PY
+  then
+    rm -f -- "${output}"
+    return 0
+  fi
+  rm -f -- "${output}"
+  return 1
 }
 
 collect_real_diagnostics() {
@@ -150,21 +222,8 @@ fi
 log "real VPN TUN lifecycle"
 run_podlaz_as_socket_user connect --mode tun "${PROFILE_ID}" >"${E2E_ARTIFACT_DIR}/connect-tun.stdout" 2>"${E2E_ARTIFACT_DIR}/connect-tun.stderr"
 ACTIVE_CONNECTION=1
-run_podlaz_as_socket_user status --json >"${E2E_ARTIFACT_DIR}/status-tun.json" 2>"${E2E_ARTIFACT_DIR}/status-tun.stderr"
-python3 - "${E2E_ARTIFACT_DIR}/status-tun.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-status = payload.get("status") or payload
-health = status.get("tun_health") or {}
-ok = (
-    status.get("connection") == "active"
-    and status.get("tun") == "active"
-    and health.get("state") == "verified"
-)
-raise SystemExit(0 if ok else "TUN status is not verified active")
-PY
+wait_for_status_match "real TUN verified active" 120 daemon_status_is_verified_active
+fetch_daemon_status_json >"${E2E_ARTIFACT_DIR}/status-tun.json"
 getent hosts "${PODLAZ_E2E_DNS_CHECK_HOST}" >"${E2E_ARTIFACT_DIR}/dns-check.txt"
 AFTER_TUN_IP="$(curl -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" || true)"
 mask_value "${AFTER_TUN_IP}"
@@ -174,16 +233,8 @@ if [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP:-}" && "${AFTER_TUN_IP}" != "${PODLAZ_
 fi
 run_podlaz_as_socket_user disconnect >"${E2E_ARTIFACT_DIR}/disconnect-tun.stdout" 2>"${E2E_ARTIFACT_DIR}/disconnect-tun.stderr"
 ACTIVE_CONNECTION=0
-run_podlaz_as_socket_user status --json >"${E2E_ARTIFACT_DIR}/status-after-tun-disconnect.json" 2>"${E2E_ARTIFACT_DIR}/status-after-tun-disconnect.stderr"
-python3 - "${E2E_ARTIFACT_DIR}/status-after-tun-disconnect.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-status = payload.get("status") or payload
-ok = status.get("connection") == "inactive" and status.get("tun") == "disabled"
-raise SystemExit(0 if ok else "TUN status did not converge to clean inactive state")
-PY
+wait_for_status_match "real TUN clean inactive" 80 daemon_status_is_clean_inactive
+fetch_daemon_status_json >"${E2E_ARTIFACT_DIR}/status-after-tun-disconnect.json"
 run_podlaz_as_socket_user recover --json >"${E2E_ARTIFACT_DIR}/recover-after-tun.json" 2>"${E2E_ARTIFACT_DIR}/recover-after-tun.stderr"
 python3 - "${E2E_ARTIFACT_DIR}/recover-after-tun.json" <<'PY'
 import json
