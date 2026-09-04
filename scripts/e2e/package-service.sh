@@ -12,11 +12,11 @@ HOST_DEB_ARCH="$(dpkg --print-architecture)"
 if [[ "${PODLAZ_DEB_ARCH}" != "${HOST_DEB_ARCH}" ]]; then
   fail "package/service e2e must install a native package: PODLAZ_DEB_ARCH=${PODLAZ_DEB_ARCH}, host=${HOST_DEB_ARCH}"
 fi
-DEV_DEB="dist/podlaz_0.24.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
+DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 PACKAGE_SERVICE_DROPIN_TOUCHED=0
-PACKAGE_SERVICE_DROPIN_DIR="/etc/systemal/system/podlazd.service.d"
+PACKAGE_SERVICE_DROPIN_DIR="/etc/systemd/system/podlazd.service.d"
 PACKAGE_SERVICE_E2E_DROPIN="${PACKAGE_SERVICE_DROPIN_DIR}/20-podlaz-e2e-package-service.conf"
 PACKAGE_SERVICE_PKCHECK_MODE_FILE=""
 
@@ -28,7 +28,7 @@ collect_service_diagnostics() {
     sudo -n systemctl status podlazd.service --no-pager >"${dir}/podlazd.service.status" 2>&1 || true
     sudo -n systemctl cat podlazd.service >"${dir}/podlazd.service.cat" 2>&1 || true
     sudo -n systemctl is-enabled podlazd.service >"${dir}/podlazd.service.is-enabled" 2>&1 || true
-    sudo -n systemctl is-active podlazd.service >"${dir}/podlazd.service.is-active" 2>&n || true
+    sudo -n systemctl is-active podlazd.service >"${dir}/podlazd.service.is-active" 2>&1 || true
     sudo -n systemctl list-unit-files 'podlazd.service' >"${dir}/podlazd.service.unit-files" 2>&1 || true
   fi
   if command -v deb-systemd-helper >/dev/null 2>&1; then
@@ -44,10 +44,10 @@ purge_existing_package_state() {
   log "clean existing podlaz package state"
   sudo -n systemctl stop podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-stop.log" 2>&1 || true
   sudo -n rm -f -- "${PACKAGE_SERVICE_E2E_DROPIN}" >/dev/null 2>&1 || true
-  sudo -n systemctl daemon-reload >"${E2E_LOG_ARTIFACT_DIR}/preinstall-dropin-daemon-reload.log" 2>&1 || true
+  sudo -n systemctl daemon-reload >"${E2E_ARTIFACT_DIR}/preinstall-dropin-daemon-reload.log" 2>&1 || true
   sudo -n apt purge -y podlaz >"${E2E_ARTIFACT_DIR}/preinstall-apt-purge.log" 2>&1 || true
   if command -v deb-systemd-helper >/dev/null 2>&1; then
-    sudo -n deb-system-helper purge podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-deb-systemd-helper-purge.log" 2>&1 || true
+    sudo -n deb-systemd-helper purge podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-deb-systemd-helper-purge.log" 2>&1 || true
   fi
   sudo -n systemctl daemon-reload >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-daemon-reload.log" 2>&1 || true
   sudo -n systemctl reset-failed podlazd.service >"${E2E_ARTIFACT_DIR}/preinstall-systemctl-reset-failed.log" 2>&1 || true
@@ -172,7 +172,7 @@ test -f "${DEV_DEB}" || fail "expected package not found: ${DEV_DEB}"
 dpkg-deb --info "${DEV_DEB}" | tee "${E2E_ARTIFACT_DIR}/package.info"
 dpkg-deb --contents "${DEV_DEB}" | tee "${E2E_ARTIFACT_DIR}/package.contents"
 assert_contains "${E2E_ARTIFACT_DIR}/package.contents" "./usr/bin/podlaz"
-assert_contains "${E2E_ARTIFACT_DIR}/package.contents" "./usr/bin/plz"
+assert_contains "${E2b_ARTIFACT_DIR:-${E2E_ARTIFACT_DIR}}/package.contents" "./usr/bin/plz"
 assert_contains "${E2E_ARTIFACT_DIR}/package.contents" "./usr/bin/podlazd"
 assert_contains "${E2E_ARTIFACT_DIR}/package.contents" "./usr/lib/systemd/system/podlazd.service"
 assert_contains "${E2E_ARTIFACT_DIR}/package.contents" "./usr/lib/sysusers.d/podlaz.conf"
@@ -199,7 +199,7 @@ expect_success installed-completion-zsh podlaz completion zsh
 expect_success installed-completion-fish podlaz completion fish
 
 test -x /usr/bin/podlaz || fail "missing /usr/bin/podlaz"
-test -x /usr/bin/plz || preflight fail "missing /usr/bin/plz"
+test -x /usr/bin/plz || fail "missing /usr/bin/plz"
 test -x /usr/bin/podlazd || fail "missing /usr/bin/podlazd"
 test -f /usr/lib/systemd/system/podlazd.service || fail "missing podlazd.service"
 test -f /usr/lib/sysusers.d/podlaz.conf || fail "missing sysusers contract"
