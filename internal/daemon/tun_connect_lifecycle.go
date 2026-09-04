@@ -68,7 +68,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 	snapshotOpts := netsnapshot.Options{Server: p.Server}
 	snapshot := m.collectTunResourceSnapshot(ctx, snapshotOpts)
-	preHandoffPlan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
+	allocationEvidence, err := m.collectTunAllocationEvidence(ctx, snapshot)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
+	}
+	preHandoffPlan, err := planner.PlanTunForSessionWithAllocationEvidence(p, snapshot, allocationEvidence, planner.TunOptions{})
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
@@ -158,8 +162,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("handoff", "", "not-started", err)
 	}
-	snapshot = m.ensureTunPolicyRuleInventory(ctx, snapshot)
-	plan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
+	allocationEvidence, err = m.collectTunAllocationEvidence(ctx, snapshot)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
+	}
+	plan, err := planner.PlanTunForSessionWithAllocationEvidence(p, snapshot, allocationEvidence, planner.TunOptions{})
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
