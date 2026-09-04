@@ -56,9 +56,9 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     recovery = json.load(handle).get("recovery", {})
 if recovery.get("candidates"):
-    raise SystemError("unexpected recovery candidates")
+    raise SystemExit("unexpected recovery candidates")
 if recovery.get("warnings"):
-    raise SystemError("unexpected recovery warnings")
+    raise SystemExit("unexpected recovery warnings")
 PY
   rm -f -- "${output}"
   write_evidence recovery_clean pass
