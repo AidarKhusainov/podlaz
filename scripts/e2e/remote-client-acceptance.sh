@@ -11,25 +11,17 @@ source "${SCRIPT_DIR}/lib/evidence.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
 
-require_cmd awk env git grep id install mktemp python3 sudo systemctl timeout
+require_cmd awk env git grep id mktemp python3 sudo systemctl timeout
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/remote-client-acceptance.txt"
-FIXTURE_DIR="/run/podlaz/e2e-remote-client"
-FIXTURE_XRAY="${FIXTURE_DIR}/xray"
-DROPIN_DIR="/run/systemd/system/podlazd.service.d"
-DROPIN_PATH="${DROPIN_DIR}/remote-client-acceptance.conf"
 PROFILE_URI='vless://00000000-0000-0000-0000-000000000077@remote-client.example.net:443?type=tcp&security=tls&encryption=none#remote-client'
 PROFILE_ID=""
 CONNECTED=false
-FIXTURE_INSTALLED=false
 
 write_evidence() {
   append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
 }
 
-# Deliberately local. The acceptance preserves the runner's ordinary login
-# identity, including OS-managed supplementary groups. Rewriting groups would
-# manufacture a different client/journald permission boundary.
 run_ordinary_podlaz() {
   local timeout_seconds="$1"
   shift
@@ -42,9 +34,6 @@ run_ordinary_podlaz() {
       /usr/bin/podlaz "$@"
 }
 
-# Lifecycle setup is privileged and bounded so the acceptance does not depend on
-# an interactive polkit session. All read-only client paths keep ordinary-user
-# identity unchanged.
 run_privileged_podlaz() {
   local timeout_seconds="$1"
   shift
@@ -57,60 +46,12 @@ run_privileged_podlaz() {
       /usr/bin/podlaz "$@"
 }
 
-install_xray_fixture() {
-  local tmp_xray tmp_dropin
-  tmp_xray="$(mktemp "${E2E_TMP_ROOT}/remote-client-xray.XXXXXX")"
-  tmp_dropin="$(mktemp "${E2E_TMP_ROOT}/remote-client-dropin.XXXXXX")"
-
-  cat >"${tmp_xray}" <<'SH'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-if [[ "${1:-}" != "run" || "${2:-}" != "-config" || -z "${3:-}" ]]; then
-  printf 'fake xray expected: run -config <path>\n' >&2
-  exit 2
-fi
-if [[ ! -r "${3}" ]]; then
-  printf 'fake xray cannot read config\n' >&2
-  exit 3
-fi
-trap 'exit 0' TERM INT
-while :; do
-  sleep 1 &
-  wait $!
-done
-SH
-  chmod 0755 "${tmp_xray}"
-
-  cat >"${tmp_dropin}" <<EOF
-[Service]
-Environment=PODLAZ_XRAY_PATH=${FIXTURE_XRAY}
-EOF
-
-  sudo -n install -d -m 0755 "${FIXTURE_DIR}" "${DROPIN_DIR}"
-  sudo -n install -m 0755 "${tmp_xray}" "${FIXTURE_XRAY}"
-  sudo -n install -m 0644 "${tmp_dropin}" "${DROPIN_PATH}"
-  rm -f -- "${tmp_xray}" "${tmp_dropin}"
-
-  FIXTURE_INSTALLED=true
-  sudo -n systemctl daemon-reload
-  sudo -n systemctl restart podlazd.service
-  assert_package_service_active podlazd.service
-  write_evidence deterministic_xray_fixture pass
-}
-
 cleanup() {
   local saved=$? cleanup_failed=0
   set +e
   if [[ "${CONNECTED}" == "true" ]]; then
     run_privileged_podlaz 60s disconnect >/dev/null 2>&1 || cleanup_failed=1
     CONNECTED=false
-  fi
-  if [[ "${FIXTURE_INSTALLED}" == "true" ]]; then
-    sudo -n rm -f -- "${DROPIN_PATH}" || cleanup_failed=1
-    sudo -n rm -rf -- "${FIXTURE_DIR}" || cleanup_failed=1
-    sudo -n systemctl daemon-reload || cleanup_failed=1
-    sudo -n systemctl restart podlazd.service || cleanup_failed=1
-    FIXTURE_INSTALLED=false
   fi
   if (( saved == 0 && cleanup_failed == 0 )); then
     write_evidence acceptance pass || cleanup_failed=1
@@ -136,19 +77,18 @@ verify_package_and_ordinary_identity() {
   write_evidence ordinary_user_without_podlaz_group pass
 }
 
-import_profile_privately() {
+import_profile() {
   local output error_output
   mask_value "${PROFILE_URI}"
   output="$(mktemp "${E2E_TMP_ROOT}/remote-client-profile-import.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-profile-import.stderr.XXXXXX")"
   if ! run_ordinary_podlaz 30s profile import "${PROFILE_URI}" >"${output}" 2>"${error_output}"; then
-    rm -f -- "${output}" "${error_output}"
     fail "remote-client profile import failed"
   fi
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
-  rm -f -- "${output}" "${error_output}"
   assert_nonempty "${PROFILE_ID}" "remote-client imported profile id"
   mask_value "${PROFILE_ID}"
+  rm -f -- "${output}" "${error_output}"
   write_evidence profile_import pass
 }
 
@@ -161,11 +101,26 @@ import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
-if payload.get("recovery", {}).get("candidates"):
+recovery = payload.get("recovery", {})
+if recovery.get("candidates"):
     raise SystemExit("unexpected recovery candidates")
+if recovery.get("warnings"):
+    raise SystemExit("unexpected recovery warnings")
 PY
   rm -f -- "${output}"
   write_evidence "recovery_clean_${phase}" pass
+}
+
+connect_packaged_runtime() {
+  local output error_output
+  output="${E2E_ARTIFACT_DIR}/remote-client-connect.stdout"
+  error_output="${E2E_ARTIFACT_DIR}/remote-client-connect.stderr"
+  if ! run_privileged_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >"${output}" 2>"${error_output}"; then
+    sudo -n journalctl -u podlazd.service -n 200 --no-pager >"${E2E_ARTIFACT_DIR}/remote-client-connect.journal" 2>&1 || true
+    fail "remote-client proxy-only connect failed"
+  fi
+  CONNECTED=true
+  write_evidence packaged_proxy_connect pass
 }
 
 assert_proxy_publication_consistent() {
@@ -196,13 +151,9 @@ assert_logs_36h_ordinary_user() {
   output="$(mktemp "${E2E_TMP_ROOT}/remote-client-logs-${mode}.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-logs-${mode}.stderr.XXXXXX")"
   if ! run_ordinary_podlaz 30s logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"; then
-    rm -f -- "${output}" "${error_output}"
     fail "ordinary-user podlaz logs --${mode} --since 36h failed"
   fi
-  grep -Fx "${header}" "${output}" >/dev/null || {
-    rm -f -- "${output}" "${error_output}"
-    fail "ordinary-user podlaz logs --${mode} --since 36h did not render the expected header"
-  }
+  grep -Fx "${header}" "${output}" >/dev/null || fail "ordinary-user podlaz logs --${mode} --since 36h did not render the expected header"
   rm -f -- "${output}" "${error_output}"
   write_evidence "logs_since_36h_${key}_ordinary_user" pass
 }
@@ -211,18 +162,11 @@ assert_logs_36h_ordinary_user() {
 setup_isolated_xdg remote-client-acceptance
 verify_package_and_ordinary_identity
 assert_recovery_clean baseline
-install_xray_fixture
-import_profile_privately
-
-if ! run_privileged_podlaz 90s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1; then
-  fail "remote-client proxy-only connect failed"
-fi
-CONNECTED=true
+import_profile
+connect_packaged_runtime
 assert_proxy_publication_consistent
 
-if ! run_privileged_podlaz 60s disconnect >/dev/null 2>&1; then
-  fail "remote-client proxy-only disconnect failed"
-fi
+run_privileged_podlaz 60s disconnect >/dev/null 2>&1 || fail "remote-client proxy-only disconnect failed"
 CONNECTED=false
 assert_recovery_clean after-proxy-disconnect
 
