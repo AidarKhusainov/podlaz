@@ -60,11 +60,9 @@ func TestRealVPNSupportsPrebuiltPackageProvenance(t *testing.T) {
 		`assert_running_podlazd_matches_deb "${DEV_DEB}"`,
 		`http://localhost/v1/status`,
 		`wait_for_status_match "real TUN verified active"`,
-		`status.get("connection") == "active"`,
-		`status.get("mode") == "tun"`,
-		`health.get("state") == "verified"`,
+		`python3 "${SCRIPT_DIR}/lib/daemon_status_semantics.py" verified-active`,
 		`wait_for_status_match "real TUN clean inactive"`,
-		`status.get("connection") == "inactive"`,
+		`python3 "${SCRIPT_DIR}/lib/daemon_status_semantics.py" clean-inactive`,
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("real VPN E2E missing prebuilt-package contract %q", fragment)
@@ -72,5 +70,8 @@ func TestRealVPNSupportsPrebuiltPackageProvenance(t *testing.T) {
 	}
 	if strings.Contains(text, `run_podlaz_as_socket_user status --json`) {
 		t.Fatal("release smoke must not depend on deferred public CLI status --json")
+	}
+	if strings.Contains(text, `status.get("tun")`) {
+		t.Fatal("release smoke must not classify lifecycle authority from presentation-only TUN status")
 	}
 }
