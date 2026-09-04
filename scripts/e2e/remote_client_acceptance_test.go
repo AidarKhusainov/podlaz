@@ -28,8 +28,9 @@ func TestRemoteClientAcceptanceUsesPackagedRuntimeAndOrdinaryUserIdentity(t *tes
 		"id -nG",
 		"ordinary-user acceptance must not run as root",
 		"ordinary_user_without_podlaz_group",
+		"PODLAZ_E2E_PKCHECK_MODE_FILE",
 		"remote-client.example.net",
-		"connect --mode proxy-only",
+		"run_ordinary_podlaz 90s connect --mode proxy-only",
 		"recover --json",
 		`logs "--${mode}" --since 36h`,
 		"proxy_status_doctor_recover_consistent",
@@ -43,12 +44,12 @@ func TestRemoteClientAcceptanceUsesPackagedRuntimeAndOrdinaryUserIdentity(t *tes
 		"PODLAZ_E2E_PROFILE_URI",
 		"PODLAZ_E2E_PROFILE_URI_LIST",
 		"PODLAZ_XRAY_PATH",
-		"remote-client-acceptance.conf",
 		"FIXTURE_XRAY",
 		"e2e-tun-package-convergence.yml",
+		"run_privileged_podlaz 90s connect",
 	} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("remote-client acceptance must use the installed package without provider/workflow fixtures: %q", forbidden)
+			t.Fatalf("remote-client acceptance must use packaged runtime and ordinary-user state: %q", forbidden)
 		}
 	}
 
