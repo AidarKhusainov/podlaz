@@ -2,7 +2,7 @@ package planner
 
 import (
 	"fmt"
-	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -14,8 +14,8 @@ const tunAddressAllocationLastHost = 254
 const tunRoutingTableAllocationLast = TunRoutingTableID + 99
 
 // TunResourceAllocation is the immutable set of collision-sensitive identities
-// selected for one new TUN Network Session. It is derived from one read-only
-// authoritative snapshot and must be persisted before mutation by the daemon.
+// selected for one new TUN Network Session. It is derived from authoritative
+// typed host evidence and must be persisted before mutation by the daemon.
 type TunResourceAllocation struct {
 	TunIPv4CIDR        string
 	RoutingTableID     int
@@ -26,20 +26,20 @@ type TunResourceAllocation struct {
 // AllocateTunResources selects deterministic, verified-free resources for one
 // new Network Session. Historical values remain first-choice candidates only;
 // their numeric shape never implies Podlaz ownership.
-func AllocateTunResources(s snapshot.Snapshot) (TunResourceAllocation, error) {
-	if err := validateTunAllocationEvidence(s); err != nil {
+func AllocateTunResources(evidence snapshot.TunAllocationEvidence) (TunResourceAllocation, error) {
+	if err := validateTunAllocationEvidence(evidence); err != nil {
 		return TunResourceAllocation{}, err
 	}
 
-	cidr, err := allocateTunIPv4CIDR(s)
+	cidr, err := allocateTunIPv4CIDR(evidence)
 	if err != nil {
 		return TunResourceAllocation{}, err
 	}
-	tableID, err := allocateTunRoutingTable(s)
+	tableID, err := allocateTunRoutingTable(evidence)
 	if err != nil {
 		return TunResourceAllocation{}, err
 	}
-	serverPriority, tunnelPriority, err := allocateTunRulePriorities(s)
+	serverPriority, tunnelPriority, err := allocateTunRulePriorities(evidence)
 	if err != nil {
 		return TunResourceAllocation{}, err
 	}
@@ -51,48 +51,163 @@ func AllocateTunResources(s snapshot.Snapshot) (TunResourceAllocation, error) {
 	}, nil
 }
 
-func validateTunAllocationEvidence(s snapshot.Snapshot) error {
-	if !allocationInspectionAvailable(s.IPv4Addresses.Inspection.Status) {
-		return fmt.Errorf("allocate TUN resources: IPv4 address inventory is %s", allocationInspectionStatus(s.IPv4Addresses.Inspection.Status))
-	}
-	if !allocationInspectionAvailable(s.IPv4Routes.Inspection.Status) {
-		return fmt.Errorf("allocate TUN resources: IPv4 route inventory is %s", allocationInspectionStatus(s.IPv4Routes.Inspection.Status))
-	}
-	if !allocationInspectionAvailable(s.IPv4PolicyRules.Inspection.Status) {
-		return fmt.Errorf("allocate TUN resources: IPv4 policy-rule inventory is %s", allocationInspectionStatus(s.IPv4PolicyRules.Inspection.Status))
-	}
-
-	for _, address := range s.IPv4Addresses.Addresses {
-		ip, _, err := net.ParseCIDR(strings.TrimSpace(address.CIDR))
-		if err != nil || ip.To4() == nil {
+func validateTunAllocationEvidence(evidence snapshot.TunAllocationEvidence) error {
+	for _, address := range evidence.IPv4Addresses {
+		if !address.IsValid() || !address.Addr().Is4() {
 			return fmt.Errorf("allocate TUN resources: malformed IPv4 address inventory entry")
 		}
 	}
-	for _, route := range s.IPv4Routes.Routes {
-		destination := strings.TrimSpace(route.Destination)
-		if destination == "" || destination == IPv4DefaultRoute || destination == "0.0.0.0/0" {
+	for _, route := range evidence.IPv4Routes {
+		if route.Table == 0 {
+			return fmt.Errorf("allocate TUN resources: route inventory entry has no routing table")
+		}
+		if route.Default {
+			if route.Destination.IsValid() {
+				return fmt.Errorf("allocate TUN resources: default route inventory entry has a destination")
+			}
 			continue
 		}
-		ip, _, err := net.ParseCIDR(destination)
-		if err != nil || ip.To4() == nil {
+		if !route.Destination.IsValid() || !route.Destination.Addr().Is4() {
 			return fmt.Errorf("allocate TUN resources: malformed IPv4 route inventory entry")
 		}
 	}
-	for _, rule := range allocationPolicyRules(s) {
-		if strings.TrimSpace(rule.Priority) == "" {
-			return fmt.Errorf("allocate TUN resources: policy-rule inventory entry has no priority")
+	for _, rule := range evidence.IPv4PolicyRules {
+		if rule.Table == 0 {
+			return fmt.Errorf("allocate TUN resources: policy-rule inventory entry has no routing table")
 		}
-		priority, err := strconv.Atoi(strings.TrimSpace(rule.Priority))
-		if err != nil || priority <= 0 || priority >= 32766 {
+		if rule.Priority == 0 || rule.Priority >= 32766 {
 			return fmt.Errorf("allocate TUN resources: malformed policy-rule priority")
 		}
 	}
 	return nil
 }
 
+func allocateTunIPv4CIDR(evidence snapshot.TunAllocationEvidence) (string, error) {
+	for host := 1; host <= tunAddressAllocationLastHost; host++ {
+		candidate := netip.MustParseAddr(fmt.Sprintf("198.18.0.%d", host))
+		if !tunAllocationAddressOccupied(evidence, candidate) {
+			return netip.PrefixFrom(candidate, 32).String(), nil
+		}
+	}
+	return "", fmt.Errorf("allocate TUN resources: no collision-free TUN IPv4 address is available in the bounded session pool")
+}
+
+func tunAllocationAddressOccupied(evidence snapshot.TunAllocationEvidence, candidate netip.Addr) bool {
+	for _, address := range evidence.IPv4Addresses {
+		if address.Contains(candidate) {
+			return true
+		}
+	}
+	for _, route := range evidence.IPv4Routes {
+		if !route.Default && route.Destination.Contains(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func allocateTunRoutingTable(evidence snapshot.TunAllocationEvidence) (int, error) {
+	used := map[uint32]struct{}{}
+	for _, route := range evidence.IPv4Routes {
+		used[route.Table] = struct{}{}
+	}
+	for _, rule := range evidence.IPv4PolicyRules {
+		used[rule.Table] = struct{}{}
+	}
+	for candidate := TunRoutingTableID; candidate <= tunRoutingTableAllocationLast; candidate++ {
+		if _, occupied := used[uint32(candidate)]; !occupied {
+			return candidate, nil
+		}
+	}
+	return 0, fmt.Errorf("allocate TUN resources: no collision-free routing table is available in the bounded session pool")
+}
+
+func allocateTunRulePriorities(evidence snapshot.TunAllocationEvidence) (serverPriority, tunnelPriority int, err error) {
+	used := map[uint32]struct{}{}
+	upperTunnelPriority := TunRulePriority
+	for _, rule := range evidence.IPv4PolicyRules {
+		used[rule.Priority] = struct{}{}
+		priority := int(rule.Priority)
+		if priority <= upperTunnelPriority {
+			upperTunnelPriority = priority - 1
+		}
+	}
+
+	for tunnel := upperTunnelPriority; tunnel >= 2; tunnel-- {
+		server := tunnel - 1
+		_, serverOccupied := used[uint32(server)]
+		_, tunnelOccupied := used[uint32(tunnel)]
+		if !serverOccupied && !tunnelOccupied {
+			return server, tunnel, nil
+		}
+	}
+	return 0, 0, fmt.Errorf("allocate TUN resources: no collision-free policy-rule priority pair can precede the existing host policy rules")
+}
+
+// tunAllocationEvidenceFromSnapshot is a compatibility adapter for read-only
+// planning and explicit in-memory fixtures. Production mutation authority is
+// collected separately from rtnetlink and must not fall back to this adapter.
+func tunAllocationEvidenceFromSnapshot(s snapshot.Snapshot) (snapshot.TunAllocationEvidence, error) {
+	if !allocationInspectionAvailable(s.IPv4Addresses.Inspection.Status) {
+		return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: IPv4 address inventory is %s", allocationInspectionStatus(s.IPv4Addresses.Inspection.Status))
+	}
+	if !allocationInspectionAvailable(s.IPv4Routes.Inspection.Status) {
+		return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: IPv4 route inventory is %s", allocationInspectionStatus(s.IPv4Routes.Inspection.Status))
+	}
+	if !allocationInspectionAvailable(s.IPv4PolicyRules.Inspection.Status) {
+		return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: IPv4 policy-rule inventory is %s", allocationInspectionStatus(s.IPv4PolicyRules.Inspection.Status))
+	}
+
+	evidence := snapshot.TunAllocationEvidence{
+		IPv4Addresses:   make([]netip.Prefix, 0, len(s.IPv4Addresses.Addresses)),
+		IPv4Routes:      make([]snapshot.TunAllocationRoute, 0, len(s.IPv4Routes.Routes)),
+		IPv4PolicyRules: make([]snapshot.TunAllocationRule, 0, len(allocationPolicyRules(s))),
+	}
+	for _, address := range s.IPv4Addresses.Addresses {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(address.CIDR))
+		if err != nil || !prefix.Addr().Is4() {
+			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed IPv4 address inventory entry")
+		}
+		evidence.IPv4Addresses = append(evidence.IPv4Addresses, prefix)
+	}
+	for _, route := range s.IPv4Routes.Routes {
+		table, ok := compatibilityRouteTable(route.Table)
+		if !ok {
+			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed routing table identity %q", route.Table)
+		}
+		converted := snapshot.TunAllocationRoute{Table: table}
+		destination := strings.TrimSpace(route.Destination)
+		if destination == "" || destination == IPv4DefaultRoute || destination == "0.0.0.0/0" {
+			converted.Default = true
+		} else {
+			prefix, err := netip.ParsePrefix(destination)
+			if err != nil || !prefix.Addr().Is4() {
+				return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed IPv4 route inventory entry")
+			}
+			converted.Destination = prefix.Masked()
+		}
+		evidence.IPv4Routes = append(evidence.IPv4Routes, converted)
+	}
+	for _, rule := range allocationPolicyRules(s) {
+		priority, err := strconv.ParseUint(strings.TrimSpace(rule.Priority), 10, 32)
+		if err != nil {
+			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule priority")
+		}
+		table, ok := compatibilityRouteTable(rule.Table)
+		if !ok {
+			return snapshot.TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule routing table %q", rule.Table)
+		}
+		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, snapshot.TunAllocationRule{Priority: uint32(priority), Table: table})
+	}
+	if err := validateTunAllocationEvidence(evidence); err != nil {
+		return snapshot.TunAllocationEvidence{}, err
+	}
+	return evidence, nil
+}
+
 func allocationInspectionAvailable(status snapshot.Status) bool {
 	// The empty value keeps existing in-memory test/legacy snapshot producers
-	// compatible. Production collection always publishes an explicit status.
+	// compatible. Production mutation never uses this compatibility path.
 	return status == "" || status == snapshot.StatusDetected
 }
 
@@ -107,8 +222,6 @@ func allocationPolicyRules(s snapshot.Snapshot) []snapshot.PolicyRoutingSignal {
 	if s.IPv4PolicyRules.Inspection.Status == snapshot.StatusDetected || len(s.IPv4PolicyRules.Rules) > 0 {
 		return s.IPv4PolicyRules.Rules
 	}
-	// Zero-value inventories are retained only for older in-memory fixtures.
-	// Explicit unknown/missing inventories never fall back to lossy evidence.
 	if s.IPv4PolicyRules.Inspection.Status == "" {
 		var rules []snapshot.PolicyRoutingSignal
 		for _, signal := range s.PolicyRouting {
@@ -121,78 +234,36 @@ func allocationPolicyRules(s snapshot.Snapshot) []snapshot.PolicyRoutingSignal {
 	return nil
 }
 
-func allocateTunIPv4CIDR(s snapshot.Snapshot) (string, error) {
-	for host := 1; host <= tunAddressAllocationLastHost; host++ {
-		candidate := fmt.Sprintf("198.18.0.%d/32", host)
-		if tunAddressConflict(s, candidate) == "" {
-			return candidate, nil
-		}
+func compatibilityRouteTable(table string) (uint32, bool) {
+	switch strings.TrimSpace(table) {
+	case "", MainRoutingTable, "main":
+		return 254, true
+	case "local":
+		return 255, true
+	case "default":
+		return 253, true
 	}
-	return "", fmt.Errorf("allocate TUN resources: no collision-free TUN IPv4 address is available in the bounded session pool")
+	value, err := strconv.ParseUint(strings.TrimSpace(table), 10, 32)
+	return uint32(value), err == nil && value > 0
 }
 
-func allocateTunRoutingTable(s snapshot.Snapshot) (int, error) {
-	used := map[int]struct{}{}
-	for _, route := range s.IPv4Routes.Routes {
-		if tableID, ok := numericRouteTable(route.Table); ok {
-			used[tableID] = struct{}{}
-		}
-	}
-	for _, rule := range allocationPolicyRules(s) {
-		if tableID, ok := numericRouteTable(rule.Table); ok {
-			used[tableID] = struct{}{}
-		}
-	}
-	for candidate := TunRoutingTableID; candidate <= tunRoutingTableAllocationLast; candidate++ {
-		if _, occupied := used[candidate]; !occupied {
-			return candidate, nil
-		}
-	}
-	return 0, fmt.Errorf("allocate TUN resources: no collision-free routing table is available in the bounded session pool")
-}
-
-func numericRouteTable(table string) (int, bool) {
-	table = strings.TrimSpace(table)
-	if table == "" {
-		return 0, false
-	}
-	value, err := strconv.Atoi(table)
-	return value, err == nil && value > 0
-}
-
-func allocateTunRulePriorities(s snapshot.Snapshot) (serverPriority, tunnelPriority int, err error) {
-	used := map[int]struct{}{}
-	upperTunnelPriority := TunRulePriority
-	for _, rule := range allocationPolicyRules(s) {
-		priority, parseErr := strconv.Atoi(strings.TrimSpace(rule.Priority))
-		if parseErr != nil || priority <= 0 || priority >= 32766 {
-			return 0, 0, fmt.Errorf("allocate TUN resources: malformed policy-rule priority")
-		}
-		used[priority] = struct{}{}
-		if priority <= upperTunnelPriority {
-			upperTunnelPriority = priority - 1
-		}
-	}
-
-	for tunnel := upperTunnelPriority; tunnel >= 2; tunnel-- {
-		server := tunnel - 1
-		_, serverOccupied := used[server]
-		_, tunnelOccupied := used[tunnel]
-		if !serverOccupied && !tunnelOccupied {
-			return server, tunnel, nil
-		}
-	}
-	return 0, 0, fmt.Errorf("allocate TUN resources: no collision-free policy-rule priority pair can precede the existing host policy rules")
-}
-
-// PlanTunForSession builds a full-tunnel plan with exact numeric identities
-// selected from the supplied host snapshot. Existing PlanTun remains the
-// historical dry-run contract until its callers migrate explicitly.
+// PlanTunForSession builds a read-only plan from diagnostic snapshot evidence.
+// Production mutation callers must use PlanTunForSessionWithAllocationEvidence.
 func PlanTunForSession(p profile.Profile, s snapshot.Snapshot, opts TunOptions) (TunPlan, error) {
+	evidence, err := tunAllocationEvidenceFromSnapshot(s)
+	if err != nil {
+		return TunPlan{}, err
+	}
+	return PlanTunForSessionWithAllocationEvidence(p, s, evidence, opts)
+}
+
+// PlanTunForSessionWithAllocationEvidence keeps diagnostic composition separate
+// from collision-sensitive allocation authority.
+func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snapshot, evidence snapshot.TunAllocationEvidence, opts TunOptions) (TunPlan, error) {
 	if err := profile.Validate(p); err != nil {
 		return TunPlan{}, err
 	}
-	resources, err := AllocateTunResources(s)
+	resources, err := AllocateTunResources(evidence)
 	if err != nil {
 		return TunPlan{}, err
 	}
