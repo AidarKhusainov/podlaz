@@ -21,12 +21,14 @@ func TestReleaseRequiresExactPackageTunSmokeBeforePublish(t *testing.T) {
 		"runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]",
 		"environment: vpn-e2e",
 		"PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}",
+		"PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}",
 		"uses: actions/download-artifact@v8",
 		"name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}",
 		"PODLAZ_E2E_DEB_PATH:",
 		"PODLAZ_E2E_EXPECT_COMMIT: ${{ needs.build.outputs.commit_sha }}",
 		"PODLAZ_E2E_ENABLE_LIFECYCLE: 'true'",
 		"PODLAZ_E2E_ENABLE_TUN: 'true'",
+		`test -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP}"`,
 		"bash scripts/e2e/real-vpn.sh",
 	} {
 		if !strings.Contains(workflow, fragment) {
@@ -54,6 +56,10 @@ func TestRealVPNSupportsPrebuiltPackageProvenance(t *testing.T) {
 		`assert_native_deb_arch "${DEV_DEB}" "$(dpkg --print-architecture)"`,
 		`assert_installed_package_version_matches_deb "${DEV_DEB}" podlaz`,
 		`assert_installed_podlaz_commit "${PODLAZ_E2E_EXPECT_COMMIT}"`,
+		`assert_running_podlazd_matches_deb "${DEV_DEB}"`,
+		`status.get("connection") == "active"`,
+		`health.get("state") == "verified"`,
+		`status.get("connection") == "inactive"`,
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("real VPN E2E missing prebuilt-package contract %q", fragment)
