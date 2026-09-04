@@ -43,6 +43,25 @@ func TestNetworkRecoveryBaselineSetupMayStartServiceExplicitly(t *testing.T) {
 	}
 }
 
+func TestNetworkRecoveryPinsOfficialV029PackageProvenance(t *testing.T) {
+	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
+	if err != nil {
+		t.Fatalf("read network-recovery acceptance: %v", err)
+	}
+	script := string(data)
+	for _, required := range []string{
+		"c846f5465a90a50d72f3fc393d639a402d590798",
+		"91644dee9ca92ddc5c48793b926f20d18da4d4267cbfdd3b41303e1e5c52516e",
+		"74a4fe360fc0b05ec419440ae6f54ec3b76f9679a525671d1a905142920fa673",
+		`sha256sum "${PODLAZ_E2E_BASE_DEB}"`,
+		"baseline package digest",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("historical v0.2.29 provenance lost %q", required)
+		}
+	}
+}
+
 func TestNetworkRecoveryStatusUsesSemanticFiniteStateModel(t *testing.T) {
 	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
 	if err != nil {
