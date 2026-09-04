@@ -78,5 +78,6 @@ fi
 log "verify installed runtime contracts"
 bash "${SCRIPT_DIR}/log-window-acceptance.sh"
 bash "${SCRIPT_DIR}/remote-client-acceptance.sh"
+bash "${SCRIPT_DIR}/installed-user-lifecycle-acceptance.sh"
 
 log "installed-package integration completed"
