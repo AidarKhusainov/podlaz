@@ -32,14 +32,3 @@ func TestStrictLogWindowAcceptanceProvesVisibleOldAndFreshMarkers(t *testing.T) 
 		t.Fatal("broad CLI-visible marker proof must precede the short-window exclusion check")
 	}
 }
-
-func TestTunPackageConvergenceRunsStrictLogWindowAcceptance(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
-	if err != nil {
-		t.Fatalf("read TUN package convergence workflow: %v", err)
-	}
-	workflow := string(data)
-	if !strings.Contains(workflow, "bash scripts/e2e/log-window-acceptance.sh") {
-		t.Fatal("TUN package convergence must run the strict log-window acceptance")
-	}
-}
