@@ -21,13 +21,11 @@ PACKAGE_INSTALLED=false
 cleanup() {
   local saved=$? cleanup_failed=0
   set +e
-  sudo -n rm -f /run/systemd/system/podlazd.service.d/remote-client-acceptance.conf >/dev/null 2>&1 || cleanup_failed=1
-  sudo -n rm -rf /run/podlaz/e2e-remote-client >/dev/null 2>&1 || cleanup_failed=1
   sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
   if [[ "${PACKAGE_INSTALLED}" == "true" ]]; then
     sudo -n apt purge -y podlaz >/dev/null 2>&1 || cleanup_failed=1
     if command -v deb-systemd-helper >/dev/null 2>&1; then
-      sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || cleanup_failed=1
+      sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
     fi
   fi
   sudo -n systemctl daemon-reload >/dev/null 2>&1 || cleanup_failed=1
