@@ -28,6 +28,7 @@ func TestRemoteClientAcceptancePreservesOrdinaryUserReadOnlyAccess(t *testing.T)
 		"id -nG",
 		"ordinary-user acceptance must not run as root",
 		"ordinary_user_without_podlaz_group",
+		"Status: Disconnected",
 		"status",
 		"doctor",
 		"recover --json",
@@ -44,13 +45,14 @@ func TestRemoteClientAcceptancePreservesOrdinaryUserReadOnlyAccess(t *testing.T)
 		"PODLAZ_XRAY_PATH",
 		"PODLAZ_E2E_PKCHECK_MODE_FILE",
 		"connect --mode",
+		"Connection: inactive",
 		"runuser",
 		"usermod",
 		"gpasswd",
 		"e2e-tun-package-convergence.yml",
 	} {
 		if strings.Contains(executableShellLines(script), forbidden) {
-			t.Fatalf("ordinary-user read-only acceptance must not mutate lifecycle or identity: %q", forbidden)
+			t.Fatalf("ordinary-user read-only acceptance must not mutate lifecycle or depend on internal presentation: %q", forbidden)
 		}
 	}
 }
