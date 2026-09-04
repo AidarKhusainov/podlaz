@@ -2,6 +2,7 @@ package planner
 
 import (
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/snapshot"
@@ -49,6 +50,30 @@ func TestAllocateTunResourcesRejectsPoolOverlappedByForeignRoute(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("foreign route covering the bounded TUN pool must block allocation")
+	}
+}
+
+func TestAllocateTunResourcesFailsClosedWhenRoutingTablePoolIsExhausted(t *testing.T) {
+	routes := make([]snapshot.TunAllocationRoute, 0, tunRoutingTableAllocationLast-TunRoutingTableID+1)
+	for table := TunRoutingTableID; table <= tunRoutingTableAllocationLast; table++ {
+		routes = append(routes, snapshot.TunAllocationRoute{Default: true, Table: uint32(table)})
+	}
+
+	_, err := AllocateTunResources(snapshot.TunAllocationEvidence{IPv4Routes: routes})
+	if err == nil || !strings.Contains(err.Error(), "no collision-free routing table") {
+		t.Fatalf("exhausted routing-table pool must fail closed, got %v", err)
+	}
+}
+
+func TestAllocateTunResourcesFailsClosedWhenPolicyPriorityPoolIsExhausted(t *testing.T) {
+	rules := make([]snapshot.TunAllocationRule, 0, TunRulePriority)
+	for priority := 1; priority <= TunRulePriority; priority++ {
+		rules = append(rules, snapshot.TunAllocationRule{Priority: uint32(priority), Table: 60000})
+	}
+
+	_, err := AllocateTunResources(snapshot.TunAllocationEvidence{IPv4PolicyRules: rules})
+	if err == nil || !strings.Contains(err.Error(), "no collision-free policy-rule priority pair") {
+		t.Fatalf("exhausted policy-priority pool must fail closed, got %v", err)
 	}
 }
 
