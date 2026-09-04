@@ -88,11 +88,15 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Run real proxy data-plane integration
+        id: data_plane
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-e2e-tmp/real-provider-artifacts
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
           bash scripts/e2e/data-plane.sh
 
       - name: Purge package state
+        id: cleanup
         if: always()
         run: |
           sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
@@ -103,8 +107,27 @@ jobs:
           sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
           sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
 
-      - name: Upload real-provider diagnostics
+      - name: Prepare public result
         if: always()
+        env:
+          DATA_PLANE_OUTCOME: ${{ steps.data_plane.outcome }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/podlaz-e2e-artifacts"
+          printf 'real-provider data-plane: %s\n' "${DATA_PLANE_OUTCOME}" \
+            >"${RUNNER_TEMP}/podlaz-e2e-artifacts/real-provider-result.txt"
+
+      - name: Scan public artifacts
+        id: evidence_scan
+        if: always()
+        run: bash scripts/e2e/scan-public-artifacts.sh
+
+      - name: Remove private E2E temp state
+        id: private_cleanup
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+
+      - name: Upload real-provider diagnostics
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-real-provider-integration
