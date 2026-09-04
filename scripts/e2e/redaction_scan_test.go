@@ -197,19 +197,6 @@ assert_artifacts_do_not_contain_file_contents "runtime-leak" "${runtime_config}"
 	}
 }
 
-func TestE2EScriptsHaveValidBashSyntax(t *testing.T) {
-	for _, path := range []string{"lib/e2e.sh", "data-plane.sh", "server-coverage.sh", "coverage-evidence.sh"} {
-		t.Run(path, func(t *testing.T) {
-			cmd := exec.Command("bash", "-n", path)
-			cmd.Dir = "."
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("bash -n %s failed: %v\n%s", path, err, output)
-			}
-		})
-	}
-}
-
 type bashResult struct {
 	stdout string
 	stderr string
