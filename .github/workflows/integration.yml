@@ -1,6 +1,9 @@
 name: Integration
 
 on:
+  pull_request:
+    branches:
+      - master
   push:
     branches:
       - master
@@ -52,12 +55,13 @@ jobs:
       - name: Purge package state
         if: always()
         run: |
+          sudo -n rm -f /run/system.rm/podlazd.service.d/remote-client-acceptance.conf >/dev/null 2>&1 || true
           sudo -n rm -f /run/systemd/system/podlazd.service.d/remote-client-acceptance.conf >/dev/null 2>&1 || true
           sudo -n rm -rf /run/podlaz/e2e-remote-client >/dev/null 2>&1 || true
           sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
           sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
           if command -v deb-systemd-helper >/dev/null 2>&1; then
-            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || always_cleanup=true
           fi
           sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
           sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
