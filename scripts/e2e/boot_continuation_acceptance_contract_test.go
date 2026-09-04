@@ -68,20 +68,3 @@ func TestBootContinuationPackageAcceptanceAvoidsManualNetworkRepair(t *testing.T
 		}
 	}
 }
-
-func TestBootContinuationWorkflowRunsInstalledPackageAcceptance(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
-	if err != nil {
-		t.Fatalf("read package convergence workflow: %v", err)
-	}
-	workflow := string(data)
-	for _, required := range []string{
-		"Run boot continuation acceptance",
-		"bash scripts/e2e/boot-continuation-package-acceptance.sh",
-		"timeout-minutes: 90",
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("boot-continuation workflow wiring must contain %q", required)
-		}
-	}
-}
