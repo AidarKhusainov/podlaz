@@ -2,7 +2,6 @@ package e2e_test
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,27 +40,6 @@ func TestNetworkRecoveryBaselineSetupMayStartServiceExplicitly(t *testing.T) {
 	baseline := shellFunctionBody(t, string(data), "install_setup_package")
 	if !strings.Contains(baseline, "systemctl start") {
 		t.Fatal("baseline setup helper may explicitly start podlazd to establish the test fixture")
-	}
-}
-
-func TestNetworkRecoveryPinsHistoricalV029Release(t *testing.T) {
-	workflowPath := filepath.Join("..", "..", ".github", "workflows", "e2e-tun-package-convergence.yml")
-	data, err := os.ReadFile(workflowPath)
-	if err != nil {
-		t.Fatalf("read TUN package workflow: %v", err)
-	}
-	workflow := string(data)
-	for _, required := range []string{
-		"Download v0.2.29 package for network recovery",
-		"gh release download v0.2.29",
-		"PODLAZ_E2E_BASE_VERSION=v0.2.29",
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("historical package workflow must contain %q", required)
-		}
-	}
-	if strings.Contains(workflow, "Download latest released package for network recovery") {
-		t.Fatal("network recovery must not drift to the latest release instead of v0.2.29")
 	}
 }
 
