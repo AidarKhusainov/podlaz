@@ -69,3 +69,14 @@ func TestInstalledPackageIntegrationRunsInstalledUserLifecycle(t *testing.T) {
 		t.Fatal("hosted installed-package integration must run the focused installed-user lifecycle acceptance")
 	}
 }
+
+func TestPRPackageValidationRunsInstalledUserLifecycle(t *testing.T) {
+	data, err := os.ReadFile("../ci/validate-package-install.sh")
+	if err != nil {
+		t.Fatalf("read package install validation: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `bash scripts/e2e/installed-user-lifecycle-acceptance.sh`) {
+		t.Fatal("PR package validation must execute the focused installed-user lifecycle acceptance")
+	}
+}
