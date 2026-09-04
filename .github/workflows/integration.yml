@@ -37,33 +37,10 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Run package and service acceptance
-        env:
-          PODLAZ_E2E_KEEP_PACKAGE: 'true'
+      - name: Run installed package integration
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
-          bash scripts/e2e/package-service.sh
-
-      - name: Run installed runtime acceptance
-        run: |
-          sudo -n systemctl daemon-reload
-          sudo -n systemctl reset-failed podlazd.service || true
-          sudo -n systemctl start podlazd.service
-          bash scripts/e2e/log-window-acceptance.sh
-          bash scripts/e2e/remote-client-acceptance.sh
-
-      - name: Purge package state
-        if: always()
-        run: |
-          sudo -n rm -f /run/systemd/system/podlazd.service.d/remote-client-acceptance.conf >/dev/null 2>&1 || true
-          sudo -n rm -rf /run/podlaz/e2e-remote-client >/dev/null 2>&1 || true
-          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
-          if command -v deb-systemd-helper >/dev/null 2>&1; then
-            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
-          fi
-          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
-          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+          bash scripts/e2e/installed-package-integration.sh
 
       - name: Upload integration diagnostics
         if: always()
