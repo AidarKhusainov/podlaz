@@ -59,8 +59,8 @@ func TestPlanTunForSessionWithAllocationEvidenceSeparatesDiagnosticsFromAuthorit
 	diagnostic.IPv4PolicyRules.Inspection.Status = snapshot.StatusUnknown
 
 	evidence := snapshot.TunAllocationEvidence{
-		IPv4Addresses: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/24")},
-		IPv4Routes: []snapshot.TunAllocationRoute{{Default: true, Table: 254}},
+		IPv4Addresses:   []netip.Prefix{netip.MustParsePrefix("192.0.2.10/24")},
+		IPv4Routes:      []snapshot.TunAllocationRoute{{Default: true, Table: 254}},
 		IPv4PolicyRules: []snapshot.TunAllocationRule{{Priority: 100, Table: 60000}},
 	}
 
