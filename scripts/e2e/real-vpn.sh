@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/private_command.sh
+source "${SCRIPT_DIR}/lib/private_command.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
 # shellcheck source=lib/recovery_json.sh
@@ -30,26 +32,19 @@ build_podlaz_binary
 setup_isolated_xdg "real-vpn"
 PODLAZ=("${PODLAZ_BIN}")
 
-PROFILE_IMPORT_STDOUT="${E2E_ARTIFACT_DIR}/real-profile-import.stdout"
-PROFILE_IMPORT_STDERR="${E2E_ARTIFACT_DIR}/real-profile-import.stderr"
-log "import real e2e profile from PODLAZ_E2E_PROFILE_URI"
-set +e
-"${PODLAZ[@]}" profile import "${PODLAZ_E2E_PROFILE_URI}" >"${PROFILE_IMPORT_STDOUT}" 2>"${PROFILE_IMPORT_STDERR}"
-PROFILE_IMPORT_CODE=$?
-set -e
-[[ "${PROFILE_IMPORT_CODE}" == "0" ]] || fail "real profile import failed with exit code ${PROFILE_IMPORT_CODE}"
-PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${PROFILE_IMPORT_STDOUT}")"
+expect_private_success real-profile-import "${PODLAZ[@]}" profile import "${PODLAZ_E2E_PROFILE_URI}"
+PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
 assert_nonempty "${PROFILE_ID}" "real imported profile id"
 mask_value "${PROFILE_ID}"
-assert_not_contains "${PROFILE_IMPORT_STDOUT}" "${PODLAZ_E2E_PROFILE_URI}"
+assert_not_contains "${LAST_STDOUT}" "${PODLAZ_E2E_PROFILE_URI}"
 
-expect_success real-profile-show "${PODLAZ[@]}" profile show "${PROFILE_ID}"
-expect_success real-profile-show-json "${PODLAZ[@]}" profile show "${PROFILE_ID}" --json
+expect_private_success real-profile-show "${PODLAZ[@]}" profile show "${PROFILE_ID}"
+expect_private_success real-profile-show-json "${PODLAZ[@]}" profile show "${PROFILE_ID}" --json
 assert_json_file "${LAST_STDOUT}"
-expect_success real-profile-validate-proxy-only "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
-expect_success real-profile-validate-tun "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode tun
-expect_success real-plan-proxy-only "${PODLAZ[@]}" plan --mode proxy-only "${PROFILE_ID}"
-expect_success real-plan-tun-dry-run "${PODLAZ[@]}" plan --mode tun "${PROFILE_ID}"
+expect_private_success real-profile-validate-proxy-only "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
+expect_private_success real-profile-validate-tun "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode tun
+expect_private_success real-plan-proxy-only "${PODLAZ[@]}" plan --mode proxy-only "${PROFILE_ID}"
+expect_private_success real-plan-tun-dry-run "${PODLAZ[@]}" plan --mode tun "${PROFILE_ID}"
 assert_contains "${LAST_STDOUT}" "No changes were applied."
 
 if [[ "${PODLAZ_E2E_ENABLE_LIFECYCLE}" != "true" ]]; then
