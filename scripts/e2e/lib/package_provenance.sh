@@ -32,3 +32,24 @@ assert_installed_package_version_matches_deb() {
   [[ "${installed_version}" == "${expected_version}" ]] || \
     fail "installed package version mismatch for ${package_name}"
 }
+
+assert_running_podlazd_matches_deb() {
+  local deb_path="$1" extract_dir expected_hash main_pid running_exe running_hash
+  extract_dir="$(mktemp -d)" || fail "cannot create package provenance temp directory"
+  if ! dpkg-deb -x "${deb_path}" "${extract_dir}"; then
+    rm -rf -- "${extract_dir}"
+    fail "cannot extract package for daemon provenance"
+  fi
+  expected_hash="$(sha256sum "${extract_dir}/usr/bin/podlazd" | awk '{print $1}')" || {
+    rm -rf -- "${extract_dir}"
+    fail "cannot hash packaged podlazd"
+  }
+  rm -rf -- "${extract_dir}"
+
+  main_pid="$(systemctl show -p MainPID --value podlazd.service)" || fail "cannot read podlazd.service MainPID"
+  [[ "${main_pid}" =~ ^[1-9][0-9]*$ ]] || fail "podlazd.service has no running MainPID"
+  running_exe="$(sudo -n readlink -f "/proc/${main_pid}/exe")" || fail "cannot resolve running podlazd executable"
+  [[ "${running_exe}" == "/usr/bin/podlazd" ]] || fail "running daemon executable is not /usr/bin/podlazd"
+  running_hash="$(sudo -n sha256sum "/proc/${main_pid}/exe" | awk '{print $1}')" || fail "cannot hash running podlazd"
+  [[ "${running_hash}" == "${expected_hash}" ]] || fail "running podlazd does not match tested package"
+}

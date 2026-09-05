@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -40,10 +42,11 @@ type TunAddressExecutor interface {
 }
 
 type IPTunAddressExecutor struct {
-	Runner           CommandRunner
-	BindAttempts     int
-	BindPollInterval time.Duration
-	Sleep            func(context.Context, time.Duration) error
+	Runner                      CommandRunner
+	BindAttempts                int
+	BindPollInterval            time.Duration
+	Sleep                       func(context.Context, time.Duration) error
+	AllocationEvidenceCollector func(context.Context) (netsnapshot.TunAllocationEvidence, error)
 }
 
 func (e IPTunAddressExecutor) Bind(ctx context.Context, plan planner.TunAddressPlan, proof TunLinkCreationProof) (bound planner.TunAddressPlan, err error) {
@@ -284,74 +287,72 @@ func (e IPTunAddressExecutor) verifyGlobalTunAddressAllocation(ctx context.Conte
 	if !planner.IsTunAddressExclusiveAction(plan.Action) {
 		return nil
 	}
-	addresses, err := e.inspectGlobalIPv4Addresses(ctx)
-	if err != nil {
-		return fmt.Errorf("%w: inspect global IPv4 addresses %s: %v", ErrTunAddressConflict, phase, err)
+	candidate, err := netip.ParsePrefix(strings.TrimSpace(plan.CIDR))
+	if err != nil || !candidate.Addr().Is4() {
+		return fmt.Errorf("%w: invalid allocated TUN address %q", ErrTunAddressConflict, plan.CIDR)
 	}
-	routes, err := e.inspectGlobalIPv4Routes(ctx)
+	candidate = candidate.Masked()
+
+	evidence, err := e.collectAllocationEvidence(ctx)
 	if err != nil {
-		return fmt.Errorf("%w: inspect global IPv4 routes %s: %v", ErrTunAddressConflict, phase, err)
+		return fmt.Errorf("%w: inspect authoritative TUN allocation evidence %s: %v", ErrTunAddressConflict, phase, err)
 	}
 
 	ownExact := 0
-	for _, address := range addresses {
-		if !ipv4CIDRsOverlapForAllocation(address.CIDR, plan.CIDR) {
+	for _, address := range evidence.IPv4Addresses {
+		if !address.IsValid() || !address.Addr().Is4() {
+			return fmt.Errorf("%w: invalid IPv4 address allocation evidence %s", ErrTunAddressConflict, phase)
+		}
+		if !ipv4PrefixesOverlapForAllocation(address, candidate) {
 			continue
 		}
-		if address.Interface == plan.Interface && strings.TrimSpace(address.CIDR) == strings.TrimSpace(plan.CIDR) {
+		if address == candidate {
 			ownExact++
 			continue
 		}
-		return fmt.Errorf("%w: allocated TUN address %s overlaps foreign address %s on %s %s", ErrTunAddressConflict, plan.CIDR, address.CIDR, address.Interface, phase)
+		return fmt.Errorf("%w: allocated TUN address %s overlaps foreign address %s %s", ErrTunAddressConflict, plan.CIDR, address, phase)
 	}
 	if ownExact != wantOwnExact {
-		return fmt.Errorf("%w: allocated TUN address %s has %d global owned entries %s, want %d", ErrTunAddressConflict, plan.CIDR, ownExact, phase, wantOwnExact)
+		return fmt.Errorf("%w: allocated TUN address %s has %d global exact entries %s, want %d", ErrTunAddressConflict, plan.CIDR, ownExact, phase, wantOwnExact)
 	}
 
-	for _, route := range routes {
-		if !ipv4CIDRsOverlapForAllocation(route.Destination, plan.CIDR) {
+	for _, route := range evidence.IPv4Routes {
+		if route.Default {
 			continue
 		}
-		if wantOwnExact == 1 && kernelLocalRouteForTunAddress(route, plan) {
+		if !route.Destination.IsValid() || !route.Destination.Addr().Is4() {
+			return fmt.Errorf("%w: invalid IPv4 route allocation evidence %s", ErrTunAddressConflict, phase)
+		}
+		if !ipv4PrefixesOverlapForAllocation(route.Destination, candidate) {
 			continue
 		}
-		return fmt.Errorf("%w: allocated TUN address %s overlaps route %s table %s dev %s %s", ErrTunAddressConflict, plan.CIDR, route.Destination, route.Table, route.Interface, phase)
+		if wantOwnExact == 1 && kernelLocalRouteForTunAddressEvidence(route, plan, candidate) {
+			continue
+		}
+		return fmt.Errorf("%w: allocated TUN address %s overlaps route %s table %d %s", ErrTunAddressConflict, plan.CIDR, route.Destination, route.Table, phase)
 	}
 	return nil
 }
 
-func (e IPTunAddressExecutor) inspectGlobalIPv4Addresses(ctx context.Context) ([]netsnapshot.IPAddress, error) {
-	result, err := observeCommand(ctx, e.Runner, "ip", "-4", "-o", "address", "show")
-	if err != nil {
-		return nil, err
+func (e IPTunAddressExecutor) collectAllocationEvidence(ctx context.Context) (netsnapshot.TunAllocationEvidence, error) {
+	if e.AllocationEvidenceCollector != nil {
+		return e.AllocationEvidenceCollector(ctx)
 	}
-	return netsnapshot.ParseIPv4Addresses(result.Stdout)
+	return netsnapshot.CollectTunAllocationEvidence(ctx)
 }
 
-func (e IPTunAddressExecutor) inspectGlobalIPv4Routes(ctx context.Context) ([]netsnapshot.Route, error) {
-	result, err := observeCommand(ctx, e.Runner, "ip", "-N", "-4", "-o", "route", "show", "table", "all")
-	if err != nil {
-		return nil, err
-	}
-	return netsnapshot.ParseIPv4Routes(result.Stdout)
+func kernelLocalRouteForTunAddressEvidence(route netsnapshot.TunAllocationRoute, plan planner.TunAddressPlan, candidate netip.Prefix) bool {
+	return route.Destination == candidate &&
+		route.Table == unix.RT_TABLE_LOCAL &&
+		route.Type == unix.RTN_LOCAL &&
+		route.LinkIndex == plan.LinkIndex
 }
 
-func kernelLocalRouteForTunAddress(route netsnapshot.Route, plan planner.TunAddressPlan) bool {
-	if route.Interface != plan.Interface || strings.TrimSpace(route.Destination) != strings.TrimSpace(plan.CIDR) {
+func ipv4PrefixesOverlapForAllocation(left, right netip.Prefix) bool {
+	if !left.IsValid() || !right.IsValid() || !left.Addr().Is4() || !right.Addr().Is4() {
 		return false
 	}
-	switch strings.TrimSpace(route.Table) {
-	case "local", "255":
-	default:
-		return false
-	}
-	fields := strings.Fields(strings.ToLower(strings.TrimSpace(route.Raw)))
-	if len(fields) == 0 || fields[0] != "local" {
-		return false
-	}
-	return containsAdjacentFields(fields, "dev", strings.ToLower(plan.Interface)) &&
-		containsAdjacentFields(fields, "proto", "kernel") &&
-		containsAdjacentFields(fields, "scope", "host")
+	return left.Contains(right.Addr()) || right.Contains(left.Addr())
 }
 
 func ipv4CIDRsOverlapForAllocation(left, right string) bool {

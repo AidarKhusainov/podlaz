@@ -43,17 +43,21 @@ func runPlanCommand(ctx context.Context, args []string, stdout io.Writer, opts o
 	if err := engine.ValidateXrayTunProfile(p); err != nil {
 		return usageError("%s", err.Error())
 	}
-	collect := opts.systemSnapshot
-	if collect == nil {
-		collect = func(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
-			return netsnapshot.EnsureTunAllocationEvidence(ctx, netsnapshot.Collect(ctx, opts))
-		}
+
+	collectSnapshot := opts.systemSnapshot
+	if collectSnapshot == nil {
+		collectSnapshot = netsnapshot.Collect
 	}
-	snapshot := collect(ctx, netsnapshot.Options{
+	snapshot := collectSnapshot(ctx, netsnapshot.Options{
 		Server:   p.Server,
 		TunNames: []string{netsnapshot.DefaultTunName},
 	})
-	plan, err := planner.PlanTunForSession(p, snapshot, planner.TunOptions{})
+
+	evidence, err := collectPlanTunAllocationEvidence(ctx, opts, snapshot)
+	if err != nil {
+		return usageError("%s", err.Error())
+	}
+	plan, err := planner.PlanTunForSessionWithAllocationEvidence(p, snapshot, evidence, planner.TunOptions{})
 	if err != nil {
 		return usageError("%s", err.Error())
 	}
@@ -66,6 +70,19 @@ func runPlanCommand(ctx context.Context, args []string, stdout io.Writer, opts o
 	}
 	renderTunPlanSummary(stdout, plan, parsed.profileID, parsed.plainOutput)
 	return nil
+}
+
+func collectPlanTunAllocationEvidence(ctx context.Context, opts options, diagnostic netsnapshot.Snapshot) (netsnapshot.TunAllocationEvidence, error) {
+	if opts.tunAllocationEvidence != nil {
+		return opts.tunAllocationEvidence(ctx)
+	}
+	if opts.systemSnapshot != nil {
+		// systemSnapshot is an unexported deterministic test seam. Production
+		// read-only planning uses the same rtnetlink allocation authority as the
+		// daemon and never falls back to presentation-oriented snapshot parsing.
+		return netsnapshot.TunAllocationEvidenceFromSnapshot(diagnostic)
+	}
+	return netsnapshot.CollectTunAllocationEvidence(ctx)
 }
 
 type planArgs struct {

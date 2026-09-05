@@ -14,6 +14,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -31,8 +32,9 @@ type XrayManager struct {
 	XrayPath    string
 	StopTimeout time.Duration
 
-	tunExecutor       tunPlanExecutor
-	snapshotCollector tunSnapshotCollector
+	tunExecutor                 tunPlanExecutor
+	snapshotCollector           tunSnapshotCollector
+	allocationEvidenceCollector func(context.Context) (netsnapshot.TunAllocationEvidence, error)
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
