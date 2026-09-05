@@ -19,6 +19,9 @@ func TestReleaseTunRunnerHasReproducibleProvisioningContract(t *testing.T) {
 		`x86_64`,
 		`/dev/net/tun`,
 		`systemctl enable --now systemd-resolved.service`,
+		`RUNNER_USER="gha-runner"`,
+		`RUNNER_HOME="/opt/actions-runner/podlaz-vpn-e2e"`,
+		`RUNNER_NAME="podlaz-vpn-e2e"`,
 		`RUNNER_LABELS="self-hosted,linux,x64,vpn-e2e,ubuntu-24.04"`,
 		`./config.sh`,
 		`--labels "${RUNNER_LABELS}"`,
@@ -47,6 +50,9 @@ func TestReleaseTunRunnerHasReproducibleProvisioningContract(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
+		`RUNNER_USER:=`,
+		`RUNNER_HOME:=`,
+		`RUNNER_NAME:=`,
 		"usermod -aG podlaz",
 		"suspend-resume",
 		"network-reconnect",
@@ -59,7 +65,7 @@ func TestReleaseTunRunnerHasReproducibleProvisioningContract(t *testing.T) {
 		"debian-13",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("release runner bootstrap still carries retired capability %q", forbidden)
+			t.Fatalf("release runner bootstrap still carries retired or unsafe capability %q", forbidden)
 		}
 	}
 }
