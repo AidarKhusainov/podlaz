@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/recovery_json.sh
+source "${SCRIPT_DIR}/lib/recovery_json.sh"
 # shellcheck source=lib/evidence.sh
 source "${SCRIPT_DIR}/lib/evidence.sh"
 # shellcheck source=lib/host_observation.sh
@@ -133,25 +135,7 @@ assert_recovery_plan_empty() {
     rm -f -- "${output}"
     fail "${phase}: recovery inspection failed"
   fi
-  if ! python3 - "${output}" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-if payload.get("status") != "ok":
-    raise SystemExit("recover JSON status is not ok")
-if payload.get("warnings"):
-    raise SystemExit("top-level recover JSON warnings remain")
-recovery = payload.get("recovery")
-if not isinstance(recovery, dict):
-    raise SystemExit("recovery payload is missing")
-if recovery.get("candidates"):
-    raise SystemExit("recovery candidates remain")
-if recovery.get("warnings"):
-    raise SystemExit("recovery inspection warnings remain")
-PY
-  then
+  if ! assert_clean_recovery_json_file "${output}"; then
     rm -f -- "${output}"
     fail "${phase}: recover --json is not clean"
   fi
