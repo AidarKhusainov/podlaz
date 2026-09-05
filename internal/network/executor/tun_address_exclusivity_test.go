@@ -4,15 +4,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"golang.org/x/sys/unix"
 )
 
 func TestExclusiveTunAddressDetectsForeignRaceAndRollsBackOnlyOwnedAddress(t *testing.T) {
 	runner := &tunAddressAllocationRaceRunner{}
-	exec := IPTunAddressExecutor{Runner: runner}
+	exec := IPTunAddressExecutor{
+		Runner: runner,
+		AllocationEvidenceCollector: func(context.Context) (netsnapshot.TunAllocationEvidence, error) {
+			evidence := netsnapshot.TunAllocationEvidence{}
+			if runner.ownAddress {
+				evidence.IPv4Addresses = append(evidence.IPv4Addresses, netip.MustParsePrefix(planner.DefaultTunIPv4CIDR))
+				evidence.IPv4Routes = append(evidence.IPv4Routes, netsnapshot.TunAllocationRoute{
+					Destination: netip.MustParsePrefix(planner.DefaultTunIPv4CIDR),
+					Table:       unix.RT_TABLE_LOCAL,
+					Type:        unix.RTN_LOCAL,
+					LinkIndex:   7,
+				})
+			}
+			if runner.foreignAddress {
+				evidence.IPv4Addresses = append(evidence.IPv4Addresses, netip.MustParsePrefix(planner.DefaultTunIPv4CIDR))
+			}
+			return evidence, nil
+		},
+	}
 	plan := rollbackIdentityAddressPlanForTest()
 	plan.Action = planner.TunAddressActionAssignExclusive
 
@@ -61,20 +82,6 @@ func (r *tunAddressAllocationRaceRunner) Run(_ context.Context, name string, arg
 	case "ip -4 -o address show dev podlaz0":
 		if r.ownAddress {
 			return CommandResult{Stdout: "7: podlaz0 inet " + planner.DefaultTunIPv4CIDR + " scope global podlaz0"}, nil
-		}
-		return CommandResult{}, nil
-	case "ip -4 -o address show":
-		var lines []string
-		if r.ownAddress {
-			lines = append(lines, "7: podlaz0 inet "+planner.DefaultTunIPv4CIDR+" scope global podlaz0")
-		}
-		if r.foreignAddress {
-			lines = append(lines, "9: eth9 inet "+planner.DefaultTunIPv4CIDR+" scope global eth9")
-		}
-		return CommandResult{Stdout: strings.Join(lines, "\n")}, nil
-	case "ip -N -4 -o route show table all":
-		if r.ownAddress {
-			return CommandResult{Stdout: "local 198.18.0.1 dev podlaz0 table 255 proto kernel scope host src 198.18.0.1"}, nil
 		}
 		return CommandResult{}, nil
 	case "ip -4 address replace " + planner.DefaultTunIPv4CIDR + " dev podlaz0":

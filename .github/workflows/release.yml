@@ -146,11 +146,78 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  tun-smoke:
+    name: Exact-package TUN smoke
+    needs:
+      - resolve
+      - build
+    runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
+    environment: vpn-e2e
+    timeout-minutes: 60
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_DNS_CHECK_HOST: ${{ vars.PODLAZ_E2E_DNS_CHECK_HOST }}
+      PODLAZ_E2E_EXPECT_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      PODLAZ_E2E_ENABLE_LIFECYCLE: 'true'
+      PODLAZ_E2E_ENABLE_TUN: 'true'
+      PODLAZ_E2E_KEEP_PACKAGE: 'true'
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-release-smoke
+
+      - name: Run exact-package TUN smoke
+        shell: bash
+        env:
+          PODLAZ_E2E_DEB_PATH: ${{ runner.temp }}/podlaz-release-smoke/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+        run: |
+          set -euo pipefail
+          test -n "${PODLAZ_E2E_PROFILE_URI}"
+          test -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP}"
+          test -f "${PODLAZ_E2E_DEB_PATH}"
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/real-vpn.sh
+
+      - name: Recover and purge smoke package state
+        if: always()
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          PODLAZ_E2E_PURGE_PACKAGE=true \
+            timeout --signal=TERM --kill-after=30s 900s \
+            bash scripts/e2e/tun-package-cleanup.sh
+
+      - name: Remove private smoke evidence
+        if: always()
+        shell: bash
+        run: |
+          sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-release-smoke"
+
   attest-and-publish:
     name: Attest and publish GitHub Release
     needs:
       - resolve
       - build
+      - tun-smoke
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:

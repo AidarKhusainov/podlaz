@@ -32,6 +32,9 @@ ra_status_json() { printf '%s\n' "$status_active"; }
 ra_wait_active 1 >/dev/null 2>&1 || fail "semantic active status with formatted tun presentation did not satisfy wait active"
 
 # Regression: revalidating is progress and must converge to verified without being classified as failure.
+# This is a semantic contract test, not a wall-clock polling test. Shadow sleep so
+# CI scheduling load cannot consume a tiny timeout before the second fixture state
+# is observed.
 sequence_file="$TMP/status-sequence"
 printf '%s\n%s\n' "$status_revalidating" "$status_active" >"$sequence_file"
 ra_status_json() {
@@ -40,7 +43,9 @@ ra_status_json() {
   if [[ "$(wc -l <"$sequence_file")" -gt 1 ]]; then tail -n +2 "$sequence_file" >"$sequence_file.next"; mv "$sequence_file.next" "$sequence_file"; fi
   printf '%s\n' "$first"
 }
-ra_wait_active 2 >/dev/null 2>&1 || fail "revalidating did not progress to verified active state"
+sleep() { :; }
+ra_wait_active 10 >/dev/null 2>&1 || fail "revalidating did not progress to verified active state"
+unset -f sleep
 
 # Regression: authoritative terminal/impossible state must stop polling immediately.
 calls_file="$TMP/status-calls"
