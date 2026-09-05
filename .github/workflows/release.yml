@@ -153,6 +153,8 @@ jobs:
     needs:
       - resolve
       - build
+      - installed-runtime
+      - real-provider
     runs-on: [self-hosted, linux, x64, vpn-e2e, ubuntu-24.04]
     environment: vpn-e2e
     timeout-minutes: 60
