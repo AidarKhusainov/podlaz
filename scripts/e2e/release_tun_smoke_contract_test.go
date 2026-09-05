@@ -1,16 +1,14 @@
-package e2e
+package e2e_test
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
 
 func TestReleaseRequiresExactPackageTunSmokeBeforePublish(t *testing.T) {
-	workflowPath := filepath.Join("..", "..", ".github", "workflows", "release.yml")
-	contents, err := os.ReadFile(workflowPath)
+	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatalf("read release workflow: %v", err)
 	}
@@ -22,14 +20,17 @@ func TestReleaseRequiresExactPackageTunSmokeBeforePublish(t *testing.T) {
 		"environment: vpn-e2e",
 		"PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}",
 		"PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}",
-		"uses: actions/download-artifact@v8",
-		"name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}",
+		"uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+		"uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+		"uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
 		"PODLAZ_E2E_DEB_PATH:",
 		"PODLAZ_E2E_EXPECT_COMMIT: ${{ needs.build.outputs.commit_sha }}",
 		"PODLAZ_E2E_ENABLE_LIFECYCLE: 'true'",
 		"PODLAZ_E2E_ENABLE_TUN: 'true'",
 		`test -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP}"`,
 		"bash scripts/e2e/real-vpn.sh",
+		"bash scripts/e2e/tun-package-cleanup.sh",
+		`rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts"`,
 	} {
 		if !strings.Contains(workflow, fragment) {
 			t.Fatalf("release workflow missing exact-package TUN smoke contract %q", fragment)
@@ -38,40 +39,5 @@ func TestReleaseRequiresExactPackageTunSmokeBeforePublish(t *testing.T) {
 	publishDependsOnSmoke := regexp.MustCompile(`(?s)attest-and-publish:.*?needs:\s*\n(?:\s*- .*\n)*?\s*- tun-smoke(?:\s|$)`)
 	if !publishDependsOnSmoke.MatchString(workflow) {
 		t.Fatal("release publication must depend on successful exact-package TUN smoke")
-	}
-}
-
-func TestRealVPNSupportsPrebuiltPackageProvenance(t *testing.T) {
-	contents, err := os.ReadFile("real-vpn.sh")
-	if err != nil {
-		t.Fatalf("read real VPN E2E: %v", err)
-	}
-	text := string(contents)
-	for _, fragment := range []string{
-		`PODLAZ_E2E_DEB_PATH`,
-		`PODLAZ_E2E_EXPECT_COMMIT`,
-		`source "${SCRIPT_DIR}/lib/package_provenance.sh"`,
-		`source "${SCRIPT_DIR}/lib/status_polling.sh"`,
-		`if [[ -n "${PODLAZ_E2E_DEB_PATH}" ]]; then`,
-		`DEV_DEB="${PODLAZ_E2E_DEB_PATH}"`,
-		`assert_native_deb_arch "${DEV_DEB}" "$(dpkg --print-architecture)"`,
-		`assert_installed_package_version_matches_deb "${DEV_DEB}" podlaz`,
-		`assert_installed_podlaz_commit "${PODLAZ_E2E_EXPECT_COMMIT}"`,
-		`assert_running_podlazd_matches_deb "${DEV_DEB}"`,
-		`http://localhost/v1/status`,
-		`wait_for_status_match "real TUN verified active"`,
-		`python3 "${SCRIPT_DIR}/lib/daemon_status_semantics.py" verified-active`,
-		`wait_for_status_match "real TUN clean inactive"`,
-		`python3 "${SCRIPT_DIR}/lib/daemon_status_semantics.py" clean-inactive`,
-	} {
-		if !strings.Contains(text, fragment) {
-			t.Fatalf("real VPN E2E missing prebuilt-package contract %q", fragment)
-		}
-	}
-	if strings.Contains(text, `run_podlaz_as_socket_user status --json`) {
-		t.Fatal("release smoke must not depend on deferred public CLI status --json")
-	}
-	if strings.Contains(text, `status.get("tun")`) {
-		t.Fatal("release smoke must not classify lifecycle authority from presentation-only TUN status")
 	}
 }

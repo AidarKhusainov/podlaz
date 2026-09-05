@@ -2,17 +2,21 @@ package e2e_test
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestNetworkRecoveryCandidateUpgradeDoesNotManuallyStartService(t *testing.T) {
-	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
+func readNetworkRecoveryScenario(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("network-recovery-package-scenario.sh")
 	if err != nil {
-		t.Fatalf("read network-recovery acceptance: %v", err)
+		t.Fatalf("read network-recovery scenario: %v", err)
 	}
-	script := string(data)
+	return string(data)
+}
+
+func TestNetworkRecoveryCandidateUpgradeDoesNotManuallyStartService(t *testing.T) {
+	script := readNetworkRecoveryScenario(t)
 	candidate := shellFunctionBody(t, script, "install_candidate_package")
 	if !strings.Contains(candidate, "apt install") {
 		t.Fatal("candidate install helper must install the candidate package")
@@ -34,43 +38,34 @@ func TestNetworkRecoveryCandidateUpgradeDoesNotManuallyStartService(t *testing.T
 }
 
 func TestNetworkRecoveryBaselineSetupMayStartServiceExplicitly(t *testing.T) {
-	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
-	if err != nil {
-		t.Fatalf("read network-recovery acceptance: %v", err)
-	}
-	baseline := shellFunctionBody(t, string(data), "install_setup_package")
+	baseline := shellFunctionBody(t, readNetworkRecoveryScenario(t), "install_setup_package")
 	if !strings.Contains(baseline, "systemctl start") {
 		t.Fatal("baseline setup helper may explicitly start podlazd to establish the test fixture")
 	}
 }
 
-func TestNetworkRecoveryPinsHistoricalV029Release(t *testing.T) {
-	workflowPath := filepath.Join("..", "..", ".github", "workflows", "e2e-tun-package-convergence.yml")
-	data, err := os.ReadFile(workflowPath)
+func TestNetworkRecoveryPinsOfficialV029PackageProvenance(t *testing.T) {
+	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
 	if err != nil {
-		t.Fatalf("read TUN package workflow: %v", err)
+		t.Fatalf("read network-recovery entrypoint: %v", err)
 	}
-	workflow := string(data)
+	script := string(data)
 	for _, required := range []string{
-		"Download v0.2.29 package for network recovery",
-		"gh release download v0.2.29",
-		"PODLAZ_E2E_BASE_VERSION=v0.2.29",
+		"c846f5465a90a50d72f3fc393d639a402d590798",
+		"91644dee9ca92ddc5c48793b926f20d18da4d4267cbfdd3b41303e1e5c52516e",
+		"74a4fe360fc0b05ec419440ae6f54ec3b76f9679a525671d1a905142920fa673",
+		`sha256sum "${BASE_DEB}"`,
+		"baseline package digest",
+		`exec bash "${SCRIPT_DIR}/network-recovery-package-scenario.sh"`,
 	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("historical package workflow must contain %q", required)
+		if !strings.Contains(script, required) {
+			t.Fatalf("historical v0.2.29 provenance lost %q", required)
 		}
-	}
-	if strings.Contains(workflow, "Download latest released package for network recovery") {
-		t.Fatal("network recovery must not drift to the latest release instead of v0.2.29")
 	}
 }
 
 func TestNetworkRecoveryStatusUsesSemanticFiniteStateModel(t *testing.T) {
-	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
-	if err != nil {
-		t.Fatalf("read network-recovery acceptance: %v", err)
-	}
-	script := string(data)
+	script := readNetworkRecoveryScenario(t)
 	classifier := shellFunctionBody(t, script, "daemon_status_classify")
 	for _, required := range []string{
 		"connection", "mode", "tun_health", "transactions", "requires_cleanup",
@@ -93,11 +88,7 @@ func TestNetworkRecoveryStatusUsesSemanticFiniteStateModel(t *testing.T) {
 }
 
 func TestNetworkRecoveryCapturesFailureEvidenceBeforeCleanup(t *testing.T) {
-	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
-	if err != nil {
-		t.Fatalf("read network-recovery acceptance: %v", err)
-	}
-	script := string(data)
+	script := readNetworkRecoveryScenario(t)
 	finish := shellFunctionBody(t, script, "finish")
 	capture := strings.Index(finish, "capture_failure_evidence")
 	cleanupCall := strings.Index(finish, "\n  cleanup ||")
@@ -117,11 +108,7 @@ func TestNetworkRecoveryCapturesFailureEvidenceBeforeCleanup(t *testing.T) {
 }
 
 func TestNetworkRecoveryLegacyUpgradeSuccessProvesReconstructionNotSameSessionID(t *testing.T) {
-	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
-	if err != nil {
-		t.Fatalf("read network-recovery acceptance: %v", err)
-	}
-	script := string(data)
+	script := readNetworkRecoveryScenario(t)
 	proof := shellFunctionBody(t, script, "assert_legacy_upgrade_converged")
 	for _, required := range []string{
 		"legacy-upgrade-continuation", "network-session-continuation.json", "intent",
@@ -137,11 +124,7 @@ func TestNetworkRecoveryLegacyUpgradeSuccessProvesReconstructionNotSameSessionID
 }
 
 func TestNetworkRecoveryRejectsTimeoutFallbackAfterCandidateInstall(t *testing.T) {
-	data, err := os.ReadFile("network-recovery-package-acceptance.sh")
-	if err != nil {
-		t.Fatalf("read network-recovery acceptance: %v", err)
-	}
-	proof := shellFunctionBody(t, string(data), "assert_package_replacement_transition")
+	proof := shellFunctionBody(t, readNetworkRecoveryScenario(t), "assert_package_replacement_transition")
 	for _, required := range []string{"Result", "timeout", "ExecMainCode", "ExecMainStatus", "RestartKillSignal", "KillMode", "TimeoutStopUSec"} {
 		if !strings.Contains(proof, required) {
 			t.Fatalf("package replacement proof must inspect %q", required)

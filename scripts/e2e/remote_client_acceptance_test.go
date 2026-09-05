@@ -18,7 +18,7 @@ func executableShellLines(script string) string {
 	return strings.Join(lines, "\n")
 }
 
-func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testing.T) {
+func TestRemoteClientAcceptancePreservesOrdinaryUserReadOnlyAccess(t *testing.T) {
 	data, err := os.ReadFile("remote-client-acceptance.sh")
 	if err != nil {
 		t.Fatalf("read remote-client acceptance: %v", err)
@@ -28,11 +28,12 @@ func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testi
 		"id -nG",
 		"ordinary-user acceptance must not run as root",
 		"ordinary_user_without_podlaz_group",
-		"connect --mode proxy-only",
+		"Status: Disconnected",
+		"Autostart: Disabled",
+		"status",
+		"doctor",
 		"recover --json",
-		"Startup recovery scan: clean for active connection",
-		"logs \"--${mode}\" --since 36h",
-		"proxy_status_doctor_recover_consistent",
+		`logs "--${mode}" --since 36h`,
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("remote-client acceptance lost %q", required)
@@ -41,25 +42,20 @@ func TestRemoteClientAcceptanceUsesNormalOrdinaryUserWithoutPodlazGroup(t *testi
 
 	executable := executableShellLines(script)
 	for _, forbidden := range []string{
+		"PODLAZ_E2E_PROFILE_URI",
+		"PODLAZ_E2E_PROFILE_URI_LIST",
+		"PODLAZ_XRAY_PATH",
+		"PODLAZ_E2E_PKCHECK_MODE_FILE",
+		"connect --mode",
+		"Connection: inactive",
+		"Stale state: none",
 		"runuser",
 		"usermod",
 		"gpasswd",
-		`-g podlaz`,
-		`-G podlaz`,
-		`-G "${LOG_READER_ACCESS_GROUP}"`,
+		"e2e-tun-package-convergence.yml",
 	} {
 		if strings.Contains(executable, forbidden) {
-			t.Fatalf("ordinary-user acceptance must preserve the login identity without granting or rewriting groups in executable behavior: %q", forbidden)
+			t.Fatalf("ordinary-user read-only acceptance must not mutate lifecycle or depend on internal presentation: %q", forbidden)
 		}
-	}
-}
-
-func TestTunPackageConvergenceRunsRemoteClientAcceptance(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/e2e-tun-package-convergence.yml")
-	if err != nil {
-		t.Fatalf("read TUN package convergence workflow: %v", err)
-	}
-	if !strings.Contains(string(data), "bash scripts/e2e/remote-client-acceptance.sh") {
-		t.Fatal("TUN package convergence must run remote-client acceptance")
 	}
 }

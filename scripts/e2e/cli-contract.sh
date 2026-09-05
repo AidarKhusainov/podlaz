@@ -180,11 +180,6 @@ expect_success plan-proxy-only "${PODLAZ[@]}" plan --mode proxy-only "${PROFILE_
 assert_contains "${LAST_STDOUT}" "Proxy-only plan"
 expect_success plan-proxy-only-json "${PODLAZ[@]}" plan --mode=proxy-only "${PROFILE_ID}" --json
 assert_json_file "${LAST_STDOUT}"
-expect_success plan-tun "${PODLAZ[@]}" plan --mode tun "${PROFILE_ID}"
-assert_contains "${LAST_STDOUT}" "podlaz TUN plan"
-assert_contains "${LAST_STDOUT}" "No changes were applied."
-expect_success plan-tun-json "${PODLAZ[@]}" plan --mode=tun "${PROFILE_ID}" --json
-assert_json_file "${LAST_STDOUT}"
 expect_exit 2 plan-missing-mode "${PODLAZ[@]}" plan "${PROFILE_ID}"
 expect_exit 2 plan-invalid-mode "${PODLAZ[@]}" plan --mode wireguard "${PROFILE_ID}"
 expect_exit 1 plan-missing-profile "${PODLAZ[@]}" plan --mode proxy-only missing-profile

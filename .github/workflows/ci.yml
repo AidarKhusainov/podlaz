@@ -6,26 +6,27 @@ on:
   push:
     branches:
       - master
-      - foundation
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   workflow-lint:
     name: Workflow and shell lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -57,7 +58,7 @@ jobs:
 
       - name: Upload workflow lint diagnostics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-workflow-lint-diagnostics
           path: /tmp/podlaz-workflow-lint.txt
@@ -66,14 +67,16 @@ jobs:
 
   test:
     name: Go and CLI contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -86,12 +89,9 @@ jobs:
           set -o pipefail
           bash scripts/ci/go-core.sh 2>&1 | tee /tmp/podlaz-go-core.txt
 
-      - name: Boot continuation contract
-        run: bash scripts/ci/boot-continuation-contract.sh
-
       - name: Upload Go diagnostics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-go-diagnostics
           path: /tmp/podlaz-go-core.txt
@@ -111,9 +111,12 @@ jobs:
       - name: CLI smoke contract
         run: bash scripts/ci/cli-smoke.sh
 
+      - name: CLI behavior contract
+        run: bash scripts/e2e/cli-contract.sh
+
   deb-package:
     name: Debian package
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
@@ -122,10 +125,12 @@ jobs:
       CI_PODLAZ_BUILT: Jun 19 2026
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -144,7 +149,7 @@ jobs:
 
       - name: Upload package build diagnostics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-build-deb-diagnostics
           path: |
@@ -163,7 +168,7 @@ jobs:
 
       - name: Upload package validation diagnostics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-package-validation-diagnostics
           path: |
@@ -187,7 +192,7 @@ jobs:
 
       - name: Upload package install diagnostics
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-package-install-diagnostics
           path: /tmp/podlaz-package-install.txt

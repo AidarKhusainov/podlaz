@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
+# shellcheck source=lib/recovery_json.sh
+source "${SCRIPT_DIR}/lib/recovery_json.sh"
 # shellcheck source=lib/status_polling.sh
 source "${SCRIPT_DIR}/lib/status_polling.sh"
 
@@ -197,14 +199,6 @@ ACTIVE_CONNECTION=0
 wait_for_status_match "real TUN clean inactive" 80 daemon_status_is_clean_inactive
 fetch_daemon_status_json >"${E2E_ARTIFACT_DIR}/status-after-tun-disconnect.json"
 run_podlaz_as_socket_user recover --json >"${E2E_ARTIFACT_DIR}/recover-after-tun.json" 2>"${E2E_ARTIFACT_DIR}/recover-after-tun.stderr"
-python3 - "${E2E_ARTIFACT_DIR}/recover-after-tun.json" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-recovery = payload.get("recovery") or payload
-if recovery.get("candidates"):
-    raise SystemExit("recovery candidates remain after TUN disconnect")
-PY
+assert_clean_recovery_json_file "${E2E_ARTIFACT_DIR}/recover-after-tun.json"
 
 log "real VPN e2e completed"

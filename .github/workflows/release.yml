@@ -15,7 +15,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve release version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.release-vars.outputs.tag }}
@@ -37,16 +37,17 @@ jobs:
   test:
     name: Test release commit
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -67,16 +68,17 @@ jobs:
     needs:
       - resolve
       - test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     outputs:
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
       built_date: ${{ steps.release-commit.outputs.built_date }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
 
       - name: Resolve release commit
         id: release-commit
@@ -88,7 +90,7 @@ jobs:
           echo "built_date=${built_date}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -133,8 +135,8 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: bash scripts/ci/create-release-artifacts.sh
 
-      - name: Upload release artifacts for review
-        uses: actions/upload-artifact@v7
+      - name: Upload release artifacts for qualification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: |
@@ -165,12 +167,13 @@ jobs:
       PODLAZ_E2E_KEEP_PACKAGE: 'true'
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: 'go.mod'
           cache: true
@@ -179,7 +182,7 @@ jobs:
             packaging/package-toolchain.env
 
       - name: Download exact release artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-smoke
@@ -212,27 +215,168 @@ jobs:
           sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-release-smoke"
 
+  installed-runtime:
+    name: Qualify exact installed package
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Install exact release package
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          sudo -n apt install -y "./dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+          sudo -n systemctl start podlazd.service
+          sudo -n systemctl is-active --quiet podlazd.service
+
+      - name: Run exact-package runtime acceptance
+        run: |
+          bash scripts/e2e/log-window-acceptance.sh
+          bash scripts/e2e/remote-client-acceptance.sh
+
+      - name: Purge exact release package
+        if: always()
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
+      - name: Upload exact-package diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-installed-runtime-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+  real-provider:
+    name: Qualify exact real proxy data plane
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    environment: vpn-e2e
+    timeout-minutes: 90
+    env:
+      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELEASE_RELIABILITY_CYCLES || '10' }}
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Run exact-package real proxy data-plane integration
+        id: data_plane
+        env:
+          PODLAZ_E2E_PACKAGE_PATH: ${{ github.workspace }}/dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-e2e-tmp/real-provider-artifacts
+        run: |
+          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
+          bash scripts/e2e/data-plane.sh
+
+      - name: Purge package state
+        id: cleanup
+        if: always()
+        run: |
+          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
+          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
+          if command -v deb-systemd-helper >/dev/null 2>&1; then
+            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
+          fi
+          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
+
+      - name: Prepare public result
+        if: always()
+        env:
+          DATA_PLANE_OUTCOME: ${{ steps.data_plane.outcome }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/podlaz-e2e-artifacts"
+          printf 'real-provider data-plane: %s\n' "${DATA_PLANE_OUTCOME}" \
+            >"${RUNNER_TEMP}/podlaz-e2e-artifacts/real-provider-result.txt"
+
+      - name: Scan public artifacts
+        id: evidence_scan
+        if: always()
+        run: bash scripts/e2e/scan-public-artifacts.sh
+
+      - name: Remove private E2E temp state
+        id: private_cleanup
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+
+      - name: Upload exact data-plane diagnostics
+        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-real-provider-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
   attest-and-publish:
     name: Attest and publish GitHub Release
     needs:
       - resolve
       - build
       - tun-smoke
-    runs-on: ubuntu-22.04
+      - installed-runtime
+      - real-provider
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: write
       attestations: write
       id-token: write
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v8
+      - name: Download qualified release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
 
       - name: Attest release artifacts
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.tar.gz

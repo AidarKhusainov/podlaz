@@ -4,19 +4,29 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
-# shellcheck source=lib/bounded_client.sh
-source "${SCRIPT_DIR}/lib/bounded_client.sh"
 # shellcheck source=lib/evidence.sh
 source "${SCRIPT_DIR}/lib/evidence.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
 
-require_cmd date git grep journalctl mktemp python3 runuser sleep sudo systemctl timeout
+require_cmd date env git grep journalctl mktemp python3 sleep sudo systemctl timeout
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/log-window-acceptance.txt"
 
 write_evidence() {
   append_evidence_kv "${EVIDENCE_FILE}" "$1" "$2"
+}
+
+run_log_reader_podlaz() {
+  local timeout_seconds="$1"
+  shift
+  timeout --signal=TERM --kill-after=5s "${timeout_seconds}" \
+    sudo -n env \
+      LC_ALL=C \
+      XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+      XDG_STATE_HOME="${XDG_STATE_HOME}" \
+      XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+      /usr/bin/podlaz "$@"
 }
 
 verify_package_provenance() {
@@ -34,14 +44,13 @@ assert_visible_marker_and_bounded_window() {
   short_output="$(mktemp "${E2E_TMP_ROOT}/log-window-short.stdout.XXXXXX")"
   short_error="$(mktemp "${E2E_TMP_ROOT}/log-window-short.stderr.XXXXXX")"
 
-  # Create a marker that the installed CLI itself must be able to read. This
-  # closes the empty-output loophole: lack of journal visibility is not accepted
-  # as evidence that the requested lookback was enforced.
+  # Keep this scenario focused on --since semantics. Ordinary-user journal
+  # authorization is covered separately by remote-client-acceptance.sh.
   for _ in 1 2 3; do
-    run_installed_podlaz_bounded 10s status >/dev/null 2>&1 || fail "log-window could not create the old daemon journal marker"
+    run_log_reader_podlaz 10s status >/dev/null 2>&1 || fail "log-window could not create the old daemon journal marker"
   done
   sudo -n journalctl --sync
-  run_installed_podlaz_bounded 20s logs --daemon --since 30s >"${broad_output}" 2>"${broad_error}" || \
+  run_log_reader_podlaz 20s logs --daemon --since 30s >"${broad_output}" 2>"${broad_error}" || \
     fail "installed podlaz logs could not read the broad daemon journal window"
   grep -Fx 'podlaz daemon logs' "${broad_output}" >/dev/null || fail "broad daemon log window did not render its stable header"
   grep -F 'status request' "${broad_output}" >/dev/null || \
@@ -53,9 +62,9 @@ assert_visible_marker_and_bounded_window() {
   # timestamp gate below would fail on the old entry.
   sleep 8
   invocation_start="$(date +%s)"
-  run_installed_podlaz_bounded 10s status >/dev/null 2>&1 || fail "log-window could not create the fresh daemon journal marker"
+  run_log_reader_podlaz 10s status >/dev/null 2>&1 || fail "log-window could not create the fresh daemon journal marker"
   sudo -n journalctl --sync
-  run_installed_podlaz_bounded 20s logs --daemon --since 5s >"${short_output}" 2>"${short_error}" || \
+  run_log_reader_podlaz 20s logs --daemon --since 5s >"${short_output}" 2>"${short_error}" || \
     fail "installed podlaz logs --daemon --since 5s failed"
   grep -Fx 'podlaz daemon logs' "${short_output}" >/dev/null || fail "short daemon log window did not render its stable header"
   grep -F 'status request' "${short_output}" >/dev/null || \

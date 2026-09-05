@@ -9,7 +9,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/logs"
 )
 
-func TestRunCLILogsParsesAdditionalIssue160Flags(t *testing.T) {
+func TestRunCLILogsParsesSupportedFlags(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string

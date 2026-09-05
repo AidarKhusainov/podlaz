@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestBuildJournalctlArgsIssue160FlagMatrix(t *testing.T) {
+func TestBuildJournalctlArgsFlagMatrix(t *testing.T) {
 	tests := []struct {
 		name string
 		opts Options
