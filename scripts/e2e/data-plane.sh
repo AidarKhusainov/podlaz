@@ -64,12 +64,10 @@ capture_sensitive_command() {
   E2E_STEP=$((E2E_STEP + 1))
   LAST_STDOUT="${E2E_ARTIFACT_DIR}/$(printf '%03d' "${E2E_STEP}")-${safe}.stdout"
   LAST_STDERR="${E2E_ARTIFACT_DIR}/$(printf '%03d' "${E2E_STEP}")-${safe}.stderr"
-  log "${name}: command arguments are intentionally not printed"
+  log "${name}: command arguments and output are intentionally not printed"
   set +e
   "$@" >"${LAST_STDOUT}" 2>"${LAST_STDERR}"
   local code=$?
-  if [[ -s "${LAST_STDOUT}" ]]; then sed -e 's/^/stdout: /' "${LAST_STDOUT}"; fi
-  if [[ -s "${LAST_STDERR}" ]]; then sed -e 's/^/stderr: /' "${LAST_STDERR}" >&2; fi
   if [[ "${restore_errexit}" == "1" ]]; then set -e; fi
   return "${code}"
 }
@@ -296,7 +294,7 @@ expect_sensitive_success import-primary-profile "${PODLAZ[@]}" profile import "$
 PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
 assert_nonempty "${PROFILE_ID}" "primary profile id"
 assert_not_contains "${LAST_STDOUT}" "${PRIMARY_URI}"
-expect_success validate-primary-proxy "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
+expect_sensitive_success validate-primary-proxy "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
 
 if [[ -n "${PODLAZ_E2E_PACKAGE_PATH}" ]]; then
   log "use prebuilt package for data-plane checks"
