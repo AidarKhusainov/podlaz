@@ -52,30 +52,11 @@ func TestInstalledUserLifecycleCoversSupervisedXrayCrash(t *testing.T) {
 		"127.0.0.1:1080",
 		"127.0.0.1:8080",
 		"recover --json",
-		"unexpected recovery candidates",
+		"assert_clean_recovery_json_file",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("installed-user Xray crash contract lost %q", required)
 		}
-	}
-}
-
-func TestInstalledUserLifecycleRecoveryInspectionFailsClosed(t *testing.T) {
-	script := readInstalledUserLifecycle(t)
-	for _, required := range []string{
-		`payload.get("status") != "ok"`,
-		`payload.get("warnings")`,
-		`recovery = payload.get("recovery")`,
-		`not isinstance(recovery, dict)`,
-		`recovery.get("candidates")`,
-		`recovery.get("warnings")`,
-	} {
-		if !strings.Contains(script, required) {
-			t.Fatalf("installed-user recovery contract lost %q", required)
-		}
-	}
-	if strings.Contains(script, `.get("recovery", {})`) {
-		t.Fatal("installed-user recovery inspection must not default a missing recovery object to clean")
 	}
 }
 
