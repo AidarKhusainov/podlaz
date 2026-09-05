@@ -36,6 +36,11 @@ func TestReleaseRequiresExactPackageTunSmokeBeforePublish(t *testing.T) {
 			t.Fatalf("release workflow missing exact-package TUN smoke contract %q", fragment)
 		}
 	}
+
+	tunSmokeHostedNeeds := regexp.MustCompile(`(?s)tun-smoke:\s*\n.*?needs:\s*\n(?:(?:\s+- .*\n))*?\s+- installed-runtime\s*\n(?:(?:\s+- .*\n))*?\s+- real-provider(?:\s|$)`)
+	if !tunSmokeHostedNeeds.MatchString(workflow) {
+		t.Fatal("destructive TUN smoke must wait for successful installed-runtime and real-provider hosted qualification")
+	}
 	publishDependsOnSmoke := regexp.MustCompile(`(?s)attest-and-publish:.*?needs:\s*\n(?:\s*- .*\n)*?\s*- tun-smoke(?:\s|$)`)
 	if !publishDependsOnSmoke.MatchString(workflow) {
 		t.Fatal("release publication must depend on successful exact-package TUN smoke")
