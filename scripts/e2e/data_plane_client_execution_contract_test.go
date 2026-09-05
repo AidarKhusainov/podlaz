@@ -36,7 +36,17 @@ func TestDataPlaneUsesHostedCompatibleInstalledClientBoundary(t *testing.T) {
 func TestDataPlaneKeepsSensitiveProfileOutputOutOfWorkflowLogs(t *testing.T) {
 	script := readDataPlaneScript(t)
 
+	for _, required := range []string{
+		`source "${SCRIPT_DIR}/lib/private_command.sh"`,
+		`expect_private_success validate-primary-proxy`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("data-plane private command boundary lost %q", required)
+		}
+	}
 	for _, forbidden := range []string{
+		`capture_sensitive_command()`,
+		`expect_sensitive_success()`,
 		`sed -e 's/^/stdout: /' "${LAST_STDOUT}"`,
 		`sed -e 's/^/stderr: /' "${LAST_STDERR}"`,
 		`expect_success validate-primary-proxy`,
@@ -44,8 +54,5 @@ func TestDataPlaneKeepsSensitiveProfileOutputOutOfWorkflowLogs(t *testing.T) {
 		if strings.Contains(script, forbidden) {
 			t.Fatalf("data-plane can publish sensitive profile output via %q", forbidden)
 		}
-	}
-	if !strings.Contains(script, `expect_sensitive_success validate-primary-proxy`) {
-		t.Fatal("profile validation must use the sensitive command capture boundary")
 	}
 }
