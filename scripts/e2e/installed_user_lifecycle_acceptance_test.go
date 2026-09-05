@@ -60,6 +60,25 @@ func TestInstalledUserLifecycleCoversSupervisedXrayCrash(t *testing.T) {
 	}
 }
 
+func TestInstalledUserLifecycleRecoveryInspectionFailsClosed(t *testing.T) {
+	script := readInstalledUserLifecycle(t)
+	for _, required := range []string{
+		`payload.get("status") != "ok"`,
+		`payload.get("warnings")`,
+		`recovery = payload.get("recovery")`,
+		`not isinstance(recovery, dict)`,
+		`recovery.get("candidates")`,
+		`recovery.get("warnings")`,
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("installed-user recovery contract lost %q", required)
+		}
+	}
+	if strings.Contains(script, `.get("recovery", {})`) {
+		t.Fatal("installed-user recovery inspection must not default a missing recovery object to clean")
+	}
+}
+
 func TestInstalledPackageIntegrationRunsInstalledUserLifecycle(t *testing.T) {
 	data, err := os.ReadFile("installed-package-integration.sh")
 	if err != nil {
