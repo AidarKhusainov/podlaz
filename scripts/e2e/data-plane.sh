@@ -4,10 +4,12 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/installed_client.sh
+source "${SCRIPT_DIR}/lib/installed_client.sh"
 # shellcheck source=lib/profile_input.sh
 source "${SCRIPT_DIR}/lib/profile_input.sh"
 
-require_cmd bash go python3 grep awk sed mktemp sudo systemctl journalctl apt curl getent ip ss timeout dpkg dpkg-deb
+require_cmd bash go python3 grep awk sed mktemp sudo runuser systemctl journalctl apt curl getent ip ss timeout dpkg dpkg-deb
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -50,16 +52,6 @@ done
 build_podlaz_binary
 setup_isolated_xdg "data-plane"
 PODLAZ=("${PODLAZ_BIN}")
-
-# Deliberately local: this scenario uses sudo's socket-user identity rather than
-# the installed-client runuser contract used by package acceptance scenarios.
-run_podlaz_as_socket_user() {
-  sudo -n -u "$(id -un)" -g podlaz env \
-    XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME}" \
-    XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-    /usr/bin/podlaz "$@"
-}
 
 capture_sensitive_command() {
   local name="$1"
@@ -120,7 +112,7 @@ wait_for_daemon_socket() {
 cleanup_data_plane() {
   local code=$?
   if [[ "${ACTIVE_CONNECTION}" == "1" ]]; then
-    run_podlaz_as_socket_user disconnect >"${E2E_ARTIFACT_DIR}/cleanup-disconnect.stdout" 2>"${E2E_ARTIFACT_DIR}/cleanup-disconnect.stderr" || true
+    run_installed_podlaz disconnect >"${E2E_ARTIFACT_DIR}/cleanup-disconnect.stdout" 2>"${E2E_ARTIFACT_DIR}/cleanup-disconnect.stderr" || true
     ACTIVE_CONNECTION=0
   fi
   ss -ltnp >"${E2E_ARTIFACT_DIR}/cleanup-ss-ltnp.txt" 2>&1 || true
@@ -233,14 +225,14 @@ PY
 assert_active_proxy_only_control_plane() {
   local phase="$1" pass
   for pass in 1 2; do
-    expect_sensitive_success "status-${phase}-active-${pass}" run_podlaz_as_socket_user status
+    expect_sensitive_success "status-${phase}-active-${pass}" run_installed_podlaz status
     grep -Fx "Status: Connected" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not connected"
     grep -Fx "Mode: proxy-only" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not proxy-only"
     if [[ "${pass}" == "1" ]]; then
       sudo -n test -f "${ACTIVE_RUNTIME_CONFIG_PATH}" || fail "${phase}: active runtime config is missing"
     fi
   done
-  expect_sensitive_success "recover-${phase}-while-active-json" run_podlaz_as_socket_user recover --json
+  expect_sensitive_success "recover-${phase}-while-active-json" run_installed_podlaz recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_plan_empty "${phase}-while-active"
 }
@@ -255,9 +247,9 @@ assert_runtime_config_removed() {
 
 assert_no_stale_state() {
   local phase="$1"
-  expect_sensitive_success "status-${phase}-after-disconnect" run_podlaz_as_socket_user status
+  expect_sensitive_success "status-${phase}-after-disconnect" run_installed_podlaz status
   grep -Fx "Status: Disconnected" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status is not disconnected after disconnect"
-  expect_sensitive_success "recover-${phase}-dry-run-json" run_podlaz_as_socket_user recover --json
+  expect_sensitive_success "recover-${phase}-dry-run-json" run_installed_podlaz recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_plan_empty "${phase}"
 }
@@ -285,15 +277,15 @@ PY
 connect_profile() {
   local label="$1" id="$2"
   shift 2
-  expect_sensitive_success "connect-${label}" run_podlaz_as_socket_user connect "$@" "${id}"
+  expect_sensitive_success "connect-${label}" run_installed_podlaz connect "$@" "${id}"
   ACTIVE_CONNECTION=1
   ACTIVE_RUNTIME_CONFIG_PATH="${DAEMON_RUNTIME_CONFIG_PATH}"
-  capture_sensitive_command "status-${label}" run_podlaz_as_socket_user status || true
+  capture_sensitive_command "status-${label}" run_installed_podlaz status || true
 }
 
 disconnect_profile() {
   local label="$1"
-  expect_sensitive_success "disconnect-${label}" run_podlaz_as_socket_user disconnect
+  expect_sensitive_success "disconnect-${label}" run_installed_podlaz disconnect
   ACTIVE_CONNECTION=0
 }
 
