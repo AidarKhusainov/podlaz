@@ -45,6 +45,7 @@ func TestRecoveryAcceptancesUseSharedPredicate(t *testing.T) {
 	for _, path := range []string{
 		"installed-user-lifecycle-acceptance.sh",
 		"package-lifecycle-acceptance.sh",
+		"remote-client-acceptance.sh",
 	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
