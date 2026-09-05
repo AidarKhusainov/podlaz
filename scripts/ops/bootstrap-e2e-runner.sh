@@ -177,9 +177,9 @@ main() {
   : "${RUNNER_VERSION:?RUNNER_VERSION is required}"
   : "${RUNNER_SHA256:?RUNNER_SHA256 is required}"
   : "${GITHUB_SERVER_URL:=https://github.com}"
-  : "${RUNNER_USER:=gha-runner}"
-  : "${RUNNER_HOME:=/opt/actions-runner/podlaz-vpn-e2e}"
-  : "${RUNNER_NAME:=podlaz-vpn-e2e}"
+  RUNNER_USER="gha-runner"
+  RUNNER_HOME="/opt/actions-runner/podlaz-vpn-e2e"
+  RUNNER_NAME="podlaz-vpn-e2e"
   RUNNER_LABELS="self-hosted,linux,x64,vpn-e2e,ubuntu-24.04"
 
   validate_inputs
