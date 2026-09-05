@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 source "${SCRIPT_DIR}/lib/evidence.sh"
 # shellcheck source=lib/package_provenance.sh
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
+# shellcheck source=lib/recovery_json.sh
+source "${SCRIPT_DIR}/lib/recovery_json.sh"
 
 require_cmd env git grep id mktemp python3 systemctl timeout
 
@@ -49,17 +51,14 @@ verify_package_and_ordinary_identity() {
 assert_recovery_clean() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/remote-client-recover.XXXXXX")"
-  run_ordinary_podlaz 20s recover --json >"${output}" 2>/dev/null || fail "read-only recovery inspection failed"
-  python3 - "${output}" <<'PY'
-import json
-import sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    recovery = json.load(handle).get("recovery", {})
-if recovery.get("candidates"):
-    raise SystemExit("unexpected recovery candidates")
-if recovery.get("warnings"):
-    raise SystemExit("unexpected recovery warnings")
-PY
+  if ! run_ordinary_podlaz 20s recover --json >"${output}" 2>/dev/null; then
+    rm -f -- "${output}"
+    fail "read-only recovery inspection failed"
+  fi
+  if ! assert_clean_recovery_json_file "${output}"; then
+    rm -f -- "${output}"
+    fail "read-only recovery inspection is not clean"
+  fi
   rm -f -- "${output}"
   write_evidence recovery_clean pass
 }
