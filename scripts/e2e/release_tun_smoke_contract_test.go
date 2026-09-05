@@ -37,10 +37,18 @@ func TestReleaseRequiresExactPackageTunSmokeBeforePublish(t *testing.T) {
 		}
 	}
 
-	tunSmokeHostedNeeds := regexp.MustCompile(`(?s)tun-smoke:\s*\n.*?needs:\s*\n(?:(?:\s+- .*\n))*?\s+- installed-runtime\s*\n(?:(?:\s+- .*\n))*?\s+- real-provider(?:\s|$)`)
-	if !tunSmokeHostedNeeds.MatchString(workflow) {
-		t.Fatal("destructive TUN smoke must wait for successful installed-runtime and real-provider hosted qualification")
+	tunStart := strings.Index(workflow, "\n  tun-smoke:\n")
+	installedStart := strings.Index(workflow, "\n  installed-runtime:\n")
+	if tunStart < 0 || installedStart < 0 || installedStart <= tunStart {
+		t.Fatal("cannot isolate tun-smoke job from release workflow")
 	}
+	tunBlock := workflow[tunStart:installedStart]
+	for _, dependency := range []string{"      - installed-runtime\n", "      - real-provider\n"} {
+		if !strings.Contains(tunBlock, dependency) {
+			t.Fatalf("destructive TUN smoke must wait for hosted qualification dependency %q", strings.TrimSpace(dependency))
+		}
+	}
+
 	publishDependsOnSmoke := regexp.MustCompile(`(?s)attest-and-publish:.*?needs:\s*\n(?:\s*- .*\n)*?\s*- tun-smoke(?:\s|$)`)
 	if !publishDependsOnSmoke.MatchString(workflow) {
 		t.Fatal("release publication must depend on successful exact-package TUN smoke")
