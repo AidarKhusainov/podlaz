@@ -58,6 +58,27 @@ func TestTunAllocationEvidenceFromNetlinkPreservesKernelIdentities(t *testing.T)
 	}
 }
 
+func TestTunAllocationEvidenceFromNetlinkNormalizesZeroPrefixDefaultRoute(t *testing.T) {
+	routes := []netlink.Route{{
+		Dst:       &net.IPNet{IP: net.IPv4zero, Mask: net.CIDRMask(0, 32)},
+		Table:     unix.RT_TABLE_MAIN,
+		Type:      unix.RTN_UNICAST,
+		LinkIndex: 2,
+	}}
+
+	evidence, err := tunAllocationEvidenceFromNetlink(nil, routes, nil, nil)
+	if err != nil {
+		t.Fatalf("tunAllocationEvidenceFromNetlink() error = %v", err)
+	}
+	if len(evidence.IPv4Routes) != 1 {
+		t.Fatalf("IPv4 routes = %#v", evidence.IPv4Routes)
+	}
+	route := evidence.IPv4Routes[0]
+	if !route.Default || route.Destination.IsValid() {
+		t.Fatalf("0.0.0.0/0 must normalize to a default route without destination: %#v", route)
+	}
+}
+
 func TestTunAllocationEvidenceFromNetlinkRejectsUnspecifiedRouteTable(t *testing.T) {
 	_, err := tunAllocationEvidenceFromNetlink(nil, []netlink.Route{{Dst: nil, Table: unix.RT_TABLE_UNSPEC}}, nil, nil)
 	if err == nil {
