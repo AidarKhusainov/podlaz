@@ -11,7 +11,7 @@ source "${SCRIPT_DIR}/lib/installed_client.sh"
 # shellcheck source=lib/profile_input.sh
 source "${SCRIPT_DIR}/lib/profile_input.sh"
 
-require_cmd bash go python3 grep awk sed mktemp sudo runuser systemctl journalctl apt curl getent ip ss timeout dpkg dpkg-deb
+require_cmd bash go python3 grep awk sed mktemp sudo runuser systemctl journalctl apt curl getent ip ss timeout dpkg dpkg-deb id install
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -19,7 +19,20 @@ require_cmd bash go python3 grep awk sed mktemp sudo runuser systemctl journalct
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
 : "${PODLAZ_E2E_RELIABILITY_CYCLES:=0}"
 : "${PODLAZ_E2E_PACKAGE_PATH:=}"
+: "${PODLAZ_E2E_HEADLESS_POLKIT_ALLOW:=}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
+
+if [[ -z "${PODLAZ_E2E_HEADLESS_POLKIT_ALLOW}" ]]; then
+  if [[ "${GITHUB_ACTIONS:-}" == "true" && "${RUNNER_ENVIRONMENT:-}" == "github-hosted" ]]; then
+    PODLAZ_E2E_HEADLESS_POLKIT_ALLOW=true
+  else
+    PODLAZ_E2E_HEADLESS_POLKIT_ALLOW=false
+  fi
+fi
+case "${PODLAZ_E2E_HEADLESS_POLKIT_ALLOW}" in
+  true|false) ;;
+  *) fail "PODLAZ_E2E_HEADLESS_POLKIT_ALLOW must be true or false" ;;
+esac
 
 if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; then
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required for data-plane e2e"
@@ -32,6 +45,8 @@ DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
 INSTALL_DEB=""
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 DAEMON_RUNTIME_CONFIG_PATH="${DAEMON_SOCKET%/*}/generated/xray.json"
+HEADLESS_POLKIT_RULE_PATH="/etc/polkit-1/rules.d/49-podlaz-e2e.rules"
+HEADLESS_POLKIT_RULE_INSTALLED=0
 PACKAGE_INSTALLED=0
 SERVICE_TOUCHED=0
 ACTIVE_CONNECTION=0
@@ -54,6 +69,29 @@ done
 build_podlaz_binary
 setup_isolated_xdg "data-plane"
 PODLAZ=("${PODLAZ_BIN}")
+
+install_headless_polkit_rule() {
+  [[ "${PODLAZ_E2E_HEADLESS_POLKIT_ALLOW}" == "true" ]] || return 0
+
+  local ci_user rule_tmp
+  ci_user="$(id -un)"
+  [[ "${ci_user}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "headless Polkit qualification user name is invalid"
+  rule_tmp="$(mktemp "${E2E_TMP_ROOT}/headless-polkit.XXXXXX.rules")"
+  cat >"${rule_tmp}" <<EOF
+polkit.addRule(function(action, subject) {
+    var ci_user = "${ci_user}";
+    if (subject.user == ci_user &&
+        (action.id == "io.github.aidarkhusainov.podlaz.connect-proxy-only" ||
+         action.id == "io.github.aidarkhusainov.podlaz.disconnect")) {
+        return polkit.Result.YES;
+    }
+});
+EOF
+  chmod 0600 "${rule_tmp}"
+  sudo -n install -D -m 0644 "${rule_tmp}" "${HEADLESS_POLKIT_RULE_PATH}"
+  rm -f -- "${rule_tmp}"
+  HEADLESS_POLKIT_RULE_INSTALLED=1
+}
 
 collect_daemon_startup_diagnostics() {
   sudo -n systemctl status podlazd.service --no-pager >"${E2E_ARTIFACT_DIR}/data-plane-podlazd.service.status" 2>&1 || true
@@ -85,6 +123,12 @@ cleanup_data_plane() {
   if [[ "${ACTIVE_CONNECTION}" == "1" ]]; then
     run_installed_podlaz disconnect >"${E2E_ARTIFACT_DIR}/cleanup-disconnect.stdout" 2>"${E2E_ARTIFACT_DIR}/cleanup-disconnect.stderr" || true
     ACTIVE_CONNECTION=0
+  fi
+  if [[ "${HEADLESS_POLKIT_RULE_INSTALLED}" == "1" ]]; then
+    if ! sudo -n rm -f -- "${HEADLESS_POLKIT_RULE_PATH}"; then
+      [[ "${code}" != "0" ]] || code=1
+    fi
+    HEADLESS_POLKIT_RULE_INSTALLED=0
   fi
   ss -ltnp >"${E2E_ARTIFACT_DIR}/cleanup-ss-ltnp.txt" 2>&1 || true
   if [[ "${SERVICE_TOUCHED}" == "1" ]]; then
@@ -288,6 +332,7 @@ fi
 
 sudo -n apt install -y "${INSTALL_DEB}" 2>&1 | tee "${E2E_ARTIFACT_DIR}/data-plane-apt-install.log"
 PACKAGE_INSTALLED=1
+install_headless_polkit_rule
 sudo -n systemctl daemon-reload
 sudo -n systemctl reset-failed podlazd.service || true
 sudo -n systemctl start podlazd.service
