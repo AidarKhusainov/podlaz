@@ -62,6 +62,25 @@ func TestPolicyRuleRollbackRefusesIndistinguishableDuplicateTuple(t *testing.T) 
 	}
 }
 
+func TestPolicyRuleRollbackDoesNotAdoptRuleWithExtraSelector(t *testing.T) {
+	runner := &extraSelectorPolicyRuleRunner{}
+	exec := IPPolicyRuleExecutor{Runner: runner}
+	plan := planner.TunPolicyRulePlan{
+		Family:   "ipv4",
+		Priority: 10001,
+		Selector: planner.IPv4DefaultSelector,
+		Table:    "51821",
+		Action:   planner.TunActionAddExclusive,
+	}
+
+	if err := exec.Rollback(context.Background(), plan); err != nil {
+		t.Fatalf("foreign rule must be ignored without mutation: %v", err)
+	}
+	if runner.deleteCalls != 0 {
+		t.Fatalf("rollback adopted a foreign rule with extra selector: deletes=%d", runner.deleteCalls)
+	}
+}
+
 type policyRulePriorityRaceRunner struct {
 	ownRule     bool
 	foreignRule bool
@@ -114,6 +133,25 @@ func (r *duplicatePolicyRuleRollbackRunner) Run(_ context.Context, name string, 
 		if r.copies > 0 {
 			r.copies--
 		}
+		return CommandResult{}, nil
+	case "ip -4 route flush cache":
+		return CommandResult{}, nil
+	default:
+		return CommandResult{ExitCode: 127, Stderr: "unexpected command"}, fmt.Errorf("unexpected command: %s", command)
+	}
+}
+
+type extraSelectorPolicyRuleRunner struct {
+	deleteCalls int
+}
+
+func (r *extraSelectorPolicyRuleRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
+	command := strings.TrimSpace(name + " " + strings.Join(args, " "))
+	switch command {
+	case "ip -4 rule show priority 10001":
+		return CommandResult{Stdout: "10001: from all fwmark 0x1 lookup 51821"}, nil
+	case "ip -4 rule del priority 10001 from all lookup 51821":
+		r.deleteCalls++
 		return CommandResult{}, nil
 	case "ip -4 route flush cache":
 		return CommandResult{}, nil

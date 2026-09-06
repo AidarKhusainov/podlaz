@@ -189,16 +189,78 @@ func verifyPolicyRuleLine(line string, plan planner.TunPolicyRulePlan) error {
 	if len(fields) == 0 || fields[0] != strconv.Itoa(plan.Priority) {
 		return fmt.Errorf("priority mismatch: expected %d in %q", plan.Priority, line)
 	}
-	for _, field := range strings.Fields(plan.Selector) {
-		if !containsField(fields, field) {
-			return fmt.Errorf("selector mismatch: expected %q in %q", plan.Selector, line)
+
+	wantFrom, wantTo, err := policyRuleSelectorIdentity(plan.Selector)
+	if err != nil {
+		return err
+	}
+	if wantFrom == "" {
+		wantFrom = "all"
+	}
+
+	i := 1
+	if i < len(fields) && fields[i] == "from" {
+		if i+1 >= len(fields) || !routeTokenMatches(fields[i+1], wantFrom) {
+			return fmt.Errorf("source selector mismatch: expected from %s in %q", wantFrom, line)
 		}
+		i += 2
+	} else if wantFrom != "all" {
+		return fmt.Errorf("source selector mismatch: expected from %s in %q", wantFrom, line)
+	}
+
+	if wantTo != "" {
+		if i+1 >= len(fields) || fields[i] != "to" || !routeTokenMatches(fields[i+1], wantTo) {
+			return fmt.Errorf("destination selector mismatch: expected to %s in %q", wantTo, line)
+		}
+		i += 2
+	} else if i < len(fields) && fields[i] == "to" {
+		return fmt.Errorf("unexpected destination selector in %q", line)
+	}
+
+	if i+1 >= len(fields) || (fields[i] != "lookup" && fields[i] != "table") {
+		return fmt.Errorf("lookup table missing in %q", line)
 	}
 	expectedTable := routeTable(plan.Table)
-	if !containsLookupTable(fields, expectedTable) {
+	if !samePolicyRuleTable(fields[i+1], expectedTable) {
 		return fmt.Errorf("lookup table mismatch: expected %s in %q", expectedTable, line)
 	}
+	i += 2
+	if i != len(fields) {
+		return fmt.Errorf("unexpected policy-rule selectors or attributes in %q", line)
+	}
 	return nil
+}
+
+func policyRuleSelectorIdentity(selector string) (from, to string, err error) {
+	fields := strings.Fields(strings.TrimSpace(selector))
+	switch {
+	case len(fields) == 2 && fields[0] == "from":
+		return fields[1], "", nil
+	case len(fields) == 2 && fields[0] == "to":
+		return "all", fields[1], nil
+	case len(fields) == 4 && fields[0] == "from" && fields[2] == "to":
+		return fields[1], fields[3], nil
+	default:
+		return "", "", fmt.Errorf("unsupported policy-rule selector %q", selector)
+	}
+}
+
+func samePolicyRuleTable(got, want string) bool {
+	return policyRuleTableIdentity(got) == policyRuleTableIdentity(want)
+}
+
+func policyRuleTableIdentity(table string) string {
+	table = routeTable(strings.TrimSpace(table))
+	switch table {
+	case "local", "255":
+		return "255"
+	case "main", "254":
+		return "254"
+	case "default", "253":
+		return "253"
+	default:
+		return table
+	}
 }
 
 func normalizeRuleFields(fields []string) []string {
@@ -207,15 +269,6 @@ func normalizeRuleFields(fields []string) []string {
 		out = append(out, strings.TrimSuffix(field, ":"))
 	}
 	return out
-}
-
-func containsLookupTable(fields []string, table string) bool {
-	for i := 0; i < len(fields)-1; i++ {
-		if fields[i] == "lookup" && (fields[i+1] == table || routeTable(fields[i+1]) == table) {
-			return true
-		}
-	}
-	return false
 }
 
 func ruleTarget(plan planner.TunPolicyRulePlan) string {
