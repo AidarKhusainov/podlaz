@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd find sort python3
+require_cmd find python3
 
 result_file="${E2E_ARTIFACT_DIR}/real-provider-result.txt"
 mapfile -d '' -t public_entries < <(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -print0)
@@ -21,17 +21,17 @@ case "${result}" in
     ;;
   "real-provider data-plane: failure")
     private_dir="${E2E_TMP_ROOT}/private-command"
+    failure_marker="${private_dir}/failed-command"
     failure_stderr=""
-    if [[ -d "${private_dir}" ]]; then
-      mapfile -t private_stderr_files < <(find "${private_dir}" -maxdepth 1 -type f -name '*.stderr' -printf '%f\n' | sort)
-      if [[ "${#private_stderr_files[@]}" -gt 0 ]]; then
-        failure_stderr="${private_dir}/${private_stderr_files[$((${#private_stderr_files[@]} - 1))]}"
-      fi
+    if [[ -f "${failure_marker}" && ! -L "${failure_marker}" ]]; then
+      IFS= read -r failure_stderr_name <"${failure_marker}" || fail "private failure marker is empty"
+      [[ "${failure_stderr_name}" =~ ^[0-9]{3}-[A-Za-z0-9._-]+[.]stderr$ ]] || fail "private failure marker is invalid"
+      failure_stderr="${private_dir}/${failure_stderr_name}"
+      [[ -f "${failure_stderr}" && ! -L "${failure_stderr}" ]] || fail "private failure stderr is unavailable"
     fi
 
     if [[ -n "${failure_stderr}" ]]; then
-      failure_name="$(basename -- "${failure_stderr}")"
-      failure_name="${failure_name%.stderr}"
+      failure_name="${failure_stderr_name%.stderr}"
       failure_name="${failure_name#*-}"
       failure_class="$(python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" classify-cli-error --stderr-file "${failure_stderr}")"
       printf 'command: %s\nclass: %s\n' "$(safe_name "${failure_name}")" "${failure_class}" >>"${result_file}"
