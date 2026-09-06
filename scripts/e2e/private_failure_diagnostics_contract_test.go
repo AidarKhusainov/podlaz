@@ -6,27 +6,24 @@ import (
 	"testing"
 )
 
-func TestReleaseRealProviderFailurePublishesSanitizedDiagnosticsBeforePrivateCleanup(t *testing.T) {
+func TestReleaseRealProviderScansPublicDiagnosticsBeforePrivateCleanup(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatalf("read release workflow: %v", err)
 	}
 	workflow := string(data)
 
-	diagnostic := strings.Index(workflow, "Prepare sanitized failure diagnostics")
+	scan := strings.Index(workflow, "Scan public artifacts")
 	cleanup := strings.Index(workflow, "Remove private E2E temp state")
-	if diagnostic < 0 {
-		t.Fatal("release real-provider flow must prepare sanitized failure diagnostics")
+	if scan < 0 || cleanup < 0 || scan >= cleanup {
+		t.Fatal("real-provider public artifact scan must run before private E2E temp cleanup")
 	}
-	if cleanup < 0 || diagnostic >= cleanup {
-		t.Fatal("sanitized failure diagnostics must be prepared before private E2E temp cleanup")
+
+	scanner, err := os.ReadFile("scan-public-artifacts.sh")
+	if err != nil {
+		t.Fatalf("read public artifact scanner: %v", err)
 	}
-	for _, required := range []string{
-		"scripts/e2e/sanitize-private-failure.sh",
-		"steps.data_plane.outcome",
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("release failure diagnostics lost %q", required)
-		}
+	if !strings.Contains(string(scanner), "sanitize-private-failure.sh") {
+		t.Fatal("public artifact scanner must reduce private failure evidence before private cleanup")
 	}
 }
