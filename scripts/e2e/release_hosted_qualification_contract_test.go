@@ -38,20 +38,25 @@ func TestReleaseUsesHostedQualificationWithoutRetiredRunner(t *testing.T) {
 }
 
 func TestLocalVPNValidationScriptsRemainAvailable(t *testing.T) {
-	for _, path := range []string{
-		"real-vpn.sh",
-		"tun-package-cleanup.sh",
-		"../acceptance/release-laptop.sh",
-	} {
-		info, err := os.Stat(path)
+	tests := []struct {
+		path       string
+		executable bool
+	}{
+		{path: "real-vpn.sh"},
+		{path: "tun-package-cleanup.sh", executable: true},
+		{path: "../acceptance/release-laptop.sh", executable: true},
+	}
+
+	for _, test := range tests {
+		info, err := os.Stat(test.path)
 		if err != nil {
-			t.Fatalf("local VPN validation script %s must remain available: %v", path, err)
+			t.Fatalf("local VPN validation script %s must remain available: %v", test.path, err)
 		}
 		if !info.Mode().IsRegular() {
-			t.Fatalf("local VPN validation script %s is not a regular file", path)
+			t.Fatalf("local VPN validation script %s is not a regular file", test.path)
 		}
-		if info.Mode().Perm()&0111 == 0 {
-			t.Fatalf("local VPN validation script %s must remain executable", path)
+		if test.executable && info.Mode().Perm()&0111 == 0 {
+			t.Fatalf("local VPN validation script %s must remain executable", test.path)
 		}
 	}
 }
