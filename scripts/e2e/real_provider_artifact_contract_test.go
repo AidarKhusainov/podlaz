@@ -43,9 +43,9 @@ func TestRealProviderUploadsRequirePrivateExecutionAndFailClosedPublication(t *t
 	if err != nil {
 		t.Fatalf("read public artifact scanner: %v", err)
 	}
-	for _, required := range []string{"lib/tun_soak_metrics.py", "classify-cli-error"} {
+	for _, required := range []string{"lib/tun_soak_metrics.py", "classify-cli-error", "failed-command"} {
 		if !strings.Contains(string(scanner), required) {
-			t.Fatalf("public artifact scanner must reuse private CLI failure classification %q", required)
+			t.Fatalf("public artifact scanner must reuse exact private CLI failure evidence %q", required)
 		}
 	}
 }
@@ -123,7 +123,11 @@ func TestPublicArtifactGateKeepsPrivateFailureDiagnosticSafe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(artifactDir, "real-provider-result.txt"), []byte("real-provider data-plane: failure\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(privateCommandDir, "004-connect-proxy-only-explicit.stderr"), []byte("podlaz: authorization denied: polkit denied "+secret+"\n"), 0o600); err != nil {
+	stderrName := "004-connect-proxy-only-explicit.stderr"
+	if err := os.WriteFile(filepath.Join(privateCommandDir, stderrName), []byte("podlaz: authorization denied: polkit denied "+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateCommandDir, "failed-command"), []byte(stderrName+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
