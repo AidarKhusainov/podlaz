@@ -50,5 +50,8 @@ func TestLocalVPNValidationScriptsRemainAvailable(t *testing.T) {
 		if !info.Mode().IsRegular() {
 			t.Fatalf("local VPN validation script %s is not a regular file", path)
 		}
+		if info.Mode().Perm()&0111 == 0 {
+			t.Fatalf("local VPN validation script %s must remain executable", path)
+		}
 	}
 }
