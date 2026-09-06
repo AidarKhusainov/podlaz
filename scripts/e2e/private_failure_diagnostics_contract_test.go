@@ -23,7 +23,12 @@ func TestReleaseRealProviderScansPublicDiagnosticsBeforePrivateCleanup(t *testin
 	if err != nil {
 		t.Fatalf("read public artifact scanner: %v", err)
 	}
-	if !strings.Contains(string(scanner), "sanitize-private-failure.sh") {
-		t.Fatal("public artifact scanner must reduce private failure evidence before private cleanup")
+	for _, required := range []string{
+		"lib/tun_soak_metrics.py",
+		"classify-cli-error",
+	} {
+		if !strings.Contains(string(scanner), required) {
+			t.Fatalf("public artifact scanner must reuse private CLI failure classification %q", required)
+		}
 	}
 }
