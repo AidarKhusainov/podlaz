@@ -54,3 +54,54 @@ printf 'capture-verified\n'
 		t.Fatalf("expected private stdout/stderr files only, got %v", matches)
 	}
 }
+
+func TestPrivateSuccessExpectationMarksExactFailedCommandWithoutLeakingOutput(t *testing.T) {
+	artifactDir := t.TempDir()
+	privateDir := t.TempDir()
+	const privateValue = "private-endpoint.example.invalid"
+	script := `
+set -Eeuo pipefail
+source ./lib/e2e.sh
+source ./lib/private_command.sh
+expect_private_success failed-fixture bash -c 'printf "private-endpoint.example.invalid\n" >&2; exit 7'
+`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = "."
+	cmd.Env = append(os.Environ(),
+		"E2E_ARTIFACT_DIR="+artifactDir,
+		"E2E_TMP_ROOT="+privateDir,
+	)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil {
+		t.Fatal("expected private command failure")
+	}
+	if strings.Contains(stdout.String(), privateValue) || strings.Contains(stderr.String(), privateValue) {
+		t.Fatal("private command failure output leaked to console")
+	}
+
+	privateCommandDir := filepath.Join(privateDir, "private-command")
+	markerPath := filepath.Join(privateCommandDir, "failed-command")
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read private failure marker: %v", err)
+	}
+	if got, want := string(marker), "001-failed-fixture.stderr\n"; got != want {
+		t.Fatalf("unexpected private failure marker: got %q want %q", got, want)
+	}
+	info, err := os.Stat(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("private failure marker mode = %o, want 600", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(privateCommandDir, "001-failed-fixture.stderr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), privateValue) {
+		t.Fatal("private stderr evidence was not retained privately")
+	}
+}
