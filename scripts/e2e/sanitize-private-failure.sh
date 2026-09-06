@@ -22,9 +22,5 @@ elif grep -Eqi 'deadline exceeded|timed out|timeout' "${stderr_path}"; then
   failure_class="timeout"
 fi
 
-mkdir -p "${E2E_ARTIFACT_DIR}"
-report="${E2E_ARTIFACT_DIR}/real-provider-failure.txt"
-{
-  printf 'command: %s\n' "$(safe_name "${command_name}")"
-  printf 'class: %s\n' "${failure_class}"
-} >"${report}"
+printf 'command: %s\n' "$(safe_name "${command_name}")"
+printf 'class: %s\n' "${failure_class}"
