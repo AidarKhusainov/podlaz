@@ -29,9 +29,8 @@ case "${result}" in
 
     private_dir="${E2E_TMP_ROOT}/private-command"
     failure_marker="${private_dir}/failed-command"
-    failure_step_marker="${private_dir}/failed-step"
     failure_stderr=""
-    failure_step=""
+    failure_step="data-plane"
     failure_class="unclassified"
 
     if [[ -f "${failure_marker}" && ! -L "${failure_marker}" ]]; then
@@ -42,11 +41,6 @@ case "${result}" in
       failure_step="${failure_stderr_name%.stderr}"
       failure_step="${failure_step#*-}"
       failure_class="$(python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" classify-cli-error --stderr-file "${failure_stderr}")"
-    elif [[ -f "${failure_step_marker}" && ! -L "${failure_step_marker}" ]]; then
-      IFS= read -r failure_step <"${failure_step_marker}" || fail "private failure step marker is empty"
-      [[ "${failure_step}" =~ ^[A-Za-z0-9._-]+$ ]] || fail "private failure step marker is invalid"
-    else
-      failure_step="unavailable"
     fi
 
     sanitized_result="${result_file}.tmp"
