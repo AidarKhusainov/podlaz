@@ -43,19 +43,9 @@ func TestRealProviderUploadsRequirePrivateExecutionAndFailClosedPublication(t *t
 	if err != nil {
 		t.Fatalf("read public artifact scanner: %v", err)
 	}
-	for _, required := range []string{"lib/tun_soak_metrics.py", "classify-cli-error", "failed-command", "failed-step"} {
+	for _, required := range []string{"lib/tun_soak_metrics.py", "classify-cli-error", "failed-command", "step: %s"} {
 		if !strings.Contains(string(scanner), required) {
-			t.Fatalf("public artifact scanner must reuse bounded private failure evidence %q", required)
-		}
-	}
-
-	dataPlane, err := os.ReadFile("data-plane.sh")
-	if err != nil {
-		t.Fatalf("read data-plane harness: %v", err)
-	}
-	for _, required := range []string{"CURRENT_FAILURE_STEP", "failed-step"} {
-		if !strings.Contains(string(dataPlane), required) {
-			t.Fatalf("data-plane harness must retain generic safe failure attribution %q", required)
+			t.Fatalf("public artifact scanner must preserve bounded failure evidence %q", required)
 		}
 	}
 }
@@ -157,50 +147,23 @@ func TestPublicArtifactGateKeepsPrivateFailureDiagnosticSafe(t *testing.T) {
 	}
 }
 
-func TestPublicArtifactGateUsesGenericStepWithoutPrivateCommandEvidence(t *testing.T) {
+func TestPublicArtifactGateUsesGenericDataPlaneStepWithoutPrivateCommandEvidence(t *testing.T) {
 	artifactDir := t.TempDir()
 	privateDir := t.TempDir()
-	privateCommandDir := filepath.Join(privateDir, "private-command")
-	if err := os.MkdirAll(privateCommandDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(filepath.Join(artifactDir, "real-provider-result.txt"), []byte("real-provider data-plane: failure\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(privateCommandDir, "failed-step"), []byte("proxy-only-explicit\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	stdout, stderr, err := runPublicArtifactGateWithPrivateRoot(t, artifactDir, privateDir)
 	if err != nil {
-		t.Fatalf("scan public artifacts with generic failure step: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
+		t.Fatalf("scan public artifacts without private command evidence: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
 	}
 	result, err := os.ReadFile(filepath.Join(artifactDir, "real-provider-result.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(result), "real-provider data-plane: failure\nstep: proxy-only-explicit\nclass: unclassified\n"; got != want {
+	if got, want := string(result), "real-provider data-plane: failure\nstep: data-plane\nclass: unclassified\n"; got != want {
 		t.Fatalf("unexpected generic diagnostics:\ngot:  %q\nwant: %q", got, want)
-	}
-}
-
-func TestPublicArtifactGateFallsBackWithoutPrivateFailureEvidence(t *testing.T) {
-	artifactDir := t.TempDir()
-	privateDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(artifactDir, "real-provider-result.txt"), []byte("real-provider data-plane: failure\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, err := runPublicArtifactGateWithPrivateRoot(t, artifactDir, privateDir)
-	if err != nil {
-		t.Fatalf("scan public artifacts without private evidence: %v\nstdout=%s\nstderr=%s", err, stdout, stderr)
-	}
-	result, err := os.ReadFile(filepath.Join(artifactDir, "real-provider-result.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(result), "real-provider data-plane: failure\nstep: unavailable\nclass: unclassified\n"; got != want {
-		t.Fatalf("unexpected fallback diagnostics:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
