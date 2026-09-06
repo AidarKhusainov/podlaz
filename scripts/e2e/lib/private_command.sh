@@ -35,7 +35,7 @@ capture_private_command() {
 expect_private_success() {
   local name="$1"
   shift
-  local code restore_errexit=0
+  local code marker restore_errexit=0
 
   case $- in
     *e*) restore_errexit=1 ;;
@@ -46,5 +46,10 @@ expect_private_success() {
   if [[ "${restore_errexit}" == "1" ]]; then
     set -e
   fi
-  [[ "${code}" == "0" ]] || fail "${name} failed with exit code ${code}"
+  if [[ "${code}" != "0" ]]; then
+    marker="${E2E_TMP_ROOT}/private-command/failed-command"
+    printf '%s\n' "$(basename -- "${LAST_STDERR}")" >"${marker}"
+    chmod 0600 "${marker}"
+    fail "${name} failed with exit code ${code}"
+  fi
 }
