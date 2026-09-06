@@ -18,6 +18,7 @@ func TestRealVPNSupportsExactPrebuiltPackageTunContract(t *testing.T) {
 		`source "${SCRIPT_DIR}/lib/package_provenance.sh"`,
 		`source "${SCRIPT_DIR}/lib/status_polling.sh"`,
 		`source "${SCRIPT_DIR}/lib/recovery_json.sh"`,
+		`source "${SCRIPT_DIR}/lib/private_command.sh"`,
 		`if [[ -n "${PODLAZ_E2E_DEB_PATH}" ]]; then`,
 		`DEV_DEB="${PODLAZ_E2E_DEB_PATH}"`,
 		`assert_native_deb_arch "${DEV_DEB}" "$(dpkg --print-architecture)"`,
@@ -33,6 +34,21 @@ func TestRealVPNSupportsExactPrebuiltPackageTunContract(t *testing.T) {
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("real VPN E2E missing exact-package TUN contract %q", fragment)
+		}
+	}
+	for _, privateCommand := range []string{
+		"real-profile-show",
+		"real-profile-show-json",
+		"real-profile-validate-proxy-only",
+		"real-profile-validate-tun",
+		"real-plan-proxy-only",
+		"real-plan-tun-dry-run",
+	} {
+		if !strings.Contains(text, `expect_private_success `+privateCommand) {
+			t.Fatalf("real VPN profile-derived output must stay private for %q", privateCommand)
+		}
+		if strings.Contains(text, `expect_success `+privateCommand) {
+			t.Fatalf("real VPN must not log profile-derived output for %q", privateCommand)
 		}
 	}
 	if strings.Contains(text, `run_podlaz_as_socket_user status --json`) {

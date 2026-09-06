@@ -49,6 +49,47 @@ assert_active_runtime_config_artifacts_safe "runtime-config-leak" "${status_json
 	}
 }
 
+func TestE2EActiveRuntimeConfigScanFailsClosedWhenPrivilegedReadFails(t *testing.T) {
+	artifactDir := t.TempDir()
+	privateDir := t.TempDir()
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "sudo"), []byte("#!/usr/bin/env bash\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const privateValue = "private-runtime-config-marker"
+	script := `
+set -Eeuo pipefail
+source ./lib/e2e.sh
+runtime_config="${E2E_TMP_ROOT}/xray-runtime.json"
+status_json="${E2E_TMP_ROOT}/active-status.json"
+printf '%s\n' 'private-runtime-config-marker' >"${runtime_config}"
+chmod 000 "${runtime_config}"
+python3 - "${runtime_config}" "${status_json}" <<'PY'
+import json
+import sys
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump({"runtime_config_path": sys.argv[1]}, handle)
+PY
+assert_active_runtime_config_artifacts_safe "runtime-config-unreadable" "${status_json}"
+`
+	cmd := exec.Command("bash", "-c", script)
+	cmd.Dir = "."
+	cmd.Env = append(os.Environ(),
+		"PATH="+fakeBin+":"+os.Getenv("PATH"),
+		"E2E_ARTIFACT_DIR="+artifactDir,
+		"E2E_TMP_ROOT="+privateDir,
+	)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("runtime-config redaction scan must fail closed when privileged read fails")
+	}
+	assertRuntimeConfigValueNotLeaked(t, stdout.String(), privateValue, "stdout")
+	assertRuntimeConfigValueNotLeaked(t, stderr.String(), privateValue, "stderr")
+}
+
 type runtimeConfigBashResult struct {
 	stdout string
 	stderr string

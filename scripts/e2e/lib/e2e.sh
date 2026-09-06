@@ -207,32 +207,12 @@ copy_runtime_config_for_scan() {
     cat -- "${path}" >"${copy}"
     return 0
   fi
-  if command -v sudo >/dev/null 2>&1 && command -v getent >/dev/null 2>&1 && getent group podlaz-xray >/dev/null 2>&1; then
-    if sudo -n -u "$(id -un)" -g podlaz-xray cat -- "${path}" >"${copy}" 2>"${copy}.stderr"; then
-      rm -f -- "${copy}.stderr"
-      return 0
-    fi
+  if command -v sudo >/dev/null 2>&1 && sudo -n cat -- "${path}" >"${copy}" 2>"${copy}.stderr"; then
     rm -f -- "${copy}.stderr"
+    return 0
   fi
+  rm -f -- "${copy}.stderr"
   return 1
-}
-
-record_runtime_config_read_boundary() {
-  local label="$1"
-  local path="$2"
-  local evidence="$3"
-  local stat_output
-  {
-    printf 'Runtime config content scan boundary\n'
-    printf 'label: %s\n' "${label}"
-    printf 'path: %s\n' "${path}"
-    printf 'reason: runtime config is not readable by the e2e runner without privileged file reads\n'
-    if stat_output="$(stat -Lc 'mode=%A owner=%U group=%G path=%n' -- "${path}" 2>&1)"; then
-      printf '%s\n' "${stat_output}"
-    else
-      printf 'stat: %s\n' "${stat_output}"
-    fi
-  } >>"${evidence}"
 }
 
 assert_active_runtime_config_artifacts_safe() {
@@ -240,15 +220,12 @@ assert_active_runtime_config_artifacts_safe() {
   local status_json="$2"
   local paths=()
   local source_copies=()
-  local path copy report evidence scan_code=0
+  local path copy report
 
   mapfile -t paths < <(runtime_config_paths_from_status_json "${status_json}")
   if [[ "${#paths[@]}" -eq 0 ]]; then
     fail "${label}: active status did not expose runtime_config_path for generated-content redaction scan"
   fi
-
-  evidence="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-runtime-config-read-boundary.txt"
-  : >"${evidence}"
 
   for path in "${paths[@]}"; do
     [[ "${path}" == /* ]] || fail "${label}: runtime_config_path is not absolute"
@@ -256,25 +233,18 @@ assert_active_runtime_config_artifacts_safe() {
     chmod 600 "${copy}"
     if copy_runtime_config_for_scan "${path}" "${copy}"; then
       source_copies+=("${copy}")
-    else
-      rm -f -- "${copy}"
-      record_runtime_config_read_boundary "${label}" "${path}" "${evidence}"
+      continue
     fi
+    rm -f -- "${copy}" "${source_copies[@]}"
+    fail "${label}: runtime config could not be read for generated-content redaction scan"
   done
-
-  if [[ "${#source_copies[@]}" -eq 0 ]]; then
-    log "${label}: runtime config content is not readable by the e2e runner; recorded permission-boundary evidence"
-    return 0
-  fi
 
   report="${E2E_ARTIFACT_DIR}/$(safe_name "${label}")-content-redaction-scan.txt"
   require_cmd python3
   if python3 "${E2E_REDACTION_SCAN}" file-contents "${E2E_ARTIFACT_DIR}" "${report}" "${source_copies[@]}"; then
     rm -f -- "${source_copies[@]}"
-    rm -f -- "${evidence}"
     return 0
   fi
-  scan_code=$?
   rm -f -- "${source_copies[@]}"
   fail "${label}: generated runtime config appeared in e2e artifacts"
 }
