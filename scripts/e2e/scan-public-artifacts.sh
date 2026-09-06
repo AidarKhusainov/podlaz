@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
 
-require_cmd find sort
+require_cmd find sort python3
 
 result_file="${E2E_ARTIFACT_DIR}/real-provider-result.txt"
 mapfile -d '' -t public_entries < <(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -print0)
@@ -33,14 +33,15 @@ case "${result}" in
       failure_name="$(basename -- "${failure_stderr}")"
       failure_name="${failure_name%.stderr}"
       failure_name="${failure_name#*-}"
-      bash "${SCRIPT_DIR}/sanitize-private-failure.sh" "${failure_name}" "${failure_stderr}" >>"${result_file}"
+      failure_class="$(python3 "${SCRIPT_DIR}/lib/tun_soak_metrics.py" classify-cli-error --stderr-file "${failure_stderr}")"
+      printf 'command: %s\nclass: %s\n' "$(safe_name "${failure_name}")" "${failure_class}" >>"${result_file}"
     else
       printf 'command: unavailable\nclass: unclassified\n' >>"${result_file}"
     fi
 
     [[ "$(wc -l <"${result_file}")" -eq 3 ]] || fail "failed real-provider result must contain exactly three lines"
     sed -n '2p' "${result_file}" | grep -Eq '^command: [A-Za-z0-9._-]+$' || fail "real-provider failure command is invalid"
-    sed -n '3p' "${result_file}" | grep -Eq '^class: (authorization|daemon-transport|runtime|timeout|unclassified)$' || fail "real-provider failure class is invalid"
+    sed -n '3p' "${result_file}" | grep -Eq '^class: (authorization-denied|authorization-unavailable|daemon-internal|daemon-unavailable|unclassified)$' || fail "real-provider failure class is invalid"
     ;;
   *) fail "real-provider result has unexpected content" ;;
 esac
