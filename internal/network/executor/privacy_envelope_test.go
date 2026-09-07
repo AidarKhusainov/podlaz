@@ -12,7 +12,7 @@ import (
 
 func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing.T) {
 	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
-	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: privacyEnvelopeListOutputForTest(plan.Table, "192.0.2.10")}}
+	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: privacyEnvelopeJSONForTest(plan.Table, "192.0.2.10")}}
 	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir()}
 
 	if err := exec.Apply(context.Background(), plan); err != nil {
@@ -28,7 +28,7 @@ func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing
 	if len(runner.commands) != 3 {
 		t.Fatalf("expected apply batch, exact verify, exact remove, got %#v", runner.commands)
 	}
-	if got := runner.commands[1]; !reflect.DeepEqual(got, []string{"nft", "-y", "list", "table", "inet", plan.Table}) {
+	if got := runner.commands[1]; !reflect.DeepEqual(got, []string{"nft", "-j", "list", "table", "inet", plan.Table}) {
 		t.Fatalf("unexpected verify command: %#v", got)
 	}
 	if got := runner.commands[2]; !reflect.DeepEqual(got, []string{"nft", "delete", "table", "inet", plan.Table}) {
@@ -87,14 +87,14 @@ func TestPrivacyEnvelopeExecutorBatchFailureNeverRunsCompensatingDelete(t *testi
 func TestPrivacyEnvelopeExecutorVerifyRejectsCompositionDrift(t *testing.T) {
 	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
 	output := strings.Replace(
-		privacyEnvelopeListOutputForTest(plan.Table, "192.0.2.10"),
-		`counter reject comment "podlaz:privacy-envelope:block-direct"`,
-		`meta l4proto tcp counter accept comment "foreign:extra"\n\t\tcounter reject comment "podlaz:privacy-envelope:block-direct"`,
+		privacyEnvelopeJSONForTest(plan.Table, "192.0.2.10"),
+		`"comment":"podlaz:privacy-envelope:block-direct"`,
+		`"comment":"foreign:replacement"`,
 		1,
 	)
 	err := (PrivacyEnvelopeExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
 	if err == nil {
-		t.Fatal("exact verification must reject extra firewall rules")
+		t.Fatal("exact verification must reject changed ownership comment")
 	}
 }
 
@@ -147,14 +147,14 @@ func privacyEnvelopePlanForTest(table, bootstrapIPv4 string) PrivacyEnvelopePlan
 	}
 }
 
-func privacyEnvelopeListOutputForTest(table, bootstrapIPv4 string) string {
-	return `table inet ` + table + ` {
-	chain output {
-		type filter hook output priority -10; policy accept;
-		ip daddr ` + bootstrapIPv4 + ` counter accept comment "podlaz:privacy-envelope:bootstrap"
-		oifname "lo" counter accept comment "podlaz:privacy-envelope:loopback"
-		oifname "podlaz0" counter accept comment "podlaz:privacy-envelope:tun-egress"
-		counter reject comment "podlaz:privacy-envelope:block-direct"
-	}
-}`
+func privacyEnvelopeJSONForTest(table, bootstrapIPv4 string) string {
+	return `{"nftables":[
+{"metainfo":{"version":"1.0.9","release_name":"Old Doc Yak","json_schema_version":1}},
+{"table":{"family":"inet","name":"` + table + `","handle":10}},
+{"chain":{"family":"inet","table":"` + table + `","name":"output","handle":1,"type":"filter","hook":"output","prio":-10,"policy":"accept"}},
+{"rule":{"family":"inet","table":"` + table + `","chain":"output","handle":1,"expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"` + bootstrapIPv4 + `"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:privacy-envelope:bootstrap"}},
+{"rule":{"family":"inet","table":"` + table + `","chain":"output","handle":2,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"lo"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:privacy-envelope:loopback"}},
+{"rule":{"family":"inet","table":"` + table + `","chain":"output","handle":3,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"podlaz0"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:privacy-envelope:tun-egress"}},
+{"rule":{"family":"inet","table":"` + table + `","chain":"output","handle":4,"expr":[{"counter":{"packets":0,"bytes":0}},{"reject":{"type":"icmpx","expr":"port-unreachable"}}],"comment":"podlaz:privacy-envelope:block-direct"}}
+]}`
 }
