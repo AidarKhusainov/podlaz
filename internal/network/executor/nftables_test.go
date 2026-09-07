@@ -45,7 +45,7 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		t.Fatalf("unexpected commands after apply:\nwant %#v\n got %#v", wantTail, runner.commands[1:])
 	}
 	for _, want := range []string{
-		"add table inet podlaz",
+		"create table inet podlaz",
 		"add chain inet podlaz output { type filter hook output priority 0; policy accept; }",
 		`add rule inet podlaz output ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"`,
 		`add rule inet podlaz output oifname "lo" counter accept comment "podlaz:firewall:loopback"`,
@@ -82,7 +82,7 @@ func TestNftablesExecutorApplyUsesAtomicBatchAndDoesNotRollbackOnBatchFailure(t 
 	if len(runner.commands) != 1 || len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
 		t.Fatalf("expected only nft batch apply command without rollback side effect, got %#v", runner.commands)
 	}
-	if !strings.Contains(runner.script, "add table inet podlaz") || !strings.Contains(runner.script, `comment "podlaz:firewall:kill-switch"`) {
+	if !strings.Contains(runner.script, "create table inet podlaz") || !strings.Contains(runner.script, `comment "podlaz:firewall:kill-switch"`) {
 		t.Fatalf("expected complete batch script to be produced before apply failure, got:\n%s", runner.script)
 	}
 }
