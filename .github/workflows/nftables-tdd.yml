@@ -28,17 +28,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Materialize dependency graph
-        env:
-          GOFLAGS: -mod=mod
-        run: |
-          set -euxo pipefail
-          go mod tidy
-          echo '--- go.mod ---'
-          cat go.mod
-          echo '--- go.sum ---'
-          cat go.sum
-
       - name: Focused baseline
         env:
           GOFLAGS: -mod=readonly
