@@ -204,7 +204,7 @@ func validateResolvedLinkReadiness(plan planner.TunPlan) error {
 	if strings.TrimSpace(plan.TunDevice.Name) == "" || strings.TrimSpace(address.Interface) != strings.TrimSpace(plan.TunDevice.Name) {
 		return errors.New("planned TUN address interface does not match the TUN device")
 	}
-	if address.Family != "ipv4" || strings.TrimSpace(address.CIDR) == "" || address.Action != planner.TunAddressActionAssign {
+	if address.Family != "ipv4" || strings.TrimSpace(address.CIDR) == "" || !planner.IsTunAddressAssignAction(address.Action) {
 		return errors.New("planned daemon-owned IPv4 address is absent")
 	}
 	if address.LinkIndex <= 0 || address.LinkKind != "tun" || !address.AppearedAfterCore {
