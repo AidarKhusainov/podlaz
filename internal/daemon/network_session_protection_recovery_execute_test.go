@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -12,6 +14,8 @@ import (
 )
 
 func TestRecoverExecuteRoutesProtectionOnlyAuthorityThroughNetworkSessionResume(t *testing.T) {
+	installRecoveryObservationFakes(t)
+
 	runtimeDir := t.TempDir()
 	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
 	if err := continuation.Save(testContinuationRequest()); err != nil {
@@ -93,4 +97,24 @@ func TestRecoverExecuteRoutesProtectionOnlyAuthorityThroughNetworkSessionResume(
 	if len(response.Warnings) != 0 {
 		t.Fatalf("successful protection-only recovery returned warnings: %#v", response.Warnings)
 	}
+}
+
+func installRecoveryObservationFakes(t *testing.T) {
+	t.Helper()
+	binDir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		path := filepath.Join(binDir, name)
+		content := "#!/bin/sh\nset -eu\n" + body + "\n"
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatalf("write fake %s: %v", name, err)
+		}
+	}
+	write("ip", `printf '%s\n' 'Device "podlaz0" does not exist.' >&2
+exit 1`)
+	write("nft", `printf '%s\n' 'Error: Could not process rule: No such file or directory' >&2
+exit 1`)
+	write("resolvectl", `printf '%s\n' 'Failed to resolve interface "podlaz0": No such device' >&2
+exit 1`)
+	t.Setenv("PATH", binDir)
 }
