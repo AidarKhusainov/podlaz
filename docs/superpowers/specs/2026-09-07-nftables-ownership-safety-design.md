@@ -32,7 +32,7 @@ Decode structured output into one small private internal snapshot model containi
 - table family and name;
 - exact table flags;
 - ephemeral table handle;
-- exact chain order and security-relevant chain metadata;
+- exact chain cardinality and security-relevant chain metadata;
 - ordered rules;
 - supported expressions/statements and verdicts;
 - ownership comments;
@@ -51,11 +51,13 @@ For each expected chain, exact verification includes at least:
 - policy;
 - device binding (`dev`) where the chain representation supports it, including exact absence when Podlaz expects no device binding.
 
+Chain cardinality is exact. Chain ordering is compared only where nftables semantics make that order meaningful; independent chain enumeration order must not become presentation-dependent ownership evidence. Rule order within each chain remains exact and security-relevant.
+
 Kernel-assigned chain/rule handles and runtime counter values are not persisted composition semantics and must not create false drift.
 
 ### Strict object model
 
-The decoder is strict and narrow. It validates the document envelope, supported JSON schema, expected object identities/cardinality, and all security-relevant expressions.
+The decoder is strict and narrow. It validates the document envelope, metainfo shape when emitted, supported JSON schema semantics, expected object identities/cardinality, and all security-relevant expressions.
 
 For current Podlaz compositions, any table-scoped object kind that is not explicitly expected must fail closed. This includes unexpected sets, maps, flowtables, named counters, quotas, stateful objects, or any other unhandled table member. The implementation must not silently skip an unknown object because it does not currently affect the planned rule list.
 
@@ -174,6 +176,7 @@ Required regression coverage includes:
 - unexpected table flags, including `dormant`, are rejected;
 - exact expected table flags are accepted;
 - changed chain name/type/hook/priority/policy/device binding is rejected;
+- chain enumeration order alone does not create false drift when order has no packet-processing semantics;
 - extra/missing/reordered/changed rules, comments, verdicts, predicates, unknown expressions, and duplicate/ambiguous JSON objects are rejected;
 - unexpected table-scoped sets/maps/flowtables/named counters/quotas/stateful objects are rejected rather than ignored;
 - exact absent/present/unknown observation semantics;
