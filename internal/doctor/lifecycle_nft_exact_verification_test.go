@@ -13,13 +13,13 @@ import (
 
 func TestStaleResourcesRejectsChangedActiveNFTTableWithSameFamilyAndName(t *testing.T) {
 	plan := lifecycleNFTPlanForTest()
-	runner := exactNFTLifecycleRunner{nftOutput: `table inet podlaz {
-	chain output {
-		type filter hook output priority 0; policy accept;
-		oifname "podlaz0" counter packets 0 bytes 0 accept comment "podlaz:firewall:tun-egress"
-		meta l4proto tcp counter packets 0 bytes 0 accept comment "foreign-extra"
-	}
-}`}
+	runner := exactNFTLifecycleRunner{nftOutput: `{"nftables":[
+{"metainfo":{"version":"1.0.9","release_name":"Old Doc Yak","json_schema_version":1}},
+{"table":{"family":"inet","name":"podlaz","handle":10}},
+{"chain":{"family":"inet","table":"podlaz","name":"output","handle":1,"type":"filter","hook":"output","prio":0,"policy":"accept"}},
+{"rule":{"family":"inet","table":"podlaz","chain":"output","handle":1,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"podlaz0"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:firewall:tun-egress"}},
+{"rule":{"family":"inet","table":"podlaz","chain":"output","handle":2,"expr":[{"match":{"op":"==","left":{"meta":{"key":"l4proto"}},"right":"tcp"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"foreign-extra"}}
+]}`}
 
 	check := staleResources(context.Background(), runner, staleResourceOptions{
 		ipPath: "/usr/bin/ip", ipOK: true,
@@ -83,7 +83,7 @@ func (r exactNFTLifecycleRunner) Run(_ context.Context, name string, args ...str
 	switch command {
 	case "ip -details -o link show dev podlaz0":
 		return CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun"}, nil
-	case "nft -y list table inet podlaz":
+	case "nft -j list table inet podlaz":
 		return CommandResult{Stdout: r.nftOutput}, nil
 	default:
 		return CommandResult{ExitCode: -1}, errors.New("unexpected command: " + command)
