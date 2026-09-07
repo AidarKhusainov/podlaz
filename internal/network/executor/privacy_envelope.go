@@ -39,17 +39,11 @@ func (e PrivacyEnvelopeExecutor) Exists(ctx context.Context, plan PrivacyEnvelop
 	if err := validatePrivacyEnvelopePlan(plan); err != nil {
 		return false, err
 	}
-	result, err := observeCommand(ctx, e.Runner, "nft", "-y", "list", "table", plan.Family, plan.Table)
+	present, err := observeNftTablePresence(ctx, e.Runner, plan.Family, plan.Table)
 	if err != nil {
-		if resourceMissing(err) {
-			return false, nil
-		}
 		return false, fmt.Errorf("observe privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
-	if _, err := parseOwnedNftTable(result.Stdout, plan.Family, plan.Table); err != nil {
-		return false, fmt.Errorf("observe privacy envelope %s %s: %w", plan.Family, plan.Table, err)
-	}
-	return true, nil
+	return present, nil
 }
 
 func (e PrivacyEnvelopeExecutor) Apply(ctx context.Context, plan PrivacyEnvelopePlan) error {
@@ -131,7 +125,7 @@ func privacyEnvelopeApplyScript(plan PrivacyEnvelopePlan) (string, error) {
 		return "", err
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "add table %s %s\n", plan.Family, plan.Table)
+	fmt.Fprintf(&builder, "create table %s %s\n", plan.Family, plan.Table)
 	for _, chain := range plan.Chains {
 		fmt.Fprintf(
 			&builder,
