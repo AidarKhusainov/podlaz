@@ -28,6 +28,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Resolve nftables mutation dependency
+        run: go list -m -json github.com/google/nftables@f9b52ed2ba653815684ff3e19a4d087ff0b87332
+
       - name: Focused baseline
         run: |
           set -euxo pipefail
