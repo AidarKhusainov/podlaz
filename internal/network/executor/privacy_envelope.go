@@ -89,16 +89,16 @@ func (e PrivacyEnvelopeExecutor) Verify(ctx context.Context, plan PrivacyEnvelop
 	if err := validatePrivacyEnvelopePlan(plan); err != nil {
 		return err
 	}
-	result, err := observeCommand(ctx, e.Runner, "nft", "-y", "list", "table", plan.Family, plan.Table)
+	result, err := observeCommand(ctx, e.Runner, "nft", "-j", "list", "table", plan.Family, plan.Table)
 	if err != nil {
 		return fmt.Errorf("verify privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
-	observed, err := parseOwnedNftTable(result.Stdout, plan.Family, plan.Table)
+	snapshot, err := parseNftTableJSON(result.Stdout, plan.Family, plan.Table)
 	if err != nil {
 		return fmt.Errorf("verify privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
 	firewallPlan := planner.TunFirewallPlan{Chains: plan.Chains, Rules: plan.Rules}
-	if err := verifyExactNftChains(observed, firewallPlan); err != nil {
+	if err := verifyNftTableSnapshot(snapshot, firewallPlan); err != nil {
 		return fmt.Errorf("verify privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
 	return nil
