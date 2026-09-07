@@ -55,19 +55,27 @@ func observeVerifiedNftTableForMutation(
 	family, table string,
 	plan planner.TunFirewallPlan,
 ) (nftMutationTarget, bool, error) {
-	present, err := observeNftTablePresence(ctx, runner, family, table)
-	if err != nil {
-		return nftMutationTarget{}, false, err
-	}
-	if !present {
-		return nftMutationTarget{}, true, nil
-	}
-
 	for attempt := 0; attempt < nftCoherentObservationAttempts; attempt++ {
 		before, err := backend.generation(ctx)
 		if err != nil {
 			return nftMutationTarget{}, false, fmt.Errorf("read nftables generation before observation: %w", err)
 		}
+
+		present, err := observeNftTablePresence(ctx, runner, family, table)
+		if err != nil {
+			return nftMutationTarget{}, false, err
+		}
+		if !present {
+			after, err := backend.generation(ctx)
+			if err != nil {
+				return nftMutationTarget{}, false, fmt.Errorf("read nftables generation after absence observation: %w", err)
+			}
+			if before != after {
+				continue
+			}
+			return nftMutationTarget{}, true, nil
+		}
+
 		result, err := observeCommand(ctx, runner, "nft", "-j", "list", "table", family, table)
 		if err != nil {
 			return nftMutationTarget{}, false, fmt.Errorf("observe nftables table %s %s for mutation: %w", family, table, err)
