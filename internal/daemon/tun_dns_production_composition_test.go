@@ -335,17 +335,32 @@ func (r *productionTunCommandRunner) runNFT(args []string, command string) (nete
 		return netexecutor.CommandResult{ExitCode: 0}, nil
 	}
 	switch command {
-	case "nft -y list table inet podlaz":
+	case "nft -j list tables":
+		return netexecutor.CommandResult{Stdout: productionNFTTablesJSONForTest(r.nftTable), ExitCode: 0}, nil
+	case "nft -j list table inet podlaz":
 		if !r.nftTable {
 			return netexecutor.CommandResult{ExitCode: 1, Stderr: "No such file or directory"}, fmt.Errorf("nft table absent")
 		}
 		return netexecutor.CommandResult{Stdout: productionNFTListOutputForTest(), ExitCode: 0}, nil
-	case "nft delete table inet podlaz":
-		r.nftTable = false
-		return netexecutor.CommandResult{ExitCode: 0}, nil
 	default:
 		return unexpectedProductionCommand(command)
 	}
+}
+
+func (r *productionTunCommandRunner) NftablesGeneration(context.Context) (uint32, error) {
+	return 7, nil
+}
+
+func (r *productionTunCommandRunner) NftablesRemoveTable(_ context.Context, family, table string, handle uint64, generation uint32) error {
+	if family != "inet" || table != "podlaz" || handle != 10 || generation != 7 {
+		return fmt.Errorf("unexpected guarded nftables removal target %s %s handle=%d generation=%d", family, table, handle, generation)
+	}
+	r.nftTable = false
+	return nil
+}
+
+func (r *productionTunCommandRunner) NftablesReplaceTable(_ context.Context, family, table string, handle uint64, generation uint32, _ planner.TunFirewallPlan) error {
+	return fmt.Errorf("unexpected nftables replacement target %s %s handle=%d generation=%d", family, table, handle, generation)
 }
 
 func unexpectedProductionCommand(command string) (netexecutor.CommandResult, error) {
@@ -362,13 +377,20 @@ func (r *productionTunCommandRunner) count(command string) int {
 	return count
 }
 
-func productionNFTListOutputForTest() string {
-	return `table inet podlaz {
-	chain output {
-		type filter hook output priority 0; policy accept;
-		ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"
-		oifname "lo" counter accept comment "podlaz:firewall:loopback"
-		oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"
+func productionNFTTablesJSONForTest(present bool) string {
+	if !present {
+		return `{"nftables":[{"metainfo":{"version":"1.0.9","release_name":"Old Doc Yak","json_schema_version":1}}]}`
 	}
-}`
+	return `{"nftables":[{"metainfo":{"version":"1.0.9","release_name":"Old Doc Yak","json_schema_version":1}},{"table":{"family":"inet","name":"podlaz","handle":10}}]}`
+}
+
+func productionNFTListOutputForTest() string {
+	return `{"nftables":[
+{"metainfo":{"version":"1.0.9","release_name":"Old Doc Yak","json_schema_version":1}},
+{"table":{"family":"inet","name":"podlaz","handle":10}},
+{"chain":{"family":"inet","table":"podlaz","name":"output","handle":1,"type":"filter","hook":"output","prio":0,"policy":"accept"}},
+{"rule":{"family":"inet","table":"podlaz","chain":"output","handle":1,"expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"203.0.113.10"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:firewall:server-bypass"}},
+{"rule":{"family":"inet","table":"podlaz","chain":"output","handle":2,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"lo"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:firewall:loopback"}},
+{"rule":{"family":"inet","table":"podlaz","chain":"output","handle":3,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"podlaz0"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:firewall:tun-egress"}}
+]}`
 }
