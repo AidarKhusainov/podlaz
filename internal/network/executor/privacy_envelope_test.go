@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,8 +13,20 @@ import (
 
 func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing.T) {
 	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
-	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: privacyEnvelopeJSONForTest(plan.Table, "192.0.2.10")}}
-	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir()}
+	runner := &privacyEnvelopeRecordingRunner{
+		presenceJSON: nftTablesPresenceJSONForTest(plan.Family, plan.Table, 10),
+		tableJSON:    privacyEnvelopeJSONForTest(plan.Table, "192.0.2.10"),
+	}
+	backend := coherentTestMutationBackend(70)
+	removeCalls := 0
+	backend.removeTable = func(_ context.Context, target nftMutationTarget) error {
+		removeCalls++
+		if target.Family != plan.Family || target.Table != plan.Table || target.Handle != 10 || target.Generation != 70 {
+			t.Fatalf("unexpected verified removal target: %#v", target)
+		}
+		return nil
+	}
+	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir(), mutation: backend}
 
 	if err := exec.Apply(context.Background(), plan); err != nil {
 		t.Fatalf("apply privacy envelope: %v", err)
@@ -24,15 +37,29 @@ func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing
 	if err := exec.Remove(context.Background(), plan); err != nil {
 		t.Fatalf("remove privacy envelope: %v", err)
 	}
+	if removeCalls != 1 {
+		t.Fatalf("verified removal calls=%d, want 1", removeCalls)
+	}
 
-	if len(runner.commands) != 3 {
-		t.Fatalf("expected apply batch, exact verify, exact remove, got %#v", runner.commands)
+	wantCommands := [][]string{
+		{"nft", "-f", runner.commands[0][2]},
+		{"nft", "-j", "list", "table", "inet", plan.Table},
+		{"nft", "-j", "list", "tables"},
+		{"nft", "-j", "list", "table", "inet", plan.Table},
 	}
-	if got := runner.commands[1]; !reflect.DeepEqual(got, []string{"nft", "-j", "list", "table", "inet", plan.Table}) {
-		t.Fatalf("unexpected verify command: %#v", got)
+	if len(runner.commands) != len(wantCommands) {
+		t.Fatalf("commands=%#v, want %d commands", runner.commands, len(wantCommands))
 	}
-	if got := runner.commands[2]; !reflect.DeepEqual(got, []string{"nft", "delete", "table", "inet", plan.Table}) {
-		t.Fatalf("unexpected remove command: %#v", got)
+	for i := range wantCommands {
+		if i == 0 {
+			if len(runner.commands[i]) != 3 || runner.commands[i][0] != "nft" || runner.commands[i][1] != "-f" {
+				t.Fatalf("unexpected apply command: %#v", runner.commands[i])
+			}
+			continue
+		}
+		if !reflect.DeepEqual(runner.commands[i], wantCommands[i]) {
+			t.Fatalf("command[%d]=%#v, want %#v", i, runner.commands[i], wantCommands[i])
+		}
 	}
 	for _, want := range []string{
 		"create table inet " + plan.Table,
@@ -48,38 +75,54 @@ func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing
 	}
 }
 
-func TestPrivacyEnvelopeExecutorReplaceIsOneAtomicNftBatch(t *testing.T) {
+func TestPrivacyEnvelopeExecutorReplaceUsesFreshVerifiedMutationBackend(t *testing.T) {
 	oldPlan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
 	newPlan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "198.51.100.20")
-	runner := &nftScriptRecordingRunner{}
-	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir()}
+	runner := &privacyEnvelopeRecordingRunner{
+		presenceJSON: nftTablesPresenceJSONForTest(oldPlan.Family, oldPlan.Table, 10),
+		tableJSON:    privacyEnvelopeJSONForTest(oldPlan.Table, "192.0.2.10"),
+	}
+	backend := coherentTestMutationBackend(71)
+	replaceCalls := 0
+	backend.replaceTable = func(_ context.Context, target nftMutationTarget, replacement planner.TunFirewallPlan) error {
+		replaceCalls++
+		if target.Handle != 10 || target.Generation != 71 {
+			t.Fatalf("unexpected replacement target: %#v", target)
+		}
+		if replacement.Family != newPlan.Family || replacement.Table != newPlan.Table || !reflect.DeepEqual(replacement.Chains, newPlan.Chains) || !reflect.DeepEqual(replacement.Rules, newPlan.Rules) {
+			t.Fatalf("unexpected replacement composition: %#v", replacement)
+		}
+		return nil
+	}
+	exec := PrivacyEnvelopeExecutor{Runner: runner, mutation: backend}
 
 	if err := exec.Replace(context.Background(), oldPlan, newPlan); err != nil {
 		t.Fatalf("replace privacy envelope: %v", err)
 	}
-	if len(runner.commands) != 1 || len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
-		t.Fatalf("replacement must be one nft batch, got %#v", runner.commands)
+	if replaceCalls != 1 {
+		t.Fatalf("replacement calls=%d, want 1", replaceCalls)
 	}
-	deleteAt := strings.Index(runner.script, "delete table inet "+oldPlan.Table)
-	createAt := strings.Index(runner.script, "create table inet "+newPlan.Table)
-	newEndpointAt := strings.Index(runner.script, "ip daddr 198.51.100.20")
-	if deleteAt < 0 || createAt <= deleteAt || newEndpointAt <= createAt {
-		t.Fatalf("replacement batch does not atomically rebuild exact table:\n%s", runner.script)
+	wantCommands := [][]string{
+		{"nft", "-j", "list", "tables"},
+		{"nft", "-j", "list", "table", "inet", oldPlan.Table},
 	}
-	if strings.Contains(runner.script, "192.0.2.10") {
-		t.Fatalf("replacement must reconstruct only the new exact composition:\n%s", runner.script)
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("replacement observation commands=%#v, want %#v", runner.commands, wantCommands)
+	}
+	if runner.script != "" {
+		t.Fatalf("guarded replacement must not use a separate nft -f script:\n%s", runner.script)
 	}
 }
 
 func TestPrivacyEnvelopeExecutorBatchFailureNeverRunsCompensatingDelete(t *testing.T) {
 	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
-	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{err: errors.New("injected nft transaction failure")}}
+	runner := &privacyEnvelopeRecordingRunner{batchErr: errors.New("injected nft transaction failure")}
 	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir()}
 
 	if err := exec.Apply(context.Background(), plan); err == nil {
 		t.Fatal("expected injected apply failure")
 	}
-	if len(runner.commands) != 1 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
+	if len(runner.commands) != 1 || len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
 		t.Fatalf("failed atomic apply must not perform compensating mutations, got %#v", runner.commands)
 	}
 }
@@ -92,7 +135,7 @@ func TestPrivacyEnvelopeExecutorVerifyRejectsCompositionDrift(t *testing.T) {
 		`"comment":"foreign:replacement"`,
 		1,
 	)
-	err := (PrivacyEnvelopeExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
+	err := (PrivacyEnvelopeExecutor{Runner: &privacyEnvelopeRecordingRunner{tableJSON: output}}).Verify(context.Background(), plan)
 	if err == nil {
 		t.Fatal("exact verification must reject changed ownership comment")
 	}
@@ -100,7 +143,7 @@ func TestPrivacyEnvelopeExecutorVerifyRejectsCompositionDrift(t *testing.T) {
 
 func TestPrivacyEnvelopeExecutorRefusesAmbiguousTargetWithoutMutation(t *testing.T) {
 	plan := privacyEnvelopePlanForTest("foreign_table", "192.0.2.10")
-	runner := &recordingRunner{}
+	runner := &privacyEnvelopeRecordingRunner{}
 	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir()}
 
 	if err := exec.Apply(context.Background(), plan); err == nil {
@@ -114,14 +157,20 @@ func TestPrivacyEnvelopeExecutorRefusesAmbiguousTargetWithoutMutation(t *testing
 	}
 }
 
-func TestPrivacyEnvelopeExecutorRemoveIsIdempotentOnlyForMissingExactTable(t *testing.T) {
+func TestPrivacyEnvelopeExecutorRemoveIsIdempotentOnlyForStructurallyProvenAbsence(t *testing.T) {
 	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
-	runner := &recordingRunner{err: errors.New("No such file or directory")}
-	if err := (PrivacyEnvelopeExecutor{Runner: runner}).Remove(context.Background(), plan); err != nil {
-		t.Fatalf("missing exact envelope must be idempotent: %v", err)
+	runner := &privacyEnvelopeRecordingRunner{presenceJSON: nftTablesAbsenceJSONForTest()}
+	backend := coherentTestMutationBackend(72)
+	backend.removeTable = func(context.Context, nftMutationTarget) error {
+		t.Fatal("proven absence must not issue a mutation")
+		return nil
 	}
-	if len(runner.commands) != 1 {
-		t.Fatalf("expected one exact removal attempt, got %#v", runner.commands)
+	if err := (PrivacyEnvelopeExecutor{Runner: runner, mutation: backend}).Remove(context.Background(), plan); err != nil {
+		t.Fatalf("structurally proven missing envelope must be idempotent: %v", err)
+	}
+	want := [][]string{{"nft", "-j", "list", "tables"}}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("absence observation commands=%#v, want %#v", runner.commands, want)
 	}
 }
 
@@ -157,4 +206,38 @@ func privacyEnvelopeJSONForTest(table, bootstrapIPv4 string) string {
 {"rule":{"family":"inet","table":"` + table + `","chain":"output","handle":3,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"podlaz0"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:privacy-envelope:tun-egress"}},
 {"rule":{"family":"inet","table":"` + table + `","chain":"output","handle":4,"expr":[{"counter":{"packets":0,"bytes":0}},{"reject":{"type":"icmpx","expr":"port-unreachable"}}],"comment":"podlaz:privacy-envelope:block-direct"}}
 ]}`
+}
+
+type privacyEnvelopeRecordingRunner struct {
+	commands     [][]string
+	script       string
+	presenceJSON string
+	tableJSON    string
+	batchErr     error
+}
+
+func (r *privacyEnvelopeRecordingRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
+	command := append([]string{name}, args...)
+	r.commands = append(r.commands, command)
+	if name != "nft" {
+		return CommandResult{ExitCode: 1}, errors.New("unexpected command")
+	}
+	if len(args) == 2 && args[0] == "-f" {
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			return CommandResult{ExitCode: 1, Stderr: err.Error()}, err
+		}
+		r.script = string(data)
+		if r.batchErr != nil {
+			return CommandResult{ExitCode: 1, Stderr: r.batchErr.Error()}, r.batchErr
+		}
+		return CommandResult{}, nil
+	}
+	if reflect.DeepEqual(args, []string{"-j", "list", "tables"}) {
+		return CommandResult{Stdout: r.presenceJSON}, nil
+	}
+	if len(args) == 5 && reflect.DeepEqual(args[:4], []string{"-j", "list", "table", "inet"}) {
+		return CommandResult{Stdout: r.tableJSON}, nil
+	}
+	return CommandResult{ExitCode: 1}, errors.New("unexpected nft command")
 }
