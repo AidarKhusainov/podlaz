@@ -292,7 +292,7 @@ func nftablesApplyScript(plan planner.TunFirewallPlan) (string, error) {
 	}
 	family, table := firewallFamilyTable(plan)
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "add table %s %s\n", family, table)
+	fmt.Fprintf(&builder, "create table %s %s\n", family, table)
 	for _, chain := range plan.Chains {
 		if chain.Action != planner.FirewallTableAction && chain.Action != planner.FirewallActionAdd {
 			continue
