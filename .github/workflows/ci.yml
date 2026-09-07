@@ -84,7 +84,14 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
+      - name: Install real nftables test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nftables
+
       - name: Go fmt, test, and vet
+        env:
+          PODLAZ_TEST_REAL_NFT: '1'
         run: |
           set -o pipefail
           bash scripts/ci/go-core.sh 2>&1 | tee /tmp/podlaz-go-core.txt
