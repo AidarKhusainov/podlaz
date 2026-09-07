@@ -137,7 +137,11 @@ func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink
 			if err != nil {
 				return TunAllocationEvidence{}, fmt.Errorf("convert IPv4 route allocation evidence: %w", err)
 			}
-			converted.Destination = prefix
+			if prefix.Bits() == 0 {
+				converted.Default = true
+			} else {
+				converted.Destination = prefix
+			}
 		}
 		evidence.IPv4Routes = append(evidence.IPv4Routes, converted)
 	}
