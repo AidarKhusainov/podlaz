@@ -33,6 +33,7 @@ type PrivacyEnvelopePlan struct {
 type PrivacyEnvelopeExecutor struct {
 	Runner    CommandRunner
 	ScriptDir string
+	mutation  *nftMutationBackend
 }
 
 func (e PrivacyEnvelopeExecutor) Exists(ctx context.Context, plan PrivacyEnvelopePlan) (bool, error) {
@@ -57,10 +58,9 @@ func (e PrivacyEnvelopeExecutor) Apply(ctx context.Context, plan PrivacyEnvelope
 	return e.runBatch(ctx, plan, script, "apply")
 }
 
-// Replace swaps one exact composition for another in one nft transaction. The
-// family/table identity must remain stable for the Network Session. If the batch
-// fails, nftables transaction semantics leave the previous kernel generation in
-// place; no userspace compensating delete is attempted.
+// Replace re-proves the current composition and atomically swaps it for the new
+// one under the ruleset generation that was observed. A stale verification can
+// therefore never authorize deletion of a same-name replacement.
 func (e PrivacyEnvelopeExecutor) Replace(ctx context.Context, oldPlan, newPlan PrivacyEnvelopePlan) error {
 	if err := validatePrivacyEnvelopePlan(oldPlan); err != nil {
 		return fmt.Errorf("validate old privacy envelope: %w", err)
@@ -71,12 +71,23 @@ func (e PrivacyEnvelopeExecutor) Replace(ctx context.Context, oldPlan, newPlan P
 	if oldPlan.Family != newPlan.Family || oldPlan.Table != newPlan.Table {
 		return errors.New("privacy envelope replacement cannot change exact table identity")
 	}
-	applyScript, err := privacyEnvelopeApplyScript(newPlan)
+	backend := e.mutationBackend()
+	current := planner.TunFirewallPlan{Family: oldPlan.Family, Table: oldPlan.Table, Chains: oldPlan.Chains, Rules: oldPlan.Rules}
+	target, absent, err := observeVerifiedNftTableForMutation(ctx, e.Runner, backend, oldPlan.Family, oldPlan.Table, current)
 	if err != nil {
-		return err
+		return fmt.Errorf("observe exact privacy envelope before replacement: %w", err)
 	}
-	script := fmt.Sprintf("delete table %s %s\n%s", oldPlan.Family, oldPlan.Table, applyScript)
-	return e.runBatch(ctx, newPlan, script, "replace")
+	if absent {
+		return errors.New("privacy envelope disappeared before replacement")
+	}
+	if backend.replaceTable == nil {
+		return errors.New("nftables mutation backend has no replacement operation")
+	}
+	replacement := planner.TunFirewallPlan{Family: newPlan.Family, Table: newPlan.Table, Chains: newPlan.Chains, Rules: newPlan.Rules}
+	if err := backend.replaceTable(ctx, target, replacement); err != nil {
+		return fmt.Errorf("replace privacy envelope %s %s: %w", newPlan.Family, newPlan.Table, err)
+	}
+	return nil
 }
 
 func (e PrivacyEnvelopeExecutor) Verify(ctx context.Context, plan PrivacyEnvelopePlan) error {
@@ -102,10 +113,29 @@ func (e PrivacyEnvelopeExecutor) Remove(ctx context.Context, plan PrivacyEnvelop
 	if err := validatePrivacyEnvelopePlan(plan); err != nil {
 		return err
 	}
-	if err := runCommand(ctx, e.Runner, "nft", "delete", "table", plan.Family, plan.Table); err != nil && !resourceMissing(err) {
+	backend := e.mutationBackend()
+	expected := planner.TunFirewallPlan{Family: plan.Family, Table: plan.Table, Chains: plan.Chains, Rules: plan.Rules}
+	target, absent, err := observeVerifiedNftTableForMutation(ctx, e.Runner, backend, plan.Family, plan.Table, expected)
+	if err != nil {
+		return fmt.Errorf("observe exact privacy envelope before removal: %w", err)
+	}
+	if absent {
+		return nil
+	}
+	if backend.removeTable == nil {
+		return errors.New("nftables mutation backend has no removal operation")
+	}
+	if err := backend.removeTable(ctx, target); err != nil {
 		return fmt.Errorf("remove privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
 	return nil
+}
+
+func (e PrivacyEnvelopeExecutor) mutationBackend() *nftMutationBackend {
+	if e.mutation != nil {
+		return e.mutation
+	}
+	return defaultNftMutationBackend()
 }
 
 func (e PrivacyEnvelopeExecutor) runBatch(ctx context.Context, plan PrivacyEnvelopePlan, script, operation string) error {
