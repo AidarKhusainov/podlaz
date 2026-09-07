@@ -34,3 +34,20 @@ jobs:
         run: |
           set -euxo pipefail
           go test ./internal/network/executor ./internal/daemon ./internal/doctor -count=1
+
+      - name: Install nftables
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nftables
+
+      - name: Compile real nftables contract
+        env:
+          GOFLAGS: -mod=readonly
+        run: go test -c -o /tmp/podlaz-executor-real-nft.test ./internal/network/executor
+
+      - name: Real nftables Privacy Envelope round trip
+        run: |
+          sudo env "PATH=${PATH}" PODLAZ_TEST_REAL_NFT=1 \
+            /tmp/podlaz-executor-real-nft.test \
+            -test.run '^TestPrivacyEnvelopeRealNFTRoundTrip$' \
+            -test.v
