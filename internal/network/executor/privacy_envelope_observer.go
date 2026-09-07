@@ -16,15 +16,9 @@ func (e PrivacyEnvelopeExecutor) PrivacyEnvelopeTableExists(ctx context.Context,
 	if !privacyEnvelopeTableNamePattern.MatchString(table) {
 		return false, errors.New("privacy envelope candidate has invalid table identity")
 	}
-	result, err := observeCommand(ctx, e.Runner, "nft", "-y", "list", "table", family, table)
+	present, err := observeNftTablePresence(ctx, e.Runner, family, table)
 	if err != nil {
-		if resourceMissing(err) {
-			return false, nil
-		}
 		return false, fmt.Errorf("observe privacy envelope candidate %s %s: %w", family, table, err)
 	}
-	if _, err := parseOwnedNftTable(result.Stdout, family, table); err != nil {
-		return false, fmt.Errorf("observe privacy envelope candidate %s %s: %w", family, table, err)
-	}
-	return true, nil
+	return present, nil
 }
