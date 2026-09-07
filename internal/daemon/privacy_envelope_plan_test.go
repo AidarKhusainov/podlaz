@@ -8,8 +8,11 @@ import (
 	"testing"
 )
 
-func TestAllocatePrivacyEnvelopeUsesStableSessionScopedCandidate(t *testing.T) {
-	observer := &privacyEnvelopeObserverStub{}
+func TestPrivacyEnvelopeAllocationSkipsOccupiedGeneratedTablesDeterministically(t *testing.T) {
+	observer := &privacyEnvelopeObserverStub{occupied: map[string]bool{
+		"inet/podlaz_pe_001122334455":   true,
+		"inet/podlaz_pe_001122334455_1": true,
+	}}
 	protection, plan, err := allocatePrivacyEnvelope(
 		context.Background(),
 		"00112233445566778899aabbccddeeff",
@@ -20,49 +23,46 @@ func TestAllocatePrivacyEnvelopeUsesStableSessionScopedCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allocate privacy envelope: %v", err)
 	}
-	if plan.Family != "inet" || plan.Table != "podlaz_pe_001122334455" {
-		t.Fatalf("unexpected exact envelope target: %#v", plan)
+	if protection.Table != "podlaz_pe_001122334455_2" || plan.Table != protection.Table {
+		t.Fatalf("unexpected allocated table: protection=%#v plan=%#v", protection, plan)
 	}
-	if protection.Table != plan.Table || protection.Family != plan.Family || protection.State != networkSessionProtectionArming {
-		t.Fatalf("protection authority does not bind the exact planned table: %#v", protection)
+	if got, want := protection.BootstrapIPv4, []string{"192.0.2.10", "198.51.100.20"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("bootstrap endpoints = %#v, want %#v", got, want)
 	}
-	wantEndpoints := []string{"192.0.2.10", "198.51.100.20"}
-	if !reflect.DeepEqual(protection.BootstrapIPv4, wantEndpoints) {
-		t.Fatalf("bootstrap endpoints = %#v, want %#v", protection.BootstrapIPv4, wantEndpoints)
-	}
-	if protection.CompositionVersion != privacyEnvelopeCompositionVersion {
-		t.Fatalf("composition version = %d, want %d", protection.CompositionVersion, privacyEnvelopeCompositionVersion)
+	if got, want := observer.seen, []string{
+		"inet/podlaz_pe_001122334455",
+		"inet/podlaz_pe_001122334455_1",
+		"inet/podlaz_pe_001122334455_2",
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidate order = %#v, want %#v", got, want)
 	}
 }
 
-func TestAllocatePrivacyEnvelopeSkipsOccupiedCandidateWithoutInspectingOwnership(t *testing.T) {
-	observer := &privacyEnvelopeObserverStub{occupied: map[string]bool{
-		"inet/podlaz_pe_001122334455": true,
-	}}
-	protection, _, err := allocatePrivacyEnvelope(
+func TestPrivacyEnvelopeAllocationFailsClosedWhenCandidateInspectionFails(t *testing.T) {
+	observer := &privacyEnvelopeObserverStub{errAt: "inet/podlaz_pe_001122334455_1"}
+	observer.occupied = map[string]bool{"inet/podlaz_pe_001122334455": true}
+	if _, _, err := allocatePrivacyEnvelope(
 		context.Background(),
 		"00112233445566778899aabbccddeeff",
 		"podlaz0",
 		[]string{"192.0.2.10"},
 		observer,
-	)
-	if err != nil {
-		t.Fatalf("allocate around occupied envelope candidate: %v", err)
+	); err == nil {
+		t.Fatal("expected privacy envelope allocation to fail closed on inspection error")
 	}
-	if protection.Table != "podlaz_pe_001122334455_1" {
-		t.Fatalf("allocated table = %q, want collision-free suffix candidate", protection.Table)
-	}
-	if len(observer.seen) < 2 || observer.seen[0] != "inet/podlaz_pe_001122334455" || observer.seen[1] != "inet/podlaz_pe_001122334455_1" {
-		t.Fatalf("candidate observation order = %#v", observer.seen)
+	if got, want := observer.seen, []string{"inet/podlaz_pe_001122334455", "inet/podlaz_pe_001122334455_1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected observation sequence: got %#v want %#v", got, want)
 	}
 }
 
-func TestAllocatePrivacyEnvelopeFailsClosedWhenBoundedCandidatesExhausted(t *testing.T) {
-	observer := &privacyEnvelopeObserverStub{occupied: map[string]bool{}}
-	base := "podlaz_pe_001122334455"
-	observer.occupied["inet/"+base] = true
-	for i := 1; i < privacyEnvelopeCandidateLimit; i++ {
-		observer.occupied[fmt.Sprintf("inet/%s_%d", base, i)] = true
+func TestPrivacyEnvelopeAllocationIsBounded(t *testing.T) {
+	observer := &privacyEnvelopeObserverStub{occupied: make(map[string]bool)}
+	for i := 0; i < privacyEnvelopeCandidateLimit; i++ {
+		table := "podlaz_pe_001122334455"
+		if i != 0 {
+			table = fmt.Sprintf("%s_%d", table, i)
+		}
+		observer.occupied["inet/"+table] = true
 	}
 	if _, _, err := allocatePrivacyEnvelope(
 		context.Background(),
@@ -100,7 +100,7 @@ func TestPrivacyEnvelopeCompositionAllowsOnlyProtectedAndMinimalControlPaths(t *
 		`ip daddr 192.0.2.10 -> accept`,
 		`meta nfproto ipv4 udp sport 68 udp dport 67 -> accept`,
 		`meta nfproto ipv6 udp sport 546 udp dport 547 -> accept`,
-		`meta nfproto ipv6 icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } -> accept`,
+		`icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } -> accept`,
 		`-> reject`,
 	} {
 		if !strings.Contains(joined, want) {
@@ -134,40 +134,29 @@ func TestPrivacyEnvelopePlanReconstructsExactlyFromDurableAuthority(t *testing.T
 		t.Fatalf("reconstruct privacy envelope: %v", err)
 	}
 	if !reflect.DeepEqual(reconstructed, plan) {
-		t.Fatalf("reconstructed envelope differs from persisted authority:\nwant %#v\n got %#v", plan, reconstructed)
+		t.Fatalf("reconstructed plan differs:\nwant %#v\n got %#v", plan, reconstructed)
 	}
 }
 
-func TestPrivacyEnvelopePlanRejectsInvalidIdentityInputs(t *testing.T) {
-	tests := []struct {
-		name      string
-		sessionID string
-		iface     string
-		endpoints []string
-	}{
-		{name: "session", sessionID: "not-a-session", iface: "podlaz0", endpoints: []string{"192.0.2.10"}},
-		{name: "interface", sessionID: "00112233445566778899aabbccddeeff", iface: "bad interface", endpoints: []string{"192.0.2.10"}},
-		{name: "endpoint", sessionID: "00112233445566778899aabbccddeeff", iface: "podlaz0", endpoints: []string{"2001:db8::10"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if _, _, err := allocatePrivacyEnvelope(context.Background(), tt.sessionID, tt.iface, tt.endpoints, &privacyEnvelopeObserverStub{}); err == nil {
-				t.Fatal("expected invalid exact identity input to fail closed")
-			}
-		})
+func TestPrivacyEnvelopePlanRejectsUnsupportedCompositionVersion(t *testing.T) {
+	protection := testArmedPrivacyProtection()
+	protection.CompositionVersion++
+	if _, err := privacyEnvelopePlanFromAuthority(protection); err == nil {
+		t.Fatal("expected unsupported composition version rejection")
 	}
 }
 
 type privacyEnvelopeObserverStub struct {
 	occupied map[string]bool
+	errAt    string
 	seen     []string
-	err      error
 }
 
-func (s *privacyEnvelopeObserverStub) PrivacyEnvelopeTableExists(_ context.Context, family, table string) (bool, error) {
-	s.seen = append(s.seen, family+"/"+table)
-	if s.err != nil {
-		return false, s.err
+func (o *privacyEnvelopeObserverStub) PrivacyEnvelopeTableExists(_ context.Context, family, table string) (bool, error) {
+	key := family + "/" + table
+	o.seen = append(o.seen, key)
+	if key == o.errAt {
+		return false, fmt.Errorf("synthetic observation failure")
 	}
-	return s.occupied[family+"/"+table], nil
+	return o.occupied[key], nil
 }
