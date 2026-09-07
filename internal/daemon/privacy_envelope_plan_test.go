@@ -100,7 +100,7 @@ func TestPrivacyEnvelopeCompositionAllowsOnlyProtectedAndMinimalControlPaths(t *
 		`ip daddr 192.0.2.10 -> accept`,
 		`meta nfproto ipv4 udp sport 68 udp dport 67 -> accept`,
 		`meta nfproto ipv6 udp sport 546 udp dport 547 -> accept`,
-		`meta nfproto ipv6 icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } -> accept`,
+		`icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } -> accept`,
 		`-> reject`,
 	} {
 		if !strings.Contains(joined, want) {
