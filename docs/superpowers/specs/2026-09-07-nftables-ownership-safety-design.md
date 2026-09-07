@@ -9,9 +9,9 @@ Fix #307 without broadening cleanup authority or redesigning the VPN policy: aut
 This change covers both Podlaz-owned nftables surfaces that currently share the same bug class:
 
 - the session-scoped Privacy Envelope table;
-- the transaction-owned `inet podlaz` table, including lifecycle/doctor exact verification.
+- the transaction-owned `inet podlaz` table, including lifecycle/doctor exact verification and rollback deletion.
 
-Public CLI/API/state schemas remain unchanged unless implementation proves that an existing contract cannot represent truthful recovery state.
+Public CLI/API/state schemas remain unchanged unless implementation proves that an existing contract cannot represent truthful recovery state. Any public compatibility change requires explicit review rather than being folded into this fix implicitly.
 
 ## Invariants
 
@@ -20,7 +20,7 @@ Public CLI/API/state schemas remain unchanged unless implementation proves that 
 - Family/name, generated names, comments, historical resemblance, handles, or read-only observation are never cleanup authority by themselves.
 - Ambiguous or unavailable inspection remains fail-closed and retains durable authority.
 - Durable protection authority is cleared only after exact absence has been re-observed.
-- Human-readable `nft list` output is diagnostic only and must not participate in authority-bearing decisions.
+- Human-readable `nft list` output and stderr text are diagnostic only and must not participate in authority-bearing decisions.
 
 ## Structured observation
 
@@ -32,6 +32,18 @@ Only explicitly understood semantic normalization is allowed. In particular, the
 
 One shared semantic verifier is used by Privacy Envelope verification and ordinary transaction-owned nftables verification. No second human-text exact verifier remains in lifecycle/doctor paths.
 
+### Presence, absence, and occupancy
+
+Presence/absence and allocation occupancy are derived from successful structured table enumeration and exact family/name lookup, not from classifying human stderr text from `nft list table`.
+
+The result is three-state:
+
+- exact identity absent from a successfully decoded enumeration -> absent;
+- exact identity present -> present, regardless of whether later semantic verification accepts its composition;
+- enumeration/decoding unavailable, malformed, unsupported, or ambiguous -> unknown/error.
+
+Unknown is never converted to absence. An occupied generated candidate is skipped but never adopted as ownership.
+
 ## Fresh creation
 
 Any path that claims a fresh Podlaz-owned table must use exclusive creation semantics equivalent to `nft create table`, in the same atomic nftables batch as the initial chains/rules.
@@ -40,18 +52,18 @@ A prior absence observation is allocation evidence only. If another process crea
 
 ## Destructive mutation and concurrency
 
-Destructive Remove/Replace is authorized in two layers:
+Destructive Privacy Envelope Remove/Replace and transaction-owned table rollback are authorized in two layers:
 
 1. durable Podlaz state authorizes which resource may be considered for mutation;
 2. fresh kernel evidence proves the exact live object and composition immediately before mutation.
 
 Observation captures table handle and nftables ruleset generation. The semantic snapshot must be coherent: if generation changes while the snapshot is being established, inspection is retried only as a bounded read; inability to obtain one coherent snapshot is `unknown`, not absence or ownership.
 
-The destructive nftables batch is committed with the observed generation ID. If any process changes the nftables ruleset after verification, the kernel rejects the stale batch (for example with `ERESTART`) and Podlaz fails closed without mutation. This closes same-name delete/recreate and same-object semantic-mutation races between Verify and Remove/Replace.
+The destructive nftables batch is committed with the observed generation ID. If any process changes the nftables ruleset after verification, the kernel rejects the stale batch (for example with `ERESTART`) and Podlaz fails closed without mutation. This closes same-name delete/recreate and same-object semantic-mutation races between Verify and Remove/Replace/Rollback.
 
 The table handle is ephemeral identity evidence for the current observation. It is validated as part of the snapshot but is not persisted as durable ownership state.
 
-After successful terminal deletion, Podlaz performs a new structured observation and clears durable protection authority only after exact family/name absence is proven.
+After successful terminal deletion, Podlaz performs a new structured observation and clears durable authority only after exact family/name absence is proven.
 
 ## Privacy Envelope composition
 
@@ -75,6 +87,8 @@ Existing persistence ordering remains authoritative:
 
 A Network Session with Privacy Envelope authority is recovery-relevant even if transaction recovery has zero candidates. `recover --execute --yes`, startup, terminal teardown, replacement recovery, and reconciliation route through the same Network Session convergence semantics rather than treating transaction candidate count as proof of cleanliness.
 
+Status and diagnostics must preserve a known Privacy Envelope verification/cleanup cause using existing typed/public fields where possible; known failure evidence must not be collapsed into a false clean state or an avoidably generic internal diagnostic.
+
 ## Compatibility
 
 A fixed daemon must recover same-boot v0.2.39 Network Session protection authority and the corresponding old-form live Privacy Envelope without reboot or manual firewall cleanup. Existing persisted schema/composition version is preserved unless implementation proves that compatibility cannot be maintained; old and canonical ICMPv6 spellings are accepted only when semantically identical.
@@ -94,10 +108,12 @@ Required regression coverage includes:
 - production-shaped ICMPv6 canonicalization regression;
 - extra/missing/reordered/changed rules, comments, verdicts, base-chain metadata, predicates, unknown expressions, and duplicate/ambiguous JSON objects;
 - exact absent/present/unknown observation semantics;
+- malformed/unsupported observation is never classified as absence;
 - foreign same-name table created between absence observation and apply;
 - semantic mutation after verification before Remove;
 - same-name delete/recreate after verification before Remove;
 - same races for Replace;
+- transaction-owned rollback cannot delete a changed/replaced same-name table;
 - crash/restart at each durable removal boundary;
 - v0.2.39-shaped persisted/live recovery;
 - recovery/status cannot report clean while protection authority remains;
