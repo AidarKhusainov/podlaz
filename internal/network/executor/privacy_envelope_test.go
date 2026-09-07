@@ -11,8 +11,8 @@ import (
 )
 
 func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing.T) {
-	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
-	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: privacyEnvelopeListOutputForTest(plan.Table, "192.0.2.10")}}
+	plan := productionShapedPrivacyEnvelopePlanForTest()
+	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: canonicalPrivacyEnvelopeJSONForTest()}}
 	exec := PrivacyEnvelopeExecutor{Runner: runner, ScriptDir: t.TempDir()}
 
 	if err := exec.Apply(context.Background(), plan); err != nil {
@@ -28,7 +28,7 @@ func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing
 	if len(runner.commands) != 3 {
 		t.Fatalf("expected apply batch, exact verify, exact remove, got %#v", runner.commands)
 	}
-	if got := runner.commands[1]; !reflect.DeepEqual(got, []string{"nft", "-y", "list", "table", "inet", plan.Table}) {
+	if got := runner.commands[1]; !reflect.DeepEqual(got, []string{"nft", "-j", "-y", "list", "table", "inet", plan.Table}) {
 		t.Fatalf("unexpected verify command: %#v", got)
 	}
 	if got := runner.commands[2]; !reflect.DeepEqual(got, []string{"nft", "delete", "table", "inet", plan.Table}) {
@@ -40,6 +40,7 @@ func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing
 		`ip daddr 192.0.2.10 counter accept comment "podlaz:privacy-envelope:bootstrap"`,
 		`oifname "lo" counter accept comment "podlaz:privacy-envelope:loopback"`,
 		`oifname "podlaz0" counter accept comment "podlaz:privacy-envelope:tun-egress"`,
+		`icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert } counter accept comment "podlaz:privacy-envelope:ipv6-link-control"`,
 		`counter reject comment "podlaz:privacy-envelope:block-direct"`,
 	} {
 		if !strings.Contains(runner.script, want) {
@@ -85,16 +86,16 @@ func TestPrivacyEnvelopeExecutorBatchFailureNeverRunsCompensatingDelete(t *testi
 }
 
 func TestPrivacyEnvelopeExecutorVerifyRejectsCompositionDrift(t *testing.T) {
-	plan := privacyEnvelopePlanForTest("podlaz_pe_001122334455", "192.0.2.10")
+	plan := productionShapedPrivacyEnvelopePlanForTest()
 	output := strings.Replace(
-		privacyEnvelopeListOutputForTest(plan.Table, "192.0.2.10"),
-		`counter reject comment "podlaz:privacy-envelope:block-direct"`,
-		`meta l4proto tcp counter accept comment "foreign:extra"\n\t\tcounter reject comment "podlaz:privacy-envelope:block-direct"`,
+		canonicalPrivacyEnvelopeJSONForTest(),
+		`"comment":"podlaz:privacy-envelope:block-direct"`,
+		`"comment":"foreign:extra"`,
 		1,
 	)
 	err := (PrivacyEnvelopeExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
 	if err == nil {
-		t.Fatal("exact verification must reject extra firewall rules")
+		t.Fatal("exact verification must reject changed firewall ownership")
 	}
 }
 
@@ -145,16 +146,4 @@ func privacyEnvelopePlanForTest(table, bootstrapIPv4 string) PrivacyEnvelopePlan
 		},
 		Reason: "preserve a fail-closed network session privacy boundary",
 	}
-}
-
-func privacyEnvelopeListOutputForTest(table, bootstrapIPv4 string) string {
-	return `table inet ` + table + ` {
-	chain output {
-		type filter hook output priority -10; policy accept;
-		ip daddr ` + bootstrapIPv4 + ` counter accept comment "podlaz:privacy-envelope:bootstrap"
-		oifname "lo" counter accept comment "podlaz:privacy-envelope:loopback"
-		oifname "podlaz0" counter accept comment "podlaz:privacy-envelope:tun-egress"
-		counter reject comment "podlaz:privacy-envelope:block-direct"
-	}
-}`
 }
