@@ -119,7 +119,7 @@ func privacyEnvelopePlanFromAuthority(protection networkSessionProtection) (nete
 	}
 	appendAccept("meta nfproto ipv4 udp sport 68 udp dport 67", "podlaz:privacy-envelope:dhcp4")
 	appendAccept("meta nfproto ipv6 udp sport 546 udp dport 547", "podlaz:privacy-envelope:dhcp6")
-	appendAccept("meta nfproto ipv6 icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert }", "podlaz:privacy-envelope:ipv6-link-control")
+	appendAccept("icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert }", "podlaz:privacy-envelope:ipv6-link-control")
 	plan.Rules = append(plan.Rules, planner.TunFirewallRulePlan{
 		Chain:     privacyEnvelopeOutputChain,
 		Verdict:   planner.FirewallVerdictReject,
