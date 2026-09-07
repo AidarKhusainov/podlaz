@@ -35,7 +35,7 @@ func TestPrivacyEnvelopeExecutorApplyVerifyAndRemoveExactDynamicTable(t *testing
 		t.Fatalf("unexpected remove command: %#v", got)
 	}
 	for _, want := range []string{
-		"add table inet " + plan.Table,
+		"create table inet " + plan.Table,
 		"add chain inet " + plan.Table + " output { type filter hook output priority -10; policy accept; }",
 		`ip daddr 192.0.2.10 counter accept comment "podlaz:privacy-envelope:bootstrap"`,
 		`oifname "lo" counter accept comment "podlaz:privacy-envelope:loopback"`,
@@ -61,9 +61,9 @@ func TestPrivacyEnvelopeExecutorReplaceIsOneAtomicNftBatch(t *testing.T) {
 		t.Fatalf("replacement must be one nft batch, got %#v", runner.commands)
 	}
 	deleteAt := strings.Index(runner.script, "delete table inet "+oldPlan.Table)
-	addAt := strings.Index(runner.script, "add table inet "+newPlan.Table)
+	createAt := strings.Index(runner.script, "create table inet "+newPlan.Table)
 	newEndpointAt := strings.Index(runner.script, "ip daddr 198.51.100.20")
-	if deleteAt < 0 || addAt <= deleteAt || newEndpointAt <= addAt {
+	if deleteAt < 0 || createAt <= deleteAt || newEndpointAt <= createAt {
 		t.Fatalf("replacement batch does not atomically rebuild exact table:\n%s", runner.script)
 	}
 	if strings.Contains(runner.script, "192.0.2.10") {
