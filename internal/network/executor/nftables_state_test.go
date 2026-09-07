@@ -143,9 +143,9 @@ func TestFreshOwnedTableScriptsUseExclusiveCreate(t *testing.T) {
 
 func testNftablesPlanForExclusiveCreate() planner.TunFirewallPlan {
 	return planner.TunFirewallPlan{
-		Backend: planner.FirewallBackendNftables,
-		Family: "inet",
-		Table: "podlaz",
+		Backend:     planner.FirewallBackendNftables,
+		Family:      "inet",
+		Table:       "podlaz",
 		TableAction: planner.FirewallTableAction,
 		Chains: []planner.TunFirewallChainPlan{{
 			Name: planner.FirewallOutputChain, Type: planner.FirewallChainTypeFilter,
