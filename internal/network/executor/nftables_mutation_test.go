@@ -155,7 +155,7 @@ func (r *nftMutationObservationRunner) Run(_ context.Context, name string, args 
 	if reflect.DeepEqual(args, []string{"-j", "list", "tables"}) {
 		return CommandResult{Stdout: r.tablesJSON}, nil
 	}
-	if len(args) == 6 && reflect.DeepEqual(args[:4], []string{"-j", "list", "table", "inet"}) {
+	if len(args) == 5 && reflect.DeepEqual(args[:4], []string{"-j", "list", "table", "inet"}) {
 		r.tableListCalls++
 		return CommandResult{Stdout: r.tableJSON}, nil
 	}
