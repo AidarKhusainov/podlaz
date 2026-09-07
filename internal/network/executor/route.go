@@ -7,20 +7,18 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 )
 
 type IPRouteExecutor struct {
-	Runner CommandRunner
+	Runner                      CommandRunner
+	AllocationEvidenceCollector func(context.Context) (netsnapshot.TunAllocationEvidence, error)
 }
 
 func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (Step, error) {
 	if exclusiveAllocatedRouteTable(plan) {
-		lines, err := e.allocatedRouteTableLines(ctx, plan)
-		if err != nil {
+		if err := e.verifyAllocatedRoutingTableAuthority(ctx, plan, 0); err != nil {
 			return Step{}, fmt.Errorf("inspect allocated routing table %s before apply: %w", plan.Table, err)
-		}
-		if len(lines) != 0 {
-			return Step{}, fmt.Errorf("allocated routing table %s became occupied before apply", plan.Table)
 		}
 	} else if mainServerBypassRoute(plan) {
 		line, err := e.existingRouteLine(ctx, plan)
@@ -44,6 +42,9 @@ func (e IPRouteExecutor) Add(ctx context.Context, plan planner.TunRoutePlan) (St
 	}
 	step := Step{Kind: "route", Target: routeTarget(plan), Description: plan.Reason, Owner: OwnerRoute}
 	if exclusiveAllocatedRouteTable(plan) {
+		if err := e.verifyAllocatedRoutingTableAuthority(ctx, plan, 1); err != nil {
+			return step, fmt.Errorf("revalidate allocated routing table %s after add: %w", plan.Table, err)
+		}
 		if err := e.verifyExclusiveAllocatedRouteTable(ctx, plan); err != nil {
 			return step, fmt.Errorf("verify allocated routing table %s after add: %w", plan.Table, err)
 		}
@@ -103,6 +104,49 @@ func (e IPRouteExecutor) allocatedRouteTableLines(ctx context.Context, plan plan
 	return nonEmptyLines(result.Stdout), nil
 }
 
+func (e IPRouteExecutor) collectAllocationEvidence(ctx context.Context) (netsnapshot.TunAllocationEvidence, error) {
+	if e.AllocationEvidenceCollector != nil {
+		return e.AllocationEvidenceCollector(ctx)
+	}
+	return netsnapshot.CollectTunAllocationEvidence(ctx)
+}
+
+func (e IPRouteExecutor) verifyAllocatedRoutingTableAuthority(ctx context.Context, plan planner.TunRoutePlan, wantRoutes int) error {
+	tableText := routeTable(plan.Table)
+	tableValue, err := strconv.ParseUint(tableText, 10, 32)
+	if err != nil || tableValue == 0 {
+		return fmt.Errorf("invalid allocated routing table identity %q", tableText)
+	}
+	table := uint32(tableValue)
+
+	evidence, err := e.collectAllocationEvidence(ctx)
+	if err != nil {
+		return fmt.Errorf("collect authoritative TUN allocation evidence: %w", err)
+	}
+
+	routes := 0
+	for _, route := range evidence.IPv4Routes {
+		if route.Table == table {
+			routes++
+		}
+	}
+	if routes != wantRoutes {
+		return fmt.Errorf("allocated routing table %d has %d route(s), want %d", table, routes, wantRoutes)
+	}
+
+	for _, rule := range evidence.IPv4PolicyRules {
+		if rule.Table == table {
+			return fmt.Errorf("allocated routing table %d is referenced by foreign policy rule priority %d", table, rule.Priority)
+		}
+	}
+	for _, reserved := range evidence.ReservedRoutingTables {
+		if reserved == table {
+			return fmt.Errorf("allocated routing table %d is reserved by a foreign VRF", table)
+		}
+	}
+	return nil
+}
+
 func (e IPRouteExecutor) verifyExclusiveAllocatedRouteTable(ctx context.Context, plan planner.TunRoutePlan) error {
 	lines, err := e.allocatedRouteTableLines(ctx, plan)
 	if err != nil {
@@ -131,8 +175,8 @@ func routeArgs(op string, plan planner.TunRoutePlan) []string {
 
 func verifyRouteLine(line string, plan planner.TunRoutePlan) error {
 	fields := strings.Fields(line)
-	if plan.Destination != planner.IPv4DefaultRoute && !containsField(fields, plan.Destination) {
-		return fmt.Errorf("destination mismatch in %q", line)
+	if !routeDestinationMatches(fields, plan.Destination) {
+		return fmt.Errorf("destination mismatch: expected %s in %q", plan.Destination, line)
 	}
 	if plan.Interface != "" && !containsAdjacentFields(fields, "dev", plan.Interface) {
 		return fmt.Errorf("interface mismatch: expected dev %s in %q", plan.Interface, line)
@@ -141,6 +185,16 @@ func verifyRouteLine(line string, plan planner.TunRoutePlan) error {
 		return fmt.Errorf("gateway mismatch: expected via %s in %q", plan.Gateway, line)
 	}
 	return nil
+}
+
+func routeDestinationMatches(fields []string, destination string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	if destination == planner.IPv4DefaultRoute {
+		return fields[0] == planner.IPv4DefaultRoute || fields[0] == "0.0.0.0/0"
+	}
+	return containsField(fields, destination)
 }
 
 func containsAdjacentFields(fields []string, first, second string) bool {
