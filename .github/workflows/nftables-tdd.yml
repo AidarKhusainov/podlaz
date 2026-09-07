@@ -15,7 +15,7 @@ concurrency:
 jobs:
   focused:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -35,10 +35,11 @@ jobs:
           set -euxo pipefail
           go test ./internal/network/executor ./internal/daemon ./internal/doctor -count=1
 
-      - name: Install nftables
+      - name: Install nftables and lint tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nftables
+          sudo apt-get install -y --no-install-recommends nftables shellcheck
+          bash scripts/ci/install-go-tool.sh actionlint
 
       - name: Compile real nftables contract
         env:
@@ -51,3 +52,28 @@ jobs:
             /tmp/podlaz-executor-real-nft.test \
             -test.run '^TestPrivacyEnvelopeRealNFTRoundTrip$' \
             -test.v
+
+      - name: Go format, full test, and vet
+        env:
+          GOFLAGS: -mod=readonly
+        run: |
+          set -euxo pipefail
+          test -z "$(gofmt -l .)"
+          go test ./... -count=1
+          go vet ./...
+
+      - name: Concurrency-sensitive race tests
+        env:
+          GOFLAGS: -mod=readonly
+        run: go test -race ./internal/daemon ./internal/network/executor -count=1
+
+      - name: Govulncheck
+        run: |
+          bash scripts/ci/install-go-tool.sh govulncheck
+          govulncheck ./...
+
+      - name: Workflow and repository checks
+        run: |
+          bash scripts/ci/workflow-lint.sh
+          bash scripts/ci/repository-structure-test.sh
+          bash scripts/ci/repository-structure.sh
