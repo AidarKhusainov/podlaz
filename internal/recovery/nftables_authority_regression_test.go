@@ -43,6 +43,21 @@ func TestOSCleanupExecutorDoesNotDeleteNftablesTableByName(t *testing.T) {
 	}
 }
 
+func TestOSCleanupExecutorTreatsProvenAbsentStaleNftablesCandidateAsRecovered(t *testing.T) {
+	runner := newNftablesAuthorityRunner()
+	runner.tablePresent = false
+	candidate := Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"}
+
+	result := (OSCleanupExecutor{Runner: runner, RuntimeDir: t.TempDir()}).Cleanup(context.Background(), candidate)
+
+	if result.Status != "recovered" {
+		t.Fatalf("proven absent stale nftables candidate must converge without mutation: %#v", result)
+	}
+	if runner.directDeletes != 0 || runner.guardedRemoves != 0 {
+		t.Fatalf("proven absent stale candidate caused mutation: direct=%d guarded=%d", runner.directDeletes, runner.guardedRemoves)
+	}
+}
+
 func TestSkippedStandaloneNftablesCleanupIsIncomplete(t *testing.T) {
 	result := ExecuteResult{Results: []CleanupResult{{
 		Candidate: Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"},
