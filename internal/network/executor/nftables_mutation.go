@@ -45,7 +45,14 @@ func (b *nftMutationBackend) generation(ctx context.Context) (uint32, error) {
 	if b == nil || b.getGeneration == nil {
 		return 0, errors.New("nftables mutation backend has no generation reader")
 	}
-	return b.getGeneration(ctx)
+	generation, err := b.getGeneration(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if generation == 0 {
+		return 0, errors.New("nftables mutation generation is zero; kernel generation guard would be disabled")
+	}
+	return generation, nil
 }
 
 func observeVerifiedNftTableForMutation(
@@ -176,6 +183,9 @@ func validateNftMutationTarget(target nftMutationTarget) error {
 	}
 	if target.Handle == 0 {
 		return errors.New("nftables mutation target has no verified kernel handle")
+	}
+	if target.Generation == 0 {
+		return errors.New("nftables mutation target has zero generation; kernel generation guard would be disabled")
 	}
 	return nil
 }
