@@ -22,6 +22,13 @@ func TestPrivacyEnvelopeRealNFTRoundTrip(t *testing.T) {
 		t.Fatalf("nft command is required for real-nftables contract: %v", err)
 	}
 
+	foreignTable := "foreign_guard_" + realNFTUniqueSuffix(t)
+	createRealNFTForeignSentinel(t, foreignTable)
+	foreignBefore := realNFTTableJSON(t, foreignTable)
+	t.Cleanup(func() {
+		_ = exec.Command("nft", "delete", "table", "inet", foreignTable).Run()
+	})
+
 	plan := productionShapedPrivacyEnvelopePlanForTest()
 	plan.Table = realNFTPrivacyEnvelopeTable(t)
 	// Current composition-v1 generation uses the minimal ICMPv6 expression;
@@ -72,13 +79,45 @@ func TestPrivacyEnvelopeRealNFTRoundTrip(t *testing.T) {
 	if present {
 		t.Fatalf("real Privacy Envelope still exists after production removal: %s %s", replacement.Family, replacement.Table)
 	}
+
+	foreignAfter := realNFTTableJSON(t, foreignTable)
+	if foreignAfter != foreignBefore {
+		t.Fatalf("unrelated nftables state changed during Privacy Envelope lifecycle\nbefore: %s\nafter:  %s", foreignBefore, foreignAfter)
+	}
+}
+
+func createRealNFTForeignSentinel(t *testing.T, table string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"create", "table", "inet", table},
+		{"add", "chain", "inet", table, "sentinel"},
+		{"add", "rule", "inet", table, "sentinel", "counter", "comment", "foreign-sentinel"},
+	} {
+		if output, err := exec.Command("nft", args...).CombinedOutput(); err != nil {
+			t.Fatalf("create foreign nftables sentinel with nft %v: %v: %s", args, err, output)
+		}
+	}
+}
+
+func realNFTTableJSON(t *testing.T, table string) string {
+	t.Helper()
+	output, err := exec.Command("nft", "-j", "list", "table", "inet", table).Output()
+	if err != nil {
+		t.Fatalf("list real nftables table %s: %v", table, err)
+	}
+	return string(output)
 }
 
 func realNFTPrivacyEnvelopeTable(t *testing.T) string {
+	t.Helper()
+	return "podlaz_pe_" + realNFTUniqueSuffix(t)
+}
+
+func realNFTUniqueSuffix(t *testing.T) string {
 	t.Helper()
 	var suffix [6]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		t.Fatalf("generate real nftables test identity: %v", err)
 	}
-	return "podlaz_pe_" + hex.EncodeToString(suffix[:])
+	return hex.EncodeToString(suffix[:])
 }
