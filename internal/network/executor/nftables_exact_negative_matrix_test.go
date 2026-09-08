@@ -82,11 +82,12 @@ func TestPrivacyEnvelopeStructuredVerifierTreatsICMPv6SetMemberOrderAsSemantic(t
 	if output == canonicalPrivacyEnvelopeJSONForTest() {
 		t.Fatal("test fixture did not reorder ICMPv6 set members")
 	}
+	snapshot, err := parseNftTableJSON(output, "inet", "podlaz_pe_001122334455")
+	if err != nil {
+		t.Fatalf("parse reordered ICMPv6 set fixture: %v", err)
+	}
 	plan := productionShapedPrivacyEnvelopePlanForTest()
-	if err := VerifyNftablesTableOutput(
-		planner.TunFirewallPlan{Family: plan.Family, Table: plan.Table, Chains: plan.Chains, Rules: plan.Rules},
-		output,
-	); err != nil {
+	if err := verifyNftTableSnapshot(snapshot, planner.TunFirewallPlan{Chains: plan.Chains, Rules: plan.Rules}); err != nil {
 		t.Fatalf("ICMPv6 set member order must not create semantic drift: %v", err)
 	}
 }
