@@ -24,6 +24,7 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		if target.Family != "inet" || target.Table != "podlaz" || target.Handle != 21 || target.Generation != 81 {
 			t.Fatalf("unexpected rollback target: %#v", target)
 		}
+		runner.presenceJSON = nftTablesAbsenceJSONForTest()
 		return nil
 	}
 	exec := NftablesExecutor{Runner: runner, ScriptDir: t.TempDir(), mutation: backend}
@@ -45,8 +46,8 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		t.Fatalf("guarded rollback calls=%d, want 1", removeCalls)
 	}
 
-	if len(runner.commands) != 4 {
-		t.Fatalf("expected apply, verify, presence and exact rollback observations, got %#v", runner.commands)
+	if len(runner.commands) != 5 {
+		t.Fatalf("expected apply, verify, exact rollback observations and absence proof, got %#v", runner.commands)
 	}
 	if len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
 		t.Fatalf("expected nft batch apply command, got %#v", runner.commands[0])
@@ -55,6 +56,7 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 		{"nft", "-j", "list", "table", "inet", "podlaz"},
 		{"nft", "-j", "list", "tables"},
 		{"nft", "-j", "list", "table", "inet", "podlaz"},
+		{"nft", "-j", "list", "tables"},
 	}
 	if !reflect.DeepEqual(runner.commands[1:], wantTail) {
 		t.Fatalf("unexpected commands after apply:\nwant %#v\n got %#v", wantTail, runner.commands[1:])
