@@ -135,6 +135,9 @@ func (e PrivacyEnvelopeExecutor) mutationBackend() *nftMutationBackend {
 	if e.mutation != nil {
 		return e.mutation
 	}
+	if backend := nftMutationBackendFromRunner(e.Runner); backend != nil {
+		return backend
+	}
 	return defaultNftMutationBackend()
 }
 
