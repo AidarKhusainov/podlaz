@@ -29,6 +29,31 @@ func TestRecoveryDoesNotDeleteStandaloneNftablesTableByName(t *testing.T) {
 	}
 }
 
+func TestOSCleanupExecutorDoesNotDeleteNftablesTableByName(t *testing.T) {
+	runner := newNftablesAuthorityRunner()
+	candidate := Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"}
+
+	result := (OSCleanupExecutor{Runner: runner, RuntimeDir: t.TempDir()}).Cleanup(context.Background(), candidate)
+
+	if result.Status != "skipped" {
+		t.Fatalf("legacy OS cleanup must not turn table identity into authority: %#v", result)
+	}
+	if runner.directDeletes != 0 || runner.guardedRemoves != 0 {
+		t.Fatalf("legacy OS cleanup caused nftables mutation: direct=%d guarded=%d", runner.directDeletes, runner.guardedRemoves)
+	}
+}
+
+func TestSkippedStandaloneNftablesCleanupIsIncomplete(t *testing.T) {
+	result := ExecuteResult{Results: []CleanupResult{{
+		Candidate: Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"},
+		Status:    "skipped",
+		Message:   "exact transaction rollback authority is required",
+	}}}
+	if !result.HasIncompleteCleanup() {
+		t.Fatal("skipped standalone nftables state must not be reported as converged recovery")
+	}
+}
+
 func TestRecoveryPreservesTransactionWhenExactNftablesCompositionIsUnavailable(t *testing.T) {
 	runtimeDir := t.TempDir()
 	rollback := txstate.RollbackMetadata{NFTables: []txstate.NFTablesRollback{{
