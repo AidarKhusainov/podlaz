@@ -158,7 +158,7 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 	gateResult, gateDecision := networkSessionRollbackLinkIdentityGate(ctx, e, osExec, rollback, tx.AppliedSteps, childAbsenceProven)
 	switch gateDecision {
 	case rollbackLinkBlocked:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
 		results = append(results, rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)...)
 		results = append(results, gateResult)
@@ -169,7 +169,7 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 		results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
 		return results
 	case rollbackLinkAbsentChildAbsent:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
 		results = append(results, rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)...)
 		results = append(results, missingNetworkSessionLinkRoutes(rollback.Routes, allocation)...)
@@ -177,7 +177,7 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 		results = append(results, e.missingLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
 	default:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
 		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
 		results = append(results, rollbackNetworkSessionRoutes(ctx, osExec, rollback.Routes, allocation)...)
