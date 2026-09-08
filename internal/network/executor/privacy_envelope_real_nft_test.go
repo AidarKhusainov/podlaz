@@ -51,15 +51,26 @@ func TestPrivacyEnvelopeRealNFTRoundTrip(t *testing.T) {
 	if err := executor.Verify(ctx, plan); err != nil {
 		t.Fatalf("verify real Privacy Envelope from nft JSON: %v", err)
 	}
-	if err := executor.Remove(ctx, plan); err != nil {
+
+	replacement := plan
+	replacement.Rules = append([]planner.TunFirewallRulePlan(nil), plan.Rules...)
+	replacement.Rules[2].Expr = "ip daddr 198.51.100.20"
+	if err := executor.Replace(ctx, plan, replacement); err != nil {
+		t.Fatalf("generation-guarded replacement of real Privacy Envelope: %v", err)
+	}
+	if err := executor.Verify(ctx, replacement); err != nil {
+		t.Fatalf("verify replaced real Privacy Envelope from nft JSON: %v", err)
+	}
+
+	if err := executor.Remove(ctx, replacement); err != nil {
 		t.Fatalf("generation-guarded removal of real Privacy Envelope: %v", err)
 	}
-	present, err = executor.Exists(ctx, plan)
+	present, err = executor.Exists(ctx, replacement)
 	if err != nil {
 		t.Fatalf("observe real Privacy Envelope after removal: %v", err)
 	}
 	if present {
-		t.Fatalf("real Privacy Envelope still exists after production removal: %s %s", plan.Family, plan.Table)
+		t.Fatalf("real Privacy Envelope still exists after production removal: %s %s", replacement.Family, replacement.Table)
 	}
 }
 
