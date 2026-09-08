@@ -47,6 +47,9 @@ func (e NetworkSessionCleanupExecutor) Cleanup(ctx context.Context, candidate Ca
 
 func (e NetworkSessionCleanupExecutor) CleanupMany(ctx context.Context, candidate Candidate) []CleanupResult {
 	legacy := DaemonCleanupExecutor{Runner: e.Runner, RuntimeDir: e.RuntimeDir}.withDefaults()
+	if candidate.Kind == "nftables-table" {
+		return []CleanupResult{inspectStandaloneNftablesCandidate(ctx, legacy.Runner, candidate)}
+	}
 	if candidate.Kind != "transaction-state" || candidate.Transaction == nil {
 		return legacy.CleanupMany(ctx, candidate)
 	}
