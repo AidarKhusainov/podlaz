@@ -102,6 +102,13 @@ func (e NftablesExecutor) Rollback(ctx context.Context, plan planner.TunFirewall
 	if err := backend.removeTable(ctx, target); err != nil {
 		return fmt.Errorf("rollback nftables table %s %s: %w", family, table, err)
 	}
+	present, err := observeNftTablePresence(ctx, e.Runner, family, table)
+	if err != nil {
+		return fmt.Errorf("verify nftables table %s %s absence after rollback: %w", family, table, err)
+	}
+	if present {
+		return fmt.Errorf("nftables table %s %s is still present after rollback", family, table)
+	}
 	return nil
 }
 
