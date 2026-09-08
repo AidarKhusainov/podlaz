@@ -39,6 +39,7 @@ func TestNftablesExecutorRollbackUsesFreshGenerationGuardedVerification(t *testi
 		if target.Family != "inet" || target.Table != "podlaz" || target.Handle != 21 || target.Generation != 80 {
 			t.Fatalf("unexpected guarded rollback target: %#v", target)
 		}
+		runner.presenceJSON = nftTablesAbsenceJSONForTest()
 		return nil
 	}
 
@@ -51,6 +52,7 @@ func TestNftablesExecutorRollbackUsesFreshGenerationGuardedVerification(t *testi
 	want := [][]string{
 		{"nft", "-j", "list", "tables"},
 		{"nft", "-j", "list", "table", "inet", "podlaz"},
+		{"nft", "-j", "list", "tables"},
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("rollback observation commands=%#v, want %#v", runner.commands, want)
