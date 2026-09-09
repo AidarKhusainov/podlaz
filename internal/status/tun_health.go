@@ -29,9 +29,30 @@ func WithTunHealth(report Report, health *api.TunHealthStatus) Report {
 		}
 	}
 	report.TUN = strings.Join(nonEmpty, "; ")
+	if terminalCleanupRequired(report, health) {
+		report.ProductReconnecting = false
+		report.Connection = "unknown (terminal cleanup incomplete)"
+		return report
+	}
 	report.ProductReconnecting = report.Connection == "active" && health.State != api.TunHealthVerified
 	if report.ProductReconnecting {
 		report.Connection = fmt.Sprintf("active (%s: %s)", health.State, health.Classification)
 	}
 	return report
+}
+
+func terminalCleanupRequired(report Report, health *api.TunHealthStatus) bool {
+	if health == nil || health.State != api.TunHealthCleanupRequired || report.StartupScan == nil || report.StartupScan.NetworkSession == nil {
+		return false
+	}
+	session := report.StartupScan.NetworkSession
+	if session.NextAction != api.NetworkSessionRecoveryActionContinueTeardown {
+		return false
+	}
+	switch strings.TrimSpace(session.Intent) {
+	case "disconnect", "terminal":
+		return true
+	default:
+		return false
+	}
 }
