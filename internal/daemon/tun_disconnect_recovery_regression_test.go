@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
-	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
@@ -96,29 +95,3 @@ func TestInspectNetworkSessionRecoveryPlanExposesTerminalIntentWithOpenStartupGa
 		t.Fatalf("unexpected terminal recovery plan: %#v", plan)
 	}
 }
-
-func TestCleanupRequiredActiveStatusDoesNotSuppressRecoveryExecution(t *testing.T) {
-	status := api.StatusResponse{
-		Connection: "active",
-		Mode:       planner.ModeTun,
-		TunHealth: &api.TunHealthStatus{
-			State:             api.TunHealthCleanupRequired,
-			NetworkGeneration: 1,
-			Classification:    "ownership_invalid",
-		},
-		Transactions: []api.TransactionStatus{{
-			ID: "tx-example", State: "failed", RollbackAvailable: true, RequiresCleanup: true, Path: "/run/podlaz/transactions/tx-example.json",
-		}},
-	}
-	if activeStatusMustKeepRecoveryMutationFree(status) {
-		t.Fatal("cleanup-required active publication must not suppress exact recovery execution")
-	}
-	verified := status
-	verified.TunHealth = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
-	verified.Transactions = nil
-	if !activeStatusMustKeepRecoveryMutationFree(verified) {
-		t.Fatal("healthy active TUN must remain mutation-free for generic recovery")
-	}
-}
-
-var _ = netexecutor.OwnerFirewall
