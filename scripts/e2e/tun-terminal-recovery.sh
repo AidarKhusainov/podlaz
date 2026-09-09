@@ -10,8 +10,15 @@ source "${SCRIPT_DIR}/lib/host_state.sh"
 source "${SCRIPT_DIR}/lib/profile_input.sh"
 # shellcheck source=lib/package_runtime_provenance.sh
 source "${SCRIPT_DIR}/lib/package_runtime_provenance.sh"
+# shellcheck source=lib/tun_package_assertions.sh
+source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
+# shellcheck source=lib/tun_foreign_state.sh
+source "${SCRIPT_DIR}/lib/tun_foreign_state.sh"
 
-require_cmd bash python3 sudo systemctl dpkg dpkg-deb dpkg-query apt ip nft resolvectl getent curl find sha256sum awk sed grep mktemp cat readlink sort seq sleep install rm chmod id env dirname tr mkdir stat
+require_cmd \
+  awk apt bash cat chmod curl dirname dpkg dpkg-deb dpkg-query env find getent git grep id \
+  install ip mktemp mkdir nft python3 readlink resolvectl rm sed seq sha256sum sleep sort stat \
+  sudo systemctl systemd-run tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -24,43 +31,60 @@ usage() {
 (($# == 2)) || { usage; exit 2; }
 CANDIDATE="$(readlink -f -- "$1")"
 PREVIOUS="$(readlink -f -- "$2")"
-[[ -f "${CANDIDATE}" ]] || fail "candidate package does not exist"
-[[ -f "${PREVIOUS}" ]] || fail "v0.2.40 package does not exist"
+[[ -f "${CANDIDATE}" && ! -L "${CANDIDATE}" ]] || fail "candidate package must be a regular file"
+[[ -f "${PREVIOUS}" && ! -L "${PREVIOUS}" ]] || fail "v0.2.40 package must be a regular file"
 [[ -n "${PODLAZ_E2E_PROFILE_URI}" || -n "${PODLAZ_E2E_PROFILE_URI_LIST}" ]] || \
   fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
 
+REPO_ROOT="$(git -C "${SCRIPT_DIR}/../.." rev-parse --show-toplevel)" || fail "cannot resolve source checkout"
+SOURCE_HEAD="$(git -C "${REPO_ROOT}" rev-parse HEAD)" || fail "cannot resolve source HEAD"
+[[ "${SOURCE_HEAD}" =~ ^[0-9a-f]{40}$ ]] || fail "source HEAD is not a full commit identity"
+
 HOST_ARCH="$(dpkg --print-architecture)"
-CANDIDATE_ARCH="$(dpkg-deb -f "${CANDIDATE}" Architecture)"
-PREVIOUS_ARCH="$(dpkg-deb -f "${PREVIOUS}" Architecture)"
-CANDIDATE_VERSION="$(dpkg-deb -f "${CANDIDATE}" Version)"
-PREVIOUS_VERSION="$(dpkg-deb -f "${PREVIOUS}" Version)"
+CANDIDATE_ARCH="$(dpkg-deb --field "${CANDIDATE}" Architecture)"
+PREVIOUS_ARCH="$(dpkg-deb --field "${PREVIOUS}" Architecture)"
+CANDIDATE_VERSION="$(dpkg-deb --field "${CANDIDATE}" Version)"
+PREVIOUS_VERSION="$(dpkg-deb --field "${PREVIOUS}" Version)"
+[[ "$(dpkg-deb --field "${CANDIDATE}" Package)" == podlaz ]] || fail "candidate package is not podlaz"
+[[ "$(dpkg-deb --field "${PREVIOUS}" Package)" == podlaz ]] || fail "v0.2.40 package is not podlaz"
 [[ "${CANDIDATE_ARCH}" == "${HOST_ARCH}" && "${PREVIOUS_ARCH}" == "${HOST_ARCH}" ]] || \
   fail "candidate and v0.2.40 package architectures must match host ${HOST_ARCH}"
 [[ "${PREVIOUS_VERSION%%-*}" == "0.2.40" ]] || \
-  fail "previous package must be the exact v0.2.40 release boundary, got ${PREVIOUS_VERSION}"
+  fail "previous package must be exact v0.2.40, got ${PREVIOUS_VERSION}"
 dpkg --compare-versions "${CANDIDATE_VERSION}" gt "${PREVIOUS_VERSION}" || \
   fail "candidate version ${CANDIDATE_VERSION} must be newer than ${PREVIOUS_VERSION}"
 
+DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 HOOK_DIR="/run/podlaz/e2e-terminal-recovery"
 HOOK_DROPIN_DIR="/run/systemd/system/podlazd.service.d"
 HOOK_DROPIN="${HOOK_DROPIN_DIR}/99-e2e-terminal-recovery.conf"
 HOOK_MARKER="${HOOK_DIR}/terminal-firewall-rollback.injected"
 SESSION_STATE="/run/podlaz/network-session-continuation.json"
 TRANSACTION_DIR="/run/podlaz/transactions"
-FOREIGN_NFT_FAMILY="inet"
-FOREIGN_NFT_TABLE="podlaz_e2e_terminal_foreign"
+FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
+
 PRIVATE_TX="${E2E_TMP_ROOT}/terminal-recovery-transaction.json"
 PRIVATE_SESSION="${E2E_TMP_ROOT}/terminal-recovery-session.json"
 PRIVATE_ADDR="${E2E_TMP_ROOT}/terminal-recovery-ip-addr.json"
 PRIVATE_ROUTES="${E2E_TMP_ROOT}/terminal-recovery-ip-routes.json"
 PRIVATE_RULES="${E2E_TMP_ROOT}/terminal-recovery-ip-rules.json"
 PRIVATE_NFT="${E2E_TMP_ROOT}/terminal-recovery-nft-tables.json"
+PRIVATE_MANIFEST="${E2E_TMP_ROOT}/terminal-recovery-network-manifest.json"
+
 TX_PATH=""
-ORIGINAL_CHILD_PID=""
-ORIGINAL_CHILD_START=""
+TX_ID=""
+CHILD_PID=""
+CHILD_START=""
+TUN_IFACE=""
+TUN_CIDR=""
 PACKAGE_TOUCHED=0
 EXPECTED_RUNTIME_DEB=""
 EXPECTED_RUNTIME_PHASE=""
+FOREIGN_STATE_CREATED=0
+
+V0240_PRE_TX_ID=""
+V0240_PRE_CHILD_PID=""
+V0240_PRE_CHILD_START=""
 
 mask_multiline_sensitive() {
   local value="${1:-}" line
@@ -93,7 +117,7 @@ capture_secret_command() {
   E2E_STEP=$((E2E_STEP + 1))
   LAST_STDOUT="${E2E_TMP_ROOT}/$(printf '%03d' "${E2E_STEP}")-${safe}.stdout"
   LAST_STDERR="${E2E_TMP_ROOT}/$(printf '%03d' "${E2E_STEP}")-${safe}.stderr"
-  log "${name}: private command output is retained outside public artifacts"
+  log "${name}: private command output retained outside public artifacts"
   set +e
   "$@" >"${LAST_STDOUT}" 2>"${LAST_STDERR}"
   code=$?
@@ -109,7 +133,7 @@ expect_secret_success() {
   capture_secret_command "${name}" "$@"
   local code=$?
   set -e
-  [[ "${code}" == 0 ]] || fail "${name} failed with exit code ${code}; inspect private E2E temp output"
+  [[ "${code}" == 0 ]] || fail "${name} failed with exit ${code}; inspect private E2E output"
 }
 
 expect_secret_exit() {
@@ -119,13 +143,13 @@ expect_secret_exit() {
   capture_secret_command "${name}" "$@"
   local code=$?
   set -e
-  [[ "${code}" == "${want}" ]] || fail "${name}: expected exit ${want}, got ${code}; inspect private E2E temp output"
+  [[ "${code}" == "${want}" ]] || fail "${name}: expected exit ${want}, got ${code}"
 }
 
 wait_for_daemon_socket() {
   local attempt
   for attempt in $(seq 1 100); do
-    if [[ -S /run/podlaz/podlazd.sock ]]; then
+    if [[ -S "${DAEMON_SOCKET}" ]]; then
       [[ -n "${EXPECTED_RUNTIME_DEB}" && -n "${EXPECTED_RUNTIME_PHASE}" ]] || \
         fail "package/runtime provenance expectation is not configured"
       assert_exact_package_runtime_provenance "${EXPECTED_RUNTIME_DEB}" "${EXPECTED_RUNTIME_PHASE}"
@@ -134,6 +158,22 @@ wait_for_daemon_socket() {
     sleep 0.1
   done
   fail "podlazd socket did not become ready"
+}
+
+install_exact_package() {
+  local deb="$1" phase="$2" allow_downgrade="${3:-false}"
+  EXPECTED_RUNTIME_DEB="${deb}"
+  EXPECTED_RUNTIME_PHASE="${phase}"
+  if [[ "${allow_downgrade}" == true ]]; then
+    sudo -n apt install --allow-downgrades -y "${deb}"
+  else
+    sudo -n apt install -y "${deb}"
+  fi
+  PACKAGE_TOUCHED=1
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl reset-failed podlazd.service || true
+  sudo -n systemctl start podlazd.service
+  wait_for_daemon_socket
 }
 
 remove_test_hook() {
@@ -145,7 +185,9 @@ remove_test_hook() {
 cleanup() {
   local code=$?
   remove_test_hook
-  sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || true
+  if [[ "${FOREIGN_STATE_CREATED}" == 1 ]]; then
+    cleanup_tun_foreign_state || true
+  fi
   if [[ "${PODLAZ_E2E_KEEP_PACKAGE:-false}" != true && "${PACKAGE_TOUCHED}" == 1 ]]; then
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
     sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
@@ -171,87 +213,12 @@ EOF
   wait_for_daemon_socket
 }
 
-create_foreign_nft_sentinel() {
-  sudo -n nft delete table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || true
-  sudo -n nft add table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}"
-}
-
-assert_foreign_nft_sentinel() {
-  sudo -n nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null 2>&1 || \
-    fail "unrelated nftables sentinel was removed"
-}
-
 check_https_and_dns() {
   local phase="$1"
   getent hosts example.com >"${E2E_ARTIFACT_DIR}/$(safe_name "${phase}")-dns.txt" 2>&1 || \
     fail "${phase}: system DNS resolution failed"
   curl -4 -fsS --max-time 20 -o /dev/null "${PODLAZ_E2E_HTTPS_CHECK_URL}" || \
     fail "${phase}: IPv4 HTTPS failed"
-}
-
-assert_tun_path_usable() {
-  local phase="$1" route
-  sudo -n ip link show dev podlaz0 >/dev/null 2>&1 || fail "${phase}: podlaz0 is absent"
-  sudo -n ip -4 addr show dev podlaz0 | grep -F 'inet ' >/dev/null || fail "${phase}: podlaz0 has no IPv4 address"
-  route="$(sudo -n ip -4 route get 198.51.100.1)" || fail "${phase}: TUN route lookup failed"
-  grep -F 'dev podlaz0' <<<"${route}" >/dev/null || fail "${phase}: test route no longer uses podlaz0"
-  check_https_and_dns "${phase}"
-}
-
-capture_exact_authority_common() {
-  local required_state="$1" tx_files=()
-  mapfile -t tx_files < <(sudo -n find "${TRANSACTION_DIR}" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort)
-  [[ "${#tx_files[@]}" == 1 ]] || fail "TUN state must expose exactly one transaction, got ${#tx_files[@]}"
-  TX_PATH="${tx_files[0]}"
-  sudo -n cat "${TX_PATH}" >"${PRIVATE_TX}"
-  sudo -n cat "${SESSION_STATE}" >"${PRIVATE_SESSION}"
-  chmod 0600 "${PRIVATE_TX}" "${PRIVATE_SESSION}"
-  python3 - "${required_state}" "${PRIVATE_TX}" "${PRIVATE_SESSION}" <<'PY'
-import json, sys
-required=sys.argv[1]
-with open(sys.argv[2], encoding='utf-8') as f: tx=json.load(f)
-with open(sys.argv[3], encoding='utf-8') as f: session=json.load(f)
-if tx.get('state') != required:
-    raise SystemExit(f"transaction state={tx.get('state')!r}, expected {required!r}")
-rb=tx.get('rollback',{})
-nft=rb.get('nftables') or []
-if len(nft) != 1 or not tx.get('desired_plan',{}).get('nftables',{}).get('chains'):
-    raise SystemExit('transaction lacks exact nftables rollback composition')
-children=rb.get('child_processes') or []
-if len(children) != 1 or int(children[0].get('pid',0)) <= 1:
-    raise SystemExit('transaction lacks one exact tracked child process')
-configs=rb.get('generated_configs') or []
-if not configs or any(not item.get('path') for item in configs):
-    raise SystemExit('transaction lacks exact generated-config authority')
-protection=session.get('protection') or {}
-if protection.get('state') != 'armed' or not protection.get('family') or not protection.get('table'):
-    raise SystemExit('Network Session lacks armed Privacy Envelope authority')
-if required == 'failed':
-    if session.get('intent') not in ('disconnect','terminal'):
-        raise SystemExit(f"stranded Network Session intent={session.get('intent')!r}")
-    if 'missing nftables chains' not in (tx.get('failure_reason') or ''):
-        raise SystemExit(f"v0.2.40 stranded transaction has unexpected failure: {tx.get('failure_reason')!r}")
-PY
-  ORIGINAL_CHILD_PID="$(python3 - "${PRIVATE_TX}" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding='utf-8') as f: tx=json.load(f)
-print((tx.get('rollback',{}).get('child_processes') or [{}])[0].get('pid',0))
-PY
-)"
-  if sudo -n test -r "/proc/${ORIGINAL_CHILD_PID}/stat"; then
-    ORIGINAL_CHILD_START="$(sudo -n awk '{print $22}' "/proc/${ORIGINAL_CHILD_PID}/stat")"
-  else
-    ORIGINAL_CHILD_START=""
-  fi
-}
-
-capture_committed_authority() {
-  capture_exact_authority_common committed
-  [[ -n "${ORIGINAL_CHILD_START}" ]] || fail "tracked Xray process is not inspectable"
-}
-
-capture_v0240_stranded_authority() {
-  capture_exact_authority_common failed
 }
 
 capture_host_state() {
@@ -261,158 +228,169 @@ capture_host_state() {
   sudo -n nft -j list tables >"${PRIVATE_NFT}"
 }
 
-assert_v0240_stranded_shape() {
-  local current_start config
-  [[ -n "${ORIGINAL_CHILD_START}" ]] || fail "v0.2.40 tracked Xray process is not inspectable"
-  sudo -n ip link show dev podlaz0 >/dev/null 2>&1 || fail "v0.2.40 stranded boundary lost podlaz0"
-  sudo -n test -r "/proc/${ORIGINAL_CHILD_PID}/stat" || fail "v0.2.40 stranded boundary lost tracked Xray child"
-  current_start="$(sudo -n awk '{print $22}' "/proc/${ORIGINAL_CHILD_PID}/stat")"
-  [[ "${current_start}" == "${ORIGINAL_CHILD_START}" ]] || fail "v0.2.40 stranded tracked Xray identity changed"
+capture_exact_authority() {
+  local required_state="$1" tx_files=() values=()
+  mapfile -t tx_files < <(sudo -n find "${TRANSACTION_DIR}" -maxdepth 1 -type f -name '*.json' -print 2>/dev/null | sort)
+  [[ "${#tx_files[@]}" == 1 ]] || fail "${required_state}: expected exactly one TUN transaction, got ${#tx_files[@]}"
+  TX_PATH="${tx_files[0]}"
+  sudo -n cat "${TX_PATH}" >"${PRIVATE_TX}"
+  sudo -n cat "${SESSION_STATE}" >"${PRIVATE_SESSION}"
+  chmod 0600 "${PRIVATE_TX}" "${PRIVATE_SESSION}"
+
+  mapfile -t values < <(python3 - "${required_state}" "${PRIVATE_TX}" "${PRIVATE_SESSION}" <<'PY'
+import json,sys
+required,tx_path,session_path=sys.argv[1:]
+with open(tx_path,encoding='utf-8') as f: tx=json.load(f)
+with open(session_path,encoding='utf-8') as f: session=json.load(f)
+if tx.get('state') != required:
+    raise SystemExit(f"transaction state={tx.get('state')!r}, want {required!r}")
+rb=tx.get('rollback') or {}
+children=rb.get('child_processes') or []
+addresses=rb.get('tun_addresses') or []
+nft=rb.get('nftables') or []
+configs=rb.get('generated_configs') or []
+protection=session.get('protection') or {}
+if len(children)!=1 or int(children[0].get('pid',0))<=1:
+    raise SystemExit('transaction lacks one exact tracked child')
+if len(addresses)!=1 or not addresses[0].get('interface_name') or not addresses[0].get('cidr'):
+    raise SystemExit('transaction lacks one exact TUN address authority')
+if not (rb.get('routes') or []) or not (rb.get('policy_rules') or []):
+    raise SystemExit('transaction lacks exact route/rule authority')
+if len(nft)!=1 or not nft[0].get('family') or not nft[0].get('table'):
+    raise SystemExit('transaction lacks exact nftables rollback authority')
+if not (tx.get('desired_plan') or {}).get('nftables',{}).get('chains'):
+    raise SystemExit('transaction lacks exact desired nftables composition')
+if not configs or any(not item.get('path') for item in configs):
+    raise SystemExit('transaction lacks generated-config authority')
+if protection.get('state')!='armed' or not protection.get('family') or not protection.get('table'):
+    raise SystemExit('Network Session lacks armed Privacy Envelope authority')
+if required=='failed':
+    if session.get('intent') not in ('disconnect','terminal'):
+        raise SystemExit('failed transaction lacks terminal Network Session intent')
+    if 'missing nftables chains' not in (tx.get('failure_reason') or ''):
+        raise SystemExit('failed transaction is not historical v0.2.40 nftables failure')
+print(tx.get('id') or '')
+print(children[0]['pid'])
+print(addresses[0]['interface_name'])
+print(addresses[0]['cidr'])
+PY
+)
+  [[ "${#values[@]}" == 4 && -n "${values[0]}" ]] || fail "${required_state}: exact authority extraction failed"
+  TX_ID="${values[0]}"
+  CHILD_PID="${values[1]}"
+  TUN_IFACE="${values[2]}"
+  TUN_CIDR="${values[3]}"
+  if sudo -n test -r "/proc/${CHILD_PID}/stat"; then
+    CHILD_START="$(sudo -n awk '{print $22}' "/proc/${CHILD_PID}/stat")"
+  else
+    CHILD_START=""
+  fi
+}
+
+assert_child_identity() {
+  local pid="$1" start="$2" phase="$3" current_start exe
+  [[ -n "${start}" ]] || fail "${phase}: tracked Xray start identity is unavailable"
+  sudo -n test -r "/proc/${pid}/stat" || fail "${phase}: tracked Xray process is absent"
+  current_start="$(sudo -n awk '{print $22}' "/proc/${pid}/stat")"
+  [[ "${current_start}" == "${start}" ]] || fail "${phase}: tracked Xray process identity changed"
+  exe="$(sudo -n readlink "/proc/${pid}/exe")" || fail "${phase}: tracked Xray executable cannot be inspected"
+  [[ "${exe}" == /usr/lib/podlaz/xray ]] || fail "${phase}: tracked PID is not packaged Xray"
+}
+
+assert_original_child_absent() {
+  local pid="$1" start="$2" phase="$3" current_start
+  [[ -n "${start}" ]] || return 0
+  if sudo -n test -r "/proc/${pid}/stat"; then
+    current_start="$(sudo -n awk '{print $22}' "/proc/${pid}/stat")"
+    [[ "${current_start}" != "${start}" ]] || fail "${phase}: original tracked Xray is still alive"
+  fi
+}
+
+assert_generated_configs() {
+  local mode="$1" phase="$2" config
   while IFS= read -r config; do
     [[ -n "${config}" ]] || continue
-    sudo -n test -e "${config}" || fail "v0.2.40 stranded generated config is absent"
+    case "${mode}" in
+      present) sudo -n test -e "${config}" || fail "${phase}: generated config is absent" ;;
+      absent) sudo -n test ! -e "${config}" || fail "${phase}: generated config remains" ;;
+      *) fail "invalid generated-config assertion mode ${mode}" ;;
+    esac
   done < <(python3 - "${PRIVATE_TX}" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding='utf-8') as f: tx=json.load(f)
-for item in tx.get('rollback',{}).get('generated_configs') or []:
+for item in (tx.get('rollback') or {}).get('generated_configs') or []:
     path=item.get('path')
     if path: print(path)
 PY
 )
-  capture_host_state
-  python3 "${SCRIPT_DIR}/lib/tun_terminal_stranded.py" \
-    "${PRIVATE_TX}" "${PRIVATE_SESSION}" "${PRIVATE_ADDR}" \
-    "${PRIVATE_ROUTES}" "${PRIVATE_RULES}" "${PRIVATE_NFT}"
-  printf 'v0.2.40_stranded_shape=confirmed\n' >"${E2E_ARTIFACT_DIR}/v0.2.40-stranded-shape.txt"
 }
 
-assert_exact_network_tuples() {
-  local mode="$1"
+assert_resolved_state() {
+  local mode="$1" phase="$2" state
+  if inspect_resolved_link_state "${TUN_IFACE}"; then
+    state=0
+  else
+    state=$?
+  fi
+  case "${mode}:${state}" in
+    present:1|absent:0) return 0 ;;
+    present:0) fail "${phase}: systemd-resolved TUN state is absent" ;;
+    absent:1) fail "${phase}: systemd-resolved TUN state remains" ;;
+    *) fail "${phase}: systemd-resolved TUN state is unknown" ;;
+  esac
+}
+
+assert_exact_live_network() {
+  local mode="$1" phase="$2"
   capture_host_state
-  python3 - "${mode}" "${PRIVATE_TX}" "${PRIVATE_SESSION}" "${PRIVATE_ADDR}" "${PRIVATE_ROUTES}" "${PRIVATE_RULES}" "${PRIVATE_NFT}" <<'PY'
-import ipaddress, json, sys
-mode=sys.argv[1]
-if mode not in {'present','absent'}:
-    raise SystemExit('invalid exact tuple assertion mode')
-with open(sys.argv[2],encoding='utf-8') as f: tx=json.load(f)
-with open(sys.argv[3],encoding='utf-8') as f: session=json.load(f)
-with open(sys.argv[4],encoding='utf-8') as f: addrs=json.load(f)
-with open(sys.argv[5],encoding='utf-8') as f: routes=json.load(f)
-with open(sys.argv[6],encoding='utf-8') as f: rules=json.load(f)
-with open(sys.argv[7],encoding='utf-8') as f: nft=json.load(f)
-rb=tx.get('rollback',{})
+  python3 "${SCRIPT_DIR}/lib/tun_terminal_stranded.py" "${mode}" \
+    "${PRIVATE_TX}" "${PRIVATE_SESSION}" "${PRIVATE_ADDR}" \
+    "${PRIVATE_ROUTES}" "${PRIVATE_RULES}" "${PRIVATE_NFT}" || \
+    fail "${phase}: exact live network contract failed for mode ${mode}"
+}
 
-def require(found, description):
-    if found != (mode == 'present'):
-        state='present' if found else 'absent'
-        raise SystemExit(f'{description} is {state}, expected {mode}')
+snapshot_exact_network_manifest() {
+  local phase="$1"
+  sudo -n rm -f -- "${PRIVATE_MANIFEST}" >/dev/null 2>&1 || fail "${phase}: cannot clear network manifest"
+  sudo -n python3 "${FALLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${PRIVATE_MANIFEST}" >/dev/null || \
+    fail "${phase}: transaction-derived route/rule manifest snapshot failed"
+  sudo -n test -f "${PRIVATE_MANIFEST}" || fail "${phase}: route/rule manifest was not persisted"
+}
 
-def norm_table(value):
-    text=str(value if value is not None else 'main')
-    return 'main' if text in {'254','main'} else text
+assert_network_manifest_absent() {
+  local phase="$1"
+  verify_tun_package_network_absent "${phase}" "${FALLBACK_NETWORK_HELPER}" "${PRIVATE_MANIFEST}" || \
+    fail "${phase}: exact transaction route/rule residue remains or cannot be inspected"
+}
 
-def norm_dst(value):
-    return '0.0.0.0/0' if value in (None,'default') else value
-
-for expected in rb.get('tun_addresses') or []:
-    iface=expected.get('interface_name')
-    net=ipaddress.ip_interface(expected.get('cidr'))
-    found=False
-    for link in addrs:
-        if link.get('ifname') != iface: continue
-        for info in link.get('addr_info') or []:
-            if info.get('family')=='inet' and info.get('local')==str(net.ip) and info.get('prefixlen')==net.network.prefixlen:
-                found=True
-    require(found, f'exact TUN address on {iface}')
-
-for expected in rb.get('routes') or []:
-    found=False
-    for route in routes:
-        if norm_table(route.get('table')) != norm_table(expected.get('table')): continue
-        if norm_dst(route.get('dst')) != norm_dst(expected.get('cidr')): continue
-        if (route.get('dev') or '') != (expected.get('dev') or ''): continue
-        if (route.get('gateway') or '') != (expected.get('via') or ''): continue
-        found=True
-    require(found, f'exact route {expected}')
-
-for expected in rb.get('policy_rules') or []:
-    found=False
-    for rule in rules:
-        if int(rule.get('priority',-1)) != int(expected.get('priority',-2)): continue
-        if norm_table(rule.get('table','')) != norm_table(expected.get('table','')): continue
-        if expected.get('from') and rule.get('from','all') != expected.get('from'): continue
-        if expected.get('to') and rule.get('to') != expected.get('to'): continue
-        if expected.get('mark') and str(rule.get('fwmark','')) != str(expected.get('mark')): continue
-        found=True
-    require(found, f'exact policy rule {expected}')
-
-tables=[]
-for item in nft.get('nftables') or []:
-    table=item.get('table') if isinstance(item,dict) else None
-    if table: tables.append((table.get('family'),table.get('name')))
-for expected in rb.get('nftables') or []:
-    require((expected.get('family'),expected.get('table')) in tables, 'exact transaction nftables table')
-protection=session.get('protection') or {}
-require((protection.get('family'),protection.get('table')) in tables, 'exact Privacy Envelope table')
-PY
+assert_active_authority_present() {
+  local phase="$1"
+  sudo -n test -e "${TX_PATH}" || fail "${phase}: transaction authority disappeared"
+  sudo -n test -e "${SESSION_STATE}" || fail "${phase}: Network Session authority disappeared"
+  sudo -n ip link show dev "${TUN_IFACE}" >/dev/null 2>&1 || fail "${phase}: TUN link disappeared"
+  assert_resolved_state present "${phase}"
+  assert_child_identity "${CHILD_PID}" "${CHILD_START}" "${phase}"
+  assert_generated_configs present "${phase}"
+  assert_exact_live_network active "${phase}"
 }
 
 assert_exact_authority_absent() {
-  local state current_start config
-  sudo -n test ! -e "${TX_PATH}" || fail "exact transaction authority still exists"
-  sudo -n test ! -e "${SESSION_STATE}" || fail "Network Session authority still exists"
-  if inspect_link_state podlaz0; then :; else
-    state=$?
-    case "${state}" in 1) fail "podlaz0 still exists" ;; *) fail "podlaz0 absence is unknown" ;; esac
-  fi
-  if inspect_resolved_link_state podlaz0; then :; else
-    state=$?
-    case "${state}" in 1) fail "systemd-resolved still has podlaz0 state" ;; *) fail "resolved absence is unknown" ;; esac
-  fi
-  if [[ -n "${ORIGINAL_CHILD_START}" ]] && sudo -n test -r "/proc/${ORIGINAL_CHILD_PID}/stat"; then
-    current_start="$(sudo -n awk '{print $22}' "/proc/${ORIGINAL_CHILD_PID}/stat")"
-    [[ "${current_start}" != "${ORIGINAL_CHILD_START}" ]] || fail "original tracked Xray process is still alive"
-  fi
-  while IFS= read -r config; do
-    [[ -n "${config}" ]] || continue
-    sudo -n test ! -e "${config}" || fail "transaction-owned generated config still exists"
-  done < <(python3 - "${PRIVATE_TX}" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding='utf-8') as f: tx=json.load(f)
-for item in tx.get('rollback',{}).get('generated_configs') or []:
-    path=item.get('path')
-    if path: print(path)
-PY
-)
-  assert_exact_network_tuples absent
-}
-
-assert_committed_authority_present() {
-  local state current_start config
-  sudo -n test -e "${TX_PATH}" || fail "exact transaction authority disappeared"
-  sudo -n test -e "${SESSION_STATE}" || fail "Network Session authority disappeared"
-  sudo -n ip link show dev podlaz0 >/dev/null 2>&1 || fail "podlaz0 disappeared"
-  if inspect_resolved_link_state podlaz0; then
-    fail "systemd-resolved podlaz0 state disappeared"
+  local phase="$1"
+  sudo -n test ! -e "${TX_PATH}" || fail "${phase}: exact transaction authority remains"
+  sudo -n test ! -e "${SESSION_STATE}" || fail "${phase}: Network Session authority remains"
+  if inspect_link_state "${TUN_IFACE}"; then
+    :
   else
-    state=$?
-    case "${state}" in 1) ;; *) fail "systemd-resolved podlaz0 observation is unknown" ;; esac
+    case $? in 1) fail "${phase}: exact TUN link remains" ;; *) fail "${phase}: TUN link absence is unknown" ;; esac
   fi
-  sudo -n test -r "/proc/${ORIGINAL_CHILD_PID}/stat" || fail "tracked Xray process disappeared"
-  current_start="$(sudo -n awk '{print $22}' "/proc/${ORIGINAL_CHILD_PID}/stat")"
-  [[ "${current_start}" == "${ORIGINAL_CHILD_START}" ]] || fail "tracked Xray process identity changed"
-  while IFS= read -r config; do
-    [[ -n "${config}" ]] || continue
-    sudo -n test -e "${config}" || fail "transaction-owned generated config disappeared"
-  done < <(python3 - "${PRIVATE_TX}" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding='utf-8') as f: tx=json.load(f)
-for item in tx.get('rollback',{}).get('generated_configs') or []:
-    path=item.get('path')
-    if path: print(path)
-PY
-)
-  assert_exact_network_tuples present
+  assert_resolved_state absent "${phase}"
+  assert_original_child_absent "${CHILD_PID}" "${CHILD_START}" "${phase}"
+  assert_generated_configs absent "${phase}"
+  assert_exact_live_network absent "${phase}"
+  if sudo -n test -d "${TRANSACTION_DIR}" && \
+    sudo -n find "${TRANSACTION_DIR}" -maxdepth 1 -type f -name '*.json' -print -quit | grep -q .; then
+    fail "${phase}: transaction cleanup authority remains"
+  fi
 }
 
 assert_clean_recovery_view() {
@@ -425,45 +403,35 @@ if recovery.get('candidates'):
     raise SystemExit('clean recovery view still contains candidates')
 network_session=recovery.get('network_session')
 if network_session and network_session.get('next_action') not in (None,'none'):
-    raise SystemExit(f'clean recovery view still contains Network Session work: {network_session}')
+    raise SystemExit('clean recovery view still contains Network Session work')
 PY
 }
 
-assert_no_podlaz_runtime_residue() {
-  local state tables
-  if inspect_link_state podlaz0; then :; else
-    state=$?
-    case "${state}" in 1) fail "podlaz0 still exists" ;; *) fail "podlaz0 absence is unknown" ;; esac
-  fi
-  if inspect_resolved_link_state podlaz0; then :; else
-    state=$?
-    case "${state}" in 1) fail "systemd-resolved still has podlaz0 state" ;; *) fail "resolved absence is unknown" ;; esac
-  fi
-  tables="$(sudo -n nft list tables)" || fail "nftables table inspection failed"
-  if grep -Eq '^table inet podlaz$|^table inet podlaz_pe_' <<<"${tables}"; then
-    fail "Podlaz nftables residue remains"
-  fi
-  if sudo -n test -d "${TRANSACTION_DIR}"; then
-    if sudo -n find "${TRANSACTION_DIR}" -maxdepth 1 -type f -name '*.json' -print -quit | grep -q .; then
-      fail "Podlaz transaction residue remains"
-    fi
-  fi
-  sudo -n test ! -e "${SESSION_STATE}" || fail "Network Session authority remains"
+assert_v0240_stranded_shape() {
+  local current_start
+  [[ "${TX_ID}" == "${V0240_PRE_TX_ID}" ]] || fail "v0.2.40 failed transaction identity changed across disconnect"
+  [[ "${CHILD_PID}" == "${V0240_PRE_CHILD_PID}" ]] || fail "v0.2.40 rollback child PID changed across disconnect"
+  assert_child_identity "${V0240_PRE_CHILD_PID}" "${V0240_PRE_CHILD_START}" "v0.2.40 stranded"
+  sudo -n ip link show dev "${TUN_IFACE}" >/dev/null 2>&1 || fail "v0.2.40 stranded boundary lost TUN link"
+  assert_generated_configs present "v0.2.40 stranded"
+  capture_host_state
+  python3 "${SCRIPT_DIR}/lib/tun_terminal_stranded.py" v0240-stranded \
+    "${PRIVATE_TX}" "${PRIVATE_SESSION}" "${PRIVATE_ADDR}" \
+    "${PRIVATE_ROUTES}" "${PRIVATE_RULES}" "${PRIVATE_NFT}" || \
+    fail "v0.2.40 captured stranded live shape was not reproduced"
+  current_start="$(sudo -n awk '{print $22}' "/proc/${V0240_PRE_CHILD_PID}/stat")"
+  [[ "${current_start}" == "${V0240_PRE_CHILD_START}" ]] || fail "v0.2.40 Xray identity changed during stranded assertion"
+  printf 'v0.2.40_stranded_shape=confirmed\npre_disconnect_child_identity=preserved\n' \
+    >"${E2E_ARTIFACT_DIR}/v0.2.40-stranded-shape.txt"
 }
 
 log "record exact package identities"
-sha256sum "${CANDIDATE}" | awk '{print $1}' >"${E2E_ARTIFACT_DIR}/candidate.sha256"
-sha256sum "${PREVIOUS}" | awk '{print $1}' >"${E2E_ARTIFACT_DIR}/v0.2.40.sha256"
+printf '%s\n' "$(sha256sum "${CANDIDATE}" | awk '{print $1}')" >"${E2E_ARTIFACT_DIR}/candidate.sha256"
+printf '%s\n' "$(sha256sum "${PREVIOUS}" | awk '{print $1}')" >"${E2E_ARTIFACT_DIR}/v0.2.40.sha256"
+printf '%s\n' "${SOURCE_HEAD}" >"${E2E_ARTIFACT_DIR}/source-head.txt"
 
 log "install exact candidate package"
-EXPECTED_RUNTIME_DEB="${CANDIDATE}"
-EXPECTED_RUNTIME_PHASE="candidate-initial"
-sudo -n apt install -y "${CANDIDATE}"
-PACKAGE_TOUCHED=1
-sudo -n systemctl daemon-reload
-sudo -n systemctl reset-failed podlazd.service || true
-sudo -n systemctl start podlazd.service
-wait_for_daemon_socket
+install_exact_package "${CANDIDATE}" candidate-initial
 
 log "import private TUN profile"
 PROFILE_URI="$(first_configured_profile_uri)"
@@ -477,102 +445,100 @@ assert_not_contains "${LAST_STDOUT}" "${PROFILE_URI}"
 expect_secret_success "validate-profile-tun" run_client profile validate "${PROFILE_ID}" --mode tun
 
 check_https_and_dns baseline
-create_foreign_nft_sentinel
-assert_foreign_nft_sentinel
+create_tun_foreign_state
+FOREIGN_STATE_CREATED=1
+assert_tun_foreign_state baseline
 install_terminal_hook
 
 log "connect exact candidate TUN"
 expect_secret_success "connect-tun" run_client connect --mode tun "${PROFILE_ID}"
 expect_secret_success "status-active" run_client status
 assert_contains "${LAST_STDOUT}" "Status: Connected"
-assert_tun_path_usable active
-capture_committed_authority
-assert_committed_authority_present
+capture_exact_authority committed
+assert_active_authority_present candidate-active
+assert_tun_foreign_state candidate-active
 
-log "inject first terminal firewall rollback blocker"
+log "inject terminal firewall rollback blocker"
 set +e
 capture_secret_command "disconnect-injected" run_client disconnect
 DISCONNECT_RC=$?
 set -e
 [[ "${DISCONNECT_RC}" != 0 ]] || fail "injected terminal disconnect unexpectedly succeeded"
 sudo -n test -f "${HOOK_MARKER}" || fail "terminal firewall rollback hook did not fire"
-assert_foreign_nft_sentinel
-
-log "prove early blocker did not amplify into dependent teardown"
-assert_tun_path_usable after-failed-disconnect
-assert_committed_authority_present
+assert_active_authority_present after-failed-disconnect
+assert_tun_foreign_state after-failed-disconnect
 expect_secret_exit 3 "status-terminal-incomplete" run_client status
 assert_contains "${LAST_STDOUT}" "Status: Unknown"
 
-log "recover terminal state in the same daemon without reboot or service restart"
+log "recover terminal state in same daemon without reboot/service restart"
 expect_secret_success "recover-terminal-execute" run_client recover --execute --yes
 check_https_and_dns after-recover
-assert_exact_authority_absent
-assert_foreign_nft_sentinel
+assert_exact_authority_absent after-recover
+assert_tun_foreign_state after-recover
 expect_secret_success "status-disconnected" run_client status
 assert_contains "${LAST_STDOUT}" "Status: Disconnected"
 
-log "prove recovery is idempotent without depending on unrelated host churn"
-assert_exact_authority_absent
+log "prove recovery is idempotent"
 expect_secret_success "recover-terminal-second" run_client recover --execute --yes
-assert_exact_authority_absent
+assert_exact_authority_absent after-second-recover
 assert_clean_recovery_view
-assert_foreign_nft_sentinel
+assert_tun_foreign_state after-second-recover
 
-log "prove a subsequent normal lifecycle still works"
+log "prove normal candidate disconnect has no exact route/rule residue"
 expect_secret_success "connect-after-recovery" run_client connect --mode tun "${PROFILE_ID}"
-assert_tun_path_usable reconnect
+capture_exact_authority committed
+assert_active_authority_present candidate-reconnect
+snapshot_exact_network_manifest candidate-reconnect
 expect_secret_success "disconnect-after-recovery" run_client disconnect
 check_https_and_dns final-candidate
-assert_no_podlaz_runtime_residue
+assert_exact_authority_absent final-candidate
+assert_network_manifest_absent final-candidate
 assert_clean_recovery_view
-assert_foreign_nft_sentinel
+assert_tun_foreign_state final-candidate
 
-log "reproduce the exact v0.2.40 stranded upgrade boundary"
+log "reproduce exact v0.2.40 stranded upgrade boundary"
 remove_test_hook
-EXPECTED_RUNTIME_DEB="${PREVIOUS}"
-EXPECTED_RUNTIME_PHASE="v0.2.40-downgrade"
-sudo -n apt install --allow-downgrades -y "${PREVIOUS}"
-sudo -n systemctl daemon-reload
-sudo -n systemctl reset-failed podlazd.service || true
-sudo -n systemctl start podlazd.service
-wait_for_daemon_socket
+install_exact_package "${PREVIOUS}" v0.2.40-downgrade true
 expect_secret_success "v0240-validate-profile-tun" run_client profile validate "${PROFILE_ID}" --mode tun
 expect_secret_success "v0240-connect-tun" run_client connect --mode tun "${PROFILE_ID}"
-assert_tun_path_usable v0240-active
+capture_exact_authority committed
+assert_active_authority_present v0.2.40-active
+V0240_PRE_TX_ID="${TX_ID}"
+V0240_PRE_CHILD_PID="${CHILD_PID}"
+V0240_PRE_CHILD_START="${CHILD_START}"
+assert_child_identity "${V0240_PRE_CHILD_PID}" "${V0240_PRE_CHILD_START}" "v0.2.40 pre-disconnect"
+assert_tun_foreign_state v0.2.40-active
+
 set +e
 capture_secret_command "v0240-disconnect-stranded" run_client disconnect
 V0240_DISCONNECT_RC=$?
 set -e
-[[ "${V0240_DISCONNECT_RC}" != 0 ]] || fail "v0.2.40 disconnect unexpectedly converged; stranded upgrade boundary was not reproduced"
-capture_v0240_stranded_authority
+[[ "${V0240_DISCONNECT_RC}" != 0 ]] || fail "v0.2.40 disconnect unexpectedly converged"
+capture_exact_authority failed
 assert_v0240_stranded_shape
-assert_foreign_nft_sentinel
+assert_tun_foreign_state v0.2.40-stranded
 
 log "install exact fixed candidate over v0.2.40 stranded state without reboot"
-EXPECTED_RUNTIME_DEB="${CANDIDATE}"
-EXPECTED_RUNTIME_PHASE="candidate-upgrade-over-stranded"
-sudo -n apt install -y "${CANDIDATE}"
-sudo -n systemctl daemon-reload
-sudo -n systemctl reset-failed podlazd.service || true
-sudo -n systemctl start podlazd.service
-wait_for_daemon_socket
+install_exact_package "${CANDIDATE}" candidate-upgrade-over-stranded
 expect_secret_success "upgrade-recover-terminal" run_client recover --execute --yes
 check_https_and_dns after-v0240-upgrade-recover
-assert_exact_authority_absent
-assert_foreign_nft_sentinel
+assert_exact_authority_absent after-v0240-upgrade-recover
+assert_tun_foreign_state after-v0240-upgrade-recover
 expect_secret_success "upgrade-status-disconnected" run_client status
 assert_contains "${LAST_STDOUT}" "Status: Disconnected"
 assert_clean_recovery_view
 
-log "prove post-upgrade lifecycle remains reusable"
+log "prove post-upgrade normal lifecycle and route/rule cleanup"
 expect_secret_success "upgrade-connect-after-recovery" run_client connect --mode tun "${PROFILE_ID}"
-assert_tun_path_usable upgrade-reconnect
+capture_exact_authority committed
+assert_active_authority_present upgrade-reconnect
+snapshot_exact_network_manifest upgrade-reconnect
 expect_secret_success "upgrade-disconnect-after-recovery" run_client disconnect
 check_https_and_dns final-upgrade
-assert_no_podlaz_runtime_residue
+assert_exact_authority_absent final-upgrade
+assert_network_manifest_absent final-upgrade
 assert_clean_recovery_view
-assert_foreign_nft_sentinel
+assert_tun_foreign_state final-upgrade
 
 assert_artifacts_do_not_contain_sensitive_values \
   "tun-terminal-recovery" "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}" "${PROFILE_URI}" "${PROFILE_ID}"
