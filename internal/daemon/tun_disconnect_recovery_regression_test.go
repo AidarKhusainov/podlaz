@@ -95,3 +95,27 @@ func TestInspectNetworkSessionRecoveryPlanExposesTerminalIntentWithOpenStartupGa
 		t.Fatalf("unexpected terminal recovery plan: %#v", plan)
 	}
 }
+
+func TestCleanupRequiredActiveStatusDoesNotSuppressExactRecovery(t *testing.T) {
+	status := api.StatusResponse{
+		Connection: "active",
+		Mode:       planner.ModeTun,
+		TunHealth: &api.TunHealthStatus{
+			State:             api.TunHealthCleanupRequired,
+			NetworkGeneration: 1,
+			Classification:    api.TunHealthOwnershipInvalid,
+		},
+		Transactions: []api.TransactionStatus{{
+			ID: "tx-example", State: "failed", RollbackAvailable: true, RequiresCleanup: true, Path: "/run/podlaz/transactions/tx-example.json",
+		}},
+	}
+	if activeStatusMustKeepRecoveryMutationFree(status) {
+		t.Fatal("cleanup-required active publication must allow exact recovery")
+	}
+
+	status.TunHealth = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
+	status.Transactions = nil
+	if !activeStatusMustKeepRecoveryMutationFree(status) {
+		t.Fatal("healthy active publication must remain mutation-free")
+	}
+}
