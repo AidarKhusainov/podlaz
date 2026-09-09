@@ -216,16 +216,19 @@ type networkSessionLiveTerminalConverger interface {
 	convergeLiveTerminalDataPlane(context.Context) error
 }
 
-// convergeLiveTerminalDataPlane uses only the current daemon's supervised
-// lifecycle authority. It deliberately bypasses Network Session finalization so
-// session-scoped Privacy Envelope authority remains durable until the later
-// terminal teardown stage proves the data plane and remaining host network clean.
+// convergeLiveTerminalDataPlane delegates only to the explicit live terminal
+// capability of the wrapped lifecycle. It must never call ordinary Disconnect:
+// production Disconnect wrappers also own Privacy Envelope removal and Network
+// Session finalization, which must run only after exact durable recovery.
 func (l *networkSessionLifecycle) convergeLiveTerminalDataPlane(ctx context.Context) error {
 	if l == nil || l.lifecycle == nil {
 		return errors.New("live terminal data-plane convergence requires a lifecycle service")
 	}
-	_, err := l.lifecycle.Disconnect(ctx)
-	return err
+	live, ok := l.lifecycle.(networkSessionLiveTerminalConverger)
+	if !ok {
+		return nil
+	}
+	return live.convergeLiveTerminalDataPlane(ctx)
 }
 
 type networkSessionStatusFunc func(context.Context) api.StatusResponse
