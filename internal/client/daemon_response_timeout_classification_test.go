@@ -62,3 +62,34 @@ func TestTunDoctorResponseTimeoutAfterSuccessfulDaemonDialIsNotDaemonUnavailable
 		t.Fatalf("successful daemon dial followed by TUN diagnostic response timeout was misclassified as daemon unavailable: %v", err)
 	}
 }
+
+func TestRecoverResponseTimeoutAfterSuccessfulDaemonDialIsNotDaemonUnavailable(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "podlazd.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := http.Server{Handler: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	defer func() {
+		_ = server.Close()
+		<-done
+	}()
+
+	_, err = (RecoveryClient{
+		SocketPath:       socketPath,
+		DialTimeout:      25 * time.Millisecond,
+		OperationTimeout: 25 * time.Millisecond,
+	}).Recover(context.Background())
+	if err == nil {
+		t.Fatal("expected bounded daemon recovery response timeout")
+	}
+	if IsDaemonUnavailable(err) {
+		t.Fatalf("successful daemon dial followed by recovery response timeout was misclassified as daemon unavailable: %v", err)
+	}
+}
