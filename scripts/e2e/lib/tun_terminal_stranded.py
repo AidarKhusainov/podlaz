@@ -95,19 +95,33 @@ def _exact_authority(tx, session):
     return addresses, routes, rules, nft_entry, protection
 
 
+def _require_collection_state(flags, *, expected_present, label):
+    if expected_present:
+        if not flags or not all(flags):
+            raise ValueError(f"{label} set is absent or incomplete, expected all exact tuples present")
+        return
+    if any(flags):
+        raise ValueError(f"{label} residue remains, expected every exact tuple absent")
+
+
 def validate_exact_live_state(tx, session, addrs, routes, rules, nft, *, data_plane_present, barriers_present):
     addresses, route_authority, rule_authority, nft_entry, protection = _exact_authority(tx, session)
 
-    checks = [
-        (all(_address_present(expected, addrs) for expected in addresses), "exact TUN address"),
-        (all(_route_present(expected, routes) for expected in route_authority), "exact route"),
-        (all(_rule_present(expected, rules) for expected in rule_authority), "exact policy rule"),
-    ]
-    for found, label in checks:
-        if found != data_plane_present:
-            actual = "present" if found else "absent or incomplete"
-            expected = "present" if data_plane_present else "absent"
-            raise ValueError(f"{label} state is {actual}, expected {expected}")
+    _require_collection_state(
+        [_address_present(expected, addrs) for expected in addresses],
+        expected_present=data_plane_present,
+        label="exact TUN address",
+    )
+    _require_collection_state(
+        [_route_present(expected, routes) for expected in route_authority],
+        expected_present=data_plane_present,
+        label="exact route",
+    )
+    _require_collection_state(
+        [_rule_present(expected, rules) for expected in rule_authority],
+        expected_present=data_plane_present,
+        label="exact policy rule",
+    )
 
     tables = _tables(nft)
     barrier_checks = [
