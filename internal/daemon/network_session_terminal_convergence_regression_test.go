@@ -83,7 +83,9 @@ func TestTerminalNetworkSessionKeepsProtectionWhenExactRecoveryIsIncomplete(t *t
 		continuation,
 		networkSessionRecordingLifecycle{events: &[]string{}},
 		func(context.Context) api.StatusResponse { return api.StatusResponse{Connection: "active"} },
-		func(context.Context, api.StatusResponse) api.RecoveryResponse { return api.RecoveryResponse{Mode: "execute"} },
+		func(context.Context, api.StatusResponse) api.RecoveryResponse {
+			return api.RecoveryResponse{Mode: "execute"}
+		},
 	)
 	if err == nil || resumed {
 		t.Fatalf("incomplete exact recovery must stop terminal teardown: resumed=%v err=%v", resumed, err)
