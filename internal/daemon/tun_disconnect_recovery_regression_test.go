@@ -68,7 +68,7 @@ func TestTunPlanFromTransactionDoesNotGrantFirewallRollbackFromDesiredIntentAlon
 	tx := txstate.NewTransaction("tun-disconnect-no-authority", plan.ProfileID, plan.Mode, fixedClock()())
 	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
 
-	if got := tunPlanFromTransaction(tx).Firewall; got != (planner.TunFirewallPlan{}) {
+	if got := tunPlanFromTransaction(tx).Firewall; !reflect.DeepEqual(got, planner.TunFirewallPlan{}) {
 		t.Fatalf("desired nftables intent must not grant rollback authority: %#v", got)
 	}
 }
