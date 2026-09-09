@@ -112,26 +112,24 @@ func (e DNSAwareTunExecutor) Verify(ctx context.Context, plan planner.TunPlan) e
 // Rollback proves the transaction-bound link identity before the first
 // link-scoped mutation. Only after this read-only gate succeeds does rollback
 // proceed in the canonical order: firewall, DNS, policy rules/routes, address,
-// and finally any owned link cleanup performed by the base executor.
+// and finally any owned link cleanup performed by the base executor. Each phase
+// is a safety gate: a blocker stops later dependent destructive mutations so a
+// protected usable data plane is not degraded into a stranded host.
 func (e DNSAwareTunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.Base.VerifyRollbackIdentity(ctx, plan); err != nil {
 		return err
 	}
-	var errs []error
 	if e.Firewall != nil && strings.TrimSpace(plan.Firewall.Table) != "" {
 		if err := e.Firewall.Rollback(ctx, plan.Firewall); err != nil {
-			errs = append(errs, err)
+			return err
 		}
 	}
 	if e.DNS != nil && strings.TrimSpace(plan.DNS.TargetLink) != "" {
 		if err := e.DNS.Rollback(ctx, plan.DNS); err != nil {
-			errs = append(errs, err)
+			return err
 		}
 	}
-	if err := e.Base.Rollback(ctx, plan); err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
+	return e.Base.Rollback(ctx, plan)
 }
 
 func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
