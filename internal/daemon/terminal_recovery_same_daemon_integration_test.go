@@ -45,6 +45,20 @@ func TestRecoverCapturedSameDaemonTerminalTunShapeConvergesWithoutReboot(t *test
 		t.Fatal(err)
 	}
 
+	// A second cleanup-required transaction represents durable residue outside
+	// the currently supervised Xray transaction. The exact-recovery stage must
+	// observe it before session protection or Network Session authority can be
+	// finalized.
+	secondary := txstate.NewTransaction("tun-terminal-secondary", "profile-secondary", planner.ModeTun, store.Now())
+	secondary.State = txstate.TransactionApplying
+	secondary.Rollback.TUN = []txstate.TUNRollback{{InterfaceName: "podlaz0", Owner: txstate.TransactionOwner}}
+	if _, err := txstate.MarkFailure(&secondary, "synthetic secondary cleanup", store.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(secondary); err != nil {
+		t.Fatal(err)
+	}
+
 	fakeXray := writeFakeXray(t, `#!/bin/sh
 trap 'exit 0' TERM
 while true; do sleep 3600 & wait $!; done
@@ -95,6 +109,7 @@ while true; do sleep 3600 & wait $!; done
 	if err := continuation.disarm(networkSessionIntentDisconnect); err != nil {
 		t.Fatal(err)
 	}
+
 	envelope := &privacyEnvelopeExecutorStub{exists: true}
 	postNetworkCalls := 0
 	continuation.continueTeardown = func(ctx context.Context, stateStore networkSessionStateStore) error {
@@ -104,7 +119,48 @@ while true; do sleep 3600 & wait $!; done
 		})
 	}
 
-	sessionLifecycle := newNetworkSessionLifecycle(manager, continuation)
+	wrapperRefreshCalls := 0
+	healthLifecycle := tunRevalidationLifecycle{
+		lifecycle: startupScanRefreshingLifecycle{
+			lifecycle: manager,
+			refresh: func(context.Context) {
+				wrapperRefreshCalls++
+			},
+		},
+	}
+	sessionLifecycle := newNetworkSessionLifecycle(healthLifecycle, continuation)
+
+	exactStageSawProtection := false
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+		state, exists, err := continuation.stateStore().Load()
+		if err != nil {
+			t.Fatalf("load Network Session at exact recovery stage: %v", err)
+		}
+		if !exists || state.Protection == nil {
+			t.Fatalf("exact recovery ran after Network Session protection was finalized: exists=%v state=%#v", exists, state)
+		}
+		if !envelope.exists || envelope.removeCalls != 0 {
+			t.Fatalf("exact recovery ran after Privacy Envelope removal: exists=%v remove=%d", envelope.exists, envelope.removeCalls)
+		}
+		if wrapperRefreshCalls != 0 {
+			t.Fatalf("ordinary Disconnect wrapper ran during live data-plane convergence: refresh=%d", wrapperRefreshCalls)
+		}
+		if _, _, err := store.Load(secondary.ID); err != nil {
+			t.Fatalf("secondary durable transaction disappeared before exact recovery: %v", err)
+		}
+		if err := removeTransactionFile(store, secondary.ID); err != nil {
+			t.Fatalf("remove synthetic secondary transaction during exact stage: %v", err)
+		}
+		exactStageSawProtection = true
+		return api.RecoveryResponse{
+			Mode: "execute",
+			Results: []api.RecoveryCleanupResult{{
+				Candidate: api.RecoveryCandidate{Kind: "transaction-state", Target: secondary.ID},
+				Status:    "recovered",
+			}},
+		}
+	}
+
 	gate := newNetworkSessionStartupMutationGate(sessionLifecycle)
 	currentStatus := func(ctx context.Context) api.StatusResponse {
 		status := manager.Status(ctx)
@@ -136,6 +192,9 @@ while true; do sleep 3600 & wait $!; done
 	if len(response.Warnings) != 0 {
 		t.Fatalf("same-daemon terminal recovery warnings: %#v", response.Warnings)
 	}
+	if !exactStageSawProtection {
+		t.Fatal("exact recovery stage was not observed before session teardown")
+	}
 	if rollback.calls != 1 {
 		t.Fatalf("host rollback calls=%d, want 1", rollback.calls)
 	}
@@ -152,7 +211,10 @@ while true; do sleep 3600 & wait $!; done
 		t.Fatalf("Xray manager remained non-terminal after recovery: %#v", got)
 	}
 	if _, _, err := store.Load(tx.ID); err == nil {
-		t.Fatal("converged terminal recovery left transaction authority")
+		t.Fatal("converged terminal recovery left supervised transaction authority")
+	}
+	if _, _, err := store.Load(secondary.ID); err == nil {
+		t.Fatal("converged terminal recovery left secondary transaction authority")
 	}
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("converged terminal recovery left generated config: %v", err)
@@ -161,10 +223,6 @@ while true; do sleep 3600 & wait $!; done
 		t.Fatalf("converged terminal recovery left Network Session authority: exists=%v err=%v", exists, err)
 	}
 
-	// A second request must prove clean/idempotent behavior without depending on
-	// privileged nftables access from the Go test process. The production daemon
-	// runs privileged; this fixture supplies authoritative read-only absence for
-	// the three host inspectors used by an otherwise clean recovery scan.
 	installCleanRecoveryCommandFixtures(t)
 	second := executeRecoveryHTTPRequest(t, httpServer.Handler)
 	if !networkSessionRecoveryConverged(second) {
