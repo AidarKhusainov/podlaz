@@ -1,0 +1,124 @@
+package daemon
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	txstate "github.com/AidarKhusainov/podlaz/internal/state"
+)
+
+func TestTunPlanFromTransactionReconstructsExactFirewallForActiveDisconnect(t *testing.T) {
+	firewall := planner.TunFirewallPlan{
+		Backend:     planner.FirewallBackendNftables,
+		Family:      "inet",
+		Table:       "podlaz",
+		TableAction: planner.FirewallTableAction,
+		Chains: []planner.TunFirewallChainPlan{{
+			Name:     planner.FirewallOutputChain,
+			Type:     planner.FirewallChainTypeFilter,
+			Hook:     planner.FirewallOutputHook,
+			Priority: planner.FirewallOutputPriority,
+			Policy:   planner.FirewallDefaultChainPolicy,
+			Action:   planner.FirewallTableAction,
+		}},
+		Rules: []planner.TunFirewallRulePlan{{
+			Chain:       planner.FirewallOutputChain,
+			Expr:        `oifname != "podlaz0"`,
+			Verdict:     planner.FirewallVerdictReject,
+			Action:      planner.FirewallActionAdd,
+			Ownership:   planner.FirewallKillSwitchOwner,
+			RollbackKey: planner.FirewallKillSwitchKey,
+		}},
+	}
+	plan := planner.TunPlan{ProfileID: "example-profile", Mode: planner.ModeTun, Firewall: firewall}
+	tx := txstate.NewTransaction("tun-disconnect", plan.ProfileID, plan.Mode, fixedClock()())
+	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
+	tx.Rollback = rollbackMetadataFromTunPlan(plan)
+
+	got := tunPlanFromTransaction(tx).Firewall
+	if len(got.Chains) != 1 || len(got.Rules) != 1 {
+		t.Fatalf("active disconnect lost exact nftables composition: %#v", got)
+	}
+	if !reflect.DeepEqual(got.Chains, firewall.Chains) {
+		t.Fatalf("reconstructed chains = %#v, want %#v", got.Chains, firewall.Chains)
+	}
+	if !reflect.DeepEqual(got.Rules, firewall.Rules) {
+		t.Fatalf("reconstructed rules = %#v, want %#v", got.Rules, firewall.Rules)
+	}
+}
+
+func TestTunPlanFromTransactionDoesNotGrantFirewallRollbackFromDesiredIntentAlone(t *testing.T) {
+	plan := planner.TunPlan{
+		ProfileID: "example-profile",
+		Mode:      planner.ModeTun,
+		Firewall: planner.TunFirewallPlan{
+			Backend:     planner.FirewallBackendNftables,
+			Family:      "inet",
+			Table:       "podlaz",
+			TableAction: planner.FirewallTableAction,
+			Chains: []planner.TunFirewallChainPlan{{
+				Name: planner.FirewallOutputChain, Type: planner.FirewallChainTypeFilter,
+				Hook: planner.FirewallOutputHook, Priority: planner.FirewallOutputPriority,
+				Policy: planner.FirewallDefaultChainPolicy, Action: planner.FirewallTableAction,
+			}},
+		},
+	}
+	tx := txstate.NewTransaction("tun-disconnect-no-authority", plan.ProfileID, plan.Mode, fixedClock()())
+	tx.DesiredPlan = desiredPlanFromTunPlan(plan)
+
+	if got := tunPlanFromTransaction(tx).Firewall; got != (planner.TunFirewallPlan{}) {
+		t.Fatalf("desired nftables intent must not grant rollback authority: %#v", got)
+	}
+}
+
+func TestInspectNetworkSessionRecoveryPlanExposesTerminalIntentWithOpenStartupGate(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	if err := continuation.Save(testContinuationRequest()); err != nil {
+		t.Fatalf("save network session: %v", err)
+	}
+	if err := continuation.disarm(networkSessionIntentDisconnect); err != nil {
+		t.Fatalf("persist disconnect intent: %v", err)
+	}
+	gate := newNetworkSessionStartupMutationGate(networkSessionRecordingLifecycle{events: &[]string{}})
+
+	plan, err := inspectNetworkSessionRecoveryPlan(continuation, gate)
+	if err != nil {
+		t.Fatalf("inspect terminal recovery plan: %v", err)
+	}
+	if plan == nil {
+		t.Fatal("open startup gate must not hide persisted terminal Network Session recovery work")
+	}
+	if plan.Intent != string(networkSessionIntentDisconnect) || plan.StartupGate != api.NetworkSessionStartupGateOpen || plan.NextAction != api.NetworkSessionRecoveryActionContinueTeardown {
+		t.Fatalf("unexpected terminal recovery plan: %#v", plan)
+	}
+}
+
+func TestCleanupRequiredActiveStatusDoesNotSuppressRecoveryExecution(t *testing.T) {
+	status := api.StatusResponse{
+		Connection: "active",
+		Mode:       planner.ModeTun,
+		TunHealth: &api.TunHealthStatus{
+			State:             api.TunHealthCleanupRequired,
+			NetworkGeneration: 1,
+			Classification:    "ownership_invalid",
+		},
+		Transactions: []api.TransactionStatus{{
+			ID: "tx-example", State: "failed", RollbackAvailable: true, RequiresCleanup: true, Path: "/run/podlaz/transactions/tx-example.json",
+		}},
+	}
+	if activeStatusMustKeepRecoveryMutationFree(status) {
+		t.Fatal("cleanup-required active publication must not suppress exact recovery execution")
+	}
+	verified := status
+	verified.TunHealth = &api.TunHealthStatus{State: api.TunHealthVerified, NetworkGeneration: 1}
+	verified.Transactions = nil
+	if !activeStatusMustKeepRecoveryMutationFree(verified) {
+		t.Fatal("healthy active TUN must remain mutation-free for generic recovery")
+	}
+}
+
+var _ = netexecutor.OwnerFirewall
