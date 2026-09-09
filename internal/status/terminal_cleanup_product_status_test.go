@@ -36,8 +36,8 @@ func TestCleanupRequiredTerminalSessionIsUnknownNotReconnecting(t *testing.T) {
 	if report.ProductReconnecting {
 		t.Fatalf("terminal cleanup was incorrectly published as reconnecting: %#v", report)
 	}
-	if !report.HasUnhealthyState() {
-		t.Fatalf("terminal cleanup must remain non-zero/unhealthy until convergence: %#v", report)
+	if !report.HasTerminalCleanup() {
+		t.Fatalf("terminal cleanup authority was not preserved in typed status: %#v", report)
 	}
 }
 
@@ -49,5 +49,8 @@ func TestRevalidatingResumeSessionStillPublishesReconnecting(t *testing.T) {
 	})
 	if view := report.ProductView(nil); view.State != ProductReconnecting {
 		t.Fatalf("normal active revalidation state=%q, want %q", view.State, ProductReconnecting)
+	}
+	if report.HasTerminalCleanup() {
+		t.Fatalf("normal active revalidation was misclassified as terminal cleanup: %#v", report)
 	}
 }
