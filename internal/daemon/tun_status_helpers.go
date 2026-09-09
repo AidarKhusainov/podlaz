@@ -7,6 +7,7 @@ import (
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
 )
 
@@ -97,12 +98,12 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 			if !rollbackOwnerMatches(nft.Owner, netexecutor.OwnerFirewall) {
 				continue
 			}
-			plan.Firewall = planner.TunFirewallPlan{
-				Backend:     planner.FirewallBackendNftables,
-				Family:      nft.Family,
-				Table:       nft.Table,
-				TableAction: planner.FirewallTableAction,
+			firewall, err := recovery.ExactNftablesRollbackPlan(tx, nft)
+			if err != nil {
+				plan.TunDevice = planner.TunDevicePlan{Name: "podlaz0", Action: "invalid-rollback-projection", Reason: err.Error()}
+				return plan
 			}
+			plan.Firewall = firewall
 			break
 		}
 	}
@@ -142,7 +143,11 @@ func validateTunRollbackProjection(tx txstate.Transaction) error {
 	}
 	if err := validateSingleRollbackCategory("nftables", len(tx.Rollback.NFTables), func(i int) bool {
 		entry := tx.Rollback.NFTables[i]
-		return rollbackOwnerMatches(entry.Owner, netexecutor.OwnerFirewall) && strings.TrimSpace(entry.Family) != "" && strings.TrimSpace(entry.Table) != ""
+		if !rollbackOwnerMatches(entry.Owner, netexecutor.OwnerFirewall) || strings.TrimSpace(entry.Family) == "" || strings.TrimSpace(entry.Table) == "" {
+			return false
+		}
+		_, err := recovery.ExactNftablesRollbackPlan(tx, entry)
+		return err == nil
 	}); err != nil {
 		reasons = append(reasons, err.Error())
 	}
