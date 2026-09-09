@@ -23,7 +23,7 @@ func daemonRecover(ctx context.Context, runtimeDir string, status api.StatusResp
 func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api.StatusResponse, opts recovery.Options) api.RecoveryResponse {
 	opts.RuntimeDir = runtimeDir
 	plan := recovery.PlanWithOptions(ctx, opts)
-	if status.Connection == "active" {
+	if activeStatusMustKeepRecoveryMutationFree(status) {
 		return recoveryResponseToAPI(activeRecoveryMutationFreeResult(plan, runtimeDir))
 	}
 	plan = filterStartupScanForActiveRuntime(plan, status, runtimeDir)
@@ -33,6 +33,21 @@ func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api
 	}
 	result := recovery.ExecuteWithOptions(ctx, opts)
 	return recoveryResponseToAPI(result)
+}
+
+func activeStatusMustKeepRecoveryMutationFree(status api.StatusResponse) bool {
+	if status.Connection != "active" {
+		return false
+	}
+	if status.TunHealth != nil && status.TunHealth.State == api.TunHealthCleanupRequired {
+		return false
+	}
+	for _, tx := range status.Transactions {
+		if tx.RequiresCleanup {
+			return false
+		}
+	}
+	return true
 }
 
 func activeRecoveryMutationFreeResult(plan recovery.PlanResult, runtimeDir string) recovery.ExecuteResult {
