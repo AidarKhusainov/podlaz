@@ -1,6 +1,10 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
@@ -117,5 +121,83 @@ func TestCleanupRequiredActiveStatusDoesNotSuppressExactRecovery(t *testing.T) {
 	status.Transactions = nil
 	if !activeStatusMustKeepRecoveryMutationFree(status) {
 		t.Fatal("healthy active publication must remain mutation-free")
+	}
+}
+
+func TestRecoverExecuteContinuesOpenGateTerminalNetworkSession(t *testing.T) {
+	installRecoveryObservationFakes(t)
+
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	if err := continuation.Save(testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if err := continuation.stateStore().SetProtection(&networkSessionProtection{
+		State:              networkSessionProtectionArmed,
+		CompositionVersion: privacyEnvelopeCompositionVersion,
+		Family:             privacyEnvelopeFamily,
+		Table:              "podlaz_pe_001122334455",
+		TunInterface:       "podlaz0",
+		BootstrapIPv4:      []string{"192.0.2.10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := continuation.disarm(networkSessionIntentDisconnect); err != nil {
+		t.Fatal(err)
+	}
+
+	exactCalls := 0
+	teardownCalls := 0
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+		exactCalls++
+		return api.RecoveryResponse{Mode: "execute"}
+	}
+	continuation.continueTeardown = func(context.Context, networkSessionStateStore) error {
+		teardownCalls++
+		return nil
+	}
+
+	events := []string{}
+	sessionLifecycle := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events}, continuation)
+	gate := newNetworkSessionStartupMutationGate(sessionLifecycle)
+	runtime := &daemonRuntime{
+		runtimeDir: runtimeDir,
+		authorizer: AllowAuthorizer{},
+		currentStatus: func(context.Context) api.StatusResponse {
+			return api.StatusResponse{
+				Connection: "active",
+				Mode:       planner.ModeTun,
+				TunHealth: &api.TunHealthStatus{
+					State: api.TunHealthCleanupRequired, NetworkGeneration: 1,
+					Classification: api.TunHealthOwnershipInvalid,
+				},
+			}
+		},
+		operationLock:           newLifecycleOperationLock(),
+		continuation:            continuation,
+		sessionLifecycle:        sessionLifecycle,
+		startupMutationGate:     gate,
+		forceRefreshStartupScan: func(context.Context) {},
+	}
+	httpServer := (Server{}).newHTTPServer(runtime, newBootAutostartManifestStore(t.TempDir(), fixedBootID("boot-a")))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, api.RecoverPath, nil)
+	httpServer.Handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("recover status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	var response api.RecoveryResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode recover response: %v", err)
+	}
+	if exactCalls != 1 || teardownCalls != 1 {
+		t.Fatalf("terminal recovery stages: exact=%d teardown=%d, want 1/1", exactCalls, teardownCalls)
+	}
+	if response.NetworkSession == nil || response.NetworkSession.LastResumeOutcome != api.NetworkSessionResumeOutcomeSucceeded || response.NetworkSession.NextAction != api.NetworkSessionRecoveryActionNone {
+		t.Fatalf("terminal recovery did not converge: %#v", response.NetworkSession)
+	}
+	if len(response.Warnings) != 0 {
+		t.Fatalf("terminal recovery returned warnings: %#v", response.Warnings)
 	}
 }
