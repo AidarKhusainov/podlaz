@@ -47,6 +47,9 @@ func (e NetworkSessionCleanupExecutor) Cleanup(ctx context.Context, candidate Ca
 
 func (e NetworkSessionCleanupExecutor) CleanupMany(ctx context.Context, candidate Candidate) []CleanupResult {
 	legacy := DaemonCleanupExecutor{Runner: e.Runner, RuntimeDir: e.RuntimeDir}.withDefaults()
+	if candidate.Kind == "nftables-table" {
+		return []CleanupResult{inspectStandaloneNftablesCandidate(ctx, legacy.Runner, candidate)}
+	}
 	if candidate.Kind != "transaction-state" || candidate.Transaction == nil {
 		return legacy.CleanupMany(ctx, candidate)
 	}
@@ -158,7 +161,7 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 	gateResult, gateDecision := networkSessionRollbackLinkIdentityGate(ctx, e, osExec, rollback, tx.AppliedSteps, childAbsenceProven)
 	switch gateDecision {
 	case rollbackLinkBlocked:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
 		results = append(results, rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)...)
 		results = append(results, gateResult)
@@ -169,7 +172,7 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 		results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
 		return results
 	case rollbackLinkAbsentChildAbsent:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
 		results = append(results, rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)...)
 		results = append(results, missingNetworkSessionLinkRoutes(rollback.Routes, allocation)...)
@@ -177,7 +180,7 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 		results = append(results, e.missingLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
 	default:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
 		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
 		results = append(results, rollbackNetworkSessionRoutes(ctx, osExec, rollback.Routes, allocation)...)

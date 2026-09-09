@@ -33,23 +33,18 @@ type PrivacyEnvelopePlan struct {
 type PrivacyEnvelopeExecutor struct {
 	Runner    CommandRunner
 	ScriptDir string
+	mutation  *nftMutationBackend
 }
 
 func (e PrivacyEnvelopeExecutor) Exists(ctx context.Context, plan PrivacyEnvelopePlan) (bool, error) {
 	if err := validatePrivacyEnvelopePlan(plan); err != nil {
 		return false, err
 	}
-	result, err := observeCommand(ctx, e.Runner, "nft", "-y", "list", "table", plan.Family, plan.Table)
+	present, err := observeNftTablePresence(ctx, e.Runner, plan.Family, plan.Table)
 	if err != nil {
-		if resourceMissing(err) {
-			return false, nil
-		}
 		return false, fmt.Errorf("observe privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
-	if _, err := parseOwnedNftTable(result.Stdout, plan.Family, plan.Table); err != nil {
-		return false, fmt.Errorf("observe privacy envelope %s %s: %w", plan.Family, plan.Table, err)
-	}
-	return true, nil
+	return present, nil
 }
 
 func (e PrivacyEnvelopeExecutor) Apply(ctx context.Context, plan PrivacyEnvelopePlan) error {
@@ -63,10 +58,9 @@ func (e PrivacyEnvelopeExecutor) Apply(ctx context.Context, plan PrivacyEnvelope
 	return e.runBatch(ctx, plan, script, "apply")
 }
 
-// Replace swaps one exact composition for another in one nft transaction. The
-// family/table identity must remain stable for the Network Session. If the batch
-// fails, nftables transaction semantics leave the previous kernel generation in
-// place; no userspace compensating delete is attempted.
+// Replace re-proves the current composition and atomically swaps it for the new
+// one under the ruleset generation that was observed. A stale verification can
+// therefore never authorize deletion of a same-name replacement.
 func (e PrivacyEnvelopeExecutor) Replace(ctx context.Context, oldPlan, newPlan PrivacyEnvelopePlan) error {
 	if err := validatePrivacyEnvelopePlan(oldPlan); err != nil {
 		return fmt.Errorf("validate old privacy envelope: %w", err)
@@ -77,28 +71,39 @@ func (e PrivacyEnvelopeExecutor) Replace(ctx context.Context, oldPlan, newPlan P
 	if oldPlan.Family != newPlan.Family || oldPlan.Table != newPlan.Table {
 		return errors.New("privacy envelope replacement cannot change exact table identity")
 	}
-	applyScript, err := privacyEnvelopeApplyScript(newPlan)
+	backend := e.mutationBackend()
+	current := planner.TunFirewallPlan{Family: oldPlan.Family, Table: oldPlan.Table, Chains: oldPlan.Chains, Rules: oldPlan.Rules}
+	target, absent, err := observeVerifiedNftTableForMutation(ctx, e.Runner, backend, oldPlan.Family, oldPlan.Table, current)
 	if err != nil {
-		return err
+		return fmt.Errorf("observe exact privacy envelope before replacement: %w", err)
 	}
-	script := fmt.Sprintf("delete table %s %s\n%s", oldPlan.Family, oldPlan.Table, applyScript)
-	return e.runBatch(ctx, newPlan, script, "replace")
+	if absent {
+		return errors.New("privacy envelope disappeared before replacement")
+	}
+	if backend.replaceTable == nil {
+		return errors.New("nftables mutation backend has no replacement operation")
+	}
+	replacement := planner.TunFirewallPlan{Family: newPlan.Family, Table: newPlan.Table, Chains: newPlan.Chains, Rules: newPlan.Rules}
+	if err := backend.replaceTable(ctx, target, replacement); err != nil {
+		return fmt.Errorf("replace privacy envelope %s %s: %w", newPlan.Family, newPlan.Table, err)
+	}
+	return nil
 }
 
 func (e PrivacyEnvelopeExecutor) Verify(ctx context.Context, plan PrivacyEnvelopePlan) error {
 	if err := validatePrivacyEnvelopePlan(plan); err != nil {
 		return err
 	}
-	result, err := observeCommand(ctx, e.Runner, "nft", "-y", "list", "table", plan.Family, plan.Table)
+	result, err := observeCommand(ctx, e.Runner, "nft", "-j", "list", "table", plan.Family, plan.Table)
 	if err != nil {
 		return fmt.Errorf("verify privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
-	observed, err := parseOwnedNftTable(result.Stdout, plan.Family, plan.Table)
+	snapshot, err := parseNftTableJSON(result.Stdout, plan.Family, plan.Table)
 	if err != nil {
 		return fmt.Errorf("verify privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
 	firewallPlan := planner.TunFirewallPlan{Chains: plan.Chains, Rules: plan.Rules}
-	if err := verifyExactNftChains(observed, firewallPlan); err != nil {
+	if err := verifyNftTableSnapshot(snapshot, firewallPlan); err != nil {
 		return fmt.Errorf("verify privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
 	return nil
@@ -108,10 +113,32 @@ func (e PrivacyEnvelopeExecutor) Remove(ctx context.Context, plan PrivacyEnvelop
 	if err := validatePrivacyEnvelopePlan(plan); err != nil {
 		return err
 	}
-	if err := runCommand(ctx, e.Runner, "nft", "delete", "table", plan.Family, plan.Table); err != nil && !resourceMissing(err) {
+	backend := e.mutationBackend()
+	expected := planner.TunFirewallPlan{Family: plan.Family, Table: plan.Table, Chains: plan.Chains, Rules: plan.Rules}
+	target, absent, err := observeVerifiedNftTableForMutation(ctx, e.Runner, backend, plan.Family, plan.Table, expected)
+	if err != nil {
+		return fmt.Errorf("observe exact privacy envelope before removal: %w", err)
+	}
+	if absent {
+		return nil
+	}
+	if backend.removeTable == nil {
+		return errors.New("nftables mutation backend has no removal operation")
+	}
+	if err := backend.removeTable(ctx, target); err != nil {
 		return fmt.Errorf("remove privacy envelope %s %s: %w", plan.Family, plan.Table, err)
 	}
 	return nil
+}
+
+func (e PrivacyEnvelopeExecutor) mutationBackend() *nftMutationBackend {
+	if e.mutation != nil {
+		return e.mutation
+	}
+	if backend := nftMutationBackendFromRunner(e.Runner); backend != nil {
+		return backend
+	}
+	return defaultNftMutationBackend()
 }
 
 func (e PrivacyEnvelopeExecutor) runBatch(ctx context.Context, plan PrivacyEnvelopePlan, script, operation string) error {
@@ -131,7 +158,7 @@ func privacyEnvelopeApplyScript(plan PrivacyEnvelopePlan) (string, error) {
 		return "", err
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "add table %s %s\n", plan.Family, plan.Table)
+	fmt.Fprintf(&builder, "create table %s %s\n", plan.Family, plan.Table)
 	for _, chain := range plan.Chains {
 		fmt.Fprintf(
 			&builder,

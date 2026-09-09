@@ -313,7 +313,7 @@ func TestRunCLIRecoverExecuteJSONRendersResult(t *testing.T) {
 	err := runWithOptions(context.Background(), []string{"recover", "--execute", "--yes", "--json"}, &out, options{
 		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
 			return recovery.ExecuteResult{Results: []recovery.CleanupResult{{
-				Candidate: recovery.Candidate{Kind: "nftables-table", Description: "nftables table", Target: "inet podlaz"},
+				Candidate: recovery.Candidate{Kind: "generated-runtime-config", Description: "generated runtime config", Target: "/run/podlaz/generated/xray.json"},
 				Status:    "skipped",
 				Message:   "already absent",
 			}}}, nil
@@ -323,7 +323,7 @@ func TestRunCLIRecoverExecuteJSONRendersResult(t *testing.T) {
 		t.Fatalf("recover --execute --yes --json failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{`"mode": "execute"`, `"status": "skipped"`, `"target": "inet podlaz"`} {
+	for _, text := range []string{`"mode": "execute"`, `"status": "skipped"`, `"target": "/run/podlaz/generated/xray.json"`} {
 		if !strings.Contains(got, text) {
 			t.Fatalf("expected JSON output to contain %q, got %q", text, got)
 		}

@@ -89,7 +89,7 @@ func (r ExecuteResult) HasIncompleteCleanup() bool {
 		return true
 	}
 	for _, result := range r.Results {
-		if result.Status == "skipped" && (result.Candidate.Kind == "transaction-state" || strings.Contains(result.Message, "transaction state was preserved")) {
+		if result.Status == "skipped" && (result.Candidate.Kind == "transaction-state" || result.Candidate.Kind == "nftables-table" || strings.Contains(result.Message, "transaction state was preserved")) {
 			return true
 		}
 	}
@@ -431,15 +431,12 @@ func (e OSCleanupExecutor) cleanupTUNInterface(_ context.Context, candidate Cand
 	return skipped(candidate, "interface name alone is not podlaz ownership proof; use transaction-bound process/link identity")
 }
 
-func (e OSCleanupExecutor) cleanupNFTablesTable(ctx context.Context, candidate Candidate) CleanupResult {
+func (e OSCleanupExecutor) cleanupNFTablesTable(_ context.Context, candidate Candidate) CleanupResult {
 	family, table, ok := parseNFTTarget(candidate.Target)
 	if !ok || !isManagedNFTTarget(family, table) {
 		return skipped(candidate, "non-podlaz nftables target")
 	}
-	if err := e.run(ctx, "nft", "delete", "table", family, table); err != nil && !commandErrorIsMissing(err) {
-		return failed(candidate, err)
-	}
-	return recovered(candidate)
+	return skipped(candidate, "nftables table identity alone is not podlaz ownership proof; exact transaction-bound rollback authority is required")
 }
 
 func (e OSCleanupExecutor) cleanupGeneratedRuntimeConfigs(candidate Candidate) CleanupResult {
@@ -451,26 +448,6 @@ func (e OSCleanupExecutor) cleanupGeneratedRuntimeConfigs(candidate Candidate) C
 		return failed(candidate, fmt.Errorf("remove generated runtime configs %s: %w", generatedDir, err))
 	}
 	return recovered(candidate)
-}
-
-func (e OSCleanupExecutor) rollbackNFTables(ctx context.Context, entries []txstate.NFTablesRollback) error {
-	seen := make(map[string]struct{})
-	var errs []error
-	for _, entry := range entries {
-		if entry.Owner != txstate.TransactionOwner || !isManagedNFTTarget(entry.Family, entry.Table) {
-			errs = append(errs, fmt.Errorf("refuse to rollback non-podlaz nftables target %s %s", entry.Family, entry.Table))
-			continue
-		}
-		key := entry.Family + " " + entry.Table
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if err := e.run(ctx, "nft", "delete", "table", managedNFTFamily, managedNFTTableName); err != nil && !commandErrorIsMissing(err) {
-			errs = append(errs, fmt.Errorf("delete nftables table %s: %w", managedNFTTable, err))
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func (e OSCleanupExecutor) rollbackDNS(ctx context.Context, dns txstate.DNSRollback) error {

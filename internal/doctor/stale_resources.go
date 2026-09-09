@@ -94,9 +94,9 @@ func inspectManagedNFTTable(ctx context.Context, runner CommandRunner, opts stal
 
 	args := []string{"list", "table", "inet", "podlaz"}
 	if opts.lifecycle.NFTTable == ManagedResourceExpectedOwned {
-		// Numeric priority keeps the exact verifier deterministic across nft
-		// aliases, matching NftablesExecutor.Verify.
-		args = []string{"-y", "list", "table", "inet", "podlaz"}
+		// Exact ownership verification must use the same structured semantic
+		// boundary as the executor; human nft presentation is diagnostic only.
+		args = []string{"-j", "list", "table", "inet", "podlaz"}
 	}
 	result, err := runCommand(ctx, runner, opts.nftPath, args...)
 	switch {

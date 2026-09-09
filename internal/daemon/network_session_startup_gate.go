@@ -55,10 +55,14 @@ func (g *networkSessionStartupMutationGate) Disconnect(ctx context.Context) (api
 	return g.lifecycle.Disconnect(ctx)
 }
 
-func withNetworkSessionResumeWarning(response api.RecoveryResponse) api.RecoveryResponse {
+func withNetworkSessionResumeWarning(response api.RecoveryResponse, cause error) api.RecoveryResponse {
+	message := networkSessionResumeWarningMessage
+	if cause != nil {
+		message += ": " + cause.Error()
+	}
 	response.Warnings = append(response.Warnings, api.RecoveryWarning{
 		Target:  "network session continuation",
-		Message: networkSessionResumeWarningMessage,
+		Message: message,
 	})
 	return response
 }

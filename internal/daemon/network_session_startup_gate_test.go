@@ -63,12 +63,13 @@ func TestApplyNetworkSessionResumeResultReleasesGateOnlyAfterSuccessfulResume(t 
 	}
 }
 
-func TestApplyNetworkSessionResumeResultKeepsGateBlockedAndWarnsAfterFailedResume(t *testing.T) {
+func TestApplyNetworkSessionResumeResultKeepsGateBlockedAndPreservesFailureCause(t *testing.T) {
 	gate := newNetworkSessionStartupMutationGate(networkSessionRecordingLifecycle{events: &[]string{}})
 	gate.Block()
 	response := api.RecoveryResponse{Mode: "execute"}
+	resumeErr := errors.New("reconcile network session privacy protection: privacy envelope table has unexpected dormant flag")
 
-	got := applyNetworkSessionResumeResult(response, gate, errors.New("resume failed"))
+	got := applyNetworkSessionResumeResult(response, gate, resumeErr)
 
 	if !gate.Blocked() {
 		t.Fatal("failed resume must keep startup mutation gate blocked")
@@ -77,7 +78,8 @@ func TestApplyNetworkSessionResumeResultKeepsGateBlockedAndWarnsAfterFailedResum
 		t.Fatalf("failed resume warnings = %#v, want one actionable warning", got.Warnings)
 	}
 	warning := got.Warnings[0]
-	if warning.Target != "network session continuation" || warning.Message != networkSessionResumeWarningMessage {
-		t.Fatalf("failed resume warning = %#v", warning)
+	wantMessage := networkSessionResumeWarningMessage + ": " + resumeErr.Error()
+	if warning.Target != "network session continuation" || warning.Message != wantMessage {
+		t.Fatalf("failed resume warning = %#v, want exact failure cause %q", warning, wantMessage)
 	}
 }

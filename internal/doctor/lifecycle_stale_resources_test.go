@@ -152,7 +152,12 @@ func (r lifecycleResourceRunner) Run(_ context.Context, name string, args ...str
 			return CommandResult{Stdout: fmt.Sprintf("%d: podlaz0: <POINTOPOINT,UP> mtu 1500 tun type tun", index)}, nil
 		}
 		return CommandResult{Stderr: "Device podlaz0 does not exist", ExitCode: 1}, errors.New("exit status 1")
-	case "nft list table inet podlaz", "nft -y list table inet podlaz":
+	case "nft list table inet podlaz":
+		if r.nftPresent {
+			return CommandResult{Stdout: "table inet podlaz { }"}, nil
+		}
+		return CommandResult{Stderr: "No such table", ExitCode: 1}, errors.New("exit status 1")
+	case "nft -j list table inet podlaz":
 		if r.nftPresent {
 			return CommandResult{Stdout: canonicalLifecycleNFTOutputForTest()}, nil
 		}
@@ -163,10 +168,10 @@ func (r lifecycleResourceRunner) Run(_ context.Context, name string, args ...str
 }
 
 func canonicalLifecycleNFTOutputForTest() string {
-	return `table inet podlaz {
-	chain output {
-		type filter hook output priority 0; policy accept;
-		oifname "podlaz0" counter packets 0 bytes 0 accept comment "podlaz:firewall:tun-egress"
-	}
-}`
+	return `{"nftables":[
+{"metainfo":{"version":"1.0.9","release_name":"Old Doc Yak","json_schema_version":1}},
+{"table":{"family":"inet","name":"podlaz","handle":10}},
+{"chain":{"family":"inet","table":"podlaz","name":"output","handle":1,"type":"filter","hook":"output","prio":0,"policy":"accept"}},
+{"rule":{"family":"inet","table":"podlaz","chain":"output","handle":1,"expr":[{"match":{"op":"==","left":{"meta":{"key":"oifname"}},"right":"podlaz0"}},{"counter":{"packets":0,"bytes":0}},{"accept":null}],"comment":"podlaz:firewall:tun-egress"}}
+]}`
 }

@@ -58,7 +58,7 @@ func (e DaemonCleanupExecutor) CleanupMany(ctx context.Context, candidate Candid
 	case managedDNSCandidateKind:
 		return []CleanupResult{osExec.cleanupManagedResolvedLink(ctx, candidate)}
 	case "nftables-table":
-		return []CleanupResult{osExec.cleanupNFTablesTable(ctx, candidate)}
+		return []CleanupResult{skipped(candidate, "nftables table identity alone is not Podlaz cleanup authority; exact transaction rollback authority is required")}
 	case "transaction-state":
 		return e.cleanupTransactionState(ctx, candidate, osExec)
 	case "generated-runtime-configs":
@@ -105,7 +105,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 	gateResult, gateDecision := e.rollbackLinkIdentityGate(ctx, osExec, rollback, tx.AppliedSteps, childAbsenceProven)
 	switch gateDecision {
 	case rollbackLinkBlocked:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
 		results = append(results, e.rollbackIndependentRouteResults(ctx, osExec, rollback.Routes)...)
 		results = append(results, gateResult)
@@ -116,7 +116,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 		results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
 		return results
 	case rollbackLinkAbsentChildAbsent:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
 		results = append(results, e.rollbackIndependentRouteResults(ctx, osExec, rollback.Routes)...)
 		results = append(results, e.missingLinkRouteResults(rollback.Routes)...)
@@ -124,7 +124,7 @@ func (e DaemonCleanupExecutor) cleanupTransactionState(ctx context.Context, cand
 		results = append(results, e.missingLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
 	default:
-		results = append(results, e.rollbackNFTablesResults(ctx, osExec, rollback.NFTables)...)
+		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
 		results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
 		results = append(results, e.rollbackPolicyRuleResults(ctx, osExec, rollback.PolicyRules)...)
 		results = append(results, e.rollbackRouteResults(ctx, osExec, rollback.Routes)...)
@@ -422,9 +422,10 @@ func (e DaemonCleanupExecutor) rollbackChildProcessResults(processes []txstate.C
 	return results
 }
 
-func (e DaemonCleanupExecutor) rollbackNFTablesResults(ctx context.Context, osExec OSCleanupExecutor, entries []txstate.NFTablesRollback) []CleanupResult {
+func (e DaemonCleanupExecutor) rollbackNFTablesResults(ctx context.Context, tx txstate.Transaction, entries []txstate.NFTablesRollback) []CleanupResult {
 	seen := make(map[string]struct{})
 	results := make([]CleanupResult, 0, len(entries))
+	executor := netexecutor.NftablesExecutor{Runner: nftablesExecutorCommandRunner(e.Runner)}
 	for _, entry := range entries {
 		candidate := Candidate{Kind: "nftables-table", Description: "nftables table", Target: entry.Family + " " + entry.Table}
 		if !ownedRollbackMetadata(entry.Owner, netexecutor.OwnerFirewall) || !isManagedNFTTarget(entry.Family, entry.Table) {
@@ -436,9 +437,12 @@ func (e DaemonCleanupExecutor) rollbackNFTablesResults(ctx context.Context, osEx
 			continue
 		}
 		seen[key] = struct{}{}
-		rollback := entry
-		rollback.Owner = txstate.TransactionOwner
-		if err := osExec.rollbackNFTables(ctx, []txstate.NFTablesRollback{rollback}); err != nil {
+		plan, err := exactNftablesRollbackPlan(tx, entry)
+		if err != nil {
+			results = append(results, skipped(candidate, "exact nftables rollback composition is unavailable: "+err.Error()))
+			continue
+		}
+		if err := executor.Rollback(ctx, plan); err != nil {
 			results = append(results, failed(candidate, err))
 			continue
 		}

@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"errors"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,8 +13,21 @@ import (
 
 func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	plan := firewallPlanForTest()
-	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{stdout: nftablesListOutputForTest()}}
-	exec := NftablesExecutor{Runner: runner, ScriptDir: t.TempDir()}
+	runner := &privacyEnvelopeRecordingRunner{
+		presenceJSON: nftTablesPresenceJSONForTest("inet", "podlaz", 21),
+		tableJSON:    nftablesJSONForTest(),
+	}
+	backend := coherentTestMutationBackend(81)
+	removeCalls := 0
+	backend.removeTable = func(_ context.Context, target nftMutationTarget) error {
+		removeCalls++
+		if target.Family != "inet" || target.Table != "podlaz" || target.Handle != 21 || target.Generation != 81 {
+			t.Fatalf("unexpected rollback target: %#v", target)
+		}
+		runner.presenceJSON = nftTablesAbsenceJSONForTest()
+		return nil
+	}
+	exec := NftablesExecutor{Runner: runner, ScriptDir: t.TempDir(), mutation: backend}
 
 	step, err := exec.Apply(context.Background(), plan)
 	if err != nil {
@@ -30,22 +42,27 @@ func TestNftablesExecutorApplyVerifyAndRollbackCommands(t *testing.T) {
 	if err := exec.Rollback(context.Background(), plan); err != nil {
 		t.Fatalf("rollback nftables: %v", err)
 	}
+	if removeCalls != 1 {
+		t.Fatalf("guarded rollback calls=%d, want 1", removeCalls)
+	}
 
-	if len(runner.commands) != 3 {
-		t.Fatalf("expected apply batch, verify, rollback commands, got %#v", runner.commands)
+	if len(runner.commands) != 5 {
+		t.Fatalf("expected apply, verify, exact rollback observations and absence proof, got %#v", runner.commands)
 	}
 	if len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
 		t.Fatalf("expected nft batch apply command, got %#v", runner.commands[0])
 	}
 	wantTail := [][]string{
-		{"nft", "-y", "list", "table", "inet", "podlaz"},
-		{"nft", "delete", "table", "inet", "podlaz"},
+		{"nft", "-j", "list", "table", "inet", "podlaz"},
+		{"nft", "-j", "list", "tables"},
+		{"nft", "-j", "list", "table", "inet", "podlaz"},
+		{"nft", "-j", "list", "tables"},
 	}
 	if !reflect.DeepEqual(runner.commands[1:], wantTail) {
 		t.Fatalf("unexpected commands after apply:\nwant %#v\n got %#v", wantTail, runner.commands[1:])
 	}
 	for _, want := range []string{
-		"add table inet podlaz",
+		"create table inet podlaz",
 		"add chain inet podlaz output { type filter hook output priority 0; policy accept; }",
 		`add rule inet podlaz output ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"`,
 		`add rule inet podlaz output oifname "lo" counter accept comment "podlaz:firewall:loopback"`,
@@ -74,7 +91,7 @@ func TestNftStringLiteralQuotesAndEscapesForNftCLI(t *testing.T) {
 
 func TestNftablesExecutorApplyUsesAtomicBatchAndDoesNotRollbackOnBatchFailure(t *testing.T) {
 	plan := firewallPlanForTest()
-	runner := &nftScriptRecordingRunner{recordingRunner: recordingRunner{err: errors.New("injected nft batch failure")}}
+	runner := &privacyEnvelopeRecordingRunner{batchErr: errors.New("injected nft batch failure")}
 	_, err := (NftablesExecutor{Runner: runner, ScriptDir: t.TempDir()}).Apply(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected batch apply failure")
@@ -82,7 +99,7 @@ func TestNftablesExecutorApplyUsesAtomicBatchAndDoesNotRollbackOnBatchFailure(t 
 	if len(runner.commands) != 1 || len(runner.commands[0]) != 3 || runner.commands[0][0] != "nft" || runner.commands[0][1] != "-f" {
 		t.Fatalf("expected only nft batch apply command without rollback side effect, got %#v", runner.commands)
 	}
-	if !strings.Contains(runner.script, "add table inet podlaz") || !strings.Contains(runner.script, `comment "podlaz:firewall:kill-switch"`) {
+	if !strings.Contains(runner.script, "create table inet podlaz") || !strings.Contains(runner.script, `comment "podlaz:firewall:kill-switch"`) {
 		t.Fatalf("expected complete batch script to be produced before apply failure, got:\n%s", runner.script)
 	}
 }
@@ -120,42 +137,29 @@ func TestNftablesExecutorRollbackRejectsNonOwnedTarget(t *testing.T) {
 	}
 }
 
-func TestNftablesExecutorRollbackIsIdempotentWhenTableIsMissing(t *testing.T) {
+func TestNftablesExecutorRollbackIsIdempotentWhenTableIsStructurallyAbsent(t *testing.T) {
 	plan := firewallPlanForTest()
-	runner := &recordingRunner{err: errors.New("No such file or directory")}
-	if err := (NftablesExecutor{Runner: runner}).Rollback(context.Background(), plan); err != nil {
-		t.Fatalf("expected missing table rollback to be ignored: %v", err)
+	runner := &privacyEnvelopeRecordingRunner{presenceJSON: nftTablesAbsenceJSONForTest()}
+	backend := coherentTestMutationBackend(82)
+	backend.removeTable = func(context.Context, nftMutationTarget) error {
+		t.Fatal("proven absence must not issue rollback mutation")
+		return nil
 	}
-	want := []string{"nft", "delete", "table", "inet", "podlaz"}
-	if !reflect.DeepEqual(runner.commands[0], want) {
-		t.Fatalf("unexpected rollback command: %#v", runner.commands[0])
+	if err := (NftablesExecutor{Runner: runner, mutation: backend}).Rollback(context.Background(), plan); err != nil {
+		t.Fatalf("expected structured absence rollback to be idempotent: %v", err)
+	}
+	want := [][]string{{"nft", "-j", "list", "tables"}}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("absence observation commands=%#v, want %#v", runner.commands, want)
 	}
 }
 
 func TestNftablesExecutorVerifyRequiresOwnedRules(t *testing.T) {
 	plan := firewallPlanForTest()
-	output := strings.ReplaceAll(nftablesListOutputForTest(), planner.FirewallKillSwitchOwner, "missing-owner")
-	err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
+	output := strings.ReplaceAll(nftablesJSONForTest(), planner.FirewallKillSwitchOwner, "missing-owner")
+	err := (NftablesExecutor{Runner: &privacyEnvelopeRecordingRunner{tableJSON: output}}).Verify(context.Background(), plan)
 	if err == nil {
 		t.Fatal("expected verify failure when owned kill-switch rule is missing")
-	}
-}
-
-func TestNftablesExecutorVerifyMatchesRuleFieldsOnSameLine(t *testing.T) {
-	plan := firewallPlanForTest()
-	output := `table inet podlaz {
-	chain output {
-		type filter hook output priority 0; policy accept;
-		oifname != "podlaz0" counter reject comment "other-project"
-		ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"
-		oifname "lo" counter accept comment "podlaz:firewall:loopback"
-		oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"
-		meta l4proto tcp counter reject comment "podlaz:firewall:kill-switch"
-	}
-}`
-	err := (NftablesExecutor{Runner: &recordingRunner{stdout: output}}).Verify(context.Background(), plan)
-	if err == nil {
-		t.Fatal("expected verify failure when expression, verdict, and owner appear on different rules")
 	}
 }
 
@@ -183,32 +187,4 @@ func firewallPlanForTest() planner.TunFirewallPlan {
 		Reason:     "create a podlaz-owned nftables table",
 		Rollback:   planner.FirewallRollbackRemove,
 	}
-}
-
-func nftablesListOutputForTest() string {
-	return `table inet podlaz {
-	chain output {
-		type filter hook output priority 0; policy accept;
-		ip daddr 203.0.113.10 counter accept comment "podlaz:firewall:server-bypass"
-		oifname "lo" counter accept comment "podlaz:firewall:loopback"
-		oifname "podlaz0" counter accept comment "podlaz:firewall:tun-egress"
-		oifname != "podlaz0" counter reject comment "podlaz:firewall:kill-switch"
-	}
-}`
-}
-
-type nftScriptRecordingRunner struct {
-	recordingRunner
-	script string
-}
-
-func (r *nftScriptRecordingRunner) Run(ctx context.Context, name string, args ...string) (CommandResult, error) {
-	if name == "nft" && len(args) == 2 && args[0] == "-f" {
-		data, err := os.ReadFile(args[1])
-		if err != nil {
-			return CommandResult{ExitCode: 1, Stderr: err.Error()}, err
-		}
-		r.script = string(data)
-	}
-	return r.recordingRunner.Run(ctx, name, args...)
 }

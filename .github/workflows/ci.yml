@@ -114,6 +114,40 @@ jobs:
       - name: CLI behavior contract
         run: bash scripts/e2e/cli-contract.sh
 
+  real-nftables:
+    name: Real nftables ownership contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: go.mod
+
+      - name: Install nftables
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nftables
+
+      - name: Compile privileged nftables contract
+        env:
+          GOFLAGS: -mod=readonly
+        run: go test -c -o /tmp/podlaz-executor-real-nft.test ./internal/network/executor
+
+      - name: Apply, verify, and remove a real Privacy Envelope
+        run: |
+          sudo env "PATH=${PATH}" PODLAZ_TEST_REAL_NFT=1 \
+            /tmp/podlaz-executor-real-nft.test \
+            -test.run '^TestPrivacyEnvelopeRealNFTRoundTrip$' \
+            -test.v
+
   deb-package:
     name: Debian package
     runs-on: ubuntu-24.04
