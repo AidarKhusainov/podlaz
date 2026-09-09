@@ -30,7 +30,10 @@ func (d *daemonDialTracker) DialContext(ctx context.Context, _, _ string) (net.C
 }
 
 func (d *daemonDialTracker) requestError(operation string, err error) error {
-	if d == nil || !d.connected.Load() {
+	if d == nil {
+		return fmt.Errorf("daemon %s request failed: %w", operation, err)
+	}
+	if !d.connected.Load() {
 		return newDaemonUnavailableError(d.socketPath, err)
 	}
 	return fmt.Errorf("daemon %s request failed after connection: %w", operation, err)
