@@ -294,12 +294,12 @@ func resumeNetworkSession(
 		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return false, nil
 	}
-	if status == nil || recover == nil {
-		return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("network session resume requires status and recovery functions"))
-	}
 
 	switch state.Intent {
 	case networkSessionIntentResume:
+		if status == nil || recover == nil {
+			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("network session resume requires status and recovery functions"))
+		}
 		if err := reconcilePrivacy(ctx, stateStore); err != nil {
 			return fail(api.NetworkSessionResumeStagePrivacyReconcile, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("reconcile network session privacy protection: %w", err))
 		}
@@ -328,17 +328,16 @@ func resumeNetworkSession(
 		return true, nil
 
 	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
-		// A persisted teardown decision is terminal for automatic continuation.
-		// Keep the envelope in place while every exact/generic data-plane cleanup
-		// stage converges, then deliberately remove protection, verify the
-		// remaining host network, and clear the durable session authority.
+		// Terminal convergence has one owner. Exact transaction recovery first
+		// converges only transaction-backed data-plane resources. Once that exact
+		// stage succeeds, continueTeardown owns tracked session protection removal,
+		// remaining-host verification, and Network Session authority cleanup.
+		// Generic standalone recovery is deliberately not interposed here: it has
+		// no unique authority over terminal session resources and observational
+		// warnings must not veto an otherwise exact terminal convergence path.
 		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
 		if !networkSessionRecoveryConverged(exactRecovery) {
 			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
-		}
-		recovery := recover(ctx, status(ctx))
-		if !networkSessionRecoveryConverged(recovery) {
-			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(recovery), errNetworkSessionRecoveryIncomplete)
 		}
 		if err := continueTeardown(ctx, stateStore); err != nil {
 			return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("continue persisted network session teardown: %w", err))
