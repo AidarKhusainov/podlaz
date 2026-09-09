@@ -194,7 +194,9 @@ func (e *capturingTerminalRecoveryTunExecutor) Apply(context.Context, planner.Tu
 	return nil, nil
 }
 
-func (e *capturingTerminalRecoveryTunExecutor) Verify(context.Context, planner.TunPlan) error { return nil }
+func (e *capturingTerminalRecoveryTunExecutor) Verify(context.Context, planner.TunPlan) error {
+	return nil
+}
 
 func (e *capturingTerminalRecoveryTunExecutor) Rollback(_ context.Context, plan planner.TunPlan) error {
 	e.calls++
