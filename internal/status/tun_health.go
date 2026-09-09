@@ -41,11 +41,15 @@ func WithTunHealth(report Report, health *api.TunHealthStatus) Report {
 	return report
 }
 
-func terminalCleanupRequired(report Report, health *api.TunHealthStatus) bool {
-	if health == nil || health.State != api.TunHealthCleanupRequired || report.StartupScan == nil || report.StartupScan.NetworkSession == nil {
+// HasTerminalCleanup reports durable current-boot Network Session teardown work.
+// It is deliberately separate from generic stale-candidate/warning classification:
+// terminal session authority is a typed lifecycle condition even when there are
+// no standalone recovery candidates or inspection warnings.
+func (r Report) HasTerminalCleanup() bool {
+	if r.StartupScan == nil || r.StartupScan.NetworkSession == nil {
 		return false
 	}
-	session := report.StartupScan.NetworkSession
+	session := r.StartupScan.NetworkSession
 	if session.NextAction != api.NetworkSessionRecoveryActionContinueTeardown {
 		return false
 	}
@@ -55,4 +59,8 @@ func terminalCleanupRequired(report Report, health *api.TunHealthStatus) bool {
 	default:
 		return false
 	}
+}
+
+func terminalCleanupRequired(report Report, health *api.TunHealthStatus) bool {
+	return health != nil && health.State == api.TunHealthCleanupRequired && report.HasTerminalCleanup()
 }
