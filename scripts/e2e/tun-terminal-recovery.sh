@@ -18,11 +18,12 @@ source "${SCRIPT_DIR}/lib/tun_foreign_state.sh"
 require_cmd \
   awk apt bash cat chmod curl dirname dpkg dpkg-deb dpkg-query env find getent git grep id \
   install ip mktemp mkdir nft python3 readlink resolvectl rm sed seq sha256sum sleep sort stat \
-  sudo systemctl systemd-run tr
+  sudo systemctl systemd-run timeout tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
 : "${PODLAZ_E2E_HTTPS_CHECK_URL:=https://example.com/}"
+[[ "${PODLAZ_E2E_HTTPS_CHECK_URL}" == https://* ]] || fail "PODLAZ_E2E_HTTPS_CHECK_URL must use HTTPS"
 
 usage() {
   printf 'Usage: %s EXACT-CANDIDATE.deb EXACT-V0.2.40.deb\n' "$0" >&2
@@ -215,10 +216,10 @@ EOF
 
 check_https_and_dns() {
   local phase="$1"
-  getent hosts example.com >"${E2E_ARTIFACT_DIR}/$(safe_name "${phase}")-dns.txt" 2>&1 || \
-    fail "${phase}: system DNS resolution failed"
-  curl -4 -fsS --max-time 20 -o /dev/null "${PODLAZ_E2E_HTTPS_CHECK_URL}" || \
-    fail "${phase}: IPv4 HTTPS failed"
+  timeout 15 getent ahostsv4 example.com >"${E2E_ARTIFACT_DIR}/$(safe_name "${phase}")-dns.txt" 2>&1 || \
+    fail "${phase}: bounded system IPv4 DNS resolution failed"
+  curl -4 -fsS --connect-timeout 10 --max-time 20 -o /dev/null "${PODLAZ_E2E_HTTPS_CHECK_URL}" || \
+    fail "${phase}: IPv4 HTTPS/TLS failed"
 }
 
 capture_host_state() {
@@ -407,6 +408,38 @@ if network_session and network_session.get('next_action') not in (None,'none'):
 PY
 }
 
+assert_networkmanager_tun_absent() {
+  local phase="$1" code
+  command -v nmcli >/dev/null 2>&1 || return 0
+  systemctl is-active --quiet NetworkManager.service || return 0
+
+  set +e
+  capture_secret_command "networkmanager-active-${phase}" \
+    timeout 10 nmcli --terse --escape no --get-values DEVICE connection show --active
+  code=$?
+  set -e
+  [[ "${code}" == 0 ]] || fail "${phase}: NetworkManager active connections could not be inspected"
+  if grep -Fx -- "${TUN_IFACE}" "${LAST_STDOUT}" >/dev/null; then
+    fail "${phase}: NetworkManager still publishes the exact TUN interface as an active connection"
+  fi
+}
+
+assert_post_convergence_diagnostics() {
+  local phase="$1" stale_failure="$2"
+
+  expect_secret_success "status-${phase}" run_client status
+  assert_contains "${LAST_STDOUT}" "Status: Disconnected"
+  assert_not_contains "${LAST_STDOUT}" "${stale_failure}"
+
+  expect_secret_success "doctor-${phase}" run_client doctor
+  assert_contains "${LAST_STDOUT}" "Source: daemon"
+  assert_not_contains "${LAST_STDOUT}" "${stale_failure}"
+
+  assert_clean_recovery_view
+  assert_not_contains "${LAST_STDOUT}" "${stale_failure}"
+  assert_networkmanager_tun_absent "${phase}"
+}
+
 assert_v0240_stranded_shape() {
   local current_start
   [[ "${TX_ID}" == "${V0240_PRE_TX_ID}" ]] || fail "v0.2.40 failed transaction identity changed across disconnect"
@@ -457,6 +490,7 @@ assert_contains "${LAST_STDOUT}" "Status: Connected"
 capture_exact_authority committed
 assert_active_authority_present candidate-active
 assert_tun_foreign_state candidate-active
+check_https_and_dns candidate-active-vpn
 
 log "inject terminal firewall rollback blocker"
 set +e
@@ -475,8 +509,7 @@ expect_secret_success "recover-terminal-execute" run_client recover --execute --
 check_https_and_dns after-recover
 assert_exact_authority_absent after-recover
 assert_tun_foreign_state after-recover
-expect_secret_success "status-disconnected" run_client status
-assert_contains "${LAST_STDOUT}" "Status: Disconnected"
+assert_post_convergence_diagnostics after-recover "terminal firewall rollback blocked before nftables mutation"
 
 log "prove recovery is idempotent"
 expect_secret_success "recover-terminal-second" run_client recover --execute --yes
@@ -488,6 +521,7 @@ log "prove normal candidate disconnect has no exact route/rule residue"
 expect_secret_success "connect-after-recovery" run_client connect --mode tun "${PROFILE_ID}"
 capture_exact_authority committed
 assert_active_authority_present candidate-reconnect
+check_https_and_dns candidate-reconnect-vpn
 snapshot_exact_network_manifest candidate-reconnect
 expect_secret_success "disconnect-after-recovery" run_client disconnect
 check_https_and_dns final-candidate
@@ -524,14 +558,13 @@ expect_secret_success "upgrade-recover-terminal" run_client recover --execute --
 check_https_and_dns after-v0240-upgrade-recover
 assert_exact_authority_absent after-v0240-upgrade-recover
 assert_tun_foreign_state after-v0240-upgrade-recover
-expect_secret_success "upgrade-status-disconnected" run_client status
-assert_contains "${LAST_STDOUT}" "Status: Disconnected"
-assert_clean_recovery_view
+assert_post_convergence_diagnostics after-v0240-upgrade-recover "missing nftables chains"
 
 log "prove post-upgrade normal lifecycle and route/rule cleanup"
 expect_secret_success "upgrade-connect-after-recovery" run_client connect --mode tun "${PROFILE_ID}"
 capture_exact_authority committed
 assert_active_authority_present upgrade-reconnect
+check_https_and_dns upgrade-reconnect-vpn
 snapshot_exact_network_manifest upgrade-reconnect
 expect_secret_success "upgrade-disconnect-after-recovery" run_client disconnect
 check_https_and_dns final-upgrade
