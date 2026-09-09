@@ -26,22 +26,25 @@ func TestPersistedTerminalArmedProtectionStaysUpThroughDataPlaneRecovery(t *test
 			return nil
 		})
 	}
+	genericCalled := false
 
 	resumed, err := resumeNetworkSession(
 		context.Background(),
 		continuation,
 		networkSessionRecordingLifecycle{events: &events},
-		func(context.Context) api.StatusResponse { return api.StatusResponse{Connection: "inactive"} },
+		nil,
 		func(context.Context, api.StatusResponse) api.RecoveryResponse {
-			assertProtectionState(t, store, networkSessionProtectionArmed)
-			events = append(events, "generic-data-plane-recovery")
+			genericCalled = true
 			return api.RecoveryResponse{Mode: "execute"}
 		},
 	)
 	if err != nil || resumed {
 		t.Fatalf("terminal restart convergence: resumed=%v err=%v", resumed, err)
 	}
-	want := []string{"exact-data-plane-recovery", "generic-data-plane-recovery", "terminal-envelope-convergence", "post-network-verify"}
+	if genericCalled {
+		t.Fatal("generic recovery must not run inside terminal convergence")
+	}
+	want := []string{"exact-data-plane-recovery", "terminal-envelope-convergence", "post-network-verify"}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("terminal restart ordering=%#v, want %#v", events, want)
 	}
