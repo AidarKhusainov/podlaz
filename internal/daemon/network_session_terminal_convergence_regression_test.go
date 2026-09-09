@@ -9,6 +9,15 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
+type recordingLiveTerminalLifecycle struct {
+	networkSessionRecordingLifecycle
+}
+
+func (l recordingLiveTerminalLifecycle) convergeLiveTerminalDataPlane(ctx context.Context) error {
+	_, err := l.Disconnect(ctx)
+	return err
+}
+
 func TestTerminalNetworkSessionConvergenceHasOneCleanupOwner(t *testing.T) {
 	runtimeDir := t.TempDir()
 	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
@@ -77,7 +86,8 @@ func TestTerminalNetworkSessionUsesLiveSupervisorBeforeExactRecovery(t *testing.
 		events = append(events, "terminal-teardown")
 		return store.Remove()
 	}
-	live := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events}, continuation)
+	inner := recordingLiveTerminalLifecycle{networkSessionRecordingLifecycle: networkSessionRecordingLifecycle{events: &events}}
+	live := newNetworkSessionLifecycle(inner, continuation)
 
 	resumed, err := resumeNetworkSession(context.Background(), continuation, live, nil, nil)
 	if err != nil || resumed {
@@ -94,7 +104,8 @@ func TestTerminalNetworkSessionStopsWhenLiveSupervisorTeardownFails(t *testing.T
 	continuation := newNetworkSessionContinuationStore(store.runtimeDir, fixedBootID("boot-a"))
 	blocker := errors.New("synthetic live supervised teardown blocker")
 	events := []string{}
-	live := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events, disconnectErr: blocker}, continuation)
+	inner := recordingLiveTerminalLifecycle{networkSessionRecordingLifecycle: networkSessionRecordingLifecycle{events: &events, disconnectErr: blocker}}
+	live := newNetworkSessionLifecycle(inner, continuation)
 	exactCalled := false
 	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
 		exactCalled = true
