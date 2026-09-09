@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
@@ -43,12 +42,8 @@ func (c DoctorClient) Doctor(ctx context.Context) (api.DoctorResponse, error) {
 }
 
 func (c DoctorClient) doctorViaSocket(ctx context.Context, socketPath string, timeout time.Duration) (api.DoctorResponse, error) {
-	dialer := net.Dialer{Timeout: timeout}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "unix", socketPath)
-		},
-	}
+	dial := newDaemonDialTracker(socketPath, timeout)
+	transport := &http.Transport{DialContext: dial.DialContext}
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: timeout}
@@ -59,7 +54,7 @@ func (c DoctorClient) doctorViaSocket(ctx context.Context, socketPath string, ti
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.DoctorResponse{}, newDaemonUnavailableError(socketPath, err)
+		return api.DoctorResponse{}, dial.requestError("doctor", err)
 	}
 	defer resp.Body.Close()
 
