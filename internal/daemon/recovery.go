@@ -23,7 +23,7 @@ func daemonRecover(ctx context.Context, runtimeDir string, status api.StatusResp
 func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api.StatusResponse, opts recovery.Options) api.RecoveryResponse {
 	opts.RuntimeDir = runtimeDir
 	plan := recovery.PlanWithOptions(ctx, opts)
-	if status.Connection == "active" {
+	if activeStatusMustKeepRecoveryMutationFree(status) {
 		return recoveryResponseToAPI(activeRecoveryMutationFreeResult(plan, runtimeDir))
 	}
 	plan = filterStartupScanForActiveRuntime(plan, status, runtimeDir)
@@ -33,6 +33,15 @@ func daemonRecoverWithOptions(ctx context.Context, runtimeDir string, status api
 	}
 	result := recovery.ExecuteWithOptions(ctx, opts)
 	return recoveryResponseToAPI(result)
+}
+
+// Generic recovery never gains mutation authority from an active publication.
+// Terminal current-boot cleanup is routed separately through the typed Network
+// Session convergence owner, which proves terminal intent before invoking exact
+// transaction recovery. This keeps a healthy active TUN mutation-free even if an
+// unrelated stale transaction is also visible.
+func activeStatusMustKeepRecoveryMutationFree(status api.StatusResponse) bool {
+	return status.Connection == "active"
 }
 
 func activeRecoveryMutationFreeResult(plan recovery.PlanResult, runtimeDir string) recovery.ExecuteResult {

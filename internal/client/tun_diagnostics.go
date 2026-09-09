@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
@@ -39,10 +38,8 @@ func (c DoctorClient) TunDiagnostics(ctx context.Context) (tundiag.Report, error
 }
 
 func (c DoctorClient) tunDiagnosticsViaSocket(ctx context.Context, socketPath string, timeout time.Duration) (tundiag.Report, error) {
-	dialer := net.Dialer{Timeout: timeout}
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return dialer.DialContext(ctx, "unix", socketPath)
-	}}
+	dial := newDaemonDialTracker(socketPath, timeout)
+	transport := &http.Transport{DialContext: dial.DialContext}
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: timeout}
@@ -52,7 +49,7 @@ func (c DoctorClient) tunDiagnosticsViaSocket(ctx context.Context, socketPath st
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return tundiag.Report{}, newDaemonUnavailableError(socketPath, err)
+		return tundiag.Report{}, dial.requestError("TUN diagnostics", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

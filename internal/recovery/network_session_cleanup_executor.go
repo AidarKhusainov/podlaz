@@ -158,12 +158,34 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 	childAbsenceProven := trackedChildAbsenceProven(rollback.ChildProcesses, processResults)
 	results := make([]CleanupResult, 0)
 
+	appendPhase := func(phase []CleanupResult) bool {
+		results = append(results, phase...)
+		return cleanupPhaseBlocked(phase)
+	}
+	stopAtBlocker := func() []CleanupResult {
+		results = append(results, processResults...)
+		results = append(results, e.preserveGeneratedConfigResults(rollback.GeneratedConfigs)...)
+		results = append(results, e.inspectUnrecordedDesiredMainState(ctx, tx)...)
+		if hasFailedCleanup(results) {
+			results = append(results, failed(candidate, errors.New("transaction cleanup stopped at the first blocking phase; transaction state was preserved")))
+		} else {
+			results = append(results, skipped(candidate, "transaction cleanup stopped at the first ambiguous phase; transaction state was preserved"))
+		}
+		return results
+	}
+
 	gateResult, gateDecision := networkSessionRollbackLinkIdentityGate(ctx, e, osExec, rollback, tx.AppliedSteps, childAbsenceProven)
 	switch gateDecision {
 	case rollbackLinkBlocked:
-		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
-		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
-		results = append(results, rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)...)
+		if appendPhase(e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)) {
+			return stopAtBlocker()
+		}
 		results = append(results, gateResult)
 		results = append(results, e.failLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
@@ -172,20 +194,38 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 		results = append(results, failed(candidate, errors.New("transaction cleanup failed link identity proof; transaction state was preserved")))
 		return results
 	case rollbackLinkAbsentChildAbsent:
-		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
-		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
-		results = append(results, rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)...)
+		if appendPhase(e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(rollbackNetworkSessionIndependentRoutes(ctx, osExec, rollback.Routes, allocation)) {
+			return stopAtBlocker()
+		}
 		results = append(results, missingNetworkSessionLinkRoutes(rollback.Routes, allocation)...)
 		results = append(results, gateResult)
 		results = append(results, e.missingLinkScopedRollbackResults(rollback)...)
 		results = append(results, processResults...)
 	default:
-		results = append(results, e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)...)
-		results = append(results, e.rollbackDNSResults(ctx, osExec, rollback.DNS)...)
-		results = append(results, rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)...)
-		results = append(results, rollbackNetworkSessionRoutes(ctx, osExec, rollback.Routes, allocation)...)
-		results = append(results, e.rollbackTUNAddressResults(ctx, rollback.TUNAddresses, childAbsenceProven)...)
-		results = append(results, e.rollbackTUNResults(ctx, osExec, rollback.TUN)...)
+		if appendPhase(e.rollbackNFTablesResults(ctx, tx, rollback.NFTables)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(e.rollbackDNSResults(ctx, osExec, rollback.DNS)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(rollbackNetworkSessionPolicyRules(ctx, osExec, rollback.PolicyRules, allocation)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(rollbackNetworkSessionRoutes(ctx, osExec, rollback.Routes, allocation)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(e.rollbackTUNAddressResults(ctx, rollback.TUNAddresses, childAbsenceProven)) {
+			return stopAtBlocker()
+		}
+		if appendPhase(e.rollbackTUNResults(ctx, osExec, rollback.TUN)) {
+			return stopAtBlocker()
+		}
 		results = append(results, processResults...)
 	}
 
@@ -217,6 +257,10 @@ func cleanupAllocatedNetworkSessionTransaction(ctx context.Context, e DaemonClea
 	}
 	results = append(results, recovered(candidate))
 	return results
+}
+
+func cleanupPhaseBlocked(results []CleanupResult) bool {
+	return hasFailedCleanup(results) || hasSkippedCleanup(results)
 }
 
 func networkSessionRecoveryRollbackMetadata(tx txstate.Transaction, allocation persistedNetworkSessionAllocation) txstate.RollbackMetadata {
@@ -328,16 +372,16 @@ func rollbackNetworkSessionPolicyRules(ctx context.Context, osExec OSCleanupExec
 		candidate := Candidate{Kind: "policy-rule", Description: "policy rule", Target: fmt.Sprintf("priority %d table %s", rule.Priority, rule.Table)}
 		if !ownedRollbackMetadata(rule.Owner, netexecutor.OwnerPolicyRule) {
 			results = append(results, skipped(candidate, "non-podlaz policy rule metadata"))
-			continue
+			break
 		}
 		args, ok := exactNetworkSessionPolicyRuleDeleteArgs(rule, allocation)
 		if !ok {
 			results = append(results, skipped(candidate, "policy rule does not match the exact persisted session allocation"))
-			continue
+			break
 		}
 		if err := osExec.run(ctx, "ip", args...); err != nil && !commandErrorIsMissing(err) {
 			results = append(results, failed(candidate, err))
-			continue
+			break
 		}
 		results = append(results, recovered(candidate))
 	}
@@ -361,7 +405,11 @@ func exactNetworkSessionPolicyRuleDeleteArgs(rule txstate.PolicyRuleRollback, al
 func rollbackNetworkSessionRoutes(ctx context.Context, osExec OSCleanupExecutor, routes []txstate.RouteRollback, allocation persistedNetworkSessionAllocation) []CleanupResult {
 	results := make([]CleanupResult, 0, len(routes))
 	for _, route := range routes {
-		results = append(results, rollbackNetworkSessionRoute(ctx, osExec, route, allocation))
+		result := rollbackNetworkSessionRoute(ctx, osExec, route, allocation)
+		results = append(results, result)
+		if cleanupPhaseBlocked([]CleanupResult{result}) {
+			break
+		}
 	}
 	return results
 }
@@ -372,7 +420,11 @@ func rollbackNetworkSessionIndependentRoutes(ctx context.Context, osExec OSClean
 		if networkSessionLinkDependentRoute(route, allocation) {
 			continue
 		}
-		results = append(results, rollbackNetworkSessionRoute(ctx, osExec, route, allocation))
+		result := rollbackNetworkSessionRoute(ctx, osExec, route, allocation)
+		results = append(results, result)
+		if cleanupPhaseBlocked([]CleanupResult{result}) {
+			break
+		}
 	}
 	return results
 }

@@ -158,18 +158,21 @@ func (e TunExecutor) Verify(ctx context.Context, plan planner.TunPlan) error {
 	return nil
 }
 
+// Rollback is deliberately phase-gated. Once an exact owned rollback operation
+// reports a blocker, later dependent destructive phases do not start. A retry
+// re-observes already-converged resources from the same durable transaction
+// authority rather than trying to maximize cleanup in one best-effort pass.
 func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	if err := e.validatePlan(plan); err != nil {
 		return err
 	}
-	var errs []error
 	for i := len(plan.PolicyRules) - 1; i >= 0; i-- {
 		rule := plan.PolicyRules[i]
 		if !planner.IsTunAddAction(rule.Action) {
 			continue
 		}
 		if err := e.PolicyRules.Rollback(ctx, rule); err != nil {
-			errs = append(errs, err)
+			return err
 		}
 	}
 	for i := len(plan.Routes) - 1; i >= 0; i-- {
@@ -178,12 +181,12 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 			continue
 		}
 		if err := e.Routes.Rollback(ctx, route); err != nil {
-			errs = append(errs, err)
+			return err
 		}
 	}
 	if shouldApplyTunAddress(plan.TunAddress) {
 		if err := e.TunAddress.Rollback(ctx, plan.TunAddress); err != nil {
-			errs = append(errs, err)
+			return err
 		}
 	}
 	switch tunDeviceAction(plan.TunDevice.Action) {
@@ -193,11 +196,11 @@ func (e TunExecutor) Rollback(ctx context.Context, plan planner.TunPlan) error {
 	case "verify", "use-existing":
 		// Xray-owned link. Link rollback is intentionally skipped.
 	case "create":
-		errs = append(errs, errors.New("daemon-created TUN link rollback is unsupported without typed creation proof"))
+		return errors.New("daemon-created TUN link rollback is unsupported without typed creation proof")
 	default:
-		errs = append(errs, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action))
+		return fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 func appendAppliedStep(steps []Step, step Step) []Step {

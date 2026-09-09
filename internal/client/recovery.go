@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -56,12 +55,8 @@ func (c RecoveryClient) Recover(ctx context.Context) (api.RecoveryResponse, erro
 }
 
 func (c RecoveryClient) recoverViaSocket(ctx context.Context, socketPath string, dialTimeout, operationTimeout time.Duration) (api.RecoveryResponse, error) {
-	dialer := net.Dialer{Timeout: dialTimeout}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, "unix", socketPath)
-		},
-	}
+	dial := newDaemonDialTracker(socketPath, dialTimeout)
+	transport := &http.Transport{DialContext: dial.DialContext}
 	defer transport.CloseIdleConnections()
 
 	httpClient := http.Client{Transport: transport, Timeout: operationTimeout}
@@ -72,7 +67,7 @@ func (c RecoveryClient) recoverViaSocket(ctx context.Context, socketPath string,
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return api.RecoveryResponse{}, newDaemonUnavailableError(socketPath, err)
+		return api.RecoveryResponse{}, dial.requestError("recover", err)
 	}
 	defer resp.Body.Close()
 

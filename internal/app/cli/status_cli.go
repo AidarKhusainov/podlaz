@@ -120,5 +120,5 @@ func statusReportFromDaemonResponse(response api.StatusResponse) status.Report {
 }
 
 func statusCommandShouldFail(report status.Report) bool {
-	return report.Health() == status.LifecycleHealthUnhealthy || report.HasUnhealthyState()
+	return report.Health() == status.LifecycleHealthUnhealthy || report.HasUnhealthyState() || report.HasTerminalCleanup()
 }

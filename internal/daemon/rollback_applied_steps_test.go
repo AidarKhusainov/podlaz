@@ -15,10 +15,11 @@ func appliedStepsFromRollbackMetadataForTest(rollback txstate.RollbackMetadata, 
 	)
 	add := func(kind, target, owner string) {
 		steps = append(steps, txstate.AppliedStep{
-			Kind:      kind,
-			Target:    strings.TrimSpace(target),
-			Owner:     owner,
-			AppliedAt: now.UTC(),
+			Kind:        kind,
+			Target:      strings.TrimSpace(target),
+			Description: "synthetic applied ownership proof",
+			Owner:       owner,
+			AppliedAt:   now.UTC(),
 		})
 	}
 	for _, tun := range rollback.TUN {
