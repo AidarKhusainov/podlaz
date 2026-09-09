@@ -58,6 +58,67 @@ func TestTerminalNetworkSessionConvergenceHasOneCleanupOwner(t *testing.T) {
 	}
 }
 
+func TestTerminalNetworkSessionUsesLiveSupervisorBeforeExactRecovery(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	if err := continuation.Save(testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if err := continuation.stateStore().SetIntent(networkSessionIntentDisconnect); err != nil {
+		t.Fatal(err)
+	}
+
+	events := []string{}
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+		events = append(events, "exact-data-plane-recovery")
+		return api.RecoveryResponse{Mode: "execute"}
+	}
+	continuation.continueTeardown = func(_ context.Context, store networkSessionStateStore) error {
+		events = append(events, "terminal-teardown")
+		return store.Remove()
+	}
+	live := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events}, continuation)
+
+	resumed, err := resumeNetworkSession(context.Background(), continuation, live, nil, nil)
+	if err != nil || resumed {
+		t.Fatalf("same-daemon terminal convergence: resumed=%v err=%v", resumed, err)
+	}
+	want := []string{"disconnect", "exact-data-plane-recovery", "terminal-teardown"}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("same-daemon terminal ordering=%#v, want %#v", events, want)
+	}
+}
+
+func TestTerminalNetworkSessionStopsWhenLiveSupervisorTeardownFails(t *testing.T) {
+	store := seededProtectedNetworkSessionStore(t, networkSessionIntentDisconnect)
+	continuation := newNetworkSessionContinuationStore(store.runtimeDir, fixedBootID("boot-a"))
+	blocker := errors.New("synthetic live supervised teardown blocker")
+	events := []string{}
+	live := newNetworkSessionLifecycle(networkSessionRecordingLifecycle{events: &events, disconnectErr: blocker}, continuation)
+	exactCalled := false
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+		exactCalled = true
+		return api.RecoveryResponse{Mode: "execute"}
+	}
+	teardownCalled := false
+	continuation.continueTeardown = func(context.Context, networkSessionStateStore) error {
+		teardownCalled = true
+		return nil
+	}
+
+	resumed, err := resumeNetworkSession(context.Background(), continuation, live, nil, nil)
+	if err == nil || resumed {
+		t.Fatalf("live teardown blocker must stop terminal convergence: resumed=%v err=%v", resumed, err)
+	}
+	if !errors.Is(err, blocker) {
+		t.Fatalf("terminal blocker=%v, want wrapped %v", err, blocker)
+	}
+	if exactCalled || teardownCalled {
+		t.Fatalf("later terminal stages ran after live blocker: exact=%v teardown=%v", exactCalled, teardownCalled)
+	}
+	assertProtectionState(t, store, networkSessionProtectionArmed)
+}
+
 func TestTerminalNetworkSessionKeepsProtectionWhenExactRecoveryIsIncomplete(t *testing.T) {
 	store := seededProtectedNetworkSessionStore(t, networkSessionIntentDisconnect)
 	continuation := newNetworkSessionContinuationStore(store.runtimeDir, fixedBootID("boot-a"))
