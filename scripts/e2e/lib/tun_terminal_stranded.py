@@ -71,6 +71,56 @@ def _rule_present(expected, rules):
     return False
 
 
+def _exact_authority(tx, session):
+    rollback = tx.get("rollback") or {}
+    addresses = rollback.get("tun_addresses") or []
+    routes = rollback.get("routes") or []
+    rules = rollback.get("policy_rules") or []
+    nft_authority = rollback.get("nftables") or []
+    if not addresses or not routes or not rules:
+        raise ValueError("transaction lacks exact address/route/rule rollback authority")
+    if len(nft_authority) != 1:
+        raise ValueError("transaction does not have one exact nftables rollback authority")
+    nft_entry = nft_authority[0]
+    if not nft_entry.get("family") or not nft_entry.get("table"):
+        raise ValueError("transaction nftables rollback identity is incomplete")
+
+    protection = session.get("protection") or {}
+    if (
+        protection.get("state") != "armed"
+        or not protection.get("family")
+        or not protection.get("table")
+    ):
+        raise ValueError("Network Session lacks armed Privacy Envelope authority")
+    return addresses, routes, rules, nft_entry, protection
+
+
+def validate_exact_live_state(tx, session, addrs, routes, rules, nft, *, data_plane_present, barriers_present):
+    addresses, route_authority, rule_authority, nft_entry, protection = _exact_authority(tx, session)
+
+    checks = [
+        (all(_address_present(expected, addrs) for expected in addresses), "exact TUN address"),
+        (all(_route_present(expected, routes) for expected in route_authority), "exact route"),
+        (all(_rule_present(expected, rules) for expected in rule_authority), "exact policy rule"),
+    ]
+    for found, label in checks:
+        if found != data_plane_present:
+            actual = "present" if found else "absent or incomplete"
+            expected = "present" if data_plane_present else "absent"
+            raise ValueError(f"{label} state is {actual}, expected {expected}")
+
+    tables = _tables(nft)
+    barrier_checks = [
+        ((nft_entry.get("family"), nft_entry.get("table")) in tables, "exact transaction nftables table"),
+        ((protection.get("family"), protection.get("table")) in tables, "exact Privacy Envelope table"),
+    ]
+    for found, label in barrier_checks:
+        if found != barriers_present:
+            actual = "present" if found else "absent"
+            expected = "present" if barriers_present else "absent"
+            raise ValueError(f"{label} is {actual}, expected {expected}")
+
+
 def validate_v0240_stranded_state(tx, session, addrs, routes, rules, nft):
     if tx.get("state") != "failed":
         raise ValueError("v0.2.40 transaction is not failed")
@@ -80,39 +130,20 @@ def validate_v0240_stranded_state(tx, session, addrs, routes, rules, nft):
         raise ValueError("Network Session does not have terminal intent")
 
     rollback = tx.get("rollback") or {}
-    addresses = rollback.get("tun_addresses") or []
-    route_authority = rollback.get("routes") or []
-    rule_authority = rollback.get("policy_rules") or []
     nft_authority = rollback.get("nftables") or []
-    if not addresses or not route_authority or not rule_authority:
-        raise ValueError("v0.2.40 transaction lacks exact address/route/rule rollback authority")
-    if len(nft_authority) != 1:
-        raise ValueError("v0.2.40 transaction does not have one exact nftables rollback authority")
-    nft_entry = nft_authority[0]
-    if nft_entry.get("family") != "inet" or nft_entry.get("table") != "podlaz":
+    if len(nft_authority) != 1 or nft_authority[0].get("family") != "inet" or nft_authority[0].get("table") != "podlaz":
         raise ValueError("v0.2.40 transaction nftables authority is not inet podlaz")
 
-    protection = session.get("protection") or {}
-    if (
-        protection.get("state") != "armed"
-        or not protection.get("family")
-        or not protection.get("table")
-    ):
-        raise ValueError("Network Session lacks armed Privacy Envelope authority")
-
-    if any(_address_present(expected, addrs) for expected in addresses):
-        raise ValueError("exact v0.2.40 TUN address still exists; captured partial teardown shape was not reproduced")
-    if any(_route_present(expected, routes) for expected in route_authority):
-        raise ValueError("exact v0.2.40 route still exists; captured partial teardown shape was not reproduced")
-    if any(_rule_present(expected, rules) for expected in rule_authority):
-        raise ValueError("exact v0.2.40 policy rule still exists; captured partial teardown shape was not reproduced")
-
-    tables = _tables(nft)
-    if ("inet", "podlaz") not in tables:
-        raise ValueError("exact v0.2.40 transaction nftables table is absent")
-    privacy_identity = (protection.get("family"), protection.get("table"))
-    if privacy_identity not in tables:
-        raise ValueError("exact Privacy Envelope table is absent")
+    validate_exact_live_state(
+        tx,
+        session,
+        addrs,
+        routes,
+        rules,
+        nft,
+        data_plane_present=False,
+        barriers_present=True,
+    )
 
 
 def _load(path):
@@ -121,14 +152,29 @@ def _load(path):
 
 
 def main(argv):
-    if len(argv) != 7:
+    if len(argv) != 8:
         print(
-            "usage: tun_terminal_stranded.py TRANSACTION SESSION ADDRS ROUTES RULES NFT",
+            "usage: tun_terminal_stranded.py MODE TRANSACTION SESSION ADDRS ROUTES RULES NFT",
             file=sys.stderr,
         )
         return 2
+    mode = argv[1]
     try:
-        validate_v0240_stranded_state(*(_load(path) for path in argv[1:]))
+        tx, session, addrs, routes, rules, nft = (_load(path) for path in argv[2:])
+        if mode == "v0240-stranded":
+            validate_v0240_stranded_state(tx, session, addrs, routes, rules, nft)
+        elif mode == "active":
+            validate_exact_live_state(
+                tx, session, addrs, routes, rules, nft,
+                data_plane_present=True, barriers_present=True,
+            )
+        elif mode == "absent":
+            validate_exact_live_state(
+                tx, session, addrs, routes, rules, nft,
+                data_plane_present=False, barriers_present=False,
+            )
+        else:
+            raise ValueError(f"unsupported terminal state mode {mode!r}")
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
