@@ -131,7 +131,7 @@ func TestResumeNetworkSessionStopsBeforeDataPlaneRecoveryWhenPrivacyReconcileFai
 	}
 }
 
-func TestResumeNetworkSessionTerminalConvergenceRunsExactAndGenericCleanupBeforeTeardown(t *testing.T) {
+func TestResumeNetworkSessionTerminalConvergenceRunsExactCleanupBeforeTeardown(t *testing.T) {
 	runtimeDir := t.TempDir()
 	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
 	if err := continuation.Save(testContinuationRequest()); err != nil {
@@ -154,21 +154,25 @@ func TestResumeNetworkSessionTerminalConvergenceRunsExactAndGenericCleanupBefore
 		events = append(events, "terminal-teardown")
 		return store.Remove()
 	}
+	genericCalled := false
 
 	resumed, err := resumeNetworkSession(
 		context.Background(),
 		continuation,
 		networkSessionRecordingLifecycle{events: &events},
-		func(context.Context) api.StatusResponse { return api.StatusResponse{Connection: "inactive"} },
+		nil,
 		func(context.Context, api.StatusResponse) api.RecoveryResponse {
-			events = append(events, "generic-recovery")
+			genericCalled = true
 			return api.RecoveryResponse{Mode: "execute"}
 		},
 	)
 	if err != nil || resumed {
 		t.Fatalf("terminal convergence: resumed=%v err=%v", resumed, err)
 	}
-	want := []string{"exact-data-plane-recovery", "generic-recovery", "terminal-teardown"}
+	if genericCalled {
+		t.Fatal("generic recovery must not run inside terminal convergence")
+	}
+	want := []string{"exact-data-plane-recovery", "terminal-teardown"}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("terminal startup ordering = %#v, want %#v", events, want)
 	}

@@ -23,8 +23,9 @@ func (m *XrayManager) tunPlanExecutor() tunPlanExecutor {
 }
 
 func newProductionTunPlanExecutor(runner netexecutor.CommandRunner) tunPlanExecutor {
-	executor := maybeWrapE2ETunHookExecutor(netexecutor.NewDNSExecutorWithRunner(runner))
-	return maybeRecordE2EDNSRollback(executor)
+	executor := netexecutor.NewDNSExecutorWithRunner(runner)
+	executor = maybeWrapE2ETerminalFirewallRollback(executor)
+	return maybeRecordE2EDNSRollback(maybeWrapE2ETunHookExecutor(executor))
 }
 
 func (m *XrayManager) collectTunSnapshot(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
@@ -115,5 +116,9 @@ func transactionDoctorCheck(runtimeDir, transactionID string) doctor.Check {
 	if tx.RequiresCleanup() {
 		severity = doctor.SeverityWarning
 	}
-	return doctor.Check{Name: "transaction", Severity: severity, Message: fmt.Sprintf("%s transaction %s", tx.State, tx.ID)}
+	message := fmt.Sprintf("%s transaction %s", tx.State, tx.ID)
+	if tx.State == txstate.TransactionFailed && strings.TrimSpace(tx.FailureReason) != "" {
+		message += "; durable failure: " + sanitizeConnectivityDiagnostic(tx.FailureReason)
+	}
+	return doctor.Check{Name: "transaction", Severity: severity, Message: message}
 }

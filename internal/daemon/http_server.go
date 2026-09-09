@@ -9,9 +9,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
+
+const daemonDoctorObservationBudget = 500 * time.Millisecond
 
 func openDaemonListeners(runtimeDir string, authorizer Authorizer) ([]net.Listener, func(), error) {
 	socketPath := api.SocketPath(runtimeDir)
@@ -71,17 +74,24 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 			return
 		}
 
+		// The CLI's ordinary daemon-backed doctor call is deliberately short.
+		// Bound all subordinate observation inside the daemon to a smaller budget
+		// so a slow resolver/host command becomes typed incomplete evidence while
+		// there is still time to serialize a response over the already-live socket.
+		observationCtx, cancelObservation := context.WithTimeout(r.Context(), daemonDoctorObservationBudget)
+		defer cancelObservation()
+
 		mutationBefore := runtime.operationLock.doctorMutationSnapshot()
 		lifecycleSnapshot := runtime.lifecycle.captureDoctorLifecycleSnapshot()
 		status, scan := startupScanForPublication(
-			r.Context(), runtime.currentStatus, runtime.lifecycle, runtime.startupScan, runtime.runtimeDir, unexpectedCoreExitRefreshTimeout,
+			observationCtx, runtime.currentStatus, runtime.lifecycle, runtime.startupScan, runtime.runtimeDir, daemonDoctorObservationBudget,
 		)
 
 		var response api.DoctorResponse
 		if s.Doctor != nil {
-			response = s.Doctor(r.Context())
+			response = s.Doctor(observationCtx)
 		} else {
-			response = runtime.lifecycle.doctorFromSnapshot(r.Context(), lifecycleSnapshot)
+			response = runtime.lifecycle.doctorFromSnapshot(observationCtx, lifecycleSnapshot)
 		}
 		lifecycleAfter := runtime.lifecycle.captureDoctorLifecycleSnapshot()
 		mutationAfter := runtime.operationLock.doctorMutationSnapshot()
@@ -116,10 +126,11 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 			r.Context(),
 			func() api.RecoveryResponse {
 				blocked := runtime.startupMutationGate.Blocked()
-				response := networkSessionRecoveryInitialStage(blocked, func() api.RecoveryResponse {
+				plan, inspectErr := inspectNetworkSessionRecoveryPlan(runtime.continuation, runtime.startupMutationGate)
+				terminalTeardown := plan != nil && plan.NextAction == api.NetworkSessionRecoveryActionContinueTeardown
+				response := networkSessionRecoveryInitialStage(blocked || terminalTeardown, func() api.RecoveryResponse {
 					return daemonRecover(r.Context(), runtime.runtimeDir, runtime.currentStatus(r.Context()))
 				})
-				plan, inspectErr := inspectNetworkSessionRecoveryPlan(runtime.continuation, runtime.startupMutationGate)
 				if inspectErr != nil {
 					response.Warnings = append(response.Warnings, api.RecoveryWarning{
 						Target:  "network session authority",
@@ -128,7 +139,7 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 				} else {
 					response.NetworkSession = plan
 				}
-				if !blocked {
+				if !blocked && !terminalTeardown {
 					refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 					runtime.forceRefreshStartupScan(refreshCtx)
 					cancel()
@@ -136,7 +147,8 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 				return response
 			},
 			func(response api.RecoveryResponse) api.RecoveryResponse {
-				if !runtime.startupMutationGate.Blocked() || !networkSessionRecoveryConverged(response) {
+				terminalTeardown := response.NetworkSession != nil && response.NetworkSession.NextAction == api.NetworkSessionRecoveryActionContinueTeardown
+				if (!runtime.startupMutationGate.Blocked() && !terminalTeardown) || !networkSessionRecoveryConverged(response) {
 					return response
 				}
 

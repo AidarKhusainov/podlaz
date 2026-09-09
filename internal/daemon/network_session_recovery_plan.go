@@ -22,7 +22,7 @@ func inspectNetworkSessionRecoveryPlan(
 	continuation networkSessionContinuationStore,
 	gate *networkSessionStartupMutationGate,
 ) (*api.NetworkSessionRecoveryState, error) {
-	if gate == nil || !gate.Blocked() {
+	if gate == nil {
 		return nil, nil
 	}
 
@@ -33,11 +33,22 @@ func inspectNetworkSessionRecoveryPlan(
 	if !exists {
 		return nil, nil
 	}
+	blocked := gate.Blocked()
+	if !blocked && authority.intent == networkSessionIntentResume {
+		// A healthy active/resumable session with an open startup gate is not
+		// recovery work. Terminal intent is different: it remains cleanup work
+		// until exact teardown has converged, even when the gate is already open.
+		return nil, nil
+	}
+	startupGate := api.NetworkSessionStartupGateOpen
+	if blocked {
+		startupGate = api.NetworkSessionStartupGateBlocked
+	}
 
 	plan := &api.NetworkSessionRecoveryState{
 		Authority:         api.NetworkSessionRecoveryAuthorityPresent,
 		Intent:            string(authority.intent),
-		StartupGate:       api.NetworkSessionStartupGateBlocked,
+		StartupGate:       startupGate,
 		LastResumeOutcome: api.NetworkSessionResumeOutcomeNotAttempted,
 		LegacyMigration:   authority.legacyMigration,
 		CleanupAuthority:  api.NetworkSessionCleanupAuthorityNone,

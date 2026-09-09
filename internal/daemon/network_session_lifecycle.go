@@ -212,6 +212,22 @@ type restartDisconnectLifecycle interface {
 	DisconnectForRestart(context.Context) (api.LifecycleResponse, error)
 }
 
+type networkSessionLiveTerminalConverger interface {
+	convergeLiveTerminalDataPlane(context.Context) error
+}
+
+// convergeLiveTerminalDataPlane uses only the current daemon's supervised
+// lifecycle authority. It deliberately bypasses Network Session finalization so
+// session-scoped Privacy Envelope authority remains durable until the later
+// terminal teardown stage proves the data plane and remaining host network clean.
+func (l *networkSessionLifecycle) convergeLiveTerminalDataPlane(ctx context.Context) error {
+	if l == nil || l.lifecycle == nil {
+		return errors.New("live terminal data-plane convergence requires a lifecycle service")
+	}
+	_, err := l.lifecycle.Disconnect(ctx)
+	return err
+}
+
 type networkSessionStatusFunc func(context.Context) api.StatusResponse
 type networkSessionRecoveryFunc func(context.Context, api.StatusResponse) api.RecoveryResponse
 type networkSessionPrivacyReconcileStage func(context.Context, networkSessionStateStore) error
@@ -294,12 +310,12 @@ func resumeNetworkSession(
 		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return false, nil
 	}
-	if status == nil || recover == nil {
-		return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("network session resume requires status and recovery functions"))
-	}
 
 	switch state.Intent {
 	case networkSessionIntentResume:
+		if status == nil || recover == nil {
+			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("network session resume requires status and recovery functions"))
+		}
 		if err := reconcilePrivacy(ctx, stateStore); err != nil {
 			return fail(api.NetworkSessionResumeStagePrivacyReconcile, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("reconcile network session privacy protection: %w", err))
 		}
@@ -328,17 +344,22 @@ func resumeNetworkSession(
 		return true, nil
 
 	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
-		// A persisted teardown decision is terminal for automatic continuation.
-		// Keep the envelope in place while every exact/generic data-plane cleanup
-		// stage converges, then deliberately remove protection, verify the
-		// remaining host network, and clear the durable session authority.
+		// Same-daemon recovery first uses live supervisor authority when available.
+		// Restart recovery has no such authority and therefore skips this stage,
+		// relying only on the exact durable transaction evidence below.
+		if live, ok := lifecycle.(networkSessionLiveTerminalConverger); ok {
+			if err := live.convergeLiveTerminalDataPlane(ctx); err != nil {
+				return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, true, fmt.Errorf("continue live terminal data-plane teardown: %w", err))
+			}
+		}
+		// Exact transaction recovery converges any durable residue left by a crash
+		// or already-completed live teardown. Once that succeeds, continueTeardown
+		// owns session protection removal, remaining-host verification, and Network
+		// Session authority cleanup. Generic standalone recovery is deliberately
+		// not interposed in this terminal path.
 		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
 		if !networkSessionRecoveryConverged(exactRecovery) {
 			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
-		}
-		recovery := recover(ctx, status(ctx))
-		if !networkSessionRecoveryConverged(recovery) {
-			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(recovery), errNetworkSessionRecoveryIncomplete)
 		}
 		if err := continueTeardown(ctx, stateStore); err != nil {
 			return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("continue persisted network session teardown: %w", err))
