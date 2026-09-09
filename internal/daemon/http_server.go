@@ -116,10 +116,11 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 			r.Context(),
 			func() api.RecoveryResponse {
 				blocked := runtime.startupMutationGate.Blocked()
-				response := networkSessionRecoveryInitialStage(blocked, func() api.RecoveryResponse {
+				plan, inspectErr := inspectNetworkSessionRecoveryPlan(runtime.continuation, runtime.startupMutationGate)
+				terminalTeardown := plan != nil && plan.NextAction == api.NetworkSessionRecoveryActionContinueTeardown
+				response := networkSessionRecoveryInitialStage(blocked || terminalTeardown, func() api.RecoveryResponse {
 					return daemonRecover(r.Context(), runtime.runtimeDir, runtime.currentStatus(r.Context()))
 				})
-				plan, inspectErr := inspectNetworkSessionRecoveryPlan(runtime.continuation, runtime.startupMutationGate)
 				if inspectErr != nil {
 					response.Warnings = append(response.Warnings, api.RecoveryWarning{
 						Target:  "network session authority",
@@ -128,7 +129,7 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 				} else {
 					response.NetworkSession = plan
 				}
-				if !blocked {
+				if !blocked && !terminalTeardown {
 					refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 					runtime.forceRefreshStartupScan(refreshCtx)
 					cancel()
@@ -136,7 +137,8 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 				return response
 			},
 			func(response api.RecoveryResponse) api.RecoveryResponse {
-				if !runtime.startupMutationGate.Blocked() || !networkSessionRecoveryConverged(response) {
+				terminalTeardown := response.NetworkSession != nil && response.NetworkSession.NextAction == api.NetworkSessionRecoveryActionContinueTeardown
+				if (!runtime.startupMutationGate.Blocked() && !terminalTeardown) || !networkSessionRecoveryConverged(response) {
 					return response
 				}
 
