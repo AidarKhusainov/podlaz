@@ -9,11 +9,11 @@ func TestNetworkSessionTerminalTransitionCommitsOnlyCurrentProvenAttempt(t *test
 		t.Fatalf("begin recovery attempt: exists=%v err=%v", exists, err)
 	}
 	attempt := networkSessionReplayAttempt{
-		SessionID:           state.SessionID,
-		RecoveryEpoch:       state.RecoveryEpoch,
-		ReplayDisposition:   networkSessionReplayDispositionTerminal,
-		RollbackStatus:      "completed",
-		CandidateMutation:   networkSessionCandidateMutationRolledBack,
+		SessionID:         state.SessionID,
+		RecoveryEpoch:     state.RecoveryEpoch,
+		ReplayDisposition: networkSessionReplayDispositionTerminal,
+		RollbackStatus:    "completed",
+		CandidateMutation: networkSessionCandidateMutationRolledBack,
 	}
 	witness := networkSessionTerminalCleanupWitness{
 		sessionID:     state.SessionID,
@@ -39,15 +39,27 @@ func TestNetworkSessionTerminalTransitionCommitsOnlyCurrentProvenAttempt(t *test
 
 func TestNetworkSessionTerminalTransitionRejectsStaleOrUnsafeEvidenceWithoutMutation(t *testing.T) {
 	tests := []struct {
-		name    string
-		mutate  func(*networkSessionState, *networkSessionReplayAttempt, *networkSessionTerminalCleanupWitness)
+		name   string
+		mutate func(*networkSessionState, *networkSessionReplayAttempt, *networkSessionTerminalCleanupWitness)
 	}{
-		{name: "stale-session", mutate: func(_ *networkSessionState, attempt *networkSessionReplayAttempt, _ *networkSessionTerminalCleanupWitness) { attempt.SessionID = "ffffffffffffffffffffffffffffffff" }},
-		{name: "stale-epoch", mutate: func(_ *networkSessionState, attempt *networkSessionReplayAttempt, _ *networkSessionTerminalCleanupWitness) { attempt.RecoveryEpoch++ }},
-		{name: "non-terminal-evidence", mutate: func(_ *networkSessionState, attempt *networkSessionReplayAttempt, _ *networkSessionTerminalCleanupWitness) { attempt.ReplayDisposition = networkSessionReplayDispositionRetryable }},
-		{name: "unproven-witness", mutate: func(_ *networkSessionState, _ *networkSessionReplayAttempt, witness *networkSessionTerminalCleanupWitness) { witness.proven = false }},
-		{name: "stale-witness-session", mutate: func(_ *networkSessionState, _ *networkSessionReplayAttempt, witness *networkSessionTerminalCleanupWitness) { witness.sessionID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }},
-		{name: "stale-witness-epoch", mutate: func(_ *networkSessionState, _ *networkSessionReplayAttempt, witness *networkSessionTerminalCleanupWitness) { witness.recoveryEpoch++ }},
+		{name: "stale-session", mutate: func(_ *networkSessionState, attempt *networkSessionReplayAttempt, _ *networkSessionTerminalCleanupWitness) {
+			attempt.SessionID = "ffffffffffffffffffffffffffffffff"
+		}},
+		{name: "stale-epoch", mutate: func(_ *networkSessionState, attempt *networkSessionReplayAttempt, _ *networkSessionTerminalCleanupWitness) {
+			attempt.RecoveryEpoch++
+		}},
+		{name: "non-terminal-evidence", mutate: func(_ *networkSessionState, attempt *networkSessionReplayAttempt, _ *networkSessionTerminalCleanupWitness) {
+			attempt.ReplayDisposition = networkSessionReplayDispositionRetryable
+		}},
+		{name: "unproven-witness", mutate: func(_ *networkSessionState, _ *networkSessionReplayAttempt, witness *networkSessionTerminalCleanupWitness) {
+			witness.proven = false
+		}},
+		{name: "stale-witness-session", mutate: func(_ *networkSessionState, _ *networkSessionReplayAttempt, witness *networkSessionTerminalCleanupWitness) {
+			witness.sessionID = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		}},
+		{name: "stale-witness-epoch", mutate: func(_ *networkSessionState, _ *networkSessionReplayAttempt, witness *networkSessionTerminalCleanupWitness) {
+			witness.recoveryEpoch++
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
