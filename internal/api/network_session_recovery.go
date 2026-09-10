@@ -153,11 +153,27 @@ func ValidateNetworkSessionRecoveryState(state NetworkSessionRecoveryState) erro
 	if state.StartupGate == NetworkSessionStartupGateBlocked && state.LastResumeOutcome == NetworkSessionResumeOutcomeSucceeded {
 		return errors.New("blocked startup gate cannot have a successful resume outcome")
 	}
-	if state.Intent == "resume" && state.NextAction == NetworkSessionRecoveryActionContinueTeardown {
-		return errors.New("resume intent cannot request terminal teardown")
+	if state.Intent == "resume" && state.NextAction == NetworkSessionRecoveryActionContinueTeardown && state.ReplayDisposition != NetworkSessionReplayDispositionTerminal {
+		return errors.New("resume intent can request terminal teardown only for terminal replay disposition")
 	}
 	if state.Intent != "resume" && state.NextAction == NetworkSessionRecoveryActionRetryResume {
 		return errors.New("terminal network session intent cannot request resume")
+	}
+	if state.Intent == "resume" {
+		switch state.ReplayDisposition {
+		case NetworkSessionReplayDispositionTerminal:
+			if state.NextAction != NetworkSessionRecoveryActionContinueTeardown {
+				return errors.New("terminal replay disposition requires continue-teardown")
+			}
+		case NetworkSessionReplayDispositionIncomplete:
+			if state.NextAction != NetworkSessionRecoveryActionManualDiagnosis {
+				return errors.New("incomplete replay disposition requires manual-diagnosis")
+			}
+		case NetworkSessionReplayDispositionRetryable, NetworkSessionReplayDispositionInterrupted:
+			if state.NextAction != NetworkSessionRecoveryActionRetryResume {
+				return errors.New("retryable or interrupted replay disposition requires retry-resume")
+			}
+		}
 	}
 	return nil
 }
