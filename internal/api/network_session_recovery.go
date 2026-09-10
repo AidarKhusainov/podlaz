@@ -26,6 +26,17 @@ const (
 	NetworkSessionResumeOutcomeIncomplete   = "incomplete"
 	NetworkSessionResumeOutcomeSucceeded    = "succeeded"
 
+	NetworkSessionReplayDispositionTerminal    = "terminal"
+	NetworkSessionReplayDispositionRetryable   = "retryable"
+	NetworkSessionReplayDispositionInterrupted = "interrupted"
+	NetworkSessionReplayDispositionIncomplete  = "incomplete"
+
+	NetworkSessionApplySubphaseTUNAddress   = "tun-address"
+	NetworkSessionApplySubphaseRoutes       = "routes"
+	NetworkSessionApplySubphasePolicyRules  = "policy-rules"
+	NetworkSessionApplySubphaseDNS          = "dns"
+	NetworkSessionApplySubphaseNFTables     = "nftables"
+
 	NetworkSessionCleanupAuthorityNone              = "none"
 	NetworkSessionCleanupAuthoritySessionProtection = "session-protection"
 
@@ -44,17 +55,19 @@ var networkSessionFailurePhasePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0
 // Transaction cleanup authority remains represented separately by ordinary
 // RecoveryCandidate values.
 type NetworkSessionRecoveryState struct {
-	Authority           string `json:"authority"`
-	Intent              string `json:"intent"`
-	StartupGate         string `json:"startup_gate"`
-	ResumeStage         string `json:"resume_stage,omitempty"`
-	LastResumeOutcome   string `json:"last_resume_outcome"`
-	LastTUNFailurePhase string `json:"last_tun_failure_phase,omitempty"`
-	RollbackStatus      string `json:"rollback_status,omitempty"`
-	TransactionPresent  bool   `json:"transaction_present"`
-	LegacyMigration     bool   `json:"legacy_migration"`
-	CleanupAuthority    string `json:"cleanup_authority"`
-	NextAction          string `json:"next_action"`
+	Authority            string `json:"authority"`
+	Intent               string `json:"intent"`
+	StartupGate          string `json:"startup_gate"`
+	ResumeStage          string `json:"resume_stage,omitempty"`
+	LastResumeOutcome    string `json:"last_resume_outcome"`
+	LastTUNFailurePhase  string `json:"last_tun_failure_phase,omitempty"`
+	ReplayDisposition    string `json:"replay_disposition,omitempty"`
+	NetworkApplySubphase string `json:"network_apply_subphase,omitempty"`
+	RollbackStatus       string `json:"rollback_status,omitempty"`
+	TransactionPresent   bool   `json:"transaction_present"`
+	LegacyMigration      bool   `json:"legacy_migration"`
+	CleanupAuthority     string `json:"cleanup_authority"`
+	NextAction           string `json:"next_action"`
 }
 
 func ValidateNetworkSessionRecoveryState(state NetworkSessionRecoveryState) error {
@@ -82,6 +95,33 @@ func ValidateNetworkSessionRecoveryState(state NetworkSessionRecoveryState) erro
 	if state.LastTUNFailurePhase != "" && !networkSessionFailurePhasePattern.MatchString(state.LastTUNFailurePhase) {
 		return errors.New("invalid network session TUN failure phase")
 	}
+	if state.ReplayDisposition != "" {
+		switch state.ReplayDisposition {
+		case NetworkSessionReplayDispositionTerminal,
+			NetworkSessionReplayDispositionRetryable,
+			NetworkSessionReplayDispositionInterrupted,
+			NetworkSessionReplayDispositionIncomplete:
+		default:
+			return fmt.Errorf("invalid network session replay disposition %q", state.ReplayDisposition)
+		}
+		if state.ResumeStage != NetworkSessionResumeStageConnectReplay {
+			return errors.New("network session replay disposition requires connect-replay resume stage")
+		}
+	}
+	if state.NetworkApplySubphase != "" {
+		switch state.NetworkApplySubphase {
+		case NetworkSessionApplySubphaseTUNAddress,
+			NetworkSessionApplySubphaseRoutes,
+			NetworkSessionApplySubphasePolicyRules,
+			NetworkSessionApplySubphaseDNS,
+			NetworkSessionApplySubphaseNFTables:
+		default:
+			return fmt.Errorf("invalid network session apply subphase %q", state.NetworkApplySubphase)
+		}
+		if state.ResumeStage != NetworkSessionResumeStageConnectReplay || state.LastTUNFailurePhase != "network-apply" {
+			return errors.New("network session apply subphase requires connect-replay network-apply failure")
+		}
+	}
 	if state.RollbackStatus != "" {
 		switch state.RollbackStatus {
 		case "not-started", "completed", "failed", "unknown":
@@ -105,6 +145,9 @@ func ValidateNetworkSessionRecoveryState(state NetworkSessionRecoveryState) erro
 		}
 		if state.NextAction != NetworkSessionRecoveryActionNone {
 			return errors.New("successful network session recovery cannot require another action")
+		}
+		if state.ReplayDisposition != "" || state.NetworkApplySubphase != "" {
+			return errors.New("successful network session recovery cannot retain replay failure metadata")
 		}
 	}
 	if state.StartupGate == NetworkSessionStartupGateBlocked && state.LastResumeOutcome == NetworkSessionResumeOutcomeSucceeded {
