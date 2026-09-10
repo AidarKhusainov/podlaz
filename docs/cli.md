@@ -483,14 +483,21 @@ unowned resources are skipped, and non-interactive execution requires `--yes`.
 The stable `network_session` projection contains only semantic recovery evidence:
 `authority`, `intent`, `startup_gate`, optional `resume_stage`,
 `last_resume_outcome`, optional `last_tun_failure_phase`, optional
+`replay_disposition`, optional `network_apply_subphase`, optional
 `rollback_status`, `transaction_present`, `legacy_migration`,
 `cleanup_authority`, and `next_action`. It deliberately excludes profile/server
 identity, Network Session and transaction identifiers, generated config, and raw
 child output. `resume_stage` can identify state load, legacy migration, Privacy
 Envelope reconciliation, exact transaction recovery, generic recovery, connect
 replay, or terminal teardown. `last_resume_outcome` is one of `not-attempted`,
-`failed`, `incomplete`, or `succeeded`; `next_action` is `retry-resume`,
-`continue-teardown`, `manual-diagnosis`, or `none`.
+`failed`, `incomplete`, or `succeeded`. When present, `replay_disposition` is one
+of `terminal`, `retryable`, `interrupted`, or `incomplete` for the current
+`connect-replay` blocker. `network_apply_subphase` is present only for a current
+`connect-replay` failure in `network-apply` and is one of `tun-address`, `routes`,
+`policy-rules`, `dns`, or `nftables`. A newer non-replay blocker clears these two
+optional top-level fields rather than presenting stale replay evidence.
+`next_action` is `retry-resume`, `continue-teardown`, `manual-diagnosis`, or
+`none`.
 
 Execution is complete only when ordinary cleanup has no failed/incomplete result
 and Network Session recovery has an open startup gate with `next_action: none`.
