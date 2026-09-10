@@ -45,10 +45,6 @@ func TestRecoverCapturedSameDaemonTerminalTunShapeConvergesWithoutReboot(t *test
 		t.Fatal(err)
 	}
 
-	// A second cleanup-required transaction represents durable residue outside
-	// the currently supervised Xray transaction. The exact-recovery stage must
-	// observe it before session protection or Network Session authority can be
-	// finalized.
 	secondary := txstate.NewTransaction("tun-terminal-secondary", "profile-secondary", planner.ModeTun, store.Now())
 	secondary.State = txstate.TransactionApplying
 	secondary.Rollback.TUN = []txstate.TUNRollback{{InterfaceName: "podlaz0", Owner: txstate.TransactionOwner}}
@@ -186,8 +182,8 @@ while true; do sleep 3600 & wait $!; done
 	httpServer := (Server{}).newHTTPServer(runtime, newBootAutostartManifestStore(t.TempDir(), fixedBootID("boot-a")))
 
 	response := executeRecoveryHTTPRequest(t, httpServer.Handler)
-	if response.NetworkSession == nil || response.NetworkSession.LastResumeOutcome != api.NetworkSessionResumeOutcomeSucceeded || response.NetworkSession.NextAction != api.NetworkSessionRecoveryActionNone {
-		t.Fatalf("same-daemon terminal recovery did not converge: %#v", response.NetworkSession)
+	if response.NetworkSession != nil {
+		t.Fatalf("same-daemon terminal recovery retained stale Network Session projection: %#v", response.NetworkSession)
 	}
 	if len(response.Warnings) != 0 {
 		t.Fatalf("same-daemon terminal recovery warnings: %#v", response.Warnings)
