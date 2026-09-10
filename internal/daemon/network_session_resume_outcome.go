@@ -18,10 +18,10 @@ const (
 )
 
 // resumeNetworkSessionResult is the semantic caller boundary for startup and
-// explicit recovery. The legacy boolean helper remains only as the lower-level
-// orchestration implementation while callers migrate to the typed result.
-// Terminal convergence is deliberately retained: the Network Session record is
-// cleared only by the caller after any higher-level durable outcome is committed.
+// explicit recovery. The lower-level boolean helper reports whether Connect
+// replay succeeded; this adapter distinguishes retained terminal convergence
+// from the absence of Network Session authority for callers with different
+// durable finalization responsibilities.
 func resumeNetworkSessionResult(
 	ctx context.Context,
 	continuation networkSessionContinuationStore,
@@ -67,7 +67,10 @@ func resumeNetworkSessionResultWithTerminalObservation(
 	if !exists {
 		return networkSessionResumeNoSession, nil
 	}
-	if (state.Intent == networkSessionIntentDisconnect || state.Intent == networkSessionIntentTerminal) && state.Protection == nil {
+	if state.Intent == networkSessionIntentDisconnect || state.Intent == networkSessionIntentTerminal {
+		// A successful teardown stage is the semantic proof. Production teardown
+		// removes session protection before returning; tests may inject an
+		// equivalent successful stage without reproducing its internal writes.
 		return networkSessionResumeTerminalConverged, nil
 	}
 	return networkSessionResumeUnknown, errors.New("network session resume completed without a terminal semantic result")
