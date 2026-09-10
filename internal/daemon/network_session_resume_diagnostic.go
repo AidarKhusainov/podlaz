@@ -37,15 +37,15 @@ const (
 )
 
 type networkSessionReplayAttempt struct {
-	SessionID            string                          `json:"session_id"`
-	RecoveryEpoch        uint64                          `json:"recovery_epoch"`
+	SessionID            string                           `json:"session_id"`
+	RecoveryEpoch        uint64                           `json:"recovery_epoch"`
 	ReplayDisposition    networkSessionReplayDisposition `json:"replay_disposition"`
-	ResumeStage          string                          `json:"resume_stage"`
-	TUNFailurePhase      string                          `json:"tun_failure_phase,omitempty"`
-	NetworkApplySubphase string                          `json:"network_apply_subphase,omitempty"`
-	RollbackStatus       string                          `json:"rollback_status,omitempty"`
-	TransactionPresent   bool                            `json:"transaction_present"`
-	LegacyMigration      bool                            `json:"legacy_migration"`
+	ResumeStage          string                           `json:"resume_stage"`
+	TUNFailurePhase      string                           `json:"tun_failure_phase,omitempty"`
+	NetworkApplySubphase string                           `json:"network_apply_subphase,omitempty"`
+	RollbackStatus       string                           `json:"rollback_status,omitempty"`
+	TransactionPresent   bool                             `json:"transaction_present"`
+	LegacyMigration      bool                             `json:"legacy_migration"`
 	CandidateMutation    networkSessionCandidateMutation `json:"candidate_mutation"`
 }
 
@@ -247,18 +247,24 @@ func validateNetworkSessionReplayAttempt(attempt networkSessionReplayAttempt) er
 	if !validNetworkSessionReplayDisposition(attempt.ReplayDisposition) {
 		return fmt.Errorf("invalid replay disposition %q", attempt.ReplayDisposition)
 	}
-	if attempt.TUNFailurePhase != "" && !networkSessionFailurePhasePattern.MatchString(attempt.TUNFailurePhase) {
-		return errors.New("invalid replay TUN failure phase")
-	}
 	if attempt.NetworkApplySubphase != "" && !validNetworkSessionApplySubphase(attempt.NetworkApplySubphase) {
 		return fmt.Errorf("invalid replay apply subphase %q", attempt.NetworkApplySubphase)
 	}
-	if attempt.RollbackStatus != "" {
-		switch attempt.RollbackStatus {
-		case "not-started", "completed", "failed", "unknown":
-		default:
-			return fmt.Errorf("invalid replay rollback status %q", attempt.RollbackStatus)
-		}
+	state := api.NetworkSessionRecoveryState{
+		Authority:           api.NetworkSessionRecoveryAuthorityPresent,
+		Intent:              "resume",
+		StartupGate:         api.NetworkSessionStartupGateBlocked,
+		ResumeStage:         attempt.ResumeStage,
+		LastResumeOutcome:   api.NetworkSessionResumeOutcomeFailed,
+		LastTUNFailurePhase: attempt.TUNFailurePhase,
+		RollbackStatus:      attempt.RollbackStatus,
+		TransactionPresent:  attempt.TransactionPresent,
+		LegacyMigration:     attempt.LegacyMigration,
+		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
+		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
+	}
+	if err := api.ValidateNetworkSessionRecoveryState(state); err != nil {
+		return err
 	}
 	switch attempt.CandidateMutation {
 	case networkSessionCandidateMutationNotOpened, networkSessionCandidateMutationRolledBack, networkSessionCandidateMutationUnresolved:
