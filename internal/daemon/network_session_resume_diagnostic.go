@@ -37,15 +37,15 @@ const (
 )
 
 type networkSessionReplayAttempt struct {
-	SessionID            string                           `json:"session_id"`
-	RecoveryEpoch        uint64                           `json:"recovery_epoch"`
+	SessionID            string                          `json:"session_id"`
+	RecoveryEpoch        uint64                          `json:"recovery_epoch"`
 	ReplayDisposition    networkSessionReplayDisposition `json:"replay_disposition"`
-	ResumeStage          string                           `json:"resume_stage"`
-	TUNFailurePhase      string                           `json:"tun_failure_phase,omitempty"`
-	NetworkApplySubphase string                           `json:"network_apply_subphase,omitempty"`
-	RollbackStatus       string                           `json:"rollback_status,omitempty"`
-	TransactionPresent   bool                             `json:"transaction_present"`
-	LegacyMigration      bool                             `json:"legacy_migration"`
+	ResumeStage          string                          `json:"resume_stage"`
+	TUNFailurePhase      string                          `json:"tun_failure_phase,omitempty"`
+	NetworkApplySubphase string                          `json:"network_apply_subphase,omitempty"`
+	RollbackStatus       string                          `json:"rollback_status,omitempty"`
+	TransactionPresent   bool                            `json:"transaction_present"`
+	LegacyMigration      bool                            `json:"legacy_migration"`
 	CandidateMutation    networkSessionCandidateMutation `json:"candidate_mutation"`
 }
 
