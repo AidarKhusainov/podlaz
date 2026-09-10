@@ -44,6 +44,40 @@ func deriveNetworkSessionTerminalCleanupWitness(
 	}, nil
 }
 
+func terminalizeNetworkSessionReplay(
+	ctx context.Context,
+	continuation networkSessionContinuationStore,
+	stateStore networkSessionStateStore,
+	attempt networkSessionReplayAttempt,
+	exactRecovery api.RecoveryResponse,
+	observe networkSessionTerminalObservationStage,
+	continueTeardown networkSessionTeardownRecoveryStage,
+) (bool, error) {
+	state, exists, err := stateStore.Load()
+	if err != nil {
+		return false, fmt.Errorf("reload Network Session before terminal replay transition: %w", err)
+	}
+	if !exists {
+		return false, nil
+	}
+	witness, err := deriveNetworkSessionTerminalCleanupWitness(ctx, state, attempt, exactRecovery, observe, continuation.runtimeDir)
+	if err != nil {
+		return false, err
+	}
+	outcome, err := stateStore.TransitionReplayToTerminal(attempt, witness)
+	if err != nil {
+		return false, fmt.Errorf("persist terminal Network Session replay transition: %w", err)
+	}
+	if outcome != networkSessionTerminalTransitionCommitted {
+		return false, nil
+	}
+	if err := continueTeardown(ctx, stateStore); err != nil {
+		return false, fmt.Errorf("continue terminalized Network Session teardown: %w", err)
+	}
+	_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
+	return true, nil
+}
+
 func observeProductionNetworkSessionTerminalDataPlane(ctx context.Context, runtimeDir string) error {
 	plan := recovery.PlanWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir})
 	if len(plan.Warnings) != 0 || len(plan.Candidates) != 0 {
