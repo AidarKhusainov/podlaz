@@ -101,7 +101,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 	}
 	if shouldApplyTunAddress(plan.TunAddress) {
 		step, applyErr := e.TunAddress.Apply(ctx, plan.TunAddress)
-		if err := record(step, applyErr); err != nil {
+		if err := record(step, withApplyFailureSubphase(applyFailureSubphaseTunAddress, applyErr)); err != nil {
 			return steps, err
 		}
 	}
@@ -111,7 +111,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 			continue
 		}
 		step, applyErr := e.Routes.Add(ctx, route)
-		if err := record(step, applyErr); err != nil {
+		if err := record(step, withApplyFailureSubphase(applyFailureSubphaseRoutes, applyErr)); err != nil {
 			return steps, err
 		}
 	}
@@ -120,7 +120,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 			continue
 		}
 		step, applyErr := e.PolicyRules.Add(ctx, rule)
-		if err := record(step, applyErr); err != nil {
+		if err := record(step, withApplyFailureSubphase(applyFailureSubphasePolicyRules, applyErr)); err != nil {
 			return steps, err
 		}
 	}

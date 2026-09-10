@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"strings"
 )
@@ -78,4 +79,61 @@ func tunVerificationPhase(err error) string {
 		return "connectivity"
 	}
 	return phase
+}
+
+type networkSessionReplaySemanticsError struct {
+	disposition       networkSessionReplayDisposition
+	candidateMutation networkSessionCandidateMutation
+	err               error
+}
+
+func (e networkSessionReplaySemanticsError) Error() string {
+	if e.err == nil {
+		return "network session replay failed"
+	}
+	return e.err.Error()
+}
+
+func (e networkSessionReplaySemanticsError) Unwrap() error { return e.err }
+
+func withNetworkSessionReplaySemantics(disposition networkSessionReplayDisposition, candidateMutation networkSessionCandidateMutation, err error) error {
+	if err == nil {
+		return nil
+	}
+	return networkSessionReplaySemanticsError{
+		disposition:       disposition,
+		candidateMutation: candidateMutation,
+		err:               err,
+	}
+}
+
+func classifyNetworkSessionReplayFailure(ctx context.Context, err error) (networkSessionReplayDisposition, networkSessionCandidateMutation) {
+	if err == nil {
+		return networkSessionReplayDispositionIncomplete, networkSessionCandidateMutationUnresolved
+	}
+	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return networkSessionReplayDispositionInterrupted, networkSessionCandidateMutationUnresolved
+	}
+	if errors.Is(err, errLifecycleShuttingDown) || errors.Is(err, context.Canceled) {
+		return networkSessionReplayDispositionInterrupted, networkSessionCandidateMutationUnresolved
+	}
+
+	var semantic networkSessionReplaySemanticsError
+	if errors.As(err, &semantic) &&
+		validNetworkSessionReplayDisposition(semantic.disposition) &&
+		validNetworkSessionCandidateMutation(semantic.candidateMutation) {
+		return semantic.disposition, semantic.candidateMutation
+	}
+	return networkSessionReplayDispositionIncomplete, networkSessionCandidateMutationUnresolved
+}
+
+func validNetworkSessionCandidateMutation(mutation networkSessionCandidateMutation) bool {
+	switch mutation {
+	case networkSessionCandidateMutationNotOpened,
+		networkSessionCandidateMutationRolledBack,
+		networkSessionCandidateMutationUnresolved:
+		return true
+	default:
+		return false
+	}
 }
