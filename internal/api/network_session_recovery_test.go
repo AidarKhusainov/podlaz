@@ -2,7 +2,7 @@ package api
 
 import "testing"
 
-func TestValidateNetworkSessionRecoveryStateAcceptsBlockedResume(t *testing.T) {
+func TestValidateNetworkSessionRecoveryStateAcceptsTerminalResumeContinuation(t *testing.T) {
 	state := NetworkSessionRecoveryState{
 		Authority:            NetworkSessionRecoveryAuthorityPresent,
 		Intent:               "resume",
@@ -10,14 +10,31 @@ func TestValidateNetworkSessionRecoveryStateAcceptsBlockedResume(t *testing.T) {
 		ResumeStage:          NetworkSessionResumeStageConnectReplay,
 		LastResumeOutcome:    NetworkSessionResumeOutcomeFailed,
 		LastTUNFailurePhase:  "network-apply",
-		ReplayDisposition:    "terminal",
+		ReplayDisposition:    NetworkSessionReplayDispositionTerminal,
 		NetworkApplySubphase: "dns",
 		RollbackStatus:       "completed",
 		CleanupAuthority:     NetworkSessionCleanupAuthorityNone,
-		NextAction:           NetworkSessionRecoveryActionRetryResume,
+		NextAction:           NetworkSessionRecoveryActionContinueTeardown,
 	}
 	if err := ValidateNetworkSessionRecoveryState(state); err != nil {
-		t.Fatalf("validate blocked resume state: %v", err)
+		t.Fatalf("validate terminal replay continuation state: %v", err)
+	}
+}
+
+func TestValidateNetworkSessionRecoveryStateAcceptsIncompleteResumeDiagnosis(t *testing.T) {
+	state := NetworkSessionRecoveryState{
+		Authority:         NetworkSessionRecoveryAuthorityPresent,
+		Intent:            "resume",
+		StartupGate:       NetworkSessionStartupGateBlocked,
+		ResumeStage:       NetworkSessionResumeStageConnectReplay,
+		LastResumeOutcome: NetworkSessionResumeOutcomeFailed,
+		ReplayDisposition: NetworkSessionReplayDispositionIncomplete,
+		RollbackStatus:    "completed",
+		CleanupAuthority:  NetworkSessionCleanupAuthoritySessionProtection,
+		NextAction:        NetworkSessionRecoveryActionManualDiagnosis,
+	}
+	if err := ValidateNetworkSessionRecoveryState(state); err != nil {
+		t.Fatalf("validate incomplete replay diagnosis state: %v", err)
 	}
 }
 
@@ -35,7 +52,7 @@ func TestValidateNetworkSessionRecoveryStateRejectsInvalidReplayProjection(t *te
 	if err := ValidateNetworkSessionRecoveryState(state); err == nil {
 		t.Fatal("invalid replay disposition must be rejected")
 	}
-	state.ReplayDisposition = "terminal"
+	state.ReplayDisposition = NetworkSessionReplayDispositionTerminal
 	state.NetworkApplySubphase = "invented"
 	if err := ValidateNetworkSessionRecoveryState(state); err == nil {
 		t.Fatal("invalid network apply subphase must be rejected")
