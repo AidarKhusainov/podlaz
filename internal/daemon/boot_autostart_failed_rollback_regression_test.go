@@ -84,7 +84,7 @@ func TestBootAutostartFailedTunRollbackBeforePrivacyEnvelopeStaysInProgress(t *t
 		attemptStore,
 		continuation,
 		bootAutostartFullTunnelFailureLifecycle{runner: runner},
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 	)
 	if err == nil || !exactRecoveryObserved {
 		t.Fatalf("failed rollback startup = result %q err %v exactRecoveryObserved=%v", result, err, exactRecoveryObserved)
