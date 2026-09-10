@@ -156,12 +156,7 @@ func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.Conne
 			}
 		}
 		if err := l.continuation.Save(previous); err != nil {
-				return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
-			}
-			return nil
-		}
-		if err := l.continuation.Remove(); err != nil {
-			return fmt.Errorf("disarm failed network session continuation: %w", err)
+			return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
 		}
 		return nil
 	}
