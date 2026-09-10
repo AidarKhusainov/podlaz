@@ -181,7 +181,7 @@ func TestFailedRecoveryRetryKeepsGateBlockedAndTypedReason(t *testing.T) {
 	}
 	resumeErr := newNetworkSessionResumeError(api.NetworkSessionResumeStageConnectReplay, false, withTunFailurePhase("preflight", noTunTransactionID, "not-started", context.DeadlineExceeded))
 
-	got := applyNetworkSessionResumeResult(response, gate, resumeErr)
+	got := applyNetworkSessionResumeResult(response, gate, networkSessionResumeUnknown, resumeErr)
 	if !gate.Blocked() {
 		t.Fatal("failed retry must remain fail-closed")
 	}
