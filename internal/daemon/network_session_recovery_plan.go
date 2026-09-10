@@ -63,6 +63,8 @@ func inspectNetworkSessionRecoveryPlan(
 		plan.ResumeStage = diagnostic.ResumeStage
 		plan.LastResumeOutcome = diagnostic.LastResumeOutcome
 		plan.LastTUNFailurePhase = diagnostic.TUNFailurePhase
+		plan.ReplayDisposition = diagnostic.ReplayDisposition
+		plan.NetworkApplySubphase = diagnostic.NetworkApplySubphase
 		plan.RollbackStatus = diagnostic.RollbackStatus
 		plan.TransactionPresent = diagnostic.TransactionPresent
 		plan.LegacyMigration = plan.LegacyMigration || diagnostic.LegacyMigration
@@ -173,6 +175,8 @@ func successfulNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState
 	out.LastResumeOutcome = api.NetworkSessionResumeOutcomeSucceeded
 	out.ResumeStage = ""
 	out.LastTUNFailurePhase = ""
+	out.ReplayDisposition = ""
+	out.NetworkApplySubphase = ""
 	out.RollbackStatus = ""
 	out.TransactionPresent = false
 	out.NextAction = api.NetworkSessionRecoveryActionNone
@@ -193,11 +197,17 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 		out.ResumeStage = failure.ResumeStage
 		out.LastResumeOutcome = failure.LastResumeOutcome
 		out.LastTUNFailurePhase = failure.TUNFailurePhase
+		if failure.ResumeStage != api.NetworkSessionResumeStageConnectReplay {
+			out.ReplayDisposition = ""
+			out.NetworkApplySubphase = ""
+		}
 		out.RollbackStatus = failure.RollbackStatus
 		out.TransactionPresent = failure.TransactionPresent
 		out.LegacyMigration = out.LegacyMigration || failure.LegacyMigration
 	} else {
 		out.LastResumeOutcome = api.NetworkSessionResumeOutcomeFailed
+		out.ReplayDisposition = ""
+		out.NetworkApplySubphase = ""
 	}
 	return out
 }
