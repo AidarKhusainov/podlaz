@@ -219,17 +219,19 @@ func validateNetworkSessionResumeDiagnostic(record networkSessionResumeDiagnosti
 		}
 	}
 	state := api.NetworkSessionRecoveryState{
-		Authority:           api.NetworkSessionRecoveryAuthorityPresent,
-		Intent:              "resume",
-		StartupGate:         api.NetworkSessionStartupGateBlocked,
-		ResumeStage:         record.ResumeStage,
-		LastResumeOutcome:   record.LastResumeOutcome,
-		LastTUNFailurePhase: record.TUNFailurePhase,
-		RollbackStatus:      record.RollbackStatus,
-		TransactionPresent:  record.TransactionPresent,
-		LegacyMigration:     record.LegacyMigration,
-		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
-		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
+		Authority:            api.NetworkSessionRecoveryAuthorityPresent,
+		Intent:               "resume",
+		StartupGate:          api.NetworkSessionStartupGateBlocked,
+		ResumeStage:          record.ResumeStage,
+		LastResumeOutcome:    record.LastResumeOutcome,
+		LastTUNFailurePhase:  record.TUNFailurePhase,
+		ReplayDisposition:    record.ReplayDisposition,
+		NetworkApplySubphase: record.NetworkApplySubphase,
+		RollbackStatus:       record.RollbackStatus,
+		TransactionPresent:   record.TransactionPresent,
+		LegacyMigration:      record.LegacyMigration,
+		CleanupAuthority:     api.NetworkSessionCleanupAuthorityNone,
+		NextAction:           networkSessionResumeRecoveryAction(record.ReplayDisposition),
 	}
 	return api.ValidateNetworkSessionRecoveryState(state)
 }
@@ -251,17 +253,19 @@ func validateNetworkSessionReplayAttempt(attempt networkSessionReplayAttempt) er
 		return fmt.Errorf("invalid replay apply subphase %q", attempt.NetworkApplySubphase)
 	}
 	state := api.NetworkSessionRecoveryState{
-		Authority:           api.NetworkSessionRecoveryAuthorityPresent,
-		Intent:              "resume",
-		StartupGate:         api.NetworkSessionStartupGateBlocked,
-		ResumeStage:         attempt.ResumeStage,
-		LastResumeOutcome:   api.NetworkSessionResumeOutcomeFailed,
-		LastTUNFailurePhase: attempt.TUNFailurePhase,
-		RollbackStatus:      attempt.RollbackStatus,
-		TransactionPresent:  attempt.TransactionPresent,
-		LegacyMigration:     attempt.LegacyMigration,
-		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
-		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
+		Authority:            api.NetworkSessionRecoveryAuthorityPresent,
+		Intent:               "resume",
+		StartupGate:          api.NetworkSessionStartupGateBlocked,
+		ResumeStage:          attempt.ResumeStage,
+		LastResumeOutcome:    api.NetworkSessionResumeOutcomeFailed,
+		LastTUNFailurePhase:  attempt.TUNFailurePhase,
+		ReplayDisposition:    string(attempt.ReplayDisposition),
+		NetworkApplySubphase: attempt.NetworkApplySubphase,
+		RollbackStatus:       attempt.RollbackStatus,
+		TransactionPresent:   attempt.TransactionPresent,
+		LegacyMigration:      attempt.LegacyMigration,
+		CleanupAuthority:     api.NetworkSessionCleanupAuthorityNone,
+		NextAction:           networkSessionResumeRecoveryAction(string(attempt.ReplayDisposition)),
 	}
 	if err := api.ValidateNetworkSessionRecoveryState(state); err != nil {
 		return err
