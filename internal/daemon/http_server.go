@@ -154,7 +154,7 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 
 				networkSessionPlan := api.CloneNetworkSessionRecoveryState(response.NetworkSession)
 				var genericResponse api.RecoveryResponse
-				_, retryErr := resumeNetworkSession(
+				resumeResult, retryErr := resumeNetworkSessionResult(
 					r.Context(),
 					runtime.continuation,
 					runtime.sessionLifecycle,
@@ -168,7 +168,13 @@ func (s Server) newHTTPServer(runtime *daemonRuntime, manifestStore bootAutostar
 					response = genericResponse
 					response.NetworkSession = networkSessionPlan
 				}
-				response = applyNetworkSessionResumeResult(response, runtime.startupMutationGate, retryErr)
+				if retryErr == nil {
+					if finalizeErr := finalizeNetworkSessionResumeResult(runtime.continuation, resumeResult); finalizeErr != nil {
+						resumeResult = networkSessionResumeUnknown
+						retryErr = finalizeErr
+					}
+				}
+				response = applyNetworkSessionResumeResult(response, runtime.startupMutationGate, resumeResult, retryErr)
 				refreshCtx, cancel := boundedStartupScanRefreshContext(r.Context())
 				runtime.forceRefreshStartupScan(refreshCtx)
 				cancel()
