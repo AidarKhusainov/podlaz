@@ -52,7 +52,6 @@ func (e *TunVerificationError) Error() string {
 				b.WriteString(diagnostic)
 				b.WriteString("\n")
 			}
-		}
 	}
 	b.WriteString("\nRun:\n  plz doctor\n  plz plan --mode tun <profile> --verbose\n  podlaz logs --core")
 	return b.String()
@@ -72,7 +71,22 @@ func withTunRollbackCompleted(err error) error {
 		copy.RollbackCompleted = true
 		return &copy
 	}
-	return fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
+
+	completed := fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
+	// A tunNetworkMutationError is the typed boundary proving this attempt
+	// entered transaction-owned host mutation. Reaching this helper proves the
+	// exact rollback path completed. That combination is a positive lifecycle
+	// classification for a replay attempt; generic/verification failures remain
+	// unclassified and therefore fail closed as incomplete.
+	var mutation *tunNetworkMutationError
+	if errors.As(err, &mutation) {
+		return withNetworkSessionReplaySemantics(
+			networkSessionReplayDispositionTerminal,
+			networkSessionCandidateMutationRolledBack,
+			completed,
+		)
+	}
+	return completed
 }
 
 func isTunVerificationError(err error) bool {
