@@ -124,6 +124,15 @@ func classifyNetworkSessionReplayFailure(ctx context.Context, err error) (networ
 		validNetworkSessionCandidateMutation(semantic.candidateMutation) {
 		return semantic.disposition, semantic.candidateMutation
 	}
+
+	// runtimeUnavailableError is an existing typed lifecycle classification:
+	// the pinned request cannot start in the current runtime and explicitly
+	// guarantees that no network mutation was applied. It is therefore a
+	// positive non-retryable current-attempt failure, not an inference from
+	// phase, text, timeout, or an OS command result.
+	if isRuntimeUnavailableError(err) {
+		return networkSessionReplayDispositionTerminal, networkSessionCandidateMutationNotOpened
+	}
 	return networkSessionReplayDispositionIncomplete, networkSessionCandidateMutationUnresolved
 }
 
