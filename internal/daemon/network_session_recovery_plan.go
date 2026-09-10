@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 )
 
 type networkSessionAuthoritySnapshot struct {
@@ -72,7 +74,7 @@ func inspectNetworkSessionRecoveryPlan(
 
 	switch authority.intent {
 	case networkSessionIntentResume:
-		plan.NextAction = api.NetworkSessionRecoveryActionRetryResume
+		plan.NextAction = networkSessionResumeRecoveryAction(plan.ReplayDisposition)
 	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
 		plan.NextAction = api.NetworkSessionRecoveryActionContinueTeardown
 	default:
@@ -190,24 +192,44 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 	out := api.CloneNetworkSessionRecoveryState(plan)
 	out.StartupGate = api.NetworkSessionStartupGateBlocked
 	out.NextAction = api.NetworkSessionRecoveryActionManualDiagnosis
-	if out.Intent == string(networkSessionIntentResume) {
-		out.NextAction = api.NetworkSessionRecoveryActionRetryResume
-	}
 	if failure, ok := networkSessionResumeFailure(resumeErr); ok {
 		out.ResumeStage = failure.ResumeStage
 		out.LastResumeOutcome = failure.LastResumeOutcome
 		out.LastTUNFailurePhase = failure.TUNFailurePhase
-		if failure.ResumeStage != api.NetworkSessionResumeStageConnectReplay {
-			out.ReplayDisposition = ""
-			out.NetworkApplySubphase = ""
-		}
 		out.RollbackStatus = failure.RollbackStatus
 		out.TransactionPresent = failure.TransactionPresent
 		out.LegacyMigration = out.LegacyMigration || failure.LegacyMigration
+		if failure.ResumeStage == api.NetworkSessionResumeStageConnectReplay {
+			disposition, _ := classifyNetworkSessionReplayFailure(context.Background(), resumeErr)
+			out.ReplayDisposition = string(disposition)
+			out.NetworkApplySubphase = ""
+			if failure.TUNFailurePhase == "network-apply" {
+				out.NetworkApplySubphase = netexecutor.ApplyFailureSubphase(resumeErr)
+			}
+		} else {
+			out.ReplayDisposition = ""
+			out.NetworkApplySubphase = ""
+		}
 	} else {
 		out.LastResumeOutcome = api.NetworkSessionResumeOutcomeFailed
 		out.ReplayDisposition = ""
 		out.NetworkApplySubphase = ""
 	}
+	if out.Intent == string(networkSessionIntentResume) {
+		out.NextAction = networkSessionResumeRecoveryAction(out.ReplayDisposition)
+	}
 	return out
+}
+
+func networkSessionResumeRecoveryAction(replayDisposition string) string {
+	switch replayDisposition {
+	case api.NetworkSessionReplayDispositionTerminal:
+		return api.NetworkSessionRecoveryActionContinueTeardown
+	case api.NetworkSessionReplayDispositionIncomplete:
+		return api.NetworkSessionRecoveryActionManualDiagnosis
+	case api.NetworkSessionReplayDispositionRetryable, api.NetworkSessionReplayDispositionInterrupted, "":
+		return api.NetworkSessionRecoveryActionRetryResume
+	default:
+		return api.NetworkSessionRecoveryActionManualDiagnosis
+	}
 }
