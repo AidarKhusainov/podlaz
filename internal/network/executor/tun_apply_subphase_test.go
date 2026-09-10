@@ -65,11 +65,11 @@ func TestTunExecutorApplyReportsTypedSubphase(t *testing.T) {
 
 func TestDNSAwareTunExecutorApplyReportsDNSAndNFTablesSubphases(t *testing.T) {
 	for _, tt := range []struct {
-		name        string
-		dnsErr      error
-		firewallErr error
+		name         string
+		dnsErr       error
+		firewallErr  error
 		withFirewall bool
-		want        string
+		want         string
 	}{
 		{name: "dns", dnsErr: errors.New("dns apply failed"), want: "dns"},
 		{name: "nftables", firewallErr: errors.New("firewall apply failed"), withFirewall: true, want: "nftables"},
@@ -105,7 +105,7 @@ type applySubphaseTunDevice struct{}
 func (applySubphaseTunDevice) Create(context.Context, planner.TunDevicePlan) (Step, error) {
 	return Step{}, nil
 }
-func (applySubphaseTunDevice) Verify(context.Context, planner.TunDevicePlan) error { return nil }
+func (applySubphaseTunDevice) Verify(context.Context, planner.TunDevicePlan) error   { return nil }
 func (applySubphaseTunDevice) Rollback(context.Context, planner.TunDevicePlan) error { return nil }
 
 type applySubphaseTunAddress struct{ err error }
@@ -116,7 +116,7 @@ func (e applySubphaseTunAddress) Bind(_ context.Context, plan planner.TunAddress
 func (e applySubphaseTunAddress) Apply(context.Context, planner.TunAddressPlan) (Step, error) {
 	return Step{}, e.err
 }
-func (e applySubphaseTunAddress) Verify(context.Context, planner.TunAddressPlan) error { return nil }
+func (e applySubphaseTunAddress) Verify(context.Context, planner.TunAddressPlan) error   { return nil }
 func (e applySubphaseTunAddress) Rollback(context.Context, planner.TunAddressPlan) error { return nil }
 
 type applySubphaseRoute struct{ err error }
@@ -124,7 +124,7 @@ type applySubphaseRoute struct{ err error }
 func (e applySubphaseRoute) Add(context.Context, planner.TunRoutePlan) (Step, error) {
 	return Step{}, e.err
 }
-func (e applySubphaseRoute) Verify(context.Context, planner.TunRoutePlan) error { return nil }
+func (e applySubphaseRoute) Verify(context.Context, planner.TunRoutePlan) error   { return nil }
 func (e applySubphaseRoute) Rollback(context.Context, planner.TunRoutePlan) error { return nil }
 
 type applySubphasePolicyRule struct{ err error }
@@ -133,14 +133,16 @@ func (e applySubphasePolicyRule) Add(context.Context, planner.TunPolicyRulePlan)
 	return Step{}, e.err
 }
 func (e applySubphasePolicyRule) Verify(context.Context, planner.TunPolicyRulePlan) error { return nil }
-func (e applySubphasePolicyRule) Rollback(context.Context, planner.TunPolicyRulePlan) error { return nil }
+func (e applySubphasePolicyRule) Rollback(context.Context, planner.TunPolicyRulePlan) error {
+	return nil
+}
 
 type applySubphaseDNS struct{ err error }
 
 func (e applySubphaseDNS) Apply(context.Context, planner.TunDNSPlan) (Step, error) {
 	return Step{}, e.err
 }
-func (e applySubphaseDNS) Verify(context.Context, planner.TunDNSPlan) error { return nil }
+func (e applySubphaseDNS) Verify(context.Context, planner.TunDNSPlan) error   { return nil }
 func (e applySubphaseDNS) Rollback(context.Context, planner.TunDNSPlan) error { return nil }
 
 type applySubphaseFirewall struct{ err error }
@@ -148,5 +150,5 @@ type applySubphaseFirewall struct{ err error }
 func (e applySubphaseFirewall) Apply(context.Context, planner.TunFirewallPlan) (Step, error) {
 	return Step{}, e.err
 }
-func (e applySubphaseFirewall) Verify(context.Context, planner.TunFirewallPlan) error { return nil }
+func (e applySubphaseFirewall) Verify(context.Context, planner.TunFirewallPlan) error   { return nil }
 func (e applySubphaseFirewall) Rollback(context.Context, planner.TunFirewallPlan) error { return nil }
