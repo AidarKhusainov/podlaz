@@ -321,19 +321,19 @@ func redactedNetworkSessionRecoveryState(state *api.NetworkSessionRecoveryState)
 		return nil
 	}
 	return map[string]any{
-		"authority":               render.Redact(state.Authority),
-		"intent":                  render.Redact(state.Intent),
-		"startup_gate":            render.Redact(state.StartupGate),
-		"resume_stage":            render.Redact(state.ResumeStage),
-		"last_resume_outcome":     render.Redact(state.LastResumeOutcome),
-		"last_tun_failure_phase":  render.Redact(state.LastTUNFailurePhase),
-		"replay_disposition":      render.Redact(state.ReplayDisposition),
-		"network_apply_subphase":  render.Redact(state.NetworkApplySubphase),
-		"rollback_status":         render.Redact(state.RollbackStatus),
-		"transaction_present":     state.TransactionPresent,
-		"legacy_migration":        state.LegacyMigration,
-		"cleanup_authority":       render.Redact(state.CleanupAuthority),
-		"next_action":             render.Redact(state.NextAction),
+		"authority":              render.Redact(state.Authority),
+		"intent":                 render.Redact(state.Intent),
+		"startup_gate":           render.Redact(state.StartupGate),
+		"resume_stage":           render.Redact(state.ResumeStage),
+		"last_resume_outcome":    render.Redact(state.LastResumeOutcome),
+		"last_tun_failure_phase": render.Redact(state.LastTUNFailurePhase),
+		"replay_disposition":     render.Redact(state.ReplayDisposition),
+		"network_apply_subphase": render.Redact(state.NetworkApplySubphase),
+		"rollback_status":        render.Redact(state.RollbackStatus),
+		"transaction_present":    state.TransactionPresent,
+		"legacy_migration":       state.LegacyMigration,
+		"cleanup_authority":      render.Redact(state.CleanupAuthority),
+		"next_action":            render.Redact(state.NextAction),
 	}
 }
 
