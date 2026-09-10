@@ -9,15 +9,17 @@ import (
 
 func TestRecoverDryRunShowsRetainedNetworkSessionAuthority(t *testing.T) {
 	state := &api.NetworkSessionRecoveryState{
-		Authority:           api.NetworkSessionRecoveryAuthorityPresent,
-		Intent:              "resume",
-		StartupGate:         api.NetworkSessionStartupGateBlocked,
-		ResumeStage:         api.NetworkSessionResumeStageConnectReplay,
-		LastResumeOutcome:   api.NetworkSessionResumeOutcomeFailed,
-		LastTUNFailurePhase: "preflight",
-		RollbackStatus:      "not-started",
-		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
-		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
+		Authority:            api.NetworkSessionRecoveryAuthorityPresent,
+		Intent:               "resume",
+		StartupGate:          api.NetworkSessionStartupGateBlocked,
+		ResumeStage:          api.NetworkSessionResumeStageConnectReplay,
+		LastResumeOutcome:    api.NetworkSessionResumeOutcomeFailed,
+		LastTUNFailurePhase:  "network-apply",
+		ReplayDisposition:    "terminal",
+		NetworkApplySubphase: "dns",
+		RollbackStatus:       "completed",
+		CleanupAuthority:     api.NetworkSessionCleanupAuthorityNone,
+		NextAction:           api.NetworkSessionRecoveryActionRetryResume,
 	}
 	got := (recoverPlanView{NetworkSession: state}).String()
 	if strings.Contains(got, "No podlaz-owned recovery candidates found") {
@@ -29,7 +31,9 @@ func TestRecoverDryRunShowsRetainedNetworkSessionAuthority(t *testing.T) {
 		"Startup gate: blocked",
 		"Resume stage: connect-replay",
 		"Last resume outcome: failed",
-		"TUN failure phase: preflight",
+		"TUN failure phase: network-apply",
+		"Replay disposition: terminal",
+		"Network apply subphase: dns",
 		"Cleanup authority: none",
 		"Next action: retry-resume",
 	} {
@@ -47,6 +51,7 @@ func TestRecoverExecuteFailedResumeUsesSameSemanticModelAndFails(t *testing.T) {
 		ResumeStage:         api.NetworkSessionResumeStageConnectReplay,
 		LastResumeOutcome:   api.NetworkSessionResumeOutcomeFailed,
 		LastTUNFailurePhase: "preflight",
+		ReplayDisposition:   "retryable",
 		RollbackStatus:      "not-started",
 		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
 		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
@@ -56,7 +61,7 @@ func TestRecoverExecuteFailedResumeUsesSameSemanticModelAndFails(t *testing.T) {
 		t.Fatal("failed retained resume must produce the non-zero incomplete recovery outcome")
 	}
 	got := result.String()
-	for _, want := range []string{"Network Session authority: present", "Next action: retry-resume"} {
+	for _, want := range []string{"Network Session authority: present", "Replay disposition: retryable", "Next action: retry-resume"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("recover execute missing %q: %q", want, got)
 		}
