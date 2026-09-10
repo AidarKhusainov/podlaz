@@ -329,6 +329,15 @@ func resumeNetworkSession(
 		if state.Intent != networkSessionIntentResume {
 			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
 		}
+		currentAttempt, currentAttemptExists, currentAttemptErr := currentNetworkSessionReplayAttempt(continuation, state)
+		if currentAttemptErr != nil {
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("load Network Session replay evidence: %w", currentAttemptErr))
+		}
+		if currentAttemptExists {
+			if blocker := networkSessionReplayReadmissionBlocker(currentAttempt); blocker != nil {
+				return false, blocker
+			}
+		}
 
 		attemptState, attemptExists, beginErr := stateStore.BeginRecoveryAttempt()
 		if beginErr != nil {
