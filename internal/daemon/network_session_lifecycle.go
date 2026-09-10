@@ -156,7 +156,12 @@ func (l *networkSessionLifecycle) restorePreviousContinuation(previous api.Conne
 			}
 		}
 		if err := l.continuation.Save(previous); err != nil {
-			return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
+				return fmt.Errorf("restore previous network session continuation after failed connect: %w", err)
+			}
+			return nil
+		}
+		if err := l.continuation.Remove(); err != nil {
+			return fmt.Errorf("disarm failed network session continuation: %w", err)
 		}
 		return nil
 	}
@@ -343,7 +348,7 @@ func resumeNetworkSession(
 			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
 		}
 		if _, err := lifecycle.Connect(ctx, state.Request); err != nil {
-			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("resume network session: %w", err))
+			return false, persistNetworkSessionReplayFailure(ctx, continuation, state, legacyMigration, fmt.Errorf("resume network session: %w", err))
 		}
 		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return true, nil
