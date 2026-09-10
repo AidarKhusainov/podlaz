@@ -277,19 +277,8 @@ func resumeNetworkSession(
 			}
 		}
 	}
-
 	if exists {
-		attemptState, attemptExists, beginErr := stateStore.BeginRecoveryAttempt()
-		if attemptExists {
-			recoveryEpoch = attemptState.RecoveryEpoch
-			state = attemptState
-		}
-		if beginErr != nil {
-			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("begin Network Session recovery epoch: %w", beginErr))
-		}
-		if !attemptExists {
-			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("Network Session authority disappeared before recovery attempt"))
-		}
+		recoveryEpoch = state.RecoveryEpoch
 	}
 
 	reconcilePrivacy := continuation.reconcilePrivacy
@@ -337,6 +326,19 @@ func resumeNetworkSession(
 		if !exists {
 			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("Network Session authority disappeared before startup replay"))
 		}
+		if state.Intent != networkSessionIntentResume {
+			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
+		}
+
+		attemptState, attemptExists, beginErr := stateStore.BeginRecoveryAttempt()
+		if beginErr != nil {
+			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("begin Network Session recovery epoch: %w", beginErr))
+		}
+		if !attemptExists {
+			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("Network Session authority disappeared before recovery replay admission"))
+		}
+		recoveryEpoch = attemptState.RecoveryEpoch
+		state = attemptState
 		if state.Intent != networkSessionIntentResume {
 			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
 		}
