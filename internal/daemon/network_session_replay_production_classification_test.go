@@ -78,6 +78,14 @@ func TestFullTunnelRunnerKeepsFailedRollbackIncomplete(t *testing.T) {
 	}
 }
 
+func TestNetworkSessionReplayClassificationTreatsRuntimeUnavailableAsTerminalNotOpened(t *testing.T) {
+	err := newRuntimeUnavailableError("Xray", "packaged runtime is unavailable")
+	disposition, mutation := classifyNetworkSessionReplayFailure(context.Background(), err)
+	if disposition != networkSessionReplayDispositionTerminal || mutation != networkSessionCandidateMutationNotOpened {
+		t.Fatalf("runtime-unavailable replay semantics=(%q,%q), want=(terminal,not-opened)", disposition, mutation)
+	}
+}
+
 func TestNetworkSessionReplayClassificationTreatsParentDeadlineAsInterrupted(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
