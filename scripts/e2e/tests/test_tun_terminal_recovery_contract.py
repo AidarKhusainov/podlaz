@@ -149,6 +149,34 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
         self.assertIn("package_restart_second_recovery_clean", flow)
         self.assertIn("assert_tun_foreign_state package-restart-second-recovery", flow)
 
+    def test_v0240_package_restart_terminal_cleanup_proves_exact_owned_resources_absent(self) -> None:
+        text = self.package_restart_text
+        self.assertIn("lib/tun_package_assertions.sh", text)
+        capture = self.function_body(
+            "capture_v0240_package_restart_authority",
+            "\n}\n\nassert_original_process_absent",
+            text,
+        )
+        for required in (
+            "FALLBACK_NETWORK_HELPER",
+            "PRIVATE_SOURCE_MANIFEST",
+            "snapshot",
+            "V0240_PROTECTION_FAMILY",
+            "V0240_PROTECTION_TABLE",
+        ):
+            self.assertIn(required, capture)
+
+        clean = self.function_body("assert_terminal_clean", "\n}\n\ncleanup", text)
+        for required in (
+            "verify_tun_package_resources_absent",
+            "FALLBACK_NETWORK_HELPER",
+            "PRIVATE_SOURCE_MANIFEST",
+            "inspect_nft_table_state",
+            "V0240_PROTECTION_FAMILY",
+            "V0240_PROTECTION_TABLE",
+        ):
+            self.assertIn(required, clean)
+
 
 if __name__ == "__main__":
     unittest.main()
