@@ -53,7 +53,7 @@ func TestApplyNetworkSessionResumeResultReleasesGateOnlyAfterSuccessfulResume(t 
 	gate.Block()
 	response := api.RecoveryResponse{Mode: "execute"}
 
-	got := applyNetworkSessionResumeResult(response, gate, nil)
+	got := applyNetworkSessionResumeResult(response, gate, networkSessionResumeResumed, nil)
 
 	if gate.Blocked() {
 		t.Fatal("successful resume must release startup mutation gate")
@@ -69,7 +69,7 @@ func TestApplyNetworkSessionResumeResultKeepsGateBlockedAndPreservesFailureCause
 	response := api.RecoveryResponse{Mode: "execute"}
 	resumeErr := errors.New("reconcile network session privacy protection: privacy envelope table has unexpected dormant flag")
 
-	got := applyNetworkSessionResumeResult(response, gate, resumeErr)
+	got := applyNetworkSessionResumeResult(response, gate, networkSessionResumeUnknown, resumeErr)
 
 	if !gate.Blocked() {
 		t.Fatal("failed resume must keep startup mutation gate blocked")
