@@ -111,7 +111,7 @@ func classifyNetworkSessionReplayFailure(ctx context.Context, err error) (networ
 	if err == nil {
 		return networkSessionReplayDispositionIncomplete, networkSessionCandidateMutationUnresolved
 	}
-	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+	if ctx != nil && ctx.Err() != nil {
 		return networkSessionReplayDispositionInterrupted, networkSessionCandidateMutationUnresolved
 	}
 	if errors.Is(err, errLifecycleShuttingDown) || errors.Is(err, context.Canceled) {
