@@ -244,6 +244,17 @@ func resumeNetworkSession(
 	status networkSessionStatusFunc,
 	recover networkSessionRecoveryFunc,
 ) (bool, error) {
+	return resumeNetworkSessionWithTerminalObservation(ctx, continuation, lifecycle, status, recover, nil)
+}
+
+func resumeNetworkSessionWithTerminalObservation(
+	ctx context.Context,
+	continuation networkSessionContinuationStore,
+	lifecycle lifecycleService,
+	status networkSessionStatusFunc,
+	recover networkSessionRecoveryFunc,
+	observeTerminal networkSessionTerminalObservationStage,
+) (bool, error) {
 	recoveryEpoch := uint64(0)
 	fail := func(stage, outcome string, legacyMigration, transactionPresent bool, err error) (bool, error) {
 		wrapped := newNetworkSessionResumeOutcomeError(stage, outcome, legacyMigration, transactionPresent, err)
@@ -334,6 +345,16 @@ func resumeNetworkSession(
 			return fail(api.NetworkSessionResumeStageStateLoad, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("load Network Session replay evidence: %w", currentAttemptErr))
 		}
 		if currentAttemptExists {
+			if currentAttempt.ReplayDisposition == networkSessionReplayDispositionTerminal {
+				terminalized, terminalErr := terminalizeNetworkSessionReplay(ctx, continuation, stateStore, currentAttempt, exactRecovery, observeTerminal, continueTeardown)
+				if terminalErr != nil {
+					return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, currentAttempt.TransactionPresent, terminalErr)
+				}
+				if !terminalized {
+					return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, currentAttempt.TransactionPresent, errors.New("terminal Network Session replay transition was superseded"))
+				}
+				return false, nil
+			}
 			if blocker := networkSessionReplayReadmissionBlocker(currentAttempt); blocker != nil {
 				return false, blocker
 			}
@@ -352,7 +373,31 @@ func resumeNetworkSession(
 			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
 		}
 		if _, err := lifecycle.Connect(ctx, state.Request); err != nil {
-			return false, persistNetworkSessionReplayFailure(ctx, continuation, state, legacyMigration, fmt.Errorf("resume network session: %w", err))
+			replayErr := persistNetworkSessionReplayFailure(ctx, continuation, state, legacyMigration, fmt.Errorf("resume network session: %w", err))
+			currentAttempt, currentAttemptExists, currentAttemptErr = currentNetworkSessionReplayAttempt(continuation, state)
+			if currentAttemptErr != nil {
+				return false, errors.Join(replayErr, fmt.Errorf("reload Network Session replay evidence after failed replay: %w", currentAttemptErr))
+			}
+			if !currentAttemptExists || currentAttempt.ReplayDisposition != networkSessionReplayDispositionTerminal {
+				return false, replayErr
+			}
+
+			exactRecovery = recoverExact(ctx, continuation.runtimeDir)
+			if !networkSessionRecoveryConverged(exactRecovery) {
+				return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
+			}
+			recovery = recover(ctx, status(ctx))
+			if !networkSessionRecoveryConverged(recovery) {
+				return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(recovery), errNetworkSessionRecoveryIncomplete)
+			}
+			terminalized, terminalErr := terminalizeNetworkSessionReplay(ctx, continuation, stateStore, currentAttempt, exactRecovery, observeTerminal, continueTeardown)
+			if terminalErr != nil {
+				return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, currentAttempt.TransactionPresent, terminalErr)
+			}
+			if !terminalized {
+				return false, replayErr
+			}
+			return false, nil
 		}
 		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 		return true, nil
