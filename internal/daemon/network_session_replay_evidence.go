@@ -69,3 +69,37 @@ func persistNetworkSessionReplayFailure(
 	}
 	return wrapped
 }
+
+var errNetworkSessionReplayIncomplete = errors.New("network session replay outcome remains incomplete")
+
+func currentNetworkSessionReplayAttempt(
+	continuation networkSessionContinuationStore,
+	state networkSessionState,
+) (networkSessionReplayAttempt, bool, error) {
+	record, exists, err := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Load()
+	if err != nil {
+		return networkSessionReplayAttempt{}, false, err
+	}
+	if !exists || record.Current == nil {
+		return networkSessionReplayAttempt{}, false, nil
+	}
+	current := *record.Current
+	if current.SessionID != state.SessionID || current.RecoveryEpoch != state.RecoveryEpoch {
+		return networkSessionReplayAttempt{}, false, nil
+	}
+	return current, true, nil
+}
+
+func networkSessionReplayReadmissionBlocker(attempt networkSessionReplayAttempt) error {
+	if attempt.ReplayDisposition != networkSessionReplayDispositionIncomplete {
+		return nil
+	}
+	phased := withTunFailurePhase(attempt.TUNFailurePhase, "", attempt.RollbackStatus, errNetworkSessionReplayIncomplete)
+	return newNetworkSessionResumeOutcomeError(
+		api.NetworkSessionResumeStageConnectReplay,
+		api.NetworkSessionResumeOutcomeFailed,
+		attempt.LegacyMigration,
+		attempt.TransactionPresent,
+		phased,
+	)
+}
