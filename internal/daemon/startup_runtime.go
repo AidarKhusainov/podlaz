@@ -13,25 +13,27 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime) bootAuto
 
 	manifestStore := newBootAutostartManifestStore(runtime.stateDir, s.bootID)
 	attemptStore := newBootAutostartAttemptStore(runtime.runtimeDir, s.bootID)
-	startupResult, startupErr := runBootAutostartStartupWithOptions(
-		ctx,
-		manifestStore,
-		attemptStore,
-		runtime.continuation,
-		runtime.startupMutationGate,
-		func(resumeCtx context.Context) (bool, error) {
-			return resumeNetworkSession(
-				resumeCtx,
-				runtime.continuation,
-				runtime.lockedLifecycle,
-				runtime.currentStatus,
-				func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
-					return daemonRecover(recoveryCtx, runtime.runtimeDir, status)
-				},
-			)
-		},
-		bootAutostartStartupOptions{waitForNetwork: newBootNetworkReadinessWaiter()},
-	)
+	startupResult, startupErr := runSerializedStartupLifecycleOperation(ctx, runtime.operationLock, func() (bootAutostartStartupResult, error) {
+		return runBootAutostartStartupWithOptions(
+			ctx,
+			manifestStore,
+			attemptStore,
+			runtime.continuation,
+			runtime.sessionLifecycle,
+			func(resumeCtx context.Context) (networkSessionResumeResult, error) {
+				return resumeNetworkSessionResult(
+					resumeCtx,
+					runtime.continuation,
+					runtime.sessionLifecycle,
+					runtime.currentStatus,
+					func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
+						return daemonRecover(recoveryCtx, runtime.runtimeDir, status)
+					},
+				)
+			},
+			bootAutostartStartupOptions{waitForNetwork: newBootNetworkReadinessWaiter()},
+		)
+	})
 	switch {
 	case startupErr == nil && startupResult == bootAutostartStartupConnected:
 		log.Printf("podlazd: boot autostart connection established")
