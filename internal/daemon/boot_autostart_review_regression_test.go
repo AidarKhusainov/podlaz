@@ -39,7 +39,7 @@ func TestBootAutostartRestartCancellationKeepsPinnedAttemptForContinuation(t *te
 		attemptStore,
 		continuation,
 		lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 		func(context.Context, networkSessionContinuationStore) error {
 			terminalConvergeCalls++
 			return nil
@@ -82,7 +82,7 @@ func TestBootAutostartConnectFailureRequiresConclusiveTerminalConvergence(t *tes
 		attemptStore,
 		continuation,
 		lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 		func(_ context.Context, terminal networkSessionContinuationStore) error {
 			state, exists, loadErr := terminal.stateStore().Load()
 			if loadErr != nil {
@@ -119,7 +119,7 @@ func TestBootAutostartTerminalCompletionWriteFailureStaysFailClosed(t *testing.T
 		attemptStore,
 		continuation,
 		lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 		func(_ context.Context, terminal networkSessionContinuationStore) error {
 			if err := os.RemoveAll(attemptStore.runtimeDir); err != nil {
 				return err
@@ -160,7 +160,7 @@ func TestBootAutostartSuccessfulCompletionWriteFailureRetainsResumeAuthority(t *
 		attemptStore,
 		continuation,
 		lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 		successfulBootTerminalConvergence(t),
 	)
 	if err == nil || result != bootAutostartStartupRecoveryFailed {
