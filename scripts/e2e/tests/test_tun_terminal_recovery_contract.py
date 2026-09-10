@@ -5,6 +5,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tun-terminal-recovery.sh"
 PACKAGE_RESTART_SCRIPT = Path(__file__).resolve().parents[1] / "tun-package-restart-recovery.sh"
+PACKAGE_RUNTIME_PROVENANCE = Path(__file__).resolve().parents[1] / "lib" / "package_runtime_provenance.sh"
 
 
 class TunTerminalRecoveryContractTests(unittest.TestCase):
@@ -12,6 +13,7 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.text = SCRIPT.read_text(encoding="utf-8")
         cls.package_restart_text = PACKAGE_RESTART_SCRIPT.read_text(encoding="utf-8")
+        cls.package_runtime_provenance_text = PACKAGE_RUNTIME_PROVENANCE.read_text(encoding="utf-8")
 
     def function_body(self, name: str, next_marker: str, text: str | None = None) -> str:
         source = self.text if text is None else text
@@ -114,13 +116,16 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
     def test_v0240_package_restart_pins_public_release_bytes(self) -> None:
         text = self.package_restart_text
         for required in (
-            "ab71c876d558a7653d44d5b98c76f3899e569a90",
             "c9d8f76838292d39355506123e2f03ca1f0a96227fb2c22af8324ac6baf3b278",
             "8a86c439cc86fb075b66f58ae16eb99baaf35118d9f9b6ddc05a9235b1b57250",
             "V0240_ACTUAL_SHA256",
             "assert_exact_package_runtime_provenance",
         ):
             self.assertIn(required, text)
+        self.assertIn(
+            "ab71c876d558a7653d44d5b98c76f3899e569a90",
+            self.package_runtime_provenance_text,
+        )
 
     def test_v0240_package_restart_flow_proves_traffic_and_terminal_idempotence(self) -> None:
         text = self.package_restart_text
@@ -137,7 +142,10 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
         self.assertIn("check_https_and_dns package-restart-resumed-vpn", flow)
         self.assertIn("check_https_and_dns package-restart-terminal-ordinary", flow)
         self.assertIn('run_client recover --execute --yes', flow)
-        self.assertIn("assert_clean_recovery_view", flow)
+        self.assertIn("assert_terminal_clean package-restart-first-recovery", flow)
+        self.assertIn("assert_terminal_clean package-restart-second-recovery", flow)
+        clean = self.function_body("assert_terminal_clean", "\n}\n\ncleanup", text)
+        self.assertIn("assert_clean_recovery_view", clean)
         self.assertIn("package_restart_second_recovery_clean", flow)
         self.assertIn("assert_tun_foreign_state package-restart-second-recovery", flow)
 
