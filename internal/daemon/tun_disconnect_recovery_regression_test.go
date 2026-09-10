@@ -152,9 +152,9 @@ func TestRecoverExecuteContinuesOpenGateTerminalNetworkSession(t *testing.T) {
 		exactCalls++
 		return api.RecoveryResponse{Mode: "execute"}
 	}
-	continuation.continueTeardown = func(context.Context, networkSessionStateStore) error {
+	continuation.continueTeardown = func(_ context.Context, stateStore networkSessionStateStore) error {
 		teardownCalls++
-		return nil
+		return stateStore.SetProtection(nil)
 	}
 
 	events := []string{}
