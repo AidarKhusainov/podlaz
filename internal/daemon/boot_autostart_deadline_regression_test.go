@@ -21,7 +21,7 @@ func TestBootAutostartChildDeadlineDoesNotMasqueradeAsDaemonInterruption(t *test
 		attemptStore,
 		continuation,
 		lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 		func(ctx context.Context, continuation networkSessionContinuationStore) error {
 			if ctx.Err() != nil {
 				t.Fatalf("root context unexpectedly canceled: %v", ctx.Err())
