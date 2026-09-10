@@ -15,14 +15,14 @@ func TestResumeNetworkSessionConsumesCurrentTerminalReplayWithoutReadmission(t *
 		t.Fatalf("admit replay attempt: exists=%v err=%v", exists, err)
 	}
 	attempt := networkSessionReplayAttempt{
-		SessionID:            attemptState.SessionID,
-		RecoveryEpoch:        attemptState.RecoveryEpoch,
-		ReplayDisposition:    networkSessionReplayDispositionTerminal,
-		ResumeStage:          api.NetworkSessionResumeStageConnectReplay,
-		TUNFailurePhase:      "network-apply",
-		RollbackStatus:       "completed",
-		TransactionPresent:   true,
-		CandidateMutation:    networkSessionCandidateMutationRolledBack,
+		SessionID:          attemptState.SessionID,
+		RecoveryEpoch:      attemptState.RecoveryEpoch,
+		ReplayDisposition:  networkSessionReplayDispositionTerminal,
+		ResumeStage:        api.NetworkSessionResumeStageConnectReplay,
+		TUNFailurePhase:    "network-apply",
+		RollbackStatus:     "completed",
+		TransactionPresent: true,
+		CandidateMutation:  networkSessionCandidateMutationRolledBack,
 	}
 	record := networkSessionResumeDiagnostic{
 		RecoveryEpoch:      attemptState.RecoveryEpoch,
