@@ -31,11 +31,11 @@ const (
 	NetworkSessionReplayDispositionInterrupted = "interrupted"
 	NetworkSessionReplayDispositionIncomplete  = "incomplete"
 
-	NetworkSessionApplySubphaseTUNAddress   = "tun-address"
-	NetworkSessionApplySubphaseRoutes       = "routes"
-	NetworkSessionApplySubphasePolicyRules  = "policy-rules"
-	NetworkSessionApplySubphaseDNS          = "dns"
-	NetworkSessionApplySubphaseNFTables     = "nftables"
+	NetworkSessionApplySubphaseTUNAddress  = "tun-address"
+	NetworkSessionApplySubphaseRoutes      = "routes"
+	NetworkSessionApplySubphasePolicyRules = "policy-rules"
+	NetworkSessionApplySubphaseDNS         = "dns"
+	NetworkSessionApplySubphaseNFTables    = "nftables"
 
 	NetworkSessionCleanupAuthorityNone              = "none"
 	NetworkSessionCleanupAuthoritySessionProtection = "session-protection"
