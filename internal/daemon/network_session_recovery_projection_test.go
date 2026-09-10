@@ -86,10 +86,10 @@ func TestNetworkSessionRecoveryPlanClearsStaleReplayProjectionForNewerBlocker(t 
 		t.Fatal(err)
 	}
 	if err := diagnostics.SaveLatestBlocker(networkSessionResumeDiagnostic{
-		RecoveryEpoch:       state.RecoveryEpoch,
-		ResumeStage:         api.NetworkSessionResumeStageExactRecovery,
-		LastResumeOutcome:   api.NetworkSessionResumeOutcomeIncomplete,
-		TransactionPresent:  true,
+		RecoveryEpoch:      state.RecoveryEpoch,
+		ResumeStage:        api.NetworkSessionResumeStageExactRecovery,
+		LastResumeOutcome:  api.NetworkSessionResumeOutcomeIncomplete,
+		TransactionPresent: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
