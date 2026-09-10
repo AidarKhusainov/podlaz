@@ -62,9 +62,9 @@ func TestResumeNetworkSessionPreservesOriginatingAndAdvancesCurrentReplayEvidenc
 		withTunFailurePhase("preflight", noTunTransactionID, "not-started", errors.New("typed transient replay failure")),
 	)
 	second := withNetworkSessionReplaySemantics(
-		networkSessionReplayDispositionTerminal,
-		networkSessionCandidateMutationRolledBack,
-		withTunFailurePhase("network-apply", "tun-test-replay", "completed", errors.New("typed terminal replay failure")),
+		networkSessionReplayDispositionInterrupted,
+		networkSessionCandidateMutationUnresolved,
+		withTunFailurePhase("network-apply", "tun-test-replay", "unknown", errors.New("typed interrupted replay failure")),
 	)
 	lifecycle := &scriptedReplayEvidenceLifecycle{errs: []error{first, second}}
 
@@ -85,10 +85,10 @@ func TestResumeNetworkSessionPreservesOriginatingAndAdvancesCurrentReplayEvidenc
 	if record.Originating.RecoveryEpoch != 1 || record.Originating.ReplayDisposition != networkSessionReplayDispositionRetryable {
 		t.Fatalf("originating replay evidence changed: %#v", record.Originating)
 	}
-	if record.Current.RecoveryEpoch != 2 || record.Current.ReplayDisposition != networkSessionReplayDispositionTerminal || record.Current.CandidateMutation != networkSessionCandidateMutationRolledBack {
+	if record.Current.RecoveryEpoch != 2 || record.Current.ReplayDisposition != networkSessionReplayDispositionInterrupted || record.Current.CandidateMutation != networkSessionCandidateMutationUnresolved {
 		t.Fatalf("current replay evidence=%#v", record.Current)
 	}
-	if record.ReplayDisposition != string(networkSessionReplayDispositionTerminal) || record.RollbackStatus != "completed" || !record.TransactionPresent {
+	if record.ReplayDisposition != string(networkSessionReplayDispositionInterrupted) || record.RollbackStatus != "unknown" || !record.TransactionPresent {
 		t.Fatalf("top-level current replay projection=%#v", record)
 	}
 }
