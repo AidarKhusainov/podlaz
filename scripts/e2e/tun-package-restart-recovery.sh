@@ -8,12 +8,14 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 source "${SCRIPT_DIR}/lib/profile_input.sh"
 # shellcheck source=lib/package_runtime_provenance.sh
 source "${SCRIPT_DIR}/lib/package_runtime_provenance.sh"
+# shellcheck source=lib/tun_package_assertions.sh
+source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 # shellcheck source=lib/tun_foreign_state.sh
 source "${SCRIPT_DIR}/lib/tun_foreign_state.sh"
 
 require_cmd \
-  apt awk cat curl date dpkg dpkg-deb find getent git grep id ip journalctl mktemp nft \
-  python3 readlink resolvectl rm sed seq sha256sum sleep sudo systemctl systemd-run timeout tr
+  apt awk cat curl date dpkg dpkg-deb find getent git grep id ip journalctl mktemp nft pgrep \
+  python3 readlink resolvectl rm sed seq sha256sum sleep sort sudo systemctl systemd-run timeout tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -57,8 +59,10 @@ V0240_ACTUAL_SHA256="$(sha256sum "${PREVIOUS}" | awk '{print $1}')"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 SESSION_STATE="/run/podlaz/network-session-continuation.json"
 TRANSACTION_DIR="/run/podlaz/transactions"
+FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 PRIVATE_SOURCE_SESSION="${E2E_TMP_ROOT}/package-restart-source-session.json"
 PRIVATE_SOURCE_TX="${E2E_TMP_ROOT}/package-restart-source-transaction.json"
+PRIVATE_SOURCE_MANIFEST="${E2E_TMP_ROOT}/package-restart-source-network-manifest.json"
 PRIVATE_SOURCE_JOURNAL="${E2E_TMP_ROOT}/package-restart-source-journal.txt"
 PACKAGE_TOUCHED=0
 FOREIGN_STATE_CREATED=0
@@ -70,6 +74,8 @@ V0240_PRE_DAEMON_PID=""
 V0240_PRE_DAEMON_START=""
 V0240_PRE_CHILD_PID=""
 V0240_PRE_CHILD_START=""
+V0240_PROTECTION_FAMILY=""
+V0240_PROTECTION_TABLE=""
 PACKAGE_RESTART_STARTED_AT=""
 PACKAGE_RESTART_OUTCOME=""
 
@@ -204,6 +210,11 @@ capture_v0240_package_restart_authority() {
   sudo -n cat "${tx_files[0]}" >"${PRIVATE_SOURCE_TX}"
   sudo -n cat "${SESSION_STATE}" >"${PRIVATE_SOURCE_SESSION}"
   chmod 0600 "${PRIVATE_SOURCE_TX}" "${PRIVATE_SOURCE_SESSION}"
+  sudo -n rm -f -- "${PRIVATE_SOURCE_MANIFEST}" >/dev/null 2>&1 || \
+    fail "v0.2.40 source route/rule manifest cannot be reset"
+  sudo -n python3 "${FALLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${PRIVATE_SOURCE_MANIFEST}" >/dev/null || \
+    fail "v0.2.40 source route/rule manifest cannot be captured"
+  sudo -n test -f "${PRIVATE_SOURCE_MANIFEST}" || fail "v0.2.40 source route/rule manifest was not persisted"
   mapfile -t values < <(python3 - "${PRIVATE_SOURCE_TX}" "${PRIVATE_SOURCE_SESSION}" <<'PY_AUTHORITY'
 import json,sys
 with open(sys.argv[1],encoding='utf-8') as handle: tx=json.load(handle)
@@ -213,16 +224,20 @@ if tx.get('owner')!='podlaz' or tx.get('state')!='committed':
 if session.get('owner')!='podlaz' or session.get('intent')!='resume':
     raise SystemExit('source Network Session does not preserve reconnect intent')
 protection=session.get('protection') or {}
-if protection.get('state')!='armed':
-    raise SystemExit('source Network Session Privacy Envelope is not armed')
+if protection.get('state')!='armed' or not protection.get('family') or not protection.get('table'):
+    raise SystemExit('source Network Session Privacy Envelope authority is incomplete')
 children=(tx.get('rollback') or {}).get('child_processes') or []
 if len(children)!=1 or int(children[0].get('pid') or 0)<=1:
     raise SystemExit('source transaction lacks exact tracked Xray child')
 print(children[0]['pid'])
+print(protection['family'])
+print(protection['table'])
 PY_AUTHORITY
   )
-  [[ "${#values[@]}" == 1 ]] || fail "v0.2.40 package restart authority extraction failed"
+  [[ "${#values[@]}" == 3 ]] || fail "v0.2.40 package restart authority extraction failed"
   V0240_PRE_CHILD_PID="${values[0]}"
+  V0240_PROTECTION_FAMILY="${values[1]}"
+  V0240_PROTECTION_TABLE="${values[2]}"
   V0240_PRE_CHILD_START="$(process_start_ticks "${V0240_PRE_CHILD_PID}")" || fail "source Xray identity is unavailable"
   V0240_PRE_DAEMON_PID="$(main_pid)"
   [[ "${V0240_PRE_DAEMON_PID}" =~ ^[1-9][0-9]*$ ]] || fail "source daemon MainPID is unavailable"
@@ -331,15 +346,20 @@ PY_RECOVERY
 }
 
 assert_terminal_clean() {
-  local phase="$1"
+  local phase="$1" privacy_state
   sudo -n test ! -e "${SESSION_STATE}" || fail "${phase}: Network Session authority remains"
-  if sudo -n test -d "${TRANSACTION_DIR}" && \
-    sudo -n find "${TRANSACTION_DIR}" -maxdepth 1 -type f -name '*.json' -print -quit | grep -q .; then
-    fail "${phase}: transaction cleanup authority remains"
+  verify_tun_package_resources_absent "${phase}" "${FALLBACK_NETWORK_HELPER}" "${PRIVATE_SOURCE_MANIFEST}" || \
+    fail "${phase}: exact Podlaz TUN resources remain or cannot be conclusively inspected"
+  if inspect_nft_table_state "${V0240_PROTECTION_FAMILY}" "${V0240_PROTECTION_TABLE}"; then
+    privacy_state="${HOST_STATE_ABSENT}"
+  else
+    privacy_state=$?
   fi
-  if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
-    fail "${phase}: podlaz0 remains after terminal convergence"
-  fi
+  case "${privacy_state}" in
+    "${HOST_STATE_ABSENT}") ;;
+    "${HOST_STATE_PRESENT}") fail "${phase}: exact Privacy Envelope table remains" ;;
+    *) fail "${phase}: exact Privacy Envelope table absence cannot be inspected" ;;
+  esac
   assert_clean_recovery_view
 }
 
