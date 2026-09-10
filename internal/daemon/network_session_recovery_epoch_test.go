@@ -101,7 +101,7 @@ func TestResumeNetworkSessionAbandonedAdmissionRecoversBeforeNewEpoch(t *testing
 		observedExactEpochs = append(observedExactEpochs, loadRecoveryEpochState(t, store).RecoveryEpoch)
 		if exactCalls == 1 {
 			return api.RecoveryResponse{
-				Mode: "execute",
+				Mode:     "execute",
 				Warnings: []api.RecoveryWarning{{Target: "transaction state", Message: "exact recovery incomplete"}},
 			}
 		}
