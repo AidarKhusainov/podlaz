@@ -2,29 +2,32 @@
 
 ## Problem
 
-A current-boot protected TUN Network Session may survive package replacement with `intent=resume` while the candidate replay fails after the old generation has already converged away. Today the daemon preserves Privacy Envelope protection and blocks ordinary lifecycle mutation, but it has no typed authority to decide that the failed replay is terminal for the exact current recovery attempt and that exact terminal convergence is now safe. Re-running recovery advances `RecoveryEpoch` and may overwrite the first actionable failure diagnostic, leaving the host indefinitely fail-closed even after the data plane is gone.
+A protected current-boot TUN Network Session can survive package replacement with `intent=resume` while the candidate replay fails after the old generation has already converged away. The daemon then correctly remains fail-closed behind the Privacy Envelope, but today it has no exact protocol for deciding that the replay failure is terminal for the current recovery attempt, that the evidence is still fresh, and that terminal cleanup is safe. Repeated recovery may advance `RecoveryEpoch` and replace the original diagnostic, leaving the host indefinitely blocked even after the candidate data plane has been rolled back.
 
-The fix must preserve fail-closed ownership semantics while adding a deterministic same-boot convergence path for the exact `v0.2.40 active -> candidate` package boundary. It must reuse, not duplicate, the terminal recovery ordering already implemented for exact TUN teardown.
+The fix must provide deterministic same-boot convergence for the exact `v0.2.40 active -> candidate` package boundary without weakening exact ownership or creating a second cleanup subsystem. It reuses the Network Session state/store, exact transaction recovery, lifecycle operation lock, Privacy Envelope lifecycle, and retained/final persisted terminal teardown paths added by the existing terminal recovery implementation.
 
 ## Constraints
 
-- Reuse the existing Network Session state, serialized mutation boundary, exact transaction recovery, Privacy Envelope lifecycle, and persisted terminal teardown path.
-- Keep replay disposition, attempt freshness, and terminal cleanup safety as separate predicates.
-- Historical diagnostics remain evidence, never cleanup authority.
-- Preserve the released `podlaz.network-session-resume-diagnostic.v1` schema identifier and old top-level fields so same-boot package rollback to `v0.2.41` remains readable.
-- Do not expose raw `SessionID`, `RecoveryEpoch`, transaction identity, command stderr, profile identity, or endpoint data publicly.
-- Do not retry destructive lifecycle operations merely to obtain a different diagnostic.
-- Do not add a package, recovery subsystem, second teardown coordinator, or dependency.
+- Replay disposition, attempt freshness, and cleanup safety are separate predicates.
+- Evidence never becomes cleanup authority.
+- Keep `podlaz.network-session-resume-diagnostic.v1`; do not introduce a v2 schema.
+- Preserve released top-level v1 diagnostic semantics for same-boot downgrade compatibility.
+- Do not expose `SessionID`, `RecoveryEpoch`, transaction identity, raw command stderr, profile identity, endpoint data, or generated config contents publicly.
+- Do not add a package, parallel recovery state machine, cleanup-proof store, second teardown coordinator, or dependency.
+- Do not retry destructive lifecycle operations merely to refresh diagnostics.
+- Unknown or ambiguous evidence fails closed.
 
-## Backward-readable additive v1 replay evidence
+## Backward-readable additive v1 diagnostic
 
-Keep one private current-boot resume diagnostic file and keep its schema identifier exactly:
+Keep the existing private mode-`0600`, bounded diagnostic file and schema identifier exactly:
 
 `podlaz.network-session-resume-diagnostic.v1`.
 
-Do not introduce a v2 schema for this issue. Released `v0.2.41` accepts only the v1 schema identifier, while ordinary Go JSON decoding ignores unknown object fields. The fixed candidate therefore extends v1 additively so a same-boot downgrade to `v0.2.41` can still decode the file.
+Released `v0.2.41` accepts that schema and ignores unknown JSON fields, so the fixed candidate extends v1 only with optional fields.
 
-The existing top-level v1 fields remain present with their existing names and meanings:
+### Top-level v1 compatibility projection
+
+The existing top-level fields keep their released meaning: they describe the **latest resume failure or blocker from any resume stage**, not necessarily the latest connect replay:
 
 - `recovery_epoch`;
 - `resume_stage`;
@@ -34,140 +37,192 @@ The existing top-level v1 fields remain present with their existing names and me
 - `transaction_present`;
 - `legacy_migration`.
 
-When the extended record contains a structured `current` replay attempt, these top-level fields are its backward-compatible projection. A new reader validates that the top-level projection and structured `current` attempt agree before any attempt evidence can be mutation-eligible. A mismatch is diagnostic-only/incomplete and never authorizes terminalization.
+A later `privacy-reconcile`, `exact-recovery`, `generic-recovery`, or other pre-replay blocker may update those top-level fields exactly as `v0.2.41` does today so old readers and current status/recovery inspection continue to show the latest blocker.
 
-Add only optional unknown-to-v0.2.41 fields:
+The top-level projection is diagnostic only and is never replay terminalization authority. It is therefore **not required to match structured `current` replay evidence**.
 
-- private top-level `session_id` for the structured current-attempt binding;
-- optional `replay_disposition` and `network_apply_subphase` compatibility projections for new readers;
-- optional `originating` replay-attempt record;
-- optional `current` replay-attempt record.
+Optional new top-level `replay_disposition` and `network_apply_subphase` may describe the latest failure when known, but absence or disagreement with older fields never grants mutation authority.
 
-Each structured replay-attempt record contains:
+### Structured replay evidence
 
-- private `session_id`;
+Add optional `originating` and `current` structured replay-attempt records inside the same v1 file. They are updated only by an actually admitted connect replay, never by a pre-replay blocker.
+
+Each structured attempt contains the minimum private fields required for fencing and crash reconstruction:
+
+- `session_id`;
 - `recovery_epoch`;
 - `replay_disposition`: `terminal`, `retryable`, `interrupted`, or `incomplete`;
-- resume stage;
-- TUN failure phase;
+- resume stage and TUN failure phase;
+- optional privacy-safe `network_apply_subphase`;
 - rollback status;
 - transaction-present diagnostic evidence;
 - legacy-migration flag;
-- optional privacy-safe `network_apply_subphase`.
+- typed candidate mutation outcome sufficient to distinguish `not-opened`, `rolled-back`, and `unresolved` without inferring it from error text or phase names.
 
-The file remains mode `0600` and bounded. Existing released v1 records without structured attempt fields remain readable by the new candidate as legacy diagnostic evidence, but because they lack the exact `SessionID` plus typed replay disposition they are never mutation authority for `resume -> terminal`.
+`originating` is the first actionable replay failure for the unresolved Network Session. `current` is the latest actually admitted replay attempt. For the first structured failure, `originating == current`. A later replay after a retryable or eligible interrupted attempt updates only `current`; `originating` remains immutable diagnostic evidence until resume succeeds, terminal convergence completes, or an explicit user lifecycle epoch supersedes the session.
 
-If a downgraded `v0.2.41` process rewrites the file and therefore drops fields it does not know, a later fixed candidate must treat the remaining old v1 projection as legacy diagnostic-only evidence. Loss of the extension must never be reconstructed into terminalization authority.
+Only structured `current`, fenced to the exact current `SessionID + RecoveryEpoch`, may participate in replay terminalization eligibility. Top-level v1 fields and `originating` are never mutation authority.
 
-Before any structured replay attempt has been admitted, existing pre-replay startup diagnostics may continue to use the old top-level v1 projection. Once a structured replay attempt exists, later privacy/exact/generic recovery blockers must not overwrite `originating` or `current`; they are surfaced as current recovery blockers while the preserved replay evidence remains intact.
+Existing v1 diagnostics, or a record rewritten by downgraded `v0.2.41` that has lost the added structured fields, remain readable as latest-blocker diagnostics but are never eligible to authorize `resume -> terminal`.
 
-`transaction_present` remains historical evidence only. Current transaction cleanup authority continues to come from exact recovery candidates/durable transaction state.
-
-The originating attempt is retained until resume succeeds, terminal convergence completes, or an explicit user lifecycle epoch supersedes the session. A newer replay attempt may update only `current`; it never erases `originating`.
+`transaction_present` remains historical evidence only. Current transaction cleanup authority still comes only from exact current recovery candidates/durable transaction state.
 
 ## Replay disposition
 
-Disposition comes from typed internal error semantics, never `err.Error()`, phase name alone, retry count, timeout, or `tun_health` alone.
+Disposition is a total, conservative typed classification.
 
-- `terminal`: replay completed and is non-retryable for this attempt.
-- `retryable`: a bounded transient may legitimately succeed in a newer recovery epoch without a new user lifecycle epoch.
-- `interrupted`: cancellation, shutdown, package-replacement interruption, or lifecycle supersession ended the attempt. It never terminalizes by itself.
-- `incomplete`: recovery/ownership/observation is insufficient to decide.
+- `terminal`: allowed only by a positive typed non-retryable classification for the admitted replay.
+- `retryable`: allowed only by a positive typed transient classification that may legitimately succeed in a newer recovery epoch without a new user lifecycle epoch.
+- `interrupted`: parent cancellation, daemon shutdown, package replacement interruption, or explicit lifecycle supersession ended the attempt. It never terminalizes by itself.
+- `incomplete`: every unknown, unsupported, untyped, contradictory, or otherwise ambiguous failure.
 
-Reuse existing typed classifications where they already express these semantics. Add only one small private classifier/wrapper where needed. Cancellation and supersession must never become terminal merely because `Connect` returned an error.
+Do not infer disposition from `err.Error()`, phase name alone, retry count, timeout, `tun_health`, one failed OS command, or rollback status alone. Reuse existing typed errors/classifications where they already provide the required semantics; add only the smallest private wrapper/classifier for missing cases.
 
-An interrupted attempt is not a permanent retry blocker. While the interrupting lifecycle/context is active, no replacement replay is admitted. On a later fresh startup or explicit serialized recovery entry, if the same `SessionID` still exists with `intent=resume`, no lifecycle supersession is active, and pre-replay recovery prerequisites converge, the interrupted attempt may be superseded by exactly one new recovery epoch and one fresh replay. The interrupted attempt remains diagnostic evidence and can never authorize terminalization of that newer epoch.
+An interrupted attempt is not a permanent retry blocker. No replacement replay is admitted while the interrupting lifecycle/context remains active. On a later fresh startup or serialized recovery entry, if the same Network Session still exists with `intent=resume`, no supersession is active, and pre-replay prerequisites converge, exactly one new recovery epoch and replay may be admitted. The old interrupted attempt remains diagnostic evidence and can never terminalize the newer attempt.
 
-`incomplete` remains fail-closed until the missing ownership/recovery/observation evidence becomes conclusive; it does not gain retry or terminal authority merely from elapsed time or repeated recovery calls.
+An incomplete attempt remains fail-closed until missing evidence becomes conclusive. Repeated calls or elapsed time alone do not turn it into retryable or terminal.
 
 ## RecoveryEpoch admission semantics
 
-`RecoveryEpoch` identifies an admitted replay attempt, not an arbitrary invocation of startup/recovery orchestration.
+`RecoveryEpoch` identifies an **admitted connect replay attempt**, not an arbitrary startup/recovery invocation.
 
-Move `BeginRecoveryAttempt()` out of the beginning of `resumeNetworkSession()`. It is called exactly once, immediately before admitting a new connect replay, after all of the following have already happened for the still-current Network Session:
+Move `BeginRecoveryAttempt()` out of the beginning of `resumeNetworkSession()`. It is called exactly once immediately before a new connect replay, only after:
 
-1. current Network Session state and intent are loaded;
+1. current Network Session state/intent is loaded;
 2. Privacy Envelope authority is reconciled;
-3. exact old/candidate transaction recovery prerequisites have converged sufficiently to permit replay;
-4. the existing generic recovery stage, where it owns distinct candidates, has converged sufficiently to permit replay;
-5. already-persisted current-attempt evidence has been evaluated;
-6. the operation has decided that a new replay is actually permitted (`no current attempt`, `retryable`, or a previously `interrupted` attempt entering a later fresh lifecycle/recovery entry).
+3. exact old/candidate recovery prerequisites have converged sufficiently for replay;
+4. generic recovery, where it owns distinct candidates, has converged sufficiently for replay;
+5. existing structured replay evidence has been evaluated;
+6. the operation has decided that a new replay is permitted because there is no structured attempt, the current attempt is retryable, or a prior interrupted attempt is being superseded on a later fresh lifecycle entry.
 
-Re-evaluating or terminalizing existing evidence for epoch `E` never increments the epoch. Running terminal convergence after a fenced `resume -> terminal` transition never increments the epoch. A pre-replay privacy/exact/generic blocker never increments the epoch merely because recovery was invoked.
+Terminal re-evaluation of epoch `E`, terminal convergence, pre-replay blockers, and merely entering recovery never increment the epoch. The `networkSessionState` returned by `BeginRecoveryAttempt()` is the exact `SessionID + RecoveryEpoch` bound to that replay and its structured evidence.
 
-The state returned by `BeginRecoveryAttempt()` is the exact `SessionID + RecoveryEpoch` identity bound to the new replay and its persisted evidence. No second increment is permitted for that replay.
+## Durable cleanup-safety reconstruction
 
-## Cleanup-safety witness
+Do not persist a new cleanup authority, cleanup-proof record, or standalone `cleanup_safe` boolean.
 
-Do not persist a new cleanup authority or a standalone `cleanup_safe` boolean.
+During the same process execution, cleanup safety may be represented by a private in-memory witness derived from exact recovery and read-only observation. After a crash, that witness must be deterministically reconstructible from existing durable evidence.
 
-After the existing exact old/candidate recovery stages run, derive one private in-memory terminalization witness from their typed results plus current exact ownership inspection. The witness is bound to the expected `SessionID` and `RecoveryEpoch` and is valid only while the already-existing serialized recovery/lifecycle operation remains owned.
+### Candidate replay evidence
 
-The witness is positive only when all applicable exact authority has converged:
+For an admitted replay:
 
-- no unresolved transaction recovery candidate remains;
-- a candidate transaction either never mutated or its exact rollback converged;
-- exact TUN address, routes, policy rules, DNS, and nftables state are absent/converged from durable authority;
-- tracked old/candidate Xray child absence is proven from valid process/config ownership, never stale PID alone;
-- terminal native `podlaz0` lifecycle is absent/converged;
-- generated runtime config is absent/cleaned from exact authority;
-- the same Network Session still owns the exact Privacy Envelope authority needed for terminal teardown.
+- typed mutation outcome `rolled-back` together with `rollback_status=completed` means the replay's exact candidate rollback protocol completed successfully. This is durable **evidence**, not cleanup authority;
+- typed mutation outcome `not-opened` means the candidate replay never opened data-plane mutation. This must come from a typed control-flow boundary, not from `transaction_present=false` or failure phase inference;
+- `unresolved`, `rollback_status=failed`, `rollback_status=unknown`, missing structured evidence, or contradictory evidence can never prove cleanup safety.
 
-A missing transaction file, missing `podlaz0`, inactive status, process-name match, timeout, or `systemd-resolved=unknown` is never sufficient by itself.
+The implementation must only persist `rolled-back/completed` after the existing rollback path has completed all resources it owns, including the tracked child and generated runtime config where applicable. The current transaction implementation already removes durable transaction state only after its exact cleanup sequence has converged; absence of that file later is therefore supporting observation, not the sole proof.
 
-No new durable cleanup-proof file or package is introduced.
+### Reconstructing the witness after restart
+
+For crash boundary `terminal replay evidence persisted -> terminal intent not yet committed`, the new process reconstructs cleanup safety from all of:
+
+1. structured `current` evidence for the exact current `SessionID + RecoveryEpoch` proving either candidate mutation `not-opened` or exact candidate rollback `rolled-back/completed`;
+2. a fresh exact recovery scan showing no unresolved current/old transaction recovery candidates or ownership warnings;
+3. fresh bounded read-only observation proving the applicable terminal data-plane postconditions from exact known identities/authority: TUN address/routes/policy rules/DNS/nftables absent or converged, tracked candidate/old child absent from valid process/config identity, terminal native `podlaz0` lifecycle converged, and generated runtime config absent/cleaned;
+4. the same current Network Session still carrying exact Privacy Envelope authority required for terminal teardown.
+
+A missing transaction file, missing `podlaz0`, inactive status, process-name match, timeout, or `systemd-resolved=unknown` is never sufficient by itself. If any required reconstruction input is unavailable or ambiguous, the witness is unavailable and terminalization is forbidden.
+
+The witness is bound to the expected `SessionID + RecoveryEpoch` and is consumed only while the lifecycle operation token that produced/reconstructed it remains owned.
 
 ## Fenced `resume -> terminal` transition
 
-Add one conditional method on `networkSessionStateStore` under the existing per-state mutation lock. The method receives the expected attempt identity, terminal replay evidence, and the in-memory cleanup-safety witness. Inside the same load-transition-validate-save boundary it verifies:
+Add one conditional method on `networkSessionStateStore` under the existing per-state mutation lock. It receives expected attempt identity, structured terminal replay evidence, and the cleanup-safety witness. Inside one load-transition-validate-save boundary it verifies:
 
 - current `SessionID` equals expected `SessionID`;
 - current `RecoveryEpoch` equals expected `RecoveryEpoch`;
 - current intent is `resume`;
-- the consumed `current` replay evidence is `terminal` and matches the same session/epoch;
-- the cleanup-safety witness matches that same session/epoch and was produced by the currently serialized recovery operation.
+- structured `current` evidence is `terminal` for exactly that session/epoch;
+- the cleanup-safety witness is positive for exactly that session/epoch and was derived while the current serialized lifecycle operation is owned.
 
-Only then is intent changed to `terminal` and durably saved.
+Only then is intent changed to `terminal` and durably saved. Any mismatch is a typed no-transition result with no cleanup or protection mutation. There is no unlocked `Load()` followed by `SetIntent(terminal)`.
 
-Any mismatch returns a typed non-transition result with no mutation. There is no unlocked `Load()` followed by `SetIntent(terminal)` sequence. Terminal intent is durable before Privacy Envelope removal or Network Session authority clearing.
+Terminal intent is durable before Privacy Envelope removal or Network Session clearing.
+
+## One operation token for the complete resume flow
+
+The cleanup-safety witness and fenced state transition must not be separated by another lifecycle mutation.
+
+`/recover` already satisfies this with `runRecoveryWithFollowUp()`, which keeps generic recovery plus resume follow-up under one mutation registration and one operation token.
+
+Startup continuation must gain the same property. The startup caller acquires one existing `lifecycleOperationLock` mutation registration/token **before** entering privacy reconciliation/exact recovery/generic recovery/evidence evaluation and retains it through replay, witness construction, fenced transition, and the appropriate convergence result.
+
+While that token is held, startup passes the **unwrapped `runtime.sessionLifecycle`** into `resumeNetworkSession`; it must not call `runtime.lockedLifecycle`, because that wrapper would try to acquire the same non-reentrant operation token around `Connect` and deadlock.
+
+Use the existing operation-lock primitives or one small private helper on that existing type. Do not introduce a second startup-specific lock/authority model.
+
+Tests must prove a competing connect/disconnect/recover cannot interleave between witness construction and `resume -> terminal`, and must prove startup does not nested-lock when replay calls `Connect`.
+
+## Typed convergence result
+
+Replace the ambiguous `(bool, error)` contract of `resumeNetworkSession` with one small private typed result representing its semantic outcome. The minimum states are equivalent to:
+
+- `resumed` — protected replay succeeded; the Network Session remains `intent=resume` and active;
+- `terminal-converged` — terminal intent is durable and terminal data-plane/protection convergence succeeded while retained Network Session authority still exists for caller finalization;
+- `no-session` — there is no current Network Session continuation to finalize.
+
+Errors remain separate and represent incomplete/blocked convergence.
+
+This result is required because callers have different durable finalization responsibilities and because `/recover` must not convert a terminal convergence into the old `intent=resume / succeeded` projection.
+
+### Retained terminal authority
+
+When `resumeNetworkSession` terminalizes a replay, it reuses the existing **retained** terminal convergence path (`convergePersistedNetworkSessionTeardown` semantics): exact terminal data-plane convergence, Privacy Envelope removal, and remaining-host verification complete, but the terminal Network Session record is retained until its caller commits any higher-level durable outcome.
+
+Callers then finalize as follows:
+
+- ordinary startup continuation with no in-progress boot attempt: clear the retained converged Network Session, then publish terminal/no-session convergence;
+- `/recover`: clear the retained converged Network Session inside the same operation token and return a truthful terminal/disconnected recovery result, never an old cloned `resume/succeeded` plan;
+- boot autostart with `attempt=in_progress`: preserve the established ordering exactly: `terminal Network Session -> retained terminal convergence -> attemptStore.MarkTerminal(...) -> Network Session finalize`. If `MarkTerminal` fails, retained terminal Network Session authority remains for restart continuation.
+
+A crash after durable terminal intent but before higher-level finalization therefore cannot return to replay/resume semantics.
+
+The private typed result is one existing domain boundary consumed by startup/boot-autostart and `/recover`; it does not justify a new package or public API type.
 
 ## Recovery orchestration
 
-For `intent=resume`, while holding the existing serialized lifecycle/recovery operation ownership:
+For `intent=resume`, under one lifecycle operation token:
 
-1. Load current Network Session state without incrementing `RecoveryEpoch`.
-2. Reconcile current Privacy Envelope authority.
-3. Converge exact old/candidate transaction recovery prerequisites.
-4. Run the existing generic recovery stage only for its distinct candidates.
-5. Load and evaluate current structured replay evidence before opening another replay attempt.
-6. If current evidence is `terminal`, do not increment the epoch and do not replay. Derive the cleanup-safety witness. If positive, perform the fenced `resume -> terminal` transition for the same `SessionID/RecoveryEpoch` and immediately continue the existing terminal teardown in this same serialized operation. If the witness is not positive, remain fail-closed with the specific blocker.
-7. If current evidence is `incomplete`, do not increment/replay solely because recovery was called again. Preserve fail-closed semantics until the missing evidence becomes conclusive.
-8. If current evidence is `interrupted`, do nothing while the interrupting lifecycle/context is still active. On a later fresh startup/recover entry, if the same session remains current with `intent=resume` and replay prerequisites converge, it may admit one new replay epoch.
-9. If current evidence is `retryable`, or there is no structured replay evidence, admit one new replay: call `BeginRecoveryAttempt()` exactly once immediately before `Connect`, then bind the replay to the returned `SessionID/RecoveryEpoch`.
-10. If that replay succeeds, keep `intent=resume`, preserve the same logical Network Session and valid Privacy Envelope, clear resolved resume evidence, and release the startup gate.
-11. If that replay fails, classify the failure and durably persist its structured evidence for the exact admitted `SessionID/RecoveryEpoch` before taking any disposition-dependent action.
-12. If the just-persisted disposition is `terminal`, derive cleanup safety immediately. When positive, perform the fenced `resume -> terminal` transition and existing terminal teardown before returning from the same serialized startup/recover operation. A second `recover` call is not required merely to consume an already-proven terminal replay outcome.
-13. If the just-persisted disposition is `retryable`, return the truthful retryable failure; a later recovery entry may admit a newer epoch. If it is `interrupted` or `incomplete`, follow the semantics above and never reinterpret it as terminal.
+1. Load current Network Session without incrementing `RecoveryEpoch`.
+2. Reconcile Privacy Envelope authority.
+3. Converge exact current/old transaction recovery prerequisites.
+4. Run generic recovery only for distinct candidates.
+5. Update the top-level v1 latest-blocker projection if any of steps 2-4 fail; do not alter structured `originating/current` replay evidence.
+6. Evaluate structured `current` replay evidence.
+7. If `current=terminal`, do not increment or replay. Reconstruct/derive cleanup safety; if positive, perform the fenced `resume -> terminal`, run retained terminal convergence, and return `terminal-converged`. Otherwise remain fail-closed with the current blocker.
+8. If `current=incomplete`, do not increment/replay merely because recovery was called again.
+9. If `current=interrupted`, admit nothing while interruption is active; on a later eligible lifecycle entry it may be superseded by one new epoch.
+10. If `current=retryable` or no structured replay exists, call `BeginRecoveryAttempt()` exactly once immediately before `Connect` and bind the replay to that returned session/epoch.
+11. On replay success, keep `intent=resume`, preserve the same logical session/protection, clear resolved replay evidence as appropriate, and return `resumed`.
+12. On replay failure, classify it conservatively and durably write the latest top-level blocker plus structured evidence for that admitted session/epoch.
+13. If the newly persisted disposition is `terminal`, derive cleanup safety immediately. When positive, perform fenced `resume -> terminal` plus retained terminal convergence **before returning from the same serialized startup/recover operation**. A second `recover` call is not required just to consume an already-proven terminal outcome.
+14. `retryable`, `interrupted`, and `incomplete` failures return their truthful blocked semantics without terminalization.
 
-After terminal intent is durable, reuse the existing terminal path:
+## Public recovery semantics
 
-`terminal intent -> exact data-plane recovery/absence proof -> Privacy Envelope removal -> remaining host-network verification -> Network Session authority clear -> startup publication/gate release`.
+Extend the existing bounded public `network_session` projection with only:
 
-No parallel cleanup path is added.
+- optional `replay_disposition`;
+- optional `network_apply_subphase`.
 
-## Originating/current evidence rules
+Do not expose `SessionID` or `RecoveryEpoch`.
 
-The first actionable structured replay failure for an unresolved Network Session becomes `originating` and is retained until resume succeeds, terminal convergence completes, or an explicit user lifecycle epoch legitimately supersedes the session.
+`docs/cli.md` must be updated because it already defines the stable `network_session` recovery fields.
 
-For the first structured replay failure, `originating == current`.
+`status`, `doctor`, and `recover` must remain mutually consistent:
 
-A later admitted replay after a `retryable` or eligible prior `interrupted` attempt updates only `current`. `originating` remains immutable diagnostic evidence. Only `current`, when fenced to the exact current `SessionID/RecoveryEpoch`, may participate in terminalization eligibility.
-
-Pre-replay privacy/exact/generic blockers never replace an existing `originating/current` replay record merely to report a newer observation.
+- latest top-level blocker remains visible even when older structured replay evidence is preserved;
+- retryable -> retry-resume;
+- interrupted while interruption is active -> no competing replay; a later eligible lifecycle entry may retry;
+- incomplete/unsafe ownership -> fail-closed manual diagnosis/blocker;
+- terminal + fresh + cleanup-safe -> terminal convergence in the same operation;
+- terminal-converged -> conclusively disconnected/no Network Session after caller finalization, never `resume/succeeded`;
+- successful replay -> active `resume`, open gate, no terminal transition.
 
 ## Network-apply attribution
 
-Add one small typed apply-subphase marker at existing executor/application boundaries. Required values cover:
+Add one small typed apply-subphase marker at existing executor/application boundaries, with bounded semantics equivalent to:
 
 - TUN address;
 - routes;
@@ -175,76 +230,81 @@ Add one small typed apply-subphase marker at existing executor/application bound
 - systemd-resolved DNS;
 - nftables firewall.
 
-The subphase is diagnostic only; it never decides disposition or cleanup authority. Do not persist raw command stderr or private profile/network data.
-
-## Public recovery semantics
-
-Keep the public surface minimal. Extend the bounded `network_session` recovery projection only with fields needed for truthful operator semantics:
-
-- optional `replay_disposition`;
-- optional `network_apply_subphase`.
-
-Do not expose `SessionID` or `RecoveryEpoch` publicly.
-
-`recover`, `status`, and `doctor` remain mutually consistent:
-
-- retryable -> retry-resume;
-- interrupted during active interruption -> no competing replay; later fresh eligible recovery may retry;
-- incomplete/unsafe ownership -> fail-closed blocker/manual diagnosis as appropriate;
-- terminal + fresh + cleanup-safe -> transition to terminal convergence without requiring another recovery request;
-- success -> active `resume`, open gate, no terminal transition.
+It is diagnostic only and never determines disposition or cleanup authority. Do not parse raw error text or persist raw stderr/private network data.
 
 ## Crash/restart safety
 
 Cover these durable boundaries:
 
-1. terminal replay evidence persisted, terminal intent not yet committed;
+1. terminal structured replay evidence persisted, terminal intent not committed;
 2. terminal intent committed, exact data-plane convergence incomplete;
 3. exact data-plane convergence complete, Privacy Envelope still armed;
-4. Privacy Envelope removed, Network Session authority still present;
-5. Network Session authority cleared, publication/gate refresh pending.
+4. Privacy Envelope removed, retained Network Session authority still present;
+5. Network Session cleared, startup publication/gate finalization pending.
 
-At boundary 1, terminalization may continue only if the same `SessionID`, `RecoveryEpoch`, and `resume` intent still match. Re-evaluating this boundary does not increment `RecoveryEpoch`. Any newer epoch/session/intent makes the evidence stale and mutation-free.
+At boundary 1, the witness must be reconstructed as specified above. Re-evaluation does not increment `RecoveryEpoch`. Any newer session/epoch/intent makes old evidence stale and mutation-free.
 
-Once terminal intent is committed, restart must never return the session to `resume`.
+Once terminal intent is committed, restart must never return to `resume`.
 
-An interrupted replay persisted before daemon/package replacement is retryable only through a later fresh lifecycle/recovery entry that explicitly admits a new epoch after revalidating the same current session and replay prerequisites. Restart does not reinterpret the old interruption as terminal.
+For an interrupted attempt, restart may admit a newer replay only through a fresh lifecycle entry after revalidating the same current session and replay prerequisites; interruption is never reclassified as terminal.
+
+For boot autostart, a crash/failure between retained terminal convergence and `attempt=terminal` persistence must preserve terminal Network Session authority so the next daemon continues terminal finalization rather than replaying the boot attempt.
 
 ## Tests
 
-Use TDD from the reproduced failure shape. Hosted tests cover:
+Use TDD from the reproduced failure shape. Hosted tests must cover:
 
-- additive extended-v1 diagnostic round-trip while preserving all released top-level v1 fields and schema identifier;
-- a `v0.2.41`-compatible decoder can read an extended-v1 fixture and ignore the added fields;
-- the new reader treats a legacy/stripped v1 record without structured attempt identity as diagnostic-only, never terminalization authority;
-- top-level compatibility projection mismatch with structured `current` fails closed;
-- all four dispositions;
-- cancellation/shutdown/supersession never terminal;
-- an interrupted attempt cannot terminalize, does not start a competing replay while interruption is active, and may admit exactly one fresh `E+1` replay on a later eligible startup/recover entry;
-- `BeginRecoveryAttempt()` is not called for terminal re-evaluation, terminal convergence, incomplete pre-replay blockers, or merely entering recovery;
-- `BeginRecoveryAttempt()` is called exactly once immediately before each actually admitted replay;
-- exact current `SessionID + RecoveryEpoch + resume` fencing;
-- stale session, stale epoch, superseded intent, and legacy/stale diagnostic are mutation-free;
-- cleanup-safety negatives: incomplete exact recovery, ownership ambiguity, rollback failed/unknown, unresolved transaction authority, unproven data-plane absence;
-- a terminal failure returned by the replay admitted in the current call is persisted, fenced, terminalized, and sent through existing terminal teardown in that same serialized operation when cleanup safety is positive;
-- no second `recover` is required solely to consume that just-produced terminal evidence;
-- terminal positive path reuses existing teardown ordering and never removes Privacy Envelope early;
-- originating/current evidence preservation across retryable/interrupted replay supersession;
-- successful resume positive control, including stale older terminal evidence, with no `resume -> terminal` transition;
-- all five crash/restart boundaries and repeated idempotent recovery;
-- production-shaped startup and `/recover` paths;
-- privacy-safe apply-subphase diagnostics.
+- extended-v1 diagnostic remains readable by a `v0.2.41`-compatible decoder;
+- top-level v1 fields retain latest-blocker semantics independently of structured `current`;
+- pre-replay blockers update top-level fields without overwriting `originating/current`;
+- stripped/legacy v1 records are diagnostic-only and never terminalization authority;
+- all four replay dispositions, including an unknown/untyped wrapper -> `incomplete`;
+- cancellation/shutdown/supersession -> `interrupted`, never terminal;
+- interrupted attempt does not compete with the active interrupt and may admit exactly one fresh `E+1` replay on a later eligible entry;
+- `BeginRecoveryAttempt()` is not called for terminal re-evaluation, terminal convergence, incomplete/pre-replay blockers, or merely entering recovery;
+- `BeginRecoveryAttempt()` is called exactly once immediately before every actually admitted replay;
+- exact `SessionID + RecoveryEpoch + resume` fenced transition accepts current evidence and rejects stale session, stale epoch, superseded intent, legacy evidence, and stale current evidence without mutation;
+- cleanup-safety negatives for incomplete exact recovery, ownership ambiguity, candidate mutation unresolved, rollback failed/unknown, current recovery candidates, and unproven read-only absence;
+- crash-boundary-1 witness reconstruction from `not-opened` or `rolled-back/completed` structured evidence + clean exact recovery scan + fresh exact observation;
+- no witness is reconstructed from transaction-file absence, `transaction_present=false`, phase name, timeout, or missing `podlaz0` alone;
+- terminal replay returned by the current call persists evidence and, when cleanup safety is positive, reaches fenced terminalization and retained terminal convergence in the same operation;
+- no second recovery request is needed solely to consume that terminal evidence;
+- the existing terminal ordering keeps Privacy Envelope until exact data-plane convergence is proven;
+- private convergence result distinguishes `resumed`, `terminal-converged`, and `no-session` and `/recover` never projects terminal convergence as `resume/succeeded`;
+- boot-autostart terminalization preserves `terminal session -> retained convergence -> attempt=terminal -> session clear`, including failure/restart between each durable step;
+- startup owns one operation token for the entire resume flow, uses unwrapped `sessionLifecycle`, does not nested-lock, and rejects/interlocks competing mutations through the existing operation lock;
+- successful replay remains transparent, including stale older terminal evidence, with no `resume -> terminal` transition;
+- originating/current evidence survives retryable/interrupted supersession correctly;
+- all five crash/restart boundaries are idempotent;
+- public recovery projection and CLI rendering include the two new optional bounded fields;
+- network-apply subphase is privacy-safe and structured.
 
-The target-host acceptance scenario covers exact public `v0.2.40` active TUN -> candidate package replacement through the normal package lifecycle. It independently proves real DNS and IPv4 HTTPS/TLS before replacement, then requires either verified active continuity or, for a current terminal replay with proven cleanup safety, same-boot terminal convergence to ordinary networking. A terminal replay produced during candidate startup must converge in that same startup operation when safety is already proven; the harness must not need a second `recover` merely to trigger terminalization. No hidden second connect, package retry, manual state deletion, broad cleanup, or reboot may make the scenario pass.
+## Target-host acceptance
 
-## Scope
+The focused physical scenario must use the exact public `v0.2.40` package and exact candidate through the normal package lifecycle with exact package/runtime provenance.
+
+Required flow:
+
+1. prove clean baseline and ordinary system DNS + IPv4 TCP/TLS/HTTPS;
+2. install exact `v0.2.40`, establish product-verified active TUN, then independently prove bounded **system DNS + IPv4 HTTPS/TLS through the VPN** immediately before replacement;
+3. install the candidate once; no hidden second connect, package retry, service restart, manual state deletion, broad cleanup, or reboot may repair the scenario;
+4. if replay succeeds, require verified active continuity and then independently prove bounded **system DNS + IPv4 HTTPS/TLS through the candidate VPN**;
+5. if the current replay is typed terminal and cleanup safety is proven, require same-operation/same-boot terminal convergence and then independently prove bounded **system DNS + IPv4 HTTPS/TLS through ordinary host networking**;
+6. after terminal convergence, run a second `recover --execute --yes` and require it to be clean, idempotent, and mutation-free;
+7. if evidence is stale or ownership/cleanup remains ambiguous, require truthful fail-closed/manual-diagnosis semantics and forbid unsafe terminalization;
+8. preserve unrelated NetworkManager/Docker/libvirt/nftables state semantically unchanged.
+
+The scenario must also prove Privacy Envelope ordering, absence of current transaction/Network Session cleanup authority after terminal completion, and no unnecessary terminalization after successful resume.
+
+## Scope and YAGNI
 
 In scope:
 
-- `internal/daemon/**` Network Session state/recovery/diagnostics and focused lifecycle classification;
-- `internal/api/**` only for bounded public recovery fields required for truthful semantics;
-- `internal/app/cli/**` and `docs/cli.md` only if rendering changes are required;
-- `internal/recovery/**` only if an existing exact recovery result lacks a small reusable predicate needed for the witness;
+- `internal/daemon/**` Network Session state/recovery/diagnostics, existing operation-lock wiring, and focused typed classification;
+- `internal/api/**` only for the two bounded public recovery fields;
+- `internal/app/cli/**` as required to render the public fields consistently;
+- `docs/cli.md` mandatory for the changed stable recovery projection;
+- `internal/recovery/**` only if an existing exact recovery result lacks a small predicate needed to reconstruct the witness;
 - focused acceptance/E2E coverage and existing shared helpers where needed.
 
 Out of scope:
@@ -253,9 +313,8 @@ Out of scope:
 - dependency upgrades;
 - broad lifecycle refactoring;
 - new recovery packages/subsystems;
+- another durable cleanup/evidence store;
 - broad network cleanup or ownership expansion;
 - unrelated connect/disconnect behavior.
 
-## YAGNI guardrail
-
-Prefer fields and private helpers in existing files. Create a new production source file only if adding the code to an existing file would mix a clearly separate responsibility or materially harm reviewability. Add no interface unless at least two production consumers need it or it represents an existing domain boundary. Temporary spec/plan files are removed before final repository verification, as required by `AGENTS.md`.
+Prefer fields and private helpers in existing files. Create a production source file only when an existing file would otherwise mix a clearly separate responsibility or become materially harder to review. The private convergence result is justified by the existing startup/boot-autostart and `/recover` consumers; do not generalize it beyond that boundary. Add no other interface unless at least two production consumers need it or it represents an existing domain boundary. Temporary spec/plan files are removed before final repository verification as required by `AGENTS.md`.
