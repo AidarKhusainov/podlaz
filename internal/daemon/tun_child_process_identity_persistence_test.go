@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	txstate "github.com/AidarKhusainov/podlaz/internal/state"
@@ -9,15 +10,15 @@ import (
 
 func TestFullTunnelTransactionRunnerPersistsTrackedChildStartTimeBeforeNetworkApply(t *testing.T) {
 	h := newFullTunnelRunnerHarness(t)
+	pid := os.Getpid()
+	wantStartTime, err := rollbackChildProcessStartTime(pid)
+	if err != nil {
+		t.Fatalf("read test process start time: %v", err)
+	}
+
 	runner := h.runner()
 	runner.startCore = func(context.Context) (fullTunnelCoreHandle, error) {
-		return fullTunnelCoreHandle{done: make(chan struct{}), pid: 4242}, nil
-	}
-	runner.readCoreStartTime = func(pid int) (string, error) {
-		if pid != 4242 {
-			t.Fatalf("read process start time for pid=%d", pid)
-		}
-		return "987654", nil
+		return fullTunnelCoreHandle{done: make(chan struct{}), pid: pid}, nil
 	}
 	h.onNetworkApplied = func() {
 		summaries, warnings := txstate.ScanTransactions(h.runtimeDir)
@@ -32,7 +33,7 @@ func TestFullTunnelTransactionRunnerPersistsTrackedChildStartTimeBeforeNetworkAp
 			t.Fatalf("tracked child rollback metadata=%#v", tx.Rollback.ChildProcesses)
 		}
 		child := tx.Rollback.ChildProcesses[0]
-		if child.PID != 4242 || child.StartTime != "987654" || child.ConfigRef == "" || child.Label != "xray" || child.Owner != txstate.TransactionOwner {
+		if child.PID != pid || child.StartTime != wantStartTime || child.ConfigRef == "" || child.Label != "xray" || child.Owner != txstate.TransactionOwner {
 			t.Fatalf("incomplete tracked child identity: %#v", child)
 		}
 	}
