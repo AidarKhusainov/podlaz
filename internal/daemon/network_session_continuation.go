@@ -148,10 +148,23 @@ func (s networkSessionContinuationStore) disarm(intent networkSessionIntent) err
 }
 
 func (s networkSessionContinuationStore) finalize() error {
-	if err := finalizeRetainedNetworkSessionReplayEvidence(s.runtimeDir, s.readBootID); err != nil {
-		return err
+	return finalizeNetworkSessionWithAuthorityRemoval(s, s.stateStore().Remove)
+}
+
+func finalizeNetworkSessionWithAuthorityRemoval(s networkSessionContinuationStore, removeAuthority func() error) error {
+	if removeAuthority == nil {
+		return errors.New("Network Session authority finalizer is nil")
 	}
-	return s.stateStore().Remove()
+	if err := preflightRetainedNetworkSessionReplayEvidence(s.runtimeDir, s.readBootID); err != nil {
+		return fmt.Errorf("preflight retained Network Session replay evidence: %w", err)
+	}
+	if err := removeAuthority(); err != nil {
+		return fmt.Errorf("clear converged Network Session authority: %w", err)
+	}
+	if err := finalizeRetainedNetworkSessionReplayEvidence(s.runtimeDir, s.readBootID); err != nil {
+		return fmt.Errorf("finalize retained Network Session replay evidence: %w", err)
+	}
+	return nil
 }
 
 func (s networkSessionContinuationStore) currentBootID() (string, error) {
