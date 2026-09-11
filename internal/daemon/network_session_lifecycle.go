@@ -423,7 +423,9 @@ func resumeNetworkSessionWithTerminalObservation(
 		if err := continueTeardown(ctx, stateStore); err != nil {
 			return fail(api.NetworkSessionResumeStageTerminalTeardown, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("continue persisted network session teardown: %w", err))
 		}
-		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
+		if err := finalizeNetworkSessionReplayEvidenceAfterTeardown(continuation, stateStore); err != nil {
+			return false, fmt.Errorf("finalize terminal replay evidence after persisted teardown: %w", err)
+		}
 		return false, nil
 
 	default:
