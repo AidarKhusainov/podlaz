@@ -80,7 +80,9 @@ func terminalizeNetworkSessionReplay(
 	if err := continueTeardown(ctx, stateStore); err != nil {
 		return false, fmt.Errorf("continue terminalized Network Session teardown: %w", err)
 	}
-	_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
+	if err := finalizeNetworkSessionReplayEvidenceAfterTeardown(continuation, stateStore); err != nil {
+		return false, fmt.Errorf("finalize terminal replay evidence after teardown: %w", err)
+	}
 	return true, nil
 }
 
