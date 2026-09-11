@@ -46,6 +46,10 @@ func persistNetworkSessionReplayFailure(
 		return wrapped
 	}
 	disposition, mutation := classifyNetworkSessionReplayFailure(ctx, err)
+	_, transactionID, _ := tunFailureLogFields(err)
+	if transactionID == noTunTransactionID {
+		transactionID = ""
+	}
 	record.RecoveryEpoch = attemptState.RecoveryEpoch
 	record.ReplayDisposition = string(disposition)
 	if record.TUNFailurePhase == "network-apply" {
@@ -60,12 +64,19 @@ func persistNetworkSessionReplayFailure(
 		NetworkApplySubphase: record.NetworkApplySubphase,
 		RollbackStatus:       record.RollbackStatus,
 		TransactionPresent:   record.TransactionPresent,
+		TransactionID:        transactionID,
 		LegacyMigration:      legacyMigration,
 		CandidateMutation:    mutation,
 	}
 	store := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
 	if persistErr := store.SaveReplayFailure(record, attempt); persistErr != nil {
-		return errors.Join(wrapped, persistErr)
+		cleanupErr := removeRetainedNetworkSessionReplayTransaction(continuation.runtimeDir, transactionID)
+		return errors.Join(wrapped, persistErr, cleanupErr)
+	}
+	if disposition != networkSessionReplayDispositionTerminal {
+		if cleanupErr := removeRetainedNetworkSessionReplayTransaction(continuation.runtimeDir, transactionID); cleanupErr != nil {
+			return errors.Join(wrapped, cleanupErr)
+		}
 	}
 	return wrapped
 }
