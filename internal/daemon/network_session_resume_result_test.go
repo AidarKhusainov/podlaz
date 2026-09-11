@@ -32,7 +32,13 @@ func TestApplyNetworkSessionResumeResultTerminalConvergenceDoesNotPublishResumeS
 }
 
 func TestTerminalResumeResultRetainsReplayEvidenceUntilCallerFinalization(t *testing.T) {
-	stateStore := seededProtectedNetworkSessionStore(t, networkSessionIntentTerminal)
+	stateStore := seededProtectedNetworkSessionStore(t, networkSessionIntentResume)
+	if _, exists, err := stateStore.BeginRecoveryAttempt(); err != nil || !exists {
+		t.Fatalf("admit replay epoch: exists=%v err=%v", exists, err)
+	}
+	if err := stateStore.SetIntent(networkSessionIntentTerminal); err != nil {
+		t.Fatal(err)
+	}
 	if err := stateStore.SetProtection(nil); err != nil {
 		t.Fatal(err)
 	}
