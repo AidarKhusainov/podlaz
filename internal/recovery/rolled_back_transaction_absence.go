@@ -16,6 +16,7 @@ import (
 type rolledBackTransactionAbsenceOptions struct {
 	Runner     CommandRunner
 	PathExists func(string) (bool, error)
+	ReadFile   func(string) ([]byte, error)
 }
 
 // VerifyRolledBackTransactionAbsence performs a read-only, transaction-bound
@@ -45,6 +46,9 @@ func verifyRolledBackTransactionAbsenceWithOptions(
 	}
 	if opts.PathExists == nil {
 		opts.PathExists = lstatPathExists
+	}
+	if opts.ReadFile == nil {
+		opts.ReadFile = os.ReadFile
 	}
 
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
@@ -76,7 +80,7 @@ func verifyRolledBackTransactionAbsenceWithOptions(
 	if err := verifyRolledBackNFTablesAbsent(ctx, opts.Runner, tx.Rollback.NFTables); err != nil {
 		return err
 	}
-	if err := verifyRolledBackChildProcessesAbsent(tx, opts.PathExists); err != nil {
+	if err := verifyRolledBackChildProcessesAbsent(tx, opts.ReadFile); err != nil {
 		return err
 	}
 	if err := verifyRolledBackGeneratedConfigsAbsent(runtimeDir, tx, opts.PathExists); err != nil {
@@ -222,20 +226,59 @@ func verifyRolledBackNFTablesAbsent(ctx context.Context, runner CommandRunner, e
 	return nil
 }
 
-func verifyRolledBackChildProcessesAbsent(tx txstate.Transaction, pathExists func(string) (bool, error)) error {
-	for _, child := range tx.Rollback.ChildProcesses {
-		if child.Owner != txstate.TransactionOwner || child.PID <= 1 || child.Label != "xray" || strings.TrimSpace(child.ConfigRef) == "" {
-			return errors.New("retained tracked child identity is incomplete or ambiguous")
-		}
-		present, err := pathExists(fmt.Sprintf("/proc/%d", child.PID))
-		if err != nil {
-			return fmt.Errorf("inspect tracked child pid %d: %w", child.PID, err)
-		}
-		if present {
-			return fmt.Errorf("tracked child pid %d remains present after completed rollback", child.PID)
+func verifyRolledBackChildProcessesAbsent(tx txstate.Transaction, readFile func(string) ([]byte, error)) error {
+	generated := make(map[string]struct{}, len(tx.Rollback.GeneratedConfigs))
+	for _, cfg := range tx.Rollback.GeneratedConfigs {
+		if cfg.Owner == txstate.TransactionOwner && strings.TrimSpace(cfg.Path) != "" {
+			generated[filepath.Clean(cfg.Path)] = struct{}{}
 		}
 	}
+	for _, child := range tx.Rollback.ChildProcesses {
+		configRef := filepath.Clean(strings.TrimSpace(child.ConfigRef))
+		startTime := strings.TrimSpace(child.StartTime)
+		if child.Owner != txstate.TransactionOwner || child.PID <= 1 || child.Label != "xray" || configRef == "." || startTime == "" {
+			return errors.New("retained tracked child identity is incomplete or ambiguous")
+		}
+		if _, ok := generated[configRef]; !ok || filepath.Clean(tx.DesiredPlan.Core.RuntimeConfigPath) != configRef || tx.DesiredPlan.Core.Owner != txstate.TransactionOwner || tx.DesiredPlan.Core.ProcessLabel != "xray" {
+			return errors.New("retained tracked child config identity is inconsistent")
+		}
+		data, err := readFile(fmt.Sprintf("/proc/%d/stat", child.PID))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect tracked child pid %d start time: %w", child.PID, err)
+		}
+		currentStart, err := processStartTimeFromProcStat(child.PID, data)
+		if err != nil {
+			return err
+		}
+		if currentStart != startTime {
+			// The PID now names another process. It is evidence that the tracked
+			// original child is absent, never authority over the replacement.
+			continue
+		}
+		return fmt.Errorf("tracked child pid %d with exact start time remains present after completed rollback", child.PID)
+	}
 	return nil
+}
+
+func processStartTimeFromProcStat(pid int, data []byte) (string, error) {
+	text := string(data)
+	closeParen := strings.LastIndex(text, ")")
+	if closeParen < 0 || closeParen+2 >= len(text) {
+		return "", fmt.Errorf("parse tracked child pid %d stat: malformed comm field", pid)
+	}
+	fields := strings.Fields(text[closeParen+2:])
+	const startTimeIndex = 22 - 3
+	if len(fields) <= startTimeIndex {
+		return "", fmt.Errorf("parse tracked child pid %d stat: missing start time", pid)
+	}
+	start := strings.TrimSpace(fields[startTimeIndex])
+	if start == "" {
+		return "", fmt.Errorf("parse tracked child pid %d stat: empty start time", pid)
+	}
+	return start, nil
 }
 
 func verifyRolledBackGeneratedConfigsAbsent(runtimeDir string, tx txstate.Transaction, pathExists func(string) (bool, error)) error {
