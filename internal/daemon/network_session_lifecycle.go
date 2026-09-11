@@ -310,7 +310,9 @@ func resumeNetworkSessionWithTerminalObservation(
 		if !networkSessionRecoveryConverged(exactRecovery) {
 			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
 		}
-		_ = newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
+		if err := finalizeRetainedNetworkSessionReplayEvidence(continuation.runtimeDir, continuation.readBootID); err != nil {
+			return false, fmt.Errorf("finalize retained Network Session replay evidence without session authority: %w", err)
+		}
 		return false, nil
 	}
 
