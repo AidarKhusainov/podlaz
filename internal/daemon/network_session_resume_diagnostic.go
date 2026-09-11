@@ -45,6 +45,7 @@ type networkSessionReplayAttempt struct {
 	NetworkApplySubphase string                          `json:"network_apply_subphase,omitempty"`
 	RollbackStatus       string                          `json:"rollback_status,omitempty"`
 	TransactionPresent   bool                            `json:"transaction_present"`
+	TransactionID        string                          `json:"transaction_id,omitempty"`
 	LegacyMigration      bool                            `json:"legacy_migration"`
 	CandidateMutation    networkSessionCandidateMutation `json:"candidate_mutation"`
 }
