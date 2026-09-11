@@ -130,7 +130,7 @@ func (r terminalAbsenceRunner) Run(_ context.Context, name string, args ...strin
 		if r.present == "dns" {
 			return CommandResult{Stdout: "Link 7 (podlaz0)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute\nCurrent DNS Server: 192.0.2.53\n       DNS Servers: 192.0.2.53\n        DNS Domain: ~.", RawStdout: "Link 7 (podlaz0)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute\nCurrent DNS Server: 192.0.2.53\n       DNS Servers: 192.0.2.53\n        DNS Domain: ~.\n", ExitCode: 0}, nil
 		}
-		return missingCommandResult(`Failed to resolve interface \"podlaz0\": No such device`)
+		return missingCommandResult("Failed to resolve interface \"podlaz0\": No such device")
 	case strings.HasPrefix(key, "nft list table inet podlaz"):
 		if r.present == "nftables" {
 			return CommandResult{Stdout: "table inet podlaz { }", ExitCode: 0}, nil
@@ -141,7 +141,15 @@ func (r terminalAbsenceRunner) Run(_ context.Context, name string, args ...strin
 	}
 }
 
+type terminalAbsenceExitError struct {
+	message string
+	code    int
+}
+
+func (e terminalAbsenceExitError) Error() string { return e.message }
+func (e terminalAbsenceExitError) ExitCode() int { return e.code }
+
 func missingCommandResult(stderr string) (CommandResult, error) {
 	stderr = strings.ReplaceAll(stderr, `\"`, `"`)
-	return CommandResult{Stderr: stderr, RawStderr: stderr + "\n", ExitCode: 1}, errors.New(stderr)
+	return CommandResult{Stderr: stderr, RawStderr: stderr + "\n", ExitCode: 1}, terminalAbsenceExitError{message: stderr, code: 1}
 }
