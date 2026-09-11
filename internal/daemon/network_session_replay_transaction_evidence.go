@@ -62,6 +62,23 @@ func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID 
 	return diagnosticStore.Remove()
 }
 
+func finalizeNetworkSessionReplayEvidenceAfterTeardown(
+	continuation networkSessionContinuationStore,
+	stateStore networkSessionStateStore,
+) error {
+	_, exists, err := stateStore.Load()
+	if err != nil {
+		return fmt.Errorf("inspect Network Session after terminal teardown: %w", err)
+	}
+	if exists {
+		// Retained terminal authority means the caller still owns a durable
+		// finalization step. Keep the diagnostic and exact transaction identity
+		// until that step commits so a crash cannot erase the cleanup witness.
+		return nil
+	}
+	return finalizeRetainedNetworkSessionReplayEvidence(continuation.runtimeDir, continuation.readBootID)
+}
+
 func replayDiagnosticTransactionIDs(record networkSessionResumeDiagnostic) []string {
 	seen := make(map[string]struct{}, 2)
 	ids := make([]string, 0, 2)
