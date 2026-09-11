@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ func TestRolledBackTransactionAbsenceVerifiesOrphanEvidenceWithoutTreatingItAsAu
 	for _, tc := range []struct {
 		name               string
 		orphanRoutePresent bool
-		wantErr             string
+		wantErr            string
 	}{
 		{name: "clean orphan", orphanRoutePresent: false},
 		{name: "orphan residue", orphanRoutePresent: true, wantErr: "exact route remains present: 128.0.0.0/1 table 51820"},
@@ -35,7 +36,7 @@ func TestRolledBackTransactionAbsenceVerifiesOrphanEvidenceWithoutTreatingItAsAu
 				rolledBackTransactionAbsenceOptions{
 					Runner:     runner,
 					PathExists: func(string) (bool, error) { return false, nil },
-					ReadFile:   func(string) ([]byte, error) { return nil, errProcessNotFoundForAbsenceTest },
+					ReadFile:   func(string) ([]byte, error) { return nil, os.ErrNotExist },
 				},
 			)
 			if tc.wantErr == "" {
@@ -86,13 +87,4 @@ func (r orphanRolledBackEvidenceRunner) Run(ctx context.Context, name string, ar
 		return CommandResult{ExitCode: 0}, nil
 	}
 	return r.terminalAbsenceRunner.Run(ctx, name, args...)
-}
-
-var errProcessNotFoundForAbsenceTest = processNotFoundError{}
-
-type processNotFoundError struct{}
-
-func (processNotFoundError) Error() string { return "process not found" }
-func (processNotFoundError) Is(target error) bool {
-	return target != nil && target.Error() == "file does not exist"
 }
