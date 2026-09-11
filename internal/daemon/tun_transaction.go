@@ -244,7 +244,7 @@ func saveGeneratedConfigRollbackMetadata(store txstate.TransactionStore, transac
 	return err
 }
 
-func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, startTime string, now time.Time) error {
+func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, runtimeConfigPath string, pid int, now time.Time) error {
 	tx, _, err := store.Load(transactionID)
 	if err != nil {
 		return fmt.Errorf("load TUN transaction %s: %w", transactionID, err)
@@ -258,6 +258,10 @@ func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, run
 		tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{Path: runtimeConfigPath, Owner: txstate.TransactionOwner})
 	}
 	if pid > 0 {
+		startTime, err := rollbackChildProcessStartTime(pid)
+		if err != nil {
+			return fmt.Errorf("read tracked Xray process start time: %w", err)
+		}
 		startTime = strings.TrimSpace(startTime)
 		if startTime == "" {
 			return errors.New("tracked Xray process start time is unavailable")
