@@ -3,7 +3,6 @@ package recovery
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -84,13 +83,13 @@ func saveRolledBackAbsenceEvidence(t *testing.T, runtimeDir string) txstate.Tran
 	t.Helper()
 	configPath := filepath.Join(runtimeDir, "generated", "xray.json")
 	rollback := txstate.RollbackMetadata{
-		TUNAddresses: []txstate.TUNAddressRollback{ownedTunAddressRollback(7)},
-		Routes: []txstate.RouteRollback{{Table: "51820", CIDR: "0.0.0.0/1", Dev: managedInterface, Owner: netexecutor.OwnerRoute}},
-		PolicyRules: []txstate.PolicyRuleRollback{{Priority: 10000, From: "all", Table: "51820", Owner: netexecutor.OwnerPolicyRule}},
-		DNS: []txstate.DNSRollback{{Backend: "systemd-resolved", Link: managedInterface, Owner: netexecutor.OwnerDNS}},
-		NFTables: []txstate.NFTablesRollback{{Family: "inet", Table: "podlaz", Owner: netexecutor.OwnerFirewall}},
+		TUNAddresses:     []txstate.TUNAddressRollback{ownedTunAddressRollback(7)},
+		Routes:           []txstate.RouteRollback{{Table: "51820", CIDR: "0.0.0.0/1", Dev: managedInterface, Owner: netexecutor.OwnerRoute}},
+		PolicyRules:      []txstate.PolicyRuleRollback{{Priority: 10000, From: "all", Table: "51820", Owner: netexecutor.OwnerPolicyRule}},
+		DNS:              []txstate.DNSRollback{{Backend: "systemd-resolved", Link: managedInterface, Owner: netexecutor.OwnerDNS}},
+		NFTables:         []txstate.NFTablesRollback{{Family: "inet", Table: "podlaz", Owner: netexecutor.OwnerFirewall}},
 		GeneratedConfigs: []txstate.GeneratedConfigRollback{{Path: configPath, Owner: txstate.TransactionOwner}},
-		ChildProcesses: []txstate.ChildProcessRollback{{PID: 4242, Label: "xray", ConfigRef: configPath, Owner: txstate.TransactionOwner}},
+		ChildProcesses:   []txstate.ChildProcessRollback{{PID: 4242, Label: "xray", ConfigRef: configPath, Owner: txstate.TransactionOwner}},
 	}
 	_, tx := saveTransaction(t, runtimeDir, rollback)
 	tx.State = txstate.TransactionRolledBack
@@ -145,5 +144,3 @@ func (r terminalAbsenceRunner) Run(_ context.Context, name string, args ...strin
 func missingCommandResult(stderr string) (CommandResult, error) {
 	return CommandResult{Stderr: stderr, RawStderr: stderr + "\n", ExitCode: 1}, errors.New(stderr)
 }
-
-var _ = os.ErrNotExist
