@@ -32,16 +32,19 @@ func removeRetainedNetworkSessionReplayTransaction(runtimeDir, transactionID str
 
 func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID bootIDReader) error {
 	diagnosticStore := newNetworkSessionResumeDiagnosticStore(runtimeDir, readBootID)
-	_, diagnosticExists, err := diagnosticStore.Load()
+	record, diagnosticExists, err := diagnosticStore.Load()
 	if err != nil {
 		return err
 	}
 	if !diagnosticExists {
-		// Ordinary disconnect/finalization does not own unrelated transaction
-		// state. The all-transaction preflight below is specific to retained
-		// replay evidence whose exact terminal witness already covered those
-		// rolled-back tombstones.
 		return nil
+	}
+	if !diagnosticHasTerminalReplayEvidence(record) {
+		// Generic startup/recovery diagnostics and non-terminal replay failures do
+		// not own unrelated transaction state. A successful explicit lifecycle
+		// finalization may discard that diagnostic, but must not inspect/delete
+		// transactions merely because the diagnostic file exists.
+		return diagnosticStore.Remove()
 	}
 
 	transactionIDs, err := finalizableRolledBackTransactionEvidence(runtimeDir)
@@ -57,6 +60,10 @@ func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID 
 		return err
 	}
 	return diagnosticStore.Remove()
+}
+
+func diagnosticHasTerminalReplayEvidence(record networkSessionResumeDiagnostic) bool {
+	return record.Current != nil && record.Current.ReplayDisposition == networkSessionReplayDispositionTerminal
 }
 
 func finalizableRolledBackTransactionEvidence(runtimeDir string) ([]string, error) {
