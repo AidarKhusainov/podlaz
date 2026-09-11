@@ -46,7 +46,7 @@ func resumeNetworkSessionResultWithTerminalObservation(
 	}
 
 	resumed, err := resumeNetworkSessionWithTerminalObservation(
-		ctx,
+		withNetworkSessionReplayContext(ctx),
 		retained,
 		lifecycle,
 		status,
