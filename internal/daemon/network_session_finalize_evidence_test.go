@@ -74,6 +74,9 @@ func admittedTerminalSessionForFinalizeTest(t *testing.T) (networkSessionStateSt
 	if err := store.SetIntent(networkSessionIntentTerminal); err != nil {
 		t.Fatalf("set terminal intent: %v", err)
 	}
+	if err := store.SetProtection(nil); err != nil {
+		t.Fatalf("record converged protection removal: %v", err)
+	}
 	state, exists, err = store.Load()
 	if err != nil || !exists {
 		t.Fatalf("load terminal session: exists=%v err=%v", exists, err)
