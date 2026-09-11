@@ -36,6 +36,13 @@ func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID 
 	if err != nil {
 		return err
 	}
+	if !diagnosticExists {
+		// Ordinary disconnect/finalization does not own unrelated transaction
+		// state. The all-transaction preflight below is specific to retained
+		// replay evidence whose exact terminal witness already covered those
+		// rolled-back tombstones.
+		return nil
+	}
 
 	transactionIDs, err := finalizableRolledBackTransactionEvidence(runtimeDir)
 	if err != nil {
@@ -48,9 +55,6 @@ func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID 
 	}
 	if err := requireNoNetworkSessionTransactionState(runtimeDir); err != nil {
 		return err
-	}
-	if !diagnosticExists {
-		return nil
 	}
 	return diagnosticStore.Remove()
 }
