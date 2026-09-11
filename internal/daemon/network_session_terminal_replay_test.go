@@ -23,6 +23,7 @@ func TestResumeNetworkSessionConsumesCurrentTerminalReplayWithoutReadmission(t *
 		TUNFailurePhase:    "network-apply",
 		RollbackStatus:     "completed",
 		TransactionPresent: true,
+		TransactionID:      "tun-terminal-replay",
 		CandidateMutation:  networkSessionCandidateMutationRolledBack,
 	}
 	record := networkSessionResumeDiagnostic{
@@ -118,6 +119,7 @@ func TestResumeNetworkSessionTerminalObservationFailureKeepsProtectionArmed(t *t
 		TUNFailurePhase:    "network-apply",
 		RollbackStatus:     "completed",
 		TransactionPresent: true,
+		TransactionID:      "tun-terminal-replay",
 		CandidateMutation:  networkSessionCandidateMutationRolledBack,
 	}
 	record := networkSessionResumeDiagnostic{
