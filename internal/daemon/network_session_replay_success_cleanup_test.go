@@ -41,8 +41,8 @@ func TestSuccessfulReplayFinalizesRetainedRolledBackEvidenceFromPriorRetryableAt
 	)
 	lifecycle := &scriptedReplayEvidenceLifecycle{errs: []error{firstFailure, nil}}
 
-	if resumed, err := resumeNetworkSession(context.Background(), continuation, lifecycle, inactiveNetworkSessionStatus, successfulNetworkSessionRecovery); err == nil || resumed {
-		t.Fatalf("first retryable replay must report retained evidence cleanup failure: resumed=%v err=%v", resumed, err)
+	if result, err := resumeNetworkSessionResult(context.Background(), continuation, lifecycle, inactiveNetworkSessionStatus, successfulNetworkSessionRecovery); err == nil || result != networkSessionResumeUnknown {
+		t.Fatalf("first retryable replay must report retained evidence cleanup failure: result=%q err=%v", result, err)
 	}
 	if _, err := os.Stat(retainedPath); err != nil {
 		t.Fatalf("retained rolled-back evidence disappeared despite failed cleanup: %v", err)
@@ -51,9 +51,9 @@ func TestSuccessfulReplayFinalizesRetainedRolledBackEvidenceFromPriorRetryableAt
 		t.Fatal(err)
 	}
 
-	resumed, err := resumeNetworkSession(context.Background(), continuation, lifecycle, inactiveNetworkSessionStatus, successfulNetworkSessionRecovery)
-	if err != nil || !resumed {
-		t.Fatalf("second replay must resume successfully: resumed=%v err=%v", resumed, err)
+	result, err := resumeNetworkSessionResult(context.Background(), continuation, lifecycle, inactiveNetworkSessionStatus, successfulNetworkSessionRecovery)
+	if err != nil || result != networkSessionResumeResumed {
+		t.Fatalf("second replay must resume successfully: result=%q err=%v", result, err)
 	}
 	if _, err := os.Stat(retainedPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("successful replay retained stale rolled-back transaction evidence: %v", err)
