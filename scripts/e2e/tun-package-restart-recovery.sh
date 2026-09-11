@@ -14,8 +14,8 @@ source "${SCRIPT_DIR}/lib/tun_package_assertions.sh"
 source "${SCRIPT_DIR}/lib/tun_foreign_state.sh"
 
 require_cmd \
-  apt awk cat curl date dpkg dpkg-deb find getent git grep id ip journalctl mktemp nft pgrep \
-  python3 readlink resolvectl rm sed seq sha256sum sleep sort sudo systemctl systemd-run timeout tr
+  apt awk cat curl date dpkg dpkg-deb find getent git grep id install ip journalctl mkdir mktemp nft pgrep \
+  python3 readlink resolvectl rm sed seq sha256sum sleep sort sudo systemctl systemd-run timeout touch tr
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -58,12 +58,21 @@ V0240_ACTUAL_SHA256="$(sha256sum "${PREVIOUS}" | awk '{print $1}')"
 
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 SESSION_STATE="/run/podlaz/network-session-continuation.json"
+RESUME_DIAGNOSTIC="/run/podlaz/diagnostics/network-session-resume.json"
 TRANSACTION_DIR="/run/podlaz/transactions"
 FALLBACK_NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
+CANDIDATE_HOOK_DIR="/run/podlaz/e2e-package-restart"
+CANDIDATE_HOOK_DROPIN_DIR="/run/systemd/system/podlazd.service.d"
+CANDIDATE_HOOK_DROPIN="${CANDIDATE_HOOK_DROPIN_DIR}/99-e2e-package-restart.conf"
+CANDIDATE_TERMINAL_READY="${CANDIDATE_HOOK_DIR}/terminal-data-plane-clean.ready"
+CANDIDATE_TERMINAL_CONTINUE="${CANDIDATE_HOOK_DIR}/terminal-data-plane-clean.continue"
 PRIVATE_SOURCE_SESSION="${E2E_TMP_ROOT}/package-restart-source-session.json"
 PRIVATE_SOURCE_TX="${E2E_TMP_ROOT}/package-restart-source-transaction.json"
 PRIVATE_SOURCE_MANIFEST="${E2E_TMP_ROOT}/package-restart-source-network-manifest.json"
 PRIVATE_SOURCE_JOURNAL="${E2E_TMP_ROOT}/package-restart-source-journal.txt"
+PRIVATE_CANDIDATE_DIAGNOSTIC="${E2E_TMP_ROOT}/package-restart-candidate-resume-diagnostic.json"
+PRIVATE_CANDIDATE_SESSION="${E2E_TMP_ROOT}/package-restart-candidate-session.json"
+PRIVATE_TYPED_TERMINAL="${E2E_TMP_ROOT}/package-restart-typed-terminal.txt"
 PACKAGE_TOUCHED=0
 FOREIGN_STATE_CREATED=0
 EXPECTED_RUNTIME_DEB=""
@@ -78,6 +87,7 @@ V0240_PROTECTION_FAMILY=""
 V0240_PROTECTION_TABLE=""
 PACKAGE_RESTART_STARTED_AT=""
 PACKAGE_RESTART_OUTCOME=""
+PACKAGE_RESTART_TYPED_TERMINAL=0
 
 mask_multiline_sensitive() {
   local value="${1:-}" line
@@ -252,6 +262,83 @@ assert_original_process_absent() {
   fi
 }
 
+install_candidate_terminal_evidence_pause() {
+  local tmp
+  sudo -n mkdir -p "${CANDIDATE_HOOK_DROPIN_DIR}" "${CANDIDATE_HOOK_DIR}"
+  sudo -n rm -f -- "${CANDIDATE_TERMINAL_READY}" "${CANDIDATE_TERMINAL_CONTINUE}"
+  tmp="$(mktemp "${E2E_TMP_ROOT}/package-restart-hook.XXXXXX")"
+  cat >"${tmp}" <<EOF
+[Service]
+Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE=true
+Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_DIR=${CANDIDATE_HOOK_DIR}
+Environment=PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE_TIMEOUT_SECONDS=180
+EOF
+  sudo -n install -m 0644 "${tmp}" "${CANDIDATE_HOOK_DROPIN}"
+  rm -f -- "${tmp}"
+  sudo -n systemctl daemon-reload >/dev/null
+}
+
+capture_typed_terminal_replay_evidence() {
+  local values=()
+  [[ "${PACKAGE_RESTART_TYPED_TERMINAL}" == 0 ]] || return 0
+  sudo -n test -f "${CANDIDATE_TERMINAL_READY}" || fail "typed terminal boundary marker is absent"
+  sudo -n test -f "${RESUME_DIAGNOSTIC}" || fail "typed terminal replay diagnostic is absent"
+  sudo -n test -f "${SESSION_STATE}" || fail "typed terminal Network Session authority is absent"
+  sudo -n cat "${RESUME_DIAGNOSTIC}" >"${PRIVATE_CANDIDATE_DIAGNOSTIC}"
+  sudo -n cat "${SESSION_STATE}" >"${PRIVATE_CANDIDATE_SESSION}"
+  chmod 0600 "${PRIVATE_CANDIDATE_DIAGNOSTIC}" "${PRIVATE_CANDIDATE_SESSION}"
+  if ! python3 - "${PRIVATE_CANDIDATE_DIAGNOSTIC}" "${PRIVATE_CANDIDATE_SESSION}" >"${PRIVATE_TYPED_TERMINAL}" <<'PY_TYPED_TERMINAL'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as handle: diagnostic=json.load(handle)
+with open(sys.argv[2],encoding='utf-8') as handle: session=json.load(handle)
+current=diagnostic.get('current') or {}
+if current.get('replay_disposition')!='terminal':
+    raise SystemExit('current replay disposition is not terminal')
+if current.get('session_id')!=session.get('session_id'):
+    raise SystemExit('typed terminal replay belongs to another Network Session')
+if int(current.get('recovery_epoch') or 0)!=int(session.get('recovery_epoch') or 0):
+    raise SystemExit('typed terminal replay belongs to another recovery epoch')
+if session.get('intent')!='terminal':
+    raise SystemExit('typed terminal replay did not persist terminal intent')
+if current.get('resume_stage')!='connect-replay':
+    raise SystemExit('typed terminal evidence does not describe connect replay')
+mutation=current.get('candidate_mutation')
+if mutation not in ('not-opened','rolled-back'):
+    raise SystemExit('typed terminal candidate mutation is not cleanup-safe')
+if mutation=='rolled-back':
+    if current.get('rollback_status')!='completed' or not current.get('transaction_id'):
+        raise SystemExit('rolled-back terminal replay lacks exact retained transaction evidence')
+subphase=current.get('network_apply_subphase') or 'none'
+print(mutation)
+print(subphase)
+PY_TYPED_TERMINAL
+  then
+    fail "candidate typed terminal replay evidence is invalid"
+  fi
+  chmod 0600 "${PRIVATE_TYPED_TERMINAL}"
+  mapfile -t values <"${PRIVATE_TYPED_TERMINAL}"
+  [[ "${#values[@]}" == 2 ]] || fail "typed terminal replay evidence extraction failed"
+  PACKAGE_RESTART_TYPED_TERMINAL=1
+  printf 'typed_terminal_replay=true\ntyped_terminal_candidate_mutation=%s\ntyped_terminal_network_apply_subphase=%s\n' \
+    "${values[0]}" "${values[1]}" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+  sudo -n touch "${CANDIDATE_TERMINAL_CONTINUE}"
+}
+
+wait_for_candidate_start_boundary() {
+  local attempt
+  for attempt in $(seq 1 300); do
+    if sudo -n test -f "${CANDIDATE_TERMINAL_READY}"; then
+      capture_typed_terminal_replay_evidence
+      return 0
+    fi
+    if [[ -S "${DAEMON_SOCKET}" ]] && sudo -n systemctl is-active --quiet podlazd.service; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  fail "candidate package-restart startup boundary was not reached"
+}
+
 install_candidate_package_replacement() {
   local deb="$1" candidate_pid
   EXPECTED_RUNTIME_DEB="${deb}"
@@ -259,6 +346,7 @@ install_candidate_package_replacement() {
   PACKAGE_RESTART_STARTED_AT="$(date -u '+%Y-%m-%d %H:%M:%S')"
   sudo -n apt install -y "${deb}" >/dev/null
   PACKAGE_TOUCHED=1
+  wait_for_candidate_start_boundary
   wait_for_daemon_socket
   candidate_pid="$(main_pid)"
   [[ "${candidate_pid}" =~ ^[1-9][0-9]*$ ]] || fail "candidate daemon MainPID is unavailable"
@@ -287,6 +375,9 @@ PY_RESUME
 classify_package_restart_candidate() {
   local attempt status classification
   for attempt in $(seq 1 300); do
+    if sudo -n test -f "${CANDIDATE_TERMINAL_READY}" && [[ "${PACKAGE_RESTART_TYPED_TERMINAL}" == 0 ]]; then
+      capture_typed_terminal_replay_evidence
+    fi
     status="$(mktemp "${E2E_TMP_ROOT}/package-restart-status.XXXXXX")"
     if ! sudo -n curl --fail --silent --show-error --max-time 3 --unix-socket "${DAEMON_SOCKET}" \
       http://localhost/v1/status >"${status}" 2>/dev/null; then
@@ -306,7 +397,7 @@ session=scan.get('network_session') or None
 if status.get('connection')=='active' and status.get('mode')=='tun' and health.get('state')=='verified' and len(committed)==1 and not cleanup:
     print('resumed')
 elif status.get('connection')=='inactive' and not cleanup and not committed and not session:
-    print('terminal')
+    print('terminal-clean')
 elif isinstance(session,dict) and (session.get('startup_gate')=='blocked' or session.get('next_action') in ('retry-resume','manual-diagnosis')):
     print('blocked')
 else:
@@ -315,9 +406,19 @@ PY_CLASSIFY
 )"
     rm -f -- "${status}"
     case "${classification}" in
-      resumed|terminal)
-        PACKAGE_RESTART_OUTCOME="${classification}"
-        printf 'candidate_outcome=%s\n' "${classification}" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+      resumed)
+        [[ "${PACKAGE_RESTART_TYPED_TERMINAL}" == 0 ]] || \
+          fail "candidate resumed after typed terminal transition"
+        sudo -n touch "${CANDIDATE_TERMINAL_CONTINUE}"
+        PACKAGE_RESTART_OUTCOME="resumed"
+        printf 'candidate_outcome=resumed\n' >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+        return 0
+        ;;
+      terminal-clean)
+        [[ "${PACKAGE_RESTART_TYPED_TERMINAL}" == 1 ]] || \
+          fail "candidate reached untyped terminal clean state"
+        PACKAGE_RESTART_OUTCOME="terminal"
+        printf 'candidate_outcome=terminal\n' >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
         return 0
         ;;
       blocked)
@@ -365,6 +466,9 @@ assert_terminal_clean() {
 
 cleanup() {
   local code=$?
+  sudo -n rm -f -- "${CANDIDATE_HOOK_DROPIN}" >/dev/null 2>&1 || true
+  sudo -n rm -rf -- "${CANDIDATE_HOOK_DIR}" >/dev/null 2>&1 || true
+  sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
   if [[ "${FOREIGN_STATE_CREATED}" == 1 ]]; then
     cleanup_tun_foreign_state || true
   fi
@@ -401,6 +505,7 @@ wait_for_verified_active v0.2.40-package-restart-active
 capture_v0240_package_restart_authority
 assert_tun_foreign_state v0.2.40-package-restart-active
 check_https_and_dns v0.2.40-package-restart-vpn
+install_candidate_terminal_evidence_pause
 
 install_candidate_package_replacement "${CANDIDATE}"
 assert_v0240_package_restart_failure
