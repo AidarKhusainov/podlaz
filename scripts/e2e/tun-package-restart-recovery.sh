@@ -309,18 +309,22 @@ if mutation=='rolled-back':
     if current.get('rollback_status')!='completed' or not current.get('transaction_id'):
         raise SystemExit('rolled-back terminal replay lacks exact retained transaction evidence')
 subphase=current.get('network_apply_subphase') or 'none'
+cause=current.get('network_apply_failure_cause') or 'unknown'
+if cause not in ('command-exit','command-timeout','command-unavailable','unknown'):
+    raise SystemExit('typed terminal replay has invalid network apply failure cause')
 print(mutation)
 print(subphase)
+print(cause)
 PY_TYPED_TERMINAL
   then
     fail "candidate typed terminal replay evidence is invalid"
   fi
   chmod 0600 "${PRIVATE_TYPED_TERMINAL}"
   mapfile -t values <"${PRIVATE_TYPED_TERMINAL}"
-  [[ "${#values[@]}" == 2 ]] || fail "typed terminal replay evidence extraction failed"
+  [[ "${#values[@]}" == 3 ]] || fail "typed terminal replay evidence extraction failed"
   PACKAGE_RESTART_TYPED_TERMINAL=1
-  printf 'typed_terminal_replay=true\ntyped_terminal_candidate_mutation=%s\ntyped_terminal_network_apply_subphase=%s\n' \
-    "${values[0]}" "${values[1]}" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+  printf 'typed_terminal_replay=true\ntyped_terminal_candidate_mutation=%s\ntyped_terminal_network_apply_subphase=%s\ntyped_terminal_network_apply_failure_cause=%s\n' \
+    "${values[0]}" "${values[1]}" "${values[2]}" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
   sudo -n touch "${CANDIDATE_TERMINAL_CONTINUE}"
 }
 
@@ -370,6 +374,44 @@ PY_RESUME
   assert_original_process_absent "${V0240_PRE_CHILD_PID}" "${V0240_PRE_CHILD_START}" "v0.2.40 package restart Xray"
   printf 'historical_package_restart_failure=missing nftables chains\nintent=resume\n' \
     >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+}
+
+capture_blocked_replay_evidence() {
+  local evidence
+  sudo -n test -f "${RESUME_DIAGNOSTIC}" || fail "blocked replay diagnostic is absent"
+  sudo -n cat "${RESUME_DIAGNOSTIC}" >"${PRIVATE_CANDIDATE_DIAGNOSTIC}"
+  chmod 0600 "${PRIVATE_CANDIDATE_DIAGNOSTIC}"
+  if ! evidence="$(python3 - "${PRIVATE_CANDIDATE_DIAGNOSTIC}" <<'PY_BLOCKED_REPLAY'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as handle: diagnostic=json.load(handle)
+current=diagnostic.get('current') or {}
+if current.get('resume_stage')!='connect-replay':
+    raise SystemExit('blocked evidence does not describe connect replay')
+disposition=current.get('replay_disposition') or 'unknown'
+subphase=current.get('network_apply_subphase') or 'none'
+cause=current.get('network_apply_failure_cause') or 'unknown'
+mutation=current.get('candidate_mutation') or 'unresolved'
+rollback=current.get('rollback_status') or 'unknown'
+if disposition not in ('terminal','retryable','interrupted','incomplete'):
+    raise SystemExit('blocked replay disposition is invalid')
+if subphase not in ('none','tun-address','routes','policy-rules','dns','nftables'):
+    raise SystemExit('blocked replay network apply subphase is invalid')
+if cause not in ('command-exit','command-timeout','command-unavailable','unknown'):
+    raise SystemExit('blocked replay network apply failure cause is invalid')
+if mutation not in ('not-opened','rolled-back','unresolved'):
+    raise SystemExit('blocked replay candidate mutation is invalid')
+if rollback not in ('not-started','completed','failed','unknown'):
+    raise SystemExit('blocked replay rollback status is invalid')
+print(f'blocked_replay_disposition={disposition}')
+print(f'blocked_replay_network_apply_subphase={subphase}')
+print(f'blocked_replay_failure_cause={cause}')
+print(f'blocked_replay_candidate_mutation={mutation}')
+print(f'blocked_replay_rollback_status={rollback}')
+PY_BLOCKED_REPLAY
+)"; then
+    fail "blocked replay bounded evidence is invalid"
+  fi
+  printf '%s\n' "${evidence}" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
 }
 
 classify_package_restart_candidate() {
@@ -422,6 +464,7 @@ PY_CLASSIFY
         return 0
         ;;
       blocked)
+        capture_blocked_replay_evidence
         fail "candidate package-restart recovery remained blocked instead of converging"
         ;;
       progress) ;;
