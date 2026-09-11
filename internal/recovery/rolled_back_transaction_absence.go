@@ -52,18 +52,76 @@ func verifyRolledBackTransactionAbsenceWithOptions(
 	}
 
 	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
-	tx, _, err := store.Load(transactionID)
+	retained, _, err := store.Load(transactionID)
 	if err != nil {
 		return fmt.Errorf("load retained rolled-back transaction evidence: %w", err)
 	}
-	if tx.State != txstate.TransactionRolledBack || tx.RequiresRecovery() {
+	if retained.State != txstate.TransactionRolledBack || retained.RequiresRecovery() {
 		return fmt.Errorf("retained transaction %s is not conclusively rolled back", transactionID)
 	}
-	if reasons := rollbackOwnershipConsistencyReasons(tx, tx.Rollback); len(reasons) != 0 {
-		return fmt.Errorf("retained rolled-back transaction ownership is inconsistent: %s", strings.Join(reasons, "; "))
-	}
-	if err := verifyNoOtherTransactionAuthority(runtimeDir, transactionID); err != nil {
+	orphans, err := loadOrphanRolledBackTransactionEvidence(runtimeDir, transactionID)
+	if err != nil {
 		return err
+	}
+	if err := verifyRolledBackTransactionFootprintAbsent(ctx, runtimeDir, retained, opts); err != nil {
+		return err
+	}
+	for _, orphan := range orphans {
+		if err := verifyRolledBackTransactionFootprintAbsent(ctx, runtimeDir, orphan, opts); err != nil {
+			return fmt.Errorf("orphan rolled-back transaction %s absence proof failed: %w", orphan.ID, err)
+		}
+	}
+	return nil
+}
+
+func loadOrphanRolledBackTransactionEvidence(runtimeDir, retainedID string) ([]txstate.Transaction, error) {
+	summaries, warnings := txstate.ScanTransactions(runtimeDir)
+	if len(warnings) != 0 {
+		return nil, fmt.Errorf("transaction authority inspection is inconclusive: %s", strings.Join(warnings, "; "))
+	}
+	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
+	retainedFound := false
+	orphans := make([]txstate.Transaction, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary.ID == retainedID {
+			retainedFound = true
+			if summary.State != txstate.TransactionRolledBack || summary.RequiresRecovery {
+				return nil, fmt.Errorf("retained transaction %s regained cleanup authority", retainedID)
+			}
+			continue
+		}
+		if summary.RequiresRecovery {
+			return nil, fmt.Errorf("another durable transaction authority remains: %s (%s)", summary.ID, summary.State)
+		}
+		if summary.State != txstate.TransactionRolledBack {
+			return nil, fmt.Errorf("transaction %s has unexpected non-recovery state %s", summary.ID, summary.State)
+		}
+		tx, _, err := store.Load(summary.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load orphan rolled-back transaction evidence %s: %w", summary.ID, err)
+		}
+		if tx.State != txstate.TransactionRolledBack || tx.RequiresRecovery() {
+			return nil, fmt.Errorf("orphan transaction %s regained cleanup authority", summary.ID)
+		}
+		orphans = append(orphans, tx)
+	}
+	if !retainedFound {
+		return nil, fmt.Errorf("retained rolled-back transaction %s disappeared during absence proof", retainedID)
+	}
+	return orphans, nil
+}
+
+func verifyRolledBackTransactionFootprintAbsent(
+	ctx context.Context,
+	runtimeDir string,
+	tx txstate.Transaction,
+	opts rolledBackTransactionAbsenceOptions,
+) error {
+	if tx.State != txstate.TransactionRolledBack || tx.RequiresRecovery() {
+		return fmt.Errorf("transaction %s is not conclusively rolled back", tx.ID)
+	}
+	if reasons := rollbackOwnershipConsistencyReasons(tx, tx.Rollback); len(reasons) != 0 {
+		return fmt.Errorf("rolled-back transaction ownership is inconsistent: %s", strings.Join(reasons, "; "))
 	}
 	if err := verifyRolledBackLinkAbsent(ctx, opts.Runner, tx.Rollback); err != nil {
 		return err
@@ -106,28 +164,6 @@ func lstatPathExists(path string) (bool, error) {
 	default:
 		return false, err
 	}
-}
-
-func verifyNoOtherTransactionAuthority(runtimeDir, retainedID string) error {
-	summaries, warnings := txstate.ScanTransactions(runtimeDir)
-	if len(warnings) != 0 {
-		return fmt.Errorf("transaction authority inspection is inconclusive: %s", strings.Join(warnings, "; "))
-	}
-	retainedFound := false
-	for _, summary := range summaries {
-		if summary.ID == retainedID {
-			retainedFound = true
-			if summary.State != txstate.TransactionRolledBack || summary.RequiresRecovery {
-				return fmt.Errorf("retained transaction %s regained cleanup authority", retainedID)
-			}
-			continue
-		}
-		return fmt.Errorf("another durable transaction authority remains: %s (%s)", summary.ID, summary.State)
-	}
-	if !retainedFound {
-		return fmt.Errorf("retained rolled-back transaction %s disappeared during absence proof", retainedID)
-	}
-	return nil
 }
 
 func verifyRolledBackLinkAbsent(ctx context.Context, runner CommandRunner, rollback txstate.RollbackMetadata) error {
