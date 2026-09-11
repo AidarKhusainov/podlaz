@@ -148,6 +148,9 @@ func (s networkSessionContinuationStore) disarm(intent networkSessionIntent) err
 }
 
 func (s networkSessionContinuationStore) finalize() error {
+	if err := finalizeRetainedNetworkSessionReplayEvidence(s.runtimeDir, s.readBootID); err != nil {
+		return err
+	}
 	return s.stateStore().Remove()
 }
 
