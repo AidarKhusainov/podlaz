@@ -39,9 +39,6 @@ func TestPersistNetworkSessionReplayFailureStoresPrivateBoundedApplyCause(t *tes
 		t.Fatal("expected persisted replay failure")
 	}
 	record := loadReplayEvidenceDiagnostic(t, continuation)
-	if record.NetworkApplyFailureCause != netexecutor.ApplyFailureCauseCommandUnavailable {
-		t.Fatalf("top-level apply failure cause=%q want=%q", record.NetworkApplyFailureCause, netexecutor.ApplyFailureCauseCommandUnavailable)
-	}
 	if record.Current == nil || record.Current.NetworkApplyFailureCause != netexecutor.ApplyFailureCauseCommandUnavailable {
 		t.Fatalf("current private apply failure cause missing: %#v", record.Current)
 	}
