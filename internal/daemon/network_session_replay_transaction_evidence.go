@@ -32,34 +32,56 @@ func removeRetainedNetworkSessionReplayTransaction(runtimeDir, transactionID str
 
 func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID bootIDReader) error {
 	diagnosticStore := newNetworkSessionResumeDiagnosticStore(runtimeDir, readBootID)
-	record, exists, err := diagnosticStore.Load()
+	_, diagnosticExists, err := diagnosticStore.Load()
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return nil
-	}
 
-	transactionIDs := replayDiagnosticTransactionIDs(record)
-	store := txstate.TransactionStore{RuntimeDir: runtimeDir}
-	for _, transactionID := range transactionIDs {
-		tx, _, loadErr := store.Load(transactionID)
-		if errors.Is(loadErr, os.ErrNotExist) {
-			continue
-		}
-		if loadErr != nil {
-			return fmt.Errorf("load retained replay transaction %q: %w", transactionID, loadErr)
-		}
-		if tx.State != txstate.TransactionRolledBack || tx.RequiresRecovery() {
-			return fmt.Errorf("retained replay transaction %q still requires recovery", transactionID)
-		}
+	transactionIDs, err := finalizableRolledBackTransactionEvidence(runtimeDir)
+	if err != nil {
+		return err
 	}
 	for _, transactionID := range transactionIDs {
 		if err := removeRetainedNetworkSessionReplayTransaction(runtimeDir, transactionID); err != nil {
-			return fmt.Errorf("remove retained replay transaction %q: %w", transactionID, err)
+			return fmt.Errorf("remove rolled-back transaction evidence %q: %w", transactionID, err)
 		}
 	}
+	if err := requireNoNetworkSessionTransactionState(runtimeDir); err != nil {
+		return err
+	}
+	if !diagnosticExists {
+		return nil
+	}
 	return diagnosticStore.Remove()
+}
+
+func finalizableRolledBackTransactionEvidence(runtimeDir string) ([]string, error) {
+	summaries, warnings := txstate.ScanTransactions(runtimeDir)
+	if len(warnings) != 0 {
+		return nil, fmt.Errorf("transaction finalization inspection is inconclusive: %s", strings.Join(warnings, "; "))
+	}
+	ids := make([]string, 0, len(summaries))
+	for _, summary := range summaries {
+		if summary.RequiresRecovery {
+			return nil, fmt.Errorf("transaction %q still requires recovery", summary.ID)
+		}
+		if summary.State != txstate.TransactionRolledBack {
+			return nil, fmt.Errorf("transaction %q has unexpected non-recovery state %q", summary.ID, summary.State)
+		}
+		ids = append(ids, summary.ID)
+	}
+	return ids, nil
+}
+
+func requireNoNetworkSessionTransactionState(runtimeDir string) error {
+	summaries, warnings := txstate.ScanTransactions(runtimeDir)
+	if len(warnings) != 0 {
+		return fmt.Errorf("transaction finalization verification is inconclusive: %s", strings.Join(warnings, "; "))
+	}
+	if len(summaries) != 0 {
+		return fmt.Errorf("transaction finalization left %d transaction record(s)", len(summaries))
+	}
+	return nil
 }
 
 func finalizeNetworkSessionReplayEvidenceAfterTeardown(
@@ -77,24 +99,4 @@ func finalizeNetworkSessionReplayEvidenceAfterTeardown(
 		return nil
 	}
 	return finalizeRetainedNetworkSessionReplayEvidence(continuation.runtimeDir, continuation.readBootID)
-}
-
-func replayDiagnosticTransactionIDs(record networkSessionResumeDiagnostic) []string {
-	seen := make(map[string]struct{}, 2)
-	ids := make([]string, 0, 2)
-	for _, attempt := range []*networkSessionReplayAttempt{record.Originating, record.Current} {
-		if attempt == nil {
-			continue
-		}
-		transactionID := strings.TrimSpace(attempt.TransactionID)
-		if transactionID == "" || transactionID == noTunTransactionID {
-			continue
-		}
-		if _, ok := seen[transactionID]; ok {
-			continue
-		}
-		seen[transactionID] = struct{}{}
-		ids = append(ids, transactionID)
-	}
-	return ids
 }
