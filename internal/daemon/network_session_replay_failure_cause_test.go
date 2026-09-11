@@ -5,7 +5,6 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/AidarKhusainov/podlaz/internal/api"
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
@@ -46,10 +45,8 @@ func TestPersistNetworkSessionReplayFailureStoresPrivateBoundedApplyCause(t *tes
 	if record.Current == nil || record.Current.NetworkApplyFailureCause != netexecutor.ApplyFailureCauseCommandUnavailable {
 		t.Fatalf("current private apply failure cause missing: %#v", record.Current)
 	}
-
-	projected := projectNetworkSessionRecoveryState(networkSessionState{Intent: networkSessionIntentResume}, record, false)
-	if projected.ReplayDisposition != api.NetworkSessionReplayDispositionIncomplete {
-		t.Fatalf("bounded cause must not create terminality: replay disposition=%q", projected.ReplayDisposition)
+	if record.Current.ReplayDisposition != networkSessionReplayDispositionIncomplete {
+		t.Fatalf("bounded cause must not create terminality: replay disposition=%q", record.Current.ReplayDisposition)
 	}
 }
 
