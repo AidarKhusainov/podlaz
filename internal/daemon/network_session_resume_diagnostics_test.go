@@ -276,7 +276,11 @@ type resumeRetryLifecycle struct{ attempts int }
 func (l *resumeRetryLifecycle) Connect(_ context.Context, request api.ConnectRequest) (api.LifecycleResponse, error) {
 	l.attempts++
 	if l.attempts == 1 {
-		return api.LifecycleResponse{}, withTunFailurePhase("preflight", noTunTransactionID, "not-started", errors.New("transient pre-Xray failure"))
+		return api.LifecycleResponse{}, withNetworkSessionReplaySemantics(
+			networkSessionReplayDispositionRetryable,
+			networkSessionCandidateMutationNotOpened,
+			withTunFailurePhase("preflight", noTunTransactionID, "not-started", errors.New("transient pre-Xray failure")),
+		)
 	}
 	return api.LifecycleResponse{Connection: "active", Mode: request.Mode, Proxy: "inactive", TUN: "active"}, nil
 }

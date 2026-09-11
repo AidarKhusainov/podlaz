@@ -212,6 +212,12 @@ func networkSessionRecoveryHuman(state *api.NetworkSessionRecoveryState) string 
 	if state.LastTUNFailurePhase != "" {
 		fmt.Fprintf(&b, "TUN failure phase: %s\n", render.Redact(state.LastTUNFailurePhase))
 	}
+	if state.ReplayDisposition != "" {
+		fmt.Fprintf(&b, "Replay disposition: %s\n", render.Redact(state.ReplayDisposition))
+	}
+	if state.NetworkApplySubphase != "" {
+		fmt.Fprintf(&b, "Network apply subphase: %s\n", render.Redact(state.NetworkApplySubphase))
+	}
 	if state.RollbackStatus != "" {
 		fmt.Fprintf(&b, "Rollback status: %s\n", render.Redact(state.RollbackStatus))
 	}
@@ -321,6 +327,8 @@ func redactedNetworkSessionRecoveryState(state *api.NetworkSessionRecoveryState)
 		"resume_stage":           render.Redact(state.ResumeStage),
 		"last_resume_outcome":    render.Redact(state.LastResumeOutcome),
 		"last_tun_failure_phase": render.Redact(state.LastTUNFailurePhase),
+		"replay_disposition":     render.Redact(state.ReplayDisposition),
+		"network_apply_subphase": render.Redact(state.NetworkApplySubphase),
 		"rollback_status":        render.Redact(state.RollbackStatus),
 		"transaction_present":    state.TransactionPresent,
 		"legacy_migration":       state.LegacyMigration,

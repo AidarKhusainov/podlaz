@@ -83,6 +83,9 @@ func convergePersistedNetworkSessionTeardownWith(
 	if state.Intent != networkSessionIntentDisconnect && state.Intent != networkSessionIntentTerminal {
 		return fmt.Errorf("persisted teardown requires disconnect/terminal intent, found %q", state.Intent)
 	}
+	if err := maybePauseAfterTerminalDataPlaneCleanup(ctx); err != nil {
+		return fmt.Errorf("pause after exact data-plane cleanup for E2E verification: %w", err)
+	}
 
 	if state.Protection != nil {
 		if executor == nil {

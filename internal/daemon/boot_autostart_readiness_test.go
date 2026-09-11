@@ -36,7 +36,7 @@ func TestBootAutostartReadinessTimeoutConsumesAttemptWithoutConnect(t *testing.T
 
 	result, err := runBootAutostartStartupWithOptions(
 		context.Background(), manifestStore, attemptStore, continuation, lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		func(context.Context) (networkSessionResumeResult, error) { return networkSessionResumeNoSession, nil },
 		bootAutostartStartupOptions{
 			terminalConverge: successfulBootTerminalConvergence(t),
 			waitForNetwork: func(context.Context) error {
@@ -75,7 +75,7 @@ func TestBootAutostartReadinessCancellationKeepsAttemptInProgressWithoutConnect(
 
 	result, err := runBootAutostartStartupWithOptions(
 		ctx, manifestStore, attemptStore, continuation, lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		func(context.Context) (networkSessionResumeResult, error) { return networkSessionResumeNoSession, nil },
 		bootAutostartStartupOptions{
 			waitForNetwork: func(context.Context) error {
 				cancel()

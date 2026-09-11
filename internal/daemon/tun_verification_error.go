@@ -66,13 +66,37 @@ func (e *TunVerificationError) Unwrap() error {
 }
 
 func withTunRollbackCompleted(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	completed := err
 	var verification *TunVerificationError
 	if errors.As(err, &verification) {
 		copy := *verification
 		copy.RollbackCompleted = true
-		return &copy
+		completed = &copy
+	} else {
+		completed = fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
 	}
-	return fmt.Errorf("%w; rolled back applied podlaz-owned networking state", err)
+
+	// Rollback completion proves the candidate mutation outcome only. It never
+	// creates replay terminality. Preserve a positive typed disposition when the
+	// underlying cause already carries one; otherwise remain conservatively
+	// incomplete while recording that exact candidate rollback completed.
+	var semantic networkSessionReplaySemanticsError
+	if errors.As(err, &semantic) && validNetworkSessionReplayDisposition(semantic.disposition) {
+		return withNetworkSessionReplaySemantics(
+			semantic.disposition,
+			networkSessionCandidateMutationRolledBack,
+			completed,
+		)
+	}
+	return withNetworkSessionReplaySemantics(
+		networkSessionReplayDispositionIncomplete,
+		networkSessionCandidateMutationRolledBack,
+		completed,
+	)
 }
 
 func isTunVerificationError(err error) bool {

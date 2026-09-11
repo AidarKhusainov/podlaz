@@ -72,13 +72,13 @@ func (e DNSAwareTunExecutor) ApplyWithStepSink(ctx context.Context, plan planner
 	}
 	if shouldApplyDNS(plan.DNS) {
 		dnsStep, applyErr := e.DNS.Apply(ctx, plan.DNS)
-		if err := record(dnsStep, applyErr); err != nil {
+		if err := record(dnsStep, withApplyFailureSubphase(applyFailureSubphaseDNS, applyErr)); err != nil {
 			return steps, err
 		}
 	}
 	if shouldApplyFirewall(plan.Firewall) {
 		firewallStep, applyErr := e.Firewall.Apply(ctx, plan.Firewall)
-		if err := record(firewallStep, applyErr); err != nil {
+		if err := record(firewallStep, withApplyFailureSubphase(applyFailureSubphaseNFTables, applyErr)); err != nil {
 			return steps, err
 		}
 	}

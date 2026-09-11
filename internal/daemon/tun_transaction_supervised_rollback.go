@@ -12,6 +12,12 @@ func (e *tunNetworkMutationError) RollbackWithChildStopper(ctx context.Context, 
 	if e == nil {
 		return nil
 	}
+	if isNetworkSessionReplayContext(ctx) {
+		// Automatic Network Session replay keeps the exact rolled-back transaction
+		// as read-only evidence until the replay disposition and terminal witness
+		// are resolved. TransactionRolledBack carries no cleanup authority.
+		return rollbackTunTransactionWithChildStopper(ctx, e.store, &e.transaction, e.rollbackPlan, executor, stopChildren)
+	}
 	return rollbackPreparedTunFailureWithChildStopper(ctx, e.store, &e.transaction, e.rollbackPlan, executor, stopChildren)
 }
 

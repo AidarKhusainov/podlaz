@@ -55,6 +55,10 @@ func successfulBootTerminalConvergence(t *testing.T) bootAutostartTerminalConver
 	}
 }
 
+func noNetworkSessionResume(context.Context) (networkSessionResumeResult, error) {
+	return networkSessionResumeNoSession, nil
+}
+
 func bootRequest(configuration api.AutostartConfigureRequest) api.ConnectRequest {
 	return api.ConnectRequest{Mode: configuration.Mode, Profile: configuration.Profile}
 }
@@ -64,9 +68,9 @@ func TestRunBootAutostartStartupDoesNothingWhenDisabled(t *testing.T) {
 	lifecycle := &bootAutostartRecordingLifecycle{}
 	resumeCalls := 0
 
-	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) {
+	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (networkSessionResumeResult, error) {
 		resumeCalls++
-		return false, nil
+		return networkSessionResumeNoSession, nil
 	})
 	if err != nil {
 		t.Fatalf("runBootAutostartStartup() error = %v", err)
@@ -85,7 +89,7 @@ func TestRunBootAutostartStartupDoesNotUseManifestConfiguredThisBoot(t *testing.
 		t.Fatal(err)
 	}
 	lifecycle := &bootAutostartRecordingLifecycle{}
-	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) { return false, nil })
+	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, noNetworkSessionResume)
 	if err != nil || result != bootAutostartStartupNoop || len(lifecycle.requests) != 0 {
 		t.Fatalf("same-boot configuration triggered connect: result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
 	}
@@ -102,7 +106,7 @@ func TestRunBootAutostartStartupAdmitsOneFutureBootConnectWithCanonicalDefaults(
 	}
 	lifecycle := &bootAutostartRecordingLifecycle{}
 
-	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) { return false, nil })
+	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, noNetworkSessionResume)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +149,7 @@ func TestRunBootAutostartStartupReplaysPinnedInProgressAttemptAfterPreContinuati
 	}
 
 	lifecycle := &bootAutostartRecordingLifecycle{}
-	result, err := runBootAutostartStartup(context.Background(), changedStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) { return false, nil })
+	result, err := runBootAutostartStartup(context.Background(), changedStore, attemptStore, continuation, lifecycle, noNetworkSessionResume)
 	if err != nil || result != bootAutostartStartupConnected || len(lifecycle.requests) != 1 {
 		t.Fatalf("result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
 	}
@@ -170,9 +174,9 @@ func TestRunBootAutostartStartupContinuationAlwaysWins(t *testing.T) {
 	lifecycle := &bootAutostartRecordingLifecycle{}
 	resumeCalls := 0
 
-	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) {
+	result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (networkSessionResumeResult, error) {
 		resumeCalls++
-		return true, nil
+		return networkSessionResumeResumed, nil
 	})
 	if err != nil || result != bootAutostartStartupContinued || resumeCalls != 1 || len(lifecycle.requests) != 0 {
 		t.Fatalf("continuation ordering: result=%q resume=%d requests=%d err=%v", result, resumeCalls, len(lifecycle.requests), err)
@@ -203,9 +207,9 @@ func TestRunBootAutostartStartupConvergedTerminalContinuationDoesNotFreshConnect
 
 	result, err := runBootAutostartStartup(
 		context.Background(), manifestStore, attemptStore, continuation, lifecycle,
-		func(context.Context) (bool, error) {
+		func(context.Context) (networkSessionResumeResult, error) {
 			resumeCalls++
-			return false, nil
+			return networkSessionResumeNoSession, nil
 		},
 		successfulBootTerminalConvergence(t),
 	)
@@ -244,7 +248,7 @@ func TestRunBootAutostartStartupCompletedAttemptNeverReconnectsSameBoot(t *testi
 				t.Fatal(err)
 			}
 			lifecycle := &bootAutostartRecordingLifecycle{}
-			result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, func(context.Context) (bool, error) { return false, nil })
+			result, err := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, lifecycle, noNetworkSessionResume)
 			if err != nil || result != bootAutostartStartupNoop || len(lifecycle.requests) != 0 {
 				t.Fatalf("completed attempt reconnected: result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
 			}
@@ -260,7 +264,7 @@ func TestRunBootAutostartStartupConnectFailureConsumesAttemptOnlyAfterConvergenc
 	lifecycle := &bootAutostartRecordingLifecycle{err: errors.New("simulated terminal connect failure")}
 	result, err := runBootAutostartStartup(
 		context.Background(), manifestStore, attemptStore, continuation, lifecycle,
-		func(context.Context) (bool, error) { return false, nil },
+		noNetworkSessionResume,
 		successfulBootTerminalConvergence(t),
 	)
 	if err == nil || result != bootAutostartStartupTerminal || len(lifecycle.requests) != 1 {
@@ -275,7 +279,7 @@ func TestRunBootAutostartStartupConnectFailureConsumesAttemptOnlyAfterConvergenc
 	}
 
 	secondLifecycle := &bootAutostartRecordingLifecycle{}
-	result, secondErr := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, secondLifecycle, func(context.Context) (bool, error) { return false, nil })
+	result, secondErr := runBootAutostartStartup(context.Background(), manifestStore, attemptStore, continuation, secondLifecycle, noNetworkSessionResume)
 	if secondErr != nil || result != bootAutostartStartupNoop || len(secondLifecycle.requests) != 0 {
 		t.Fatalf("terminal attempt retried: result=%q requests=%d err=%v", result, len(secondLifecycle.requests), secondErr)
 	}

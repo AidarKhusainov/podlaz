@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -257,7 +258,21 @@ func saveCoreRollbackMetadata(store txstate.TransactionStore, transactionID, run
 		tx.Rollback.GeneratedConfigs = append(tx.Rollback.GeneratedConfigs, txstate.GeneratedConfigRollback{Path: runtimeConfigPath, Owner: txstate.TransactionOwner})
 	}
 	if pid > 0 {
-		tx.Rollback.ChildProcesses = append(tx.Rollback.ChildProcesses, txstate.ChildProcessRollback{PID: pid, Label: "xray", ConfigRef: runtimeConfigPath, Owner: txstate.TransactionOwner})
+		startTime, err := rollbackChildProcessStartTime(pid)
+		if err != nil {
+			return fmt.Errorf("read tracked Xray process start time: %w", err)
+		}
+		startTime = strings.TrimSpace(startTime)
+		if startTime == "" {
+			return errors.New("tracked Xray process start time is unavailable")
+		}
+		tx.Rollback.ChildProcesses = append(tx.Rollback.ChildProcesses, txstate.ChildProcessRollback{
+			PID:       pid,
+			Label:     "xray",
+			ConfigRef: runtimeConfigPath,
+			StartTime: startTime,
+			Owner:     txstate.TransactionOwner,
+		})
 	}
 	tx.Health = txstate.HealthResult{Status: "core-started", CheckedAt: now.UTC(), Message: "Xray process stayed alive during startup verification"}
 	_, err = store.Save(tx)

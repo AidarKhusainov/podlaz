@@ -19,17 +19,53 @@ const (
 	maxNetworkSessionResumeDiagnosticBytes      = 16 * 1024
 )
 
+type networkSessionReplayDisposition string
+
+const (
+	networkSessionReplayDispositionTerminal    networkSessionReplayDisposition = "terminal"
+	networkSessionReplayDispositionRetryable   networkSessionReplayDisposition = "retryable"
+	networkSessionReplayDispositionInterrupted networkSessionReplayDisposition = "interrupted"
+	networkSessionReplayDispositionIncomplete  networkSessionReplayDisposition = "incomplete"
+)
+
+type networkSessionCandidateMutation string
+
+const (
+	networkSessionCandidateMutationNotOpened  networkSessionCandidateMutation = "not-opened"
+	networkSessionCandidateMutationRolledBack networkSessionCandidateMutation = "rolled-back"
+	networkSessionCandidateMutationUnresolved networkSessionCandidateMutation = "unresolved"
+)
+
+type networkSessionReplayAttempt struct {
+	SessionID                string                          `json:"session_id"`
+	RecoveryEpoch            uint64                          `json:"recovery_epoch"`
+	ReplayDisposition        networkSessionReplayDisposition `json:"replay_disposition"`
+	ResumeStage              string                          `json:"resume_stage"`
+	TUNFailurePhase          string                          `json:"tun_failure_phase,omitempty"`
+	NetworkApplySubphase     string                          `json:"network_apply_subphase,omitempty"`
+	NetworkApplyFailureCause string                          `json:"network_apply_failure_cause,omitempty"`
+	RollbackStatus           string                          `json:"rollback_status,omitempty"`
+	TransactionPresent       bool                            `json:"transaction_present"`
+	TransactionID            string                          `json:"transaction_id,omitempty"`
+	LegacyMigration          bool                            `json:"legacy_migration"`
+	CandidateMutation        networkSessionCandidateMutation `json:"candidate_mutation"`
+}
+
 type networkSessionResumeDiagnostic struct {
-	SchemaVersion      string `json:"schema_version"`
-	Owner              string `json:"owner"`
-	BootID             string `json:"boot_id"`
-	RecoveryEpoch      uint64 `json:"recovery_epoch"`
-	ResumeStage        string `json:"resume_stage"`
-	LastResumeOutcome  string `json:"last_resume_outcome"`
-	TUNFailurePhase    string `json:"tun_failure_phase,omitempty"`
-	RollbackStatus     string `json:"rollback_status,omitempty"`
-	TransactionPresent bool   `json:"transaction_present"`
-	LegacyMigration    bool   `json:"legacy_migration"`
+	SchemaVersion        string                       `json:"schema_version"`
+	Owner                string                       `json:"owner"`
+	BootID               string                       `json:"boot_id"`
+	RecoveryEpoch        uint64                       `json:"recovery_epoch"`
+	ResumeStage          string                       `json:"resume_stage"`
+	LastResumeOutcome    string                       `json:"last_resume_outcome"`
+	TUNFailurePhase      string                       `json:"tun_failure_phase,omitempty"`
+	RollbackStatus       string                       `json:"rollback_status,omitempty"`
+	TransactionPresent   bool                         `json:"transaction_present"`
+	LegacyMigration      bool                         `json:"legacy_migration"`
+	ReplayDisposition    string                       `json:"replay_disposition,omitempty"`
+	NetworkApplySubphase string                       `json:"network_apply_subphase,omitempty"`
+	Originating          *networkSessionReplayAttempt `json:"originating,omitempty"`
+	Current              *networkSessionReplayAttempt `json:"current,omitempty"`
 }
 
 type networkSessionResumeDiagnosticStore struct {
@@ -74,6 +110,22 @@ func (s networkSessionResumeDiagnosticStore) Save(record networkSessionResumeDia
 		return fmt.Errorf("persist network session resume diagnostic: %w", err)
 	}
 	return nil
+}
+
+func (s networkSessionResumeDiagnosticStore) SaveLatestBlocker(record networkSessionResumeDiagnostic) error {
+	current, exists, err := s.Load()
+	if err != nil {
+		return err
+	}
+	if exists {
+		record.Originating = cloneNetworkSessionReplayAttempt(current.Originating)
+		record.Current = cloneNetworkSessionReplayAttempt(current.Current)
+	}
+	if record.ResumeStage != api.NetworkSessionResumeStageConnectReplay {
+		record.ReplayDisposition = ""
+		record.NetworkApplySubphase = ""
+	}
+	return s.Save(record)
 }
 
 func (s networkSessionResumeDiagnosticStore) Load() (networkSessionResumeDiagnostic, bool, error) {
@@ -152,20 +204,126 @@ func validateNetworkSessionResumeDiagnostic(record networkSessionResumeDiagnosti
 	if strings.TrimSpace(record.BootID) == "" {
 		return errors.New("network session resume diagnostic has empty boot id")
 	}
+	if record.ReplayDisposition != "" && !validNetworkSessionReplayDisposition(networkSessionReplayDisposition(record.ReplayDisposition)) {
+		return fmt.Errorf("invalid network session replay disposition %q", record.ReplayDisposition)
+	}
+	if record.NetworkApplySubphase != "" && !validNetworkSessionApplySubphase(record.NetworkApplySubphase) {
+		return fmt.Errorf("invalid network session apply subphase %q", record.NetworkApplySubphase)
+	}
+	if record.Originating != nil {
+		if err := validateNetworkSessionReplayAttempt(*record.Originating); err != nil {
+			return fmt.Errorf("invalid originating replay attempt: %w", err)
+		}
+	}
+	if record.Current != nil {
+		if err := validateNetworkSessionReplayAttempt(*record.Current); err != nil {
+			return fmt.Errorf("invalid current replay attempt: %w", err)
+		}
+	}
 	state := api.NetworkSessionRecoveryState{
-		Authority:           api.NetworkSessionRecoveryAuthorityPresent,
-		Intent:              "resume",
-		StartupGate:         api.NetworkSessionStartupGateBlocked,
-		ResumeStage:         record.ResumeStage,
-		LastResumeOutcome:   record.LastResumeOutcome,
-		LastTUNFailurePhase: record.TUNFailurePhase,
-		RollbackStatus:      record.RollbackStatus,
-		TransactionPresent:  record.TransactionPresent,
-		LegacyMigration:     record.LegacyMigration,
-		CleanupAuthority:    api.NetworkSessionCleanupAuthorityNone,
-		NextAction:          api.NetworkSessionRecoveryActionRetryResume,
+		Authority:            api.NetworkSessionRecoveryAuthorityPresent,
+		Intent:               "resume",
+		StartupGate:          api.NetworkSessionStartupGateBlocked,
+		ResumeStage:          record.ResumeStage,
+		LastResumeOutcome:    record.LastResumeOutcome,
+		LastTUNFailurePhase:  record.TUNFailurePhase,
+		ReplayDisposition:    record.ReplayDisposition,
+		NetworkApplySubphase: record.NetworkApplySubphase,
+		RollbackStatus:       record.RollbackStatus,
+		TransactionPresent:   record.TransactionPresent,
+		LegacyMigration:      record.LegacyMigration,
+		CleanupAuthority:     api.NetworkSessionCleanupAuthorityNone,
+		NextAction:           networkSessionResumeRecoveryAction(record.ReplayDisposition),
 	}
 	return api.ValidateNetworkSessionRecoveryState(state)
+}
+
+func validateNetworkSessionReplayAttempt(attempt networkSessionReplayAttempt) error {
+	if !networkSessionIDPattern.MatchString(strings.TrimSpace(attempt.SessionID)) {
+		return errors.New("invalid Network Session identity")
+	}
+	if attempt.RecoveryEpoch == 0 {
+		return errors.New("replay attempt has zero recovery epoch")
+	}
+	if attempt.ResumeStage != api.NetworkSessionResumeStageConnectReplay {
+		return fmt.Errorf("replay attempt has invalid resume stage %q", attempt.ResumeStage)
+	}
+	if !validNetworkSessionReplayDisposition(attempt.ReplayDisposition) {
+		return fmt.Errorf("invalid replay disposition %q", attempt.ReplayDisposition)
+	}
+	if attempt.NetworkApplySubphase != "" && !validNetworkSessionApplySubphase(attempt.NetworkApplySubphase) {
+		return fmt.Errorf("invalid replay apply subphase %q", attempt.NetworkApplySubphase)
+	}
+	if attempt.NetworkApplyFailureCause != "" {
+		if attempt.TUNFailurePhase != "network-apply" {
+			return errors.New("network apply failure cause requires network-apply TUN failure phase")
+		}
+		if !validNetworkSessionApplyFailureCause(attempt.NetworkApplyFailureCause) {
+			return fmt.Errorf("invalid network apply failure cause %q", attempt.NetworkApplyFailureCause)
+		}
+	}
+	state := api.NetworkSessionRecoveryState{
+		Authority:            api.NetworkSessionRecoveryAuthorityPresent,
+		Intent:               "resume",
+		StartupGate:          api.NetworkSessionStartupGateBlocked,
+		ResumeStage:          attempt.ResumeStage,
+		LastResumeOutcome:    api.NetworkSessionResumeOutcomeFailed,
+		LastTUNFailurePhase:  attempt.TUNFailurePhase,
+		ReplayDisposition:    string(attempt.ReplayDisposition),
+		NetworkApplySubphase: attempt.NetworkApplySubphase,
+		RollbackStatus:       attempt.RollbackStatus,
+		TransactionPresent:   attempt.TransactionPresent,
+		LegacyMigration:      attempt.LegacyMigration,
+		CleanupAuthority:     api.NetworkSessionCleanupAuthorityNone,
+		NextAction:           networkSessionResumeRecoveryAction(string(attempt.ReplayDisposition)),
+	}
+	if err := api.ValidateNetworkSessionRecoveryState(state); err != nil {
+		return err
+	}
+	switch attempt.CandidateMutation {
+	case networkSessionCandidateMutationNotOpened, networkSessionCandidateMutationRolledBack, networkSessionCandidateMutationUnresolved:
+	default:
+		return fmt.Errorf("invalid candidate mutation outcome %q", attempt.CandidateMutation)
+	}
+	return nil
+}
+
+func validNetworkSessionReplayDisposition(disposition networkSessionReplayDisposition) bool {
+	switch disposition {
+	case networkSessionReplayDispositionTerminal,
+		networkSessionReplayDispositionRetryable,
+		networkSessionReplayDispositionInterrupted,
+		networkSessionReplayDispositionIncomplete:
+		return true
+	default:
+		return false
+	}
+}
+
+func validNetworkSessionApplySubphase(subphase string) bool {
+	switch strings.TrimSpace(subphase) {
+	case "tun-address", "routes", "policy-rules", "dns", "nftables":
+		return true
+	default:
+		return false
+	}
+}
+
+func validNetworkSessionApplyFailureCause(cause string) bool {
+	switch strings.TrimSpace(cause) {
+	case "command-exit", "command-timeout", "command-unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneNetworkSessionReplayAttempt(attempt *networkSessionReplayAttempt) *networkSessionReplayAttempt {
+	if attempt == nil {
+		return nil
+	}
+	cloned := *attempt
+	return &cloned
 }
 
 type networkSessionResumeStageError struct {
@@ -244,7 +402,7 @@ func persistNetworkSessionResumeFailure(continuation networkSessionContinuationS
 	}
 	record.RecoveryEpoch = recoveryEpoch
 	store := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
-	if persistErr := store.Save(record); persistErr != nil {
+	if persistErr := store.SaveLatestBlocker(record); persistErr != nil {
 		return errors.Join(err, persistErr)
 	}
 	return err

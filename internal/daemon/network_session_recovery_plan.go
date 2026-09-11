@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 )
 
 type networkSessionAuthoritySnapshot struct {
@@ -63,6 +65,8 @@ func inspectNetworkSessionRecoveryPlan(
 		plan.ResumeStage = diagnostic.ResumeStage
 		plan.LastResumeOutcome = diagnostic.LastResumeOutcome
 		plan.LastTUNFailurePhase = diagnostic.TUNFailurePhase
+		plan.ReplayDisposition = diagnostic.ReplayDisposition
+		plan.NetworkApplySubphase = diagnostic.NetworkApplySubphase
 		plan.RollbackStatus = diagnostic.RollbackStatus
 		plan.TransactionPresent = diagnostic.TransactionPresent
 		plan.LegacyMigration = plan.LegacyMigration || diagnostic.LegacyMigration
@@ -70,7 +74,7 @@ func inspectNetworkSessionRecoveryPlan(
 
 	switch authority.intent {
 	case networkSessionIntentResume:
-		plan.NextAction = api.NetworkSessionRecoveryActionRetryResume
+		plan.NextAction = networkSessionResumeRecoveryAction(plan.ReplayDisposition)
 	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
 		plan.NextAction = api.NetworkSessionRecoveryActionContinueTeardown
 	default:
@@ -173,6 +177,8 @@ func successfulNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState
 	out.LastResumeOutcome = api.NetworkSessionResumeOutcomeSucceeded
 	out.ResumeStage = ""
 	out.LastTUNFailurePhase = ""
+	out.ReplayDisposition = ""
+	out.NetworkApplySubphase = ""
 	out.RollbackStatus = ""
 	out.TransactionPresent = false
 	out.NextAction = api.NetworkSessionRecoveryActionNone
@@ -186,9 +192,6 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 	out := api.CloneNetworkSessionRecoveryState(plan)
 	out.StartupGate = api.NetworkSessionStartupGateBlocked
 	out.NextAction = api.NetworkSessionRecoveryActionManualDiagnosis
-	if out.Intent == string(networkSessionIntentResume) {
-		out.NextAction = api.NetworkSessionRecoveryActionRetryResume
-	}
 	if failure, ok := networkSessionResumeFailure(resumeErr); ok {
 		out.ResumeStage = failure.ResumeStage
 		out.LastResumeOutcome = failure.LastResumeOutcome
@@ -196,8 +199,46 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 		out.RollbackStatus = failure.RollbackStatus
 		out.TransactionPresent = failure.TransactionPresent
 		out.LegacyMigration = out.LegacyMigration || failure.LegacyMigration
+		if failure.ResumeStage == api.NetworkSessionResumeStageConnectReplay {
+			out.ReplayDisposition = ""
+			out.NetworkApplySubphase = ""
+			if disposition, subphase, projected := networkSessionReplayProjection(resumeErr); projected {
+				out.ReplayDisposition = string(disposition)
+				out.NetworkApplySubphase = subphase
+			} else {
+				// Non-replay orchestration failures may still enter the connect-replay
+				// stage without having passed through the authoritative replay
+				// persistence boundary. Preserve their existing conservative fallback.
+				disposition, _ := classifyNetworkSessionReplayFailure(context.Background(), resumeErr)
+				out.ReplayDisposition = string(disposition)
+				if failure.TUNFailurePhase == "network-apply" {
+					out.NetworkApplySubphase = netexecutor.ApplyFailureSubphase(resumeErr)
+				}
+			}
+		} else {
+			out.ReplayDisposition = ""
+			out.NetworkApplySubphase = ""
+		}
 	} else {
 		out.LastResumeOutcome = api.NetworkSessionResumeOutcomeFailed
+		out.ReplayDisposition = ""
+		out.NetworkApplySubphase = ""
+	}
+	if out.Intent == string(networkSessionIntentResume) {
+		out.NextAction = networkSessionResumeRecoveryAction(out.ReplayDisposition)
 	}
 	return out
+}
+
+func networkSessionResumeRecoveryAction(replayDisposition string) string {
+	switch replayDisposition {
+	case api.NetworkSessionReplayDispositionTerminal:
+		return api.NetworkSessionRecoveryActionContinueTeardown
+	case api.NetworkSessionReplayDispositionIncomplete:
+		return api.NetworkSessionRecoveryActionManualDiagnosis
+	case api.NetworkSessionReplayDispositionRetryable, api.NetworkSessionReplayDispositionInterrupted, "":
+		return api.NetworkSessionRecoveryActionRetryResume
+	default:
+		return api.NetworkSessionRecoveryActionManualDiagnosis
+	}
 }

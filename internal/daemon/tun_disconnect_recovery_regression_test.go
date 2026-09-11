@@ -152,9 +152,9 @@ func TestRecoverExecuteContinuesOpenGateTerminalNetworkSession(t *testing.T) {
 		exactCalls++
 		return api.RecoveryResponse{Mode: "execute"}
 	}
-	continuation.continueTeardown = func(context.Context, networkSessionStateStore) error {
+	continuation.continueTeardown = func(_ context.Context, stateStore networkSessionStateStore) error {
 		teardownCalls++
-		return nil
+		return stateStore.SetProtection(nil)
 	}
 
 	events := []string{}
@@ -194,10 +194,13 @@ func TestRecoverExecuteContinuesOpenGateTerminalNetworkSession(t *testing.T) {
 	if exactCalls != 1 || teardownCalls != 1 {
 		t.Fatalf("terminal recovery stages: exact=%d teardown=%d, want 1/1", exactCalls, teardownCalls)
 	}
-	if response.NetworkSession == nil || response.NetworkSession.LastResumeOutcome != api.NetworkSessionResumeOutcomeSucceeded || response.NetworkSession.NextAction != api.NetworkSessionRecoveryActionNone {
-		t.Fatalf("terminal recovery did not converge: %#v", response.NetworkSession)
+	if response.NetworkSession != nil {
+		t.Fatalf("terminal recovery retained stale Network Session projection: %#v", response.NetworkSession)
 	}
 	if len(response.Warnings) != 0 {
 		t.Fatalf("terminal recovery returned warnings: %#v", response.Warnings)
+	}
+	if _, exists, loadErr := continuation.stateStore().Load(); loadErr != nil || exists {
+		t.Fatalf("terminal recovery retained finalized Network Session authority: exists=%v err=%v", exists, loadErr)
 	}
 }
