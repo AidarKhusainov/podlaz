@@ -87,14 +87,19 @@ func terminalizeNetworkSessionReplay(
 }
 
 func observeProductionNetworkSessionTerminalDataPlane(ctx context.Context, runtimeDir, transactionID string) error {
-	if strings.TrimSpace(transactionID) != "" {
+	transactionID = strings.TrimSpace(transactionID)
+	if transactionID != "" {
 		if err := recovery.VerifyRolledBackTransactionAbsence(ctx, runtimeDir, transactionID); err != nil {
 			return fmt.Errorf("exact retained transaction absence proof failed: %w", err)
+		}
+	} else {
+		if err := recovery.VerifyAllRolledBackTransactionAbsence(ctx, runtimeDir); err != nil {
+			return fmt.Errorf("exact rolled-back transaction absence proof failed: %w", err)
 		}
 	}
 	// Generic recovery observation remains an additional guard for standalone or
 	// legacy Podlaz resources. It is never sufficient in place of exact retained
-	// transaction evidence for a replay that actually mutated and rolled back.
+	// transaction evidence when completed rollback metadata exists.
 	plan := recovery.PlanWithOptions(ctx, recovery.Options{RuntimeDir: runtimeDir})
 	if len(plan.Warnings) != 0 || len(plan.Candidates) != 0 {
 		return fmt.Errorf("terminal data-plane observation is inconclusive: candidates=%d warnings=%d", len(plan.Candidates), len(plan.Warnings))
