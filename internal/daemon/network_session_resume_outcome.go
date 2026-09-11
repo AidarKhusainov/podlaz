@@ -40,6 +40,9 @@ func resumeNetworkSessionResultWithTerminalObservation(
 	recover networkSessionRecoveryFunc,
 	observeTerminal networkSessionTerminalObservationStage,
 ) (networkSessionResumeResult, error) {
+	diagnosticStore := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
+	priorReplayEvidence, priorReplayEvidenceExists, priorReplayEvidenceErr := diagnosticStore.Load()
+
 	retained := continuation
 	if retained.continueTeardown == nil {
 		retained.continueTeardown = convergePersistedNetworkSessionTeardown
@@ -57,6 +60,15 @@ func resumeNetworkSessionResultWithTerminalObservation(
 		return networkSessionResumeUnknown, err
 	}
 	if resumed {
+		// The lower-level success path deliberately treats replay diagnostics as
+		// non-authoritative and removes them best-effort. Keep the pre-replay
+		// snapshot here so a transient earlier tombstone cleanup failure can be
+		// retried by exact transaction identity even after that diagnostic has
+		// disappeared. Never turn a verified active replay into failure merely
+		// because stale evidence cleanup remains unavailable.
+		if priorReplayEvidenceErr == nil && priorReplayEvidenceExists {
+			_ = finalizeSuccessfulNetworkSessionReplayEvidence(continuation, priorReplayEvidence)
+		}
 		return networkSessionResumeResumed, nil
 	}
 
