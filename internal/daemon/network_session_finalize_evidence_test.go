@@ -10,12 +10,8 @@ import (
 )
 
 func TestFinalizeRemovesRolledBackReplayEvidenceThenSession(t *testing.T) {
-	stateStore := seededProtectedNetworkSessionStore(t, networkSessionIntentTerminal)
+	stateStore, state := admittedTerminalSessionForFinalizeTest(t)
 	continuation := newNetworkSessionContinuationStore(stateStore.runtimeDir, fixedBootID("boot-a"))
-	state, exists, err := stateStore.Load()
-	if err != nil || !exists {
-		t.Fatalf("load session: exists=%v err=%v", exists, err)
-	}
 
 	txStore := txstate.TransactionStore{RuntimeDir: stateStore.runtimeDir}
 	tx := txstate.NewTransaction("tun-finalize", "profile-test", "tun", time.Now().UTC())
@@ -43,12 +39,8 @@ func TestFinalizeRemovesRolledBackReplayEvidenceThenSession(t *testing.T) {
 }
 
 func TestFinalizeKeepsSessionWhenReferencedTransactionStillNeedsRecovery(t *testing.T) {
-	stateStore := seededProtectedNetworkSessionStore(t, networkSessionIntentTerminal)
+	stateStore, state := admittedTerminalSessionForFinalizeTest(t)
 	continuation := newNetworkSessionContinuationStore(stateStore.runtimeDir, fixedBootID("boot-a"))
-	state, exists, err := stateStore.Load()
-	if err != nil || !exists {
-		t.Fatalf("load session: exists=%v err=%v", exists, err)
-	}
 
 	txStore := txstate.TransactionStore{RuntimeDir: stateStore.runtimeDir}
 	tx := txstate.NewTransaction("tun-finalize-blocked", "profile-test", "tun", time.Now().UTC())
@@ -70,6 +62,23 @@ func TestFinalizeKeepsSessionWhenReferencedTransactionStillNeedsRecovery(t *test
 	if _, exists, err := stateStore.Load(); err != nil || !exists {
 		t.Fatalf("session authority was removed: exists=%v err=%v", exists, err)
 	}
+}
+
+func admittedTerminalSessionForFinalizeTest(t *testing.T) (networkSessionStateStore, networkSessionState) {
+	t.Helper()
+	store := seededProtectedNetworkSessionStore(t, networkSessionIntentResume)
+	state, exists, err := store.BeginRecoveryAttempt()
+	if err != nil || !exists {
+		t.Fatalf("begin recovery attempt: exists=%v err=%v", exists, err)
+	}
+	if err := store.SetIntent(networkSessionIntentTerminal); err != nil {
+		t.Fatalf("set terminal intent: %v", err)
+	}
+	state, exists, err = store.Load()
+	if err != nil || !exists {
+		t.Fatalf("load terminal session: exists=%v err=%v", exists, err)
+	}
+	return store, state
 }
 
 func saveFinalizeReplayDiagnostic(store networkSessionStateStore, state networkSessionState, transactionID string) error {
