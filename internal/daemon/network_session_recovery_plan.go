@@ -200,11 +200,20 @@ func failedNetworkSessionRecoveryState(plan *api.NetworkSessionRecoveryState, re
 		out.TransactionPresent = failure.TransactionPresent
 		out.LegacyMigration = out.LegacyMigration || failure.LegacyMigration
 		if failure.ResumeStage == api.NetworkSessionResumeStageConnectReplay {
-			disposition, _ := classifyNetworkSessionReplayFailure(context.Background(), resumeErr)
-			out.ReplayDisposition = string(disposition)
+			out.ReplayDisposition = ""
 			out.NetworkApplySubphase = ""
-			if failure.TUNFailurePhase == "network-apply" {
-				out.NetworkApplySubphase = netexecutor.ApplyFailureSubphase(resumeErr)
+			if disposition, subphase, projected := networkSessionReplayProjection(resumeErr); projected {
+				out.ReplayDisposition = string(disposition)
+				out.NetworkApplySubphase = subphase
+			} else {
+				// Non-replay orchestration failures may still enter the connect-replay
+				// stage without having passed through the authoritative replay
+				// persistence boundary. Preserve their existing conservative fallback.
+				disposition, _ := classifyNetworkSessionReplayFailure(context.Background(), resumeErr)
+				out.ReplayDisposition = string(disposition)
+				if failure.TUNFailurePhase == "network-apply" {
+					out.NetworkApplySubphase = netexecutor.ApplyFailureSubphase(resumeErr)
+				}
 			}
 		} else {
 			out.ReplayDisposition = ""
