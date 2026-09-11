@@ -24,9 +24,10 @@ func TestAllRolledBackTransactionAbsenceVerifiesEvidenceWithoutCurrentTransactio
 				orphanRoutePresent:    tc.orphanRoutePresent,
 			}
 
-			err := verifyAllRolledBackTransactionAbsenceWithOptions(
+			err := verifyRolledBackTransactionAbsenceWithOptions(
 				context.Background(),
 				runtimeDir,
+				"",
 				rolledBackTransactionAbsenceOptions{
 					Runner:     runner,
 					PathExists: func(string) (bool, error) { return false, nil },
