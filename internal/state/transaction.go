@@ -215,6 +215,7 @@ type ChildProcessRollback struct {
 	PidFile   string `json:"pid_file,omitempty"`
 	Label     string `json:"label,omitempty"`
 	ConfigRef string `json:"config_ref,omitempty"`
+	StartTime string `json:"start_time,omitempty"`
 	Owner     string `json:"owner,omitempty"`
 }
 
