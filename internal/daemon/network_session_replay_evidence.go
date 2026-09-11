@@ -8,6 +8,43 @@ import (
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 )
 
+type networkSessionReplayProjectionError struct {
+	disposition networkSessionReplayDisposition
+	subphase    string
+	err         error
+}
+
+func (e networkSessionReplayProjectionError) Error() string {
+	if e.err == nil {
+		return "network session replay failed"
+	}
+	return e.err.Error()
+}
+
+func (e networkSessionReplayProjectionError) Unwrap() error { return e.err }
+
+func withNetworkSessionReplayProjection(disposition networkSessionReplayDisposition, subphase string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return networkSessionReplayProjectionError{
+		disposition: disposition,
+		subphase:    subphase,
+		err:         err,
+	}
+}
+
+func networkSessionReplayProjection(err error) (networkSessionReplayDisposition, string, bool) {
+	var projected networkSessionReplayProjectionError
+	if !errors.As(err, &projected) || !validNetworkSessionReplayDisposition(projected.disposition) {
+		return "", "", false
+	}
+	if projected.subphase != "" && !validNetworkSessionApplySubphase(projected.subphase) {
+		return "", "", false
+	}
+	return projected.disposition, projected.subphase, true
+}
+
 func (s networkSessionResumeDiagnosticStore) SaveReplayFailure(record networkSessionResumeDiagnostic, attempt networkSessionReplayAttempt) error {
 	current, exists, err := s.Load()
 	if err != nil {
@@ -73,17 +110,18 @@ func persistNetworkSessionReplayFailure(
 		LegacyMigration:          legacyMigration,
 		CandidateMutation:        mutation,
 	}
+	projected := withNetworkSessionReplayProjection(disposition, record.NetworkApplySubphase, wrapped)
 	store := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
 	if persistErr := store.SaveReplayFailure(record, attempt); persistErr != nil {
 		cleanupErr := removeRetainedNetworkSessionReplayTransaction(continuation.runtimeDir, transactionID)
-		return errors.Join(wrapped, persistErr, cleanupErr)
+		return errors.Join(projected, persistErr, cleanupErr)
 	}
 	if disposition != networkSessionReplayDispositionTerminal {
 		if cleanupErr := removeRetainedNetworkSessionReplayTransaction(continuation.runtimeDir, transactionID); cleanupErr != nil {
-			return errors.Join(wrapped, cleanupErr)
+			return errors.Join(projected, cleanupErr)
 		}
 	}
-	return wrapped
+	return projected
 }
 
 var errNetworkSessionReplayIncomplete = errors.New("network session replay outcome remains incomplete")
