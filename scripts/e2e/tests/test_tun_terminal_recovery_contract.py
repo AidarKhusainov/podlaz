@@ -127,6 +127,49 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
             self.package_runtime_provenance_text,
         )
 
+    def test_v0240_package_restart_terminal_outcome_requires_typed_replay_evidence(self) -> None:
+        text = self.package_restart_text
+        for required in (
+            "network-session-resume.json",
+            "terminal-data-plane-clean.ready",
+            "terminal-data-plane-clean.continue",
+            "PODLAZ_E2E_PRIVACY_TEARDOWN_PAUSE=true",
+            "PACKAGE_RESTART_TYPED_TERMINAL",
+        ):
+            self.assertIn(required, text)
+
+        evidence = self.function_body(
+            "capture_typed_terminal_replay_evidence",
+            "\n}\n\nwait_for_candidate_start_boundary",
+            text,
+        )
+        for required in (
+            "replay_disposition",
+            "terminal",
+            "session_id",
+            "recovery_epoch",
+            "candidate_mutation",
+            "network_apply_subphase",
+        ):
+            self.assertIn(required, evidence)
+
+        classify = self.function_body(
+            "classify_package_restart_candidate",
+            "\n}\n\nassert_clean_recovery_view",
+            text,
+        )
+        self.assertIn("PACKAGE_RESTART_TYPED_TERMINAL", classify)
+        self.assertIn("untyped terminal", classify)
+        self.assertNotIn(
+            "elif status.get('connection')=='inactive' and not cleanup and not committed and not session:\n    print('terminal')",
+            classify,
+        )
+
+        flow = text[text.index("capture_v0240_package_restart_authority") :]
+        arm = flow.index("install_candidate_terminal_evidence_pause")
+        install = flow.index('install_candidate_package_replacement "${CANDIDATE}"', arm)
+        self.assertLess(arm, install)
+
     def test_v0240_package_restart_flow_proves_traffic_and_terminal_idempotence(self) -> None:
         text = self.package_restart_text
         flow = text[text.index('log "reproduce exact v0.2.40 package-restart resume boundary"') :]
