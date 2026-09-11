@@ -17,12 +17,13 @@ class TunPackageRestartFailureCauseContractTests(unittest.TestCase):
         return self.text[start:end]
 
     def test_blocked_candidate_captures_only_bounded_private_replay_cause_before_failing(self) -> None:
+        self.assertIn("network-session-resume.json", self.text)
         body = self.function_body(
             "capture_blocked_replay_evidence",
             "\n}\n\nclassify_package_restart_candidate",
         )
         for required in (
-            "network-session-resume.json",
+            "RESUME_DIAGNOSTIC",
             "replay_disposition",
             "network_apply_subphase",
             "network_apply_failure_cause",
