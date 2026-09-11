@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,21 +19,21 @@ func TestRolledBackTransactionAbsenceRejectsRemainingExactResources(t *testing.T
 			tx := saveRolledBackAbsenceEvidence(t, runtimeDir)
 			runner := terminalAbsenceRunner{present: resource}
 			exists := func(path string) (bool, error) {
-				switch {
-				case resource == "child-process" && path == "/proc/4242":
+				if resource == "generated-config" && path == filepath.Join(runtimeDir, "generated", "xray.json") {
 					return true, nil
-				case resource == "generated-config" && path == filepath.Join(runtimeDir, "generated", "xray.json"):
-					return true, nil
-				default:
-					return false, nil
 				}
+				return false, nil
+			}
+			readFile := func(path string) ([]byte, error) {
+				if resource == "child-process" && path == "/proc/4242/stat" {
+					return processStatForAbsenceTest(4242, "111111"), nil
+				}
+				return nil, os.ErrNotExist
 			}
 
 			err := verifyRolledBackTransactionAbsenceWithOptions(
-				context.Background(),
-				runtimeDir,
-				tx.ID,
-				rolledBackTransactionAbsenceOptions{Runner: runner, PathExists: exists},
+				context.Background(), runtimeDir, tx.ID,
+				rolledBackTransactionAbsenceOptions{Runner: runner, PathExists: exists, ReadFile: readFile},
 			)
 			if err == nil {
 				t.Fatalf("remaining %s must make terminal absence proof inconclusive", resource)
@@ -45,14 +46,11 @@ func TestRolledBackTransactionAbsenceAcceptsFreshExactAbsence(t *testing.T) {
 	runtimeDir := t.TempDir()
 	tx := saveRolledBackAbsenceEvidence(t, runtimeDir)
 	err := verifyRolledBackTransactionAbsenceWithOptions(
-		context.Background(),
-		runtimeDir,
-		tx.ID,
+		context.Background(), runtimeDir, tx.ID,
 		rolledBackTransactionAbsenceOptions{
-			Runner: terminalAbsenceRunner{},
-			PathExists: func(string) (bool, error) {
-				return false, nil
-			},
+			Runner:     terminalAbsenceRunner{},
+			PathExists: func(string) (bool, error) { return false, nil },
+			ReadFile:   func(string) ([]byte, error) { return nil, os.ErrNotExist },
 		},
 	)
 	if err != nil {
@@ -69,10 +67,12 @@ func TestRolledBackTransactionAbsenceRejectsOtherCleanupAuthority(t *testing.T) 
 	_ = other
 
 	err := verifyRolledBackTransactionAbsenceWithOptions(
-		context.Background(),
-		runtimeDir,
-		tx.ID,
-		rolledBackTransactionAbsenceOptions{Runner: terminalAbsenceRunner{}, PathExists: func(string) (bool, error) { return false, nil }},
+		context.Background(), runtimeDir, tx.ID,
+		rolledBackTransactionAbsenceOptions{
+			Runner:     terminalAbsenceRunner{},
+			PathExists: func(string) (bool, error) { return false, nil },
+			ReadFile:   func(string) ([]byte, error) { return nil, os.ErrNotExist },
+		},
 	)
 	if err == nil {
 		t.Fatal("another recovery-required transaction must block terminal absence proof")
@@ -89,7 +89,7 @@ func saveRolledBackAbsenceEvidence(t *testing.T, runtimeDir string) txstate.Tran
 		DNS:              []txstate.DNSRollback{{Backend: "systemd-resolved", Link: managedInterface, Owner: netexecutor.OwnerDNS}},
 		NFTables:         []txstate.NFTablesRollback{{Family: "inet", Table: "podlaz", Owner: netexecutor.OwnerFirewall}},
 		GeneratedConfigs: []txstate.GeneratedConfigRollback{{Path: configPath, Owner: txstate.TransactionOwner}},
-		ChildProcesses:   []txstate.ChildProcessRollback{{PID: 4242, Label: "xray", ConfigRef: configPath, Owner: txstate.TransactionOwner}},
+		ChildProcesses:   []txstate.ChildProcessRollback{{PID: 4242, Label: "xray", ConfigRef: configPath, StartTime: "111111", Owner: txstate.TransactionOwner}},
 	}
 	_, tx := saveTransaction(t, runtimeDir, rollback)
 	tx.State = txstate.TransactionRolledBack
@@ -100,31 +100,21 @@ func saveRolledBackAbsenceEvidence(t *testing.T, runtimeDir string) txstate.Tran
 	return tx
 }
 
-type terminalAbsenceRunner struct {
-	present string
-}
+type terminalAbsenceRunner struct{ present string }
 
-func (r terminalAbsenceRunner) LookPath(file string) (string, error) {
-	return "/usr/bin/" + file, nil
-}
+func (r terminalAbsenceRunner) LookPath(file string) (string, error) { return "/usr/bin/" + file, nil }
 
 func (r terminalAbsenceRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
 	key := filepath.Base(name) + " " + strings.Join(args, " ")
 	switch {
 	case strings.HasPrefix(key, "ip -details -o link show dev "):
-		if r.present == "tun-link" {
-			return CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 type tun", ExitCode: 0}, nil
-		}
+		if r.present == "tun-link" { return CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 type tun", ExitCode: 0}, nil }
 		return missingCommandResult("Device podlaz0 does not exist")
 	case strings.HasPrefix(key, "ip -4 route show table "):
-		if r.present == "route" {
-			return CommandResult{Stdout: "0.0.0.0/1 dev podlaz0 table 51820", ExitCode: 0}, nil
-		}
+		if r.present == "route" { return CommandResult{Stdout: "0.0.0.0/1 dev podlaz0 table 51820", ExitCode: 0}, nil }
 		return CommandResult{ExitCode: 0}, nil
 	case strings.HasPrefix(key, "ip -4 rule show priority "):
-		if r.present == "policy-rule" {
-			return CommandResult{Stdout: "10000: from all lookup 51820", ExitCode: 0}, nil
-		}
+		if r.present == "policy-rule" { return CommandResult{Stdout: "10000: from all lookup 51820", ExitCode: 0}, nil }
 		return CommandResult{ExitCode: 0}, nil
 	case strings.HasPrefix(key, "resolvectl status podlaz0 --no-pager"):
 		if r.present == "dns" {
@@ -132,24 +122,17 @@ func (r terminalAbsenceRunner) Run(_ context.Context, name string, args ...strin
 		}
 		return missingCommandResult("Failed to resolve interface \"podlaz0\": No such device")
 	case strings.HasPrefix(key, "nft list table inet podlaz"):
-		if r.present == "nftables" {
-			return CommandResult{Stdout: "table inet podlaz { }", ExitCode: 0}, nil
-		}
+		if r.present == "nftables" { return CommandResult{Stdout: "table inet podlaz { }", ExitCode: 0}, nil }
 		return missingCommandResult("No such file or directory")
 	default:
 		return CommandResult{ExitCode: -1}, errors.New("unexpected command: " + key)
 	}
 }
 
-type terminalAbsenceExitError struct {
-	message string
-	code    int
-}
-
+type terminalAbsenceExitError struct{ message string; code int }
 func (e terminalAbsenceExitError) Error() string { return e.message }
 func (e terminalAbsenceExitError) ExitCode() int { return e.code }
 
 func missingCommandResult(stderr string) (CommandResult, error) {
-	stderr = strings.ReplaceAll(stderr, `\"`, `"`)
 	return CommandResult{Stderr: stderr, RawStderr: stderr + "\n", ExitCode: 1}, terminalAbsenceExitError{message: stderr, code: 1}
 }
