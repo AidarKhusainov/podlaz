@@ -37,17 +37,18 @@ const (
 )
 
 type networkSessionReplayAttempt struct {
-	SessionID            string                          `json:"session_id"`
-	RecoveryEpoch        uint64                          `json:"recovery_epoch"`
-	ReplayDisposition    networkSessionReplayDisposition `json:"replay_disposition"`
-	ResumeStage          string                          `json:"resume_stage"`
-	TUNFailurePhase      string                          `json:"tun_failure_phase,omitempty"`
-	NetworkApplySubphase string                          `json:"network_apply_subphase,omitempty"`
-	RollbackStatus       string                          `json:"rollback_status,omitempty"`
-	TransactionPresent   bool                            `json:"transaction_present"`
-	TransactionID        string                          `json:"transaction_id,omitempty"`
-	LegacyMigration      bool                            `json:"legacy_migration"`
-	CandidateMutation    networkSessionCandidateMutation `json:"candidate_mutation"`
+	SessionID                string                          `json:"session_id"`
+	RecoveryEpoch            uint64                          `json:"recovery_epoch"`
+	ReplayDisposition        networkSessionReplayDisposition `json:"replay_disposition"`
+	ResumeStage              string                          `json:"resume_stage"`
+	TUNFailurePhase          string                          `json:"tun_failure_phase,omitempty"`
+	NetworkApplySubphase     string                          `json:"network_apply_subphase,omitempty"`
+	NetworkApplyFailureCause string                          `json:"network_apply_failure_cause,omitempty"`
+	RollbackStatus           string                          `json:"rollback_status,omitempty"`
+	TransactionPresent       bool                            `json:"transaction_present"`
+	TransactionID            string                          `json:"transaction_id,omitempty"`
+	LegacyMigration          bool                            `json:"legacy_migration"`
+	CandidateMutation        networkSessionCandidateMutation `json:"candidate_mutation"`
 }
 
 type networkSessionResumeDiagnostic struct {
@@ -253,6 +254,14 @@ func validateNetworkSessionReplayAttempt(attempt networkSessionReplayAttempt) er
 	if attempt.NetworkApplySubphase != "" && !validNetworkSessionApplySubphase(attempt.NetworkApplySubphase) {
 		return fmt.Errorf("invalid replay apply subphase %q", attempt.NetworkApplySubphase)
 	}
+	if attempt.NetworkApplyFailureCause != "" {
+		if attempt.TUNFailurePhase != "network-apply" {
+			return errors.New("network apply failure cause requires network-apply TUN failure phase")
+		}
+		if !validNetworkSessionApplyFailureCause(attempt.NetworkApplyFailureCause) {
+			return fmt.Errorf("invalid network apply failure cause %q", attempt.NetworkApplyFailureCause)
+		}
+	}
 	state := api.NetworkSessionRecoveryState{
 		Authority:            api.NetworkSessionRecoveryAuthorityPresent,
 		Intent:               "resume",
@@ -294,6 +303,15 @@ func validNetworkSessionReplayDisposition(disposition networkSessionReplayDispos
 func validNetworkSessionApplySubphase(subphase string) bool {
 	switch strings.TrimSpace(subphase) {
 	case "tun-address", "routes", "policy-rules", "dns", "nftables":
+		return true
+	default:
+		return false
+	}
+}
+
+func validNetworkSessionApplyFailureCause(cause string) bool {
+	switch strings.TrimSpace(cause) {
+	case "command-exit", "command-timeout", "command-unavailable":
 		return true
 	default:
 		return false
