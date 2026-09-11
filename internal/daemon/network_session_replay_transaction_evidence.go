@@ -30,6 +30,19 @@ func removeRetainedNetworkSessionReplayTransaction(runtimeDir, transactionID str
 	return removeTransactionFile(store, transactionID)
 }
 
+func preflightRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID bootIDReader) error {
+	diagnosticStore := newNetworkSessionResumeDiagnosticStore(runtimeDir, readBootID)
+	record, diagnosticExists, err := diagnosticStore.Load()
+	if err != nil {
+		return err
+	}
+	if !diagnosticExists || !diagnosticHasTerminalReplayEvidence(record) {
+		return nil
+	}
+	_, err = finalizableRolledBackTransactionEvidence(runtimeDir)
+	return err
+}
+
 func finalizeRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID bootIDReader) error {
 	diagnosticStore := newNetworkSessionResumeDiagnosticStore(runtimeDir, readBootID)
 	record, diagnosticExists, err := diagnosticStore.Load()
