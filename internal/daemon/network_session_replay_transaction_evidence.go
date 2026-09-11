@@ -30,13 +30,10 @@ func removeRetainedNetworkSessionReplayTransaction(runtimeDir, transactionID str
 	return removeTransactionFile(store, transactionID)
 }
 
-func finalizeSuccessfulNetworkSessionReplayEvidence(continuation networkSessionContinuationStore) error {
-	diagnosticStore := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
-	record, exists, err := diagnosticStore.Load()
-	if err != nil || !exists {
-		return err
-	}
-
+func finalizeSuccessfulNetworkSessionReplayEvidence(
+	continuation networkSessionContinuationStore,
+	record networkSessionResumeDiagnostic,
+) error {
 	seen := make(map[string]struct{}, 2)
 	for _, attempt := range []*networkSessionReplayAttempt{record.Originating, record.Current} {
 		if attempt == nil {
@@ -54,7 +51,7 @@ func finalizeSuccessfulNetworkSessionReplayEvidence(continuation networkSessionC
 			return fmt.Errorf("remove rolled-back replay transaction evidence %q after successful resume: %w", transactionID, err)
 		}
 	}
-	return diagnosticStore.Remove()
+	return newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID).Remove()
 }
 
 func preflightRetainedNetworkSessionReplayEvidence(runtimeDir string, readBootID bootIDReader) error {
