@@ -31,6 +31,52 @@ func TestApplyNetworkSessionResumeResultTerminalConvergenceDoesNotPublishResumeS
 	}
 }
 
+func TestTerminalResumeResultRetainsReplayEvidenceUntilCallerFinalization(t *testing.T) {
+	stateStore := seededProtectedNetworkSessionStore(t, networkSessionIntentTerminal)
+	if err := stateStore.SetProtection(nil); err != nil {
+		t.Fatal(err)
+	}
+	continuation := newNetworkSessionContinuationStore(stateStore.runtimeDir, fixedBootID("boot-a"))
+	continuation.recoverExact = func(context.Context, string) api.RecoveryResponse {
+		return api.RecoveryResponse{Mode: "execute"}
+	}
+	continuation.continueTeardown = func(context.Context, networkSessionStateStore) error { return nil }
+	state, exists, err := stateStore.Load()
+	if err != nil || !exists {
+		t.Fatalf("load terminal session: exists=%v err=%v", exists, err)
+	}
+	if err := saveFinalizeReplayDiagnostic(stateStore, state, "tun-retained-until-finalize"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resumeNetworkSessionResult(
+		context.Background(),
+		continuation,
+		networkSessionRecordingLifecycle{events: &[]string{}},
+		nil,
+		nil,
+	)
+	if err != nil || result != networkSessionResumeTerminalConverged {
+		t.Fatalf("terminal resume result=%q err=%v", result, err)
+	}
+	if _, exists, err := newNetworkSessionResumeDiagnosticStore(stateStore.runtimeDir, stateStore.readBootID).Load(); err != nil || !exists {
+		t.Fatalf("terminal convergence dropped replay evidence before finalization: exists=%v err=%v", exists, err)
+	}
+	if _, exists, err := stateStore.Load(); err != nil || !exists {
+		t.Fatalf("terminal convergence dropped session authority before finalization: exists=%v err=%v", exists, err)
+	}
+
+	if err := finalizeNetworkSessionResumeResult(continuation, result); err != nil {
+		t.Fatalf("finalize terminal resume result: %v", err)
+	}
+	if _, exists, err := newNetworkSessionResumeDiagnosticStore(stateStore.runtimeDir, stateStore.readBootID).Load(); err != nil || exists {
+		t.Fatalf("terminal finalization retained replay diagnostic: exists=%v err=%v", exists, err)
+	}
+	if _, exists, err := stateStore.Load(); err != nil || exists {
+		t.Fatalf("terminal finalization retained session authority: exists=%v err=%v", exists, err)
+	}
+}
+
 func TestBootAutostartTerminalResumeResultCommitsAttemptBeforeSessionFinalization(t *testing.T) {
 	manifestStore, attemptStore, continuation := bootAutostartStores(t, testBootConfigured, testBootAttempt)
 	manifest, err := manifestStore.Enable(testBootAutostartConfig())
