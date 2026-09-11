@@ -19,7 +19,7 @@ func TestRecoverDryRunShowsRetainedNetworkSessionAuthority(t *testing.T) {
 		NetworkApplySubphase: "dns",
 		RollbackStatus:       "completed",
 		CleanupAuthority:     api.NetworkSessionCleanupAuthorityNone,
-		NextAction:           api.NetworkSessionRecoveryActionRetryResume,
+		NextAction:           api.NetworkSessionRecoveryActionContinueTeardown,
 	}
 	got := (recoverPlanView{NetworkSession: state}).String()
 	if strings.Contains(got, "No podlaz-owned recovery candidates found") {
@@ -35,7 +35,7 @@ func TestRecoverDryRunShowsRetainedNetworkSessionAuthority(t *testing.T) {
 		"Replay disposition: terminal",
 		"Network apply subphase: dns",
 		"Cleanup authority: none",
-		"Next action: retry-resume",
+		"Next action: continue-teardown",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("recover dry-run missing %q: %q", want, got)
