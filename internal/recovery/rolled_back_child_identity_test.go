@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,9 +19,7 @@ func TestRolledBackTransactionAbsenceTreatsReusedPIDAsOriginalChildAbsent(t *tes
 	}
 
 	err := verifyRolledBackTransactionAbsenceWithOptions(
-		context.Background(),
-		runtimeDir,
-		tx.ID,
+		context.Background(), runtimeDir, tx.ID,
 		rolledBackTransactionAbsenceOptions{
 			Runner:     terminalAbsenceRunner{},
 			PathExists: func(string) (bool, error) { return false, nil },
@@ -48,9 +45,7 @@ func TestRolledBackTransactionAbsenceRejectsSameTrackedChildIdentity(t *testing.
 	}
 
 	err := verifyRolledBackTransactionAbsenceWithOptions(
-		context.Background(),
-		runtimeDir,
-		tx.ID,
+		context.Background(), runtimeDir, tx.ID,
 		rolledBackTransactionAbsenceOptions{
 			Runner:     terminalAbsenceRunner{},
 			PathExists: func(string) (bool, error) { return false, nil },
@@ -76,9 +71,7 @@ func TestRolledBackTransactionAbsenceRejectsMissingTrackedChildStartTime(t *test
 	}
 
 	err := verifyRolledBackTransactionAbsenceWithOptions(
-		context.Background(),
-		runtimeDir,
-		tx.ID,
+		context.Background(), runtimeDir, tx.ID,
 		rolledBackTransactionAbsenceOptions{
 			Runner:     terminalAbsenceRunner{},
 			PathExists: func(string) (bool, error) { return false, nil },
@@ -99,5 +92,3 @@ func processStatForAbsenceTest(pid int, startTime string) []byte {
 	fields[19] = startTime
 	return []byte(fmt.Sprintf("%d (xray worker) %s\n", pid, strings.Join(fields, " ")))
 }
-
-var _ = filepath.Clean
