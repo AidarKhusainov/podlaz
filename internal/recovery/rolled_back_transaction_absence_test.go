@@ -100,36 +100,56 @@ func saveRolledBackAbsenceEvidence(t *testing.T, runtimeDir string) txstate.Tran
 	return tx
 }
 
-type terminalAbsenceRunner struct{ present string }
+type terminalAbsenceRunner struct {
+	present string
+}
 
-func (r terminalAbsenceRunner) LookPath(file string) (string, error) { return "/usr/bin/" + file, nil }
+func (r terminalAbsenceRunner) LookPath(file string) (string, error) {
+	return "/usr/bin/" + file, nil
+}
 
 func (r terminalAbsenceRunner) Run(_ context.Context, name string, args ...string) (CommandResult, error) {
 	key := filepath.Base(name) + " " + strings.Join(args, " ")
 	switch {
 	case strings.HasPrefix(key, "ip -details -o link show dev "):
-		if r.present == "tun-link" { return CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 type tun", ExitCode: 0}, nil }
+		if r.present == "tun-link" {
+			return CommandResult{Stdout: "7: podlaz0: <POINTOPOINT,UP> mtu 1500 type tun", ExitCode: 0}, nil
+		}
 		return missingCommandResult("Device podlaz0 does not exist")
 	case strings.HasPrefix(key, "ip -4 route show table "):
-		if r.present == "route" { return CommandResult{Stdout: "0.0.0.0/1 dev podlaz0 table 51820", ExitCode: 0}, nil }
+		if r.present == "route" {
+			return CommandResult{Stdout: "0.0.0.0/1 dev podlaz0 table 51820", ExitCode: 0}, nil
+		}
 		return CommandResult{ExitCode: 0}, nil
 	case strings.HasPrefix(key, "ip -4 rule show priority "):
-		if r.present == "policy-rule" { return CommandResult{Stdout: "10000: from all lookup 51820", ExitCode: 0}, nil }
+		if r.present == "policy-rule" {
+			return CommandResult{Stdout: "10000: from all lookup 51820", ExitCode: 0}, nil
+		}
 		return CommandResult{ExitCode: 0}, nil
 	case strings.HasPrefix(key, "resolvectl status podlaz0 --no-pager"):
 		if r.present == "dns" {
-			return CommandResult{Stdout: "Link 7 (podlaz0)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute\nCurrent DNS Server: 192.0.2.53\n       DNS Servers: 192.0.2.53\n        DNS Domain: ~.", RawStdout: "Link 7 (podlaz0)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute\nCurrent DNS Server: 192.0.2.53\n       DNS Servers: 192.0.2.53\n        DNS Domain: ~.\n", ExitCode: 0}, nil
+			return CommandResult{
+				Stdout:    "Link 7 (podlaz0)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute\nCurrent DNS Server: 192.0.2.53\n       DNS Servers: 192.0.2.53\n        DNS Domain: ~.",
+				RawStdout: "Link 7 (podlaz0)\n    Current Scopes: DNS\n         Protocols: +DefaultRoute\nCurrent DNS Server: 192.0.2.53\n       DNS Servers: 192.0.2.53\n        DNS Domain: ~.\n",
+				ExitCode:  0,
+			}, nil
 		}
 		return missingCommandResult("Failed to resolve interface \"podlaz0\": No such device")
 	case strings.HasPrefix(key, "nft list table inet podlaz"):
-		if r.present == "nftables" { return CommandResult{Stdout: "table inet podlaz { }", ExitCode: 0}, nil }
+		if r.present == "nftables" {
+			return CommandResult{Stdout: "table inet podlaz { }", ExitCode: 0}, nil
+		}
 		return missingCommandResult("No such file or directory")
 	default:
 		return CommandResult{ExitCode: -1}, errors.New("unexpected command: " + key)
 	}
 }
 
-type terminalAbsenceExitError struct{ message string; code int }
+type terminalAbsenceExitError struct {
+	message string
+	code    int
+}
+
 func (e terminalAbsenceExitError) Error() string { return e.message }
 func (e terminalAbsenceExitError) ExitCode() int { return e.code }
 
