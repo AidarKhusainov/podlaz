@@ -52,21 +52,26 @@ func persistNetworkSessionReplayFailure(
 	}
 	record.RecoveryEpoch = attemptState.RecoveryEpoch
 	record.ReplayDisposition = string(disposition)
+	applyFailureCause := ""
 	if record.TUNFailurePhase == "network-apply" {
 		record.NetworkApplySubphase = netexecutor.ApplyFailureSubphase(err)
+		if cause := netexecutor.ApplyFailureCause(err); cause != netexecutor.ApplyFailureCauseUnknown {
+			applyFailureCause = cause
+		}
 	}
 	attempt := networkSessionReplayAttempt{
-		SessionID:            attemptState.SessionID,
-		RecoveryEpoch:        attemptState.RecoveryEpoch,
-		ReplayDisposition:    disposition,
-		ResumeStage:          api.NetworkSessionResumeStageConnectReplay,
-		TUNFailurePhase:      record.TUNFailurePhase,
-		NetworkApplySubphase: record.NetworkApplySubphase,
-		RollbackStatus:       record.RollbackStatus,
-		TransactionPresent:   record.TransactionPresent,
-		TransactionID:        transactionID,
-		LegacyMigration:      legacyMigration,
-		CandidateMutation:    mutation,
+		SessionID:                attemptState.SessionID,
+		RecoveryEpoch:            attemptState.RecoveryEpoch,
+		ReplayDisposition:        disposition,
+		ResumeStage:              api.NetworkSessionResumeStageConnectReplay,
+		TUNFailurePhase:          record.TUNFailurePhase,
+		NetworkApplySubphase:     record.NetworkApplySubphase,
+		NetworkApplyFailureCause: applyFailureCause,
+		RollbackStatus:           record.RollbackStatus,
+		TransactionPresent:       record.TransactionPresent,
+		TransactionID:            transactionID,
+		LegacyMigration:          legacyMigration,
+		CandidateMutation:        mutation,
 	}
 	store := newNetworkSessionResumeDiagnosticStore(continuation.runtimeDir, continuation.readBootID)
 	if persistErr := store.SaveReplayFailure(record, attempt); persistErr != nil {
