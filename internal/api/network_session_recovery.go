@@ -31,6 +31,7 @@ const (
 	NetworkSessionReplayDispositionInterrupted = "interrupted"
 	NetworkSessionReplayDispositionIncomplete  = "incomplete"
 
+	NetworkSessionApplySubphaseTUNDevice   = "tun-device"
 	NetworkSessionApplySubphaseTUNAddress  = "tun-address"
 	NetworkSessionApplySubphaseRoutes      = "routes"
 	NetworkSessionApplySubphasePolicyRules = "policy-rules"
@@ -110,7 +111,8 @@ func ValidateNetworkSessionRecoveryState(state NetworkSessionRecoveryState) erro
 	}
 	if state.NetworkApplySubphase != "" {
 		switch state.NetworkApplySubphase {
-		case NetworkSessionApplySubphaseTUNAddress,
+		case NetworkSessionApplySubphaseTUNDevice,
+			NetworkSessionApplySubphaseTUNAddress,
 			NetworkSessionApplySubphaseRoutes,
 			NetworkSessionApplySubphasePolicyRules,
 			NetworkSessionApplySubphaseDNS,
