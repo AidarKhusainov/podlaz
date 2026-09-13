@@ -11,7 +11,7 @@ import (
 var errTunNotYetUp = errors.New("tracked Xray TUN is not yet up")
 
 func TestTunExecutorApplyAllowsBoundXrayTunToBecomeReadyDuringAddressApply(t *testing.T) {
-	device := &notYetReadyTunDevice{err: errTunNotYetUp}
+	device := &notYetReadyTunDevice{verifyErr: errTunNotYetUp}
 	address := &recordingReadyTunAddress{}
 	exec := TunExecutor{
 		TunDevice:   device,
@@ -26,6 +26,9 @@ func TestTunExecutorApplyAllowsBoundXrayTunToBecomeReadyDuringAddressApply(t *te
 	if err != nil {
 		t.Fatalf("apply exact bound Xray TUN while address stage makes link ready: %v", err)
 	}
+	if device.preApplyCalls != 1 {
+		t.Fatalf("pre-apply TUN shape verification calls=%d, want 1", device.preApplyCalls)
+	}
 	if device.verifyCalls != 0 {
 		t.Fatalf("full device readiness verified before address apply: calls=%d", device.verifyCalls)
 	}
@@ -37,8 +40,30 @@ func TestTunExecutorApplyAllowsBoundXrayTunToBecomeReadyDuringAddressApply(t *te
 	}
 }
 
+func TestTunExecutorApplyStopsBeforeAddressMutationWhenPreApplyShapeFails(t *testing.T) {
+	shapeErr := errors.New("TUN MTU mismatch")
+	device := &notYetReadyTunDevice{preApplyErr: shapeErr, verifyErr: errTunNotYetUp}
+	address := &recordingReadyTunAddress{}
+	exec := TunExecutor{
+		TunDevice:   device,
+		TunAddress:  address,
+		Routes:      applySubphaseRoute{},
+		PolicyRules: applySubphasePolicyRule{},
+	}
+	plan := executorPlanForTest()
+	plan.TunAddress = rollbackIdentityAddressPlanForTest()
+
+	_, err := exec.ApplyWithStepSink(context.Background(), plan, nil)
+	if !errors.Is(err, shapeErr) {
+		t.Fatalf("pre-apply shape failure err=%v, want %v", err, shapeErr)
+	}
+	if address.applyCalls != 0 {
+		t.Fatalf("address mutated after failed pre-apply TUN shape proof: calls=%d", address.applyCalls)
+	}
+}
+
 func TestTunExecutorFinalVerifyStillRequiresDeviceReady(t *testing.T) {
-	device := &notYetReadyTunDevice{err: errTunNotYetUp}
+	device := &notYetReadyTunDevice{verifyErr: errTunNotYetUp}
 	exec := TunExecutor{
 		TunDevice:   device,
 		TunAddress:  &recordingReadyTunAddress{},
@@ -57,17 +82,24 @@ func TestTunExecutorFinalVerifyStillRequiresDeviceReady(t *testing.T) {
 }
 
 type notYetReadyTunDevice struct {
-	err         error
-	verifyCalls int
+	preApplyErr  error
+	verifyErr    error
+	preApplyCalls int
+	verifyCalls   int
 }
 
 func (*notYetReadyTunDevice) Create(context.Context, planner.TunDevicePlan) (Step, error) {
 	return Step{}, errors.New("unexpected TUN create")
 }
 
+func (e *notYetReadyTunDevice) VerifyForApply(context.Context, planner.TunDevicePlan) error {
+	e.preApplyCalls++
+	return e.preApplyErr
+}
+
 func (e *notYetReadyTunDevice) Verify(context.Context, planner.TunDevicePlan) error {
 	e.verifyCalls++
-	return e.err
+	return e.verifyErr
 }
 
 func (*notYetReadyTunDevice) Rollback(context.Context, planner.TunDevicePlan) error {
