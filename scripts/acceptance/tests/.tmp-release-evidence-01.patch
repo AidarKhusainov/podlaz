@@ -1,0 +1,164 @@
+ ra_finalize() { ra_restore_original_policy || return 1; ra_final_restoration_verify || { ra_record final_restoration FAIL "restoration verification failed" || true; return 1; }; ra_record final_restoration PASS || return 1; local q; q="$(ra_qualification)" || return 1; ra_report_write "$q" || return 1; ra_verify_run_tree || return 1; ra_set_phase complete || return 1; if [[ "$q" != FAIL ]]; then ra_state_remove || return 1; fi; printf '%s\n' "$q"; [[ "$q" != FAIL ]]; }
+@@ -936,8 +937,12 @@
+ ra_failure_policy() { case "$1" in HOST_CAPABILITY|HOST_STATE) printf 'RETRY\tfix host capability/state and rerun' ;; INPUT) printf 'RETRY\tfix input and rerun' ;; OWNERSHIP) printf 'MANUAL_DIAGNOSIS\tinspect retained authority before mutation' ;; INTERRUPTED) printf 'RETRY\trerun the same command at the persisted boundary' ;; INTERNAL) printf 'RESTART\tfix harness/contract incompatibility, then restart qualification' ;; PRODUCT) printf 'RESTART\trestart qualification after reviewing product evidence' ;; *) printf 'MANUAL_DIAGNOSIS\tinspect evidence' ;; esac; }
+ ra_failure_record() { local reason="$1" exit_code="$2" class policy retry action occurred scenario boot progress; class="$(ra_failure_class "$reason")"; policy="$(ra_failure_policy "$class")"; IFS=$'\t' read -r retry action <<<"$policy"; occurred="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; scenario="$(jq -r '.current_scenario//""' "$RA_CHECKPOINT" 2>/dev/null || true)"; boot="$(ra_boot_id 2>/dev/null || true)"; progress="$(jq -c --arg s "$scenario" '{phase:.phase,scenario_state:(if $s=="" then null else (.scenarios[$s].state//null) end)}' "$RA_CHECKPOINT" 2>/dev/null || printf '{}')"; ra_state_jq '.current_boot_id=$boot|.last_failure={step:$step,scenario:$scenario,class:$class,exit_code:$exit,retry_policy:$retry,recommended_action:$action,occurred_at:$at,boot_id:$boot,progress:$progress,cleanup_outcome:"pending"}' --arg step "$reason" --arg scenario "$scenario" --arg class "$class" --argjson exit "$exit_code" --arg retry "$retry" --arg action "$action" --arg at "$occurred" --arg boot "$boot" --argjson progress "$progress"; }
+ ra_failure_component_set() {
+-  local components="$1" name="$2" status="$3"
+-  jq -c --arg name "$name" --arg status "$status" '.[$name]={status:$status}' <<<"$components"
++  local components="$1" name="$2" status="$3" observation="${4:-$3}" applicability="${5:-required}" satisfies="${6:-}"
++  if [[ -z "$satisfies" ]]; then
++    if [[ "$status" == captured ]]; then satisfies=true; else satisfies=false; fi
++  fi
++  jq -c --arg name "$name" --arg status "$status" --arg observation "$observation" --arg applicability "$applicability" --argjson satisfies "$satisfies" \
++    '.[$name]={status:$status,observation:$observation,applicability:$applicability,satisfies_requirement:$satisfies}' <<<"$components"
+ }
+ 
+ ra_failure_capture_command() {
+@@ -949,6 +954,91 @@
+   printf '%s' "$status"
+ }
+ 
++ra_failure_capture_doctor_tun() {
++  local file="$1" rc
++  if ra_product doctor --tun --json >/dev/null; then rc=0; else rc="$RA_CAPTURE_RC"; fi
++  { printf 'rc=%s\n' "$rc"; printf '%s\n' "$RA_CAPTURE"; } | ra_artifact_file_write "$file" || return 1
++  if [[ "$rc" == 124 ]]; then
++    printf timeout
++    return 0
++  fi
++  if [[ "$rc" != 0 && "$rc" != 3 ]]; then
++    printf command_failed
++    return 0
++  fi
++  if ! jq -e --argjson rc "$rc" '''
++    type=="object" and
++    .schema_version==1 and
++    (.status=="healthy" or .status=="degraded" or .status=="unhealthy" or .status=="unavailable") and
++    (($rc==0 and (.status=="healthy" or .status=="degraded")) or
++     ($rc==3 and (.status=="unhealthy" or .status=="unavailable")))
++  ''' <<<"$RA_CAPTURE" >/dev/null 2>&1; then
++    printf invalid
++    return 0
++  fi
++  printf captured
++}
++
++ra_failure_resume_diagnostic_valid() {
++  local file="$1"
++  jq -e '''
++    type=="object" and
++    .schema_version=="podlaz.network-session-resume-diagnostic.v1" and
++    .owner=="podlaz" and
++    (.boot_id|type)=="string" and (.boot_id|length)>0 and
++    (.recovery_epoch|type)=="number" and
++    (.resume_stage|type)=="string" and (.resume_stage|length)>0 and
++    (.last_resume_outcome|type)=="string" and (.last_resume_outcome|length)>0
++  ''' "$file" >/dev/null 2>&1
++}
++
++ra_failure_boot_attempt_valid() {
++  local file="$1"
++  jq -e '''
++    type=="object" and
++    .schema_version=="podlaz.boot-autostart-attempt.v1" and
++    (.boot_id|type)=="string" and (.boot_id|length)>0 and
++    (.state=="in_progress" or .state=="succeeded" or .state=="terminal")
++  ''' "$file" >/dev/null 2>&1
++}
++
++ra_failure_copy_private_observed() {
++  local source="$1" target="$2" validator="${3:-}" size
++  if [[ ! -e "$source" && ! -L "$source" ]]; then
++    printf 'unavailable\tverified_absent'
++    return 0
++  fi
++  if [[ ! -f "$source" || -L "$source" ]]; then
++    printf 'invalid\tinvalid'
++    return 0
++  fi
++  size="$(stat -Lc '%s' "$source" 2>/dev/null || printf 0)"
++  if [[ ! "$size" =~ ^[0-9]+$ || "$size" -gt 1048576 ]]; then
++    printf 'invalid\tinvalid'
++    return 0
++  fi
++  cat "$source" | ra_artifact_file_write "$target" || return 1
++  if [[ -n "$validator" ]] && ! "$validator" "$target"; then
++    printf 'invalid\tinvalid'
++    return 0
++  fi
++  printf 'captured\tcaptured'
++}
++
++ra_failure_boot_attempt_applicability() {
++  case "$1" in
++    reboot_autostart_off|reboot_autostart_on|explicit_disconnect_no_same_boot_retry|reboot_terminal_autostart|terminal_no_same_boot_retry)
++      printf required
++      ;;
++    lower_release_upgrade|privacy_active|graceful_restart|daemon_kill|rollback_interruption|stop_start_no_reconnect|reinstall|warmed_inactive_candidate_baseline|preconnect_coexistence|active_coexistence|resource_soak|wifi_reconnect|suspend_resume|disconnect_cleanup|coexistence_reconnect|reconnect_resource_nonaccumulation|runtime_terminal_convergence|runtime_terminal_no_retry|final_restoration|"")
++      printf not_applicable
++      ;;
++    *)
++      printf required
++      ;;
++  esac
++}
++
+ ra_failure_copy_private_file() {
+   local source="$1" target="$2" size
+   [[ -f "$source" && ! -L "$source" ]] || { printf unavailable; return 0; }
+@@ -1008,7 +1098,7 @@
+ ra_failure_bundle_capture() {
+   local reason="${1:-failure}" exit_code="${2:-1}" invocation_mode="${3:-$RA_MODE}"
+   local failures attempt_id final tmp previous_path previous_id="" root_id="" created_at scenario scenario_state phase started boot boot_canonical
+-  local components='{}' status value package_identity process_identity capture_status dpkg_log_source
++  local components='{}' status value observation applicability satisfies package_identity process_identity capture_status dpkg_log_source
+   [[ -n "$RA_PRIVATE_DIR" ]] || return 1
+   ra_artifact_dir_validate "$RA_PRIVATE_DIR" || return 1
+   failures="$RA_PRIVATE_DIR/failures"
+@@ -1056,9 +1146,9 @@
+   fi
+   components="$(ra_failure_component_set "$components" status "$status")" || return 1
+ 
+-  if ra_product doctor --tun --json >/dev/null; then status=captured; else status=command_failed; fi
+-  { printf 'rc=%s\n' "$RA_CAPTURE_RC"; printf '%s\n' "$RA_CAPTURE"; } | ra_artifact_file_write "$tmp/doctor-tun.txt" || return 1
+-  components="$(ra_failure_component_set "$components" doctor "$status")" || return 1
++  status="$(ra_failure_capture_doctor_tun "$tmp/doctor-tun.txt")" || return 1
++  if [[ "$status" == captured ]]; then satisfies=true; else satisfies=false; fi
++  components="$(ra_failure_component_set "$components" doctor "$status" "$status" required "$satisfies")" || return 1
+ 
+   status="$(ra_failure_capture_command "$tmp/systemd-unit-properties.txt" systemctl show "$RA_SERVICE" -p MainPID -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus -p KillSignal -p RestartKillSignal -p KillMode -p TimeoutStopUSec -p FragmentPath)" || return 1
+   components="$(ra_failure_component_set "$components" systemd_unit_properties "$status")" || return 1
+@@ -1092,8 +1182,22 @@
+ 
+   status="$(ra_failure_copy_private_file "$RA_CONTINUATION" "$tmp/network-session.json")" || return 1
+   components="$(ra_failure_component_set "$components" network_session "$status")" || return 1
+-  status="$(ra_failure_copy_private_file "$RA_BOOT_ATTEMPT" "$tmp/boot-autostart-attempt.json")" || return 1
+-  components="$(ra_failure_component_set "$components" boot_attempt "$status")" || return 1
++
++  IFS=$'\t' read -r status observation < <(ra_failure_copy_private_observed "$RA_BOOT_ATTEMPT" "$tmp/boot-autostart-attempt.json" ra_failure_boot_attempt_valid) || return 1
++  applicability="$(ra_failure_boot_attempt_applicability "$scenario")" || return 1
++  satisfies=false
++  if [[ "$applicability" == not_applicable || "$status" == captured || ( "$scenario" == reboot_autostart_off && "$observation" == verified_absent ) ]]; then satisfies=true; fi
++  components="$(ra_failure_component_set "$components" boot_attempt "$status" "$observation" "$applicability" "$satisfies")" || return 1
++
++  IFS=$'\t' read -r status observation < <(ra_failure_copy_private_observed "$RA_RESUME_DIAGNOSTIC" "$tmp/network-session-resume.json" ra_failure_resume_diagnostic_valid) || return 1
++  if [[ "$observation" == verified_absent ]]; then
++    applicability=optional
++    satisfies=true
++  else
++    applicability=required
++    if [[ "$status" == captured ]]; then satisfies=true; else satisfies=false; fi
++  fi
++  components="$(ra_failure_component_set "$components" replay_diagnostic "$status" "$observation" "$applicability" "$satisfies")" || return 1
+ 
+   if process_identity="$(ra_failure_process_identity 2>/dev/null)"; then
+     printf '%s\n' "$process_identity" | ra_artifact_file_write "$tmp/daemon-process-identity.json" || return 1
+@@ -1117,7 +1221,7 @@
+   status="$(ra_failure_capture_command "$tmp/resolved-status.txt" resolvectl status --no-pager)" || return 1
+   components="$(ra_failure_component_set "$components" resolved_status "$status")" || return 1
+ 
+-  if jq -e 'to_entries|all(.value.status=="captured")' <<<"$components" >/dev/null; then capture_status=complete; else capture_status=partial; fi
++  if jq -e 'to_entries|all(.value.satisfies_requirement==true)' <<<"$components" >/dev/null; then capture_status=complete; else capture_status=partial; fi
+   jq -cn \
+     --arg attempt "$attempt_id" --arg root "$root_id" --arg previous "$previous_id" \
+     --arg created "$created_at" --arg mode "$invocation_mode" --arg phase "$phase" \
