@@ -101,7 +101,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 		// before routes or rules can be installed.
 		if !shouldApplyTunAddress(plan.TunAddress) {
 			if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
-				return steps, withApplyFailureSubphase(applyFailureSubphaseTunDevice, err)
+				return steps, err
 			}
 		}
 	default:
