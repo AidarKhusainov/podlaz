@@ -136,6 +136,7 @@ func TestTunExecutorAppliesAddressBeforeRoutesAndRollsItBackBeforeLink(t *testin
 	}
 
 	want := []string{
+		"tun:verify:podlaz0",
 		"address:apply:podlaz0:" + planner.DefaultTunIPv4CIDR,
 		"route:add:podlaz:default",
 		"route:add:main:203.0.113.10/32",
@@ -178,6 +179,7 @@ func TestTunExecutorApplyWithStepSinkPersistsEachMutationBeforeNext(t *testing.T
 	}
 
 	want := []string{
+		"tun:verify:podlaz0",
 		"address:apply:podlaz0:" + planner.DefaultTunIPv4CIDR,
 		"persist:tun-address",
 		"route:add:podlaz:default",
@@ -217,6 +219,7 @@ func TestTunExecutorApplyWithStepSinkStopsBeforeNextMutationWhenPersistenceFails
 		t.Fatalf("mutated address must remain rollbackable, got %#v", steps)
 	}
 	want := []string{
+		"tun:verify:podlaz0",
 		"address:apply:podlaz0:" + planner.DefaultTunIPv4CIDR,
 		"persist:tun-address",
 	}
