@@ -93,8 +93,16 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 	case "", "create":
 		return steps, errors.New("daemon-created TUN links are unsupported; Xray owns podlaz0 creation and lifetime")
 	case "verify", "use-existing":
-		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
-			return steps, err
+		// A bound TUN address already carries the exact Xray-created link identity.
+		// Its executor revalidates that identity before every mutation and owns
+		// bringing the link up, so requiring final device readiness here creates a
+		// race between Xray link creation and the address/link-up stage itself.
+		// Plans without an address mutation still need a complete device check
+		// before routes or rules can be installed.
+		if !shouldApplyTunAddress(plan.TunAddress) {
+			if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
+				return steps, withApplyFailureSubphase(applyFailureSubphaseTunDevice, err)
+			}
 		}
 	default:
 		return steps, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action)
