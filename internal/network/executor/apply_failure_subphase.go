@@ -6,7 +6,6 @@ import (
 )
 
 const (
-	applyFailureSubphaseTunDevice   = "tun-device"
 	applyFailureSubphaseTunAddress  = "tun-address"
 	applyFailureSubphaseRoutes      = "routes"
 	applyFailureSubphasePolicyRules = "policy-rules"
