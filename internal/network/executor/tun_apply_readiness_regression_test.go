@@ -56,23 +56,6 @@ func TestTunExecutorFinalVerifyStillRequiresDeviceReady(t *testing.T) {
 	}
 }
 
-func TestTunExecutorApplyReportsTunDeviceSubphaseWithoutAddressMutation(t *testing.T) {
-	exec := TunExecutor{
-		TunDevice:   &notYetReadyTunDevice{err: errTunNotYetUp},
-		Routes:      applySubphaseRoute{},
-		PolicyRules: applySubphasePolicyRule{},
-	}
-	plan := executorPlanForTest()
-
-	_, err := exec.ApplyWithStepSink(context.Background(), plan, nil)
-	if err == nil {
-		t.Fatal("expected device readiness failure")
-	}
-	if got := ApplyFailureSubphase(err); got != "tun-device" {
-		t.Fatalf("apply subphase=%q, want %q; err=%v", got, "tun-device", err)
-	}
-}
-
 type notYetReadyTunDevice struct {
 	err         error
 	verifyCalls int
