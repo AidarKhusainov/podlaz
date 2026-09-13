@@ -57,6 +57,9 @@ func TestTunExecutorApplyStopsBeforeAddressMutationWhenPreApplyShapeFails(t *tes
 	if !errors.Is(err, shapeErr) {
 		t.Fatalf("pre-apply shape failure err=%v, want %v", err, shapeErr)
 	}
+	if got := ApplyFailureSubphase(err); got != applyFailureSubphaseTunAddress {
+		t.Fatalf("pre-apply shape subphase=%q, want %q", got, applyFailureSubphaseTunAddress)
+	}
 	if address.applyCalls != 0 {
 		t.Fatalf("address mutated after failed pre-apply TUN shape proof: calls=%d", address.applyCalls)
 	}
