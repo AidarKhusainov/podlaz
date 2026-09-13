@@ -82,8 +82,8 @@ func TestTunExecutorFinalVerifyStillRequiresDeviceReady(t *testing.T) {
 }
 
 type notYetReadyTunDevice struct {
-	preApplyErr  error
-	verifyErr    error
+	preApplyErr   error
+	verifyErr     error
 	preApplyCalls int
 	verifyCalls   int
 }
