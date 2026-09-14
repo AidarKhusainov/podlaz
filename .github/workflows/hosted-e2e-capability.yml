@@ -3,6 +3,9 @@ name: Hosted E2E Capability
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - agent/github-hosted-e2e-qualification
   workflow_dispatch:
 
 permissions:
