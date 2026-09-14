@@ -39,10 +39,6 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 		"tun.authorization",
 		"tun.profile_import_usage_error",
 		"tun.profile_import_arg_error",
-		"tun.profile_import_arg_requires_uri",
-		"tun.profile_import_arg_multiple_uri",
-		"tun.profile_import_arg_unsupported",
-		"tun.profile_import_arg_json",
 		"tun.profile_import_vless_error",
 		"tun.profile_import_profile_validation_error",
 		"tun.profile_import_usage_other",
@@ -53,6 +49,16 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 		"tun.profile_import",
 		"tun.profile_validate",
 		"tun.connect_requested",
+	)
+}
+
+func TestHostedE2ECapabilityReportsProfileImportArgFailureSubtype(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"tun.profile_import_arg_requires_uri=observed",
+		"tun.profile_import_arg_multiple_uri=observed",
+		"tun.profile_import_arg_unsupported=observed",
+		"tun.profile_import_arg_json=observed",
 	)
 }
 
