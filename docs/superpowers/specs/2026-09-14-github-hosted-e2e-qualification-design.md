@@ -250,7 +250,9 @@ Do not require nested hardware virtualization on ARM unless GitHub documents/pro
 
 The first implementation milestone is a bounded Actions capability workflow. It is intentionally a spike and does not become a release gate until its findings are reviewed.
 
-It must record pass/fail for:
+The spike includes the smallest throwaway synthetic Xray endpoint needed to prove that an installed Podlaz package can complete a real full-TUN lifecycle inside the candidate guest. That endpoint is feasibility scaffolding only; it is not the permanent Layer 2 harness. After the guest mechanism is selected from real Actions evidence, the next milestone promotes the proven topology into reusable, behavior-oriented synthetic qualification.
+
+The capability workflow must record pass/fail for:
 
 - `/dev/net/tun` availability and functional TUN creation;
 - network namespace creation;
@@ -263,7 +265,7 @@ It must record pass/fail for:
 - package install/service start in the guest;
 - guest Internet access after setup;
 - Podlaz proxy-only lifecycle in the guest;
-- Podlaz full-TUN lifecycle in the guest using the configured synthetic endpoint;
+- Podlaz full-TUN lifecycle against the throwaway synthetic endpoint;
 - active system DNS and HTTPS through TUN;
 - guest cleanup while the outer runner retains Internet/GitHub connectivity;
 - QEMU availability;
@@ -358,10 +360,10 @@ Those remain optional manual/hardware acceptance. Their absence does not justify
 
 ## Implementation sequence
 
-1. Add the capability workflow and minimal reusable guest/bootstrap helpers required only for the spike.
+1. Add the capability workflow, minimal guest/bootstrap helpers, and a throwaway synthetic Xray endpoint sufficient to prove full-TUN feasibility.
 2. Run it on `ubuntu-24.04` and capture actual capability evidence.
 3. Review results and select the simplest guest mechanism that proves the required production interfaces.
-4. Add secret-free synthetic Xray/TUN qualification.
+4. Promote the proven synthetic topology into reusable secret-free Xray/TUN qualification.
 5. Migrate existing destructive installed-package harnesses into isolated hosted jobs by invariant.
 6. Add trusted real-provider TUN qualification.
 7. Add full-VM reboot and exact historical package migration qualification.
