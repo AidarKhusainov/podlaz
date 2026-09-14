@@ -3,31 +3,43 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 SCRIPT="$ROOT/scripts/acceptance/release-laptop.sh"
+MODULE_DIR="$ROOT/scripts/acceptance/lib/release-laptop"
+CONTROLLER_FILES=(
+  "$MODULE_DIR/core.sh"
+  "$MODULE_DIR/product.sh"
+  "$MODULE_DIR/host_exercise.sh"
+  "$MODULE_DIR/lifecycle.sh"
+  "$MODULE_DIR/evidence.sh"
+  "$MODULE_DIR/scenarios.sh"
+  "$MODULE_DIR/legacy.sh"
+  "$SCRIPT"
+)
 # shellcheck source=/dev/null
 source "$SCRIPT"
 
 fail() { printf 'standalone_safety: %s\n' "$*" >&2; exit 1; }
-assert_contains_file() { grep -Fq -- "$2" "$1" || fail "expected $1 to contain [$2]"; }
+CONTROLLER_SOURCE="$(cat -- "${CONTROLLER_FILES[@]}")"
+assert_controller_contains() { grep -Fq -- "$1" <<<"$CONTROLLER_SOURCE" || fail "expected controller source to contain [$1]"; }
 
 # Persistent privileged authority must not live in a user-writable state tree.
-assert_contains_file "$SCRIPT" 'RA_STATE_DIR="${RELEASE_ACCEPTANCE_STATE_DIR:-/var/lib/podlaz-release-acceptance}"'
-assert_contains_file "$SCRIPT" 'flock'
+[[ "$RA_STATE_DIR" == "${RELEASE_ACCEPTANCE_STATE_DIR:-/var/lib/podlaz-release-acceptance}" ]] || fail "unexpected privileged state directory: $RA_STATE_DIR"
+assert_controller_contains 'flock'
 
-# The approved standalone design explicitly forbids eval.
-if grep -Eq '(^|[;[:space:]])eval([[:space:]]|$)' "$SCRIPT"; then
+# The approved standalone design explicitly forbids eval across the complete controller.
+if grep -Eq '(^|[;[:space:]])eval([[:space:]]|$)' <<<"$CONTROLLER_SOURCE"; then
   fail "standalone harness must not use eval"
 fi
 
 # User-selected evidence paths are validated before chmod/chown/creation.
-assert_contains_file "$SCRIPT" 'ra_validate_artifact_root'
+assert_controller_contains 'ra_validate_artifact_root'
 
 # Candidate privacy proof must validate actual nft rule expressions/verdicts,
 # not just table/chain/comment counts.
-assert_contains_file "$SCRIPT" 'ra_privacy_verify_rule'
-assert_contains_file "$SCRIPT" 'block-direct'
-assert_contains_file "$SCRIPT" 'reject'
-assert_contains_file "$SCRIPT" 'tun-egress'
-assert_contains_file "$SCRIPT" 'bootstrap_ipv4'
+assert_controller_contains 'ra_privacy_verify_rule'
+assert_controller_contains 'block-direct'
+assert_controller_contains 'reject'
+assert_controller_contains 'tun-egress'
+assert_controller_contains 'bootstrap_ipv4'
 
 # Canonical qualification is exactly 60 minutes; longer debug runs are partial too.
 TMP="$(mktemp -d)"
@@ -43,19 +55,19 @@ RA_SOAK_MINUTES=60
 
 # Reboot no-retry evidence is only meaningful if the verifier deliberately
 # restarts the daemon in the same boot after successful autostart/disconnect/terminal.
-reboot_verifiers="$(sed -n '/^ra_resume_reboot_on_verify()/,/^ra_preflight_capabilities()/p' "$SCRIPT")"
+reboot_verifiers="$(sed -n '/^ra_resume_reboot_on_verify()/,/^ra_preflight_capabilities()/p' <<<"$CONTROLLER_SOURCE")"
 grep -Fq 'ra_successful_boot_restart_continuity' <<<"$reboot_verifiers" || fail "successful autostart does not restart daemon while active"
 [[ "$(grep -c 'ra_same_boot_restart_stays_inactive' <<<"$reboot_verifiers")" -ge 2 ]] || fail "disconnect/terminal no-retry checks do not restart daemon"
 
 # Abort/finalization must preserve the exact cleanup boundary. The outer
 # compatibility dispatcher delegates current-v5 runs to the integrated controller;
 # supported legacy runs use their separately tested narrow reconciliation proof.
-abort_dispatch="$(sed -n '/^ra_run_abort()/,/^ra_run_restart()/p' "$SCRIPT")"
+abort_dispatch="$(sed -n '/^ra_run_abort()/,/^ra_run_restart()/p' <<<"$CONTROLLER_SOURCE")"
 grep -Fq 'ra_run_abort_current' <<<"$abort_dispatch" || fail "current abort does not delegate to exact cleanup controller"
-current_abort_body="$(sed -n '/^ra_run_abort_current()/,/^ra_run_restart_current()/p' "$SCRIPT")"
+current_abort_body="$(sed -n '/^ra_run_abort_current()/,/^ra_run_restart_current()/p' <<<"$CONTROLLER_SOURCE")"
 grep -Fq 'ra_safe_cleanup' <<<"$current_abort_body" || fail "current abort bypasses exact safe cleanup"
 grep -Fq 'ra_legacy_checkpoint_reconcile' <<<"$abort_dispatch" || fail "legacy abort bypasses narrow reconciliation"
-cleanup_body="$(sed -n '/^ra_safe_cleanup()/,/^ra_public_resource_summary()/p' "$SCRIPT")"
+cleanup_body="$(sed -n '/^ra_safe_cleanup()/,/^ra_public_resource_summary()/p' <<<"$CONTROLLER_SOURCE")"
 grep -Eq 'ra_verify_ordinary_network|ra_privacy_require_ordinary' <<<"$cleanup_body" || fail "safe cleanup can declare clean without ordinary-network verification"
 
 printf 'standalone_safety: PASS\n'
