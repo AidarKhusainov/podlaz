@@ -41,7 +41,11 @@ JSON
 chmod 0600 "$RA_CONTINUATION"
 
 write_checkpoint() {
-  local scenario="$1" replay_required="$2"
+  local scenario="$1" candidate_applied="${2:-false}"
+  local mutations='{}'
+  if [[ "$candidate_applied" == true ]]; then
+    mutations='{"candidate_upgrade":{"state":"acquired","kind":"candidate_package","identity":{"applied":true}}}'
+  fi
   cat >"$RA_CHECKPOINT" <<JSON
 {
   "schema_version":"podlaz.release-acceptance-checkpoint.v5",
@@ -53,9 +57,9 @@ write_checkpoint() {
   "current_scenario":"$scenario",
   "last_failure":{"boot_id":"01234567-89ab-cdef-0123-456789abcdef"},
   "candidate":{"package":"podlaz","version":"9.9.9","architecture":"amd64","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-  "mutations":{},
+  "mutations":$mutations,
   "scenarios":{
-    "$scenario":{"name":"$scenario","state":"failed","started_at":"2026-09-14T08:01:00Z","private":{"replay_diagnostic_required":$replay_required}}
+    "$scenario":{"name":"$scenario","state":"failed","started_at":"2026-09-14T08:01:00Z"}
   },
   "private":{"artifact_root":"$RA_ARTIFACT_DIR","service_active_before":true,"run_config":{"soak_minutes":60},"resource":{}}
 }
@@ -99,6 +103,23 @@ assert_eq "$(jq -r '.components.boot_attempt.observation // ""' "$INVALID_BOOT_B
 assert_eq "$(jq -r '.components.boot_attempt.applicability // ""' "$INVALID_BOOT_BUNDLE/metadata.json")" required 'invalid required boot attempt applicability'
 assert_eq "$(jq -r '.capture_status' "$INVALID_BOOT_BUNDLE/metadata.json")" partial 'invalid required boot attempt completeness'
 
+# Terminal attempts must preserve one of the daemon-owned typed terminal reasons.
+cat >"$RA_BOOT_ATTEMPT" <<'JSON'
+{
+  "schema_version":"podlaz.boot-autostart-attempt.v1",
+  "boot_id":"01234567-89ab-cdef-0123-456789abcdef",
+  "manifest_generation":"0123456789abcdef0123456789abcdef",
+  "state":"terminal",
+  "terminal_reason":"not-a-real-reason",
+  "configuration":{}
+}
+JSON
+chmod 0600 "$RA_BOOT_ATTEMPT"
+ra_failure_bundle_capture invalid_terminal_boot_attempt 1 automatic-finalizer
+INVALID_TERMINAL_BUNDLE="$(latest_bundle)"
+assert_eq "$(jq -r '.components.boot_attempt.observation // ""' "$INVALID_TERMINAL_BUNDLE/metadata.json")" invalid 'invalid terminal boot reason observation'
+assert_eq "$(jq -r '.capture_status' "$INVALID_TERMINAL_BUNDLE/metadata.json")" partial 'invalid terminal boot reason completeness'
+
 # A valid current-boot attempt satisfies the same required component.
 cat >"$RA_BOOT_ATTEMPT" <<'JSON'
 {
@@ -115,8 +136,9 @@ VALID_BOOT_BUNDLE="$(latest_bundle)"
 assert_eq "$(jq -r '.components.boot_attempt.observation // .components.boot_attempt.status // ""' "$VALID_BOOT_BUNDLE/metadata.json")" captured 'valid required boot attempt observation'
 assert_eq "$(jq -r '.capture_status' "$VALID_BOOT_BUNDLE/metadata.json")" complete 'valid required boot attempt completeness'
 
-# Once the harness records that candidate replay evidence is required, proven file
-# absence is missing required evidence, not an optional observation.
+# Once candidate replacement has been durably recorded as applied inside the
+# lower-release-upgrade scenario, replay evidence is required even if the file
+# itself has disappeared before immutable failure capture.
 rm -f "$RA_BOOT_ATTEMPT" "$RA_RESUME_DIAGNOSTIC"
 write_checkpoint lower_release_upgrade true
 ra_failure_bundle_capture required_replay_diagnostic_absent 1 automatic-finalizer
@@ -124,5 +146,13 @@ REPLAY_BUNDLE="$(latest_bundle)"
 assert_eq "$(jq -r '.components.replay_diagnostic.observation // ""' "$REPLAY_BUNDLE/metadata.json")" verified_absent 'required replay diagnostic absence observation'
 assert_eq "$(jq -r '.components.replay_diagnostic.applicability // ""' "$REPLAY_BUNDLE/metadata.json")" required 'required replay diagnostic applicability'
 assert_eq "$(jq -r '.capture_status' "$REPLAY_BUNDLE/metadata.json")" partial 'required replay diagnostic absence completeness'
+
+# The same absent diagnostic remains optional before candidate replacement is applied.
+write_checkpoint lower_release_upgrade false
+ra_failure_bundle_capture optional_pre_replay_diagnostic_absent 1 automatic-finalizer
+PRE_REPLAY_BUNDLE="$(latest_bundle)"
+assert_eq "$(jq -r '.components.replay_diagnostic.observation // ""' "$PRE_REPLAY_BUNDLE/metadata.json")" verified_absent 'pre-replay diagnostic absence observation'
+assert_eq "$(jq -r '.components.replay_diagnostic.applicability // ""' "$PRE_REPLAY_BUNDLE/metadata.json")" optional 'pre-replay diagnostic applicability'
+assert_eq "$(jq -r '.capture_status' "$PRE_REPLAY_BUNDLE/metadata.json")" complete 'pre-replay optional absence completeness'
 
 printf 'failure_evidence_validation_contract: PASS\n'
