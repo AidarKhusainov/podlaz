@@ -13,3 +13,12 @@ func TestHostedE2ECapabilityOwnsScopedOuterForwarding(t *testing.T) {
 		"iptables -D",
 	)
 }
+
+func TestHostedE2ECapabilityObservesForwardDropWithoutRejectingRunner(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"Inspect outer forward policy",
+		"outer.forward.iptables_policy=drop",
+	)
+	forbidHostedCapabilityMarkers(t, workflow, "exit 42")
+}
