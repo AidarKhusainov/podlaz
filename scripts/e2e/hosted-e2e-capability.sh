@@ -165,7 +165,7 @@ PY
 }
 
 capture_outer_baseline() {
-  require_cmd curl ip sha256sum
+  require_cmd curl ip iptables sha256sum
   install -d -m 0700 "${CAPABILITY_PRIVATE}"
   OUTER_DEFAULT_ROUTE_BASELINE="${CAPABILITY_PRIVATE}/outer-default-route.json"
   OUTER_RULES_BASELINE="${CAPABILITY_PRIVATE}/outer-rules.json"
@@ -180,6 +180,9 @@ capture_outer_baseline() {
     return 1
   fi
   if sudo -n nft list table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! sudo -n iptables -S DOCKER-USER >/dev/null 2>&1; then
     return 1
   fi
   record_capability outer.baseline pass
@@ -198,12 +201,15 @@ assert_outer_control_plane_healthy() {
     [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "${OUTER_IP_FORWARD_BASELINE}" ]] || return 1
     ! ip link show dev "${CAPABILITY_HOST_VETH}" >/dev/null 2>&1 || return 1
     ! sudo -n nft list table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" >/dev/null 2>&1 || return 1
+    ! sudo -n iptables -S DOCKER-USER | grep -F 'podlaz-hosted-e2e-forward-' >/dev/null || return 1
   fi
 }
 
 cleanup_outer_plumbing() {
   local failed=0
   set +e
+  sudo -n iptables -D DOCKER-USER -i "${OUTER_EGRESS_IF}" -o "${CAPABILITY_HOST_VETH}" -d 192.0.2.0/30 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-e2e-forward-in -j ACCEPT >/dev/null 2>&1 || true
+  sudo -n iptables -D DOCKER-USER -i "${CAPABILITY_HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s 192.0.2.0/30 -m comment --comment podlaz-hosted-e2e-forward-out -j ACCEPT >/dev/null 2>&1 || true
   sudo -n nft delete table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" >/dev/null 2>&1 || true
   sudo -n ip link del dev "${CAPABILITY_HOST_VETH}" >/dev/null 2>&1 || true
   if [[ -n "${OUTER_IP_FORWARD_BASELINE}" ]]; then
@@ -413,6 +419,8 @@ setup_outer_plumbing() {
   sudo -n ip addr add "${CAPABILITY_HOST_CIDR}" dev "${CAPABILITY_HOST_VETH}"
   sudo -n ip link set dev "${CAPABILITY_HOST_VETH}" up
   printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
+  sudo -n iptables -I DOCKER-USER 1 -i "${CAPABILITY_HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s 192.0.2.0/30 -m comment --comment podlaz-hosted-e2e-forward-out -j ACCEPT
+  sudo -n iptables -I DOCKER-USER 1 -i "${OUTER_EGRESS_IF}" -o "${CAPABILITY_HOST_VETH}" -d 192.0.2.0/30 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-e2e-forward-in -j ACCEPT
   sudo -n nft add table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}"
   sudo -n nft "add chain ${CAPABILITY_NFT_FAMILY} ${CAPABILITY_NFT_TABLE} postrouting { type nat hook postrouting priority srcnat; policy accept; }"
   sudo -n nft add rule "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" postrouting ip saddr 192.0.2.0/30 oifname "${OUTER_EGRESS_IF}" masquerade
@@ -947,7 +955,7 @@ validate_candidate() {
 main() {
   local failed=0 probe_status
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  require_cmd awk bash cmp curl debootstrap dpkg dpkg-deb find grep ip mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
+  require_cmd awk bash cmp curl debootstrap dpkg dpkg-deb find grep ip iptables mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
   install -d -m 0700 "${CAPABILITY_PRIVATE}" "${E2E_ARTIFACT_DIR}"
   : >"${CAPABILITY_REPORT}"
