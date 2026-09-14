@@ -83,8 +83,9 @@ jobs:
           install -d -m 0700 "${E2E_TMP_ROOT}"
           install -d -m 0700 "${E2E_ARTIFACT_DIR}"
 
-          # Capture volatile package install diagnostics while the nspawn /run
-          # namespace still exists. This watcher is read-only and private.
+          # systemd-nspawn mounts /tmp as tmpfs. Restage the exact built
+          # candidate after the machine exists so the package install sees it.
+          # Stage candidate into live guest tmpfs.
           candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           capture_pid=""
           cleanup_capture() {
@@ -104,6 +105,17 @@ jobs:
                 exit 0
               fi
               if machinectl show podlaz-capability >/dev/null 2>&1; then
+                if ! sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc "install -m 0644 '/workspace/${DEV_DEB}' /tmp/.candidate.deb && mv -f /tmp/.candidate.deb /tmp/candidate.deb" \
+                  >/dev/null 2>&1; then
+                  sleep 0.1
+                  continue
+                fi
+
+                # Capture volatile package install diagnostics while the
+                # nspawn /run namespace still exists. This is read-only.
                 if {
                   sudo -n systemd-run \
                     --machine=podlaz-capability \
