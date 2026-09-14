@@ -483,8 +483,14 @@ start_system_guest() {
   record_capability guest.start.tun pass
 
   SYSTEM_GUEST_START_STAGE=internet
-  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
-  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+  if ! guest_exec timeout 20 getent ahostsv4 example.com >/dev/null; then
+    printf '%s\n' 'guest.start.internet.dns=fail' >&2
+    return 1
+  fi
+  if ! guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/; then
+    printf '%s\n' 'guest.start.internet.https=fail' >&2
+    return 1
+  fi
   record_capability guest.internet.before pass
   record_capability guest.start.internet pass
   SYSTEM_GUEST_START_STAGE=""
