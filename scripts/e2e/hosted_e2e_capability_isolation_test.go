@@ -84,6 +84,28 @@ find_loopback_port
 	}
 }
 
+func TestHostedE2ECapabilityBootstrapsMinbaseBeforeGuestPackages(t *testing.T) {
+	data, err := os.ReadFile(hostedCapabilityScript)
+	if err != nil {
+		t.Fatalf("read hosted capability script: %v", err)
+	}
+	script := string(data)
+	debootstrap := strings.Index(script, "--variant=minbase")
+	guestPackages := strings.Index(script, "apt-get install -y --no-install-recommends")
+	if debootstrap < 0 {
+		t.Fatal("hosted capability must bootstrap a Noble minbase rootfs")
+	}
+	if guestPackages < 0 {
+		t.Fatal("hosted capability must install the guest runtime with apt after minbase bootstrap")
+	}
+	if guestPackages < debootstrap {
+		t.Fatal("guest runtime package installation must happen after minbase debootstrap")
+	}
+	if strings.Contains(script[debootstrap:guestPackages], "--include=") {
+		t.Fatal("debootstrap must not install the desktop-like guest runtime through --include")
+	}
+}
+
 func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 	data, err := os.ReadFile(hostedCapabilityScript)
 	if err != nil {
