@@ -359,15 +359,27 @@ EOF
 }
 
 prepare_system_guest() {
+  local policy_rc="${CAPABILITY_GUEST_ROOT}/usr/sbin/policy-rc.d"
   require_cmd debootstrap systemd-nspawn machinectl systemd-run
   sudo -n rm -rf "${CAPABILITY_GUEST_ROOT}"
 
   SYSTEM_GUEST_PREPARE_STAGE=debootstrap
   sudo -n debootstrap \
     --variant=minbase \
-    --include=systemd,systemd-sysv,dbus,ca-certificates,sudo,iproute2,nftables,curl,python3,gawk,grep,sed,procps,util-linux,iputils-ping,network-manager,systemd-resolved,polkitd,jq,openssl,git \
     noble "${CAPABILITY_GUEST_ROOT}" http://archive.ubuntu.com/ubuntu \
     >"${CAPABILITY_PRIVATE}/debootstrap.log" 2>&1
+
+  printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
+  sudo -n chmod 0755 "${policy_rc}"
+  sudo -n chroot "${CAPABILITY_GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+    apt-get update >"${CAPABILITY_PRIVATE}/guest-apt.log" 2>&1
+  sudo -n chroot "${CAPABILITY_GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends \
+      systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
+      network-manager systemd-resolved polkitd jq openssl git \
+    >>"${CAPABILITY_PRIVATE}/guest-apt.log" 2>&1
+  sudo -n rm -f "${policy_rc}"
+  sudo -n chroot "${CAPABILITY_GUEST_ROOT}" apt-get clean >/dev/null 2>&1
   record_capability guest.prepare.debootstrap pass
 
   write_system_guest_files
