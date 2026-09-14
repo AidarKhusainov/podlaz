@@ -23,6 +23,16 @@ func TestHostedE2ECapabilityObservesForwardDropWithoutRejectingRunner(t *testing
 	forbidHostedCapabilityMarkers(t, workflow, "exit 42")
 }
 
+func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"Stage candidate into live guest tmpfs",
+		"/workspace/${DEV_DEB}",
+		"/tmp/candidate.deb",
+		"install -m 0644",
+	)
+}
+
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
