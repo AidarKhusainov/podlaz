@@ -84,6 +84,16 @@ jobs:
           install -d -m 0700 "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/hosted-e2e-capability.sh "${DEV_DEB}"
 
+      - name: Collect bounded package install diagnostics
+        if: failure()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
+        run: |
+          apt_log="${E2E_TMP_ROOT}/system-guest/run/podlaz-capability-apt.log"
+          if sudo -n test -f "${apt_log}"; then
+            sudo -n tail -n 80 "${apt_log}"
+          fi
+
       - name: Validate public capability report
         id: report_validation
         if: always()
