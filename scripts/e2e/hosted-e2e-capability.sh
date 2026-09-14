@@ -591,8 +591,7 @@ run_synthetic_tun_lifecycle() {
 
 assert_guest_tun_clean() {
   ! guest_exec ip link show dev podlaz0 >/dev/null 2>&1 || return 1
-  # shellcheck disable=SC2016 -- expansion belongs to the guest shell.
-  guest_exec /bin/bash -lc 'test ! -d /run/podlaz/transactions || test -z "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -print -quit)"'
+  guest_exec /bin/bash -lc "test ! -d /run/podlaz/transactions || test -z \"\$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -print -quit)\""
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
   sudo -n rm -f "${CAPABILITY_GUEST_ROOT}${CAPABILITY_TUN_RULE}"
@@ -765,8 +764,7 @@ run_qemu_capability() (
     record_capability_if_missing qemu.boot fail
     return 1
   fi
-  # shellcheck disable=SC2016 -- expansion belongs to the VM shell.
-  if ! qemu_ssh '. /etc/os-release; test "$ID" = ubuntu; test "$VERSION_ID" = 24.04' >/dev/null; then
+  if ! qemu_ssh ". /etc/os-release; test \"\$ID\" = ubuntu; test \"\$VERSION_ID\" = 24.04" >/dev/null; then
     record_capability_if_missing qemu.boot fail
     return 1
   fi
