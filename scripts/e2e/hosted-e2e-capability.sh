@@ -462,7 +462,7 @@ start_synthetic_xray_endpoint() {
   port="$(python3 - "${CAPABILITY_HOST_IP}" <<'PY'
 import socket
 import sys
-sock = socket.socket()
+sock = socket()
 sock.bind((sys.argv[1], 0))
 print(sock.getsockname()[1])
 sock.close()
@@ -812,7 +812,7 @@ run_system_guest_capability() (
   install_tun_ci_authorization
   run_synthetic_tun_lifecycle
   assert_guest_tun_clean
-  stage=done
+  stage="done"
 )
 
 run_independent_capability_probes() {
