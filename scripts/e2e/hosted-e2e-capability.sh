@@ -38,6 +38,11 @@ CAPABILITY_KEYS=(
   kernel.nftables
   guest.bootstrap.prepare
   guest.bootstrap.start
+  guest.prepare.debootstrap
+  guest.prepare.networking
+  guest.prepare.user
+  guest.prepare.services
+  guest.prepare.candidate
   guest.systemd
   guest.resolved
   guest.networkmanager
@@ -80,6 +85,7 @@ OUTER_IP_FORWARD_BASELINE=""
 OUTER_EGRESS_IF=""
 NSPAWN_PID=""
 SYSTEM_GUEST_ACTIVE=false
+SYSTEM_GUEST_PREPARE_STAGE=""
 XRAY_PID=""
 QEMU_PID=""
 QEMU_SSH_PORT=""
@@ -311,6 +317,8 @@ probe_hosted_kernel_primitives() {
 
 write_system_guest_files() {
   local nm_tmp sudoers_tmp
+
+  SYSTEM_GUEST_PREPARE_STAGE=networking
   nm_tmp="$(mktemp "${CAPABILITY_PRIVATE}/nm.XXXXXX")"
   cat >"${nm_tmp}" <<EOF
 [connection]
@@ -330,31 +338,44 @@ method=disabled
 EOF
   sudo -n install -D -m 0600 "${nm_tmp}" "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/system-connections/capability-uplink.nmconnection"
   rm -f -- "${nm_tmp}"
-
   sudo -n mkdir -p "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d"
   printf '[main]\ndns=systemd-resolved\n' | sudo -n tee "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d/10-capability-dns.conf" >/dev/null
   sudo -n rm -f "${CAPABILITY_GUEST_ROOT}/etc/resolv.conf"
   sudo -n ln -s /run/systemd/resolve/stub-resolv.conf "${CAPABILITY_GUEST_ROOT}/etc/resolv.conf"
+  record_capability guest.prepare.networking pass
 
+  SYSTEM_GUEST_PREPARE_STAGE=user
   sudo -n chroot "${CAPABILITY_GUEST_ROOT}" useradd -m -s /bin/bash e2e
   sudoers_tmp="$(mktemp "${CAPABILITY_PRIVATE}/sudoers.XXXXXX")"
   printf 'e2e ALL=(ALL) NOPASSWD: ALL\n' >"${sudoers_tmp}"
   sudo -n install -D -m 0440 "${sudoers_tmp}" "${CAPABILITY_GUEST_ROOT}/etc/sudoers.d/e2e-capability"
   rm -f -- "${sudoers_tmp}"
+  record_capability guest.prepare.user pass
+
+  SYSTEM_GUEST_PREPARE_STAGE=services
   sudo -n mkdir -p "${CAPABILITY_GUEST_ROOT}/workspace"
   sudo -n systemctl --root="${CAPABILITY_GUEST_ROOT}" enable NetworkManager.service systemd-resolved.service >/dev/null
+  record_capability guest.prepare.services pass
 }
 
 prepare_system_guest() {
   require_cmd debootstrap systemd-nspawn machinectl systemd-run
   sudo -n rm -rf "${CAPABILITY_GUEST_ROOT}"
+
+  SYSTEM_GUEST_PREPARE_STAGE=debootstrap
   sudo -n debootstrap \
     --variant=minbase \
     --include=systemd,systemd-sysv,dbus,ca-certificates,sudo,iproute2,nftables,curl,python3,gawk,grep,sed,procps,util-linux,iputils-ping,network-manager,systemd-resolved,polkitd,jq,openssl,git \
     noble "${CAPABILITY_GUEST_ROOT}" http://archive.ubuntu.com/ubuntu \
     >"${CAPABILITY_PRIVATE}/debootstrap.log" 2>&1
+  record_capability guest.prepare.debootstrap pass
+
   write_system_guest_files
+
+  SYSTEM_GUEST_PREPARE_STAGE=candidate
   sudo -n install -m 0644 "${CANDIDATE_DEB}" "${CAPABILITY_GUEST_ROOT}/tmp/candidate.deb"
+  record_capability guest.prepare.candidate pass
+  SYSTEM_GUEST_PREPARE_STAGE=""
 }
 
 setup_outer_plumbing() {
@@ -462,7 +483,7 @@ start_synthetic_xray_endpoint() {
   port="$(python3 - "${CAPABILITY_HOST_IP}" <<'PY'
 import socket
 import sys
-sock = socket()
+sock = socket.socket()
 sock.bind((sys.argv[1], 0))
 print(sock.getsockname()[1])
 sock.close()
@@ -676,7 +697,7 @@ choose_qemu_accel() {
 find_loopback_port() {
   python3 - <<'PY'
 import socket
-sock = socket()
+sock = socket.socket()
 sock.bind(("127.0.0.1", 0))
 print(sock.getsockname()[1])
 sock.close()
@@ -787,7 +808,16 @@ run_system_guest_capability() (
     set +e
     if (( saved != 0 )); then
       case "${stage}" in
-        prepare) record_capability_if_missing guest.bootstrap.prepare fail ;;
+        prepare)
+          case "${SYSTEM_GUEST_PREPARE_STAGE}" in
+            debootstrap) record_capability_if_missing guest.prepare.debootstrap fail ;;
+            networking) record_capability_if_missing guest.prepare.networking fail ;;
+            user) record_capability_if_missing guest.prepare.user fail ;;
+            services) record_capability_if_missing guest.prepare.services fail ;;
+            candidate) record_capability_if_missing guest.prepare.candidate fail ;;
+          esac
+          record_capability_if_missing guest.bootstrap.prepare fail
+          ;;
         start) record_capability_if_missing guest.bootstrap.start fail ;;
       esac
     fi
