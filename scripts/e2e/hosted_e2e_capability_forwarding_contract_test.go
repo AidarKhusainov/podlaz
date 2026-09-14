@@ -23,6 +23,15 @@ func TestHostedE2ECapabilityObservesForwardDropWithoutRejectingRunner(t *testing
 	forbidHostedCapabilityMarkers(t, workflow, "exit 42")
 }
 
+func TestHostedE2ECapabilityRetriesTransientOuterControlPlaneFailure(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"--retry 3",
+		"--retry-max-time 20",
+		"https://github.com/",
+	)
+}
+
 func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
