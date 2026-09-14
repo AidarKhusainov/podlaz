@@ -31,11 +31,11 @@ run_system_guest_capability() (
   : >"${SYSTEM_AFTER_FAILURE_MARKER}"
 )
 run_qemu_capability() { : >"${QEMU_MARKER}"; return 0; }
-set +e
-run_independent_capability_probes
-code=$?
-set -e
-[[ "$code" -ne 0 ]]
+failed=0
+if ! run_independent_capability_probes; then
+  failed=1
+fi
+[[ "$failed" -eq 1 ]]
 [[ -f "${SYSTEM_MARKER}" ]]
 [[ ! -e "${SYSTEM_AFTER_FAILURE_MARKER}" ]]
 [[ -f "${QEMU_MARKER}" ]]
