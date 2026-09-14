@@ -116,6 +116,31 @@ func TestHostedE2ECapabilityBoundsSystemGuestReadiness(t *testing.T) {
 	}
 }
 
+func TestHostedE2ECapabilityChecksGuestUplinkIdentityBeforeNetworkManager(t *testing.T) {
+	data, err := os.ReadFile(hostedCapabilityScript)
+	if err != nil {
+		t.Fatalf("read hosted capability script: %v", err)
+	}
+	script := string(data)
+	interfaceCheck := strings.Index(script, "guest.start.interface")
+	nmActivate := strings.Index(script, "nmcli connection up capability-uplink")
+	if interfaceCheck < 0 {
+		t.Fatal("system guest startup must classify the guest uplink interface before NetworkManager activation")
+	}
+	if nmActivate < 0 {
+		t.Fatal("system guest startup must activate the NetworkManager capability uplink")
+	}
+	if interfaceCheck > nmActivate {
+		t.Fatal("guest uplink identity must be checked before NetworkManager activation")
+	}
+	if !strings.Contains(script, "ip -o link show dev \"${CAPABILITY_GUEST_IF}\"") {
+		t.Fatal("system guest startup must verify the expected guest veth identity")
+	}
+	if !strings.Contains(script, "guest-start-links.log") {
+		t.Fatal("system guest startup must retain a private link snapshot for bootstrap diagnosis")
+	}
+}
+
 func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 	data, err := os.ReadFile(hostedCapabilityScript)
 	if err != nil {
@@ -132,6 +157,7 @@ func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 		"guest.prepare.candidate",
 		"guest.start.nspawn",
 		"guest.start.control",
+		"guest.start.interface",
 		"guest.start.uplink",
 		"guest.start.services",
 		"guest.start.tun",
