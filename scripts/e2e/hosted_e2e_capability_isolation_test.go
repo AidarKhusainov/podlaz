@@ -31,11 +31,11 @@ run_system_guest_capability() (
   : >"${SYSTEM_AFTER_FAILURE_MARKER}"
 )
 run_qemu_capability() { : >"${QEMU_MARKER}"; return 0; }
-failed=0
-if ! run_independent_capability_probes; then
-  failed=1
-fi
-[[ "$failed" -eq 1 ]]
+set +e
+run_independent_capability_probes
+code=$?
+set -e
+[[ "$code" -ne 0 ]]
 [[ -f "${SYSTEM_MARKER}" ]]
 [[ ! -e "${SYSTEM_AFTER_FAILURE_MARKER}" ]]
 [[ -f "${QEMU_MARKER}" ]]
@@ -44,6 +44,16 @@ fi
 	cmd.Dir = "."
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("independent capability orchestration failed: %v\n%s", err, output)
+	}
+}
+
+func TestHostedE2ECapabilityMainDoesNotDisableProbeErrexit(t *testing.T) {
+	data, err := os.ReadFile(hostedCapabilityScript)
+	if err != nil {
+		t.Fatalf("read hosted capability script: %v", err)
+	}
+	if strings.Contains(string(data), "if ! run_independent_capability_probes; then") {
+		t.Fatal("main must collect probe status without invoking the orchestrator in conditional context")
 	}
 }
 
