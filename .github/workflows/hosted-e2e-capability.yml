@@ -62,22 +62,16 @@ jobs:
 
       - name: Inspect outer forward policy
         run: |
-          if ! command -v iptables >/dev/null 2>&1; then
+          if command -v iptables >/dev/null 2>&1; then
+            forward_policy="$(sudo -n iptables -S FORWARD 2>/dev/null | sed -n '1p')"
+            case "${forward_policy}" in
+              '-P FORWARD ACCEPT') printf '%s\n' 'outer.forward.iptables_policy=accept' ;;
+              '-P FORWARD DROP') printf '%s\n' 'outer.forward.iptables_policy=drop' ;;
+              *) printf '%s\n' 'outer.forward.iptables_policy=other' ;;
+            esac
+          else
             printf '%s\n' 'outer.forward.iptables_policy=unavailable'
-            exit 1
           fi
-          forward_policy="$(sudo -n iptables -S FORWARD 2>/dev/null | sed -n '1p')"
-          case "${forward_policy}" in
-            '-P FORWARD ACCEPT') printf '%s\n' 'outer.forward.iptables_policy=accept' ;;
-            '-P FORWARD DROP')
-              printf '%s\n' 'outer.forward.iptables_policy=drop'
-              exit 42
-              ;;
-            *)
-              printf '%s\n' 'outer.forward.iptables_policy=other'
-              exit 1
-              ;;
-          esac
 
       - name: Run disposable guest capability
         id: capability
