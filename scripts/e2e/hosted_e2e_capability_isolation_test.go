@@ -106,6 +106,16 @@ func TestHostedE2ECapabilityBootstrapsMinbaseBeforeGuestPackages(t *testing.T) {
 	}
 }
 
+func TestHostedE2ECapabilityBoundsSystemGuestReadiness(t *testing.T) {
+	data, err := os.ReadFile(hostedCapabilityScript)
+	if err != nil {
+		t.Fatalf("read hosted capability script: %v", err)
+	}
+	if !strings.Contains(string(data), "timeout 30 systemctl is-system-running --wait") {
+		t.Fatal("system guest readiness wait must have an explicit bounded timeout")
+	}
+}
+
 func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 	data, err := os.ReadFile(hostedCapabilityScript)
 	if err != nil {
@@ -120,6 +130,12 @@ func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 		"guest.prepare.user",
 		"guest.prepare.services",
 		"guest.prepare.candidate",
+		"guest.start.nspawn",
+		"guest.start.control",
+		"guest.start.uplink",
+		"guest.start.services",
+		"guest.start.tun",
+		"guest.start.internet",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("hosted capability evidence must expose %q", required)
