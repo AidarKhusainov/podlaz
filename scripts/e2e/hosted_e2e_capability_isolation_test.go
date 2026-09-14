@@ -18,17 +18,19 @@ set -euo pipefail
 export PODLAZ_E2E_CAPABILITY_SOURCE_ONLY=true
 export E2E_TMP_ROOT="$1/private"
 export E2E_ARTIFACT_DIR="$1/public"
+SYSTEM_MARKER="$2"
+QEMU_MARKER="$3"
 mkdir -p "$E2E_TMP_ROOT" "$E2E_ARTIFACT_DIR"
 source ./hosted-e2e-capability.sh
-run_system_guest_capability() { : >"$2"; return 1; }
-run_qemu_capability() { : >"$3"; return 0; }
+run_system_guest_capability() { : >"${SYSTEM_MARKER}"; return 1; }
+run_qemu_capability() { : >"${QEMU_MARKER}"; return 0; }
 set +e
 run_independent_capability_probes
 code=$?
 set -e
 [[ "$code" -ne 0 ]]
-[[ -f "$2" ]]
-[[ -f "$3" ]]
+[[ -f "${SYSTEM_MARKER}" ]]
+[[ -f "${QEMU_MARKER}" ]]
 `
 	cmd := exec.Command("bash", "-c", command, "bash", tmp, systemMarker, qemuMarker)
 	cmd.Dir = "."
