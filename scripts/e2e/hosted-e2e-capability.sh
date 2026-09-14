@@ -36,6 +36,8 @@ CAPABILITY_KEYS=(
   kernel.netns
   kernel.route_rule
   kernel.nftables
+  guest.bootstrap.prepare
+  guest.bootstrap.start
   guest.systemd
   guest.resolved
   guest.networkmanager
@@ -76,7 +78,6 @@ OUTER_RULES_BASELINE=""
 OUTER_RESOLV_CONF_BASELINE=""
 OUTER_IP_FORWARD_BASELINE=""
 OUTER_EGRESS_IF=""
-OUTER_PLUMBING_ACTIVE=false
 NSPAWN_PID=""
 SYSTEM_GUEST_ACTIVE=false
 XRAY_PID=""
@@ -85,6 +86,11 @@ QEMU_SSH_PORT=""
 QEMU_SSH_KEY=""
 TEARDOWN_RUNNING=false
 
+capability_recorded() {
+  local key="$1"
+  [[ -f "${CAPABILITY_REPORT}" ]] && grep -Eq "^${key}=" "${CAPABILITY_REPORT}"
+}
+
 record_capability() {
   local key="${1:-}" state="${2:-}"
   [[ "${key}" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "invalid capability evidence key"
@@ -92,14 +98,14 @@ record_capability() {
     pass|fail|unavailable|observed) ;;
     *) fail "invalid capability evidence state for ${key}" ;;
   esac
-  [[ -z "${CAPABILITY_SEEN[${key}]+x}" ]] || fail "duplicate capability evidence key: ${key}"
+  ! capability_recorded "${key}" || fail "duplicate capability evidence key: ${key}"
   CAPABILITY_SEEN["${key}"]=1
   printf '%s=%s\n' "${key}" "${state}" >>"${CAPABILITY_REPORT}"
 }
 
 record_capability_if_missing() {
   local key="$1" state="$2"
-  if [[ -z "${CAPABILITY_SEEN[${key}]+x}" ]]; then
+  if ! capability_recorded "${key}"; then
     record_capability "${key}" "${state}"
   fi
 }
@@ -189,7 +195,6 @@ cleanup_outer_plumbing() {
   if [[ -n "${OUTER_IP_FORWARD_BASELINE}" ]]; then
     printf '%s\n' "${OUTER_IP_FORWARD_BASELINE}" | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null || failed=1
   fi
-  OUTER_PLUMBING_ACTIVE=false
   set -e
   return "${failed}"
 }
@@ -364,7 +369,6 @@ setup_outer_plumbing() {
   sudo -n nft add table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}"
   sudo -n nft "add chain ${CAPABILITY_NFT_FAMILY} ${CAPABILITY_NFT_TABLE} postrouting { type nat hook postrouting priority srcnat; policy accept; }"
   sudo -n nft add rule "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" postrouting ip saddr 192.0.2.0/30 oifname "${OUTER_EGRESS_IF}" masquerade
-  OUTER_PLUMBING_ACTIVE=true
 }
 
 start_system_guest() {
@@ -587,6 +591,7 @@ run_synthetic_tun_lifecycle() {
 
 assert_guest_tun_clean() {
   ! guest_exec ip link show dev podlaz0 >/dev/null 2>&1 || return 1
+  # shellcheck disable=SC2016 -- expansion belongs to the guest shell.
   guest_exec /bin/bash -lc 'test ! -d /run/podlaz/transactions || test -z "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -print -quit)"'
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
@@ -625,12 +630,19 @@ prepare_qemu_image() {
   local free_kb image="${CAPABILITY_QEMU_ROOT}/ubuntu.img" sums="${CAPABILITY_QEMU_ROOT}/SHA256SUMS" expected actual user_data
   install -d -m 0700 "${CAPABILITY_QEMU_ROOT}"
   free_kb="$(df -Pk "${E2E_TMP_ROOT}" | awk 'NR == 2 {print $4}')"
-  (( free_kb >= 3 * 1024 * 1024 )) || return 1
+  if (( free_kb < 3 * 1024 * 1024 )); then
+    record_capability qemu.disk_budget fail
+    return 1
+  fi
+  record_capability qemu.disk_budget pass
   curl -fsSL "${CAPABILITY_QEMU_IMAGE_URL}" -o "${image}"
   curl -fsSL "${CAPABILITY_QEMU_SUMS_URL}" -o "${sums}"
   expected="$(awk '$2 == "*ubuntu-24.04-server-cloudimg-amd64.img" || $2 == "ubuntu-24.04-server-cloudimg-amd64.img" {print $1; exit}' "${sums}")"
   actual="$(sha256sum "${image}" | awk '{print $1}')"
-  [[ -n "${expected}" && "${actual}" == "${expected}" ]] || return 1
+  if [[ -z "${expected}" || "${actual}" != "${expected}" ]]; then
+    record_capability qemu.image_checksum fail
+    return 1
+  fi
   record_capability qemu.image_checksum pass
 
   qemu-img create -q -f qcow2 -F qcow2 -b "${image}" "${CAPABILITY_QEMU_ROOT}/overlay.qcow2" 4G
@@ -652,11 +664,10 @@ disable_root: true
 EOF
   printf 'instance-id: podlaz-hosted-capability\nlocal-hostname: podlaz-capability-vm\n' >"${CAPABILITY_QEMU_ROOT}/meta-data"
   cloud-localds "${CAPABILITY_QEMU_ROOT}/seed.img" "${user_data}" "${CAPABILITY_QEMU_ROOT}/meta-data"
-  record_capability qemu.disk_budget pass
 }
 
 choose_qemu_accel() {
-  if [[ -f "${CAPABILITY_QEMU_ROOT}/kvm-probe.pid" && "${CAPABILITY_SEEN[qemu.kvm_usable]+x}" == x ]] && grep -q '^qemu.kvm_usable=pass$' "${CAPABILITY_REPORT}"; then
+  if grep -q '^qemu.kvm_usable=pass$' "${CAPABILITY_REPORT}"; then
     printf 'kvm\n'
   else
     printf 'tcg\n'
@@ -740,21 +751,81 @@ reboot_qemu_guest() {
   [[ -n "${after}" && "${after}" != "${before}" ]]
 }
 
-run_qemu_capability() {
-  sudo -n rm -rf "${CAPABILITY_GUEST_ROOT}"
+run_qemu_capability() (
+  trap stop_qemu_guest EXIT
+  set -Eeuo pipefail
   mkdir -p "${CAPABILITY_QEMU_ROOT}"
   probe_qemu_accelerators
   prepare_qemu_image
-  start_qemu_guest
-  wait_qemu_ssh
-  qemu_ssh '. /etc/os-release; test "$ID" = ubuntu; test "$VERSION_ID" = 24.04' >/dev/null
+  if ! start_qemu_guest; then
+    record_capability_if_missing qemu.boot fail
+    return 1
+  fi
+  if ! wait_qemu_ssh; then
+    record_capability_if_missing qemu.boot fail
+    return 1
+  fi
+  # shellcheck disable=SC2016 -- expansion belongs to the VM shell.
+  if ! qemu_ssh '. /etc/os-release; test "$ID" = ubuntu; test "$VERSION_ID" = 24.04' >/dev/null; then
+    record_capability_if_missing qemu.boot fail
+    return 1
+  fi
   record_capability qemu.boot pass
-  reboot_qemu_guest
+  if ! reboot_qemu_guest; then
+    record_capability qemu.reboot_boot_id fail
+    return 1
+  fi
   record_capability qemu.reboot_boot_id pass
   stop_qemu_guest
   local free_kb
   free_kb="$(df -Pk "${E2E_TMP_ROOT}" | awk 'NR == 2 {print $4}')"
-  (( free_kb >= 1024 * 1024 )) || return 1
+  (( free_kb >= 1024 * 1024 ))
+)
+
+run_system_guest_capability() (
+  local stage=prepare saved=0
+  cleanup_system_probe() {
+    saved=$?
+    set +e
+    if (( saved != 0 )); then
+      case "${stage}" in
+        prepare) record_capability_if_missing guest.bootstrap.prepare fail ;;
+        start) record_capability_if_missing guest.bootstrap.start fail ;;
+      esac
+    fi
+    stop_synthetic_xray_endpoint || true
+    stop_system_guest || true
+    cleanup_outer_plumbing || true
+    exit "${saved}"
+  }
+  trap cleanup_system_probe EXIT
+  set -Eeuo pipefail
+
+  prepare_system_guest
+  record_capability guest.bootstrap.prepare pass
+  stage=start
+  start_system_guest
+  record_capability guest.bootstrap.start pass
+  stage=product
+  install_candidate_in_guest
+  assert_guest_package_provenance
+  run_guest_ordinary_user_acceptance
+  start_synthetic_xray_endpoint
+  install_tun_ci_authorization
+  run_synthetic_tun_lifecycle
+  assert_guest_tun_clean
+  stage=done
+)
+
+run_independent_capability_probes() {
+  local failed=0
+  if ! run_system_guest_capability; then
+    failed=1
+  fi
+  if ! run_qemu_capability; then
+    failed=1
+  fi
+  return "${failed}"
 }
 
 validate_candidate() {
@@ -767,6 +838,7 @@ validate_candidate() {
 }
 
 main() {
+  local failed=0
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd awk bash cmp curl debootstrap dpkg dpkg-deb find grep ip mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
@@ -783,20 +855,13 @@ main() {
     return 1
   fi
 
-  probe_hosted_kernel_primitives
-  prepare_system_guest
-  start_system_guest
-  install_candidate_in_guest
-  assert_guest_package_provenance
-  run_guest_ordinary_user_acceptance
-  start_synthetic_xray_endpoint
-  install_tun_ci_authorization
-  run_synthetic_tun_lifecycle
-  assert_guest_tun_clean
-  stop_synthetic_xray_endpoint
-  stop_system_guest
-  cleanup_outer_plumbing
-  run_qemu_capability
+  if ! probe_hosted_kernel_primitives; then
+    failed=1
+  fi
+  if ! run_independent_capability_probes; then
+    failed=1
+  fi
+  return "${failed}"
 }
 
 if [[ "${PODLAZ_E2E_CAPABILITY_SOURCE_ONLY}" == "true" ]]; then
