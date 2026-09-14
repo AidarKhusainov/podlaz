@@ -143,21 +143,23 @@ jobs:
           (
             for _ in $(seq 1 2400); do
               if machinectl show podlaz-capability >/dev/null 2>&1; then
-                if sudo -n systemd-run \
-                  --machine=podlaz-capability \
-                  --wait --pipe --collect --quiet \
-                  -- /bin/bash -lc '
-                    while [ ! -s /tmp/podlaz-capability-tun-private/import.stderr ]; do sleep 0.05; done
-                    if grep -Fq "profile import requires a share URI" /tmp/podlaz-capability-tun-private/import.stderr; then
-                      printf "%s\n" "tun.profile_import_arg_requires_uri=observed"
-                    elif grep -Fq "profile import accepts exactly one share URI" /tmp/podlaz-capability-tun-private/import.stderr; then
-                      printf "%s\n" "tun.profile_import_arg_multiple_uri=observed"
-                    elif grep -Fq "unsupported profile import argument" /tmp/podlaz-capability-tun-private/import.stderr; then
-                      printf "%s\n" "tun.profile_import_arg_unsupported=observed"
-                    elif grep -Fq "profile import --json is not implemented" /tmp/podlaz-capability-tun-private/import.stderr; then
-                      printf "%s\n" "tun.profile_import_arg_json=observed"
-                    fi
-                  ' >"${argv_log}.tmp" 2>/dev/null; then
+                if {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --wait --pipe --collect --quiet \
+                    -- /bin/bash -lc '
+                      while [ ! -s /tmp/podlaz-capability-tun-private/import.stderr ]; do sleep 0.05; done
+                      if grep -Fq "profile import requires a share URI" /tmp/podlaz-capability-tun-private/import.stderr; then
+                        printf "%s\n" "tun.profile_import_arg_requires_uri=observed"
+                      elif grep -Fq "profile import accepts exactly one share URI" /tmp/podlaz-capability-tun-private/import.stderr; then
+                        printf "%s\n" "tun.profile_import_arg_multiple_uri=observed"
+                      elif grep -Fq "unsupported profile import argument" /tmp/podlaz-capability-tun-private/import.stderr; then
+                        printf "%s\n" "tun.profile_import_arg_unsupported=observed"
+                      elif grep -Fq "profile import --json is not implemented" /tmp/podlaz-capability-tun-private/import.stderr; then
+                        printf "%s\n" "tun.profile_import_arg_json=observed"
+                      fi
+                    '
+                } >"${argv_log}.tmp" 2>/dev/null; then
                   if [[ -s "${argv_log}.tmp" ]]; then
                     mv -f "${argv_log}.tmp" "${argv_log}"
                     chmod 0600 "${argv_log}"
