@@ -11,6 +11,7 @@ import (
 func TestHostedE2ECapabilityIndependentProbesContinueAfterSystemGuestFailure(t *testing.T) {
 	tmp := t.TempDir()
 	systemMarker := filepath.Join(tmp, "system-probe-ran")
+	systemAfterFailureMarker := filepath.Join(tmp, "system-probe-continued-after-failure")
 	qemuMarker := filepath.Join(tmp, "qemu-probe-ran")
 
 	command := `
@@ -19,10 +20,16 @@ export PODLAZ_E2E_CAPABILITY_SOURCE_ONLY=true
 export E2E_TMP_ROOT="$1/private"
 export E2E_ARTIFACT_DIR="$1/public"
 SYSTEM_MARKER="$2"
-QEMU_MARKER="$3"
+SYSTEM_AFTER_FAILURE_MARKER="$3"
+QEMU_MARKER="$4"
 mkdir -p "$E2E_TMP_ROOT" "$E2E_ARTIFACT_DIR"
 source ./hosted-e2e-capability.sh
-run_system_guest_capability() { : >"${SYSTEM_MARKER}"; return 1; }
+run_system_guest_capability() (
+  set -e
+  : >"${SYSTEM_MARKER}"
+  false
+  : >"${SYSTEM_AFTER_FAILURE_MARKER}"
+)
 run_qemu_capability() { : >"${QEMU_MARKER}"; return 0; }
 set +e
 run_independent_capability_probes
@@ -30,9 +37,10 @@ code=$?
 set -e
 [[ "$code" -ne 0 ]]
 [[ -f "${SYSTEM_MARKER}" ]]
+[[ ! -e "${SYSTEM_AFTER_FAILURE_MARKER}" ]]
 [[ -f "${QEMU_MARKER}" ]]
 `
-	cmd := exec.Command("bash", "-c", command, "bash", tmp, systemMarker, qemuMarker)
+	cmd := exec.Command("bash", "-c", command, "bash", tmp, systemMarker, systemAfterFailureMarker, qemuMarker)
 	cmd.Dir = "."
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("independent capability orchestration failed: %v\n%s", err, output)
