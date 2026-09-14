@@ -3,6 +3,17 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 SCRIPT="$ROOT/scripts/acceptance/release-laptop.sh"
+MODULE_DIR="$ROOT/scripts/acceptance/lib/release-laptop"
+CONTROLLER_FILES=(
+  "$MODULE_DIR/core.sh"
+  "$MODULE_DIR/product.sh"
+  "$MODULE_DIR/host_exercise.sh"
+  "$MODULE_DIR/lifecycle.sh"
+  "$MODULE_DIR/evidence.sh"
+  "$MODULE_DIR/scenarios.sh"
+  "$MODULE_DIR/legacy.sh"
+  "$SCRIPT"
+)
 
 fail() {
   printf 'standalone_acceptance_design: %s\n' "$*" >&2
@@ -12,6 +23,7 @@ fail() {
 export RELEASE_ACCEPTANCE_TEST_MODE=1
 # shellcheck source=/dev/null
 source "$SCRIPT"
+CONTROLLER_SOURCE="$(cat -- "${CONTROLLER_FILES[@]}")"
 
 # --help is a normal success path and must print the usage block exactly once.
 help_output="$(SUDO_USER="${USER:-tester}" bash "$SCRIPT" --help 2>&1)" || fail "--help returned non-zero"
@@ -59,18 +71,18 @@ after_changed='{"connection":"wifi","device":"wlan0","addresses":["192.0.2.20/24
 [[ "$(ra_failure_class status_contract_incompatible)" == INTERNAL ]] || fail "INTERNAL classification missing"
 
 # The implementation must persist rollback authority before SIGKILL and use exact journal boot identity semantics.
-grep -q 'rolling_back_authority' "$SCRIPT" || fail "rollback authority evidence is not persisted"
-grep -q -- '_BOOT_ID=' "$SCRIPT" || fail "failure journal is not exact-boot scoped"
-if grep -Eq 'journalctl[^\n]*--boot[[:space:]]+[^[:space:]]+' "$SCRIPT"; then
+grep -q 'rolling_back_authority' <<<"$CONTROLLER_SOURCE" || fail "rollback authority evidence is not persisted"
+grep -q -- '_BOOT_ID=' <<<"$CONTROLLER_SOURCE" || fail "failure journal is not exact-boot scoped"
+if grep -Eq 'journalctl[^\n]*--boot[[:space:]]+[^[:space:]]+' <<<"$CONTROLLER_SOURCE"; then
   fail "failure journal still uses raw --boot selector"
 fi
 
 # Meaningful suspend is 60-120 seconds and reports actual observed interval.
-grep -Eq 'rtcwake[^\n]*-s[[:space:]]+(60|[6-9][0-9]|1[01][0-9]|120)' "$SCRIPT" || fail "suspend duration is not meaningful"
-grep -q 'observed_suspend_seconds' "$SCRIPT" || fail "suspend interval evidence missing"
+grep -Eq 'rtcwake[^\n]*-s[[:space:]]+(60|[6-9][0-9]|1[01][0-9]|120)' <<<"$CONTROLLER_SOURCE" || fail "suspend duration is not meaningful"
+grep -q 'observed_suspend_seconds' <<<"$CONTROLLER_SOURCE" || fail "suspend interval evidence missing"
 
 # Final restoration must include service state and run-tree ownership/mode verification.
-grep -q 'service_active_before' "$SCRIPT" || fail "original service state is not captured"
-grep -q 'run_tree' "$SCRIPT" || fail "run-tree restoration invariant missing"
+grep -q 'service_active_before' <<<"$CONTROLLER_SOURCE" || fail "original service state is not captured"
+grep -q 'run_tree' <<<"$CONTROLLER_SOURCE" || fail "run-tree restoration invariant missing"
 
 printf 'standalone_acceptance_design: PASS\n'
