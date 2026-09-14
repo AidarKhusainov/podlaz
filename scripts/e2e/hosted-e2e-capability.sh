@@ -62,6 +62,8 @@ CAPABILITY_KEYS=(
   proxy.lifecycle
   synthetic.xray_endpoint
   tun.authorization
+  tun.profile_import_command
+  tun.profile_import_output
   tun.profile_import
   tun.profile_validate
   tun.connect_requested
@@ -641,9 +643,11 @@ run_synthetic_tun_lifecycle() {
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
   guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-capability/synthetic-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
+  record_capability tun.profile_import_command pass
   guest_exec chown -R e2e:e2e /tmp/podlaz-capability-tun-private
   guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' /tmp/podlaz-capability-tun-private/import.stdout >/run/podlaz-capability/profile-id"
   guest_exec test -s /run/podlaz-capability/profile-id
+  record_capability tun.profile_import_output pass
   record_capability tun.profile_import pass
 
   guest_exec /bin/bash -lc "id=\$(cat /run/podlaz-capability/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
