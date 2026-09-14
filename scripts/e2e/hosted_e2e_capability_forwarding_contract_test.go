@@ -27,8 +27,8 @@ func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
 		"Collect bounded package install diagnostics",
-		"system-guest/var/log/apt/term.log",
-		"system-guest/var/log/dpkg.log",
+		"var/log/apt/term.log",
+		"var/log/dpkg.log",
 		"dpkg-query",
 		"hosted-capability-private/candidate-install.log",
 		"tail -n 80",
