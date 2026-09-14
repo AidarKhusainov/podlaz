@@ -676,7 +676,7 @@ choose_qemu_accel() {
 find_loopback_port() {
   python3 - <<'PY'
 import socket
-sock = socket.socket()
+sock = socket()
 sock.bind(("127.0.0.1", 0))
 print(sock.getsockname()[1])
 sock.close()
@@ -815,16 +815,20 @@ run_system_guest_capability() (
   stage="done"
 )
 
-run_independent_capability_probes() {
-  local failed=0
-  if ! run_system_guest_capability; then
-    failed=1
-  fi
-  if ! run_qemu_capability; then
-    failed=1
-  fi
+run_independent_capability_probes() (
+  local failed=0 probe_status
+  set +e
+
+  run_system_guest_capability
+  probe_status=$?
+  (( probe_status == 0 )) || failed=1
+
+  run_qemu_capability
+  probe_status=$?
+  (( probe_status == 0 )) || failed=1
+
   return "${failed}"
-}
+)
 
 validate_candidate() {
   local path="$1" arch
@@ -836,7 +840,7 @@ validate_candidate() {
 }
 
 main() {
-  local failed=0
+  local failed=0 probe_status
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd awk bash cmp curl debootstrap dpkg dpkg-deb find grep ip mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
@@ -853,12 +857,19 @@ main() {
     return 1
   fi
 
-  if ! probe_hosted_kernel_primitives; then
-    failed=1
-  fi
-  if ! run_independent_capability_probes; then
-    failed=1
-  fi
+  set +e
+  (
+    set -Eeuo pipefail
+    probe_hosted_kernel_primitives
+  )
+  probe_status=$?
+  (( probe_status == 0 )) || failed=1
+
+  run_independent_capability_probes
+  probe_status=$?
+  (( probe_status == 0 )) || failed=1
+  set -e
+
   return "${failed}"
 }
 
