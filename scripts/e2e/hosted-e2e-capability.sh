@@ -45,6 +45,7 @@ CAPABILITY_KEYS=(
   guest.prepare.candidate
   guest.start.nspawn
   guest.start.control
+  guest.start.interface
   guest.start.uplink
   guest.start.services
   guest.start.tun
@@ -445,6 +446,11 @@ start_system_guest() {
   record_capability guest.start.control pass
   guest_exec timeout 30 systemctl is-system-running --wait >/dev/null 2>&1 || true
   record_capability guest.systemd pass
+
+  SYSTEM_GUEST_START_STAGE=interface
+  guest_exec ip -o link show >"${CAPABILITY_PRIVATE}/guest-start-links.log"
+  guest_exec ip -o link show dev "${CAPABILITY_GUEST_IF}" >/dev/null
+  record_capability guest.start.interface pass
 
   SYSTEM_GUEST_START_STAGE=uplink
   guest_exec nmcli connection reload
@@ -860,6 +866,7 @@ run_system_guest_capability() (
           case "${SYSTEM_GUEST_START_STAGE}" in
             nspawn) record_capability_if_missing guest.start.nspawn fail ;;
             control) record_capability_if_missing guest.start.control fail ;;
+            interface) record_capability_if_missing guest.start.interface fail ;;
             uplink) record_capability_if_missing guest.start.uplink fail ;;
             services) record_capability_if_missing guest.start.services fail ;;
             tun) record_capability_if_missing guest.start.tun fail ;;
