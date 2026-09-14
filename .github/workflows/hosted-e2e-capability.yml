@@ -89,10 +89,18 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
         run: |
-          apt_log="${E2E_TMP_ROOT}/system-guest/var/log/apt/term.log"
+          guest_root="${E2E_TMP_ROOT}/system-guest"
+          apt_log="${guest_root}/var/log/apt/term.log"
+          dpkg_log="${guest_root}/var/log/dpkg.log"
           candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           if sudo -n test -f "${apt_log}"; then
             sudo -n tail -n 80 "${apt_log}" | tee "${candidate_log}"
+          fi
+          if sudo -n test -x "${guest_root}/usr/bin/dpkg-query"; then
+            sudo -n chroot "${guest_root}" dpkg-query -W -f='candidate.package.status=${db:Status-Status}\n' podlaz 2>/dev/null | tee -a "${candidate_log}" || true
+          fi
+          if sudo -n test -f "${dpkg_log}"; then
+            sudo -n grep -F ' podlaz ' "${dpkg_log}" | tail -n 20 | tee -a "${candidate_log}" || true
           fi
 
       - name: Validate public capability report
