@@ -89,9 +89,10 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
         run: |
-          apt_log="${E2E_TMP_ROOT}/system-guest/run/podlaz-capability-apt.log"
+          apt_log="${E2E_TMP_ROOT}/system-guest/var/log/apt/term.log"
+          candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           if sudo -n test -f "${apt_log}"; then
-            sudo -n tail -n 80 "${apt_log}"
+            sudo -n tail -n 80 "${apt_log}" | tee "${candidate_log}"
           fi
 
       - name: Validate public capability report
