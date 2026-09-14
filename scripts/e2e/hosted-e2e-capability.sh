@@ -483,6 +483,14 @@ start_system_guest() {
   record_capability guest.start.tun pass
 
   SYSTEM_GUEST_START_STAGE=internet
+  if ! guest_exec timeout 5 ping -4 -c 1 -W 2 "${CAPABILITY_HOST_IP}" >/dev/null; then
+    printf '%s\n' 'guest.start.internet.gateway=fail' >&2
+    return 1
+  fi
+  if ! guest_exec timeout 10 curl -4 -k -fsS --connect-timeout 5 -o /dev/null https://1.1.1.1/; then
+    printf '%s\n' 'guest.start.internet.egress=fail' >&2
+    return 1
+  fi
   if ! guest_exec timeout 20 getent ahostsv4 example.com >/dev/null; then
     printf '%s\n' 'guest.start.internet.dns=fail' >&2
     return 1
