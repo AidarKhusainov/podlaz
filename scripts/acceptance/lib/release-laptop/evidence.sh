@@ -171,7 +171,7 @@ ra_failure_capture_boot_attempt() {
     (.manifest_generation|test("^[0-9a-f]{32}$")) and
     (.configuration|type)=="object" and
     (.state=="in_progress" or .state=="succeeded" or .state=="terminal") and
-    (if .state=="terminal" then ((.terminal_reason//"")|type)=="string" else ((.terminal_reason//"")=="") end)
+    (if .state=="terminal" then (.terminal_reason=="connect_failed" or .terminal_reason=="session_terminal" or .terminal_reason=="network_not_ready") else ((.terminal_reason//"")=="") end)
   ' "$source" >/dev/null 2>&1 || { printf invalid; return 0; }
   if cat "$source" | ra_artifact_file_write "$target"; then printf captured; else return 1; fi
 }
@@ -259,7 +259,7 @@ ra_failure_bundle_capture() {
   local reason="${1:-failure}" exit_code="${2:-1}" invocation_mode="${3:-$RA_MODE}"
   local failures attempt_id final tmp previous_path previous_id="" root_id="" created_at scenario scenario_state phase started boot boot_canonical
   local components='{}' status value package_identity process_identity capture_status dpkg_log_source
-  local boot_attempt_applicability boot_attempt_absence replay_applicability replay_absence
+  local boot_attempt_applicability boot_attempt_absence replay_applicability replay_absence replay_required=false
   [[ -n "$RA_PRIVATE_DIR" ]] || return 1
   ra_artifact_dir_validate "$RA_PRIVATE_DIR" || return 1
   failures="$RA_PRIVATE_DIR/failures"
@@ -289,6 +289,7 @@ ra_failure_bundle_capture() {
   fi
   boot="$(jq -r '.last_failure.boot_id//.current_boot_id//.starting_boot_id//""' "$RA_CHECKPOINT")"
   boot_canonical="$(ra_boot_id_normalize "$boot" 2>/dev/null || true)"
+  replay_required="$(jq -r --arg scenario "$scenario" '($scenario=="lower_release_upgrade") and (.mutations.candidate_upgrade.identity.applied//false)' "$RA_CHECKPOINT" 2>/dev/null || printf false)"
 
   if cat "$RA_CHECKPOINT" | ra_artifact_file_write "$tmp/checkpoint.json"; then status=captured; else status=command_failed; fi
   components="$(ra_failure_component_set "$components" checkpoint "$status")" || return 1
@@ -350,7 +351,7 @@ ra_failure_bundle_capture() {
   components="$(ra_failure_component_set "$components" boot_attempt "$status" "$boot_attempt_applicability" "$boot_attempt_absence")" || return 1
 
   status="$(ra_failure_capture_replay_diagnostic "$tmp/network-session-resume.json")" || return 1
-  if [[ "$status" == verified_absent ]]; then
+  if [[ "$status" == verified_absent && "$replay_required" != true ]]; then
     replay_applicability=optional
     replay_absence=1
   else
