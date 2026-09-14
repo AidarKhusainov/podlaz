@@ -230,7 +230,7 @@ ra_failure_dpkg_slice() {
 ra_failure_boot_attempt_policy() {
   case "$1" in
     reboot_autostart_off) printf 'required\t1' ;;
-    reboot_autostart_on|reboot_terminal_autostart) printf 'required\t0' ;;
+    reboot_autostart_on|explicit_disconnect_no_same_boot_retry|reboot_terminal_autostart|terminal_no_same_boot_retry) printf 'required\t0' ;;
     *) printf 'not_applicable\t1' ;;
   esac
 }
