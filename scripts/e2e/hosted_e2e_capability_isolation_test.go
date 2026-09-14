@@ -141,6 +141,33 @@ func TestHostedE2ECapabilityChecksGuestUplinkIdentityBeforeNetworkManager(t *tes
 	}
 }
 
+func TestHostedE2ECapabilityScopesNetworkManagerManagedOverride(t *testing.T) {
+	data, err := os.ReadFile(hostedCapabilityScript)
+	if err != nil {
+		t.Fatalf("read hosted capability script: %v", err)
+	}
+	script := string(data)
+	for _, required := range []string{
+		"20-capability-uplink.conf",
+		"[device-capability-uplink]",
+		"match-device=interface-name:=${CAPABILITY_GUEST_IF}",
+		"managed=1",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("hosted capability must scope the NetworkManager managed override with %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"match-device=*",
+		"match-device=interface-name:*",
+		"unmanaged-devices=*",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("hosted capability must not use broad NetworkManager override %q", forbidden)
+		}
+	}
+}
+
 func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 	data, err := os.ReadFile(hostedCapabilityScript)
 	if err != nil {
