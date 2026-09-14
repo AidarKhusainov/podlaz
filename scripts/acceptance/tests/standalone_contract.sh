@@ -3,6 +3,17 @@ set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 SCRIPT="$ROOT/scripts/acceptance/release-laptop.sh"
+MODULE_DIR="$ROOT/scripts/acceptance/lib/release-laptop"
+CONTROLLER_FILES=(
+  "$SCRIPT"
+  "$MODULE_DIR/core.sh"
+  "$MODULE_DIR/product.sh"
+  "$MODULE_DIR/host_exercise.sh"
+  "$MODULE_DIR/lifecycle.sh"
+  "$MODULE_DIR/evidence.sh"
+  "$MODULE_DIR/scenarios.sh"
+  "$MODULE_DIR/legacy.sh"
+)
 
 fail() {
   printf 'standalone_contract: %s\n' "$*" >&2
@@ -13,8 +24,8 @@ fail() {
 [[ -x "$SCRIPT" ]] || fail "release-laptop.sh is not executable"
 bash -n "$SCRIPT" || fail "release-laptop.sh fails bash -n"
 
-if grep -Eqi '(^|[;&|()]|exec[[:space:]]+)[[:space:]]*(python|python3)([[:space:]]|$)|-m[[:space:]]+release_acceptance([[:space:]]|$)' "$SCRIPT"; then
-  fail "release-laptop.sh still executes Python runtime/modules"
+if grep -Eqi '(^|[;&|()]|exec[[:space:]]+)[[:space:]]*(python|python3)([[:space:]]|$)|-m[[:space:]]+release_acceptance([[:space:]]|$)' "${CONTROLLER_FILES[@]}"; then
+  fail "release acceptance controller still executes Python runtime/modules"
 fi
 
 if find "$ROOT/scripts/acceptance/release_acceptance" -type f -name '*.py' -print -quit 2>/dev/null | grep -q .; then
