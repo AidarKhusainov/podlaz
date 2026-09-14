@@ -60,11 +60,7 @@ jobs:
       - name: Capability contract
         run: go test ./scripts/e2e -run '^TestHostedE2ECapability' -count=1
 
-      - name: Run disposable guest capability
-        id: capability
-        env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
+      - name: Inspect outer forward policy
         run: |
           if command -v iptables >/dev/null 2>&1; then
             forward_policy="$(sudo -n iptables -S FORWARD 2>/dev/null | sed -n '1p')"
@@ -76,6 +72,13 @@ jobs:
           else
             printf '%s\n' 'outer.forward.iptables_policy=unavailable'
           fi
+
+      - name: Run disposable guest capability
+        id: capability
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
+        run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}"
           install -d -m 0700 "${E2E_ARTIFACT_DIR}"
