@@ -347,6 +347,7 @@ EOF
   sudo -n install -D -m 0600 "${nm_tmp}" "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/system-connections/capability-uplink.nmconnection"
   rm -f -- "${nm_tmp}"
   sudo -n mkdir -p "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d"
+  sudo -n install -D -m 0644 /dev/null "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d/10-globally-managed-devices.conf"
   printf '[main]\ndns=systemd-resolved\n' | sudo -n tee "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d/10-capability-dns.conf" >/dev/null
   cat <<EOF | sudo -n tee "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d/20-capability-uplink.conf" >/dev/null
 [device-capability-uplink]
