@@ -190,7 +190,7 @@ capture_outer_baseline() {
 
 assert_outer_control_plane_healthy() {
   local phase="$1" current
-  timeout 20 curl -4 -fsS -o /dev/null https://github.com/ || return 1
+  timeout 25 curl -4 -fsS --retry 3 --retry-max-time 20 --max-time 8 -o /dev/null https://github.com/ || return 1
   [[ -f "${OUTER_DEFAULT_ROUTE_BASELINE}" ]] || return 1
   [[ -f "${OUTER_RULES_BASELINE}" ]] || return 1
   cmp -s "${OUTER_DEFAULT_ROUTE_BASELINE}" <(ip -4 -j route show default) || return 1
