@@ -21,8 +21,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
@@ -64,6 +62,9 @@ jobs:
 
       - name: Run disposable guest capability
         id: capability
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}"
@@ -73,11 +74,16 @@ jobs:
       - name: Validate public capability report
         id: report_validation
         if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
         run: bash scripts/e2e/hosted-e2e-capability.sh validate-report
 
       - name: Remove private capability state
         id: private_cleanup
         if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
         run: sudo -n rm -rf "${E2E_TMP_ROOT}"
 
       - name: Upload capability evidence
