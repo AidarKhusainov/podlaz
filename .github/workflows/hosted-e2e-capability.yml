@@ -104,11 +104,12 @@ jobs:
                 exit 0
               fi
               if machinectl show podlaz-capability >/dev/null 2>&1; then
-                if sudo -n systemd-run \
-                  --machine=podlaz-capability \
-                  --wait --pipe --collect --quiet \
-                  -- /bin/bash -lc 'while [ ! -s /run/podlaz-capability-apt.log ]; do sleep 0.05; done; tail -n 120 /run/podlaz-capability-apt.log' \
-                  >"${candidate_log}.tmp" 2>/dev/null; then
+                if {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --wait --pipe --collect --quiet \
+                    -- /bin/bash -lc 'while [ ! -s /run/podlaz-capability-apt.log ]; do sleep 0.05; done; tail -n 120 /run/podlaz-capability-apt.log'
+                } >"${candidate_log}.tmp" 2>/dev/null; then
                   mv -f "${candidate_log}.tmp" "${candidate_log}"
                   chmod 0600 "${candidate_log}"
                   exit 0
