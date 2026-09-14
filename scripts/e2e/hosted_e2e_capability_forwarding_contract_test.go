@@ -37,6 +37,8 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 	requireHostedCapabilityMarkers(t, script,
 		"synthetic.xray_endpoint",
 		"tun.authorization",
+		"tun.profile_import_command",
+		"tun.profile_import_output",
 		"tun.profile_import",
 		"tun.profile_validate",
 		"tun.connect_requested",
