@@ -63,6 +63,10 @@ CAPABILITY_KEYS=(
   synthetic.xray_endpoint
   tun.authorization
   tun.profile_import_usage_error
+  tun.profile_import_arg_error
+  tun.profile_import_vless_error
+  tun.profile_import_profile_validation_error
+  tun.profile_import_usage_other
   tun.profile_import_runtime_error
   tun.profile_import_other_error
   tun.profile_import_command
@@ -652,7 +656,18 @@ run_synthetic_tun_lifecycle() {
   set -e
   if (( import_code != 0 )); then
     case "${import_code}" in
-      2) record_capability tun.profile_import_usage_error observed ;;
+      2)
+        record_capability tun.profile_import_usage_error observed
+        if guest_exec grep -Eq 'profile import (requires|accepts)|profile import --json|unsupported profile import argument' /tmp/podlaz-capability-tun-private/import.stderr; then
+          record_capability tun.profile_import_arg_error observed
+        elif guest_exec grep -Eq 'invalid VLESS URI|unsupported VLESS|unsupported profile import URI|parse VLESS share URI' /tmp/podlaz-capability-tun-private/import.stderr; then
+          record_capability tun.profile_import_vless_error observed
+        elif guest_exec grep -F 'invalid profile:' /tmp/podlaz-capability-tun-private/import.stderr >/dev/null; then
+          record_capability tun.profile_import_profile_validation_error observed
+        else
+          record_capability tun.profile_import_usage_other observed
+        fi
+        ;;
       1) record_capability tun.profile_import_runtime_error observed ;;
       *) record_capability tun.profile_import_other_error observed ;;
     esac
