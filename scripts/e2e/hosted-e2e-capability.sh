@@ -588,7 +588,10 @@ EOF
   ss -H -ltn | awk '{print $4}' | grep -Fx "${CAPABILITY_HOST_IP}:${port}" >/dev/null || return 1
   printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-capability\n' "${uuid}" "${CAPABILITY_HOST_IP}" "${port}" >"${CAPABILITY_XRAY_ROOT}/client-uri"
   chmod 0600 "${CAPABILITY_XRAY_ROOT}/client-uri"
-  sudo -n install -D -o 1000 -g 1000 -m 0600 "${CAPABILITY_XRAY_ROOT}/client-uri" "${CAPABILITY_GUEST_ROOT}/run/podlaz-capability/synthetic-uri"
+  guest_exec install -d -o e2e -g e2e -m 0700 /run/podlaz-capability
+  guest_exec /bin/bash -lc 'umask 077; cat > /run/podlaz-capability/synthetic-uri; chown e2e:e2e /run/podlaz-capability/synthetic-uri' \
+    <"${CAPABILITY_XRAY_ROOT}/client-uri"
+  guest_exec test -s /run/podlaz-capability/synthetic-uri
 }
 
 install_tun_ci_authorization() {
