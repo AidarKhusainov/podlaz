@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,32 @@ func TestHostedE2ECapabilityMainDoesNotDisableProbeErrexit(t *testing.T) {
 	}
 }
 
+func TestHostedE2ECapabilityFindLoopbackPort(t *testing.T) {
+	tmp := t.TempDir()
+	command := `
+set -euo pipefail
+export PODLAZ_E2E_CAPABILITY_SOURCE_ONLY=true
+export E2E_TMP_ROOT="$1/private"
+export E2E_ARTIFACT_DIR="$1/public"
+mkdir -p "$E2E_TMP_ROOT" "$E2E_ARTIFACT_DIR"
+source ./hosted-e2e-capability.sh
+find_loopback_port
+`
+	cmd := exec.Command("bash", "-c", command, "bash", tmp)
+	cmd.Dir = "."
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("find_loopback_port failed: %v\n%s", err, output)
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		t.Fatalf("find_loopback_port returned non-numeric output %q: %v", output, err)
+	}
+	if port < 1 || port > 65535 {
+		t.Fatalf("find_loopback_port returned invalid port %d", port)
+	}
+}
+
 func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 	data, err := os.ReadFile(hostedCapabilityScript)
 	if err != nil {
@@ -66,6 +93,11 @@ func TestHostedE2ECapabilityReportsGuestBootstrapStages(t *testing.T) {
 	for _, required := range []string{
 		"guest.bootstrap.prepare",
 		"guest.bootstrap.start",
+		"guest.prepare.debootstrap",
+		"guest.prepare.networking",
+		"guest.prepare.user",
+		"guest.prepare.services",
+		"guest.prepare.candidate",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("hosted capability evidence must expose %q", required)
