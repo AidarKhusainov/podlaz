@@ -60,6 +60,11 @@ CAPABILITY_KEYS=(
   authorization.ordinary_user
   authorization.polkit
   proxy.lifecycle
+  synthetic.xray_endpoint
+  tun.authorization
+  tun.profile_import
+  tun.profile_validate
+  tun.connect_requested
   tun.verified_active
   tun.system_dns
   tun.https_tls
@@ -592,6 +597,7 @@ EOF
   guest_exec /bin/bash -lc 'umask 077; cat > /run/podlaz-capability/synthetic-uri; chown e2e:e2e /run/podlaz-capability/synthetic-uri' \
     <"${CAPABILITY_XRAY_ROOT}/client-uri"
   guest_exec test -s /run/podlaz-capability/synthetic-uri
+  record_capability synthetic.xray_endpoint pass
 }
 
 install_tun_ci_authorization() {
@@ -609,6 +615,7 @@ EOF
   sudo -n install -D -m 0644 "${rule_tmp}" "${CAPABILITY_GUEST_ROOT}${CAPABILITY_TUN_RULE}"
   rm -f -- "${rule_tmp}"
   sleep 1
+  record_capability tun.authorization pass
 }
 
 run_guest_user() {
@@ -637,9 +644,12 @@ run_synthetic_tun_lifecycle() {
   guest_exec chown -R e2e:e2e /tmp/podlaz-capability-tun-private
   guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' /tmp/podlaz-capability-tun-private/import.stdout >/run/podlaz-capability/profile-id"
   guest_exec test -s /run/podlaz-capability/profile-id
+  record_capability tun.profile_import pass
 
   guest_exec /bin/bash -lc "id=\$(cat /run/podlaz-capability/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
+  record_capability tun.profile_validate pass
   guest_exec /bin/bash -lc "id=\$(cat /run/podlaz-capability/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
+  record_capability tun.connect_requested pass
   wait_guest_tun_status verified-active 120
   record_capability tun.verified_active pass
 
