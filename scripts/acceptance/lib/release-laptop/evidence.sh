@@ -156,6 +156,26 @@ ra_failure_copy_private_file() {
   if cat "$source" | ra_artifact_file_write "$target"; then printf captured; else return 1; fi
 }
 
+ra_failure_capture_boot_attempt() {
+  local source="$1" target="$2" expected_boot="$3" size mode
+  if [[ -L "$source" ]]; then printf invalid; return 0; fi
+  if [[ ! -e "$source" ]]; then printf verified_absent; return 0; fi
+  [[ -f "$source" ]] || { printf invalid; return 0; }
+  size="$(stat -Lc '%s' "$source" 2>/dev/null)" || { printf command_failed; return 0; }
+  mode="$(stat -Lc '%a' "$source" 2>/dev/null)" || { printf command_failed; return 0; }
+  [[ "$size" =~ ^[0-9]+$ && "$size" -le 65536 && "$mode" == 600 ]] || { printf invalid; return 0; }
+  jq -e --arg boot "$expected_boot" '
+    .schema_version=="podlaz.boot-autostart-attempt.v1" and
+    .boot_id==$boot and
+    (.manifest_generation|type)=="string" and
+    (.manifest_generation|test("^[0-9a-f]{32}$")) and
+    (.configuration|type)=="object" and
+    (.state=="in_progress" or .state=="succeeded" or .state=="terminal") and
+    (if .state=="terminal" then ((.terminal_reason//"")|type)=="string" else ((.terminal_reason//"")=="") end)
+  ' "$source" >/dev/null 2>&1 || { printf invalid; return 0; }
+  if cat "$source" | ra_artifact_file_write "$target"; then printf captured; else return 1; fi
+}
+
 ra_failure_capture_replay_diagnostic() {
   local target="$1" source="$RA_RESUME_DIAGNOSTIC" size mode
   if [[ -L "$source" ]]; then printf invalid; return 0; fi
@@ -325,7 +345,7 @@ ra_failure_bundle_capture() {
   status="$(ra_failure_copy_private_file "$RA_CONTINUATION" "$tmp/network-session.json")" || return 1
   components="$(ra_failure_component_set "$components" network_session "$status" required 0)" || return 1
 
-  status="$(ra_failure_copy_private_file "$RA_BOOT_ATTEMPT" "$tmp/boot-autostart-attempt.json")" || return 1
+  status="$(ra_failure_capture_boot_attempt "$RA_BOOT_ATTEMPT" "$tmp/boot-autostart-attempt.json" "$boot")" || return 1
   IFS=$'\t' read -r boot_attempt_applicability boot_attempt_absence <<<"$(ra_failure_boot_attempt_policy "$scenario")"
   components="$(ra_failure_component_set "$components" boot_attempt "$status" "$boot_attempt_applicability" "$boot_attempt_absence")" || return 1
 
