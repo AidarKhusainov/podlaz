@@ -24,19 +24,15 @@ func TestHostedE2ECapabilityObservesForwardDropWithoutRejectingRunner(t *testing
 }
 
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
-	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, script,
-		"/run/podlaz-capability-apt.log",
-		"candidate-install.log",
-		"stop_system_guest",
-	)
 	requireHostedCapabilityMarkers(t, workflow,
+		"Capture volatile package install diagnostics",
+		"/run/podlaz-capability-apt.log",
+		"hosted-capability-private/candidate-install.log",
 		"Collect bounded package install diagnostics",
 		"var/log/apt/term.log",
 		"var/log/dpkg.log",
 		"dpkg-query",
-		"hosted-capability-private/candidate-install.log",
 		"tail -n 80",
 	)
 	forbidHostedCapabilityMarkers(t, workflow, "system-guest/run/podlaz-capability-apt.log")
