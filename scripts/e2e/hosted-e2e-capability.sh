@@ -43,6 +43,12 @@ CAPABILITY_KEYS=(
   guest.prepare.user
   guest.prepare.services
   guest.prepare.candidate
+  guest.start.nspawn
+  guest.start.control
+  guest.start.uplink
+  guest.start.services
+  guest.start.tun
+  guest.start.internet
   guest.systemd
   guest.resolved
   guest.networkmanager
@@ -86,6 +92,7 @@ OUTER_EGRESS_IF=""
 NSPAWN_PID=""
 SYSTEM_GUEST_ACTIVE=false
 SYSTEM_GUEST_PREPARE_STAGE=""
+SYSTEM_GUEST_START_STAGE=""
 XRAY_PID=""
 QEMU_PID=""
 QEMU_SSH_PORT=""
@@ -406,6 +413,8 @@ setup_outer_plumbing() {
 
 start_system_guest() {
   local nspawn_log="${CAPABILITY_PRIVATE}/nspawn.log"
+
+  SYSTEM_GUEST_START_STAGE=nspawn
   sudo -n systemd-nspawn \
     --quiet \
     --boot \
@@ -422,7 +431,10 @@ start_system_guest() {
   NSPAWN_PID=$!
   SYSTEM_GUEST_ACTIVE=true
   setup_outer_plumbing
+  kill -0 "${NSPAWN_PID}" >/dev/null 2>&1
+  record_capability guest.start.nspawn pass
 
+  SYSTEM_GUEST_START_STAGE=control
   for _ in $(seq 1 200); do
     if machinectl show "${CAPABILITY_MACHINE}" >/dev/null 2>&1 && guest_exec /bin/true >/dev/null 2>&1; then
       break
@@ -430,26 +442,40 @@ start_system_guest() {
     sleep 0.2
   done
   guest_exec /bin/true >/dev/null 2>&1 || return 1
-  guest_exec systemctl is-system-running --wait >/dev/null 2>&1 || true
+  record_capability guest.start.control pass
+  guest_exec timeout 30 systemctl is-system-running --wait >/dev/null 2>&1 || true
+  record_capability guest.systemd pass
+
+  SYSTEM_GUEST_START_STAGE=uplink
   guest_exec nmcli connection reload
   guest_exec nmcli connection up capability-uplink >/dev/null
-  guest_exec systemctl is-active --quiet systemd-resolved.service
-  guest_exec systemctl is-active --quiet NetworkManager.service
-  guest_exec test -c /dev/net/tun
-  guest_exec ip tuntap add dev pzcap-guest-tun mode tun
-  guest_exec ip link del dev pzcap-guest-tun
-  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
-  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
-  record_capability guest.systemd pass
-  record_capability guest.resolved pass
-  record_capability guest.networkmanager pass
   if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -Fx "capability-uplink:${CAPABILITY_GUEST_IF}" >/dev/null; then
     record_capability guest.uplink pass
   else
     record_capability guest.uplink fail
     return 1
   fi
+  record_capability guest.start.uplink pass
+
+  SYSTEM_GUEST_START_STAGE=services
+  guest_exec systemctl is-active --quiet systemd-resolved.service
+  guest_exec systemctl is-active --quiet NetworkManager.service
+  record_capability guest.resolved pass
+  record_capability guest.networkmanager pass
+  record_capability guest.start.services pass
+
+  SYSTEM_GUEST_START_STAGE=tun
+  guest_exec test -c /dev/net/tun
+  guest_exec ip tuntap add dev pzcap-guest-tun mode tun
+  guest_exec ip link del dev pzcap-guest-tun
+  record_capability guest.start.tun pass
+
+  SYSTEM_GUEST_START_STAGE=internet
+  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
   record_capability guest.internet.before pass
+  record_capability guest.start.internet pass
+  SYSTEM_GUEST_START_STAGE=""
 }
 
 guest_exec() {
@@ -830,7 +856,17 @@ run_system_guest_capability() (
           esac
           record_capability_if_missing guest.bootstrap.prepare fail
           ;;
-        start) record_capability_if_missing guest.bootstrap.start fail ;;
+        start)
+          case "${SYSTEM_GUEST_START_STAGE}" in
+            nspawn) record_capability_if_missing guest.start.nspawn fail ;;
+            control) record_capability_if_missing guest.start.control fail ;;
+            uplink) record_capability_if_missing guest.start.uplink fail ;;
+            services) record_capability_if_missing guest.start.services fail ;;
+            tun) record_capability_if_missing guest.start.tun fail ;;
+            internet) record_capability_if_missing guest.start.internet fail ;;
+          esac
+          record_capability_if_missing guest.bootstrap.start fail
+          ;;
       esac
     fi
     stop_synthetic_xray_endpoint || true
