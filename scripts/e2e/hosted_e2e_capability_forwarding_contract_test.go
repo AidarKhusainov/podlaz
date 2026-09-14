@@ -32,6 +32,17 @@ func TestHostedE2ECapabilityRetriesTransientOuterControlPlaneFailure(t *testing.
 	)
 }
 
+func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"synthetic.xray_endpoint",
+		"tun.authorization",
+		"tun.profile_import",
+		"tun.profile_validate",
+		"tun.connect_requested",
+	)
+}
+
 func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
