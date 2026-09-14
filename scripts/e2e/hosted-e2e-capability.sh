@@ -348,6 +348,11 @@ EOF
   rm -f -- "${nm_tmp}"
   sudo -n mkdir -p "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d"
   printf '[main]\ndns=systemd-resolved\n' | sudo -n tee "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d/10-capability-dns.conf" >/dev/null
+  cat <<EOF | sudo -n tee "${CAPABILITY_GUEST_ROOT}/etc/NetworkManager/conf.d/20-capability-uplink.conf" >/dev/null
+[device-capability-uplink]
+match-device=interface-name:=${CAPABILITY_GUEST_IF}
+managed=1
+EOF
   sudo -n rm -f "${CAPABILITY_GUEST_ROOT}/etc/resolv.conf"
   sudo -n ln -s /run/systemd/resolve/stub-resolv.conf "${CAPABILITY_GUEST_ROOT}/etc/resolv.conf"
   record_capability guest.prepare.networking pass
