@@ -22,3 +22,12 @@ func TestHostedE2ECapabilityObservesForwardDropWithoutRejectingRunner(t *testing
 	)
 	forbidHostedCapabilityMarkers(t, workflow, "exit 42")
 }
+
+func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"Collect bounded package install diagnostics",
+		"system-guest/run/podlaz-capability-apt.log",
+		"tail -n 80",
+	)
+}
