@@ -227,6 +227,42 @@ jobs:
                   printf '%s\n' 'tun.synthetic_uri_bind_nonempty=fail' >>"${transport_log}.tmp"
                 fi
 
+                set +e
+                sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc 'test -s /run/podlaz-capability-xray/client-uri || exit 91; URI="$(cat /run/podlaz-capability-xray/client-uri)" || exit 92; [[ -n "${URI}" ]] || exit 90' \
+                  >/dev/null 2>&1
+                import_shell_rc=$?
+                set -e
+                case "${import_shell_rc}" in
+                  0)
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_stat=pass' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_read=pass' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_nonempty=pass' >>"${transport_log}.tmp"
+                    ;;
+                  90)
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_stat=pass' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_read=pass' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_nonempty=fail' >>"${transport_log}.tmp"
+                    ;;
+                  91)
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_stat=fail' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_read=unavailable' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_nonempty=unavailable' >>"${transport_log}.tmp"
+                    ;;
+                  92)
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_stat=pass' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_read=fail' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_nonempty=unavailable' >>"${transport_log}.tmp"
+                    ;;
+                  *)
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_stat=unavailable' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_read=unavailable' >>"${transport_log}.tmp"
+                    printf '%s\n' 'tun.synthetic_uri_import_shell_nonempty=unavailable' >>"${transport_log}.tmp"
+                    ;;
+                esac
+
                 mv -f "${transport_log}.tmp" "${transport_log}"
                 chmod 0600 "${transport_log}"
                 exit 0
