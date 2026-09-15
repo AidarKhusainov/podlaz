@@ -133,6 +133,28 @@ func TestHostedE2ECapabilityClassifiesDaemonConnectFailureFromSafeJournalFields(
 	)
 }
 
+func TestHostedE2ECapabilityClassifiesTransientResolvedScopedQueryPrivately(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"profile-resolved-query.log",
+		"resolvectl --cache=no",
+		"--interface=\"${ifindex}\"",
+		"-4 query example.com",
+		"tun.resolved_query.exit_zero=observed",
+		"tun.resolved_query.exit_nonzero=observed",
+		"tun.resolved_query.stderr_empty=observed",
+		"tun.resolved_query.stderr_nonempty=observed",
+		"tun.resolved_query.expected_link=observed",
+		"tun.resolved_query.expected_link_missing=observed",
+		"tun.resolved_query.ipv4_answer=observed",
+		"tun.resolved_query.ipv4_answer_missing=observed",
+	)
+	forbidHostedCapabilityMarkers(t, workflow,
+		"cat /tmp/podlaz-capability-resolved-query.stdout",
+		"cat /tmp/podlaz-capability-resolved-query.stderr",
+	)
+}
+
 func TestHostedE2ECapabilityWaitsForConnectObserverPrivateDir(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
