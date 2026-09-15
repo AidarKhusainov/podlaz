@@ -603,10 +603,6 @@ EOF
   ss -H -ltn | awk '{print $4}' | grep -Fx "${CAPABILITY_HOST_IP}:${port}" >/dev/null || return 1
   printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-capability\n' "${uuid}" "${CAPABILITY_HOST_IP}" "${port}" >"${CAPABILITY_XRAY_ROOT}/client-uri"
   chmod 0600 "${CAPABILITY_XRAY_ROOT}/client-uri"
-  guest_exec install -d -o e2e -g e2e -m 0700 /run/podlaz-capability
-  guest_exec /bin/bash -lc 'umask 077; cat > /run/podlaz-capability/synthetic-uri; chown e2e:e2e /run/podlaz-capability/synthetic-uri' \
-    <"${CAPABILITY_XRAY_ROOT}/client-uri"
-  guest_exec test -s /run/podlaz-capability/synthetic-uri
   record_capability synthetic.xray_endpoint pass
 }
 
@@ -652,13 +648,14 @@ run_synthetic_tun_lifecycle() {
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
   set +e
-  guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-capability/synthetic-uri); [[ -n \"\${URI}\" ]] || exit 90; : >/run/podlaz-capability/synthetic-uri-loaded; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
+  guest_exec /bin/bash -lc "URI=\$(cat); [[ -n \"\${URI}\" ]] || exit 90; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr" \
+    <"${CAPABILITY_XRAY_ROOT}/client-uri"
   import_code=$?
   set -e
-  if guest_exec test -f /run/podlaz-capability/synthetic-uri-loaded; then
-    record_capability tun.synthetic_uri_loaded pass
-  else
+  if (( import_code == 90 )); then
     record_capability tun.synthetic_uri_loaded fail
+  else
+    record_capability tun.synthetic_uri_loaded pass
   fi
   if (( import_code != 0 )); then
     case "${import_code}" in
