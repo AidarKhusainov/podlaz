@@ -120,6 +120,19 @@ func TestHostedE2ECapabilityWaitsForBoundSyntheticURIReadiness(t *testing.T) {
 	)
 }
 
+func TestHostedE2ECapabilityClassifiesSyntheticURIInsideImportShell(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"tun.synthetic_uri_import_shell_stat",
+		"tun.synthetic_uri_import_shell_read",
+		"test -s /run/podlaz-capability-xray/client-uri || exit 91",
+		"URI=\"$(cat /run/podlaz-capability-xray/client-uri)\" || exit 92",
+		"[[ -n \"${URI}\" ]] || exit 90",
+		"91)",
+		"92)",
+	)
+}
+
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
