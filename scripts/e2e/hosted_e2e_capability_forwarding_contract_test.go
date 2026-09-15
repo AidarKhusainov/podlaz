@@ -86,6 +86,22 @@ func TestHostedE2ECapabilityReportsProfileImportArgFailureSubtype(t *testing.T) 
 	)
 }
 
+func TestHostedE2ECapabilityClassifiesConnectFailureWithoutLeakingStderr(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"profile-connect-classification.log",
+		"tun.connect.authorization_denied=observed",
+		"tun.connect.authorization_unavailable=observed",
+		"tun.connect.socket_permission=observed",
+		"tun.connect.daemon_error=observed",
+		"tun.connect.other_error=observed",
+	)
+	forbidHostedCapabilityMarkers(t, workflow,
+		"cat /tmp/podlaz-capability-tun-private/connect.stderr",
+		"tail /tmp/podlaz-capability-tun-private/connect.stderr",
+	)
+}
+
 func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
