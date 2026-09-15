@@ -62,6 +62,7 @@ CAPABILITY_KEYS=(
   proxy.lifecycle
   synthetic.xray_endpoint
   tun.authorization
+  tun.synthetic_uri_loaded
   tun.profile_import_usage_error
   tun.profile_import_arg_error
   tun.profile_import_vless_error
@@ -651,9 +652,14 @@ run_synthetic_tun_lifecycle() {
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
   set +e
-  guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-capability/synthetic-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
+  guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-capability/synthetic-uri); [[ -n \"\${URI}\" ]] || exit 90; : >/run/podlaz-capability/synthetic-uri-loaded; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
   import_code=$?
   set -e
+  if guest_exec test -f /run/podlaz-capability/synthetic-uri-loaded; then
+    record_capability tun.synthetic_uri_loaded pass
+  else
+    record_capability tun.synthetic_uri_loaded fail
+  fi
   if (( import_code != 0 )); then
     case "${import_code}" in
       2)
