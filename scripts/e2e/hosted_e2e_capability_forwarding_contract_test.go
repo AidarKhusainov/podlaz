@@ -155,6 +155,22 @@ func TestHostedE2ECapabilityClassifiesTransientResolvedScopedQueryPrivately(t *t
 	)
 }
 
+func TestHostedE2ECapabilityClassifiesResolvedQueryFailureCauseWithoutLeakingDetails(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"tun.resolved_query.scope_dns=observed",
+		"tun.resolved_query.scope_not_dns=observed",
+		"tun.resolved_query.stderr_timeout=observed",
+		"tun.resolved_query.stderr_no_suitable_server=observed",
+		"tun.resolved_query.stderr_link_device=observed",
+		"tun.resolved_query.stderr_other=observed",
+	)
+	forbidHostedCapabilityMarkers(t, workflow,
+		"cat \"${stderr}\"",
+		"printf '%s\\n' \"$(<\"${stderr}\")\"",
+	)
+}
+
 func TestHostedE2ECapabilityWaitsForConnectObserverPrivateDir(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
