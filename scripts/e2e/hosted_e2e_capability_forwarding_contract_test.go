@@ -119,6 +119,16 @@ func TestHostedE2ECapabilityRecordsConnectExitBoundaryPrivately(t *testing.T) {
 	)
 }
 
+func TestHostedE2ECapabilityWaitsForConnectObserverPrivateDir(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"connect_exit_dir=\"$(dirname \"${connect_exit_log}\")\"",
+		"while [[ ! -d \"${connect_exit_dir}\" ]]",
+		"kill -0 \"${capability_pid}\"",
+		": >\"${connect_exit_log}.tmp\"",
+	)
+}
+
 func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
