@@ -701,7 +701,7 @@ run_synthetic_tun_lifecycle() {
 
   guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
   record_capability tun.profile_validate pass
-  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
+  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
   record_capability tun.connect_requested pass
   wait_guest_tun_status verified-active 120
   record_capability tun.verified_active pass
@@ -712,7 +712,7 @@ run_synthetic_tun_lifecycle() {
   record_capability tun.https_tls pass
 
   set +e
-  guest_exec /bin/bash -lc "timeout 90 runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz doctor --tun >/tmp/podlaz-capability-tun-private/doctor.stdout 2>/tmp/podlaz-capability-tun-private/doctor.stderr"
+  guest_exec /bin/bash -lc "timeout 90 runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz doctor --tun >/tmp/podlaz-capability-tun-private/doctor.stdout 2>/tmp/podlaz-capability-tun-private/doctor.stderr"
   local doctor_code=$?
   set -e
   if [[ "${doctor_code}" == "0" || "${doctor_code}" == "3" ]]; then
@@ -732,7 +732,7 @@ run_synthetic_tun_lifecycle() {
     return 1
   fi
 
-  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz disconnect >/tmp/podlaz-capability-tun-private/disconnect.stdout 2>/tmp/podlaz-capability-tun-private/disconnect.stderr"
+  guest_exec /bin/bash -lc "runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz disconnect >/tmp/podlaz-capability-tun-private/disconnect.stdout 2>/tmp/podlaz-capability-tun-private/disconnect.stderr"
   wait_guest_tun_status clean-inactive 80
   record_capability tun.clean_disconnect pass
 
@@ -744,7 +744,7 @@ run_synthetic_tun_lifecycle() {
     return 1
   fi
 
-  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz recover --json >/tmp/podlaz-capability-tun-private/recover.json 2>/tmp/podlaz-capability-tun-private/recover.stderr && cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file /tmp/podlaz-capability-tun-private/recover.json"
+  guest_exec /bin/bash -lc "runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz recover --json >/tmp/podlaz-capability-tun-private/recover.json 2>/tmp/podlaz-capability-tun-private/recover.stderr && cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file /tmp/podlaz-capability-tun-private/recover.json"
   record_capability tun.recovery_clean pass
 }
 
