@@ -90,6 +90,7 @@ jobs:
           argv_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-argv.log"
           transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
           connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
+          connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
           capture_pid=""
           argv_capture_pid=""
           transport_capture_pid=""
@@ -324,11 +325,35 @@ jobs:
           argv_capture_pid=$!
 
           (
+            profile_stage=false
+            runuser_stage=false
+            stderr_classified=false
+            : >"${connect_exit_log}.tmp"
+            chmod 0600 "${connect_exit_log}.tmp"
             for _ in $(seq 1 2400); do
+              guest_live=false
               if machinectl show podlaz-capability >/dev/null 2>&1; then
-                if {
+                guest_live=true
+                if [[ "${profile_stage}" == false ]] && sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- test -s /tmp/podlaz-capability-tun-private/profile-id \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.connect.stage_profile_id=observed' >>"${connect_exit_log}.tmp"
+                  profile_stage=true
+                fi
+                if [[ "${runuser_stage}" == false ]] && sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc 'test -e /tmp/podlaz-capability-tun-private/connect.stdout && test -e /tmp/podlaz-capability-tun-private/connect.stderr' \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.connect.stage_runuser=observed' >>"${connect_exit_log}.tmp"
+                  runuser_stage=true
+                fi
+                if [[ "${stderr_classified}" == false ]] && {
                   sudo -n systemd-run \
                     --machine=podlaz-capability \
+                    --expand-environment=no \
                     --wait --pipe --collect --quiet \
                     -- /bin/bash -lc '
                       stderr=/tmp/podlaz-capability-tun-private/connect.stderr
@@ -349,12 +374,37 @@ jobs:
                   if [[ -s "${connect_log}.tmp" ]]; then
                     mv -f "${connect_log}.tmp" "${connect_log}"
                     chmod 0600 "${connect_log}"
-                    exit 0
+                    stderr_classified=true
                   fi
+                else
+                  rm -f "${connect_log}.tmp"
                 fi
-                rm -f "${connect_log}.tmp"
+              fi
+
+              if grep -Fx 'tun.connect_requested=pass' "${E2E_ARTIFACT_DIR}/hosted-e2e-capability.txt" >/dev/null 2>&1; then
+                printf '%s\n' 'tun.connect.exit_zero=observed' >>"${connect_exit_log}.tmp"
+                mv -f "${connect_exit_log}.tmp" "${connect_exit_log}"
+                chmod 0600 "${connect_exit_log}"
+                exit 0
+              fi
+              if [[ "${runuser_stage}" == true && "${guest_live}" == false ]] && \
+                  grep -Fx 'tun.profile_validate=pass' "${E2E_ARTIFACT_DIR}/hosted-e2e-capability.txt" >/dev/null 2>&1; then
+                printf '%s\n' 'tun.connect.exit_nonzero=observed' >>"${connect_exit_log}.tmp"
+                mv -f "${connect_exit_log}.tmp" "${connect_exit_log}"
+                chmod 0600 "${connect_exit_log}"
+                exit 0
               fi
               if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
+                if [[ "${runuser_stage}" == true ]] && \
+                    grep -Fx 'tun.profile_validate=pass' "${E2E_ARTIFACT_DIR}/hosted-e2e-capability.txt" >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.connect.exit_nonzero=observed' >>"${connect_exit_log}.tmp"
+                fi
+                if [[ -s "${connect_exit_log}.tmp" ]]; then
+                  mv -f "${connect_exit_log}.tmp" "${connect_exit_log}"
+                  chmod 0600 "${connect_exit_log}"
+                else
+                  rm -f "${connect_exit_log}.tmp"
+                fi
                 exit 0
               fi
               sleep 0.1
@@ -382,6 +432,7 @@ jobs:
           argv_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-argv.log"
           transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
           connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
+          connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -402,6 +453,9 @@ jobs:
           fi
           if [[ -s "${connect_log}" ]]; then
             cat "${connect_log}"
+          fi
+          if [[ -s "${connect_exit_log}" ]]; then
+            cat "${connect_exit_log}"
           fi
 
       - name: Validate public capability report
