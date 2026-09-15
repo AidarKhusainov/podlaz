@@ -80,7 +80,7 @@ func TestHostedE2ECapabilityFeedsSyntheticURIIntoImportUnit(t *testing.T) {
 		"CAPABILITY_XRAY_ROOT}/client-uri",
 		"<\"${CAPABILITY_XRAY_ROOT}/client-uri\"",
 	)
-	forbidHostedCapabilityMarkers(t, script, "/run/podlaz-capability/synthetic-uri")
+	forbidHostedCapabilityMarkers(t, script, "cat /run/podlaz-capability/synthetic-uri")
 }
 
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
