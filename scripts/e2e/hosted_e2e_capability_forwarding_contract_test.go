@@ -134,6 +134,16 @@ func TestHostedE2ECapabilityClassifiesSyntheticURIInsideImportShell(t *testing.T
 	)
 }
 
+func TestHostedE2ECapabilityDisablesSystemdArgumentEnvironmentExpansion(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"guest_exec()",
+		"--machine=\"${CAPABILITY_MACHINE}\"",
+		"--expand-environment=no",
+		"-- \"$@\"",
+	)
+}
+
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
