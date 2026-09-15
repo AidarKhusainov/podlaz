@@ -93,6 +93,7 @@ jobs:
           connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
           connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
           resolved_query_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-resolved-query.log"
+          udp_dns_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-direct-udp-dns.log"
           capture_pid=""
           argv_capture_pid=""
           transport_capture_pid=""
@@ -332,6 +333,7 @@ jobs:
             stderr_classified=false
             daemon_classified=false
             resolved_query_classified=false
+            udp_dns_classified=false
             connect_exit_dir="$(dirname "${connect_exit_log}")"
             while [[ ! -d "${connect_exit_dir}" ]]; do
               if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
@@ -452,6 +454,20 @@ jobs:
                 else
                   rm -f "${resolved_query_log}.tmp"
                 fi
+                if [[ "${resolved_query_classified}" == true && "${udp_dns_classified}" == false ]] && sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --expand-environment=no \
+                  --wait --pipe --collect --quiet \
+                  -- /usr/bin/python3 -c 'import socket,struct; exec("query=struct.pack(\"!HHHHHH\",0x505A,0x0100,1,0,0,0)+b\"\\x07example\\x03com\\x00\"+struct.pack(\"!HH\",1,1)\nsock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nsock.settimeout(5)\ntry:\n    sock.sendto(query,(\"1.1.1.1\",53))\n    data,_=sock.recvfrom(4096)\n    print(\"tun.resolved_query.udp_dns_response=observed\" if len(data)>=12 and data[:2]==query[:2] else \"tun.resolved_query.udp_dns_error=observed\")\nexcept socket.timeout:\n    print(\"tun.resolved_query.udp_dns_timeout=observed\")\nexcept OSError:\n    print(\"tun.resolved_query.udp_dns_error=observed\")\nfinally:\n    sock.close()")' \
+                  >"${udp_dns_log}.tmp" 2>/dev/null; then
+                  if [[ -s "${udp_dns_log}.tmp" ]]; then
+                    mv -f "${udp_dns_log}.tmp" "${udp_dns_log}"
+                    chmod 0600 "${udp_dns_log}"
+                    udp_dns_classified=true
+                  fi
+                else
+                  rm -f "${udp_dns_log}.tmp"
+                fi
                 if [[ "${daemon_classified}" == false ]] && {
                   sudo -n systemd-run \
                     --machine=podlaz-capability \
@@ -547,6 +563,7 @@ jobs:
           connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
           connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
           resolved_query_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-resolved-query.log"
+          udp_dns_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-direct-udp-dns.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -576,6 +593,9 @@ jobs:
           fi
           if [[ -s "${resolved_query_log}" ]]; then
             cat "${resolved_query_log}"
+          fi
+          if [[ -s "${udp_dns_log}" ]]; then
+            cat "${udp_dns_log}"
           fi
 
       - name: Validate public capability report
