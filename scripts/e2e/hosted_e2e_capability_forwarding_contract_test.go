@@ -119,6 +119,22 @@ func TestHostedE2ECapabilityRecordsConnectExitBoundaryPrivately(t *testing.T) {
 	)
 }
 
+func TestHostedE2ECapabilityClassifiesExactConnectExitCodePrivately(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, script,
+		"connect.exit-code",
+		"connect_code=$?",
+		"exit \"${connect_code}\"",
+	)
+	requireHostedCapabilityMarkers(t, workflow,
+		"tun.connect.exit_generic=observed",
+		"tun.connect.exit_usage=observed",
+		"tun.connect.exit_daemon_unavailable=observed",
+		"tun.connect.exit_other=observed",
+	)
+}
+
 func TestHostedE2ECapabilityWaitsForConnectObserverPrivateDir(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
