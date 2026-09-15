@@ -91,6 +91,7 @@ jobs:
           transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
           connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
           connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
+          connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
           capture_pid=""
           argv_capture_pid=""
           transport_capture_pid=""
@@ -328,6 +329,7 @@ jobs:
             profile_stage=false
             runuser_stage=false
             stderr_classified=false
+            daemon_classified=false
             connect_exit_dir="$(dirname "${connect_exit_log}")"
             while [[ ! -d "${connect_exit_dir}" ]]; do
               if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
@@ -386,6 +388,45 @@ jobs:
                 else
                   rm -f "${connect_log}.tmp"
                 fi
+                if [[ "${daemon_classified}" == false ]] && {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --expand-environment=no \
+                    --wait --pipe --collect --quiet \
+                    -- /bin/bash -lc '
+                      line="$(journalctl -u podlazd --no-pager -n 120 | grep -F "podlazd: connect request failed" | tail -n 1)"
+                      test -n "${line}" || exit 3
+                      field() {
+                        local key="$1" token
+                        for token in ${line}; do
+                          case "${token}" in
+                            "${key}="*) printf "%s" "${token#*=}"; return 0 ;;
+                          esac
+                        done
+                        return 1
+                      }
+                      classification="$(field classification)" || exit 4
+                      phase="$(field phase)" || exit 4
+                      rollback="$(field rollback_status)" || exit 4
+                      primary="$(field tun_primary_classification)" || exit 4
+                      for value in "${classification}" "${phase}" "${rollback}" "${primary}"; do
+                        [[ "${value}" =~ ^[A-Za-z0-9_.-]+$ ]] || exit 4
+                      done
+                      printf "%s\n" "tun.connect.exit_generic=observed"
+                      printf "tun.connect.daemon_classification_%s=observed\n" "${classification}"
+                      printf "tun.connect.daemon_phase_%s=observed\n" "${phase}"
+                      printf "tun.connect.daemon_rollback_%s=observed\n" "${rollback}"
+                      printf "tun.connect.tun_primary_%s=observed\n" "${primary}"
+                    '
+                } >"${connect_daemon_log}.tmp" 2>/dev/null; then
+                  if [[ -s "${connect_daemon_log}.tmp" ]]; then
+                    mv -f "${connect_daemon_log}.tmp" "${connect_daemon_log}"
+                    chmod 0600 "${connect_daemon_log}"
+                    daemon_classified=true
+                  fi
+                else
+                  rm -f "${connect_daemon_log}.tmp"
+                fi
               fi
 
               if grep -Fx 'tun.connect_requested=pass' "${E2E_ARTIFACT_DIR}/hosted-e2e-capability.txt" >/dev/null 2>&1; then
@@ -440,6 +481,7 @@ jobs:
           transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
           connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
           connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
+          connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -463,6 +505,9 @@ jobs:
           fi
           if [[ -s "${connect_exit_log}" ]]; then
             cat "${connect_exit_log}"
+          fi
+          if [[ -s "${connect_daemon_log}" ]]; then
+            cat "${connect_daemon_log}"
           fi
 
       - name: Validate public capability report
