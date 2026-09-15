@@ -149,10 +149,12 @@ jobs:
 
           (
             uri_path="${E2E_TMP_ROOT}/hosted-capability-private/synthetic-xray/client-uri"
+            punctuation='vless://probe@192.0.2.1:443?type=tcp&security=none&encryption=none#hosted-capability'
             for _ in $(seq 1 2400); do
               if [[ -s "${uri_path}" ]] && machinectl show podlaz-capability >/dev/null 2>&1; then
                 printf '%s\n' 'tun.synthetic_uri_host_loaded=pass' >"${transport_log}.tmp"
                 uri="$(<"${uri_path}")"
+                uri_len="${#uri}"
                 uri_sha="$(printf '%s' "${uri}" | sha256sum | awk '{print $1}')"
 
                 if sudo -n systemd-run \
@@ -163,6 +165,26 @@ jobs:
                   printf '%s\n' 'tun.guest_argv_transport=pass' >>"${transport_log}.tmp"
                 else
                   printf '%s\n' 'tun.guest_argv_transport=fail' >>"${transport_log}.tmp"
+                fi
+
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc '[[ "$1" == "$2" ]]' _ "${punctuation}" "${punctuation}" \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.guest_uri_punctuation_transport=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.guest_uri_punctuation_transport=fail' >>"${transport_log}.tmp"
+                fi
+
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc '[[ "${#1}" == "$2" ]]' _ "${uri}" "${uri_len}" \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.synthetic_uri_argv_length=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.synthetic_uri_argv_length=fail' >>"${transport_log}.tmp"
                 fi
 
                 if sudo -n systemd-run \
