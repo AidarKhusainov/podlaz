@@ -694,14 +694,14 @@ run_synthetic_tun_lifecycle() {
   fi
   record_capability tun.profile_import_command pass
   guest_exec chown -R e2e:e2e /tmp/podlaz-capability-tun-private
-  guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' /tmp/podlaz-capability-tun-private/import.stdout >/run/podlaz-capability/profile-id"
-  guest_exec test -s /run/podlaz-capability/profile-id
+  guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' /tmp/podlaz-capability-tun-private/import.stdout >/tmp/podlaz-capability-tun-private/profile-id"
+  guest_exec test -s /tmp/podlaz-capability-tun-private/profile-id
   record_capability tun.profile_import_output pass
   record_capability tun.profile_import pass
 
-  guest_exec /bin/bash -lc "id=\$(cat /run/podlaz-capability/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
+  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
   record_capability tun.profile_validate pass
-  guest_exec /bin/bash -lc "id=\$(cat /run/podlaz-capability/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
+  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
   record_capability tun.connect_requested pass
   wait_guest_tun_status verified-active 120
   record_capability tun.verified_active pass
