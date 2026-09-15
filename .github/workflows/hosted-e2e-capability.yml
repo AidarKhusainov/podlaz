@@ -89,9 +89,11 @@ jobs:
           candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           argv_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-argv.log"
           transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
+          connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
           capture_pid=""
           argv_capture_pid=""
           transport_capture_pid=""
+          connect_capture_pid=""
           cleanup_capture() {
             if [[ -n "${capture_pid}" ]]; then
               kill "${capture_pid}" >/dev/null 2>&1 || true
@@ -107,6 +109,11 @@ jobs:
               kill "${transport_capture_pid}" >/dev/null 2>&1 || true
               wait "${transport_capture_pid}" >/dev/null 2>&1 || true
               transport_capture_pid=""
+            fi
+            if [[ -n "${connect_capture_pid}" ]]; then
+              kill "${connect_capture_pid}" >/dev/null 2>&1 || true
+              wait "${connect_capture_pid}" >/dev/null 2>&1 || true
+              connect_capture_pid=""
             fi
           }
           trap cleanup_capture EXIT
@@ -316,6 +323,45 @@ jobs:
           ) &
           argv_capture_pid=$!
 
+          (
+            for _ in $(seq 1 2400); do
+              if machinectl show podlaz-capability >/dev/null 2>&1; then
+                if {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --wait --pipe --collect --quiet \
+                    -- /bin/bash -lc '
+                      stderr=/tmp/podlaz-capability-tun-private/connect.stderr
+                      test -s "${stderr}" || exit 3
+                      if grep -Fqi "authorization denied" "${stderr}"; then
+                        printf "%s\n" "tun.connect.authorization_denied=observed"
+                      elif grep -Fqi "authorization unavailable" "${stderr}"; then
+                        printf "%s\n" "tun.connect.authorization_unavailable=observed"
+                      elif grep -Eqi "daemon socket .*permission denied|permission denied.*daemon socket" "${stderr}"; then
+                        printf "%s\n" "tun.connect.socket_permission=observed"
+                      elif grep -Eqi "daemon connect|connection already active|full[- ]tunnel|handoff|stale podlaz|xray|runtime|resolve|verification|tun|route|nft|dns" "${stderr}"; then
+                        printf "%s\n" "tun.connect.daemon_error=observed"
+                      else
+                        printf "%s\n" "tun.connect.other_error=observed"
+                      fi
+                    '
+                } >"${connect_log}.tmp" 2>/dev/null; then
+                  if [[ -s "${connect_log}.tmp" ]]; then
+                    mv -f "${connect_log}.tmp" "${connect_log}"
+                    chmod 0600 "${connect_log}"
+                    exit 0
+                  fi
+                fi
+                rm -f "${connect_log}.tmp"
+              fi
+              if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
+                exit 0
+              fi
+              sleep 0.1
+            done
+          ) &
+          connect_capture_pid=$!
+
           set +e
           wait "${capability_pid}"
           capability_rc=$?
@@ -335,6 +381,7 @@ jobs:
           candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           argv_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-argv.log"
           transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
+          connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -352,6 +399,9 @@ jobs:
           fi
           if [[ -s "${transport_log}" ]]; then
             cat "${transport_log}"
+          fi
+          if [[ -s "${connect_log}" ]]; then
+            cat "${connect_log}"
           fi
 
       - name: Validate public capability report
