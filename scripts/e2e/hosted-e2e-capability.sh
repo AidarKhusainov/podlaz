@@ -531,6 +531,7 @@ start_system_guest() {
 guest_exec() {
   sudo -n systemd-run \
     --machine="${CAPABILITY_MACHINE}" \
+    --expand-environment=no \
     --wait --pipe --collect --quiet \
     -- "$@"
 }
