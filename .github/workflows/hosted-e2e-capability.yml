@@ -197,6 +197,36 @@ jobs:
                   printf '%s\n' 'tun.synthetic_uri_argv_integrity=fail' >>"${transport_log}.tmp"
                 fi
 
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- test -e /run/podlaz-capability-xray/client-uri \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.synthetic_uri_bind_exists=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.synthetic_uri_bind_exists=fail' >>"${transport_log}.tmp"
+                fi
+
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- test -r /run/podlaz-capability-xray/client-uri \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.synthetic_uri_bind_readable=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.synthetic_uri_bind_readable=fail' >>"${transport_log}.tmp"
+                fi
+
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- test -s /run/podlaz-capability-xray/client-uri \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.synthetic_uri_bind_nonempty=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.synthetic_uri_bind_nonempty=fail' >>"${transport_log}.tmp"
+                fi
+
                 mv -f "${transport_log}.tmp" "${transport_log}"
                 chmod 0600 "${transport_log}"
                 exit 0
