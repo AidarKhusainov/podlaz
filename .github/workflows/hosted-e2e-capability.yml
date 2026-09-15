@@ -88,8 +88,10 @@ jobs:
           # Stage candidate into live guest tmpfs.
           candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           argv_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-argv.log"
+          transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
           capture_pid=""
           argv_capture_pid=""
+          transport_capture_pid=""
           cleanup_capture() {
             if [[ -n "${capture_pid}" ]]; then
               kill "${capture_pid}" >/dev/null 2>&1 || true
@@ -100,6 +102,11 @@ jobs:
               kill "${argv_capture_pid}" >/dev/null 2>&1 || true
               wait "${argv_capture_pid}" >/dev/null 2>&1 || true
               argv_capture_pid=""
+            fi
+            if [[ -n "${transport_capture_pid}" ]]; then
+              kill "${transport_capture_pid}" >/dev/null 2>&1 || true
+              wait "${transport_capture_pid}" >/dev/null 2>&1 || true
+              transport_capture_pid=""
             fi
           }
           trap cleanup_capture EXIT
@@ -139,6 +146,49 @@ jobs:
             done
           ) &
           capture_pid=$!
+
+          (
+            uri_path="${E2E_TMP_ROOT}/hosted-capability-private/synthetic-xray/client-uri"
+            for _ in $(seq 1 2400); do
+              if [[ -s "${uri_path}" ]] && machinectl show podlaz-capability >/dev/null 2>&1; then
+                printf '%s\n' 'tun.synthetic_uri_host_loaded=pass' >"${transport_log}.tmp"
+                uri="$(<"${uri_path}")"
+                uri_sha="$(printf '%s' "${uri}" | sha256sum | awk '{print $1}')"
+
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc '[[ "$1" == podlaz-hosted-argv-probe ]]' _ podlaz-hosted-argv-probe \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.guest_argv_transport=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.guest_argv_transport=fail' >>"${transport_log}.tmp"
+                fi
+
+                if sudo -n systemd-run \
+                  --machine=podlaz-capability \
+                  --wait --pipe --collect --quiet \
+                  -- /bin/bash -lc 'actual="$(printf "%s" "$1" | sha256sum)"; [[ "${actual%% *}" == "$2" ]]' _ "${uri}" "${uri_sha}" \
+                  >/dev/null 2>&1; then
+                  printf '%s\n' 'tun.synthetic_uri_argv_integrity=pass' >>"${transport_log}.tmp"
+                else
+                  printf '%s\n' 'tun.synthetic_uri_argv_integrity=fail' >>"${transport_log}.tmp"
+                fi
+
+                mv -f "${transport_log}.tmp" "${transport_log}"
+                chmod 0600 "${transport_log}"
+                exit 0
+              fi
+              if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
+                printf '%s\n' 'tun.synthetic_uri_host_loaded=fail' >"${transport_log}.tmp"
+                mv -f "${transport_log}.tmp" "${transport_log}"
+                chmod 0600 "${transport_log}"
+                exit 0
+              fi
+              sleep 0.1
+            done
+          ) &
+          transport_capture_pid=$!
 
           (
             for _ in $(seq 1 2400); do
@@ -196,6 +246,7 @@ jobs:
           dpkg_log="${guest_root}/var/log/dpkg.log"
           candidate_log="${E2E_TMP_ROOT}/hosted-capability-private/candidate-install.log"
           argv_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-argv.log"
+          transport_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-import-transport.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -210,6 +261,9 @@ jobs:
           tail -n 140 "${candidate_log}"
           if [[ -s "${argv_log}" ]]; then
             cat "${argv_log}"
+          fi
+          if [[ -s "${transport_log}" ]]; then
+            cat "${transport_log}"
           fi
 
       - name: Validate public capability report
