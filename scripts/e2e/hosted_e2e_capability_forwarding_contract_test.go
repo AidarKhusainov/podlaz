@@ -154,6 +154,17 @@ func TestHostedE2ECapabilityKeepsImportedProfileIDInPrivateTmp(t *testing.T) {
 	)
 }
 
+func TestHostedE2ECapabilityUsesSocketGroupOnlyForDaemonFacingTunCLI(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"runuser -u e2e -g podlaz -- env",
+		"/usr/bin/podlaz connect --mode tun",
+		"/usr/bin/podlaz doctor --tun",
+		"/usr/bin/podlaz disconnect",
+		"/usr/bin/podlaz recover --json",
+	)
+}
+
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
