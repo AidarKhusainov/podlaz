@@ -144,6 +144,16 @@ func TestHostedE2ECapabilityDisablesSystemdArgumentEnvironmentExpansion(t *testi
 	)
 }
 
+func TestHostedE2ECapabilityKeepsImportedProfileIDInPrivateTmp(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"/tmp/podlaz-capability-tun-private/profile-id",
+	)
+	forbidHostedCapabilityMarkers(t, script,
+		"/run/podlaz-capability/profile-id",
+	)
+}
+
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
