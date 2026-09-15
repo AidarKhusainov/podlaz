@@ -78,7 +78,7 @@ func TestHostedE2ECapabilityPassesSyntheticURIAsImportArgument(t *testing.T) {
 	requireHostedCapabilityMarkers(t, script,
 		"local import_code uri",
 		"uri=\"$(<\"${CAPABILITY_XRAY_ROOT}/client-uri\")\"",
-		"URI=\"$1\"",
+		"URI=\\\"\\$1\\\"",
 		"_ \"${uri}\"",
 	)
 	forbidHostedCapabilityMarkers(t, script,
