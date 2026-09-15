@@ -102,6 +102,23 @@ func TestHostedE2ECapabilityClassifiesConnectFailureWithoutLeakingStderr(t *test
 	)
 }
 
+func TestHostedE2ECapabilityRecordsConnectExitBoundaryPrivately(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, script,
+		"connect.exit",
+		"connect.stage",
+		"profile-id-loaded",
+		"runuser-started",
+	)
+	requireHostedCapabilityMarkers(t, workflow,
+		"tun.connect.exit_zero=observed",
+		"tun.connect.exit_nonzero=observed",
+		"tun.connect.stage_profile_id=observed",
+		"tun.connect.stage_runuser=observed",
+	)
+}
+
 func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
