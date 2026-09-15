@@ -90,18 +90,17 @@ func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
 	)
 }
 
-func TestHostedE2ECapabilityPassesSyntheticURIAsEncodedImportArgument(t *testing.T) {
+func TestHostedE2ECapabilityBindsSyntheticURIIntoLiveMachine(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	requireHostedCapabilityMarkers(t, script,
-		"local import_code uri uri_b64",
-		"uri=\"$(<\"${CAPABILITY_XRAY_ROOT}/client-uri\")\"",
-		"base64 -w0",
-		"base64 -d",
-		"_ \"${uri_b64}\"",
+		"install -d -m 0700 \"${CAPABILITY_XRAY_ROOT}\"",
+		"--bind-ro=\"${CAPABILITY_XRAY_ROOT}:/run/podlaz-capability-xray\"",
+		"cat /run/podlaz-capability-xray/client-uri",
 	)
 	forbidHostedCapabilityMarkers(t, script,
-		"URI=\\$(cat)",
-		"_ \"${uri}\"",
+		"local import_code uri uri_b64",
+		"base64 -d",
+		"_ \"${uri_b64}\"",
 		"cat /run/podlaz-capability/synthetic-uri",
 	)
 }
