@@ -103,19 +103,19 @@ func TestHostedE2ECapabilityClassifiesConnectFailureWithoutLeakingStderr(t *test
 }
 
 func TestHostedE2ECapabilityRecordsConnectExitBoundaryPrivately(t *testing.T) {
-	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, script,
-		"connect.exit",
-		"connect.stage",
-		"profile-id-loaded",
-		"runuser-started",
-	)
 	requireHostedCapabilityMarkers(t, workflow,
+		"profile-connect-exit.log",
 		"tun.connect.exit_zero=observed",
 		"tun.connect.exit_nonzero=observed",
 		"tun.connect.stage_profile_id=observed",
 		"tun.connect.stage_runuser=observed",
+		"tun.profile_validate=pass",
+		"tun.connect_requested=pass",
+	)
+	forbidHostedCapabilityMarkers(t, workflow,
+		"cat /tmp/podlaz-capability-tun-private/connect.stdout",
+		"cat /tmp/podlaz-capability-tun-private/connect.stderr",
 	)
 }
 
