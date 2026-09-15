@@ -92,6 +92,7 @@ jobs:
           connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
           connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
           connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
+          resolved_query_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-resolved-query.log"
           capture_pid=""
           argv_capture_pid=""
           transport_capture_pid=""
@@ -330,6 +331,7 @@ jobs:
             runuser_stage=false
             stderr_classified=false
             daemon_classified=false
+            resolved_query_classified=false
             connect_exit_dir="$(dirname "${connect_exit_log}")"
             while [[ ! -d "${connect_exit_dir}" ]]; do
               if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
@@ -387,6 +389,54 @@ jobs:
                   fi
                 else
                   rm -f "${connect_log}.tmp"
+                fi
+                if [[ "${resolved_query_classified}" == false ]] && {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --expand-environment=no \
+                    --wait --pipe --collect --quiet \
+                    -- /bin/bash -lc '
+                      test -e /sys/class/net/podlaz0/ifindex || exit 3
+                      status="$(resolvectl status podlaz0 --no-pager 2>/dev/null)" || exit 3
+                      grep -Fq "DNS Servers:" <<<"${status}" || exit 3
+                      grep -Fq "~." <<<"${status}" || exit 3
+                      ifindex="$(cat /sys/class/net/podlaz0/ifindex)"
+                      stdout=/tmp/podlaz-capability-resolved-query.stdout
+                      stderr=/tmp/podlaz-capability-resolved-query.stderr
+                      set +e
+                      resolvectl --cache=no --interface="${ifindex}" -4 query example.com >"${stdout}" 2>"${stderr}"
+                      rc=$?
+                      set -e
+                      if (( rc == 0 )); then
+                        printf "%s\n" "tun.resolved_query.exit_zero=observed"
+                      else
+                        printf "%s\n" "tun.resolved_query.exit_nonzero=observed"
+                      fi
+                      if [[ -s "${stderr}" ]]; then
+                        printf "%s\n" "tun.resolved_query.stderr_nonempty=observed"
+                      else
+                        printf "%s\n" "tun.resolved_query.stderr_empty=observed"
+                      fi
+                      if grep -Fq " -- link: podlaz0" "${stdout}"; then
+                        printf "%s\n" "tun.resolved_query.expected_link=observed"
+                      else
+                        printf "%s\n" "tun.resolved_query.expected_link_missing=observed"
+                      fi
+                      if grep -Eq "(^|[^0-9])([0-9]{1,3}\\.){3}[0-9]{1,3}([^0-9]|$)" "${stdout}"; then
+                        printf "%s\n" "tun.resolved_query.ipv4_answer=observed"
+                      else
+                        printf "%s\n" "tun.resolved_query.ipv4_answer_missing=observed"
+                      fi
+                      rm -f -- "${stdout}" "${stderr}"
+                    '
+                } >"${resolved_query_log}.tmp" 2>/dev/null; then
+                  if [[ -s "${resolved_query_log}.tmp" ]]; then
+                    mv -f "${resolved_query_log}.tmp" "${resolved_query_log}"
+                    chmod 0600 "${resolved_query_log}"
+                    resolved_query_classified=true
+                  fi
+                else
+                  rm -f "${resolved_query_log}.tmp"
                 fi
                 if [[ "${daemon_classified}" == false ]] && {
                   sudo -n systemd-run \
@@ -482,6 +532,7 @@ jobs:
           connect_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-classification.log"
           connect_exit_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-exit.log"
           connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
+          resolved_query_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-resolved-query.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -508,6 +559,9 @@ jobs:
           fi
           if [[ -s "${connect_daemon_log}" ]]; then
             cat "${connect_daemon_log}"
+          fi
+          if [[ -s "${resolved_query_log}" ]]; then
+            cat "${resolved_query_log}"
           fi
 
       - name: Validate public capability report
