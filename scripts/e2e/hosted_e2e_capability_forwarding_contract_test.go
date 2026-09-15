@@ -66,6 +66,12 @@ func TestHostedE2ECapabilityReportsURITransportDiagnostics(t *testing.T) {
 		"tun.synthetic_uri_argv_length=fail",
 		"tun.synthetic_uri_argv_integrity=pass",
 		"tun.synthetic_uri_argv_integrity=fail",
+		"tun.synthetic_uri_bind_exists=pass",
+		"tun.synthetic_uri_bind_exists=fail",
+		"tun.synthetic_uri_bind_readable=pass",
+		"tun.synthetic_uri_bind_readable=fail",
+		"tun.synthetic_uri_bind_nonempty=pass",
+		"tun.synthetic_uri_bind_nonempty=fail",
 		"profile-import-transport.log",
 	)
 }
