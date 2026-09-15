@@ -645,7 +645,7 @@ wait_guest_tun_status() {
 }
 
 wait_guest_synthetic_uri() {
-  local attempts="${1:-50}"
+  local attempts=50
   for _ in $(seq 1 "${attempts}"); do
     if guest_exec test -s /run/podlaz-capability-xray/client-uri >/dev/null 2>&1; then
       return 0
