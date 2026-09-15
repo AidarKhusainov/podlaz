@@ -644,10 +644,25 @@ wait_guest_tun_status() {
   return 1
 }
 
+wait_guest_synthetic_uri() {
+  local attempts="${1:-50}"
+  for _ in $(seq 1 "${attempts}"); do
+    if guest_exec test -s /run/podlaz-capability-xray/client-uri >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 run_synthetic_tun_lifecycle() {
   local import_code
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
+  if ! wait_guest_synthetic_uri; then
+    record_capability tun.synthetic_uri_loaded fail
+    return 1
+  fi
   set +e
   guest_exec /bin/bash -lc "URI=\"\$(cat /run/podlaz-capability-xray/client-uri)\"; [[ -n \"\${URI}\" ]] || exit 90; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
   import_code=$?
