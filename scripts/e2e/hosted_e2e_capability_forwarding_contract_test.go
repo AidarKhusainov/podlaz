@@ -37,9 +37,6 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 	requireHostedCapabilityMarkers(t, script,
 		"synthetic.xray_endpoint",
 		"tun.authorization",
-		"tun.synthetic_uri_host_loaded",
-		"tun.guest_argv_transport",
-		"tun.synthetic_uri_argv_integrity",
 		"tun.synthetic_uri_loaded",
 		"tun.profile_import_usage_error",
 		"tun.profile_import_arg_error",
@@ -53,6 +50,19 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 		"tun.profile_import",
 		"tun.profile_validate",
 		"tun.connect_requested",
+	)
+}
+
+func TestHostedE2ECapabilityReportsURITransportDiagnostics(t *testing.T) {
+	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
+	requireHostedCapabilityMarkers(t, workflow,
+		"tun.synthetic_uri_host_loaded=pass",
+		"tun.synthetic_uri_host_loaded=fail",
+		"tun.guest_argv_transport=pass",
+		"tun.guest_argv_transport=fail",
+		"tun.synthetic_uri_argv_integrity=pass",
+		"tun.synthetic_uri_argv_integrity=fail",
+		"profile-import-transport.log",
 	)
 }
 
