@@ -119,19 +119,17 @@ func TestHostedE2ECapabilityRecordsConnectExitBoundaryPrivately(t *testing.T) {
 	)
 }
 
-func TestHostedE2ECapabilityClassifiesExactConnectExitCodePrivately(t *testing.T) {
-	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+func TestHostedE2ECapabilityClassifiesDaemonConnectFailureFromSafeJournalFields(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, script,
-		"connect.exit-code",
-		"connect_code=$?",
-		"exit \"${connect_code}\"",
-	)
 	requireHostedCapabilityMarkers(t, workflow,
+		"profile-connect-daemon.log",
+		"journalctl -u podlazd",
+		"podlazd: connect request failed",
 		"tun.connect.exit_generic=observed",
-		"tun.connect.exit_usage=observed",
-		"tun.connect.exit_daemon_unavailable=observed",
-		"tun.connect.exit_other=observed",
+		"tun.connect.daemon_classification_",
+		"tun.connect.daemon_phase_",
+		"tun.connect.daemon_rollback_",
+		"tun.connect.tun_primary_",
 	)
 }
 
