@@ -328,6 +328,13 @@ jobs:
             profile_stage=false
             runuser_stage=false
             stderr_classified=false
+            connect_exit_dir="$(dirname "${connect_exit_log}")"
+            while [[ ! -d "${connect_exit_dir}" ]]; do
+              if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
+                exit 0
+              fi
+              sleep 0.1
+            done
             : >"${connect_exit_log}.tmp"
             chmod 0600 "${connect_exit_log}.tmp"
             for _ in $(seq 1 2400); do
