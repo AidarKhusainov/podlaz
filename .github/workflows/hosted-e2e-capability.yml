@@ -400,6 +400,11 @@ jobs:
                       status="$(resolvectl status podlaz0 --no-pager 2>/dev/null)" || exit 3
                       grep -Fq "DNS Servers:" <<<"${status}" || exit 3
                       grep -Fq "~." <<<"${status}" || exit 3
+                      if grep -Eq "Current Scopes:.*(^|[[:space:]])DNS([[:space:]]|$)" <<<"${status}"; then
+                        printf "%s\n" "tun.resolved_query.scope_dns=observed"
+                      else
+                        printf "%s\n" "tun.resolved_query.scope_not_dns=observed"
+                      fi
                       ifindex="$(cat /sys/class/net/podlaz0/ifindex)"
                       stdout=/tmp/podlaz-capability-resolved-query.stdout
                       stderr=/tmp/podlaz-capability-resolved-query.stderr
@@ -414,6 +419,15 @@ jobs:
                       fi
                       if [[ -s "${stderr}" ]]; then
                         printf "%s\n" "tun.resolved_query.stderr_nonempty=observed"
+                        if grep -Eqi "timed out|timeout|all attempts .*failed" "${stderr}"; then
+                          printf "%s\n" "tun.resolved_query.stderr_timeout=observed"
+                        elif grep -Eqi "no appropriate name servers|no suitable .*server|no suitable .*network|no name servers|network .*unavailable" "${stderr}"; then
+                          printf "%s\n" "tun.resolved_query.stderr_no_suitable_server=observed"
+                        elif grep -Eqi "link|interface|device|no such device|not found" "${stderr}"; then
+                          printf "%s\n" "tun.resolved_query.stderr_link_device=observed"
+                        else
+                          printf "%s\n" "tun.resolved_query.stderr_other=observed"
+                        fi
                       else
                         printf "%s\n" "tun.resolved_query.stderr_empty=observed"
                       fi
