@@ -454,6 +454,7 @@ start_system_guest() {
     --private-network \
     --network-veth-extra="${CAPABILITY_HOST_VETH}:${CAPABILITY_GUEST_IF}" \
     --bind-ro="${REPO_ROOT}:/workspace" \
+    --bind-ro="${CAPABILITY_XRAY_ROOT}:/run/podlaz-capability-xray" \
     --bind=/dev/net/tun \
     --capability=CAP_NET_ADMIN,CAP_NET_RAW \
     --link-journal=no \
@@ -644,13 +645,11 @@ wait_guest_tun_status() {
 }
 
 run_synthetic_tun_lifecycle() {
-  local import_code uri uri_b64
+  local import_code
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
-  uri="$(<"${CAPABILITY_XRAY_ROOT}/client-uri")"
-  uri_b64="$(printf '%s' "${uri}" | base64 -w0)"
   set +e
-  guest_exec /bin/bash -lc "URI=\"\$(printf '%s' \"\$1\" | base64 -d)\"; [[ -n \"\${URI}\" ]] || exit 90; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr" _ "${uri_b64}"
+  guest_exec /bin/bash -lc "URI=\"\$(cat /run/podlaz-capability-xray/client-uri)\"; [[ -n \"\${URI}\" ]] || exit 90; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
   import_code=$?
   set -e
   if (( import_code == 90 )); then
@@ -1006,9 +1005,10 @@ validate_candidate() {
 main() {
   local failed=0 probe_status
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  require_cmd awk base64 bash cmp curl debootstrap dpkg dpkg-deb find grep ip iptables mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
+  require_cmd awk bash cmp curl debootstrap dpkg dpkg-deb find grep ip iptables mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
   install -d -m 0700 "${CAPABILITY_PRIVATE}" "${E2E_ARTIFACT_DIR}"
+  install -d -m 0700 "${CAPABILITY_XRAY_ROOT}"
   : >"${CAPABILITY_REPORT}"
   chmod 0600 "${CAPABILITY_REPORT}"
   trap teardown_all EXIT
