@@ -111,6 +111,15 @@ func TestHostedE2ECapabilityBindsSyntheticURIIntoLiveMachine(t *testing.T) {
 	)
 }
 
+func TestHostedE2ECapabilityWaitsForBoundSyntheticURIReadiness(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"wait_guest_synthetic_uri()",
+		"guest_exec test -s /run/podlaz-capability-xray/client-uri",
+		"wait_guest_synthetic_uri",
+	)
+}
+
 func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
 	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
 	requireHostedCapabilityMarkers(t, workflow,
