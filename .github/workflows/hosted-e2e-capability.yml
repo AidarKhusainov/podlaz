@@ -94,6 +94,7 @@ jobs:
           connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
           resolved_query_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-resolved-query.log"
           udp_dns_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-direct-udp-dns.log"
+          tun_report_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-tun-report-cause.log"
           capture_pid=""
           argv_capture_pid=""
           transport_capture_pid=""
@@ -334,6 +335,7 @@ jobs:
             daemon_classified=false
             resolved_query_classified=false
             udp_dns_classified=false
+            report_classified=false
             connect_exit_dir="$(dirname "${connect_exit_log}")"
             while [[ ! -d "${connect_exit_dir}" ]]; do
               if ! kill -0 "${capability_pid}" >/dev/null 2>&1; then
@@ -454,12 +456,13 @@ jobs:
                 else
                   rm -f "${resolved_query_log}.tmp"
                 fi
-                if [[ "${resolved_query_classified}" == true && "${udp_dns_classified}" == false ]] && sudo -n systemd-run \
-                  --machine=podlaz-capability \
-                  --expand-environment=no \
-                  --wait --pipe --collect --quiet \
-                  -- /usr/bin/python3 -c 'import socket,struct; exec("query=struct.pack(\"!HHHHHH\",0x505A,0x0100,1,0,0,0)+b\"\\x07example\\x03com\\x00\"+struct.pack(\"!HH\",1,1)\nsock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nsock.settimeout(5)\ntry:\n    sock.sendto(query,(\"1.1.1.1\",53))\n    data,_=sock.recvfrom(4096)\n    print(\"tun.resolved_query.udp_dns_response=observed\" if len(data)>=12 and data[:2]==query[:2] else \"tun.resolved_query.udp_dns_error=observed\")\nexcept socket.timeout:\n    print(\"tun.resolved_query.udp_dns_timeout=observed\")\nexcept OSError:\n    print(\"tun.resolved_query.udp_dns_error=observed\")\nfinally:\n    sock.close()")' \
-                  >"${udp_dns_log}.tmp" 2>/dev/null; then
+                if [[ "${resolved_query_classified}" == true && "${udp_dns_classified}" == false ]] && {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --expand-environment=no \
+                    --wait --pipe --collect --quiet \
+                    -- /usr/bin/python3 -c 'import socket,struct; exec("query=struct.pack(\"!HHHHHH\",0x505A,0x0100,1,0,0,0)+b\"\\x07example\\x03com\\x00\"+struct.pack(\"!HH\",1,1)\nsock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\nsock.settimeout(5)\ntry:\n    sock.sendto(query,(\"1.1.1.1\",53))\n    data,_=sock.recvfrom(4096)\n    print(\"tun.resolved_query.udp_dns_response=observed\" if len(data)>=12 and data[:2]==query[:2] else \"tun.resolved_query.udp_dns_error=observed\")\nexcept socket.timeout:\n    print(\"tun.resolved_query.udp_dns_timeout=observed\")\nexcept OSError:\n    print(\"tun.resolved_query.udp_dns_error=observed\")\nfinally:\n    sock.close()")'
+                } >"${udp_dns_log}.tmp" 2>/dev/null; then
                   if [[ -s "${udp_dns_log}.tmp" ]]; then
                     mv -f "${udp_dns_log}.tmp" "${udp_dns_log}"
                     chmod 0600 "${udp_dns_log}"
@@ -467,6 +470,21 @@ jobs:
                   fi
                 else
                   rm -f "${udp_dns_log}.tmp"
+                fi
+                if [[ "${report_classified}" == false ]] && {
+                  sudo -n systemd-run \
+                    --machine=podlaz-capability \
+                    --expand-environment=no \
+                    --wait --pipe --collect --quiet \
+                    -- /usr/bin/python3 -c 'import json,re; report=json.load(open("/run/podlaz/diagnostics/tun-last.json",encoding="utf-8")); primary=report.get("primary_classification",""); parts=[value for value in report.get("errors",[]) if isinstance(value,str)]; parts.extend(probe.get("error","") for probe in report.get("probes",[]) if isinstance(probe,dict) and isinstance(probe.get("error",""),str)); text=" ".join(parts).lower(); print("tun.report.primary_resolved_link_query_failure=observed" if primary=="resolved_link_query_failure" else "tun.report.primary_other=observed"); print("tun.report.cause_no_servers=observed" if re.search(r"no appropriate name servers|no suitable .*server|no suitable .*network|no name servers|network .*unavailable",text) else "tun.report.cause_timeout=observed" if re.search(r"timed out|timeout|all attempts .*failed",text) else "tun.report.cause_link_device=observed" if re.search(r"link|interface|device|no such device|not found",text) else "tun.report.cause_other=observed")'
+                } >"${tun_report_log}.tmp" 2>/dev/null; then
+                  if [[ -s "${tun_report_log}.tmp" ]]; then
+                    mv -f "${tun_report_log}.tmp" "${tun_report_log}"
+                    chmod 0600 "${tun_report_log}"
+                    report_classified=true
+                  fi
+                else
+                  rm -f "${tun_report_log}.tmp"
                 fi
                 if [[ "${daemon_classified}" == false ]] && {
                   sudo -n systemd-run \
@@ -564,6 +582,7 @@ jobs:
           connect_daemon_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-connect-daemon.log"
           resolved_query_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-resolved-query.log"
           udp_dns_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-direct-udp-dns.log"
+          tun_report_log="${E2E_TMP_ROOT}/hosted-capability-private/profile-tun-report-cause.log"
           touch "${candidate_log}"
           chmod 0600 "${candidate_log}"
           if sudo -n test -f "${apt_log}"; then
@@ -596,6 +615,9 @@ jobs:
           fi
           if [[ -s "${udp_dns_log}" ]]; then
             cat "${udp_dns_log}"
+          fi
+          if [[ -s "${tun_report_log}" ]]; then
+            cat "${tun_report_log}"
           fi
 
       - name: Validate public capability report
