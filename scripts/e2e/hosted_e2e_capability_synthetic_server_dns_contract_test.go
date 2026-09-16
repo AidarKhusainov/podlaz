@@ -28,6 +28,13 @@ func TestHostedE2ECapabilityClassifiesSyntheticServerDNSBoundary(t *testing.T) {
 		t.Fatal("synthetic Xray DNS classifier must be defined and invoked on the failure path")
 	}
 
+	const noRejectCause = "tun.synthetic_server.reject_invalid_version=missing\n" +
+		"tun.synthetic_server.reject_invalid_user_id=missing\n" +
+		"tun.synthetic_server.reject_header_addons=missing\n" +
+		"tun.synthetic_server.reject_request_command=missing\n" +
+		"tun.synthetic_server.reject_invalid_address=missing\n" +
+		"tun.synthetic_server.reject_other=missing\n"
+
 	tests := []struct {
 		name string
 		log  string
@@ -36,37 +43,44 @@ func TestHostedE2ECapabilityClassifiesSyntheticServerDNSBoundary(t *testing.T) {
 		{
 			name: "udp request observed",
 			log:  "accepted udp:1.1.1.1:53",
-			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\ntun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\n" + noRejectCause + "tun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 		{
 			name: "tcp request observed",
 			log:  "accepted tcp:1.1.1.1:53",
-			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=observed\n",
+			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\n" + noRejectCause + "tun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=observed\n",
 		},
 		{
 			name: "vless bytes observed",
 			log:  "[Info] proxy/vless/inbound: firstLen = 48",
-			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\n" + noRejectCause + "tun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 		{
 			name: "vless request decoded",
 			log:  "[Info] proxy/vless/inbound: firstLen = 48\n[Info] proxy/vless/inbound: received request for udp:1.1.1.1:53",
-			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=observed\ntun.synthetic_server.vless_rejected=missing\ntun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=observed\ntun.synthetic_server.vless_rejected=missing\n" + noRejectCause + "tun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 		{
 			name: "vless request rejected",
 			log:  "[Info] proxy/vless/inbound: firstLen = 48\n[Info] proxy/vless/inbound: invalid request from 192.0.2.2:12345",
-			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=observed\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=observed\n" +
+				"tun.synthetic_server.reject_invalid_version=missing\n" +
+				"tun.synthetic_server.reject_invalid_user_id=missing\n" +
+				"tun.synthetic_server.reject_header_addons=missing\n" +
+				"tun.synthetic_server.reject_request_command=missing\n" +
+				"tun.synthetic_server.reject_invalid_address=missing\n" +
+				"tun.synthetic_server.reject_other=observed\n" +
+				"tun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 		{
 			name: "both requests observed",
 			log:  "[Info] proxy/vless/inbound: firstLen = 48\n[Info] proxy/vless/inbound: received request for udp:1.1.1.1:53\naccepted udp:1.1.1.1:53\naccepted tcp:1.1.1.1:53",
-			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=observed\ntun.synthetic_server.vless_rejected=missing\ntun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=observed\n",
+			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.vless_decoded=observed\ntun.synthetic_server.vless_rejected=missing\n" + noRejectCause + "tun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=observed\n",
 		},
 		{
 			name: "requests missing",
 			log:  "accepted tcp:203.0.113.10:443",
-			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.vless_decoded=missing\ntun.synthetic_server.vless_rejected=missing\n" + noRejectCause + "tun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 	}
 
