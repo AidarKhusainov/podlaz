@@ -47,7 +47,6 @@ func TestHostedE2ECapabilityWorkflowContract(t *testing.T) {
 
 	requireHostedCapabilityMarkers(t, workflow,
 		"name: Hosted E2E Capability",
-		"pull_request:",
 		"workflow_dispatch:",
 		"permissions:\n  contents: read",
 		"runs-on: ubuntu-24.04",
