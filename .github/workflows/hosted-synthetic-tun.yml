@@ -20,14 +20,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          ref: ${{ env.CANDIDATE_COMMIT }}
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -46,7 +44,7 @@ jobs:
 
       - name: Build exact candidate package
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_COMMIT: ${{ github.sha }}
         run: bash scripts/build-deb.sh
 
       - name: Scenario contract
@@ -56,54 +54,10 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-synthetic-public
-          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"
-
-      - name: Diagnose private connect failure
-        if: failure()
-        env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
-        run: |
-          CONNECT_STDERR="${E2E_TMP_ROOT}/system-guest/tmp/podlaz-hosted-synthetic-tun/connect.stderr"
-          if sudo -n test -f "${CONNECT_STDERR}"; then
-            sudo -n python3 scripts/e2e/lib/tun_soak_metrics.py classify-cli-error --stderr-file "${CONNECT_STDERR}" \
-              | sed 's/^/connect-class=/'
-          else
-            echo 'connect-class=stderr-unavailable'
-          fi
-          if timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/53'; then
-            echo 'outer-tcp53=pass'
-          else
-            echo 'outer-tcp53=fail'
-          fi
-          if python3 - <<'PY'
-          import os
-          import socket
-          import struct
-
-          txid = 0x1234
-          name = b''.join(bytes([len(part)]) + part for part in b'example.com'.split(b'.')) + b'\x00'
-          query = struct.pack('!HHHHHH', txid, 0x0100, 1, 0, 0, 0) + name + struct.pack('!HH', 1, 1)
-          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          sock.settimeout(5)
-          try:
-              sock.sendto(query, ('1.1.1.1', 53))
-              data, _ = sock.recvfrom(4096)
-              ok = len(data) >= 12 and struct.unpack('!H', data[:2])[0] == txid
-          except OSError:
-              ok = False
-          finally:
-              sock.close()
-          raise SystemExit(0 if ok else 1)
-          PY
-          then
-            echo 'outer-udp53=pass'
-          else
-            echo 'outer-udp53=fail'
-          fi
 
       - name: Validate public report
         if: always()
