@@ -22,9 +22,15 @@ func TestHostedE2ECapabilityCapturesTunFailureBeforeGuestTeardown(t *testing.T) 
 		"return \"${connect_code}\"",
 		"profile-tun-report-cause.log",
 		"/run/podlaz/diagnostics/tun-last.json",
+		"tun.report.primary_%s=observed",
+		"tun.report.status_%s=observed",
+		"tun.report.failure_phase_%s=observed",
+		"tun.report.probe_%s_classification_%s=observed",
+		"tun.report.probe_%s_failure_phase_%s=observed",
+		"^[A-Za-z0-9_.-]+$",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("hosted capability script must synchronously capture late TUN diagnostics before teardown; missing %q", want)
+			t.Fatalf("hosted capability script must synchronously capture bounded structured TUN diagnostics before teardown; missing %q", want)
 		}
 	}
 
