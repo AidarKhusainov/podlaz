@@ -76,18 +76,15 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 	)
 }
 
-func TestHostedSyntheticTUNCandidateCommitIsExplicit(t *testing.T) {
+func TestHostedSyntheticTUNCandidateProvenanceMatchesCheckedOutCandidate(t *testing.T) {
 	workflow := readHostedSyntheticTUNFile(t, hostedSyntheticTUNWorkflow)
-	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
-	candidateExpr := "${{ github.event.pull_request.head.sha || github.sha }}"
 	requireHostedSyntheticTUNMarkers(t, workflow,
-		"CANDIDATE_COMMIT: "+candidateExpr,
-		"ref: ${{ env.CANDIDATE_COMMIT }}",
-		"PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}",
-		"PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}",
+		"PODLAZ_COMMIT: ${{ github.sha }}",
 	)
-	requireHostedSyntheticTUNMarkers(t, script,
-		`EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"`,
+	forbidHostedSyntheticTUNMarkers(t, workflow,
+		"CANDIDATE_COMMIT:",
+		"ref: ${{ env.CANDIDATE_COMMIT }}",
+		"PODLAZ_E2E_CANDIDATE_COMMIT:",
 	)
 }
 
