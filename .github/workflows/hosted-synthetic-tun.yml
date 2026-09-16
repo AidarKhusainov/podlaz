@@ -62,6 +62,24 @@ jobs:
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"
 
+      - name: Diagnose private connect failure
+        if: failure()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
+        run: |
+          CONNECT_STDERR="${E2E_TMP_ROOT}/system-guest/tmp/podlaz-hosted-synthetic-tun/connect.stderr"
+          if sudo -n test -f "${CONNECT_STDERR}"; then
+            sudo -n python3 scripts/e2e/lib/tun_soak_metrics.py classify-cli-error --stderr-file "${CONNECT_STDERR}" \
+              | sed 's/^/connect-class=/'
+          else
+            echo 'connect-class=stderr-unavailable'
+          fi
+          if timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/53'; then
+            echo 'outer-tcp53=pass'
+          else
+            echo 'outer-tcp53=fail'
+          fi
+
       - name: Validate public report
         if: always()
         env:
