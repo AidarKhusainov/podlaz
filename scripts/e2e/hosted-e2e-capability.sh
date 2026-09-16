@@ -720,6 +720,8 @@ capture_synthetic_xray_dns_evidence() {
   local output="${CAPABILITY_PRIVATE}/synthetic-server-dns.log"
   local server_log="${CAPABILITY_XRAY_ROOT}/server.log"
   local vless=missing decoded=missing rejected=missing udp=missing tcp=missing
+  local reject_invalid_version=missing reject_invalid_user_id=missing reject_header_addons=missing
+  local reject_request_command=missing reject_invalid_address=missing reject_other=missing
 
   if [[ -f "${server_log}" ]]; then
     if grep -Fq 'proxy/vless/inbound: firstLen = ' "${server_log}"; then
@@ -730,6 +732,25 @@ capture_synthetic_xray_dns_evidence() {
     fi
     if grep -Fq 'proxy/vless/inbound: invalid request from ' "${server_log}"; then
       rejected=observed
+    fi
+    if grep -Fq 'invalid request version' "${server_log}"; then
+      reject_invalid_version=observed
+    fi
+    if grep -Fq 'invalid request user id:' "${server_log}"; then
+      reject_invalid_user_id=observed
+    fi
+    if grep -Fq 'failed to decode request header addons' "${server_log}"; then
+      reject_header_addons=observed
+    fi
+    if grep -Fq 'failed to read request command' "${server_log}"; then
+      reject_request_command=observed
+    fi
+    if grep -Fq 'invalid request address' "${server_log}"; then
+      reject_invalid_address=observed
+    fi
+    if [[ "${rejected}" == observed && "${reject_invalid_version}" == missing && "${reject_invalid_user_id}" == missing && \
+          "${reject_header_addons}" == missing && "${reject_request_command}" == missing && "${reject_invalid_address}" == missing ]]; then
+      reject_other=observed
     fi
     if grep -Fq 'udp:1.1.1.1:53' "${server_log}"; then
       udp=observed
@@ -743,6 +764,12 @@ capture_synthetic_xray_dns_evidence() {
     printf 'tun.synthetic_server.vless_bytes=%s\n' "${vless}"
     printf 'tun.synthetic_server.vless_decoded=%s\n' "${decoded}"
     printf 'tun.synthetic_server.vless_rejected=%s\n' "${rejected}"
+    printf 'tun.synthetic_server.reject_invalid_version=%s\n' "${reject_invalid_version}"
+    printf 'tun.synthetic_server.reject_invalid_user_id=%s\n' "${reject_invalid_user_id}"
+    printf 'tun.synthetic_server.reject_header_addons=%s\n' "${reject_header_addons}"
+    printf 'tun.synthetic_server.reject_request_command=%s\n' "${reject_request_command}"
+    printf 'tun.synthetic_server.reject_invalid_address=%s\n' "${reject_invalid_address}"
+    printf 'tun.synthetic_server.reject_other=%s\n' "${reject_other}"
     printf 'tun.synthetic_server.udp53_request=%s\n' "${udp}"
     printf 'tun.synthetic_server.tcp53_request=%s\n' "${tcp}"
   } >"${output}.tmp"
