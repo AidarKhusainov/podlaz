@@ -1,11 +1,6 @@
 name: Hosted E2E Capability
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches:
-      - agent/github-hosted-e2e-qualification
   workflow_dispatch:
 
 permissions:
@@ -54,7 +49,6 @@ jobs:
       - name: Build exact candidate package
         env:
           PODLAZ_COMMIT: ${{ github.sha }}
-          PODLAZ_BUILT: Sep 14 2026
         run: bash scripts/build-deb.sh
 
       - name: Capability contract
