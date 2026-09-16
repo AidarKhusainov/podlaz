@@ -135,10 +135,10 @@ func TestHostedE2ESyntheticVLESSServerUsesPackagedInboundSchema(t *testing.T) {
 		t.Fatal("synthetic Xray endpoint function boundaries not found")
 	}
 	fixture := script[start:end]
-	if !strings.Contains(fixture, `"settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"}`) {
+	if !strings.Contains(fixture, "\"settings\": {\"clients\": [{\"id\": \"${uuid}\"}], \"decryption\": \"none\"}") {
 		t.Fatal("synthetic VLESS inbound must configure the packaged Xray clients field")
 	}
-	if strings.Contains(fixture, `"settings": {"users":`) {
+	if strings.Contains(fixture, "\"settings\": {\"users\":") {
 		t.Fatal("synthetic VLESS inbound must not use outbound-only users field")
 	}
 }
