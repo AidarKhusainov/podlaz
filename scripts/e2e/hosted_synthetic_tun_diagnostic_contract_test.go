@@ -6,30 +6,26 @@ import (
 )
 
 func TestHostedSyntheticTUNConnectFailureDiagnosticIsPrivateAndBounded(t *testing.T) {
-	workflow := readHostedSyntheticTUNFile(t, hostedSyntheticTUNWorkflow)
-	start := strings.Index(workflow, "- name: Diagnose private connect failure")
-	end := strings.Index(workflow, "- name: Validate public report")
-	if start < 0 || end <= start {
-		t.Fatal("temporary hosted connect diagnostic step boundaries not found")
-	}
-	block := workflow[start:end]
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
 	for _, marker := range []string{
-		"if: failure()",
-		"connect.stderr",
-		"classify-cli-error --stderr-file",
-		"outer-tcp53=pass",
-		"outer-tcp53=fail",
+		"diagnose_connect_failure()",
+		"/run/podlaz/diagnostics/tun-last.json",
+		"primary_classification",
+		"failure_phase",
+		"connect-diagnostic=%s/%s",
 	} {
-		if !strings.Contains(block, marker) {
+		if !strings.Contains(script, marker) {
 			t.Fatalf("temporary hosted connect diagnostic lost %q", marker)
 		}
 	}
 	for _, forbidden := range []string{
-		"cat ${CONNECT_STDERR}",
-		"upload private connect",
-		"actions/upload-artifact",
+		"cat ${GUEST_PRIVATE}/connect.stderr",
+		".errors",
+		".error",
+		".network",
+		".session.profile",
 	} {
-		if strings.Contains(block, forbidden) {
+		if strings.Contains(script, forbidden) {
 			t.Fatalf("temporary hosted connect diagnostic exposes private evidence via %q", forbidden)
 		}
 	}
