@@ -79,6 +79,31 @@ jobs:
           else
             echo 'outer-tcp53=fail'
           fi
+          if python3 - <<'PY'
+          import os
+          import socket
+          import struct
+
+          txid = 0x1234
+          name = b''.join(bytes([len(part)]) + part for part in b'example.com'.split(b'.')) + b'\x00'
+          query = struct.pack('!HHHHHH', txid, 0x0100, 1, 0, 0, 0) + name + struct.pack('!HH', 1, 1)
+          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          sock.settimeout(5)
+          try:
+              sock.sendto(query, ('1.1.1.1', 53))
+              data, _ = sock.recvfrom(4096)
+              ok = len(data) >= 12 and struct.unpack('!H', data[:2])[0] == txid
+          except OSError:
+              ok = False
+          finally:
+              sock.close()
+          raise SystemExit(0 if ok else 1)
+          PY
+          then
+            echo 'outer-udp53=pass'
+          else
+            echo 'outer-udp53=fail'
+          fi
 
       - name: Validate public report
         if: always()
