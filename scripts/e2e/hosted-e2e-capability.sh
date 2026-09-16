@@ -580,7 +580,7 @@ PY
 )"
   cat >"${config}" <<EOF
 {
-  "log": {"loglevel": "warning"},
+  "log": {"loglevel": "info"},
   "inbounds": [{
     "listen": "${CAPABILITY_HOST_IP}",
     "port": ${port},
@@ -669,6 +669,29 @@ capture_guest_tun_failure_diagnostics() {
   fi
 }
 
+capture_synthetic_xray_dns_evidence() {
+  local output="${CAPABILITY_PRIVATE}/synthetic-server-dns.log"
+  local server_log="${CAPABILITY_XRAY_ROOT}/server.log"
+  local udp=missing tcp=missing
+
+  if [[ -f "${server_log}" ]]; then
+    if grep -Fq 'udp:1.1.1.1:53' "${server_log}"; then
+      udp=observed
+    fi
+    if grep -Fq 'tcp:1.1.1.1:53' "${server_log}"; then
+      tcp=observed
+    fi
+  fi
+
+  {
+    printf 'tun.synthetic_server.udp53_request=%s\n' "${udp}"
+    printf 'tun.synthetic_server.tcp53_request=%s\n' "${tcp}"
+  } >"${output}.tmp"
+  mv -f "${output}.tmp" "${output}"
+  chmod 0600 "${output}"
+  cat "${output}"
+}
+
 run_synthetic_tun_lifecycle() {
   local import_code connect_code
   guest_exec install -d -o e2e -g e2e -m 0700 \
@@ -720,6 +743,7 @@ run_synthetic_tun_lifecycle() {
   set -e
   if (( connect_code != 0 )); then
     capture_guest_tun_failure_diagnostics
+    capture_synthetic_xray_dns_evidence
     return "${connect_code}"
   fi
   record_capability tun.connect_requested pass
