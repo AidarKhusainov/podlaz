@@ -176,7 +176,7 @@ Simulation is reported as simulated Wi-Fi evidence and does not claim vendor dri
 
 #### 8. Resource soak
 
-Existing resource-soak intent remains part of automated qualification. Soak runs on a scheduled/manual cadence with an explicit runtime budget and measures durable resource/lifecycle behavior without becoming an ordinary PR gate.
+Existing resource-soak intent remains part of automated qualification. Soak runs on a scheduled or workflow-dispatch cadence with an explicit runtime budget and measures durable resource/lifecycle behavior without becoming an ordinary PR gate.
 
 #### 9. External-network diversity
 
@@ -238,7 +238,7 @@ A default cadence is:
 | Full-VM lifecycle / historical upgrade | relevant PRs + scheduled | informational initially |
 | Simulated Wi-Fi | relevant networking PRs + scheduled | informational initially |
 | Real-provider | trusted scheduled/pre-release/release | preserve existing required release evidence where applicable |
-| Resource soak | scheduled/manual | informational |
+| Resource soak | scheduled + workflow_dispatch | informational |
 | External-network diversity | scheduled/pre-release | informational |
 | Physical HIL | scheduled/pre-release | informational until proven reliable |
 
