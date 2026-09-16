@@ -96,7 +96,7 @@ func TestHostedE2ECapabilityUsesProductionOrdinaryUserBoundary(t *testing.T) {
 		"root:podlaz:660",
 		"errno.EACCES",
 		"connect --mode proxy-only",
-		"authorization denied",
+		"authorization (denied|unavailable)",
 		"/usr/bin/podlaz connect --mode tun",
 		"/usr/bin/podlaz doctor --tun",
 		"/usr/bin/podlaz disconnect",
@@ -121,6 +121,7 @@ guest_exec() {
     *"/usr/bin/podlaz connect --mode proxy-only"*) return 1 ;;
     *"grep -F authorization denied"*) return 1 ;;
     *"grep -F authorization unavailable"*) return 0 ;;
+    *"grep -Eq authorization (denied|unavailable)"*) return 0 ;;
     *) return 0 ;;
   esac
 }
