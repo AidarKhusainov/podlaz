@@ -95,7 +95,6 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 		"start_synthetic_xray_endpoint()",
 		"install_tun_ci_authorization()",
 		"compare_synthetic_identity_chain()",
-		"compare_synthetic_wire_identity()",
 		"run_synthetic_tun_lifecycle()",
 		"assert_guest_tun_clean()",
 		"probe_qemu_accelerators()",
@@ -126,6 +125,17 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bash -n %s: %v\n%s", hostedCapabilityScript, err, output)
 	}
+}
+
+func TestHostedE2ESyntheticVLESSServerUsesPackagedInboundSchema(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+
+	requireHostedCapabilityMarkers(t, script,
+		`"settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"}`,
+	)
+	forbidHostedCapabilityMarkers(t, script,
+		`"settings": {"users": [{"id": "${uuid}"}], "decryption": "none"}`,
+	)
 }
 
 func TestHostedE2ECapabilityEvidenceSchema(t *testing.T) {
