@@ -171,6 +171,7 @@ jobs:
               if machinectl show podlaz-capability >/dev/null 2>&1; then
                 if ! sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc "install -m 0644 '/workspace/${DEV_DEB}' /tmp/.candidate.deb && mv -f /tmp/.candidate.deb /tmp/candidate.deb" \
                   >/dev/null 2>&1; then
@@ -183,6 +184,7 @@ jobs:
                 if {
                   sudo -n systemd-run \
                     --machine=podlaz-capability \
+                    --expand-environment=no \
                     --wait --pipe --collect --quiet \
                     -- /bin/bash -lc 'while [ ! -s /run/podlaz-capability-apt.log ]; do sleep 0.05; done; tail -n 120 /run/podlaz-capability-apt.log'
                 } >"${candidate_log}.tmp" 2>/dev/null; then
@@ -209,6 +211,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc '[[ "$1" == podlaz-hosted-argv-probe ]]' _ podlaz-hosted-argv-probe \
                   >/dev/null 2>&1; then
@@ -219,6 +222,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc '[[ "$1" == "$2" ]]' _ "${punctuation}" "${punctuation}" \
                   >/dev/null 2>&1; then
@@ -229,6 +233,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc '[[ "${#1}" == "$2" ]]' _ "${uri}" "${uri_len}" \
                   >/dev/null 2>&1; then
@@ -239,6 +244,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc 'actual="$(printf "%s" "$1" | sha256sum)"; [[ "${actual%% *}" == "$2" ]]' _ "${uri}" "${uri_sha}" \
                   >/dev/null 2>&1; then
@@ -249,6 +255,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- test -e /run/podlaz-capability-xray/client-uri \
                   >/dev/null 2>&1; then
@@ -259,6 +266,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- test -r /run/podlaz-capability-xray/client-uri \
                   >/dev/null 2>&1; then
@@ -269,6 +277,7 @@ jobs:
 
                 if sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- test -s /run/podlaz-capability-xray/client-uri \
                   >/dev/null 2>&1; then
@@ -280,6 +289,7 @@ jobs:
                 set +e
                 sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc 'test -s /run/podlaz-capability-xray/client-uri || exit 91; URI="$(cat /run/podlaz-capability-xray/client-uri)" || exit 92; [[ -n "${URI}" ]] || exit 90' \
                   >/dev/null 2>&1
@@ -334,6 +344,7 @@ jobs:
                 if {
                   sudo -n systemd-run \
                     --machine=podlaz-capability \
+                    --expand-environment=no \
                     --wait --pipe --collect --quiet \
                     -- /bin/bash -lc '
                       while [ ! -s /tmp/podlaz-capability-tun-private/import.stderr ]; do sleep 0.05; done
@@ -389,6 +400,7 @@ jobs:
                 guest_live=true
                 if [[ "${profile_stage}" == false ]] && sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- test -s /tmp/podlaz-capability-tun-private/profile-id \
                   >/dev/null 2>&1; then
@@ -397,6 +409,7 @@ jobs:
                 fi
                 if [[ "${runuser_stage}" == false ]] && sudo -n systemd-run \
                   --machine=podlaz-capability \
+                  --expand-environment=no \
                   --wait --pipe --collect --quiet \
                   -- /bin/bash -lc 'test -e /tmp/podlaz-capability-tun-private/connect.stdout && test -e /tmp/podlaz-capability-tun-private/connect.stderr' \
                   >/dev/null 2>&1; then
