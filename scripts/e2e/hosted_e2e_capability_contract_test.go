@@ -64,6 +64,9 @@ func TestHostedE2ECapabilityWorkflowContract(t *testing.T) {
 	}
 
 	forbidHostedCapabilityMarkers(t, workflow,
+		"\n  pull_request:",
+		"\n  push:",
+		"PODLAZ_BUILT:",
 		"self-hosted",
 		"environment: vpn-e2e",
 		"${{ secrets.",
