@@ -119,6 +119,23 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 	}
 }
 
+func TestHostedSyntheticTUNEndpointIsRoutedBehindGuestGateway(t *testing.T) {
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	requireHostedSyntheticTUNMarkers(t, script,
+		`HOST_ENDPOINT_DEV="pzsyntsrv"`,
+		`ENDPOINT_CIDR="172.31.253.1/32"`,
+		`ENDPOINT_IP="172.31.253.1"`,
+		`ip link add dev "${HOST_ENDPOINT_DEV}" type dummy`,
+		`ip addr add "${ENDPOINT_CIDR}" dev "${HOST_ENDPOINT_DEV}"`,
+		`ip link del dev "${HOST_ENDPOINT_DEV}"`,
+		`"${ENDPOINT_IP}:${port}"`,
+	)
+	forbidHostedSyntheticTUNMarkers(t, script,
+		`"${HOST_IP}:${port}"`,
+		`@${HOST_IP}:`,
+	)
+}
+
 func TestHostedSyntheticTUNEvidenceSchemaIsBounded(t *testing.T) {
 	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
 	for _, key := range []string{
