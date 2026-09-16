@@ -95,6 +95,7 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 		"start_synthetic_xray_endpoint()",
 		"install_tun_ci_authorization()",
 		"compare_synthetic_identity_chain()",
+		"compare_synthetic_wire_identity()",
 		"run_synthetic_tun_lifecycle()",
 		"assert_guest_tun_clean()",
 		"probe_qemu_accelerators()",
