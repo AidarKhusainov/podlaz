@@ -127,7 +127,7 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 	}
 }
 
-func TestHostedE2ESyntheticVLESSServerUsesPackagedInboundSchema(t *testing.T) {
+func TestHostedE2ECapabilitySyntheticVLESSServerUsesPackagedInboundSchema(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	start := strings.Index(script, "start_synthetic_xray_endpoint() {")
 	end := strings.Index(script, "\ninstall_tun_ci_authorization() {")
