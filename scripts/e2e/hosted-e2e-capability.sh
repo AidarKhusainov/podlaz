@@ -672,9 +672,12 @@ capture_guest_tun_failure_diagnostics() {
 capture_synthetic_xray_dns_evidence() {
   local output="${CAPABILITY_PRIVATE}/synthetic-server-dns.log"
   local server_log="${CAPABILITY_XRAY_ROOT}/server.log"
-  local udp=missing tcp=missing
+  local vless=missing udp=missing tcp=missing
 
   if [[ -f "${server_log}" ]]; then
+    if grep -Fq 'proxy/vless/inbound: firstLen = ' "${server_log}"; then
+      vless=observed
+    fi
     if grep -Fq 'udp:1.1.1.1:53' "${server_log}"; then
       udp=observed
     fi
@@ -684,6 +687,7 @@ capture_synthetic_xray_dns_evidence() {
   fi
 
   {
+    printf 'tun.synthetic_server.vless_bytes=%s\n' "${vless}"
     printf 'tun.synthetic_server.udp53_request=%s\n' "${udp}"
     printf 'tun.synthetic_server.tcp53_request=%s\n' "${tcp}"
   } >"${output}.tmp"
