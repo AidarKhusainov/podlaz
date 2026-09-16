@@ -129,13 +129,18 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 
 func TestHostedE2ESyntheticVLESSServerUsesPackagedInboundSchema(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
-
-	requireHostedCapabilityMarkers(t, script,
-		`"settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"}`,
-	)
-	forbidHostedCapabilityMarkers(t, script,
-		`"settings": {"users": [{"id": "${uuid}"}], "decryption": "none"}`,
-	)
+	start := strings.Index(script, "start_synthetic_xray_endpoint() {")
+	end := strings.Index(script, "\ninstall_tun_ci_authorization() {")
+	if start < 0 || end <= start {
+		t.Fatal("synthetic Xray endpoint function boundaries not found")
+	}
+	fixture := script[start:end]
+	if !strings.Contains(fixture, `"settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"}`) {
+		t.Fatal("synthetic VLESS inbound must configure the packaged Xray clients field")
+	}
+	if strings.Contains(fixture, `"settings": {"users":`) {
+		t.Fatal("synthetic VLESS inbound must not use outbound-only users field")
+	}
 }
 
 func TestHostedE2ECapabilityEvidenceSchema(t *testing.T) {
