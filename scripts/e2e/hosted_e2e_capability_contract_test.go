@@ -72,6 +72,14 @@ func TestHostedE2ECapabilityWorkflowContract(t *testing.T) {
 		"PODLAZ_E2E_PROFILE_URI_LIST",
 		"PODLAZ_E2E_EXPECTED_EGRESS_IP",
 		"podlaz connect --mode tun",
+		"capture_pid=",
+		"argv_capture_pid=",
+		"transport_capture_pid=",
+		"connect_capture_pid=",
+		"profile-connect-classification.log",
+		"profile-resolved-query.log",
+		"profile-direct-udp-dns.log",
+		"machinectl show podlaz-capability",
 	)
 }
 
@@ -94,7 +102,11 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 		"run_guest_ordinary_user_acceptance()",
 		"start_synthetic_xray_endpoint()",
 		"install_tun_ci_authorization()",
-		"compare_synthetic_identity_chain()",
+		"assert_tun_authorization_boundary()",
+		"capture_guest_network_baseline()",
+		"assert_guest_network_baseline_restored()",
+		"assert_guest_terminal_authority_clean()",
+		"assert_public_artifact_privacy()",
 		"run_synthetic_tun_lifecycle()",
 		"assert_guest_tun_clean()",
 		"probe_qemu_accelerators()",
@@ -113,12 +125,14 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 		"cloud-images.ubuntu.com/releases/noble",
 		"SHA256SUMS",
 		"127.0.0.1",
+		"/opt/podlaz-candidate.deb",
 	)
 
 	forbidHostedCapabilityMarkers(t, script,
 		"PODLAZ_E2E_PROFILE_URI",
 		"PODLAZ_E2E_PROFILE_URI_LIST",
 		"PODLAZ_E2E_EXPECTED_EGRESS_IP",
+		"runuser -u e2e -g podlaz",
 	)
 
 	cmd := exec.Command("bash", "-n", hostedCapabilityScript)
