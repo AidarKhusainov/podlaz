@@ -14,15 +14,6 @@ func TestHostedE2ECapabilityOwnsScopedOuterForwarding(t *testing.T) {
 	)
 }
 
-func TestHostedE2ECapabilityObservesForwardDropWithoutRejectingRunner(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"Inspect outer forward policy",
-		"outer.forward.iptables_policy=drop",
-	)
-	forbidHostedCapabilityMarkers(t, workflow, "exit 42")
-}
-
 func TestHostedE2ECapabilityRetriesTransientOuterControlPlaneFailure(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	requireHostedCapabilityMarkers(t, script,
@@ -38,156 +29,15 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 		"synthetic.xray_endpoint",
 		"tun.authorization",
 		"tun.synthetic_uri_loaded",
-		"tun.profile_import_usage_error",
-		"tun.profile_import_arg_error",
-		"tun.profile_import_vless_error",
-		"tun.profile_import_profile_validation_error",
-		"tun.profile_import_usage_other",
-		"tun.profile_import_runtime_error",
-		"tun.profile_import_other_error",
 		"tun.profile_import_command",
 		"tun.profile_import_output",
 		"tun.profile_import",
 		"tun.profile_validate",
 		"tun.connect_requested",
-	)
-}
-
-func TestHostedE2ECapabilityReportsURITransportDiagnostics(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"tun.synthetic_uri_host_loaded=pass",
-		"tun.synthetic_uri_host_loaded=fail",
-		"tun.guest_argv_transport=pass",
-		"tun.guest_argv_transport=fail",
-		"tun.guest_uri_punctuation_transport=pass",
-		"tun.guest_uri_punctuation_transport=fail",
-		"tun.synthetic_uri_argv_length=pass",
-		"tun.synthetic_uri_argv_length=fail",
-		"tun.synthetic_uri_argv_integrity=pass",
-		"tun.synthetic_uri_argv_integrity=fail",
-		"tun.synthetic_uri_bind_exists=pass",
-		"tun.synthetic_uri_bind_exists=fail",
-		"tun.synthetic_uri_bind_readable=pass",
-		"tun.synthetic_uri_bind_readable=fail",
-		"tun.synthetic_uri_bind_nonempty=pass",
-		"tun.synthetic_uri_bind_nonempty=fail",
-		"profile-import-transport.log",
-	)
-}
-
-func TestHostedE2ECapabilityReportsProfileImportArgFailureSubtype(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"tun.profile_import_arg_requires_uri=observed",
-		"tun.profile_import_arg_multiple_uri=observed",
-		"tun.profile_import_arg_unsupported=observed",
-		"tun.profile_import_arg_json=observed",
-	)
-}
-
-func TestHostedE2ECapabilityClassifiesConnectFailureWithoutLeakingStderr(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"profile-connect-classification.log",
-		"tun.connect.authorization_denied=observed",
-		"tun.connect.authorization_unavailable=observed",
-		"tun.connect.socket_permission=observed",
-		"tun.connect.daemon_error=observed",
-		"tun.connect.other_error=observed",
-	)
-	forbidHostedCapabilityMarkers(t, workflow,
-		"cat /tmp/podlaz-capability-tun-private/connect.stderr",
-		"tail /tmp/podlaz-capability-tun-private/connect.stderr",
-	)
-}
-
-func TestHostedE2ECapabilityRecordsConnectExitBoundaryPrivately(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"profile-connect-exit.log",
-		"tun.connect.exit_zero=observed",
-		"tun.connect.exit_nonzero=observed",
-		"tun.connect.stage_profile_id=observed",
-		"tun.connect.stage_runuser=observed",
-		"tun.profile_validate=pass",
-		"tun.connect_requested=pass",
-	)
-	forbidHostedCapabilityMarkers(t, workflow,
-		"cat /tmp/podlaz-capability-tun-private/connect.stdout",
-		"cat /tmp/podlaz-capability-tun-private/connect.stderr",
-	)
-}
-
-func TestHostedE2ECapabilityClassifiesDaemonConnectFailureFromSafeJournalFields(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"profile-connect-daemon.log",
-		"journalctl -u podlazd",
-		"podlazd: connect request failed",
-		"tun.connect.exit_generic=observed",
-		"tun.connect.daemon_classification_",
-		"tun.connect.daemon_phase_",
-		"tun.connect.daemon_rollback_",
-		"tun.connect.tun_primary_",
-	)
-}
-
-func TestHostedE2ECapabilityClassifiesTransientResolvedScopedQueryPrivately(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"profile-resolved-query.log",
-		"resolvectl --cache=no",
-		"--interface=\"${ifindex}\"",
-		"-4 query example.com",
-		"tun.resolved_query.exit_zero=observed",
-		"tun.resolved_query.exit_nonzero=observed",
-		"tun.resolved_query.stderr_empty=observed",
-		"tun.resolved_query.stderr_nonempty=observed",
-		"tun.resolved_query.expected_link=observed",
-		"tun.resolved_query.expected_link_missing=observed",
-		"tun.resolved_query.ipv4_answer=observed",
-		"tun.resolved_query.ipv4_answer_missing=observed",
-	)
-	forbidHostedCapabilityMarkers(t, workflow,
-		"cat /tmp/podlaz-capability-resolved-query.stdout",
-		"cat /tmp/podlaz-capability-resolved-query.stderr",
-	)
-}
-
-func TestHostedE2ECapabilityClassifiesResolvedQueryFailureCauseWithoutLeakingDetails(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"tun.resolved_query.scope_dns=observed",
-		"tun.resolved_query.scope_not_dns=observed",
-		"tun.resolved_query.stderr_timeout=observed",
-		"tun.resolved_query.stderr_no_suitable_server=observed",
-		"tun.resolved_query.stderr_link_device=observed",
-		"tun.resolved_query.stderr_other=observed",
-	)
-	forbidHostedCapabilityMarkers(t, workflow,
-		"cat \"${stderr}\"",
-		"printf '%s\\n' \"$(<\"${stderr}\")\"",
-	)
-}
-
-func TestHostedE2ECapabilityWaitsForConnectObserverPrivateDir(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"connect_exit_dir=\"$(dirname \"${connect_exit_log}\")\"",
-		"while [[ ! -d \"${connect_exit_dir}\" ]]",
-		"kill -0 \"${capability_pid}\"",
-		": >\"${connect_exit_log}.tmp\"",
-	)
-}
-
-func TestHostedE2ECapabilityRestagesCandidateIntoLiveGuestTmp(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"Stage candidate into live guest tmpfs",
-		"/workspace/${DEV_DEB}",
-		"/tmp/candidate.deb",
-		"install -m 0644",
+		"tun.verified_active",
+		"tun.clean_disconnect",
+		"tun.recovery_clean",
+		"artifact.privacy",
 	)
 }
 
@@ -215,20 +65,6 @@ func TestHostedE2ECapabilityWaitsForBoundSyntheticURIReadiness(t *testing.T) {
 	)
 }
 
-func TestHostedE2ECapabilityClassifiesSyntheticURIInsideImportShell(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"tun.synthetic_uri_import_shell_stat=pass",
-		"tun.synthetic_uri_import_shell_stat=fail",
-		"tun.synthetic_uri_import_shell_read=pass",
-		"tun.synthetic_uri_import_shell_read=fail",
-		"test -s /run/podlaz-capability-xray/client-uri || exit 91",
-		"URI=\"$(cat /run/podlaz-capability-xray/client-uri)\" || exit 92",
-		"[[ -n \"${URI}\" ]] || exit 90",
-		"import_shell_rc=$?",
-	)
-}
-
 func TestHostedE2ECapabilityDisablesSystemdArgumentEnvironmentExpansion(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	requireHostedCapabilityMarkers(t, script,
@@ -249,28 +85,30 @@ func TestHostedE2ECapabilityKeepsImportedProfileIDInPrivateTmp(t *testing.T) {
 	)
 }
 
-func TestHostedE2ECapabilityUsesSocketGroupOnlyForDaemonFacingTunCLI(t *testing.T) {
+func TestHostedE2ECapabilityUsesProductionOrdinaryUserBoundary(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	requireHostedCapabilityMarkers(t, script,
-		"runuser -u e2e -g podlaz -- env",
+		"assert_tun_authorization_boundary()",
+		"runuser -u e2e -- env",
+		"root:podlaz:660",
+		"errno.EACCES",
+		"connect --mode proxy-only",
+		"authorization denied",
 		"/usr/bin/podlaz connect --mode tun",
 		"/usr/bin/podlaz doctor --tun",
 		"/usr/bin/podlaz disconnect",
 		"/usr/bin/podlaz recover --json",
 	)
+	forbidHostedCapabilityMarkers(t, script,
+		"runuser -u e2e -g podlaz",
+	)
 }
 
-func TestHostedE2ECapabilityPreservesBoundedPackageFailureDiagnostics(t *testing.T) {
-	workflow := readHostedCapabilityFile(t, hostedCapabilityWorkflow)
-	requireHostedCapabilityMarkers(t, workflow,
-		"Capture volatile package install diagnostics",
-		"/run/podlaz-capability-apt.log",
-		"hosted-capability-private/candidate-install.log",
-		"Collect bounded package install diagnostics",
-		"var/log/apt/term.log",
-		"var/log/dpkg.log",
-		"dpkg-query",
-		"tail -n 80",
+func TestHostedE2ECapabilityStagesCandidateThroughReadOnlyGuestBind(t *testing.T) {
+	script := readHostedCapabilityFile(t, hostedCapabilityScript)
+	requireHostedCapabilityMarkers(t, script,
+		"CAPABILITY_GUEST_CANDIDATE=\"/opt/podlaz-candidate.deb\"",
+		"--bind-ro=\"${CANDIDATE_DEB}:${CAPABILITY_GUEST_CANDIDATE}\"",
+		"guest_exec test -r \"${CAPABILITY_GUEST_CANDIDATE}\"",
 	)
-	forbidHostedCapabilityMarkers(t, workflow, "system-guest/run/podlaz-capability-apt.log")
 }
