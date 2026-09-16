@@ -778,8 +778,17 @@ capture_synthetic_xray_dns_evidence() {
   cat "${output}"
 }
 
+compare_synthetic_identity_chain() {
+  guest_exec /usr/bin/python3 -c 'import json,sys,urllib.parse; from pathlib import Path; server=json.load(open(sys.argv[1],encoding="utf-8"))["inbounds"][0]["settings"]["users"][0]["id"]; uri=urllib.parse.unquote(urllib.parse.urlsplit(Path(sys.argv[2]).read_text(encoding="utf-8").strip()).username or ""); profile_id=Path(sys.argv[4]).read_text(encoding="utf-8").strip(); store=json.load(open(sys.argv[3],encoding="utf-8")); profile=next(p for p in store["profiles"] if p["id"]==profile_id); imported=profile["user_identity"]; config=json.load(open(sys.argv[5],encoding="utf-8")); outbound=next(o for o in config["outbounds"] if o.get("tag")=="podlaz-tun-proxy"); generated=outbound["settings"]["vnext"][0]["users"][0]["id"]; values=(server,uri,imported,generated); print("MATCH" if all(values) and len(set(values))==1 else "MISMATCH")' \
+    /run/podlaz-capability-xray/server.json \
+    /run/podlaz-capability-xray/client-uri \
+    "${CAPABILITY_GUEST_XDG}/state/podlaz/profiles.json" \
+    /tmp/podlaz-capability-tun-private/profile-id \
+    /run/podlaz/generated/xray.json
+}
+
 run_synthetic_tun_lifecycle() {
-  local import_code connect_code
+  local import_code connect_code connect_runner_pid identity_result=""
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
   if ! wait_guest_synthetic_uri; then
@@ -824,9 +833,23 @@ run_synthetic_tun_lifecycle() {
   guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
   record_capability tun.profile_validate pass
   set +e
-  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
+  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr" &
+  connect_runner_pid=$!
+  for _ in $(seq 1 100); do
+    if guest_exec test -s /run/podlaz/generated/xray.json >/dev/null 2>&1; then
+      identity_result="$(compare_synthetic_identity_chain 2>/dev/null)"
+      break
+    fi
+    kill -0 "${connect_runner_pid}" >/dev/null 2>&1 || break
+    sleep 0.05
+  done
+  wait "${connect_runner_pid}"
   connect_code=$?
   set -e
+  case "${identity_result}" in
+    MATCH|MISMATCH) printf 'tun.synthetic_identity_chain=%s\n' "${identity_result}" ;;
+    *) printf '%s\n' 'tun.synthetic_identity_chain=UNOBSERVED' ;;
+  esac
   if (( connect_code != 0 )); then
     capture_guest_tun_failure_diagnostics
     capture_synthetic_xray_dns_evidence
