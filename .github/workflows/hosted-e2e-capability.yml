@@ -73,6 +73,44 @@ jobs:
             printf '%s\n' 'outer.forward.iptables_policy=unavailable'
           fi
 
+      - name: Probe outer DNS transport
+        run: |
+          python3 - <<'PY'
+          import socket
+          import struct
+
+          target = ("1.1.1.1", 53)
+          query = struct.pack("!HHHHHH", 0x505A, 0x0100, 1, 0, 0, 0) + b"\x07example\x03com\x00" + struct.pack("!HH", 1, 1)
+
+          udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          udp.settimeout(5)
+          try:
+              udp.sendto(query, target)
+              data, _ = udp.recvfrom(4096)
+              if len(data) >= 12 and data[:2] == query[:2]:
+                  print("outer.dns.udp53_response=observed")
+              else:
+                  print("outer.dns.udp53_error=observed")
+          except socket.timeout:
+              print("outer.dns.udp53_timeout=observed")
+          except OSError:
+              print("outer.dns.udp53_error=observed")
+          finally:
+              udp.close()
+
+          tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          tcp.settimeout(5)
+          try:
+              tcp.connect(target)
+              print("outer.dns.tcp53_connect=observed")
+          except socket.timeout:
+              print("outer.dns.tcp53_timeout=observed")
+          except OSError:
+              print("outer.dns.tcp53_error=observed")
+          finally:
+              tcp.close()
+          PY
+
       - name: Run disposable guest capability
         id: capability
         env:
