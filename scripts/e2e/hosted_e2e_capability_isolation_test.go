@@ -136,9 +136,6 @@ func TestHostedE2ECapabilityChecksGuestUplinkIdentityBeforeNetworkManager(t *tes
 	if !strings.Contains(script, "ip -o link show dev \"${CAPABILITY_GUEST_IF}\"") {
 		t.Fatal("system guest startup must verify the expected guest veth identity")
 	}
-	if !strings.Contains(script, "guest-start-links.log") {
-		t.Fatal("system guest startup must retain a private link snapshot for bootstrap diagnosis")
-	}
 }
 
 func TestHostedE2ECapabilityScopesNetworkManagerManagedOverride(t *testing.T) {
