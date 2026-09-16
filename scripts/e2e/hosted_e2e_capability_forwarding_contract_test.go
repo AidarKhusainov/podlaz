@@ -1,6 +1,9 @@
 package e2e_test
 
-import "testing"
+import (
+	"os/exec"
+	"testing"
+)
 
 func TestHostedE2ECapabilityOwnsScopedOuterForwarding(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
@@ -102,6 +105,33 @@ func TestHostedE2ECapabilityUsesProductionOrdinaryUserBoundary(t *testing.T) {
 	forbidHostedCapabilityMarkers(t, script,
 		"runuser -u e2e -g podlaz",
 	)
+}
+
+func TestHostedE2ECapabilityAcceptsHeadlessPolkitNotAuthorizedOutcome(t *testing.T) {
+	tmp := t.TempDir()
+	command := `
+set -euo pipefail
+export PODLAZ_E2E_CAPABILITY_SOURCE_ONLY=true
+export E2E_TMP_ROOT="$1/private"
+export E2E_ARTIFACT_DIR="$1/public"
+mkdir -p "$E2E_TMP_ROOT" "$E2E_ARTIFACT_DIR"
+source ./hosted-e2e-capability.sh
+guest_exec() {
+  case "$*" in
+    *"/usr/bin/podlaz connect --mode proxy-only"*) return 1 ;;
+    *"grep -F authorization denied"*) return 1 ;;
+    *"grep -F authorization unavailable"*) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+wait_guest_tun_status() { return 0; }
+assert_tun_authorization_boundary
+`
+	cmd := exec.Command("bash", "-c", command, "bash", tmp)
+	cmd.Dir = "."
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("headless Polkit non-authorization must satisfy the negative boundary: %v\n%s", err, output)
+	}
 }
 
 func TestHostedE2ECapabilityStagesCandidateThroughReadOnlyGuestBind(t *testing.T) {
