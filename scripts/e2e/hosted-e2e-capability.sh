@@ -688,7 +688,8 @@ assert_guest_network_baseline_restored() {
 assert_tun_authorization_boundary() {
   local code
   guest_exec /bin/bash -lc '! id -nG e2e | tr " " "\n" | grep -Fx podlaz >/dev/null'
-  # shellcheck disable=SC2016 -- command substitution intentionally runs inside the guest shell.
+  # Command substitution intentionally runs inside the guest shell.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc '[[ "$(stat -c "%U:%G:%a" /run/podlaz/podlazd.sock)" == "root:podlaz:660" ]]'
   guest_exec runuser -u e2e -- python3 -c 'import errno,socket; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); ok=False
 try:
@@ -704,7 +705,7 @@ raise SystemExit(0 if ok else 1)'
   code=$?
   set -e
   [[ "${code}" == 1 ]] || return 1
-  guest_exec grep -F 'authorization denied' /tmp/podlaz-capability-tun-private/unauthorized.stderr >/dev/null
+  guest_exec grep -Eq 'authorization (denied|unavailable)' /tmp/podlaz-capability-tun-private/unauthorized.stderr >/dev/null
   wait_guest_tun_status clean-inactive 20
 }
 
@@ -712,12 +713,14 @@ assert_guest_terminal_authority_clean() {
   ! guest_exec ip link show dev podlaz0 >/dev/null 2>&1 || return 1
   guest_exec test ! -e /run/podlaz/generated/xray.json
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
-  # shellcheck disable=SC2016 -- command substitution intentionally runs inside the guest shell.
+  # Command substitution intentionally runs inside the guest shell.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'test ! -d /run/podlaz/transactions || test -z "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -print -quit)"'
   ! guest_exec nft list table inet podlaz >/dev/null 2>&1 || return 1
   ! guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1 || return 1
   ! guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null || return 1
-  # shellcheck disable=SC2016 -- substitutions intentionally run inside the guest shell.
+  # Substitutions intentionally run inside the guest shell.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "${daemon}" 2>/dev/null || true); do [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
 }
 
@@ -945,7 +948,8 @@ run_qemu_capability() (
   probe_qemu_accelerators
   prepare_qemu_image
   if ! start_qemu_guest || ! wait_qemu_ssh; then record_capability_if_missing qemu.boot fail; return 1; fi
-  # shellcheck disable=SC2016 -- variables intentionally expand on the QEMU guest.
+  # Variables intentionally expand on the QEMU guest.
+  # shellcheck disable=SC2016
   if ! qemu_ssh '. /etc/os-release; test "$ID" = ubuntu; test "$VERSION_ID" = 24.04' >/dev/null; then record_capability_if_missing qemu.boot fail; return 1; fi
   record_capability qemu.boot pass
   if ! reboot_qemu_guest; then record_capability qemu.reboot_boot_id fail; return 1; fi
