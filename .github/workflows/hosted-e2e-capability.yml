@@ -22,8 +22,6 @@ jobs:
     timeout-minutes: 120
     env:
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-      E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
-      E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -63,6 +61,9 @@ jobs:
         run: go test ./scripts/e2e -run '^TestHostedE2ECapability' -count=1
 
       - name: Run disposable guest capability
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
@@ -70,10 +71,15 @@ jobs:
 
       - name: Validate public capability report
         if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-capability-public
         run: bash scripts/e2e/hosted-e2e-capability.sh validate-report
 
       - name: Remove private capability state
         if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-capability-private
         run: sudo -n rm -rf "${E2E_TMP_ROOT}"
 
       - name: Upload capability evidence
@@ -81,6 +87,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: podlaz-hosted-e2e-capability
-          path: ${{ env.E2E_ARTIFACT_DIR }}/hosted-e2e-capability.txt
+          path: ${{ runner.temp }}/podlaz-hosted-capability-public/hosted-e2e-capability.txt
           if-no-files-found: error
           retention-days: 7
