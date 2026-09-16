@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 REPORT="${E2E_ARTIFACT_DIR}/hosted-synthetic-tun.txt"
 MACHINE="podlaz-synthetic-tun"
 HOST_VETH="pzsynt0"
+HOST_ENDPOINT_DEV="pzsyntsrv"
 GUEST_IF="host0"
 NFT_FAMILY="inet"
 NFT_TABLE="pzsynt_hosted"
@@ -17,6 +18,8 @@ NETWORK_CIDR="172.31.254.0/30"
 HOST_CIDR="172.31.254.1/30"
 GUEST_CIDR="172.31.254.2/30"
 HOST_IP="172.31.254.1"
+ENDPOINT_CIDR="172.31.253.1/32"
+ENDPOINT_IP="172.31.253.1"
 GUEST_ROOT="${E2E_TMP_ROOT}/system-guest"
 PRIVATE_ROOT="${E2E_TMP_ROOT}/private"
 XRAY_ROOT="${PRIVATE_ROOT}/synthetic-xray"
@@ -141,7 +144,7 @@ assert_public_artifact_privacy() {
   extra="$(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 ! -name 'hosted-synthetic-tun.txt' -print -quit)"
   [[ -z "${extra}" ]] || return 1
   [[ -f "${REPORT}" && ! -L "${REPORT}" ]] || return 1
-  ! grep -Eq 'vless://|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|172[.]31[.]254[.]' "${REPORT}"
+  ! grep -Eq 'vless://|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|172[.]31[.](253|254)[.]' "${REPORT}"
 }
 
 validate_candidate() {
@@ -153,13 +156,14 @@ validate_candidate() {
   CANDIDATE_DEB="$(readlink -f -- "${path}")"
 }
 
-assert_synthetic_subnet_available() {
-  python3 - "${NETWORK_CIDR}" <(ip -j -4 addr show) <(ip -j -4 route show table all) <<'PY'
+assert_synthetic_range_available() {
+  local target="$1"
+  python3 - "${target}" <(ip -j -4 addr show) <(ip -j -4 route show table all) <<'PY'
 import ipaddress
 import json
 import sys
 
-target = ipaddress.ip_network(sys.argv[1], strict=True)
+target = ipaddress.ip_network(sys.argv[1], strict=False)
 with open(sys.argv[2], encoding="utf-8") as f:
     addresses = json.load(f)
 for link in addresses:
@@ -170,7 +174,7 @@ for link in addresses:
         if local is None or prefix is None:
             continue
         if ipaddress.ip_network(f"{local}/{prefix}", strict=False).overlaps(target):
-            raise SystemExit("synthetic subnet overlaps an existing address")
+            raise SystemExit("synthetic range overlaps an existing address")
 with open(sys.argv[3], encoding="utf-8") as f:
     routes = json.load(f)
 for route in routes:
@@ -182,7 +186,7 @@ for route in routes:
     except ValueError:
         continue
     if candidate.overlaps(target):
-        raise SystemExit("synthetic subnet overlaps an existing route")
+        raise SystemExit("synthetic range overlaps an existing route")
 PY
 }
 
@@ -198,8 +202,10 @@ capture_outer_baseline() {
   OUTER_EGRESS_IF="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
   [[ -n "${OUTER_EGRESS_IF}" ]] || return 1
   ! ip link show dev "${HOST_VETH}" >/dev/null 2>&1 || return 1
+  ! ip link show dev "${HOST_ENDPOINT_DEV}" >/dev/null 2>&1 || return 1
   ! sudo -n nft list table "${NFT_FAMILY}" "${NFT_TABLE}" >/dev/null 2>&1 || return 1
-  assert_synthetic_subnet_available
+  assert_synthetic_range_available "${NETWORK_CIDR}"
+  assert_synthetic_range_available "${ENDPOINT_CIDR}"
   timeout 30 curl -4 -fsS --max-time 10 -o /dev/null https://github.com/
 }
 
@@ -211,6 +217,7 @@ assert_outer_baseline_restored() {
   [[ "${current}" == "$(cat "${OUTER_RESOLV_HASH}")" ]] || return 1
   [[ "$(cat /proc/sys/net/ipv4/ip_forward)" == "${OUTER_IP_FORWARD}" ]] || return 1
   ! ip link show dev "${HOST_VETH}" >/dev/null 2>&1 || return 1
+  ! ip link show dev "${HOST_ENDPOINT_DEV}" >/dev/null 2>&1 || return 1
   ! sudo -n nft list table "${NFT_FAMILY}" "${NFT_TABLE}" >/dev/null 2>&1 || return 1
   ! sudo -n iptables -S DOCKER-USER | grep -F 'podlaz-hosted-synthetic-tun-' >/dev/null || return 1
   timeout 30 curl -4 -fsS --max-time 10 -o /dev/null https://github.com/
@@ -224,6 +231,7 @@ cleanup_outer_plumbing() {
   fi
   sudo -n nft delete table "${NFT_FAMILY}" "${NFT_TABLE}" >/dev/null 2>&1 || true
   sudo -n ip link del dev "${HOST_VETH}" >/dev/null 2>&1 || true
+  sudo -n ip link del dev "${HOST_ENDPOINT_DEV}" >/dev/null 2>&1 || true
   if [[ -n "${OUTER_IP_FORWARD}" ]]; then
     printf '%s\n' "${OUTER_IP_FORWARD}" | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null || return 1
   fi
@@ -351,6 +359,9 @@ setup_outer_plumbing() {
   ip link show dev "${HOST_VETH}" >/dev/null 2>&1 || return 1
   sudo -n ip addr add "${HOST_CIDR}" dev "${HOST_VETH}"
   sudo -n ip link set dev "${HOST_VETH}" up
+  sudo -n ip link add dev "${HOST_ENDPOINT_DEV}" type dummy
+  sudo -n ip addr add "${ENDPOINT_CIDR}" dev "${HOST_ENDPOINT_DEV}"
+  sudo -n ip link set dev "${HOST_ENDPOINT_DEV}" up
   printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
   sudo -n iptables -I DOCKER-USER 1 -i "${HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s "${NETWORK_CIDR}" -m comment --comment podlaz-hosted-synthetic-tun-out -j ACCEPT
   sudo -n iptables -I DOCKER-USER 1 -i "${OUTER_EGRESS_IF}" -o "${HOST_VETH}" -d "${NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-synthetic-tun-in -j ACCEPT
@@ -416,7 +427,7 @@ start_synthetic_xray_endpoint() {
   dpkg-deb -x "${CANDIDATE_DEB}" "${extract}"
   uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
   [[ "${uuid}" =~ ^[0-9a-fA-F-]{36}$ ]] || return 1
-  port="$(python3 - "${HOST_IP}" <<'PY'
+  port="$(python3 - "${ENDPOINT_IP}" <<'PY'
 import socket, sys
 sock = socket.socket()
 sock.bind((sys.argv[1], 0))
@@ -428,7 +439,7 @@ PY
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
-    "listen": "${HOST_IP}",
+    "listen": "${ENDPOINT_IP}",
     "port": ${port},
     "protocol": "vless",
     "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
@@ -442,12 +453,12 @@ EOF_XRAY
   "${extract}/usr/lib/podlaz/xray" run -config "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
   XRAY_PID=$!
   for _ in $(seq 1 100); do
-    if ss -H -ltn | awk '{print $4}' | grep -Fx "${HOST_IP}:${port}" >/dev/null; then break; fi
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null; then break; fi
     kill -0 "${XRAY_PID}" >/dev/null 2>&1 || return 1
     sleep 0.1
   done
-  ss -H -ltn | awk '{print $4}' | grep -Fx "${HOST_IP}:${port}" >/dev/null || return 1
-  printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic\n' "${uuid}" "${HOST_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
+  ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
+  printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic\n' "${uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
 }
 
