@@ -16,10 +16,11 @@ CAPABILITY_HOST_VETH="pzcap0"
 CAPABILITY_GUEST_IF="host0"
 CAPABILITY_NFT_FAMILY="inet"
 CAPABILITY_NFT_TABLE="pzcap_hosted_e2e"
-CAPABILITY_HOST_CIDR="192.0.2.1/30"
-CAPABILITY_GUEST_CIDR="192.0.2.2/30"
-CAPABILITY_HOST_IP="192.0.2.1"
-CAPABILITY_GUEST_IP="192.0.2.2"
+CAPABILITY_NETWORK_CIDR="172.31.255.0/30"
+CAPABILITY_HOST_CIDR="172.31.255.1/30"
+CAPABILITY_GUEST_CIDR="172.31.255.2/30"
+CAPABILITY_HOST_IP="172.31.255.1"
+CAPABILITY_GUEST_IP="172.31.255.2"
 CAPABILITY_GUEST_ROOT="${E2E_TMP_ROOT}/system-guest"
 CAPABILITY_PRIVATE="${E2E_TMP_ROOT}/hosted-capability-private"
 CAPABILITY_XRAY_ROOT="${CAPABILITY_PRIVATE}/synthetic-xray"
@@ -179,8 +180,53 @@ if set(seen) != set(expected):
 PY
 }
 
+assert_capability_subnet_available() {
+  python3 - \
+    "${CAPABILITY_NETWORK_CIDR}" \
+    <(ip -j -4 addr show) \
+    <(ip -j -4 route show table all) <<'PY'
+import ipaddress
+import json
+import sys
+
+target = ipaddress.ip_network(sys.argv[1], strict=True)
+rfc1918 = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+if target.version != 4 or target.prefixlen != 30 or not any(target.subnet_of(network) for network in rfc1918):
+    raise SystemExit("capability synthetic subnet must be an RFC1918 IPv4 /30")
+
+with open(sys.argv[2], encoding="utf-8") as handle:
+    addresses = json.load(handle)
+for link in addresses:
+    for info in link.get("addr_info", []):
+        local = info.get("local")
+        prefixlen = info.get("prefixlen")
+        if info.get("family") != "inet" or local is None or prefixlen is None:
+            continue
+        candidate = ipaddress.ip_network(f"{local}/{prefixlen}", strict=False)
+        if candidate.overlaps(target):
+            raise SystemExit("capability synthetic subnet overlaps an existing IPv4 address")
+
+with open(sys.argv[3], encoding="utf-8") as handle:
+    routes = json.load(handle)
+for route in routes:
+    destination = route.get("dst")
+    if not destination or destination == "default":
+        continue
+    try:
+        candidate = ipaddress.ip_network(destination, strict=False)
+    except ValueError:
+        continue
+    if candidate.overlaps(target):
+        raise SystemExit("capability synthetic subnet overlaps an existing IPv4 route")
+PY
+}
+
 capture_outer_baseline() {
-  require_cmd curl ip iptables sha256sum
+  require_cmd curl ip iptables python3 sha256sum
   install -d -m 0700 "${CAPABILITY_PRIVATE}"
   OUTER_DEFAULT_ROUTE_BASELINE="${CAPABILITY_PRIVATE}/outer-default-route.json"
   OUTER_RULES_BASELINE="${CAPABILITY_PRIVATE}/outer-rules.json"
@@ -200,6 +246,7 @@ capture_outer_baseline() {
   if ! sudo -n iptables -S DOCKER-USER >/dev/null 2>&1; then
     return 1
   fi
+  assert_capability_subnet_available
   record_capability outer.baseline pass
 }
 
@@ -223,8 +270,8 @@ assert_outer_control_plane_healthy() {
 cleanup_outer_plumbing() {
   local failed=0
   set +e
-  sudo -n iptables -D DOCKER-USER -i "${OUTER_EGRESS_IF}" -o "${CAPABILITY_HOST_VETH}" -d 192.0.2.0/30 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-e2e-forward-in -j ACCEPT >/dev/null 2>&1 || true
-  sudo -n iptables -D DOCKER-USER -i "${CAPABILITY_HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s 192.0.2.0/30 -m comment --comment podlaz-hosted-e2e-forward-out -j ACCEPT >/dev/null 2>&1 || true
+  sudo -n iptables -D DOCKER-USER -i "${OUTER_EGRESS_IF}" -o "${CAPABILITY_HOST_VETH}" -d "${CAPABILITY_NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-e2e-forward-in -j ACCEPT >/dev/null 2>&1 || true
+  sudo -n iptables -D DOCKER-USER -i "${CAPABILITY_HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s "${CAPABILITY_NETWORK_CIDR}" -m comment --comment podlaz-hosted-e2e-forward-out -j ACCEPT >/dev/null 2>&1 || true
   sudo -n nft delete table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" >/dev/null 2>&1 || true
   sudo -n ip link del dev "${CAPABILITY_HOST_VETH}" >/dev/null 2>&1 || true
   if [[ -n "${OUTER_IP_FORWARD_BASELINE}" ]]; then
@@ -434,11 +481,11 @@ setup_outer_plumbing() {
   sudo -n ip addr add "${CAPABILITY_HOST_CIDR}" dev "${CAPABILITY_HOST_VETH}"
   sudo -n ip link set dev "${CAPABILITY_HOST_VETH}" up
   printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
-  sudo -n iptables -I DOCKER-USER 1 -i "${CAPABILITY_HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s 192.0.2.0/30 -m comment --comment podlaz-hosted-e2e-forward-out -j ACCEPT
-  sudo -n iptables -I DOCKER-USER 1 -i "${OUTER_EGRESS_IF}" -o "${CAPABILITY_HOST_VETH}" -d 192.0.2.0/30 -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-e2e-forward-in -j ACCEPT
+  sudo -n iptables -I DOCKER-USER 1 -i "${CAPABILITY_HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s "${CAPABILITY_NETWORK_CIDR}" -m comment --comment podlaz-hosted-e2e-forward-out -j ACCEPT
+  sudo -n iptables -I DOCKER-USER 1 -i "${OUTER_EGRESS_IF}" -o "${CAPABILITY_HOST_VETH}" -d "${CAPABILITY_NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment podlaz-hosted-e2e-forward-in -j ACCEPT
   sudo -n nft add table "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}"
   sudo -n nft "add chain ${CAPABILITY_NFT_FAMILY} ${CAPABILITY_NFT_TABLE} postrouting { type nat hook postrouting priority srcnat; policy accept; }"
-  sudo -n nft add rule "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" postrouting ip saddr 192.0.2.0/30 oifname "${OUTER_EGRESS_IF}" masquerade
+  sudo -n nft add rule "${CAPABILITY_NFT_FAMILY}" "${CAPABILITY_NFT_TABLE}" postrouting ip saddr "${CAPABILITY_NETWORK_CIDR}" oifname "${OUTER_EGRESS_IF}" masquerade
 }
 
 start_system_guest() {
