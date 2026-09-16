@@ -632,7 +632,7 @@ PY
     "listen": "${CAPABILITY_HOST_IP}",
     "port": ${port},
     "protocol": "vless",
-    "settings": {"users": [{"id": "${uuid}"}], "decryption": "none"},
+    "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
     "streamSettings": {"security": "none"}
   }],
   "outbounds": [{"protocol": "freedom", "settings": {}}]
@@ -779,7 +779,7 @@ capture_synthetic_xray_dns_evidence() {
 }
 
 compare_synthetic_identity_chain() {
-  guest_exec /usr/bin/python3 -c 'import json,sys,urllib.parse; from pathlib import Path; server=json.load(open(sys.argv[1],encoding="utf-8"))["inbounds"][0]["settings"]["users"][0]["id"]; uri=urllib.parse.unquote(urllib.parse.urlsplit(Path(sys.argv[2]).read_text(encoding="utf-8").strip()).username or ""); profile_id=Path(sys.argv[4]).read_text(encoding="utf-8").strip(); store=json.load(open(sys.argv[3],encoding="utf-8")); profile=next(p for p in store["profiles"] if p["id"]==profile_id); imported=profile["user_identity"]; config=json.load(open(sys.argv[5],encoding="utf-8")); outbound=next(o for o in config["outbounds"] if o.get("tag")=="podlaz-tun-proxy"); generated=outbound["settings"]["vnext"][0]["users"][0]["id"]; values=(server,uri,imported,generated); print("MATCH" if all(values) and len(set(values))==1 else "MISMATCH")' \
+  guest_exec /usr/bin/python3 -c 'import json,sys,urllib.parse; from pathlib import Path; server=json.load(open(sys.argv[1],encoding="utf-8"))["inbounds"][0]["settings"]["clients"][0]["id"]; uri=urllib.parse.unquote(urllib.parse.urlsplit(Path(sys.argv[2]).read_text(encoding="utf-8").strip()).username or ""); profile_id=Path(sys.argv[4]).read_text(encoding="utf-8").strip(); store=json.load(open(sys.argv[3],encoding="utf-8")); profile=next(p for p in store["profiles"] if p["id"]==profile_id); imported=profile["user_identity"]; config=json.load(open(sys.argv[5],encoding="utf-8")); outbound=next(o for o in config["outbounds"] if o.get("tag")=="podlaz-tun-proxy"); generated=outbound["settings"]["vnext"][0]["users"][0]["id"]; values=(server,uri,imported,generated); print("MATCH" if all(values) and len(set(values))==1 else "MISMATCH")' \
     /run/podlaz-capability-xray/server.json \
     /run/podlaz-capability-xray/client-uri \
     "${CAPABILITY_GUEST_XDG}/state/podlaz/profiles.json" \
