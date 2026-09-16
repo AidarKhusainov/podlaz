@@ -656,8 +656,21 @@ wait_guest_synthetic_uri() {
   return 1
 }
 
+capture_guest_tun_failure_diagnostics() {
+  local output="${CAPABILITY_PRIVATE}/profile-tun-report-cause.log"
+
+  if {
+    guest_exec /usr/bin/python3 -c 'import json,re; report=json.load(open("/run/podlaz/diagnostics/tun-last.json",encoding="utf-8")); primary=report.get("primary_classification",""); parts=[value for value in report.get("errors",[]) if isinstance(value,str)]; parts.extend(probe.get("error","") for probe in report.get("probes",[]) if isinstance(probe,dict) and isinstance(probe.get("error",""),str)); text=" ".join(parts).lower(); print("tun.report.primary_resolved_link_query_failure=observed" if primary=="resolved_link_query_failure" else "tun.report.primary_other=observed"); print("tun.report.cause_no_servers=observed" if re.search(r"no appropriate name servers|no suitable .*server|no suitable .*network|no name servers|network .*unavailable",text) else "tun.report.cause_timeout=observed" if re.search(r"timed out|timeout|all attempts .*failed",text) else "tun.report.cause_link_device=observed" if re.search(r"link|interface|device|no such device|not found",text) else "tun.report.cause_other=observed")'
+  } >"${output}.tmp" 2>/dev/null && [[ -s "${output}.tmp" ]]; then
+    mv -f "${output}.tmp" "${output}"
+    chmod 0600 "${output}"
+  else
+    rm -f "${output}.tmp"
+  fi
+}
+
 run_synthetic_tun_lifecycle() {
-  local import_code
+  local import_code connect_code
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${CAPABILITY_GUEST_XDG}" "${CAPABILITY_GUEST_XDG}/config" "${CAPABILITY_GUEST_XDG}/state" "${CAPABILITY_GUEST_XDG}/cache" /tmp/podlaz-capability-tun-private
   if ! wait_guest_synthetic_uri; then
@@ -701,7 +714,14 @@ run_synthetic_tun_lifecycle() {
 
   guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
   record_capability tun.profile_validate pass
+  set +e
   guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -g podlaz -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
+  connect_code=$?
+  set -e
+  if (( connect_code != 0 )); then
+    capture_guest_tun_failure_diagnostics
+    return "${connect_code}"
+  fi
   record_capability tun.connect_requested pass
   wait_guest_tun_status verified-active 120
   record_capability tun.verified_active pass
