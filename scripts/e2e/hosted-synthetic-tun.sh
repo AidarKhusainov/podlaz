@@ -46,7 +46,7 @@ EVIDENCE_KEYS=(
 )
 
 CANDIDATE_DEB=""
-EXPECTED_COMMIT="${GITHUB_SHA:-}"
+EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 OUTER_DEFAULT_ROUTE=""
 OUTER_RULES=""
 OUTER_RESOLV_HASH=""
@@ -280,8 +280,7 @@ teardown_all() {
     record_if_missing outer.cleanup fail
     mark_failure infrastructure outer.cleanup
   fi
-  assert_public_artifact_privacy
-  if [[ $? == 0 ]]; then
+  if assert_public_artifact_privacy; then
     record_if_missing artifact.privacy pass
   else
     record_if_missing artifact.privacy fail
@@ -395,6 +394,8 @@ start_system_guest() {
     sleep 0.2
   done
   guest_exec /bin/true >/dev/null
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'state="$(timeout 30 systemctl is-system-running --wait 2>/dev/null || true)"; [[ "$state" == running || "$state" == degraded ]]'
   guest_exec nmcli connection reload
   guest_exec nmcli connection up synthetic-uplink >/dev/null
@@ -533,6 +534,8 @@ assert_foreign_sentinel() {
 assert_ordinary_user_boundary() {
   local code
   guest_exec /bin/bash -lc '! id -nG e2e | tr " " "\n" | grep -Fx podlaz >/dev/null'
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc '[[ "$(stat -c "%U:%G:%a" /run/podlaz/podlazd.sock)" == "root:podlaz:660" ]]'
   guest_exec runuser -u e2e -- python3 -c 'import errno,socket; s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); ok=False
 try:
@@ -559,8 +562,14 @@ assert_verified_active_authority() {
   guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null"
   guest_exec test -s /run/podlaz/network-session-continuation.json
   guest_exec test -s /run/podlaz/generated/xray.json
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'test -d /run/podlaz/transactions && test -n "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -name "*.json" -print -quit)"'
-  ! guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null
+  if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then
+    return 1
+  fi
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"'
   guest_exec python3 "${FALLBACK_NETWORK_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null
   guest_exec test -s "${GUEST_MANIFEST}"
@@ -590,9 +599,15 @@ run_tun_doctor() {
 assert_terminal_authority_clean() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${FALLBACK_NETWORK_HELPER}' '${GUEST_MANIFEST}'"
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
-  ! guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1
-  ! guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null
+  if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1; then
+    return 1
+  fi
+  if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then
+    return 1
+  fi
   guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -Fx "synthetic-uplink:${GUEST_IF}" >/dev/null
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
   assert_foreign_sentinel
 }
