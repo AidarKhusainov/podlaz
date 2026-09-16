@@ -36,22 +36,27 @@ func TestHostedE2ECapabilityClassifiesSyntheticServerDNSBoundary(t *testing.T) {
 		{
 			name: "udp request observed",
 			log:  "accepted udp:1.1.1.1:53",
-			want: "tun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 		{
 			name: "tcp request observed",
 			log:  "accepted tcp:1.1.1.1:53",
-			want: "tun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=observed\n",
+			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=observed\n",
+		},
+		{
+			name: "vless bytes observed",
+			log:  "[Info] proxy/vless/inbound: firstLen = 48",
+			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 		{
 			name: "both requests observed",
-			log:  "accepted udp:1.1.1.1:53\naccepted tcp:1.1.1.1:53",
-			want: "tun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=observed\n",
+			log:  "[Info] proxy/vless/inbound: firstLen = 48\naccepted udp:1.1.1.1:53\naccepted tcp:1.1.1.1:53",
+			want: "tun.synthetic_server.vless_bytes=observed\ntun.synthetic_server.udp53_request=observed\ntun.synthetic_server.tcp53_request=observed\n",
 		},
 		{
 			name: "requests missing",
 			log:  "accepted tcp:203.0.113.10:443",
-			want: "tun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
+			want: "tun.synthetic_server.vless_bytes=missing\ntun.synthetic_server.udp53_request=missing\ntun.synthetic_server.tcp53_request=missing\n",
 		},
 	}
 
