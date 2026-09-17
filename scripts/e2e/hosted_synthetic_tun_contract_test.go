@@ -79,12 +79,12 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 func TestHostedSyntheticTUNCandidateProvenanceMatchesCheckedOutCandidate(t *testing.T) {
 	workflow := readHostedSyntheticTUNFile(t, hostedSyntheticTUNWorkflow)
 	requireHostedSyntheticTUNMarkers(t, workflow,
-		"PODLAZ_COMMIT: ${{ github.sha }}",
+		"CANDIDATE_COMMIT: ${{ github.sha }}",
+		"PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}",
+		"PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}",
 	)
 	forbidHostedSyntheticTUNMarkers(t, workflow,
-		"CANDIDATE_COMMIT:",
-		"ref: ${{ env.CANDIDATE_COMMIT }}",
-		"PODLAZ_E2E_CANDIDATE_COMMIT:",
+		"PODLAZ_COMMIT: ${{ github.sha }}",
 	)
 }
 
