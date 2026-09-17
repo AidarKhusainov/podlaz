@@ -588,6 +588,7 @@ assert_verified_active_authority() {
 }
 
 run_active_traffic_checks() {
+  guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   record_evidence tun.system_dns pass
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
@@ -704,6 +705,7 @@ run_scenario() {
   assert_guest_network_baseline_restored
   record_evidence guest.baseline_restored pass
   mark_failure diagnostic_unknown guest.connectivity_restored
+  guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
 
