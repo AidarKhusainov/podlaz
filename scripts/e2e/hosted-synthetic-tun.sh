@@ -569,7 +569,8 @@ assert_verified_active_authority() {
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"'
   guest_exec python3 "${FALLBACK_NETWORK_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null
-  guest_exec test -s "${GUEST_MANIFEST}"
+  guest_exec jq -e '(.routes | length) > 0 and (.rules | length) > 0' "${GUEST_MANIFEST}" >/dev/null
+  guest_exec python3 "${FALLBACK_NETWORK_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
   assert_foreign_sentinel
 }
 
