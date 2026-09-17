@@ -620,9 +620,15 @@ if report.get("primary_classification") != "ipv6_not_present":
 if report.get("errors"):
     raise SystemExit("doctor degraded report contains errors")
 for probe in report.get("probes") or []:
-    if probe.get("status") == "pass":
+    probe_status = probe.get("status")
+    classification = probe.get("classification") or ""
+    if probe_status == "pass":
         continue
-    if probe.get("classification") != "ipv6_not_present":
+    if probe_status == "skipped" and not classification:
+        if not probe.get("dependency_reason"):
+            raise SystemExit("doctor contains an unexplained skipped probe")
+        continue
+    if classification != "ipv6_not_present":
         raise SystemExit("doctor contains a non-topology-dependent failing probe")
 print("observed")
 PY
