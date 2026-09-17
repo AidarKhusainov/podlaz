@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
-import os
 import re
 import shlex
 import stat
@@ -172,7 +171,11 @@ def validate_session(
     require(match is not None and match.group(1) == session_id[:12], "Privacy Envelope table identity")
 
     bootstrap = normalize_ipv4_list(protection.get("bootstrap_ipv4"), "Privacy Envelope bootstrap")
-    previous = normalize_ipv4_list(protection.get("previous_bootstrap_ipv4") or [], "Privacy Envelope previous bootstrap", allow_empty=True)
+    previous = normalize_ipv4_list(
+        protection.get("previous_bootstrap_ipv4") or [],
+        "Privacy Envelope previous bootstrap",
+        allow_empty=True,
+    )
     combined = sorted(set(bootstrap + previous))
     require(bool(combined), "Privacy Envelope bootstrap authority")
     result = dict(protection)
@@ -207,13 +210,30 @@ def parse_resolved_links(path: Path) -> dict[str, list[str]]:
     return result
 
 
-def validate_resolved(tx: dict[str, Any], dns_path: Path, domain_path: Path, default_path: Path, tun_interface: str) -> None:
-    desired = dict_value(dict_value(tx.get("desired_plan") or {}, "desired plan").get("dns") or {}, "desired DNS")
+def validate_resolved(
+    tx: dict[str, Any], dns_path: Path, domain_path: Path, default_path: Path, tun_interface: str
+) -> None:
+    desired = dict_value(
+        dict_value(tx.get("desired_plan") or {}, "desired plan").get("dns") or {},
+        "desired DNS",
+    )
     require(desired.get("owner") == TRANSACTION_OWNER, "desired DNS owner")
     require(desired.get("backend") == "systemd-resolved per-link DNS", "desired DNS backend")
     require(clean_string(desired.get("link")) == tun_interface, "desired DNS link")
-    servers = sorted({clean_string(item) for item in list_value(desired.get("servers") or [], "desired DNS servers") if clean_string(item)})
-    domains = sorted({clean_string(item) for item in list_value(desired.get("search_domains") or [], "desired DNS domains") if clean_string(item)})
+    servers = sorted(
+        {
+            clean_string(item)
+            for item in list_value(desired.get("servers") or [], "desired DNS servers")
+            if clean_string(item)
+        }
+    )
+    domains = sorted(
+        {
+            clean_string(item)
+            for item in list_value(desired.get("search_domains") or [], "desired DNS domains")
+            if clean_string(item)
+        }
+    )
     require(bool(servers), "desired DNS servers empty")
     require(domains == ["~."], "desired DNS route-only domain")
 
@@ -226,7 +246,14 @@ def validate_resolved(tx: dict[str, Any], dns_path: Path, domain_path: Path, def
         and item.get("owner") == DNS_OWNER
         and item.get("backend") == desired.get("backend")
         and clean_string(item.get("link")) == tun_interface
-        and sorted({clean_string(value) for value in item.get("search_domains") or [] if clean_string(value)}) == domains
+        and sorted(
+            {
+                clean_string(value)
+                for value in item.get("search_domains") or []
+                if clean_string(value)
+            }
+        )
+        == domains
     ]
     require(len(matches) == 1, "DNS rollback authority")
 
@@ -279,7 +306,11 @@ def parse_nft_ruleset(path: Path) -> dict[tuple[str, str], NftTable]:
             require(family and name and key not in tables, "nftables table identity")
             flags = table.get("flags") or []
             require(isinstance(flags, list), "nftables table flags")
-            tables[key] = NftTable(family, name, tuple(sorted(clean_string(item) for item in flags)))
+            tables[key] = NftTable(
+                family,
+                name,
+                tuple(sorted(clean_string(item) for item in flags)),
+            )
         elif "chain" in entry:
             chain = dict_value(entry["chain"], "nftables chain")
             key = (clean_string(chain.get("family")), clean_string(chain.get("table")))
@@ -288,7 +319,10 @@ def parse_nft_ruleset(path: Path) -> dict[tuple[str, str], NftTable]:
             name = clean_string(chain.get("name"))
             require(name and name not in table.chains, "nftables chain identity")
             priority = chain.get("prio", chain.get("priority"))
-            require(isinstance(priority, int) and not isinstance(priority, bool), "nftables chain priority")
+            require(
+                isinstance(priority, int) and not isinstance(priority, bool),
+                "nftables chain priority",
+            )
             table.chains[name] = NftChain(
                 name=name,
                 type=clean_string(chain.get("type")),
@@ -299,7 +333,6 @@ def parse_nft_ruleset(path: Path) -> dict[tuple[str, str], NftTable]:
         elif "rule" in entry:
             rules.append(dict_value(entry["rule"], "nftables rule"))
         else:
-            # Foreign object types are allowed outside the two Podlaz-owned tables.
             continue
 
     for rule in rules:
@@ -349,8 +382,18 @@ def canonical_observed_left(value: Any) -> str:
         require(key in {"oifname", "nfproto", "l4proto"}, "nftables meta key")
         return f"meta:{key}:"
     require(kind == "payload", "nftables match left kind")
-    protocol, field_name = clean_string(data.get("protocol")), clean_string(data.get("field"))
-    require((protocol, field_name) in {("ip", "daddr"), ("udp", "sport"), ("udp", "dport"), ("icmpv6", "type")}, "nftables payload key")
+    protocol = clean_string(data.get("protocol"))
+    field_name = clean_string(data.get("field"))
+    require(
+        (protocol, field_name)
+        in {
+            ("ip", "daddr"),
+            ("udp", "sport"),
+            ("udp", "dport"),
+            ("icmpv6", "type"),
+        },
+        "nftables payload key",
+    )
     return f"payload:{protocol}:{field_name}:"
 
 
@@ -373,7 +416,13 @@ def canonical_nft_scalar(left: str, value: Any) -> str:
         require(text in mapping, "nftables nfproto")
         return mapping[text]
     if left == "meta:l4proto:":
-        mapping = {"udp": "udp", "17": "udp", "icmpv6": "icmpv6", "ipv6-icmp": "icmpv6", "58": "icmpv6"}
+        mapping = {
+            "udp": "udp",
+            "17": "udp",
+            "icmpv6": "icmpv6",
+            "ipv6-icmp": "icmpv6",
+            "58": "icmpv6",
+        }
         require(text in mapping, "nftables l4proto")
         return mapping[text]
     if left == "payload:ip:daddr:":
@@ -414,7 +463,10 @@ def normalize_implicit_nft_dependencies(statements: list[str]) -> list[str]:
     for item in statements:
         if has_udp and item == "match=meta:l4proto:==udp":
             continue
-        if has_icmpv6 and item in {"match=meta:l4proto:==icmpv6", "match=meta:nfproto:==ipv6"}:
+        if has_icmpv6 and item in {
+            "match=meta:l4proto:==icmpv6",
+            "match=meta:nfproto:==ipv6",
+        }:
             continue
         if has_ipv4_payload and item == "match=meta:nfproto:==ipv4":
             continue
@@ -424,7 +476,10 @@ def normalize_implicit_nft_dependencies(statements: list[str]) -> list[str]:
 
 def canonical_planned_rule(raw: str) -> tuple[str, ...]:
     fields = shlex.split(raw)
-    require(len(fields) >= 4 and fields[-2] == "owner", "persisted nftables rule ownership")
+    require(
+        len(fields) >= 4 and fields[-2] == "owner",
+        "persisted nftables rule ownership",
+    )
     ownership = fields[-1]
     verdict = fields[-3]
     require(verdict in {"accept", "drop", "reject"}, "persisted nftables verdict")
@@ -453,30 +508,53 @@ def canonical_planned_expression(fields: list[str]) -> list[str]:
             result.append(f"match=meta:oifname:{op}{value}")
             index = value_index + 1
         elif token == "ip":
-            require(index + 2 < len(fields) and fields[index + 1] == "daddr", "persisted IPv4 expression")
+            require(
+                index + 2 < len(fields) and fields[index + 1] == "daddr",
+                "persisted IPv4 expression",
+            )
             value = canonical_nft_scalar("payload:ip:daddr:", fields[index + 2])
             result.append("match=payload:ip:daddr:==" + value)
             index += 3
         elif token == "meta":
-            require(index + 2 < len(fields) and fields[index + 1] == "nfproto", "persisted meta expression")
+            require(
+                index + 2 < len(fields) and fields[index + 1] == "nfproto",
+                "persisted meta expression",
+            )
             value = canonical_nft_scalar("meta:nfproto:", fields[index + 2])
             result.append("match=meta:nfproto:==" + value)
             index += 3
         elif token == "udp":
-            require(index + 2 < len(fields) and fields[index + 1] in {"sport", "dport"}, "persisted UDP expression")
+            require(
+                index + 2 < len(fields) and fields[index + 1] in {"sport", "dport"},
+                "persisted UDP expression",
+            )
             left = f"payload:udp:{fields[index + 1]}:"
             value = canonical_nft_scalar(left, fields[index + 2])
             result.append(f"match={left}=={value}")
             index += 3
         elif token == "icmpv6":
-            require(index + 3 < len(fields) and fields[index + 1] == "type" and fields[index + 2] == "{", "persisted ICMPv6 expression")
+            require(
+                index + 3 < len(fields)
+                and fields[index + 1] == "type"
+                and fields[index + 2] == "{",
+                "persisted ICMPv6 expression",
+            )
             index += 3
             values: list[str] = []
             while index < len(fields) and fields[index] != "}":
-                values.append(canonical_nft_scalar("payload:icmpv6:type:", fields[index].rstrip(",")))
+                values.append(
+                    canonical_nft_scalar(
+                        "payload:icmpv6:type:", fields[index].rstrip(",")
+                    )
+                )
                 index += 1
-            require(index < len(fields) and fields[index] == "}" and values, "persisted ICMPv6 set")
-            result.append("match=payload:icmpv6:type:=={" + ",".join(sorted(values)) + "}")
+            require(
+                index < len(fields) and fields[index] == "}" and values,
+                "persisted ICMPv6 set",
+            )
+            result.append(
+                "match=payload:icmpv6:type:=={" + ",".join(sorted(values)) + "}"
+            )
             index += 1
         else:
             raise AuthorityMismatch("unsupported persisted nftables expression")
@@ -507,16 +585,25 @@ def require_exact_table(
 
 
 def validate_data_plane_nft(tx: dict[str, Any], tables: dict[tuple[str, str], NftTable]) -> None:
-    desired = dict_value(dict_value(tx.get("desired_plan") or {}, "desired plan").get("nftables") or {}, "desired nftables")
+    desired = dict_value(
+        dict_value(tx.get("desired_plan") or {}, "desired plan").get("nftables") or {},
+        "desired nftables",
+    )
     require(desired.get("owner") == FIREWALL_OWNER, "desired nftables owner")
     family, table = clean_string(desired.get("family")), clean_string(desired.get("table"))
     require(family and table, "desired nftables identity")
     chains = list_value(desired.get("chains") or [], "desired nftables chains")
     require(bool(chains), "desired nftables chains empty")
     if len(chains) > 1:
-        require(not any((item.get("rules") or []) for item in chains if isinstance(item, dict)), "ambiguous desired nftables rule mapping")
+        require(
+            not any((item.get("rules") or []) for item in chains if isinstance(item, dict)),
+            "ambiguous desired nftables rule mapping",
+        )
 
-    rollback = list_value(dict_value(tx.get("rollback") or {}, "rollback").get("nftables") or [], "nftables rollback")
+    rollback = list_value(
+        dict_value(tx.get("rollback") or {}, "rollback").get("nftables") or [],
+        "nftables rollback",
+    )
     rollback_matches = [
         item
         for item in rollback
@@ -531,30 +618,50 @@ def validate_data_plane_nft(tx: dict[str, Any], tables: dict[tuple[str, str], Nf
     normalized_chains: list[dict[str, Any]] = []
     for item in chains:
         chain = dict_value(item, "desired nftables chain")
-        require(chain.get("owner") in {None, "", FIREWALL_OWNER}, "desired nftables chain owner")
+        require(
+            chain.get("owner") in {None, "", FIREWALL_OWNER},
+            "desired nftables chain owner",
+        )
         name = clean_string(chain.get("name"))
         require(name, "desired nftables chain name")
+        priority = chain.get("priority")
+        if priority is None:
+            priority = 0
+        require(
+            isinstance(priority, int) and not isinstance(priority, bool),
+            "desired nftables chain priority",
+        )
         normalized_chains.append(
             {
                 "name": name,
                 "type": clean_string(chain.get("type")),
                 "hook": clean_string(chain.get("hook")),
-                "priority": chain.get("priority"),
+                "priority": priority,
                 "policy": clean_string(chain.get("policy")),
             }
         )
-        expected_rules[name] = [canonical_planned_rule(clean_string(raw)) for raw in list_value(chain.get("rules") or [], "desired nftables rules")]
+        expected_rules[name] = [
+            canonical_planned_rule(clean_string(raw))
+            for raw in list_value(chain.get("rules") or [], "desired nftables rules")
+        ]
     require_exact_table(tables, family, table, normalized_chains, expected_rules, "TUN nftables")
 
 
-def privacy_expected(protection: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, list[tuple[str, ...]]]]:
+def privacy_expected(
+    protection: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, list[tuple[str, ...]]]]:
     tun = clean_string(protection.get("tun_interface"))
-    endpoints = list_value(protection.get("bootstrap_ipv4") or [], "Privacy Envelope bootstrap")
+    endpoints = list_value(
+        protection.get("bootstrap_ipv4") or [], "Privacy Envelope bootstrap"
+    )
     raw_rules = [
         f'oifname "lo" accept owner podlaz:privacy-envelope:loopback',
         f'oifname "{tun}" accept owner podlaz:privacy-envelope:tun-egress',
     ]
-    raw_rules.extend(f"ip daddr {endpoint} accept owner podlaz:privacy-envelope:bootstrap" for endpoint in endpoints)
+    raw_rules.extend(
+        f"ip daddr {endpoint} accept owner podlaz:privacy-envelope:bootstrap"
+        for endpoint in endpoints
+    )
     raw_rules.extend(
         [
             "meta nfproto ipv4 udp sport 68 udp dport 67 accept owner podlaz:privacy-envelope:dhcp4",
@@ -563,15 +670,25 @@ def privacy_expected(protection: dict[str, Any]) -> tuple[list[dict[str, Any]], 
             "reject owner podlaz:privacy-envelope:block-direct",
         ]
     )
-    # The terminal block rule has an empty expression, so construct it directly.
     expected = [canonical_planned_rule(raw) for raw in raw_rules[:-1]]
     expected.append(("counter", "reject", "comment=podlaz:privacy-envelope:block-direct"))
-    chains = [{"name": "output", "type": "filter", "hook": "output", "priority": -10, "policy": "accept"}]
+    chains = [
+        {
+            "name": "output",
+            "type": "filter",
+            "hook": "output",
+            "priority": -10,
+            "policy": "accept",
+        }
+    ]
     return chains, {"output": expected}
 
 
-def validate_privacy_envelope(protection: dict[str, Any], tables: dict[tuple[str, str], NftTable]) -> None:
-    family, table = clean_string(protection.get("family")), clean_string(protection.get("table"))
+def validate_privacy_envelope(
+    protection: dict[str, Any], tables: dict[tuple[str, str], NftTable]
+) -> None:
+    family = clean_string(protection.get("family"))
+    table = clean_string(protection.get("table"))
     chains, rules = privacy_expected(protection)
     require_exact_table(tables, family, table, chains, rules, "Privacy Envelope")
 
@@ -614,7 +731,9 @@ def verify(args: argparse.Namespace) -> None:
     tx = active_transaction(status, Path(args.transactions))
     tun_interface = validate_runtime_authority(tx, runtime_config)
     session = load_json(session_path, "Network Session")
-    protection = validate_session(session, tx, read_current_boot_id(boot_path), tun_interface)
+    protection = validate_session(
+        session, tx, read_current_boot_id(boot_path), tun_interface
+    )
     validate_resolved(tx, dns_path, domain_path, default_path, tun_interface)
     tables = parse_nft_ruleset(nft_path)
     validate_data_plane_nft(tx, tables)
@@ -629,7 +748,10 @@ def main(argv: list[str]) -> int:
         print(f"hosted synthetic active authority mismatch: {exc}", file=sys.stderr)
         return 1
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"hosted synthetic active authority inspection failed: {type(exc).__name__}", file=sys.stderr)
+        print(
+            f"hosted synthetic active authority inspection failed: {type(exc).__name__}",
+            file=sys.stderr,
+        )
         return 2
     return 0
 
