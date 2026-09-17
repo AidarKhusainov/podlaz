@@ -119,6 +119,42 @@ func TestHostedSyntheticTUNDoctorUsesStructuredCanonicalSemantics(t *testing.T) 
 	forbidHostedSyntheticTUNMarkers(t, doctor, "3) record_evidence tun.doctor observed")
 }
 
+func TestHostedSyntheticTUNDNSPositiveControlsFlushResolvedCacheBeforeNSSLookup(t *testing.T) {
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	assertFlushBeforeLookup := func(t *testing.T, section string) {
+		t.Helper()
+		flush := strings.Index(section, "guest_exec resolvectl flush-caches")
+		lookup := strings.Index(section, "guest_exec timeout 20 getent ahostsv4 example.com >/dev/null")
+		if flush < 0 {
+			t.Fatal("system DNS positive control does not flush systemd-resolved cache")
+		}
+		if lookup < 0 {
+			t.Fatal("system DNS positive control does not use the NSS/system resolver path")
+		}
+		if flush > lookup {
+			t.Fatal("systemd-resolved cache flush must occur before the NSS lookup")
+		}
+	}
+
+	activeStart := strings.Index(script, "run_active_traffic_checks() {")
+	activeEnd := strings.Index(script, "\nrun_tun_doctor() {")
+	if activeStart < 0 || activeEnd <= activeStart {
+		t.Fatal("active traffic check boundaries not found")
+	}
+	t.Run("verified active", func(t *testing.T) {
+		assertFlushBeforeLookup(t, script[activeStart:activeEnd])
+	})
+
+	restoredStart := strings.Index(script, "mark_failure diagnostic_unknown guest.connectivity_restored")
+	restoredEnd := strings.Index(script, "mark_failure diagnostic_unknown tun.recovery")
+	if restoredStart < 0 || restoredEnd <= restoredStart {
+		t.Fatal("restored connectivity check boundaries not found")
+	}
+	t.Run("baseline restored", func(t *testing.T) {
+		assertFlushBeforeLookup(t, script[restoredStart:restoredEnd])
+	})
+}
+
 func TestHostedSyntheticTUNFailureClassificationDoesNotPrejudgeProduct(t *testing.T) {
 	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
 	requireHostedSyntheticTUNMarkers(t, script,
