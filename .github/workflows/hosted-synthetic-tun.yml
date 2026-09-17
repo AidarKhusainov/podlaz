@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
@@ -44,7 +45,7 @@ jobs:
 
       - name: Build exact candidate package
         env:
-          PODLAZ_COMMIT: ${{ github.sha }}
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: bash scripts/build-deb.sh
 
       - name: Scenario contract
@@ -54,6 +55,7 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-synthetic-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
