@@ -131,6 +131,72 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 	}
 }
 
+func TestHostedSyntheticTUNVerifiedActiveChecksExactRouteRulePresence(t *testing.T) {
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	activeStart := strings.Index(script, "assert_verified_active_authority() {")
+	activeEnd := strings.Index(script, "\nrun_active_traffic_checks() {")
+	if activeStart < 0 || activeEnd <= activeStart {
+		t.Fatal("verified-active authority function boundaries not found")
+	}
+	active := script[activeStart:activeEnd]
+	requireHostedSyntheticTUNMarkers(t, active,
+		`"${FALLBACK_NETWORK_HELPER}" snapshot`,
+		`jq -e '(.routes | length) > 0 and (.rules | length) > 0'`,
+		`"${FALLBACK_NETWORK_HELPER}" verify-present`,
+	)
+}
+
+func TestHostedSyntheticTUNExactNetworkManifestCanBeVerifiedPresent(t *testing.T) {
+	tmp := t.TempDir()
+	fakeIP := tmp + "/ip"
+	fakeIPScript := `#!/bin/sh
+case "$*" in
+  "-4 rule show")
+    if [ "${FAKE_IP_MODE:-exact}" = "missing-rule" ]; then
+      printf '%s\n' '10000: from all lookup main'
+    else
+      printf '%s\n' '10000: from all lookup podlaz'
+    fi
+    ;;
+  "-4 route show table 51820 exact default")
+    if [ "${FAKE_IP_MODE:-exact}" = "missing-route" ]; then
+      exit 0
+    fi
+    printf '%s\n' 'default dev podlaz0'
+    ;;
+  *) exit 64 ;;
+esac
+`
+	if err := os.WriteFile(fakeIP, []byte(fakeIPScript), 0o755); err != nil {
+		t.Fatalf("write fake ip: %v", err)
+	}
+	manifest := tmp + "/manifest.json"
+	manifestJSON := `{"schema_version":"podlaz.e2e.rollback-network.v1","routes":[{"family":"-4","table":"51820","cidr":"default","via":"","dev":"podlaz0"}],"rules":[{"family":"-4","priority":10000,"source":"all","destination":"","mark":"","table":"51820"}]}`
+	if err := os.WriteFile(manifest, []byte(manifestJSON), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	run := func(mode string) error {
+		t.Helper()
+		cmd := exec.Command("python3", "tun-package-fallback-network.py", "verify-present", manifest)
+		cmd.Env = append(os.Environ(), "PATH="+tmp+":"+os.Getenv("PATH"), "FAKE_IP_MODE="+mode)
+		output, err := cmd.CombinedOutput()
+		if err != nil && mode == "exact" {
+			t.Fatalf("verify-present exact manifest: %v\n%s", err, output)
+		}
+		return err
+	}
+
+	if err := run("exact"); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"missing-route", "missing-rule"} {
+		if err := run(mode); err == nil {
+			t.Fatalf("verify-present accepted %s", mode)
+		}
+	}
+}
+
 func TestHostedSyntheticTUNNetworkManagerObservationIsTerminalPostcondition(t *testing.T) {
 	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
 	activeStart := strings.Index(script, "assert_verified_active_authority() {")
