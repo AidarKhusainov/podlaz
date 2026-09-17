@@ -29,6 +29,7 @@ TUN_RULE="/etc/polkit-1/rules.d/49-podlaz-hosted-synthetic-tun.rules"
 GUEST_PRIVATE="/tmp/podlaz-hosted-synthetic-tun"
 GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
 FALLBACK_NETWORK_HELPER="/workspace/scripts/e2e/tun-package-fallback-network.py"
+ACTIVE_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_active_authority.py"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -83,7 +84,7 @@ record_if_missing() {
 mark_failure() {
   local class="$1" step="$2"
   case "${class}" in
-    product|fixture|infrastructure|capability) ;;
+    product|fixture|infrastructure|capability|diagnostic_unknown) ;;
     *) class=infrastructure ;;
   esac
   FAILURE_CLASS="${class}"
@@ -132,10 +133,14 @@ if set(values) != set(expected):
     raise SystemExit(f"evidence schema mismatch: expected={sorted(expected)} got={sorted(values)}")
 if set(meta) != {"class", "step"}:
     raise SystemExit("failure metadata is incomplete")
-if meta["class"] not in {"none", "product", "fixture", "infrastructure", "capability"}:
+if meta["class"] not in {"none", "product", "fixture", "infrastructure", "capability", "diagnostic_unknown"}:
     raise SystemExit("invalid failure class")
-if meta["class"] == "none" and any(values[k] == "fail" for k in expected):
-    raise SystemExit("failed required evidence has no failure classification")
+for key in expected:
+    allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
+    if values[key] not in allowed:
+        raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
+if meta != {"class": "none", "step": "none"}:
+    raise SystemExit("successful evidence report contains failure metadata")
 PY
 }
 
@@ -557,14 +562,22 @@ raise SystemExit(0 if ok else 1)'
 assert_verified_active_authority() {
   guest_exec ip link show dev podlaz0 >/dev/null
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && assert_tun_package_address_present active podlaz0 198.18.0.1/32"
-  guest_exec resolvectl status podlaz0 --no-pager >/dev/null
-  guest_exec nft list table inet podlaz >/dev/null
-  guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null"
-  guest_exec test -s /run/podlaz/network-session-continuation.json
-  guest_exec test -s /run/podlaz/generated/xray.json
-  # Expansion is intentionally evaluated by guest bash.
-  # shellcheck disable=SC2016
-  guest_exec /bin/bash -lc 'test -d /run/podlaz/transactions && test -n "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -name "*.json" -print -quit)"'
+  # Capture live composition into guest-private files, then compare it to the
+  # exact persisted active transaction and current-boot Network Session.
+  guest_exec /bin/bash -lc "resolvectl dns >'${GUEST_PRIVATE}/resolved-dns.txt'"
+  guest_exec /bin/bash -lc "resolvectl domain >'${GUEST_PRIVATE}/resolved-domain.txt'"
+  guest_exec /bin/bash -lc "resolvectl default-route >'${GUEST_PRIVATE}/resolved-default-route.txt'"
+  guest_exec /bin/bash -lc "nft -j list ruleset >'${GUEST_PRIVATE}/nft-ruleset.json'"
+  guest_exec python3 "${ACTIVE_AUTHORITY_HELPER}" \
+    --status "${GUEST_PRIVATE}/status.json" \
+    --transactions /run/podlaz/transactions \
+    --session /run/podlaz/network-session-continuation.json \
+    --boot-id /proc/sys/kernel/random/boot_id \
+    --runtime-config /run/podlaz/generated/xray.json \
+    --resolved-dns "${GUEST_PRIVATE}/resolved-dns.txt" \
+    --resolved-domain "${GUEST_PRIVATE}/resolved-domain.txt" \
+    --resolved-default-route "${GUEST_PRIVATE}/resolved-default-route.txt" \
+    --nft-ruleset "${GUEST_PRIVATE}/nft-ruleset.json"
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"'
@@ -582,16 +595,39 @@ run_active_traffic_checks() {
 }
 
 run_tun_doctor() {
-  local doctor_code
+  local doctor_code doctor_state
   set +e
-  run_guest_user timeout 90 /usr/bin/podlaz doctor --tun >"${PRIVATE_ROOT}/doctor.stdout" 2>"${PRIVATE_ROOT}/doctor.stderr"
+  run_guest_user timeout 90 /usr/bin/podlaz doctor --tun --json >"${PRIVATE_ROOT}/doctor.json" 2>"${PRIVATE_ROOT}/doctor.stderr"
   doctor_code=$?
   set -e
-  case "${doctor_code}" in
-    0) record_evidence tun.doctor pass ;;
-    3) record_evidence tun.doctor observed ;;
-    *) return 1 ;;
-  esac
+  (( doctor_code == 0 )) || return 1
+  doctor_state="$(python3 - "${PRIVATE_ROOT}/doctor.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+if report.get("schema_version") != 1:
+    raise SystemExit("unexpected doctor schema")
+status = report.get("status")
+if status == "healthy":
+    print("pass")
+    raise SystemExit(0)
+if status != "degraded":
+    raise SystemExit("doctor status is not acceptable")
+if report.get("primary_classification") != "ipv6_not_present":
+    raise SystemExit("doctor degradation is not the allowed topology-dependent IPv6 observation")
+if report.get("errors"):
+    raise SystemExit("doctor degraded report contains errors")
+for probe in report.get("probes") or []:
+    if probe.get("status") == "pass":
+        continue
+    if probe.get("classification") != "ipv6_not_present":
+        raise SystemExit("doctor contains a non-topology-dependent failing probe")
+print("observed")
+PY
+)" || return 1
+  record_evidence tun.doctor "${doctor_state}"
 }
 
 assert_terminal_authority_clean() {
@@ -632,11 +668,12 @@ run_scenario() {
   start_synthetic_xray_endpoint
   install_tun_authorization
 
+  mark_failure diagnostic_unknown profile.import
   set +e
   guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
   import_code=$?
   set -e
-  (( import_code == 0 )) || { mark_failure product profile.import; return 1; }
+  (( import_code == 0 )) || return 1
   guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' ${GUEST_PRIVATE}/import.stdout >${GUEST_PRIVATE}/profile-id && test -s ${GUEST_PRIVATE}/profile-id"
   guest_exec /bin/bash -lc "id=\$(cat ${GUEST_PRIVATE}/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >${GUEST_PRIVATE}/validate.stdout 2>${GUEST_PRIVATE}/validate.stderr"
 
@@ -646,30 +683,35 @@ run_scenario() {
   create_foreign_sentinel
   capture_guest_network_baseline
 
-  mark_failure product tun.connect
+  mark_failure diagnostic_unknown tun.connect
   set +e
   guest_exec /bin/bash -lc "id=\$(cat ${GUEST_PRIVATE}/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >${GUEST_PRIVATE}/connect.stdout 2>${GUEST_PRIVATE}/connect.stderr"
   connect_code=$?
   set -e
   (( connect_code == 0 )) || return "${connect_code}"
   wait_guest_status verified-active 120
+  mark_failure diagnostic_unknown tun.authority
   assert_verified_active_authority
   record_evidence tun.verified_active pass
+  mark_failure diagnostic_unknown tun.active_traffic
   run_active_traffic_checks
+  mark_failure diagnostic_unknown tun.doctor
   run_tun_doctor
 
-  mark_failure product tun.disconnect
+  mark_failure diagnostic_unknown tun.disconnect
   run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
   wait_guest_status clean-inactive 80
   record_evidence tun.clean_disconnect pass
+  mark_failure diagnostic_unknown tun.terminal_cleanup
   assert_terminal_authority_clean
   record_evidence tun.terminal_cleanup pass
   assert_guest_network_baseline_restored
   record_evidence guest.baseline_restored pass
+  mark_failure diagnostic_unknown guest.connectivity_restored
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
 
-  mark_failure product tun.recovery
+  mark_failure diagnostic_unknown tun.recovery
   run_clean_recovery
   record_evidence tun.recovery_clean pass
   FAILURE_CLASS=none
