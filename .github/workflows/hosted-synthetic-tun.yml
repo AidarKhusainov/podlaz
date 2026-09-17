@@ -59,11 +59,12 @@ jobs:
           text = path.read_text(encoding='utf-8')
           authority_marker = 'assert_verified_active_authority() {\n'
           diagnostic = r'''diagnose_verified_active_authority() {
+            local NFT_BIN=nft
             if guest_exec ip link show dev podlaz0 >/dev/null 2>&1; then echo 'diag.auth.link=pass'; else echo 'diag.auth.link=fail'; fi
             if guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && assert_tun_package_address_present active podlaz0 198.18.0.1/32" >/dev/null 2>&1; then echo 'diag.auth.address=pass'; else echo 'diag.auth.address=fail'; fi
             if guest_exec resolvectl status podlaz0 --no-pager >/dev/null 2>&1; then echo 'diag.auth.resolved=pass'; else echo 'diag.auth.resolved=fail'; fi
-            if guest_exec nft list table inet podlaz >/dev/null 2>&1; then echo 'diag.auth.nft=pass'; else echo 'diag.auth.nft=fail'; fi
-            if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null" >/dev/null 2>&1; then echo 'diag.auth.privacy=pass'; else echo 'diag.auth.privacy=fail'; fi
+            if guest_exec "${NFT_BIN}" list table inet podlaz >/dev/null 2>&1; then echo 'diag.auth.nft=pass'; else echo 'diag.auth.nft=fail'; fi
+            if guest_exec /bin/bash -lc "${NFT_BIN} list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null" >/dev/null 2>&1; then echo 'diag.auth.privacy=pass'; else echo 'diag.auth.privacy=fail'; fi
             if guest_exec test -s /run/podlaz/network-session-continuation.json >/dev/null 2>&1; then echo 'diag.auth.session=pass'; else echo 'diag.auth.session=fail'; fi
             if guest_exec test -s /run/podlaz/generated/xray.json >/dev/null 2>&1; then echo 'diag.auth.config=pass'; else echo 'diag.auth.config=fail'; fi
             if guest_exec /bin/bash -lc 'test -d /run/podlaz/transactions && test -n "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -name "*.json" -print -quit)"' >/dev/null 2>&1; then echo 'diag.auth.transaction=pass'; else echo 'diag.auth.transaction=fail'; fi
