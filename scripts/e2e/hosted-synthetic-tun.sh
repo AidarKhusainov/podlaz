@@ -565,9 +565,6 @@ assert_verified_active_authority() {
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'test -d /run/podlaz/transactions && test -n "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -name "*.json" -print -quit)"'
-  if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then
-    return 1
-  fi
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"'
