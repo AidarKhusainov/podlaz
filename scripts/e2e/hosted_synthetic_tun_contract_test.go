@@ -131,6 +131,22 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 	}
 }
 
+func TestHostedSyntheticTUNNetworkManagerObservationIsTerminalPostcondition(t *testing.T) {
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	activeStart := strings.Index(script, "assert_verified_active_authority() {")
+	activeEnd := strings.Index(script, "\nrun_active_traffic_checks() {")
+	terminalStart := strings.Index(script, "assert_terminal_authority_clean() {")
+	terminalEnd := strings.Index(script, "\nrun_clean_recovery() {")
+	if activeStart < 0 || activeEnd <= activeStart || terminalStart < 0 || terminalEnd <= terminalStart {
+		t.Fatal("authority function boundaries not found")
+	}
+	active := script[activeStart:activeEnd]
+	terminal := script[terminalStart:terminalEnd]
+	marker := `nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0'`
+	forbidHostedSyntheticTUNMarkers(t, active, marker)
+	requireHostedSyntheticTUNMarkers(t, terminal, marker)
+}
+
 func TestHostedSyntheticTUNEndpointIsRoutedBehindGuestGateway(t *testing.T) {
 	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
 	requireHostedSyntheticTUNMarkers(t, script,
