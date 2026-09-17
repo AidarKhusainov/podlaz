@@ -16,27 +16,27 @@ def match(left: dict, right: object, op: str = "==") -> dict:
     return {"match": {"op": op, "left": left, "right": right}}
 
 
+def verdict(name: str) -> dict:
+    return {name: None}
+
+
 def rule(table: str, handle: int, expr: list[dict], comment: str) -> dict:
+    statements = expr[:-1] + [{"counter": {"packets": 1, "bytes": 2}}] + expr[-1:]
     return {
         "rule": {
             "family": "inet",
             "table": table,
             "chain": "output",
             "handle": handle,
-            "expr": expr + [{"counter": {"packets": 1, "bytes": 2}}],
+            "expr": statements,
             "comment": comment,
         }
     }
 
 
-def verdict(name: str) -> dict:
-    return {name: None}
-
-
 def nft_ruleset() -> dict:
-    meta = {"metainfo": {"version": "1.0.9", "release_name": "Old Doc Yak", "json_schema_version": 1}}
-    entries = [meta]
-    entries += [
+    entries = [
+        {"metainfo": {"version": "1.0.9", "release_name": "Old Doc Yak", "json_schema_version": 1}},
         {"table": {"family": "inet", "name": "podlaz", "handle": 10}},
         {"chain": {"family": "inet", "table": "podlaz", "name": "output", "handle": 11, "type": "filter", "hook": "output", "prio": 0, "policy": "accept"}},
         rule("podlaz", 12, [match({"payload": {"protocol": "ip", "field": "daddr"}}, "172.31.253.1"), verdict("accept")], "podlaz:firewall:server-bypass"),
@@ -67,7 +67,7 @@ def transaction() -> dict:
         "desired_plan": {
             "tun": {"interface_name": "podlaz0", "mtu": 1500, "owner": "xray:tun-inbound"},
             "dns": {"backend": "systemd-resolved per-link DNS", "link": "podlaz0", "servers": ["1.1.1.1"], "search_domains": ["~."], "owner": "podlaz"},
-            "nftables": {"family": "inet", "table": "podlaz", "owner": "podlaz:firewall", "chains": [{"name": "output", "hook": "output", "type": "filter", "priority": 0, "policy": "accept", "owner": "podlaz:firewall", "rules": ["ip daddr 172.31.253.1 accept owner podlaz:firewall:server-bypass", "oifname \\\"lo\\\" accept owner podlaz:firewall:loopback", "oifname \\\"podlaz0\\\" accept owner podlaz:firewall:tun-egress", "oifname != \\\"podlaz0\\\" reject owner podlaz:firewall:kill-switch"]}]},
+            "nftables": {"family": "inet", "table": "podlaz", "owner": "podlaz:firewall", "chains": [{"name": "output", "hook": "output", "type": "filter", "priority": 0, "policy": "accept", "owner": "podlaz:firewall", "rules": ["ip daddr 172.31.253.1 accept owner podlaz:firewall:server-bypass", 'oifname "lo" accept owner podlaz:firewall:loopback', 'oifname "podlaz0" accept owner podlaz:firewall:tun-egress', 'oifname != "podlaz0" reject owner podlaz:firewall:kill-switch']}]},
             "core": {"runtime_config_path": "/run/podlaz/generated/xray.json", "process_label": "xray", "owner": "podlaz"},
         },
         "rollback": {
@@ -99,26 +99,34 @@ def write(path: Path, value: object) -> None:
 
 
 def verify(root: Path) -> None:
-    args = argparse.Namespace(
-        status=str(root / "status.json"),
-        transactions=str(root / "transactions"),
-        session=str(root / "session.json"),
-        boot_id=str(root / "boot-id"),
-        runtime_config=str(root / "xray.json"),
-        resolved_dns=str(root / "resolved-dns.txt"),
-        resolved_domain=str(root / "resolved-domain.txt"),
-        resolved_default_route=str(root / "resolved-default-route.txt"),
-        nft_ruleset=str(root / "nft.json"),
+    authority.verify(
+        argparse.Namespace(
+            status=str(root / "status.json"),
+            transactions=str(root / "transactions"),
+            session=str(root / "session.json"),
+            boot_id=str(root / "boot-id"),
+            runtime_config=str(root / "xray.json"),
+            resolved_dns=str(root / "resolved-dns.txt"),
+            resolved_domain=str(root / "resolved-domain.txt"),
+            resolved_default_route=str(root / "resolved-default-route.txt"),
+            nft_ruleset=str(root / "nft.json"),
+        )
     )
-    authority.verify(args)
+
+
+def expect_mismatch(root: Path, message: str) -> None:
+    try:
+        verify(root)
+    except authority.AuthorityMismatch:
+        return
+    raise SystemExit(message)
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "transactions").mkdir()
-        status = {"connection": "active", "mode": "tun", "active_transaction_id": "tx-1", "tun_health": {"state": "verified"}, "transactions": [{"id": "tx-1", "state": "committed", "requires_cleanup": False}]}
-        write(root / "status.json", status)
+        write(root / "status.json", {"connection": "active", "mode": "tun", "active_transaction_id": "tx-1", "tun_health": {"state": "verified"}, "transactions": [{"id": "tx-1", "state": "committed", "requires_cleanup": False}]})
         write(root / "transactions" / "tx-1.json", transaction())
         write(root / "session.json", session())
         write(root / "boot-id", "boot-1\n")
@@ -131,21 +139,11 @@ def main() -> int:
         verify(root)
 
         write(root / "boot-id", "boot-2\n")
-        try:
-            verify(root)
-        except authority.AuthorityMismatch:
-            pass
-        else:
-            raise SystemExit("previous-boot Network Session authority was accepted")
+        expect_mismatch(root, "previous-boot Network Session authority was accepted")
         write(root / "boot-id", "boot-1\n")
 
         write(root / "resolved-dns.txt", "Global:\nLink 2 (host0): 1.0.0.1\nLink 3 (podlaz0): 9.9.9.9\n")
-        try:
-            verify(root)
-        except authority.AuthorityMismatch:
-            pass
-        else:
-            raise SystemExit("wrong resolved DNS composition was accepted")
+        expect_mismatch(root, "wrong resolved DNS composition was accepted")
         write(root / "resolved-dns.txt", "Global:\nLink 2 (host0): 1.0.0.1\nLink 3 (podlaz0): 1.1.1.1\n")
 
         bad_nft = copy.deepcopy(exact_nft)
@@ -154,12 +152,7 @@ def main() -> int:
             if body and body.get("comment") == "podlaz:privacy-envelope:block-direct":
                 body["comment"] = "podlaz:privacy-envelope:foreign"
         write(root / "nft.json", bad_nft)
-        try:
-            verify(root)
-        except authority.AuthorityMismatch:
-            pass
-        else:
-            raise SystemExit("wrong Privacy Envelope composition was accepted")
+        expect_mismatch(root, "wrong Privacy Envelope composition was accepted")
     return 0
 
 

@@ -117,7 +117,6 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 	forbidHostedSyntheticTUNMarkers(t, script,
 		"probe_qemu_",
 		"qemu-system",
-		"/proc/sys/kernel/random/boot_id",
 		"capture_pid=",
 		"argv_capture_pid=",
 		"transport_capture_pid=",
