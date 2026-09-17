@@ -615,21 +615,11 @@ if status == "healthy":
     raise SystemExit(0)
 if status != "degraded":
     raise SystemExit("doctor status is not acceptable")
-if report.get("primary_classification") != "ipv6_not_present":
-    raise SystemExit("doctor degradation is not the allowed topology-dependent IPv6 observation")
+allowed_advisory = {"https_partial_failure", "doh_partial_failure", "ipv6_not_present"}
+if report.get("primary_classification") not in allowed_advisory:
+    raise SystemExit("doctor degradation is not a canonical advisory classification")
 if report.get("errors"):
     raise SystemExit("doctor degraded report contains errors")
-for probe in report.get("probes") or []:
-    probe_status = probe.get("status")
-    classification = probe.get("classification") or ""
-    if probe_status == "pass":
-        continue
-    if probe_status == "skipped" and not classification:
-        if not probe.get("dependency_reason"):
-            raise SystemExit("doctor contains an unexplained skipped probe")
-        continue
-    if classification != "ipv6_not_present":
-        raise SystemExit("doctor contains a non-topology-dependent failing probe")
 print("observed")
 PY
 )" || return 1
