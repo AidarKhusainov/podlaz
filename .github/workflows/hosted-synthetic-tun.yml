@@ -57,6 +57,27 @@ jobs:
 
           path = Path('scripts/e2e/hosted-synthetic-tun.sh')
           text = path.read_text(encoding='utf-8')
+          authority_marker = 'assert_verified_active_authority() {\n'
+          diagnostic = r'''diagnose_verified_active_authority() {
+            if guest_exec ip link show dev podlaz0 >/dev/null 2>&1; then echo 'diag.auth.link=pass'; else echo 'diag.auth.link=fail'; fi
+            if guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && assert_tun_package_address_present active podlaz0 198.18.0.1/32" >/dev/null 2>&1; then echo 'diag.auth.address=pass'; else echo 'diag.auth.address=fail'; fi
+            if guest_exec resolvectl status podlaz0 --no-pager >/dev/null 2>&1; then echo 'diag.auth.resolved=pass'; else echo 'diag.auth.resolved=fail'; fi
+            if guest_exec nft list table inet podlaz >/dev/null 2>&1; then echo 'diag.auth.nft=pass'; else echo 'diag.auth.nft=fail'; fi
+            if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null" >/dev/null 2>&1; then echo 'diag.auth.privacy=pass'; else echo 'diag.auth.privacy=fail'; fi
+            if guest_exec test -s /run/podlaz/network-session-continuation.json >/dev/null 2>&1; then echo 'diag.auth.session=pass'; else echo 'diag.auth.session=fail'; fi
+            if guest_exec test -s /run/podlaz/generated/xray.json >/dev/null 2>&1; then echo 'diag.auth.config=pass'; else echo 'diag.auth.config=fail'; fi
+            if guest_exec /bin/bash -lc 'test -d /run/podlaz/transactions && test -n "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -name "*.json" -print -quit)"' >/dev/null 2>&1; then echo 'diag.auth.transaction=pass'; else echo 'diag.auth.transaction=fail'; fi
+            if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then echo 'diag.auth.nm_absent=fail'; else echo 'diag.auth.nm_absent=pass'; fi
+            if guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"' >/dev/null 2>&1; then echo 'diag.auth.xray=pass'; else echo 'diag.auth.xray=fail'; fi
+            if guest_exec python3 "${FALLBACK_NETWORK_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null 2>&1; then echo 'diag.auth.snapshot=pass'; else echo 'diag.auth.snapshot=fail'; fi
+            if guest_exec test -s "${GUEST_MANIFEST}" >/dev/null 2>&1; then echo 'diag.auth.manifest=pass'; else echo 'diag.auth.manifest=fail'; fi
+            if assert_foreign_sentinel >/dev/null 2>&1; then echo 'diag.auth.foreign=pass'; else echo 'diag.auth.foreign=fail'; fi
+          }
+
+          '''
+          if authority_marker not in text:
+              raise SystemExit('authority marker not found')
+          text = text.replace(authority_marker, diagnostic + authority_marker, 1)
           old = '''  (( connect_code == 0 )) || return "${connect_code}"
             wait_guest_status verified-active 120
             assert_verified_active_authority
@@ -64,7 +85,6 @@ jobs:
           new = '''  if (( connect_code != 0 )); then
             echo 'diag.connect_command=fail'
             guest_exec python3 /workspace/scripts/e2e/lib/tun_soak_metrics.py classify-cli-error --stderr-file "${GUEST_PRIVATE}/connect.stderr" | sed 's/^/diag.cli_class=/'
-            guest_exec python3 -c 'import json,re; p="/run/podlaz/diagnostics/tun-last.json";\ntry:\n d=json.load(open(p,encoding="utf-8"))\nexcept Exception:\n print("diag.report=missing")\nelse:\n for k in ("failure_phase","primary_classification"):\n  v=d.get(k,"missing"); v=v if isinstance(v,str) and re.fullmatch(r"[A-Za-z0-9_.-]+",v) else "invalid"; print("diag."+k+"="+v)'
             return "${connect_code}"
           fi
           echo 'diag.connect_command=pass'
@@ -73,6 +93,7 @@ jobs:
             return 1
           fi
           echo 'diag.verified_status=pass'
+          diagnose_verified_active_authority
           if ! assert_verified_active_authority; then
             echo 'diag.authority=fail'
             return 1
