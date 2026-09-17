@@ -254,7 +254,7 @@ def _policy_rule_from_target(target: str, owner: str) -> OwnedPolicyRule:
         raise MetadataError("applied policy-rule target is invalid")
     selector_fields = fields[2:lookup_index]
     if len(selector_fields) != 2 or selector_fields[0] not in {"from", "to", "fwmark"}:
-        raise MetadataError("applied policy-rule selector is invalid")
+        raise MetadataError("applied policy-rule target is invalid")
     rule: dict[str, object] = {
         "owner": owner,
         "priority": priority,
@@ -573,6 +573,16 @@ def verify_manifest(manifest: NetworkManifest) -> bool:
     return True
 
 
+def verify_manifest_present(manifest: NetworkManifest) -> bool:
+    for rule in manifest.rules:
+        if not _rule_present(rule, _inspection_output(rule.show_command())):
+            return False
+    for route in manifest.routes:
+        if not _route_present(route, _inspection_output(route.show_command())):
+            return False
+    return True
+
+
 def cleanup_manifest(manifest: NetworkManifest) -> bool:
     for rule in manifest.rules:
         _run(rule.delete_command())
@@ -584,12 +594,12 @@ def cleanup_manifest(manifest: NetworkManifest) -> bool:
 def main(argv: list[str]) -> int:
     if len(argv) == 4 and argv[1] == "snapshot":
         mode, source, manifest_arg = argv[1:]
-    elif len(argv) == 3 and argv[1] in {"cleanup", "verify"}:
+    elif len(argv) == 3 and argv[1] in {"cleanup", "verify", "verify-present"}:
         mode, manifest_arg = argv[1:]
         source = ""
     else:
         print(
-            "usage: tun-package-fallback-network.py snapshot <transaction-dir> <manifest> | <cleanup|verify> <manifest>",
+            "usage: tun-package-fallback-network.py snapshot <transaction-dir> <manifest> | <cleanup|verify|verify-present> <manifest>",
             file=sys.stderr,
         )
         return 2
@@ -598,7 +608,13 @@ def main(argv: list[str]) -> int:
             snapshot_transactions(Path(source), Path(manifest_arg))
             return 0
         manifest = load_manifest(Path(manifest_arg))
-        return 0 if (cleanup_manifest(manifest) if mode == "cleanup" else verify_manifest(manifest)) else 1
+        if mode == "cleanup":
+            result = cleanup_manifest(manifest)
+        elif mode == "verify-present":
+            result = verify_manifest_present(manifest)
+        else:
+            result = verify_manifest(manifest)
+        return 0 if result else 1
     except InspectionError as exc:
         print(f"fallback network inspection failed: {exc}", file=sys.stderr)
         return 2
