@@ -50,6 +50,40 @@ jobs:
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedSyntheticTUN' -count=1
 
+      - name: Instrument private connect boundary
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/e2e/hosted-synthetic-tun.sh')
+          text = path.read_text(encoding='utf-8')
+          old = '''  (( connect_code == 0 )) || return "${connect_code}"
+            wait_guest_status verified-active 120
+            assert_verified_active_authority
+          '''
+          new = '''  if (( connect_code != 0 )); then
+            echo 'diag.connect_command=fail'
+            guest_exec python3 /workspace/scripts/e2e/lib/tun_soak_metrics.py classify-cli-error --stderr-file "${GUEST_PRIVATE}/connect.stderr" | sed 's/^/diag.cli_class=/'
+            guest_exec python3 -c 'import json,re; p="/run/podlaz/diagnostics/tun-last.json";\ntry:\n d=json.load(open(p,encoding="utf-8"))\nexcept Exception:\n print("diag.report=missing")\nelse:\n for k in ("failure_phase","primary_classification"):\n  v=d.get(k,"missing"); v=v if isinstance(v,str) and re.fullmatch(r"[A-Za-z0-9_.-]+",v) else "invalid"; print("diag."+k+"="+v)'
+            return "${connect_code}"
+          fi
+          echo 'diag.connect_command=pass'
+          if ! wait_guest_status verified-active 120; then
+            echo 'diag.verified_status=fail'
+            return 1
+          fi
+          echo 'diag.verified_status=pass'
+          if ! assert_verified_active_authority; then
+            echo 'diag.authority=fail'
+            return 1
+          fi
+          echo 'diag.authority=pass'
+          '''
+          if old not in text:
+              raise SystemExit('connect boundary marker not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Run hosted synthetic full-TUN qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
