@@ -49,7 +49,7 @@ func TestHostedSyntheticTUNReportValidationIsFailClosed(t *testing.T) {
 		t.Fatalf("all-pass required report rejected: %v", err)
 	}
 	if err := run(map[string]string{"tun.doctor": "observed"}); err != nil {
-		t.Fatalf("topology-dependent doctor observation rejected: %v", err)
+		t.Fatalf("canonical doctor observation rejected: %v", err)
 	}
 	for name, overrides := range map[string]map[string]string{
 		"required observed":    {"candidate.provenance": "observed"},
@@ -112,6 +112,8 @@ func TestHostedSyntheticTUNDoctorUsesStructuredCanonicalSemantics(t *testing.T) 
 		"doctor --tun --json",
 		"healthy",
 		"degraded",
+		"https_partial_failure",
+		"doh_partial_failure",
 		"ipv6_not_present",
 	)
 	forbidHostedSyntheticTUNMarkers(t, doctor, "3) record_evidence tun.doctor observed")
