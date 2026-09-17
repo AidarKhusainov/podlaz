@@ -67,12 +67,12 @@ def transaction() -> dict:
         "desired_plan": {
             "tun": {"interface_name": "podlaz0", "mtu": 1500, "owner": "xray:tun-inbound"},
             "dns": {"backend": "systemd-resolved per-link DNS", "link": "podlaz0", "servers": ["1.1.1.1"], "search_domains": ["~."], "owner": "podlaz"},
-            "nftables": {"family": "inet", "table": "podlaz", "owner": "podlaz:firewall", "chains": [{"name": "output", "hook": "output", "type": "filter", "priority": 0, "policy": "accept", "owner": "podlaz:firewall", "rules": ["ip daddr 172.31.253.1 accept owner podlaz:firewall:server-bypass", 'oifname "lo" accept owner podlaz:firewall:loopback', 'oifname "podlaz0" accept owner podlaz:firewall:tun-egress', 'oifname != "podlaz0" reject owner podlaz:firewall:kill-switch']}]},
+            "nftables": {"family": "inet", "table": "podlaz", "owner": "podlaz:nftables", "chains": [{"name": "output", "hook": "output", "type": "filter", "priority": 0, "policy": "accept", "owner": "podlaz:nftables", "rules": ["ip daddr 172.31.253.1 accept owner podlaz:firewall:server-bypass", 'oifname "lo" accept owner podlaz:firewall:loopback', 'oifname "podlaz0" accept owner podlaz:firewall:tun-egress', 'oifname != "podlaz0" reject owner podlaz:firewall:kill-switch']}]},
             "core": {"runtime_config_path": "/run/podlaz/generated/xray.json", "process_label": "xray", "owner": "podlaz"},
         },
         "rollback": {
             "dns": [{"backend": "systemd-resolved per-link DNS", "link": "podlaz0", "search_domains": ["~."], "owner": "podlaz:dns-link"}],
-            "nftables": [{"family": "inet", "table": "podlaz", "owner": "podlaz:firewall"}],
+            "nftables": [{"family": "inet", "table": "podlaz", "owner": "podlaz:nftables"}],
             "generated_configs": [{"path": "/run/podlaz/generated/xray.json", "owner": "podlaz"}],
             "child_processes": [{"pid": 123, "pid_file": "/run/podlaz/xray.pid", "label": "xray", "config_ref": "/run/podlaz/generated/xray.json", "start_time": "1", "owner": "podlaz"}],
         },
