@@ -394,6 +394,7 @@ wait_for_guest_network_baseline() {
 }
 
 assert_owned_state_absent() {
+  guest_exec install -d -m 0700 "${STALE_GUEST_PRIVATE}" >/dev/null
   guest_exec test ! -e "${SESSION_STATE}" || return 1
   guest_exec test ! -e /run/podlaz/generated/xray.json || return 1
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1' || return 1
