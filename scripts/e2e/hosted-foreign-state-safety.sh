@@ -194,7 +194,7 @@ cleanup() {
 
 wait_for_control_ready() {
   local phase="$1" ready="${CONTROL_DIR}/$1.ready" attempt code
-  for attempt in $(seq 1 6000); do
+  for attempt in $(seq 1 2400); do
     [[ -f "${ready}" && ! -L "${ready}" ]] && return 0
     if [[ -z "${BASE_PID}" ]] || ! kill -0 "${BASE_PID}" >/dev/null 2>&1; then
       if [[ -n "${BASE_PID}" ]]; then
