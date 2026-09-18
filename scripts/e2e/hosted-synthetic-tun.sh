@@ -614,9 +614,38 @@ raise SystemExit(0 if ok else 1)'
   wait_guest_status clean-inactive 20
 }
 
+assert_active_allocated_address() {
+  local cidr
+  cidr="$(guest_exec python3 - "${GUEST_PRIVATE}/status.json" /run/podlaz/transactions <<\'PY\'
+import json
+import pathlib
+import sys
+
+status_path = pathlib.Path(sys.argv[1])
+transactions = pathlib.Path(sys.argv[2])
+with status_path.open(encoding="utf-8") as handle:
+    status = json.load(handle)
+tx_id = str(status.get("active_transaction_id") or "")
+if not tx_id:
+    raise SystemExit("active transaction id is empty")
+path = transactions / f"{tx_id}.json"
+with path.open(encoding="utf-8") as handle:
+    tx = json.load(handle)
+if tx.get("owner") != "podlaz" or tx.get("state") != "committed":
+    raise SystemExit("active transaction is not exact committed Podlaz authority")
+address = ((tx.get("desired_plan") or {}).get("tun_address") or {}).get("cidr")
+if not isinstance(address, str) or "/" not in address:
+    raise SystemExit("active transaction has no allocated TUN address")
+print(address)
+PY
+)"
+  [[ -n "${cidr}" ]]
+  guest_exec ip -4 -o address show dev podlaz0 | grep -F " ${cidr} " >/dev/null
+}
+
 assert_verified_active_authority() {
   guest_exec ip link show dev podlaz0 >/dev/null
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && assert_tun_package_address_present active podlaz0 198.18.0.1/32"
+  assert_active_allocated_address
   # Capture live composition into guest-private files, then compare it to the
   # exact persisted active transaction and current-boot Network Session.
   guest_exec /bin/bash -lc "resolvectl dns >'${GUEST_PRIVATE}/resolved-dns.txt'"
@@ -781,6 +810,7 @@ run_scenario() {
   mark_failure diagnostic_unknown tun.recovery
   run_clean_recovery
   record_evidence tun.recovery_clean pass
+  hosted_control_pause recovery-clean
   FAILURE_CLASS=none
   FAILURE_STEP=none
 }
