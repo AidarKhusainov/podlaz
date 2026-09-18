@@ -234,10 +234,21 @@ run_fault_base_scenario() {
   BASE_PID=$!
 }
 
+wait_for_fault_daemon_ready() {
+  local attempt
+  for attempt in $(seq 1 100); do
+    if guest_exec systemctl is-active --quiet podlazd.service >/dev/null 2>&1 && \
+      guest_exec test -S "${DAEMON_SOCKET}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 install_fault_hook() {
   guest_exec /bin/bash -lc "rm -rf '${HOOK_DIR}'; install -d -m 0700 '${HOOK_DIR}' '${HOOK_DROPIN_DIR}'; printf '%s\\n' '[Service]' 'Environment=PODLAZ_E2E_TUN_HOOKS=true' 'Environment=PODLAZ_E2E_TUN_HOOK_PHASE=${FAULT_PHASE}' 'Environment=PODLAZ_E2E_TUN_HOOK_DIR=${HOOK_DIR}' 'Environment=PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS=60' >'${HOOK_DROPIN}'; systemctl daemon-reload; systemctl restart podlazd.service" >/dev/null
-  guest_exec systemctl is-active --quiet podlazd.service >/dev/null
-  guest_exec test -S "${DAEMON_SOCKET}" >/dev/null
+  wait_for_fault_daemon_ready || return 1
 }
 
 assert_foreign_sentinel() {
