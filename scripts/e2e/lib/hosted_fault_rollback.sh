@@ -349,9 +349,44 @@ wait_for_clean_inactive() {
 }
 
 assert_owned_state_absent() {
-  wait_for_clean_inactive || return 1
-  guest_exec /bin/bash -lc "test ! -e '${SESSION_STATE}' && test ! -e /run/podlaz/generated/xray.json && ! ip link show dev podlaz0 >/dev/null 2>&1 && ! nft list table inet podlaz >/dev/null 2>&1 && nft list tables >'${FAULT_GUEST_PRIVATE}/nft-tables.txt' && ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FAULT_GUEST_PRIVATE}/nft-tables.txt' >/dev/null && python3 -c 'import glob,sys; raise SystemExit(1 if glob.glob(\"/run/podlaz/transactions/*.json\") else 0)'" || return 1
-  wait_for_guest_network_baseline
+  local current="${FAULT_PRIVATE_ROOT}/guest-after-fault" suffix
+  wait_for_clean_inactive || {
+    printf 'owned-state diagnosis: status-not-clean-inactive\n' >&2
+    return 1
+  }
+  guest_exec test ! -e "${SESSION_STATE}" >/dev/null 2>&1 || {
+    printf 'owned-state diagnosis: network-session-remains\n' >&2
+    return 1
+  }
+  guest_exec test ! -e /run/podlaz/generated/xray.json >/dev/null 2>&1 || {
+    printf 'owned-state diagnosis: generated-config-remains\n' >&2
+    return 1
+  }
+  if guest_exec ip link show dev podlaz0 >/dev/null 2>&1; then
+    printf 'owned-state diagnosis: tun-link-remains\n' >&2
+    return 1
+  fi
+  if guest_exec nft list table inet podlaz >/dev/null 2>&1; then
+    printf 'owned-state diagnosis: data-plane-nft-remains\n' >&2
+    return 1
+  fi
+  guest_exec /bin/bash -lc "nft list tables >'${FAULT_GUEST_PRIVATE}/nft-tables.txt' && ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FAULT_GUEST_PRIVATE}/nft-tables.txt' >/dev/null" || {
+    printf 'owned-state diagnosis: privacy-envelope-remains-or-uninspectable\n' >&2
+    return 1
+  }
+  guest_exec python3 -c 'import glob,sys; raise SystemExit(1 if glob.glob("/run/podlaz/transactions/*.json") else 0)' >/dev/null 2>&1 || {
+    printf 'owned-state diagnosis: transaction-remains\n' >&2
+    return 1
+  }
+  if wait_for_guest_network_baseline; then
+    return 0
+  fi
+  for suffix in addr.json routes.json rules.json nft.json nm.txt resolved.txt; do
+    if ! cmp -s "${BASE_NETWORK_PREFIX}.${suffix}" "${current}.${suffix}"; then
+      printf 'owned-state diagnosis: baseline-mismatch.%s\n' "${suffix}" >&2
+    fi
+  done
+  return 1
 }
 
 assert_clean_recovery() {
