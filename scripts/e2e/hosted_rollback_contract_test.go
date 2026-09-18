@@ -10,8 +10,8 @@ import (
 
 const (
 	hostedRollbackWorkflow = "../../.github/workflows/hosted-rollback.yml"
-	hostedApplyRollback = "hosted-apply-rollback.sh"
-	hostedVerifyRollback = "hosted-verify-rollback.sh"
+	hostedApplyRollback    = "hosted-apply-rollback.sh"
+	hostedVerifyRollback   = "hosted-verify-rollback.sh"
 )
 
 func TestHostedSyntheticTunCanBeSourcedWithoutRunningMain(t *testing.T) {
