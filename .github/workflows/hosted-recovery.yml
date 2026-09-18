@@ -1,0 +1,152 @@
+name: Hosted Recovery
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '47 4 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-recovery-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  daemon-recovery:
+    name: Same-boot daemon recovery privacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedDaemonRecovery' -count=1
+
+      - name: Run same-boot daemon recovery qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-recovery-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-recovery-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-daemon-recovery.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-recovery-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-recovery-public
+        run: bash scripts/e2e/hosted-daemon-recovery.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-recovery-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-daemon-recovery
+          path: ${{ runner.temp }}/podlaz-hosted-recovery-public/hosted-daemon-recovery.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  xray-replacement:
+    name: Xray replacement privacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedXrayReplacement' -count=1
+
+      - name: Run Xray replacement qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-xray-replacement-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-xray-replacement-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-xray-replacement.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-xray-replacement-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-xray-replacement-public
+        run: bash scripts/e2e/hosted-xray-replacement.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-xray-replacement-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-xray-replacement
+          path: ${{ runner.temp }}/podlaz-hosted-xray-replacement-public/hosted-xray-replacement.txt
+          if-no-files-found: error
+          retention-days: 7
