@@ -25,7 +25,7 @@ func TestHostedOwnershipSafetyWorkflowKeepsConditionsIndependent(t *testing.T) {
 	)
 }
 
-func TestHostedStaleObservationUsesSupportedMissingLinkRollback(t *testing.T) {
+func TestHostedOwnershipSafetyStaleObservationUsesSupportedMissingLinkRollback(t *testing.T) {
 	hostedStaleObservation   = "hosted-stale-observation.sh"
 	requireHostedRecoveryMarkers(t, script,
 		`BASE_SCENARIO="${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
@@ -67,7 +67,7 @@ func TestHostedStaleObservationUsesSupportedMissingLinkRollback(t *testing.T) {
 	}
 }
 
-func TestHostedForeignStateSafetyCoversFullFixtureAndAllocation(t *testing.T) {
+func TestHostedOwnershipSafetyForeignStateCoversFullFixtureAndAllocation(t *testing.T) {
 	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
 	requireHostedRecoveryMarkers(t, script,
 		`BASE_SCENARIO="${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
@@ -104,7 +104,7 @@ func TestHostedForeignStateSafetyCoversFullFixtureAndAllocation(t *testing.T) {
 	}
 }
 
-func TestHostedSyntheticTUNPositiveControlIsAllocationAware(t *testing.T) {
+func TestHostedOwnershipSafetySyntheticTUNPositiveControlIsAllocationAware(t *testing.T) {
 	base := readHostedRecoveryFile(t, hostedSyntheticTUN)
 	requireHostedRecoveryMarkers(t, base,
 		"assert_active_allocated_address",
