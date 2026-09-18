@@ -10,6 +10,7 @@ import (
 
 const (
 	hostedRollbackWorkflow = "../../.github/workflows/hosted-rollback.yml"
+	hostedRollbackCommon   = "lib/hosted_rollback.sh"
 	hostedApplyRollback    = "hosted-apply-rollback.sh"
 	hostedVerifyRollback   = "hosted-verify-rollback.sh"
 )
@@ -60,16 +61,17 @@ func TestHostedRollbackWorkflowKeepsApplyAndVerifySeparate(t *testing.T) {
 	}
 }
 
-func TestHostedApplyRollbackUsesExistingPostMutationHook(t *testing.T) {
-	assertHostedRollbackScenario(t, hostedApplyRollback, []string{
-		`source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
-		"PODLAZ_E2E_TUN_HOOK_PHASE=tun-address-apply",
-		"tun-address-apply-injected",
-		"failure_phase=network-apply",
-		"primary_classification=tun_address_apply_failure",
+func TestHostedRollbackCommonPreservesDiagnosticAndOwnershipAssertions(t *testing.T) {
+	data, err := os.ReadFile(hostedRollbackCommon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	common := string(data)
+	for _, marker := range []string{
 		"diagnostics-persisted",
 		"rollback-started",
 		"rollback-completed",
+		"assert_event_order",
 		"assert_owned_state_absent",
 		"assert_foreign_sentinel",
 		"assert_recovery_clean",
@@ -79,28 +81,36 @@ func TestHostedApplyRollbackUsesExistingPostMutationHook(t *testing.T) {
 		"foreign.nft_preserved",
 		"recovery.clean",
 		"artifact.privacy",
+	} {
+		if !strings.Contains(common, marker) {
+			t.Fatalf("hosted rollback common contract lost %q", marker)
+		}
+	}
+}
+
+func TestHostedApplyRollbackUsesExistingPostMutationHook(t *testing.T) {
+	assertHostedRollbackScenario(t, hostedApplyRollback, []string{
+		`source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
+		`source "${SCRIPT_DIR}/lib/hosted_rollback.sh"`,
+		"PODLAZ_E2E_TUN_HOOK_PHASE=tun-address-apply",
+		"tun-address-apply-injected",
+		"failure_phase=network-apply",
+		"primary_classification=tun_address_apply_failure",
+		"hosted-apply-rollback.txt",
+		"hosted_rollback_main",
 	})
 }
 
 func TestHostedVerifyRollbackUsesExistingVerificationHook(t *testing.T) {
 	assertHostedRollbackScenario(t, hostedVerifyRollback, []string{
 		`source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
+		`source "${SCRIPT_DIR}/lib/hosted_rollback.sh"`,
 		"PODLAZ_E2E_TUN_HOOK_PHASE=network-verify",
 		"network-verify-injected",
 		"failure_phase=network-verify",
 		"primary_classification=network_verify_failure",
-		"diagnostics-persisted",
-		"rollback-started",
-		"rollback-completed",
-		"assert_owned_state_absent",
-		"assert_foreign_sentinel",
-		"assert_recovery_clean",
-		"connect.failed",
-		"diagnostic.truth",
-		"rollback.owned_absent",
-		"foreign.nft_preserved",
-		"recovery.clean",
-		"artifact.privacy",
+		"hosted-verify-rollback.txt",
+		"hosted_rollback_main",
 	})
 }
 
