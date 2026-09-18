@@ -1,0 +1,56 @@
+name: Temporary Exact Candidate Artifact
+
+on:
+  push:
+    branches:
+      - 'agent/issue-314-candidate-artifact'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET_COMMIT: e251a3551b2600bdf5f1664c1f33604bd948482f
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout exact product candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TARGET_COMMIT }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install package tool
+        run: bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate
+        env:
+          PODLAZ_COMMIT: ${{ env.TARGET_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Record exact artifact identity
+        run: |
+          test -f "${DEV_DEB}"
+          dpkg-deb --field "${DEV_DEB}" Package Version Architecture
+          sha256sum "${DEV_DEB}" > candidate.sha256
+
+      - name: Upload exact candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-exact-candidate
+          path: |
+            ${{ env.DEV_DEB }}
+            candidate.sha256
+          if-no-files-found: error
+          retention-days: 3
