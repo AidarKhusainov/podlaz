@@ -83,9 +83,11 @@ The exact build, package, and acceptance commands are executable in `scripts/**`
 
 ## E2E architecture
 
-Hosted tests validate pure/unit/contract behavior without privileged host mutation. Dedicated package/E2E scenarios validate installed-package, daemon, authorization, lifecycle, recovery, networking, and data-plane behavior. Scenario names describe the invariant they protect, not the issue that originally introduced them.
+Hosted tests validate pure/unit/contract behavior without direct Podlaz-owned mutation of the outer runner. Dedicated package/E2E scenarios validate installed-package, daemon, authorization, lifecycle, recovery, networking, and data-plane behavior. Scenario names describe the invariant they protect, not the issue that originally introduced them.
 
-Shared E2E infrastructure belongs in `scripts/e2e/lib/**`: readiness, package provenance, execution wrappers, bounded polling, evidence capture, and cleanup primitives should be reused. Scenario-specific predicates and resource cleanup remain local when their semantics differ. Destructive host-network E2E must remain explicitly gated to the dedicated runner.
+Shared E2E infrastructure belongs in `scripts/e2e/lib/**`: readiness, package provenance, execution wrappers, bounded polling, evidence capture, and cleanup primitives should be reused. Scenario-specific predicates and resource cleanup remain local when their semantics differ.
+
+Podlaz-owned destructive networking never mutates the outer hosted runner. Hosted qualification may create narrowly scoped infrastructure-owned guest plumbing on that runner when the scenario proves exact baseline restoration and cleanup. Direct destructive product networking on a host remains dedicated-only and explicitly gated to the dedicated runner.
 
 ## Security and privacy rules
 
