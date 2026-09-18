@@ -21,10 +21,6 @@ type TunDeviceExecutor interface {
 	Rollback(ctx context.Context, plan planner.TunDevicePlan) error
 }
 
-type tunDevicePreApplyVerifier interface {
-	VerifyForApply(ctx context.Context, plan planner.TunDevicePlan) error
-}
-
 type tunDeviceStepSinkExecutor interface {
 	CreateWithStepSink(ctx context.Context, plan planner.TunDevicePlan, sink AppliedStepSink) (Step, error)
 }
@@ -85,7 +81,6 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 	if err := e.validatePlan(plan); err != nil {
 		return nil, err
 	}
-	recordE2EApplyTrace("tun-base-validate-passed")
 	steps := make([]Step, 0, 1+len(plan.Routes)+len(plan.PolicyRules))
 
 	record := func(step Step, applyErr error) error {
@@ -98,36 +93,14 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 	case "", "create":
 		return steps, errors.New("daemon-created TUN links are unsupported; Xray owns podlaz0 creation and lifetime")
 	case "verify", "use-existing":
-		if shouldApplyTunAddress(plan.TunAddress) {
-			// Production OS execution proves the existing link is still a TUN with
-			// the planned MTU before the first host mutation, but deliberately does
-			// not require UP yet: the exact bound address stage owns link-up. Other
-			// device executors fall back to their existing full verification.
-			recordE2EApplyTrace("tun-preapply-started")
-			if verifier, ok := e.TunDevice.(tunDevicePreApplyVerifier); ok {
-				if err := verifier.VerifyForApply(ctx, plan.TunDevice); err != nil {
-					recordE2EApplyTrace("tun-preapply-failed")
-					return steps, withApplyFailureSubphase(applyFailureSubphaseTunAddress, err)
-				}
-			} else if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
-				recordE2EApplyTrace("tun-preapply-failed")
-				return steps, withApplyFailureSubphase(applyFailureSubphaseTunAddress, err)
-			}
-			recordE2EApplyTrace("tun-preapply-passed")
-		} else if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
+		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
 			return steps, err
 		}
 	default:
 		return steps, fmt.Errorf("unsupported TUN device action %q", plan.TunDevice.Action)
 	}
 	if shouldApplyTunAddress(plan.TunAddress) {
-		recordE2EApplyTrace("tun-address-apply-started")
 		step, applyErr := e.TunAddress.Apply(ctx, plan.TunAddress)
-		if applyErr != nil {
-			recordE2EApplyTrace("tun-address-apply-failed")
-		} else {
-			recordE2EApplyTrace("tun-address-apply-passed")
-		}
 		if err := record(step, withApplyFailureSubphase(applyFailureSubphaseTunAddress, applyErr)); err != nil {
 			return steps, err
 		}
