@@ -1,9 +1,12 @@
 package executor
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 func TestRecordE2EApplyTraceRequiresArmedRollbackPause(t *testing.T) {
@@ -41,5 +44,24 @@ func TestRecordE2EApplyTraceRejectsUnknownEvent(t *testing.T) {
 	recordE2EApplyTrace("../escape")
 	if _, err := os.Stat(filepath.Join(dir, "escape")); !os.IsNotExist(err) {
 		t.Fatalf("unknown trace event escaped marker directory: %v", err)
+	}
+}
+
+func TestDNSAwareApplyTraceAttributesValidationFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PODLAZ_E2E_TUN_ROLLBACK_PAUSE", "true")
+	t.Setenv("PODLAZ_E2E_TUN_ROLLBACK_PAUSE_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "rollback-pause.arm"), []byte("armed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := DNSAwareTunExecutor{}
+	if _, err := exec.ApplyWithStepSink(context.Background(), planner.TunPlan{}, nil); err == nil {
+		t.Fatal("expected DNS-aware validation failure")
+	}
+	for _, event := range []string{"dnsaware-entered", "dnsaware-validate-dns-failed"} {
+		if _, err := os.Stat(filepath.Join(dir, "apply-trace."+event)); err != nil {
+			t.Fatalf("missing validation trace %s: %v", event, err)
+		}
 	}
 }
