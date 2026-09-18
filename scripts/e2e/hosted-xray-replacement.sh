@@ -422,6 +422,10 @@ flags={part.strip() for part in (flags_match.group(1).split(",") if flags_match 
 up_token="up" if "UP" in flags or "state UP" in first else "down"
 trace_dir=sys.argv[1]
 trace_events=[
+    ("entered","dnsaware-entered"),
+    ("dnsfail","dnsaware-validate-dns-failed"),
+    ("fwfail","dnsaware-validate-firewall-failed"),
+    ("basefail","dnsaware-validate-base-failed"),
     ("dnsvalid","dnsaware-validate-passed"),
     ("basevalid","tun-base-validate-passed"),
     ("prestart","tun-preapply-started"),
