@@ -355,7 +355,7 @@ arm_rollback_pause() {
 }
 
 diagnose_rollback_pause() {
-  guest_exec python3 -c 'import glob,json,re,subprocess
+  guest_exec python3 -c 'import glob,json,os,re,subprocess,sys
 matches=[]
 for path in glob.glob("/run/podlaz/transactions/*.json"):
     try:
@@ -420,7 +420,19 @@ first=text.splitlines()[0] if text else ""
 flags_match=re.search(r"<([^>]*)>", first)
 flags={part.strip() for part in (flags_match.group(1).split(",") if flags_match else [])}
 up_token="up" if "UP" in flags or "state UP" in first else "down"
-print("pre-rollback.bound-address."+step_token+".live-link."+kind_token+"."+ifindex_token+"."+mtu_token+"."+up_token)' | tr -d '[:space:]'
+trace_dir=sys.argv[1]
+trace_events=[
+    ("dnsvalid","dnsaware-validate-passed"),
+    ("basevalid","tun-base-validate-passed"),
+    ("prestart","tun-preapply-started"),
+    ("prepass","tun-preapply-passed"),
+    ("prefail","tun-preapply-failed"),
+    ("addrstart","tun-address-apply-started"),
+    ("addrpass","tun-address-apply-passed"),
+    ("addrfail","tun-address-apply-failed"),
+]
+trace="-".join(label+("1" if os.path.isfile(os.path.join(trace_dir,"apply-trace."+event)) else "0") for label,event in trace_events)
+print("pre-rollback.bound-address."+step_token+".live-link."+kind_token+"."+ifindex_token+"."+mtu_token+"."+up_token+".trace-"+trace)' "${XRAY_HOOK_DIR}" | tr -d '[:space:]'
 }
 
 wait_for_rolling_back_absent() {
