@@ -134,21 +134,30 @@ func (e DNSAwareTunExecutor) Rollback(ctx context.Context, plan planner.TunPlan)
 }
 
 func (e DNSAwareTunExecutor) validate(plan planner.TunPlan) error {
+	recordE2EApplyTrace("dnsaware-entered")
 	if e.DNS == nil {
+		recordE2EApplyTrace("dnsaware-validate-dns-failed")
 		return errors.New("missing DNS executor")
 	}
 	if err := validateDNSPlan(plan.DNS); err != nil {
+		recordE2EApplyTrace("dnsaware-validate-dns-failed")
 		return err
 	}
 	if hasFirewallPlan(plan.Firewall) {
 		if e.Firewall == nil {
+			recordE2EApplyTrace("dnsaware-validate-firewall-failed")
 			return errors.New("missing firewall executor")
 		}
 		if err := validateFirewallPlan(plan.Firewall); err != nil {
+			recordE2EApplyTrace("dnsaware-validate-firewall-failed")
 			return err
 		}
 	}
-	return e.Base.validatePlan(plan)
+	if err := e.Base.validatePlan(plan); err != nil {
+		recordE2EApplyTrace("dnsaware-validate-base-failed")
+		return err
+	}
+	return nil
 }
 
 func (e DNSAwareTunExecutor) BindTunAddress(ctx context.Context, plan planner.TunPlan, proof TunLinkCreationProof) (planner.TunPlan, error) {
