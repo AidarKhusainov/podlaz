@@ -26,7 +26,7 @@ func TestHostedOwnershipSafetyWorkflowKeepsConditionsIndependent(t *testing.T) {
 }
 
 func TestHostedOwnershipSafetyStaleObservationUsesSupportedMissingLinkRollback(t *testing.T) {
-	hostedStaleObservation   = "hosted-stale-observation.sh"
+	script := readHostedRecoveryFile(t, hostedStaleObservation)
 	requireHostedRecoveryMarkers(t, script,
 		`BASE_SCENARIO="${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
 		"PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE=true",
@@ -61,14 +61,14 @@ func TestHostedOwnershipSafetyStaleObservationUsesSupportedMissingLinkRollback(t
 		"rm -rf /run/podlaz/transactions",
 		"rm -f /run/podlaz/network-session-continuation.json",
 	)
-	hostedStaleObservation   = "hosted-stale-observation.sh"
+	cmd := exec.Command("bash", "-n", hostedStaleObservation)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bash -n %s: %v\n%s", hostedStaleObservation, err, output)
 	}
 }
 
 func TestHostedOwnershipSafetyForeignStateCoversFullFixtureAndAllocation(t *testing.T) {
-	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
+	script := readHostedRecoveryFile(t, hostedForeignStateSafety)
 	requireHostedRecoveryMarkers(t, script,
 		`BASE_SCENARIO="${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
 		`PODLAZ_E2E_HOSTED_CONTROL_PHASES="guest-ready verified-active terminal-clean recovery-clean"`,
@@ -98,7 +98,7 @@ func TestHostedOwnershipSafetyForeignStateCoversFullFixtureAndAllocation(t *test
 		"rm -rf /run/podlaz/transactions",
 		"rm -f /run/podlaz/network-session-continuation.json",
 	)
-	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
+	cmd := exec.Command("bash", "-n", hostedForeignStateSafety)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bash -n %s: %v\n%s", hostedForeignStateSafety, err, output)
 	}
