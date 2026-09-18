@@ -129,8 +129,8 @@ func TestHostedFaultRollbackSharedHelperUsesExistingFaultHooksAndExactDiagnostic
 		"assert_foreign_sentinel",
 		"assert_owned_state_absent",
 		"assert_clean_recovery",
-		"failure.class=none",
-		"failure.step=none",
+		"FAILURE_CLASS=none",
+		"FAILURE_STEP=none",
 	)
 	forbidHostedFaultMarkers(t, helper,
 		"ip link del podlaz0",
