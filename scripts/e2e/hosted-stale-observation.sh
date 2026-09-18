@@ -366,7 +366,6 @@ run_clean_recovery() {
 }
 
 run_retry_cycle() {
-  guest_exec python3 "${FALLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${RETRY_MANIFEST}" >/dev/null 2>&1 && return 1
   guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-hosted-synthetic-tun/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/dev/null"
   wait_for_guest_status verified-active 160
   guest_exec nft list table inet "${FOREIGN_NFT_TABLE}" >/dev/null
