@@ -68,20 +68,6 @@ func (e IPTunDeviceExecutor) CreateWithStepSink(ctx context.Context, plan planne
 	return step, nil
 }
 
-func (e IPTunDeviceExecutor) VerifyForApply(ctx context.Context, plan planner.TunDevicePlan) error {
-	if strings.TrimSpace(plan.Name) == "" {
-		return errors.New("missing TUN device name")
-	}
-	result, err := observeCommand(ctx, e.Runner, "ip", "-details", "link", "show", "dev", plan.Name)
-	if err != nil {
-		return fmt.Errorf("verify TUN device %s before apply: %w", plan.Name, err)
-	}
-	if err := verifyTUNLinkShape(plan, result.Stdout); err != nil {
-		return fmt.Errorf("verify TUN device %s before apply: %w", plan.Name, err)
-	}
-	return nil
-}
-
 func (e IPTunDeviceExecutor) Verify(ctx context.Context, plan planner.TunDevicePlan) error {
 	if strings.TrimSpace(plan.Name) == "" {
 		return errors.New("missing TUN device name")
@@ -96,7 +82,7 @@ func (e IPTunDeviceExecutor) Verify(ctx context.Context, plan planner.TunDeviceP
 	return nil
 }
 
-func verifyTUNLinkShape(plan planner.TunDevicePlan, output string) error {
+func verifyTUNLinkDetails(plan planner.TunDevicePlan, output string) error {
 	text := strings.TrimSpace(output)
 	if text == "" {
 		return errors.New("empty ip link details output")
@@ -106,14 +92,6 @@ func verifyTUNLinkShape(plan planner.TunDevicePlan, output string) error {
 	}
 	if plan.MTU > 0 && !linkOutputHasMTU(text, plan.MTU) {
 		return fmt.Errorf("link MTU does not match planned MTU %d: %s", plan.MTU, firstLine(text))
-	}
-	return nil
-}
-
-func verifyTUNLinkDetails(plan planner.TunDevicePlan, output string) error {
-	text := strings.TrimSpace(output)
-	if err := verifyTUNLinkShape(plan, text); err != nil {
-		return err
 	}
 	if !linkOutputIsUp(text) {
 		return fmt.Errorf("link is not up: %s", firstLine(text))
