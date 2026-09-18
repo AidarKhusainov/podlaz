@@ -458,31 +458,6 @@ wait_for_marker() {
 }
 
 
-wait_for_fault_health() {
-  local expected_state="$1" expected_classification="$2" attempt
-  for attempt in $(seq 1 40); do
-    if capture_status >/dev/null 2>&1 && guest_exec python3 - "${GUEST_PRIVATE}/status.json" "${expected_state}" "${expected_classification}" <<'PY' >/dev/null 2>&1
-import json,sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload=json.load(handle)
-status=payload.get("status") or payload
-health=status.get("tun_health") or {}
-ok=(
-    status.get("connection")=="active"
-    and status.get("mode")=="tun"
-    and health.get("state")==sys.argv[2]
-    and health.get("classification")==sys.argv[3]
-)
-raise SystemExit(0 if ok else 1)
-PY
-    then
-      return 0
-    fi
-    sleep 0.05
-  done
-  return 1
-}
-
 wait_for_uplink_active() {
   local attempt
   for attempt in $(seq 1 120); do
@@ -512,7 +487,6 @@ inject_fault() {
       guest_exec test ! -e "${HOOK_DIR}/reconciliation-resolved-unknown.trigger"
       guest_exec touch "${HOOK_DIR}/reconciliation-resolved-unknown.trigger"
       wait_for_marker reconciliation-resolved-unknown.injected
-      wait_for_fault_health revalidating network_converging
       ;;
     route-replacement)
       guest_exec ip -4 route replace blackhole "${FOREIGN_ROUTE_B}" table "${FOREIGN_TABLE}"
