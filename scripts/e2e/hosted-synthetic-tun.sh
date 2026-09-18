@@ -614,9 +614,67 @@ raise SystemExit(0 if ok else 1)'
   wait_guest_status clean-inactive 20
 }
 
+assert_persisted_tun_address_present() {
+  guest_exec python3 - /run/podlaz/transactions <<'PY'
+import glob
+import ipaddress
+import json
+import socket
+import subprocess
+import sys
+
+paths = sorted(glob.glob(sys.argv[1].rstrip("/") + "/*.json"))
+committed = []
+for path in paths:
+    with open(path, encoding="utf-8") as handle:
+        tx = json.load(handle)
+    if tx.get("owner") == "podlaz" and tx.get("mode") == "tun" and tx.get("state") == "committed":
+        committed.append(tx)
+if len(committed) != 1:
+    raise SystemExit(f"expected one committed TUN transaction, found {len(committed)}")
+desired = (committed[0].get("desired_plan") or {}).get("tun_address") or {}
+interface = str(desired.get("interface_name") or "")
+cidr = str(desired.get("cidr") or "")
+if desired.get("owner") != "podlaz:tun-address" or desired.get("family") != "ipv4":
+    raise SystemExit("persisted TUN address ownership is invalid")
+if interface != "podlaz0" or not cidr:
+    raise SystemExit("persisted TUN address identity is incomplete")
+try:
+    expected = ipaddress.ip_interface(cidr)
+except ValueError as exc:
+    raise SystemExit("persisted TUN address is invalid") from exc
+if expected.version != 4:
+    raise SystemExit("persisted TUN address is not IPv4")
+link_index = desired.get("link_index")
+if not isinstance(link_index, int) or link_index <= 0 or desired.get("link_kind") != "tun":
+    raise SystemExit("persisted TUN link identity is incomplete")
+if socket.if_nametoindex(interface) != link_index:
+    raise SystemExit("live TUN ifindex differs from persisted authority")
+result = subprocess.run(
+    ["ip", "-4", "-j", "address", "show", "dev", interface],
+    check=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+)
+links = json.loads(result.stdout)
+observed = set()
+for link in links:
+    for info in link.get("addr_info", []):
+        if info.get("family") != "inet":
+            continue
+        local = info.get("local")
+        prefix = info.get("prefixlen")
+        if local is not None and prefix is not None:
+            observed.add(str(ipaddress.ip_interface(f"{local}/{prefix}")))
+if str(expected) not in observed:
+    raise SystemExit(f"persisted TUN address is absent: {expected}")
+PY
+}
+
 assert_verified_active_authority() {
   guest_exec ip link show dev podlaz0 >/dev/null
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && assert_tun_package_address_present active podlaz0 198.18.0.1/32"
+  assert_persisted_tun_address_present
   # Capture live composition into guest-private files, then compare it to the
   # exact persisted active transaction and current-boot Network Session.
   guest_exec /bin/bash -lc "resolvectl dns >'${GUEST_PRIVATE}/resolved-dns.txt'"
