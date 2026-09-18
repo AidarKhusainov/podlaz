@@ -727,9 +727,11 @@ main() {
   run_scenario
 }
 
-if [[ "${1:-}" == validate-report ]]; then
-  validate_report
-  exit 0
-fi
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ "${1:-}" == validate-report ]]; then
+    validate_report
+    exit 0
+  fi
 
-main "$@"
+  main "$@"
+fi
