@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	hostedStaleObservation      = "hosted-stale-observation.sh"
-	hostedForeignStateSafety    = "hosted-foreign-state-safety.sh"
+	hostedStaleObservation   = "hosted-stale-observation.sh"
+	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
 )
 
 func TestHostedOwnershipSafetyWorkflowKeepsConditionsIndependent(t *testing.T) {
@@ -26,7 +26,7 @@ func TestHostedOwnershipSafetyWorkflowKeepsConditionsIndependent(t *testing.T) {
 }
 
 func TestHostedStaleObservationUsesSupportedMissingLinkRollback(t *testing.T) {
-	script := readHostedRecoveryFile(t, hostedStaleObservation)
+	hostedStaleObservation   = "hosted-stale-observation.sh"
 	requireHostedRecoveryMarkers(t, script,
 		`BASE_SCENARIO="${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
 		"PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE=true",
@@ -61,14 +61,14 @@ func TestHostedStaleObservationUsesSupportedMissingLinkRollback(t *testing.T) {
 		"rm -rf /run/podlaz/transactions",
 		"rm -f /run/podlaz/network-session-continuation.json",
 	)
-	cmd := exec.Command("bash", "-n", hostedStaleObservation)
+	hostedStaleObservation   = "hosted-stale-observation.sh"
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bash -n %s: %v\n%s", hostedStaleObservation, err, output)
 	}
 }
 
 func TestHostedForeignStateSafetyCoversFullFixtureAndAllocation(t *testing.T) {
-	script := readHostedRecoveryFile(t, hostedForeignStateSafety)
+	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
 	requireHostedRecoveryMarkers(t, script,
 		`BASE_SCENARIO="${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
 		`PODLAZ_E2E_HOSTED_CONTROL_PHASES="guest-ready verified-active terminal-clean recovery-clean"`,
@@ -98,7 +98,7 @@ func TestHostedForeignStateSafetyCoversFullFixtureAndAllocation(t *testing.T) {
 		"rm -rf /run/podlaz/transactions",
 		"rm -f /run/podlaz/network-session-continuation.json",
 	)
-	cmd := exec.Command("bash", "-n", hostedForeignStateSafety)
+	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("bash -n %s: %v\n%s", hostedForeignStateSafety, err, output)
 	}
