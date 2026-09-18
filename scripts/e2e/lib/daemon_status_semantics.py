@@ -68,6 +68,23 @@ def clean_inactive(status: dict) -> bool:
     )
 
 
+def terminal_inactive(status: dict) -> bool:
+    txs = transactions(status)
+    active_id = str(status.get("active_transaction_id") or "")
+    committed_count = sum(
+        1
+        for tx in txs
+        if tx.get("state") == "committed" and not bool(tx.get("requires_cleanup"))
+    )
+    return (
+        status.get("connection") == "inactive"
+        and active_id == ""
+        and committed_count == 0
+        and not has_cleanup_required(txs)
+        and status.get("terminal_reason") == "vpn_restore_failed"
+    )
+
+
 def bounded_token(value: object, default: str = "none") -> str:
     token = re.sub(r"[^a-z0-9_.-]+", "-", str(value or "").strip().lower()).strip("-.")
     return token or default
@@ -197,6 +214,8 @@ def main() -> int:
             matched = verified_active(status)
         elif target == "clean-inactive":
             matched = clean_inactive(status)
+        elif target == "terminal-inactive":
+            matched = terminal_inactive(status)
         else:
             return 2
     except (OSError, ValueError, json.JSONDecodeError):

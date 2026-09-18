@@ -34,6 +34,7 @@ HOSTED_CONTROL_DIR="${PODLAZ_E2E_HOSTED_CONTROL_DIR:-}"
 HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180}"
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
+HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -49,6 +50,19 @@ EVIDENCE_KEYS=(
   outer.cleanup
   artifact.privacy
 )
+
+if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
+  EVIDENCE_KEYS=(
+    candidate.provenance
+    ordinary_user.boundary
+    tun.verified_active
+    tun.terminal_cleanup
+    tun.recovery_clean
+    guest.baseline_restored
+    outer.cleanup
+    artifact.privacy
+  )
+fi
 
 CANDIDATE_DEB=""
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
@@ -737,15 +751,22 @@ run_scenario() {
   assert_verified_active_authority
   record_evidence tun.verified_active pass
   hosted_control_pause verified-active
-  mark_failure diagnostic_unknown tun.active_traffic
-  run_active_traffic_checks
-  mark_failure diagnostic_unknown tun.doctor
-  run_tun_doctor
 
-  mark_failure diagnostic_unknown tun.disconnect
-  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
-  wait_guest_status clean-inactive 80
-  record_evidence tun.clean_disconnect pass
+  if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
+    mark_failure product tun.external_terminal
+    wait_guest_status terminal-inactive 80
+  else
+    mark_failure diagnostic_unknown tun.active_traffic
+    run_active_traffic_checks
+    mark_failure diagnostic_unknown tun.doctor
+    run_tun_doctor
+
+    mark_failure diagnostic_unknown tun.disconnect
+    run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
+    wait_guest_status clean-inactive 80
+    record_evidence tun.clean_disconnect pass
+  fi
+
   mark_failure diagnostic_unknown tun.terminal_cleanup
   assert_terminal_authority_clean
   record_evidence tun.terminal_cleanup pass
@@ -768,6 +789,10 @@ main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
+  case "${HOSTED_EXPECT_CONNECT_FAILURE}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}" in
+    false:false|true:false|false:true) ;;
+    *) fail "hosted failure mode flags are invalid or conflicting" ;;
+  esac
   install -d -m 0700 "${PRIVATE_ROOT}" "${E2E_ARTIFACT_DIR}" "${XRAY_ROOT}"
   : >"${REPORT}"
   chmod 0600 "${REPORT}"
