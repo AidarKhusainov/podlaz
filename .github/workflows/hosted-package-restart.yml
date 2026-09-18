@@ -1,0 +1,122 @@
+name: Hosted Package Restart
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '13 5 * * 5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-package-restart-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  real-provider-package-restart:
+    name: Real-provider v0.2.40 package restart
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    environment: vpn-e2e
+    timeout-minutes: 120
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      PREVIOUS_DEB: dist/podlaz_0.2.40_linux_amd64.deb
+      PREVIOUS_SHA256: c9d8f76838292d39355506123e2f03ca1f0a96227fb2c22af8324ac6baf3b278
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Resolve exact candidate version
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          candidate_version="0.2.42+git.${short_sha}"
+          echo "CANDIDATE_VERSION=${candidate_version}" >>"${GITHUB_ENV}"
+          echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb" >>"${GITHUB_ENV}"
+
+      - name: Build exact candidate package
+        run: |
+          PODLAZ_VERSION="${CANDIDATE_VERSION}" \
+            PODLAZ_DEB_VERSION="${CANDIDATE_VERSION}" \
+            PODLAZ_COMMIT="${CANDIDATE_COMMIT}" \
+            bash scripts/build-deb.sh
+
+      - name: Fetch exact public v0.2.40 package
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${PREVIOUS_DEB}" \
+            https://github.com/AidarKhusainov/podlaz/releases/download/v0.2.40/podlaz_0.2.40_linux_amd64.deb
+          printf '%s  %s\n' "${PREVIOUS_SHA256}" "${PREVIOUS_DEB}" | sha256sum -c -
+
+      - name: Scenario contract
+        run: |
+          go test ./scripts/e2e -run '^TestHostedPackageRestart' -count=1
+          python3 -m unittest scripts/e2e/tests/test_tun_terminal_recovery_contract.py
+
+      - name: Run isolated real-provider package restart qualification
+        id: qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-package-restart-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-package-restart-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+          PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+          PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+          PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-package-restart-recovery.sh "${CANDIDATE_DEB}" "${PREVIOUS_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-package-restart-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-package-restart-public
+        run: bash scripts/e2e/hosted-package-restart-recovery.sh validate-report
+
+      - name: Verify public artifacts are privacy-safe
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-package-restart-public
+        run: |
+          test -f "${E2E_ARTIFACT_DIR}/hosted-package-restart-recovery.txt"
+          grep -Fx 'artifact.privacy=pass' "${E2E_ARTIFACT_DIR}/hosted-package-restart-recovery.txt" >/dev/null
+
+      - name: Remove private qualification state
+        id: private_cleanup
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-package-restart-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-package-restart
+          path: ${{ runner.temp }}/podlaz-hosted-package-restart-public
+          if-no-files-found: error
+          retention-days: 7
