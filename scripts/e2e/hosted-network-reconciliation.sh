@@ -368,10 +368,9 @@ create_foreign_fixture() {
 }
 
 assert_foreign_fixture() {
-  local expected="${1:-${FOREIGN_EXPECTED_ROUTE}}"
   guest_exec ip link show dev "${FOREIGN_TUN}" >/dev/null 2>&1
   guest_exec ip -4 address show dev "${FOREIGN_TUN}" | grep -F "${FOREIGN_TUN_CIDR}" >/dev/null
-  guest_exec ip -4 route show table "${FOREIGN_TABLE}" | grep -F "${expected%/32}" >/dev/null
+  guest_exec ip -4 route show table "${FOREIGN_TABLE}" | grep -F "${FOREIGN_EXPECTED_ROUTE%/32}" >/dev/null
   guest_exec /bin/bash -lc "nft -j list table inet '${FOREIGN_NFT_TABLE}' >'${GUEST_PRIVATE}/foreign-nft-current.json'; cmp -s '${GUEST_PRIVATE}/foreign-nft-before.json' '${GUEST_PRIVATE}/foreign-nft-current.json'"
 }
 
@@ -603,7 +602,7 @@ main() {
   configure_scenario "$1"
   [[ -f "$2" && ! -L "$2" ]] || fail "candidate package must be a regular file"
   [[ "${EXPECTED_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "PODLAZ_E2E_CANDIDATE_COMMIT must be an exact 40-hex commit"
-  require_cmd awk bash chmod cmp curl find grep install ip nmcli nft python3 rm seq sleep sudo systemd-run timeout
+  require_cmd awk bash chmod cmp curl find grep install ip nft python3 rm seq sleep sudo systemd-run timeout
   install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
   : >"${REPORT}"
   chmod 0600 "${REPORT}"
