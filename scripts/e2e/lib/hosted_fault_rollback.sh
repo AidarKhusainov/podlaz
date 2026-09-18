@@ -15,9 +15,14 @@ HOOK_DROPIN="${HOOK_DROPIN_DIR}/99-hosted-fault-rollback.conf"
 DIAGNOSTIC_REPORT="/run/podlaz/diagnostics/tun-last.json"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 SESSION_STATE="/run/podlaz/network-session-continuation.json"
+TRANSACTION_DIR="/run/podlaz/transactions"
 GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-synthetic-tun"
 FAULT_GUEST_PRIVATE="/tmp/podlaz-hosted-fault-rollback"
 STATUS_HELPER="/workspace/scripts/e2e/lib/daemon_status_semantics.py"
+ROLLBACK_NETWORK_HELPER="/workspace/scripts/e2e/tun-package-fallback-network.py"
+ROLLBACK_PAUSE_ARM="${HOOK_DIR}/rollback-pause.arm"
+ROLLBACK_PAUSE_READY="${HOOK_DIR}/rollback-pause.ready"
+ROLLBACK_PAUSE_CONTINUE="${HOOK_DIR}/rollback-pause.continue"
 
 FAULT_PRIVATE_ROOT=""
 BASE_TMP_ROOT=""
@@ -39,7 +44,11 @@ FAULT_EVIDENCE_KEYS=(
   fault.injected
   connect.failed
   diagnostic.classification
+  diagnostic.pre_rollback
   diagnostic.rollback_order
+  rollback.authority
+  terminal.failure
+  privacy.fail_closed
   owned_state.absent
   foreign_state.preserved
   recovery.clean
@@ -94,7 +103,11 @@ required = {
     "fault.injected",
     "connect.failed",
     "diagnostic.classification",
+    "diagnostic.pre_rollback",
     "diagnostic.rollback_order",
+    "rollback.authority",
+    "terminal.failure",
+    "privacy.fail_closed",
     "owned_state.absent",
     "foreign_state.preserved",
     "recovery.clean",
@@ -135,12 +148,14 @@ guest_exec() {
 
 release_all_fault_controls() {
   local phase continue
-  [[ -d "${CONTROL_DIR}" ]] || return 0
-  for phase in candidate-ready connect-failed; do
-    continue="${CONTROL_DIR}/${phase}.continue"
-    [[ -e "${continue}" ]] || printf 'continue\n' >"${continue}"
-    chmod 0600 "${continue}" >/dev/null 2>&1 || true
-  done
+  if [[ -d "${CONTROL_DIR}" ]]; then
+    for phase in candidate-ready connect-failed; do
+      continue="${CONTROL_DIR}/${phase}.continue"
+      [[ -e "${continue}" ]] || printf 'continue\n' >"${continue}"
+      chmod 0600 "${continue}" >/dev/null 2>&1 || true
+    done
+  fi
+  guest_exec /bin/bash -lc "if test -d '${HOOK_DIR}'; then printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}'; chmod 0600 '${ROLLBACK_PAUSE_CONTINUE}'; fi" >/dev/null 2>&1 || true
 }
 
 hosted_fault_cleanup() {
@@ -247,8 +262,30 @@ wait_for_fault_daemon_ready() {
 }
 
 install_fault_hook() {
-  guest_exec /bin/bash -lc "rm -rf '${HOOK_DIR}'; install -d -m 0700 '${HOOK_DIR}' '${HOOK_DROPIN_DIR}'; printf '%s\\n' '[Service]' 'Environment=PODLAZ_E2E_TUN_HOOKS=true' 'Environment=PODLAZ_E2E_TUN_HOOK_PHASE=${FAULT_PHASE}' 'Environment=PODLAZ_E2E_TUN_HOOK_DIR=${HOOK_DIR}' 'Environment=PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS=60' >'${HOOK_DROPIN}'; systemctl daemon-reload; systemctl restart podlazd.service" >/dev/null
+  guest_exec /bin/bash -lc "rm -rf '${HOOK_DIR}'; install -d -m 0700 '${HOOK_DIR}' '${HOOK_DROPIN_DIR}'; printf '%s\\n' '[Service]' 'Environment=PODLAZ_E2E_TUN_HOOKS=true' 'Environment=PODLAZ_E2E_TUN_HOOK_PHASE=${FAULT_PHASE}' 'Environment=PODLAZ_E2E_TUN_HOOK_DIR=${HOOK_DIR}' 'Environment=PODLAZ_E2E_TUN_HOOK_TIMEOUT_SECONDS=60' 'Environment=PODLAZ_E2E_TUN_ROLLBACK_PAUSE=true' 'Environment=PODLAZ_E2E_TUN_ROLLBACK_PAUSE_DIR=${HOOK_DIR}' 'Environment=PODLAZ_E2E_TUN_ROLLBACK_PAUSE_TIMEOUT_SECONDS=60' >'${HOOK_DROPIN}'; systemctl daemon-reload; systemctl restart podlazd.service" >/dev/null
   wait_for_fault_daemon_ready || return 1
+}
+
+arm_rollback_pause() {
+  guest_exec /bin/bash -lc "rm -f '${ROLLBACK_PAUSE_READY}' '${ROLLBACK_PAUSE_CONTINUE}'; printf 'armed\\n' >'${ROLLBACK_PAUSE_ARM}'; chmod 0600 '${ROLLBACK_PAUSE_ARM}'"
+}
+
+wait_for_rollback_pause_ready() {
+  local attempt
+  for attempt in $(seq 1 600); do
+    if guest_exec test -f "${ROLLBACK_PAUSE_READY}" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ -z "${BASE_PID}" ]] || ! kill -0 "${BASE_PID}" >/dev/null 2>&1; then
+      return 1
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+release_rollback_pause() {
+  guest_exec /bin/bash -lc "test -f '${ROLLBACK_PAUSE_READY}' && test ! -e '${ROLLBACK_PAUSE_CONTINUE}' && printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}' && chmod 0600 '${ROLLBACK_PAUSE_CONTINUE}'" >/dev/null
 }
 
 assert_foreign_sentinel() {
@@ -286,6 +323,26 @@ if first_index >= second_index:
 PY
 }
 
+assert_pre_rollback_failure_report() {
+  local path="$1"
+  python3 - "${path}" "${FAULT_FAILURE_PHASE}" "${FAULT_CLASSIFICATION}" <<'PY'
+import json
+import sys
+
+path, phase, classification = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    report = json.load(handle)
+expected = {
+    "failure_phase": phase,
+    "primary_classification": classification,
+    "rollback_status": "pending",
+}
+for key, value in expected.items():
+    if report.get(key) != value:
+        raise SystemExit(f"{key}={report.get(key)!r}, expected {value!r}")
+PY
+}
+
 assert_failure_report() {
   local path="$1"
   python3 - "${path}" "${FAULT_FAILURE_PHASE}" "${FAULT_CLASSIFICATION}" <<'PY'
@@ -306,6 +363,141 @@ for key, value in expected.items():
 if report.get("primary_classification") in {"healthy", "degraded", "unhealthy", "unavailable"}:
     raise SystemExit("overall health state leaked into failure classification")
 PY
+}
+
+assert_durable_rollback_authority() {
+  guest_exec install -d -m 0700 "${FAULT_GUEST_PRIVATE}" >/dev/null
+  guest_exec python3 - "${TRANSACTION_DIR}" "${FAULT_PHASE}" <<'PY'
+import glob
+import json
+import sys
+
+transaction_dir, fault_phase = sys.argv[1:]
+paths = sorted(glob.glob(transaction_dir.rstrip("/") + "/*.json"))
+if len(paths) != 1:
+    raise SystemExit(f"expected exactly one durable TUN transaction, found {len(paths)}")
+with open(paths[0], encoding="utf-8") as handle:
+    tx = json.load(handle)
+if tx.get("schema_version") != "podlaz.transaction.v1" or tx.get("owner") != "podlaz" or tx.get("mode") != "tun":
+    raise SystemExit("transaction identity is not exact Podlaz TUN authority")
+if tx.get("state") != "rolling_back":
+    raise SystemExit(f"transaction state={tx.get('state')!r}, expected rolling_back")
+
+steps = tx.get("applied_steps") or []
+if not isinstance(steps, list) or not steps:
+    raise SystemExit("rolling-back transaction has no durable applied-step authority")
+owners = {
+    "tun-address": "podlaz:tun-address",
+    "route": "podlaz:route",
+    "policy-rule": "podlaz:policy-rule",
+    "dns": "podlaz:dns-link",
+    "nftables": "podlaz:nftables",
+}
+kinds = []
+for step in steps:
+    if not isinstance(step, dict):
+        raise SystemExit("applied step is not an object")
+    kind = str(step.get("kind") or "")
+    target = str(step.get("target") or "")
+    owner = str(step.get("owner") or "")
+    if kind not in owners or owner != owners[kind] or not target:
+        raise SystemExit(f"invalid durable applied step kind={kind!r} owner={owner!r}")
+    kinds.append(kind)
+
+if fault_phase == "tun-address-apply":
+    if kinds != ["tun-address"]:
+        raise SystemExit(f"address-apply fault authority is not exact: {kinds!r}")
+elif fault_phase == "network-verify":
+    required = {"tun-address", "route", "policy-rule", "dns", "nftables"}
+    missing = required.difference(kinds)
+    if missing:
+        raise SystemExit(f"verify fault lacks durable ownership kinds: {sorted(missing)!r}")
+else:
+    raise SystemExit(f"unsupported hosted fault phase {fault_phase!r}")
+
+rollback = tx.get("rollback") or {}
+if not isinstance(rollback, dict):
+    raise SystemExit("rollback metadata is not an object")
+
+address_steps = [step for step in steps if step["kind"] == "tun-address"]
+addresses = rollback.get("tun_addresses") or []
+if len(addresses) != len(address_steps):
+    raise SystemExit("TUN address rollback metadata does not exactly cover applied address steps")
+for step, item in zip(address_steps, addresses):
+    if not isinstance(item, dict) or item.get("owner") != "podlaz:tun-address":
+        raise SystemExit("TUN address rollback owner is invalid")
+    interface = str(item.get("interface_name") or "")
+    cidr = str(item.get("cidr") or "")
+    index = item.get("link_index")
+    kind = str(item.get("link_kind") or "")
+    if not interface or not cidr or not isinstance(index, int) or index <= 0 or kind != "tun" or item.get("appeared_after_core") is not True:
+        raise SystemExit("TUN address rollback identity is incomplete")
+    expected = f"{interface}@ifindex={index}:{cidr}"
+    if step.get("target") != expected:
+        raise SystemExit("TUN address applied step and rollback identity disagree")
+
+dns_steps = [step for step in steps if step["kind"] == "dns"]
+dns_items = rollback.get("dns") or []
+if len(dns_items) != len(dns_steps):
+    raise SystemExit("DNS rollback metadata does not exactly cover applied DNS steps")
+for step, item in zip(dns_steps, dns_items):
+    if not isinstance(item, dict) or item.get("owner") != "podlaz:dns-link" or item.get("link") != step.get("target"):
+        raise SystemExit("DNS rollback identity does not match applied step")
+
+nft_steps = [step for step in steps if step["kind"] == "nftables"]
+nft_items = rollback.get("nftables") or []
+if len(nft_items) != len(nft_steps):
+    raise SystemExit("nftables rollback metadata does not exactly cover applied firewall steps")
+for step, item in zip(nft_steps, nft_items):
+    if not isinstance(item, dict) or item.get("owner") != "podlaz:nftables":
+        raise SystemExit("nftables rollback owner is invalid")
+    exact = f"{item.get('family') or ''} {item.get('table') or ''}".strip()
+    if exact != step.get("target"):
+        raise SystemExit("nftables rollback identity does not match applied step")
+
+configs = rollback.get("generated_configs") or []
+if len(configs) != 1 or configs[0].get("owner") != "podlaz" or configs[0].get("path") != "/run/podlaz/generated/xray.json":
+    raise SystemExit("generated-config rollback authority is not exact")
+children = rollback.get("child_processes") or []
+if len(children) != 1 or children[0].get("owner") != "podlaz" or children[0].get("label") != "xray" or not children[0].get("pid") or not children[0].get("start_time"):
+    raise SystemExit("Xray child rollback authority is not exact")
+PY
+  guest_exec python3 "${ROLLBACK_NETWORK_HELPER}" snapshot "${TRANSACTION_DIR}" "${FAULT_GUEST_PRIVATE}/rollback-network.json" >/dev/null
+  guest_exec python3 "${ROLLBACK_NETWORK_HELPER}" verify-present "${FAULT_GUEST_PRIVATE}/rollback-network.json" >/dev/null
+}
+
+capture_fault_status() {
+  guest_exec install -d -m 0700 "${FAULT_GUEST_PRIVATE}" >/dev/null
+  guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FAULT_GUEST_PRIVATE}/status.json'"
+}
+
+assert_not_published_success() {
+  capture_fault_status || return 1
+  ! guest_exec python3 "${STATUS_HELPER}" verified-active "${FAULT_GUEST_PRIVATE}/status.json" >/dev/null 2>&1
+}
+
+assert_failed_connect_terminal() {
+  capture_fault_status || return 1
+  guest_exec python3 - "${FAULT_GUEST_PRIVATE}/status.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    status = json.load(handle)
+transactions = status.get("transactions") or []
+if status.get("connection") != "inactive":
+    raise SystemExit(f"connection={status.get('connection')!r}, expected inactive")
+if str(status.get("active_transaction_id") or ""):
+    raise SystemExit("failed connect published an active transaction")
+if any(tx.get("state") == "committed" or bool(tx.get("requires_cleanup")) for tx in transactions):
+    raise SystemExit("failed connect retained committed or cleanup-required transaction status")
+if status.get("terminal_reason") != "vpn_connect_failed":
+    raise SystemExit(f"terminal_reason={status.get('terminal_reason')!r}, expected vpn_connect_failed")
+PY
+}
+
+assert_privacy_envelope_absent() {
+  guest_exec /bin/bash -lc "nft list tables >'${FAULT_GUEST_PRIVATE}/nft-tables.txt' && ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FAULT_GUEST_PRIVATE}/nft-tables.txt' >/dev/null"
 }
 
 capture_guest_network_snapshot() {
@@ -336,22 +528,10 @@ wait_for_guest_network_baseline() {
   return 1
 }
 
-wait_for_clean_inactive() {
-  local attempt
-  guest_exec install -d -m 0700 "${FAULT_GUEST_PRIVATE}" >/dev/null
-  for attempt in $(seq 1 160); do
-    if guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FAULT_GUEST_PRIVATE}/status.json' 2>/dev/null && python3 '${STATUS_HELPER}' clean-inactive '${FAULT_GUEST_PRIVATE}/status.json' >/dev/null" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.25
-  done
-  return 1
-}
-
 assert_owned_state_absent() {
   local current="${FAULT_PRIVATE_ROOT}/guest-after-fault" suffix
-  wait_for_clean_inactive || {
-    printf 'owned-state diagnosis: status-not-clean-inactive\n' >&2
+  assert_failed_connect_terminal || {
+    printf 'owned-state diagnosis: failed-connect-terminal-status-invalid\n' >&2
     return 1
   }
   guest_exec test ! -e "${SESSION_STATE}" >/dev/null 2>&1 || {
@@ -405,32 +585,53 @@ run_fault_scenario() {
 
   hosted_fault_mark_failure fixture fault.hook_install
   install_fault_hook || fail "could not install supported TUN fault hook"
+  arm_rollback_pause || fail "could not arm production rollback pause"
 
   hosted_fault_mark_failure product fault.connect
   release_fault_control candidate-ready || fail "could not release candidate-ready boundary"
-  wait_for_fault_control_ready connect-failed || fail "faulted connect did not reach expected failed-connect boundary"
-  hosted_fault_record connect.failed pass
+  wait_for_rollback_pause_ready || fail "faulted connect did not reach pre-rollback authority boundary"
 
   events="${FAULT_PRIVATE_ROOT}/events.log"
   diagnostic="${FAULT_PRIVATE_ROOT}/tun-last.json"
-  capture_fault_file "${HOOK_EVENTS}" "${events}" || fail "fault hook events are unavailable"
-  capture_fault_file "${DIAGNOSTIC_REPORT}" "${diagnostic}" || fail "TUN failure diagnostic is unavailable"
+  capture_fault_file "${HOOK_EVENTS}" "${events}" || fail "pre-rollback fault events are unavailable"
+  capture_fault_file "${DIAGNOSTIC_REPORT}" "${diagnostic}" || fail "pre-rollback TUN failure diagnostic is unavailable"
   assert_event_present "${events}" "${FAULT_EVENT}" || fail "expected fault injection event is absent"
   hosted_fault_record fault.injected pass
-  assert_failure_report "${diagnostic}" || fail "failure diagnostic phase/classification/rollback status is incorrect"
-  hosted_fault_record diagnostic.classification pass
-  assert_event_present "${events}" diagnostics-persisted || fail "diagnostic persistence event is absent"
-  assert_event_present "${events}" rollback-started || fail "rollback start event is absent"
-  assert_event_present "${events}" rollback-completed || fail "rollback completion event is absent"
+  assert_event_present "${events}" diagnostics-persisted || fail "diagnostic persistence event is absent before rollback"
+  assert_event_present "${events}" rollback-started || fail "rollback start event is absent at rollback boundary"
+  if grep -Fx rollback-completed "${events}" >/dev/null; then
+    fail "rollback completed before pre-rollback authority inspection"
+  fi
   assert_event_order "${events}" diagnostics-persisted rollback-started || fail "diagnostics were not persisted before rollback"
+  assert_pre_rollback_failure_report "${diagnostic}" || fail "pre-rollback failure diagnostic is not exact"
+  hosted_fault_record diagnostic.pre_rollback pass
+  hosted_fault_record diagnostic.classification pass
+  assert_durable_rollback_authority || fail "rollback is not backed by exact durable Podlaz ownership"
+  hosted_fault_record rollback.authority pass
+  assert_foreign_sentinel || fail "foreign nft state changed before rollback"
+  assert_not_published_success || fail "faulted connect was published as verified active before rollback"
+  assert_privacy_envelope_absent || fail "Privacy Envelope was armed before apply/verify failure rollback"
+
+  release_rollback_pause || fail "could not release production rollback"
+  wait_for_fault_control_ready connect-failed || fail "faulted connect did not reach expected failed-connect boundary"
+  hosted_fault_record connect.failed pass
+
+  capture_fault_file "${HOOK_EVENTS}" "${events}" || fail "final fault hook events are unavailable"
+  capture_fault_file "${DIAGNOSTIC_REPORT}" "${diagnostic}" || fail "final TUN failure diagnostic is unavailable"
+  assert_failure_report "${diagnostic}" || fail "failure diagnostic phase/classification/rollback status is incorrect"
+  assert_event_present "${events}" rollback-completed || fail "rollback completion event is absent"
   assert_event_order "${events}" rollback-started rollback-completed || fail "rollback lifecycle order is incorrect"
   hosted_fault_record diagnostic.rollback_order pass
+  assert_failed_connect_terminal || fail "failed connect terminal publication is incorrect"
+  hosted_fault_record terminal.failure pass
 
   hosted_fault_mark_failure product fault.post_rollback
   assert_foreign_sentinel || fail "foreign nft state changed during rollback"
   hosted_fault_record foreign_state.preserved pass
   assert_owned_state_absent || fail "owned network/runtime state did not return to exact pre-connect baseline"
   hosted_fault_record owned_state.absent pass
+  assert_privacy_envelope_absent || fail "Privacy Envelope residue remains after rollback"
+  hosted_fault_record privacy.fail_closed pass
   assert_clean_recovery || fail "post-rollback recovery inspection is not clean"
   hosted_fault_record recovery.clean pass
 
