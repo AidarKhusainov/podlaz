@@ -14,9 +14,6 @@ HOOK_DROPIN_DIR="/run/systemd/system/podlazd.service.d"
 HOOK_DROPIN="${HOOK_DROPIN_DIR}/99-hosted-stale-observation.conf"
 HOOK_READY="${HOOK_DIR}/dns-missing-link.ready"
 HOOK_CONTINUE="${HOOK_DIR}/dns-missing-link.continue"
-DNS_ROLLBACK_EXIT_CODE="${HOOK_DIR}/dns-rollback.exit-code"
-DNS_ROLLBACK_STDOUT="${HOOK_DIR}/dns-rollback.stdout"
-DNS_ROLLBACK_STDERR="${HOOK_DIR}/dns-rollback.stderr"
 DIAGNOSTIC_REPORT="/run/podlaz/diagnostics/tun-last.json"
 SESSION_STATE="/run/podlaz/network-session-continuation.json"
 GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-synthetic-tun"
@@ -45,7 +42,7 @@ EVIDENCE_KEYS=(
   candidate.provenance
   resolver.fault_injected
   resolver.missing_link_classified
-  resolver.rollback_order
+  resolver.fail_closed_no_name_cleanup
   resolver.bounded_convergence
   link.stale_classified
   observation.never_authority
@@ -95,7 +92,7 @@ required = {
     "candidate.provenance",
     "resolver.fault_injected",
     "resolver.missing_link_classified",
-    "resolver.rollback_order",
+    "resolver.fail_closed_no_name_cleanup",
     "resolver.bounded_convergence",
     "link.stale_classified",
     "observation.never_authority",
@@ -336,16 +333,18 @@ assert_missing_link_classification() {
   local events="${PRIVATE_ROOT}/events.log" diagnostic="${PRIVATE_ROOT}/tun-last.json"
   capture_guest_file "${HOOK_EVENTS}" "${events}"
   capture_guest_file "${DIAGNOSTIC_REPORT}" "${diagnostic}"
-  guest_exec grep -Fx 1 "${DNS_ROLLBACK_EXIT_CODE}" >/dev/null
-  guest_exec test ! -s "${DNS_ROLLBACK_STDOUT}"
-  guest_exec python3 "${MISSING_LINK_HELPER}" "${DNS_ROLLBACK_STDERR}"
-  for event in dns-missing-link-ready dns-missing-link-released diagnostics-persisted rollback-started dns-rollback-started dns-rollback-result-captured rollback-completed; do
+
+  for event in dns-missing-link-ready dns-missing-link-released diagnostics-persisted rollback-started diagnostics-finalized-failed rollback-failed; do
     grep -Fx "${event}" "${events}" >/dev/null || return 1
   done
+  if grep -Fx dns-rollback-started "${events}" >/dev/null ||
+      grep -Fx dns-rollback-result-captured "${events}" >/dev/null ||
+      grep -Fx rollback-completed "${events}" >/dev/null; then
+    return 1
+  fi
   assert_event_order "${events}" diagnostics-persisted rollback-started
-  assert_event_order "${events}" rollback-started dns-rollback-started
-  assert_event_order "${events}" dns-rollback-started dns-rollback-result-captured
-  assert_event_order "${events}" dns-rollback-result-captured rollback-completed
+  assert_event_order "${events}" rollback-started rollback-failed
+
   python3 - "${diagnostic}" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -353,12 +352,38 @@ with open(sys.argv[1],encoding="utf-8") as handle:
 expected={
     "failure_phase":"network-verify",
     "primary_classification":"network_verify_failure",
-    "rollback_status":"completed",
+    "rollback_status":"failed",
 }
 for key,value in expected.items():
     if report.get(key)!=value:
         raise SystemExit(f"{key}={report.get(key)!r}, expected {value!r}")
 PY
+
+  guest_exec install -d -m 0700 "${STALE_GUEST_PRIVATE}"
+  guest_exec /bin/bash -lc "set +e; resolvectl status podlaz0 --no-pager >'${STALE_GUEST_PRIVATE}/resolved-missing.stdout' 2>'${STALE_GUEST_PRIVATE}/resolved-missing.stderr'; code=\$?; set -e; test \$code -eq 1; test ! -s '${STALE_GUEST_PRIVATE}/resolved-missing.stdout'; python3 '${MISSING_LINK_HELPER}' '${STALE_GUEST_PRIVATE}/resolved-missing.stderr'"
+  guest_exec /bin/bash -lc "set +e; /usr/bin/podlaz doctor >'${STALE_GUEST_PRIVATE}/doctor-after-missing.txt' 2>&1; set -e; grep -F 'resolved:' '${STALE_GUEST_PRIVATE}/doctor-after-missing.txt' | grep -F 'no podlaz-owned DNS state found for podlaz0' >/dev/null"
+}
+
+wait_for_clean_inactive_status() {
+  local attempt
+  for attempt in $(seq 1 160); do
+    if guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >'${STALE_GUEST_PRIVATE}/status.json' 2>/dev/null && python3 '${STATUS_HELPER}' clean-inactive '${STALE_GUEST_PRIVATE}/status.json'" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+restart_without_missing_link_hook() {
+  guest_exec /bin/bash -lc "rm -f '${HOOK_DROPIN}'; systemctl daemon-reload; systemctl restart podlazd.service"
+  wait_for_daemon_ready
+  wait_for_clean_inactive_status
+}
+
+cleanup_missing_link_hook_dir() {
+  guest_exec test -d "${HOOK_DIR}" >/dev/null 2>&1 || return 0
+  guest_exec /bin/bash -lc "find '${HOOK_DIR}' -mindepth 1 -maxdepth 1 -type f \( -name 'dns-missing-link.ready' -o -name 'dns-missing-link.continue' -o -name 'events.log' \) -delete; test -z \"\$(find '${HOOK_DIR}' -mindepth 1 -maxdepth 1 -print -quit)\"; rmdir '${HOOK_DIR}'"
 }
 
 assert_foreign_sentinel() {
@@ -476,15 +501,17 @@ run_scenario() {
 
   mark_failure product stale.connect_failure
   wait_for_control_ready connect-failed || fail "faulted connect did not reach expected failure boundary"
-  assert_missing_link_classification || fail "missing-link resolver observation was not classified exactly"
+  assert_missing_link_classification || fail "missing-link resolver/link observation did not preserve current fail-closed classification"
   record_evidence resolver.missing_link_classified pass
-  record_evidence resolver.rollback_order pass
+  record_evidence resolver.fail_closed_no_name_cleanup pass
 
   mark_failure product stale.convergence
-  assert_owned_state_absent || fail "missing-link rollback did not boundedly converge to exact pre-connect state"
+  restart_without_missing_link_hook || fail "daemon restart did not boundedly converge the exact missing-link transaction"
+  cleanup_missing_link_hook_dir || fail "could not remove exact stale-observation hook fixtures"
+  assert_owned_state_absent || fail "missing-link recovery did not converge to exact pre-connect state"
   record_evidence owned_state.absent pass
   record_evidence resolver.bounded_convergence pass
-  assert_foreign_sentinel || fail "base foreign network state changed during missing-link rollback"
+  assert_foreign_sentinel || fail "base foreign network state changed during missing-link convergence"
   record_evidence foreign.state_preserved pass
 
   mark_failure product stale.observation_authority
