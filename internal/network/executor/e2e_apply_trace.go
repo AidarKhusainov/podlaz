@@ -14,7 +14,11 @@ const (
 
 func recordE2EApplyTrace(event string) {
 	switch event {
-	case "dnsaware-validate-passed",
+	case "dnsaware-entered",
+		"dnsaware-validate-dns-failed",
+		"dnsaware-validate-firewall-failed",
+		"dnsaware-validate-base-failed",
+		"dnsaware-validate-passed",
 		"tun-base-validate-passed",
 		"tun-preapply-started",
 		"tun-preapply-passed",
