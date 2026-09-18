@@ -8,6 +8,7 @@ import (
 var primaryClassificationPriority = []Classification{
 	ClassSessionInactive,
 	ClassSessionMetadataInconsistent,
+	ClassTunAddressApplyFailure,
 	ClassOwnershipMismatch,
 	ClassServerBypassFailure,
 	ClassPolicyRuleFailure,
