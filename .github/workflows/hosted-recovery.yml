@@ -150,3 +150,139 @@ jobs:
           path: ${{ runner.temp }}/podlaz-hosted-xray-replacement-public/hosted-xray-replacement.txt
           if-no-files-found: error
           retention-days: 7
+
+  network-apply-rollback:
+    name: Network apply rollback diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedFaultRollback' -count=1
+
+      - name: Run network apply rollback qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-network-apply-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-network-apply-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-network-apply-rollback.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-network-apply-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-network-apply-public
+        run: bash scripts/e2e/hosted-network-apply-rollback.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-network-apply-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-network-apply-rollback
+          path: ${{ runner.temp }}/podlaz-hosted-network-apply-public/hosted-network-apply-rollback.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  network-verify-rollback:
+    name: Network verify rollback diagnostics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedFaultRollback' -count=1
+
+      - name: Run network verify rollback qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-network-verify-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-network-verify-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-network-verify-rollback.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-network-verify-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-network-verify-public
+        run: bash scripts/e2e/hosted-network-verify-rollback.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-network-verify-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-network-verify-rollback
+          path: ${{ runner.temp }}/podlaz-hosted-network-verify-public/hosted-network-verify-rollback.txt
+          if-no-files-found: error
+          retention-days: 7

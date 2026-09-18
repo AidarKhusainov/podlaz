@@ -39,6 +39,18 @@ func TestValidateE2ETunHookConfigAcceptsDocumentedPhases(t *testing.T) {
 	}
 }
 
+func TestE2ETunAddressHookPreservesRollbackIdentityCapability(t *testing.T) {
+	address := &e2eHookApplyRecordingTunAddressExecutor{}
+	wrapped := e2eHookTunAddressExecutor{delegate: address}
+
+	if err := wrapped.VerifyRollbackIdentity(context.Background(), planner.TunAddressPlan{}); err != nil {
+		t.Fatalf("forward rollback identity verification: %v", err)
+	}
+	if address.rollbackIdentityCalls != 1 {
+		t.Fatalf("rollback identity verification calls = %d, want 1", address.rollbackIdentityCalls)
+	}
+}
+
 func TestE2ETunAddressHookFailsAfterDelegateApplyAndPreservesOwnership(t *testing.T) {
 	t.Setenv(e2eTunHookGateEnv, "true")
 	t.Setenv(e2eTunHookPhaseEnv, e2eTunHookTunAddressApplyPhase)
@@ -287,7 +299,8 @@ func (e2eHookApplyStaticPolicyRuleExecutor) Rollback(context.Context, planner.Tu
 }
 
 type e2eHookApplyRecordingTunAddressExecutor struct {
-	applyCalls int
+	applyCalls            int
+	rollbackIdentityCalls int
 }
 
 func (e *e2eHookApplyRecordingTunAddressExecutor) Bind(_ context.Context, plan planner.TunAddressPlan, _ netexecutor.TunLinkCreationProof) (planner.TunAddressPlan, error) {
@@ -304,5 +317,10 @@ func (*e2eHookApplyRecordingTunAddressExecutor) Verify(context.Context, planner.
 }
 
 func (*e2eHookApplyRecordingTunAddressExecutor) Rollback(context.Context, planner.TunAddressPlan) error {
+	return nil
+}
+
+func (e *e2eHookApplyRecordingTunAddressExecutor) VerifyRollbackIdentity(context.Context, planner.TunAddressPlan) error {
+	e.rollbackIdentityCalls++
 	return nil
 }

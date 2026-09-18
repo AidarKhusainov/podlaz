@@ -41,3 +41,21 @@ func TestTunLifecycleFailureClassificationUsesStableTaxonomy(t *testing.T) {
 		})
 	}
 }
+
+func TestTunLifecycleFailureClassificationRemainsPrimaryAcrossPartialStateDiagnostics(t *testing.T) {
+	report := tundiag.Report{
+		Probes: []tundiag.ProbeResult{{
+			ID:             "session",
+			Layer:          tundiag.LayerSession,
+			Status:         tundiag.ProbeFail,
+			Classification: tundiag.ClassOwnershipMismatch,
+			Error:          "expected partial pre-rollback ownership mismatch",
+		}},
+	}
+	report = appendTunLifecycleFailureProbe(report, "network-apply", netexecutor.ErrTunAddressApply)
+	report = tundiag.Finalize(report)
+
+	if report.PrimaryClassification != tundiag.ClassTunAddressApplyFailure {
+		t.Fatalf("lifecycle root classification was masked by partial-state diagnostics: got %q want %q", report.PrimaryClassification, tundiag.ClassTunAddressApplyFailure)
+	}
+}

@@ -33,6 +33,7 @@ ACTIVE_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_active_authorit
 HOSTED_CONTROL_DIR="${PODLAZ_E2E_HOSTED_CONTROL_DIR:-}"
 HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180}"
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
+HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -727,6 +728,9 @@ run_scenario() {
   guest_exec /bin/bash -lc "id=\$(cat ${GUEST_PRIVATE}/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >${GUEST_PRIVATE}/connect.stdout 2>${GUEST_PRIVATE}/connect.stderr"
   connect_code=$?
   set -e
+  if (( connect_code != 0 )) && [[ "${HOSTED_EXPECT_CONNECT_FAILURE}" == true ]]; then
+    hosted_control_pause connect-failed
+  fi
   (( connect_code == 0 )) || return "${connect_code}"
   wait_guest_status verified-active 120
   mark_failure diagnostic_unknown tun.authority
