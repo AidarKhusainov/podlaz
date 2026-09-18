@@ -154,7 +154,7 @@ cleanup_foreign_fixture() {
   guest_exec /bin/bash -lc "
     if systemctl is-active --quiet '${FOREIGN_SERVICE}'; then systemctl stop '${FOREIGN_SERVICE}'; fi
     systemctl reset-failed '${FOREIGN_SERVICE}' >/dev/null 2>&1 || true
-    uuid=\$(nmcli -g UUID connection show '${FOREIGN_NM_CONNECTION}' 2>/dev/null || true)
+    uuid=\$(nmcli -g connection.uuid connection show '${FOREIGN_NM_CONNECTION}' 2>/dev/null || true)
     if [[ -n \"\$uuid\" && \"\$uuid\" == '${FOREIGN_NM_UUID}' ]]; then nmcli connection delete '${FOREIGN_NM_CONNECTION}' >/dev/null; fi
     resolvectl revert '${FOREIGN_DNS_LINK}' >/dev/null 2>&1 || true
     ip link del dev '${FOREIGN_DNS_LINK}' >/dev/null 2>&1 || true
@@ -200,6 +200,9 @@ wait_for_control_ready() {
       if [[ -n "${BASE_PID}" ]]; then
         set +e; wait "${BASE_PID}"; code=$?; set -e
         BASE_PID=""
+      fi
+      if [[ -f "${BASE_REPORT}" ]]; then
+        grep -E '^(failure[.]class|failure[.]step)=' "${BASE_REPORT}" >&2 || true
       fi
       return 1
     fi
@@ -272,14 +275,14 @@ wait_for_uplink_active() {
 }
 
 create_foreign_fixture() {
-  guest_exec test ! -e "${GUEST_PRIVATE}"
-  guest_exec install -d -m 0700 "${GUEST_PRIVATE}"
-  guest_exec /bin/bash -lc "
+  guest_exec test ! -e "${GUEST_PRIVATE}" || return 1
+  guest_exec install -d -m 0700 "${GUEST_PRIVATE}" || return 1
+  guest_exec /bin/bash -lc "set -Eeuo pipefail
     ! ip link show dev '${FOREIGN_TUN}' >/dev/null 2>&1
     ! ip link show dev '${FOREIGN_DNS_LINK}' >/dev/null 2>&1
     ! ip link show dev '${FOREIGN_NM_LINK}' >/dev/null 2>&1
     ! nft list table '${FOREIGN_NFT_FAMILY}' '${FOREIGN_NFT_TABLE}' >/dev/null 2>&1
-    ! ip -4 route show table '${FOREIGN_TABLE}' | grep -q .
+    ! ip -4 route show table all | grep -Eq '(^| )table ${FOREIGN_TABLE}( |$)'
     ! ip -4 rule show priority '${FOREIGN_RULE_PRIORITY_A}' | grep -q .
     ! ip -4 rule show priority '${FOREIGN_RULE_PRIORITY_B}' | grep -q .
     ! nmcli connection show '${FOREIGN_NM_CONNECTION}' >/dev/null 2>&1
@@ -299,10 +302,10 @@ create_foreign_fixture() {
     nmcli connection add type dummy ifname '${FOREIGN_NM_LINK}' con-name '${FOREIGN_NM_CONNECTION}' ipv4.method disabled ipv6.method disabled connection.autoconnect no >/dev/null
     nmcli connection up '${FOREIGN_NM_CONNECTION}' >/dev/null
     systemd-run --unit='${FOREIGN_SERVICE}' --property=Type=simple --property=Restart=no /usr/bin/sleep infinity >/dev/null
-  "
-  FOREIGN_TUN_INDEX="$(guest_exec ip -o link show dev "${FOREIGN_TUN}" | awk -F: 'NR==1 {gsub(/[[:space:]]/,"",$1); print $1}')"
-  FOREIGN_NM_UUID="$(guest_exec nmcli -g UUID connection show "${FOREIGN_NM_CONNECTION}" | tr -d '[:space:]')"
-  [[ "${FOREIGN_TUN_INDEX}" =~ ^[1-9][0-9]*$ && -n "${FOREIGN_NM_UUID}" ]]
+  " || return 1
+  FOREIGN_TUN_INDEX="$(guest_exec ip -o link show dev "${FOREIGN_TUN}" | awk -F: 'NR==1 {gsub(/[[:space:]]/,"",$1); print $1}')" || return 1
+  FOREIGN_NM_UUID="$(guest_exec nmcli -g connection.uuid connection show "${FOREIGN_NM_CONNECTION}" | tr -d '[:space:]')" || return 1
+  [[ "${FOREIGN_TUN_INDEX}" =~ ^[1-9][0-9]*$ && "${FOREIGN_NM_UUID}" =~ ^[0-9a-fA-F-]{36}$ ]] || return 1
   FOREIGN_CREATED=true
 }
 
@@ -317,7 +320,7 @@ assert_foreign_fixture() {
   guest_exec resolvectl status "${FOREIGN_DNS_LINK}" --no-pager | grep -F "${FOREIGN_DNS_DOMAIN}" >/dev/null
   guest_exec systemctl is-active --quiet "${FOREIGN_SERVICE}"
   guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -Fx "${FOREIGN_NM_CONNECTION}:${FOREIGN_NM_LINK}" >/dev/null
-  [[ "$(guest_exec nmcli -g UUID connection show "${FOREIGN_NM_CONNECTION}" | tr -d '[:space:]')" == "${FOREIGN_NM_UUID}" ]]
+  [[ "$(guest_exec nmcli -g connection.uuid connection show "${FOREIGN_NM_CONNECTION}" | tr -d '[:space:]')" == "${FOREIGN_NM_UUID}" ]]
   [[ "$(guest_exec ip -o link show dev "${FOREIGN_TUN}" | awk -F: 'NR==1 {gsub(/[[:space:]]/,"",$1); print $1}')" == "${FOREIGN_TUN_INDEX}" ]]
 }
 
