@@ -151,7 +151,7 @@ release_all_controls() {
 remove_observation_link() {
   local current_index
   [[ "${OBSERVATION_LINK_CREATED}" == true ]] || return 0
-  current_index="$(guest_exec /bin/bash -lc "ip -o link show dev podlaz0 2>/dev/null | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \\$1); print \\$1}'" 2>/dev/null || true)"
+  current_index="$(guest_exec /bin/bash -lc "ip -o link show dev podlaz0 2>/dev/null | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \$1); print \$1}'" 2>/dev/null || true)"
   if [[ -z "${current_index}" ]]; then
     OBSERVATION_LINK_CREATED=false
     OBSERVATION_LINK_INDEX=""
@@ -407,7 +407,7 @@ assert_owned_state_absent() {
 create_observation_only_foreign_link() {
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1'
   guest_exec ip tuntap add dev podlaz0 mode tun
-  OBSERVATION_LINK_INDEX="$(guest_exec /bin/bash -lc "ip -o link show dev podlaz0 | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \\$1); print \\$1}'")"
+  OBSERVATION_LINK_INDEX="$(guest_exec /bin/bash -lc "ip -o link show dev podlaz0 | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \$1); print \$1}'")"
   [[ "${OBSERVATION_LINK_INDEX}" =~ ^[1-9][0-9]*$ ]]
   OBSERVATION_LINK_CREATED=true
 }
