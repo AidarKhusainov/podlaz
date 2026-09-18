@@ -41,6 +41,39 @@ func TestDaemonStatusSemanticsIgnoresTunPresentationForCleanInactive(t *testing.
 	runDaemonStatusPredicate(t, "clean-inactive", statusPath, true)
 }
 
+func TestDaemonStatusSemanticsAcceptsTerminalInactiveWithoutAuthority(t *testing.T) {
+	statusPath := writeDaemonStatusFixture(t, map[string]any{
+		"connection":            "inactive",
+		"active_transaction_id": "",
+		"terminal_reason":       "vpn_restore_failed",
+		"transactions":          []map[string]any{},
+	})
+
+	runDaemonStatusPredicate(t, "terminal-inactive", statusPath, true)
+
+	cleanupRequiredPath := writeDaemonStatusFixture(t, map[string]any{
+		"connection":            "inactive",
+		"active_transaction_id": "",
+		"terminal_reason":       "vpn_restore_failed",
+		"transactions": []map[string]any{
+			{
+				"id":               "tx-example",
+				"state":            "failed",
+				"requires_cleanup": true,
+			},
+		},
+	})
+	runDaemonStatusPredicate(t, "terminal-inactive", cleanupRequiredPath, false)
+
+	wrongReasonPath := writeDaemonStatusFixture(t, map[string]any{
+		"connection":            "inactive",
+		"active_transaction_id": "",
+		"terminal_reason":       "vpn_connect_failed",
+		"transactions":          []map[string]any{},
+	})
+	runDaemonStatusPredicate(t, "terminal-inactive", wrongReasonPath, false)
+}
+
 func TestDaemonStatusSemanticsRequiresExactCommittedActiveTransaction(t *testing.T) {
 	statusPath := writeDaemonStatusFixture(t, map[string]any{
 		"connection":            "active",
