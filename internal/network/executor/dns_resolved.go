@@ -61,6 +61,7 @@ func (e DNSAwareTunExecutor) ApplyWithStepSink(ctx context.Context, plan planner
 	if err := e.validate(plan); err != nil {
 		return nil, err
 	}
+	recordE2EApplyTrace("dnsaware-validate-passed")
 	steps, err := e.Base.ApplyWithStepSink(ctx, plan, sink)
 	if err != nil {
 		return steps, err
