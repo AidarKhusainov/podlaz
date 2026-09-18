@@ -435,7 +435,7 @@ jobs:
           path: ${{ runner.temp }}/podlaz-hosted-network-reconciliation-${{ matrix.scenario }}-public/hosted-network-reconciliation-${{ matrix.scenario }}.txt
           if-no-files-found: error
           retention-days: 7
-stale-observation:
+  stale-observation:
     name: Stale observation convergence
     runs-on: ubuntu-24.04
     timeout-minutes: 100
