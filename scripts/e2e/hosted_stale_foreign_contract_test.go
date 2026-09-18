@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	hostedSafetyWorkflow      = "../../.github/workflows/hosted-recovery.yml"
-	hostedStaleObservation    = "hosted-stale-observation.sh"
+	hostedSafetyWorkflow     = "../../.github/workflows/hosted-recovery.yml"
+	hostedStaleObservation   = "hosted-stale-observation.sh"
 	hostedForeignStateSafety = "hosted-foreign-state-safety.sh"
 )
 
