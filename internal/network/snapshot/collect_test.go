@@ -100,6 +100,25 @@ func TestCollectWithRunnerBuildsReadOnlySnapshot(t *testing.T) {
 	}
 }
 
+func TestNftablesDoesNotConfusePrivacyEnvelopeWithDataPlaneTable(t *testing.T) {
+	runner := fakeRunner{
+		paths: map[string]string{"nft": "/usr/sbin/nft"},
+		commands: map[string]CommandResult{
+			"/usr/sbin/nft list tables": {
+				Stdout: "table inet podlaz_pe_001122334455\ntable inet podlaz_extra",
+			},
+		},
+	}
+
+	got := nftables(context.Background(), runner)
+	if got.Availability.Status != StatusDetected {
+		t.Fatalf("nftables availability = %q, want detected", got.Availability.Status)
+	}
+	if got.PodlazTable.Status != StatusMissing {
+		t.Fatalf("privacy-envelope/prefix table must not prove exact inet podlaz presence: %#v", got.PodlazTable)
+	}
+}
+
 func TestParseResolvedLinksDetectsRouteOnlyDefaultDNSScope(t *testing.T) {
 	links := ParseResolvedLinks(`Global
        Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported
