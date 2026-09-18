@@ -113,7 +113,7 @@ func TestHostedFaultRollbackScenariosAreThinDistinctEntrypoints(t *testing.T) {
 func TestHostedFaultRollbackSharedHelperUsesExistingFaultHooksAndExactDiagnostics(t *testing.T) {
 	helper := readHostedFaultFile(t, hostedFaultHelper)
 	requireHostedFaultMarkers(t, helper,
-		`BASE_SCENARIO="${SCRIPT_DIR}/../hosted-synthetic-tun.sh"`,
+		`BASE_SCENARIO="${HOSTED_FAULT_E2E_DIR}/hosted-synthetic-tun.sh"`,
 		"PODLAZ_E2E_TUN_HOOKS=true",
 		"PODLAZ_E2E_TUN_HOOK_PHASE=",
 		"PODLAZ_E2E_TUN_HOOK_DIR=",
