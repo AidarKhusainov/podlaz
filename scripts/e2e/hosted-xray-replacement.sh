@@ -355,7 +355,7 @@ arm_rollback_pause() {
 }
 
 diagnose_rollback_pause() {
-  guest_exec python3 -c 'import glob,json
+  guest_exec python3 -c 'import glob,json,re,subprocess
 matches=[]
 for path in glob.glob("/run/podlaz/transactions/*.json"):
     try:
@@ -369,7 +369,8 @@ if len(matches)!=1:
     print("pre-rollback.authority-unavailable")
     raise SystemExit(0)
 tx=matches[0]
-address=(tx.get("desired_plan") or {}).get("tun_address") or {}
+desired=tx.get("desired_plan") or {}
+address=desired.get("tun_address") or {}
 if not (address.get("interface_name")=="podlaz0" and isinstance(address.get("link_index"),int) and address.get("link_index")>0 and address.get("link_kind")=="tun" and address.get("appeared_after_core") is True and address.get("owner")=="podlaz:tun-address"):
     print("pre-rollback.bound-address-invalid")
     raise SystemExit(0)
@@ -387,7 +388,39 @@ for step in steps:
         raise SystemExit(0)
     if kind not in kinds:
         kinds.append(kind)
-print("pre-rollback.bound-address.steps-none" if not kinds else "pre-rollback.bound-address.steps-"+"-".join(kinds))' | tr -d '[:space:]'
+step_token="steps-none" if not kinds else "steps-"+"-".join(kinds)
+tun=desired.get("tun") or {}
+name=str(tun.get("interface_name") or "")
+planned_mtu=tun.get("mtu")
+if name!="podlaz0" or not isinstance(planned_mtu,int) or planned_mtu<=0:
+    print("pre-rollback.bound-address."+step_token+".live-link.desired-invalid")
+    raise SystemExit(0)
+result=subprocess.run(["ip","-details","-o","link","show","dev",name], capture_output=True, text=True, check=False)
+if result.returncode!=0:
+    print("pre-rollback.bound-address."+step_token+".live-link.unavailable")
+    raise SystemExit(0)
+text=result.stdout.strip()
+fields=text.split()
+try:
+    current_index=int(fields[0].rstrip(":"))
+except (ValueError,IndexError):
+    current_index=0
+ifindex_token="ifindex-match" if current_index==address.get("link_index") else "ifindex-mismatch"
+kind_token="tun" if any(fields[i]=="tun" and i+2<len(fields) and fields[i+1]=="type" and fields[i+2]=="tun" for i in range(len(fields))) else "not-tun"
+current_mtu=0
+for i,field in enumerate(fields[:-1]):
+    if field=="mtu":
+        try:
+            current_mtu=int(fields[i+1])
+        except ValueError:
+            current_mtu=0
+        break
+mtu_token="mtu-match" if current_mtu==planned_mtu else "mtu-mismatch"
+first=text.splitlines()[0] if text else ""
+flags_match=re.search(r"<([^>]*)>", first)
+flags={part.strip() for part in (flags_match.group(1).split(",") if flags_match else [])}
+up_token="up" if "UP" in flags or "state UP" in first else "down"
+print("pre-rollback.bound-address."+step_token+".live-link."+kind_token+"."+ifindex_token+"."+mtu_token+"."+up_token)' | tr -d '[:space:]'
 }
 
 wait_for_rolling_back_absent() {
