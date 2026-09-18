@@ -523,10 +523,13 @@ inject_fault() {
       guest_exec nmcli connection down "${UPLINK_CONNECTION}" >/dev/null
       UPLINK_DOWN=true
       guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -Fx "${UPLINK_CONNECTION}:${GUEST_IF}" >/dev/null && return 1
-      assert_protected_window
+      assert_privacy_envelope_present
+      assert_same_session_protection
+      assert_foreign_fixture
       guest_exec nmcli connection up "${UPLINK_CONNECTION}" >/dev/null
       UPLINK_DOWN=false
       wait_for_uplink_active
+      assert_direct_uplink_blocked
       ;;
   esac
 }
