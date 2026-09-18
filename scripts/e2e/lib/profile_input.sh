@@ -7,6 +7,14 @@ first_configured_profile_uri() {
     printf '%s\n' "${PODLAZ_E2E_PROFILE_URI}"
     return 0
   fi
+  if [[ -n "${PODLAZ_E2E_PROFILE_URI_FILE:-}" ]]; then
+    [[ -f "${PODLAZ_E2E_PROFILE_URI_FILE}" && ! -L "${PODLAZ_E2E_PROFILE_URI_FILE}" ]] || return 1
+    local file_uri
+    IFS= read -r file_uri <"${PODLAZ_E2E_PROFILE_URI_FILE}" || true
+    [[ -n "${file_uri}" ]] || return 1
+    printf '%s\n' "${file_uri}"
+    return 0
+  fi
   local uri
   while IFS= read -r uri; do
     [[ -n "${uri}" ]] || continue

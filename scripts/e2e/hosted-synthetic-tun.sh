@@ -310,7 +310,7 @@ prepare_system_guest() {
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
-    network-manager systemd-resolved polkitd jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+    network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
 
@@ -346,7 +346,7 @@ EOF_NM_MANAGED
 
   sudo -n chroot "${GUEST_ROOT}" useradd -m -s /bin/bash e2e
   sudoers_tmp="$(mktemp "${PRIVATE_ROOT}/sudoers.XXXXXX")"
-  printf 'e2e ALL=(ALL) NOPASSWD: ALL\n' >"${sudoers_tmp}"
+  printf 'e2e ALL=(ALL:ALL) NOPASSWD: ALL\n' >"${sudoers_tmp}"
   sudo -n install -D -m 0440 "${sudoers_tmp}" "${GUEST_ROOT}/etc/sudoers.d/e2e-harness"
   rm -f "${sudoers_tmp}"
   sudo -n mkdir -p "${GUEST_ROOT}/workspace" "${GUEST_ROOT}/opt"
@@ -727,9 +727,11 @@ main() {
   run_scenario
 }
 
-if [[ "${1:-}" == validate-report ]]; then
-  validate_report
-  exit 0
-fi
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ "${1:-}" == validate-report ]]; then
+    validate_report
+    exit 0
+  fi
 
-main "$@"
+  main "$@"
+fi

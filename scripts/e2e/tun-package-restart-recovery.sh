@@ -19,8 +19,24 @@ require_cmd \
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
+: "${PODLAZ_E2E_PROFILE_URI_FILE:=}"
+: "${PODLAZ_E2E_EXPECTED_EGRESS_IP:=}"
+: "${PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE:=}"
+: "${PODLAZ_E2E_REQUIRE_EGRESS_CHANGE:=false}"
+: "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
 : "${PODLAZ_E2E_HTTPS_CHECK_URL:=https://example.com/}"
 [[ "${PODLAZ_E2E_HTTPS_CHECK_URL}" == https://* ]] || fail "PODLAZ_E2E_HTTPS_CHECK_URL must use HTTPS"
+[[ "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" == https://* ]] || fail "PODLAZ_E2E_PUBLIC_IP_CHECK_URL must use HTTPS"
+if [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE}" ]]; then
+  [[ -f "${PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE}" && ! -L "${PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE}" ]] || \
+    fail "PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE must be a regular non-symlink file"
+  IFS= read -r PODLAZ_E2E_EXPECTED_EGRESS_IP <"${PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE}" || true
+  [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP}" ]] || fail "expected egress file is empty"
+fi
+case "${PODLAZ_E2E_REQUIRE_EGRESS_CHANGE}" in
+  true|false) ;;
+  *) fail "PODLAZ_E2E_REQUIRE_EGRESS_CHANGE must be true or false" ;;
+esac
 
 usage() {
   printf 'Usage: %s EXACT-CANDIDATE.deb EXACT-V0.2.40.deb\n' "$0" >&2
@@ -31,8 +47,8 @@ CANDIDATE="$(readlink -f -- "$1")"
 PREVIOUS="$(readlink -f -- "$2")"
 [[ -f "${CANDIDATE}" && ! -L "${CANDIDATE}" ]] || fail "candidate package must be a regular file"
 [[ -f "${PREVIOUS}" && ! -L "${PREVIOUS}" ]] || fail "v0.2.40 package must be a regular file"
-[[ -n "${PODLAZ_E2E_PROFILE_URI}" || -n "${PODLAZ_E2E_PROFILE_URI_LIST}" ]] || \
-  fail "PODLAZ_E2E_PROFILE_URI or PODLAZ_E2E_PROFILE_URI_LIST is required"
+[[ -n "${PODLAZ_E2E_PROFILE_URI}" || -n "${PODLAZ_E2E_PROFILE_URI_LIST}" || -n "${PODLAZ_E2E_PROFILE_URI_FILE}" ]] || \
+  fail "PODLAZ_E2E_PROFILE_URI, PODLAZ_E2E_PROFILE_URI_LIST, or PODLAZ_E2E_PROFILE_URI_FILE is required"
 
 HOST_ARCH="$(dpkg --print-architecture)"
 CANDIDATE_ARCH="$(dpkg-deb --field "${CANDIDATE}" Architecture)"
@@ -73,6 +89,10 @@ PRIVATE_SOURCE_JOURNAL="${E2E_TMP_ROOT}/package-restart-source-journal.txt"
 PRIVATE_CANDIDATE_DIAGNOSTIC="${E2E_TMP_ROOT}/package-restart-candidate-resume-diagnostic.json"
 PRIVATE_CANDIDATE_SESSION="${E2E_TMP_ROOT}/package-restart-candidate-session.json"
 PRIVATE_TYPED_TERMINAL="${E2E_TMP_ROOT}/package-restart-typed-terminal.txt"
+PRIVATE_BASELINE_EGRESS="${E2E_TMP_ROOT}/package-restart-baseline-egress.txt"
+PRIVATE_SOURCE_CONNECT_OBSERVATION="${E2E_TMP_ROOT}/package-restart-source-connect-observation.json"
+PRIVATE_SOURCE_CONNECT_OBSERVER_STOP="${E2E_TMP_ROOT}/package-restart-source-connect-observer.stop"
+SOURCE_CONNECT_OBSERVER_PID=""
 PACKAGE_TOUCHED=0
 FOREIGN_STATE_CREATED=0
 EXPECTED_RUNTIME_DEB=""
@@ -97,7 +117,7 @@ mask_multiline_sensitive() {
     [[ -n "${line}" ]] && mask_value "${line}"
   done <<<"${value}"
 }
-for sensitive in "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}"; do
+for sensitive in "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}" "${PODLAZ_E2E_EXPECTED_EGRESS_IP}"; do
   mask_multiline_sensitive "${sensitive}"
 done
 
@@ -138,6 +158,324 @@ expect_secret_success() {
   [[ "${code}" == 0 ]] || fail "${name} failed with exit ${code}; inspect private E2E output"
 }
 
+start_source_connect_observer() {
+  sudo -n rm -f -- "${PRIVATE_SOURCE_CONNECT_OBSERVATION}" "${PRIVATE_SOURCE_CONNECT_OBSERVER_STOP}"
+  sudo -n python3 - "${TRANSACTION_DIR}" "${PRIVATE_SOURCE_CONNECT_OBSERVATION}" "${PRIVATE_SOURCE_CONNECT_OBSERVER_STOP}" <<'PY_SOURCE_OBSERVER' &
+import glob
+import json
+import os
+import sys
+import time
+
+transaction_dir, output_path, stop_path = sys.argv[1:]
+known_states = {"planned", "applying", "applied", "verifying", "committed", "rolling_back", "rolled_back", "failed"}
+known_steps = {"tun-address", "route", "policy-rule", "dns", "nftables"}
+known_health = {"core-preflight-planned", "core-started", "tun-link-identified"}
+
+seen_transaction = False
+seen_states = set()
+best_steps = []
+best_health = "unavailable"
+desired_dns = "unavailable"
+desired_nftables = "unavailable"
+link_seen = False
+link_up = False
+link_mtu_1500 = False
+
+def publish():
+    if not seen_transaction:
+        transaction = "false"
+        applied = "unavailable"
+    else:
+        transaction = "true"
+        applied = "+".join(best_steps) if best_steps else "none"
+    if not link_seen:
+        link = "absent"
+    elif link_up and link_mtu_1500:
+        link = "up-mtu1500"
+    elif link_up:
+        link = "up-other-mtu"
+    elif link_mtu_1500:
+        link = "down-mtu1500"
+    else:
+        link = "down-other-mtu"
+    payload = {
+        "transaction": transaction,
+        "applied_steps": applied,
+        "health": best_health,
+        "tun_link": link,
+        "desired_dns": desired_dns,
+        "desired_nftables": desired_nftables,
+    }
+    tmp = output_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True)
+        handle.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, output_path)
+
+deadline = time.monotonic() + 20.0
+while time.monotonic() < deadline and not os.path.exists(stop_path):
+    for path in glob.glob(os.path.join(transaction_dir, "*.json")):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                tx = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if tx.get("schema_version") != "podlaz.transaction.v1" or tx.get("owner") != "podlaz" or tx.get("mode") != "tun":
+            continue
+        seen_transaction = True
+        desired_steps = {
+            str(raw.get("kind") or "").strip()
+            for raw in ((tx.get("desired_plan") or {}).get("steps") or [])
+            if isinstance(raw, dict)
+        }
+        desired_dns = "true" if "dns" in desired_steps else "false"
+        desired_nftables = "true" if "nftables" in desired_steps else "false"
+        state = str(tx.get("state") or "").strip()
+        if state in known_states:
+            seen_states.add(state)
+        health = str((tx.get("health_result") or {}).get("status") or "").strip()
+        if health in known_health:
+            best_health = health
+        steps = []
+        for raw in tx.get("applied_steps") or []:
+            if not isinstance(raw, dict):
+                continue
+            kind = str(raw.get("kind") or "").strip()
+            if kind in known_steps:
+                steps.append(kind)
+        if len(steps) > len(best_steps):
+            best_steps = steps
+
+    sys_link = "/sys/class/net/podlaz0"
+    if os.path.isdir(sys_link):
+        link_seen = True
+        try:
+            with open(os.path.join(sys_link, "mtu"), encoding="ascii") as handle:
+                link_mtu_1500 = link_mtu_1500 or handle.read().strip() == "1500"
+        except OSError:
+            pass
+        try:
+            with open(os.path.join(sys_link, "flags"), encoding="ascii") as handle:
+                link_up = link_up or bool(int(handle.read().strip(), 0) & 0x1)
+        except (OSError, ValueError):
+            pass
+
+    publish()
+    time.sleep(0.005)
+
+publish()
+PY_SOURCE_OBSERVER
+  SOURCE_CONNECT_OBSERVER_PID=$!
+  [[ "${SOURCE_CONNECT_OBSERVER_PID}" =~ ^[1-9][0-9]*$ ]] || return 1
+}
+
+stop_source_connect_observer() {
+  local pid="${SOURCE_CONNECT_OBSERVER_PID}" attempt
+  [[ -n "${pid}" ]] || return 0
+  touch "${PRIVATE_SOURCE_CONNECT_OBSERVER_STOP}"
+  for attempt in $(seq 1 100); do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      wait "${pid}"
+      SOURCE_CONNECT_OBSERVER_PID=""
+      return 0
+    fi
+    sleep 0.01
+  done
+  kill "${pid}" >/dev/null 2>&1 || true
+  wait "${pid}" >/dev/null 2>&1 || true
+  SOURCE_CONNECT_OBSERVER_PID=""
+  return 1
+}
+
+capture_source_connect_observation() {
+  local transaction=unavailable applied_steps=unavailable health=unavailable tun_link=unavailable desired_dns=unavailable desired_nftables=unavailable token
+  if sudo -n test -f "${PRIVATE_SOURCE_CONNECT_OBSERVATION}"; then
+    read -r transaction applied_steps health tun_link desired_dns desired_nftables < <(
+      sudo -n python3 - "${PRIVATE_SOURCE_CONNECT_OBSERVATION}" <<'PY_SOURCE_OBSERVATION'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    value = json.load(handle)
+allowed = {
+    "transaction": {"true", "false"},
+    "health": {"unavailable", "core-preflight-planned", "core-started", "tun-link-identified"},
+    "tun_link": {"absent", "up-mtu1500", "up-other-mtu", "down-mtu1500", "down-other-mtu"},
+    "desired": {"true", "false", "unavailable"},
+}
+transaction = str(value.get("transaction") or "unavailable")
+health = str(value.get("health") or "unavailable")
+tun_link = str(value.get("tun_link") or "unavailable")
+desired_dns = str(value.get("desired_dns") or "unavailable")
+desired_nftables = str(value.get("desired_nftables") or "unavailable")
+applied = str(value.get("applied_steps") or "unavailable")
+if transaction not in allowed["transaction"]:
+    transaction = "unavailable"
+if health not in allowed["health"]:
+    health = "unavailable"
+if tun_link not in allowed["tun_link"]:
+    tun_link = "unavailable"
+if desired_dns not in allowed["desired"]:
+    desired_dns = "unavailable"
+if desired_nftables not in allowed["desired"]:
+    desired_nftables = "unavailable"
+valid_steps = {"unavailable", "none"}
+if applied not in valid_steps:
+    kinds = applied.split("+")
+    if not kinds or any(kind not in {"tun-address", "route", "policy-rule", "dns", "nftables"} for kind in kinds):
+        applied = "unavailable"
+print(transaction, applied, health, tun_link, desired_dns, desired_nftables)
+PY_SOURCE_OBSERVATION
+    )
+  fi
+  for token in "${transaction}" "${applied_steps}" "${health}" "${tun_link}" "${desired_dns}" "${desired_nftables}"; do
+    [[ "${token}" =~ ^[A-Za-z0-9_.+-]+$ ]] || fail "source connect observation metadata is malformed"
+  done
+  printf 'connect_v0.2.40_observer_transaction=%s\nconnect_v0.2.40_observer_applied_steps=%s\nconnect_v0.2.40_observer_health=%s\nconnect_v0.2.40_observer_tun_link=%s\nconnect_v0.2.40_observer_desired_dns=%s\nconnect_v0.2.40_observer_desired_nftables=%s\n' \
+    "${transaction}" "${applied_steps}" "${health}" "${tun_link}" "${desired_dns}" "${desired_nftables}" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+}
+
+capture_connect_failure_evidence() {
+  local stderr_file="$1" class=other status_file connection=unavailable session=unavailable tx_state=unavailable
+  local log_line="" phase=unavailable rollback_status=unavailable daemon_classification=unavailable tun_primary_classification=unavailable
+  local preflight=unavailable network_apply=unavailable token report_status=unavailable report_failure_phase=unavailable report_rollback_status=unavailable report_network_apply=unavailable
+  if grep -Eqi 'authori[sz]ation|polkit|permission denied|access denied' "${stderr_file}"; then
+    class=authorization
+  elif grep -Eqi 'preflight|foreign|ownership|stale|conflict' "${stderr_file}"; then
+    class=preflight
+  elif grep -Eqi 'xray|core process|core start|core-running' "${stderr_file}"; then
+    class=core
+  elif grep -Eqi 'tun|network-apply|network apply|nftables|route|policy rule|resolved|dns' "${stderr_file}"; then
+    class=network
+  elif grep -Eqi 'timeout|deadline|timed out' "${stderr_file}"; then
+    class=timeout
+  elif grep -Eqi 'daemon|socket|connection refused|unavailable' "${stderr_file}"; then
+    class=daemon
+  fi
+
+  if grep -Fqi 'verify TUN device' "${stderr_file}"; then
+    network_apply=tun-device
+  elif grep -Eqi 'TUN address|address (apply|verification)|allocated TUN address' "${stderr_file}"; then
+    network_apply=tun-address
+  elif grep -Eqi 'systemd-resolved|DNS (server|domain|default route)|DNS desired state' "${stderr_file}"; then
+    network_apply=dns
+  elif grep -Eqi 'nftables|firewall desired state' "${stderr_file}"; then
+    network_apply=firewall
+  elif grep -Eqi 'policy[- ]rule|policy rule' "${stderr_file}"; then
+    network_apply=policy-rule
+  elif grep -Eqi 'add route|verify route|routing table|server bypass' "${stderr_file}"; then
+    network_apply=route
+  elif grep -Eqi 'persist applied|record applied TUN plan|transaction' "${stderr_file}"; then
+    network_apply=transaction
+  fi
+
+  if grep -Fqi 'TUN DNS preflight blocked before handoff' "${stderr_file}"; then
+    preflight=dns
+  elif grep -Fqi 'TUN firewall preflight blocked before handoff' "${stderr_file}"; then
+    preflight=firewall
+  elif grep -Eqi 'TUN address conflict|IPv4 address/route collision|TUN plan is missing the daemon-owned IPv4 address' "${stderr_file}"; then
+    preflight=address
+  elif grep -Eqi 'collect TUN allocation evidence|allocate TUN resources' "${stderr_file}"; then
+    preflight=allocation
+  elif grep -Eqi 'profile.*(invalid|unsupported|required)|invalid profile' "${stderr_file}"; then
+    preflight=profile
+  elif [[ "${phase:-}" == preflight ]]; then
+    preflight=other
+  fi
+
+  log_line="$(sudo -n journalctl -u podlazd.service --no-pager -o cat 2>/dev/null | \
+    grep -F 'podlazd: connect request failed mode=tun ' | tail -n 1 || true)"
+  for token in ${log_line}; do
+    case "${token}" in
+      phase=*) phase="${token#phase=}" ;;
+      rollback_status=*) rollback_status="${token#rollback_status=}" ;;
+      classification=*) daemon_classification="${token#classification=}" ;;
+      tun_primary_classification=*) tun_primary_classification="${token#tun_primary_classification=}" ;;
+    esac
+  done
+  if [[ "${phase}" == preflight && "${preflight}" == unavailable ]]; then
+    preflight=other
+  fi
+  if [[ "${phase}" == network-apply && "${network_apply}" == unavailable ]]; then
+    network_apply=other
+  fi
+
+  if sudo -n test -f /run/podlaz/diagnostics/tun-last.json; then
+    read -r report_status report_failure_phase report_rollback_status report_network_apply < <(
+      sudo -n python3 - /run/podlaz/diagnostics/tun-last.json <<'PY_SOURCE_REPORT'
+import json,re,sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    report=json.load(handle)
+def bounded(value):
+    value=str(value or '').strip()
+    if not value:
+        return 'unavailable'
+    allowed='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-'
+    return value if all(ch in allowed for ch in value) else 'malformed'
+errors='\n'.join(str(item or '') for item in (report.get('errors') or [])).lower()
+if re.search(r'verify tun device|tun device', errors):
+    network_apply='tun-device'
+elif re.search(r'tun address|address apply|address verification', errors):
+    network_apply='tun-address'
+elif re.search(r'systemd-resolved|\bdns\b', errors):
+    network_apply='dns'
+elif re.search(r'nftables|firewall', errors):
+    network_apply='firewall'
+elif re.search(r'policy[- ]rule', errors):
+    network_apply='policy-rule'
+elif re.search(r'\broute\b|routing table|server bypass', errors):
+    network_apply='route'
+elif re.search(r'persist applied|transaction', errors):
+    network_apply='transaction'
+else:
+    network_apply='other'
+print(
+    bounded(report.get('status')),
+    bounded(report.get('failure_phase')),
+    bounded(report.get('rollback_status')),
+    network_apply,
+)
+PY_SOURCE_REPORT
+    )
+  fi
+  for token in "${phase}" "${rollback_status}" "${daemon_classification}" "${tun_primary_classification}" "${preflight}" "${network_apply}" "${report_status}" "${report_failure_phase}" "${report_rollback_status}" "${report_network_apply}"; do
+    [[ "${token}" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "source connect structured failure metadata is malformed"
+  done
+
+  status_file="$(mktemp "${E2E_TMP_ROOT}/source-connect-status.XXXXXX")"
+  if sudo -n curl --fail --silent --show-error --max-time 3 --unix-socket "${DAEMON_SOCKET}" \
+    http://localhost/v1/status >"${status_file}" 2>/dev/null; then
+    read -r connection session tx_state < <(python3 - "${status_file}" <<'PY_SOURCE_CONNECT'
+import json,sys
+with open(sys.argv[1],encoding='utf-8') as handle:
+    status=json.load(handle)
+connection=status.get('connection')
+if connection not in ('active','inactive','connecting','reconnecting'):
+    connection='other'
+scan=status.get('startup_scan') or {}
+session='present' if isinstance(scan.get('network_session'),dict) else 'absent'
+txs=[tx for tx in (status.get('transactions') or []) if isinstance(tx,dict)]
+if not txs:
+    tx_state='none'
+elif any(tx.get('requires_cleanup') for tx in txs):
+    tx_state='cleanup'
+elif any(tx.get('state')=='committed' for tx in txs):
+    tx_state='committed'
+else:
+    tx_state='other'
+print(connection,session,tx_state)
+PY_SOURCE_CONNECT
+    )
+  fi
+  rm -f -- "${status_file}"
+  printf 'connect_v0.2.40_failure_class=%s\nconnect_v0.2.40_phase=%s\nconnect_v0.2.40_rollback_status=%s\nconnect_v0.2.40_daemon_classification=%s\nconnect_v0.2.40_tun_primary_classification=%s\nconnect_v0.2.40_report_status=%s\nconnect_v0.2.40_report_failure_phase=%s\nconnect_v0.2.40_report_rollback_status=%s\nconnect_v0.2.40_report_network_apply=%s\nconnect_v0.2.40_preflight=%s\nconnect_v0.2.40_network_apply=%s\nconnect_v0.2.40_status=%s\nconnect_v0.2.40_session=%s\nconnect_v0.2.40_transactions=%s\n' \
+    "${class}" "${phase}" "${rollback_status}" "${daemon_classification}" "${tun_primary_classification}" "${report_status}" "${report_failure_phase}" "${report_rollback_status}" "${report_network_apply}" "${preflight}" "${network_apply}" "${connection}" "${session}" "${tx_state}" \
+    >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+  capture_source_connect_observation
+}
+
 check_https_and_dns() {
   local phase="$1"
   timeout 15 getent ahostsv4 example.com >/dev/null 2>&1 || \
@@ -145,6 +483,49 @@ check_https_and_dns() {
   curl -4 -fsS --connect-timeout 10 --max-time 20 -o /dev/null "${PODLAZ_E2E_HTTPS_CHECK_URL}" || \
     fail "${phase}: IPv4 HTTPS/TLS failed"
   printf 'traffic_%s=passed\n' "$(safe_name "${phase}")" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
+}
+
+probe_public_ipv4() {
+  local phase="$1" observed
+  observed="$(curl -4 -fsS --connect-timeout 10 --max-time 20 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" | tr -d '\r\n[:space:]')" || \
+    fail "${phase}: public IPv4 egress probe failed"
+  python3 - "${observed}" <<'PY_EGRESS' || fail "${phase}: public egress probe did not return one IPv4 address"
+import ipaddress
+import sys
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+raise SystemExit(0 if value.version == 4 else 1)
+PY_EGRESS
+  mask_value "${observed}"
+  printf '%s\n' "${observed}"
+}
+
+capture_ordinary_egress() {
+  local observed
+  observed="$(probe_public_ipv4 baseline-ordinary)"
+  printf '%s\n' "${observed}" >"${PRIVATE_BASELINE_EGRESS}"
+  chmod 0600 "${PRIVATE_BASELINE_EGRESS}"
+}
+
+check_expected_egress() {
+  local phase="$1" observed baseline
+  [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP}" || "${PODLAZ_E2E_REQUIRE_EGRESS_CHANGE}" == true ]] || return 0
+  observed="$(probe_public_ipv4 "${phase}")"
+  if [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP}" ]]; then
+    [[ "${observed}" == "${PODLAZ_E2E_EXPECTED_EGRESS_IP}" ]] || \
+      fail "${phase}: public egress does not match configured expected address"
+  fi
+  if [[ "${PODLAZ_E2E_REQUIRE_EGRESS_CHANGE}" == true ]]; then
+    [[ -f "${PRIVATE_BASELINE_EGRESS}" && ! -L "${PRIVATE_BASELINE_EGRESS}" ]] || \
+      fail "${phase}: ordinary egress baseline is unavailable"
+    IFS= read -r baseline <"${PRIVATE_BASELINE_EGRESS}" || true
+    [[ -n "${baseline}" ]] || fail "${phase}: ordinary egress baseline is empty"
+    mask_value "${baseline}"
+    [[ "${observed}" != "${baseline}" ]] || fail "${phase}: TUN egress did not change from ordinary host egress"
+  fi
+  printf 'egress_%s=passed\n' "$(safe_name "${phase}")" >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
 }
 
 main_pid() {
@@ -509,6 +890,9 @@ assert_terminal_clean() {
 
 cleanup() {
   local code=$?
+  if [[ -n "${SOURCE_CONNECT_OBSERVER_PID}" ]]; then
+    stop_source_connect_observer >/dev/null 2>&1 || true
+  fi
   sudo -n rm -f -- "${CANDIDATE_HOOK_DROPIN}" >/dev/null 2>&1 || true
   sudo -n rm -rf -- "${CANDIDATE_HOOK_DIR}" >/dev/null 2>&1 || true
   sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
@@ -529,6 +913,7 @@ printf '%s\n' "$(sha256sum "${CANDIDATE}" | awk '{print $1}')" >"${E2E_ARTIFACT_
 
 log "prove ordinary networking before package boundary"
 check_https_and_dns baseline-ordinary
+capture_ordinary_egress
 
 log "reproduce exact v0.2.40 package-restart resume boundary"
 install_setup_package "${PREVIOUS}" v0.2.40-package-restart true
@@ -543,11 +928,21 @@ expect_secret_success "validate-v0240-profile" run_client profile validate "${PR
 create_tun_foreign_state
 FOREIGN_STATE_CREATED=1
 assert_tun_foreign_state v0.2.40-package-restart-baseline
-expect_secret_success "connect-v0240" run_client connect --mode tun "${PROFILE_ID}"
+start_source_connect_observer || fail "could not start read-only v0.2.40 connect observer"
+set +e
+capture_secret_command "connect-v0240" run_client connect --mode tun "${PROFILE_ID}"
+connect_code=$?
+set -e
+stop_source_connect_observer || fail "read-only v0.2.40 connect observer did not stop cleanly"
+if (( connect_code != 0 )); then
+  capture_connect_failure_evidence "${LAST_STDERR}"
+  fail "connect-v0240 failed with exit ${connect_code}; inspect private E2E output"
+fi
 wait_for_verified_active v0.2.40-package-restart-active
 capture_v0240_package_restart_authority
 assert_tun_foreign_state v0.2.40-package-restart-active
 check_https_and_dns v0.2.40-package-restart-vpn
+check_expected_egress v0.2.40-package-restart-vpn
 install_candidate_terminal_evidence_pause
 
 install_candidate_package_replacement "${CANDIDATE}"
@@ -558,6 +953,7 @@ classify_package_restart_candidate
 case "${PACKAGE_RESTART_OUTCOME}" in
   resumed)
     check_https_and_dns package-restart-resumed-vpn
+    check_expected_egress package-restart-resumed-vpn
     expect_secret_success "disconnect-resumed-candidate" run_client disconnect
     check_https_and_dns package-restart-terminal-ordinary
     ;;
