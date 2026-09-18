@@ -142,6 +142,16 @@ func TestHostedFaultRollbackSharedHelperUsesExistingFaultHooksAndExactDiagnostic
 	)
 }
 
+func TestHostedFaultRollbackWaitsForDaemonReadinessAfterHookRestart(t *testing.T) {
+	helper := readHostedFaultFile(t, hostedFaultHelper)
+	requireHostedFaultMarkers(t, helper,
+		"wait_for_fault_daemon_ready()",
+		"systemctl is-active --quiet podlazd.service",
+		`test -S "${DAEMON_SOCKET}"`,
+		"wait_for_fault_daemon_ready || return 1",
+	)
+}
+
 func TestHostedFaultRollbackBaseExposesOnlyOptInExpectedConnectFailurePause(t *testing.T) {
 	base := readHostedFaultFile(t, hostedSyntheticTUN)
 	requireHostedFaultMarkers(t, base,
