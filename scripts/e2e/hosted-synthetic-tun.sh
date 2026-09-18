@@ -30,6 +30,9 @@ GUEST_PRIVATE="/tmp/podlaz-hosted-synthetic-tun"
 GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
 FALLBACK_NETWORK_HELPER="/workspace/scripts/e2e/tun-package-fallback-network.py"
 ACTIVE_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_active_authority.py"
+HOSTED_CONTROL_DIR="${PODLAZ_E2E_HOSTED_CONTROL_DIR:-}"
+HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180}"
+HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -89,6 +92,43 @@ mark_failure() {
   esac
   FAILURE_CLASS="${class}"
   FAILURE_STEP="${step//[^A-Za-z0-9_.-]/_}"
+}
+
+hosted_control_phase_enabled() {
+  local phase="$1" configured
+  [[ "${phase}" =~ ^[a-z0-9-]+$ ]] || fail "invalid hosted control phase"
+  for configured in ${HOSTED_CONTROL_PHASES}; do
+    [[ "${configured}" =~ ^[a-z0-9-]+$ ]] || fail "invalid configured hosted control phase"
+    [[ "${configured}" == "${phase}" ]] && return 0
+  done
+  return 1
+}
+
+hosted_control_pause() {
+  local phase="$1" ready continue attempts
+  [[ -n "${HOSTED_CONTROL_DIR}" ]] || return 0
+  hosted_control_phase_enabled "${phase}" || return 0
+  [[ "${HOSTED_CONTROL_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]*$ ]] || fail "invalid hosted control timeout"
+  case "${HOSTED_CONTROL_DIR}" in
+    "${E2E_TMP_ROOT}"/*) ;;
+    *) fail "hosted control directory must stay inside E2E_TMP_ROOT" ;;
+  esac
+  install -d -m 0700 "${HOSTED_CONTROL_DIR}"
+  ready="${HOSTED_CONTROL_DIR}/${phase}.ready"
+  continue="${HOSTED_CONTROL_DIR}/${phase}.continue"
+  rm -f -- "${ready}" "${continue}"
+  printf 'ready\n' >"${ready}"
+  chmod 0600 "${ready}"
+  attempts=$((HOSTED_CONTROL_TIMEOUT_SECONDS * 10))
+  for _ in $(seq 1 "${attempts}"); do
+    if [[ -f "${continue}" && ! -L "${continue}" ]]; then
+      rm -f -- "${ready}" "${continue}"
+      return 0
+    fi
+    sleep 0.1
+  done
+  mark_failure infrastructure "hosted.control.${phase}"
+  return 1
 }
 
 finalize_report() {
@@ -655,6 +695,7 @@ run_scenario() {
   mark_failure infrastructure guest.prepare
   prepare_system_guest
   start_system_guest
+  hosted_control_pause guest-ready
   mark_failure product candidate.provenance
   install_candidate_in_guest
   assert_guest_package_provenance
@@ -679,6 +720,7 @@ run_scenario() {
   record_evidence ordinary_user.boundary pass
   create_foreign_sentinel
   capture_guest_network_baseline
+  hosted_control_pause candidate-ready
 
   mark_failure diagnostic_unknown tun.connect
   set +e
@@ -690,6 +732,7 @@ run_scenario() {
   mark_failure diagnostic_unknown tun.authority
   assert_verified_active_authority
   record_evidence tun.verified_active pass
+  hosted_control_pause verified-active
   mark_failure diagnostic_unknown tun.active_traffic
   run_active_traffic_checks
   mark_failure diagnostic_unknown tun.doctor
@@ -702,6 +745,7 @@ run_scenario() {
   mark_failure diagnostic_unknown tun.terminal_cleanup
   assert_terminal_authority_clean
   record_evidence tun.terminal_cleanup pass
+  hosted_control_pause terminal-clean
   assert_guest_network_baseline_restored
   record_evidence guest.baseline_restored pass
   mark_failure diagnostic_unknown guest.connectivity_restored
@@ -718,7 +762,7 @@ run_scenario() {
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  require_cmd awk bash cmp curl debootstrap dpkg dpkg-deb find grep ip iptables jq mktemp nft python3 readlink sha256sum ss sudo systemd-nspawn systemd-run timeout
+  require_cmd awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
   install -d -m 0700 "${PRIVATE_ROOT}" "${E2E_ARTIFACT_DIR}" "${XRAY_ROOT}"
   : >"${REPORT}"
