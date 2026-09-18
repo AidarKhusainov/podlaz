@@ -241,7 +241,7 @@ create_foreign_fixture() {
   guest_exec ip tuntap add dev "${FOREIGN_TUN}" mode tun
   guest_exec ip link set dev "${FOREIGN_TUN}" up
   guest_exec ip -4 address add "${FOREIGN_TUN_CIDR}" dev "${FOREIGN_TUN}"
-  FOREIGN_TUN_INDEX="$(guest_exec /bin/bash -lc "ip -o link show dev '${FOREIGN_TUN}' | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \\$1); print \\$1}'")"
+  FOREIGN_TUN_INDEX="$(guest_exec /bin/bash -lc "ip -o link show dev '${FOREIGN_TUN}' | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \$1); print \$1}'")"
   [[ "${FOREIGN_TUN_INDEX}" =~ ^[1-9][0-9]*$ ]]
 
   guest_exec ip -4 route add blackhole "${FOREIGN_ROUTE}" table "${FOREIGN_TABLE}"
@@ -277,7 +277,7 @@ assert_foreign_fixture_without_nm_active() {
   guest_exec nft list table "${FOREIGN_NFT_FAMILY}" "${FOREIGN_NFT_TABLE}" >/dev/null
   guest_exec /bin/bash -lc "resolvectl status '${FOREIGN_DNS_LINK}' --no-pager >'${FOREIGN_GUEST_PRIVATE}/foreign-resolved.txt'; grep -F '${FOREIGN_DNS_SERVER}' '${FOREIGN_GUEST_PRIVATE}/foreign-resolved.txt' >/dev/null; grep -F '${FOREIGN_DNS_DOMAIN}' '${FOREIGN_GUEST_PRIVATE}/foreign-resolved.txt' >/dev/null"
   guest_exec systemctl is-active --quiet "${FOREIGN_SERVICE}"
-  guest_exec /bin/bash -lc "test \"$(nmcli -g connection.uuid connection show '${FOREIGN_NM_CONN}' | tr -d '[:space:]')\" = '${FOREIGN_NM_UUID}'"
+  guest_exec /bin/bash -lc "test \"\$(nmcli -g connection.uuid connection show '${FOREIGN_NM_CONN}' | tr -d '[:space:]')\" = '${FOREIGN_NM_UUID}'"
 }
 
 assert_foreign_fixture() {
@@ -386,7 +386,7 @@ cleanup_foreign_fixture() {
     guest_exec ip -4 route del blackhole "${FOREIGN_ROUTE}" table "${FOREIGN_TABLE}"
   fi
 
-  current_index="$(guest_exec /bin/bash -lc "ip -o link show dev '${FOREIGN_TUN}' 2>/dev/null | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \\$1); print \\$1}'" 2>/dev/null || true)"
+  current_index="$(guest_exec /bin/bash -lc "ip -o link show dev '${FOREIGN_TUN}' 2>/dev/null | awk -F: 'NR == 1 {gsub(/[[:space:]]/, \"\", \$1); print \$1}'" 2>/dev/null || true)"
   if [[ -n "${current_index}" ]]; then
     [[ "${current_index}" == "${FOREIGN_TUN_INDEX}" ]] || return 1
     guest_exec /bin/bash -lc "ip tuntap show dev '${FOREIGN_TUN}' | grep -Eq '^${FOREIGN_TUN}:[[:space:]]+tun([[:space:]]|$)'"
