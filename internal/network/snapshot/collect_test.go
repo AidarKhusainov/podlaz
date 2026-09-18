@@ -119,6 +119,22 @@ func TestNftablesDoesNotConfusePrivacyEnvelopeWithDataPlaneTable(t *testing.T) {
 	}
 }
 
+func TestNftablesDetectsExactDataPlaneTableAlongsidePrivacyEnvelope(t *testing.T) {
+	runner := fakeRunner{
+		paths: map[string]string{"nft": "/usr/sbin/nft"},
+		commands: map[string]CommandResult{
+			"/usr/sbin/nft list tables": {
+				Stdout: "table inet podlaz_pe_001122334455\ntable inet podlaz",
+			},
+		},
+	}
+
+	got := nftables(context.Background(), runner)
+	if got.PodlazTable.Status != StatusDetected {
+		t.Fatalf("exact inet podlaz table must be detected: %#v", got.PodlazTable)
+	}
+}
+
 func TestParseResolvedLinksDetectsRouteOnlyDefaultDNSScope(t *testing.T) {
 	links := ParseResolvedLinks(`Global
        Protocols: +LLMNR +mDNS -DNSOverTLS DNSSEC=no/unsupported
