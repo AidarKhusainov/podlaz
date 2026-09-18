@@ -279,14 +279,28 @@ assert_exact_pre_fault_authority() {
 import glob
 import json
 import sys
+
 paths=glob.glob(sys.argv[1].rstrip("/")+"/*.json")
 if len(paths)!=1:
     raise SystemExit(f"expected one transaction, found {len(paths)}")
 with open(paths[0],encoding="utf-8") as handle:
     tx=json.load(handle)
-if tx.get("owner")!="podlaz" or tx.get("mode")!="tun" or tx.get("state") not in {"applying","applied","verifying","rolling_back"}:
-    raise SystemExit("transaction is not exact in-flight Podlaz TUN authority")
+if tx.get("schema_version")!="podlaz.transaction.v1" or tx.get("owner")!="podlaz" or tx.get("mode")!="tun":
+    raise SystemExit("transaction identity is not exact Podlaz TUN authority")
+if tx.get("state")!="applying":
+    raise SystemExit(f"transaction state={tx.get('state')!r}, expected applying at DNS hook boundary")
+
+steps=tx.get("applied_steps") or []
+if not isinstance(steps,list) or not steps:
+    raise SystemExit("pre-DNS transaction has no durable applied-step authority")
+if any(not isinstance(step,dict) for step in steps):
+    raise SystemExit("pre-DNS applied step is not an object")
+if any(step.get("kind")=="dns" for step in steps):
+    raise SystemExit("live resolver observation became durable DNS applied-step authority before DNS Apply returned")
+
 rollback=tx.get("rollback") or {}
+if not isinstance(rollback,dict):
+    raise SystemExit("rollback metadata is not an object")
 addresses=rollback.get("tun_addresses") or []
 if len(addresses)!=1:
     raise SystemExit("missing exact TUN-address rollback authority")
@@ -295,9 +309,16 @@ if item.get("owner")!="podlaz:tun-address" or item.get("interface_name")!="podla
     raise SystemExit("invalid TUN-address rollback identity")
 if not isinstance(item.get("link_index"),int) or item["link_index"]<=0 or item.get("appeared_after_core") is not True:
     raise SystemExit("TUN-address rollback identity is not bound to the created link")
-dns=[x for x in rollback.get("dns") or [] if isinstance(x,dict) and x.get("owner")=="podlaz:dns-link" and x.get("link")=="podlaz0"]
-if len(dns)!=1:
-    raise SystemExit("missing exact DNS rollback authority")
+
+# The supported missing-link hook pauses *inside* DNS Apply after the real
+# resolvectl mutation but before the DNS step returns to the transaction
+# recorder. Live resolver observation therefore must not manufacture cleanup
+# authority: neither AppliedSteps nor Rollback.DNS may claim it yet.
+if rollback.get("dns"):
+    raise SystemExit("live resolver observation became DNS rollback authority before durable DNS apply")
+desired=(tx.get("desired_plan") or {}).get("dns") or {}
+if desired.get("owner")!="podlaz:dns-link" or desired.get("link")!="podlaz0":
+    raise SystemExit("desired DNS intent is not the exact Podlaz plan")
 PY
 }
 
