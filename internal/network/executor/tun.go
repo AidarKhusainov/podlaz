@@ -21,10 +21,6 @@ type TunDeviceExecutor interface {
 	Rollback(ctx context.Context, plan planner.TunDevicePlan) error
 }
 
-type tunDevicePreApplyVerifier interface {
-	VerifyForApply(ctx context.Context, plan planner.TunDevicePlan) error
-}
-
 type tunDeviceStepSinkExecutor interface {
 	CreateWithStepSink(ctx context.Context, plan planner.TunDevicePlan, sink AppliedStepSink) (Step, error)
 }
@@ -97,19 +93,7 @@ func (e TunExecutor) ApplyWithStepSink(ctx context.Context, plan planner.TunPlan
 	case "", "create":
 		return steps, errors.New("daemon-created TUN links are unsupported; Xray owns podlaz0 creation and lifetime")
 	case "verify", "use-existing":
-		if shouldApplyTunAddress(plan.TunAddress) {
-			// Production OS execution proves the existing link is still a TUN with
-			// the planned MTU before the first host mutation, but deliberately does
-			// not require UP yet: the exact bound address stage owns link-up. Other
-			// device executors fall back to their existing full verification.
-			if verifier, ok := e.TunDevice.(tunDevicePreApplyVerifier); ok {
-				if err := verifier.VerifyForApply(ctx, plan.TunDevice); err != nil {
-					return steps, withApplyFailureSubphase(applyFailureSubphaseTunAddress, err)
-				}
-			} else if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
-				return steps, withApplyFailureSubphase(applyFailureSubphaseTunAddress, err)
-			}
-		} else if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
+		if err := e.TunDevice.Verify(ctx, plan.TunDevice); err != nil {
 			return steps, err
 		}
 	default:
