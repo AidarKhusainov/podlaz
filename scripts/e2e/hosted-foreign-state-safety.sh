@@ -136,6 +136,24 @@ guest_exec() {
   sudo -n systemd-run --machine="${MACHINE}" --expand-environment=no --wait --pipe --collect --quiet -- "$@"
 }
 
+inherit_base_failure() {
+  local class step
+  [[ -f "${BASE_REPORT}" ]] || return 0
+  class="$(awk -F= '$1 == "failure.class" {print $2; exit}' "${BASE_REPORT}" 2>/dev/null || true)"
+  step="$(awk -F= '$1 == "failure.step" {print $2; exit}' "${BASE_REPORT}" 2>/dev/null || true)"
+  case "${class}" in
+    product|fixture|infrastructure|capability|diagnostic_unknown)
+      FAILURE_CLASS="${class}"
+      ;;
+    *)
+      ;;
+  esac
+  if [[ -n "${step}" && "${step}" != none ]]; then
+    FAILURE_STEP="base.${step//[^A-Za-z0-9_.-]/_}"
+  fi
+  printf 'base normalized failure: class=%s step=%s\n' "${class:-unknown}" "${step:-unknown}" >&2
+}
+
 release_all_controls() {
   local phase path
   [[ -d "${CONTROL_DIR}" ]] || return 0
@@ -159,6 +177,7 @@ wait_for_control_ready() {
         code=$?
         set -e
         BASE_PID=""
+        inherit_base_failure
         printf 'base scenario exited before %s boundary: %s\n' "${phase}" "${code}" >&2
       fi
       return 1
@@ -413,6 +432,7 @@ cleanup() {
     fi
     wait "${BASE_PID}" >/dev/null 2>&1 || true
   fi
+  inherit_base_failure
   if [[ -f "${REPORT}" ]]; then
     if assert_public_artifact_privacy; then
       record_if_missing artifact.privacy pass
