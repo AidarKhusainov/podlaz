@@ -502,6 +502,7 @@ run_scenario() {
   mark_failure product terminal.release
   release_terminal_cleanup_boundary || fail "could not release supported terminal cleanup boundary"
   wait_for_guest_status terminal-inactive 160 || fail "terminal failure did not converge to inactive terminal outcome"
+  release_control verified-active || fail "could not release verified-active boundary after terminal convergence"
   wait_for_control_ready terminal-clean || fail "base synthetic TUN did not prove terminal cleanup"
 
   mark_failure product terminal.authority
