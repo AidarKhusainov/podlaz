@@ -576,10 +576,20 @@ func nftables(ctx context.Context, runner CommandRunner) Nftables {
 		return Nftables{Availability: findingWithDetail(StatusUnknown, "nftables table listing unavailable", detail), PodlazTable: findingWithDetail(StatusUnknown, "podlaz nftables table state unknown", detail)}
 	}
 	availability := finding(StatusDetected, "nftables table listing available")
-	if strings.Contains(result.Stdout, fmt.Sprintf("table %s %s", DefaultNFTFamily, DefaultNFTTable)) {
+	if nftTableListed(result.Stdout, DefaultNFTFamily, DefaultNFTTable) {
 		return Nftables{Availability: availability, PodlazTable: finding(StatusDetected, "podlaz nftables table exists")}
 	}
 	return Nftables{Availability: availability, PodlazTable: finding(StatusMissing, "podlaz nftables table not found")}
+}
+
+func nftTableListed(output, family, table string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 3 && fields[0] == "table" && fields[1] == family && fields[2] == table {
+			return true
+		}
+	}
+	return false
 }
 
 func tunLikeInterfaceNames(ctx context.Context, runner CommandRunner, ipPath string) []string {
