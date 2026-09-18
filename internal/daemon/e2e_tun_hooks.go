@@ -205,6 +205,19 @@ func (e e2eHookTunAddressExecutor) Rollback(ctx context.Context, plan planner.Tu
 	return e.delegate.Rollback(ctx, plan)
 }
 
+func (e e2eHookTunAddressExecutor) VerifyRollbackIdentity(ctx context.Context, plan planner.TunAddressPlan) error {
+	if e.delegate == nil {
+		return errors.New("missing TUN address executor")
+	}
+	verifier, ok := e.delegate.(interface {
+		VerifyRollbackIdentity(context.Context, planner.TunAddressPlan) error
+	})
+	if !ok {
+		return errors.New("E2E TUN address delegate cannot prove rollback link identity")
+	}
+	return verifier.VerifyRollbackIdentity(ctx, plan)
+}
+
 type e2eHookRouteExecutor struct {
 	delegate netexecutor.RouteExecutor
 }
