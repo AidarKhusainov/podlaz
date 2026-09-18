@@ -94,8 +94,8 @@ func TestHostedApplyRollbackUsesExistingPostMutationHook(t *testing.T) {
 		`source "${SCRIPT_DIR}/lib/hosted_rollback.sh"`,
 		"PODLAZ_E2E_TUN_HOOK_PHASE=tun-address-apply",
 		"tun-address-apply-injected",
-		"failure_phase=network-apply",
-		"primary_classification=tun_address_apply_failure",
+		"HOSTED_ROLLBACK_FAILURE_PHASE=network-apply",
+		"HOSTED_ROLLBACK_CLASSIFICATION=tun_address_apply_failure",
 		"hosted-apply-rollback.txt",
 		"hosted_rollback_main",
 	})
@@ -107,8 +107,8 @@ func TestHostedVerifyRollbackUsesExistingVerificationHook(t *testing.T) {
 		`source "${SCRIPT_DIR}/lib/hosted_rollback.sh"`,
 		"PODLAZ_E2E_TUN_HOOK_PHASE=network-verify",
 		"network-verify-injected",
-		"failure_phase=network-verify",
-		"primary_classification=network_verify_failure",
+		"HOSTED_ROLLBACK_FAILURE_PHASE=network-verify",
+		"HOSTED_ROLLBACK_CLASSIFICATION=network_verify_failure",
 		"hosted-verify-rollback.txt",
 		"hosted_rollback_main",
 	})
