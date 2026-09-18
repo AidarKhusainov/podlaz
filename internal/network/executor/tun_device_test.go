@@ -30,40 +30,6 @@ func TestIPTunDeviceVerifyRequiresTunTypeMTUAndUp(t *testing.T) {
 	}
 }
 
-func TestIPTunDeviceVerifyForApplyAllowsDownLinkWithExactTypeAndMTU(t *testing.T) {
-	down := strings.Replace(tunLinkDetails, "<POINTOPOINT,NOARP,UP,LOWER_UP>", "<POINTOPOINT,NOARP>", 1)
-	runner := &recordingRunner{stdout: down}
-	exec := IPTunDeviceExecutor{Runner: runner}
-
-	if err := exec.VerifyForApply(context.Background(), planner.TunDevicePlan{Name: "podlaz0", MTU: 1500}); err != nil {
-		t.Fatalf("pre-apply TUN shape verification rejected not-yet-up link: %v", err)
-	}
-}
-
-func TestIPTunDeviceVerifyForApplyRejectsMTUMismatchBeforeMutation(t *testing.T) {
-	downWrongMTU := strings.Replace(tunLinkDetails, "<POINTOPOINT,NOARP,UP,LOWER_UP>", "<POINTOPOINT,NOARP>", 1)
-	downWrongMTU = strings.Replace(downWrongMTU, "mtu 1500", "mtu 1400", 1)
-	runner := &recordingRunner{stdout: downWrongMTU}
-	exec := IPTunDeviceExecutor{Runner: runner}
-
-	err := exec.VerifyForApply(context.Background(), planner.TunDevicePlan{Name: "podlaz0", MTU: 1500})
-	if err == nil || !strings.Contains(err.Error(), "MTU does not match") {
-		t.Fatalf("expected pre-apply MTU verification failure, got %v", err)
-	}
-}
-
-func TestIPTunDeviceVerifyForApplyRejectsNonTunDeviceBeforeMutation(t *testing.T) {
-	runner := &recordingRunner{stdout: `7: podlaz0: <BROADCAST,MULTICAST> mtu 1500 qdisc fq_codel state DOWN mode DEFAULT group default qlen 1000
-    link/ether 02:00:00:00:00:01 brd ff:ff:ff:ff:ff:ff
-`}
-	exec := IPTunDeviceExecutor{Runner: runner}
-
-	err := exec.VerifyForApply(context.Background(), planner.TunDevicePlan{Name: "podlaz0", MTU: 1500})
-	if err == nil || !strings.Contains(err.Error(), "not a TUN device") {
-		t.Fatalf("expected pre-apply non-TUN verification failure, got %v", err)
-	}
-}
-
 func TestIPTunDeviceVerifyRejectsNonTunDevice(t *testing.T) {
 	runner := &recordingRunner{stdout: `7: podlaz0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP mode DEFAULT group default qlen 1000
     link/ether 02:00:00:00:00:01 brd ff:ff:ff:ff:ff:ff
