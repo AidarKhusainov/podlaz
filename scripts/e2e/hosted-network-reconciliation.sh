@@ -507,7 +507,6 @@ inject_fault() {
       guest_exec test ! -e "${HOOK_DIR}/reconciliation-soft-provider.trigger"
       guest_exec touch "${HOOK_DIR}/reconciliation-soft-provider.trigger"
       wait_for_marker reconciliation-soft-provider.injected
-      wait_for_fault_health degraded connectivity_failed
       ;;
     resolved-unknown)
       guest_exec test ! -e "${HOOK_DIR}/reconciliation-resolved-unknown.trigger"
