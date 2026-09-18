@@ -1,0 +1,83 @@
+name: Temporary Issue 314 Physical Bundle
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TARGET_COMMIT: e251a3551b2600bdf5f1664c1f33604bd948482f
+      CANDIDATE_VERSION: 0.2.42+git.e251a355
+      CANDIDATE_DEB: dist/podlaz_0.2.42+git.e251a355_linux_amd64.deb
+      PREVIOUS_DEB: podlaz_0.2.40_linux_amd64.deb
+      PREVIOUS_SHA256: c9d8f76838292d39355506123e2f03ca1f0a96227fb2c22af8324ac6baf3b278
+    steps:
+      - name: Checkout exact product candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TARGET_COMMIT }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install package tool
+        run: bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate
+        env:
+          PODLAZ_VERSION: ${{ env.CANDIDATE_VERSION }}
+          PODLAZ_DEB_VERSION: ${{ env.CANDIDATE_VERSION }}
+          PODLAZ_COMMIT: ${{ env.TARGET_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Fetch exact public v0.2.40
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${PREVIOUS_DEB}" \
+            'https://github.com/AidarKhusainov/podlaz/releases/download/v0.2.40/podlaz_0.2.40_linux_amd64.deb'
+          printf '%s  %s\n' "${PREVIOUS_SHA256}" "${PREVIOUS_DEB}" | sha256sum -c -
+
+      - name: Validate bundle identities
+        run: |
+          set -euo pipefail
+          test "$(dpkg-deb --field "${CANDIDATE_DEB}" Package)" = podlaz
+          test "$(dpkg-deb --field "${CANDIDATE_DEB}" Version)" = "${CANDIDATE_VERSION}"
+          test "$(dpkg-deb --field "${CANDIDATE_DEB}" Architecture)" = amd64
+          dpkg --compare-versions "${CANDIDATE_VERSION}" gt 0.2.42
+          dpkg --compare-versions "${CANDIDATE_VERSION}" lt 0.2.43
+          test "$(dpkg-deb --field "${PREVIOUS_DEB}" Package)" = podlaz
+          test "$(dpkg-deb --field "${PREVIOUS_DEB}" Version | sed 's/-.*//')" = 0.2.40
+          test "$(dpkg-deb --field "${PREVIOUS_DEB}" Architecture)" = amd64
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "${tmp}"' EXIT
+          dpkg-deb -x "${CANDIDATE_DEB}" "${tmp}"
+          "${tmp}/usr/bin/podlaz" version | tee candidate.version.txt
+          grep -Fx "podlaz version ${CANDIDATE_VERSION}" candidate.version.txt
+          grep -Fx "commit: ${TARGET_COMMIT}" candidate.version.txt
+          sha256sum "${CANDIDATE_DEB}" "${PREVIOUS_DEB}" | tee bundle.sha256
+
+      - name: Upload physical acceptance bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-issue314-physical-bundle
+          path: |
+            ${{ env.CANDIDATE_DEB }}
+            ${{ env.PREVIOUS_DEB }}
+            bundle.sha256
+            candidate.version.txt
+          if-no-files-found: error
+          retention-days: 3
