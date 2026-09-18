@@ -469,7 +469,7 @@ status=payload.get("status") or payload
 health=status.get("tun_health") or {}
 ok=(
     status.get("connection")=="active"
-    and status.get("tun")=="active"
+    and status.get("mode")=="tun"
     and health.get("state")==sys.argv[2]
     and health.get("classification")==sys.argv[3]
 )
