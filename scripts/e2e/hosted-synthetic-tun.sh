@@ -616,7 +616,7 @@ raise SystemExit(0 if ok else 1)'
 
 assert_active_allocated_address() {
   local cidr
-  cidr="$(guest_exec python3 - "${GUEST_PRIVATE}/status.json" /run/podlaz/transactions <<\'PY\'
+  cidr="$(guest_exec python3 - "${GUEST_PRIVATE}/status.json" /run/podlaz/transactions <<'PY'
 import json
 import pathlib
 import sys
