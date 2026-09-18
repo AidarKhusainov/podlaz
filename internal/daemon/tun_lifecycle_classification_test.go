@@ -42,7 +42,6 @@ func TestTunLifecycleFailureClassificationUsesStableTaxonomy(t *testing.T) {
 	}
 }
 
-
 func TestTunLifecycleFailureClassificationRemainsPrimaryAcrossPartialStateDiagnostics(t *testing.T) {
 	report := tundiag.Report{
 		Probes: []tundiag.ProbeResult{{
