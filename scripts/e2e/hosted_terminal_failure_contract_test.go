@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	hostedTerminalWorkflow = "../../.github/workflows/hosted-recovery.yml"
-	hostedTerminalScenario = "hosted-terminal-failure-convergence.sh"
+	hostedTerminalWorkflow  = "../../.github/workflows/hosted-recovery.yml"
+	hostedTerminalScenario  = "hosted-terminal-failure-convergence.sh"
 	hostedSyntheticScenario = "hosted-synthetic-tun.sh"
 )
 
