@@ -153,6 +153,73 @@ func TestHostedSyntheticTUNVerifiedActiveChecksExactRouteRulePresence(t *testing
 	)
 }
 
+func TestHostedSyntheticTUNDynamicNetworkSnapshotRequiresExactTransactionProof(t *testing.T) {
+	tmp := t.TempDir()
+	txDir := tmp + "/transactions"
+	if err := os.Mkdir(txDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transaction := `{
+  "schema_version":"podlaz.transaction.v1",
+  "owner":"podlaz",
+  "id":"dynamic-authority",
+  "mode":"tun",
+  "state":"committed",
+  "desired_plan":{
+    "routes":[
+      {"kind":"route","table":"51821","cidr":"default","via":"","dev":"podlaz0","owner":"podlaz:route","operation":"add"},
+      {"kind":"route","table":"main","cidr":"203.0.113.10/32","via":"192.0.2.1","dev":"host0","owner":"podlaz:route","operation":"add"}
+    ],
+    "steps":[
+      {"kind":"policy-rule","target":"priority 9997 to 203.0.113.10/32 lookup main","owner":"podlaz:policy-rule"},
+      {"kind":"policy-rule","target":"priority 9998 from all lookup 51821","owner":"podlaz:policy-rule"}
+    ]
+  },
+  "applied_steps":[
+    {"kind":"route","target":"51821 default","owner":"podlaz:route"},
+    {"kind":"route","target":"main 203.0.113.10/32","owner":"podlaz:route"},
+    {"kind":"policy-rule","target":"priority 9997 to 203.0.113.10/32 lookup main","owner":"podlaz:policy-rule"},
+    {"kind":"policy-rule","target":"priority 9998 from all lookup 51821","owner":"podlaz:policy-rule"}
+  ],
+  "rollback":{
+    "routes":[
+      {"table":"51821","cidr":"default","via":"","dev":"podlaz0","owner":"podlaz:route"},
+      {"table":"main","cidr":"203.0.113.10/32","via":"192.0.2.1","dev":"host0","owner":"podlaz:route"}
+    ],
+    "policy_rules":[
+      {"priority":9997,"to":"203.0.113.10/32","table":"main","owner":"podlaz:policy-rule"},
+      {"priority":9998,"from":"all","table":"51821","owner":"podlaz:policy-rule"}
+    ]
+  }
+}`
+	if err := os.WriteFile(txDir+"/dynamic-authority.json", []byte(transaction), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := tmp + "/manifest.json"
+	cmd := exec.Command("python3", "hosted_synthetic_network_authority.py", "snapshot", txDir, manifest)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("snapshot dynamic transaction: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, marker := range []string{`"table": "51821"`, `"priority": 9997`, `"priority": 9998`} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("dynamic authority manifest lost %s: %s", marker, text)
+		}
+	}
+
+	broken := strings.Replace(transaction, `"target":"priority 9998 from all lookup 51821"`, `"target":"priority 9998 from all lookup 51822"`, 1)
+	if err := os.WriteFile(txDir+"/dynamic-authority.json", []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("python3", "hosted_synthetic_network_authority.py", "snapshot", txDir, manifest).Run(); err == nil {
+		t.Fatal("snapshot accepted applied policy rule outside exact desired transaction proof")
+	}
+}
+
 func TestHostedSyntheticTUNDynamicNetworkManifestCanBeVerifiedPresentAndAbsent(t *testing.T) {
 	tmp := t.TempDir()
 	fakeIP := tmp + "/ip"
