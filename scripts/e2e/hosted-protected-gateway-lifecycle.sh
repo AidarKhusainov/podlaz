@@ -380,14 +380,31 @@ PY
 
 assert_inactive_status() {
   local phase="$1" output
-  output="${PRIVATE_ROOT}/${phase}-inactive-status.txt"
+  output="${PRIVATE_ROOT}/${phase}-inactive-status.json"
   wait_guest_status clean-inactive || return 1
-  run_e2e_podlaz status >"${output}"
-  grep -Fx 'Connection: inactive' "${output}" >/dev/null || return 1
-  grep -Fx 'Stale state: none' "${output}" >/dev/null || return 1
-  grep -Fx 'Startup recovery scan: clean inactive state' "${output}" >/dev/null || return 1
-  ! grep -F 'Recovery candidates:' "${output}" >/dev/null || return 1
-  ! grep -F 'Inspection warnings:' "${output}" >/dev/null || return 1
+  guest_exec curl --fail --silent --show-error --max-time 3 --unix-socket "${DAEMON_SOCKET}" http://localhost/v1/status >"${output}" || return 1
+  guest_exec python3 "${STATUS_HELPER}" clean-inactive "${Q17_PRIVATE}/status.json" >/dev/null || return 1
+  python3 - "${output}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    status = json.load(handle)
+scan = status.get("startup_scan")
+if not isinstance(scan, dict) or scan.get("status") != "clean":
+    raise SystemExit("inactive startup recovery scan is not clean")
+if scan.get("candidates") or scan.get("warnings") or scan.get("network_session"):
+    raise SystemExit("inactive status publishes recovery or observation authority")
+txs = status.get("transactions") or []
+if not isinstance(txs, list):
+    raise SystemExit("inactive transactions are not an array")
+if any(
+    isinstance(item, dict)
+    and (item.get("state") == "committed" or bool(item.get("requires_cleanup")))
+    for item in txs
+):
+    raise SystemExit("inactive status retained transaction authority")
+PY
 }
 
 assert_recover_dry_run_noop() {
@@ -492,17 +509,34 @@ assert_fresh_generation() {
 
 assert_terminal_clean() {
   local phase="$1" manifest="$2" identity="$3"
-  assert_inactive_status "${phase}" || return 1
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent '${phase}' '${NETWORK_AUTHORITY_HELPER}' '${manifest}'" >/dev/null
-  guest_exec test ! -e "${SESSION_STATE}"
-  guest_exec python3 "${PROTECTED_AUTHORITY_HELPER}" privacy-absent "${identity}" >/dev/null
+  assert_inactive_status "${phase}" || {
+    printf 'terminal-clean[%s]: semantic inactive status failed\n' "${phase}" >&2
+    return 1
+  }
+  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent '${phase}' '${NETWORK_AUTHORITY_HELPER}' '${manifest}'" >/dev/null || {
+    printf 'terminal-clean[%s]: exact package resource absence failed\n' "${phase}" >&2
+    return 1
+  }
+  guest_exec test ! -e "${SESSION_STATE}" || {
+    printf 'terminal-clean[%s]: Network Session authority remained\n' "${phase}" >&2
+    return 1
+  }
+  guest_exec python3 "${PROTECTED_AUTHORITY_HELPER}" privacy-absent "${identity}" >/dev/null || {
+    printf 'terminal-clean[%s]: retired Privacy Envelope authority remained\n' "${phase}" >&2
+    return 1
+  }
   if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1; then
+    printf 'terminal-clean[%s]: Privacy Envelope table remained\n' "${phase}" >&2
     return 1
   fi
   if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then
+    printf 'terminal-clean[%s]: NetworkManager still publishes podlaz0 active\n' "${phase}" >&2
     return 1
   fi
-  assert_foreign_sentinel
+  assert_foreign_sentinel || {
+    printf 'terminal-clean[%s]: foreign sentinel changed\n' "${phase}" >&2
+    return 1
+  }
 }
 
 wait_resolved_missing_link() {
