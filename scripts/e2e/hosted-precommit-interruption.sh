@@ -11,7 +11,6 @@ MACHINE="podlaz-synthetic-tun"
 GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-synthetic-tun"
 FOCUSED_GUEST_PRIVATE="/tmp/podlaz-hosted-precommit-interruption"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
-STATUS_HELPER="/workspace/scripts/e2e/lib/daemon_status_semantics.py"
 HOOK_DIR="/run/podlaz/e2e-hosted-precommit-interruption"
 HOOK_DROPIN_DIR="/run/systemd/system/podlazd.service.d"
 HOOK_DROPIN="${HOOK_DROPIN_DIR}/99-hosted-precommit-interruption.conf"
@@ -35,9 +34,10 @@ EVIDENCE_KEYS=(
   precommit.no_network_mutation
   restart.no_false_resume_authority
   recovery.exact_transaction_only
+  recovery.insufficient_authority_preserved
   foreign.state_preserved
-  terminal.clean
   hidden_reconnect.absent
+  direct.connectivity_preserved
   base.outer_cleanup
   artifact.privacy
 )
@@ -68,8 +68,8 @@ validate_report() {
   python3 - "${REPORT}" <<'PY'
 import sys
 required={"hook.precommit_reached","connect.interrupted_not_success","precommit.no_network_mutation",
-"restart.no_false_resume_authority","recovery.exact_transaction_only","foreign.state_preserved",
-"terminal.clean","hidden_reconnect.absent","base.outer_cleanup","artifact.privacy"}
+"restart.no_false_resume_authority","recovery.exact_transaction_only","recovery.insufficient_authority_preserved",
+"foreign.state_preserved","hidden_reconnect.absent","direct.connectivity_preserved","base.outer_cleanup","artifact.privacy"}
 values={}
 with open(sys.argv[1],encoding="utf-8") as handle:
     for raw in handle:
@@ -206,7 +206,12 @@ EOF_RULE
 wait_for_daemon_socket() {
   local attempt
   for attempt in $(seq 1 200); do
-    if guest_exec systemctl is-active --quiet podlazd.service >/dev/null 2>&1 && guest_exec test -S "${DAEMON_SOCKET}" >/dev/null 2>&1; then return 0; fi
+    if guest_exec systemctl is-active --quiet podlazd.service >/dev/null 2>&1 &&
+      guest_exec test -S "${DAEMON_SOCKET}" >/dev/null 2>&1 &&
+      guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/readiness-status.json' 2>/dev/null" >/dev/null 2>&1 &&
+      guest_exec python3 -c 'import json,sys; json.load(open(sys.argv[1],encoding="utf-8"))' "${FOCUSED_GUEST_PRIVATE}/readiness-status.json" >/dev/null 2>&1; then
+      return 0
+    fi
     sleep 0.1
   done
   return 1
@@ -242,104 +247,162 @@ assert_network_snapshot_equal() {
 
 assert_foreign_sentinel() { guest_exec nft list table inet pzsynt_foreign >/dev/null 2>&1; }
 
-assert_precommit_transaction_only() {
-  guest_exec python3 - /run/podlaz/transactions <<'PY'
-import glob,json,sys
-paths=glob.glob(sys.argv[1].rstrip("/")+"/*.json")
-if len(paths)!=1: raise SystemExit(f"expected one pre-commit transaction, found {len(paths)}")
-with open(paths[0],encoding="utf-8") as handle: tx=json.load(handle)
-if tx.get("schema_version")!="podlaz.transaction.v1" or tx.get("owner")!="podlaz" or tx.get("mode")!="tun": raise SystemExit("invalid pre-commit transaction")
-if tx.get("state")!="applying": raise SystemExit(f"unexpected pre-commit transaction state: {tx.get('state')!r}")
-if tx.get("applied_steps"): raise SystemExit("pre-commit transaction has applied mutation authority")
+capture_transaction_fingerprint() {
+  local output="$1"
+  guest_exec python3 - /run/podlaz/transactions <<'PY' >"${output}" || return 1
+import glob
+import hashlib
+import json
+import sys
+
+paths = glob.glob(sys.argv[1].rstrip("/") + "/*.json")
+if len(paths) != 1:
+    raise SystemExit(f"expected one preserved pre-commit transaction, found {len(paths)}")
+raw = open(paths[0], "rb").read()
+tx = json.loads(raw)
+if tx.get("schema_version") != "podlaz.transaction.v1" or tx.get("owner") != "podlaz" or tx.get("mode") != "tun":
+    raise SystemExit("preserved pre-commit transaction identity is invalid")
+if tx.get("state") != "applying":
+    raise SystemExit(f"preserved pre-commit transaction state is {tx.get('state')!r}")
+if tx.get("applied_steps"):
+    raise SystemExit("preserved pre-commit transaction gained applied mutation authority")
+print(hashlib.sha256(raw).hexdigest())
 PY
-  guest_exec test ! -e /run/podlaz/network-session-continuation.json
-  guest_exec test ! -e /run/podlaz/generated/xray.json
-  guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1'
-  guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1'
-  guest_exec /bin/bash -lc "nft list tables >'${FOCUSED_GUEST_PRIVATE}/nft-precommit.txt'; ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FOCUSED_GUEST_PRIVATE}/nft-precommit.txt'"
+  [[ -s "${output}" ]] || return 1
+  chmod 0600 "${output}" || return 1
+}
+
+assert_precommit_transaction_only() {
+  local fingerprint="$1"
+  capture_transaction_fingerprint "${fingerprint}" || return 1
+  guest_exec test ! -e /run/podlaz/network-session-continuation.json || return 1
+  guest_exec test ! -e /run/podlaz/generated/xray.json || return 1
+  guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1' || return 1
+  guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1' || return 1
+  guest_exec /bin/bash -lc "nft list tables >'${FOCUSED_GUEST_PRIVATE}/nft-precommit.txt'; ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FOCUSED_GUEST_PRIVATE}/nft-precommit.txt'" || return 1
   # Guest shell expands daemon/child process variables.
   # shellcheck disable=SC2016
-  guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
-  guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/precommit-status.json'"
-  guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/precommit-status.json" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding="utf-8") as handle: status=json.load(handle)
-connection=str(status.get("connection") or "")
-if connection in {"active","reconnecting"}:
+  guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done' || return 1
+  guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/precommit-status.json'" || return 1
+  guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/precommit-status.json" <<'PY' || return 1
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    status = json.load(handle)
+connection = str(status.get("connection") or "")
+if connection in {"active", "reconnecting"}:
     raise SystemExit(f"pre-commit lifecycle published unsafe connection state: {connection!r}")
-if str(status.get("active_transaction_id") or ""): raise SystemExit("pre-commit lifecycle published an active transaction")
+if str(status.get("active_transaction_id") or ""):
+    raise SystemExit("pre-commit lifecycle published an active transaction")
 PY
 }
 
 assert_no_published_or_resumed_authority() {
-  guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/post-restart-status.json'"
-  guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/post-restart-status.json" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding="utf-8") as handle: status=json.load(handle)
-if status.get("connection") in {"active","connecting","reconnecting"}: raise SystemExit(f"interrupted lifecycle was published/resumed as {status.get('connection')!r}")
-if str(status.get("active_transaction_id") or ""): raise SystemExit("interrupted lifecycle published active transaction authority")
+  guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/post-restart-status.json'" || return 1
+  guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/post-restart-status.json" <<'PY' || return 1
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    status = json.load(handle)
+if status.get("connection") in {"active", "connecting", "reconnecting"}:
+    raise SystemExit(f"interrupted lifecycle was published/resumed as {status.get('connection')!r}")
+if str(status.get("active_transaction_id") or ""):
+    raise SystemExit("interrupted lifecycle published active transaction authority")
 PY
-  guest_exec test ! -e /run/podlaz/network-session-continuation.json
-  guest_exec test ! -e /run/podlaz/generated/xray.json
-  guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1'
-  guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1'
-  guest_exec /bin/bash -lc "nft list tables >'${FOCUSED_GUEST_PRIVATE}/nft-post-restart.txt'; ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FOCUSED_GUEST_PRIVATE}/nft-post-restart.txt'"
+  guest_exec test ! -e /run/podlaz/network-session-continuation.json || return 1
+  guest_exec test ! -e /run/podlaz/generated/xray.json || return 1
+  guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1' || return 1
+  guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1' || return 1
+  guest_exec /bin/bash -lc "nft list tables >'${FOCUSED_GUEST_PRIVATE}/nft-post-restart.txt'; ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FOCUSED_GUEST_PRIVATE}/nft-post-restart.txt'" || return 1
   # Guest shell expands daemon/child process variables.
   # shellcheck disable=SC2016
-  guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
-}
-
-wait_for_clean_inactive() {
-  local attempt
-  for attempt in $(seq 1 160); do
-    if guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/inactive-status.json' 2>/dev/null && python3 '${STATUS_HELPER}' clean-inactive '${FOCUSED_GUEST_PRIVATE}/inactive-status.json' >/dev/null" >/dev/null 2>&1; then return 0; fi
-    sleep 0.25
-  done
-  return 1
+  guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done' || return 1
 }
 
 assert_recovery_exact_transaction_only() {
+  local expected_fingerprint="$1"
   local before="${PRIVATE_ROOT}/recover-before.json"
-  run_e2e_podlaz recover --json >"${before}"
-  python3 - "${before}" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding="utf-8") as handle: payload=json.load(handle)
-candidates=(payload.get("recovery") or {}).get("candidates") or []
-session=payload.get("network_session")
-if isinstance(session,dict) and (session.get("cleanup_authority") or session.get("transaction_present") or session.get("next_action") not in (None,"","none")):
-    raise SystemExit("pre-commit recovery fabricated Network Session authority")
+  local execute="${PRIVATE_ROOT}/recover-execute.json"
+  local execute_stderr="${PRIVATE_ROOT}/recover-execute.stderr"
+  local after_dry_run="${PRIVATE_ROOT}/transaction-after-dry-run.sha256"
+  local after_execute="${PRIVATE_ROOT}/transaction-after-execute.sha256"
+  local execute_code
+
+  run_e2e_podlaz recover --json >"${before}" 2>"${PRIVATE_ROOT}/recover-before.stderr" || return 1
+  python3 - "${before}" <<'PY' || return 1
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("status") != "warn" or payload.get("mode") != "dry-run":
+    raise SystemExit("pre-commit dry-run did not publish pending fail-closed recovery")
+recovery = payload.get("recovery")
+if not isinstance(recovery, dict):
+    raise SystemExit("pre-commit dry-run recovery projection is missing")
+candidates = recovery.get("candidates") or []
+if not candidates:
+    raise SystemExit("durable pre-commit transaction exists without recovery evidence")
+session = recovery.get("network_session")
+if isinstance(session, dict) and (
+    session.get("cleanup_authority")
+    or session.get("transaction_present")
+    or session.get("next_action") not in (None, "", "none")
+):
+    raise SystemExit("pre-commit dry-run fabricated Network Session authority")
 for candidate in candidates:
-    if not isinstance(candidate,dict) or not isinstance(candidate.get("transaction"),dict):
-        raise SystemExit("pre-commit recovery exposed non-transaction cleanup authority")
+    transaction = candidate.get("transaction") if isinstance(candidate, dict) else None
+    if not isinstance(transaction, dict):
+        raise SystemExit("pre-commit dry-run exposed non-transaction cleanup authority")
+    if transaction.get("state") != "applying" or not transaction.get("requires_cleanup"):
+        raise SystemExit("pre-commit dry-run lost applying transaction evidence")
 PY
-  guest_exec python3 - "${before}" /run/podlaz/transactions <<'PY'
-import glob,json,sys
-with open(sys.argv[1],encoding="utf-8") as handle: payload=json.load(handle)
-paths=glob.glob(sys.argv[2].rstrip("/")+"/*.json")
-candidates=(payload.get("recovery") or {}).get("candidates") or []
-if paths and not candidates: raise SystemExit("durable pre-commit transaction exists without recovery evidence")
+
+  capture_transaction_fingerprint "${after_dry_run}" || return 1
+  cmp -s "${expected_fingerprint}" "${after_dry_run}" || return 1
+
+  set +e
+  run_e2e_podlaz recover --execute --yes --json >"${execute}" 2>"${execute_stderr}"
+  execute_code=$?
+  set -e
+  (( execute_code == 1 )) || return 1
+  python3 - "${execute}" <<'PY' || return 1
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("status") != "warn" or payload.get("mode") != "execute":
+    raise SystemExit("pre-commit execute did not fail closed as incomplete")
+if "recover completed with incomplete cleanup" not in (payload.get("errors") or []):
+    raise SystemExit("pre-commit execute lost incomplete-cleanup classification")
+session = payload.get("network_session")
+if isinstance(session, dict) and (
+    session.get("cleanup_authority")
+    or session.get("transaction_present")
+    or session.get("next_action") not in (None, "", "none")
+):
+    raise SystemExit("pre-commit execute fabricated Network Session authority")
+results = payload.get("recovery") or []
+if not isinstance(results, list) or not results:
+    raise SystemExit("pre-commit execute lacks bounded recovery results")
+if not any(isinstance(item, dict) and item.get("status") == "skipped" for item in results):
+    raise SystemExit("pre-commit execute did not preserve an ambiguous ownership result")
 PY
-  run_e2e_podlaz recover --execute --yes --json >"${PRIVATE_ROOT}/recover-execute.json"
-  wait_for_clean_inactive
-  guest_exec python3 -c 'import glob,sys; raise SystemExit(1 if glob.glob("/run/podlaz/transactions/*.json") else 0)'
-  run_e2e_podlaz recover --json >"${PRIVATE_ROOT}/recover-clean.json"
-  python3 - "${PRIVATE_ROOT}/recover-clean.json" <<'PY'
-import json,sys
-with open(sys.argv[1],encoding="utf-8") as handle: payload=json.load(handle)
-if payload.get("status")!="ok" or payload.get("warnings"): raise SystemExit("post-interruption recovery is not clean")
-recovery=payload.get("recovery") or {}
-if recovery.get("candidates") or recovery.get("warnings"): raise SystemExit("post-interruption recovery retains candidates")
-session=payload.get("network_session")
-if isinstance(session,dict) and (session.get("cleanup_authority") or session.get("transaction_present") or session.get("next_action") not in (None,"","none")):
-    raise SystemExit("post-interruption recovery retains session authority")
-PY
+
+  capture_transaction_fingerprint "${after_execute}" || return 1
+  cmp -s "${expected_fingerprint}" "${after_execute}" || return 1
 }
 
 assert_no_hidden_reconnect() {
-  local attempt
+  local expected_fingerprint="$1"
+  local attempt current="${PRIVATE_ROOT}/transaction-hidden-reconnect.sha256"
   for attempt in $(seq 1 20); do
     assert_no_published_or_resumed_authority || return 1
-    guest_exec python3 -c 'import glob,sys; raise SystemExit(1 if glob.glob("/run/podlaz/transactions/*.json") else 0)' || return 1
+    capture_transaction_fingerprint "${current}" || return 1
+    cmp -s "${expected_fingerprint}" "${current}" || return 1
     sleep 0.25
   done
 }
@@ -357,6 +420,9 @@ run_scenario() {
   local candidate="$1"
   local before_interrupt="${PRIVATE_ROOT}/before-interrupt" after_restart="${PRIVATE_ROOT}/after-restart"
   local after_recovery="${PRIVATE_ROOT}/after-recovery" after_second_restart="${PRIVATE_ROOT}/after-second-restart"
+  local transaction_fingerprint="${PRIVATE_ROOT}/transaction-precommit.sha256"
+  local transaction_after_restart="${PRIVATE_ROOT}/transaction-after-restart.sha256"
+  local transaction_after_second_restart="${PRIVATE_ROOT}/transaction-after-second-restart.sha256"
   local boot_before boot_after
 
   mark_failure diagnostic_unknown base.candidate_ready
@@ -379,7 +445,7 @@ run_scenario() {
   mark_failure product precommit.connect
   release_control candidate-ready || fail "could not release candidate-ready boundary"
   wait_for_hook_ready || fail "connect did not reach before-commit-pause"
-  assert_precommit_transaction_only || fail "pre-commit pause already published or mutated runtime authority"
+  assert_precommit_transaction_only "${transaction_fingerprint}" || fail "pre-commit pause already published or mutated runtime authority"
   assert_foreign_sentinel || fail "foreign state changed before interruption"
   record_evidence hook.precommit_reached pass
   record_evidence precommit.no_network_mutation pass
@@ -397,32 +463,36 @@ run_scenario() {
   boot_after="$(guest_exec cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]')"
   [[ "${boot_after}" == "${boot_before}" ]] || fail "pre-commit interruption crossed a boot boundary"
   assert_no_published_or_resumed_authority || fail "daemon restart fabricated active/reconnect authority"
+  capture_transaction_fingerprint "${transaction_after_restart}" || fail "daemon restart lost exact pre-commit transaction evidence"
+  cmp -s "${transaction_fingerprint}" "${transaction_after_restart}" || fail "daemon restart changed exact pre-commit transaction authority"
   capture_guest_network_snapshot "${after_restart}"
   assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_restart}" || fail "daemon restart changed foreign network state"
   assert_foreign_sentinel || fail "foreign state changed after restart"
   record_evidence restart.no_false_resume_authority pass
 
   mark_failure product recovery.exact
-  assert_recovery_exact_transaction_only || fail "recovery exceeded exact pre-commit transaction authority"
+  assert_recovery_exact_transaction_only "${transaction_fingerprint}" || fail "recovery exceeded exact pre-commit transaction authority"
   assert_no_published_or_resumed_authority || fail "recovery published active/reconnect authority"
   capture_guest_network_snapshot "${after_recovery}"
   assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_recovery}" || fail "recovery changed foreign network state"
   record_evidence recovery.exact_transaction_only pass
+  record_evidence recovery.insufficient_authority_preserved pass
   record_evidence foreign.state_preserved pass
 
   mark_failure product hidden_reconnect
-  assert_no_hidden_reconnect || fail "interrupted lifecycle retried or reconnected after recovery"
+  assert_no_hidden_reconnect "${transaction_fingerprint}" || fail "interrupted lifecycle retried, reconnected, or changed preserved transaction authority"
   record_evidence hidden_reconnect.absent pass
 
-  mark_failure product clean_restart
-  restart_daemon_cleanly || fail "clean daemon restart did not replace daemon process"
-  wait_for_clean_inactive || fail "clean restart did not remain inactive"
-  assert_no_published_or_resumed_authority || fail "clean restart fabricated lifecycle authority"
+  mark_failure product preserved_restart
+  restart_daemon_cleanly || fail "same-boot daemon restart did not replace daemon process"
+  assert_no_published_or_resumed_authority || fail "same-boot restart fabricated lifecycle authority"
+  capture_transaction_fingerprint "${transaction_after_second_restart}" || fail "same-boot restart lost preserved pre-commit transaction"
+  cmp -s "${transaction_fingerprint}" "${transaction_after_second_restart}" || fail "same-boot restart changed preserved pre-commit transaction"
   capture_guest_network_snapshot "${after_second_restart}"
-  assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_second_restart}" || fail "clean restart changed foreign network state"
-  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
-  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
-  record_evidence terminal.clean pass
+  assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_second_restart}" || fail "same-boot restart changed foreign network state"
+  guest_exec timeout 20 getent ahostsv4 example.com >/dev/null || fail "direct DNS connectivity was not preserved"
+  guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/ || fail "direct HTTPS connectivity was not preserved"
+  record_evidence direct.connectivity_preserved pass
 
   mark_failure diagnostic_unknown base.teardown
   remove_recovery_authorization
