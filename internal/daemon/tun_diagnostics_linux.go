@@ -118,10 +118,17 @@ func probeTunIPv4Route(ctx context.Context, plan planner.TunPlan) tundiag.ProbeR
 		result.Error = ruleErr.Error()
 		return result
 	}
-	if !tunDiagnosticHasPolicyRule(ruleResult.stdout, planner.TunRulePriority) {
+	tunnelRule, ok := tunDiagnosticFullTunnelRule(plan)
+	if !ok {
 		result.Status = tundiag.ProbeFail
 		result.Classification = tundiag.ClassPolicyRuleFailure
-		result.Error = fmt.Sprintf("missing priority %d lookup rule for the podlaz routing table", planner.TunRulePriority)
+		result.Error = "transaction has no exact persisted full-tunnel policy rule"
+		return result
+	}
+	if !tunDiagnosticHasPolicyRule(ruleResult.stdout, tunnelRule) {
+		result.Status = tundiag.ProbeFail
+		result.Classification = tundiag.ClassPolicyRuleFailure
+		result.Error = fmt.Sprintf("missing priority %d lookup %s rule for the allocated TUN routing table", tunnelRule.Priority, tunnelRule.Table)
 		return result
 	}
 	expectedInterface := emptyAs(plan.TunDevice.Name, netsnapshot.DefaultTunName)
@@ -341,15 +348,66 @@ func parseTunDiagnosticRoute(output string) tundiag.RouteEvidence {
 	return evidence
 }
 
-func tunDiagnosticHasPolicyRule(output string, priority int) bool {
-	needle := strconv.Itoa(priority) + ":"
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, needle) && (strings.Contains(line, "lookup podlaz") || strings.Contains(line, "lookup "+netsnapshot.DefaultRouteTableID)) {
-			return true
+func tunDiagnosticFullTunnelRule(plan planner.TunPlan) (planner.TunPolicyRulePlan, bool) {
+	var match planner.TunPolicyRulePlan
+	matches := 0
+	for _, rule := range plan.PolicyRules {
+		if rule.Priority <= 0 ||
+			strings.TrimSpace(rule.Selector) != planner.IPv4DefaultSelector ||
+			strings.TrimSpace(rule.Table) == "" {
+			continue
 		}
+		match = rule
+		matches++
+	}
+	return match, matches == 1
+}
+
+func tunDiagnosticHasPolicyRule(output string, rule planner.TunPolicyRulePlan) bool {
+	if rule.Priority <= 0 ||
+		strings.TrimSpace(rule.Selector) != planner.IPv4DefaultSelector ||
+		strings.TrimSpace(rule.Table) == "" {
+		return false
+	}
+	needle := strconv.Itoa(rule.Priority) + ":"
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 || fields[0] != needle {
+			continue
+		}
+		lookup := ""
+		from := ""
+		hasTo := false
+		hasMark := false
+		for i := 1; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "lookup":
+				lookup = fields[i+1]
+			case "from":
+				from = fields[i+1]
+			case "to":
+				hasTo = true
+			case "fwmark":
+				hasMark = true
+			}
+		}
+		if from != "all" || hasTo || hasMark || !tunDiagnosticTableMatches(lookup, rule.Table) {
+			continue
+		}
+		return true
 	}
 	return false
+}
+
+func tunDiagnosticTableMatches(observed, expected string) bool {
+	normalize := func(value string) string {
+		value = strings.TrimSpace(value)
+		if value == planner.TunRoutingTable {
+			return netsnapshot.DefaultRouteTableID
+		}
+		return value
+	}
+	return normalize(observed) != "" && normalize(observed) == normalize(expected)
 }
 
 func tunDiagnosticBootstrapDialer(target tundiag.Target) tundiag.DialContextFunc {

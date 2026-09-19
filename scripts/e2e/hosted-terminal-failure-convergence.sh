@@ -18,7 +18,7 @@ OVERRIDE_PATH="${OVERRIDE_DIR}/99-hosted-terminal-failure.conf"
 GUEST_PRIVATE="/tmp/podlaz-hosted-terminal-failure"
 BASE_GUEST_PRIVATE="/tmp/podlaz-hosted-synthetic-tun"
 GUEST_MANIFEST="${BASE_GUEST_PRIVATE}/network-manifest.json"
-FALLBACK_NETWORK_HELPER="/workspace/scripts/e2e/tun-package-fallback-network.py"
+HOSTED_NETWORK_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_network_authority.py"
 STATUS_HELPER="/workspace/scripts/e2e/lib/daemon_status_semantics.py"
 PRIVATE_ROOT="${E2E_TMP_ROOT}/hosted-terminal-failure-private"
 BASE_TMP_ROOT="${PRIVATE_ROOT}/base-private"
@@ -392,7 +392,7 @@ assert_foreign_sentinel_unchanged() {
 }
 
 assert_terminal_data_plane_clean() {
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal-failure '${FALLBACK_NETWORK_HELPER}' '${GUEST_MANIFEST}'"
+  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal-failure '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
 }
 
 wait_for_terminal_cleanup_boundary() {

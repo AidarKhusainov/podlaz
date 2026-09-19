@@ -28,7 +28,7 @@ GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-synthetic-tun"
 TUN_RULE="/etc/polkit-1/rules.d/49-podlaz-hosted-synthetic-tun.rules"
 GUEST_PRIVATE="/tmp/podlaz-hosted-synthetic-tun"
 GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
-FALLBACK_NETWORK_HELPER="/workspace/scripts/e2e/tun-package-fallback-network.py"
+HOSTED_NETWORK_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_network_authority.py"
 ACTIVE_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_active_authority.py"
 HOSTED_CONTROL_DIR="${PODLAZ_E2E_HOSTED_CONTROL_DIR:-}"
 HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180}"
@@ -614,9 +614,67 @@ raise SystemExit(0 if ok else 1)'
   wait_guest_status clean-inactive 20
 }
 
+assert_persisted_tun_address_present() {
+  guest_exec python3 - /run/podlaz/transactions <<'PY'
+import glob
+import ipaddress
+import json
+import socket
+import subprocess
+import sys
+
+paths = sorted(glob.glob(sys.argv[1].rstrip("/") + "/*.json"))
+committed = []
+for path in paths:
+    with open(path, encoding="utf-8") as handle:
+        tx = json.load(handle)
+    if tx.get("owner") == "podlaz" and tx.get("mode") == "tun" and tx.get("state") == "committed":
+        committed.append(tx)
+if len(committed) != 1:
+    raise SystemExit(f"expected one committed TUN transaction, found {len(committed)}")
+desired = (committed[0].get("desired_plan") or {}).get("tun_address") or {}
+interface = str(desired.get("interface_name") or "")
+cidr = str(desired.get("cidr") or "")
+if desired.get("owner") != "podlaz:tun-address" or desired.get("family") != "ipv4":
+    raise SystemExit("persisted TUN address ownership is invalid")
+if interface != "podlaz0" or not cidr:
+    raise SystemExit("persisted TUN address identity is incomplete")
+try:
+    expected = ipaddress.ip_interface(cidr)
+except ValueError as exc:
+    raise SystemExit("persisted TUN address is invalid") from exc
+if expected.version != 4:
+    raise SystemExit("persisted TUN address is not IPv4")
+link_index = desired.get("link_index")
+if not isinstance(link_index, int) or link_index <= 0 or desired.get("link_kind") != "tun":
+    raise SystemExit("persisted TUN link identity is incomplete")
+if socket.if_nametoindex(interface) != link_index:
+    raise SystemExit("live TUN ifindex differs from persisted authority")
+result = subprocess.run(
+    ["ip", "-4", "-j", "address", "show", "dev", interface],
+    check=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+)
+links = json.loads(result.stdout)
+observed = set()
+for link in links:
+    for info in link.get("addr_info", []):
+        if info.get("family") != "inet":
+            continue
+        local = info.get("local")
+        prefix = info.get("prefixlen")
+        if local is not None and prefix is not None:
+            observed.add(str(ipaddress.ip_interface(f"{local}/{prefix}")))
+if str(expected) not in observed:
+    raise SystemExit(f"persisted TUN address is absent: {expected}")
+PY
+}
+
 assert_verified_active_authority() {
   guest_exec ip link show dev podlaz0 >/dev/null
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && assert_tun_package_address_present active podlaz0 198.18.0.1/32"
+  assert_persisted_tun_address_present
   # Capture live composition into guest-private files, then compare it to the
   # exact persisted active transaction and current-boot Network Session.
   guest_exec /bin/bash -lc "resolvectl dns >'${GUEST_PRIVATE}/resolved-dns.txt'"
@@ -636,9 +694,9 @@ assert_verified_active_authority() {
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"'
-  guest_exec python3 "${FALLBACK_NETWORK_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null
+  guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null
   guest_exec jq -e '(.routes | length) > 0 and (.rules | length) > 0' "${GUEST_MANIFEST}" >/dev/null
-  guest_exec python3 "${FALLBACK_NETWORK_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
+  guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
   assert_foreign_sentinel
 }
 
@@ -683,7 +741,7 @@ PY
 }
 
 assert_terminal_authority_clean() {
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${FALLBACK_NETWORK_HELPER}' '${GUEST_MANIFEST}'"
+  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
   if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1; then
     return 1

@@ -62,11 +62,18 @@ func probeTunServerBypassPath(ctx context.Context, plan planner.TunPlan) tundiag
 		result.Error = "inspect VPN server bypass policy rule: " + ruleErr.Error()
 		return result
 	}
-	rule := tunDiagnosticHardenedServerBypassRule(ruleResult.stdout, target)
+	plannedRule, ok := tunDiagnosticServerBypassPolicyRule(plan, target)
+	if !ok {
+		result.Status = tundiag.ProbeFail
+		result.Classification = tundiag.ClassPolicyRuleFailure
+		result.Error = "transaction has no exact persisted VPN server bypass policy rule"
+		return result
+	}
+	rule := tunDiagnosticHardenedServerBypassRule(ruleResult.stdout, plannedRule)
 	if rule == "" {
 		result.Status = tundiag.ProbeFail
 		result.Classification = tundiag.ClassPolicyRuleFailure
-		result.Error = fmt.Sprintf("missing priority %d rule routing VPN server %s through main", planner.ServerRulePriority, target)
+		result.Error = fmt.Sprintf("missing priority %d rule routing VPN server %s through %s", plannedRule.Priority, target, plannedRule.Table)
 		return result
 	}
 	result.Evidence.PolicyRules = []string{rule}
@@ -96,25 +103,56 @@ func probeTunServerBypassPath(ctx context.Context, plan planner.TunPlan) tundiag
 	return result
 }
 
-func tunDiagnosticHardenedServerBypassRule(output, target string) string {
-	priority := strconv.Itoa(planner.ServerRulePriority) + ":"
-	for _, raw := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(raw)
-		if !strings.HasPrefix(line, priority) {
+func tunDiagnosticServerBypassPolicyRule(plan planner.TunPlan, target string) (planner.TunPolicyRulePlan, bool) {
+	wantSelector := "to " + strings.TrimSuffix(strings.TrimSpace(target), "/32") + "/32"
+	var match planner.TunPolicyRulePlan
+	matches := 0
+	for _, rule := range plan.PolicyRules {
+		if rule.Priority <= 0 ||
+			strings.TrimSpace(rule.Selector) != wantSelector ||
+			strings.TrimSpace(rule.Table) != planner.MainRoutingTable {
 			continue
 		}
+		match = rule
+		matches++
+	}
+	return match, matches == 1
+}
+
+func tunDiagnosticHardenedServerBypassRule(output string, expected planner.TunPolicyRulePlan) string {
+	if expected.Priority <= 0 ||
+		strings.TrimSpace(expected.Table) != planner.MainRoutingTable ||
+		!strings.HasPrefix(strings.TrimSpace(expected.Selector), "to ") {
+		return ""
+	}
+	target := strings.TrimSuffix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expected.Selector), "to ")), "/32")
+	if net.ParseIP(target) == nil {
+		return ""
+	}
+	priority := strconv.Itoa(expected.Priority) + ":"
+	for _, raw := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(raw)
 		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != priority {
+			continue
+		}
 		targetOK := false
 		mainOK := false
-		for i := 0; i < len(fields)-1; i++ {
+		fromOK := true
+		hasMark := false
+		for i := 1; i+1 < len(fields); i++ {
 			switch fields[i] {
+			case "from":
+				fromOK = fields[i+1] == "all"
 			case "to":
 				targetOK = strings.TrimSuffix(fields[i+1], "/32") == target
 			case "lookup", "table":
 				mainOK = fields[i+1] == planner.MainRoutingTable
+			case "fwmark":
+				hasMark = true
 			}
 		}
-		if targetOK && mainOK {
+		if targetOK && mainOK && fromOK && !hasMark {
 			return line
 		}
 	}

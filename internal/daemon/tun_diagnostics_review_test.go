@@ -14,12 +14,19 @@ import (
 )
 
 func TestBuildHardenedTunDiagnosticAdaptersValidatesServerBypassMainPath(t *testing.T) {
-	input := tunDiagnosticInput{plan: planner.TunPlan{ServerBypass: planner.TunRoutePlan{
-		Destination: "203.0.113.10/32",
-		Table:       planner.MainRoutingTable,
-		Interface:   "eth0",
-		Gateway:     "192.0.2.1",
-	}}}
+	input := tunDiagnosticInput{plan: planner.TunPlan{
+		ServerBypass: planner.TunRoutePlan{
+			Destination: "203.0.113.10/32",
+			Table:       planner.MainRoutingTable,
+			Interface:   "eth0",
+			Gateway:     "192.0.2.1",
+		},
+		PolicyRules: []planner.TunPolicyRulePlan{{
+			Priority: planner.ServerRulePriority,
+			Selector: "to 203.0.113.10/32",
+			Table:    planner.MainRoutingTable,
+		}},
+	}}
 	original := tunDiagnosticCommandRunner
 	tunDiagnosticCommandRunner = func(_ context.Context, name string, args ...string) (tunDiagnosticCommandResult, error) {
 		command := strings.TrimSpace(name + " " + strings.Join(args, " "))
