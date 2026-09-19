@@ -379,7 +379,7 @@ run_scenario() {
   record_evidence precommit.no_network_mutation pass
 
   mark_failure product precommit.interrupt
-  guest_exec systemctl kill --kill-who=main --signal=SIGKILL podlazd.service
+  guest_exec systemctl kill --kill-whom=main --signal=SIGKILL podlazd.service
   wait_for_control_ready connect-failed || fail "interrupted connect did not return as failure"
   record_evidence connect.interrupted_not_success pass
 
