@@ -225,9 +225,19 @@ func TestHostedSyntheticTUNDynamicNetworkManifestCanBeVerifiedPresentAndAbsent(t
 	fakeIP := tmp + "/ip"
 	fakeIPScript := `#!/bin/sh
 case "$*" in
+  "-4 rule show priority 9997")
+    if [ "${FAKE_IP_MODE:-present}" = "present" ]; then
+      printf '%s\n' '9997: from all to 203.0.113.10 lookup main'
+    fi
+    ;;
   "-4 rule show priority 9998")
     if [ "${FAKE_IP_MODE:-present}" = "present" ]; then
       printf '%s\n' '9998: from all lookup 51821'
+    fi
+    ;;
+  "-4 route show table main exact 203.0.113.10/32")
+    if [ "${FAKE_IP_MODE:-present}" = "present" ]; then
+      printf '%s\n' '203.0.113.10 via 192.0.2.1 dev host0'
     fi
     ;;
   "-4 route show table 51821 exact default")
@@ -242,7 +252,7 @@ esac
 		t.Fatalf("write fake ip: %v", err)
 	}
 	manifest := tmp + "/manifest.json"
-	manifestJSON := `{"schema_version":"podlaz.e2e.hosted-network-authority.v1","routes":[{"family":"ipv4","table":"51821","cidr":"default","via":"","dev":"podlaz0"}],"rules":[{"family":"ipv4","priority":9998,"from":"all","to":"","mark":"","table":"51821"}]}`
+	manifestJSON := `{"schema_version":"podlaz.e2e.hosted-network-authority.v1","routes":[{"family":"ipv4","table":"51821","cidr":"default","via":"","dev":"podlaz0"},{"family":"ipv4","table":"main","cidr":"203.0.113.10/32","via":"192.0.2.1","dev":"host0"}],"rules":[{"family":"ipv4","priority":9997,"source":"","destination":"203.0.113.10/32","mark":"","table":"main"},{"family":"ipv4","priority":9998,"source":"all","destination":"","mark":"","table":"51821"}]}`
 	if err := os.WriteFile(manifest, []byte(manifestJSON), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
