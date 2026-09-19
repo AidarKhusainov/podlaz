@@ -28,7 +28,7 @@ GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-synthetic-tun"
 TUN_RULE="/etc/polkit-1/rules.d/49-podlaz-hosted-synthetic-tun.rules"
 GUEST_PRIVATE="/tmp/podlaz-hosted-synthetic-tun"
 GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
-FALLBACK_NETWORK_HELPER="/workspace/scripts/e2e/tun-package-fallback-network.py"
+HOSTED_NETWORK_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_network_authority.py"
 ACTIVE_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_active_authority.py"
 HOSTED_CONTROL_DIR="${PODLAZ_E2E_HOSTED_CONTROL_DIR:-}"
 HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180}"
@@ -694,9 +694,9 @@ assert_verified_active_authority() {
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; found=false; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do if [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" == /usr/lib/podlaz/xray ]]; then found=true; fi; done; "$found"'
-  guest_exec python3 "${FALLBACK_NETWORK_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null
+  guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" snapshot /run/podlaz/transactions "${GUEST_MANIFEST}" >/dev/null
   guest_exec jq -e '(.routes | length) > 0 and (.rules | length) > 0' "${GUEST_MANIFEST}" >/dev/null
-  guest_exec python3 "${FALLBACK_NETWORK_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
+  guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
   assert_foreign_sentinel
 }
 
@@ -741,7 +741,7 @@ PY
 }
 
 assert_terminal_authority_clean() {
-  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${FALLBACK_NETWORK_HELPER}' '${GUEST_MANIFEST}'"
+  guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
   if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1; then
     return 1
