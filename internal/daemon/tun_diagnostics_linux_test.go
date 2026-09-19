@@ -24,7 +24,6 @@ func TestParseTunDiagnosticRouteAndPolicyRule(t *testing.T) {
 	}
 }
 
-
 func TestProbeTunIPv4RouteUsesAllocatedFullTunnelRule(t *testing.T) {
 	original := tunDiagnosticCommandRunner
 	t.Cleanup(func() { tunDiagnosticCommandRunner = original })
