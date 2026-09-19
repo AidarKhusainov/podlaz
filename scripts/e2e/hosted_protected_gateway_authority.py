@@ -16,7 +16,7 @@ from typing import Any
 
 import hosted_synthetic_network_authority as network
 
-TX_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+TX_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 PE_TABLE_RE = re.compile(r"^podlaz_pe_[0-9a-f]{12}(?:_[1-9][0-9]{0,2})?$")
 
