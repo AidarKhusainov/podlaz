@@ -14,7 +14,6 @@ func TestHostedVMRebootAutostartDisabledOwnsRealBootBoundary(t *testing.T) {
 	text := string(script)
 	for _, marker := range []string{
 		"hosted_vm_reboot",
-		"/proc/sys/kernel/random/boot_id",
 		"autostart disable",
 		"/run/podlaz/boot-autostart-attempt.json",
 		"/var/lib/podlaz/boot-autostart-manifest.json",
@@ -52,6 +51,7 @@ func TestHostedVMRebootAutostartDisabledUsesBoundedQEMUInfrastructure(t *testing
 		"-accel tcg",
 		"127.0.0.1:",
 		"hosted_vm_reboot()",
+		"/proc/sys/kernel/random/boot_id",
 		"q35,accel=",
 	} {
 		if !strings.Contains(text, marker) {
