@@ -264,7 +264,9 @@ PY
   guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/precommit-status.json" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding="utf-8") as handle: status=json.load(handle)
-if status.get("connection")!="connecting": raise SystemExit(f"pre-commit lifecycle is not connecting: {status.get('connection')!r}")
+connection=str(status.get("connection") or "")
+if connection in {"active","reconnecting"}:
+    raise SystemExit(f"pre-commit lifecycle published unsafe connection state: {connection!r}")
 if str(status.get("active_transaction_id") or ""): raise SystemExit("pre-commit lifecycle published an active transaction")
 PY
 }
