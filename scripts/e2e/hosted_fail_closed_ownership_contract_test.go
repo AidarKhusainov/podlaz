@@ -75,8 +75,10 @@ func TestHostedCurrentRuntimeFailClosedOwnershipCannotPublishOrFabricateAuthorit
 		"connect.interrupted_not_success",
 		"restart.no_false_resume_authority",
 		"recovery.exact_transaction_only",
+		"recovery.insufficient_authority_preserved",
+		"recover completed with incomplete cleanup",
 		"foreign.state_preserved",
-		"terminal.clean",
+		"direct.connectivity_preserved",
 		"artifact.privacy",
 	)
 	forbidHostedFailClosedMarkers(t, script,
