@@ -257,6 +257,7 @@ PY
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1'
   guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1'
   guest_exec /bin/bash -lc "nft list tables >'${FOCUSED_GUEST_PRIVATE}/nft-precommit.txt'; ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FOCUSED_GUEST_PRIVATE}/nft-precommit.txt'"
+  # shellcheck disable=SC2016 # Guest shell expands daemon/child process variables.
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
   guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/precommit-status.json'"
   guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/precommit-status.json" <<'PY'
@@ -280,6 +281,7 @@ PY
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1'
   guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1'
   guest_exec /bin/bash -lc "nft list tables >'${FOCUSED_GUEST_PRIVATE}/nft-post-restart.txt'; ! grep -E 'table inet podlaz_pe_[0-9a-f]+' '${FOCUSED_GUEST_PRIVATE}/nft-post-restart.txt'"
+  # shellcheck disable=SC2016 # Guest shell expands daemon/child process variables.
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
 }
 
