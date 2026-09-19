@@ -637,7 +637,7 @@ jobs:
           name: podlaz-hosted-protected-gateway-lifecycle
           path: ${{ runner.temp }}/podlaz-hosted-protected-gateway-public/hosted-protected-gateway-lifecycle.txt
           if-no-files-found: error
-          retention-days: 7\n
+          retention-days: 7
 
   precommit-interruption:
     name: Pre-commit interruption ownership
