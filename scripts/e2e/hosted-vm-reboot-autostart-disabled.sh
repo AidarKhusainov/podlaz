@@ -64,7 +64,7 @@ mark_failure() {
 }
 
 finalize_report() {
-  local key
+  local key kvm_state
   [[ "${FINALIZED}" == false ]] || return 0
   FINALIZED=true
   for key in "${EVIDENCE_KEYS[@]}"; do
