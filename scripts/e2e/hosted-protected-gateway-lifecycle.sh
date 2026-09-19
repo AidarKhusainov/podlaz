@@ -411,17 +411,22 @@ PY
 }
 
 assert_recover_execute_noop() {
-  local phase="$1" output
+  local phase="$1" output exit_code
   output="${PRIVATE_ROOT}/${phase}-recover-execute.json"
+  set +e
   run_e2e_podlaz recover --execute --yes --json >"${output}"
+  exit_code=$?
+  set -e
+  (( exit_code == 1 )) || return 1
   python3 - "${output}" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
-if payload.get("schema_version") != "v1" or payload.get("status") != "ok" or payload.get("mode") != "execute":
-    raise SystemExit("active recovery execution did not report a successful typed no-op")
-if payload.get("errors"):
-    raise SystemExit("active recovery execution reported errors")
+if payload.get("schema_version") != "v1" or payload.get("status") != "warn" or payload.get("mode") != "execute":
+    raise SystemExit("active recovery execution did not report the typed skipped/incomplete no-op")
+errors = payload.get("errors")
+if errors != ["recover completed with incomplete cleanup"]:
+    raise SystemExit("active recovery execution returned an unexpected failure classification")
 results = payload.get("recovery")
 warnings = payload.get("warnings")
 if not isinstance(results, list) or not results:
