@@ -272,10 +272,56 @@ PY
   chmod 0600 "${output}" || return 1
 }
 
+capture_precommit_session_identity() {
+  local output="$1"
+  guest_exec python3 - /run/podlaz/network-session-continuation.json /proc/sys/kernel/random/boot_id <<'PY' >"${output}" || return 1
+import hashlib
+import json
+import re
+import sys
+
+state_path, boot_path = sys.argv[1:]
+with open(state_path, encoding="utf-8") as handle:
+    state = json.load(handle)
+with open(boot_path, encoding="utf-8") as handle:
+    boot_id = handle.read().strip()
+
+if state.get("schema_version") != "podlaz.network-session-state.v1" or state.get("owner") != "podlaz":
+    raise SystemExit("pre-commit Network Session identity is invalid")
+session_id = str(state.get("session_id") or "")
+if not re.fullmatch(r"[0-9a-f]{32}", session_id):
+    raise SystemExit("pre-commit Network Session ID is invalid")
+if state.get("boot_id") != boot_id:
+    raise SystemExit("pre-commit Network Session is not current-boot")
+if state.get("intent") != "resume":
+    raise SystemExit(f"pre-commit Network Session intent is {state.get('intent')!r}")
+request = state.get("request")
+if not isinstance(request, dict) or request.get("mode") != "tun":
+    raise SystemExit("pre-commit Network Session request is not TUN")
+if state.get("protection") is not None:
+    raise SystemExit("pre-commit Network Session fabricated Privacy Envelope authority")
+if state.get("replacement") is not None:
+    raise SystemExit("pre-commit Network Session fabricated replacement authority")
+
+stable = {
+    "schema_version": state["schema_version"],
+    "owner": state["owner"],
+    "boot_id": state["boot_id"],
+    "session_id": session_id,
+    "intent": state["intent"],
+    "request": request,
+}
+encoded = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()
+print(hashlib.sha256(encoded).hexdigest())
+PY
+  [[ -s "${output}" ]] || return 1
+  chmod 0600 "${output}" || return 1
+}
+
 assert_precommit_transaction_only() {
-  local fingerprint="$1"
-  capture_transaction_fingerprint "${fingerprint}" || return 1
-  guest_exec test ! -e /run/podlaz/network-session-continuation.json || return 1
+  local transaction_fingerprint="$1" session_fingerprint="$2"
+  capture_transaction_fingerprint "${transaction_fingerprint}" || return 1
+  capture_precommit_session_identity "${session_fingerprint}" || return 1
   guest_exec test ! -e /run/podlaz/generated/xray.json || return 1
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1' || return 1
   guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1' || return 1
@@ -299,6 +345,7 @@ PY
 }
 
 assert_no_published_or_resumed_authority() {
+  local expected_session_fingerprint="$1" current_session_fingerprint="${PRIVATE_ROOT}/session-current.sha256"
   guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 3 --unix-socket '${DAEMON_SOCKET}' http://localhost/v1/status >'${FOCUSED_GUEST_PRIVATE}/post-restart-status.json'" || return 1
   guest_exec python3 - "${FOCUSED_GUEST_PRIVATE}/post-restart-status.json" <<'PY' || return 1
 import json
@@ -311,7 +358,8 @@ if status.get("connection") in {"active", "connecting", "reconnecting"}:
 if str(status.get("active_transaction_id") or ""):
     raise SystemExit("interrupted lifecycle published active transaction authority")
 PY
-  guest_exec test ! -e /run/podlaz/network-session-continuation.json || return 1
+  capture_precommit_session_identity "${current_session_fingerprint}" || return 1
+  cmp -s "${expected_session_fingerprint}" "${current_session_fingerprint}" || return 1
   guest_exec test ! -e /run/podlaz/generated/xray.json || return 1
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1' || return 1
   guest_exec /bin/bash -lc '! nft list table inet podlaz >/dev/null 2>&1' || return 1
@@ -322,12 +370,14 @@ PY
 }
 
 assert_recovery_exact_transaction_only() {
-  local expected_fingerprint="$1"
+  local expected_fingerprint="$1" expected_session_fingerprint="$2"
   local before="${PRIVATE_ROOT}/recover-before.json"
   local execute="${PRIVATE_ROOT}/recover-execute.json"
   local execute_stderr="${PRIVATE_ROOT}/recover-execute.stderr"
   local after_dry_run="${PRIVATE_ROOT}/transaction-after-dry-run.sha256"
   local after_execute="${PRIVATE_ROOT}/transaction-after-execute.sha256"
+  local session_after_dry_run="${PRIVATE_ROOT}/session-after-dry-run.sha256"
+  local session_after_execute="${PRIVATE_ROOT}/session-after-execute.sha256"
   local execute_code
 
   run_e2e_podlaz recover --json >"${before}" 2>"${PRIVATE_ROOT}/recover-before.stderr" || return 1
@@ -346,12 +396,23 @@ candidates = recovery.get("candidates") or []
 if not candidates:
     raise SystemExit("durable pre-commit transaction exists without recovery evidence")
 session = recovery.get("network_session")
-if isinstance(session, dict) and (
-    session.get("cleanup_authority")
-    or session.get("transaction_present")
-    or session.get("next_action") not in (None, "", "none")
-):
-    raise SystemExit("pre-commit dry-run fabricated Network Session authority")
+if not isinstance(session, dict):
+    raise SystemExit("pre-commit dry-run lost current Network Session recovery projection")
+expected_session = {
+    "authority": "present",
+    "intent": "resume",
+    "startup_gate": "blocked",
+    "resume_stage": "exact-recovery",
+    "last_resume_outcome": "incomplete",
+    "transaction_present": True,
+    "cleanup_authority": "none",
+    "next_action": "retry-resume",
+}
+for key, value in expected_session.items():
+    if session.get(key) != value:
+        raise SystemExit(f"pre-commit dry-run Network Session {key}={session.get(key)!r}, expected {value!r}")
+if session.get("replay_disposition") or session.get("network_apply_subphase"):
+    raise SystemExit("pre-commit dry-run advanced into connect replay")
 for candidate in candidates:
     transaction = candidate.get("transaction") if isinstance(candidate, dict) else None
     if not isinstance(transaction, dict):
@@ -362,6 +423,8 @@ PY
 
   capture_transaction_fingerprint "${after_dry_run}" || return 1
   cmp -s "${expected_fingerprint}" "${after_dry_run}" || return 1
+  capture_precommit_session_identity "${session_after_dry_run}" || return 1
+  cmp -s "${expected_session_fingerprint}" "${session_after_dry_run}" || return 1
 
   set +e
   run_e2e_podlaz recover --execute --yes --json >"${execute}" 2>"${execute_stderr}"
@@ -379,12 +442,23 @@ if payload.get("status") != "warn" or payload.get("mode") != "execute":
 if "recover completed with incomplete cleanup" not in (payload.get("errors") or []):
     raise SystemExit("pre-commit execute lost incomplete-cleanup classification")
 session = payload.get("network_session")
-if isinstance(session, dict) and (
-    session.get("cleanup_authority")
-    or session.get("transaction_present")
-    or session.get("next_action") not in (None, "", "none")
-):
-    raise SystemExit("pre-commit execute fabricated Network Session authority")
+if not isinstance(session, dict):
+    raise SystemExit("pre-commit execute lost current Network Session recovery projection")
+expected_session = {
+    "authority": "present",
+    "intent": "resume",
+    "startup_gate": "blocked",
+    "resume_stage": "exact-recovery",
+    "last_resume_outcome": "incomplete",
+    "transaction_present": True,
+    "cleanup_authority": "none",
+    "next_action": "retry-resume",
+}
+for key, value in expected_session.items():
+    if session.get(key) != value:
+        raise SystemExit(f"pre-commit execute Network Session {key}={session.get(key)!r}, expected {value!r}")
+if session.get("replay_disposition") or session.get("network_apply_subphase"):
+    raise SystemExit("pre-commit execute advanced into connect replay")
 results = payload.get("recovery") or []
 if not isinstance(results, list) or not results:
     raise SystemExit("pre-commit execute lacks bounded recovery results")
@@ -394,13 +468,15 @@ PY
 
   capture_transaction_fingerprint "${after_execute}" || return 1
   cmp -s "${expected_fingerprint}" "${after_execute}" || return 1
+  capture_precommit_session_identity "${session_after_execute}" || return 1
+  cmp -s "${expected_session_fingerprint}" "${session_after_execute}" || return 1
 }
 
 assert_no_hidden_reconnect() {
-  local expected_fingerprint="$1"
+  local expected_fingerprint="$1" expected_session_fingerprint="$2"
   local attempt current="${PRIVATE_ROOT}/transaction-hidden-reconnect.sha256"
   for attempt in $(seq 1 20); do
-    assert_no_published_or_resumed_authority || return 1
+    assert_no_published_or_resumed_authority "${expected_session_fingerprint}" || return 1
     capture_transaction_fingerprint "${current}" || return 1
     cmp -s "${expected_fingerprint}" "${current}" || return 1
     sleep 0.25
@@ -423,6 +499,9 @@ run_scenario() {
   local transaction_fingerprint="${PRIVATE_ROOT}/transaction-precommit.sha256"
   local transaction_after_restart="${PRIVATE_ROOT}/transaction-after-restart.sha256"
   local transaction_after_second_restart="${PRIVATE_ROOT}/transaction-after-second-restart.sha256"
+  local session_fingerprint="${PRIVATE_ROOT}/session-precommit.sha256"
+  local session_after_restart="${PRIVATE_ROOT}/session-after-restart.sha256"
+  local session_after_second_restart="${PRIVATE_ROOT}/session-after-second-restart.sha256"
   local boot_before boot_after
 
   mark_failure diagnostic_unknown base.candidate_ready
@@ -445,7 +524,7 @@ run_scenario() {
   mark_failure product precommit.connect
   release_control candidate-ready || fail "could not release candidate-ready boundary"
   wait_for_hook_ready || fail "connect did not reach before-commit-pause"
-  assert_precommit_transaction_only "${transaction_fingerprint}" || fail "pre-commit pause already published or mutated runtime authority"
+  assert_precommit_transaction_only "${transaction_fingerprint}" "${session_fingerprint}" || fail "pre-commit pause already published or mutated runtime authority"
   assert_foreign_sentinel || fail "foreign state changed before interruption"
   record_evidence hook.precommit_reached pass
   record_evidence precommit.no_network_mutation pass
@@ -462,17 +541,19 @@ run_scenario() {
   wait_for_daemon_socket || fail "daemon did not return after pre-commit interruption"
   boot_after="$(guest_exec cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]')"
   [[ "${boot_after}" == "${boot_before}" ]] || fail "pre-commit interruption crossed a boot boundary"
-  assert_no_published_or_resumed_authority || fail "daemon restart fabricated active/reconnect authority"
+  assert_no_published_or_resumed_authority "${session_fingerprint}" || fail "daemon restart fabricated active/reconnect authority"
   capture_transaction_fingerprint "${transaction_after_restart}" || fail "daemon restart lost exact pre-commit transaction evidence"
   cmp -s "${transaction_fingerprint}" "${transaction_after_restart}" || fail "daemon restart changed exact pre-commit transaction authority"
+  capture_precommit_session_identity "${session_after_restart}" || fail "daemon restart lost admitted Network Session identity"
+  cmp -s "${session_fingerprint}" "${session_after_restart}" || fail "daemon restart fabricated a different Network Session"
   capture_guest_network_snapshot "${after_restart}"
   assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_restart}" || fail "daemon restart changed foreign network state"
   assert_foreign_sentinel || fail "foreign state changed after restart"
   record_evidence restart.no_false_resume_authority pass
 
   mark_failure product recovery.exact
-  assert_recovery_exact_transaction_only "${transaction_fingerprint}" || fail "recovery exceeded exact pre-commit transaction authority"
-  assert_no_published_or_resumed_authority || fail "recovery published active/reconnect authority"
+  assert_recovery_exact_transaction_only "${transaction_fingerprint}" "${session_fingerprint}" || fail "recovery exceeded exact pre-commit transaction authority"
+  assert_no_published_or_resumed_authority "${session_fingerprint}" || fail "recovery published active/reconnect authority"
   capture_guest_network_snapshot "${after_recovery}"
   assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_recovery}" || fail "recovery changed foreign network state"
   record_evidence recovery.exact_transaction_only pass
@@ -480,14 +561,16 @@ run_scenario() {
   record_evidence foreign.state_preserved pass
 
   mark_failure product hidden_reconnect
-  assert_no_hidden_reconnect "${transaction_fingerprint}" || fail "interrupted lifecycle retried, reconnected, or changed preserved transaction authority"
+  assert_no_hidden_reconnect "${transaction_fingerprint}" "${session_fingerprint}" || fail "interrupted lifecycle retried, reconnected, or changed preserved transaction authority"
   record_evidence hidden_reconnect.absent pass
 
   mark_failure product preserved_restart
   restart_daemon_cleanly || fail "same-boot daemon restart did not replace daemon process"
-  assert_no_published_or_resumed_authority || fail "same-boot restart fabricated lifecycle authority"
+  assert_no_published_or_resumed_authority "${session_fingerprint}" || fail "same-boot restart fabricated lifecycle authority"
   capture_transaction_fingerprint "${transaction_after_second_restart}" || fail "same-boot restart lost preserved pre-commit transaction"
   cmp -s "${transaction_fingerprint}" "${transaction_after_second_restart}" || fail "same-boot restart changed preserved pre-commit transaction"
+  capture_precommit_session_identity "${session_after_second_restart}" || fail "same-boot restart lost admitted Network Session"
+  cmp -s "${session_fingerprint}" "${session_after_second_restart}" || fail "same-boot restart fabricated a different Network Session"
   capture_guest_network_snapshot "${after_second_restart}"
   assert_network_snapshot_equal "${BASE_GUEST_BASELINE}" "${after_second_restart}" || fail "same-boot restart changed foreign network state"
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null || fail "direct DNS connectivity was not preserved"
