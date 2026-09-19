@@ -334,7 +334,8 @@ assert_active_status_reads() {
 }
 
 assert_inactive_status() {
-  local phase="$1" output="${PRIVATE_ROOT}/${phase}-inactive-status.txt"
+  local phase="$1" output
+  output="${PRIVATE_ROOT}/${phase}-inactive-status.txt"
   wait_guest_status clean-inactive || return 1
   run_e2e_podlaz status >"${output}"
   grep -Fx 'Connection: inactive' "${output}" >/dev/null || return 1
@@ -345,7 +346,8 @@ assert_inactive_status() {
 }
 
 assert_recover_dry_run_noop() {
-  local phase="$1" output="${PRIVATE_ROOT}/${phase}-recover-dry.json"
+  local phase="$1" output
+  output="${PRIVATE_ROOT}/${phase}-recover-dry.json"
   run_e2e_podlaz recover --json >"${output}"
   python3 - "${output}" <<'PY'
 import json, sys
@@ -364,7 +366,8 @@ PY
 }
 
 assert_recover_execute_noop() {
-  local phase="$1" output="${PRIVATE_ROOT}/${phase}-recover-execute.json"
+  local phase="$1" output
+  output="${PRIVATE_ROOT}/${phase}-recover-execute.json"
   run_e2e_podlaz recover --execute --yes --json >"${output}"
   python3 - "${output}" <<'PY'
 import json, sys
@@ -386,7 +389,8 @@ PY
 }
 
 assert_recover_execute_clean() {
-  local phase="$1" output="${PRIVATE_ROOT}/${phase}-recover-execute-clean.json"
+  local phase="$1" output
+  output="${PRIVATE_ROOT}/${phase}-recover-execute-clean.json"
   run_e2e_podlaz recover --execute --yes --json >"${output}"
   python3 - "${output}" <<'PY'
 import json, sys
@@ -452,8 +456,10 @@ assert_terminal_clean() {
 }
 
 wait_resolved_missing_link() {
-  local phase="$1" stdout_file="${PRIVATE_ROOT}/${phase}-resolved.stdout" stderr_file="${PRIVATE_ROOT}/${phase}-resolved.stderr"
+  local phase="$1" stdout_file stderr_file
   local exit_code classification attempt
+  stdout_file="${PRIVATE_ROOT}/${phase}-resolved.stdout"
+  stderr_file="${PRIVATE_ROOT}/${phase}-resolved.stderr"
   for attempt in $(seq 1 100); do
     set +e
     guest_exec timeout --signal=TERM --kill-after=1s 3s resolvectl status podlaz0 --no-pager >"${stdout_file}" 2>"${stderr_file}"
@@ -703,7 +709,7 @@ run_scenario() {
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  require_cmd awk bash chmod cmp find grep install jq mktemp python3 rm seq sleep sudo systemd-run timeout
+  require_cmd awk bash chmod cmp find grep install jq mktemp python3 rm seq sleep sudo systemd-run timeout tr
   install -d -m 0700 "${E2E_ARTIFACT_DIR}"
   : >"${REPORT}"
   trap cleanup EXIT INT TERM
