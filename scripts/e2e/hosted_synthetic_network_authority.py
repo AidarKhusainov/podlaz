@@ -425,7 +425,9 @@ def _rule_present(rule: Rule) -> bool:
                 if index + 1 < len(fields):
                     observed[key] = fields[index + 1]
         source = observed["from"]
-        if source and source != "all":
+        if source == "all":
+            source = "all" if rule.source == "all" else ""
+        elif source:
             source = _prefix(source)
         destination = _prefix(observed["to"]) if observed["to"] else ""
         if (
