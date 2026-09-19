@@ -322,15 +322,60 @@ assert_guest_baseline_unchanged() {
 
 assert_active_status_reads() {
   local phase="$1" read_name output
+  local first="${PRIVATE_ROOT}/${phase}-first-status.json"
+  local second="${PRIVATE_ROOT}/${phase}-second-status.json"
   for read_name in first second; do
-    output="${PRIVATE_ROOT}/${phase}-${read_name}-status.txt"
-    run_e2e_podlaz status >"${output}"
-    grep -Fx 'Connection: active' "${output}" >/dev/null || return 1
-    grep -Fx 'Transaction: committed' "${output}" >/dev/null || return 1
-    grep -Fx 'Stale state: none' "${output}" >/dev/null || return 1
-    grep -Fx 'Startup recovery scan: clean for active connection' "${output}" >/dev/null || return 1
-    ! grep -F 'Inspection warnings:' "${output}" >/dev/null || return 1
+    output="${PRIVATE_ROOT}/${phase}-${read_name}-status.json"
+    guest_exec curl --fail --silent --show-error --max-time 3 --unix-socket "${DAEMON_SOCKET}" http://localhost/v1/status >"${output}" || return 1
   done
+  python3 - "${first}" "${second}" <<'PY'
+import json
+import sys
+
+def project(path):
+    with open(path, encoding="utf-8") as handle:
+        status = json.load(handle)
+    if status.get("connection") != "active" or status.get("mode") != "tun":
+        raise SystemExit("status is not active TUN")
+    health = status.get("tun_health") or {}
+    if not isinstance(health, dict) or health.get("state") != "verified":
+        raise SystemExit("active TUN health is not verified")
+    tx_id = str(status.get("active_transaction_id") or "").strip()
+    if not tx_id:
+        raise SystemExit("active transaction identity is missing")
+    txs = status.get("transactions") or []
+    if not isinstance(txs, list):
+        raise SystemExit("transactions are not an array")
+    committed = [
+        item
+        for item in txs
+        if isinstance(item, dict)
+        and str(item.get("id") or "").strip() == tx_id
+        and item.get("state") == "committed"
+        and not bool(item.get("requires_cleanup"))
+    ]
+    if len(committed) != 1:
+        raise SystemExit("active status does not publish one clean committed transaction")
+    scan = status.get("startup_scan")
+    if not isinstance(scan, dict) or scan.get("status") != "clean":
+        raise SystemExit("active startup recovery scan is not clean")
+    if scan.get("candidates") or scan.get("warnings"):
+        raise SystemExit("active startup recovery scan publishes stale/inspection evidence")
+    return {
+        "connection": status.get("connection"),
+        "mode": status.get("mode"),
+        "active_transaction_id": tx_id,
+        "transaction_state": committed[0].get("state"),
+        "requires_cleanup": bool(committed[0].get("requires_cleanup")),
+        "startup_scan_status": scan.get("status"),
+        "tun_health_state": health.get("state"),
+    }
+
+first = project(sys.argv[1])
+second = project(sys.argv[2])
+if first != second:
+    raise SystemExit("repeated active status reads changed semantic authority")
+PY
 }
 
 assert_inactive_status() {
