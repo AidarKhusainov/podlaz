@@ -191,9 +191,9 @@ expected_xray="$5"
 systemctl is-active --quiet podlazd.service
 pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$pid" =~ ^[1-9][0-9]*$ ]]
-[[ "$(readlink -f "/proc/$pid/exe")" == /usr/bin/podlazd ]]
-[[ "$(sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
-[[ "$(stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
+[[ "$(sudo readlink -f "/proc/$pid/exe")" == /usr/bin/podlazd ]]
+[[ "$(sudo sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
+[[ "$(sudo stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
 EOF
 }
 
