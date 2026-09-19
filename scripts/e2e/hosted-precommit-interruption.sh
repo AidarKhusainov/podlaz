@@ -459,11 +459,11 @@ for key, value in expected_session.items():
         raise SystemExit(f"pre-commit execute Network Session {key}={session.get(key)!r}, expected {value!r}")
 if session.get("replay_disposition") or session.get("network_apply_subphase"):
     raise SystemExit("pre-commit execute advanced into connect replay")
-results = payload.get("recovery") or []
-if not isinstance(results, list) or not results:
-    raise SystemExit("pre-commit execute lacks bounded recovery results")
-if not any(isinstance(item, dict) and item.get("status") == "skipped" for item in results):
-    raise SystemExit("pre-commit execute did not preserve an ambiguous ownership result")
+results = payload.get("recovery")
+if not isinstance(results, list):
+    raise SystemExit("pre-commit execute recovery result has invalid shape")
+if results:
+    raise SystemExit("blocked Network Session execute unexpectedly ran standalone generic cleanup")
 PY
 
   capture_transaction_fingerprint "${after_execute}" || return 1
