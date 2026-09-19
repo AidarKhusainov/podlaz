@@ -152,6 +152,20 @@ inherit_base_failure() {
     FAILURE_STEP="base.${step//[^A-Za-z0-9_.-]/_}"
   fi
   printf 'base normalized failure: class=%s step=%s\n' "${class:-unknown}" "${step:-unknown}" >&2
+  if [[ "${step}" == tun.doctor && -f "${BASE_TMP_ROOT}/private/doctor.json" ]]; then
+    python3 - "${BASE_TMP_ROOT}/private/doctor.json" <<'PY' >&2 || true
+import json,sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        report=json.load(handle)
+except (OSError,json.JSONDecodeError):
+    raise SystemExit(0)
+status=str(report.get("status") or "unknown")
+classification=str(report.get("primary_classification") or "unknown")
+safe=lambda value: value if value.replace("_","").replace("-","").isalnum() else "invalid"
+print(f"base doctor summary: status={safe(status)} primary_classification={safe(classification)}")
+PY
+  fi
 }
 
 release_all_controls() {
