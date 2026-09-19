@@ -115,7 +115,8 @@ func TestHostedOrphanRoutingFixtureMutatesOnlyExactTestOwnedManifest(t *testing.
 		"51820",
 		"9999",
 		"10000",
-		"flush",
+		"route flush",
+		"rule flush",
 		"podlaz0",
 	)
 }
