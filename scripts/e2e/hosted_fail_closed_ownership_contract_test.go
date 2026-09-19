@@ -8,10 +8,10 @@ import (
 )
 
 const (
-	hostedFailClosedWorkflow  = "../../.github/workflows/hosted-recovery.yml"
-	hostedOrphanPreflight      = "hosted-orphan-routing-preflight.sh"
+	hostedFailClosedWorkflow    = "../../.github/workflows/hosted-recovery.yml"
+	hostedOrphanPreflight       = "hosted-orphan-routing-preflight.sh"
 	hostedPrecommitInterruption = "hosted-precommit-interruption.sh"
-	hostedOrphanFixtureHelper  = "hosted_orphan_routing_fixture.py"
+	hostedOrphanFixtureHelper   = "hosted_orphan_routing_fixture.py"
 )
 
 func readHostedFailClosedFile(t *testing.T, path string) string {
