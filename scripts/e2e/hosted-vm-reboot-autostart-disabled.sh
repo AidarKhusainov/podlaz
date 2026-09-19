@@ -70,9 +70,12 @@ finalize_report() {
   for key in "${EVIDENCE_KEYS[@]}"; do
     record_if_missing "${key}" fail
   done
-  printf 'capability.kvm=%s\n' "$([[ "${HOSTED_VM_ACCEL}" == kvm ]] && printf pass || printf unavailable)" >>"${REPORT}"
-  printf 'failure.class=%s\n' "${FAILURE_CLASS}" >>"${REPORT}"
-  printf 'failure.step=%s\n' "${FAILURE_STEP}" >>"${REPORT}"
+  if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then kvm_state=pass; else kvm_state=unavailable; fi
+  {
+    printf 'capability.kvm=%s\n' "${kvm_state}"
+    printf 'failure.class=%s\n' "${FAILURE_CLASS}"
+    printf 'failure.step=%s\n' "${FAILURE_STEP}"
+  } >>"${REPORT}"
 }
 
 validate_report() {
