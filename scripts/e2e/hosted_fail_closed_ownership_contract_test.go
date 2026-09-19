@@ -108,7 +108,7 @@ func TestHostedOrphanRoutingFixtureMutatesOnlyExactTestOwnedManifest(t *testing.
 		"verify-present",
 		"remove",
 		"ip",
-		"route",
+		"rules-only foreign fixture",
 		"rule",
 	)
 	forbidHostedFailClosedMarkers(t, helper,
