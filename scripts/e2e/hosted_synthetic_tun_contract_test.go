@@ -138,30 +138,35 @@ func TestHostedSyntheticTUNVerifiedActiveChecksExactRouteRulePresence(t *testing
 		t.Fatal("verified-active authority function boundaries not found")
 	}
 	active := script[activeStart:activeEnd]
+	requireHostedSyntheticTUNMarkers(t, script,
+		`HOSTED_NETWORK_AUTHORITY_HELPER="/workspace/scripts/e2e/hosted_synthetic_network_authority.py"`,
+	)
 	requireHostedSyntheticTUNMarkers(t, active,
-		`"${FALLBACK_NETWORK_HELPER}" snapshot`,
+		`"${HOSTED_NETWORK_AUTHORITY_HELPER}" snapshot`,
 		`jq -e '(.routes | length) > 0 and (.rules | length) > 0'`,
+		`"${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present`,
+	)
+	forbidHostedSyntheticTUNMarkers(t, active,
+		`"${FALLBACK_NETWORK_HELPER}" snapshot`,
 		`"${FALLBACK_NETWORK_HELPER}" verify-present`,
+		" cleanup ",
 	)
 }
 
-func TestHostedSyntheticTUNExactNetworkManifestCanBeVerifiedPresent(t *testing.T) {
+func TestHostedSyntheticTUNDynamicNetworkManifestCanBeVerifiedPresentAndAbsent(t *testing.T) {
 	tmp := t.TempDir()
 	fakeIP := tmp + "/ip"
 	fakeIPScript := `#!/bin/sh
 case "$*" in
-  "-4 rule show")
-    if [ "${FAKE_IP_MODE:-exact}" = "missing-rule" ]; then
-      printf '%s\n' '10000: from all lookup main'
-    else
-      printf '%s\n' '10000: from all lookup podlaz'
+  "-4 rule show priority 9998")
+    if [ "${FAKE_IP_MODE:-present}" = "present" ]; then
+      printf '%s\n' '9998: from all lookup 51821'
     fi
     ;;
-  "-4 route show table 51820 exact default")
-    if [ "${FAKE_IP_MODE:-exact}" = "missing-route" ]; then
-      exit 0
+  "-4 route show table 51821 exact default")
+    if [ "${FAKE_IP_MODE:-present}" = "present" ]; then
+      printf '%s\n' 'default dev podlaz0'
     fi
-    printf '%s\n' 'default dev podlaz0'
     ;;
   *) exit 64 ;;
 esac
@@ -170,29 +175,28 @@ esac
 		t.Fatalf("write fake ip: %v", err)
 	}
 	manifest := tmp + "/manifest.json"
-	manifestJSON := `{"schema_version":"podlaz.e2e.rollback-network.v1","routes":[{"family":"-4","table":"51820","cidr":"default","via":"","dev":"podlaz0"}],"rules":[{"family":"-4","priority":10000,"source":"all","destination":"","mark":"","table":"51820"}]}`
+	manifestJSON := `{"schema_version":"podlaz.e2e.hosted-network-authority.v1","routes":[{"family":"ipv4","table":"51821","cidr":"default","via":"","dev":"podlaz0"}],"rules":[{"family":"ipv4","priority":9998,"from":"all","to":"","mark":"","table":"51821"}]}`
 	if err := os.WriteFile(manifest, []byte(manifestJSON), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	run := func(mode string) error {
+	run := func(mode, command string) error {
 		t.Helper()
-		cmd := exec.Command("python3", "tun-package-fallback-network.py", "verify-present", manifest)
+		cmd := exec.Command("python3", "hosted_synthetic_network_authority.py", command, manifest)
 		cmd.Env = append(os.Environ(), "PATH="+tmp+":"+os.Getenv("PATH"), "FAKE_IP_MODE="+mode)
-		output, err := cmd.CombinedOutput()
-		if err != nil && mode == "exact" {
-			t.Fatalf("verify-present exact manifest: %v\n%s", err, output)
-		}
-		return err
+		return cmd.Run()
 	}
-
-	if err := run("exact"); err != nil {
-		t.Fatal(err)
+	if err := run("present", "verify-present"); err != nil {
+		t.Fatalf("dynamic verify-present failed: %v", err)
 	}
-	for _, mode := range []string{"missing-route", "missing-rule"} {
-		if err := run(mode); err == nil {
-			t.Fatalf("verify-present accepted %s", mode)
-		}
+	if err := run("absent", "verify-absent"); err != nil {
+		t.Fatalf("dynamic verify-absent failed: %v", err)
+	}
+	if err := run("present", "verify-absent"); err == nil {
+		t.Fatal("verify-absent accepted present dynamic tuples")
+	}
+	if err := run("absent", "verify-present"); err == nil {
+		t.Fatal("verify-present accepted absent dynamic tuples")
 	}
 }
 
