@@ -181,7 +181,7 @@ hosted_vm_install_candidate() {
 
 hosted_vm_assert_candidate_provenance() {
   local candidate="$1" expected_commit="$2"
-  local expected_version extract expected_cli expected_daemon expected_xray
+  local expected_version extract expected_cli expected_daemon expected_xray script
   [[ -n "${expected_commit}" ]] || fail "expected candidate commit is empty"
 
   expected_version="$(dpkg-deb --field "${candidate}" Version)"
@@ -192,13 +192,8 @@ hosted_vm_assert_candidate_provenance() {
   expected_xray="$(sha256sum "${extract}/usr/lib/podlaz/xray" | awk '{print $1}')"
   rm -rf -- "${extract}"
 
-  hosted_vm_ssh bash -s -- "${expected_version}" "${expected_commit}" "${expected_cli}" "${expected_daemon}" "${expected_xray}" <<'EOF'
+  script="$(cat <<'EOF'
 set -Eeuo pipefail
-expected_version="$1"
-expected_commit="$2"
-expected_cli="$3"
-expected_daemon="$4"
-expected_xray="$5"
 [[ "$(dpkg-query -W -f='${db:Status-Status}' podlaz)" == installed ]]
 [[ "$(dpkg-query -W -f='${Version}' podlaz)" == "$expected_version" ]]
 [[ "$(sha256sum /usr/bin/podlaz | awk '{print $1}')" == "$expected_cli" ]]
@@ -208,10 +203,12 @@ expected_xray="$5"
 systemctl is-active --quiet podlazd.service
 pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$pid" =~ ^[1-9][0-9]*$ ]]
-[[ "$(sudo readlink -f "/proc/$pid/exe")" == /usr/bin/podlazd ]]
-[[ "$(sudo sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
-[[ "$(sudo stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
+[[ "$(readlink -f "/proc/$pid/exe")" == /usr/bin/podlazd ]]
+[[ "$(sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
+[[ "$(stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
 EOF
+)"
+  hosted_vm_control_bash "expected_version=${expected_version@Q}; expected_commit=${expected_commit@Q}; expected_cli=${expected_cli@Q}; expected_daemon=${expected_daemon@Q}; expected_xray=${expected_xray@Q}; ${script}"
 }
 
 hosted_vm_install_polkit_rule() {
