@@ -149,7 +149,13 @@ def diagnose_active(status: dict, diagnostic: dict | None) -> str:
             return "active-transaction-mismatch"
         return "verified-active"
     if connection == "active" and mode == "tun" and health_state:
-        return "active." + bounded_token(health_state)
+        return ".".join(
+            (
+                "active",
+                bounded_token(health_state),
+                bounded_token(health.get("classification")),
+            )
+        )
     if connection == "error (core exited)" and health_state:
         return "core-exited." + bounded_token(health_state)
     if connection == "inactive":

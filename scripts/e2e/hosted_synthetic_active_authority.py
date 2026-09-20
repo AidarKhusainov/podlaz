@@ -716,16 +716,17 @@ def verify(args: argparse.Namespace) -> None:
     domain_path = Path(args.resolved_domain)
     default_path = Path(args.resolved_default_route)
     nft_path = Path(args.nft_ruleset)
-    for path, label in [
-        (status_path, "status"),
-        (session_path, "Network Session"),
-        (boot_path, "boot id"),
-        (dns_path, "resolved DNS"),
-        (domain_path, "resolved domain"),
-        (default_path, "resolved default-route"),
-        (nft_path, "nftables ruleset"),
+    for item in [
+        (status_path, "status", True),
+        (session_path, "Network Session", True),
+        (boot_path, "boot id", False),
+        (dns_path, "resolved DNS", True),
+        (domain_path, "resolved domain", True),
+        (default_path, "resolved default-route", True),
+        (nft_path, "nftables ruleset", True),
     ]:
-        regular_private_input(path, label)
+        path, label, nonempty = item
+        regular_private_input(path, label, nonempty=nonempty)
 
     status = load_json(status_path, "status")
     tx = active_transaction(status, Path(args.transactions))

@@ -16,6 +16,19 @@ HOSTED_VM_PID=""
 HOSTED_VM_SSH_PORT=""
 HOSTED_VM_ACCEL=""
 HOSTED_VM_QMP=""
+HOSTED_VM_QGA=""
+HOSTED_VM_GA_READY=false
+HOSTED_VM_USER_NET_EXTRA=""
+HOSTED_VM_PROVIDER_TAP=""
+HOSTED_VM_PROVIDER_MAC="52:54:00:7a:32:01"
+HOSTED_VM_PROVIDER_NETWORK_CIDR="172.31.252.0/30"
+HOSTED_VM_PROVIDER_HOST_CIDR="172.31.252.1/30"
+HOSTED_VM_PROVIDER_GUEST_CIDR="172.31.252.2/30"
+HOSTED_VM_PROVIDER_HOST_IP="172.31.252.1"
+HOSTED_VM_PROVIDER_GUEST_IP="172.31.252.2"
+HOSTED_VM_PROVIDER_ENDPOINT_IP="172.31.253.1"
+HOSTED_VM_PROVIDER_OUT_IF=""
+HOSTED_VM_PROVIDER_IP_FORWARD=""
 
 hosted_vm_init() {
   local root="$1"
@@ -25,7 +38,12 @@ hosted_vm_init() {
   HOSTED_VM_OVERLAY="${HOSTED_VM_ROOT}/overlay.qcow2"
   HOSTED_VM_SEED="${HOSTED_VM_ROOT}/seed.img"
   HOSTED_VM_KEY="${HOSTED_VM_ROOT}/id_ed25519"
-  HOSTED_VM_QMP="${HOSTED_VM_ROOT}/qmp.sock"
+  local socket_tag
+  socket_tag="$(printf '%s' "${HOSTED_VM_ROOT}" | sha256sum | awk '{print substr($1,1,16)}')"
+  HOSTED_VM_QMP="/tmp/pzvm-${socket_tag}.qmp"
+  HOSTED_VM_QGA="/tmp/pzvm-${socket_tag}.qga"
+  HOSTED_VM_GA_READY=false
+  rm -f -- "${HOSTED_VM_QMP}" "${HOSTED_VM_QGA}"
   install -d -m 0700 "${HOSTED_VM_ROOT}"
 }
 
@@ -92,13 +110,169 @@ sock.close()
 PY
 }
 
+hosted_vm_provider_prepare_host() {
+  local socket_tag uid
+  [[ -z "${HOSTED_VM_PROVIDER_TAP}" ]] || return 0
+  require_cmd ip iptables sudo
+  socket_tag="$(printf '%s' "${HOSTED_VM_ROOT}" | sha256sum | awk '{print substr($1,1,8)}')"
+  HOSTED_VM_PROVIDER_TAP="pzv${socket_tag}"
+  uid="$(id -u)"
+  HOSTED_VM_PROVIDER_OUT_IF="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  [[ -n "${HOSTED_VM_PROVIDER_OUT_IF}" ]] || return 1
+  HOSTED_VM_PROVIDER_IP_FORWARD="$(cat /proc/sys/net/ipv4/ip_forward)"
+  [[ "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 0 || "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 1 ]] || return 1
+
+  sudo -n ip tuntap add dev "${HOSTED_VM_PROVIDER_TAP}" mode tap user "${uid}"
+  sudo -n ip address add "${HOSTED_VM_PROVIDER_HOST_CIDR}" dev "${HOSTED_VM_PROVIDER_TAP}"
+  sudo -n ip link set dev "${HOSTED_VM_PROVIDER_TAP}" up
+  sudo -n ip address add "${HOSTED_VM_PROVIDER_ENDPOINT_IP}/32" dev lo
+  printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
+
+  sudo -n iptables -I FORWARD 1 \
+    -i "${HOSTED_VM_PROVIDER_TAP}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" \
+    -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -j ACCEPT
+  sudo -n iptables -I FORWARD 1 \
+    -i "${HOSTED_VM_PROVIDER_OUT_IF}" -o "${HOSTED_VM_PROVIDER_TAP}" \
+    -d "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  sudo -n iptables -t nat -I POSTROUTING 1 \
+    -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" -j MASQUERADE
+}
+
+hosted_vm_provider_prepare_guest() {
+  local script
+  [[ -n "${HOSTED_VM_PROVIDER_TAP}" && "${HOSTED_VM_GA_READY}" == true ]] || return 1
+  script="$(cat <<'EOF'
+set -Eeuo pipefail
+iface=""
+for path in /sys/class/net/*/address; do
+  [[ "$(cat "$path")" == "$provider_mac" ]] || continue
+  iface="$(basename "$(dirname "$path")")"
+  break
+done
+[[ -n "$iface" ]]
+
+management_iface="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+[[ -n "$management_iface" && "$management_iface" != "$iface" ]]
+management_mac="$(cat "/sys/class/net/$management_iface/address")"
+[[ -n "$management_mac" ]]
+
+cat >/etc/systemd/network/01-podlaz-management.network <<UNIT
+[Match]
+MACAddress=$management_mac
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+DHCP=ipv4
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+
+[DHCPv4]
+UseRoutes=no
+UseDNS=no
+UNIT
+
+cat >/etc/systemd/network/20-podlaz-provider.network <<UNIT
+[Match]
+MACAddress=$provider_mac
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+Address=$provider_guest_cidr
+DNS=1.1.1.1
+DNSDefaultRoute=yes
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+
+[Route]
+Destination=0.0.0.0/0
+Gateway=$provider_host_ip
+Metric=10
+UNIT
+
+systemctl is-active --quiet systemd-networkd.service
+networkctl reload
+ip link set dev "$iface" up
+networkctl reconfigure "$management_iface"
+networkctl reconfigure "$iface"
+for _ in $(seq 1 60); do
+  default_count="$(ip -4 route show default | wc -l)"
+  if ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null &&
+     [[ "$default_count" == 1 ]] &&
+     ip -4 route show default | grep -F "via $provider_host_ip dev $iface" >/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null
+[[ "$(ip -4 route show default | wc -l)" == 1 ]]
+ip -4 route show default | grep -F "via $provider_host_ip dev $iface" >/dev/null
+ip -4 route get "$provider_endpoint_ip" | grep -F "via $provider_host_ip dev $iface" >/dev/null
+ip -4 address show dev "$management_iface" | grep -F '10.0.2.' >/dev/null
+timeout 20 getent ahostsv4 example.com >/dev/null
+timeout 30 curl -4 -fsS --interface "$iface" -o /dev/null https://example.com/
+EOF
+)"
+  hosted_vm_ga_bash "provider_mac=${HOSTED_VM_PROVIDER_MAC@Q}; provider_guest_cidr=${HOSTED_VM_PROVIDER_GUEST_CIDR@Q}; provider_guest_ip=${HOSTED_VM_PROVIDER_GUEST_IP@Q}; provider_host_ip=${HOSTED_VM_PROVIDER_HOST_IP@Q}; provider_endpoint_ip=${HOSTED_VM_PROVIDER_ENDPOINT_IP@Q}; ${script}"
+}
+
+hosted_vm_provider_cleanup_host() {
+  if [[ -n "${HOSTED_VM_PROVIDER_OUT_IF}" && -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
+    sudo -n iptables -t nat -D POSTROUTING \
+      -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" -j MASQUERADE >/dev/null 2>&1 || true
+    sudo -n iptables -D FORWARD \
+      -i "${HOSTED_VM_PROVIDER_OUT_IF}" -o "${HOSTED_VM_PROVIDER_TAP}" \
+      -d "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1 || true
+    sudo -n iptables -D FORWARD \
+      -i "${HOSTED_VM_PROVIDER_TAP}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" \
+      -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -j ACCEPT >/dev/null 2>&1 || true
+  fi
+  sudo -n ip address del "${HOSTED_VM_PROVIDER_ENDPOINT_IP}/32" dev lo >/dev/null 2>&1 || true
+  if [[ -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
+    sudo -n ip link del dev "${HOSTED_VM_PROVIDER_TAP}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 0 || "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 1 ]]; then
+    printf '%s\n' "${HOSTED_VM_PROVIDER_IP_FORWARD}" | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null 2>&1 || true
+  fi
+  HOSTED_VM_PROVIDER_TAP=""
+  HOSTED_VM_PROVIDER_OUT_IF=""
+  HOSTED_VM_PROVIDER_IP_FORWARD=""
+}
+
 hosted_vm_start() {
   local cpu pidfile="${HOSTED_VM_ROOT}/qemu.pid"
+  local -a provider_args=()
   [[ "${HOSTED_VM_ACCEL}" == kvm || "${HOSTED_VM_ACCEL}" == tcg ]] || fail "hosted VM acceleration was not selected"
   if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then cpu=host; else cpu=max; fi
   HOSTED_VM_SSH_PORT="$(hosted_vm_find_loopback_port)"
+  if [[ -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
+    provider_args=(
+      -netdev "tap,id=pzprovider,ifname=${HOSTED_VM_PROVIDER_TAP},script=no,downscript=no"
+      -device "virtio-net-pci,netdev=pzprovider,mac=${HOSTED_VM_PROVIDER_MAC}"
+    )
+  fi
 
-  qemu-system-x86_64     -machine "q35,accel=${HOSTED_VM_ACCEL}"     -cpu "${cpu}"     -smp 2     -m 2048     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2"     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on"     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22"     -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off"     -display none     -monitor none     -serial "file:${HOSTED_VM_ROOT}/serial.log"     -daemonize     -pidfile "${pidfile}"
+  qemu-system-x86_64 \
+    -machine "q35,accel=${HOSTED_VM_ACCEL}" \
+    -cpu "${cpu}" \
+    -smp 2 \
+    -m 2048 \
+    -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2" \
+    -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on" \
+    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22${HOSTED_VM_USER_NET_EXTRA}" \
+    "${provider_args[@]}" \
+    -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off" \
+    -chardev "socket,path=${HOSTED_VM_QGA},server=on,wait=off,id=qga0" \
+    -device virtio-serial-pci \
+    -device "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0" \
+    -display none \
+    -monitor none \
+    -serial "file:${HOSTED_VM_ROOT}/serial.log" \
+    -daemonize \
+    -pidfile "${pidfile}"
   HOSTED_VM_PID="$(cat "${pidfile}")"
 }
 
@@ -128,26 +302,38 @@ hosted_vm_wait_cloud_init() {
 }
 
 hosted_vm_boot_id() {
-  hosted_vm_ssh cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]'
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_exec /bin/cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]'
+  else
+    hosted_vm_ssh cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]'
+  fi
 }
 
 hosted_vm_reboot() {
-  local before after disappeared=false
+  local before after="" had_ga="${HOSTED_VM_GA_READY}"
   before="$(hosted_vm_boot_id)"
   [[ -n "${before}" ]] || return 1
 
-  hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
-  for _ in $(seq 1 60); do
-    if ! hosted_vm_ssh true >/dev/null 2>&1; then
-      disappeared=true
-      break
+  if [[ "${had_ga}" == true ]]; then
+    hosted_vm_ga_async guest-shutdown '{"mode":"reboot"}' || return 1
+  else
+    hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
+  fi
+
+  HOSTED_VM_GA_READY=false
+  for _ in $(seq 1 240); do
+    if hosted_vm_ssh true >/dev/null 2>&1; then
+      after="$(hosted_vm_ssh cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ -n "${after}" && "${after}" != "${before}" ]]; then
+        break
+      fi
     fi
-    sleep 1
+    sleep 2
   done
-  [[ "${disappeared}" == true ]] || return 1
-  hosted_vm_wait_ssh 240 || return 1
-  after="$(hosted_vm_boot_id)"
   [[ -n "${after}" && "${after}" != "${before}" ]] || return 1
+  if [[ "${had_ga}" == true ]]; then
+    hosted_vm_wait_ga 120 || return 1
+  fi
   printf '%s\t%s\n' "${before}" "${after}"
 }
 
@@ -164,7 +350,7 @@ hosted_vm_install_candidate() {
 
 hosted_vm_assert_candidate_provenance() {
   local candidate="$1" expected_commit="$2"
-  local expected_version extract expected_cli expected_daemon expected_xray
+  local expected_version extract expected_cli expected_daemon expected_xray script
   [[ -n "${expected_commit}" ]] || fail "expected candidate commit is empty"
 
   expected_version="$(dpkg-deb --field "${candidate}" Version)"
@@ -175,7 +361,8 @@ hosted_vm_assert_candidate_provenance() {
   expected_xray="$(sha256sum "${extract}/usr/lib/podlaz/xray" | awk '{print $1}')"
   rm -rf -- "${extract}"
 
-  hosted_vm_ssh bash -s -- "${expected_version}" "${expected_commit}" "${expected_cli}" "${expected_daemon}" "${expected_xray}" <<'EOF'
+  if [[ "${HOSTED_VM_GA_READY}" != true ]]; then
+    hosted_vm_ssh bash -s -- "${expected_version}" "${expected_commit}" "${expected_cli}" "${expected_daemon}" "${expected_xray}" <<'EOF'
 set -Eeuo pipefail
 expected_version="$1"
 expected_commit="$2"
@@ -188,6 +375,10 @@ expected_xray="$5"
 [[ "$(sha256sum /usr/bin/podlazd | awk '{print $1}')" == "$expected_daemon" ]]
 [[ "$(sha256sum /usr/lib/podlaz/xray | awk '{print $1}')" == "$expected_xray" ]]
 /usr/bin/podlaz version | grep -Fx "commit: $expected_commit" >/dev/null
+for _ in $(seq 1 60); do
+  systemctl is-active --quiet podlazd.service && break
+  sleep 0.5
+done
 systemctl is-active --quiet podlazd.service
 pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$pid" =~ ^[1-9][0-9]*$ ]]
@@ -195,6 +386,30 @@ pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$(sudo sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
 [[ "$(sudo stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
 EOF
+    return
+  fi
+
+  script="$(cat <<'EOF'
+set -Eeuo pipefail
+[[ "$(dpkg-query -W -f='${db:Status-Status}' podlaz)" == installed ]]
+[[ "$(dpkg-query -W -f='${Version}' podlaz)" == "$expected_version" ]]
+[[ "$(sha256sum /usr/bin/podlaz | awk '{print $1}')" == "$expected_cli" ]]
+[[ "$(sha256sum /usr/bin/podlazd | awk '{print $1}')" == "$expected_daemon" ]]
+[[ "$(sha256sum /usr/lib/podlaz/xray | awk '{print $1}')" == "$expected_xray" ]]
+/usr/bin/podlaz version | grep -Fx "commit: $expected_commit" >/dev/null
+for _ in $(seq 1 60); do
+  systemctl is-active --quiet podlazd.service && break
+  sleep 0.5
+done
+systemctl is-active --quiet podlazd.service
+pid="$(systemctl show -p MainPID --value podlazd.service)"
+[[ "$pid" =~ ^[1-9][0-9]*$ ]]
+[[ "$(readlink -f "/proc/$pid/exe")" == /usr/bin/podlazd ]]
+[[ "$(sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
+[[ "$(stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
+EOF
+)"
+  hosted_vm_ga_bash "expected_version=${expected_version@Q}; expected_commit=${expected_commit@Q}; expected_cli=${expected_cli@Q}; expected_daemon=${expected_daemon@Q}; expected_xray=${expected_xray@Q}; ${script}"
 }
 
 hosted_vm_install_polkit_rule() {
@@ -213,7 +428,279 @@ EOF
 }
 
 hosted_vm_remove_polkit_rule() {
-  hosted_vm_ssh sudo rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_exec /bin/rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+  else
+    hosted_vm_ssh sudo rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+  fi
+}
+
+
+hosted_vm_ga_exec() {
+  local path="$1"
+  shift
+  python3 - "${HOSTED_VM_QGA}" "${path}" "$@" <<'PY'
+import base64
+import json
+import os
+import secrets
+import socket
+import sys
+import time
+
+socket_path = sys.argv[1]
+path = sys.argv[2]
+args = sys.argv[3:]
+
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(10)
+sock.connect(socket_path)
+stream = sock.makefile("rwb", buffering=0)
+
+def send(payload, *, delimited=False):
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n"
+    if delimited:
+        raw = b"\xff" + raw
+    stream.write(raw)
+
+def receive():
+    while True:
+        line = stream.readline()
+        if not line:
+            raise RuntimeError("QGA connection closed")
+        line = line.lstrip(b"\xff")
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "return" in message or "error" in message:
+            return message
+
+sync_id = secrets.randbits(63)
+send({"execute": "guest-sync-delimited", "arguments": {"id": sync_id}}, delimited=True)
+while True:
+    synced = receive()
+    if synced.get("return") == sync_id:
+        break
+
+send({
+    "execute": "guest-exec",
+    "arguments": {
+        "path": path,
+        "arg": args,
+        "capture-output": True,
+    },
+})
+started = receive()
+if "error" in started:
+    print(started["error"].get("desc", "guest-exec failed"), file=sys.stderr)
+    raise SystemExit(125)
+pid = (started.get("return") or {}).get("pid")
+if not isinstance(pid, int) or pid <= 0:
+    raise SystemExit("QGA guest-exec returned invalid pid")
+
+deadline = time.monotonic() + 180
+while True:
+    if time.monotonic() >= deadline:
+        raise SystemExit("QGA guest-exec timed out")
+    send({"execute": "guest-exec-status", "arguments": {"pid": pid}})
+    status_message = receive()
+    if "error" in status_message:
+        print(status_message["error"].get("desc", "guest-exec-status failed"), file=sys.stderr)
+        raise SystemExit(125)
+    status = status_message.get("return") or {}
+    if not status.get("exited"):
+        time.sleep(0.1)
+        continue
+    if status.get("out-truncated") or status.get("err-truncated"):
+        raise SystemExit("QGA guest-exec output was truncated")
+    stdout = base64.b64decode(status.get("out-data") or "")
+    stderr = base64.b64decode(status.get("err-data") or "")
+    sys.stdout.buffer.write(stdout)
+    sys.stderr.buffer.write(stderr)
+    if "signal" in status:
+        raise SystemExit(125)
+    code = status.get("exitcode")
+    raise SystemExit(code if isinstance(code, int) else 125)
+PY
+}
+
+hosted_vm_ga_bash() {
+  local script="$1"
+  hosted_vm_ga_exec /bin/bash -lc "${script}"
+}
+
+hosted_vm_ga_bash_stdin() {
+  local script
+  script="$(cat)"
+  hosted_vm_ga_bash "${script}"
+}
+
+hosted_vm_ga_ping() {
+  hosted_vm_ga_exec /bin/true >/dev/null 2>&1
+}
+
+hosted_vm_wait_ga() {
+  local attempts="${1:-120}"
+  for _ in $(seq 1 "${attempts}"); do
+    if hosted_vm_ga_ping; then
+      HOSTED_VM_GA_READY=true
+      return 0
+    fi
+    [[ -n "${HOSTED_VM_PID}" ]] && kill -0 "${HOSTED_VM_PID}" >/dev/null 2>&1 || return 1
+    sleep 1
+  done
+  return 1
+}
+
+hosted_vm_prepare_guest_agent() {
+  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-guest-agent
+  hosted_vm_ssh sudo systemctl enable qemu-guest-agent.service >/dev/null 2>&1 || true
+  hosted_vm_ssh sudo systemctl restart qemu-guest-agent.service
+  hosted_vm_wait_ga 120
+}
+
+hosted_vm_control_bash() {
+  local script="$1"
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_bash "${script}"
+  else
+    hosted_vm_ssh bash -lc "${script}"
+  fi
+}
+
+hosted_vm_ga_async() {
+  local command="$1" arguments_json="{}"
+  if (($# >= 2)); then
+    arguments_json="$2"
+  fi
+  python3 - "${HOSTED_VM_QGA}" "${command}" "${arguments_json}" <<'PY'
+import json
+import secrets
+import socket
+import sys
+
+socket_path, command, arguments_raw = sys.argv[1:4]
+arguments = json.loads(arguments_raw)
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(10)
+sock.connect(socket_path)
+stream = sock.makefile("rwb", buffering=0)
+
+def send(payload, delimited=False):
+    raw = json.dumps(payload, separators=(",", ":")).encode() + b"\n"
+    if delimited:
+        raw = b"\xff" + raw
+    stream.write(raw)
+
+def receive():
+    while True:
+        line = stream.readline()
+        if not line:
+            raise SystemExit("QGA connection closed")
+        line = line.lstrip(b"\xff")
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "return" in message or "error" in message:
+            return message
+
+sync_id = secrets.randbits(63)
+send({"execute": "guest-sync-delimited", "arguments": {"id": sync_id}}, True)
+while True:
+    message = receive()
+    if message.get("return") == sync_id:
+        break
+send({"execute": command, "arguments": arguments})
+PY
+}
+
+
+hosted_vm_qmp() {
+  local command="$1"
+  python3 - "${HOSTED_VM_QMP}" "${command}" <<'PY'
+import json
+import socket
+import sys
+
+path, command = sys.argv[1], sys.argv[2]
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(10)
+sock.connect(path)
+stream = sock.makefile("rwb", buffering=0)
+
+def recv_response():
+    while True:
+        line = stream.readline()
+        if not line:
+            raise SystemExit("QMP connection closed")
+        message = json.loads(line)
+        if "return" in message or "error" in message:
+            return message
+
+greeting = json.loads(stream.readline())
+if "QMP" not in greeting:
+    raise SystemExit("QMP greeting missing")
+stream.write(json.dumps({"execute": "qmp_capabilities"}).encode() + b"\r\n")
+cap = recv_response()
+if "error" in cap:
+    raise SystemExit("QMP capabilities negotiation failed")
+stream.write(json.dumps({"execute": command}).encode() + b"\r\n")
+response = recv_response()
+print(json.dumps(response, separators=(",", ":"), sort_keys=True))
+if "error" in response:
+    raise SystemExit(1)
+PY
+}
+
+hosted_vm_wait_qmp_status() {
+  local want="$1" attempts="${2:-120}" response
+  for _ in $(seq 1 "${attempts}"); do
+    if response="$(hosted_vm_qmp query-status 2>/dev/null)" &&
+        python3 - "${want}" "${response}" <<'PY'
+import json, sys
+want, raw = sys.argv[1], sys.argv[2]
+payload = json.loads(raw)
+raise SystemExit(0 if (payload.get("return") or {}).get("status") == want else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+hosted_vm_require_suspend_wakeup() {
+  local response
+  response="$(hosted_vm_qmp query-current-machine)"
+  python3 - "${response}" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+value = (payload.get("return") or {}).get("wakeup-suspend-support")
+raise SystemExit(0 if value is True else 1)
+PY
+}
+
+hosted_vm_suspend_guest() {
+  local boot_before
+  [[ "${HOSTED_VM_GA_READY}" == true ]] || return 1
+  boot_before="$(hosted_vm_boot_id)"
+  [[ -n "${boot_before}" ]] || return 1
+
+  hosted_vm_ga_async guest-suspend-ram '{}' || return 1
+  hosted_vm_wait_qmp_status suspended 120 || return 1
+
+  hosted_vm_qmp system_wakeup >/dev/null || return 1
+  hosted_vm_wait_qmp_status running 120 || return 1
+  hosted_vm_wait_ga 180 || return 1
+
+  [[ "$(hosted_vm_boot_id)" == "${boot_before}" ]] || return 1
 }
 
 hosted_vm_stop() {
@@ -227,4 +714,7 @@ hosted_vm_stop() {
     wait "${HOSTED_VM_PID}" >/dev/null 2>&1 || true
     HOSTED_VM_PID=""
   fi
+  rm -f -- "${HOSTED_VM_QMP}" "${HOSTED_VM_QGA}"
+  HOSTED_VM_GA_READY=false
+  hosted_vm_provider_cleanup_host
 }
