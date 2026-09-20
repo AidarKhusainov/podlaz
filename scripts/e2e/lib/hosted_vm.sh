@@ -150,6 +150,29 @@ for path in /sys/class/net/*/address; do
   break
 done
 [[ -n "$iface" ]]
+
+management_iface="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+[[ -n "$management_iface" && "$management_iface" != "$iface" ]]
+management_mac="$(cat "/sys/class/net/$management_iface/address")"
+[[ -n "$management_mac" ]]
+
+cat >/etc/systemd/network/10-podlaz-management.network <<UNIT
+[Match]
+MACAddress=$management_mac
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+DHCP=ipv4
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+
+[DHCPv4]
+UseRoutes=no
+UseDNS=no
+UNIT
+
 cat >/etc/systemd/network/20-podlaz-provider.network <<UNIT
 [Match]
 MACAddress=$provider_mac
@@ -170,20 +193,26 @@ Destination=0.0.0.0/0
 Gateway=$provider_host_ip
 Metric=10
 UNIT
+
 systemctl is-active --quiet systemd-networkd.service
 networkctl reload
 ip link set dev "$iface" up
+networkctl reconfigure "$management_iface"
 networkctl reconfigure "$iface"
 for _ in $(seq 1 60); do
+  default_count="$(ip -4 route show default | wc -l)"
   if ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null &&
-     ip -4 route show default | head -n 1 | grep -F "via $provider_host_ip dev $iface" >/dev/null; then
+     [[ "$default_count" == 1 ]] &&
+     ip -4 route show default | grep -F "via $provider_host_ip dev $iface" >/dev/null; then
     break
   fi
   sleep 0.5
 done
 ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null
-ip -4 route show default | head -n 1 | grep -F "via $provider_host_ip dev $iface" >/dev/null
+[[ "$(ip -4 route show default | wc -l)" == 1 ]]
+ip -4 route show default | grep -F "via $provider_host_ip dev $iface" >/dev/null
 ip -4 route get "$provider_endpoint_ip" | grep -F "via $provider_host_ip dev $iface" >/dev/null
+ip -4 address show dev "$management_iface" | grep -F '10.0.2.' >/dev/null
 timeout 20 getent ahostsv4 example.com >/dev/null
 timeout 30 curl -4 -fsS --interface "$iface" -o /dev/null https://example.com/
 EOF
