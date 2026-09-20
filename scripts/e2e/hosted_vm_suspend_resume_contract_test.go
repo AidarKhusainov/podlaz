@@ -55,7 +55,10 @@ func TestHostedVMSuspendResumeUsesQMPHardwareSuspendControl(t *testing.T) {
 		"wakeup-suspend-support",
 		"query-status",
 		"system_wakeup",
-		"systemctl suspend",
+		"guest-suspend-ram",
+		"guest-exec",
+		"qemu-guest-agent",
+		"org.qemu.guest_agent.0",
 		"HOSTED_VM_USER_NET_EXTRA",
 	} {
 		if !strings.Contains(text, marker) {
