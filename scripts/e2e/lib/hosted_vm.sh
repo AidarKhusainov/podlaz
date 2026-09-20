@@ -183,7 +183,6 @@ RequiredForOnline=no
 [Network]
 Address=$provider_guest_cidr
 DNS=1.1.1.1
-Domains=~.
 DNSDefaultRoute=yes
 LinkLocalAddressing=no
 IPv6AcceptRA=no
