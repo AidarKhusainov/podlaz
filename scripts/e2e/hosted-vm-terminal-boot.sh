@@ -31,13 +31,13 @@ EVIDENCE_KEYS=(
   reboot.boot_id_changed
   terminal_attempt.connect_failed
   terminal_attempt.generation_exact
-  terminal_status.truthful
+  terminal_state.clean_inactive
   terminal_cleanup.exact
   guest.ordinary_connectivity
   fixture.foreign_state_after_terminal
   same_boot_restart.new_process
   same_boot_restart.attempt_unchanged
-  same_boot_restart.terminal_status
+  same_boot_restart.clean_inactive
   same_boot_restart.no_session
   same_boot_restart.no_retry
   tun.recovery_clean
@@ -141,21 +141,11 @@ printf 'attempt-%s-%s.status-%s-%s.transport-%s.service-%s-%s.socket-%s\n' \
 EOF
 }
 
-assert_terminal_status(){
-  local output
-  for _ in $(seq 1 120); do
-    set +e
-    output="$(hosted_vm_tun_run_podlaz status 2>/dev/null)"
-    local rc=$?
-    set -e
-    if (( rc == 0 )) &&
-       grep -Fx 'Status: Disconnected' <<<"${output}" >/dev/null &&
-       grep -Fx 'Reason: VPN connection could not be established safely' <<<"${output}" >/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-  mark_failure product "terminal.status_publication.$(terminal_failure_token)"
+assert_terminal_inactive(){
+  if hosted_vm_tun_wait_status clean-inactive 120; then
+    return 0
+  fi
+  mark_failure product "terminal.clean_inactive.$(terminal_failure_token)"
   return 1
 }
 assert_terminal_cleanup(){
@@ -208,16 +198,16 @@ run_scenario(){
   wait_terminal_attempt "${boot_after}" "${gen}" "${profile}"
   record_evidence terminal_attempt.connect_failed pass
   record_evidence terminal_attempt.generation_exact pass
-  assert_terminal_status
-  record_evidence terminal_status.truthful pass
+  assert_terminal_inactive
+  record_evidence terminal_state.clean_inactive pass
   assert_terminal_cleanup; record_evidence terminal_cleanup.exact pass
   assert_ordinary_connectivity; record_evidence guest.ordinary_connectivity pass
   hosted_vm_tun_assert_foreign_state; record_evidence fixture.foreign_state_after_terminal pass
 
   before_hash="$(attempt_sha)"; pid_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
-  mark_failure product terminal.same_boot_restart; hosted_vm_ga_bash 'systemctl restart podlazd.service'; assert_terminal_status
+  mark_failure product terminal.same_boot_restart; hosted_vm_ga_bash 'systemctl restart podlazd.service'; assert_terminal_inactive
   pid_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"; [[ -n "${pid_after}" && "${pid_after}" != "${pid_before}" ]]; record_evidence same_boot_restart.new_process pass
-  after_hash="$(attempt_sha)"; [[ "${after_hash}" == "${before_hash}" ]]; assert_terminal_attempt "${boot_after}" "${gen}" "${profile}"; record_evidence same_boot_restart.attempt_unchanged pass; record_evidence same_boot_restart.terminal_status pass
+  after_hash="$(attempt_sha)"; [[ "${after_hash}" == "${before_hash}" ]]; assert_terminal_attempt "${boot_after}" "${gen}" "${profile}"; record_evidence same_boot_restart.attempt_unchanged pass; record_evidence same_boot_restart.clean_inactive pass
   hosted_vm_ga_bash 'test ! -e /run/podlaz/network-session-continuation.json'; record_evidence same_boot_restart.no_session pass
   assert_terminal_cleanup; hosted_vm_tun_assert_foreign_state; record_evidence same_boot_restart.no_retry pass
 
