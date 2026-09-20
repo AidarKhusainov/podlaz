@@ -27,6 +27,7 @@ EVIDENCE_KEYS=(
   vm.suspend_wakeup_capability
   candidate.provenance
   fixture.synthetic_endpoint
+  fixture.synthetic_endpoint_guest
   fixture.foreign_state
   tun.verified_active_before_suspend
   tun.exact_authority_before_suspend
@@ -218,6 +219,43 @@ install_guest_helpers() {
   hosted_vm_scp_to "${XRAY_ROOT}/client-uri" /tmp/client-uri
 }
 
+assert_synthetic_endpoint_guest_reachable() {
+  hosted_vm_ga_bash_stdin <<'EOF'
+set -Eeuo pipefail
+python3 - <<'PY'
+import socket
+from urllib.parse import urlsplit
+
+uri = open("/tmp/client-uri", encoding="utf-8").read().strip()
+parsed = urlsplit(uri)
+if not parsed.hostname or not parsed.port:
+    raise SystemExit("synthetic endpoint URI has no host/port")
+with socket.create_connection((parsed.hostname, parsed.port), timeout=5):
+    pass
+PY
+EOF
+}
+
+diagnose_connect_failure() {
+  local token
+  token="$(hosted_vm_ga_bash_stdin <<'EOF' 2>/dev/null || true
+set -Eeuo pipefail
+if grep -Eqi 'authorization (denied|unavailable)' /tmp/podlaz-vm-private/connect.stderr; then
+  printf 'authorization\n'
+  exit 0
+fi
+curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
+  http://localhost/v1/status >/tmp/podlaz-vm-private/status.json 2>/dev/null || {
+  printf 'status-unavailable\n'
+  exit 0
+}
+python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-vm-private/status.json 2>/dev/null || printf 'status-unclassified\n'
+EOF
+)"
+  token="$(printf '%s' "${token}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//')"
+  printf '%s\n' "${token:-unknown}"
+}
+
 install_tun_authorization() {
   cat >"${PRIVATE_ROOT}/polkit.rules" <<'EOF'
 polkit.addRule(function(action, subject) {
@@ -320,13 +358,30 @@ wait_status() {
 }
 
 connect_tun() {
+  local rc diagnosis
+  set +e
   hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 profile="$(cat /tmp/podlaz-vm-private/profile-id)"
 runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
   /usr/bin/podlaz connect --mode tun "$profile" >/tmp/podlaz-vm-private/connect.stdout 2>/tmp/podlaz-vm-private/connect.stderr
 EOF
-  wait_status verified-active 150
+  rc=$?
+  set -e
+  if (( rc != 0 )); then
+    diagnosis="$(diagnose_connect_failure)"
+    if [[ "${diagnosis}" == authorization ]]; then
+      mark_failure fixture tun.authorization
+    else
+      mark_failure product "tun.connect.request.${diagnosis}"
+    fi
+    return "${rc}"
+  fi
+  if ! wait_status verified-active 150; then
+    diagnosis="$(diagnose_connect_failure)"
+    mark_failure product "tun.connect.convergence.${diagnosis}"
+    return 1
+  fi
 }
 
 capture_exact_active_authority() {
@@ -477,6 +532,10 @@ run_scenario() {
   install_tun_authorization
   prepare_profile
   capture_direct_probe_baseline
+
+  mark_failure fixture synthetic.endpoint_guest
+  assert_synthetic_endpoint_guest_reachable
+  record_evidence fixture.synthetic_endpoint_guest pass
 
   create_foreign_state
   assert_foreign_state
