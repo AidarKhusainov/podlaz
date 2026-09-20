@@ -115,6 +115,37 @@ func TestServerDoesNotStartupScanBeforeLiveLockOwnership(t *testing.T) {
 	}
 }
 
+func TestServerInitialStartupScanUsesBoundedContext(t *testing.T) {
+	runtimeDir := t.TempDir()
+	observedDeadline := make(chan time.Duration, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- (Server{
+			RuntimeDir: runtimeDir,
+			startupScan: func(scanCtx context.Context) recovery.PlanResult {
+				deadline, ok := scanCtx.Deadline()
+				if !ok {
+					observedDeadline <- -1
+					return recovery.PlanResult{}
+				}
+				observedDeadline <- time.Until(deadline)
+				return recovery.PlanResult{}
+			},
+		}).Run(ctx)
+	}()
+
+	_ = waitForStatus(t, runtimeDir)
+	remaining := <-observedDeadline
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("server shutdown failed: %v", err)
+	}
+	if remaining <= 0 || remaining > startupScanRefreshTimeout {
+		t.Fatalf("initial startup scan deadline = %s, want (0,%s]", remaining, startupScanRefreshTimeout)
+	}
+}
+
 func TestServerStartupScanReportsCleanState(t *testing.T) {
 	runtimeDir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
