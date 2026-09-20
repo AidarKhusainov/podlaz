@@ -185,7 +185,7 @@ service_result="$(systemctl show -p Result --value podlazd.service 2>/dev/null |
 socket_state=absent
 test -S /run/podlaz/podlazd.sock && socket_state=present
 status_token=unavailable
-if curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
+if curl --fail --silent --show-error --max-time 5 --abstract-unix-socket podlazd \
     http://localhost/v1/status >/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null; then
   status_token="$(python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null || printf unclassified)"
 fi
