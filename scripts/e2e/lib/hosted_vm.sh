@@ -16,6 +16,8 @@ HOSTED_VM_PID=""
 HOSTED_VM_SSH_PORT=""
 HOSTED_VM_ACCEL=""
 HOSTED_VM_QMP=""
+HOSTED_VM_QGA=""
+HOSTED_VM_GA_READY=false
 HOSTED_VM_USER_NET_EXTRA=""
 
 hosted_vm_init() {
@@ -27,6 +29,8 @@ hosted_vm_init() {
   HOSTED_VM_SEED="${HOSTED_VM_ROOT}/seed.img"
   HOSTED_VM_KEY="${HOSTED_VM_ROOT}/id_ed25519"
   HOSTED_VM_QMP="${HOSTED_VM_ROOT}/qmp.sock"
+  HOSTED_VM_QGA="${HOSTED_VM_ROOT}/qga.sock"
+  HOSTED_VM_GA_READY=false
   install -d -m 0700 "${HOSTED_VM_ROOT}"
 }
 
@@ -99,7 +103,7 @@ hosted_vm_start() {
   if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then cpu=host; else cpu=max; fi
   HOSTED_VM_SSH_PORT="$(hosted_vm_find_loopback_port)"
 
-  qemu-system-x86_64     -machine "q35,accel=${HOSTED_VM_ACCEL}"     -cpu "${cpu}"     -smp 2     -m 2048     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2"     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on"     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22${HOSTED_VM_USER_NET_EXTRA}"     -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off"     -display none     -monitor none     -serial "file:${HOSTED_VM_ROOT}/serial.log"     -daemonize     -pidfile "${pidfile}"
+  qemu-system-x86_64     -machine "q35,accel=${HOSTED_VM_ACCEL}"     -cpu "${cpu}"     -smp 2     -m 2048     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2"     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on"     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22${HOSTED_VM_USER_NET_EXTRA}"     -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off"     -chardev "socket,path=${HOSTED_VM_QGA},server=on,wait=off,id=qga0"     -device virtio-serial-pci     -device "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"     -display none     -monitor none     -serial "file:${HOSTED_VM_ROOT}/serial.log"     -daemonize     -pidfile "${pidfile}"
   HOSTED_VM_PID="$(cat "${pidfile}")"
 }
 
@@ -129,26 +133,38 @@ hosted_vm_wait_cloud_init() {
 }
 
 hosted_vm_boot_id() {
-  hosted_vm_ssh cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]'
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_exec /bin/cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]'
+  else
+    hosted_vm_ssh cat /proc/sys/kernel/random/boot_id | tr -d '[:space:]'
+  fi
 }
 
 hosted_vm_reboot() {
-  local before after disappeared=false
+  local before after=""
   before="$(hosted_vm_boot_id)"
   [[ -n "${before}" ]] || return 1
 
-  hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
-  for _ in $(seq 1 60); do
-    if ! hosted_vm_ssh true >/dev/null 2>&1; then
-      disappeared=true
-      break
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_async guest-shutdown '{"mode":"reboot"}' || return 1
+  else
+    hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
+  fi
+
+  HOSTED_VM_GA_READY=false
+  for _ in $(seq 1 240); do
+    if hosted_vm_ssh true >/dev/null 2>&1; then
+      after="$(hosted_vm_ssh cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ -n "${after}" && "${after}" != "${before}" ]]; then
+        break
+      fi
     fi
-    sleep 1
+    sleep 2
   done
-  [[ "${disappeared}" == true ]] || return 1
-  hosted_vm_wait_ssh 240 || return 1
-  after="$(hosted_vm_boot_id)"
   [[ -n "${after}" && "${after}" != "${before}" ]] || return 1
+  if [[ -S "${HOSTED_VM_QGA}" ]]; then
+    hosted_vm_wait_ga 120 || return 1
+  fi
   printf '%s\t%s\n' "${before}" "${after}"
 }
 
@@ -216,6 +232,183 @@ EOF
 hosted_vm_remove_polkit_rule() {
   hosted_vm_ssh sudo rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
 }
+
+
+hosted_vm_ga_exec() {
+  local path="$1"
+  shift
+  python3 - "${HOSTED_VM_QGA}" "${path}" "$@" <<'PY'
+import base64
+import json
+import os
+import secrets
+import socket
+import sys
+import time
+
+socket_path = sys.argv[1]
+path = sys.argv[2]
+args = sys.argv[3:]
+
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(10)
+sock.connect(socket_path)
+stream = sock.makefile("rwb", buffering=0)
+
+def send(payload, *, delimited=False):
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n"
+    if delimited:
+        raw = b"\xff" + raw
+    stream.write(raw)
+
+def receive():
+    while True:
+        line = stream.readline()
+        if not line:
+            raise RuntimeError("QGA connection closed")
+        line = line.lstrip(b"\xff")
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "return" in message or "error" in message:
+            return message
+
+sync_id = secrets.randbits(63)
+send({"execute": "guest-sync-delimited", "arguments": {"id": sync_id}}, delimited=True)
+while True:
+    synced = receive()
+    if synced.get("return") == sync_id:
+        break
+
+send({
+    "execute": "guest-exec",
+    "arguments": {
+        "path": path,
+        "arg": args,
+        "capture-output": True,
+    },
+})
+started = receive()
+if "error" in started:
+    print(started["error"].get("desc", "guest-exec failed"), file=sys.stderr)
+    raise SystemExit(125)
+pid = (started.get("return") or {}).get("pid")
+if not isinstance(pid, int) or pid <= 0:
+    raise SystemExit("QGA guest-exec returned invalid pid")
+
+deadline = time.monotonic() + 180
+while True:
+    if time.monotonic() >= deadline:
+        raise SystemExit("QGA guest-exec timed out")
+    send({"execute": "guest-exec-status", "arguments": {"pid": pid}})
+    status_message = receive()
+    if "error" in status_message:
+        print(status_message["error"].get("desc", "guest-exec-status failed"), file=sys.stderr)
+        raise SystemExit(125)
+    status = status_message.get("return") or {}
+    if not status.get("exited"):
+        time.sleep(0.1)
+        continue
+    if status.get("out-truncated") or status.get("err-truncated"):
+        raise SystemExit("QGA guest-exec output was truncated")
+    stdout = base64.b64decode(status.get("out-data") or "")
+    stderr = base64.b64decode(status.get("err-data") or "")
+    sys.stdout.buffer.write(stdout)
+    sys.stderr.buffer.write(stderr)
+    if "signal" in status:
+        raise SystemExit(125)
+    code = status.get("exitcode")
+    raise SystemExit(code if isinstance(code, int) else 125)
+PY
+}
+
+hosted_vm_ga_bash() {
+  local script="$1"
+  hosted_vm_ga_exec /bin/bash -lc "${script}"
+}
+
+hosted_vm_ga_ping() {
+  hosted_vm_ga_exec /bin/true >/dev/null 2>&1
+}
+
+hosted_vm_wait_ga() {
+  local attempts="${1:-120}"
+  for _ in $(seq 1 "${attempts}"); do
+    if hosted_vm_ga_ping; then
+      HOSTED_VM_GA_READY=true
+      return 0
+    fi
+    [[ -n "${HOSTED_VM_PID}" ]] && kill -0 "${HOSTED_VM_PID}" >/dev/null 2>&1 || return 1
+    sleep 1
+  done
+  return 1
+}
+
+hosted_vm_prepare_guest_agent() {
+  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-guest-agent
+  hosted_vm_ssh sudo systemctl enable qemu-guest-agent.service >/dev/null 2>&1 || true
+  hosted_vm_ssh sudo systemctl restart qemu-guest-agent.service
+  hosted_vm_wait_ga 120
+}
+
+hosted_vm_control_bash() {
+  local script="$1"
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_bash "${script}"
+  else
+    hosted_vm_ssh bash -lc "${script}"
+  fi
+}
+
+hosted_vm_ga_async() {
+  local command="$1" arguments_json="${2:-{}}"
+  python3 - "${HOSTED_VM_QGA}" "${command}" "${arguments_json}" <<'PY'
+import json
+import secrets
+import socket
+import sys
+
+socket_path, command, arguments_raw = sys.argv[1:4]
+arguments = json.loads(arguments_raw)
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(10)
+sock.connect(socket_path)
+stream = sock.makefile("rwb", buffering=0)
+
+def send(payload, delimited=False):
+    raw = json.dumps(payload, separators=(",", ":")).encode() + b"\n"
+    if delimited:
+        raw = b"\xff" + raw
+    stream.write(raw)
+
+def receive():
+    while True:
+        line = stream.readline()
+        if not line:
+            raise SystemExit("QGA connection closed")
+        line = line.lstrip(b"\xff")
+        if not line.strip():
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "return" in message or "error" in message:
+            return message
+
+sync_id = secrets.randbits(63)
+send({"execute": "guest-sync-delimited", "arguments": {"id": sync_id}}, True)
+while True:
+    message = receive()
+    if message.get("return") == sync_id:
+        break
+send({"execute": command, "arguments": arguments})
+PY
+}
+
 
 hosted_vm_qmp() {
   local command="$1"
@@ -285,22 +478,20 @@ PY
 
 hosted_vm_suspend_guest() {
   local boot_before pid_before
+  [[ "${HOSTED_VM_GA_READY}" == true ]] || return 1
   boot_before="$(hosted_vm_boot_id)"
-  pid_before="$(hosted_vm_ssh sudo systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')"
+  pid_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
   [[ -n "${boot_before}" && "${pid_before}" =~ ^[1-9][0-9]*$ ]] || return 1
 
-  hosted_vm_ssh 'sudo systemctl suspend >/dev/null 2>&1 &' >/dev/null 2>&1 || true
+  hosted_vm_ga_async guest-suspend-ram '{}' || return 1
   hosted_vm_wait_qmp_status suspended 120 || return 1
-  if hosted_vm_ssh true >/dev/null 2>&1; then
-    return 1
-  fi
 
   hosted_vm_qmp system_wakeup >/dev/null || return 1
   hosted_vm_wait_qmp_status running 120 || return 1
-  hosted_vm_wait_ssh 180 || return 1
+  hosted_vm_wait_ga 180 || return 1
 
   [[ "$(hosted_vm_boot_id)" == "${boot_before}" ]] || return 1
-  [[ "$(hosted_vm_ssh sudo systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')" == "${pid_before}" ]] || return 1
+  [[ "$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')" == "${pid_before}" ]] || return 1
 }
 
 hosted_vm_stop() {
