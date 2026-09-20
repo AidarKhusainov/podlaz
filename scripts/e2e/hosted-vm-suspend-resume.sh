@@ -251,7 +251,59 @@ curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd
   printf 'status-unavailable\n'
   exit 0
 }
-python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-vm-private/status.json 2>/dev/null || printf 'status-unclassified\n'
+status_token="$(python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-vm-private/status.json 2>/dev/null || printf 'status-unclassified')"
+set +e
+runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
+  /usr/bin/podlaz doctor --tun --json >/tmp/podlaz-vm-private/doctor.json 2>/tmp/podlaz-vm-private/doctor.stderr
+doctor_rc=$?
+set -e
+doctor_token="$(python3 - "$doctor_rc" /tmp/podlaz-vm-private/doctor.json <<'PY'
+import json
+import re
+import sys
+
+rc = int(sys.argv[1])
+path = sys.argv[2]
+if rc not in (0, 3):
+    print("doctor-unavailable")
+    raise SystemExit(0)
+try:
+    with open(path, encoding="utf-8") as handle:
+        report = json.load(handle)
+except Exception:
+    print("doctor-invalid")
+    raise SystemExit(0)
+
+def safe(value):
+    value = str(value or "").strip().lower()
+    return value if re.fullmatch(r"[a-z0-9_-]+", value) else ""
+
+parts = ["doctor"]
+primary = safe(report.get("primary_classification"))
+phase = safe(report.get("failure_phase"))
+if primary:
+    parts.append(primary)
+if phase:
+    parts.append(phase)
+for probe in report.get("probes") or []:
+    if probe.get("status") != "fail":
+        continue
+    probe_id = safe(probe.get("id"))
+    classification = safe(probe.get("classification"))
+    failure_phase = safe(probe.get("failure_phase"))
+    if probe_id:
+        parts.append(probe_id)
+    if classification:
+        parts.append(classification)
+    if failure_phase:
+        parts.append(failure_phase)
+    break
+if len(parts) == 1:
+    parts.append(safe(report.get("status")) or "no-failure-detail")
+print(".".join(parts))
+PY
+)"
+printf '%s.%s\n' "$status_token" "$doctor_token"
 EOF
 )"
   token="$(printf '%s' "${token}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//')"
