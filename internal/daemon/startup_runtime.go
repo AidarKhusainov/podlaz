@@ -61,9 +61,7 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime) bootAuto
 			log.Printf("podlazd: boot autostart was not started because startup authority is unavailable")
 		}
 	}
-	refreshCtx, cancelRefresh := boundedStartupScanRefreshContext(ctx)
-	runtime.refreshStartupScan(refreshCtx)
-	cancelRefresh()
+	runtime.refreshStartupScan(ctx)
 	return manifestStore
 }
 
