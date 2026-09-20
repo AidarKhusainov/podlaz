@@ -167,6 +167,9 @@ func completeBootAutostartResumeResult(
 			if err := attemptStore.MarkTerminal(bootAutostartTerminalSessionFailure); err != nil {
 				return bootAutostartStartupRecoveryFailed, true, fmt.Errorf("persist terminal boot autostart completion: %w", err)
 			}
+			if err := publishBootAutostartTerminalProductReason(continuation, bootAutostartTerminalSessionFailure); err != nil {
+				return bootAutostartStartupRecoveryFailed, true, err
+			}
 		}
 		if err := continuation.finalize(); err != nil {
 			if inProgress {
@@ -273,6 +276,9 @@ func completeBootAutostartBeforeConnectFailure(
 	if err := attemptStore.MarkTerminal(bootAutostartTerminalNetworkNotReady); err != nil {
 		return bootAutostartStartupRecoveryFailed, errors.Join(cause, fmt.Errorf("persist boot network readiness terminal outcome: %w", err))
 	}
+	if err := publishBootAutostartTerminalProductReason(continuation, bootAutostartTerminalNetworkNotReady); err != nil {
+		return bootAutostartStartupRecoveryFailed, errors.Join(cause, err)
+	}
 	if err := continuation.finalize(); err != nil {
 		return bootAutostartStartupTerminal, errors.Join(cause, fmt.Errorf("clear boot readiness terminal authority: %w", err))
 	}
@@ -296,10 +302,35 @@ func convergeAndCompleteBootAutostartTerminal(
 	if err := attemptStore.MarkTerminal(reason); err != nil {
 		return bootAutostartStartupRecoveryFailed, fmt.Errorf("persist terminal boot autostart completion: %w", err)
 	}
+	if err := publishBootAutostartTerminalProductReason(continuation, reason); err != nil {
+		return bootAutostartStartupRecoveryFailed, err
+	}
 	if err := continuation.finalize(); err != nil {
 		return bootAutostartStartupTerminal, fmt.Errorf("clear converged boot autostart Network Session authority: %w", err)
 	}
 	return bootAutostartStartupTerminal, nil
+}
+
+func publishBootAutostartTerminalProductReason(
+	continuation networkSessionContinuationStore,
+	reason bootAutostartTerminalReason,
+) error {
+	var productReason api.TerminalReason
+	switch reason {
+	case bootAutostartTerminalConnectFailed:
+		productReason = api.TerminalReasonVPNConnectFailed
+	case bootAutostartTerminalSessionFailure:
+		productReason = api.TerminalReasonVPNRestoreFailed
+	case bootAutostartTerminalNetworkNotReady:
+		productReason = api.TerminalReasonBootNetworkNotReady
+	default:
+		return fmt.Errorf("publish terminal boot autostart product outcome: unsupported reason %q", reason)
+	}
+	store := newProductTerminalReasonStore(continuation.runtimeDir, continuation.readBootID)
+	if err := store.Set(productReason); err != nil {
+		return fmt.Errorf("persist terminal boot autostart product outcome: %w", err)
+	}
+	return nil
 }
 
 func defaultBootAutostartTerminalConverge(ctx context.Context, continuation networkSessionContinuationStore) error {
