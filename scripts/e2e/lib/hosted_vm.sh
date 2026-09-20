@@ -406,7 +406,10 @@ hosted_vm_control_bash() {
 }
 
 hosted_vm_ga_async() {
-  local command="$1" arguments_json="${2:-{}}"
+  local command="$1" arguments_json="{}"
+  if (($# >= 2)); then
+    arguments_json="$2"
+  fi
   python3 - "${HOSTED_VM_QGA}" "${command}" "${arguments_json}" <<'PY'
 import json
 import secrets
