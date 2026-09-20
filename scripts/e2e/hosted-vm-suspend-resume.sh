@@ -450,8 +450,10 @@ run_scenario() {
 
   mark_failure infrastructure vm.boot
   hosted_vm_start
-  hosted_vm_wait_ssh
+  hosted_vm_wait_ssh 180
   hosted_vm_wait_cloud_init
+  # Expansion is intentionally evaluated by the guest shell.
+  # shellcheck disable=SC2016
   hosted_vm_ssh '. /etc/os-release; test "$ID" = ubuntu; test "$VERSION_ID" = 24.04'
   record_evidence vm.boot pass
 
