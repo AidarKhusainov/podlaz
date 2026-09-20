@@ -144,11 +144,11 @@ hosted_vm_boot_id() {
 }
 
 hosted_vm_reboot() {
-  local before after=""
+  local before after="" had_ga="${HOSTED_VM_GA_READY}"
   before="$(hosted_vm_boot_id)"
   [[ -n "${before}" ]] || return 1
 
-  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+  if [[ "${had_ga}" == true ]]; then
     hosted_vm_ga_async guest-shutdown '{"mode":"reboot"}' || return 1
   else
     hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
@@ -165,7 +165,7 @@ hosted_vm_reboot() {
     sleep 2
   done
   [[ -n "${after}" && "${after}" != "${before}" ]] || return 1
-  if [[ -S "${HOSTED_VM_QGA}" ]]; then
+  if [[ "${had_ga}" == true ]]; then
     hosted_vm_wait_ga 120 || return 1
   fi
   printf '%s\t%s\n' "${before}" "${after}"
