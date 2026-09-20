@@ -261,6 +261,10 @@ func TestRunBootAutostartStartupConnectFailureConsumesAttemptOnlyAfterConvergenc
 	if _, err := manifestStore.Enable(testBootAutostartConfig()); err != nil {
 		t.Fatal(err)
 	}
+	reasonStore := newProductTerminalReasonStore(continuation.runtimeDir, continuation.readBootID)
+	if err := reasonStore.Supersede(); err != nil {
+		t.Fatal(err)
+	}
 	lifecycle := &bootAutostartRecordingLifecycle{err: errors.New("simulated terminal connect failure")}
 	result, err := runBootAutostartStartup(
 		context.Background(), manifestStore, attemptStore, continuation, lifecycle,
@@ -276,6 +280,17 @@ func TestRunBootAutostartStartupConnectFailureConsumesAttemptOnlyAfterConvergenc
 	}
 	if _, exists, loadErr := continuation.stateStore().Load(); loadErr != nil || exists {
 		t.Fatalf("terminal completion left continuation: exists=%v err=%v", exists, loadErr)
+	}
+	reason, reasonExists, reasonErr := reasonStore.LoadCurrent()
+	if reasonErr != nil || !reasonExists || reason != api.TerminalReasonVPNConnectFailed {
+		t.Fatalf("terminal product outcome = %q exists=%v err=%v", reason, reasonExists, reasonErr)
+	}
+	if got := resolveProductTerminalReason(
+		api.StatusResponse{Connection: "inactive"},
+		reasonStore,
+		attemptStore,
+	); got != api.TerminalReasonVPNConnectFailed {
+		t.Fatalf("published terminal reason = %q, want %q", got, api.TerminalReasonVPNConnectFailed)
 	}
 
 	secondLifecycle := &bootAutostartRecordingLifecycle{}
