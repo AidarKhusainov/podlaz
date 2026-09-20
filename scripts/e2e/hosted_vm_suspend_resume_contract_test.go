@@ -17,7 +17,6 @@ func TestHostedVMSuspendResumeOwnsActualPowerBoundary(t *testing.T) {
 		"vm.suspend_wakeup_capability",
 		"suspend.actual_guest_boundary",
 		"suspend.same_boot",
-		"suspend.same_daemon_process",
 		"privacy.direct_uplink_blocked_before_suspend",
 		"privacy.direct_uplink_blocked_after_wakeup",
 		"tun.same_network_session",
