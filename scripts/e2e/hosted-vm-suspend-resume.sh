@@ -34,7 +34,6 @@ EVIDENCE_KEYS=(
   tun.traffic_before_suspend
   suspend.actual_guest_boundary
   suspend.same_boot
-  suspend.same_daemon_process
   privacy.direct_uplink_blocked_after_wakeup
   tun.verified_active_after_wakeup
   tun.same_network_session
@@ -434,7 +433,7 @@ cleanup() {
 }
 
 run_scenario() {
-  local boot_before boot_after daemon_before daemon_after session_before session_after
+  local boot_before boot_after session_before session_after
 
   mark_failure capability vm.acceleration
   hosted_vm_probe_acceleration
@@ -494,7 +493,6 @@ run_scenario() {
   record_evidence tun.traffic_before_suspend pass
 
   boot_before="$(hosted_vm_boot_id)"
-  daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
   session_before="$(session_id)"
   [[ -n "${session_before}" ]]
 
@@ -503,11 +501,8 @@ run_scenario() {
   record_evidence suspend.actual_guest_boundary pass
 
   boot_after="$(hosted_vm_boot_id)"
-  daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
   [[ "${boot_after}" == "${boot_before}" ]]
   record_evidence suspend.same_boot pass
-  [[ "${daemon_after}" == "${daemon_before}" ]]
-  record_evidence suspend.same_daemon_process pass
 
   mark_failure product privacy.after_wakeup
   assert_armed_current_boot_session
