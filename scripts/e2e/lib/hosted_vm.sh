@@ -316,24 +316,29 @@ hosted_vm_reboot() {
 
   if [[ "${had_ga}" == true ]]; then
     hosted_vm_ga_async guest-shutdown '{"mode":"reboot"}' || return 1
-  else
-    hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
-  fi
-
-  HOSTED_VM_GA_READY=false
-  for _ in $(seq 1 240); do
-    if hosted_vm_ssh true >/dev/null 2>&1; then
-      after="$(hosted_vm_ssh cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '[:space:]' || true)"
+    HOSTED_VM_GA_READY=false
+    for _ in $(seq 1 240); do
+      after="$(hosted_vm_ga_exec /bin/cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '[:space:]' || true)"
       if [[ -n "${after}" && "${after}" != "${before}" ]]; then
+        HOSTED_VM_GA_READY=true
         break
       fi
-    fi
-    sleep 2
-  done
-  [[ -n "${after}" && "${after}" != "${before}" ]] || return 1
-  if [[ "${had_ga}" == true ]]; then
-    hosted_vm_wait_ga 120 || return 1
+      sleep 2
+    done
+  else
+    hosted_vm_ssh sudo systemctl reboot >/dev/null 2>&1 || true
+    for _ in $(seq 1 240); do
+      if hosted_vm_ssh true >/dev/null 2>&1; then
+        after="$(hosted_vm_ssh cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '[:space:]' || true)"
+        if [[ -n "${after}" && "${after}" != "${before}" ]]; then
+          break
+        fi
+      fi
+      sleep 2
+    done
   fi
+
+  [[ -n "${after}" && "${after}" != "${before}" ]] || return 1
   printf '%s\t%s\n' "${before}" "${after}"
 }
 
