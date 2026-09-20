@@ -156,7 +156,7 @@ management_iface="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i+
 management_mac="$(cat "/sys/class/net/$management_iface/address")"
 [[ -n "$management_mac" ]]
 
-cat >/etc/systemd/network/10-podlaz-management.network <<UNIT
+cat >/etc/systemd/network/01-podlaz-management.network <<UNIT
 [Match]
 MACAddress=$management_mac
 
