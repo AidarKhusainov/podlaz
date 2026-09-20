@@ -462,8 +462,13 @@ run_scenario() {
 
   mark_failure product candidate.install
   hosted_vm_install_candidate "${CANDIDATE_DEB}"
+  hosted_vm_assert_candidate_provenance "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}"
+
+  mark_failure fixture guest.control
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
   hosted_vm_prepare_guest_agent
+
+  mark_failure product candidate.provenance
   hosted_vm_assert_candidate_provenance "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}"
   record_evidence candidate.provenance pass
 
