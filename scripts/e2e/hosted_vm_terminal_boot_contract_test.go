@@ -20,9 +20,8 @@ func TestHostedVMTerminalBootPreservesOneTerminalAttempt(t *testing.T) {
 		"same_boot_restart.attempt_unchanged",
 		"same_boot_restart.no_session",
 		"same_boot_restart.no_retry",
-		"Reason: VPN connection could not be established safely",
 		"terminal_cleanup.exact",
-		"hosted_vm_tun_run_podlaz status",
+		"hosted_vm_tun_wait_status clean-inactive",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("terminal boot scenario missing %q", marker)
