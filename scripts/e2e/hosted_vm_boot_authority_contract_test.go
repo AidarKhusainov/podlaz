@@ -59,6 +59,7 @@ func TestHostedVMBootAuthorityUsesSharedSyntheticTUNMechanics(t *testing.T) {
 		"configure-autostart",
 		"curl -4 -fsSk --interface",
 		"podlaz-vm-foreign.service",
+		"--abstract-unix-socket podlazd",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("shared VM TUN helper missing %q", marker)
