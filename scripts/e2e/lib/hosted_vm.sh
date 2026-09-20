@@ -19,6 +19,12 @@ HOSTED_VM_QMP=""
 HOSTED_VM_QGA=""
 HOSTED_VM_GA_READY=false
 HOSTED_VM_USER_NET_EXTRA=""
+HOSTED_VM_PROVIDER_TAP=""
+HOSTED_VM_PROVIDER_MAC="52:54:00:7a:32:01"
+HOSTED_VM_PROVIDER_HOST_CIDR="172.31.252.1/30"
+HOSTED_VM_PROVIDER_GUEST_CIDR="172.31.252.2/30"
+HOSTED_VM_PROVIDER_HOST_IP="172.31.252.1"
+HOSTED_VM_PROVIDER_GUEST_IP="172.31.252.2"
 
 hosted_vm_init() {
   local root="$1"
@@ -100,13 +106,99 @@ sock.close()
 PY
 }
 
+hosted_vm_provider_prepare_host() {
+  local socket_tag uid
+  [[ -z "${HOSTED_VM_PROVIDER_TAP}" ]] || return 0
+  require_cmd ip sudo
+  socket_tag="$(printf '%s' "${HOSTED_VM_ROOT}" | sha256sum | awk '{print substr($1,1,8)}')"
+  HOSTED_VM_PROVIDER_TAP="pzv${socket_tag}"
+  uid="$(id -u)"
+  sudo -n ip tuntap add dev "${HOSTED_VM_PROVIDER_TAP}" mode tap user "${uid}"
+  sudo -n ip address add "${HOSTED_VM_PROVIDER_HOST_CIDR}" dev "${HOSTED_VM_PROVIDER_TAP}"
+  sudo -n ip link set dev "${HOSTED_VM_PROVIDER_TAP}" up
+}
+
+hosted_vm_provider_prepare_guest() {
+  local script
+  [[ -n "${HOSTED_VM_PROVIDER_TAP}" && "${HOSTED_VM_GA_READY}" == true ]] || return 1
+  script="$(cat <<'EOF'
+set -Eeuo pipefail
+iface=""
+for path in /sys/class/net/*/address; do
+  [[ "$(cat "$path")" == "$provider_mac" ]] || continue
+  iface="$(basename "$(dirname "$path")")"
+  break
+done
+[[ -n "$iface" ]]
+cat >/etc/systemd/network/20-podlaz-provider.network <<UNIT
+[Match]
+MACAddress=$provider_mac
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+Address=$provider_guest_cidr
+LinkLocalAddressing=no
+IPv6AcceptRA=no
+UNIT
+systemctl is-active --quiet systemd-networkd.service
+networkctl reload
+ip link set dev "$iface" up
+networkctl reconfigure "$iface"
+for _ in $(seq 1 60); do
+  if ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null; then
+    break
+  fi
+  sleep 0.5
+done
+ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null
+ip -4 route get "$provider_host_ip" | grep -F "dev $iface" >/dev/null
+UNIT_PATH=/etc/systemd/network/20-podlaz-provider.network
+[[ -f "$UNIT_PATH" ]]
+EOF
+)"
+  hosted_vm_ga_bash "provider_mac=${HOSTED_VM_PROVIDER_MAC@Q}; provider_guest_cidr=${HOSTED_VM_PROVIDER_GUEST_CIDR@Q}; provider_guest_ip=${HOSTED_VM_PROVIDER_GUEST_IP@Q}; provider_host_ip=${HOSTED_VM_PROVIDER_HOST_IP@Q}; ${script}"
+}
+
+hosted_vm_provider_cleanup_host() {
+  if [[ -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
+    sudo -n ip link del dev "${HOSTED_VM_PROVIDER_TAP}" >/dev/null 2>&1 || true
+    HOSTED_VM_PROVIDER_TAP=""
+  fi
+}
+
 hosted_vm_start() {
   local cpu pidfile="${HOSTED_VM_ROOT}/qemu.pid"
+  local -a provider_args=()
   [[ "${HOSTED_VM_ACCEL}" == kvm || "${HOSTED_VM_ACCEL}" == tcg ]] || fail "hosted VM acceleration was not selected"
   if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then cpu=host; else cpu=max; fi
   HOSTED_VM_SSH_PORT="$(hosted_vm_find_loopback_port)"
+  if [[ -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
+    provider_args=(
+      -netdev "tap,id=pzprovider,ifname=${HOSTED_VM_PROVIDER_TAP},script=no,downscript=no"
+      -device "virtio-net-pci,netdev=pzprovider,mac=${HOSTED_VM_PROVIDER_MAC}"
+    )
+  fi
 
-  qemu-system-x86_64     -machine "q35,accel=${HOSTED_VM_ACCEL}"     -cpu "${cpu}"     -smp 2     -m 2048     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2"     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on"     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22${HOSTED_VM_USER_NET_EXTRA}"     -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off"     -chardev "socket,path=${HOSTED_VM_QGA},server=on,wait=off,id=qga0"     -device virtio-serial-pci     -device "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"     -display none     -monitor none     -serial "file:${HOSTED_VM_ROOT}/serial.log"     -daemonize     -pidfile "${pidfile}"
+  qemu-system-x86_64 \
+    -machine "q35,accel=${HOSTED_VM_ACCEL}" \
+    -cpu "${cpu}" \
+    -smp 2 \
+    -m 2048 \
+    -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2" \
+    -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on" \
+    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22${HOSTED_VM_USER_NET_EXTRA}" \
+    "${provider_args[@]}" \
+    -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off" \
+    -chardev "socket,path=${HOSTED_VM_QGA},server=on,wait=off,id=qga0" \
+    -device virtio-serial-pci \
+    -device "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0" \
+    -display none \
+    -monitor none \
+    -serial "file:${HOSTED_VM_ROOT}/serial.log" \
+    -daemonize \
+    -pidfile "${pidfile}"
   HOSTED_VM_PID="$(cat "${pidfile}")"
 }
 
@@ -550,4 +642,5 @@ hosted_vm_stop() {
   fi
   rm -f -- "${HOSTED_VM_QMP}" "${HOSTED_VM_QGA}"
   HOSTED_VM_GA_READY=false
+  hosted_vm_provider_cleanup_host
 }
