@@ -63,6 +63,8 @@ func TestHostedVMSuspendResumeUsesQMPHardwareSuspendControl(t *testing.T) {
 		"HOSTED_VM_PROVIDER_NETWORK_CIDR",
 		"iptables -t nat",
 		"Metric=10",
+		"UseRoutes=no",
+		"UseDNS=no",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("hosted VM helper is missing suspend control %q", marker)
