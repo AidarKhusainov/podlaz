@@ -230,7 +230,11 @@ EOF
 }
 
 hosted_vm_remove_polkit_rule() {
-  hosted_vm_ssh sudo rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_exec /bin/rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+  else
+    hosted_vm_ssh sudo rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+  fi
 }
 
 
@@ -328,6 +332,12 @@ PY
 hosted_vm_ga_bash() {
   local script="$1"
   hosted_vm_ga_exec /bin/bash -lc "${script}"
+}
+
+hosted_vm_ga_bash_stdin() {
+  local script
+  script="$(cat)"
+  hosted_vm_ga_bash "${script}"
 }
 
 hosted_vm_ga_ping() {
