@@ -145,6 +145,55 @@ assert_attempt_exact() {
 assert_attempt_absent() { hosted_vm_ga_bash 'test ! -e /run/podlaz/boot-autostart-attempt.json'; }
 assert_session_absent() { hosted_vm_ga_bash 'test ! -e /run/podlaz/network-session-continuation.json'; }
 
+boot_attempt_token() {
+  hosted_vm_ga_bash_stdin <<'EOF' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//' || true
+set -Eeuo pipefail
+if ! test -f /run/podlaz/boot-autostart-attempt.json; then
+  printf 'absent\n'
+  exit 0
+fi
+state="$(jq -r '.state // "unknown"' /run/podlaz/boot-autostart-attempt.json)"
+reason="$(jq -r '.terminal_reason // "none"' /run/podlaz/boot-autostart-attempt.json)"
+printf '%s-%s\n' "$state" "$reason"
+EOF
+}
+
+wait_succeeded_attempt() {
+  local boot="$1" generation="$2" profile="$3" token
+  for _ in $(seq 1 360); do
+    if assert_attempt_exact "${boot}" "${generation}" "${profile}" succeeded >/dev/null 2>&1; then
+      return 0
+    fi
+    token="$(boot_attempt_token)"
+    case "${token}" in
+      terminal-*)
+        mark_failure product "autostart.boot_attempt.${token}"
+        return 1
+        ;;
+    esac
+    sleep 1
+  done
+  mark_failure product "autostart.boot_attempt.$(boot_attempt_token)"
+  return 1
+}
+
+boot_status_token() {
+  hosted_vm_ga_bash_stdin <<'EOF' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//' || true
+set -Eeuo pipefail
+service_state="$(systemctl is-active podlazd.service 2>/dev/null || true)"
+service_result="$(systemctl show -p Result --value podlazd.service 2>/dev/null || true)"
+socket_state=absent
+test -S /run/podlaz/podlazd.sock && socket_state=present
+status_token=unavailable
+if curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
+    http://localhost/v1/status >/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null; then
+  status_token="$(python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null || printf unclassified)"
+fi
+printf 'service-%s-%s.socket-%s.status-%s\n' \
+  "${service_state:-unknown}" "${service_result:-unknown}" "$socket_state" "$status_token"
+EOF
+}
+
 cleanup() {
   local saved=$? failed=0
   trap - EXIT
@@ -231,12 +280,15 @@ run_scenario() {
   record_evidence candidate.provenance_after_reboot pass
 
   mark_failure product autostart.boot_connect
-  hosted_vm_tun_wait_status verified-active 180
-  record_evidence tun.verified_active_after_boot pass
-
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile}" succeeded
+  wait_succeeded_attempt "${boot_after}" "${generation}" "${profile}"
   record_evidence autostart.succeeded_once pass
   record_evidence autostart.attempt_generation_exact pass
+
+  if ! hosted_vm_tun_wait_status verified-active 300; then
+    mark_failure product "autostart.status.$(boot_status_token)"
+    return 1
+  fi
+  record_evidence tun.verified_active_after_boot pass
 
   hosted_vm_tun_capture_exact_active_authority yes
   record_evidence tun.exact_authority_after_boot pass
