@@ -9,7 +9,7 @@ HOSTED_VM_TUN_XRAY_ROOT=""
 HOSTED_VM_TUN_XRAY_PID=""
 HOSTED_VM_TUN_CANDIDATE=""
 HOSTED_VM_TUN_EXPECTED_COMMIT=""
-HOSTED_VM_TUN_PRIVATE="/tmp/podlaz-hosted-vm-tun"
+HOSTED_VM_TUN_PRIVATE="/var/tmp/podlaz-hosted-vm-tun"
 HOSTED_VM_TUN_XDG="/home/e2e/.local/share/podlaz-hosted-vm-tun"
 
 hosted_vm_tun_init() {
@@ -91,11 +91,11 @@ hosted_vm_tun_assert_candidate_provenance() {
 
 hosted_vm_tun_install_helpers() {
   local repo_root="$1"
-  hosted_vm_scp_to "${repo_root}/scripts/e2e/lib/daemon_status_semantics.py" /tmp/daemon_status_semantics.py
-  hosted_vm_scp_to "${repo_root}/scripts/e2e/hosted_synthetic_active_authority.py" /tmp/active_authority.py
-  hosted_vm_scp_to "${repo_root}/scripts/e2e/hosted_synthetic_network_authority.py" /tmp/network_authority.py
-  hosted_vm_scp_to "${repo_root}/scripts/e2e/lib/recovery_json.sh" /tmp/recovery_json.sh
-  hosted_vm_scp_to "${HOSTED_VM_TUN_XRAY_ROOT}/client-uri" /tmp/client-uri
+  hosted_vm_scp_to "${repo_root}/scripts/e2e/lib/daemon_status_semantics.py" /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py
+  hosted_vm_scp_to "${repo_root}/scripts/e2e/hosted_synthetic_active_authority.py" /var/tmp/podlaz-hosted-vm-active-authority.py
+  hosted_vm_scp_to "${repo_root}/scripts/e2e/hosted_synthetic_network_authority.py" /var/tmp/podlaz-hosted-vm-network-authority.py
+  hosted_vm_scp_to "${repo_root}/scripts/e2e/lib/recovery_json.sh" /var/tmp/podlaz-hosted-vm-recovery-json.sh
+  hosted_vm_scp_to "${HOSTED_VM_TUN_XRAY_ROOT}/client-uri" /var/tmp/podlaz-hosted-vm-client-uri
 }
 
 hosted_vm_tun_install_polkit() {
@@ -128,7 +128,7 @@ hosted_vm_tun_prepare_profile() {
   script="$(cat <<'EOF'
 set -Eeuo pipefail
 install -d -o e2e -g e2e -m 0700 "$xdg" "$xdg/config" "$xdg/state" "$xdg/cache" "$private"
-uri="$(cat /tmp/client-uri)"
+uri="$(cat /var/tmp/podlaz-hosted-vm-client-uri)"
 runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz profile import "$uri" >"$private/import.stdout" 2>"$private/import.stderr"
 awk '/^Imported profile:/ {print $3; exit}' "$private/import.stdout" >"$private/profile-id"
 test -s "$private/profile-id"
@@ -150,7 +150,7 @@ python3 - <<'PY'
 import socket
 from urllib.parse import urlsplit
 
-uri = open("/tmp/client-uri", encoding="utf-8").read().strip()
+uri = open("/var/tmp/podlaz-hosted-vm-client-uri", encoding="utf-8").read().strip()
 parsed = urlsplit(uri)
 if not parsed.hostname or not parsed.port:
     raise SystemExit("synthetic endpoint URI has no host/port")
@@ -247,7 +247,7 @@ EOF
 
 hosted_vm_tun_wait_status() {
   local target="$1" attempts="$2" command
-  command="curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >${HOSTED_VM_TUN_PRIVATE}/status.json 2>/dev/null && python3 /tmp/daemon_status_semantics.py '${target}' ${HOSTED_VM_TUN_PRIVATE}/status.json"
+  command="curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >${HOSTED_VM_TUN_PRIVATE}/status.json 2>/dev/null && python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py '${target}' ${HOSTED_VM_TUN_PRIVATE}/status.json"
   for _ in $(seq 1 "${attempts}"); do
     if hosted_vm_ga_bash "${command}" >/dev/null 2>&1; then return 0; fi
     sleep 1
@@ -276,11 +276,11 @@ resolvectl dns >"$private/resolved-dns.txt"
 resolvectl domain >"$private/resolved-domain.txt"
 resolvectl default-route >"$private/resolved-default-route.txt"
 nft -j list ruleset >"$private/nft-ruleset.json"
-python3 /tmp/active_authority.py   --status "$private/status.json" --transactions /run/podlaz/transactions   --session /run/podlaz/network-session-continuation.json --boot-id /proc/sys/kernel/random/boot_id   --runtime-config /run/podlaz/generated/xray.json --resolved-dns "$private/resolved-dns.txt"   --resolved-domain "$private/resolved-domain.txt" --resolved-default-route "$private/resolved-default-route.txt"   --nft-ruleset "$private/nft-ruleset.json"
+python3 /var/tmp/podlaz-hosted-vm-active-authority.py   --status "$private/status.json" --transactions /run/podlaz/transactions   --session /run/podlaz/network-session-continuation.json --boot-id /proc/sys/kernel/random/boot_id   --runtime-config /run/podlaz/generated/xray.json --resolved-dns "$private/resolved-dns.txt"   --resolved-domain "$private/resolved-domain.txt" --resolved-default-route "$private/resolved-default-route.txt"   --nft-ruleset "$private/nft-ruleset.json"
 if [[ "$snapshot" == yes ]]; then
-  python3 /tmp/network_authority.py snapshot /run/podlaz/transactions "$private/network-manifest.json"
+  python3 /var/tmp/podlaz-hosted-vm-network-authority.py snapshot /run/podlaz/transactions "$private/network-manifest.json"
 fi
-python3 /tmp/network_authority.py verify-present "$private/network-manifest.json"
+python3 /var/tmp/podlaz-hosted-vm-network-authority.py verify-present "$private/network-manifest.json"
 EOF
 )"
   hosted_vm_ga_bash "private=${HOSTED_VM_TUN_PRIVATE@Q}; snapshot=${snapshot@Q}; ${script}"
@@ -309,7 +309,7 @@ hosted_vm_tun_assert_exact_terminal_cleanup() {
   local script
   script="$(cat <<'EOF'
 set -Eeuo pipefail
-python3 /tmp/network_authority.py verify-absent "$private/network-manifest.json"
+python3 /var/tmp/podlaz-hosted-vm-network-authority.py verify-absent "$private/network-manifest.json"
 test ! -e /run/podlaz/network-session-continuation.json
 test ! -e /run/podlaz/generated/xray.json
 if test -d /run/podlaz/transactions; then
@@ -327,7 +327,7 @@ hosted_vm_tun_run_clean_recovery() {
   script="$(cat <<'EOF'
 set -Eeuo pipefail
 runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz recover --json >"$private/recover.json" 2>"$private/recover.stderr"
-source /tmp/recovery_json.sh
+source /var/tmp/podlaz-hosted-vm-recovery-json.sh
 assert_clean_recovery_json_file "$private/recover.json"
 EOF
 )"
