@@ -123,6 +123,12 @@ def expect_mismatch(root: Path, message: str) -> None:
 
 
 def main() -> int:
+    proc_boot_id = Path("/proc/sys/kernel/random/boot_id")
+    if proc_boot_id.is_file():
+        authority.regular_private_input(proc_boot_id, "proc boot id", nonempty=False)
+        if not authority.read_current_boot_id(proc_boot_id):
+            raise SystemExit("procfs boot identity was empty")
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "transactions").mkdir()
