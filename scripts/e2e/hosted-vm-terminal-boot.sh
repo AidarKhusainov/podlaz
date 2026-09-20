@@ -116,12 +116,18 @@ run_scenario(){
   local boot_before boot_after profile gen reboot_ids before_hash after_hash pid_before pid_after
   mark_failure capability vm.acceleration; hosted_vm_probe_acceleration; record_evidence vm.acceleration pass
   hosted_vm_tun_init "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}" "${XRAY_ROOT}"
-  # Endpoint is started only to keep the shared VM user-net topology consistent; the terminal profile does not use it.
-  mark_failure fixture synthetic.endpoint; hosted_vm_tun_start_endpoint
   mark_failure infrastructure vm.image; hosted_vm_prepare_image; record_evidence vm.image_checksum pass
   mark_failure infrastructure vm.initial_boot; hosted_vm_start; hosted_vm_wait_ssh; hosted_vm_wait_cloud_init; record_evidence vm.initial_boot pass
   mark_failure product candidate.install; hosted_vm_tun_install_candidate_and_tools; record_evidence candidate.provenance pass
-  mark_failure fixture guest.setup; hosted_vm_tun_install_helpers "${REPO_ROOT}"; hosted_vm_tun_install_polkit "${PRIVATE_ROOT}/polkit.rules"; hosted_vm_tun_prepare_profile; hosted_vm_tun_capture_direct_baseline; hosted_vm_tun_create_foreign_state; hosted_vm_tun_assert_foreign_state; record_evidence fixture.foreign_state pass
+  mark_failure fixture guest.setup
+  hosted_vm_scp_to "${REPO_ROOT}/scripts/e2e/lib/daemon_status_semantics.py" /tmp/daemon_status_semantics.py
+  hosted_vm_scp_to "${REPO_ROOT}/scripts/e2e/lib/recovery_json.sh" /tmp/recovery_json.sh
+  hosted_vm_tun_install_polkit "${PRIVATE_ROOT}/polkit.rules"
+  hosted_vm_ssh install -d -o e2e -g e2e -m 0700 "${HOSTED_VM_TUN_XDG}" "${HOSTED_VM_TUN_XDG}/config" "${HOSTED_VM_TUN_XDG}/state" "${HOSTED_VM_TUN_XDG}/cache" "${HOSTED_VM_TUN_PRIVATE}"
+  hosted_vm_tun_capture_direct_baseline
+  hosted_vm_tun_create_foreign_state
+  hosted_vm_tun_assert_foreign_state
+  record_evidence fixture.foreign_state pass
   prepare_terminal_profile; record_evidence terminal_profile.imported pass
   profile="$(terminal_profile_id)"; boot_before="$(hosted_vm_boot_id)"
   mark_failure product autostart.enable_terminal; hosted_vm_tun_run_podlaz autostart enable --mode tun "${profile}" >/dev/null
