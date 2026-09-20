@@ -28,9 +28,12 @@ hosted_vm_init() {
   HOSTED_VM_OVERLAY="${HOSTED_VM_ROOT}/overlay.qcow2"
   HOSTED_VM_SEED="${HOSTED_VM_ROOT}/seed.img"
   HOSTED_VM_KEY="${HOSTED_VM_ROOT}/id_ed25519"
-  HOSTED_VM_QMP="${HOSTED_VM_ROOT}/qmp.sock"
-  HOSTED_VM_QGA="${HOSTED_VM_ROOT}/qga.sock"
+  local socket_tag
+  socket_tag="$(printf '%s' "${HOSTED_VM_ROOT}" | sha256sum | awk '{print substr($1,1,16)}')"
+  HOSTED_VM_QMP="/tmp/pzvm-${socket_tag}.qmp"
+  HOSTED_VM_QGA="/tmp/pzvm-${socket_tag}.qga"
   HOSTED_VM_GA_READY=false
+  rm -f -- "${HOSTED_VM_QMP}" "${HOSTED_VM_QGA}"
   install -d -m 0700 "${HOSTED_VM_ROOT}"
 }
 
@@ -192,6 +195,30 @@ hosted_vm_assert_candidate_provenance() {
   expected_xray="$(sha256sum "${extract}/usr/lib/podlaz/xray" | awk '{print $1}')"
   rm -rf -- "${extract}"
 
+  if [[ "${HOSTED_VM_GA_READY}" != true ]]; then
+    hosted_vm_ssh bash -s -- "${expected_version}" "${expected_commit}" "${expected_cli}" "${expected_daemon}" "${expected_xray}" <<'EOF'
+set -Eeuo pipefail
+expected_version="$1"
+expected_commit="$2"
+expected_cli="$3"
+expected_daemon="$4"
+expected_xray="$5"
+[[ "$(dpkg-query -W -f='${db:Status-Status}' podlaz)" == installed ]]
+[[ "$(dpkg-query -W -f='${Version}' podlaz)" == "$expected_version" ]]
+[[ "$(sha256sum /usr/bin/podlaz | awk '{print $1}')" == "$expected_cli" ]]
+[[ "$(sha256sum /usr/bin/podlazd | awk '{print $1}')" == "$expected_daemon" ]]
+[[ "$(sha256sum /usr/lib/podlaz/xray | awk '{print $1}')" == "$expected_xray" ]]
+/usr/bin/podlaz version | grep -Fx "commit: $expected_commit" >/dev/null
+systemctl is-active --quiet podlazd.service
+pid="$(systemctl show -p MainPID --value podlazd.service)"
+[[ "$pid" =~ ^[1-9][0-9]*$ ]]
+[[ "$(sudo readlink -f "/proc/$pid/exe")" == /usr/bin/podlazd ]]
+[[ "$(sudo sha256sum "/proc/$pid/exe" | awk '{print $1}')" == "$expected_daemon" ]]
+[[ "$(sudo stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
+EOF
+    return
+  fi
+
   script="$(cat <<'EOF'
 set -Eeuo pipefail
 [[ "$(dpkg-query -W -f='${db:Status-Status}' podlaz)" == installed ]]
@@ -208,7 +235,7 @@ pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$(stat -Lc '%d:%i' "/proc/$pid/exe")" == "$(stat -Lc '%d:%i' /usr/bin/podlazd)" ]]
 EOF
 )"
-  hosted_vm_control_bash "expected_version=${expected_version@Q}; expected_commit=${expected_commit@Q}; expected_cli=${expected_cli@Q}; expected_daemon=${expected_daemon@Q}; expected_xray=${expected_xray@Q}; ${script}"
+  hosted_vm_ga_bash "expected_version=${expected_version@Q}; expected_commit=${expected_commit@Q}; expected_cli=${expected_cli@Q}; expected_daemon=${expected_daemon@Q}; expected_xray=${expected_xray@Q}; ${script}"
 }
 
 hosted_vm_install_polkit_rule() {
@@ -512,4 +539,6 @@ hosted_vm_stop() {
     wait "${HOSTED_VM_PID}" >/dev/null 2>&1 || true
     HOSTED_VM_PID=""
   fi
+  rm -f -- "${HOSTED_VM_QMP}" "${HOSTED_VM_QGA}"
+  HOSTED_VM_GA_READY=false
 }
