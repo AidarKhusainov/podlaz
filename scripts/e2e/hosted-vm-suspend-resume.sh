@@ -618,7 +618,7 @@ run_scenario() {
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  require_cmd awk bash curl dpkg-deb find grep install jq mktemp python3 readlink seq sha256sum sleep ss
+  require_cmd awk bash curl dpkg-deb find grep install jq mktemp python3 readlink sed seq sha256sum sleep ss tr
   validate_candidate "$1"
   install -d -m 0700 "${PRIVATE_ROOT}" "${E2E_ARTIFACT_DIR}" "${XRAY_ROOT}"
   : >"${REPORT}"
