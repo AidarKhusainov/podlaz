@@ -247,7 +247,7 @@ EOF
 
 hosted_vm_tun_wait_status() {
   local target="$1" attempts="$2" command
-  command="curl --fail --silent --show-error --max-time 5 --abstract-unix-socket podlazd http://localhost/v1/status >${HOSTED_VM_TUN_PRIVATE}/status.json 2>/dev/null && python3 /tmp/daemon_status_semantics.py '${target}' ${HOSTED_VM_TUN_PRIVATE}/status.json"
+  command="curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >${HOSTED_VM_TUN_PRIVATE}/status.json 2>/dev/null && python3 /tmp/daemon_status_semantics.py '${target}' ${HOSTED_VM_TUN_PRIVATE}/status.json"
   for _ in $(seq 1 "${attempts}"); do
     if hosted_vm_ga_bash "${command}" >/dev/null 2>&1; then return 0; fi
     sleep 1
