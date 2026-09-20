@@ -15,7 +15,7 @@ XRAY_ROOT="${PRIVATE_ROOT}/synthetic-xray"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 CANDIDATE_DEB=""
 XRAY_PID=""
-VM_ENDPOINT_IP="10.0.2.100"
+VM_ENDPOINT_IP="${HOSTED_VM_PROVIDER_HOST_IP}"
 FAILURE_CLASS=none
 FAILURE_STEP=none
 FINALIZED=false
@@ -165,10 +165,12 @@ start_synthetic_endpoint() {
   dpkg-deb -x "${CANDIDATE_DEB}" "${extract}"
   uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
   [[ "${uuid}" =~ ^[0-9a-fA-F-]{36}$ ]] || return 1
-  port="$(python3 - <<'PY'
+  hosted_vm_provider_prepare_host
+  port="$(python3 - "${VM_ENDPOINT_IP}" <<'PY'
 import socket
+import sys
 sock = socket.socket()
-sock.bind(("127.0.0.1", 0))
+sock.bind((sys.argv[1], 0))
 print(sock.getsockname()[1])
 sock.close()
 PY
@@ -177,7 +179,7 @@ PY
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
-    "listen": "127.0.0.1",
+    "listen": "${VM_ENDPOINT_IP}",
     "port": ${port},
     "protocol": "vless",
     "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
@@ -191,16 +193,16 @@ EOF
   "${extract}/usr/lib/podlaz/xray" run -config "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
   XRAY_PID=$!
   for _ in $(seq 1 100); do
-    if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${port}" >/dev/null; then
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "${VM_ENDPOINT_IP}:${port}" >/dev/null; then
       break
     fi
     kill -0 "${XRAY_PID}" >/dev/null 2>&1 || return 1
     sleep 0.1
   done
-  ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${port}" >/dev/null || return 1
+  ss -H -ltn | awk '{print $4}' | grep -Fx "${VM_ENDPOINT_IP}:${port}" >/dev/null || return 1
   printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-vm-suspend\n'     "${uuid}" "${VM_ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
-  HOSTED_VM_USER_NET_EXTRA=",guestfwd=tcp:${VM_ENDPOINT_IP}:${port}-tcp:127.0.0.1:${port}"
+  :
 }
 
 stop_synthetic_endpoint() {
@@ -522,6 +524,7 @@ run_scenario() {
   mark_failure fixture guest.control
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
   hosted_vm_prepare_guest_agent
+  hosted_vm_provider_prepare_guest
 
   mark_failure product candidate.provenance
   hosted_vm_assert_candidate_provenance "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}"
