@@ -235,37 +235,52 @@ EOF
 }
 
 run_podlaz() {
-  hosted_vm_ssh env     XDG_CONFIG_HOME=/home/e2e/.config     XDG_STATE_HOME=/home/e2e/.local/state     XDG_CACHE_HOME=/home/e2e/.cache     /usr/bin/podlaz "$@"
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_exec /usr/sbin/runuser -u e2e -- env \
+      XDG_CONFIG_HOME=/home/e2e/.config \
+      XDG_STATE_HOME=/home/e2e/.local/state \
+      XDG_CACHE_HOME=/home/e2e/.cache \
+      /usr/bin/podlaz "$@"
+  else
+    hosted_vm_ssh env \
+      XDG_CONFIG_HOME=/home/e2e/.config \
+      XDG_STATE_HOME=/home/e2e/.local/state \
+      XDG_CACHE_HOME=/home/e2e/.cache \
+      /usr/bin/podlaz "$@"
+  fi
 }
 
 prepare_profile() {
-  hosted_vm_ssh install -d -m 0700 /home/e2e/.config /home/e2e/.local/state /home/e2e/.cache /tmp/podlaz-vm-private
-  hosted_vm_ssh bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
+install -d -o e2e -g e2e -m 0700 /home/e2e/.config /home/e2e/.local/state /home/e2e/.cache /tmp/podlaz-vm-private
 uri="$(cat /tmp/client-uri)"
-env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache   /usr/bin/podlaz profile import "$uri" >/tmp/podlaz-vm-private/import.stdout 2>/tmp/podlaz-vm-private/import.stderr
+runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
+  /usr/bin/podlaz profile import "$uri" >/tmp/podlaz-vm-private/import.stdout 2>/tmp/podlaz-vm-private/import.stderr
 awk '/^Imported profile:/ {print $3; exit}' /tmp/podlaz-vm-private/import.stdout >/tmp/podlaz-vm-private/profile-id
 test -s /tmp/podlaz-vm-private/profile-id
 profile="$(cat /tmp/podlaz-vm-private/profile-id)"
-env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache   /usr/bin/podlaz profile validate "$profile" --mode tun >/tmp/podlaz-vm-private/validate.stdout 2>/tmp/podlaz-vm-private/validate.stderr
+runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
+  /usr/bin/podlaz profile validate "$profile" --mode tun >/tmp/podlaz-vm-private/validate.stdout 2>/tmp/podlaz-vm-private/validate.stderr
 EOF
 }
 
 capture_direct_probe_baseline() {
-  hosted_vm_ssh bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 uplink="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
 test -n "$uplink"
 probe="$(getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
 test -n "$probe"
-timeout 20 curl -4 -fsS --interface "$uplink" --connect-timeout 5 --max-time 15   --resolve "example.com:443:$probe" https://example.com/ >/dev/null
+timeout 20 curl -4 -fsS --interface "$uplink" --connect-timeout 5 --max-time 15 \
+  --resolve "example.com:443:$probe" https://example.com/ >/dev/null
 printf '%s\n' "$uplink" >/tmp/podlaz-vm-private/uplink
 printf '%s\n' "$probe" >/tmp/podlaz-vm-private/probe-ip
 EOF
 }
 
 create_foreign_state() {
-  hosted_vm_ssh sudo bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 ! nft list table inet pzvm_foreign >/dev/null 2>&1
 ! ip link show dev pzvmforeign0 >/dev/null 2>&1
@@ -277,7 +292,7 @@ EOF
 }
 
 assert_foreign_state() {
-  hosted_vm_ssh sudo bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 nft list table inet pzvm_foreign >/dev/null
 ip -4 address show dev pzvmforeign0 | grep -F '192.0.2.1/32' >/dev/null
@@ -285,14 +300,19 @@ EOF
 }
 
 remove_foreign_state() {
-  hosted_vm_ssh sudo nft delete table inet pzvm_foreign >/dev/null 2>&1 || true
-  hosted_vm_ssh sudo ip link del dev pzvmforeign0 >/dev/null 2>&1 || true
+  if [[ "${HOSTED_VM_GA_READY}" == true ]]; then
+    hosted_vm_ga_bash 'nft delete table inet pzvm_foreign >/dev/null 2>&1 || true; ip link del dev pzvmforeign0 >/dev/null 2>&1 || true'
+  else
+    hosted_vm_ssh sudo nft delete table inet pzvm_foreign >/dev/null 2>&1 || true
+    hosted_vm_ssh sudo ip link del dev pzvmforeign0 >/dev/null 2>&1 || true
+  fi
 }
 
 wait_status() {
-  local target="$1" attempts="$2"
+  local target="$1" attempts="$2" command
+  command="curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >/tmp/podlaz-vm-private/status.json 2>/dev/null && python3 /tmp/daemon_status_semantics.py '${target}' /tmp/podlaz-vm-private/status.json"
   for _ in $(seq 1 "${attempts}"); do
-    if hosted_vm_ssh sudo bash -c       "curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >/tmp/podlaz-vm-private/status.json 2>/dev/null && python3 /tmp/daemon_status_semantics.py '${target}' /tmp/podlaz-vm-private/status.json"       >/dev/null 2>&1; then
+    if hosted_vm_ga_bash "${command}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -301,38 +321,51 @@ wait_status() {
 }
 
 connect_tun() {
-  hosted_vm_ssh bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 profile="$(cat /tmp/podlaz-vm-private/profile-id)"
-env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache   /usr/bin/podlaz connect --mode tun "$profile" >/tmp/podlaz-vm-private/connect.stdout 2>/tmp/podlaz-vm-private/connect.stderr
+runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
+  /usr/bin/podlaz connect --mode tun "$profile" >/tmp/podlaz-vm-private/connect.stdout 2>/tmp/podlaz-vm-private/connect.stderr
 EOF
   wait_status verified-active 150
 }
 
 capture_exact_active_authority() {
-  local snapshot="$1"
-  hosted_vm_ssh sudo bash -s -- "${snapshot}" <<'EOF'
+  local snapshot="$1" script
+  script="$(cat <<'EOF'
 set -Eeuo pipefail
-snapshot="$1"
-curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock   http://localhost/v1/status >/tmp/podlaz-vm-private/status.json
+curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
+  http://localhost/v1/status >/tmp/podlaz-vm-private/status.json
 resolvectl dns >/tmp/podlaz-vm-private/resolved-dns.txt
 resolvectl domain >/tmp/podlaz-vm-private/resolved-domain.txt
 resolvectl default-route >/tmp/podlaz-vm-private/resolved-default-route.txt
 nft -j list ruleset >/tmp/podlaz-vm-private/nft-ruleset.json
-python3 /tmp/active_authority.py   --status /tmp/podlaz-vm-private/status.json   --transactions /run/podlaz/transactions   --session /run/podlaz/network-session-continuation.json   --boot-id /proc/sys/kernel/random/boot_id   --runtime-config /run/podlaz/generated/xray.json   --resolved-dns /tmp/podlaz-vm-private/resolved-dns.txt   --resolved-domain /tmp/podlaz-vm-private/resolved-domain.txt   --resolved-default-route /tmp/podlaz-vm-private/resolved-default-route.txt   --nft-ruleset /tmp/podlaz-vm-private/nft-ruleset.json
+python3 /tmp/active_authority.py \
+  --status /tmp/podlaz-vm-private/status.json \
+  --transactions /run/podlaz/transactions \
+  --session /run/podlaz/network-session-continuation.json \
+  --boot-id /proc/sys/kernel/random/boot_id \
+  --runtime-config /run/podlaz/generated/xray.json \
+  --resolved-dns /tmp/podlaz-vm-private/resolved-dns.txt \
+  --resolved-domain /tmp/podlaz-vm-private/resolved-domain.txt \
+  --resolved-default-route /tmp/podlaz-vm-private/resolved-default-route.txt \
+  --nft-ruleset /tmp/podlaz-vm-private/nft-ruleset.json
 if [[ "$snapshot" == yes ]]; then
   python3 /tmp/network_authority.py snapshot /run/podlaz/transactions /tmp/podlaz-vm-private/network-manifest.json
 fi
 python3 /tmp/network_authority.py verify-present /tmp/podlaz-vm-private/network-manifest.json
 EOF
+)"
+  hosted_vm_ga_bash "snapshot=${snapshot@Q}; ${script}"
 }
 
 assert_direct_uplink_blocked() {
-  if hosted_vm_ssh bash -s <<'EOF'
+  if hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 uplink="$(cat /tmp/podlaz-vm-private/uplink)"
 probe="$(cat /tmp/podlaz-vm-private/probe-ip)"
-timeout 7 curl -4 -fsSk --interface "$uplink" --connect-timeout 3 --max-time 5   --resolve "example.com:443:$probe" https://example.com/ >/dev/null 2>&1
+timeout 7 curl -4 -fsSk --interface "$uplink" --connect-timeout 3 --max-time 5 \
+  --resolve "example.com:443:$probe" https://example.com/ >/dev/null 2>&1
 EOF
   then
     return 1
@@ -341,40 +374,43 @@ EOF
 }
 
 run_tun_traffic() {
-  hosted_vm_ssh timeout 20 getent ahostsv4 example.com >/dev/null
-  hosted_vm_ssh timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+  hosted_vm_ga_bash 'timeout 20 getent ahostsv4 example.com >/dev/null && timeout 30 curl -4 -fsS -o /dev/null https://example.com/'
 }
 
 session_id() {
-  hosted_vm_ssh sudo jq -r '.session_id' /run/podlaz/network-session-continuation.json | tr -d '[:space:]'
+  hosted_vm_ga_bash "jq -r '.session_id' /run/podlaz/network-session-continuation.json" | tr -d '[:space:]'
 }
 
 assert_armed_current_boot_session() {
   local boot
   boot="$(hosted_vm_boot_id)"
-  hosted_vm_ssh sudo jq -e --arg boot "${boot}"     '.schema_version=="podlaz.network-session-state.v1" and .owner=="podlaz" and .boot_id==$boot and .intent=="resume" and .protection.state=="armed"'     /run/podlaz/network-session-continuation.json >/dev/null
+  hosted_vm_ga_bash "jq -e --arg boot ${boot@Q} '.schema_version==\"podlaz.network-session-state.v1\" and .owner==\"podlaz\" and .boot_id==\$boot and .intent==\"resume\" and .protection.state==\"armed\"' /run/podlaz/network-session-continuation.json >/dev/null"
 }
 
 disconnect_tun() {
-  run_podlaz disconnect >/tmp/podlaz-vm-disconnect.stdout 2>/tmp/podlaz-vm-disconnect.stderr
+  run_podlaz disconnect >/dev/null
   wait_status clean-inactive 100
 }
 
 assert_exact_terminal_cleanup() {
-  hosted_vm_ssh sudo bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 python3 /tmp/network_authority.py verify-absent /tmp/podlaz-vm-private/network-manifest.json
 test ! -e /run/podlaz/network-session-continuation.json
 test ! -e /run/podlaz/generated/xray.json
+if test -d /run/podlaz/transactions; then
+  test -z "$(find /run/podlaz/transactions -mindepth 1 -maxdepth 1 -type f -print -quit)"
+fi
 ! ip link show dev podlaz0 >/dev/null 2>&1
 ! nft list tables 2>/dev/null | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null
 EOF
 }
 
 run_clean_recovery() {
-  hosted_vm_ssh bash -s <<'EOF'
+  hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
-env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache   /usr/bin/podlaz recover --json >/tmp/podlaz-vm-private/recover.json 2>/tmp/podlaz-vm-private/recover.stderr
+runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
+  /usr/bin/podlaz recover --json >/tmp/podlaz-vm-private/recover.json 2>/tmp/podlaz-vm-private/recover.stderr
 source /tmp/recovery_json.sh
 assert_clean_recovery_json_file /tmp/podlaz-vm-private/recover.json
 EOF
@@ -426,6 +462,7 @@ run_scenario() {
   mark_failure product candidate.install
   hosted_vm_install_candidate "${CANDIDATE_DEB}"
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
+  hosted_vm_prepare_guest_agent
   hosted_vm_assert_candidate_provenance "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}"
   record_evidence candidate.provenance pass
 
@@ -455,7 +492,7 @@ run_scenario() {
   record_evidence tun.traffic_before_suspend pass
 
   boot_before="$(hosted_vm_boot_id)"
-  daemon_before="$(hosted_vm_ssh sudo systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')"
+  daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
   session_before="$(session_id)"
   [[ -n "${session_before}" ]]
 
@@ -464,7 +501,7 @@ run_scenario() {
   record_evidence suspend.actual_guest_boundary pass
 
   boot_after="$(hosted_vm_boot_id)"
-  daemon_after="$(hosted_vm_ssh sudo systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')"
+  daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
   [[ "${boot_after}" == "${boot_before}" ]]
   record_evidence suspend.same_boot pass
   [[ "${daemon_after}" == "${daemon_before}" ]]
