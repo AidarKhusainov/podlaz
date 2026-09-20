@@ -58,7 +58,8 @@ func TestHostedVMSuspendResumeUsesQMPHardwareSuspendControl(t *testing.T) {
 		"guest-exec",
 		"qemu-guest-agent",
 		"org.qemu.guest_agent.0",
-		"HOSTED_VM_USER_NET_EXTRA",
+		"HOSTED_VM_PROVIDER_TAP",
+		"virtio-net-pci,netdev=pzprovider",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("hosted VM helper is missing suspend control %q", marker)
@@ -73,10 +74,10 @@ func TestHostedVMSuspendResumeKeepsProviderOutsideGuest(t *testing.T) {
 	}
 	text := string(script)
 	for _, marker := range []string{
-		"guestfwd=tcp:",
-		"-tcp:127.0.0.1:",
-		"\"listen\": \"127.0.0.1\"",
-		"VM_ENDPOINT_IP=\"10.0.2.100\"",
+		"hosted_vm_provider_prepare_host",
+		"hosted_vm_provider_prepare_guest",
+		"\"listen\": \"${VM_ENDPOINT_IP}\"",
+		"VM_ENDPOINT_IP=\"${HOSTED_VM_PROVIDER_HOST_IP}\"",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("hosted VM suspend provider topology is missing %q", marker)
