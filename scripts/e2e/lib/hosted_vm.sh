@@ -16,6 +16,7 @@ HOSTED_VM_PID=""
 HOSTED_VM_SSH_PORT=""
 HOSTED_VM_ACCEL=""
 HOSTED_VM_QMP=""
+HOSTED_VM_USER_NET_EXTRA=""
 
 hosted_vm_init() {
   local root="$1"
@@ -98,7 +99,7 @@ hosted_vm_start() {
   if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then cpu=host; else cpu=max; fi
   HOSTED_VM_SSH_PORT="$(hosted_vm_find_loopback_port)"
 
-  qemu-system-x86_64     -machine "q35,accel=${HOSTED_VM_ACCEL}"     -cpu "${cpu}"     -smp 2     -m 2048     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2"     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on"     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22"     -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off"     -display none     -monitor none     -serial "file:${HOSTED_VM_ROOT}/serial.log"     -daemonize     -pidfile "${pidfile}"
+  qemu-system-x86_64     -machine "q35,accel=${HOSTED_VM_ACCEL}"     -cpu "${cpu}"     -smp 2     -m 2048     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2"     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on"     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${HOSTED_VM_SSH_PORT}-:22${HOSTED_VM_USER_NET_EXTRA}"     -qmp "unix:${HOSTED_VM_QMP},server=on,wait=off"     -display none     -monitor none     -serial "file:${HOSTED_VM_ROOT}/serial.log"     -daemonize     -pidfile "${pidfile}"
   HOSTED_VM_PID="$(cat "${pidfile}")"
 }
 
@@ -214,6 +215,92 @@ EOF
 
 hosted_vm_remove_polkit_rule() {
   hosted_vm_ssh sudo rm -f /etc/polkit-1/rules.d/49-podlaz-hosted-vm.rules >/dev/null 2>&1 || true
+}
+
+hosted_vm_qmp() {
+  local command="$1"
+  python3 - "${HOSTED_VM_QMP}" "${command}" <<'PY'
+import json
+import socket
+import sys
+
+path, command = sys.argv[1], sys.argv[2]
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.settimeout(10)
+sock.connect(path)
+stream = sock.makefile("rwb", buffering=0)
+
+def recv_response():
+    while True:
+        line = stream.readline()
+        if not line:
+            raise SystemExit("QMP connection closed")
+        message = json.loads(line)
+        if "return" in message or "error" in message:
+            return message
+
+greeting = json.loads(stream.readline())
+if "QMP" not in greeting:
+    raise SystemExit("QMP greeting missing")
+stream.write(json.dumps({"execute": "qmp_capabilities"}).encode() + b"\r\n")
+cap = recv_response()
+if "error" in cap:
+    raise SystemExit("QMP capabilities negotiation failed")
+stream.write(json.dumps({"execute": command}).encode() + b"\r\n")
+response = recv_response()
+print(json.dumps(response, separators=(",", ":"), sort_keys=True))
+if "error" in response:
+    raise SystemExit(1)
+PY
+}
+
+hosted_vm_wait_qmp_status() {
+  local want="$1" attempts="${2:-120}" response
+  for _ in $(seq 1 "${attempts}"); do
+    if response="$(hosted_vm_qmp query-status 2>/dev/null)" &&
+        python3 - "${want}" "${response}" <<'PY'
+import json, sys
+want, raw = sys.argv[1], sys.argv[2]
+payload = json.loads(raw)
+raise SystemExit(0 if (payload.get("return") or {}).get("status") == want else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+hosted_vm_require_suspend_wakeup() {
+  local response
+  response="$(hosted_vm_qmp query-current-machine)"
+  python3 - "${response}" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+value = (payload.get("return") or {}).get("wakeup-suspend-support")
+raise SystemExit(0 if value is True else 1)
+PY
+}
+
+hosted_vm_suspend_guest() {
+  local boot_before pid_before
+  boot_before="$(hosted_vm_boot_id)"
+  pid_before="$(hosted_vm_ssh sudo systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')"
+  [[ -n "${boot_before}" && "${pid_before}" =~ ^[1-9][0-9]*$ ]] || return 1
+
+  hosted_vm_ssh 'sudo systemctl suspend >/dev/null 2>&1 &' >/dev/null 2>&1 || true
+  hosted_vm_wait_qmp_status suspended 120 || return 1
+  if hosted_vm_ssh true >/dev/null 2>&1; then
+    return 1
+  fi
+
+  hosted_vm_qmp system_wakeup >/dev/null || return 1
+  hosted_vm_wait_qmp_status running 120 || return 1
+  hosted_vm_wait_ssh 180 || return 1
+
+  [[ "$(hosted_vm_boot_id)" == "${boot_before}" ]] || return 1
+  [[ "$(hosted_vm_ssh sudo systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')" == "${pid_before}" ]] || return 1
 }
 
 hosted_vm_stop() {
