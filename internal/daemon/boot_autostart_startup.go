@@ -163,11 +163,15 @@ func completeBootAutostartResumeResult(
 		// Retained terminal Network Session authority must survive until the
 		// higher-level boot-attempt terminal outcome is durable. A replacement
 		// daemon can therefore resume this exact ordering after either crash.
+		terminalReason := attempt.TerminalReason
 		if inProgress {
-			if err := attemptStore.MarkTerminal(bootAutostartTerminalSessionFailure); err != nil {
+			terminalReason = bootAutostartTerminalSessionFailure
+			if err := attemptStore.MarkTerminal(terminalReason); err != nil {
 				return bootAutostartStartupRecoveryFailed, true, fmt.Errorf("persist terminal boot autostart completion: %w", err)
 			}
-			if err := publishBootAutostartTerminalProductReason(continuation, bootAutostartTerminalSessionFailure); err != nil {
+		}
+		if attemptExists && (inProgress || attempt.State == bootAutostartAttemptTerminal) {
+			if err := publishBootAutostartTerminalProductReason(continuation, terminalReason); err != nil {
 				return bootAutostartStartupRecoveryFailed, true, err
 			}
 		}
