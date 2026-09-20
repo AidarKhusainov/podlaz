@@ -17,6 +17,7 @@ FAILURE_CLASS=none
 FAILURE_STEP=none
 FINALIZED=false
 
+# Guest-private diagnostics must survive the real reboot boundary; shared VM TUN helpers keep them under /var/tmp.
 EVIDENCE_KEYS=(
   vm.acceleration
   vm.image_checksum
