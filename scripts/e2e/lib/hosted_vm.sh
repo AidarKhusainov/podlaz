@@ -209,6 +209,10 @@ expected_xray="$5"
 [[ "$(sha256sum /usr/bin/podlazd | awk '{print $1}')" == "$expected_daemon" ]]
 [[ "$(sha256sum /usr/lib/podlaz/xray | awk '{print $1}')" == "$expected_xray" ]]
 /usr/bin/podlaz version | grep -Fx "commit: $expected_commit" >/dev/null
+for _ in $(seq 1 60); do
+  systemctl is-active --quiet podlazd.service && break
+  sleep 0.5
+done
 systemctl is-active --quiet podlazd.service
 pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$pid" =~ ^[1-9][0-9]*$ ]]
@@ -227,6 +231,10 @@ set -Eeuo pipefail
 [[ "$(sha256sum /usr/bin/podlazd | awk '{print $1}')" == "$expected_daemon" ]]
 [[ "$(sha256sum /usr/lib/podlaz/xray | awk '{print $1}')" == "$expected_xray" ]]
 /usr/bin/podlaz version | grep -Fx "commit: $expected_commit" >/dev/null
+for _ in $(seq 1 60); do
+  systemctl is-active --quiet podlazd.service && break
+  sleep 0.5
+done
 systemctl is-active --quiet podlazd.service
 pid="$(systemctl show -p MainPID --value podlazd.service)"
 [[ "$pid" =~ ^[1-9][0-9]*$ ]]
