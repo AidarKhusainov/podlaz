@@ -21,10 +21,14 @@ HOSTED_VM_GA_READY=false
 HOSTED_VM_USER_NET_EXTRA=""
 HOSTED_VM_PROVIDER_TAP=""
 HOSTED_VM_PROVIDER_MAC="52:54:00:7a:32:01"
+HOSTED_VM_PROVIDER_NETWORK_CIDR="172.31.252.0/30"
 HOSTED_VM_PROVIDER_HOST_CIDR="172.31.252.1/30"
 HOSTED_VM_PROVIDER_GUEST_CIDR="172.31.252.2/30"
 HOSTED_VM_PROVIDER_HOST_IP="172.31.252.1"
 HOSTED_VM_PROVIDER_GUEST_IP="172.31.252.2"
+HOSTED_VM_PROVIDER_ENDPOINT_IP="172.31.253.1"
+HOSTED_VM_PROVIDER_OUT_IF=""
+HOSTED_VM_PROVIDER_IP_FORWARD=""
 
 hosted_vm_init() {
   local root="$1"
@@ -109,13 +113,29 @@ PY
 hosted_vm_provider_prepare_host() {
   local socket_tag uid
   [[ -z "${HOSTED_VM_PROVIDER_TAP}" ]] || return 0
-  require_cmd ip sudo
+  require_cmd ip iptables sudo
   socket_tag="$(printf '%s' "${HOSTED_VM_ROOT}" | sha256sum | awk '{print substr($1,1,8)}')"
   HOSTED_VM_PROVIDER_TAP="pzv${socket_tag}"
   uid="$(id -u)"
+  HOSTED_VM_PROVIDER_OUT_IF="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  [[ -n "${HOSTED_VM_PROVIDER_OUT_IF}" ]] || return 1
+  HOSTED_VM_PROVIDER_IP_FORWARD="$(cat /proc/sys/net/ipv4/ip_forward)"
+  [[ "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 0 || "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 1 ]] || return 1
+
   sudo -n ip tuntap add dev "${HOSTED_VM_PROVIDER_TAP}" mode tap user "${uid}"
   sudo -n ip address add "${HOSTED_VM_PROVIDER_HOST_CIDR}" dev "${HOSTED_VM_PROVIDER_TAP}"
   sudo -n ip link set dev "${HOSTED_VM_PROVIDER_TAP}" up
+  sudo -n ip address add "${HOSTED_VM_PROVIDER_ENDPOINT_IP}/32" dev lo
+  printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
+
+  sudo -n iptables -I FORWARD 1 \
+    -i "${HOSTED_VM_PROVIDER_TAP}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" \
+    -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -j ACCEPT
+  sudo -n iptables -I FORWARD 1 \
+    -i "${HOSTED_VM_PROVIDER_OUT_IF}" -o "${HOSTED_VM_PROVIDER_TAP}" \
+    -d "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  sudo -n iptables -t nat -I POSTROUTING 1 \
+    -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" -j MASQUERADE
 }
 
 hosted_vm_provider_prepare_guest() {
@@ -139,33 +159,59 @@ RequiredForOnline=no
 
 [Network]
 Address=$provider_guest_cidr
+DNS=1.1.1.1
+Domains=~.
+DNSDefaultRoute=yes
 LinkLocalAddressing=no
 IPv6AcceptRA=no
+
+[Route]
+Destination=0.0.0.0/0
+Gateway=$provider_host_ip
+Metric=10
 UNIT
 systemctl is-active --quiet systemd-networkd.service
 networkctl reload
 ip link set dev "$iface" up
 networkctl reconfigure "$iface"
 for _ in $(seq 1 60); do
-  if ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null; then
+  if ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null &&
+     ip -4 route show default | head -n 1 | grep -F "via $provider_host_ip dev $iface" >/dev/null; then
     break
   fi
   sleep 0.5
 done
 ip -4 address show dev "$iface" | grep -F "$provider_guest_ip/" >/dev/null
-ip -4 route get "$provider_host_ip" | grep -F "dev $iface" >/dev/null
-UNIT_PATH=/etc/systemd/network/20-podlaz-provider.network
-[[ -f "$UNIT_PATH" ]]
+ip -4 route show default | head -n 1 | grep -F "via $provider_host_ip dev $iface" >/dev/null
+ip -4 route get "$provider_endpoint_ip" | grep -F "via $provider_host_ip dev $iface" >/dev/null
+timeout 20 getent ahostsv4 example.com >/dev/null
+timeout 30 curl -4 -fsS --interface "$iface" -o /dev/null https://example.com/
 EOF
 )"
-  hosted_vm_ga_bash "provider_mac=${HOSTED_VM_PROVIDER_MAC@Q}; provider_guest_cidr=${HOSTED_VM_PROVIDER_GUEST_CIDR@Q}; provider_guest_ip=${HOSTED_VM_PROVIDER_GUEST_IP@Q}; provider_host_ip=${HOSTED_VM_PROVIDER_HOST_IP@Q}; ${script}"
+  hosted_vm_ga_bash "provider_mac=${HOSTED_VM_PROVIDER_MAC@Q}; provider_guest_cidr=${HOSTED_VM_PROVIDER_GUEST_CIDR@Q}; provider_guest_ip=${HOSTED_VM_PROVIDER_GUEST_IP@Q}; provider_host_ip=${HOSTED_VM_PROVIDER_HOST_IP@Q}; provider_endpoint_ip=${HOSTED_VM_PROVIDER_ENDPOINT_IP@Q}; ${script}"
 }
 
 hosted_vm_provider_cleanup_host() {
+  if [[ -n "${HOSTED_VM_PROVIDER_OUT_IF}" && -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
+    sudo -n iptables -t nat -D POSTROUTING \
+      -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" -j MASQUERADE >/dev/null 2>&1 || true
+    sudo -n iptables -D FORWARD \
+      -i "${HOSTED_VM_PROVIDER_OUT_IF}" -o "${HOSTED_VM_PROVIDER_TAP}" \
+      -d "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1 || true
+    sudo -n iptables -D FORWARD \
+      -i "${HOSTED_VM_PROVIDER_TAP}" -o "${HOSTED_VM_PROVIDER_OUT_IF}" \
+      -s "${HOSTED_VM_PROVIDER_NETWORK_CIDR}" -j ACCEPT >/dev/null 2>&1 || true
+  fi
+  sudo -n ip address del "${HOSTED_VM_PROVIDER_ENDPOINT_IP}/32" dev lo >/dev/null 2>&1 || true
   if [[ -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
     sudo -n ip link del dev "${HOSTED_VM_PROVIDER_TAP}" >/dev/null 2>&1 || true
-    HOSTED_VM_PROVIDER_TAP=""
   fi
+  if [[ "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 0 || "${HOSTED_VM_PROVIDER_IP_FORWARD}" == 1 ]]; then
+    printf '%s\n' "${HOSTED_VM_PROVIDER_IP_FORWARD}" | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null 2>&1 || true
+  fi
+  HOSTED_VM_PROVIDER_TAP=""
+  HOSTED_VM_PROVIDER_OUT_IF=""
+  HOSTED_VM_PROVIDER_IP_FORWARD=""
 }
 
 hosted_vm_start() {
