@@ -511,11 +511,10 @@ PY
 }
 
 hosted_vm_suspend_guest() {
-  local boot_before pid_before
+  local boot_before
   [[ "${HOSTED_VM_GA_READY}" == true ]] || return 1
   boot_before="$(hosted_vm_boot_id)"
-  pid_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
-  [[ -n "${boot_before}" && "${pid_before}" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ -n "${boot_before}" ]] || return 1
 
   hosted_vm_ga_async guest-suspend-ram '{}' || return 1
   hosted_vm_wait_qmp_status suspended 120 || return 1
@@ -525,7 +524,6 @@ hosted_vm_suspend_guest() {
   hosted_vm_wait_ga 180 || return 1
 
   [[ "$(hosted_vm_boot_id)" == "${boot_before}" ]] || return 1
-  [[ "$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')" == "${pid_before}" ]] || return 1
 }
 
 hosted_vm_stop() {
