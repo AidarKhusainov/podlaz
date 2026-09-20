@@ -225,6 +225,52 @@ func TestRunBootAutostartStartupConvergedTerminalContinuationDoesNotFreshConnect
 	}
 }
 
+func TestRunBootAutostartStartupTerminalResumeRepublishesProductOutcomeBeforeFinalization(t *testing.T) {
+	manifestStore, attemptStore, continuation := bootAutostartStores(t, testBootConfigured, testBootAttempt)
+	manifest, err := manifestStore.Enable(testBootAutostartConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attemptStore.Admit(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := continuation.Save(bootRequest(manifest.Configuration)); err != nil {
+		t.Fatal(err)
+	}
+	if err := continuation.disarm(networkSessionIntentTerminal); err != nil {
+		t.Fatal(err)
+	}
+	if err := attemptStore.MarkTerminal(bootAutostartTerminalConnectFailed); err != nil {
+		t.Fatal(err)
+	}
+	reasonStore := newProductTerminalReasonStore(continuation.runtimeDir, continuation.readBootID)
+	if err := reasonStore.Supersede(); err != nil {
+		t.Fatal(err)
+	}
+
+	lifecycle := &bootAutostartRecordingLifecycle{}
+	result, err := runBootAutostartStartup(
+		context.Background(),
+		manifestStore,
+		attemptStore,
+		continuation,
+		lifecycle,
+		func(context.Context) (networkSessionResumeResult, error) {
+			return networkSessionResumeTerminalConverged, nil
+		},
+	)
+	if err != nil || result != bootAutostartStartupContinued || len(lifecycle.requests) != 0 {
+		t.Fatalf("terminal resume result=%q requests=%d err=%v", result, len(lifecycle.requests), err)
+	}
+	reason, exists, err := reasonStore.LoadCurrent()
+	if err != nil || !exists || reason != api.TerminalReasonVPNConnectFailed {
+		t.Fatalf("republished terminal outcome = %q exists=%v err=%v", reason, exists, err)
+	}
+	if _, exists, err := continuation.stateStore().Load(); err != nil || exists {
+		t.Fatalf("terminal resume left Network Session authority: exists=%v err=%v", exists, err)
+	}
+}
+
 func TestRunBootAutostartStartupCompletedAttemptNeverReconnectsSameBoot(t *testing.T) {
 	for _, complete := range []struct {
 		name string
