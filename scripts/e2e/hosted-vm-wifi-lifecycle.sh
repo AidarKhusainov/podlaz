@@ -420,6 +420,31 @@ assert_wifi_ordinary_connectivity() {
   hosted_vm_ga_bash 'timeout 20 getent ahostsv4 example.com >/dev/null && timeout 30 curl -4 -fsS -o /dev/null https://example.com/'
 }
 
+diagnose_tun_connect_failure() {
+  local doctor_json doctor_rc token
+  set +e
+  doctor_json="$(hosted_vm_tun_run_podlaz doctor --tun --json 2>/dev/null)"
+  doctor_rc=$?
+  set -e
+  if (( doctor_rc != 0 && doctor_rc != 3 )); then
+    printf 'doctor-unavailable\n'
+    return 0
+  fi
+  token="$(jq -r '
+    [
+      .primary_classification,
+      .failure_phase,
+      ((.probes // [])[] | select(.status == "fail") | .id),
+      ((.probes // [])[] | select(.status == "fail") | .classification),
+      ((.probes // [])[] | select(.status == "fail") | .failure_phase)
+    ]
+    | map(select(. != null and . != ""))
+    | .[0:5]
+    | join(".")
+  ' <<<"${doctor_json}" 2>/dev/null || true)"
+  token="$(printf '%s' "${token}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//')"
+  printf '%s\n' "${token:-doctor-unclassified}"
+}
 assert_public_artifact_privacy() {
   local extra
   extra="$(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 ! -name 'hosted-vm-wifi-lifecycle.txt' -print -quit)"
@@ -529,7 +554,10 @@ run_scenario() {
   record_evidence fixture.foreign_state pass
 
   mark_failure product tun.connect
-  hosted_vm_tun_connect
+  if ! hosted_vm_tun_connect; then
+    mark_failure product "tun.connect.$(diagnose_tun_connect_failure)"
+    return 1
+  fi
   record_evidence tun.verified_active_before_disconnect pass
 
   mark_failure product tun.authority_before_disconnect
