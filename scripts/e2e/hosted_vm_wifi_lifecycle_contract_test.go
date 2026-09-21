@@ -65,6 +65,7 @@ func TestHostedVMWiFiLifecycleKeepsControlOffTestedWiFi(t *testing.T) {
 		"WIFI_ENDPOINT_IP=203.0.113.10",
 		"ip address add \"${endpoint_ip}/32\" dev lo",
 		"ip rule add priority \"${policy_priority}\"",
+		"ip rule add priority \"${return_priority}\" to 172.31.254.0/30 table main",
 		"ip route del default via \"${management_gateway}\"",
 		"ip -4 route show default | grep -F \"via 198.51.100.1 dev ${client_if}\"",
 	} {
