@@ -432,6 +432,7 @@ ip route flush table '${WIFI_POLICY_TABLE}' >/dev/null 2>&1
 [[ -z \"\$management_if\" ]] || iptables -t nat -D POSTROUTING -s 172.31.254.0/30 -o \"\$management_if\" -j MASQUERADE >/dev/null 2>&1
 [[ -z \"\$management_if\" ]] || iptables -D FORWARD -i pzwifi-root -o \"\$management_if\" -j ACCEPT >/dev/null 2>&1
 [[ -z \"\$management_if\" ]] || iptables -D FORWARD -i \"\$management_if\" -o pzwifi-root -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1
+test ! -s /var/tmp/podlaz-wifi-ap-ns.pid || kill "$(cat /var/tmp/podlaz-wifi-ap-ns.pid)" >/dev/null 2>&1
 ip netns del pzwifiap >/dev/null 2>&1
 ip link del pzwifi-root >/dev/null 2>&1
 rm -f /var/tmp/podlaz-wifi-*.pid /var/tmp/podlaz-wifi-hostapd.conf /var/tmp/podlaz-wifi-server.json /var/tmp/podlaz-wifi-client-if /var/tmp/podlaz-wifi-management-if /var/tmp/podlaz-wifi-management-gateway
