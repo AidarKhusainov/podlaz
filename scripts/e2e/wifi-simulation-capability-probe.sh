@@ -69,6 +69,17 @@ ip netns exec pzwifiap sleep infinity &
 ap_ns_pid=$!
 trap 'kill "$ap_ns_pid" >/dev/null 2>&1 || true; ip netns del pzwifiap >/dev/null 2>&1 || true' EXIT
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
+udevadm settle
+systemctl restart NetworkManager.service
+nmcli radio wifi on
+for _ in $(seq 1 30); do
+  if nmcli -t -f DEVICE,TYPE device status | grep -F "${client_if}:wifi" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+nmcli -t -f DEVICE,TYPE device status
+nmcli -t -f DEVICE,TYPE device status | grep -F "${client_if}:wifi" >/dev/null
 
 ip link add pzwifi-root type veth peer name pzwifi-up
 ip link set pzwifi-up netns pzwifiap
