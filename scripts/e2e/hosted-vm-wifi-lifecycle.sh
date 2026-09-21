@@ -344,7 +344,18 @@ timeout 20 getent ahostsv4 example.com >/dev/null
 timeout 30 curl -4 -fsS -o /dev/null https://example.com/
 EOF
 )"
-  hosted_vm_ga_bash "wifi_ssid=${WIFI_SSID@Q}; wifi_passphrase=${WIFI_PASSPHRASE@Q}; wifi_connection=${WIFI_CONNECTION@Q}; wifi_ap_cidr=${WIFI_AP_CIDR@Q}; upstream_root_cidr=${WIFI_UPSTREAM_ROOT_CIDR@Q}; upstream_ap_cidr=${WIFI_UPSTREAM_AP_CIDR@Q}; upstream_ap_ip=${WIFI_UPSTREAM_AP_IP@Q}; dhcp_range=${WIFI_DHCP_RANGE@Q}; policy_table=${WIFI_POLICY_TABLE@Q}; policy_priority=${WIFI_POLICY_PRIORITY@Q}; ${guest_script}"
+  hosted_vm_ssh sudo env \
+    "wifi_ssid=${WIFI_SSID}" \
+    "wifi_passphrase=${WIFI_PASSPHRASE}" \
+    "wifi_connection=${WIFI_CONNECTION}" \
+    "wifi_ap_cidr=${WIFI_AP_CIDR}" \
+    "upstream_root_cidr=${WIFI_UPSTREAM_ROOT_CIDR}" \
+    "upstream_ap_cidr=${WIFI_UPSTREAM_AP_CIDR}" \
+    "upstream_ap_ip=${WIFI_UPSTREAM_AP_IP}" \
+    "dhcp_range=${WIFI_DHCP_RANGE}" \
+    "policy_table=${WIFI_POLICY_TABLE}" \
+    "policy_priority=${WIFI_POLICY_PRIORITY}" \
+    bash -s <<<"${guest_script}"
   WIFI_CLIENT_IF="$(hosted_vm_ga_exec /bin/cat /var/tmp/podlaz-wifi-client-if | tr -d '[:space:]')"
   [[ -n "${WIFI_CLIENT_IF}" ]]
 }
