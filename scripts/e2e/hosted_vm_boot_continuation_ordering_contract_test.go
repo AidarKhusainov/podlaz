@@ -1,5 +1,7 @@
 package e2e
 
+// These tests guard Q27 scenario shape; permanent evidence comes from the VM runtime workflow.
+
 import (
 	"os"
 	"strings"
