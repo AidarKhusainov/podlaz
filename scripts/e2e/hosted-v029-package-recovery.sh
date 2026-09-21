@@ -32,6 +32,7 @@ GUEST_WORK="/tmp/podlaz-v029-work"
 GUEST_HISTORY_PRIVATE="/tmp/podlaz-v029-history/private"
 GUEST_HISTORY_PUBLIC="/tmp/podlaz-v029-history/public"
 GUEST_CANDIDATE_ALIAS="${GUEST_WORK}/dist/podlaz_0.0.0~dev-1_linux_amd64.deb"
+GUEST_V029_ALIAS="${GUEST_WORK}/podlaz_0.2.29_linux_amd64.deb"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 V029_SHA256="${PODLAZ_E2E_V029_SHA256:-91644dee9ca92ddc5c48793b926f20d18da4d4267cbfdd3b41303e1e5c52516e}"
 V029_RELEASE_COMMIT="${PODLAZ_E2E_V029_RELEASE_COMMIT:-c846f5465a90a50d72f3fc393d639a402d590798}"
@@ -86,10 +87,13 @@ prepare_v029_workdir() {
     "${GUEST_HISTORY_PRIVATE}" "${GUEST_HISTORY_PUBLIC}" \
     "${GUEST_PRIVATE}"
   guest_exec install -o e2e -g e2e -m 0600 "${GUEST_CANDIDATE}" "${GUEST_CANDIDATE_ALIAS}"
+  guest_exec install -o e2e -g e2e -m 0600 "${GUEST_V029}" "${GUEST_V029_ALIAS}"
+  guest_exec runuser -u e2e -- test -r "${GUEST_CANDIDATE_ALIAS}"
+  guest_exec runuser -u e2e -- test -r "${GUEST_V029_ALIAS}"
 }
 
 run_pinned_v029_acceptance() {
-  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/profile-uri); cd '${GUEST_WORK}'; runuser -u e2e -- env E2E_TMP_ROOT='${GUEST_HISTORY_PRIVATE}' E2E_ARTIFACT_DIR='${GUEST_HISTORY_PUBLIC}' PODLAZ_E2E_BASE_DEB='${GUEST_V029}' PODLAZ_E2E_BASE_VERSION=v0.2.29 PODLAZ_E2E_PROFILE_URI=\"\${uri}\" PODLAZ_E2E_DNS_CHECK_HOST=example.com PODLAZ_E2E_PUBLIC_IP_CHECK_URL=https://example.com/ bash /workspace/scripts/e2e/network-recovery-package-acceptance.sh"
+  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/client-uri); cd '${GUEST_WORK}'; runuser -u e2e -- env E2E_TMP_ROOT='${GUEST_HISTORY_PRIVATE}' E2E_ARTIFACT_DIR='${GUEST_HISTORY_PUBLIC}' PODLAZ_E2E_BASE_DEB='${GUEST_V029_ALIAS}' PODLAZ_E2E_BASE_VERSION=v0.2.29 PODLAZ_E2E_PROFILE_URI=\"\${uri}\" PODLAZ_E2E_DNS_CHECK_HOST=example.com PODLAZ_E2E_PUBLIC_IP_CHECK_URL=https://example.com/ bash /workspace/scripts/e2e/network-recovery-package-acceptance.sh"
 }
 
 require_legacy_evidence() {

@@ -107,7 +107,7 @@ install_previous_fixture() {
 prepare_guest_user_state() {
   guest_exec install -d -o e2e -g e2e -m 0700 \
     "${GUEST_XDG}" "${GUEST_XDG}/config" "${GUEST_XDG}/state" "${GUEST_XDG}/cache" "${GUEST_PRIVATE}"
-  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/profile-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${uri}\" >'${GUEST_PRIVATE}/import.stdout' 2>'${GUEST_PRIVATE}/import.stderr'"
+  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${uri}\" >'${GUEST_PRIVATE}/import.stdout' 2>'${GUEST_PRIVATE}/import.stderr'"
   guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' '${GUEST_PRIVATE}/import.stdout' >'${GUEST_PRIVATE}/profile-id' && test -s '${GUEST_PRIVATE}/profile-id'"
   guest_exec /bin/bash -lc "id=\$(cat '${GUEST_PRIVATE}/profile-id'); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >'${GUEST_PRIVATE}/validate.stdout' 2>'${GUEST_PRIVATE}/validate.stderr'"
 }
@@ -157,6 +157,8 @@ assert_package_replacement_observed() {
   guest_exec systemctl is-active --quiet podlazd.service
   after="$(guest_exec systemctl show -p MainPID --value podlazd.service | tr -d '[:space:]')"
   [[ "${before}" =~ ^[1-9][0-9]*$ && "${after}" =~ ^[1-9][0-9]*$ && "${after}" != "${before}" ]]
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'result="$(systemctl show -p Result --value podlazd.service)"; [[ "$result" != timeout && "$result" == success ]]'
 }
 

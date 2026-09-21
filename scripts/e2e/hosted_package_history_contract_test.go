@@ -126,7 +126,6 @@ func TestHostedPackageHistoryDoesNotReuseV0240RegressionAsEitherBoundary(t *test
 	}
 }
 
-
 func TestPinnedHistoryEvidenceKeyRemainsNormalized(t *testing.T) {
 	script := readRequiredFile(t, "network-recovery-package-scenario.sh")
 	if !strings.Contains(script, "write_evidence candidate_package_transition_result_success") {
