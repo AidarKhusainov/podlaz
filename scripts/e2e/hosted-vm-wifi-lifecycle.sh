@@ -232,7 +232,7 @@ management_gateway="$(ip -4 route show default dev "${management_if}" | awk 'NR 
 [[ "${management_if}" != "${ap_if}" && "${management_if}" != "${client_if}" ]]
 
 ip netns add pzwifiap
-ip netns exec pzwifiap sleep infinity &
+ip netns exec pzwifiap sleep infinity </dev/null >/dev/null 2>&1 &
 ap_ns_pid=$!
 printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
