@@ -151,7 +151,7 @@ func TestPinnedHistoryUsesFocusedHistoricalBoundaryWithoutChangingLegacyDefault(
 		}
 	}
 	focus := strings.Index(script, `if [[ "${PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY}" == true ]]`)
-	generic := strings.Index(script, "force_kill_inside_durable_rollback")
+	generic := strings.Index(script, "\nforce_kill_inside_durable_rollback\n")
 	if focus < 0 || generic < 0 || focus > generic {
 		t.Fatal("historical-only branch must terminate before generic restart/rollback exercises")
 	}
