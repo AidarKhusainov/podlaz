@@ -77,7 +77,7 @@ validate_v029() {
 
 stage_v029() {
   install -d -m 0700 "${XRAY_ROOT}"
-  install -m 0600 "${V029_DEB}" "${OUTER_V029}"
+  install -m 0644 "${V029_DEB}" "${OUTER_V029}"
 }
 
 prepare_v029_workdir() {
