@@ -24,6 +24,7 @@ WIFI_SSID=podlaz-ci-wifi
 WIFI_PASSPHRASE=podlaz-ci-passphrase
 WIFI_AP_CIDR=198.51.100.1/24
 WIFI_AP_IP=198.51.100.1
+WIFI_ENDPOINT_IP=203.0.113.10
 WIFI_DHCP_RANGE=198.51.100.10,198.51.100.20,255.255.255.0,1h
 WIFI_UPSTREAM_ROOT_CIDR=172.31.254.1/30
 WIFI_UPSTREAM_AP_CIDR=172.31.254.2/30
@@ -176,7 +177,7 @@ prepare_endpoint_material() {
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
-    "listen": "${WIFI_AP_IP}",
+    "listen": "${WIFI_ENDPOINT_IP}",
     "port": ${port},
     "protocol": "vless",
     "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
@@ -188,7 +189,7 @@ EOF
   chmod 0600 "${XRAY_ROOT}/server.json"
   "${extract}/usr/lib/podlaz/xray" run -test -config "${XRAY_ROOT}/server.json" >"${XRAY_ROOT}/config-test.log" 2>&1
   printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-vm-wifi\n' \
-    "${uuid}" "${WIFI_AP_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
+    "${uuid}" "${WIFI_ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
 }
 
@@ -250,12 +251,14 @@ iptables -A FORWARD -i "${management_if}" -o pzwifi-root \
 ip route add table "${policy_table}" default via "${management_gateway}" dev "${management_if}"
 ip rule add priority "${policy_priority}" from "${upstream_ap_ip}/32" table "${policy_table}"
 
-ip netns exec pzwifiap bash -s -- "${ap_if}" "${upstream_ap_cidr}" "${wifi_ap_cidr}" <<'AP'
+ip netns exec pzwifiap bash -s -- "${ap_if}" "${upstream_ap_cidr}" "${wifi_ap_cidr}" "${endpoint_ip}" <<'AP'
 set -Eeuo pipefail
 ap_if="$1"
 upstream_ap_cidr="$2"
 wifi_ap_cidr="$3"
+endpoint_ip="$4"
 ip link set lo up
+ip address add "${endpoint_ip}/32" dev lo
 ip address add "${upstream_ap_cidr}" dev pzwifi-up
 ip link set pzwifi-up up
 ip route add default via 172.31.254.1
@@ -295,12 +298,12 @@ ip netns exec pzwifiap sh -c \
   'nohup /usr/lib/podlaz/xray run -config /var/tmp/podlaz-wifi-server.json >/var/tmp/podlaz-wifi-xray.log 2>&1 </dev/null & echo $! >/var/tmp/podlaz-wifi-xray.pid'
 
 for _ in $(seq 1 100); do
-  if ip netns exec pzwifiap ss -H -ltn | awk '{print $4}' | grep -Fx "198.51.100.1:18080" >/dev/null; then
+  if ip netns exec pzwifiap ss -H -ltn | awk '{print $4}' | grep -Fx "${endpoint_ip}:18080" >/dev/null; then
     break
   fi
   sleep 0.1
 done
-ip netns exec pzwifiap ss -H -ltn | awk '{print $4}' | grep -Fx "198.51.100.1:18080" >/dev/null
+ip netns exec pzwifiap ss -H -ltn | awk '{print $4}' | grep -Fx "${endpoint_ip}:18080" >/dev/null
 
 systemctl start wpa_supplicant.service
 systemctl start NetworkManager.service
@@ -349,6 +352,7 @@ EOF
     "wifi_passphrase=${WIFI_PASSPHRASE}" \
     "wifi_connection=${WIFI_CONNECTION}" \
     "wifi_ap_cidr=${WIFI_AP_CIDR}" \
+    "endpoint_ip=${WIFI_ENDPOINT_IP}" \
     "upstream_root_cidr=${WIFI_UPSTREAM_ROOT_CIDR}" \
     "upstream_ap_cidr=${WIFI_UPSTREAM_AP_CIDR}" \
     "upstream_ap_ip=${WIFI_UPSTREAM_AP_IP}" \
@@ -416,7 +420,7 @@ assert_public_artifact_privacy() {
   extra="$(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 ! -name 'hosted-vm-wifi-lifecycle.txt' -print -quit)"
   [[ -z "${extra}" ]] || return 1
   [[ -f "${REPORT}" && ! -L "${REPORT}" ]] || return 1
-  ! grep -Eiq 'vless://|vmess://|trojan://|ss://|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|198[.]51[.]100[.]' "${REPORT}"
+  ! grep -Eiq 'vless://|vmess://|trojan://|ss://|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|198[.]51[.]100[.]|203[.]0[.]113[.]' "${REPORT}"
 }
 
 cleanup_wifi_fixture() {
