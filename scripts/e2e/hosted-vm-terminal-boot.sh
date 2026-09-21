@@ -142,9 +142,14 @@ EOF
 }
 
 assert_terminal_inactive(){
-  if hosted_vm_tun_wait_status clean-inactive 120; then
-    return 0
-  fi
+  local command
+  command="curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >\${HOSTED_VM_TUN_PRIVATE}/terminal-status.json 2>/dev/null && jq -e '.connection==\"inactive\" and ((.active_transaction_id//\"\")==\"\") and ([.transactions[]? | select(.state==\"committed\" and (.requires_cleanup//false)==false)] | length)==0 and ([.transactions[]? | select(.requires_cleanup//false)] | length)==0 and .terminal_reason==\"vpn_connect_failed\"' \${HOSTED_VM_TUN_PRIVATE}/terminal-status.json >/dev/null"
+  for _ in $(seq 1 120); do
+    if hosted_vm_ga_bash "\${command}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
   mark_failure product "terminal.clean_inactive.$(terminal_failure_token)"
   return 1
 }
