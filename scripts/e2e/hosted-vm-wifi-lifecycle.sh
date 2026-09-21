@@ -222,21 +222,26 @@ udevadm settle
 
 mapfile -t wifi_ifaces < <(iw dev | awk '$1 == "Interface" {print $2}')
 ((${#wifi_ifaces[@]} >= 2))
-ap_if="${wifi_ifaces[0]}"
-client_if="${wifi_ifaces[1]}"
-ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_if}/phy80211")")"
+ap_candidate="${wifi_ifaces[0]}"
+ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_candidate}/phy80211")")"
 [[ "${ap_phy}" == phy* ]]
 
 management_if="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
 management_gateway="$(ip -4 route show default dev "${management_if}" | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "via") {print $(i+1); exit}}')"
 [[ -n "${management_if}" && -n "${management_gateway}" ]]
-[[ "${management_if}" != "${ap_if}" && "${management_if}" != "${client_if}" ]]
+[[ "${management_if}" != "${ap_candidate}" ]]
 
 ip netns add pzwifiap
 ip netns exec pzwifiap sleep infinity </dev/null >/dev/null 2>&1 &
 ap_ns_pid=$!
 printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
+udevadm settle
+
+ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == "Interface" {print $2; exit}')"
+client_if="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
+[[ -n "${ap_if}" && -n "${client_if}" ]]
+[[ "${management_if}" != "${client_if}" ]]
 
 ip link add pzwifi-root type veth peer name pzwifi-up
 ip link set pzwifi-up netns pzwifiap
