@@ -207,6 +207,7 @@ apt-get install -y -qq --no-install-recommends \
   dnsmasq-base \
   hostapd \
   iw \
+  iptables \
   network-manager \
   wpasupplicant \
   "linux-modules-extra-$(uname -r)"
