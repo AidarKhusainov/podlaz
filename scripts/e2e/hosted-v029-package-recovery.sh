@@ -93,7 +93,7 @@ prepare_v029_workdir() {
 }
 
 run_pinned_v029_acceptance() {
-  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/client-uri); cd '${GUEST_WORK}'; runuser -u e2e -- env E2E_TMP_ROOT='${GUEST_HISTORY_PRIVATE}' E2E_ARTIFACT_DIR='${GUEST_HISTORY_PUBLIC}' PODLAZ_E2E_BASE_DEB='${GUEST_V029_ALIAS}' PODLAZ_E2E_BASE_VERSION=v0.2.29 PODLAZ_E2E_PROFILE_URI=\"\${uri}\" PODLAZ_E2E_DNS_CHECK_HOST=example.com PODLAZ_E2E_PUBLIC_IP_CHECK_URL=https://example.com/ bash /workspace/scripts/e2e/network-recovery-package-acceptance.sh"
+  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/client-uri); cd '${GUEST_WORK}'; runuser -u e2e -- env E2E_TMP_ROOT='${GUEST_HISTORY_PRIVATE}' E2E_ARTIFACT_DIR='${GUEST_HISTORY_PUBLIC}' PODLAZ_E2E_BASE_DEB='${GUEST_V029_ALIAS}' PODLAZ_E2E_BASE_VERSION=v0.2.29 PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY=true PODLAZ_E2E_PROFILE_URI=\"\${uri}\" PODLAZ_E2E_DNS_CHECK_HOST=example.com PODLAZ_E2E_PUBLIC_IP_CHECK_URL=https://example.com/ bash /workspace/scripts/e2e/network-recovery-package-acceptance.sh"
 }
 
 require_legacy_evidence() {

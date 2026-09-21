@@ -137,7 +137,6 @@ func TestPinnedHistoryEvidenceKeyRemainsNormalized(t *testing.T) {
 	}
 }
 
-
 func TestPinnedHistoryUsesFocusedHistoricalBoundaryWithoutChangingLegacyDefault(t *testing.T) {
 	script := readRequiredFile(t, "network-recovery-package-scenario.sh")
 	for _, required := range []string{
