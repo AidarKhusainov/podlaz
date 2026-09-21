@@ -60,11 +60,11 @@ func TestHostedVMWiFiLifecycleKeepsControlOffTestedWiFi(t *testing.T) {
 		"management_if=",
 		"ip netns add pzwifiap",
 		"iw phy \"${ap_phy}\" set netns",
-		"192.0.2.1/24",
+		"198.51.100.1/24",
 		"172.31.254.2/30",
 		"ip rule add priority 100",
 		"ip route del default via \"${management_gateway}\"",
-		"ip -4 route show default | grep -F \"via 192.0.2.1 dev ${client_if}\"",
+		"ip -4 route show default | grep -F \"via 198.51.100.1 dev ${client_if}\"",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("hosted VM Wi-Fi topology is missing %q", marker)
