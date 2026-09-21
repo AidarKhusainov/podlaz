@@ -420,24 +420,31 @@ assert_public_artifact_privacy() {
 }
 
 cleanup_wifi_fixture() {
+  local guest_script
   [[ "${HOSTED_VM_GA_READY}" == true ]] || return 0
-  hosted_vm_ga_bash "set +e
-client_if=\$(cat /var/tmp/podlaz-wifi-client-if 2>/dev/null)
-management_if=\$(cat /var/tmp/podlaz-wifi-management-if 2>/dev/null)
-management_gateway=\$(cat /var/tmp/podlaz-wifi-management-gateway 2>/dev/null)
-[[ -z \"\$client_if\" ]] || nmcli connection down '${WIFI_CONNECTION}' >/dev/null 2>&1
-ip rule del priority '${WIFI_POLICY_PRIORITY}' from '${WIFI_UPSTREAM_AP_IP}/32' table '${WIFI_POLICY_TABLE}' >/dev/null 2>&1
-ip route flush table '${WIFI_POLICY_TABLE}' >/dev/null 2>&1
-[[ -z \"\$management_if\" || -z \"\$management_gateway\" ]] || ip route replace default via \"\$management_gateway\" dev \"\$management_if\"
-[[ -z \"\$management_if\" ]] || iptables -t nat -D POSTROUTING -s 172.31.254.0/30 -o \"\$management_if\" -j MASQUERADE >/dev/null 2>&1
-[[ -z \"\$management_if\" ]] || iptables -D FORWARD -i pzwifi-root -o \"\$management_if\" -j ACCEPT >/dev/null 2>&1
-[[ -z \"\$management_if\" ]] || iptables -D FORWARD -i \"\$management_if\" -o pzwifi-root -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1
-test ! -s /var/tmp/podlaz-wifi-ap-ns.pid || kill "$(cat /var/tmp/podlaz-wifi-ap-ns.pid)" >/dev/null 2>&1
+  guest_script="$(cat <<'EOF'
+set +e
+client_if="$(cat /var/tmp/podlaz-wifi-client-if 2>/dev/null)"
+management_if="$(cat /var/tmp/podlaz-wifi-management-if 2>/dev/null)"
+management_gateway="$(cat /var/tmp/podlaz-wifi-management-gateway 2>/dev/null)"
+ap_ns_pid="$(cat /var/tmp/podlaz-wifi-ap-ns.pid 2>/dev/null)"
+[[ -z "$client_if" ]] || nmcli connection down "$wifi_connection" >/dev/null 2>&1
+ip rule del priority "$policy_priority" from "$upstream_ap_ip/32" table "$policy_table" >/dev/null 2>&1
+ip route flush table "$policy_table" >/dev/null 2>&1
+[[ -z "$management_if" || -z "$management_gateway" ]] || ip route replace default via "$management_gateway" dev "$management_if"
+[[ -z "$management_if" ]] || iptables -t nat -D POSTROUTING -s 172.31.254.0/30 -o "$management_if" -j MASQUERADE >/dev/null 2>&1
+[[ -z "$management_if" ]] || iptables -D FORWARD -i pzwifi-root -o "$management_if" -j ACCEPT >/dev/null 2>&1
+[[ -z "$management_if" ]] || iptables -D FORWARD -i "$management_if" -o pzwifi-root -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1
+[[ -z "$ap_ns_pid" ]] || kill "$ap_ns_pid" >/dev/null 2>&1
 ip netns del pzwifiap >/dev/null 2>&1
 ip link del pzwifi-root >/dev/null 2>&1
 rm -f /var/tmp/podlaz-wifi-*.pid /var/tmp/podlaz-wifi-hostapd.conf /var/tmp/podlaz-wifi-server.json /var/tmp/podlaz-wifi-client-if /var/tmp/podlaz-wifi-management-if /var/tmp/podlaz-wifi-management-gateway
-exit 0" >/dev/null 2>&1 || true
+exit 0
+EOF
+)"
+  hosted_vm_ga_bash "wifi_connection=${WIFI_CONNECTION@Q}; policy_priority=${WIFI_POLICY_PRIORITY@Q}; upstream_ap_ip=${WIFI_UPSTREAM_AP_IP@Q}; policy_table=${WIFI_POLICY_TABLE@Q}; ${guest_script}" >/dev/null 2>&1 || true
 }
+
 
 cleanup() {
   local saved=$? cleanup_failed=0
