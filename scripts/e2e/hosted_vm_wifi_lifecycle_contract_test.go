@@ -62,7 +62,7 @@ func TestHostedVMWiFiLifecycleKeepsControlOffTestedWiFi(t *testing.T) {
 		"iw phy \"${ap_phy}\" set netns",
 		"198.51.100.1/24",
 		"172.31.254.2/30",
-		"ip rule add priority 100",
+		"ip rule add priority \"${policy_priority}\"",
 		"ip route del default via \"${management_gateway}\"",
 		"ip -4 route show default | grep -F \"via 198.51.100.1 dev ${client_if}\"",
 	} {
