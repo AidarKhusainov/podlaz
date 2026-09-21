@@ -1,0 +1,58 @@
+name: Wi-Fi Simulation Capability Probe
+
+on:
+  push:
+    branches:
+      - agent/issue-334-wifi-lifecycle
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wifi-simulation-capability-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Linux Wi-Fi simulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install VM tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cloud-image-utils \
+            openssh-client \
+            qemu-system-x86 \
+            qemu-utils
+
+      - name: Probe simulated Wi-Fi association and reconnect
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-wifi-capability-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-wifi-capability-public
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/wifi-simulation-capability-probe.sh
+
+      - name: Remove private VM state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-wifi-capability-private
+        run: rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload capability evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-wifi-simulation-capability
+          path: ${{ runner.temp }}/podlaz-wifi-capability-public/wifi-simulation-capability.txt
+          if-no-files-found: error
+          retention-days: 7
