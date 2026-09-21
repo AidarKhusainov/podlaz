@@ -45,7 +45,8 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends   dnsmasq-base   hostapd   iw   network-manager
+apt-get install -y -qq --no-install-recommends   dnsmasq-base   hostapd   iw   network-manager \
+  wpasupplicant
 
 if ! modprobe mac80211_hwsim radios=2; then
   apt-get install -y -qq --no-install-recommends "linux-modules-extra-$(uname -r)"
@@ -111,6 +112,10 @@ ip netns exec pzwifiap hostapd -B -P /run/pzwifi-hostapd.pid /tmp/pzwifi-hostapd
 ip netns exec pzwifiap dnsmasq   --conf-file=   --interface="${ap_if}"   --bind-interfaces   --dhcp-range=192.0.2.10,192.0.2.20,255.255.255.0,1h   --dhcp-option=3,192.0.2.1   --dhcp-option=6,1.1.1.1   --pid-file=/run/pzwifi-dnsmasq.pid
 
 nmcli device set "${client_if}" managed yes
+printf 'wifi-probe: ap=%s client=%s\n' "${ap_if}" "${client_if}"
+iw dev
+nmcli -f GENERAL.DEVICE,GENERAL.TYPE,GENERAL.STATE device show "${client_if}"
+systemctl is-active --quiet wpa_supplicant.service || true
 for _ in $(seq 1 30); do
   nmcli device wifi rescan ifname "${client_if}" >/dev/null 2>&1 || true
   if nmcli -t -f SSID device wifi list ifname "${client_if}" | grep -Fx podlaz-ci-wifi >/dev/null; then
@@ -118,6 +123,7 @@ for _ in $(seq 1 30); do
   fi
   sleep 1
 done
+nmcli -f IN-USE,SSID,BSSID,CHAN,SIGNAL device wifi list ifname "${client_if}" || true
 nmcli -t -f SSID device wifi list ifname "${client_if}" | grep -Fx podlaz-ci-wifi >/dev/null
 
 nmcli --wait 30 device wifi connect podlaz-ci-wifi   password podlaz-ci-passphrase   ifname "${client_if}"   name podlaz-ci-wifi
