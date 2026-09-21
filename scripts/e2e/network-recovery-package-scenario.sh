@@ -472,7 +472,7 @@ assert_package_replacement_transition() {
   [[ "${restart_signal}" == "10" ]] || fail "candidate RestartKillSignal=${restart_signal:-unknown}, want SIGUSR1/10"
   [[ "${kill_mode}" == "mixed" ]] || fail "candidate KillMode=${kill_mode:-unknown}, want mixed"
   [[ -n "${timeout_stop}" && -n "${fragment}" ]] || fail "candidate package replacement systemd contract is incomplete"
-  write_evidence "candidate_package_transition_result_success exec_main_code=${exec_main_code:-unknown} exec_main_status=${exec_main_status:-unknown}"
+  write_evidence candidate_package_transition_result_success
 }
 
 assert_legacy_upgrade_converged() {
