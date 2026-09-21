@@ -103,9 +103,9 @@ func TestHostedV029RecoveryRunsPinnedLegacyHarnessWithoutChangingItsSemantics(t 
 		"assert_foreign_sentinel",
 		"capture_guest_network_baseline",
 		"assert_guest_network_baseline_restored",
-		"legacy_upgrade_reconstructed_current_boot_session=pass",
-		"candidate_package_replaced_daemon=pass",
-		"network_recovery_acceptance_complete=pass",
+		"legacy_upgrade_reconstructed_current_boot_session",
+		"candidate_package_replaced_daemon",
+		"network_recovery_acceptance_complete",
 		"pinned_v029.runtime_provenance",
 		"pinned_v029.foreign_state",
 		"pinned_v029.network_restored",
@@ -123,5 +123,16 @@ func TestHostedPackageHistoryDoesNotReuseV0240RegressionAsEitherBoundary(t *test
 	workflow := readRequiredFile(t, hostedPackageHistoryWorkflow)
 	if strings.Contains(workflow, "v0.2.40") || strings.Contains(workflow, "podlaz_0.2.40") {
 		t.Fatal("Q19/Q32 package history workflow must not substitute the separate v0.2.40 package-restart regression")
+	}
+}
+
+
+func TestPinnedHistoryEvidenceKeyRemainsNormalized(t *testing.T) {
+	script := readRequiredFile(t, "network-recovery-package-scenario.sh")
+	if !strings.Contains(script, "write_evidence candidate_package_transition_result_success") {
+		t.Fatal("historical package transition evidence must use a normalized evidence key")
+	}
+	if strings.Contains(script, "write_evidence \"candidate_package_transition_result_success ") {
+		t.Fatal("historical package transition evidence key must not contain diagnostic fields")
 	}
 }
