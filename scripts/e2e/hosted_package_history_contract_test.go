@@ -96,6 +96,7 @@ func TestHostedV029RecoveryRunsPinnedLegacyHarnessWithoutChangingItsSemantics(t 
 	for _, required := range []string{
 		"hosted-synthetic-tun.sh",
 		"network-recovery-package-acceptance.sh",
+		"PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY=true",
 		"PODLAZ_E2E_BASE_VERSION=v0.2.29",
 		"podlaz_0.0.0~dev-1_linux_amd64.deb",
 		"assert_guest_package_provenance",
@@ -133,5 +134,26 @@ func TestPinnedHistoryEvidenceKeyRemainsNormalized(t *testing.T) {
 	}
 	if strings.Contains(script, "write_evidence \"candidate_package_transition_result_success ") {
 		t.Fatal("historical package transition evidence key must not contain diagnostic fields")
+	}
+}
+
+
+func TestPinnedHistoryUsesFocusedHistoricalBoundaryWithoutChangingLegacyDefault(t *testing.T) {
+	script := readRequiredFile(t, "network-recovery-package-scenario.sh")
+	for _, required := range []string{
+		`PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY:=false`,
+		`if [[ "${PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY}" == true ]]`,
+		"run_historical_upgrade_terminal",
+		"historical_upgrade_terminal_cleanup",
+		"historical_upgrade_recovery_clean",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("focused historical package boundary lost %q", required)
+		}
+	}
+	focus := strings.Index(script, `if [[ "${PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY}" == true ]]`)
+	generic := strings.Index(script, "force_kill_inside_durable_rollback")
+	if focus < 0 || generic < 0 || focus > generic {
+		t.Fatal("historical-only branch must terminate before generic restart/rollback exercises")
 	}
 }

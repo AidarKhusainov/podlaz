@@ -135,6 +135,8 @@ run_scenario() {
   record_evidence pinned_v029.privacy_active pass
   require_legacy_evidence active_dns_https
   record_evidence pinned_v029.post_upgrade_traffic pass
+  require_legacy_evidence historical_upgrade_terminal_cleanup
+  require_legacy_evidence historical_upgrade_recovery_clean
   require_legacy_evidence network_recovery_acceptance_complete
   record_evidence pinned_v029.acceptance_complete pass
 
