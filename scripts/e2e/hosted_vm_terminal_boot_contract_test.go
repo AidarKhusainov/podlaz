@@ -21,7 +21,7 @@ func TestHostedVMTerminalBootPreservesOneTerminalAttempt(t *testing.T) {
 		"same_boot_restart.no_session",
 		"same_boot_restart.no_retry",
 		"terminal_cleanup.exact",
-		"hosted_vm_tun_wait_status clean-inactive",
+		"terminal_reason==\\\"vpn_connect_failed\\\"",
 	} {
 		if !strings.Contains(text, marker) {
 			t.Fatalf("terminal boot scenario missing %q", marker)
