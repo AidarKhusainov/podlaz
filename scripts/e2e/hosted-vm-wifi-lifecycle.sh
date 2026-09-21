@@ -31,6 +31,7 @@ WIFI_UPSTREAM_AP_CIDR=172.31.254.2/30
 WIFI_UPSTREAM_AP_IP=172.31.254.2
 WIFI_POLICY_TABLE=51821
 WIFI_POLICY_PRIORITY=100
+WIFI_RETURN_PRIORITY=101
 WIFI_CLIENT_IF=""
 SESSION_BEFORE=""
 
@@ -255,6 +256,7 @@ iptables -A FORWARD -i "${management_if}" -o pzwifi-root \
   -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 ip route add table "${policy_table}" default via "${management_gateway}" dev "${management_if}"
 ip rule add priority "${policy_priority}" from "${upstream_ap_ip}/32" table "${policy_table}"
+ip rule add priority "${return_priority}" to 172.31.254.0/30 table main
 
 ip netns exec pzwifiap bash -s -- "${ap_if}" "${upstream_ap_cidr}" "${wifi_ap_cidr}" "${endpoint_ip}" <<'AP'
 set -Eeuo pipefail
@@ -364,6 +366,7 @@ EOF
     "dhcp_range=${WIFI_DHCP_RANGE}" \
     "policy_table=${WIFI_POLICY_TABLE}" \
     "policy_priority=${WIFI_POLICY_PRIORITY}" \
+    "return_priority=${WIFI_RETURN_PRIORITY}" \
     bash -s <<<"${guest_script}"
   WIFI_CLIENT_IF="$(hosted_vm_ga_exec /bin/cat /var/tmp/podlaz-wifi-client-if | tr -d '[:space:]')"
   [[ -n "${WIFI_CLIENT_IF}" ]]
@@ -464,6 +467,7 @@ management_gateway="$(cat /var/tmp/podlaz-wifi-management-gateway 2>/dev/null)"
 ap_ns_pid="$(cat /var/tmp/podlaz-wifi-ap-ns.pid 2>/dev/null)"
 [[ -z "$client_if" ]] || nmcli connection down "$wifi_connection" >/dev/null 2>&1
 ip rule del priority "$policy_priority" from "$upstream_ap_ip/32" table "$policy_table" >/dev/null 2>&1
+ip rule del priority "$return_priority" to 172.31.254.0/30 table main >/dev/null 2>&1
 ip route flush table "$policy_table" >/dev/null 2>&1
 [[ -z "$management_if" || -z "$management_gateway" ]] || ip route replace default via "$management_gateway" dev "$management_if"
 [[ -z "$management_if" ]] || iptables -t nat -D POSTROUTING -s 172.31.254.0/30 -o "$management_if" -j MASQUERADE >/dev/null 2>&1
@@ -476,7 +480,7 @@ rm -f /var/tmp/podlaz-wifi-*.pid /var/tmp/podlaz-wifi-hostapd.conf /var/tmp/podl
 exit 0
 EOF
 )"
-  hosted_vm_ga_bash "wifi_connection=${WIFI_CONNECTION@Q}; policy_priority=${WIFI_POLICY_PRIORITY@Q}; upstream_ap_ip=${WIFI_UPSTREAM_AP_IP@Q}; policy_table=${WIFI_POLICY_TABLE@Q}; ${guest_script}" >/dev/null 2>&1 || true
+  hosted_vm_ga_bash "wifi_connection=${WIFI_CONNECTION@Q}; policy_priority=${WIFI_POLICY_PRIORITY@Q}; return_priority=${WIFI_RETURN_PRIORITY@Q}; upstream_ap_ip=${WIFI_UPSTREAM_AP_IP@Q}; policy_table=${WIFI_POLICY_TABLE@Q}; ${guest_script}" >/dev/null 2>&1 || true
 }
 
 
