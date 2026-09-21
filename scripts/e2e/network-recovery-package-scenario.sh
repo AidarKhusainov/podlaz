@@ -14,6 +14,8 @@ source "${SCRIPT_DIR}/lib/profile_input.sh"
 source "${SCRIPT_DIR}/lib/readiness.sh"
 # shellcheck source=lib/status_polling.sh
 source "${SCRIPT_DIR}/lib/status_polling.sh"
+# shellcheck source=lib/recovery_json.sh
+source "${SCRIPT_DIR}/lib/recovery_json.sh"
 
 require_cmd apt awk curl dpkg dpkg-deb find getent grep mktemp nft python3 runuser sed sha256sum sleep stat sudo systemctl timeout
 
@@ -23,7 +25,13 @@ require_cmd apt awk curl dpkg dpkg-deb find getent grep mktemp nft python3 runus
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
 : "${PODLAZ_E2E_DNS_CHECK_HOST:=github.com}"
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
+: "${PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY:=false}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
+
+case "${PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY}" in
+  true|false) ;;
+  *) fail "PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY must be true or false" ;;
+esac
 
 [[ -n "${PODLAZ_E2E_BASE_DEB}" ]] || fail "PODLAZ_E2E_BASE_DEB is required"
 [[ -f "${PODLAZ_E2E_BASE_DEB}" ]] || fail "released baseline package is missing"
@@ -472,7 +480,7 @@ assert_package_replacement_transition() {
   [[ "${restart_signal}" == "10" ]] || fail "candidate RestartKillSignal=${restart_signal:-unknown}, want SIGUSR1/10"
   [[ "${kill_mode}" == "mixed" ]] || fail "candidate KillMode=${kill_mode:-unknown}, want mixed"
   [[ -n "${timeout_stop}" && -n "${fragment}" ]] || fail "candidate package replacement systemd contract is incomplete"
-  write_evidence "candidate_package_transition_result_success exec_main_code=${exec_main_code:-unknown} exec_main_status=${exec_main_status:-unknown}"
+  write_evidence candidate_package_transition_result_success
 }
 
 assert_legacy_upgrade_converged() {
@@ -831,6 +839,36 @@ assert_legacy_upgrade_converged
 assert_privacy_envelope_active
 assert_active_connectivity
 
+run_historical_upgrade_terminal() {
+  local recover_json
+  run_installed_podlaz disconnect >/dev/null
+  ACTIVE_CONNECTION=0
+  wait_for_inactive historical_upgrade_disconnect
+  sudo -n test ! -e "${CONTINUATION_PATH}" || fail "historical upgrade disconnect left Network Session authority"
+  if sudo -n find "${TRANSACTION_DIR}" -maxdepth 1 -type f -name '*.json' -print -quit 2>/dev/null | grep -q .; then
+    fail "historical upgrade disconnect left transaction authority"
+  fi
+  sudo -n test ! -e /run/podlaz/generated/xray.json || fail "historical upgrade disconnect left generated runtime config"
+  if sudo -n ip link show dev podlaz0 >/dev/null 2>&1; then
+    fail "historical upgrade disconnect left podlaz0"
+  fi
+  if sudo -n nft list tables 2>/dev/null | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null; then
+    fail "historical upgrade disconnect left Privacy Envelope authority"
+  fi
+  getent hosts "${PODLAZ_E2E_DNS_CHECK_HOST}" >/dev/null 2>&1 || fail "ordinary DNS did not recover after historical upgrade disconnect"
+  curl -4 -fsS --max-time 30 "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL}" >/dev/null || fail "ordinary IPv4 egress did not recover after historical upgrade disconnect"
+  write_evidence historical_upgrade_terminal_cleanup
+
+  recover_json="$(mktemp "${E2E_TMP_ROOT}/network-recovery-clean.XXXXXX")"
+  run_installed_podlaz recover --json >"${recover_json}"
+  assert_clean_recovery_json_file "${recover_json}"
+  rm -f -- "${recover_json}"
+  write_evidence historical_upgrade_recovery_clean
+}
+
+if [[ "${PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY}" == true ]]; then
+  run_historical_upgrade_terminal
+else
 # Graceful restart must preserve intent and automatically converge/reconnect.
 sudo -n systemctl restart podlazd.service >/dev/null
 wait_for_active_tun graceful_restart_reconnected
@@ -862,6 +900,8 @@ check_direct_connectivity
 sudo -n rm -rf -- "${HOOK_DIR}" >/dev/null 2>&1 || true
 sudo -n systemctl start podlazd.service >/dev/null
 wait_for_inactive explicit_stop_then_start_stays_disconnected
+
+fi
 
 assert_artifacts_do_not_contain_sensitive_values \
   network-recovery-package \

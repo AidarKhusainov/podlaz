@@ -1,0 +1,220 @@
+name: Hosted Package History
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '41 4 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-package-history-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  MAINTAINED_RELEASE_VERSION: 0.2.42
+  MAINTAINED_RELEASE_COMMIT: 6e933a9f1b471c83ba884ee1f0569286f1dafdce
+  MAINTAINED_RELEASE_SHA256: 62acca173c0618ef3c13c7bdd810a128d42fd8c9df38d951dfb314167e2659da
+  V029_RELEASE_COMMIT: c846f5465a90a50d72f3fc393d639a402d590798
+  V029_RELEASE_SHA256: 91644dee9ca92ddc5c48793b926f20d18da4d4267cbfdd3b41303e1e5c52516e
+
+jobs:
+  maintained-previous-release:
+    name: Maintained previous-release upgrade
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      PREVIOUS_DEB: dist/podlaz_0.2.42_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Resolve exact candidate version
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          candidate_version="${MAINTAINED_RELEASE_VERSION}+git.${short_sha}"
+          echo "CANDIDATE_VERSION=${candidate_version}" >>"${GITHUB_ENV}"
+          echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb" >>"${GITHUB_ENV}"
+
+      - name: Build exact candidate package
+        run: |
+          PODLAZ_VERSION="${CANDIDATE_VERSION}" \
+            PODLAZ_DEB_VERSION="${CANDIDATE_VERSION}" \
+            PODLAZ_COMMIT="${CANDIDATE_COMMIT}" \
+            bash scripts/build-deb.sh
+
+      - name: Fetch exact maintained previous release
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${PREVIOUS_DEB}" \
+            "https://github.com/AidarKhusainov/podlaz/releases/download/v${MAINTAINED_RELEASE_VERSION}/podlaz_${MAINTAINED_RELEASE_VERSION}_linux_amd64.deb"
+          printf '%s  %s\n' "${MAINTAINED_RELEASE_SHA256}" "${PREVIOUS_DEB}" | sha256sum -c -
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedPackageHistory' -count=1
+
+      - name: Run maintained previous-release qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-maintained-upgrade-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-maintained-upgrade-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_PREVIOUS_VERSION: ${{ env.MAINTAINED_RELEASE_VERSION }}
+          PODLAZ_E2E_PREVIOUS_COMMIT: ${{ env.MAINTAINED_RELEASE_COMMIT }}
+          PODLAZ_E2E_PREVIOUS_SHA256: ${{ env.MAINTAINED_RELEASE_SHA256 }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-maintained-package-upgrade.sh "${CANDIDATE_DEB}" "${PREVIOUS_DEB}"
+
+      - name: Validate maintained report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-maintained-upgrade-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-maintained-upgrade-public
+        run: bash scripts/e2e/hosted-maintained-package-upgrade.sh validate-report
+
+      - name: Verify maintained public artifacts
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-maintained-upgrade-public
+        run: |
+          test -f "${E2E_ARTIFACT_DIR}/hosted-maintained-package-upgrade.txt"
+          grep -Fx 'artifact.privacy=pass' "${E2E_ARTIFACT_DIR}/hosted-maintained-package-upgrade.txt" >/dev/null
+
+      - name: Remove maintained private state
+        id: private_cleanup
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-maintained-upgrade-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload maintained qualification evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-maintained-package-upgrade
+          path: ${{ runner.temp }}/podlaz-maintained-upgrade-public
+          if-no-files-found: error
+          retention-days: 7
+
+  pinned-v029-history:
+    name: Pinned v0.2.29 legacy recovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      V029_DEB: dist/podlaz_0.2.29_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Resolve exact candidate version
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          candidate_version="${MAINTAINED_RELEASE_VERSION}+git.${short_sha}"
+          echo "CANDIDATE_VERSION=${candidate_version}" >>"${GITHUB_ENV}"
+          echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb" >>"${GITHUB_ENV}"
+
+      - name: Build exact candidate package
+        run: |
+          PODLAZ_VERSION="${CANDIDATE_VERSION}" \
+            PODLAZ_DEB_VERSION="${CANDIDATE_VERSION}" \
+            PODLAZ_COMMIT="${CANDIDATE_COMMIT}" \
+            bash scripts/build-deb.sh
+
+      - name: Fetch exact public v0.2.29 package
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${V029_DEB}" \
+            https://github.com/AidarKhusainov/podlaz/releases/download/v0.2.29/podlaz_0.2.29_linux_amd64.deb
+          printf '%s  %s\n' "${V029_RELEASE_SHA256}" "${V029_DEB}" | sha256sum -c -
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedPackageHistory|^TestNetworkRecovery' -count=1
+
+      - name: Run pinned v0.2.29 recovery qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-v029-recovery-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-v029-recovery-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_V029_RELEASE_COMMIT: ${{ env.V029_RELEASE_COMMIT }}
+          PODLAZ_E2E_V029_SHA256: ${{ env.V029_RELEASE_SHA256 }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-v029-package-recovery.sh "${CANDIDATE_DEB}" "${V029_DEB}"
+
+      - name: Validate pinned v0.2.29 report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-v029-recovery-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-v029-recovery-public
+        run: bash scripts/e2e/hosted-v029-package-recovery.sh validate-report
+
+      - name: Verify pinned v0.2.29 public artifacts
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-v029-recovery-public
+        run: |
+          test -f "${E2E_ARTIFACT_DIR}/hosted-v029-package-recovery.txt"
+          grep -Fx 'artifact.privacy=pass' "${E2E_ARTIFACT_DIR}/hosted-v029-package-recovery.txt" >/dev/null
+
+      - name: Remove pinned v0.2.29 private state
+        id: private_cleanup
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-v029-recovery-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload pinned v0.2.29 qualification evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-v029-package-recovery
+          path: ${{ runner.temp }}/podlaz-v029-recovery-public
+          if-no-files-found: error
+          retention-days: 7
