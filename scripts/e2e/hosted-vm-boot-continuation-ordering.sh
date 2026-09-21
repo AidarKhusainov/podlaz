@@ -7,6 +7,8 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 source "${SCRIPT_DIR}/lib/hosted_vm.sh"
 source "${SCRIPT_DIR}/lib/hosted_vm_tun.sh"
 
+# Q27 owns boot/continuation assertions here; shared VM helpers provide mechanics only.
+
 REPORT="${E2E_ARTIFACT_DIR}/hosted-vm-boot-continuation-ordering.txt"
 PRIVATE_ROOT="${E2E_TMP_ROOT}/hosted-vm-boot-continuation-ordering"
 VM_ROOT="${PRIVATE_ROOT}/vm"
