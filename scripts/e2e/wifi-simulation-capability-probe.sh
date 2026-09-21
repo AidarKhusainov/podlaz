@@ -61,50 +61,18 @@ mapfile -t wifi_ifaces < <(iw dev | awk '$1 == "Interface" {print $2}')
 (("${#wifi_ifaces[@]}" >= 2))
 ap_if="${wifi_ifaces[0]}"
 client_if="${wifi_ifaces[1]}"
-ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_if}/phy80211")")"
-[[ "${ap_phy}" == phy* ]]
 
-ip netns add pzwifiap
-ip netns exec pzwifiap sleep infinity &
-ap_ns_pid=$!
-trap 'kill "$ap_ns_pid" >/dev/null 2>&1 || true; ip netns del pzwifiap >/dev/null 2>&1 || true' EXIT
-iw phy "${ap_phy}" set netns "${ap_ns_pid}"
-udevadm settle
-systemctl restart NetworkManager.service
-nmcli radio wifi on
-for _ in $(seq 1 30); do
-  if nmcli -t -f DEVICE,TYPE device status | grep -F "${client_if}:wifi" >/dev/null; then
-    break
-  fi
-  sleep 1
-done
-nmcli -t -f DEVICE,TYPE device status
-nmcli -t -f DEVICE,TYPE device status | grep -F "${client_if}:wifi" >/dev/null
-
-ip link add pzwifi-root type veth peer name pzwifi-up
-ip link set pzwifi-up netns pzwifiap
-ip address add 172.31.254.1/30 dev pzwifi-root
-ip link set pzwifi-root up
 management_if="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
-[[ -n "${management_if}" ]]
-sysctl -q -w net.ipv4.ip_forward=1
-iptables -t nat -A POSTROUTING -s 172.31.254.0/30 -o "${management_if}" -j MASQUERADE
-iptables -A FORWARD -i pzwifi-root -o "${management_if}" -j ACCEPT
-iptables -A FORWARD -i "${management_if}" -o pzwifi-root -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+[[ -n "${management_if}" && "${management_if}" != "${ap_if}" && "${management_if}" != "${client_if}" ]]
 
-ip netns exec pzwifiap bash -s -- "${ap_if}" <<'AP'
-set -Eeuo pipefail
-ap_if="$1"
-ip link set lo up
-ip address add 172.31.254.2/30 dev pzwifi-up
-ip link set pzwifi-up up
-ip route add default via 172.31.254.1
-ip address add 192.0.2.1/24 dev "$ap_if"
+nmcli device set "${ap_if}" managed no
+nmcli device set "${client_if}" managed yes
+ip link set dev "${ap_if}" up
+ip address add 192.0.2.1/24 dev "${ap_if}"
 sysctl -q -w net.ipv4.ip_forward=1
-iptables -t nat -A POSTROUTING -s 192.0.2.0/24 -o pzwifi-up -j MASQUERADE
-iptables -A FORWARD -i "$ap_if" -o pzwifi-up -j ACCEPT
-iptables -A FORWARD -i pzwifi-up -o "$ap_if" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-AP
+iptables -t nat -A POSTROUTING -s 192.0.2.0/24 -o "${management_if}" -j MASQUERADE
+iptables -A FORWARD -i "${ap_if}" -o "${management_if}" -j ACCEPT
+iptables -A FORWARD -i "${management_if}" -o "${ap_if}" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
 cat >/tmp/pzwifi-hostapd.conf <<EOF
 interface=${ap_if}
