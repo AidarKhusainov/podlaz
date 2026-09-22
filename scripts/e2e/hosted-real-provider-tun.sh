@@ -188,6 +188,7 @@ mask_provider_material() {
   [[ -n "${PODLAZ_E2E_PROFILE_URI:-}" ]] && mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI}"
   [[ -n "${PODLAZ_E2E_PROFILE_URI_LIST:-}" ]] && mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI_LIST}"
   [[ -n "${EXPECTED_EGRESS_IP}" ]] && mask_value "${EXPECTED_EGRESS_IP}"
+  return 0
 }
 
 prepare_provider_material() {
