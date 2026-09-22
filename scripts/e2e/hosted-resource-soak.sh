@@ -181,7 +181,7 @@ from scripts.e2e.lib import tun_soak_isolation as isolation
 uplink = sys.argv[1]
 target = Path(sys.argv[2])
 snapshot = isolation.collect_snapshot()
-isolation.validate_clean_baseline(snapshot)
+isolation.validate_clean_baseline(snapshot, uplink_environment="hosted-guest")
 
 links = [copy.deepcopy(link) for link in snapshot["links"] if link.get("ifname") == uplink]
 if len(links) != 1:
@@ -225,7 +225,7 @@ trusted = {
     },
     "resolved": copy.deepcopy(snapshot["resolved"]),
 }
-isolation.validate_trusted_host(snapshot, trusted)
+isolation.validate_trusted_host(snapshot, trusted, uplink_environment="hosted-guest")
 temporary = target.with_name(target.name + ".tmp")
 temporary.write_text(json.dumps(trusted, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 os.chmod(temporary, 0o600)
@@ -297,6 +297,7 @@ run_hosted_soak() {
       PODLAZ_E2E_PREBUILT_DEB='${GUEST_CANDIDATE}' \\
       PODLAZ_E2E_CANDIDATE_COMMIT='${EXPECTED_COMMIT}' \\
       PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE='${TRUSTED_HOST}' \\
+      PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT=hosted-guest \\
       bash /workspace/scripts/e2e/tun-resource-soak.sh
   "
   soak_code=$?
