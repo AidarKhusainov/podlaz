@@ -152,7 +152,7 @@ func TestHostedResourceSoakWorkflowIsScheduledManualAndNotAnOrdinaryPRGate(t *te
 		"SOAK_MIN_MEMORY_BYTES: '12884901888'",
 		"SOAK_MIN_FREE_DISK_BYTES: '8589934592'",
 		"SOAK_MAX_PUBLIC_BYTES: '4194304'",
-		"bash scripts/e2e/hosted-resource-soak.sh \"\${DEV_DEB}\"",
+		"bash scripts/e2e/hosted-resource-soak.sh \"${DEV_DEB}\"",
 		"bash scripts/e2e/hosted-resource-soak.sh validate-report",
 		"name: podlaz-hosted-resource-soak",
 		"retention-days: 7",
