@@ -235,10 +235,12 @@ PY
 }
 
 copy_guest_evidence() {
-  guest_exec test -f "${GUEST_SOAK_ARTIFACTS}/tun-resource-soak-report.json" &&
-    guest_exec cat "${GUEST_SOAK_ARTIFACTS}/tun-resource-soak-report.json" >"${SOAK_REPORT}" || true
-  guest_exec test -f "${GUEST_SOAK_ARTIFACTS}/tun-resource-failure.json" &&
-    guest_exec cat "${GUEST_SOAK_ARTIFACTS}/tun-resource-failure.json" >"${SOAK_FAILURE}" || true
+  if guest_exec test -f "${GUEST_SOAK_ARTIFACTS}/tun-resource-soak-report.json"; then
+    guest_exec cat "${GUEST_SOAK_ARTIFACTS}/tun-resource-soak-report.json" >"${SOAK_REPORT}"
+  fi
+  if guest_exec test -f "${GUEST_SOAK_ARTIFACTS}/tun-resource-failure.json"; then
+    guest_exec cat "${GUEST_SOAK_ARTIFACTS}/tun-resource-failure.json" >"${SOAK_FAILURE}"
+  fi
   chmod 0600 "${SOAK_REPORT}" "${SOAK_FAILURE}" 2>/dev/null || true
 }
 
@@ -326,6 +328,8 @@ run_hosted_soak() {
   record_evidence soak.lifecycle_thresholds pass
 
   mark_failure product soak.terminal_cleanup
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc '! dpkg-query -W -f="\${db:Status-Abbrev}" podlaz 2>/dev/null | grep -q "^ii"'
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
   guest_exec /bin/bash -lc '! ip link show dev podlaz0 >/dev/null 2>&1'
