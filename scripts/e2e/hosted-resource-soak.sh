@@ -197,7 +197,7 @@ run_bounded_doctor() {
 
 connect_profile() {
   local label="$1"
-  guest_exec /bin/bash -lc "id=\$(cat '${BASE_GUEST_PRIVATE}/profile-id'); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"${id}\" >'${GUEST_PRIVATE}/${label}-connect.stdout' 2>'${GUEST_PRIVATE}/${label}-connect.stderr'"
+  guest_exec /bin/bash -lc "id=\$(cat '${BASE_GUEST_PRIVATE}/profile-id'); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >'${GUEST_PRIVATE}/${label}-connect.stdout' 2>'${GUEST_PRIVATE}/${label}-connect.stderr'"
   wait_for_verified_cli_status "${label}"
 }
 
@@ -425,11 +425,11 @@ write_provenance() {
   xray_artifact="${XRAY_AMD64_SHA256}"
   xray_binary="$(guest_exec sha256sum /usr/lib/podlaz/xray | awk '{print $1}')"
   kernel="$(guest_exec uname -r | tr -d '[:space:]')"
-  systemd="$(guest_exec /bin/bash -lc "systemctl --version | awk 'NR == 1 {print \\\$2; exit}'" | tr -d '[:space:]')"
+  systemd="$(guest_exec /bin/bash -lc "systemctl --version | awk 'NR == 1 {print \$2; exit}'" | tr -d '[:space:]')"
   package_hash="$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
   arch="$(dpkg-deb --field "${CANDIDATE_DEB}" Architecture)"
-  os_id="$(guest_exec /bin/bash -lc ". /etc/os-release; printf '%s' \"\\\$ID\"")"
-  os_version="$(guest_exec /bin/bash -lc ". /etc/os-release; printf '%s' \"\\\$VERSION_ID\"")"
+  os_id="$(guest_exec /bin/bash -lc ". /etc/os-release; printf '%s' \"\$ID\"")"
+  os_version="$(guest_exec /bin/bash -lc ". /etc/os-release; printf '%s' \"\$VERSION_ID\"")"
 
   python3 - "${version_file}" "${PROVENANCE_PRIVATE}" "${xray_version}" "${xray_artifact}" \
     "${xray_binary}" "${kernel}" "${systemd}" "${package_hash}" "${arch}" "${os_id}" "${os_version}" <<'PY'
