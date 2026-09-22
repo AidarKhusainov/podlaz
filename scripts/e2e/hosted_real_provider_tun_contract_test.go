@@ -24,7 +24,7 @@ func TestHostedRealProviderTUNReusesIsolatedSubstrateAndKeepsSecretsPrivate(t *t
 		"wait_guest_status verified-active",
 		"assert_verified_active_authority",
 		"getent ahostsv4 example.com",
-		"/dev/tcp/example.com/443",
+		"/dev/tcp/${PROBE_IP}/443",
 		"openssl s_client",
 		"curl -4 -fsS -o /dev/null https://example.com/",
 		`[[ "${ACTIVE_EGRESS}" != "${ORDINARY_EGRESS}" ]]`,
