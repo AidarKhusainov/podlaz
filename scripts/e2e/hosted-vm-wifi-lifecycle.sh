@@ -24,14 +24,7 @@ WIFI_SSID=podlaz-ci-wifi
 WIFI_PASSPHRASE=podlaz-ci-passphrase
 WIFI_AP_CIDR=198.51.100.1/24
 WIFI_AP_IP=198.51.100.1
-WIFI_ENDPOINT_IP=203.0.113.10
 WIFI_DHCP_RANGE=198.51.100.10,198.51.100.20,255.255.255.0,1h
-WIFI_UPSTREAM_ROOT_CIDR=172.31.254.1/30
-WIFI_UPSTREAM_AP_CIDR=172.31.254.2/30
-WIFI_UPSTREAM_AP_IP=172.31.254.2
-WIFI_POLICY_TABLE=51821
-WIFI_POLICY_PRIORITY=100
-WIFI_RETURN_PRIORITY=101
 WIFI_CLIENT_IF=""
 SESSION_BEFORE=""
 
@@ -166,38 +159,6 @@ validate_candidate() {
   CANDIDATE_DEB="$(readlink -f -- "${path}")"
 }
 
-prepare_endpoint_material() {
-  local extract uuid port=18080
-  extract="${XRAY_ROOT}/package"
-  install -d -m 0700 "${XRAY_ROOT}" "${extract}"
-  dpkg-deb -x "${CANDIDATE_DEB}" "${extract}"
-  uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
-  [[ "${uuid}" =~ ^[0-9a-fA-F-]{36}$ ]] || return 1
-
-  cat >"${XRAY_ROOT}/server.json" <<EOF
-{
-  "log": {"loglevel": "warning"},
-  "inbounds": [{
-    "listen": "${WIFI_ENDPOINT_IP}",
-    "port": ${port},
-    "protocol": "vless",
-    "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
-    "streamSettings": {"security": "none"}
-  }],
-  "outbounds": [{"protocol": "freedom", "settings": {}}]
-}
-EOF
-  chmod 0600 "${XRAY_ROOT}/server.json"
-  "${extract}/usr/lib/podlaz/xray" run -test -config "${XRAY_ROOT}/server.json" >"${XRAY_ROOT}/config-test.log" 2>&1
-  printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-vm-wifi\n' \
-    "${uuid}" "${WIFI_ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
-  chmod 0600 "${XRAY_ROOT}/client-uri"
-}
-
-install_wifi_fixture_files() {
-  hosted_vm_scp_to "${XRAY_ROOT}/server.json" /var/tmp/podlaz-wifi-server.json
-}
-
 prepare_wifi_fixture() {
   local guest_script
   guest_script="$(cat <<'EOF'
@@ -230,13 +191,23 @@ ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_candidate}/phy80211")")"
 management_if="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
 management_gateway="$(ip -4 route show default dev "${management_if}" | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "via") {print $(i+1); exit}}')"
 [[ -n "${management_if}" && -n "${management_gateway}" ]]
-[[ "${management_if}" != "${ap_candidate}" ]]
+
+provider_if=""
+for path in /sys/class/net/*/address; do
+  [[ "$(cat "${path}")" == "${provider_mac}" ]] || continue
+  provider_if="$(basename "$(dirname "${path}")")"
+  break
+done
+[[ -n "${provider_if}" ]]
+[[ "${provider_if}" != "${management_if}" && "${provider_if}" != "${ap_candidate}" ]]
 
 ip netns add pzwifiap
 ip netns exec pzwifiap sleep infinity </dev/null >/dev/null 2>&1 &
 ap_ns_pid=$!
 printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
+
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
+ip link set "${provider_if}" netns pzwifiap
 udevadm settle
 
 ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == "Interface" {print $2; exit}')"
@@ -244,38 +215,31 @@ client_if="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
 [[ -n "${ap_if}" && -n "${client_if}" ]]
 [[ "${management_if}" != "${client_if}" ]]
 
-ip link add pzwifi-root type veth peer name pzwifi-up
-ip link set pzwifi-up netns pzwifiap
-ip address add "${upstream_root_cidr}" dev pzwifi-root
-ip link set pzwifi-root up
-
-sysctl -q -w net.ipv4.ip_forward=1
-iptables -t nat -A POSTROUTING -s 172.31.254.0/30 -o "${management_if}" -j MASQUERADE
-iptables -A FORWARD -i pzwifi-root -o "${management_if}" -j ACCEPT
-iptables -A FORWARD -i "${management_if}" -o pzwifi-root \
-  -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-ip route add table "${policy_table}" default via "${management_gateway}" dev "${management_if}"
-ip rule add priority "${policy_priority}" from "${upstream_ap_ip}/32" table "${policy_table}"
-ip rule add priority "${return_priority}" to 172.31.254.0/30 table main
-
-ip netns exec pzwifiap bash -s -- "${ap_if}" "${upstream_ap_cidr}" "${wifi_ap_cidr}" "${endpoint_ip}" <<'AP'
+ip netns exec pzwifiap bash -s -- \
+  "${ap_if}" "${provider_if}" "${provider_guest_cidr}" "${provider_host_ip}" "${wifi_ap_cidr}" <<'AP'
 set -Eeuo pipefail
 ap_if="$1"
-upstream_ap_cidr="$2"
-wifi_ap_cidr="$3"
-endpoint_ip="$4"
+provider_if="$2"
+provider_guest_cidr="$3"
+provider_host_ip="$4"
+wifi_ap_cidr="$5"
+
 ip link set lo up
-ip address add "${endpoint_ip}/32" dev lo
-ip address add "${upstream_ap_cidr}" dev pzwifi-up
-ip link set pzwifi-up up
-ip route add default via 172.31.254.1
+ip address add "${provider_guest_cidr}" dev "${provider_if}"
+ip link set "${provider_if}" up
+ip route add default via "${provider_host_ip}" dev "${provider_if}"
+
 ip address add "${wifi_ap_cidr}" dev "${ap_if}"
 ip link set "${ap_if}" up
+
 sysctl -q -w net.ipv4.ip_forward=1
-iptables -t nat -A POSTROUTING -s 198.51.100.0/24 -o pzwifi-up -j MASQUERADE
-iptables -A FORWARD -i "${ap_if}" -o pzwifi-up -j ACCEPT
-iptables -A FORWARD -i pzwifi-up -o "${ap_if}" \
+iptables -t nat -A POSTROUTING -s 198.51.100.0/24 -o "${provider_if}" -j MASQUERADE
+iptables -A FORWARD -i "${ap_if}" -o "${provider_if}" -j ACCEPT
+iptables -A FORWARD -i "${provider_if}" -o "${ap_if}" \
   -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+timeout 20 getent ahostsv4 example.com >/dev/null
+timeout 30 curl -4 -fsS --interface "${provider_if}" -o /dev/null https://example.com/
 AP
 
 cat >/var/tmp/podlaz-wifi-hostapd.conf <<HOSTAPD
@@ -300,17 +264,6 @@ ip netns exec pzwifiap dnsmasq \
   --dhcp-option=3,198.51.100.1 \
   --dhcp-option=6,1.1.1.1 \
   --pid-file=/run/podlaz-wifi-dnsmasq.pid
-
-ip netns exec pzwifiap sh -c \
-  'nohup /usr/lib/podlaz/xray run -config /var/tmp/podlaz-wifi-server.json >/var/tmp/podlaz-wifi-xray.log 2>&1 </dev/null & echo $! >/var/tmp/podlaz-wifi-xray.pid'
-
-for _ in $(seq 1 100); do
-  if ip netns exec pzwifiap ss -H -ltn | awk '{print $4}' | grep -Fx "${endpoint_ip}:18080" >/dev/null; then
-    break
-  fi
-  sleep 0.1
-done
-ip netns exec pzwifiap ss -H -ltn | awk '{print $4}' | grep -Fx "${endpoint_ip}:18080" >/dev/null
 
 systemctl start wpa_supplicant.service
 systemctl start NetworkManager.service
@@ -359,14 +312,10 @@ EOF
     "wifi_passphrase=${WIFI_PASSPHRASE}" \
     "wifi_connection=${WIFI_CONNECTION}" \
     "wifi_ap_cidr=${WIFI_AP_CIDR}" \
-    "endpoint_ip=${WIFI_ENDPOINT_IP}" \
-    "upstream_root_cidr=${WIFI_UPSTREAM_ROOT_CIDR}" \
-    "upstream_ap_cidr=${WIFI_UPSTREAM_AP_CIDR}" \
-    "upstream_ap_ip=${WIFI_UPSTREAM_AP_IP}" \
+    "provider_mac=${HOSTED_VM_PROVIDER_MAC}" \
+    "provider_guest_cidr=${HOSTED_VM_PROVIDER_GUEST_CIDR}" \
+    "provider_host_ip=${HOSTED_VM_PROVIDER_HOST_IP}" \
     "dhcp_range=${WIFI_DHCP_RANGE}" \
-    "policy_table=${WIFI_POLICY_TABLE}" \
-    "policy_priority=${WIFI_POLICY_PRIORITY}" \
-    "return_priority=${WIFI_RETURN_PRIORITY}" \
     bash -s <<<"${guest_script}"
   WIFI_CLIENT_IF="$(hosted_vm_ga_exec /bin/cat /var/tmp/podlaz-wifi-client-if | tr -d '[:space:]')"
   [[ -n "${WIFI_CLIENT_IF}" ]]
@@ -465,22 +414,15 @@ client_if="$(cat /var/tmp/podlaz-wifi-client-if 2>/dev/null)"
 management_if="$(cat /var/tmp/podlaz-wifi-management-if 2>/dev/null)"
 management_gateway="$(cat /var/tmp/podlaz-wifi-management-gateway 2>/dev/null)"
 ap_ns_pid="$(cat /var/tmp/podlaz-wifi-ap-ns.pid 2>/dev/null)"
-[[ -z "$client_if" ]] || nmcli connection down "$wifi_connection" >/dev/null 2>&1
-ip rule del priority "$policy_priority" from "$upstream_ap_ip/32" table "$policy_table" >/dev/null 2>&1
-ip rule del priority "$return_priority" to 172.31.254.0/30 table main >/dev/null 2>&1
-ip route flush table "$policy_table" >/dev/null 2>&1
-[[ -z "$management_if" || -z "$management_gateway" ]] || ip route replace default via "$management_gateway" dev "$management_if"
-[[ -z "$management_if" ]] || iptables -t nat -D POSTROUTING -s 172.31.254.0/30 -o "$management_if" -j MASQUERADE >/dev/null 2>&1
-[[ -z "$management_if" ]] || iptables -D FORWARD -i pzwifi-root -o "$management_if" -j ACCEPT >/dev/null 2>&1
-[[ -z "$management_if" ]] || iptables -D FORWARD -i "$management_if" -o pzwifi-root -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1
-[[ -z "$ap_ns_pid" ]] || kill "$ap_ns_pid" >/dev/null 2>&1
+[[ -z "${client_if}" ]] || nmcli connection down "${wifi_connection}" >/dev/null 2>&1
+[[ -z "${management_if}" || -z "${management_gateway}" ]] || ip route replace default via "${management_gateway}" dev "${management_if}"
+[[ -z "${ap_ns_pid}" ]] || kill "${ap_ns_pid}" >/dev/null 2>&1
 ip netns del pzwifiap >/dev/null 2>&1
-ip link del pzwifi-root >/dev/null 2>&1
-rm -f /var/tmp/podlaz-wifi-*.pid /var/tmp/podlaz-wifi-hostapd.conf /var/tmp/podlaz-wifi-server.json /var/tmp/podlaz-wifi-client-if /var/tmp/podlaz-wifi-management-if /var/tmp/podlaz-wifi-management-gateway
+rm -f /var/tmp/podlaz-wifi-*.pid /var/tmp/podlaz-wifi-hostapd.conf /var/tmp/podlaz-wifi-client-if /var/tmp/podlaz-wifi-management-if /var/tmp/podlaz-wifi-management-gateway
 exit 0
 EOF
 )"
-  hosted_vm_ga_bash "wifi_connection=${WIFI_CONNECTION@Q}; policy_priority=${WIFI_POLICY_PRIORITY@Q}; return_priority=${WIFI_RETURN_PRIORITY@Q}; upstream_ap_ip=${WIFI_UPSTREAM_AP_IP@Q}; policy_table=${WIFI_POLICY_TABLE@Q}; ${guest_script}" >/dev/null 2>&1 || true
+  hosted_vm_ga_bash "wifi_connection=${WIFI_CONNECTION@Q}; ${guest_script}" >/dev/null 2>&1 || true
 }
 
 
@@ -489,6 +431,7 @@ cleanup() {
   trap - EXIT
   set +e
   hosted_vm_tun_remove_foreign_state || cleanup_failed=1
+  hosted_vm_tun_stop_endpoint || cleanup_failed=1
   hosted_vm_remove_polkit_rule || cleanup_failed=1
   cleanup_wifi_fixture || cleanup_failed=1
   hosted_vm_stop || cleanup_failed=1
@@ -509,7 +452,7 @@ run_scenario() {
   hosted_vm_tun_init "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}" "${XRAY_ROOT}"
 
   mark_failure fixture synthetic.endpoint_material
-  prepare_endpoint_material
+  hosted_vm_tun_start_endpoint
 
   mark_failure infrastructure vm.image
   hosted_vm_prepare_image
@@ -525,10 +468,10 @@ run_scenario() {
   hosted_vm_tun_install_candidate
 
   mark_failure fixture guest.control
-  hosted_vm_tun_prepare_control
+  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
+  hosted_vm_prepare_guest_agent
   hosted_vm_tun_install_helpers "${REPO_ROOT}"
   hosted_vm_tun_install_polkit "${PRIVATE_ROOT}/polkit.rules"
-  install_wifi_fixture_files
 
   mark_failure capability wifi.simulation_stack
   prepare_wifi_fixture
