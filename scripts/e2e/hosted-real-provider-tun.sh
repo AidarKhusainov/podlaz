@@ -174,6 +174,16 @@ for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
 PY
 }
 
+mask_multiline_sensitive() {
+  local value="${1:-}"
+  [[ -n "${value}" ]] || return 0
+  mask_value "${value}"
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    mask_value "${line}"
+  done <<<"${value}"
+}
+
 mask_provider_material() {
   [[ -n "${PODLAZ_E2E_PROFILE_URI:-}" ]] && mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI}"
   [[ -n "${PODLAZ_E2E_PROFILE_URI_LIST:-}" ]] && mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI_LIST}"
@@ -413,8 +423,8 @@ main() {
   chmod 0600 "${REPORT}"
   printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}" >>"${REPORT}"
   printf 'candidate.package_sha256=%s\n' "${CANDIDATE_SHA256}" >>"${REPORT}"
-  mask_provider_material
   trap 'remove_provider_material; teardown_all' EXIT INT TERM
+  mask_provider_material
   run_provider_scenario
   remove_provider_material
   teardown_all
