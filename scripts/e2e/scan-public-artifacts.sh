@@ -7,6 +7,88 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 
 require_cmd chmod find grep mv python3 sed wc
 
+scan_provider_tun() {
+  local result_file="${E2E_ARTIFACT_DIR}/hosted-real-provider-tun.txt"
+  mapfile -d '' -t public_entries < <(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -print0)
+
+  [[ "${#public_entries[@]}" -eq 1 ]] || fail "provider TUN public artifacts must contain exactly one filesystem entry"
+  [[ "${public_entries[0]}" == "${result_file}" ]] || fail "unexpected provider TUN public artifact"
+  [[ -f "${result_file}" && ! -L "${result_file}" ]] || fail "provider TUN result must be a regular file"
+
+  python3 - "${result_file}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+required = {
+    "candidate.provenance",
+    "provider.material_private",
+    "ordinary_user.boundary",
+    "tun.verified_active",
+    "tun.system_dns",
+    "tun.ipv4_tcp",
+    "tun.tls",
+    "tun.https",
+    "tun.provider_egress",
+    "tun.doctor",
+    "privacy.direct_uplink_blocked",
+    "foreign.state_preserved",
+    "tun.clean_disconnect",
+    "tun.terminal_cleanup",
+    "tun.recovery_clean",
+    "guest.baseline_restored",
+    "guest.ordinary_connectivity_restored",
+    "outer.cleanup",
+    "artifact.privacy",
+}
+values = {}
+candidate = {}
+failure = {}
+for line in path.read_text(encoding="utf-8").splitlines():
+    match = re.fullmatch(r"([a-z0-9_.-]+)=(pass|fail|observed|unavailable)", line)
+    if match:
+        key, value = match.groups()
+        if key not in required or key in values:
+            raise SystemExit("provider TUN report has an unexpected or duplicate evidence key")
+        values[key] = value
+        continue
+    match = re.fullmatch(r"candidate\.(commit|package_sha256)=([0-9a-f]+)", line)
+    if match:
+        key, value = match.groups()
+        expected_length = 40 if key == "commit" else 64
+        if key in candidate or len(value) != expected_length:
+            raise SystemExit("provider TUN report has invalid candidate provenance")
+        candidate[key] = value
+        continue
+    match = re.fullmatch(r"failure\.(class|step)=([A-Za-z0-9_.-]+)", line)
+    if match:
+        key, value = match.groups()
+        if key in failure:
+            raise SystemExit("provider TUN report has duplicate failure metadata")
+        failure[key] = value
+        continue
+    raise SystemExit("provider TUN report contains non-normalized data")
+
+if set(values) != required:
+    raise SystemExit("provider TUN report evidence schema is incomplete")
+if set(candidate) != {"commit", "package_sha256"}:
+    raise SystemExit("provider TUN report candidate provenance is incomplete")
+if set(failure) != {"class", "step"}:
+    raise SystemExit("provider TUN report failure metadata is incomplete")
+if failure["class"] not in {
+    "none", "product", "provider", "fixture", "infrastructure", "capability", "diagnostic_unknown"
+}:
+    raise SystemExit("provider TUN report failure class is invalid")
+PY
+}
+
+if [[ "${1:-}" == "real-provider-tun" ]]; then
+  scan_provider_tun
+  exit 0
+fi
+(($# == 0)) || fail "usage: $0 [real-provider-tun]"
+
 result_file="${E2E_ARTIFACT_DIR}/real-provider-result.txt"
 mapfile -d '' -t public_entries < <(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -print0)
 
