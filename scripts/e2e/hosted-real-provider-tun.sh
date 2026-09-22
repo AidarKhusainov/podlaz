@@ -270,10 +270,12 @@ run_provider_traffic_checks() {
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   record_evidence tun.system_dns pass
 
-  guest_exec timeout 15 /bin/bash -lc 'exec 3<>/dev/tcp/example.com/443; exec 3>&-'
+  PROBE_IP="$(guest_exec getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
+  [[ -n "${PROBE_IP}" ]] || return 1
+  guest_exec timeout 15 /bin/bash -lc "exec 3<>/dev/tcp/${PROBE_IP}/443; exec 3>&-"
   record_evidence tun.ipv4_tcp pass
 
-  guest_exec timeout 20 openssl s_client -connect example.com:443 -servername example.com -brief </dev/null \
+  guest_exec timeout 20 openssl s_client -connect "${PROBE_IP}:443" -servername example.com -brief </dev/null \
     >"${PRIVATE_ROOT}/tls.stdout" 2>"${PRIVATE_ROOT}/tls.stderr"
   record_evidence tun.tls pass
 
