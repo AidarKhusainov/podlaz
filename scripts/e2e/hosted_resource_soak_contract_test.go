@@ -86,9 +86,14 @@ func TestHostedResourceSoakUsesProductionLifecycleAndExactCleanupBeforeGuestDest
 		"wait_base_completion",
 		"validate_base_positive_control",
 	}
+	scenarioStart := strings.Index(script, "run_scenario() {")
+	if scenarioStart < 0 {
+		t.Fatal("hosted resource soak run_scenario is missing")
+	}
+	scenario := script[scenarioStart:]
 	previous := -1
 	for _, marker := range ordered {
-		index := strings.Index(script, marker)
+		index := strings.Index(scenario, marker)
 		if index < 0 {
 			t.Fatalf("hosted resource soak lost lifecycle boundary %q", marker)
 		}
