@@ -1640,7 +1640,9 @@ def validate_clean_baseline(
                 raise IsolationError("dedicated-runner loopback identity is ambiguous")
             continue
         if not _is_positive_uplink_link(link, uplink_environment):
-            raise IsolationError("link is not a positive soak uplink candidate for the selected environment")
+            if uplink_environment == UPLINK_ENVIRONMENT_DEDICATED:
+                raise IsolationError("link is not a positive physical dedicated-runner uplink candidate")
+            raise IsolationError("link is not a positive hosted-guest veth uplink candidate")
     if loopback_count != 1:
         raise IsolationError("dedicated-runner loopback cardinality is invalid")
     if len(link_by_name) != 2:
@@ -1712,7 +1714,9 @@ def validate_clean_baseline(
     uplink = next(iter(default_devices))
     uplink_link = link_by_name.get(uplink)
     if uplink_link is None or not _is_positive_uplink_link(uplink_link, uplink_environment):
-        raise IsolationError("default route does not use the selected positive soak uplink")
+        if uplink_environment == UPLINK_ENVIRONMENT_DEDICATED:
+            raise IsolationError("default route does not use a positive physical dedicated-runner uplink")
+        raise IsolationError("default route does not use the hosted-guest veth uplink")
 
     addresses = snapshot.get("addresses")
     if not isinstance(addresses, list):
