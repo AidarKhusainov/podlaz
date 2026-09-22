@@ -17,7 +17,7 @@ source "${SCRIPT_DIR}/lib/tun_soak_health.sh"
 # shellcheck source=lib/tun_soak_cleanup.sh
 source "${SCRIPT_DIR}/lib/tun_soak_cleanup.sh"
 
-require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep hostname id install ip mktemp nmcli python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
+require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git grep hostname id install ip mktemp nmcli python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
 
 CANONICAL_DNS_CHECK_HOST="github.com"
 CANONICAL_PUBLIC_IP_CHECK_URL="https://api.ipify.org"
@@ -27,6 +27,8 @@ CANONICAL_TRUSTED_HOST_FILE="/etc/podlaz-e2e/tun-resource-soak-trusted-host.json
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
+: "${PODLAZ_E2E_PREBUILT_DEB:=}"
+: "${PODLAZ_E2E_CANDIDATE_COMMIT:=}"
 : "${PODLAZ_E2E_DNS_CHECK_HOST:=${CANONICAL_DNS_CHECK_HOST}}"
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=${CANONICAL_PUBLIC_IP_CHECK_URL}}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
@@ -40,6 +42,7 @@ CANONICAL_TRUSTED_HOST_FILE="/etc/podlaz-e2e/tun-resource-soak-trusted-host.json
 : "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS:=10}"
 : "${PODLAZ_E2E_SOAK_POLICY_FILE:=${CANONICAL_SOAK_POLICY_FILE}}"
 : "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE:=${CANONICAL_TRUSTED_HOST_FILE}}"
+: "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT:=dedicated}"
 : "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:=75}"
 : "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:=1}"
 : "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS:=10}"
@@ -85,14 +88,20 @@ if ((PODLAZ_E2E_SOAK_DURATION_SECONDS > 14400)); then
 fi
 [[ -f "${PODLAZ_E2E_SOAK_POLICY_FILE}" ]] || fail "soak policy file is missing"
 sudo -n test -f "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" || fail "trusted host fingerprint is missing"
+case "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}" in
+  dedicated|hosted-guest) ;;
+  *) fail "unsupported soak uplink environment" ;;
+esac
 
-DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
+DEV_DEB="${PODLAZ_E2E_PREBUILT_DEB:-./dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb}"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 TRANSACTION_DIR="/run/podlaz/transactions"
+NETWORK_SESSION_STATE="/run/podlaz/network-session-continuation.json"
 METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
 TUN_SOAK_STATUS_TOOL="${SCRIPT_DIR}/lib/tun_soak_status.py"
 NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 ISOLATION_TOOL="${SCRIPT_DIR}/lib/tun_soak_isolation.py"
+ACTIVE_AUTHORITY_TOOL="${SCRIPT_DIR}/hosted_synthetic_active_authority.py"
 ENVIRONMENT_TOOL="${SCRIPT_DIR}/lib/tun_soak_environment.py"
 
 setup_isolated_xdg "tun-resource-soak"
@@ -139,6 +148,8 @@ SESSION_TWO_IDENTITY="${SOAK_PRIVATE_DIR}/session-two.json"
 SESSION_ONE_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/session-one-network.json"
 SESSION_TWO_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/session-two-network.json"
 PRECONNECT_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/preconnect-network.json"
+PRIVACY_UPLINK_FILE="${SOAK_PRIVATE_DIR}/privacy-uplink"
+PRIVACY_PROBE_IP_FILE="${SOAK_PRIVATE_DIR}/privacy-probe-ip"
 PROFILE_ID=""
 HOST_SENSITIVE_VALUES=""
 BUILD_COMMIT=""
@@ -147,6 +158,7 @@ SOAK_PHASE="initialization"
 SOAK_COMMAND_EXIT=""
 SOAK_COMMAND_CLASSIFICATION=""
 SOAK_STATUS_VERDICT=""
+SOAK_FAILURE_DOMAIN=""
 DOCTOR_RUNS=0
 DOCTOR_UNHEALTHY_RUNS=0
 WARMED_DAEMON_PID=""
@@ -434,6 +446,7 @@ capture_network_isolation_baseline() {
   sudo -n python3 "${ISOLATION_TOOL}" capture \
     --output "${NETWORK_ISOLATION_BASELINE}" \
     --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" \
+    --uplink-environment "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}" \
     >/dev/null 2>"${stderr_file}" || fail "clean structural network isolation cannot be proved"
 }
 
@@ -442,12 +455,98 @@ assert_network_isolation() {
   local -a args
   [[ "${label}" =~ ^[a-z0-9-]+$ ]] || fail "network isolation label is invalid"
   stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-${label}.stderr"
-  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}" --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}")
+  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}" --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" --uplink-environment "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}")
   if [[ -n "${manifest}" ]]; then
-    args+=(--manifest "${manifest}")
+    args+=(--manifest "${manifest}" --session-authority "${NETWORK_SESSION_STATE}")
   fi
-  sudo -n python3 "${ISOLATION_TOOL}" "${args[@]}" \
-    >/dev/null 2>"${stderr_file}" || fail "${label}: structural network isolation cannot be proved"
+  if sudo -n python3 "${ISOLATION_TOOL}" "${args[@]}" >/dev/null 2>"${stderr_file}"; then
+    return 0
+  fi
+  local changed
+  changed="$(sed -n 's/^network isolation verification failed: foreign or underlying network state changed during the soak: \([a-z0-9_,]*\)$/\1/p' "${stderr_file}" | head -n1)"
+  if [[ -n "${changed}" && "${changed}" =~ ^(schema_version|network_namespace_inode|links|addresses|rules_v4|rules_v6|routes_v4|routes_v6|nftables|resolved|network_manager|runtime_os)(,(schema_version|network_namespace_inode|links|addresses|rules_v4|rules_v6|routes_v4|routes_v6|nftables|resolved|network_manager|runtime_os))*$ ]]; then
+    SOAK_FAILURE_DOMAIN=infrastructure
+    fail "${label}: structural network isolation changed component(s): ${changed}"
+  fi
+  SOAK_FAILURE_DOMAIN=diagnostic_unknown
+  fail "${label}: structural network isolation cannot be proved"
+}
+
+assert_exact_active_authority() {
+  local label="${1:-}" status_file dns_file domain_file default_file nft_file verifier_rc
+  [[ "${label}" =~ ^[a-z0-9-]+$ ]] || {
+    SOAK_FAILURE_DOMAIN=fixture
+    fail "active authority label is invalid"
+    return 1
+  }
+  status_file="${SOAK_PRIVATE_DIR}/${label}-daemon-status.json"
+  dns_file="${SOAK_PRIVATE_DIR}/${label}-resolved-dns.txt"
+  domain_file="${SOAK_PRIVATE_DIR}/${label}-resolved-domain.txt"
+  default_file="${SOAK_PRIVATE_DIR}/${label}-resolved-default-route.txt"
+  nft_file="${SOAK_PRIVATE_DIR}/${label}-nft-ruleset.json"
+
+  timeout --signal=TERM --kill-after=2s 10s sudo -n curl --fail --silent --show-error --max-time 5 \
+    --unix-socket "${DAEMON_SOCKET}" http://localhost/v1/status >"${status_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: daemon authority status is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n resolvectl dns >"${dns_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: resolved DNS authority is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n resolvectl domain >"${domain_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: resolved domain authority is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n resolvectl default-route >"${default_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: resolved default-route authority is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n nft -j list ruleset >"${nft_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: nftables authority is unavailable"; return 1; }
+
+  set +e
+  sudo -n python3 "${ACTIVE_AUTHORITY_TOOL}" \
+    --status "${status_file}" \
+    --transactions "${TRANSACTION_DIR}" \
+    --session "${NETWORK_SESSION_STATE}" \
+    --boot-id /proc/sys/kernel/random/boot_id \
+    --runtime-config /run/podlaz/generated/xray.json \
+    --resolved-dns "${dns_file}" \
+    --resolved-domain "${domain_file}" \
+    --resolved-default-route "${default_file}" \
+    --nft-ruleset "${nft_file}" \
+    >"${SOAK_PRIVATE_DIR}/${label}-active-authority.stdout" \
+    2>"${SOAK_PRIVATE_DIR}/${label}-active-authority.stderr"
+  verifier_rc=$?
+  set -e
+  case "${verifier_rc}" in
+    0) return 0 ;;
+    1) SOAK_FAILURE_DOMAIN=product ;;
+    *) SOAK_FAILURE_DOMAIN=diagnostic_unknown ;;
+  esac
+  fail "${label}: exact active TUN/Privacy Envelope authority is invalid"
+}
+
+capture_direct_uplink_privacy_baseline() {
+  local uplink probe_ip
+  uplink="$(ip -4 route show table main default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  [[ -n "${uplink}" && "${uplink}" != "podlaz0" ]] || fail "privacy baseline has no ordinary uplink"
+  probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
+  [[ -n "${probe_ip}" ]] || fail "privacy baseline probe address is unavailable"
+  timeout --signal=TERM --kill-after=2s 12s     curl -4 -fsS --interface "${uplink}" --connect-timeout 4 --max-time 10     --resolve "example.com:443:${probe_ip}" https://example.com/ -o /dev/null ||
+    fail "ordinary direct uplink is unavailable before the soak"
+  printf '%s\n' "${uplink}" >"${PRIVACY_UPLINK_FILE}"
+  printf '%s\n' "${probe_ip}" >"${PRIVACY_PROBE_IP_FILE}"
+  chmod 0600 "${PRIVACY_UPLINK_FILE}" "${PRIVACY_PROBE_IP_FILE}"
+  append_sensitive_value "${uplink}"
+  append_sensitive_value "${probe_ip}"
+}
+
+assert_direct_uplink_blocked() {
+  local uplink probe_ip
+  [[ -f "${PRIVACY_UPLINK_FILE}" && -f "${PRIVACY_PROBE_IP_FILE}" ]] ||
+    { SOAK_FAILURE_DOMAIN=fixture; fail "privacy baseline evidence is unavailable"; return 1; }
+  uplink="$(cat "${PRIVACY_UPLINK_FILE}")"
+  probe_ip="$(cat "${PRIVACY_PROBE_IP_FILE}")"
+  [[ -n "${uplink}" && -n "${probe_ip}" ]] ||
+    { SOAK_FAILURE_DOMAIN=fixture; fail "privacy baseline evidence is incomplete"; return 1; }
+  if timeout --signal=TERM --kill-after=2s 8s     curl -4 -fsSk --interface "${uplink}" --connect-timeout 3 --max-time 6     --resolve "example.com:443:${probe_ip}" https://example.com/ -o /dev/null     >/dev/null 2>&1; then
+    SOAK_FAILURE_DOMAIN=product
+    fail "Privacy Envelope allowed ordinary direct uplink egress"
+  fi
 }
 
 run_bounded_data_plane_probe() {
@@ -464,6 +563,8 @@ run_bounded_data_plane_probe() {
     >"${curl_stdout}" 2>"${curl_stderr}" || fail "${label}: bounded HTTPS probe failed"
   append_sensitive_value "$(cat "${curl_stdout}")"
   wait_for_verified_tun_status "${label}"
+  assert_exact_active_authority "${label}-authority"
+  assert_direct_uplink_blocked
 }
 
 precondition_warmed_inactive_baseline() {
@@ -483,6 +584,8 @@ precondition_warmed_inactive_baseline() {
     --output "${PRECONDITION_IDENTITY}" || fail "preconditioning process attribution failed"
   snapshot_network_manifest "${PRECONDITION_NETWORK_MANIFEST}"
   assert_network_isolation precondition-active "${PRECONDITION_NETWORK_MANIFEST}"
+  assert_exact_active_authority precondition-authority
+  assert_direct_uplink_blocked
 
   SOAK_PHASE="precondition-warmup"
   sleep "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS}"
@@ -582,6 +685,8 @@ run_reconnect_probe() {
     --after "${SESSION_TWO_IDENTITY}" || fail "reconnect did not replace the exact supervised child"
   snapshot_network_manifest "${SESSION_TWO_NETWORK_MANIFEST}"
   assert_network_isolation reconnect-attributed "${SESSION_TWO_NETWORK_MANIFEST}"
+  assert_exact_active_authority reconnect-authority
+  assert_direct_uplink_blocked
   SOAK_PHASE="reconnect-warmup"
   sleep "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}"
   SOAK_PHASE="reconnect-sampling"
@@ -641,13 +746,13 @@ write_public_report() {
 
 write_failure_evidence() {
   local harness_exit_code="$1"
-  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${SOAK_STATUS_VERDICT}" "${harness_exit_code}" <<'PY'
+  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${SOAK_STATUS_VERDICT}" "${SOAK_FAILURE_DOMAIN}" "${harness_exit_code}" <<'PY'
 import json
 import os
 import re
 import sys
 
-path, phase, command_exit_text, command_classification_text, status_verdict_text, harness_exit_text = sys.argv[1:]
+path, phase, command_exit_text, command_classification_text, status_verdict_text, failure_domain_text, harness_exit_text = sys.argv[1:]
 allowed_phases = {
     "initialization",
     "cleanup-preflight",
@@ -713,10 +818,16 @@ allowed_status_verdicts = {
     "command-timeout",
     "invalid-status",
     "retry-degraded-timeout",
+    "retry-initializing-timeout",
     "retry-revalidating-timeout",
     "terminal-cleanup-required",
     "terminal-inactive",
 }
+failure_domain = None
+if failure_domain_text:
+    if failure_domain_text not in {"product", "fixture", "infrastructure", "capability", "diagnostic_unknown"}:
+        raise SystemExit("invalid resource-soak failure domain")
+    failure_domain = failure_domain_text
 status_verdict = None
 if status_verdict_text:
     if status_verdict_text not in allowed_status_verdicts:
@@ -729,6 +840,7 @@ payload = {
     "command_exit_code": command_exit_code,
     "command_classification": command_classification,
     "status_verdict": status_verdict,
+    "failure_domain": failure_domain,
 }
 temporary = path + ".tmp"
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
@@ -770,21 +882,32 @@ SOAK_PHASE="configuration"
 write_configuration
 
 SOAK_PHASE="package-build"
-log "build exact release-like package for resource soak"
-# shellcheck disable=SC1091
-. packaging/package-toolchain.env
-go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
-export PATH="$(go env GOPATH)/bin:${PATH}"
-BUILD_COMMIT="$(git rev-parse HEAD)"
-PODLAZ_COMMIT="${BUILD_COMMIT}" \
-  PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
-  PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
-  bash scripts/build-deb.sh >"${PACKAGE_BUILD_LOG}" 2>&1
-test -f "${DEV_DEB}" || fail "expected resource-soak package was not built"
+if [[ -n "${PODLAZ_E2E_PREBUILT_DEB}" ]]; then
+  [[ -f "${DEV_DEB}" && ! -L "${DEV_DEB}" ]] || fail "prebuilt resource-soak candidate must be a regular non-symlink file"
+  [[ "$(dpkg-deb --field "${DEV_DEB}" Package)" == podlaz ]] || fail "prebuilt resource-soak candidate is not podlaz"
+  [[ "$(dpkg-deb --field "${DEV_DEB}" Architecture)" == "${PODLAZ_DEB_ARCH}" ]] || fail "prebuilt resource-soak candidate architecture does not match the runtime"
+  [[ "${PODLAZ_E2E_CANDIDATE_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "prebuilt resource-soak candidate requires an exact 40-hex commit"
+  DEV_DEB="$(readlink -f -- "${DEV_DEB}")"
+  BUILD_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT,,}"
+  printf 'prebuilt candidate supplied by the outer disposable qualification environment\n' >"${PACKAGE_BUILD_LOG}"
+else
+  log "build exact release-like package for resource soak"
+  require_cmd go
+  # shellcheck disable=SC1091
+  . packaging/package-toolchain.env
+  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
+  export PATH="$(go env GOPATH)/bin:${PATH}"
+  BUILD_COMMIT="$(git rev-parse HEAD)"
+  PODLAZ_COMMIT="${BUILD_COMMIT}" \
+    PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
+    PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
+    bash scripts/build-deb.sh >"${PACKAGE_BUILD_LOG}" 2>&1
+  test -f "${DEV_DEB}" || fail "expected resource-soak package was not built"
+fi
 
 SOAK_PHASE="package-install"
-sudo -n apt install -y "./${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1
-sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1
+sudo -n apt install -y "${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1
+sudo -n apt install --reinstall -y "${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
 wait_for_daemon_socket "${DAEMON_SOCKET}" 15
@@ -818,6 +941,7 @@ snapshot_network_manifest "${PRECONNECT_NETWORK_MANIFEST}"
 assert_resources_absent preconnect "${PRECONNECT_NETWORK_MANIFEST}"
 SOAK_PHASE="isolation-baseline"
 capture_network_isolation_baseline
+capture_direct_uplink_privacy_baseline
 precondition_warmed_inactive_baseline
 
 SOAK_PHASE="session-one-connect"
@@ -838,6 +962,8 @@ sudo -n python3 "${METRICS_TOOL}" assert-replaced \
   --after "${SESSION_ONE_IDENTITY}" || fail "measured session did not replace the preconditioning child on the same daemon"
 snapshot_network_manifest "${SESSION_ONE_NETWORK_MANIFEST}"
 assert_network_isolation active-attributed "${SESSION_ONE_NETWORK_MANIFEST}"
+assert_exact_active_authority active-authority
+assert_direct_uplink_blocked
 SOAK_PHASE="warmup"
 sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"
 assert_network_isolation post-warmup "${SESSION_ONE_NETWORK_MANIFEST}"

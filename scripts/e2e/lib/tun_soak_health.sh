@@ -90,7 +90,7 @@ wait_for_verified_tun_status() {
         SOAK_COMMAND_CLASSIFICATION=""
         return 0
         ;;
-      retry-revalidating | retry-degraded)
+      retry-initializing | retry-revalidating)
         SOAK_STATUS_VERDICT="${verdict}"
         if ((SECONDS >= deadline)); then
           SOAK_STATUS_VERDICT="${verdict}-timeout"

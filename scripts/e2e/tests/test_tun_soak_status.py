@@ -25,24 +25,40 @@ class TunSoakStatusTests(unittest.TestCase):
         classification: str | None = None,
         tun_base: str = "enabled (podlaz0)",
     ) -> str:
-        tun_parts = [tun_base]
-        if state is not None:
-            tun_parts.append(f"current health={state}")
-        if generation is not None:
-            tun_parts.append(f"network generation={generation}")
-        if classification is not None:
-            tun_parts.append(f"classification={classification}")
-        return (
-            "Daemon: running\n"
-            "Service: systemd\n"
-            f"Connection: {connection}\n"
-            f"TUN: {'; '.join(tun_parts)}\n"
-            "Stale state: none\n"
-        )
+        del generation, classification
+        mode = "tun"
+        if tun_base != "enabled (podlaz0)":
+            mode = "proxy-only"
+        if connection == "inactive":
+            product_state = "Disconnected"
+            mode = ""
+        elif connection.startswith("active (revalidating:") or connection.startswith("active (degraded:"):
+            product_state = "Reconnecting"
+        elif connection.startswith("active (cleanup-required:"):
+            product_state = "Unknown"
+        elif connection == "active" and state == "verified":
+            product_state = "Connected"
+        elif connection == "active" and state is None:
+            product_state = "Connecting"
+        else:
+            product_state = "Unknown"
+        lines = [f"Status: {product_state}", "Profile: Example VPN"]
+        if mode:
+            lines.append(f"Mode: {mode}")
+        lines.append("Autostart: Disabled")
+        return "\n".join(lines) + "\n"
 
     def test_accepts_exact_verified_active_status(self) -> None:
         output = self.status_output(connection="active", state="verified", generation=1)
         self.assertEqual("verified", tun_soak_status.classify_status(output, exit_code=0))
+
+    def test_retries_active_status_while_tun_health_is_initializing(self) -> None:
+        output = self.status_output(connection="active", state=None)
+        self.assertEqual("retry-initializing", tun_soak_status.classify_status(output, exit_code=0))
+
+    def test_active_without_health_stays_fail_closed_for_non_enabled_tun(self) -> None:
+        output = self.status_output(connection="active", state=None, tun_base="disabled")
+        self.assertEqual("invalid-status", tun_soak_status.classify_status(output, exit_code=0))
 
     def test_retries_exact_revalidating_status(self) -> None:
         output = self.status_output(
@@ -60,7 +76,7 @@ class TunSoakStatusTests(unittest.TestCase):
             generation=2,
             classification="connectivity_failed",
         )
-        self.assertEqual("retry-degraded", tun_soak_status.classify_status(output, exit_code=3))
+        self.assertEqual("retry-revalidating", tun_soak_status.classify_status(output, exit_code=3))
 
     def test_rejects_cleanup_required_as_terminal(self) -> None:
         output = self.status_output(
@@ -69,7 +85,7 @@ class TunSoakStatusTests(unittest.TestCase):
             generation=2,
             classification="owned_state_invalid",
         )
-        self.assertEqual("terminal-cleanup-required", tun_soak_status.classify_status(output, exit_code=3))
+        self.assertEqual("invalid-status", tun_soak_status.classify_status(output, exit_code=3))
 
     def test_rejects_clean_inactive_status_after_connect(self) -> None:
         output = self.status_output(connection="inactive", state=None, tun_base="disabled")
@@ -83,17 +99,20 @@ class TunSoakStatusTests(unittest.TestCase):
             classification="uplink_revalidating",
         )
         verified = self.status_output(connection="active", state="verified", generation=1)
-        self.assertEqual("invalid-status", tun_soak_status.classify_status(revalidating, exit_code=0))
+        self.assertEqual("retry-revalidating", tun_soak_status.classify_status(revalidating, exit_code=0))
         self.assertEqual("invalid-status", tun_soak_status.classify_status(verified, exit_code=3))
 
-    def test_fails_closed_on_duplicate_or_incomplete_structural_fields(self) -> None:
+    def test_fails_closed_on_duplicate_or_wrong_mode_structural_fields(self) -> None:
         verified = self.status_output(connection="active", state="verified", generation=1)
-        duplicate = verified + "Connection: active\n"
-        missing_generation = self.status_output(connection="active", state="verified")
-        zero_generation = self.status_output(connection="active", state="verified", generation=0)
+        duplicate = verified + "Status: Connected\n"
+        wrong_mode = self.status_output(
+            connection="active",
+            state="verified",
+            generation=1,
+            tun_base="disabled",
+        )
         self.assertEqual("invalid-status", tun_soak_status.classify_status(duplicate, exit_code=0))
-        self.assertEqual("invalid-status", tun_soak_status.classify_status(missing_generation, exit_code=0))
-        self.assertEqual("invalid-status", tun_soak_status.classify_status(zero_generation, exit_code=0))
+        self.assertEqual("invalid-status", tun_soak_status.classify_status(wrong_mode, exit_code=0))
 
     def test_fails_closed_on_unknown_health_or_unbounded_output(self) -> None:
         unknown = self.status_output(connection="active", state="future-state", generation=1)
@@ -197,6 +216,16 @@ printf 'failure=%s\\n' "${FAIL_MESSAGE}"
                 env=env,
             )
 
+    def test_shell_wait_retries_initializing_then_accepts_verified(self) -> None:
+        initializing = self.status_output(connection="active", state=None)
+        verified = self.status_output(connection="active", state="verified", generation=1)
+        result = self.run_shell_wait([(initializing, 0, ""), (verified, 0, "")])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("result=0", result.stdout)
+        self.assertIn("calls=2", result.stdout)
+        self.assertIn("verdict=", result.stdout)
+        self.assertNotIn("podlaz0", result.stdout)
+
     def test_shell_wait_retries_revalidating_then_accepts_verified(self) -> None:
         revalidating = self.status_output(
             connection="active (revalidating: uplink_revalidating)",
@@ -223,7 +252,7 @@ printf 'failure=%s\\n' "${FAIL_MESSAGE}"
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("result=1", result.stdout)
         self.assertIn("calls=1", result.stdout)
-        self.assertIn("verdict=terminal-cleanup-required", result.stdout)
+        self.assertIn("verdict=invalid-status", result.stdout)
         self.assertNotIn("owned_state_invalid", result.stdout)
 
     def test_shell_wait_classifies_status_command_failure_without_raw_text(self) -> None:

@@ -33,6 +33,9 @@ DEFAULT_RULE_LAYOUT = {
     "ipv6": ((0, "local"), (32766, "main")),
 }
 DEDICATED_UPLINK_LINK_TYPE = "ether"
+UPLINK_ENVIRONMENT_DEDICATED = "dedicated"
+UPLINK_ENVIRONMENT_HOSTED_GUEST = "hosted-guest"
+UPLINK_ENVIRONMENTS = frozenset({UPLINK_ENVIRONMENT_DEDICATED, UPLINK_ENVIRONMENT_HOSTED_GUEST})
 TRUSTED_HOST_SCHEMA_VERSION = "podlaz.e2e.trusted-host.v2"
 MAX_TRUSTED_HOST_BYTES = 256 * 1024
 TRUSTED_HOST_FIELDS = frozenset({"schema_version", "runtime_os", "uplink", "resolved"})
@@ -71,6 +74,12 @@ TRUSTED_ROUTE_FIELDS = frozenset(
     }
 )
 TRUSTED_NETWORK_MANAGER_FIELDS = frozenset({"uuid", "device", "state"})
+NETWORK_SESSION_SCHEMA = "podlaz.network-session-state.v1"
+NETWORK_SESSION_OWNER = "podlaz"
+NETWORK_SESSION_MAX_BYTES = 256 * 1024
+NETWORK_SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+PRIVACY_TABLE_RE = re.compile(r"^podlaz_pe_([0-9a-f]{12})(?:_[1-9][0-9]{0,2})?$")
+PRIVACY_COMPOSITION_VERSION = 1
 
 RULE_RAW_FIELDS = frozenset(
     {
@@ -1046,7 +1055,11 @@ def _default_route_metrics(snapshot: Mapping[str, Any]) -> dict[tuple[str, str],
 
 def _main_connected_route_expectations(
     snapshot: Mapping[str, Any],
+    *,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
 ) -> tuple[list[frozenset[str]], list[frozenset[str]]]:
+    if uplink_environment not in UPLINK_ENVIRONMENTS:
+        raise IsolationError("unsupported soak uplink environment")
     """Derive exact required and prohibited-when-absent connected-route shapes."""
 
     addresses = snapshot.get("addresses")
@@ -1107,7 +1120,11 @@ def _main_connected_route_expectations(
         if "noprefixroute" in primary_flags:
             if any("noprefixroute" not in address.get("flags", []) for address in group):
                 raise IsolationError("connected-prefix noprefixroute evidence is ambiguous")
-            target = suppressed_groups
+            target = (
+                required_groups
+                if uplink_environment == UPLINK_ENVIRONMENT_HOSTED_GUEST
+                else suppressed_groups
+            )
         else:
             target = required_groups
 
@@ -1161,8 +1178,15 @@ def _main_connected_route_expectations(
     return required_groups, suppressed_groups
 
 
-def _validate_main_connected_routes(snapshot: Mapping[str, Any]) -> None:
-    required_groups, suppressed_groups = _main_connected_route_expectations(snapshot)
+def _validate_main_connected_routes(
+    snapshot: Mapping[str, Any],
+    *,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
+) -> None:
+    required_groups, suppressed_groups = _main_connected_route_expectations(
+        snapshot,
+        uplink_environment=uplink_environment,
+    )
     groups = required_groups + suppressed_groups
     matches = [0] * len(groups)
     observed: set[str] = set()
@@ -1457,7 +1481,14 @@ def _uplink_global_addresses(
     return _structural_sort(global_addresses)
 
 
-def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any]) -> None:
+def validate_trusted_host(
+    snapshot: Mapping[str, Any],
+    trusted: Mapping[str, Any],
+    *,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
+) -> None:
+    if uplink_environment not in UPLINK_ENVIRONMENTS:
+        raise IsolationError("unsupported soak uplink environment")
     root = _required_mapping(trusted, "trusted host fingerprint")
     if set(root) != TRUSTED_HOST_FIELDS or root.get("schema_version") != TRUSTED_HOST_SCHEMA_VERSION:
         raise IsolationError("trusted host fingerprint has an unsupported schema")
@@ -1487,7 +1518,7 @@ def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any
     ifindex = trusted_link["ifindex"]
     if (
         ifname == "lo"
-        or not _is_positive_physical_link(trusted_link)
+        or not _is_positive_uplink_link(trusted_link, uplink_environment)
         or any(route.get("dev") != ifname for route in trusted_defaults)
         or any(address.get("label") not in {ifname, ""} for address in trusted_addresses)
         or trusted_connection.get("device") != ifname
@@ -1541,12 +1572,18 @@ def validate_trusted_host(snapshot: Mapping[str, Any], trusted: Mapping[str, Any
         raise IsolationError("trusted resolver fingerprint does not match the current host")
 
 
-def _is_positive_physical_link(link: Mapping[str, Any]) -> bool:
-    return (
-        str(link.get("kind", "")) == ""
-        and str(link.get("link_type", "")) == DEDICATED_UPLINK_LINK_TYPE
-        and link.get("master") in {None, "", 0}
-    )
+def _is_positive_uplink_link(link: Mapping[str, Any], uplink_environment: str) -> bool:
+    if uplink_environment not in UPLINK_ENVIRONMENTS:
+        raise IsolationError("unsupported soak uplink environment")
+    if (
+        str(link.get("link_type", "")) != DEDICATED_UPLINK_LINK_TYPE
+        or link.get("master") not in {None, "", 0}
+    ):
+        return False
+    kind = str(link.get("kind", ""))
+    if uplink_environment == UPLINK_ENVIRONMENT_DEDICATED:
+        return kind == ""
+    return kind == "veth"
 
 
 def _default_routes(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -1576,7 +1613,13 @@ def _default_route_devices(snapshot: Mapping[str, Any]) -> set[str]:
     return devices
 
 
-def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
+def validate_clean_baseline(
+    snapshot: Mapping[str, Any],
+    *,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
+) -> None:
+    if uplink_environment not in UPLINK_ENVIRONMENTS:
+        raise IsolationError("unsupported soak uplink environment")
     links = snapshot.get("links")
     if not isinstance(links, list):
         raise IsolationError("link inventory is unavailable")
@@ -1602,8 +1645,10 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
             ):
                 raise IsolationError("dedicated-runner loopback identity is ambiguous")
             continue
-        if not _is_positive_physical_link(link):
-            raise IsolationError("link is not a positive physical dedicated-runner uplink candidate")
+        if not _is_positive_uplink_link(link, uplink_environment):
+            if uplink_environment == UPLINK_ENVIRONMENT_DEDICATED:
+                raise IsolationError("link is not a positive physical dedicated-runner uplink candidate")
+            raise IsolationError("link is not a positive hosted-guest veth uplink candidate")
     if loopback_count != 1:
         raise IsolationError("dedicated-runner loopback cardinality is invalid")
     if len(link_by_name) != 2:
@@ -1637,7 +1682,7 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
         )
 
     _validate_non_main_routes(snapshot)
-    _validate_main_connected_routes(snapshot)
+    _validate_main_connected_routes(snapshot, uplink_environment=uplink_environment)
 
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
@@ -1674,8 +1719,10 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
         raise IsolationError("dedicated runner must have exactly one authoritative default uplink")
     uplink = next(iter(default_devices))
     uplink_link = link_by_name.get(uplink)
-    if uplink_link is None or not _is_positive_physical_link(uplink_link):
-        raise IsolationError("default route does not use a positive physical dedicated-runner uplink")
+    if uplink_link is None or not _is_positive_uplink_link(uplink_link, uplink_environment):
+        if uplink_environment == UPLINK_ENVIRONMENT_DEDICATED:
+            raise IsolationError("default route does not use a positive physical dedicated-runner uplink")
+        raise IsolationError("default route does not use the hosted-guest veth uplink")
 
     addresses = snapshot.get("addresses")
     if not isinstance(addresses, list):
@@ -1713,15 +1760,68 @@ def validate_clean_baseline(snapshot: Mapping[str, Any]) -> None:
             raise IsolationError("foreign resolver default-route ownership exists before the soak")
 
 
-def _nft_entry_belongs_to_podlaz(entry: Mapping[str, Any]) -> bool:
+def _nft_entry_belongs_to_table(entry: Mapping[str, Any], *, family: str, table: str) -> bool:
     for value in entry.values():
         if not isinstance(value, Mapping):
             continue
-        family = value.get("family")
-        table = value.get("table", value.get("name"))
-        if family == PODLAZ_NFT_FAMILY and table == PODLAZ_NFT_TABLE:
+        observed_family = value.get("family")
+        observed_table = value.get("table", value.get("name"))
+        if observed_family == family and observed_table == table:
             return True
     return False
+
+
+def _nft_entry_belongs_to_podlaz(entry: Mapping[str, Any]) -> bool:
+    return _nft_entry_belongs_to_table(
+        entry,
+        family=PODLAZ_NFT_FAMILY,
+        table=PODLAZ_NFT_TABLE,
+    )
+
+
+def _validated_privacy_authority(value: Any, *, current_boot_id: str) -> dict[str, str]:
+    session = _required_mapping(value, "Network Session authority")
+    if session.get("schema_version") != NETWORK_SESSION_SCHEMA or session.get("owner") != NETWORK_SESSION_OWNER:
+        raise IsolationError("Network Session authority identity is unsupported")
+    if str(session.get("boot_id") or "").strip() != current_boot_id:
+        raise IsolationError("Network Session authority is not current-boot")
+    session_id = str(session.get("session_id") or "").strip()
+    if NETWORK_SESSION_ID_RE.fullmatch(session_id) is None:
+        raise IsolationError("Network Session id is invalid")
+    if session.get("intent") != "resume":
+        raise IsolationError("Network Session does not authorize active protection")
+
+    protection = _required_mapping(session.get("protection"), "Privacy Envelope authority")
+    if (
+        protection.get("state") != "armed"
+        or protection.get("composition_version") != PRIVACY_COMPOSITION_VERSION
+        or protection.get("family") != PODLAZ_NFT_FAMILY
+        or protection.get("tun_interface") != PODLAZ_LINK
+    ):
+        raise IsolationError("Privacy Envelope authority is incomplete")
+    table = str(protection.get("table") or "").strip()
+    match = PRIVACY_TABLE_RE.fullmatch(table)
+    if match is None or match.group(1) != session_id[:12]:
+        raise IsolationError("Privacy Envelope table identity is invalid")
+    return {"family": PODLAZ_NFT_FAMILY, "table": table}
+
+
+def _load_privacy_authority(path: Path) -> dict[str, str]:
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or path.is_symlink():
+            raise IsolationError("Network Session authority must be a regular file")
+        if info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077:
+            raise IsolationError("Network Session authority must be root-owned and private")
+        if info.st_size <= 0 or info.st_size > NETWORK_SESSION_MAX_BYTES:
+            raise IsolationError("Network Session authority size is invalid")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        current_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except IsolationError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise IsolationError("Network Session authority cannot be inspected") from exc
+    return _validated_privacy_authority(value, current_boot_id=current_boot_id)
 
 
 def _load_manifest(path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -1833,20 +1933,94 @@ def _rule_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> boo
     return dict(actual) == dict(expected)
 
 
-def strip_exact_podlaz_state(snapshot: Mapping[str, Any], manifest: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+def _strip_exact_podlaz_link_observation(snapshot: dict[str, Any]) -> None:
+    """Remove only kernel/NM observations derived from the exact live Podlaz TUN link."""
+
+    links = snapshot.get("links")
+    addresses = snapshot.get("addresses")
+    if not isinstance(links, list) or not isinstance(addresses, list):
+        raise IsolationError("Podlaz link observation inventory is unavailable")
+    podlaz_links = [
+        _required_mapping(link, "Podlaz link observation")
+        for link in links
+        if isinstance(link, Mapping) and link.get("ifname") == PODLAZ_LINK
+    ]
+    podlaz_addresses = [
+        _required_mapping(entry, "Podlaz address observation")
+        for entry in addresses
+        if isinstance(entry, Mapping) and entry.get("ifname") == PODLAZ_LINK
+    ]
+    if len(podlaz_links) != 1 or podlaz_links[0].get("kind") != "tun":
+        raise IsolationError("exact Podlaz TUN link observation is missing or ambiguous")
+    link_index = podlaz_links[0].get("ifindex")
+
+    route_keys = ("routes_v4", "routes_v6")
+    remaining_podlaz_routes = [
+        _required_mapping(route, "Podlaz link route observation")
+        for key in route_keys
+        for route in snapshot.get(key, [])
+        if isinstance(route, Mapping) and route.get("dev") == PODLAZ_LINK
+    ]
+    if remaining_podlaz_routes:
+        if len(podlaz_addresses) != 1 or podlaz_addresses[0].get("ifindex") != link_index:
+            raise IsolationError("exact Podlaz TUN address observation is missing or ambiguous")
+        required_local, optional_local = _local_route_expectations(snapshot)
+        required_main, suppressed_main = _main_connected_route_expectations(snapshot)
+        allowed_local = required_local | optional_local
+        allowed_main = set().union(*(required_main + suppressed_main)) if required_main or suppressed_main else set()
+
+        for key in route_keys:
+            routes = snapshot.get(key)
+            if not isinstance(routes, list):
+                raise IsolationError("route inventory is unavailable")
+            retained: list[dict[str, Any]] = []
+            for raw in routes:
+                route = _required_mapping(raw, "route inventory entry")
+                if route.get("dev") != PODLAZ_LINK:
+                    retained.append(dict(route))
+                    continue
+                identity = _route_key(route)
+                if route.get("table") == "local" and identity in allowed_local:
+                    continue
+                if (
+                    route.get("table") == "main"
+                    and route.get("dst") != "default"
+                    and identity in allowed_main
+                ):
+                    continue
+                raise IsolationError("unclaimed Podlaz link-derived route remains")
+            snapshot[key] = retained
+
+    network_manager = snapshot.get("network_manager")
+    if not isinstance(network_manager, list):
+        raise IsolationError("NetworkManager inventory is unavailable")
+    podlaz_connections = [
+        _required_mapping(connection, "Podlaz NetworkManager observation")
+        for connection in network_manager
+        if isinstance(connection, Mapping) and connection.get("device") == PODLAZ_LINK
+    ]
+    if len(podlaz_connections) > 1 or any(
+        connection.get("state") != "activated" for connection in podlaz_connections
+    ):
+        raise IsolationError("Podlaz NetworkManager observation is ambiguous")
+    snapshot["network_manager"] = [
+        dict(connection)
+        for connection in network_manager
+        if isinstance(connection, Mapping) and connection.get("device") != PODLAZ_LINK
+    ]
+
+
+def strip_exact_podlaz_state(
+    snapshot: Mapping[str, Any],
+    manifest: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    privacy_authority: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     result = copy.deepcopy(dict(snapshot))
     links = result.get("links")
-    if not isinstance(links, list):
-        raise IsolationError("link inventory is unavailable")
-    result["links"] = [link for link in links if isinstance(link, Mapping) and link.get("ifname") != PODLAZ_LINK]
     addresses = result.get("addresses")
-    if not isinstance(addresses, list):
-        raise IsolationError("address inventory is unavailable")
-    result["addresses"] = [
-        address
-        for address in addresses
-        if isinstance(address, Mapping) and address.get("ifname") != PODLAZ_LINK
-    ]
+    if not isinstance(links, list) or not isinstance(addresses, list):
+        raise IsolationError("link/address inventory is unavailable")
 
     for family, key in (("ipv4", "routes_v4"), ("ipv6", "routes_v6")):
         routes = result.get(key)
@@ -1864,14 +2038,39 @@ def strip_exact_podlaz_state(snapshot: Mapping[str, Any], manifest: Mapping[str,
             if rule.get("family") == family:
                 _remove_exact(rules, rule, _rule_matches, "policy rule")
 
+    _strip_exact_podlaz_link_observation(result)
+    result["links"] = [
+        dict(link)
+        for link in links
+        if isinstance(link, Mapping) and link.get("ifname") != PODLAZ_LINK
+    ]
+    result["addresses"] = [
+        dict(address)
+        for address in addresses
+        if isinstance(address, Mapping) and address.get("ifname") != PODLAZ_LINK
+    ]
+
     nftables = result.get("nftables")
     if not isinstance(nftables, list):
         raise IsolationError("nftables inventory is unavailable")
-    result["nftables"] = [
-        entry
-        for entry in nftables
-        if not (isinstance(entry, Mapping) and _nft_entry_belongs_to_podlaz(entry))
-    ]
+    privacy_matches = 0
+    retained_nftables: list[dict[str, Any]] = []
+    for entry in nftables:
+        if not isinstance(entry, Mapping):
+            raise IsolationError("nftables inventory entry is malformed")
+        if _nft_entry_belongs_to_podlaz(entry):
+            continue
+        if privacy_authority is not None and _nft_entry_belongs_to_table(
+            entry,
+            family=str(privacy_authority.get("family") or ""),
+            table=str(privacy_authority.get("table") or ""),
+        ):
+            privacy_matches += 1
+            continue
+        retained_nftables.append(dict(entry))
+    if privacy_authority is not None and privacy_matches == 0:
+        raise IsolationError("exact Privacy Envelope projection is missing")
+    result["nftables"] = retained_nftables
 
     resolved = _required_mapping(result.get("resolved"), "resolver inventory")
     resolved_links = resolved.get("links")
@@ -1905,13 +2104,47 @@ def assert_matches_baseline(
     baseline: Mapping[str, Any],
     current: Mapping[str, Any],
     manifest: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    privacy_authority: Mapping[str, str] | None = None,
     trusted: Mapping[str, Any] | None = None,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
 ) -> None:
-    observed = strip_exact_podlaz_state(current, manifest) if manifest is not None else dict(current)
+    observed = (
+        strip_exact_podlaz_state(
+            current,
+            manifest,
+            privacy_authority=privacy_authority,
+        )
+        if manifest is not None
+        else dict(current)
+    )
+    changed_components = sorted(
+        key
+        for key in set(baseline) | set(observed)
+        if observed.get(key) != baseline.get(key)
+    )
+    if changed_components:
+        allowed_components = {
+            "schema_version",
+            "network_namespace_inode",
+            "links",
+            "addresses",
+            "rules_v4",
+            "rules_v6",
+            "routes_v4",
+            "routes_v6",
+            "nftables",
+            "resolved",
+            "network_manager",
+            "runtime_os",
+        }
+        if any(component not in allowed_components for component in changed_components):
+            raise IsolationError("foreign or underlying network state changed during the soak")
+        raise IsolationError(
+            "foreign or underlying network state changed during the soak: "
+            + ",".join(changed_components)
+        )
     if trusted is not None:
-        validate_trusted_host(observed, trusted)
-    if observed != dict(baseline):
-        raise IsolationError("foreign or underlying network state changed during the soak")
+        validate_trusted_host(observed, trusted, uplink_environment=uplink_environment)
 
 
 def _network_namespace_inode() -> int:
@@ -1970,10 +2203,21 @@ def build_parser() -> argparse.ArgumentParser:
     capture = subparsers.add_parser("capture")
     capture.add_argument("--output", type=Path, required=True)
     capture.add_argument("--trusted-host", type=Path, required=True)
+    capture.add_argument(
+        "--uplink-environment",
+        choices=sorted(UPLINK_ENVIRONMENTS),
+        default=UPLINK_ENVIRONMENT_DEDICATED,
+    )
     verify = subparsers.add_parser("verify")
     verify.add_argument("--baseline", type=Path, required=True)
     verify.add_argument("--manifest", type=Path)
+    verify.add_argument("--session-authority", type=Path)
     verify.add_argument("--trusted-host", type=Path, required=True)
+    verify.add_argument(
+        "--uplink-environment",
+        choices=sorted(UPLINK_ENVIRONMENTS),
+        default=UPLINK_ENVIRONMENT_DEDICATED,
+    )
     return parser
 
 
@@ -1983,18 +2227,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         trusted = load_trusted_host(args.trusted_host)
         if args.command == "capture":
             snapshot = collect_snapshot()
-            validate_clean_baseline(snapshot)
-            validate_trusted_host(snapshot, trusted)
+            validate_clean_baseline(snapshot, uplink_environment=args.uplink_environment)
+            validate_trusted_host(snapshot, trusted, uplink_environment=args.uplink_environment)
             _atomic_write(args.output, snapshot)
             return 0
         baseline = _load_snapshot(args.baseline)
         current = collect_snapshot()
         manifest = _load_manifest(args.manifest) if args.manifest is not None else None
+        if args.session_authority is not None and manifest is None:
+            raise IsolationError("Privacy Envelope authority requires an exact network manifest")
+        privacy_authority = (
+            _load_privacy_authority(args.session_authority)
+            if args.session_authority is not None
+            else None
+        )
         assert_matches_baseline(
             baseline=baseline,
             current=current,
             manifest=manifest,
+            privacy_authority=privacy_authority,
             trusted=trusted,
+            uplink_environment=args.uplink_environment,
         )
         return 0
     except IsolationError as exc:
