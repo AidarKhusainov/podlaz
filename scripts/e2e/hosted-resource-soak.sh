@@ -245,14 +245,21 @@ copy_guest_evidence() {
 }
 
 classify_soak_failure() {
-  local phase=""
+  local phase="" command_classification=""
   if [[ -f "${SOAK_REPORT}" ]] && jq -e '.lifecycle.cleanup.ok == false or .lifecycle.reconnect.ok == false or (.policy.evaluated == true and .policy.ok == false)' "${SOAK_REPORT}" >/dev/null 2>&1; then
     mark_failure product resource.policy
     return
   fi
   if [[ -f "${SOAK_FAILURE}" ]]; then
     phase="$(jq -r '.phase // empty' "${SOAK_FAILURE}" 2>/dev/null || true)"
+    command_classification="$(jq -r '.command_classification // empty' "${SOAK_FAILURE}" 2>/dev/null || true)"
   fi
+  case "${command_classification}" in
+    authorization-denied|authorization-unavailable)
+      mark_failure fixture "soak.authorization"
+      return
+      ;;
+  esac
   case "${phase}" in
     host-attestation|cleanup-preflight|configuration|isolation-baseline)
       mark_failure infrastructure "soak.${phase}"
