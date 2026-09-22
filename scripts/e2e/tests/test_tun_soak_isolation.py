@@ -917,6 +917,164 @@ class TunSoakIsolationTests(unittest.TestCase):
             manifest=manifest,
         )
 
+    def test_kernel_and_networkmanager_observations_of_exact_podlaz_link_are_removed(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        link = current["links"][-1]
+        link["flags"] = ["LOWER_UP", "POINTOPOINT", "UP"]
+        current["addresses"].append(
+            {
+                "ifindex": 9,
+                "ifname": "podlaz0",
+                "addresses": [
+                    {
+                        "family": "inet",
+                        "local": "198.18.0.1",
+                        "prefixlen": 32,
+                        "scope": "global",
+                        "label": "podlaz0",
+                        "flags": [],
+                        "extras": {},
+                    },
+                    {
+                        "family": "inet6",
+                        "local": "fe80::9",
+                        "prefixlen": 64,
+                        "scope": "link",
+                        "label": "podlaz0",
+                        "flags": [],
+                        "extras": {"protocol": "kernel_ll"},
+                    },
+                ],
+            }
+        )
+        current["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "local",
+                "198.18.0.1/32",
+                dev="podlaz0",
+                protocol="kernel",
+                scope="host",
+                prefsrc="198.18.0.1",
+                type="local",
+            )
+        )
+        current["routes_v6"].extend(
+            [
+                self.route(
+                    "ipv6",
+                    "local",
+                    "fe80::9/128",
+                    dev="podlaz0",
+                    protocol="kernel",
+                    metric=0,
+                    preference="medium",
+                    type="local",
+                ),
+                self.route(
+                    "ipv6",
+                    "local",
+                    "ff00::/8",
+                    dev="podlaz0",
+                    protocol="kernel",
+                    metric=256,
+                    preference="medium",
+                    type="multicast",
+                ),
+                self.route(
+                    "ipv6",
+                    "main",
+                    "fe80::/64",
+                    dev="podlaz0",
+                    protocol="kernel",
+                    metric=256,
+                    preference="medium",
+                ),
+            ]
+        )
+        current["network_manager"].append(
+            {
+                "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "device": "podlaz0",
+                "state": "activated",
+            }
+        )
+
+        tun_soak_isolation.assert_matches_baseline(
+            baseline=baseline,
+            current=current,
+            manifest=manifest,
+        )
+
+    def test_foreign_route_on_podlaz_link_is_not_hidden_by_kernel_projection(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        current["links"][-1]["flags"] = ["LOWER_UP", "POINTOPOINT", "UP"]
+        current["addresses"].append(
+            {
+                "ifindex": 9,
+                "ifname": "podlaz0",
+                "addresses": [
+                    {
+                        "family": "inet",
+                        "local": "198.18.0.1",
+                        "prefixlen": 32,
+                        "scope": "global",
+                        "label": "podlaz0",
+                        "flags": [],
+                        "extras": {},
+                    }
+                ],
+            }
+        )
+        current["routes_v4"].append(
+            self.route(
+                "ipv4",
+                "main",
+                "203.0.113.0/24",
+                dev="podlaz0",
+                protocol="static",
+                scope="link",
+            )
+        )
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "unclaimed Podlaz link-derived route",
+        ):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+                manifest=manifest,
+            )
+
+    def test_multiple_networkmanager_observations_on_podlaz_link_are_ambiguous(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        current["addresses"].append({"ifindex": 9, "ifname": "podlaz0", "addresses": []})
+        current["network_manager"].extend(
+            [
+                {
+                    "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "device": "podlaz0",
+                    "state": "activated",
+                },
+                {
+                    "uuid": "11111111-aaaa-bbbb-cccc-222222222222",
+                    "device": "podlaz0",
+                    "state": "activated",
+                },
+            ]
+        )
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "NetworkManager observation is ambiguous",
+        ):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+                manifest=manifest,
+            )
+
     def test_route_metric_change_is_not_subtracted_as_podlaz_owned(self) -> None:
         baseline, current, manifest = self.active_snapshot_and_manifest()
         managed_route = next(route for route in current["routes_v4"] if route["table"] == "51820")

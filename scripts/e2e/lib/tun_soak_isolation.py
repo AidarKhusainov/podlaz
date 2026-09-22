@@ -1933,6 +1933,83 @@ def _rule_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> boo
     return dict(actual) == dict(expected)
 
 
+def _strip_exact_podlaz_link_observation(snapshot: dict[str, Any]) -> None:
+    """Remove only kernel/NM observations derived from the exact live Podlaz TUN link."""
+
+    links = snapshot.get("links")
+    addresses = snapshot.get("addresses")
+    if not isinstance(links, list) or not isinstance(addresses, list):
+        raise IsolationError("Podlaz link observation inventory is unavailable")
+    podlaz_links = [
+        _required_mapping(link, "Podlaz link observation")
+        for link in links
+        if isinstance(link, Mapping) and link.get("ifname") == PODLAZ_LINK
+    ]
+    podlaz_addresses = [
+        _required_mapping(entry, "Podlaz address observation")
+        for entry in addresses
+        if isinstance(entry, Mapping) and entry.get("ifname") == PODLAZ_LINK
+    ]
+    if len(podlaz_links) != 1 or podlaz_links[0].get("kind") != "tun":
+        raise IsolationError("exact Podlaz TUN link observation is missing or ambiguous")
+    link_index = podlaz_links[0].get("ifindex")
+    if len(podlaz_addresses) != 1 or podlaz_addresses[0].get("ifindex") != link_index:
+        raise IsolationError("exact Podlaz TUN address observation is missing or ambiguous")
+
+    route_keys = ("routes_v4", "routes_v6")
+    remaining_podlaz_routes = [
+        _required_mapping(route, "Podlaz link route observation")
+        for key in route_keys
+        for route in snapshot.get(key, [])
+        if isinstance(route, Mapping) and route.get("dev") == PODLAZ_LINK
+    ]
+    if remaining_podlaz_routes:
+        required_local, optional_local = _local_route_expectations(snapshot)
+        required_main, suppressed_main = _main_connected_route_expectations(snapshot)
+        allowed_local = required_local | optional_local
+        allowed_main = set().union(*(required_main + suppressed_main)) if required_main or suppressed_main else set()
+
+        for key in route_keys:
+            routes = snapshot.get(key)
+            if not isinstance(routes, list):
+                raise IsolationError("route inventory is unavailable")
+            retained: list[dict[str, Any]] = []
+            for raw in routes:
+                route = _required_mapping(raw, "route inventory entry")
+                if route.get("dev") != PODLAZ_LINK:
+                    retained.append(dict(route))
+                    continue
+                identity = _route_key(route)
+                if route.get("table") == "local" and identity in allowed_local:
+                    continue
+                if (
+                    route.get("table") == "main"
+                    and route.get("dst") != "default"
+                    and identity in allowed_main
+                ):
+                    continue
+                raise IsolationError("unclaimed Podlaz link-derived route remains")
+            snapshot[key] = retained
+
+    network_manager = snapshot.get("network_manager")
+    if not isinstance(network_manager, list):
+        raise IsolationError("NetworkManager inventory is unavailable")
+    podlaz_connections = [
+        _required_mapping(connection, "Podlaz NetworkManager observation")
+        for connection in network_manager
+        if isinstance(connection, Mapping) and connection.get("device") == PODLAZ_LINK
+    ]
+    if len(podlaz_connections) > 1 or any(
+        connection.get("state") != "activated" for connection in podlaz_connections
+    ):
+        raise IsolationError("Podlaz NetworkManager observation is ambiguous")
+    snapshot["network_manager"] = [
+        dict(connection)
+        for connection in network_manager
+        if isinstance(connection, Mapping) and connection.get("device") != PODLAZ_LINK
+    ]
+
+
 def strip_exact_podlaz_state(
     snapshot: Mapping[str, Any],
     manifest: Mapping[str, Sequence[Mapping[str, Any]]],
@@ -1941,17 +2018,9 @@ def strip_exact_podlaz_state(
 ) -> dict[str, Any]:
     result = copy.deepcopy(dict(snapshot))
     links = result.get("links")
-    if not isinstance(links, list):
-        raise IsolationError("link inventory is unavailable")
-    result["links"] = [link for link in links if isinstance(link, Mapping) and link.get("ifname") != PODLAZ_LINK]
     addresses = result.get("addresses")
-    if not isinstance(addresses, list):
-        raise IsolationError("address inventory is unavailable")
-    result["addresses"] = [
-        address
-        for address in addresses
-        if isinstance(address, Mapping) and address.get("ifname") != PODLAZ_LINK
-    ]
+    if not isinstance(links, list) or not isinstance(addresses, list):
+        raise IsolationError("link/address inventory is unavailable")
 
     for family, key in (("ipv4", "routes_v4"), ("ipv6", "routes_v6")):
         routes = result.get(key)
@@ -1968,6 +2037,18 @@ def strip_exact_podlaz_state(
         for rule in manifest.get("rules", []):
             if rule.get("family") == family:
                 _remove_exact(rules, rule, _rule_matches, "policy rule")
+
+    _strip_exact_podlaz_link_observation(result)
+    result["links"] = [
+        dict(link)
+        for link in links
+        if isinstance(link, Mapping) and link.get("ifname") != PODLAZ_LINK
+    ]
+    result["addresses"] = [
+        dict(address)
+        for address in addresses
+        if isinstance(address, Mapping) and address.get("ifname") != PODLAZ_LINK
+    ]
 
     nftables = result.get("nftables")
     if not isinstance(nftables, list):
