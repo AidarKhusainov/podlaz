@@ -938,13 +938,13 @@ class TunSoakIsolationTests(unittest.TestCase):
         snapshot = self.baseline()
         snapshot["links"][1]["kind"] = "veth"
 
-        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "selected environment"):
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "physical dedicated-runner uplink"):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
     def test_hosted_guest_environment_rejects_physical_uplink(self) -> None:
         snapshot = self.baseline()
 
-        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "selected environment"):
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "hosted-guest veth uplink"):
             tun_soak_isolation.validate_clean_baseline(
                 snapshot,
                 uplink_environment="hosted-guest",
