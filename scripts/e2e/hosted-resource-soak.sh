@@ -244,6 +244,8 @@ assert_candidate_ready_clean() {
   guest_exec /bin/bash -lc "! ip link show dev podlaz0 >/dev/null 2>&1"
   guest_exec /bin/bash -lc "! nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+' >/dev/null"
   guest_exec /bin/bash -lc "python3 -c 'import glob,sys; raise SystemExit(1 if glob.glob(\"/run/podlaz/transactions/*.json\") else 0)'"
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
   assert_foreign_sentinel
   guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz recover --json >'${GUEST_PRIVATE}/candidate-ready-recover.json' 2>'${GUEST_PRIVATE}/candidate-ready-recover.stderr' && cd /workspace && source '${RECOVERY_JSON_HELPER}' && assert_clean_recovery_json_file '${GUEST_PRIVATE}/candidate-ready-recover.json'"
