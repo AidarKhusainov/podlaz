@@ -455,8 +455,15 @@ assert_network_isolation() {
   if [[ -n "${manifest}" ]]; then
     args+=(--manifest "${manifest}" --session-authority "${NETWORK_SESSION_STATE}")
   fi
-  sudo -n python3 "${ISOLATION_TOOL}" "${args[@]}" \
-    >/dev/null 2>"${stderr_file}" || fail "${label}: structural network isolation cannot be proved"
+  if sudo -n python3 "${ISOLATION_TOOL}" "${args[@]}" >/dev/null 2>"${stderr_file}"; then
+    return 0
+  fi
+  local changed
+  changed="$(sed -n 's/^network isolation verification failed: foreign or underlying network state changed during the soak: \([a-z0-9_,]*\)$/\1/p' "${stderr_file}" | head -n1)"
+  if [[ -n "${changed}" && "${changed}" =~ ^(schema_version|network_namespace_inode|links|addresses|rules_v4|rules_v6|routes_v4|routes_v6|nftables|resolved|network_manager|runtime_os)(,(schema_version|network_namespace_inode|links|addresses|rules_v4|rules_v6|routes_v4|routes_v6|nftables|resolved|network_manager|runtime_os))*$ ]]; then
+    fail "${label}: structural network isolation changed component(s): ${changed}"
+  fi
+  fail "${label}: structural network isolation cannot be proved"
 }
 
 run_bounded_data_plane_probe() {

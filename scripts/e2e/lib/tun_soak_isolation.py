@@ -2036,10 +2036,34 @@ def assert_matches_baseline(
         if manifest is not None
         else dict(current)
     )
+    changed_components = sorted(
+        key
+        for key in set(baseline) | set(observed)
+        if observed.get(key) != baseline.get(key)
+    )
+    if changed_components:
+        allowed_components = {
+            "schema_version",
+            "network_namespace_inode",
+            "links",
+            "addresses",
+            "rules_v4",
+            "rules_v6",
+            "routes_v4",
+            "routes_v6",
+            "nftables",
+            "resolved",
+            "network_manager",
+            "runtime_os",
+        }
+        if any(component not in allowed_components for component in changed_components):
+            raise IsolationError("foreign or underlying network state changed during the soak")
+        raise IsolationError(
+            "foreign or underlying network state changed during the soak: "
+            + ",".join(changed_components)
+        )
     if trusted is not None:
         validate_trusted_host(observed, trusted, uplink_environment=uplink_environment)
-    if observed != dict(baseline):
-        raise IsolationError("foreign or underlying network state changed during the soak")
 
 
 def _network_namespace_inode() -> int:

@@ -875,8 +875,12 @@ class TunSoakIsolationTests(unittest.TestCase):
 
     def test_foreign_privacy_lookalike_is_not_subtracted_without_exact_authority(self) -> None:
         baseline, current, manifest = self.active_snapshot_and_manifest()
-        current["nftables"].append(
-            {"table": {"family": "inet", "name": "podlaz_pe_ffffffffffff"}}
+        current["nftables"].extend(
+            [
+                {"table": {"family": "inet", "name": "podlaz_pe_0123456789ab"}},
+                {"chain": {"family": "inet", "table": "podlaz_pe_0123456789ab", "name": "output"}},
+                {"table": {"family": "inet", "name": "podlaz_pe_ffffffffffff"}},
+            ]
         )
         authority = tun_soak_isolation._validated_privacy_authority(
             self.privacy_authority(),
@@ -885,7 +889,7 @@ class TunSoakIsolationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             tun_soak_isolation.IsolationError,
-            "network state changed",
+            "network state changed during the soak: nftables",
         ):
             tun_soak_isolation.assert_matches_baseline(
                 baseline=baseline,
