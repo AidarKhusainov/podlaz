@@ -909,6 +909,37 @@ class TunSoakIsolationTests(unittest.TestCase):
             )
 
 
+    def test_hosted_guest_accepts_exact_single_veth_uplink(self) -> None:
+        snapshot = self.baseline()
+        snapshot["links"][1]["kind"] = "veth"
+        trusted = self.trusted_host(snapshot)
+
+        tun_soak_isolation.validate_clean_baseline(
+            snapshot,
+            uplink_environment="hosted-guest",
+        )
+        tun_soak_isolation.validate_trusted_host(
+            snapshot,
+            trusted,
+            uplink_environment="hosted-guest",
+        )
+
+    def test_dedicated_environment_rejects_veth_uplink(self) -> None:
+        snapshot = self.baseline()
+        snapshot["links"][1]["kind"] = "veth"
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "selected environment"):
+            tun_soak_isolation.validate_clean_baseline(snapshot)
+
+    def test_hosted_guest_environment_rejects_physical_uplink(self) -> None:
+        snapshot = self.baseline()
+
+        with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "selected environment"):
+            tun_soak_isolation.validate_clean_baseline(
+                snapshot,
+                uplink_environment="hosted-guest",
+            )
+
     def trusted_host(self, snapshot: dict[str, object]) -> dict[str, object]:
         uplink_link = copy.deepcopy(next(link for link in snapshot["links"] if link["ifname"] == "eth0"))
         default_routes = [
