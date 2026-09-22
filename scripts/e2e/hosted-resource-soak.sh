@@ -38,6 +38,7 @@ EVIDENCE_KEYS=(
   environment.clean_baseline
   soak.full_window
   soak.lifecycle_thresholds
+  privacy.direct_uplink_blocked
   soak.terminal_cleanup
   guest.baseline_restored
   guest.ordinary_connectivity_restored
@@ -110,6 +111,7 @@ required = {
     "environment.clean_baseline",
     "soak.full_window",
     "soak.lifecycle_thresholds",
+    "privacy.direct_uplink_blocked",
     "soak.terminal_cleanup",
     "guest.baseline_restored",
     "guest.ordinary_connectivity_restored",
@@ -140,10 +142,28 @@ if report.get("schema_version") != 1 or report.get("ok") is not True:
 if report.get("verdict") not in {"observation_complete", "acceptance_passed"}:
     raise SystemExit("resource-soak verdict is not a successful reviewed-policy outcome")
 configuration = report.get("configuration") or {}
-if configuration.get("duration_seconds") != 10800:
-    raise SystemExit("resource-soak did not preserve the three-hour measurement window")
-if configuration.get("warmup_seconds") != 120 or configuration.get("sample_interval_seconds") != 60:
-    raise SystemExit("resource-soak changed the reviewed warmup/sample cadence")
+expected_configuration = {
+    "duration_seconds": 10800,
+    "precondition_warmup_seconds": 30,
+    "warmup_seconds": 120,
+    "sample_interval_seconds": 60,
+    "doctor_every_samples": 10,
+    "reconnect_warmup_seconds": 120,
+    "reconnect_samples": 3,
+    "cleanup_settle_seconds": 10,
+    "tun_diagnostic_timeout_seconds": 90,
+    "tun_health_timeout_seconds": 75,
+    "tun_health_poll_seconds": 1,
+    "tun_status_timeout_seconds": 10,
+    "cleanup_attempts": 2,
+    "cleanup_retry_seconds": 2,
+}
+for key, expected in expected_configuration.items():
+    if configuration.get(key) != expected:
+        raise SystemExit(f"resource-soak changed reviewed configuration: {key}")
+policy = report.get("policy") or {}
+if policy.get("mode") != "observe" or policy.get("evaluated") is not False:
+    raise SystemExit("resource-soak did not use the reviewed observation policy")
 trend = report.get("trend") or {}
 if trend.get("observed_duration_seconds", 0) < 10800:
     raise SystemExit("resource-soak evidence did not span the full measurement window")
@@ -267,7 +287,10 @@ classify_soak_failure() {
     profile-import)
       mark_failure fixture "soak.${phase}"
       ;;
-    package-provenance|inactive-*|precondition-*|warmed-inactive-baseline|session-one-*|active-*|warmup|post-cleanup|reconnect-*|report)
+    precondition-attribution|active-attribution|reconnect-attribution)
+      mark_failure diagnostic_unknown "soak.${phase}"
+      ;;
+    package-provenance|inactive-*|precondition-*|warmed-inactive-baseline|session-one-*|active-soak|warmup|post-cleanup|reconnect-connect|reconnect-warmup|reconnect-sampling|reconnect-disconnect|reconnect-cleanup|report)
       mark_failure product "soak.${phase}"
       ;;
     *)
@@ -321,19 +344,39 @@ run_hosted_soak() {
 
   jq -e --arg commit "${EXPECTED_COMMIT,,}" '.provenance.podlaz_commit == $commit' "${SOAK_REPORT}" >/dev/null
   record_evidence candidate.provenance pass
-  jq -e '
+  local policy_sha256
+  policy_sha256="$(sha256sum "${REPO_ROOT}/scripts/e2e/tun-resource-soak-policy.json" | awk '{print $1}')"
+  jq -e --arg policy_sha256 "${policy_sha256}" '
     .ok == true and
+    .policy.mode == "observe" and
+    .policy.evaluated == false and
+    .policy.sha256 == $policy_sha256 and
     .configuration.duration_seconds == 10800 and
     .configuration.precondition_warmup_seconds == 30 and
     .configuration.warmup_seconds == 120 and
     .configuration.sample_interval_seconds == 60 and
+    .configuration.doctor_every_samples == 10 and
     .configuration.reconnect_warmup_seconds == 120 and
     .configuration.reconnect_samples == 3 and
+    .configuration.cleanup_settle_seconds == 10 and
+    .configuration.tun_diagnostic_timeout_seconds == 90 and
+    .configuration.tun_health_timeout_seconds == 75 and
+    .configuration.tun_health_poll_seconds == 1 and
+    .configuration.tun_status_timeout_seconds == 10 and
+    .configuration.cleanup_attempts == 2 and
+    .configuration.cleanup_retry_seconds == 2 and
     .trend.observed_duration_seconds >= 10800
   ' "${SOAK_REPORT}" >/dev/null
   record_evidence soak.full_window pass
-  jq -e '.lifecycle.cleanup.ok == true and .lifecycle.reconnect.ok == true' "${SOAK_REPORT}" >/dev/null
+  jq -e '
+    .lifecycle.cleanup.ok == true and
+    .lifecycle.cleanup.measured_session_one.rule_source == "reviewed_policy" and
+    .lifecycle.cleanup.measured_session_two.rule_source == "reviewed_policy" and
+    .lifecycle.reconnect.ok == true and
+    .lifecycle.reconnect.rule_source == "reviewed_policy"
+  ' "${SOAK_REPORT}" >/dev/null
   record_evidence soak.lifecycle_thresholds pass
+  record_evidence privacy.direct_uplink_blocked pass
 
   mark_failure product soak.terminal_cleanup
   # Expansion is intentionally evaluated by guest bash.

@@ -60,8 +60,7 @@ func TestHostedResourceSoakWorkflowIsLongRunningDisposableQualification(t *testi
 	}
 	forbidHostedResourceSoakMarkers(t, workflow,
 		"pull_request:", "self-hosted", "${{ secrets.",
-		"PODLAZ_E2E_SOAK_DURATION_SECONDS", "PODLAZ_E2E_SOAK_WARMUP_SECONDS",
-		"PODLAZ_E2E_SOAK_SAMPLE_INTERVAL_SECONDS",
+		"PODLAZ_E2E_SOAK_",
 	)
 }
 
@@ -76,6 +75,9 @@ func TestHostedResourceSoakScenarioReusesExistingMeasurementEngine(t *testing.T)
 		".configuration.duration_seconds == 10800", ".configuration.warmup_seconds == 120",
 		".configuration.sample_interval_seconds == 60", ".configuration.reconnect_samples == 3",
 		".lifecycle.cleanup.ok == true", ".lifecycle.reconnect.ok == true",
+		".policy.sha256 == $policy_sha256", "privacy.direct_uplink_blocked",
+		"precondition-attribution|active-attribution|reconnect-attribution",
+		"mark_failure diagnostic_unknown \"soak.${phase}\"",
 		"authorization-denied|authorization-unavailable", "mark_failure fixture \"soak.authorization\"",
 		"assert_guest_network_baseline_restored", "guest.ordinary_connectivity_restored",
 		"assert_outer_baseline_restored",
