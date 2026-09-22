@@ -231,7 +231,7 @@ temporary.write_text(json.dumps(trusted, sort_keys=True, separators=(",", ":")) 
 os.chmod(temporary, 0o600)
 os.replace(temporary, target)
 PY
-  guest_exec /bin/bash -lc "[[ \"$(stat -c '%U:%G:%a' "${TRUSTED_HOST}")\" == 'root:root:600' ]]"
+  [[ "$(guest_exec stat -c '%U:%G:%a' "${TRUSTED_HOST}" | tr -d '[:space:]')" == "root:root:600" ]]
 }
 
 copy_guest_evidence() {
@@ -283,19 +283,22 @@ run_hosted_soak() {
 
   mark_failure fixture synthetic.endpoint
   start_synthetic_xray_endpoint
-  SOAK_URI="$(cat "${XRAY_ROOT}/client-uri")"
-  [[ -n "${SOAK_URI}" ]] || fail "synthetic resource-soak profile URI is unavailable"
+  guest_exec test -s /run/podlaz-synthetic-xray/client-uri
 
   mark_failure product candidate.provenance
   set +e
-  guest_exec runuser -u e2e -- env \
-    "E2E_TMP_ROOT=${GUEST_SOAK_TMP}" \
-    "E2E_ARTIFACT_DIR=${GUEST_SOAK_ARTIFACTS}" \
-    "PODLAZ_E2E_PROFILE_URI=${SOAK_URI}" \
-    "PODLAZ_E2E_PREBUILT_DEB=${GUEST_CANDIDATE}" \
-    "PODLAZ_E2E_CANDIDATE_COMMIT=${EXPECTED_COMMIT}" \
-    "PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE=${TRUSTED_HOST}" \
-    bash /workspace/scripts/e2e/tun-resource-soak.sh
+  guest_exec /bin/bash -lc "
+    set -Eeuo pipefail
+    uri=\$(cat /run/podlaz-synthetic-xray/client-uri)
+    exec runuser -u e2e -- env \\
+      E2E_TMP_ROOT='${GUEST_SOAK_TMP}' \\
+      E2E_ARTIFACT_DIR='${GUEST_SOAK_ARTIFACTS}' \\
+      PODLAZ_E2E_PROFILE_URI=\"\${uri}\" \\
+      PODLAZ_E2E_PREBUILT_DEB='${GUEST_CANDIDATE}' \\
+      PODLAZ_E2E_CANDIDATE_COMMIT='${EXPECTED_COMMIT}' \\
+      PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE='${TRUSTED_HOST}' \\
+      bash /workspace/scripts/e2e/tun-resource-soak.sh
+  "
   soak_code=$?
   set -e
   copy_guest_evidence
