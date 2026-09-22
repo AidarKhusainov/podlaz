@@ -276,6 +276,7 @@ run_hosted_soak() {
 
   mark_failure infrastructure guest.prepare
   prepare_system_guest
+  install_tun_authorization
   start_system_guest
 
   mark_failure infrastructure guest.clean_baseline
