@@ -4,11 +4,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '37 3 * * 0'
-  # Temporary proving trigger. Removed after the first complete unattended run.
-  push:
-    branches:
-      - agent/automated-resource-soak
-
 permissions:
   contents: read
 
