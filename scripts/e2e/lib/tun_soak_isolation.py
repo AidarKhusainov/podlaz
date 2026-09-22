@@ -1953,8 +1953,6 @@ def _strip_exact_podlaz_link_observation(snapshot: dict[str, Any]) -> None:
     if len(podlaz_links) != 1 or podlaz_links[0].get("kind") != "tun":
         raise IsolationError("exact Podlaz TUN link observation is missing or ambiguous")
     link_index = podlaz_links[0].get("ifindex")
-    if len(podlaz_addresses) != 1 or podlaz_addresses[0].get("ifindex") != link_index:
-        raise IsolationError("exact Podlaz TUN address observation is missing or ambiguous")
 
     route_keys = ("routes_v4", "routes_v6")
     remaining_podlaz_routes = [
@@ -1964,6 +1962,8 @@ def _strip_exact_podlaz_link_observation(snapshot: dict[str, Any]) -> None:
         if isinstance(route, Mapping) and route.get("dev") == PODLAZ_LINK
     ]
     if remaining_podlaz_routes:
+        if len(podlaz_addresses) != 1 or podlaz_addresses[0].get("ifindex") != link_index:
+            raise IsolationError("exact Podlaz TUN address observation is missing or ambiguous")
         required_local, optional_local = _local_route_expectations(snapshot)
         required_main, suppressed_main = _main_connected_route_expectations(snapshot)
         allowed_local = required_local | optional_local
