@@ -265,7 +265,7 @@ copy_guest_evidence() {
 }
 
 classify_soak_failure() {
-  local phase="" command_classification=""
+  local phase="" command_classification="" failure_domain=""
   if [[ -f "${SOAK_REPORT}" ]] && jq -e '.lifecycle.cleanup.ok == false or .lifecycle.reconnect.ok == false or (.policy.evaluated == true and .policy.ok == false)' "${SOAK_REPORT}" >/dev/null 2>&1; then
     mark_failure product resource.policy
     return
@@ -273,7 +273,14 @@ classify_soak_failure() {
   if [[ -f "${SOAK_FAILURE}" ]]; then
     phase="$(jq -r '.phase // empty' "${SOAK_FAILURE}" 2>/dev/null || true)"
     command_classification="$(jq -r '.command_classification // empty' "${SOAK_FAILURE}" 2>/dev/null || true)"
+    failure_domain="$(jq -r '.failure_domain // empty' "${SOAK_FAILURE}" 2>/dev/null || true)"
   fi
+  case "${failure_domain}" in
+    product|fixture|infrastructure|capability|diagnostic_unknown)
+      mark_failure "${failure_domain}" "soak.${phase:-runtime}"
+      return
+      ;;
+  esac
   case "${command_classification}" in
     authorization-denied|authorization-unavailable)
       mark_failure fixture "soak.authorization"

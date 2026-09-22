@@ -101,6 +101,7 @@ METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
 TUN_SOAK_STATUS_TOOL="${SCRIPT_DIR}/lib/tun_soak_status.py"
 NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
 ISOLATION_TOOL="${SCRIPT_DIR}/lib/tun_soak_isolation.py"
+ACTIVE_AUTHORITY_TOOL="${SCRIPT_DIR}/hosted_synthetic_active_authority.py"
 ENVIRONMENT_TOOL="${SCRIPT_DIR}/lib/tun_soak_environment.py"
 
 setup_isolated_xdg "tun-resource-soak"
@@ -157,6 +158,7 @@ SOAK_PHASE="initialization"
 SOAK_COMMAND_EXIT=""
 SOAK_COMMAND_CLASSIFICATION=""
 SOAK_STATUS_VERDICT=""
+SOAK_FAILURE_DOMAIN=""
 DOCTOR_RUNS=0
 DOCTOR_UNHEALTHY_RUNS=0
 WARMED_DAEMON_PID=""
@@ -463,9 +465,59 @@ assert_network_isolation() {
   local changed
   changed="$(sed -n 's/^network isolation verification failed: foreign or underlying network state changed during the soak: \([a-z0-9_,]*\)$/\1/p' "${stderr_file}" | head -n1)"
   if [[ -n "${changed}" && "${changed}" =~ ^(schema_version|network_namespace_inode|links|addresses|rules_v4|rules_v6|routes_v4|routes_v6|nftables|resolved|network_manager|runtime_os)(,(schema_version|network_namespace_inode|links|addresses|rules_v4|rules_v6|routes_v4|routes_v6|nftables|resolved|network_manager|runtime_os))*$ ]]; then
+    SOAK_FAILURE_DOMAIN=infrastructure
     fail "${label}: structural network isolation changed component(s): ${changed}"
   fi
+  SOAK_FAILURE_DOMAIN=diagnostic_unknown
   fail "${label}: structural network isolation cannot be proved"
+}
+
+assert_exact_active_authority() {
+  local label="${1:-}" status_file dns_file domain_file default_file nft_file verifier_rc
+  [[ "${label}" =~ ^[a-z0-9-]+$ ]] || {
+    SOAK_FAILURE_DOMAIN=fixture
+    fail "active authority label is invalid"
+    return 1
+  }
+  status_file="${SOAK_PRIVATE_DIR}/${label}-daemon-status.json"
+  dns_file="${SOAK_PRIVATE_DIR}/${label}-resolved-dns.txt"
+  domain_file="${SOAK_PRIVATE_DIR}/${label}-resolved-domain.txt"
+  default_file="${SOAK_PRIVATE_DIR}/${label}-resolved-default-route.txt"
+  nft_file="${SOAK_PRIVATE_DIR}/${label}-nft-ruleset.json"
+
+  timeout --signal=TERM --kill-after=2s 10s sudo -n curl --fail --silent --show-error --max-time 5 \
+    --unix-socket "${DAEMON_SOCKET}" http://localhost/v1/status >"${status_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: daemon authority status is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n resolvectl dns >"${dns_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: resolved DNS authority is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n resolvectl domain >"${domain_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: resolved domain authority is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n resolvectl default-route >"${default_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: resolved default-route authority is unavailable"; return 1; }
+  timeout --signal=TERM --kill-after=2s 10s sudo -n nft -j list ruleset >"${nft_file}" ||
+    { SOAK_FAILURE_DOMAIN=infrastructure; fail "${label}: nftables authority is unavailable"; return 1; }
+
+  set +e
+  sudo -n python3 "${ACTIVE_AUTHORITY_TOOL}" \
+    --status "${status_file}" \
+    --transactions "${TRANSACTION_DIR}" \
+    --session "${NETWORK_SESSION_STATE}" \
+    --boot-id /proc/sys/kernel/random/boot_id \
+    --runtime-config /run/podlaz/generated/xray.json \
+    --resolved-dns "${dns_file}" \
+    --resolved-domain "${domain_file}" \
+    --resolved-default-route "${default_file}" \
+    --nft-ruleset "${nft_file}" \
+    >"${SOAK_PRIVATE_DIR}/${label}-active-authority.stdout" \
+    2>"${SOAK_PRIVATE_DIR}/${label}-active-authority.stderr"
+  verifier_rc=$?
+  set -e
+  case "${verifier_rc}" in
+    0) return 0 ;;
+    1) SOAK_FAILURE_DOMAIN=product ;;
+    *) SOAK_FAILURE_DOMAIN=diagnostic_unknown ;;
+  esac
+  fail "${label}: exact active TUN/Privacy Envelope authority is invalid"
 }
 
 capture_direct_uplink_privacy_baseline() {
@@ -486,11 +538,13 @@ capture_direct_uplink_privacy_baseline() {
 assert_direct_uplink_blocked() {
   local uplink probe_ip
   [[ -f "${PRIVACY_UPLINK_FILE}" && -f "${PRIVACY_PROBE_IP_FILE}" ]] ||
-    fail "privacy baseline evidence is unavailable"
+    { SOAK_FAILURE_DOMAIN=fixture; fail "privacy baseline evidence is unavailable"; return 1; }
   uplink="$(cat "${PRIVACY_UPLINK_FILE}")"
   probe_ip="$(cat "${PRIVACY_PROBE_IP_FILE}")"
-  [[ -n "${uplink}" && -n "${probe_ip}" ]] || fail "privacy baseline evidence is incomplete"
+  [[ -n "${uplink}" && -n "${probe_ip}" ]] ||
+    { SOAK_FAILURE_DOMAIN=fixture; fail "privacy baseline evidence is incomplete"; return 1; }
   if timeout --signal=TERM --kill-after=2s 8s     curl -4 -fsSk --interface "${uplink}" --connect-timeout 3 --max-time 6     --resolve "example.com:443:${probe_ip}" https://example.com/ -o /dev/null     >/dev/null 2>&1; then
+    SOAK_FAILURE_DOMAIN=product
     fail "Privacy Envelope allowed ordinary direct uplink egress"
   fi
 }
@@ -509,6 +563,7 @@ run_bounded_data_plane_probe() {
     >"${curl_stdout}" 2>"${curl_stderr}" || fail "${label}: bounded HTTPS probe failed"
   append_sensitive_value "$(cat "${curl_stdout}")"
   wait_for_verified_tun_status "${label}"
+  assert_exact_active_authority "${label}-authority"
   assert_direct_uplink_blocked
 }
 
@@ -529,6 +584,7 @@ precondition_warmed_inactive_baseline() {
     --output "${PRECONDITION_IDENTITY}" || fail "preconditioning process attribution failed"
   snapshot_network_manifest "${PRECONDITION_NETWORK_MANIFEST}"
   assert_network_isolation precondition-active "${PRECONDITION_NETWORK_MANIFEST}"
+  assert_exact_active_authority precondition-authority
   assert_direct_uplink_blocked
 
   SOAK_PHASE="precondition-warmup"
@@ -629,6 +685,7 @@ run_reconnect_probe() {
     --after "${SESSION_TWO_IDENTITY}" || fail "reconnect did not replace the exact supervised child"
   snapshot_network_manifest "${SESSION_TWO_NETWORK_MANIFEST}"
   assert_network_isolation reconnect-attributed "${SESSION_TWO_NETWORK_MANIFEST}"
+  assert_exact_active_authority reconnect-authority
   assert_direct_uplink_blocked
   SOAK_PHASE="reconnect-warmup"
   sleep "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}"
@@ -689,13 +746,13 @@ write_public_report() {
 
 write_failure_evidence() {
   local harness_exit_code="$1"
-  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${SOAK_STATUS_VERDICT}" "${harness_exit_code}" <<'PY'
+  python3 - "${FAILURE_REPORT}" "${SOAK_PHASE}" "${SOAK_COMMAND_EXIT}" "${SOAK_COMMAND_CLASSIFICATION}" "${SOAK_STATUS_VERDICT}" "${SOAK_FAILURE_DOMAIN}" "${harness_exit_code}" <<'PY'
 import json
 import os
 import re
 import sys
 
-path, phase, command_exit_text, command_classification_text, status_verdict_text, harness_exit_text = sys.argv[1:]
+path, phase, command_exit_text, command_classification_text, status_verdict_text, failure_domain_text, harness_exit_text = sys.argv[1:]
 allowed_phases = {
     "initialization",
     "cleanup-preflight",
@@ -766,6 +823,11 @@ allowed_status_verdicts = {
     "terminal-cleanup-required",
     "terminal-inactive",
 }
+failure_domain = None
+if failure_domain_text:
+    if failure_domain_text not in {"product", "fixture", "infrastructure", "capability", "diagnostic_unknown"}:
+        raise SystemExit("invalid resource-soak failure domain")
+    failure_domain = failure_domain_text
 status_verdict = None
 if status_verdict_text:
     if status_verdict_text not in allowed_status_verdicts:
@@ -778,6 +840,7 @@ payload = {
     "command_exit_code": command_exit_code,
     "command_classification": command_classification,
     "status_verdict": status_verdict,
+    "failure_domain": failure_domain,
 }
 temporary = path + ".tmp"
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
@@ -899,6 +962,7 @@ sudo -n python3 "${METRICS_TOOL}" assert-replaced \
   --after "${SESSION_ONE_IDENTITY}" || fail "measured session did not replace the preconditioning child on the same daemon"
 snapshot_network_manifest "${SESSION_ONE_NETWORK_MANIFEST}"
 assert_network_isolation active-attributed "${SESSION_ONE_NETWORK_MANIFEST}"
+assert_exact_active_authority active-authority
 assert_direct_uplink_blocked
 SOAK_PHASE="warmup"
 sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"

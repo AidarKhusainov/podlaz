@@ -76,6 +76,7 @@ func TestHostedResourceSoakScenarioReusesExistingMeasurementEngine(t *testing.T)
 		".configuration.sample_interval_seconds == 60", ".configuration.reconnect_samples == 3",
 		".lifecycle.cleanup.ok == true", ".lifecycle.reconnect.ok == true",
 		".policy.sha256 == $policy_sha256", "privacy.direct_uplink_blocked",
+		".failure_domain // empty",
 		"precondition-attribution|active-attribution|reconnect-attribution",
 		"mark_failure diagnostic_unknown \"soak.${phase}\"",
 		"authorization-denied|authorization-unavailable", "mark_failure fixture \"soak.authorization\"",
