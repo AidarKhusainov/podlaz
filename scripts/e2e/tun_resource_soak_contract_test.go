@@ -41,6 +41,9 @@ func TestTunResourceSoakPreservesLifecycleAndPrivacyBoundaries(t *testing.T) {
 		`assert-replaced`,
 		`assert-gone`,
 		`NETWORK_ISOLATION_BASELINE`,
+		"capture_direct_uplink_privacy_baseline",
+		"assert_direct_uplink_blocked",
+		"Privacy Envelope allowed ordinary direct uplink egress",
 		`PACKAGE_BUILD_LOG="${SOAK_PRIVATE_DIR}/package-build.log"`,
 		`PACKAGE_INSTALL_LOG="${SOAK_PRIVATE_DIR}/package-install.log"`,
 	} {

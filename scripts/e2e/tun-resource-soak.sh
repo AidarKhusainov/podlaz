@@ -147,6 +147,8 @@ SESSION_TWO_IDENTITY="${SOAK_PRIVATE_DIR}/session-two.json"
 SESSION_ONE_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/session-one-network.json"
 SESSION_TWO_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/session-two-network.json"
 PRECONNECT_NETWORK_MANIFEST="${SOAK_PRIVATE_DIR}/preconnect-network.json"
+PRIVACY_UPLINK_FILE="${SOAK_PRIVATE_DIR}/privacy-uplink"
+PRIVACY_PROBE_IP_FILE="${SOAK_PRIVATE_DIR}/privacy-probe-ip"
 PROFILE_ID=""
 HOST_SENSITIVE_VALUES=""
 BUILD_COMMIT=""
@@ -466,6 +468,33 @@ assert_network_isolation() {
   fail "${label}: structural network isolation cannot be proved"
 }
 
+capture_direct_uplink_privacy_baseline() {
+  local uplink probe_ip
+  uplink="$(ip -4 route show table main default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
+  [[ -n "${uplink}" && "${uplink}" != "podlaz0" ]] || fail "privacy baseline has no ordinary uplink"
+  probe_ip="$(getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
+  [[ -n "${probe_ip}" ]] || fail "privacy baseline probe address is unavailable"
+  timeout --signal=TERM --kill-after=2s 12s     curl -4 -fsS --interface "${uplink}" --connect-timeout 4 --max-time 10     --resolve "example.com:443:${probe_ip}" https://example.com/ -o /dev/null ||
+    fail "ordinary direct uplink is unavailable before the soak"
+  printf '%s\n' "${uplink}" >"${PRIVACY_UPLINK_FILE}"
+  printf '%s\n' "${probe_ip}" >"${PRIVACY_PROBE_IP_FILE}"
+  chmod 0600 "${PRIVACY_UPLINK_FILE}" "${PRIVACY_PROBE_IP_FILE}"
+  append_sensitive_value "${uplink}"
+  append_sensitive_value "${probe_ip}"
+}
+
+assert_direct_uplink_blocked() {
+  local uplink probe_ip
+  [[ -f "${PRIVACY_UPLINK_FILE}" && -f "${PRIVACY_PROBE_IP_FILE}" ]] ||
+    fail "privacy baseline evidence is unavailable"
+  uplink="$(cat "${PRIVACY_UPLINK_FILE}")"
+  probe_ip="$(cat "${PRIVACY_PROBE_IP_FILE}")"
+  [[ -n "${uplink}" && -n "${probe_ip}" ]] || fail "privacy baseline evidence is incomplete"
+  if timeout --signal=TERM --kill-after=2s 8s     curl -4 -fsSk --interface "${uplink}" --connect-timeout 3 --max-time 6     --resolve "example.com:443:${probe_ip}" https://example.com/ -o /dev/null     >/dev/null 2>&1; then
+    fail "Privacy Envelope allowed ordinary direct uplink egress"
+  fi
+}
+
 run_bounded_data_plane_probe() {
   local label="$1" dns_stdout dns_stderr curl_stdout curl_stderr
   [[ "${label}" =~ ^[a-z0-9-]+$ ]] || fail "data-plane probe label is invalid"
@@ -480,6 +509,7 @@ run_bounded_data_plane_probe() {
     >"${curl_stdout}" 2>"${curl_stderr}" || fail "${label}: bounded HTTPS probe failed"
   append_sensitive_value "$(cat "${curl_stdout}")"
   wait_for_verified_tun_status "${label}"
+  assert_direct_uplink_blocked
 }
 
 precondition_warmed_inactive_baseline() {
@@ -499,6 +529,7 @@ precondition_warmed_inactive_baseline() {
     --output "${PRECONDITION_IDENTITY}" || fail "preconditioning process attribution failed"
   snapshot_network_manifest "${PRECONDITION_NETWORK_MANIFEST}"
   assert_network_isolation precondition-active "${PRECONDITION_NETWORK_MANIFEST}"
+  assert_direct_uplink_blocked
 
   SOAK_PHASE="precondition-warmup"
   sleep "${PODLAZ_E2E_SOAK_PRECONDITION_WARMUP_SECONDS}"
@@ -598,6 +629,7 @@ run_reconnect_probe() {
     --after "${SESSION_TWO_IDENTITY}" || fail "reconnect did not replace the exact supervised child"
   snapshot_network_manifest "${SESSION_TWO_NETWORK_MANIFEST}"
   assert_network_isolation reconnect-attributed "${SESSION_TWO_NETWORK_MANIFEST}"
+  assert_direct_uplink_blocked
   SOAK_PHASE="reconnect-warmup"
   sleep "${PODLAZ_E2E_SOAK_RECONNECT_WARMUP_SECONDS}"
   SOAK_PHASE="reconnect-sampling"
@@ -846,6 +878,7 @@ snapshot_network_manifest "${PRECONNECT_NETWORK_MANIFEST}"
 assert_resources_absent preconnect "${PRECONNECT_NETWORK_MANIFEST}"
 SOAK_PHASE="isolation-baseline"
 capture_network_isolation_baseline
+capture_direct_uplink_privacy_baseline
 precondition_warmed_inactive_baseline
 
 SOAK_PHASE="session-one-connect"
@@ -866,6 +899,7 @@ sudo -n python3 "${METRICS_TOOL}" assert-replaced \
   --after "${SESSION_ONE_IDENTITY}" || fail "measured session did not replace the preconditioning child on the same daemon"
 snapshot_network_manifest "${SESSION_ONE_NETWORK_MANIFEST}"
 assert_network_isolation active-attributed "${SESSION_ONE_NETWORK_MANIFEST}"
+assert_direct_uplink_blocked
 SOAK_PHASE="warmup"
 sleep "${PODLAZ_E2E_SOAK_WARMUP_SECONDS}"
 assert_network_isolation post-warmup "${SESSION_ONE_NETWORK_MANIFEST}"
