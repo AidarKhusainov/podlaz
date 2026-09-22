@@ -42,6 +42,7 @@ CANONICAL_TRUSTED_HOST_FILE="/etc/podlaz-e2e/tun-resource-soak-trusted-host.json
 : "${PODLAZ_E2E_SOAK_CLEANUP_SETTLE_SECONDS:=10}"
 : "${PODLAZ_E2E_SOAK_POLICY_FILE:=${CANONICAL_SOAK_POLICY_FILE}}"
 : "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE:=${CANONICAL_TRUSTED_HOST_FILE}}"
+: "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT:=dedicated}"
 : "${PODLAZ_E2E_TUN_HEALTH_TIMEOUT_SECONDS:=75}"
 : "${PODLAZ_E2E_TUN_HEALTH_POLL_SECONDS:=1}"
 : "${PODLAZ_E2E_TUN_STATUS_TIMEOUT_SECONDS:=10}"
@@ -87,6 +88,10 @@ if ((PODLAZ_E2E_SOAK_DURATION_SECONDS > 14400)); then
 fi
 [[ -f "${PODLAZ_E2E_SOAK_POLICY_FILE}" ]] || fail "soak policy file is missing"
 sudo -n test -f "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" || fail "trusted host fingerprint is missing"
+case "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}" in
+  dedicated|hosted-guest) ;;
+  *) fail "unsupported soak uplink environment" ;;
+esac
 
 DEV_DEB="${PODLAZ_E2E_PREBUILT_DEB:-./dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb}"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
@@ -436,6 +441,7 @@ capture_network_isolation_baseline() {
   sudo -n python3 "${ISOLATION_TOOL}" capture \
     --output "${NETWORK_ISOLATION_BASELINE}" \
     --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" \
+    --uplink-environment "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}" \
     >/dev/null 2>"${stderr_file}" || fail "clean structural network isolation cannot be proved"
 }
 
@@ -444,7 +450,7 @@ assert_network_isolation() {
   local -a args
   [[ "${label}" =~ ^[a-z0-9-]+$ ]] || fail "network isolation label is invalid"
   stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-${label}.stderr"
-  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}" --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}")
+  args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}" --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" --uplink-environment "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}")
   if [[ -n "${manifest}" ]]; then
     args+=(--manifest "${manifest}")
   fi
