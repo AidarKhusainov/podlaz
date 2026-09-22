@@ -73,6 +73,25 @@ func TestHostedRealProviderTUNWorkflowKeepsProxyAndTUNSignalsSeparate(t *testing
 			t.Fatalf("integration provider qualification lost %q", required)
 		}
 	}
+	jobStart := strings.Index(text, "\n  real-provider-tun:")
+	if jobStart < 0 {
+		t.Fatal("real-provider TUN job is missing")
+	}
+	job := text[jobStart:]
+	runStep := strings.Index(job, "      - name: Run isolated real-provider TUN qualification")
+	if runStep < 0 {
+		t.Fatal("real-provider TUN runtime step is missing")
+	}
+	preRuntime := job[:runStep]
+	for _, secretRef := range []string{
+		"PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}",
+		"PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}",
+		"PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}",
+	} {
+		if strings.Contains(preRuntime, secretRef) {
+			t.Fatalf("provider TUN secret %q must be scoped to the runtime step", secretRef)
+		}
+	}
 	for _, forbidden := range []string{"pull_request_target:", "self-hosted"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("trusted provider workflow must not contain %q", forbidden)
