@@ -1,0 +1,119 @@
+name: Hosted Resource Soak
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '37 3 * * 0'
+  # Temporary proving trigger. Removed after the first complete unattended run.
+  push:
+    branches:
+      - agent/automated-resource-soak
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-resource-soak
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Three-hour installed TUN resource soak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+      EXPECTED_FULL_RUNTIME_MINUTES: 210
+      MIN_FREE_DISK_MIB: 6144
+      MIN_AVAILABLE_MEMORY_MIB: 8192
+      MAX_PUBLIC_ARTIFACT_BYTES: 524288
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Verify disposable runner budget
+        run: |
+          set -Eeuo pipefail
+          free_disk_mib="$(df -Pm "${RUNNER_TEMP}" | awk 'NR == 2 {print $4}')"
+          available_memory_mib="$(awk '/MemAvailable:/ {print int($2 / 1024); exit}' /proc/meminfo)"
+          [[ "${free_disk_mib}" =~ ^[0-9]+$ && "${available_memory_mib}" =~ ^[0-9]+$ ]]
+          (( free_disk_mib >= MIN_FREE_DISK_MIB ))
+          (( available_memory_mib >= MIN_AVAILABLE_MEMORY_MIB ))
+          printf 'expected_full_runtime_minutes=%s\n' "${EXPECTED_FULL_RUNTIME_MINUTES}"
+          printf 'minimum_free_disk_mib=%s observed=%s\n' "${MIN_FREE_DISK_MIB}" "${free_disk_mib}"
+          printf 'minimum_available_memory_mib=%s observed=%s\n' "${MIN_AVAILABLE_MEMORY_MIB}" "${available_memory_mib}"
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Resource-soak contracts
+        run: >-
+          go test ./scripts/e2e
+          -run '^(TestHostedResourceSoak|TestTunResourceSoakPrebuilt|TestCheckedInResourceSoakPolicy)'
+          -count=1
+
+      - name: Run full hosted resource soak
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-resource-soak-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-resource-soak-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-resource-soak.sh "${DEV_DEB}"
+
+      - name: Validate public resource-soak evidence
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-resource-soak-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-resource-soak-public
+        run: bash scripts/e2e/hosted-resource-soak.sh validate-report
+
+      - name: Enforce bounded public evidence
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-resource-soak-public
+        run: |
+          set -Eeuo pipefail
+          total_bytes="$(find "${E2E_ARTIFACT_DIR}" -maxdepth 1 -type f -printf '%s\n' | awk '{sum += $1} END {print sum + 0}')"
+          (( total_bytes > 0 ))
+          (( total_bytes <= MAX_PUBLIC_ARTIFACT_BYTES ))
+          printf 'public_artifact_bytes=%s max=%s\n' "${total_bytes}" "${MAX_PUBLIC_ARTIFACT_BYTES}"
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-resource-soak-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload bounded public resource-soak evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-resource-soak
+          path: |
+            ${{ runner.temp }}/podlaz-hosted-resource-soak-public/hosted-resource-soak.txt
+            ${{ runner.temp }}/podlaz-hosted-resource-soak-public/tun-resource-soak-report.json
+            ${{ runner.temp }}/podlaz-hosted-resource-soak-public/tun-resource-failure.json
+          if-no-files-found: error
+          retention-days: 7
