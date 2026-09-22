@@ -44,6 +44,14 @@ class TunSoakStatusTests(unittest.TestCase):
         output = self.status_output(connection="active", state="verified", generation=1)
         self.assertEqual("verified", tun_soak_status.classify_status(output, exit_code=0))
 
+    def test_retries_active_status_while_tun_health_is_initializing(self) -> None:
+        output = self.status_output(connection="active", state=None)
+        self.assertEqual("retry-initializing", tun_soak_status.classify_status(output, exit_code=0))
+
+    def test_active_without_health_stays_fail_closed_for_non_enabled_tun(self) -> None:
+        output = self.status_output(connection="active", state=None, tun_base="disabled")
+        self.assertEqual("invalid-status", tun_soak_status.classify_status(output, exit_code=0))
+
     def test_retries_exact_revalidating_status(self) -> None:
         output = self.status_output(
             connection="active (revalidating: uplink_revalidating)",
@@ -196,6 +204,16 @@ printf 'failure=%s\\n' "${FAIL_MESSAGE}"
                 text=True,
                 env=env,
             )
+
+    def test_shell_wait_retries_initializing_then_accepts_verified(self) -> None:
+        initializing = self.status_output(connection="active", state=None)
+        verified = self.status_output(connection="active", state="verified", generation=1)
+        result = self.run_shell_wait([(initializing, 0, ""), (verified, 0, "")])
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("result=0", result.stdout)
+        self.assertIn("calls=2", result.stdout)
+        self.assertIn("verdict=", result.stdout)
+        self.assertNotIn("podlaz0", result.stdout)
 
     def test_shell_wait_retries_revalidating_then_accepts_verified(self) -> None:
         revalidating = self.status_output(

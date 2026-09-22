@@ -16,6 +16,7 @@ from typing import Sequence
 MAX_STATUS_BYTES = 64 * 1024
 
 VERIFIED = "verified"
+RETRY_INITIALIZING = "retry-initializing"
 RETRY_REVALIDATING = "retry-revalidating"
 RETRY_DEGRADED = "retry-degraded"
 TERMINAL_CLEANUP_REQUIRED = "terminal-cleanup-required"
@@ -26,6 +27,7 @@ INVALID_STATUS = "invalid-status"
 STATUS_VERDICTS = frozenset(
     {
         VERIFIED,
+        RETRY_INITIALIZING,
         RETRY_REVALIDATING,
         RETRY_DEGRADED,
         TERMINAL_CLEANUP_REQUIRED,
@@ -92,6 +94,16 @@ def classify_status(raw_output: str, *, exit_code: int) -> str:
         if exit_code == 0 and health is None and generation is None and classification is None:
             return TERMINAL_INACTIVE
         return INVALID_STATUS
+
+    if (
+        connection == "active"
+        and exit_code == 0
+        and parts == ["enabled (podlaz0)"]
+        and health is None
+        and generation is None
+        and classification is None
+    ):
+        return RETRY_INITIALIZING
 
     if health is None or generation is None or _GENERATION.fullmatch(generation) is None:
         return INVALID_STATUS

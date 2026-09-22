@@ -721,6 +721,7 @@ allowed_status_verdicts = {
     "command-timeout",
     "invalid-status",
     "retry-degraded-timeout",
+    "retry-initializing-timeout",
     "retry-revalidating-timeout",
     "terminal-cleanup-required",
     "terminal-inactive",
