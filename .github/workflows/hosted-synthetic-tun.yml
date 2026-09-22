@@ -6,13 +6,19 @@ on:
   schedule:
     - cron: '29 4 * * 3'
   workflow_dispatch:
+    inputs:
+      resource_soak:
+        description: Run the full three-hour hosted resource-soak qualification
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: hosted-synthetic-tun-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: hosted-synthetic-tun-\${{ github.ref }}-\${{ github.event_name }}
+  cancel-in-progress: \${{ github.event_name == 'pull_request' }}
 
 jobs:
   qualify:
@@ -20,7 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      CANDIDATE_COMMIT: ${{ github.sha }}
+      CANDIDATE_COMMIT: \${{ github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
@@ -45,7 +51,7 @@ jobs:
 
       - name: Build exact candidate package
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_COMMIT: \${{ env.CANDIDATE_COMMIT }}
         run: bash scripts/build-deb.sh
 
       - name: Scenario contract
@@ -53,32 +59,125 @@ jobs:
 
       - name: Run hosted synthetic full-TUN qualification
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-synthetic-public
-          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          E2E_TMP_ROOT: \${{ runner.temp }}/podlaz-hosted-synthetic-private
+          E2E_ARTIFACT_DIR: \${{ runner.temp }}/podlaz-hosted-synthetic-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: \${{ env.CANDIDATE_COMMIT }}
         run: |
-          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"
+          rm -rf "\${E2E_TMP_ROOT}" "\${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "\${E2E_TMP_ROOT}" "\${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-synthetic-tun.sh "\${DEV_DEB}"
 
       - name: Validate public report
         if: always()
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-synthetic-public
+          E2E_TMP_ROOT: \${{ runner.temp }}/podlaz-hosted-synthetic-private
+          E2E_ARTIFACT_DIR: \${{ runner.temp }}/podlaz-hosted-synthetic-public
         run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
 
       - name: Remove private qualification state
         if: always()
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-synthetic-private
-        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+          E2E_TMP_ROOT: \${{ runner.temp }}/podlaz-hosted-synthetic-private
+        run: sudo -n rm -rf "\${E2E_TMP_ROOT}"
 
       - name: Upload public qualification evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: podlaz-hosted-synthetic-tun
-          path: ${{ runner.temp }}/podlaz-hosted-synthetic-public/hosted-synthetic-tun.txt
+          path: \${{ runner.temp }}/podlaz-hosted-synthetic-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  resource-soak:
+    name: Installed synthetic TUN resource soak
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.resource_soak) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '<!-- run-hosted-resource-soak -->'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      CANDIDATE_COMMIT: \${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+      SOAK_EXPECTED_RUNTIME_MINUTES: '210'
+      SOAK_MIN_MEMORY_BYTES: '12884901888'
+      SOAK_MIN_FREE_DISK_BYTES: '8589934592'
+      SOAK_MAX_PUBLIC_BYTES: '4194304'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Verify hosted resource budget
+        run: |
+          memory_bytes="$(awk '/^MemTotal:/ {printf "%.0f\n", $2 * 1024; exit}' /proc/meminfo)"
+          free_disk_bytes="$(df --output=avail -B1 "\${RUNNER_TEMP}" | awk 'NR == 2 {print $1}')"
+          printf 'expected_runtime_minutes=%s\n' "\${SOAK_EXPECTED_RUNTIME_MINUTES}"
+          printf 'job_timeout_minutes=300\n'
+          printf 'github_hosted_hard_limit_minutes=360\n'
+          printf 'memory_bytes=%s\n' "\${memory_bytes}"
+          printf 'initial_free_disk_bytes=%s\n' "\${free_disk_bytes}"
+          (( memory_bytes >= SOAK_MIN_MEMORY_BYTES ))
+          (( free_disk_bytes >= SOAK_MIN_FREE_DISK_BYTES ))
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: \${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Resource-soak contract
+        run: go test ./scripts/e2e -run '^TestHostedResourceSoak' -count=1
+
+      - name: Run full hosted resource soak
+        env:
+          E2E_TMP_ROOT: \${{ runner.temp }}/podlaz-hosted-resource-soak-private
+          E2E_ARTIFACT_DIR: \${{ runner.temp }}/podlaz-hosted-resource-soak-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: \${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "\${E2E_TMP_ROOT}" "\${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "\${E2E_TMP_ROOT}" "\${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-resource-soak.sh "\${DEV_DEB}"
+
+      - name: Validate bounded public evidence
+        if: always()
+        env:
+          E2E_TMP_ROOT: \${{ runner.temp }}/podlaz-hosted-resource-soak-private
+          E2E_ARTIFACT_DIR: \${{ runner.temp }}/podlaz-hosted-resource-soak-public
+        run: |
+          bash scripts/e2e/hosted-resource-soak.sh validate-report
+          bytes="$(du -sb "\${E2E_ARTIFACT_DIR}" | awk '{print $1}')"
+          (( bytes <= SOAK_MAX_PUBLIC_BYTES ))
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: \${{ runner.temp }}/podlaz-hosted-resource-soak-private
+        run: sudo -n rm -rf "\${E2E_TMP_ROOT}"
+
+      - name: Upload bounded public resource-soak evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-hosted-resource-soak
+          path: |
+            \${{ runner.temp }}/podlaz-hosted-resource-soak-public/hosted-resource-soak.json
+            \${{ runner.temp }}/podlaz-hosted-resource-soak-public/hosted-resource-soak-status.txt
           if-no-files-found: error
           retention-days: 7
