@@ -1049,7 +1049,11 @@ def _default_route_metrics(snapshot: Mapping[str, Any]) -> dict[tuple[str, str],
 
 def _main_connected_route_expectations(
     snapshot: Mapping[str, Any],
+    *,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
 ) -> tuple[list[frozenset[str]], list[frozenset[str]]]:
+    if uplink_environment not in UPLINK_ENVIRONMENTS:
+        raise IsolationError("unsupported soak uplink environment")
     """Derive exact required and prohibited-when-absent connected-route shapes."""
 
     addresses = snapshot.get("addresses")
@@ -1110,7 +1114,11 @@ def _main_connected_route_expectations(
         if "noprefixroute" in primary_flags:
             if any("noprefixroute" not in address.get("flags", []) for address in group):
                 raise IsolationError("connected-prefix noprefixroute evidence is ambiguous")
-            target = suppressed_groups
+            target = (
+                required_groups
+                if uplink_environment == UPLINK_ENVIRONMENT_HOSTED_GUEST
+                else suppressed_groups
+            )
         else:
             target = required_groups
 
@@ -1164,8 +1172,15 @@ def _main_connected_route_expectations(
     return required_groups, suppressed_groups
 
 
-def _validate_main_connected_routes(snapshot: Mapping[str, Any]) -> None:
-    required_groups, suppressed_groups = _main_connected_route_expectations(snapshot)
+def _validate_main_connected_routes(
+    snapshot: Mapping[str, Any],
+    *,
+    uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
+) -> None:
+    required_groups, suppressed_groups = _main_connected_route_expectations(
+        snapshot,
+        uplink_environment=uplink_environment,
+    )
     groups = required_groups + suppressed_groups
     matches = [0] * len(groups)
     observed: set[str] = set()
@@ -1659,7 +1674,7 @@ def validate_clean_baseline(
         )
 
     _validate_non_main_routes(snapshot)
-    _validate_main_connected_routes(snapshot)
+    _validate_main_connected_routes(snapshot, uplink_environment=uplink_environment)
 
     for key in ("routes_v4", "routes_v6"):
         routes = snapshot.get(key)
