@@ -924,6 +924,16 @@ class TunSoakIsolationTests(unittest.TestCase):
             uplink_environment="hosted-guest",
         )
 
+    def test_hosted_guest_accepts_network_manager_noprefixroute_connected_route(self) -> None:
+        snapshot = self.baseline()
+        snapshot["links"][1]["kind"] = "veth"
+        snapshot["addresses"][1]["addresses"][0]["flags"].append("noprefixroute")
+
+        tun_soak_isolation.validate_clean_baseline(
+            snapshot,
+            uplink_environment="hosted-guest",
+        )
+
     def test_dedicated_environment_rejects_veth_uplink(self) -> None:
         snapshot = self.baseline()
         snapshot["links"][1]["kind"] = "veth"
