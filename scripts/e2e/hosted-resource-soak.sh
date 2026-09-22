@@ -290,6 +290,7 @@ run_hosted_soak() {
   guest_exec /bin/bash -lc "
     set -Eeuo pipefail
     uri=\$(cat /run/podlaz-synthetic-xray/client-uri)
+    cd /workspace
     exec runuser -u e2e -- env \\
       E2E_TMP_ROOT='${GUEST_SOAK_TMP}' \\
       E2E_ARTIFACT_DIR='${GUEST_SOAK_ARTIFACTS}' \\
