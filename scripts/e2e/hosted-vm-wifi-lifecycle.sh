@@ -237,9 +237,6 @@ iptables -t nat -A POSTROUTING -s 198.51.100.0/24 -o "${provider_if}" -j MASQUER
 iptables -A FORWARD -i "${ap_if}" -o "${provider_if}" -j ACCEPT
 iptables -A FORWARD -i "${provider_if}" -o "${ap_if}" \
   -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-timeout 20 getent ahostsv4 example.com >/dev/null
-timeout 30 curl -4 -fsS --interface "${provider_if}" -o /dev/null https://example.com/
 AP
 
 cat >/var/tmp/podlaz-wifi-hostapd.conf <<HOSTAPD
