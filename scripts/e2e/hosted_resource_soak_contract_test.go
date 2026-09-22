@@ -71,7 +71,7 @@ func TestHostedResourceSoakScenarioReusesExistingMeasurementEngine(t *testing.T)
 		"hosted-synthetic-tun.sh", "prepare_system_guest", "start_system_guest",
 		"start_synthetic_xray_endpoint", "provision_trusted_host",
 		"isolation.collect_snapshot()", "isolation.validate_clean_baseline(",
-		"uplink_environment=\\"hosted-guest\\"", "PODLAZ_E2E_PREBUILT_DEB", "PODLAZ_E2E_CANDIDATE_COMMIT",
+		"uplink_environment=\"hosted-guest\"", "PODLAZ_E2E_PREBUILT_DEB", "PODLAZ_E2E_CANDIDATE_COMMIT",
 		"PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT=hosted-guest", "bash /workspace/scripts/e2e/tun-resource-soak.sh",
 		".configuration.duration_seconds == 10800", ".configuration.warmup_seconds == 120",
 		".configuration.sample_interval_seconds == 60", ".configuration.reconnect_samples == 3",
