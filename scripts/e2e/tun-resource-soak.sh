@@ -17,7 +17,7 @@ source "${SCRIPT_DIR}/lib/tun_soak_health.sh"
 # shellcheck source=lib/tun_soak_cleanup.sh
 source "${SCRIPT_DIR}/lib/tun_soak_cleanup.sh"
 
-require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git go grep hostname id install ip mktemp nmcli python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
+require_cmd apt awk bash cat cmp curl date dpkg dpkg-deb find getent git grep hostname id install ip mktemp nmcli python3 readlink resolvectl runuser sed seq sha256sum sleep sort sudo systemctl timeout tr uname
 
 CANONICAL_DNS_CHECK_HOST="github.com"
 CANONICAL_PUBLIC_IP_CHECK_URL="https://api.ipify.org"
@@ -27,6 +27,8 @@ CANONICAL_TRUSTED_HOST_FILE="/etc/podlaz-e2e/tun-resource-soak-trusted-host.json
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
+: "${PODLAZ_E2E_PREBUILT_DEB:=}"
+: "${PODLAZ_E2E_CANDIDATE_COMMIT:=}"
 : "${PODLAZ_E2E_DNS_CHECK_HOST:=${CANONICAL_DNS_CHECK_HOST}}"
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=${CANONICAL_PUBLIC_IP_CHECK_URL}}"
 : "${PODLAZ_DEB_ARCH:=$(dpkg --print-architecture)}"
@@ -86,7 +88,7 @@ fi
 [[ -f "${PODLAZ_E2E_SOAK_POLICY_FILE}" ]] || fail "soak policy file is missing"
 sudo -n test -f "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" || fail "trusted host fingerprint is missing"
 
-DEV_DEB="dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb"
+DEV_DEB="${PODLAZ_E2E_PREBUILT_DEB:-./dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb}"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 TRANSACTION_DIR="/run/podlaz/transactions"
 METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
@@ -770,21 +772,32 @@ SOAK_PHASE="configuration"
 write_configuration
 
 SOAK_PHASE="package-build"
-log "build exact release-like package for resource soak"
-# shellcheck disable=SC1091
-. packaging/package-toolchain.env
-go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
-export PATH="$(go env GOPATH)/bin:${PATH}"
-BUILD_COMMIT="$(git rev-parse HEAD)"
-PODLAZ_COMMIT="${BUILD_COMMIT}" \
-  PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
-  PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
-  bash scripts/build-deb.sh >"${PACKAGE_BUILD_LOG}" 2>&1
-test -f "${DEV_DEB}" || fail "expected resource-soak package was not built"
+if [[ -n "${PODLAZ_E2E_PREBUILT_DEB}" ]]; then
+  [[ -f "${DEV_DEB}" && ! -L "${DEV_DEB}" ]] || fail "prebuilt resource-soak candidate must be a regular non-symlink file"
+  [[ "$(dpkg-deb --field "${DEV_DEB}" Package)" == podlaz ]] || fail "prebuilt resource-soak candidate is not podlaz"
+  [[ "$(dpkg-deb --field "${DEV_DEB}" Architecture)" == "${PODLAZ_DEB_ARCH}" ]] || fail "prebuilt resource-soak candidate architecture does not match the runtime"
+  [[ "${PODLAZ_E2E_CANDIDATE_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "prebuilt resource-soak candidate requires an exact 40-hex commit"
+  DEV_DEB="$(readlink -f -- "${DEV_DEB}")"
+  BUILD_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT,,}"
+  printf 'prebuilt candidate supplied by the outer disposable qualification environment\n' >"${PACKAGE_BUILD_LOG}"
+else
+  log "build exact release-like package for resource soak"
+  require_cmd go
+  # shellcheck disable=SC1091
+  . packaging/package-toolchain.env
+  go install github.com/goreleaser/nfpm/v2/cmd/nfpm@"${NFPM_VERSION}"
+  export PATH="$(go env GOPATH)/bin:${PATH}"
+  BUILD_COMMIT="$(git rev-parse HEAD)"
+  PODLAZ_COMMIT="${BUILD_COMMIT}" \
+    PODLAZ_BUILT="${PODLAZ_E2E_BUILT:-$(date -u '+%b %d %Y')}" \
+    PODLAZ_DEB_ARCH="${PODLAZ_DEB_ARCH}" \
+    bash scripts/build-deb.sh >"${PACKAGE_BUILD_LOG}" 2>&1
+  test -f "${DEV_DEB}" || fail "expected resource-soak package was not built"
+fi
 
 SOAK_PHASE="package-install"
-sudo -n apt install -y "./${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1
-sudo -n apt install --reinstall -y "./${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1
+sudo -n apt install -y "${DEV_DEB}" >"${PACKAGE_INSTALL_LOG}" 2>&1
+sudo -n apt install --reinstall -y "${DEV_DEB}" >"${PACKAGE_REINSTALL_LOG}" 2>&1
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart podlazd.service
 wait_for_daemon_socket "${DAEMON_SOCKET}" 15
