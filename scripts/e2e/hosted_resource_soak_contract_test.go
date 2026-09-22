@@ -99,6 +99,7 @@ func TestTunResourceSoakPrebuiltCandidatePreservesExactProvenance(t *testing.T) 
 		"BUILD_COMMIT=\"${PODLAZ_E2E_CANDIDATE_COMMIT,,}\"",
 		"DEV_DEB=\"$(readlink -f -- \"${DEV_DEB}\")\"",
 		"sudo -n apt install -y \"${DEV_DEB}\"", "verify_package_provenance",
+		"--session-authority \"${NETWORK_SESSION_STATE}\"",
 	)
 	cmd := exec.Command("bash", "-n", tunResourceSoakScript)
 	if output, err := cmd.CombinedOutput(); err != nil {

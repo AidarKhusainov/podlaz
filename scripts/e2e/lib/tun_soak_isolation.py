@@ -74,6 +74,12 @@ TRUSTED_ROUTE_FIELDS = frozenset(
     }
 )
 TRUSTED_NETWORK_MANAGER_FIELDS = frozenset({"uuid", "device", "state"})
+NETWORK_SESSION_SCHEMA = "podlaz.network-session-state.v1"
+NETWORK_SESSION_OWNER = "podlaz"
+NETWORK_SESSION_MAX_BYTES = 256 * 1024
+NETWORK_SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+PRIVACY_TABLE_RE = re.compile(r"^podlaz_pe_([0-9a-f]{12})(?:_[1-9][0-9]{0,2})?$")
+PRIVACY_COMPOSITION_VERSION = 1
 
 RULE_RAW_FIELDS = frozenset(
     {
@@ -1754,15 +1760,68 @@ def validate_clean_baseline(
             raise IsolationError("foreign resolver default-route ownership exists before the soak")
 
 
-def _nft_entry_belongs_to_podlaz(entry: Mapping[str, Any]) -> bool:
+def _nft_entry_belongs_to_table(entry: Mapping[str, Any], *, family: str, table: str) -> bool:
     for value in entry.values():
         if not isinstance(value, Mapping):
             continue
-        family = value.get("family")
-        table = value.get("table", value.get("name"))
-        if family == PODLAZ_NFT_FAMILY and table == PODLAZ_NFT_TABLE:
+        observed_family = value.get("family")
+        observed_table = value.get("table", value.get("name"))
+        if observed_family == family and observed_table == table:
             return True
     return False
+
+
+def _nft_entry_belongs_to_podlaz(entry: Mapping[str, Any]) -> bool:
+    return _nft_entry_belongs_to_table(
+        entry,
+        family=PODLAZ_NFT_FAMILY,
+        table=PODLAZ_NFT_TABLE,
+    )
+
+
+def _validated_privacy_authority(value: Any, *, current_boot_id: str) -> dict[str, str]:
+    session = _required_mapping(value, "Network Session authority")
+    if session.get("schema_version") != NETWORK_SESSION_SCHEMA or session.get("owner") != NETWORK_SESSION_OWNER:
+        raise IsolationError("Network Session authority identity is unsupported")
+    if str(session.get("boot_id") or "").strip() != current_boot_id:
+        raise IsolationError("Network Session authority is not current-boot")
+    session_id = str(session.get("session_id") or "").strip()
+    if NETWORK_SESSION_ID_RE.fullmatch(session_id) is None:
+        raise IsolationError("Network Session id is invalid")
+    if session.get("intent") != "resume":
+        raise IsolationError("Network Session does not authorize active protection")
+
+    protection = _required_mapping(session.get("protection"), "Privacy Envelope authority")
+    if (
+        protection.get("state") != "armed"
+        or protection.get("composition_version") != PRIVACY_COMPOSITION_VERSION
+        or protection.get("family") != PODLAZ_NFT_FAMILY
+        or protection.get("tun_interface") != PODLAZ_LINK
+    ):
+        raise IsolationError("Privacy Envelope authority is incomplete")
+    table = str(protection.get("table") or "").strip()
+    match = PRIVACY_TABLE_RE.fullmatch(table)
+    if match is None or match.group(1) != session_id[:12]:
+        raise IsolationError("Privacy Envelope table identity is invalid")
+    return {"family": PODLAZ_NFT_FAMILY, "table": table}
+
+
+def _load_privacy_authority(path: Path) -> dict[str, str]:
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or path.is_symlink():
+            raise IsolationError("Network Session authority must be a regular file")
+        if info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077:
+            raise IsolationError("Network Session authority must be root-owned and private")
+        if info.st_size <= 0 or info.st_size > NETWORK_SESSION_MAX_BYTES:
+            raise IsolationError("Network Session authority size is invalid")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        current_boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except IsolationError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise IsolationError("Network Session authority cannot be inspected") from exc
+    return _validated_privacy_authority(value, current_boot_id=current_boot_id)
 
 
 def _load_manifest(path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -1874,7 +1933,12 @@ def _rule_matches(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> boo
     return dict(actual) == dict(expected)
 
 
-def strip_exact_podlaz_state(snapshot: Mapping[str, Any], manifest: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+def strip_exact_podlaz_state(
+    snapshot: Mapping[str, Any],
+    manifest: Mapping[str, Sequence[Mapping[str, Any]]],
+    *,
+    privacy_authority: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     result = copy.deepcopy(dict(snapshot))
     links = result.get("links")
     if not isinstance(links, list):
@@ -1908,11 +1972,24 @@ def strip_exact_podlaz_state(snapshot: Mapping[str, Any], manifest: Mapping[str,
     nftables = result.get("nftables")
     if not isinstance(nftables, list):
         raise IsolationError("nftables inventory is unavailable")
-    result["nftables"] = [
-        entry
-        for entry in nftables
-        if not (isinstance(entry, Mapping) and _nft_entry_belongs_to_podlaz(entry))
-    ]
+    privacy_matches = 0
+    retained_nftables: list[dict[str, Any]] = []
+    for entry in nftables:
+        if not isinstance(entry, Mapping):
+            raise IsolationError("nftables inventory entry is malformed")
+        if _nft_entry_belongs_to_podlaz(entry):
+            continue
+        if privacy_authority is not None and _nft_entry_belongs_to_table(
+            entry,
+            family=str(privacy_authority.get("family") or ""),
+            table=str(privacy_authority.get("table") or ""),
+        ):
+            privacy_matches += 1
+            continue
+        retained_nftables.append(dict(entry))
+    if privacy_authority is not None and privacy_matches == 0:
+        raise IsolationError("exact Privacy Envelope projection is missing")
+    result["nftables"] = retained_nftables
 
     resolved = _required_mapping(result.get("resolved"), "resolver inventory")
     resolved_links = resolved.get("links")
@@ -1946,10 +2023,19 @@ def assert_matches_baseline(
     baseline: Mapping[str, Any],
     current: Mapping[str, Any],
     manifest: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+    privacy_authority: Mapping[str, str] | None = None,
     trusted: Mapping[str, Any] | None = None,
     uplink_environment: str = UPLINK_ENVIRONMENT_DEDICATED,
 ) -> None:
-    observed = strip_exact_podlaz_state(current, manifest) if manifest is not None else dict(current)
+    observed = (
+        strip_exact_podlaz_state(
+            current,
+            manifest,
+            privacy_authority=privacy_authority,
+        )
+        if manifest is not None
+        else dict(current)
+    )
     if trusted is not None:
         validate_trusted_host(observed, trusted, uplink_environment=uplink_environment)
     if observed != dict(baseline):
@@ -2020,6 +2106,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--baseline", type=Path, required=True)
     verify.add_argument("--manifest", type=Path)
+    verify.add_argument("--session-authority", type=Path)
     verify.add_argument("--trusted-host", type=Path, required=True)
     verify.add_argument(
         "--uplink-environment",
@@ -2042,10 +2129,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         baseline = _load_snapshot(args.baseline)
         current = collect_snapshot()
         manifest = _load_manifest(args.manifest) if args.manifest is not None else None
+        if args.session_authority is not None and manifest is None:
+            raise IsolationError("Privacy Envelope authority requires an exact network manifest")
+        privacy_authority = (
+            _load_privacy_authority(args.session_authority)
+            if args.session_authority is not None
+            else None
+        )
         assert_matches_baseline(
             baseline=baseline,
             current=current,
             manifest=manifest,
+            privacy_authority=privacy_authority,
             trusted=trusted,
             uplink_environment=args.uplink_environment,
         )

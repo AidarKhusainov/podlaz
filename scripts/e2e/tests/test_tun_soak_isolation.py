@@ -831,6 +831,79 @@ class TunSoakIsolationTests(unittest.TestCase):
         with self.assertRaisesRegex(tun_soak_isolation.IsolationError, "resolver default-route"):
             tun_soak_isolation.validate_clean_baseline(snapshot)
 
+    def privacy_authority(self, table: str = "podlaz_pe_0123456789ab") -> dict[str, object]:
+        return {
+            "schema_version": "podlaz.network-session-state.v1",
+            "owner": "podlaz",
+            "boot_id": "boot-example",
+            "session_id": "0123456789abcdef0123456789abcdef",
+            "intent": "resume",
+            "protection": {
+                "state": "armed",
+                "composition_version": 1,
+                "family": "inet",
+                "tun_interface": "podlaz0",
+                "table": table,
+            },
+        }
+
+    def test_exact_privacy_envelope_projection_is_removed_by_persisted_authority(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        current["nftables"].extend(
+            [
+                {"table": {"family": "inet", "name": "podlaz_pe_0123456789ab"}},
+                {
+                    "chain": {
+                        "family": "inet",
+                        "table": "podlaz_pe_0123456789ab",
+                        "name": "output",
+                    }
+                },
+            ]
+        )
+        authority = tun_soak_isolation._validated_privacy_authority(
+            self.privacy_authority(),
+            current_boot_id="boot-example",
+        )
+
+        tun_soak_isolation.assert_matches_baseline(
+            baseline=baseline,
+            current=current,
+            manifest=manifest,
+            privacy_authority=authority,
+        )
+
+    def test_foreign_privacy_lookalike_is_not_subtracted_without_exact_authority(self) -> None:
+        baseline, current, manifest = self.active_snapshot_and_manifest()
+        current["nftables"].append(
+            {"table": {"family": "inet", "name": "podlaz_pe_ffffffffffff"}}
+        )
+        authority = tun_soak_isolation._validated_privacy_authority(
+            self.privacy_authority(),
+            current_boot_id="boot-example",
+        )
+
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "network state changed",
+        ):
+            tun_soak_isolation.assert_matches_baseline(
+                baseline=baseline,
+                current=current,
+                manifest=manifest,
+                privacy_authority=authority,
+            )
+
+    def test_privacy_authority_rejects_session_table_mismatch(self) -> None:
+        with self.assertRaisesRegex(
+            tun_soak_isolation.IsolationError,
+            "Privacy Envelope table identity",
+        ):
+            tun_soak_isolation._validated_privacy_authority(
+                self.privacy_authority("podlaz_pe_deadbeefdead"),
+                current_boot_id="boot-example",
+            )
+
     def test_exact_podlaz_projection_is_removed_before_baseline_comparison(self) -> None:
         baseline, current, manifest = self.active_snapshot_and_manifest()
 

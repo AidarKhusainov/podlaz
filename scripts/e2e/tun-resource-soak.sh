@@ -96,6 +96,7 @@ esac
 DEV_DEB="${PODLAZ_E2E_PREBUILT_DEB:-./dist/podlaz_0.0.0~dev-1_linux_${PODLAZ_DEB_ARCH}.deb}"
 DAEMON_SOCKET="/run/podlaz/podlazd.sock"
 TRANSACTION_DIR="/run/podlaz/transactions"
+NETWORK_SESSION_STATE="/run/podlaz/network-session-continuation.json"
 METRICS_TOOL="${SCRIPT_DIR}/lib/tun_soak_metrics.py"
 TUN_SOAK_STATUS_TOOL="${SCRIPT_DIR}/lib/tun_soak_status.py"
 NETWORK_HELPER="${SCRIPT_DIR}/tun-package-fallback-network.py"
@@ -452,7 +453,7 @@ assert_network_isolation() {
   stderr_file="${SOAK_PRIVATE_DIR}/network-isolation-${label}.stderr"
   args=(verify --baseline "${NETWORK_ISOLATION_BASELINE}" --trusted-host "${PODLAZ_E2E_SOAK_TRUSTED_HOST_FILE}" --uplink-environment "${PODLAZ_E2E_SOAK_UPLINK_ENVIRONMENT}")
   if [[ -n "${manifest}" ]]; then
-    args+=(--manifest "${manifest}")
+    args+=(--manifest "${manifest}" --session-authority "${NETWORK_SESSION_STATE}")
   fi
   sudo -n python3 "${ISOLATION_TOOL}" "${args[@]}" \
     >/dev/null 2>"${stderr_file}" || fail "${label}: structural network isolation cannot be proved"
