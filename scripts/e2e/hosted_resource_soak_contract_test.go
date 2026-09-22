@@ -68,7 +68,7 @@ func TestHostedResourceSoakWorkflowIsLongRunningDisposableQualification(t *testi
 func TestHostedResourceSoakScenarioReusesExistingMeasurementEngine(t *testing.T) {
 	script := readHostedResourceSoakFile(t, hostedResourceSoakScript)
 	requireHostedResourceSoakMarkers(t, script,
-		"hosted-synthetic-tun.sh", "prepare_system_guest", "start_system_guest",
+		"hosted-synthetic-tun.sh", "prepare_system_guest", "install_tun_authorization", "start_system_guest",
 		"start_synthetic_xray_endpoint", "provision_trusted_host",
 		"isolation.collect_snapshot()", "isolation.validate_clean_baseline(",
 		"uplink_environment=\"hosted-guest\"", "PODLAZ_E2E_PREBUILT_DEB", "PODLAZ_E2E_CANDIDATE_COMMIT",
