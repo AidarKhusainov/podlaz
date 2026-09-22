@@ -223,6 +223,7 @@ import_provider_profile() {
   (( code == 0 )) || return 1
   PROFILE_ID="$(awk '/^Imported profile:/ {print $3; exit}' "${import_stdout}")"
   [[ -n "${PROFILE_ID}" && "${PROFILE_ID}" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+  mask_value "${PROFILE_ID}"
   printf '%s\n' "${PROFILE_ID}" >"${PRIVATE_ROOT}/profile-id"
   chmod 0600 "${PRIVATE_ROOT}/profile-id"
   sudo -n machinectl copy-to "${MACHINE}" "${PRIVATE_ROOT}/profile-id" "${GUEST_PRIVATE}/profile-id" >/dev/null
@@ -248,6 +249,7 @@ value=ipaddress.ip_address(sys.argv[1])
 if value.version != 4:
     raise SystemExit("ordinary egress is not IPv4")
 PY
+  mask_value "${ORDINARY_EGRESS}"
 }
 
 prepare_direct_probe() {
@@ -289,6 +291,7 @@ value=ipaddress.ip_address(sys.argv[1])
 if value.version != 4:
     raise SystemExit("active provider egress is not IPv4")
 PY
+  mask_value "${ACTIVE_EGRESS}"
   [[ "${ACTIVE_EGRESS}" != "${ORDINARY_EGRESS}" ]] || {
     mark_failure capability provider.egress_not_distinguishable
     return 1
