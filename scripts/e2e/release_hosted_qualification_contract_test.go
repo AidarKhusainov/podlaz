@@ -106,7 +106,6 @@ func TestReleaseSupportsExactTagRecoveryDispatch(t *testing.T) {
 	}
 }
 
-
 func TestIncompleteReleaseRecoveryUsesRefLookupExitStatus(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
 	if err != nil {
