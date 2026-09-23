@@ -106,7 +106,7 @@ func (s *tunReconciliationSupervisor) RunRound(round tunReconciliationRound) tun
 }
 
 func (s *tunReconciliationSupervisor) reconcileOrBoundedTerminal(round tunReconciliationRound) tunReconciliationDecision {
-	if s.advanceCycle(round) {
+	if s.advanceCycle(round, true) {
 		s.clearCycle(round.NetworkSessionID)
 		return s.automaticDecision(round, tunDecisionTerminal, terminalClassification(round))
 	}
@@ -114,7 +114,7 @@ func (s *tunReconciliationSupervisor) reconcileOrBoundedTerminal(round tunReconc
 }
 
 func (s *tunReconciliationSupervisor) retryOrBoundedTerminal(round tunReconciliationRound, classification api.TunHealthClassification, terminalEligible bool) tunReconciliationDecision {
-	if s.advanceCycle(round) {
+	if s.advanceCycle(round, terminalEligible) {
 		if terminalEligible {
 			s.clearCycle(round.NetworkSessionID)
 			return s.automaticDecision(round, tunDecisionTerminal, terminalClassification(round))
@@ -137,7 +137,7 @@ func (s *tunReconciliationSupervisor) retryOrBoundedTerminal(round tunReconcilia
 	}
 }
 
-func (s *tunReconciliationSupervisor) advanceCycle(round tunReconciliationRound) bool {
+func (s *tunReconciliationSupervisor) advanceCycle(round tunReconciliationRound, exhaustOnNoProgress bool) bool {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -159,7 +159,11 @@ func (s *tunReconciliationSupervisor) advanceCycle(round tunReconciliationRound)
 	}
 	cycle.progressKey = progressKey
 	cycle.hasProgressKey = true
-	cycle.exhausted = !now.Before(cycle.deadline) || cycle.noProgressCount >= s.maxNoProgressRounds
+	// Stable evidence that can justify a terminal decision may consume the
+	// no-progress budget. Incomplete/unknown evidence cannot grant mutation or
+	// cleanup authority, so keep observing it until the already-bounded overall
+	// deadline instead of stopping after a few identical transitional snapshots.
+	cycle.exhausted = !now.Before(cycle.deadline) || (exhaustOnNoProgress && cycle.noProgressCount >= s.maxNoProgressRounds)
 	return cycle.exhausted
 }
 

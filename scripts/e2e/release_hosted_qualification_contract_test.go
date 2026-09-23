@@ -141,6 +141,29 @@ func TestIncompleteReleaseRecoveryUsesExplicitRepositoryAndSafeTagReuse(t *testi
 	}
 }
 
+func TestIncompleteReleaseRecoveryPollsReleaseAtomicallyAndSkipsRedundantDispatch(t *testing.T) {
+	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
+	if err != nil {
+		t.Fatalf("read recovery workflow: %v", err)
+	}
+	workflow := string(contents)
+
+	for _, required := range []string{
+		"      - name: Detect complete replacement release\n",
+		"        id: replacement-state\n",
+		`if actual_sorted="$(gh release view "${TAG}" --json assets --jq '.assets[].name' 2>/dev/null | LC_ALL=C sort)" && [ "${actual_sorted}" = "${expected_sorted}" ]; then`,
+		"          echo \"ready=true\" >>\"${GITHUB_OUTPUT}\"\n",
+		"        if: steps.replacement-state.outputs.ready != 'true'\n",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("release recovery polling contract is missing %q", required)
+		}
+	}
+	if strings.Contains(workflow, `if gh release view "${TAG}" >/dev/null 2>&1; then`) {
+		t.Fatal("release recovery must not split release existence and asset reads across two API calls")
+	}
+}
+
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {

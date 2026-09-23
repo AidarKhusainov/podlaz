@@ -45,12 +45,32 @@ jobs:
             echo "created ${TAG} at ${GITHUB_SHA}"
           fi
 
+      - name: Detect complete replacement release
+        id: replacement-state
+        run: |
+          set -euo pipefail
+          expected_assets=(
+            "podlaz_0.2.44_linux_amd64.tar.gz"
+            "podlaz_0.2.44_linux_arm64.tar.gz"
+            "podlaz_0.2.44_linux_amd64.deb"
+            "podlaz_0.2.44_linux_arm64.deb"
+            "SHA256SUMS"
+          )
+          expected_sorted="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)"
+          if actual_sorted="$(gh release view "${TAG}" --json assets --jq '.assets[].name' 2>/dev/null | LC_ALL=C sort)" && [ "${actual_sorted}" = "${expected_sorted}" ]; then
+            echo "ready=true" >>"${GITHUB_OUTPUT}"
+          else
+            echo "ready=false" >>"${GITHUB_OUTPUT}"
+          fi
+
       - name: Dispatch exact-tag release qualification
+        if: steps.replacement-state.outputs.ready != 'true'
         run: |
           set -euo pipefail
           gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f tag="${TAG}"
 
       - name: Wait for immutable release assets
+        if: steps.replacement-state.outputs.ready != 'true'
         run: |
           set -euo pipefail
           expected_assets=(
@@ -63,11 +83,8 @@ jobs:
           expected_sorted="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)"
 
           for _ in $(seq 1 60); do
-            if gh release view "${TAG}" >/dev/null 2>&1; then
-              actual_sorted="$(gh release view "${TAG}" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
-              if [ "${actual_sorted}" = "${expected_sorted}" ]; then
-                exit 0
-              fi
+            if actual_sorted="$(gh release view "${TAG}" --json assets --jq '.assets[].name' 2>/dev/null | LC_ALL=C sort)" && [ "${actual_sorted}" = "${expected_sorted}" ]; then
+              exit 0
             fi
             sleep 20
           done
