@@ -214,9 +214,21 @@ done
 wifi_fixture_phase=namespace_create
 ip netns add pzwifiap
 ip netns exec pzwifiap sleep infinity </dev/null >/dev/null 2>&1 &
-ap_ns_pid=$!
-printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
+ap_ns_launcher_pid=$!
+ap_ns_pid=""
+for _ in $(seq 1 30); do
+  ap_ns_pid="$(ip netns pids pzwifiap | head -n1)"
+  if [[ "${ap_ns_pid}" =~ ^[1-9][0-9]*$ ]] && kill -0 "${ap_ns_pid}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+[[ "${ap_ns_pid}" =~ ^[1-9][0-9]*$ ]]
 kill -0 "${ap_ns_pid}"
+printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
+# The shell launcher is not namespace authority; keep it only so cleanup can
+# reap the background command if ip(8) did not exec the target in-place.
+: "${ap_ns_launcher_pid}"
 
 wifi_fixture_phase=namespace_radios
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
@@ -233,8 +245,18 @@ for _ in $(seq 1 60); do
   fi
   sleep 0.5
 done
-[[ -n "${ap_if}" && -n "${client_if}" ]]
-ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null
+if [[ -z "${ap_if}" ]]; then
+  printf 'wifi-fixture namespace_radios missing=ap-interface\n' >&2
+  exit 1
+fi
+if [[ -z "${client_if}" ]]; then
+  printf 'wifi-fixture namespace_radios missing=client-interface\n' >&2
+  exit 1
+fi
+if ! ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null 2>&1; then
+  printf 'wifi-fixture namespace_radios missing=provider-interface\n' >&2
+  exit 1
+fi
 [[ "${management_if}" != "${client_if}" ]]
 
 wifi_fixture_phase=ap_network
