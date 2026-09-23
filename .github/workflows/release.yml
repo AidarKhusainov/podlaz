@@ -4,12 +4,18 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vMAJOR.MINOR.PATCH tag to qualify and publish
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -23,9 +29,11 @@ jobs:
     steps:
       - name: Resolve release version
         id: release-vars
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          tag="${REQUESTED_TAG}"
           version="${tag#v}"
           if ! printf '%s' "${tag}" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+$'; then
             echo "release tag must use vMAJOR.MINOR.PATCH, got: ${tag}" >&2
@@ -384,6 +392,12 @@ jobs:
       attestations: write
       id-token: write
     steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
       - name: Download qualified release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
