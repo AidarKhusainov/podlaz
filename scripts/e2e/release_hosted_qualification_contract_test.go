@@ -58,6 +58,29 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 	}
 }
 
+func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
+	contents, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(contents)
+
+	for _, required := range []string{
+		"--generate-notes",
+		"Install / upgrade:",
+		"https://github.com/${GH_REPO}#install-from-a-github-release",
+		"https://github.com/${GH_REPO}#upgrade-rollback-and-uninstall",
+		"SHA256SUMS",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("release workflow is missing human-readable release-note contract %q", required)
+		}
+	}
+	if got := strings.Count(workflow, `--notes "${notes}"`); got != 1 {
+		t.Fatalf("release notes must be written only on creation so reruns preserve generated notes, got %d writers", got)
+	}
+}
+
 func TestReleaseArtifactVerifierRejectsMutation(t *testing.T) {
 	version := "1.2.3"
 	dir := t.TempDir()
