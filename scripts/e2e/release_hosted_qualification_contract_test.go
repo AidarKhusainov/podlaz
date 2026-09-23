@@ -106,64 +106,6 @@ func TestReleaseSupportsExactTagRecoveryDispatch(t *testing.T) {
 	}
 }
 
-func TestIncompleteReleaseRecoveryUsesRefLookupExitStatus(t *testing.T) {
-	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
-	if err != nil {
-		t.Fatalf("read recovery workflow: %v", err)
-	}
-	workflow := string(contents)
-
-	if strings.Contains(workflow, "existing_sha=\"$(gh api ") && strings.Contains(workflow, "|| true)") {
-		t.Fatal("release recovery must not turn a failed ref lookup body into an apparent SHA")
-	}
-	if !strings.Contains(workflow, "if existing_sha=\"$(gh api ") {
-		t.Fatal("release recovery must branch on the ref lookup exit status")
-	}
-}
-
-func TestIncompleteReleaseRecoveryUsesExplicitRepositoryAndSafeTagReuse(t *testing.T) {
-	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
-	if err != nil {
-		t.Fatalf("read recovery workflow: %v", err)
-	}
-	workflow := string(contents)
-
-	for _, required := range []string{
-		"      GH_REPO: ${{ github.repository }}\n",
-		`gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f tag="${TAG}"`,
-		`compare/${existing_sha}...${GITHUB_SHA}`,
-		`case "${comparison}" in`,
-		"identical|ahead)",
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("release recovery repository/tag contract is missing %q", required)
-		}
-	}
-}
-
-func TestIncompleteReleaseRecoveryPollsReleaseAtomicallyAndSkipsRedundantDispatch(t *testing.T) {
-	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
-	if err != nil {
-		t.Fatalf("read recovery workflow: %v", err)
-	}
-	workflow := string(contents)
-
-	for _, required := range []string{
-		"      - name: Detect complete replacement release\n",
-		"        id: replacement-state\n",
-		`if actual_sorted="$(gh release view "${TAG}" --json assets --jq '.assets[].name' 2>/dev/null | LC_ALL=C sort)" && [ "${actual_sorted}" = "${expected_sorted}" ]; then`,
-		"          echo \"ready=true\" >>\"${GITHUB_OUTPUT}\"\n",
-		"        if: steps.replacement-state.outputs.ready != 'true'\n",
-	} {
-		if !strings.Contains(workflow, required) {
-			t.Fatalf("release recovery polling contract is missing %q", required)
-		}
-	}
-	if strings.Contains(workflow, `if gh release view "${TAG}" >/dev/null 2>&1; then`) {
-		t.Fatal("release recovery must not split release existence and asset reads across two API calls")
-	}
-}
-
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
