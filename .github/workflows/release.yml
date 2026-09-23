@@ -73,6 +73,7 @@ jobs:
     outputs:
       commit_sha: ${{ steps.release-commit.outputs.commit_sha }}
       built_date: ${{ steps.release-commit.outputs.built_date }}
+      release_manifest_sha256: ${{ steps.release-manifest.outputs.sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -135,6 +136,12 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: bash scripts/ci/create-release-artifacts.sh
 
+      - name: Capture exact release artifact manifest digest
+        id: release-manifest
+        run: |
+          set -euo pipefail
+          printf 'sha256=%s\n' "$(sha256sum dist/release/SHA256SUMS | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
+
       - name: Upload release artifacts for qualification
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -168,6 +175,12 @@ jobs:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
 
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
       - name: Install exact release package
         run: |
           rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
@@ -200,6 +213,69 @@ jobs:
           name: podlaz-release-installed-runtime-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
+
+  synthetic-tun:
+    name: Qualify exact synthetic full-TUN package
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Install synthetic TUN qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Run exact-package synthetic full-TUN qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-synthetic-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-synthetic-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-synthetic-tun.sh "dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"
+
+      - name: Validate synthetic TUN public verdict
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-synthetic-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-synthetic-public
+        run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+
+      - name: Remove private synthetic TUN state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-synthetic-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload synthetic TUN release evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-release-synthetic-tun-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-release-synthetic-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
           retention-days: 7
 
   real-provider:
@@ -237,6 +313,12 @@ jobs:
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
 
       - name: Run exact-package real proxy data-plane integration
         id: data_plane
@@ -293,6 +375,7 @@ jobs:
       - resolve
       - build
       - installed-runtime
+      - synthetic-tun
       - real-provider
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -306,6 +389,12 @@ jobs:
         with:
           name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
           path: dist/release
+
+      - name: Verify exact qualified release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
 
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4

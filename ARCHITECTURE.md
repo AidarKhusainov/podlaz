@@ -81,6 +81,22 @@ The Debian package provides the CLI, privileged daemon, service/policy integrati
 
 The exact build, package, and acceptance commands are executable in `scripts/**`, `packaging/**`, and `.github/workflows/**`; avoid duplicating those procedures in prose. `README.md` contains only the stable entry commands.
 
+## Automated qualification and release policy
+
+Automated evidence has explicit roles instead of one undifferentiated acceptance checklist.
+
+- Ordinary merge-ready evidence is produced by deterministic CI/package contracts and the permanent hosted synthetic-TUN, recovery/fault, historical-package, VM lifecycle, and simulated Wi-Fi qualifications on pull requests where those workflows apply. These scenarios protect their domain invariants continuously; they are not rebuilt again merely to create a release checkbox.
+- The full resource soak remains a scheduled/manual-dispatch diagnostic because its multi-hour measurement budget is intentionally much larger than normal merge/release latency.
+- Trusted real-provider full-TUN remains a distinct scheduled/manual-dispatch pre-release compatibility signal. It is not interchangeable with secret-free synthetic TUN evidence and is not a publication dependency without additional stability/cost evidence.
+- Required release publication depends on exact-package installed runtime checks, secret-free synthetic full-TUN qualification, and the trusted real-provider proxy check. Missing/unavailable required evidence fails publication; an infrastructure, fixture, capability, provider, or product failure remains classified as such rather than being converted into PASS.
+- Capability-only/manual reproducers are informational. They do not satisfy a runtime acceptance owner and do not gate publication.
+
+Release provenance is build-once/promote-exactly. The release job builds the amd64/arm64 artifact set once, creates `SHA256SUMS`, and exports the checksum-manifest digest. Every required qualifier downloads that same workflow artifact set and verifies both the manifest digest and every asset checksum before exercising it. The publisher performs the same verification, attests those downloaded files, and publishes those exact files. A downstream retry may reuse the immutable uploaded candidate; it must not silently substitute a rebuild.
+
+The deepest runtime qualification is amd64 because that is the hosted environment proven for the isolated guest/VM scenarios. arm64 is still built and package-validated as a release artifact; lack of an equivalent hosted virtualization path is not classified as a Podlaz product failure. Real-provider proxy and real-provider TUN signals remain distinct from synthetic evidence.
+
+No physical HIL runner is part of the current release contract because no retained invariant requires one. `scripts/acceptance/release-laptop.sh` is retained only as an optional developer diagnostic/reproducer; release acceptance, merge readiness, and publication do not require a developer laptop, DUT, manual Wi-Fi action, manual suspend/reboot, manual soak, or manual provider execution.
+
 ## E2E architecture
 
 Hosted tests validate pure/unit/contract behavior without direct Podlaz-owned mutation of the outer runner. Dedicated package/E2E scenarios validate installed-package, daemon, authorization, lifecycle, recovery, networking, and data-plane behavior. Scenario names describe the invariant they protect, not the issue that originally introduced them.
