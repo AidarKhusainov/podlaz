@@ -21,9 +21,11 @@ const (
 	logindManagerInterface = "org.freedesktop.login1.Manager"
 	logindPrepareForSleep  = "PrepareForSleep"
 
-	networkManagerActivePathPrefix   = "/org/freedesktop/NetworkManager/ActiveConnection/"
-	networkManagerActiveInterface    = "org.freedesktop.NetworkManager.Connection.Active"
-	networkManagerActiveStateChanged = "StateChanged"
+	networkManagerBusName             = "org.freedesktop.NetworkManager"
+	networkManagerActivePathNamespace = dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection")
+	networkManagerActivePathPrefix    = string(networkManagerActivePathNamespace) + "/"
+	networkManagerActiveInterface     = "org.freedesktop.NetworkManager.Connection.Active"
+	networkManagerActiveStateChanged  = "StateChanged"
 
 	netlinkHeaderLength = 16
 	netlinkAlignment    = 4
@@ -143,8 +145,10 @@ func runTunNetworkManagerActiveEvents(ctx context.Context, notify tunNetworkEven
 	defer conn.Close()
 
 	options := []dbus.MatchOption{
+		dbus.WithMatchSender(networkManagerBusName),
 		dbus.WithMatchInterface(networkManagerActiveInterface),
 		dbus.WithMatchMember(networkManagerActiveStateChanged),
+		dbus.WithMatchPathNamespace(networkManagerActivePathNamespace),
 	}
 	if err := conn.AddMatchSignalContext(ctx, options...); err != nil {
 		return fmt.Errorf("subscribe NetworkManager active-connection signal: %w", err)
