@@ -95,7 +95,7 @@ func TestHostedRealProviderTUNWorkflowKeepsProxyAndTUNSignalsSeparate(t *testing
 			t.Fatalf("provider TUN secret %q must be scoped to the runtime step", secretRef)
 		}
 	}
-	for _, forbidden := range []string{"pull_request_target:", "self-hosted"} {
+	for _, forbidden := range []string{"pull_request_target:", "self-hosted", "agent/trusted-provider-tun", "github.actor == 'AidarKhusainov'"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("trusted provider workflow must not contain %q", forbidden)
 		}
