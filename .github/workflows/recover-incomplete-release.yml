@@ -26,17 +26,17 @@ jobs:
       - name: Create replacement tag if needed
         run: |
           set -euo pipefail
-          existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null || true)"
-          if [ -z "${existing_sha}" ]; then
+          if existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null)"; then
+            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
+              echo "${TAG} already points to ${existing_sha}, expected ${GITHUB_SHA}" >&2
+              exit 1
+            fi
+            echo "${TAG} already points to the repaired master commit"
+          else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
               -f ref="refs/tags/${TAG}" \
               -f sha="${GITHUB_SHA}" >/dev/null
             echo "created ${TAG} at ${GITHUB_SHA}"
-          elif [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
-            echo "${TAG} already points to ${existing_sha}, expected ${GITHUB_SHA}" >&2
-            exit 1
-          else
-            echo "${TAG} already points to the repaired master commit"
           fi
 
       - name: Dispatch exact-tag release qualification
