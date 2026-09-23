@@ -55,9 +55,9 @@ func TestTunSupervisorInitialMandatoryUnknownCannotVerify(t *testing.T) {
 	}
 }
 
-func TestTunSupervisorPersistentMandatoryUnknownBecomesBoundedActionableFailure(t *testing.T) {
+func TestTunSupervisorPersistentMandatoryUnknownUsesOverallDeadline(t *testing.T) {
 	now := time.Unix(100, 0)
-	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, time.Minute, 1)
+	supervisor := newTunReconciliationSupervisorWithPolicy(func() time.Time { return now }, 10*time.Second, 1)
 	mandatory := issue262ProvenMandatoryEvidence()
 	mandatory.ResolvedDNS = tunLocalProofUnknown
 	round := tunReconciliationRound{
@@ -66,26 +66,34 @@ func TestTunSupervisorPersistentMandatoryUnknownBecomesBoundedActionableFailure(
 		Generation:       1,
 		Evidence:         tunEvidenceSet{Mandatory: mandatory, Probes: issue262HealthyProbeEvidence()},
 	}
+
 	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
 		t.Fatalf("first decision=%q, want retry", got.Kind)
 	}
-	if got := supervisor.RunRound(round); got.Kind != tunDecisionBlockedOwnership || got.Classification != api.TunHealthRevalidationTimeout {
-		t.Fatalf("bounded unknown decision=%#v, want blocked-ownership/revalidation_timeout", got)
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
+		t.Fatalf("stable unknown exhausted no-progress budget early: %#v", got)
 	}
 
-	// A later hint may supply new observation evidence, but it must not silently
-	// create a fresh deadline/no-progress budget for the already exhausted
-	// Network Session cycle.
-	round.Fingerprint = tunUplinkFingerprint{Interface: "wlan0", Gateway: "192.0.2.254"}
-	if got := supervisor.RunRound(round); got.Kind != tunDecisionBlockedOwnership || got.Classification != api.TunHealthRevalidationTimeout {
-		t.Fatalf("post-exhaustion hint restarted cycle: %#v", got)
-	}
-
-	// Fresh complete evidence can still prove the session healthy without any
-	// lifecycle mutation and closes the exhausted cycle.
+	// A normal userspace convergence window may produce several identical
+	// incomplete snapshots before the final evidence settles. Complete healthy
+	// evidence before the fixed overall deadline must still verify without an
+	// unrelated external event.
+	now = now.Add(5 * time.Second)
 	round.Evidence.Mandatory.ResolvedDNS = tunLocalProofProven
 	if got := supervisor.RunRound(round); got.Kind != tunDecisionVerified {
-		t.Fatalf("fresh complete evidence after bounded failure=%#v, want verified", got)
+		t.Fatalf("healthy convergence before deadline=%#v, want verified", got)
+	}
+
+	// A separate cycle that stays incomplete through the fixed overall deadline
+	// remains bounded and cannot mint cleanup authority from unknown evidence.
+	round.NetworkSessionID = "fedcba9876543210fedcba9876543210"
+	round.Evidence.Mandatory.ResolvedDNS = tunLocalProofUnknown
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionRetry {
+		t.Fatalf("new cycle first decision=%#v, want retry", got)
+	}
+	now = now.Add(11 * time.Second)
+	if got := supervisor.RunRound(round); got.Kind != tunDecisionBlockedOwnership || got.Classification != api.TunHealthRevalidationTimeout {
+		t.Fatalf("post-deadline unknown decision=%#v, want blocked-ownership/revalidation_timeout", got)
 	}
 }
 
