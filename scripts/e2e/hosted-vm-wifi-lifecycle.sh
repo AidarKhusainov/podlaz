@@ -186,14 +186,14 @@ modprobe mac80211_hwsim radios=2
 wifi_count=0
 for _ in $(seq 1 60); do
   udevadm settle >/dev/null 2>&1 || true
-  wifi_count="$(iw dev | awk '$1 == \"Interface\" {count++} END {print count+0}')"
+  wifi_count="$(iw dev | awk '$1 == "Interface" {count++} END {print count+0}')"
   if (( wifi_count >= 2 )); then
     break
   fi
   sleep 0.5
 done
 (( wifi_count >= 2 ))
-ap_candidate="$(iw dev | awk '$1 == \"Interface\" {print $2; exit}')"
+ap_candidate="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
 ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_candidate}/phy80211")")"
 [[ "${ap_phy}" == phy* ]]
 
@@ -225,8 +225,8 @@ ap_if=""
 client_if=""
 for _ in $(seq 1 60); do
   udevadm settle >/dev/null 2>&1 || true
-  ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == \"Interface\" {print $2; exit}')"
-  client_if="$(iw dev | awk '$1 == \"Interface\" {print $2; exit}')"
+  ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == "Interface" {print $2; exit}')"
+  client_if="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
   if [[ -n "${ap_if}" && -n "${client_if}" ]] &&
      ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null 2>&1; then
     break
