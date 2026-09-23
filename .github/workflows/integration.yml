@@ -6,10 +6,16 @@ on:
       - master
   schedule:
     - cron: '17 3 * * *'
+    - cron: '47 4 * * 0'
   workflow_dispatch:
     inputs:
       real_provider:
         description: Run the real-provider proxy data-plane check from master
+        required: false
+        default: false
+        type: boolean
+      real_provider_tun:
+        description: Run proxy plus isolated real-provider TUN qualification from master
         required: false
         default: false
         type: boolean
@@ -62,7 +68,7 @@ jobs:
       ${{ github.event_name == 'schedule' ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
-           inputs.real_provider) }}
+           (inputs.real_provider || inputs.real_provider_tun)) }}
     runs-on: ubuntu-24.04
     environment: vpn-e2e
     timeout-minutes: 90
@@ -133,4 +139,100 @@ jobs:
           name: podlaz-real-provider-integration
           path: ${{ runner.temp }}/podlaz-e2e-artifacts
           if-no-files-found: ignore
+          retention-days: 7
+
+
+  real-provider-tun:
+    name: Real provider full-TUN
+    needs: real-provider
+    if: >-
+      ${{ (github.event_name == 'schedule' &&
+           github.event.schedule == '47 4 * * 0') ||
+          (github.event_name == 'workflow_dispatch' &&
+           github.ref == 'refs/heads/master' &&
+           inputs.real_provider_tun) }}
+    runs-on: ubuntu-24.04
+    environment: vpn-e2e
+    timeout-minutes: 120
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install provider TUN qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact provider TUN candidate
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+
+      - name: Capture candidate digest
+        id: candidate
+        run: |
+          printf 'sha256=%s\n' "$(sha256sum "${DEV_DEB}" | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
+
+      - name: Provider TUN contracts
+        run: go test ./scripts/e2e -run '^TestHostedRealProviderTUN' -count=1
+
+      - name: Run isolated real-provider TUN qualification
+        id: provider_tun
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-real-provider-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-real-provider-tun-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
+          PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
+          PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
+          PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-real-provider-tun.sh "${DEV_DEB}"
+
+      - name: Validate provider TUN public verdict
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-real-provider-tun-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        run: bash scripts/e2e/hosted-real-provider-tun.sh validate-report
+
+      - name: Scan provider TUN public artifacts
+        id: provider_tun_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-real-provider-tun-public
+        run: bash scripts/e2e/scan-public-artifacts.sh real-provider-tun
+
+      - name: Remove provider TUN private state
+        id: provider_tun_private_cleanup
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-real-provider-tun-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload provider TUN evidence
+        if: ${{ always() && steps.provider_tun_scan.outcome == 'success' && steps.provider_tun_private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-real-provider-tun
+          path: ${{ runner.temp }}/podlaz-real-provider-tun-public/hosted-real-provider-tun.txt
+          if-no-files-found: error
           retention-days: 7
