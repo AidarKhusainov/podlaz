@@ -141,7 +141,6 @@ func TestIncompleteReleaseRecoveryUsesExplicitRepositoryAndSafeTagReuse(t *testi
 	}
 }
 
-
 func TestIncompleteReleaseRecoveryPollsReleaseAtomicallyAndSkipsRedundantDispatch(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
 	if err != nil {
