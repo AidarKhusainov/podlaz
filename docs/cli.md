@@ -94,6 +94,13 @@ metadata, selected mode/backend/protocol, result, reason on failure, and next-st
 guidance. `--plain` replaces Unicode status markers with ASCII status words.
 `--json` preserves the existing machine-readable schema.
 
+For ordinary normalized profiles, the generated Xray runtime currently supports
+VLESS only. VMess, Trojan, and Shadowsocks share URIs are valid import inputs
+and remain representable in user-owned profile state, but
+`profile validate --mode proxy-only|tun` rejects them for connection because
+the generated runtime does not render those protocols. Provider-owned grouped
+Xray JSON is the separate proxy-only exception described below.
+
 ```bash
 podlaz subscription add --name <name> --url <url>
 podlaz subscription update <subscription-id>
