@@ -159,7 +159,6 @@ func TestHostedFaultRollbackWaitsForDaemonReadinessAfterHookRestart(t *testing.T
 	)
 }
 
-
 func TestHostedFaultRollbackPublishesConsumedControlFilesAtFinalMode(t *testing.T) {
 	helper := readHostedFaultFile(t, hostedFaultHelper)
 	requireHostedFaultMarkers(t, helper,
