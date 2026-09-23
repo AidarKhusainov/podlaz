@@ -71,7 +71,6 @@ func TestTunRevalidationSourceResyncReprovesSameGeneration(t *testing.T) {
 	}
 }
 
-
 func TestTunNetworkManagerDeviceStateChangedSchedulesAuthoritativeReproof(t *testing.T) {
 	signal := &dbus.Signal{
 		Sender: ":1.42",
@@ -99,7 +98,6 @@ func TestTunNetworkManagerDeviceStateChangedSchedulesAuthoritativeReproof(t *tes
 		}
 	}
 }
-
 
 func TestTunNetworkManagerActiveConnectionStateChangedSchedulesAuthoritativeReproof(t *testing.T) {
 	signal := &dbus.Signal{
