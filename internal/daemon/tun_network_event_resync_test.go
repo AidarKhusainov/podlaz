@@ -71,6 +71,36 @@ func TestTunRevalidationSourceResyncReprovesSameGeneration(t *testing.T) {
 	}
 }
 
+
+func TestTunNetworkManagerDeviceStateChangedSchedulesAuthoritativeReproof(t *testing.T) {
+	signal := &dbus.Signal{
+		Sender: ":1.42",
+		Path:   dbus.ObjectPath("/org/freedesktop/NetworkManager/Devices/7"),
+		Name:   networkManagerDeviceInterface + "." + networkManagerDeviceStateChanged,
+		Body:   []any{uint32(100), uint32(90), uint32(0)},
+	}
+	trigger, ok := tunNetworkManagerDeviceSignalTrigger(signal)
+	if !ok {
+		t.Fatal("NetworkManager device StateChanged was ignored")
+	}
+	if trigger != tunRevalidationTriggerSourceResync {
+		t.Fatalf("trigger=%q, want authoritative source resync", trigger)
+	}
+
+	for _, invalid := range []*dbus.Signal{
+		nil,
+		{Path: signal.Path, Name: signal.Name, Body: []any{uint32(100), uint32(90)}},
+		{Path: dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection/7"), Name: signal.Name, Body: signal.Body},
+		{Path: signal.Path, Name: networkManagerActiveInterface + "." + networkManagerActiveStateChanged, Body: []any{uint32(2), uint32(1)}},
+		{Path: signal.Path, Name: signal.Name, Body: []any{"activated", uint32(90), uint32(0)}},
+	} {
+		if trigger, ok := tunNetworkManagerDeviceSignalTrigger(invalid); ok || trigger != "" {
+			t.Fatalf("invalid signal %#v produced trigger=%q ok=%v", invalid, trigger, ok)
+		}
+	}
+}
+
+
 func TestTunNetworkManagerActiveConnectionStateChangedSchedulesAuthoritativeReproof(t *testing.T) {
 	signal := &dbus.Signal{
 		Sender: ":1.42",
