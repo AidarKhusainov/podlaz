@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 35
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       TAG: v0.2.44
       PREVIOUS_TAG: v0.2.43
     steps:
@@ -27,11 +28,16 @@ jobs:
         run: |
           set -euo pipefail
           if existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null)"; then
-            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
-              echo "${TAG} already points to ${existing_sha}, expected ${GITHUB_SHA}" >&2
-              exit 1
-            fi
-            echo "${TAG} already points to the repaired master commit"
+            comparison="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${existing_sha}...${GITHUB_SHA}" --jq '.status')"
+            case "${comparison}" in
+              identical|ahead)
+                echo "${TAG} already points to a commit on the repaired master history: ${existing_sha}"
+                ;;
+              *)
+                echo "${TAG} points to ${existing_sha}, which is not an ancestor of repaired master ${GITHUB_SHA}" >&2
+                exit 1
+                ;;
+            esac
           else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
               -f ref="refs/tags/${TAG}" \
@@ -42,7 +48,7 @@ jobs:
       - name: Dispatch exact-tag release qualification
         run: |
           set -euo pipefail
-          gh workflow run release.yml --ref "${TAG}" -f tag="${TAG}"
+          gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f tag="${TAG}"
 
       - name: Wait for immutable release assets
         run: |
