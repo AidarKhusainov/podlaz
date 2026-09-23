@@ -121,6 +121,27 @@ func TestIncompleteReleaseRecoveryUsesRefLookupExitStatus(t *testing.T) {
 	}
 }
 
+
+func TestIncompleteReleaseRecoveryUsesExplicitRepositoryAndSafeTagReuse(t *testing.T) {
+	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
+	if err != nil {
+		t.Fatalf("read recovery workflow: %v", err)
+	}
+	workflow := string(contents)
+
+	for _, required := range []string{
+		"      GH_REPO: ${{ github.repository }}\n",
+		`gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f tag="${TAG}"`,
+		`compare/${existing_sha}...${GITHUB_SHA}`,
+		`case "${comparison}" in`,
+		"identical|ahead)",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("release recovery repository/tag contract is missing %q", required)
+		}
+	}
+}
+
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
