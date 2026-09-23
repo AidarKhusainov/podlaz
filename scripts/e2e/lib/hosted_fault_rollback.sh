@@ -151,11 +151,12 @@ release_all_fault_controls() {
   if [[ -d "${CONTROL_DIR}" ]]; then
     for phase in candidate-ready connect-failed; do
       continue="${CONTROL_DIR}/${phase}.continue"
-      [[ -e "${continue}" ]] || printf 'continue\n' >"${continue}"
-      chmod 0600 "${continue}" >/dev/null 2>&1 || true
+      if [[ ! -e "${continue}" ]]; then
+        (umask 077; printf 'continue\n' >"${continue}") || true
+      fi
     done
   fi
-  guest_exec /bin/bash -lc "if test -d '${HOOK_DIR}'; then printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}'; chmod 0600 '${ROLLBACK_PAUSE_CONTINUE}'; fi" >/dev/null 2>&1 || true
+  guest_exec /bin/bash -lc "if test -d '${HOOK_DIR}'; then (umask 077; printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}'); fi" >/dev/null 2>&1 || true
 }
 
 hosted_fault_cleanup() {
@@ -212,8 +213,7 @@ release_fault_control() {
   continue="${CONTROL_DIR}/${phase}.continue"
   [[ -f "${ready}" && ! -L "${ready}" ]] || return 1
   [[ ! -e "${continue}" && ! -L "${continue}" ]] || return 1
-  printf 'continue\n' >"${continue}"
-  chmod 0600 "${continue}"
+  (umask 077; printf 'continue\n' >"${continue}")
   for attempt in $(seq 1 100); do
     [[ ! -e "${ready}" ]] && return 0
     sleep 0.05
@@ -285,7 +285,7 @@ wait_for_rollback_pause_ready() {
 }
 
 release_rollback_pause() {
-  guest_exec /bin/bash -lc "test -f '${ROLLBACK_PAUSE_READY}' && test ! -e '${ROLLBACK_PAUSE_CONTINUE}' && printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}' && chmod 0600 '${ROLLBACK_PAUSE_CONTINUE}'" >/dev/null
+  guest_exec /bin/bash -lc "test -f '${ROLLBACK_PAUSE_READY}' && test ! -e '${ROLLBACK_PAUSE_CONTINUE}' && (umask 077; printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}')" >/dev/null
 }
 
 assert_foreign_sentinel() {
