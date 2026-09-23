@@ -26,10 +26,6 @@ const (
 	networkManagerActivePathPrefix    = string(networkManagerActivePathNamespace) + "/"
 	networkManagerActiveInterface     = "org.freedesktop.NetworkManager.Connection.Active"
 	networkManagerActiveStateChanged  = "StateChanged"
-	networkManagerDevicePathNamespace = dbus.ObjectPath("/org/freedesktop/NetworkManager/Devices")
-	networkManagerDevicePathPrefix    = string(networkManagerDevicePathNamespace) + "/"
-	networkManagerDeviceInterface     = "org.freedesktop.NetworkManager.Device"
-	networkManagerDeviceStateChanged  = "StateChanged"
 
 	netlinkHeaderLength = 16
 	netlinkAlignment    = 4
@@ -45,8 +41,7 @@ func startTunNetworkEventSources(ctx context.Context, notify tunNetworkEventNoti
 	}
 	startE2ETunTerminalFailureTrigger(ctx, notify)
 	go retryTunNetworkEventSource(ctx, "logind", runLogindSleepEvents, notify)
-	go retryTunNetworkEventSource(ctx, "networkmanager-active", runTunNetworkManagerActiveEvents, notify)
-	go retryTunNetworkEventSource(ctx, "networkmanager-device", runTunNetworkManagerDeviceEvents, notify)
+	go retryTunNetworkEventSource(ctx, "networkmanager", runTunNetworkManagerActiveEvents, notify)
 	go retryTunNetworkEventSource(ctx, "rtnetlink", runTunRtnetlinkEvents, notify)
 }
 
@@ -202,69 +197,6 @@ func tunNetworkManagerActiveSignalTrigger(signal *dbus.Signal) (tunRevalidationT
 	// The active-connection state is part of the authoritative fingerprint
 	// evidence collected through nmcli. Force a same-generation reproof even if
 	// kernel link/address/route identity itself did not change.
-	return tunRevalidationTriggerSourceResync, true
-}
-
-func runTunNetworkManagerDeviceEvents(ctx context.Context, notify tunNetworkEventNotifyFunc, ready tunNetworkEventReadyFunc) error {
-	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
-	if err != nil {
-		return fmt.Errorf("connect system bus: %w", err)
-	}
-	defer conn.Close()
-
-	options := []dbus.MatchOption{
-		dbus.WithMatchSender(networkManagerBusName),
-		dbus.WithMatchInterface(networkManagerDeviceInterface),
-		dbus.WithMatchMember(networkManagerDeviceStateChanged),
-		dbus.WithMatchPathNamespace(networkManagerDevicePathNamespace),
-	}
-	if err := conn.AddMatchSignalContext(ctx, options...); err != nil {
-		return fmt.Errorf("subscribe NetworkManager device-state signal: %w", err)
-	}
-	defer func() { _ = conn.RemoveMatchSignal(options...) }()
-
-	signals := make(chan *dbus.Signal, 16)
-	conn.Signal(signals)
-	defer conn.RemoveSignal(signals)
-	if ready != nil {
-		// A device can reach its final activated state after the active-connection
-		// object and kernel route/address edges have already emitted their events.
-		// Subscribe first, then force one snapshot so startup/reconnect gaps remain
-		// fail-closed and bounded.
-		ready()
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case signal, ok := <-signals:
-			if !ok {
-				return errors.New("system D-Bus signal channel closed")
-			}
-			if trigger, ok := tunNetworkManagerDeviceSignalTrigger(signal); ok {
-				notify(trigger)
-			}
-		}
-	}
-}
-
-func tunNetworkManagerDeviceSignalTrigger(signal *dbus.Signal) (tunRevalidationTrigger, bool) {
-	if signal == nil ||
-		signal.Name != networkManagerDeviceInterface+"."+networkManagerDeviceStateChanged ||
-		!strings.HasPrefix(string(signal.Path), networkManagerDevicePathPrefix) ||
-		len(signal.Body) != 3 {
-		return "", false
-	}
-	for _, body := range signal.Body {
-		if _, ok := body.(uint32); !ok {
-			return "", false
-		}
-	}
-	// Device state is independent userspace convergence evidence. In particular,
-	// NetworkManager documents ACTIVATED only after the device has a network
-	// connection. Every valid transition schedules a fresh same-generation
-	// authoritative reproof; it never grants mutation or cleanup authority.
 	return tunRevalidationTriggerSourceResync, true
 }
 
