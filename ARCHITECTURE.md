@@ -35,6 +35,29 @@ State carrying authority is strict/versioned, bounded where appropriate, atomica
 
 Read-only commands may inspect state but must not clean it up.
 
+## Subscription compatibility and identity boundary
+
+Remote subscription content is user-owned sensitive input, not daemon authority.
+HTTP(S) subscription fetches use the stable `User-Agent: podlaz` contract and a
+stable `x-hwid` client identity. That identity is generated from
+cryptographically random bytes, persisted in private user-owned XDG state, and
+is not derived from hardware. Provider/device policy remains provider authority:
+the client does not rotate identity or weaken validation to bypass a rejected
+subscription.
+
+Subscription replacement is atomic from the user-state perspective. Fetch,
+parse, profile-apply, or metadata-persistence failure must preserve/restore the
+previous committed subscription/profile state rather than publish a partial
+update.
+
+Provider-owned grouped Xray JSON is preserved as sensitive source material and
+is one logical subscription-owned profile. Proxy-only runtime may preserve its
+provider outbounds, routing, balancers, stream settings, and selection rules.
+TUN validation/planning/connect must reject that grouped form before
+host-network mutation because one safe VPN-server bypass cannot be inferred from
+provider-owned routing. Mode support and public command syntax remain owned by
+`docs/cli.md`.
+
 ## Ownership and fail-closed networking
 
 Observation is not ownership. A matching address, route, rule, table, comment, numeric identifier, generated-looking name, or historical Podlaz value does not authorize deletion. Historical routing identifiers are allocation preferences/diagnostic hints only.
@@ -81,6 +104,20 @@ The Debian package provides the CLI, privileged daemon, service/policy integrati
 
 The exact build, package, and acceptance commands are executable in `scripts/**`, `packaging/**`, and `.github/workflows/**`; avoid duplicating those procedures in prose. `README.md` contains only the stable entry commands.
 
+The published Debian package contract is Linux/systemd-specific. It declares
+`libc6 >= 2.34`, `systemd`, CA certificates, `iproute2`, `nftables`,
+`systemd-resolved | systemd`, and `polkitd | policykit-1` dependencies and
+ships both the unprivileged CLI and the privileged service/policy/runtime assets.
+Release packaging accepts `amd64` and `arm64`; other architectures are not
+release targets. The stronger amd64-versus-arm64 qualification distinction is
+part of the automated release policy below and must remain visible in public
+support claims.
+
+The package service runs the daemon at the privileged boundary; ordinary users
+request privileged operations through the local daemon and packaged Polkit
+authorization path. Installing the package must not turn the CLI into a SUID
+network mutator.
+
 ## Automated qualification and release policy
 
 Automated evidence has explicit roles instead of one undifferentiated acceptance checklist.
@@ -106,6 +143,23 @@ Shared E2E infrastructure belongs in `scripts/e2e/lib/**`: readiness, package pr
 Podlaz-owned destructive networking never mutates the outer hosted runner. Hosted qualification may create narrowly scoped infrastructure-owned guest plumbing on that runner when the scenario proves exact baseline restoration and cleanup. Direct destructive product networking on a host remains dedicated-only and explicitly gated to the dedicated runner.
 
 ## Security and privacy rules
+
+Podlaz has no product analytics/telemetry subsystem. Network communication that
+is intrinsic to an explicit operation is not telemetry: remote subscription
+fetch/update, requested connectivity diagnostics, and the selected Xray
+proxy/VPN data plane may contact their configured/declared remote endpoints.
+
+The subscription client identity is private user state. It is acceptable to send
+it only through the defined remote subscription request header; it must not be
+published in diagnostics, Issues, PRs, public artifacts, screenshots, or bug
+reports. The same publication boundary applies to real subscription URLs,
+credentials, UUIDs, provider payloads, endpoint identities, and generated
+runtime configuration.
+
+Public evidence must be independently useful without retaining private provider
+material. Automated public artifacts are scanned/redacted according to their
+scenario contracts; a user's arbitrary shell history, terminal recording, or
+external archive is outside that guarantee and must be reviewed before sharing.
 
 - Never log/store credentials, subscription contents, private endpoint data, or raw authority-bearing state beyond its defined private storage.
 - Documentation, fixtures, Issues, PRs, and tests use reserved/example addresses and domains only.
