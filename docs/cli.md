@@ -108,6 +108,27 @@ and `delete` mutate user-owned subscription/profile state. Failed update/delete
 must preserve existing state. `delete --keep-profiles` keeps imported profiles.
 `subscription update --json` and `subscription delete --json` are deferred.
 
+### Remote subscription identity and failure behavior
+
+For HTTP(S) subscription fetches, podlaz sends `User-Agent: podlaz` and an
+`x-hwid` header. The header value is a stable, randomly generated UUID-shaped
+client identity created with cryptographic randomness and persisted under the
+invoking user's XDG state directory as `podlaz/client-id`. The parent directory
+is private user state and the identity file is created with mode `0600`.
+Podlaz does not read raw hardware identifiers to derive this value.
+
+The same identity is reused across remote subscription imports and updates for
+that user. Deleting or replacing `client-id` changes the provider-visible
+identity on a later fetch and is therefore not a normal remedy for a provider
+device-limit rejection.
+
+Remote fetch, HTTP-status, parse, and persistence failures are returned as
+operation errors with subscription/client secrets redacted. A failed
+`subscription update` does not commit a partial replacement of the existing
+subscription/profile set. If a provider reports a device/account limit, resolve
+that condition at the provider and retry; podlaz does not bypass it by rotating
+identity or weakening validation.
+
 ### VLESS xhttp Xray JSON profiles
 
 Single-location VLESS profiles imported from Xray JSON subscriptions may use
