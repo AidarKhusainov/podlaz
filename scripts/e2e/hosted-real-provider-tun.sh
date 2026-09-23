@@ -220,6 +220,52 @@ remove_provider_material() {
   PROFILE_URI=""
 }
 
+classify_provider_tun_connect_failure() {
+  local exit_code="$1" classification="" domain=diagnostic_unknown
+  case "${exit_code}" in
+    4)
+      mark_failure fixture provider_tun.authorization
+      return 0
+      ;;
+    5)
+      mark_failure infrastructure provider_tun.daemon_unavailable
+      return 0
+      ;;
+  esac
+
+  if guest_exec test -f /run/podlaz/diagnostics/tun-last.json >/dev/null 2>&1; then
+    classification="$(guest_exec python3 - /run/podlaz/diagnostics/tun-last.json <<'PY'
+import json
+import re
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        report = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+value = str(report.get("primary_classification") or "").strip().lower()
+value = re.sub(r"[^a-z0-9_.-]+", "-", value).strip("-.")
+if value:
+    print(value)
+PY
+)" || classification=""
+  fi
+
+  case "${classification}" in
+    network_apply_failure|network_verify_failure|ownership_invalid|owned_state_invalid)
+      domain=product
+      ;;
+    server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout)
+      domain=provider
+      ;;
+    *)
+      domain=diagnostic_unknown
+      ;;
+  esac
+  mark_failure "${domain}" "provider_tun.connect.${classification:-unclassified}"
+}
+
 import_provider_profile() {
   local import_stdout="${PRIVATE_ROOT}/profile-import.stdout" import_stderr="${PRIVATE_ROOT}/profile-import.stderr"
   set +e
@@ -343,7 +389,7 @@ run_provider_scenario() {
 
   mark_failure infrastructure guest.ordinary_connectivity
   capture_ordinary_egress || fail "isolated guest ordinary connectivity is unavailable"
-  mark_failure product candidate.provenance
+  mark_failure fixture candidate.provenance
   install_candidate_in_guest || fail "could not install candidate package in provider guest"
   assert_guest_package_provenance || fail "candidate package/runtime provenance mismatch"
   record_evidence candidate.provenance pass
@@ -364,16 +410,26 @@ run_provider_scenario() {
   capture_guest_network_baseline
 
   mark_failure diagnostic_unknown provider_tun.connect
+  local connect_code
+  set +e
   run_guest_user /usr/bin/podlaz connect --mode tun "${PROFILE_ID}" \
-    >"${PRIVATE_ROOT}/tun-connect.stdout" 2>"${PRIVATE_ROOT}/tun-connect.stderr" || \
+    >"${PRIVATE_ROOT}/tun-connect.stdout" 2>"${PRIVATE_ROOT}/tun-connect.stderr"
+  connect_code=$?
+  set -e
+  if (( connect_code != 0 )); then
+    classify_provider_tun_connect_failure "${connect_code}"
     fail "trusted provider TUN connect failed"
-  wait_guest_status verified-active 90 || fail "trusted provider TUN did not reach verified-active state"
+  fi
+  if ! wait_guest_status verified-active 90; then
+    classify_provider_tun_connect_failure 1
+    fail "trusted provider TUN did not reach verified-active state"
+  fi
 
   mark_failure product tun.active_authority
   assert_verified_active_authority || fail "trusted provider TUN active authority is incomplete"
   record_evidence tun.verified_active pass
 
-  mark_failure diagnostic_unknown provider_tun.data_plane
+  mark_failure provider provider_tun.data_plane
   run_provider_traffic_checks || fail "trusted provider TUN data plane failed"
 
   mark_failure product privacy.direct_uplink
