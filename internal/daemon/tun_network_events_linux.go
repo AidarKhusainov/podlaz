@@ -205,7 +205,6 @@ func tunNetworkManagerActiveSignalTrigger(signal *dbus.Signal) (tunRevalidationT
 	return tunRevalidationTriggerSourceResync, true
 }
 
-
 func runTunNetworkManagerDeviceEvents(ctx context.Context, notify tunNetworkEventNotifyFunc, ready tunNetworkEventReadyFunc) error {
 	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
 	if err != nil {
