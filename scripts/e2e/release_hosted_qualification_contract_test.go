@@ -58,7 +58,6 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 	}
 }
 
-
 func TestReleasePublisherChecksOutTagBeforeRepositoryScripts(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
@@ -86,7 +85,6 @@ func TestReleasePublisherChecksOutTagBeforeRepositoryScripts(t *testing.T) {
 		}
 	}
 }
-
 
 func TestReleaseSupportsExactTagRecoveryDispatch(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
