@@ -58,6 +58,35 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 	}
 }
 
+
+func TestReleasePublisherChecksOutTagBeforeRepositoryScripts(t *testing.T) {
+	contents, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(contents)
+
+	publishIndex := strings.Index(workflow, "  attest-and-publish:\n")
+	if publishIndex < 0 {
+		t.Fatal("release publisher job is missing")
+	}
+	publisher := workflow[publishIndex:]
+	verifyIndex := strings.Index(publisher, "      - name: Verify exact qualified release artifact handoff\n")
+	if verifyIndex < 0 {
+		t.Fatal("release publisher exact-artifact verification step is missing")
+	}
+	beforeVerify := publisher[:verifyIndex]
+	for _, required := range []string{
+		"      - name: Checkout exact release tag\n",
+		"          ref: ${{ needs.resolve.outputs.tag }}\n",
+		"          persist-credentials: false\n",
+	} {
+		if !strings.Contains(beforeVerify, required) {
+			t.Fatalf("release publisher must checkout the exact release tag before repository scripts; missing %q", required)
+		}
+	}
+}
+
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
