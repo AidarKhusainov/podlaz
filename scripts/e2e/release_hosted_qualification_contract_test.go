@@ -121,7 +121,6 @@ func TestIncompleteReleaseRecoveryUsesRefLookupExitStatus(t *testing.T) {
 	}
 }
 
-
 func TestIncompleteReleaseRecoveryUsesExplicitRepositoryAndSafeTagReuse(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
 	if err != nil {
