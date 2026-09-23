@@ -164,6 +164,8 @@ prepare_wifi_fixture() {
   guest_script="$(cat <<'EOF'
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
+wifi_fixture_phase=packages
+trap 'printf "wifi-fixture phase=%s failed\\n" "$wifi_fixture_phase" >&2' ERR
 
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
@@ -179,15 +181,23 @@ systemctl stop NetworkManager.service >/dev/null 2>&1 || true
 systemctl stop wpa_supplicant.service >/dev/null 2>&1 || true
 systemctl stop hostapd.service >/dev/null 2>&1 || true
 
+wifi_fixture_phase=hwsim_radios
 modprobe mac80211_hwsim radios=2
-udevadm settle
-
-mapfile -t wifi_ifaces < <(iw dev | awk '$1 == "Interface" {print $2}')
-((${#wifi_ifaces[@]} >= 2))
-ap_candidate="${wifi_ifaces[0]}"
+wifi_count=0
+for _ in $(seq 1 60); do
+  udevadm settle >/dev/null 2>&1 || true
+  wifi_count="$(iw dev | awk '$1 == \"Interface\" {count++} END {print count+0}')"
+  if (( wifi_count >= 2 )); then
+    break
+  fi
+  sleep 0.5
+done
+(( wifi_count >= 2 ))
+ap_candidate="$(iw dev | awk '$1 == \"Interface\" {print $2; exit}')"
 ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_candidate}/phy80211")")"
 [[ "${ap_phy}" == phy* ]]
 
+wifi_fixture_phase=uplink_identity
 management_if="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
 management_gateway="$(ip -4 route show default dev "${management_if}" | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "via") {print $(i+1); exit}}')"
 [[ -n "${management_if}" && -n "${management_gateway}" ]]
