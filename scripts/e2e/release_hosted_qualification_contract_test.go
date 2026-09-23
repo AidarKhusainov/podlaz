@@ -87,6 +87,27 @@ func TestReleasePublisherChecksOutTagBeforeRepositoryScripts(t *testing.T) {
 	}
 }
 
+
+func TestReleaseSupportsExactTagRecoveryDispatch(t *testing.T) {
+	contents, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatalf("read release workflow: %v", err)
+	}
+	workflow := string(contents)
+
+	for _, required := range []string{
+		"  workflow_dispatch:\n",
+		"      tag:\n",
+		"concurrency:\n  group: release-${{ inputs.tag || github.ref_name }}\n",
+		"          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}\n",
+		"          tag=\"${REQUESTED_TAG}\"\n",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("release recovery dispatch contract is missing %q", required)
+		}
+	}
+}
+
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
