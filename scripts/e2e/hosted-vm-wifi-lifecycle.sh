@@ -211,20 +211,33 @@ done
 [[ -n "${provider_if}" ]]
 [[ "${provider_if}" != "${management_if}" && "${provider_if}" != "${ap_candidate}" ]]
 
+wifi_fixture_phase=namespace_create
 ip netns add pzwifiap
 ip netns exec pzwifiap sleep infinity </dev/null >/dev/null 2>&1 &
 ap_ns_pid=$!
 printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
+kill -0 "${ap_ns_pid}"
 
+wifi_fixture_phase=namespace_radios
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
 ip link set "${provider_if}" netns pzwifiap
-udevadm settle
-
-ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == "Interface" {print $2; exit}')"
-client_if="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
+ap_if=""
+client_if=""
+for _ in $(seq 1 60); do
+  udevadm settle >/dev/null 2>&1 || true
+  ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == \"Interface\" {print $2; exit}')"
+  client_if="$(iw dev | awk '$1 == \"Interface\" {print $2; exit}')"
+  if [[ -n "${ap_if}" && -n "${client_if}" ]] &&
+     ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
 [[ -n "${ap_if}" && -n "${client_if}" ]]
+ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null
 [[ "${management_if}" != "${client_if}" ]]
 
+wifi_fixture_phase=ap_network
 ip netns exec pzwifiap bash -s -- \
   "${ap_if}" "${provider_if}" "${provider_guest_cidr}" "${provider_host_ip}" "${wifi_ap_cidr}" <<'AP'
 set -Eeuo pipefail
@@ -249,6 +262,7 @@ iptables -A FORWARD -i "${provider_if}" -o "${ap_if}" \
   -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 AP
 
+wifi_fixture_phase=hostapd
 cat >/var/tmp/podlaz-wifi-hostapd.conf <<HOSTAPD
 interface=${ap_if}
 driver=nl80211
@@ -272,6 +286,7 @@ ip netns exec pzwifiap dnsmasq \
   --dhcp-option=6,1.1.1.1 \
   --pid-file=/run/podlaz-wifi-dnsmasq.pid
 
+wifi_fixture_phase=networkmanager
 systemctl start wpa_supplicant.service
 systemctl start NetworkManager.service
 nmcli radio wifi on
@@ -293,6 +308,7 @@ for _ in $(seq 1 30); do
 done
 nmcli -t -f SSID device wifi list ifname "${client_if}" | grep -Fx "${wifi_ssid}" >/dev/null
 
+wifi_fixture_phase=wifi_association
 nmcli --wait 30 device wifi connect "${wifi_ssid}" \
   password "${wifi_passphrase}" \
   ifname "${client_if}" \
