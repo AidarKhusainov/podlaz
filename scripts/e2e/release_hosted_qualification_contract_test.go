@@ -106,6 +106,21 @@ func TestReleaseSupportsExactTagRecoveryDispatch(t *testing.T) {
 	}
 }
 
+func TestIncompleteReleaseRecoveryUsesRefLookupExitStatus(t *testing.T) {
+	contents, err := os.ReadFile("../../.github/workflows/recover-incomplete-release.yml")
+	if err != nil {
+		t.Fatalf("read recovery workflow: %v", err)
+	}
+	workflow := string(contents)
+
+	if strings.Contains(workflow, "existing_sha=\"$(gh api ") && strings.Contains(workflow, "|| true)") {
+		t.Fatal("release recovery must not turn a failed ref lookup body into an apparent SHA")
+	}
+	if !strings.Contains(workflow, "if existing_sha=\"$(gh api ") {
+		t.Fatal("release recovery must branch on the ref lookup exit status")
+	}
+}
+
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {

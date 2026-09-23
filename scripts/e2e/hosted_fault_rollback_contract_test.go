@@ -159,6 +159,19 @@ func TestHostedFaultRollbackWaitsForDaemonReadinessAfterHookRestart(t *testing.T
 	)
 }
 
+func TestHostedFaultRollbackPublishesConsumedControlFilesAtFinalMode(t *testing.T) {
+	helper := readHostedFaultFile(t, hostedFaultHelper)
+	requireHostedFaultMarkers(t, helper,
+		`(umask 077; printf 'continue\n' >"${continue}")`,
+		`umask 077; printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}'`,
+	)
+	forbidHostedFaultMarkers(t, helper,
+		`printf 'continue\n' >"${continue}"
+  chmod 0600 "${continue}"`,
+		`printf 'continue\\n' >'${ROLLBACK_PAUSE_CONTINUE}' && chmod 0600 '${ROLLBACK_PAUSE_CONTINUE}'`,
+	)
+}
+
 func TestHostedFaultRollbackBaseExposesOnlyOptInExpectedConnectFailurePause(t *testing.T) {
 	base := readHostedFaultFile(t, hostedSyntheticTUN)
 	requireHostedFaultMarkers(t, base,
