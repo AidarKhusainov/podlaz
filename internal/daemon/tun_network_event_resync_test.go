@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/godbus/dbus/v5"
 )
 
 func TestTunNetworkEventSourceReconnectSchedulesAuthoritativeResync(t *testing.T) {
@@ -66,5 +68,33 @@ func TestTunRevalidationSourceResyncReprovesSameGeneration(t *testing.T) {
 	runtime.Revalidate(context.Background(), tunRevalidationTriggerSourceResync)
 	if verifyCalls != 2 {
 		t.Fatalf("source resync verifier calls=%d, want 2", verifyCalls)
+	}
+}
+
+func TestTunNetworkManagerActiveConnectionStateChangedSchedulesAuthoritativeReproof(t *testing.T) {
+	signal := &dbus.Signal{
+		Sender: ":1.42",
+		Path:   dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection/7"),
+		Name:   networkManagerActiveInterface + "." + networkManagerActiveStateChanged,
+		Body:   []any{uint32(2), uint32(1)},
+	}
+	trigger, ok := tunNetworkManagerActiveSignalTrigger(signal)
+	if !ok {
+		t.Fatal("NetworkManager active-connection StateChanged was ignored")
+	}
+	if trigger != tunRevalidationTriggerSourceResync {
+		t.Fatalf("trigger=%q, want authoritative source resync", trigger)
+	}
+
+	for _, invalid := range []*dbus.Signal{
+		nil,
+		{Path: signal.Path, Name: signal.Name, Body: []any{uint32(2)}},
+		{Path: dbus.ObjectPath("/org/freedesktop/NetworkManager/Devices/7"), Name: signal.Name, Body: signal.Body},
+		{Path: signal.Path, Name: "org.freedesktop.NetworkManager.Device.StateChanged", Body: []any{uint32(100), uint32(30), uint32(0)}},
+		{Path: signal.Path, Name: signal.Name, Body: []any{"activated", uint32(1)}},
+	} {
+		if trigger, ok := tunNetworkManagerActiveSignalTrigger(invalid); ok || trigger != "" {
+			t.Fatalf("invalid signal %#v produced trigger=%q ok=%v", invalid, trigger, ok)
+		}
 	}
 }
