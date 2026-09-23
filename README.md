@@ -174,6 +174,49 @@ unless that exact environment has been separately qualified. The repository's
 deterministic tests prove the HTTP header, parsing, atomic update, grouped-profile,
 and redaction contracts without publishing provider credentials.
 
+### Remnawave qualification status
+
+Public claims distinguish deterministic client-contract evidence from a live
+provider qualification. The currently audited published Podlaz release is
+`v0.2.42`; no specific Remnawave server release is claimed as live-qualified
+until a disposable environment is exercised end to end.
+
+| Podlaz release | Remnawave environment | Base64 | Xray JSON | `x-hwid` | Grouped Xray JSON | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| `v0.2.42` | No disposable server version available during the public-readiness audit | Deterministic import/update contract verified | Deterministic import/update contract verified | Stable random local identity + request-header contract verified | Proxy-only preservation and pre-mutation TUN rejection verified | Repository tests/CI; live provider acceptance intentionally skipped |
+
+When a disposable Remnawave environment is available, use only disposable
+credentials and record a sanitized result with this checklist:
+
+1. Record `podlaz version` and the exact disposable Remnawave server version.
+2. Import a disposable HTTP(S) subscription URL; confirm subscription/profile
+   creation without publishing the URL, token, profile UUIDs, endpoint data, or
+   `x-hwid`.
+3. Refresh the same subscription and confirm the provider observes the same
+   client identity when HWID/device tracking is enabled.
+4. Validate and connect one supported VLESS profile in `proxy-only`; run
+   `status` and `check`, then disconnect.
+5. If the disposable subscription exposes grouped provider-owned Xray JSON,
+   verify proxy-only operation and verify TUN is rejected before host-network
+   mutation.
+6. Exercise one provider-side rejection/device-limit case when the disposable
+   environment supports it; confirm Podlaz preserves the last known good state
+   and does not rotate identity to bypass the provider policy.
+7. Delete/expire the disposable provider credentials and review any captured
+   evidence for secrets before publication.
+
+### Public visual evidence
+
+The secret-free terminal preview prepared for the Remnawave Awesome submission
+is derived from real GREEN CLI-contract output using repository example/fixture
+data only:
+
+![Podlaz CI-derived terminal preview](https://raw.githubusercontent.com/AidarKhusainov/panel/bad5425455bcf694a118065aa42618943907fc56/static/awesome/podlaz.webp)
+
+This image is not presented as a live Remnawave acceptance run. A live terminal
+demo remains intentionally unclaimed until the disposable checklist above can be
+run against an identified Remnawave server version.
+
 ## Security and privacy expectations
 
 Podlaz has no product telemetry or analytics subsystem. It does make network
@@ -195,6 +238,15 @@ Human/JSON command output and maintained public test artifacts have redaction
 contracts for credentials and provider data. This is not a promise that an
 arbitrary external command, shell history, screen recording, or user-created
 archive is safe to publish.
+
+For a non-sensitive defect, use [GitHub Issues](https://github.com/AidarKhusainov/podlaz/issues).
+For a suspected vulnerability, do **not** publish exploit details or secrets in
+a public issue. First use the repository's
+[Security](https://github.com/AidarKhusainov/podlaz/security) surface and its
+private **Report a vulnerability** flow when GitHub exposes that control. If
+private vulnerability reporting is unavailable, open only a minimal
+non-sensitive issue asking the maintainer for a private reporting channel before
+sharing technical details.
 
 When reporting a bug, include the output of `podlaz version`, the command that
 failed, the redacted error, and relevant `status`, `doctor`, or `recover`

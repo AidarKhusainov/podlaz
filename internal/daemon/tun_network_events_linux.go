@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,12 @@ const (
 	logindManagerPath      = dbus.ObjectPath("/org/freedesktop/login1")
 	logindManagerInterface = "org.freedesktop.login1.Manager"
 	logindPrepareForSleep  = "PrepareForSleep"
+
+	networkManagerBusName             = "org.freedesktop.NetworkManager"
+	networkManagerActivePathNamespace = dbus.ObjectPath("/org/freedesktop/NetworkManager/ActiveConnection")
+	networkManagerActivePathPrefix    = string(networkManagerActivePathNamespace) + "/"
+	networkManagerActiveInterface     = "org.freedesktop.NetworkManager.Connection.Active"
+	networkManagerActiveStateChanged  = "StateChanged"
 
 	netlinkHeaderLength = 16
 	netlinkAlignment    = 4
@@ -34,6 +41,7 @@ func startTunNetworkEventSources(ctx context.Context, notify tunNetworkEventNoti
 	}
 	startE2ETunTerminalFailureTrigger(ctx, notify)
 	go retryTunNetworkEventSource(ctx, "logind", runLogindSleepEvents, notify)
+	go retryTunNetworkEventSource(ctx, "networkmanager", runTunNetworkManagerActiveEvents, notify)
 	go retryTunNetworkEventSource(ctx, "rtnetlink", runTunRtnetlinkEvents, notify)
 }
 
@@ -127,6 +135,69 @@ func runLogindSleepEvents(ctx context.Context, notify tunNetworkEventNotifyFunc,
 			}
 		}
 	}
+}
+
+func runTunNetworkManagerActiveEvents(ctx context.Context, notify tunNetworkEventNotifyFunc, ready tunNetworkEventReadyFunc) error {
+	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("connect system bus: %w", err)
+	}
+	defer conn.Close()
+
+	options := []dbus.MatchOption{
+		dbus.WithMatchSender(networkManagerBusName),
+		dbus.WithMatchInterface(networkManagerActiveInterface),
+		dbus.WithMatchMember(networkManagerActiveStateChanged),
+		dbus.WithMatchPathNamespace(networkManagerActivePathNamespace),
+	}
+	if err := conn.AddMatchSignalContext(ctx, options...); err != nil {
+		return fmt.Errorf("subscribe NetworkManager active-connection signal: %w", err)
+	}
+	defer func() { _ = conn.RemoveMatchSignal(options...) }()
+
+	signals := make(chan *dbus.Signal, 16)
+	conn.Signal(signals)
+	defer conn.RemoveSignal(signals)
+	if ready != nil {
+		// NetworkManager activation state can settle after the kernel route/address
+		// edges that triggered the first revalidation round. Subscribe first, then
+		// force one current snapshot so no transition is lost during startup or a
+		// D-Bus watcher reconnect.
+		ready()
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case signal, ok := <-signals:
+			if !ok {
+				return errors.New("system D-Bus signal channel closed")
+			}
+			if trigger, ok := tunNetworkManagerActiveSignalTrigger(signal); ok {
+				notify(trigger)
+			}
+		}
+	}
+}
+
+func tunNetworkManagerActiveSignalTrigger(signal *dbus.Signal) (tunRevalidationTrigger, bool) {
+	if signal == nil ||
+		signal.Name != networkManagerActiveInterface+"."+networkManagerActiveStateChanged ||
+		!strings.HasPrefix(string(signal.Path), networkManagerActivePathPrefix) ||
+		len(signal.Body) != 2 {
+		return "", false
+	}
+	if _, ok := signal.Body[0].(uint32); !ok {
+		return "", false
+	}
+	if _, ok := signal.Body[1].(uint32); !ok {
+		return "", false
+	}
+	// The active-connection state is part of the authoritative fingerprint
+	// evidence collected through nmcli. Force a same-generation reproof even if
+	// kernel link/address/route identity itself did not change.
+	return tunRevalidationTriggerSourceResync, true
 }
 
 func runTunRtnetlinkEvents(ctx context.Context, notify tunNetworkEventNotifyFunc, ready tunNetworkEventReadyFunc) error {

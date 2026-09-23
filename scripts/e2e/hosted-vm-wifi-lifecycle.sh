@@ -164,6 +164,8 @@ prepare_wifi_fixture() {
   guest_script="$(cat <<'EOF'
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
+wifi_fixture_phase=packages
+trap 'printf "wifi-fixture phase=%s failed\\n" "$wifi_fixture_phase" >&2' ERR
 
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
@@ -179,15 +181,23 @@ systemctl stop NetworkManager.service >/dev/null 2>&1 || true
 systemctl stop wpa_supplicant.service >/dev/null 2>&1 || true
 systemctl stop hostapd.service >/dev/null 2>&1 || true
 
+wifi_fixture_phase=hwsim_radios
 modprobe mac80211_hwsim radios=2
-udevadm settle
-
-mapfile -t wifi_ifaces < <(iw dev | awk '$1 == "Interface" {print $2}')
-((${#wifi_ifaces[@]} >= 2))
-ap_candidate="${wifi_ifaces[0]}"
+wifi_count=0
+for _ in $(seq 1 60); do
+  udevadm settle >/dev/null 2>&1 || true
+  wifi_count="$(iw dev | awk '$1 == "Interface" {count++} END {print count+0}')"
+  if (( wifi_count >= 2 )); then
+    break
+  fi
+  sleep 0.5
+done
+(( wifi_count >= 2 ))
+ap_candidate="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
 ap_phy="$(basename "$(readlink -f "/sys/class/net/${ap_candidate}/phy80211")")"
 [[ "${ap_phy}" == phy* ]]
 
+wifi_fixture_phase=uplink_identity
 management_if="$(ip -4 route show default | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "dev") {print $(i+1); exit}}')"
 management_gateway="$(ip -4 route show default dev "${management_if}" | awk 'NR == 1 {for (i=1; i<=NF; i++) if ($i == "via") {print $(i+1); exit}}')"
 [[ -n "${management_if}" && -n "${management_gateway}" ]]
@@ -201,20 +211,55 @@ done
 [[ -n "${provider_if}" ]]
 [[ "${provider_if}" != "${management_if}" && "${provider_if}" != "${ap_candidate}" ]]
 
+wifi_fixture_phase=namespace_create
 ip netns add pzwifiap
 ip netns exec pzwifiap sleep infinity </dev/null >/dev/null 2>&1 &
-ap_ns_pid=$!
+ap_ns_launcher_pid=$!
+ap_ns_pid=""
+for _ in $(seq 1 30); do
+  ap_ns_pid="$(ip netns pids pzwifiap | head -n1)"
+  if [[ "${ap_ns_pid}" =~ ^[1-9][0-9]*$ ]] && kill -0 "${ap_ns_pid}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.2
+done
+[[ "${ap_ns_pid}" =~ ^[1-9][0-9]*$ ]]
+kill -0 "${ap_ns_pid}"
 printf '%s\n' "${ap_ns_pid}" >/var/tmp/podlaz-wifi-ap-ns.pid
+# The shell launcher is not namespace authority; keep it only so cleanup can
+# reap the background command if ip(8) did not exec the target in-place.
+: "${ap_ns_launcher_pid}"
 
+wifi_fixture_phase=namespace_radios
 iw phy "${ap_phy}" set netns "${ap_ns_pid}"
 ip link set "${provider_if}" netns pzwifiap
-udevadm settle
-
-ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == "Interface" {print $2; exit}')"
-client_if="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
-[[ -n "${ap_if}" && -n "${client_if}" ]]
+ap_if=""
+client_if=""
+for _ in $(seq 1 60); do
+  udevadm settle >/dev/null 2>&1 || true
+  ap_if="$(ip netns exec pzwifiap iw dev | awk '$1 == "Interface" {print $2; exit}')"
+  client_if="$(iw dev | awk '$1 == "Interface" {print $2; exit}')"
+  if [[ -n "${ap_if}" && -n "${client_if}" ]] &&
+     ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+if [[ -z "${ap_if}" ]]; then
+  printf 'wifi-fixture namespace_radios missing=ap-interface\n' >&2
+  exit 1
+fi
+if [[ -z "${client_if}" ]]; then
+  printf 'wifi-fixture namespace_radios missing=client-interface\n' >&2
+  exit 1
+fi
+if ! ip netns exec pzwifiap ip link show dev "${provider_if}" >/dev/null 2>&1; then
+  printf 'wifi-fixture namespace_radios missing=provider-interface\n' >&2
+  exit 1
+fi
 [[ "${management_if}" != "${client_if}" ]]
 
+wifi_fixture_phase=ap_network
 ip netns exec pzwifiap bash -s -- \
   "${ap_if}" "${provider_if}" "${provider_guest_cidr}" "${provider_host_ip}" "${wifi_ap_cidr}" <<'AP'
 set -Eeuo pipefail
@@ -239,6 +284,7 @@ iptables -A FORWARD -i "${provider_if}" -o "${ap_if}" \
   -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 AP
 
+wifi_fixture_phase=hostapd
 cat >/var/tmp/podlaz-wifi-hostapd.conf <<HOSTAPD
 interface=${ap_if}
 driver=nl80211
@@ -262,6 +308,7 @@ ip netns exec pzwifiap dnsmasq \
   --dhcp-option=6,1.1.1.1 \
   --pid-file=/run/podlaz-wifi-dnsmasq.pid
 
+wifi_fixture_phase=networkmanager
 systemctl start wpa_supplicant.service
 systemctl start NetworkManager.service
 nmcli radio wifi on
@@ -283,6 +330,7 @@ for _ in $(seq 1 30); do
 done
 nmcli -t -f SSID device wifi list ifname "${client_if}" | grep -Fx "${wifi_ssid}" >/dev/null
 
+wifi_fixture_phase=wifi_association
 nmcli --wait 30 device wifi connect "${wifi_ssid}" \
   password "${wifi_passphrase}" \
   ifname "${client_if}" \
