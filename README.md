@@ -14,12 +14,13 @@ The release pipeline publishes Debian packages for `amd64` and `arm64`, plus
 matching tarballs and `SHA256SUMS`. The packaged path is the supported
 end-user installation path; building from source is not required.
 
-The package requires a systemd-based Linux userspace with `libc6 >= 2.34`,
-`ca-certificates`, `iproute2`, `nftables`, `systemd-resolved`, and
-Polkit (`polkitd` or `policykit-1`). `apt` installs the declared runtime
-dependencies with the package. An interactive desktop or TTY Polkit agent is
-needed when an ordinary user authorizes privileged daemon actions such as a TUN
-connect.
+The package requires a systemd-based Linux userspace. Its declared runtime
+dependencies include `libc6 >= 2.34`, `systemd`, `ca-certificates`, `iproute2`,
+`nftables`, `systemd-resolved | systemd`, and Polkit (`polkitd` or
+`policykit-1`). `apt` resolves those dependencies with the package. TUN mode
+also relies on the packaged systemd/resolver integration. An interactive
+desktop or TTY Polkit agent is needed when an ordinary user authorizes
+privileged daemon actions such as a TUN connect.
 
 Download the current release package for the host architecture and verify it
 before installing:
@@ -34,7 +35,7 @@ case "$ARCH" in
   *) echo "unsupported release architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-TAG="$(curl -fsSL -o /dev/null -w '%{url_effective}'   "https://github.com/${REPO}/releases/latest")"
+TAG="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest")"
 TAG="${TAG##*/}"
 VERSION="${TAG#v}"
 
@@ -53,7 +54,7 @@ GitHub CLI is installed, the downloaded package can additionally be checked
 against the repository attestation:
 
 ```bash
-gh attestation verify "podlaz_${VERSION}_linux_${ARCH}.deb"   -R AidarKhusainov/podlaz
+gh attestation verify "podlaz_${VERSION}_linux_${ARCH}.deb" -R AidarKhusainov/podlaz
 ```
 
 Published assets and checksums are available on
@@ -121,12 +122,12 @@ imply that every profile is renderable in every mode.
 
 | Input / capability | Import/update | Proxy-only | TUN |
 | --- | --- | --- | --- |
-| VLESS share URI | Yes | Validate before connect | Validate before connect |
-| VMess share URI | Yes | Validate before connect | Validate before connect |
-| Trojan share URI | Yes | Validate before connect | Validate before connect |
-| Shadowsocks (`ss://`) share URI | Yes | Validate before connect | Validate before connect |
-| Base64 URI-list subscription | Yes, `file/http/https` | Per imported profile | Per imported profile |
-| Single-location Xray JSON subscription profile | Yes | Supported when validation succeeds | Supported when validation succeeds, except mode-specific transports below |
+| VLESS share URI | Yes | Supported when validation succeeds | Supported when validation succeeds |
+| VMess share URI | Yes | Not currently renderable by the generated runtime | Not currently renderable by the generated runtime |
+| Trojan share URI | Yes | Not currently renderable by the generated runtime | Not currently renderable by the generated runtime |
+| Shadowsocks (`ss://`) share URI | Yes | Not currently renderable by the generated runtime | Not currently renderable by the generated runtime |
+| Base64 URI-list subscription | Yes, `file/http/https` | VLESS entries are runtime candidates; other imported protocols remain stored only | VLESS entries are runtime candidates; other imported protocols remain stored only |
+| Single-location VLESS Xray JSON subscription profile | Yes | Supported when validation succeeds | Supported when validation succeeds, except mode-specific transports below |
 | VLESS Xray JSON with `xhttp` | Yes | Supported | Not supported; validation/planning fails before host-network mutation |
 | Grouped/provider-owned Xray JSON | Yes, kept as one grouped profile | Supported | Not supported; validation/planning/connect fails before host-network mutation |
 | Stable `x-hwid` subscription identity | Yes for HTTP(S) subscription fetches | Not mode-specific | Not mode-specific |
