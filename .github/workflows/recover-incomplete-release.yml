@@ -22,27 +22,28 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: v0.2.44
       PREVIOUS_TAG: v0.2.43
+      RECOVERY_COMMIT: a364c8edb88efd4bc50be4bc4b9e66a307444efa
     steps:
       - name: Create replacement tag if needed
         run: |
           set -euo pipefail
           if existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' 2>/dev/null)"; then
-            if [ "${existing_sha}" != "${GITHUB_SHA}" ]; then
-              echo "${TAG} already points to ${existing_sha}, expected ${GITHUB_SHA}" >&2
+            if [ "${existing_sha}" != "${RECOVERY_COMMIT}" ]; then
+              echo "${TAG} already points to ${existing_sha}, expected recovery commit ${RECOVERY_COMMIT}" >&2
               exit 1
             fi
-            echo "${TAG} already points to the repaired master commit"
+            echo "${TAG} already points to the exact recovery commit"
           else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
               -f ref="refs/tags/${TAG}" \
-              -f sha="${GITHUB_SHA}" >/dev/null
-            echo "created ${TAG} at ${GITHUB_SHA}"
+              -f sha="${RECOVERY_COMMIT}" >/dev/null
+            echo "created ${TAG} at ${RECOVERY_COMMIT}"
           fi
 
       - name: Dispatch exact-tag release qualification
         run: |
           set -euo pipefail
-          gh workflow run release.yml --ref "${TAG}" -f tag="${TAG}"
+          gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f tag="${TAG}"
 
       - name: Wait for immutable release assets
         run: |
