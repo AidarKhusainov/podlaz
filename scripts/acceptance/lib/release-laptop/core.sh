@@ -74,6 +74,7 @@ USAGE
     printf '%s\n' 'This launcher uses required adjacent Bash modules. It does not require Python.'
   fi
   cat <<'USAGE'
+Optional developer diagnostic only; it is not a release gate or required release acceptance.
 It never builds Podlaz, downloads packages, uses apt/apt-get, automatically reboots,
 or broadly flushes route/rule/nftables state.
 USAGE
