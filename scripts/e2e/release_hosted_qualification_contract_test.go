@@ -119,6 +119,14 @@ func TestIncompleteReleaseRecoveryUsesRefLookupExitStatus(t *testing.T) {
 	if !strings.Contains(workflow, "if existing_sha=\"$(gh api ") {
 		t.Fatal("release recovery must branch on the ref lookup exit status")
 	}
+	for _, required := range []string{
+		"RECOVERY_COMMIT: a364c8edb88efd4bc50be4bc4b9e66a307444efa",
+		`gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}" -f tag="${TAG}"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("release recovery lost exact-repository dispatch contract %q", required)
+		}
+	}
 }
 
 func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
