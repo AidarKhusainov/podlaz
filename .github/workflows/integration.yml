@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - agent/trusted-provider-tun # temporary #336 proving trigger
   schedule:
     - cron: '17 3 * * *'
     - cron: '47 4 * * 0'
@@ -66,6 +67,9 @@ jobs:
     name: Real proxy data plane
     if: >-
       ${{ github.event_name == 'schedule' ||
+          (github.event_name == 'push' &&
+           github.ref == 'refs/heads/agent/trusted-provider-tun' &&
+           github.actor == 'AidarKhusainov') ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            (inputs.real_provider || inputs.real_provider_tun)) }}
@@ -148,6 +152,9 @@ jobs:
     if: >-
       ${{ (github.event_name == 'schedule' &&
            github.event.schedule == '47 4 * * 0') ||
+          (github.event_name == 'push' &&
+           github.ref == 'refs/heads/agent/trusted-provider-tun' &&
+           github.actor == 'AidarKhusainov') ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            inputs.real_provider_tun) }}
