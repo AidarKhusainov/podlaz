@@ -416,7 +416,17 @@ jobs:
           BUILT_DATE: ${{ needs.build.outputs.built_date }}
         run: |
           set -euo pipefail
-          printf -v notes 'podlaz %s\n\nTag: %s\nCommit: %s\nBuilt: %s' "${VERSION}" "${TAG}" "${COMMIT_SHA}" "${BUILT_DATE}"
+          notes="$(cat <<EOF
+          Podlaz ${VERSION}
+
+          Release commit: ${COMMIT_SHA}
+          Built: ${BUILT_DATE}
+
+          Install / upgrade: https://github.com/${GH_REPO}#install-from-a-github-release
+          Upgrade / rollback / uninstall: https://github.com/${GH_REPO}#upgrade-rollback-and-uninstall
+          Verify downloaded artifacts against SHA256SUMS and the GitHub build-provenance attestations documented in the README.
+          EOF
+          )"
           expected_assets=(
             "podlaz_${VERSION}_linux_amd64.tar.gz"
             "podlaz_${VERSION}_linux_arm64.tar.gz"
@@ -434,6 +444,7 @@ jobs:
               "${release_asset_paths[@]}" \
               --verify-tag \
               --title "${TAG}" \
+              --generate-notes \
               --notes "${notes}"
             exit 0
           fi
@@ -450,7 +461,6 @@ jobs:
           done
 
           if [ "${matching_expected_asset_count}" -eq 0 ]; then
-            gh release edit "${TAG}" --title "${TAG}" --notes "${notes}"
             gh release upload "${TAG}" "${release_asset_paths[@]}"
             exit 0
           fi
@@ -471,7 +481,6 @@ jobs:
             sha256sum -c SHA256SUMS
           )
           if cmp -s "dist/release/SHA256SUMS" "${download_dir}/SHA256SUMS"; then
-            gh release edit "${TAG}" --title "${TAG}" --notes "${notes}"
             echo "release ${TAG} already has matching immutable assets"
             exit 0
           fi
