@@ -239,6 +239,15 @@ contracts for credentials and provider data. This is not a promise that an
 arbitrary external command, shell history, screen recording, or user-created
 archive is safe to publish.
 
+For a non-sensitive defect, use [GitHub Issues](https://github.com/AidarKhusainov/podlaz/issues).
+For a suspected vulnerability, do **not** publish exploit details or secrets in
+a public issue. First use the repository's
+[Security](https://github.com/AidarKhusainov/podlaz/security) surface and its
+private **Report a vulnerability** flow when GitHub exposes that control. If
+private vulnerability reporting is unavailable, open only a minimal
+non-sensitive issue asking the maintainer for a private reporting channel before
+sharing technical details.
+
 When reporting a bug, include the output of `podlaz version`, the command that
 failed, the redacted error, and relevant `status`, `doctor`, or `recover`
 output. Do **not** attach a real subscription URL/token, share URI, UUID,
