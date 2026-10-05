@@ -2,6 +2,9 @@
 
 Podlaz is a command-line VPN client for Linux.
 
+[![CI](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml/badge.svg)](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AidarKhusainov/podlaz)](https://github.com/AidarKhusainov/podlaz/releases/latest)
+
 ## Features
 
 - Import VPN profiles and subscriptions.
