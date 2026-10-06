@@ -2,7 +2,6 @@ package profile
 
 import "testing"
 
-
 func TestProviderProfileDisplayNameFallbackDoesNotExposeEndpoint(t *testing.T) {
 	name, accepted := ProviderProfileDisplayName("", "vless")
 	if accepted {
