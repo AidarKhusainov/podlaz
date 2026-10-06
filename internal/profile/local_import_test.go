@@ -72,7 +72,7 @@ func TestImportLocalContentXrayJSONRejectsUnsafeTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import local Xray JSON with unsafe tag: %v", err)
 	}
-	if len(result.Profiles) != 1 || result.Profiles[0].Name != "vless-example.com-443" {
+	if len(result.Profiles) != 1 || result.Profiles[0].Name != "vless-profile" {
 		t.Fatalf("expected safe fallback name for unsafe tag, got %#v", result.Profiles)
 	}
 	if len(result.Warnings) != 1 || result.Warnings[0].Entry != 1 || result.Warnings[0].Message != DisplayNameRejectedWarning {
