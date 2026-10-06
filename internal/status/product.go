@@ -21,14 +21,14 @@ const (
 type ProductStatusView struct {
 	State          ProductState
 	ProfileName    string
-	Mode           string
+	Protection     string
 	Reason         string
 	AutostartKnown bool
 	Autostart      bool
 }
 
 func (r Report) ProductView(autostart *api.AutostartStatusResponse, terminalReasons ...api.TerminalReason) ProductStatusView {
-	view := ProductStatusView{ProfileName: r.ProfileName, Mode: r.Mode}
+	view := ProductStatusView{ProfileName: r.ProfileName}
 	switch {
 	case r.Connection == "connecting":
 		view.State = ProductConnecting
@@ -42,6 +42,14 @@ func (r Report) ProductView(autostart *api.AutostartStatusResponse, terminalReas
 		view.State = ProductUnknown
 		if r.Health() == LifecycleHealthUnhealthy || r.HasUnhealthyState() {
 			view.Reason = "Connection state could not be determined"
+		}
+	}
+	if view.State == ProductConnected || view.State == ProductConnecting || view.State == ProductReconnecting {
+		switch strings.TrimSpace(r.Mode) {
+		case "tun":
+			view.Protection = "Active"
+		case "proxy-only":
+			view.Protection = "Proxy only"
 		}
 	}
 	if len(terminalReasons) > 0 && view.State == ProductDisconnected {
@@ -73,8 +81,8 @@ func (v ProductStatusView) String() string {
 	if v.ProfileName != "" {
 		fmt.Fprintf(&b, "Profile: %s\n", render.Redact(v.ProfileName))
 	}
-	if v.Mode != "" {
-		fmt.Fprintf(&b, "Mode: %s\n", render.Redact(v.Mode))
+	if v.Protection != "" {
+		fmt.Fprintf(&b, "Protection: %s\n", render.Redact(v.Protection))
 	}
 	if v.Reason != "" {
 		fmt.Fprintf(&b, "Reason: %s\n", render.Redact(v.Reason))
