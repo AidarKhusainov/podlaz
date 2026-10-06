@@ -3,174 +3,159 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-func TestRunCLIProfileAddListShowAndDelete(t *testing.T) {
+func TestRunCLIProfileListShowUseAndDelete(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	opts := options{profileStorePath: storePath}
-
-	var addOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "test", "--server", "example.com", "--port", "443", "--protocol", "vless"}, &addOut, opts); err != nil {
-		t.Fatalf("profile add failed: %v", err)
-	}
-	if addOut.String() != "Profile added: test\n" {
-		t.Fatalf("unexpected add output: %q", addOut.String())
-	}
+	p := addTestProfile(t, opts, "work-profile", "Work VPN")
 
 	var listOut bytes.Buffer
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &listOut, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	if got := listOut.String(); !strings.Contains(got, "test") || !strings.Contains(got, "vless") || !strings.Contains(got, "example.com") {
-		t.Fatalf("unexpected list output: %q", got)
+	gotList := listOut.String()
+	for _, want := range []string{"SELECTED", "NAME", "PROTOCOL", "SOURCE", "Work VPN", "vless"} {
+		if !strings.Contains(gotList, want) {
+			t.Fatalf("profile list missing %q: %q", want, gotList)
+		}
+	}
+	for _, forbidden := range []string{p.Server, p.UserIdentity, p.ID} {
+		if strings.Contains(gotList, forbidden) {
+			t.Fatalf("profile list leaked %q: %q", forbidden, gotList)
+		}
+	}
+
+	var useOut bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"profile", "use", "work vpn"}, &useOut, opts); err != nil {
+		t.Fatalf("profile use failed: %v", err)
+	}
+	if useOut.String() != "Selected profile: Work VPN\n" {
+		t.Fatalf("profile use output = %q", useOut.String())
+	}
+
+	var selectedList bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &selectedList, opts); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(selectedList.String(), "*") {
+		t.Fatalf("selected profile not marked: %q", selectedList.String())
 	}
 
 	var showOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "show", "test"}, &showOut, opts); err != nil {
+	if err := runWithOptions(context.Background(), []string{"profile", "show", "WORK VPN"}, &showOut, opts); err != nil {
 		t.Fatalf("profile show failed: %v", err)
 	}
-	if got := showOut.String(); !strings.Contains(got, "ID: test") || !strings.Contains(got, "Source: manual") || !strings.Contains(got, "Port: 443") {
-		t.Fatalf("unexpected show output: %q", got)
+	gotShow := showOut.String()
+	for _, want := range []string{"Name: Work VPN", "ID: work-profile", "Protocol: vless"} {
+		if !strings.Contains(gotShow, want) {
+			t.Fatalf("profile show missing %q: %q", want, gotShow)
+		}
+	}
+	if strings.Contains(gotShow, p.UserIdentity) {
+		t.Fatalf("profile show leaked user identity: %q", gotShow)
 	}
 
 	var deleteOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "delete", "test", "--yes"}, &deleteOut, opts); err != nil {
+	if err := runWithOptions(context.Background(), []string{"profile", "delete", "Work VPN", "--yes"}, &deleteOut, opts); err != nil {
 		t.Fatalf("profile delete failed: %v", err)
 	}
-	if deleteOut.String() != "Profile deleted: test\n" {
-		t.Fatalf("unexpected delete output: %q", deleteOut.String())
+	if deleteOut.String() != "Profile deleted: Work VPN\n" {
+		t.Fatalf("delete output = %q", deleteOut.String())
 	}
-
-	err := runWithOptions(context.Background(), []string{"profile", "show", "test"}, &bytes.Buffer{}, opts)
-	if err == nil {
-		t.Fatal("expected deleted profile to be missing")
-	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected missing profile exit code 1, got %d", got)
+	if _, err := profile.NewStore(storePath); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestRunCLIProfileDeleteRequiresYes(t *testing.T) {
+func TestRunCLIProfileUseIsOnlySelectionMutation(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "profiles.json")
+	opts := options{profileStorePath: storePath}
+	first := addTestProfile(t, opts, "first", "First")
+	addTestProfile(t, opts, "second", "Second")
+
+	if err := runWithOptions(context.Background(), []string{"profile", "use", "First"}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := profile.NewStore(storePath)
+	selected, err := store.ResolveSelected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.ID != first.ID {
+		t.Fatalf("selected=%q want=%q", selected.ID, first.ID)
+	}
+
+	if err := runWithOptions(context.Background(), []string{"profile", "show", "Second"}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatal(err)
+	}
+	selected, err = store.ResolveSelected()
+	if err != nil || selected.ID != first.ID {
+		t.Fatalf("read-only show changed selection: selected=%q err=%v", selected.ID, err)
+	}
+}
+
+func TestRunCLIProfileRemovedSubcommandsAndJSONFailUsage(t *testing.T) {
+	for _, args := range [][]string{
+		{"profile", "add", "--name", "test"},
+		{"profile", "import", "vless://example"},
+		{"profile", "validate", "test"},
+		{"profile", "list", "--json"},
+		{"profile", "show", "test", "--json"},
+	} {
+		err := runWithOptions(context.Background(), args, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
+		if err == nil || ExitCode(err) != 2 {
+			t.Fatalf("args=%v err=%v exit=%d, want usage error", args, err, ExitCode(err))
+		}
+	}
+}
+
+func TestRunCLIProfileDeleteRequiresYesWhenNonInteractive(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	opts := options{
 		profileStorePath: storePath,
-		stdinIsTerminal: func() bool {
-			return false
-		},
+		stdinIsTerminal:  func() bool { return false },
 	}
-	addTestProfile(t, opts)
+	addTestProfile(t, opts, "test", "Test")
 
-	err := runWithOptions(context.Background(), []string{"profile", "delete", "test"}, &bytes.Buffer{}, opts)
-	if err == nil {
-		t.Fatal("expected profile delete without --yes to fail")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
+	err := runWithOptions(context.Background(), []string{"profile", "delete", "Test"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("delete err=%v exit=%d, want usage error", err, ExitCode(err))
 	}
 }
 
-func TestRunCLIProfileAddInvalidInputReturnsUsageError(t *testing.T) {
-	err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "bad", "--server", "bad host", "--port", "443", "--protocol", "ftp"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-	if err == nil {
-		t.Fatal("expected invalid input to fail")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
-	}
-	if !strings.Contains(err.Error(), "unsupported protocol") || !strings.Contains(err.Error(), "server must not contain whitespace") {
-		t.Fatalf("unexpected validation error: %v", err)
-	}
-}
-
-func TestRunCLIProfileDuplicateAddReturnsRuntimeError(t *testing.T) {
+func TestRunCLIProfileShowMissingAndAmbiguousSelectorsFailWithoutGuessing(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	opts := options{profileStorePath: storePath}
-	addTestProfile(t, opts)
+	addTestProfile(t, opts, "work-a", "Work")
+	addTestProfile(t, opts, "work-b", " work ")
 
-	err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "test", "--server", "example.com", "--port", "443", "--protocol", "vless"}, &bytes.Buffer{}, opts)
-	if err == nil {
-		t.Fatal("expected duplicate add to fail")
+	err := runWithOptions(context.Background(), []string{"profile", "show", "missing"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("missing selector err=%v exit=%d", err, ExitCode(err))
 	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected exit code 1, got %d", got)
+	err = runWithOptions(context.Background(), []string{"profile", "show", "WORK"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous selector err=%v exit=%d", err, ExitCode(err))
 	}
 }
 
-func TestRunCLIProfileShowMissingReturnsRuntimeError(t *testing.T) {
-	err := runWithOptions(context.Background(), []string{"profile", "show", "missing"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-	if err == nil {
-		t.Fatal("expected missing profile to fail")
-	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected exit code 1, got %d", got)
-	}
-}
-
-func TestRunCLIProfileListJSONShape(t *testing.T) {
-	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	opts := options{profileStorePath: storePath}
-	addTestProfile(t, opts)
-
-	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list", "--json"}, &out, opts); err != nil {
-		t.Fatalf("profile list --json failed: %v", err)
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("decode list JSON: %v", err)
-	}
-	assertCommonJSON(t, got)
-	profiles, ok := got["profiles"].([]any)
-	if !ok || len(profiles) != 1 {
-		t.Fatalf("expected one JSON profile, got %#v", got["profiles"])
-	}
-}
-
-func TestRunCLIProfileShowJSONShape(t *testing.T) {
-	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	opts := options{profileStorePath: storePath}
-	addTestProfile(t, opts)
-
-	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "show", "test", "--json"}, &out, opts); err != nil {
-		t.Fatalf("profile show --json failed: %v", err)
-	}
-
-	var got map[string]any
-	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-		t.Fatalf("decode show JSON: %v", err)
-	}
-	assertCommonJSON(t, got)
-	profile, ok := got["profile"].(map[string]any)
-	if !ok || profile["id"] != "test" {
-		t.Fatalf("expected JSON profile test, got %#v", got["profile"])
-	}
-}
-
-func addTestProfile(t *testing.T, opts options) {
+func addTestProfile(t *testing.T, opts options, id, name string) profile.Profile {
 	t.Helper()
-	if err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "test", "--server", "example.com", "--port", "443", "--protocol", "vless"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("profile add failed: %v", err)
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func assertCommonJSON(t *testing.T, got map[string]any) {
-	t.Helper()
-	if got["schema_version"] != "v1" {
-		t.Fatalf("expected schema_version v1, got %#v", got["schema_version"])
+	p := testConnectProfile()
+	p.ID = id
+	p.Name = name
+	if err := store.Add(p); err != nil {
+		t.Fatalf("add test profile: %v", err)
 	}
-	if got["status"] != "ok" {
-		t.Fatalf("expected status ok, got %#v", got["status"])
-	}
-	if warnings, ok := got["warnings"].([]any); !ok || len(warnings) != 0 {
-		t.Fatalf("expected empty warnings, got %#v", got["warnings"])
-	}
-	if errors, ok := got["errors"].([]any); !ok || len(errors) != 0 {
-		t.Fatalf("expected empty errors, got %#v", got["errors"])
-	}
+	return p
 }

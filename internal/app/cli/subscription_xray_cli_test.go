@@ -11,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 func TestRunCLIImportHTTPBase64SubscriptionPersistsFormat(t *testing.T) {
@@ -28,11 +31,10 @@ func TestRunCLIImportHTTPBase64SubscriptionPersistsFormat(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", sourceURL}, &out, opts); err != nil {
 		t.Fatalf("HTTP Base64 subscription import failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Format: base64") || strings.Contains(got, secretToken) || strings.Contains(got, uuidForTest(20)) {
+	if got := out.String(); !strings.Contains(got, "Subscription imported") || !strings.Contains(got, "Profiles: 1") || strings.Contains(got, secretToken) || strings.Contains(got, uuidForTest(20)) {
 		t.Fatalf("unexpected HTTP Base64 import output: %q", got)
 	}
-
-	assertSubscriptionJSONContainsFormat(t, opts, []string{"subscription", "list", "--json"}, "base64", secretToken)
+	assertPersistedSubscriptionFormat(t, opts, sub.FormatBase64)
 }
 
 func TestRunCLIImportHTTPXrayJSONSubscriptionPersistsFormat(t *testing.T) {
@@ -51,19 +53,11 @@ func TestRunCLIImportHTTPXrayJSONSubscriptionPersistsFormat(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", sourceURL}, &out, opts); err != nil {
 		t.Fatalf("HTTP Xray JSON subscription import failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Format: xray-json") || strings.Contains(got, secretToken) || strings.Contains(got, userID) {
+	if got := out.String(); !strings.Contains(got, "Subscription imported") || strings.Contains(got, secretToken) || strings.Contains(got, userID) {
 		t.Fatalf("unexpected HTTP Xray JSON import output: %q", got)
 	}
-
-	assertSubscriptionJSONContainsFormat(t, opts, []string{"subscription", "list", "--json"}, "xray-json", secretToken)
-
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if got := profiles.String(); !strings.Contains(got, "http-json.example") || strings.Contains(got, userID) {
-		t.Fatalf("unexpected profile list output: %q", got)
-	}
+	assertPersistedSubscriptionFormat(t, opts, sub.FormatXrayJSON)
+	assertStoredProfileServer(t, opts.profileStorePath, "http-json.example")
 }
 
 func TestRunCLISubscriptionUpdateHTTPXrayJSONPreservesLastKnownGood(t *testing.T) {
@@ -74,107 +68,96 @@ func TestRunCLISubscriptionUpdateHTTPXrayJSONPreservesLastKnownGood(t *testing.T
 	defer server.Close()
 
 	opts := options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")}
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "remote-json", "--url", server.URL + "/sub"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
+	if err := runWithOptions(context.Background(), []string{"import", server.URL + "/sub"}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("subscription import failed: %v", err)
 	}
+	source := onlySubscription(t, opts)
+
 	var updateOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "remote-json"}, &updateOut, opts); err != nil {
+	if err := runWithOptions(context.Background(), []string{"subscription", "update", source.ID}, &updateOut, opts); err != nil {
 		t.Fatalf("subscription update failed: %v", err)
 	}
-	if !strings.Contains(updateOut.String(), "Format: xray-json") {
-		t.Fatalf("expected xray-json update output, got %q", updateOut.String())
+	if !strings.Contains(updateOut.String(), "Subscription updated") {
+		t.Fatalf("unexpected update output: %q", updateOut.String())
 	}
-	assertSubscriptionJSONContainsFormat(t, opts, []string{"subscription", "show", "remote-json", "--json"}, "xray-json", "")
+	assertPersistedSubscriptionFormat(t, opts, sub.FormatXrayJSON)
 
 	body = " {definitely-not-json"
-	err := runWithOptions(context.Background(), []string{"subscription", "update", "remote-json"}, &bytes.Buffer{}, opts)
+	err := runWithOptions(context.Background(), []string{"subscription", "update", source.ID}, &bytes.Buffer{}, opts)
 	if err == nil {
 		t.Fatal("expected malformed JSON update to fail")
 	}
 	if !strings.Contains(err.Error(), "Xray JSON") || strings.Contains(err.Error(), "Base64") {
 		t.Fatalf("expected JSON parse error without Base64 fallback, got %v", err)
 	}
-
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if got := profiles.String(); !strings.Contains(got, "stable-json.example") || strings.Contains(got, "definitely-not-json") {
-		t.Fatalf("last-known-good profile state was not preserved: %q", got)
-	}
+	assertStoredProfileServer(t, opts.profileStorePath, "stable-json.example")
 }
 
-func TestRunCLIImportFileURLXrayJSONSubscription(t *testing.T) {
-	dir := t.TempDir()
-	profileStorePath := filepath.Join(dir, "profiles.json")
-	fixturePath := filepath.Join(dir, "remote-xray.json")
-	userID := uuidForTest(25)
-	writeXrayJSONSubscriptionFixture(t, fixturePath, userID, "file-json.example", "file-json", "tcp", "tls")
-	opts := options{profileStorePath: profileStorePath}
-
-	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"import", localFileURL(fixturePath)}, &out, opts); err != nil {
-		t.Fatalf("Xray JSON subscription import failed: %v", err)
-	}
-	if !strings.Contains(out.String(), "Format: xray-json") {
-		t.Fatalf("expected xray-json import output, got %q", out.String())
-	}
-
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if got := profiles.String(); !strings.Contains(got, "file-json.example") || strings.Contains(got, userID) {
-		t.Fatalf("unexpected profile list output: %q", got)
-	}
-}
-
-func TestRunCLISubscriptionUpdateFileURLXrayJSONPreservesLastKnownGood(t *testing.T) {
+func TestRunCLIImportAndUpdateFileURLXrayJSONSubscription(t *testing.T) {
 	dir := t.TempDir()
 	profileStorePath := filepath.Join(dir, "profiles.json")
 	fixturePath := filepath.Join(dir, "remote-xray.json")
 	writeXrayJSONSubscriptionFixture(t, fixturePath, uuidForTest(26), "stable-file-json.example", "stable-file-json", "tcp", "tls")
 	opts := options{profileStorePath: profileStorePath}
 
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "remote-file-json", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
+	if err := runWithOptions(context.Background(), []string{"import", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("file Xray JSON subscription import failed: %v", err)
 	}
-	var updateOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "remote-file-json"}, &updateOut, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
+	source := onlySubscription(t, opts)
+	if source.Format != sub.FormatXrayJSON {
+		t.Fatalf("format=%q want=%q", source.Format, sub.FormatXrayJSON)
 	}
-	if !strings.Contains(updateOut.String(), "Format: xray-json") {
-		t.Fatalf("expected xray-json update output, got %q", updateOut.String())
-	}
+	assertStoredProfileServer(t, profileStorePath, "stable-file-json.example")
 
 	if err := os.WriteFile(fixturePath, []byte(" {not-json"), 0o600); err != nil {
 		t.Fatalf("write malformed fixture: %v", err)
 	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "remote-file-json"}, &bytes.Buffer{}, opts); err == nil {
+	if err := runWithOptions(context.Background(), []string{"subscription", "update", source.ID}, &bytes.Buffer{}, opts); err == nil {
 		t.Fatal("expected malformed JSON update to fail")
 	}
+	assertStoredProfileServer(t, profileStorePath, "stable-file-json.example")
+}
 
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if got := profiles.String(); !strings.Contains(got, "stable-file-json.example") || strings.Contains(got, "not-json") {
-		t.Fatalf("last-known-good profile state was not preserved: %q", got)
+func assertPersistedSubscriptionFormat(t *testing.T, opts options, want sub.Format) {
+	t.Helper()
+	source := onlySubscription(t, opts)
+	if source.Format != want {
+		t.Fatalf("subscription format=%q want=%q", source.Format, want)
 	}
 }
 
-func assertSubscriptionJSONContainsFormat(t *testing.T, opts options, args []string, format string, notContains string) {
+func onlySubscription(t *testing.T, opts options) sub.Source {
 	t.Helper()
-	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), args, &out, opts); err != nil {
-		t.Fatalf("%s failed: %v", strings.Join(args, " "), err)
+	storePath, err := resolvedSubscriptionStorePath(opts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := out.String()
-	if !strings.Contains(got, `"format": "`+format+`"`) || !strings.Contains(got, `"url": "REDACTED"`) {
-		t.Fatalf("expected redacted persisted format %q in output: %q", format, got)
+	store, err := sub.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if notContains != "" && strings.Contains(got, notContains) {
-		t.Fatalf("subscription json leaked %q in %q", notContains, got)
+	sources, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("subscriptions=%#v", sources)
+	}
+	return sources[0]
+}
+
+func assertStoredProfileServer(t *testing.T, path, want string) {
+	t.Helper()
+	store, err := profile.NewStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].Server != want {
+		t.Fatalf("profiles=%#v, want server %q", profiles, want)
 	}
 }
 

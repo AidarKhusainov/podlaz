@@ -16,7 +16,6 @@ import (
 
 type recoverArgs struct {
 	execute bool
-	yes     bool
 	json    bool
 }
 
@@ -47,15 +46,6 @@ func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		fmt.Fprint(stdout, plan.String())
 		return nil
 	}
-	if !parsed.yes {
-		if parsed.json {
-			return usageError("recover --execute --json requires --yes")
-		}
-		if err := confirmRecoverExecute(stdout, opts); err != nil {
-			return err
-		}
-	}
-
 	result, err := runRecoverExecute(ctx, opts)
 	if err != nil {
 		return lifecycleCommandError(err)
@@ -82,32 +72,13 @@ func parseRecoverArgs(args []string) (recoverArgs, error) {
 		switch arg {
 		case "--execute":
 			parsed.execute = true
-		case "--yes":
-			parsed.yes = true
 		case "--json":
 			parsed.json = true
 		default:
 			return parsed, usageError("unsupported recover argument %q", arg)
 		}
 	}
-	if parsed.yes && !parsed.execute {
-		return parsed, usageError("recover --yes requires --execute")
-	}
 	return parsed, nil
-}
-
-func confirmRecoverExecute(stdout io.Writer, opts options) error {
-	if !recoverInputIsTerminal(opts) {
-		return usageError("recover --execute requires --yes in non-interactive mode")
-	}
-	return confirmDefaultYes(stdout, confirmationReader(opts), "Recover will ask podlazd to remove only clearly podlaz-owned stale state. Type yes to continue", "recovery", "recover canceled")
-}
-
-func recoverInputIsTerminal(opts options) bool {
-	if opts.stdinIsTerminal != nil {
-		return opts.stdinIsTerminal()
-	}
-	return isStdinTerminal()
 }
 
 func isStdinTerminal() bool {
@@ -388,4 +359,15 @@ func redactedRecoveryWarnings(warnings []recovery.Warning) []map[string]string {
 		})
 	}
 	return out
+}
+
+func printRecoverHelp(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  podlaz debug recover
+  podlaz debug recover --execute [--json]
+
+Inspect or execute bounded recovery using only exact Podlaz-owned durable
+authority. Execute does not prompt because the recovery contract cannot adopt or
+remove foreign state; ambiguous ownership remains fail-closed.
+`)
 }

@@ -58,7 +58,7 @@ func TestProductViewRendersConciseStatusAndAutostart(t *testing.T) {
 	autostart := api.AutostartStatusResponse{Enabled: true, Mode: "tun", ProfileName: "Example VPN"}
 	view := (Report{Connection: "active", ProfileName: "Example VPN", Mode: "tun"}).ProductView(&autostart)
 	got := view.String()
-	for _, want := range []string{"Status: Connected", "Profile: Example VPN", "Mode: tun", "Autostart: Enabled for next boot"} {
+	for _, want := range []string{"Status: Connected", "Profile: Example VPN", "Protection: Active", "Autostart: Enabled for next boot"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("product output missing %q: %q", want, got)
 		}

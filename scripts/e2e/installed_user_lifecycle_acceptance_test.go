@@ -26,9 +26,9 @@ func TestInstalledUserLifecycleCoversPackagedAuthorizationBoundary(t *testing.T)
 		"filesystem socket unexpectedly reachable",
 		"PODLAZ_E2E_PKCHECK_MODE_FILE",
 		"authorization unavailable",
-		"connect --mode proxy-only",
+		"debug proxy",
 		"Status: Connected",
-		"Mode: proxy-only",
+		"Protection: Proxy only",
 		"Status: Disconnected",
 	} {
 		if !strings.Contains(script, required) {
@@ -48,10 +48,10 @@ func TestInstalledUserLifecycleCoversSupervisedXrayCrash(t *testing.T) {
 		"/usr/lib/podlaz/xray",
 		"pgrep -P",
 		"kill -KILL",
-		"core exited unexpectedly; inspect podlaz logs --core",
+		"core exited unexpectedly; inspect podlaz debug logs --core",
 		"127.0.0.1:1080",
 		"127.0.0.1:8080",
-		"recover --json",
+		"debug recover --json",
 		"assert_clean_recovery_json_file",
 	} {
 		if !strings.Contains(script, required) {

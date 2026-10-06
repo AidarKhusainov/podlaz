@@ -54,7 +54,7 @@ func TestRunCLIRecoverIncludesDaemonStartupScan(t *testing.T) {
 						Path:              filepath.Join(runtimeDir, "transactions", "tx-startup.json"),
 					},
 				}},
-				SuggestedAction: "podlaz recover",
+				SuggestedAction: "podlaz debug recover",
 			},
 		})
 	})}
@@ -68,12 +68,12 @@ func TestRunCLIRecoverIncludesDaemonStartupScan(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"recover"}, &out, options{}); err != nil {
+	if err := runWithOptions(context.Background(), []string{"debug", "recover"}, &out, options{}); err != nil {
 		t.Fatalf("recover failed: %v", err)
 	}
 	got := out.String()
 	for _, want := range []string{
-		"podlaz recovery dry-run",
+		"Recovery dry-run",
 		"Transaction: pending apply",
 		"Rollback available: yes",
 		"State path: " + filepath.Join(runtimeDir, "transactions", "tx-startup.json"),
@@ -126,7 +126,7 @@ func TestRunCLIRecoverTreatsDaemonStartupScanAsAuthoritative(t *testing.T) {
 	}()
 
 	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"recover"}, &out, options{}); err != nil {
+	if err := runWithOptions(context.Background(), []string{"debug", "recover"}, &out, options{}); err != nil {
 		t.Fatalf("recover failed: %v", err)
 	}
 	got := out.String()

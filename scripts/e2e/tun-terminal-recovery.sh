@@ -395,7 +395,7 @@ assert_exact_authority_absent() {
 }
 
 assert_clean_recovery_view() {
-  expect_secret_success "recover-clean-json" run_client recover --json
+  expect_secret_success "recover-clean-json" run_client debug recover --json
   python3 - "${LAST_STDOUT}" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding='utf-8') as f: payload=json.load(f)
@@ -431,7 +431,7 @@ assert_post_convergence_diagnostics() {
   assert_contains "${LAST_STDOUT}" "Status: Disconnected"
   assert_not_contains "${LAST_STDOUT}" "${stale_failure}"
 
-  expect_secret_success "doctor-${phase}" run_client doctor
+  expect_secret_success "doctor-${phase}" run_client debug doctor
   assert_contains "${LAST_STDOUT}" "Source: daemon"
   assert_not_contains "${LAST_STDOUT}" "${stale_failure}"
 
@@ -470,12 +470,11 @@ log "import private TUN profile"
 PROFILE_URI="$(first_configured_profile_uri)"
 assert_nonempty "${PROFILE_URI}" "private profile URI"
 mask_multiline_sensitive "${PROFILE_URI}"
-expect_secret_success "import-profile" run_client profile import "${PROFILE_URI}"
-PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
-assert_nonempty "${PROFILE_ID}" "imported profile id"
+expect_secret_success "import-profile" run_client import "${PROFILE_URI}"
+PROFILE_ID="$(jq -r '.selected_profile_id // empty' "${XDG_STATE_HOME}/podlaz/profiles.json")"
+assert_nonempty "${PROFILE_ID}" "selected stable profile id"
 mask_multiline_sensitive "${PROFILE_ID}"
 assert_not_contains "${LAST_STDOUT}" "${PROFILE_URI}"
-expect_secret_success "validate-profile-tun" run_client profile validate "${PROFILE_ID}" --mode tun
 
 check_https_and_dns baseline
 create_tun_foreign_state
@@ -484,7 +483,7 @@ assert_tun_foreign_state baseline
 install_terminal_hook
 
 log "connect exact candidate TUN"
-expect_secret_success "connect-tun" run_client connect --mode tun "${PROFILE_ID}"
+expect_secret_success "connect-tun" run_client connect
 expect_secret_success "status-active" run_client status
 assert_contains "${LAST_STDOUT}" "Status: Connected"
 capture_exact_authority committed
@@ -505,20 +504,20 @@ expect_secret_exit 3 "status-terminal-incomplete" run_client status
 assert_contains "${LAST_STDOUT}" "Status: Unknown"
 
 log "recover terminal state in same daemon without reboot/service restart"
-expect_secret_success "recover-terminal-execute" run_client recover --execute --yes
+expect_secret_success "recover-terminal-execute" run_client debug recover --execute
 check_https_and_dns after-recover
 assert_exact_authority_absent after-recover
 assert_tun_foreign_state after-recover
 assert_post_convergence_diagnostics after-recover "terminal firewall rollback blocked before nftables mutation"
 
 log "prove recovery is idempotent"
-expect_secret_success "recover-terminal-second" run_client recover --execute --yes
+expect_secret_success "recover-terminal-second" run_client debug recover --execute
 assert_exact_authority_absent after-second-recover
 assert_clean_recovery_view
 assert_tun_foreign_state after-second-recover
 
 log "prove normal candidate disconnect has no exact route/rule residue"
-expect_secret_success "connect-after-recovery" run_client connect --mode tun "${PROFILE_ID}"
+expect_secret_success "connect-after-recovery" run_client connect
 capture_exact_authority committed
 assert_active_authority_present candidate-reconnect
 check_https_and_dns candidate-reconnect-vpn
@@ -554,14 +553,14 @@ assert_tun_foreign_state v0.2.40-stranded
 
 log "install exact fixed candidate over v0.2.40 stranded state without reboot"
 install_exact_package "${CANDIDATE}" candidate-upgrade-over-stranded
-expect_secret_success "upgrade-recover-terminal" run_client recover --execute --yes
+expect_secret_success "upgrade-recover-terminal" run_client debug recover --execute
 check_https_and_dns after-v0240-upgrade-recover
 assert_exact_authority_absent after-v0240-upgrade-recover
 assert_tun_foreign_state after-v0240-upgrade-recover
 assert_post_convergence_diagnostics after-v0240-upgrade-recover "missing nftables chains"
 
 log "prove post-upgrade normal lifecycle and route/rule cleanup"
-expect_secret_success "upgrade-connect-after-recovery" run_client connect --mode tun "${PROFILE_ID}"
+expect_secret_success "upgrade-connect-after-recovery" run_client connect
 capture_exact_authority committed
 assert_active_authority_present upgrade-reconnect
 check_https_and_dns upgrade-reconnect-vpn

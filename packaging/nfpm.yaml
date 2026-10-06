@@ -11,8 +11,8 @@ homepage: https://github.com/AidarKhusainov/podlaz
 license: MIT
 description: |-
   Linux VPN client for Xray-compatible profiles.
-  podlaz makes VPN and proxy profile lifecycle behavior explicit,
-  inspectable, and recoverable through a CLI and a privileged daemon.
+  podlaz provides a simple VPN-first CLI backed by a privileged daemon,
+  with advanced diagnostics available separately when needed.
 
 depends:
   - libc6 (>= 2.34)

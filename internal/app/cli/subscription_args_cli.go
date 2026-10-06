@@ -10,86 +10,18 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
-type subscriptionAddArgs struct {
-	name string
-	url  string
-}
-
-func parseSubscriptionAddArgs(args []string) (subscriptionAddArgs, error) {
-	var parsed subscriptionAddArgs
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value, hasInlineValue := cutFlagValue(arg)
-		switch {
-		case arg == "--name" || strings.HasPrefix(arg, "--name="):
-			v, next, err := flagValue("subscription add --name", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.name = v
-			i = next
-		case arg == "--url" || strings.HasPrefix(arg, "--url="):
-			v, next, err := flagValue("subscription add --url", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.url = v
-			i = next
-		case arg == "--json":
-			return parsed, usageError("subscription add --json is not implemented")
-		default:
-			return parsed, usageError("unsupported subscription add argument %q", arg)
-		}
+func parseSubscriptionShowArgs(args []string) (string, error) {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") || strings.TrimSpace(args[0]) == "" {
+		return "", usageError("subscription show requires exactly one subscription id")
 	}
-	if err := sub.ValidateSource(sub.NewSource(parsed.name, parsed.url)); err != nil {
-		return parsed, usageError("%s", err.Error())
-	}
-	return parsed, nil
-}
-
-func parseSubscriptionShowArgs(args []string) (string, bool, error) {
-	var id string
-	var jsonOutput bool
-	for _, arg := range args {
-		switch arg {
-		case "--json":
-			jsonOutput = true
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return "", false, usageError("unsupported subscription show argument %q", arg)
-			}
-			if id != "" {
-				return "", false, usageError("subscription show accepts exactly one subscription id")
-			}
-			id = arg
-		}
-	}
-	if id == "" {
-		return "", false, usageError("subscription show requires a subscription id")
-	}
-	return id, jsonOutput, nil
+	return args[0], nil
 }
 
 func parseSubscriptionUpdateArgs(args []string) (string, error) {
-	var id string
-	for _, arg := range args {
-		switch arg {
-		case "--json":
-			return "", usageError("subscription update --json is not implemented")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return "", usageError("unsupported subscription update argument %q", arg)
-			}
-			if id != "" {
-				return "", usageError("subscription update accepts exactly one subscription id")
-			}
-			id = arg
-		}
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") || strings.TrimSpace(args[0]) == "" {
+		return "", usageError("subscription update requires exactly one subscription id")
 	}
-	if id == "" {
-		return "", usageError("subscription update requires a subscription id")
-	}
-	return id, nil
+	return args[0], nil
 }
 
 func subscriptionCommandError(err error) error {

@@ -107,7 +107,7 @@ func confirmSubscriptionDelete(stdout io.Writer, opts options, source sub.Source
 		action = "keep"
 	}
 	prompt := fmt.Sprintf("Delete subscription %s and %s %d imported profiles?", render.Redact(source.ID), action, len(source.ProfileIDs))
-	return confirmDefaultYes(stdout, confirmationReader(opts), prompt, "subscription delete", "subscription delete canceled")
+	return confirmDefaultNo(stdout, confirmationReader(opts), prompt, "subscription delete", "subscription delete canceled")
 }
 
 func subscriptionDeleteInputIsTerminal(opts options) bool {
@@ -125,8 +125,6 @@ func parseSubscriptionDeleteArgs(args []string) (subscriptionDeleteArgs, error) 
 			parsed.yes = true
 		case "--keep-profiles":
 			parsed.keepProfiles = true
-		case "--json":
-			return parsed, usageError("subscription delete --json is not implemented")
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return parsed, usageError("unsupported subscription delete argument %q", arg)

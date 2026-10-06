@@ -82,12 +82,9 @@ prepare_terminal_profile(){
 set -Eeuo pipefail
 uri='vless://00000000-0000-4000-8000-000000000001@vpn.invalid:443?security=tls&type=tcp&sni=vpn.invalid#BootTerminalFailure'
 runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache" \
- /usr/bin/podlaz profile import "$uri" >"$private/terminal-import.stdout" 2>"$private/terminal-import.stderr"
-awk '/^Imported profile:/ {print $3; exit}' "$private/terminal-import.stdout" >"$private/terminal-profile-id"
+ /usr/bin/podlaz import "$uri" >"$private/terminal-import.stdout" 2>"$private/terminal-import.stderr"
+jq -r '.selected_profile_id // empty' "$xdg/state/podlaz/profiles.json" >"$private/terminal-profile-id"
 test -s "$private/terminal-profile-id"
-profile="$(cat "$private/terminal-profile-id")"
-runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache" \
- /usr/bin/podlaz profile validate "$profile" --mode tun >"$private/terminal-validate.stdout" 2>"$private/terminal-validate.stderr"
 EOF
 )"
   hosted_vm_ga_bash "xdg=${HOSTED_VM_TUN_XDG@Q}; private=${HOSTED_VM_TUN_PRIVATE@Q}; ${script}"
@@ -193,7 +190,7 @@ run_scenario(){
   prepare_terminal_profile
   record_evidence terminal_profile.imported pass
   profile="$(terminal_profile_id)"; boot_before="$(hosted_vm_boot_id)"
-  mark_failure product autostart.enable_terminal; hosted_vm_tun_run_podlaz autostart enable --mode tun "${profile}" >/dev/null
+  mark_failure product autostart.enable_terminal; hosted_vm_tun_run_podlaz autostart enable >/dev/null
   assert_manifest_exact "${boot_before}" "${profile}"; gen="$(manifest_generation)"; record_evidence autostart.manifest_exact pass
   assert_attempt_absent; record_evidence autostart.no_same_boot_attempt_before_reboot pass
   mark_failure infrastructure vm.reboot; reboot_ids="$(hosted_vm_reboot)"; boot_after="${reboot_ids#*$'\t'}"; [[ -n "${boot_after}" && "${boot_after}" != "${boot_before}" ]]; record_evidence reboot.boot_id_changed pass

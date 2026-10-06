@@ -50,11 +50,11 @@ assert_visible_marker_and_bounded_window() {
     run_log_reader_podlaz 10s status >/dev/null 2>&1 || fail "log-window could not create the old daemon journal marker"
   done
   sudo -n journalctl --sync
-  run_log_reader_podlaz 20s logs --daemon --since 30s >"${broad_output}" 2>"${broad_error}" || \
-    fail "installed podlaz logs could not read the broad daemon journal window"
+  run_log_reader_podlaz 20s debug logs --daemon --since 30s >"${broad_output}" 2>"${broad_error}" || \
+    fail "installed podlaz debug logs could not read the broad daemon journal window"
   grep -Fx 'podlaz daemon logs' "${broad_output}" >/dev/null || fail "broad daemon log window did not render its stable header"
   grep -F 'status request' "${broad_output}" >/dev/null || \
-    fail "installed podlaz logs could not observe the generated daemon journal marker"
+    fail "installed podlaz debug logs could not observe the generated daemon journal marker"
   write_evidence broad_window_marker_visible pass
 
   # Move the old marker outside the requested short window, then create a fresh
@@ -64,8 +64,8 @@ assert_visible_marker_and_bounded_window() {
   invocation_start="$(date +%s)"
   run_log_reader_podlaz 10s status >/dev/null 2>&1 || fail "log-window could not create the fresh daemon journal marker"
   sudo -n journalctl --sync
-  run_log_reader_podlaz 20s logs --daemon --since 5s >"${short_output}" 2>"${short_error}" || \
-    fail "installed podlaz logs --daemon --since 5s failed"
+  run_log_reader_podlaz 20s debug logs --daemon --since 5s >"${short_output}" 2>"${short_error}" || \
+    fail "installed podlaz debug logs --daemon --since 5s failed"
   grep -Fx 'podlaz daemon logs' "${short_output}" >/dev/null || fail "short daemon log window did not render its stable header"
   grep -F 'status request' "${short_output}" >/dev/null || \
     fail "short daemon log window did not contain the fresh visible marker"
@@ -112,7 +112,7 @@ if not seen_journal_line:
 PY
   then
     rm -f -- "${broad_output}" "${broad_error}" "${short_output}" "${short_error}"
-    fail "installed podlaz logs did not prove the requested lookback against visible journal entries"
+    fail "installed podlaz debug logs did not prove the requested lookback against visible journal entries"
   fi
 
   rm -f -- "${broad_output}" "${broad_error}" "${short_output}" "${short_error}"

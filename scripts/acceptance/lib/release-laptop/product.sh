@@ -1,8 +1,9 @@
 ra_product() { if [[ "${RELEASE_ACCEPTANCE_TEST_MODE:-0}" == 1 ]]; then ra_capture podlaz "$@"; else ra_capture_user /usr/bin/podlaz "$@"; fi; }
-ra_profile_ids_json() { ra_product profile list --json || return 1; jq -ce 'select(.schema_version=="v1")|[.profiles[]?|select(type=="object" and .id)|.id]' <<<"$RA_CAPTURE"; }
-ra_profile_validate() { ra_product profile validate "$1" --mode tun --json || return 1; jq -e '.schema_version=="v1" and .valid==true' <<<"$RA_CAPTURE" >/dev/null; }
-ra_profile_select() { local explicit="$1" ids id; local valid=(); ids="$(ra_profile_ids_json)" || return 1; if [[ -n "$explicit" ]]; then jq -e --arg id "$explicit" 'index($id)!=null' <<<"$ids" >/dev/null || return 1; ra_profile_validate "$explicit" || return 1; printf '%s' "$explicit"; return 0; fi; while IFS= read -r id; do if [[ -n "$id" ]] && ra_profile_validate "$id"; then valid+=("$id"); fi; done < <(jq -r '.[]' <<<"$ids"); ((${#valid[@]}==1)) || { ra_die "input expected exactly one usable TUN profile, found ${#valid[@]}"; return 1; }; printf '%s' "${valid[0]}"; }
-ra_connect() { ra_product connect --mode tun "$1" >/dev/null || { ra_die "product Podlaz TUN connect failed"; return 1; }; }
+ra_profile_store_json() { local path="$RA_USER_STATE_HOME/podlaz/profiles.json"; [[ -f "$path" && ! -L "$path" ]] || return 1; jq -ce 'select(.schema_version=="v1" and (.profiles|type)=="array")' "$path"; }
+ra_profile_ids_json() { ra_product profile list >/dev/null || return 1; ra_profile_store_json | jq -ce '[.profiles[]?|select(type=="object" and (.id|type)=="string")|.id]'; }
+ra_profile_validate() { local id="$1" ids; ids="$(ra_profile_ids_json)" || return 1; jq -e --arg id "$id" 'index($id)!=null' <<<"$ids" >/dev/null || return 1; ra_product profile show "$id" >/dev/null; }
+ra_profile_select() { local explicit="$1" ids selected; ids="$(ra_profile_ids_json)" || return 1; if [[ -n "$explicit" ]]; then jq -e --arg id "$explicit" 'index($id)!=null' <<<"$ids" >/dev/null || return 1; ra_profile_validate "$explicit" || return 1; printf '%s' "$explicit"; return 0; fi; selected="$(ra_profile_store_json | jq -r '.selected_profile_id//""')" || return 1; [[ -n "$selected" ]] || { ra_die "input no profile is selected; run podlaz profile use <profile> as the target user"; return 1; }; jq -e --arg id "$selected" 'index($id)!=null' <<<"$ids" >/dev/null || return 1; printf '%s' "$selected"; }
+ra_connect() { ra_product connect "$1" >/dev/null || { ra_die "product Podlaz VPN connect failed"; return 1; }; }
 ra_disconnect() { ra_product disconnect >/dev/null || { ra_die "product Podlaz disconnect failed"; return 1; }; }
 
 ra_status_json() {

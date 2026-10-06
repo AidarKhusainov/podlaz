@@ -75,7 +75,7 @@ CAPABILITY_KEYS=(
   tun.profile_import_command
   tun.profile_import_output
   tun.profile_import
-  tun.profile_validate
+  tun.profile_selected
   tun.connect_requested
   tun.verified_active
   tun.system_dns
@@ -701,7 +701,7 @@ finally:
 raise SystemExit(0 if ok else 1)'
 
   set +e
-  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode proxy-only \"\${id}\" >/tmp/podlaz-capability-tun-private/unauthorized.stdout 2>/tmp/podlaz-capability-tun-private/unauthorized.stderr"
+  guest_exec /bin/bash -lc "selector=\$(cat /tmp/podlaz-capability-tun-private/profile-selector); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz debug proxy \"\${selector}\" >/tmp/podlaz-capability-tun-private/unauthorized.stdout 2>/tmp/podlaz-capability-tun-private/unauthorized.stderr"
   code=$?
   set -e
   [[ "${code}" == 1 ]] || return 1
@@ -741,7 +741,7 @@ run_synthetic_tun_lifecycle() {
   fi
 
   set +e
-  guest_exec /bin/bash -lc "URI=\"\$(cat /run/podlaz-capability-xray/client-uri)\"; [[ -n \"\${URI}\" ]] || exit 90; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
+  guest_exec /bin/bash -lc "URI=\"\$(cat /run/podlaz-capability-xray/client-uri)\"; [[ -n \"\${URI}\" ]] || exit 90; runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >/tmp/podlaz-capability-tun-private/import.stdout 2>/tmp/podlaz-capability-tun-private/import.stderr"
   import_code=$?
   set -e
   if (( import_code == 90 )); then
@@ -759,19 +759,17 @@ run_synthetic_tun_lifecycle() {
   fi
   record_capability tun.profile_import_command pass
   guest_exec chown -R e2e:e2e /tmp/podlaz-capability-tun-private
-  guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' /tmp/podlaz-capability-tun-private/import.stdout >/tmp/podlaz-capability-tun-private/profile-id"
-  guest_exec test -s /tmp/podlaz-capability-tun-private/profile-id
+  guest_exec /bin/bash -lc "sed -n 's/^Profile: //p' /tmp/podlaz-capability-tun-private/import.stdout | head -n1 >/tmp/podlaz-capability-tun-private/profile-selector"
+  guest_exec test -s /tmp/podlaz-capability-tun-private/profile-selector
   record_capability tun.profile_import_output pass
   record_capability tun.profile_import pass
-
-  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >/tmp/podlaz-capability-tun-private/validate.stdout 2>/tmp/podlaz-capability-tun-private/validate.stderr"
-  record_capability tun.profile_validate pass
+  record_capability tun.profile_selected pass
 
   capture_guest_network_baseline
   assert_tun_authorization_boundary
 
   set +e
-  guest_exec /bin/bash -lc "id=\$(cat /tmp/podlaz-capability-tun-private/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz connect >/tmp/podlaz-capability-tun-private/connect.stdout 2>/tmp/podlaz-capability-tun-private/connect.stderr"
   connect_code=$?
   set -e
   (( connect_code == 0 )) || return "${connect_code}"
@@ -786,7 +784,7 @@ run_synthetic_tun_lifecycle() {
   record_capability tun.https_tls pass
 
   set +e
-  guest_exec /bin/bash -lc "timeout 90 runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz doctor --tun >/tmp/podlaz-capability-tun-private/doctor.stdout 2>/tmp/podlaz-capability-tun-private/doctor.stderr"
+  guest_exec /bin/bash -lc "timeout 90 runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz debug doctor --tun >/tmp/podlaz-capability-tun-private/doctor.stdout 2>/tmp/podlaz-capability-tun-private/doctor.stderr"
   doctor_code=$?
   set -e
   if [[ "${doctor_code}" == 0 || "${doctor_code}" == 3 ]]; then
@@ -810,7 +808,7 @@ run_synthetic_tun_lifecycle() {
     return 1
   fi
 
-  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz recover --json >/tmp/podlaz-capability-tun-private/recover.json 2>/tmp/podlaz-capability-tun-private/recover.stderr && cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file /tmp/podlaz-capability-tun-private/recover.json"
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${CAPABILITY_GUEST_XDG}/config' XDG_STATE_HOME='${CAPABILITY_GUEST_XDG}/state' XDG_CACHE_HOME='${CAPABILITY_GUEST_XDG}/cache' /usr/bin/podlaz debug recover --json >/tmp/podlaz-capability-tun-private/recover.json 2>/tmp/podlaz-capability-tun-private/recover.stderr && cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file /tmp/podlaz-capability-tun-private/recover.json"
   assert_guest_terminal_authority_clean
   assert_guest_network_baseline_restored
   record_capability tun.recovery_clean pass

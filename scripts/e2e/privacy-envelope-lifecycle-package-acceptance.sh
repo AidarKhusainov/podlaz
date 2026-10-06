@@ -100,9 +100,7 @@ import_profile() {
   uri="$(first_configured_profile_uri)"
   out="$(mktemp "${E2E_TMP_ROOT}/network-resource-isolation-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/network-resource-isolation-import.stderr.XXXXXX")"
-  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "network-resource-isolation profile import failed"
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${PROFILE_ID}" ]] || fail "network-resource-isolation profile import returned no profile ID"
+  run_installed_podlaz import "${uri}" >"${out}" 2>"${err}" || fail "network-resource-isolation profile import failed"
   mask_multiline_sensitive "${PROFILE_ID}"
   rm -f -- "${out}" "${err}"
 }
@@ -240,7 +238,7 @@ wait_for_service_active podlazd.service 30
 import_profile
 create_foreign_collision_guard
 
-run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "network-resource-isolation protected connect failed"
+run_installed_podlaz connect >/dev/null 2>&1 || fail "network-resource-isolation protected connect failed"
 CONNECTED=true
 wait_for_active_tun protected_connected
 load_envelope_identity

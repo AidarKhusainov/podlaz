@@ -8,11 +8,6 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
-func completionProfileProtocolNames() []string {
-	flag, _ := mustCompletionCommand("profile", "add").findFlag("--protocol")
-	return append([]string(nil), flag.Values...)
-}
-
 func mustCompletionCommand(path ...string) *completionCommand {
 	node := completionRegistry()
 	for _, name := range path {
@@ -102,7 +97,7 @@ func valueCandidates(values []string, prefix string) []completionCandidate {
 	return candidates
 }
 
-func profileIDCandidates(opts options) []completionCandidate {
+func profileCandidates(opts options) []completionCandidate {
 	store, err := profile.NewStore(opts.profileStorePath)
 	if err != nil {
 		return nil
@@ -111,9 +106,30 @@ func profileIDCandidates(opts options) []completionCandidate {
 	if err != nil {
 		return nil
 	}
+	selectedID, _ := store.SelectedID()
+
+	nameCounts := make(map[string]int, len(profiles))
+	for _, p := range profiles {
+		nameCounts[strings.ToLower(strings.TrimSpace(p.Name))]++
+	}
+
 	candidates := make([]completionCandidate, 0, len(profiles))
 	for _, p := range profiles {
-		candidates = append(candidates, completionCandidate{Value: render.Redact(p.ID), Description: render.Redact(p.Name)})
+		key := strings.ToLower(strings.TrimSpace(p.Name))
+		value := render.Redact(p.Name)
+		description := render.Redact(p.Protocol)
+		if nameCounts[key] > 1 {
+			value = render.Redact(p.ID)
+			description = render.Redact(p.Name) + " · stable ID"
+		}
+		if p.ID == selectedID {
+			if description != "" {
+				description += " · selected"
+			} else {
+				description = "selected"
+			}
+		}
+		candidates = append(candidates, completionCandidate{Value: value, Description: description})
 	}
 	return candidates
 }

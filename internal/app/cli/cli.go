@@ -10,7 +10,6 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	"github.com/AidarKhusainov/podlaz/internal/logs"
-	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	"github.com/AidarKhusainov/podlaz/internal/status"
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
@@ -52,8 +51,6 @@ type options struct {
 	autostartEnable       autostartEnableRunner
 	autostartDisable      autostartDisableRunner
 	autostartStatus       autostartStatusRunner
-	check                 checkRunner
-	checkProbes           checkProbeRunner
 	doctor                func(context.Context) doctor.Report
 	coreDoctor            func(context.Context, string) doctor.Report
 	daemonDoctor          func(context.Context) (doctor.Report, error)
@@ -65,8 +62,6 @@ type options struct {
 	recoverExecute        func(context.Context) (recovery.ExecuteResult, error)
 	status                func(context.Context) status.Report
 	daemonStatus          func(context.Context) (status.Report, error)
-	systemSnapshot        func(context.Context, netsnapshot.Options) netsnapshot.Snapshot
-	tunAllocationEvidence func(context.Context) (netsnapshot.TunAllocationEvidence, error)
 	stdin                 io.Reader
 	stdinIsTerminal       func() bool
 }
@@ -113,24 +108,16 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runProfileCommand(ctx, commandArgs, stdout, opts)
 	case "subscription":
 		return runSubscriptionCommand(ctx, commandArgs, stdout, opts)
-	case "plan":
-		return runPlanCommand(ctx, commandArgs, stdout, opts)
 	case "connect":
 		return runConnectCommand(ctx, commandArgs, stdout, opts)
 	case "disconnect":
 		return runDisconnectCommand(ctx, commandArgs, stdout, opts)
 	case "autostart":
 		return runAutostartCommand(ctx, commandArgs, stdout, opts)
-	case "check":
-		return runCheckCommand(ctx, commandArgs, stdout, opts)
 	case "status":
 		return runStatusCommand(ctx, commandArgs, stdout, opts)
-	case "doctor":
-		return runDoctorCommand(ctx, commandArgs, stdout, opts)
-	case "logs":
-		return runLogsCommand(ctx, commandArgs, stdout, opts)
-	case "recover":
-		return runRecoverCommand(ctx, commandArgs, stdout, opts)
+	case "debug":
+		return runDebugCommand(ctx, commandArgs, stdout, opts)
 	default:
 		return usageError("unknown command %q", args[0])
 	}
@@ -156,24 +143,16 @@ func runHelp(args []string, stdout io.Writer) error {
 		printProfileHelp(stdout)
 	case "subscription":
 		printSubscriptionHelp(stdout)
-	case "plan":
-		printPlanHelp(stdout)
 	case "connect":
 		printConnectHelp(stdout)
 	case "disconnect":
 		printDisconnectHelp(stdout)
 	case "autostart":
 		printAutostartHelp(stdout)
-	case "check":
-		printCheckHelp(stdout)
 	case "status":
 		printStatusHelp(stdout)
-	case "doctor":
-		printDoctorHelp(stdout)
-	case "logs":
-		printLogsHelp(stdout)
-	case "recover":
-		printRecoverHelp(stdout)
+	case "debug":
+		printDebugHelp(stdout)
 	default:
 		return usageError("unknown help topic %q", args[0])
 	}

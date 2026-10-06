@@ -2,13 +2,15 @@ package daemon
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 )
+
+var errAutomaticRecoveryIncomplete = errors.New("unable to connect: exact-owned recovery did not converge safely; Podlaz may have cleaned previously owned stale state, but did not start a new VPN connection; run podlaz debug recover")
 
 var automaticPodlazRecover = func(ctx context.Context, runtimeDir string) error {
 	result := recovery.ExecuteWithOptions(ctx, recovery.Options{
@@ -18,7 +20,7 @@ var automaticPodlazRecover = func(ctx context.Context, runtimeDir string) error 
 	if automaticRecoveryComplete(result) {
 		return nil
 	}
-	return fmt.Errorf("automatic podlaz recovery did not fully complete before TUN connect: %s", strings.TrimSpace(result.String()))
+	return errAutomaticRecoveryIncomplete
 }
 
 func automaticRecoveryComplete(result recovery.ExecuteResult) bool {
@@ -59,7 +61,7 @@ func (m *XrayManager) autoRecoverTunOwnedState(ctx context.Context, s netsnapsho
 	refreshed := m.collectTunResourceSnapshot(ctx, opts)
 	remaining, _ := m.transactionFileStaleState()
 	if len(remaining) != 0 {
-		return refreshed, fmt.Errorf("automatic podlaz recovery left %d exact transaction state item(s); refusing a new network mutation", len(remaining))
+		return refreshed, errAutomaticRecoveryIncomplete
 	}
 	return refreshed, nil
 }

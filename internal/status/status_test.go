@@ -78,7 +78,7 @@ func TestInspectWithOptionsReportsStaleRuntimeDirectory(t *testing.T) {
 		"Stale state: found 1 recovery candidate\n",
 		"Recovery candidates:\n",
 		"  - runtime directory: " + runtimeDir + "\n",
-		"Guidance: run `podlaz recover` for the canonical read-only recovery dry-run.\n",
+		"Guidance: run `podlaz debug recover` for the canonical read-only recovery dry-run.\n",
 	}
 	for _, text := range want {
 		if !strings.Contains(got, text) {
@@ -124,7 +124,7 @@ func TestInspectWithOptionsDefersStaleClassificationWhenDaemonSocketInaccessible
 		"Runtime directory: present (daemon socket inaccessible; stale status unknown)\n",
 		"Stale state: unknown (inspection incomplete)\n",
 		"permission denied; local runtime state may belong to a live podlazd and was not classified as stale\n",
-		"Guidance: run `podlaz doctor` for diagnostic detail.\n",
+		"Guidance: run `podlaz debug doctor` for diagnostic detail.\n",
 	}
 	for _, text := range want {
 		if !strings.Contains(got, text) {

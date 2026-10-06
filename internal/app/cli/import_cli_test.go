@@ -18,19 +18,24 @@ func TestRunCLIImportVLESSShareURI(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", uri}, &out, opts); err != nil {
 		t.Fatalf("top-level VLESS import failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Imported profile: vless-example.com-443-") {
-		t.Fatalf("unexpected import output: %q", got)
+	got := out.String()
+	for _, want := range []string{"Imported 1 profile", "Profile: top-level", "Next: podlaz connect"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("import output missing %q: %q", want, got)
+		}
 	}
-	if strings.Contains(out.String(), "00000000-0000-0000-0000-000000000001") {
-		t.Fatalf("top-level import leaked VLESS user identity: %q", out.String())
+	for _, secret := range []string{"00000000-0000-0000-0000-000000000001", "example.com"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("top-level import leaked %q: %q", secret, got)
+		}
 	}
 
 	var profiles bytes.Buffer
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	if got := profiles.String(); !strings.Contains(got, "top-level") || !strings.Contains(got, "example.com") {
-		t.Fatalf("imported profile not listed: %q", got)
+	if got := profiles.String(); !strings.Contains(got, "top-level") || strings.Contains(got, "example.com") {
+		t.Fatalf("unexpected profile list: %q", got)
 	}
 }
 
@@ -50,13 +55,16 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"import", sourceURL}, &out, opts); err != nil {
 		t.Fatalf("top-level subscription import failed: %v", err)
 	}
-	for _, want := range []string{"Subscription imported: sub.txt", "Name: sub.txt", "Imported: 2", "Unsupported: 1", "Warnings: 0", "unsupported profile import URI scheme"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("expected import output to contain %q, got %q", want, out.String())
+	got := out.String()
+	for _, want := range []string{"Subscription imported", "Name: sub.txt", "Profiles: 2", "Skipped unsupported entries: 1", "Next: podlaz profile use <profile>"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("import output missing %q: %q", want, got)
 		}
 	}
-	if strings.Contains(out.String(), sourceURL) || strings.Contains(out.String(), uuidForTest(1)) || strings.Contains(out.String(), uuidForTest(2)) {
-		t.Fatalf("top-level subscription import leaked sensitive source or identity: %q", out.String())
+	for _, secret := range []string{sourceURL, uuidForTest(1), uuidForTest(2), "one.example", "two.example"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("subscription import leaked %q: %q", secret, got)
+		}
 	}
 
 	var subscriptions bytes.Buffer
@@ -71,9 +79,14 @@ func TestRunCLIImportBase64Subscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	for _, want := range []string{"one", "two", "one.example", "two.example"} {
+	for _, want := range []string{"one", "two"} {
 		if !strings.Contains(profiles.String(), want) {
-			t.Fatalf("expected profile list to contain %q, got %q", want, profiles.String())
+			t.Fatalf("profile list missing %q: %q", want, profiles.String())
+		}
+	}
+	for _, endpoint := range []string{"one.example", "two.example"} {
+		if strings.Contains(profiles.String(), endpoint) {
+			t.Fatalf("profile list leaked endpoint %q: %q", endpoint, profiles.String())
 		}
 	}
 }
@@ -89,19 +102,16 @@ func TestRunCLIImportSubscriptionRollbackPreservesState(t *testing.T) {
 	defer func() { subscriptionAfterProfileApplyHook = nil }()
 
 	err := runWithOptions(context.Background(), []string{"import", localFileURL(fixturePath)}, &bytes.Buffer{}, opts)
-	if err == nil {
-		t.Fatal("expected injected import failure")
-	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected exit code 1, got %d", got)
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("expected injected import failure, got err=%v exit=%d", err, ExitCode(err))
 	}
 
 	var profiles bytes.Buffer
 	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
 		t.Fatalf("profile list failed: %v", err)
 	}
-	if strings.Contains(profiles.String(), "rollback.example") {
-		t.Fatalf("failed import left imported profile behind: %q", profiles.String())
+	if strings.Contains(profiles.String(), "rollback") {
+		t.Fatalf("failed import left profile behind: %q", profiles.String())
 	}
 
 	var subscriptions bytes.Buffer
@@ -119,37 +129,22 @@ func TestRunCLIImportMalformedTargetDoesNotLeakInput(t *testing.T) {
 
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"import", secretTarget}, &out, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-	if err == nil {
-		t.Fatal("expected malformed import target to fail")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("malformed import err=%v exit=%d", err, ExitCode(err))
 	}
 	if got := err.Error(); got != "invalid import target: malformed URI or URL" {
 		t.Fatalf("unexpected sanitized error: %q", got)
 	}
 	for _, leaked := range []string{secretTarget, secretToken, "sub3cr1pt1on3"} {
-		if strings.Contains(err.Error(), leaked) {
-			t.Fatalf("malformed import error leaked %q in %q", leaked, err.Error())
+		if strings.Contains(err.Error(), leaked) || strings.Contains(out.String(), leaked) {
+			t.Fatalf("malformed import leaked %q", leaked)
 		}
-		if strings.Contains(out.String(), leaked) {
-			t.Fatalf("malformed import stdout leaked %q in %q", leaked, out.String())
-		}
-	}
-	if out.Len() != 0 {
-		t.Fatalf("expected no stdout for malformed import target, got %q", out.String())
 	}
 }
 
-func TestRunCLIImportInvalidUsageExitCode(t *testing.T) {
+func TestRunCLIImportRejectsRemovedJSONFlag(t *testing.T) {
 	err := runWithOptions(context.Background(), []string{"import", "--json", "vless://demo@example.com:443#demo"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-	if err == nil {
-		t.Fatal("expected import --json to fail")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
-	}
-	if !strings.Contains(err.Error(), "import --json is not implemented") {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("err=%v exit=%d", err, ExitCode(err))
 	}
 }

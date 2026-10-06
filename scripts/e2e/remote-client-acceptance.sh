@@ -86,10 +86,10 @@ assert_logs_36h_ordinary_user() {
   local mode="$1" header="$2" key="$3" output error_output
   output="$(mktemp "${E2E_TMP_ROOT}/remote-client-logs-${mode}.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/remote-client-logs-${mode}.stderr.XXXXXX")"
-  if ! run_ordinary_podlaz 30s logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"; then
-    fail "ordinary-user podlaz logs --${mode} --since 36h failed"
+  if ! run_ordinary_podlaz 30s debug logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"; then
+    fail "ordinary-user podlaz debug logs --${mode} --since 36h failed"
   fi
-  grep -Fx "${header}" "${output}" >/dev/null || fail "ordinary-user podlaz logs --${mode} --since 36h did not render the expected header"
+  grep -Fx "${header}" "${output}" >/dev/null || fail "ordinary-user podlaz debug logs --${mode} --since 36h did not render the expected header"
   rm -f -- "${output}" "${error_output}"
   write_evidence "logs_since_36h_${key}_ordinary_user" pass
 }

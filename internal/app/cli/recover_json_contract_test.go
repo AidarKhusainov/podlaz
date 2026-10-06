@@ -102,7 +102,7 @@ exit 0
 		OperationTimeout: 5 * time.Second,
 	}
 	var recoverOut bytes.Buffer
-	err = runRecoverCommand(context.Background(), []string{"--execute", "--yes", "--json"}, &recoverOut, options{
+	err = runRecoverCommand(context.Background(), []string{"--execute", "--json"}, &recoverOut, options{
 		recoverExecute: func(ctx context.Context) (recovery.ExecuteResult, error) {
 			response, err := recoveryClient.Recover(ctx)
 			if err != nil {

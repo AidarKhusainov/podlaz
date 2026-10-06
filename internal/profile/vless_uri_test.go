@@ -77,7 +77,7 @@ func TestImportVLESSURIRejectsUnsafeDisplayName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import VLESS URI: %v", err)
 	}
-	if p.Name != "vless-example.com-443" {
+	if p.Name != "vless-profile" {
 		t.Fatalf("expected safe fallback display name, got %q", p.Name)
 	}
 	if len(warnings) != 1 || warnings[0] != DisplayNameRejectedWarning {

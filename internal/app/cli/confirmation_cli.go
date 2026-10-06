@@ -16,10 +16,10 @@ func confirmationReader(opts options) io.Reader {
 	return os.Stdin
 }
 
-func confirmDefaultYes(stdout io.Writer, reader io.Reader, prompt, readContext, cancelMessage string) error {
+func confirmDefaultNo(stdout io.Writer, reader io.Reader, prompt, readContext, cancelMessage string) error {
 	input := bufio.NewReader(reader)
 	for {
-		if _, err := fmt.Fprintf(stdout, "%s [Y/n]: ", prompt); err != nil {
+		if _, err := fmt.Fprintf(stdout, "%s [y/N]: ", prompt); err != nil {
 			return err
 		}
 		line, err := input.ReadString('\n')
@@ -30,8 +30,8 @@ func confirmDefaultYes(stdout io.Writer, reader io.Reader, prompt, readContext, 
 			return exitError{code: 1, err: errors.New(cancelMessage)}
 		}
 
-		confirmed, ok := parseDefaultYesConfirmation(line)
-		if ok {
+		confirmed, valid := parseDefaultNoConfirmation(line)
+		if valid {
 			if confirmed {
 				return nil
 			}
@@ -47,15 +47,12 @@ func confirmDefaultYes(stdout io.Writer, reader io.Reader, prompt, readContext, 
 	}
 }
 
-func parseDefaultYesConfirmation(input string) (confirmed bool, valid bool) {
-	normalized := strings.ToLower(strings.TrimSpace(input))
-	switch normalized {
+func parseDefaultNoConfirmation(input string) (confirmed bool, valid bool) {
+	switch strings.ToLower(strings.TrimSpace(input)) {
 	case "y", "yes":
 		return true, true
-	case "n", "no":
+	case "", "n", "no":
 		return false, true
-	case "":
-		return strings.Contains(input, "\n"), strings.Contains(input, "\n")
 	default:
 		return false, false
 	}

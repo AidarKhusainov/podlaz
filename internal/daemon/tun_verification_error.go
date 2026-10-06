@@ -54,7 +54,7 @@ func (e *TunVerificationError) Error() string {
 			}
 		}
 	}
-	b.WriteString("\nRun:\n  plz doctor\n  plz plan --mode tun <profile> --verbose\n  podlaz logs --core")
+	b.WriteString("\nRun:\n  podlaz debug doctor --tun --verbose")
 	return b.String()
 }
 

@@ -129,18 +129,22 @@ hosted_vm_tun_prepare_profile() {
 set -Eeuo pipefail
 install -d -o e2e -g e2e -m 0700 "$xdg" "$xdg/config" "$xdg/state" "$xdg/cache" "$private"
 uri="$(cat /var/tmp/podlaz-hosted-vm-client-uri)"
-runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz profile import "$uri" >"$private/import.stdout" 2>"$private/import.stderr"
-awk '/^Imported profile:/ {print $3; exit}' "$private/import.stdout" >"$private/profile-id"
-test -s "$private/profile-id"
-profile="$(cat "$private/profile-id")"
-runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz profile validate "$profile" --mode tun >"$private/validate.stdout" 2>"$private/validate.stderr"
+runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz import "$uri" >"$private/import.stdout" 2>"$private/import.stderr"
+sed -n 's/^Profile: //p' "$private/import.stdout" | head -n1 >"$private/profile-selector"
+test -s "$private/profile-selector"
+runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz profile list >"$private/profile-list.stdout" 2>"$private/profile-list.stderr"
+grep -F '*' "$private/profile-list.stdout" >/dev/null
 EOF
 )"
   hosted_vm_ga_bash "xdg=${HOSTED_VM_TUN_XDG@Q}; private=${HOSTED_VM_TUN_PRIVATE@Q}; ${script}"
 }
 
+hosted_vm_tun_profile_selector() {
+  hosted_vm_ga_bash "cat ${HOSTED_VM_TUN_PRIVATE@Q}/profile-selector" | sed -e 's/[[:space:]]*$//'
+}
+
 hosted_vm_tun_profile_id() {
-  hosted_vm_ga_bash "cat ${HOSTED_VM_TUN_PRIVATE@Q}/profile-id" | tr -d '[:space:]'
+  hosted_vm_ga_bash "jq -r '.selected_profile_id // empty' ${HOSTED_VM_TUN_XDG@Q}/state/podlaz/profiles.json" | tr -d '[:space:]'
 }
 
 hosted_vm_tun_assert_endpoint_reachable() {
@@ -259,8 +263,7 @@ hosted_vm_tun_connect() {
   local script
   script="$(cat <<'EOF'
 set -Eeuo pipefail
-profile="$(cat "$private/profile-id")"
-runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz connect --mode tun "$profile" >"$private/connect.stdout" 2>"$private/connect.stderr"
+runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz connect >"$private/connect.stdout" 2>"$private/connect.stderr"
 EOF
 )"
   hosted_vm_ga_bash "xdg=${HOSTED_VM_TUN_XDG@Q}; private=${HOSTED_VM_TUN_PRIVATE@Q}; ${script}"
@@ -326,7 +329,7 @@ hosted_vm_tun_run_clean_recovery() {
   local script
   script="$(cat <<'EOF'
 set -Eeuo pipefail
-runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz recover --json >"$private/recover.json" 2>"$private/recover.stderr"
+runuser -u e2e -- env XDG_CONFIG_HOME="$xdg/config" XDG_STATE_HOME="$xdg/state" XDG_CACHE_HOME="$xdg/cache"   /usr/bin/podlaz debug recover --json >"$private/recover.json" 2>"$private/recover.stderr"
 source /var/tmp/podlaz-hosted-vm-recovery-json.sh
 assert_clean_recovery_json_file "$private/recover.json"
 EOF

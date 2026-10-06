@@ -8,48 +8,27 @@ import (
 )
 
 func TestRunCLICompletionGeneratesPlzAliasSupport(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want []string
+	for _, tt := range []struct {
+		shell string
+		want  string
 	}{
-		{
-			name: "bash",
-			args: []string{"completion", "bash"},
-			want: []string{"complete -o default -F _podlaz podlaz plz"},
-		},
-		{
-			name: "zsh",
-			args: []string{"completion", "zsh"},
-			want: []string{"#compdef podlaz plz"},
-		},
-		{
-			name: "fish",
-			args: []string{"completion", "fish"},
-			want: []string{"complete -c plz -f", "complete -c plz -n '__fish_podlaz_using_command plan' -l mode"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var out bytes.Buffer
-			if err := run(context.Background(), tt.args, &out); err != nil {
-				t.Fatalf("completion command failed: %v", err)
-			}
-			got := out.String()
-			for _, want := range tt.want {
-				if !strings.Contains(got, want) {
-					t.Fatalf("expected completion output to contain %q, got %q", want, got)
-				}
-			}
-		})
+		{shell: "bash", want: "complete -o default -F _podlaz podlaz plz"},
+		{shell: "zsh", want: "#compdef podlaz plz"},
+		{shell: "fish", want: "complete -c plz -f"},
+	} {
+		var out bytes.Buffer
+		if err := run(context.Background(), []string{"completion", tt.shell}, &out); err != nil {
+			t.Fatalf("completion %s: %v", tt.shell, err)
+		}
+		if !strings.Contains(out.String(), tt.want) {
+			t.Fatalf("completion %s missing %q", tt.shell, tt.want)
+		}
 	}
 }
 
 func TestRunCLICompletionRuntimeAcceptsPlzCommandName(t *testing.T) {
 	got := runCompletionRuntime(t, options{}, bashCompleteArgs(1, "plz", "")...)
-	assertContainsCandidateLine(t, got, "connect", "Start connection")
+	assertContainsCandidateLine(t, got, "connect", "Connect full VPN")
 	assertContainsCandidateLine(t, got, "completion", "Generate completion")
-	assertContainsCandidateLine(t, got, "profile", "Manage profiles")
-	assertContainsCandidateLine(t, got, "subscription", "Manage subscriptions")
+	assertContainsCandidateLine(t, got, "debug", "Advanced diagnostics")
 }

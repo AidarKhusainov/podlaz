@@ -4,16 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
-func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
+func TestRunCLICanonicalImportThenSubscriptionListShowUpdate(t *testing.T) {
 	dir := t.TempDir()
 	profileStorePath := filepath.Join(dir, "profiles.json")
 	fixturePath := filepath.Join(dir, "sub.txt")
@@ -22,78 +24,67 @@ func TestRunCLISubscriptionAddListShowUpdateFile(t *testing.T) {
 		"unsupported://unsupported",
 		shareLink(2, "two.example", "8443", "?type=grpc&security=tls&serviceName=svc", "two"),
 	})
-	sourceURL := localFileURL(fixturePath)
 	opts := options{profileStorePath: profileStorePath}
 
-	var addOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "my sub", "--url", sourceURL}, &addOut, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
+	var importOut bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"import", localFileURL(fixturePath)}, &importOut, opts); err != nil {
+		t.Fatalf("canonical import failed: %v", err)
 	}
-	if got := addOut.String(); got != "Subscription added: my-sub\nName: my sub\n" {
-		t.Fatalf("unexpected add output: %q", got)
+	for _, want := range []string{"Subscription imported", "Profiles: 2"} {
+		if !strings.Contains(importOut.String(), want) {
+			t.Fatalf("import output missing %q: %q", want, importOut.String())
+		}
+	}
+	if strings.Contains(importOut.String(), localFileURL(fixturePath)) || strings.Contains(importOut.String(), uuidForTest(1)) {
+		t.Fatalf("import leaked source identity: %q", importOut.String())
 	}
 
-	var listJSON bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "list", "--json"}, &listJSON, opts); err != nil {
-		t.Fatalf("subscription list json failed: %v", err)
+	storePath, err := resolvedSubscriptionStorePath(opts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	assertSubscriptionJSONEnvelope(t, listJSON.Bytes())
-	if strings.Contains(listJSON.String(), sourceURL) {
-		t.Fatalf("subscription list json leaked source URL: %q", listJSON.String())
+	subStore, err := sub.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources, err := subStore.List()
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources=%#v err=%v", sources, err)
+	}
+	source := sources[0]
+
+	var listOut bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"subscription", "list"}, &listOut, opts); err != nil {
+		t.Fatalf("subscription list: %v", err)
+	}
+	if !strings.Contains(listOut.String(), source.Name) || strings.Contains(listOut.String(), source.URL) {
+		t.Fatalf("subscription list output=%q", listOut.String())
 	}
 
 	var showOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "show", "my-sub"}, &showOut, opts); err != nil {
-		t.Fatalf("subscription show failed: %v", err)
+	if err := runWithOptions(context.Background(), []string{"subscription", "show", source.ID}, &showOut, opts); err != nil {
+		t.Fatalf("subscription show: %v", err)
 	}
-	if strings.Contains(showOut.String(), sourceURL) || !strings.Contains(showOut.String(), "URL: REDACTED") {
-		t.Fatalf("subscription show did not redact URL: %q", showOut.String())
+	if strings.Contains(showOut.String(), source.URL) || strings.Contains(showOut.String(), "URL:") {
+		t.Fatalf("subscription show leaked URL: %q", showOut.String())
 	}
-	if !strings.Contains(showOut.String(), "Name: my sub") {
-		t.Fatalf("subscription show did not include display name: %q", showOut.String())
+	for _, want := range []string{"Name: " + source.Name, "Imported profiles: 2"} {
+		if !strings.Contains(showOut.String(), want) {
+			t.Fatalf("show missing %q: %q", want, showOut.String())
+		}
 	}
 
 	var updateOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "my-sub"}, &updateOut, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
+	if err := runWithOptions(context.Background(), []string{"subscription", "update", source.ID}, &updateOut, opts); err != nil {
+		t.Fatalf("subscription update: %v", err)
 	}
-	for _, want := range []string{"Subscription updated: my-sub", "Name: my sub", "Imported: 2", "Unsupported: 1", "Warnings: 1", "unsupported profile import URI scheme", "unsupported VLESS option"} {
+	for _, want := range []string{"Subscription updated:", "Imported: 0", "Unchanged: 2", "Unsupported: 1"} {
 		if !strings.Contains(updateOut.String(), want) {
-			t.Fatalf("expected update output to contain %q, got %q", want, updateOut.String())
+			t.Fatalf("update missing %q: %q", want, updateOut.String())
 		}
 	}
 	if strings.Contains(updateOut.String(), uuidForTest(1)) {
-		t.Fatalf("subscription update leaked full identity: %q", updateOut.String())
-	}
-
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	for _, want := range []string{"one", "two", "one.example", "two.example"} {
-		if !strings.Contains(profiles.String(), want) {
-			t.Fatalf("expected profile list to contain %q, got %q", want, profiles.String())
-		}
-	}
-}
-
-func TestRunCLISubscriptionAddUsesSafeFallbackName(t *testing.T) {
-	dir := t.TempDir()
-	profileStorePath := filepath.Join(dir, "profiles.json")
-	fixturePath := filepath.Join(dir, "fallback-sub.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(1, "fallback.example", "443", "?type=tcp&security=tls", "fallback")})
-	sourceURL := localFileURL(fixturePath) + "?token=do-not-print"
-	opts := options{profileStorePath: profileStorePath}
-
-	var addOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--url", sourceURL}, &addOut, opts); err != nil {
-		t.Fatalf("subscription add without name failed: %v", err)
-	}
-	if got := addOut.String(); got != "Subscription added: fallback-sub.txt\nName: fallback-sub.txt\n" {
-		t.Fatalf("unexpected fallback add output: %q", got)
-	}
-	if strings.Contains(addOut.String(), sourceURL) || strings.Contains(addOut.String(), "do-not-print") {
-		t.Fatalf("fallback subscription add leaked source URL data: %q", addOut.String())
+		t.Fatalf("update leaked identity: %q", updateOut.String())
 	}
 }
 
@@ -104,41 +95,53 @@ func TestRunCLISubscriptionUpdateRollbackPreservesLastKnownGood(t *testing.T) {
 	writeSubscriptionFixture(t, fixturePath, []string{shareLink(1, "stable.example", "443", "?type=tcp&security=tls", "stable")})
 	opts := options{profileStorePath: profileStorePath}
 
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "stable", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
+	if err := runWithOptions(context.Background(), []string{"import", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("initial import: %v", err)
 	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "stable"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
+	storePath, _ := resolvedSubscriptionStorePath(opts)
+	subStore, _ := sub.NewStore(storePath)
+	sources, err := subStore.List()
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources=%#v err=%v", sources, err)
 	}
+	sourceID := sources[0].ID
 
 	writeSubscriptionFixture(t, fixturePath, []string{shareLink(1, "changed.example", "443", "?type=tcp&security=tls", "stable")})
 	subscriptionAfterProfileApplyHook = func() error { return fmt.Errorf("injected subscription metadata failure") }
 	defer func() { subscriptionAfterProfileApplyHook = nil }()
 
-	err := runWithOptions(context.Background(), []string{"subscription", "update", "stable"}, &bytes.Buffer{}, opts)
-	if err == nil {
-		t.Fatal("expected injected update failure")
-	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected exit code 1, got %d", got)
+	err = runWithOptions(context.Background(), []string{"subscription", "update", sourceID}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("update err=%v exit=%d", err, ExitCode(err))
 	}
 
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
+	profileStore, _ := profile.NewStore(profileStorePath)
+	profiles, err := profileStore.List()
+	if err != nil || len(profiles) != 1 {
+		t.Fatalf("profiles=%#v err=%v", profiles, err)
 	}
-	if !strings.Contains(profiles.String(), "stable.example") || strings.Contains(profiles.String(), "changed.example") {
-		t.Fatalf("failed update did not preserve last-known-good profiles: %q", profiles.String())
+	if profiles[0].Server != "stable.example" {
+		t.Fatalf("rollback published %q, want stable.example", profiles[0].Server)
+	}
+}
+
+func TestRunCLISubscriptionManualAddAndJSONSurfacesAreRemoved(t *testing.T) {
+	for _, args := range [][]string{
+		{"subscription", "add", "--name", "test", "--url", "file:///tmp/test"},
+		{"subscription", "list", "--json"},
+		{"subscription", "show", "test", "--json"},
+	} {
+		err := runWithOptions(context.Background(), args, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
+		if err == nil || ExitCode(err) != 2 {
+			t.Fatalf("args=%v err=%v exit=%d, want usage error", args, err, ExitCode(err))
+		}
 	}
 }
 
 func TestRunCLISubscriptionInvalidUsageExitCode(t *testing.T) {
 	err := runWithOptions(context.Background(), []string{"subscription", "update"}, &bytes.Buffer{}, options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")})
-	if err == nil {
-		t.Fatal("expected invalid usage")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("err=%v exit=%d", err, ExitCode(err))
 	}
 }
 
@@ -160,13 +163,4 @@ func shareLink(n int, host, port, query, name string) string {
 
 func uuidForTest(n int) string {
 	return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
-}
-
-func assertSubscriptionJSONEnvelope(t *testing.T, data []byte) {
-	t.Helper()
-	var got map[string]any
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("decode json: %v", err)
-	}
-	assertCommonJSON(t, got)
 }

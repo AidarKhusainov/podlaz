@@ -265,11 +265,9 @@ capture_secret_import() {
   local uri="$1" stdout_file stderr_file
   stdout_file="${SOAK_PRIVATE_DIR}/profile-import.stdout"
   stderr_file="${SOAK_PRIVATE_DIR}/profile-import.stderr"
-  if ! run_installed_podlaz profile import "${uri}" >"${stdout_file}" 2>"${stderr_file}"; then
+  if ! run_installed_podlaz import "${uri}" >"${stdout_file}" 2>"${stderr_file}"; then
     fail "profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3; exit}' "${stdout_file}")"
-  assert_nonempty "${PROFILE_ID}" "imported profile id"
   append_sensitive_value "${PROFILE_ID}"
   rm -f -- "${stdout_file}" "${stderr_file}"
 }
@@ -296,7 +294,7 @@ assert_resources_absent() {
 assert_no_recovery_candidates() {
   local phase="$1" output
   output="${SOAK_PRIVATE_DIR}/recover-${phase}.json"
-  run_installed_podlaz recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
+  run_installed_podlaz debug recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
   python3 - "${output}" <<'PY'
 import json
 import sys
@@ -570,7 +568,7 @@ run_bounded_data_plane_probe() {
 precondition_warmed_inactive_baseline() {
   local daemon_pid after_pid
   SOAK_PHASE="precondition-connect"
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" \
+  run_installed_podlaz connect \
     >"${SOAK_PRIVATE_DIR}/precondition-connect.stdout" \
     2>"${SOAK_PRIVATE_DIR}/precondition-connect.stderr" || fail "TUN preconditioning connect failed"
   assert_tun_package_address_present precondition || fail "preconditioning TUN address is not authoritative"
@@ -669,7 +667,7 @@ run_active_soak() {
 run_reconnect_probe() {
   local daemon_pid sample_index elapsed_seconds
   SOAK_PHASE="reconnect-connect"
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${SOAK_PRIVATE_DIR}/reconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect.stderr" || \
+  run_installed_podlaz connect >"${SOAK_PRIVATE_DIR}/reconnect.stdout" 2>"${SOAK_PRIVATE_DIR}/reconnect.stderr" || \
     fail "immediate reconnect failed"
   assert_tun_package_address_present reconnect || fail "reconnect TUN address is not authoritative"
   wait_for_verified_tun_status reconnect
@@ -946,7 +944,7 @@ precondition_warmed_inactive_baseline
 
 SOAK_PHASE="session-one-connect"
 SOAK_COMMAND_EXIT=""
-run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${SOAK_PRIVATE_DIR}/session-one-connect.stdout" 2>"${SOAK_PRIVATE_DIR}/session-one-connect.stderr" || \
+run_installed_podlaz connect >"${SOAK_PRIVATE_DIR}/session-one-connect.stdout" 2>"${SOAK_PRIVATE_DIR}/session-one-connect.stderr" || \
   fail "resource-soak TUN connect failed"
 assert_tun_package_address_present active || fail "active TUN address is not authoritative"
 wait_for_verified_tun_status post-connect

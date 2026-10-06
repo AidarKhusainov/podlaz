@@ -254,7 +254,7 @@ curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd
 status_token="$(python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-vm-private/status.json 2>/dev/null || printf 'status-unclassified')"
 set +e
 runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
-  /usr/bin/podlaz doctor --tun --json >/tmp/podlaz-vm-private/doctor.json 2>/tmp/podlaz-vm-private/doctor.stderr
+  /usr/bin/podlaz debug doctor --tun --json >/tmp/podlaz-vm-private/doctor.json 2>/tmp/podlaz-vm-private/doctor.stderr
 doctor_rc=$?
 set -e
 doctor_token="$(python3 - "$doctor_rc" /tmp/podlaz-vm-private/doctor.json <<'PY'
@@ -347,12 +347,8 @@ set -Eeuo pipefail
 install -d -o e2e -g e2e -m 0700 /home/e2e/.config /home/e2e/.local/state /home/e2e/.cache /tmp/podlaz-vm-private
 uri="$(cat /tmp/client-uri)"
 runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
-  /usr/bin/podlaz profile import "$uri" >/tmp/podlaz-vm-private/import.stdout 2>/tmp/podlaz-vm-private/import.stderr
-awk '/^Imported profile:/ {print $3; exit}' /tmp/podlaz-vm-private/import.stdout >/tmp/podlaz-vm-private/profile-id
-test -s /tmp/podlaz-vm-private/profile-id
-profile="$(cat /tmp/podlaz-vm-private/profile-id)"
-runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
-  /usr/bin/podlaz profile validate "$profile" --mode tun >/tmp/podlaz-vm-private/validate.stdout 2>/tmp/podlaz-vm-private/validate.stderr
+  /usr/bin/podlaz import "$uri" >/tmp/podlaz-vm-private/import.stdout 2>/tmp/podlaz-vm-private/import.stderr
+grep -F 'Next: podlaz connect' /tmp/podlaz-vm-private/import.stdout >/dev/null
 EOF
 }
 
@@ -416,9 +412,8 @@ connect_tun() {
   set +e
   hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
-profile="$(cat /tmp/podlaz-vm-private/profile-id)"
 runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
-  /usr/bin/podlaz connect --mode tun "$profile" >/tmp/podlaz-vm-private/connect.stdout 2>/tmp/podlaz-vm-private/connect.stderr
+  /usr/bin/podlaz connect >/tmp/podlaz-vm-private/connect.stdout 2>/tmp/podlaz-vm-private/connect.stderr
 EOF
   rc=$?
   set -e
@@ -518,7 +513,7 @@ run_clean_recovery() {
   hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
 runuser -u e2e -- env XDG_CONFIG_HOME=/home/e2e/.config XDG_STATE_HOME=/home/e2e/.local/state XDG_CACHE_HOME=/home/e2e/.cache \
-  /usr/bin/podlaz recover --json >/tmp/podlaz-vm-private/recover.json 2>/tmp/podlaz-vm-private/recover.stderr
+  /usr/bin/podlaz debug recover --json >/tmp/podlaz-vm-private/recover.json 2>/tmp/podlaz-vm-private/recover.stderr
 source /tmp/recovery_json.sh
 assert_clean_recovery_json_file /tmp/podlaz-vm-private/recover.json
 EOF

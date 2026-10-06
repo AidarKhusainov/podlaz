@@ -69,13 +69,10 @@ capture_secret_import() {
   local uri="$1" out err
   out="$(mktemp "${E2E_TMP_ROOT}/package-failure-profile-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/package-failure-profile-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+  if ! run_installed_podlaz import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "package-failure profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  rm -f -- "${out}" "${err}"
-  assert_nonempty "${PROFILE_ID}" "package-failure imported profile id"
   append_sensitive_value "${PROFILE_ID}"
   write_evidence profile_import pass
 }
@@ -363,7 +360,7 @@ assert_inactive_status() {
 assert_no_recovery_candidates() {
   local phase="$1" output
   output="$(mktemp "${E2E_TMP_ROOT}/package-failure-${phase}-recover.XXXXXX")"
-  run_installed_podlaz recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
+  run_installed_podlaz debug recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
   python3 - "${output}" <<'PY'
 import json
 import sys
@@ -416,7 +413,7 @@ run_normal_cycle() {
   local phase="$1" manifest
   manifest="${E2E_TMP_ROOT}/package-failure-${phase}-network.json"
 
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "${phase}: TUN connect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "${phase}: TUN connect failed"
   assert_tun_package_address_present "${phase}"
   assert_active_status "${phase}"
   exercise_tun_traffic "${phase}"

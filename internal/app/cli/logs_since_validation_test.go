@@ -15,7 +15,7 @@ func TestRunCLILogsRejectsInvalidSinceBeforeJournalctl(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"logs", "--since", "1h30m"}, &out, options{})
+	err := runWithOptions(context.Background(), []string{"debug", "logs", "--since", "1h30m"}, &out, options{})
 	if err == nil {
 		t.Fatal("expected invalid --since to fail")
 	}
@@ -36,7 +36,7 @@ func TestRunCLILogsRejectsInvalidSinceBeforeJournalctl(t *testing.T) {
 func TestRunCLILogsKeepsValidSinceBackendFailureAsRuntimeError(t *testing.T) {
 	backendErr := errors.New("journalctl backend failed")
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"logs", "--since", "36h"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"debug", "logs", "--since", "36h"}, &out, options{
 		logs: func(context.Context, io.Writer, logs.Options) error {
 			return backendErr
 		},

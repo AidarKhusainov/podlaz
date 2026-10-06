@@ -36,12 +36,12 @@ func TestRunImportHTTPXraySubscriptionIgnoresServiceOutbounds(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"Subscription imported:", "Format: xray-json", "Imported: 1", "Unsupported: 0", "Warnings: 0"} {
+	for _, want := range []string{"Subscription imported", "Profiles: 1", "Next: podlaz connect"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected import output to contain %q, got %q", want, got)
 		}
 	}
-	for _, unwanted := range []string{"Unsupported entries:", "freedom", "blackhole", "dns-out", "loopback"} {
+	for _, unwanted := range []string{"freedom", "blackhole", "dns-out", "loopback"} {
 		if strings.Contains(got, unwanted) {
 			t.Fatalf("expected service outbounds to stay out of user output; found %q in %q", unwanted, got)
 		}

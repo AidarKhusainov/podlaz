@@ -5,10 +5,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-
-	"github.com/AidarKhusainov/podlaz/internal/api"
-	profilecheck "github.com/AidarKhusainov/podlaz/internal/check"
-	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 )
 
 type completionDirective string
@@ -38,9 +34,9 @@ type completionRequest struct {
 type completionDynamicKind string
 
 const (
-	completionDynamicNone            completionDynamicKind = ""
-	completionDynamicProfileIDs      completionDynamicKind = "profile-ids"
-	completionDynamicSubscriptionIDs completionDynamicKind = "subscription-ids"
+	completionDynamicNone          completionDynamicKind = ""
+	completionDynamicProfiles      completionDynamicKind = "profiles"
+	completionDynamicSubscriptions completionDynamicKind = "subscriptions"
 )
 
 type completionFlag struct {
@@ -101,7 +97,6 @@ func completepodlaz(req completionRequest, opts options) completionResult {
 	default:
 		return noFileCompletion(nil)
 	}
-
 	registry := completionRegistry()
 	if req.Cursor <= 0 {
 		return noFileCompletion(commandCandidates(registry.Children))
@@ -128,9 +123,9 @@ func completepodlaz(req completionRequest, opts options) completionResult {
 			return noFileCompletion(commandCandidates(analysis.Node.Children))
 		}
 		switch analysis.Node.Dynamic {
-		case completionDynamicProfileIDs:
-			return noFileCompletion(profileIDCandidates(opts))
-		case completionDynamicSubscriptionIDs:
+		case completionDynamicProfiles:
+			return noFileCompletion(profileCandidates(opts))
+		case completionDynamicSubscriptions:
 			return noFileCompletion(subscriptionIDCandidates(opts))
 		}
 	}
@@ -178,133 +173,86 @@ func analyzeCompletion(root *completionCommand, words []string, cursor int) comp
 }
 
 func completionRegistry() *completionCommand {
-	modes := []string{planner.ModeProxyOnly, planner.ModeTun}
-	protocols := []string{"vless", "vmess", "trojan", "shadowsocks"}
-	targetIDs := profilecheck.SupportedTargetIDs()
-	jsonFlag := longBoolFlag("--json", "Print JSON output")
-	yesFlag := longBoolFlag("--yes", "Confirm without prompting")
-	plainFlag := longBoolFlag("--plain", "Print plain human output")
-	verboseFlag := completionFlag{Name: "--verbose", Shorthand: "-v", Description: "Show verbose output", NonRepeatable: true}
-	modeFlag := longEnumFlag("--mode", modes, "Select connection mode")
-	handoffFlag := longEnumFlag("--handoff", api.HandoffPolicies(), "Select TUN handoff policy")
-	targetFlag := completionFlag{Name: "--target", Description: "Select service target", TakesValue: true, Values: targetIDs}
+	jsonFlag := longBoolFlag("--json", "Print structured diagnostic output")
+	yesFlag := longBoolFlag("--yes", "Confirm deletion without prompting")
+	verboseFlag := completionFlag{Name: "--verbose", Shorthand: "-v", Description: "Show verbose diagnostic output", NonRepeatable: true}
 
 	return &completionCommand{Children: []*completionCommand{
 		{Name: "version", Description: "Show version"},
 		{Name: "import", Description: "Import profile or subscription", DefaultFiles: true},
 		{
 			Name: "profile", Description: "Manage profiles", Children: []*completionCommand{
-				{
-					Name:        "add",
-					Description: "Add manual profile",
-					Flags: []completionFlag{
-						longValueFlag("--name", "Profile name"),
-						longValueFlag("--server", "Server hostname"),
-						longValueFlag("--port", "Server port"),
-						longEnumFlag("--protocol", protocols, "Profile protocol"),
-					},
-				},
-				{Name: "import", Description: "Import share URI"},
-				{Name: "list", Description: "List profiles", Flags: []completionFlag{jsonFlag}},
-				{Name: "show", Description: "Show profile", Flags: []completionFlag{jsonFlag}, Dynamic: completionDynamicProfileIDs},
-				{Name: "validate", Description: "Validate profile", Flags: []completionFlag{modeFlag, jsonFlag, plainFlag}, Dynamic: completionDynamicProfileIDs},
-				{Name: "delete", Description: "Delete profile", Flags: []completionFlag{yesFlag}, Dynamic: completionDynamicProfileIDs},
+				{Name: "list", Description: "List profiles"},
+				{Name: "show", Description: "Show profile", Dynamic: completionDynamicProfiles},
+				{Name: "use", Description: "Select profile", Dynamic: completionDynamicProfiles},
+				{Name: "delete", Description: "Delete profile", Flags: []completionFlag{yesFlag}, Dynamic: completionDynamicProfiles},
 			},
 		},
 		{
 			Name: "subscription", Description: "Manage subscriptions", Children: []*completionCommand{
+				{Name: "list", Description: "List subscriptions"},
+				{Name: "show", Description: "Show subscription", Dynamic: completionDynamicSubscriptions},
+				{Name: "update", Description: "Update subscription", Dynamic: completionDynamicSubscriptions},
 				{
-					Name:        "add",
-					Description: "Add subscription",
-					Flags: []completionFlag{
-						longValueFlag("--name", "Subscription name"),
-						longValueFlag("--url", "Subscription URL"),
-					},
-				},
-				{Name: "list", Description: "List subscriptions", Flags: []completionFlag{jsonFlag}},
-				{Name: "show", Description: "Show subscription", Flags: []completionFlag{jsonFlag}, Dynamic: completionDynamicSubscriptionIDs},
-				{Name: "update", Description: "Fetch subscription", Dynamic: completionDynamicSubscriptionIDs},
-				{
-					Name:        "delete",
-					Description: "Delete subscription",
-					Flags: []completionFlag{
-						yesFlag,
-						longBoolFlag("--keep-profiles", "Keep imported profiles"),
-					},
-					Dynamic: completionDynamicSubscriptionIDs,
+					Name: "delete", Description: "Delete subscription",
+					Flags:   []completionFlag{yesFlag, longBoolFlag("--keep-profiles", "Keep imported profiles")},
+					Dynamic: completionDynamicSubscriptions,
 				},
 			},
 		},
-		{Name: "plan", Description: "Preview connection plan", Flags: []completionFlag{modeFlag, jsonFlag, verboseFlag, plainFlag}, Dynamic: completionDynamicProfileIDs},
-		{Name: "connect", Description: "Start connection", Flags: []completionFlag{modeFlag, handoffFlag}, Dynamic: completionDynamicProfileIDs},
-		{Name: "disconnect", Description: "Stop connection"},
+		{Name: "connect", Description: "Connect full VPN", Dynamic: completionDynamicProfiles},
+		{Name: "disconnect", Description: "Disconnect VPN"},
 		{
 			Name: "autostart", Description: "Manage boot autostart", Children: []*completionCommand{
-				{Name: "enable", Description: "Enable boot autostart", Flags: []completionFlag{modeFlag}, Dynamic: completionDynamicProfileIDs},
+				{Name: "enable", Description: "Enable selected VPN at boot", Dynamic: completionDynamicProfiles},
 				{Name: "disable", Description: "Disable boot autostart"},
 				{Name: "status", Description: "Show boot autostart"},
 			},
 		},
+		{Name: "status", Description: "Show VPN status"},
 		{
-			Name:        "check",
-			Description: "Check profile connectivity",
-			Flags: []completionFlag{
-				longBoolFlag("--all", "Check all profiles"),
-				targetFlag,
-				longValueFlag("--timeout", "Per-probe timeout"),
-				jsonFlag,
-			},
-			Dynamic: completionDynamicProfileIDs,
-		},
-		{Name: "status", Description: "Show status"},
-		{
-			Name:        "doctor",
-			Description: "Run diagnostics",
-			Flags: []completionFlag{
-				longBoolFlag("--core", "Check core binary"),
-				longBoolFlag("--tun", "Diagnose the active TUN session"),
-				longValueFlag("--xray", "Core binary path"),
-				verboseFlag,
-				jsonFlag,
-			},
-		},
-		{
-			Name:        "logs",
-			Description: "Show logs",
-			Flags: []completionFlag{
-				{Name: "--follow", Shorthand: "-f", Description: "Follow logs", NonRepeatable: true},
-				longBoolFlag("--daemon", "Daemon logs"),
-				longBoolFlag("--core", "Core logs"),
-				longValueFlag("--since", "Duration <integer><s|m|h>, max 720h"),
+			Name: "debug", Description: "Advanced diagnostics", Children: []*completionCommand{
+				{
+					Name: "doctor", Description: "Run diagnostics",
+					Flags: []completionFlag{
+						longBoolFlag("--core", "Check core binary"),
+						longBoolFlag("--tun", "Diagnose active TUN session"),
+						longValueFlag("--xray", "Core binary path"),
+						verboseFlag,
+						jsonFlag,
+					},
+				},
+				{
+					Name: "logs", Description: "Show logs",
+					Flags: []completionFlag{
+						{Name: "--follow", Shorthand: "-f", Description: "Follow logs", NonRepeatable: true},
+						longBoolFlag("--daemon", "Daemon logs"),
+						longBoolFlag("--core", "Core logs"),
+						longValueFlag("--since", "Duration <integer><s|m|h>, max 720h"),
+					},
+				},
+				{Name: "proxy", Description: "Connect with Proxy-only protection", Dynamic: completionDynamicProfiles},
+				{Name: "recover", Description: "Inspect or execute exact-owned recovery", Flags: []completionFlag{longBoolFlag("--execute", "Execute recovery"), jsonFlag}},
 			},
 		},
-		{Name: "recover", Description: "Inspect recovery", Flags: []completionFlag{longBoolFlag("--execute", "Execute cleanup"), yesFlag, jsonFlag}},
 		{
-			Name:        "completion",
-			Description: "Generate completion",
-			Children: []*completionCommand{
+			Name: "completion", Description: "Generate completion", Children: []*completionCommand{
 				{Name: "bash", Description: "Bash script"},
 				{Name: "zsh", Description: "Zsh script"},
 				{Name: "fish", Description: "Fish script"},
 			},
 		},
 		{
-			Name:        "help",
-			Description: "Show help",
-			Children: []*completionCommand{
+			Name: "help", Description: "Show help", Children: []*completionCommand{
 				{Name: "version", Description: "Version help"},
 				{Name: "import", Description: "Import help"},
 				{Name: "profile", Description: "Profile help"},
 				{Name: "subscription", Description: "Subscription help"},
-				{Name: "plan", Description: "Plan help"},
 				{Name: "connect", Description: "Connect help"},
 				{Name: "disconnect", Description: "Disconnect help"},
 				{Name: "autostart", Description: "Autostart help"},
-				{Name: "check", Description: "Check help"},
 				{Name: "status", Description: "Status help"},
-				{Name: "doctor", Description: "Doctor help"},
-				{Name: "logs", Description: "Logs help"},
-				{Name: "recover", Description: "Recover help"},
+				{Name: "debug", Description: "Advanced help"},
 				{Name: "completion", Description: "Completion help"},
 				{Name: "help", Description: "Help help"},
 			},
@@ -318,10 +266,6 @@ func longBoolFlag(name string, description string) completionFlag {
 
 func longValueFlag(name string, description string) completionFlag {
 	return completionFlag{Name: name, Description: description, TakesValue: true, NonRepeatable: true}
-}
-
-func longEnumFlag(name string, values []string, description string) completionFlag {
-	return completionFlag{Name: name, Description: description, TakesValue: true, Values: values, NonRepeatable: true}
 }
 
 func completionTopLevelCommandNames() []string {
@@ -338,14 +282,4 @@ func completionSubscriptionCommandNames() []string {
 
 func completionShellNames() []string {
 	return childNames(mustCompletionCommand("completion"))
-}
-
-func completionConnectionModeNames() []string {
-	flag, _ := mustCompletionCommand("plan").findFlag("--mode")
-	return append([]string(nil), flag.Values...)
-}
-
-func completionHandoffPolicyNames() []string {
-	flag, _ := mustCompletionCommand("connect").findFlag("--handoff")
-	return append([]string(nil), flag.Values...)
 }

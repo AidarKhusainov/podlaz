@@ -12,6 +12,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 type connectRunner func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error)
@@ -22,7 +23,7 @@ func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		printConnectHelp(stdout)
 		return nil
 	}
-	parsed, err := parseConnectArgs(args)
+	selector, err := parseCanonicalConnectArgs(args)
 	if err != nil {
 		return err
 	}
@@ -31,19 +32,57 @@ func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opt
 	if err != nil {
 		return err
 	}
-	p, err := store.Get(parsed.profileRef)
+	p, err := resolveIntentProfile(store, selector)
 	if err != nil {
 		return profileCommandError(err)
 	}
-	if err := validateConnectProfile(p, parsed.mode); err != nil {
+	if err := validateCanonicalVPNProfile(p); err != nil {
 		return err
 	}
 
-	response, err := runConnectWithHandoff(ctx, p, parsed.mode, parsed.handoff, opts)
+	report, _ := runProductStatus(ctx, opts)
+	if canonicalIntentSatisfied(report, p) {
+		renderConnectResponse(stdout, p, api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun})
+		return nil
+	}
+
+	response, err := runConnectWithHandoff(ctx, p, planner.ModeTun, canonicalConnectHandoff(report), opts)
 	if err != nil {
 		return lifecycleCommandError(err)
 	}
+	if response.Connection != "active" || response.Mode != planner.ModeTun {
+		return fmt.Errorf("unable to connect: daemon did not publish a verified full VPN session")
+	}
 	renderConnectResponse(stdout, p, response)
+	return nil
+}
+
+func runProxyConnectCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
+	if isHelp(args) {
+		printDebugProxyHelp(stdout)
+		return nil
+	}
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return usageError("debug proxy requires exactly one profile")
+	}
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		return err
+	}
+	p, err := store.Resolve(args[0])
+	if err != nil {
+		return profileCommandError(err)
+	}
+	if err := validateConnectProfile(p, planner.ModeProxyOnly); err != nil {
+		return err
+	}
+	_, err = runConnectWithHandoff(ctx, p, planner.ModeProxyOnly, api.HandoffBlock, opts)
+	if err != nil {
+		return lifecycleCommandError(err)
+	}
+	fmt.Fprintln(stdout, "Connected with reduced protection")
+	fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(p.Name))
+	fmt.Fprintln(stdout, "Protection: Proxy only")
 	return nil
 }
 
@@ -53,10 +92,7 @@ func runDisconnectCommand(ctx context.Context, args []string, stdout io.Writer, 
 		return nil
 	}
 	if len(args) > 0 {
-		if args[0] == "--json" {
-			return usageError("disconnect --json is not implemented yet")
-		}
-		return usageError("unsupported disconnect argument %q", args[0])
+		return usageError("disconnect does not accept arguments")
 	}
 
 	response, err := runDisconnect(ctx, opts)
@@ -67,56 +103,54 @@ func runDisconnectCommand(ctx context.Context, args []string, stdout io.Writer, 
 	return nil
 }
 
-type connectArgs struct {
-	mode       string
-	profileRef string
-	handoff    string
+func parseCanonicalConnectArgs(args []string) (string, error) {
+	var selector string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			return "", usageError("unsupported connect argument %q", arg)
+		}
+		if selector != "" {
+			return "", usageError("connect accepts at most one profile")
+		}
+		selector = arg
+	}
+	return selector, nil
 }
 
-func parseConnectArgs(args []string) (connectArgs, error) {
-	parsed := connectArgs{mode: planner.ModeProxyOnly, handoff: api.HandoffBlock}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value, hasInlineValue := cutFlagValue(arg)
-		switch {
-		case arg == "--mode" || strings.HasPrefix(arg, "--mode="):
-			v, next, err := flagValue("connect --mode", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.mode = strings.ToLower(strings.TrimSpace(v))
-			i = next
-		case arg == "--handoff" || strings.HasPrefix(arg, "--handoff="):
-			v, next, err := flagValue("connect --handoff", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.handoff = api.NormalizeHandoffPolicy(v)
-			i = next
-		case arg == "--json":
-			return parsed, usageError("connect --json is not implemented yet")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return parsed, usageError("unsupported connect argument %q", arg)
-			}
-			if parsed.profileRef != "" {
-				return parsed, usageError("connect accepts exactly one profile id")
-			}
-			parsed.profileRef = arg
+func resolveIntentProfile(store profile.Store, selector string) (profile.Profile, error) {
+	if strings.TrimSpace(selector) != "" {
+		return store.Resolve(selector)
+	}
+	return store.ResolveSelected()
+}
+
+func validateCanonicalVPNProfile(p profile.Profile) error {
+	if err := validateConnectProfile(p, planner.ModeTun); err != nil {
+		if validateConnectProfile(p, planner.ModeProxyOnly) == nil {
+			name := render.Redact(p.Name)
+			return fmt.Errorf("unable to connect\n\nprofile %q currently supports Proxy only; no network changes were made\n\nrun:\n  podlaz debug proxy %q", name, name)
 		}
+		return err
 	}
-	switch parsed.mode {
-	case planner.ModeProxyOnly, planner.ModeTun:
-	default:
-		return parsed, usageError("unsupported connect mode %q", parsed.mode)
+	return nil
+}
+
+func canonicalIntentSatisfied(report status.Report, p profile.Profile) bool {
+	return canonicalHealthyTunSession(report) && report.ProfileID == p.ID
+}
+
+func canonicalConnectHandoff(report status.Report) string {
+	if canonicalHealthyTunSession(report) {
+		return api.HandoffReplacePodlaz
 	}
-	if err := api.ValidateHandoffPolicy(parsed.handoff); err != nil {
-		return parsed, usageError("%s", err.Error())
-	}
-	if parsed.profileRef == "" {
-		return parsed, usageError("connect requires a profile id")
-	}
-	return parsed, nil
+	return api.HandoffBlock
+}
+
+func canonicalHealthyTunSession(report status.Report) bool {
+	return report.Connection == "active" &&
+		report.Mode == planner.ModeTun &&
+		!report.ProductReconnecting &&
+		!statusCommandShouldFail(report)
 }
 
 func validateConnectProfile(p profile.Profile, mode string) error {
@@ -155,14 +189,10 @@ func lifecycleCommandError(err error) error {
 	return err
 }
 
-func renderConnectResponse(stdout io.Writer, p profile.Profile, response api.LifecycleResponse) {
+func renderConnectResponse(stdout io.Writer, p profile.Profile, _ api.LifecycleResponse) {
 	fmt.Fprintln(stdout, "Connected")
 	fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(p.Name))
-	mode := response.Mode
-	if mode == "" {
-		mode = planner.ModeProxyOnly
-	}
-	fmt.Fprintf(stdout, "Mode: %s\n", productModeLabel(mode))
+	fmt.Fprintln(stdout, "Protection: Active")
 }
 
 func renderDisconnectResponse(stdout io.Writer, _ api.LifecycleResponse) {
@@ -197,14 +227,13 @@ func profileSnapshot(p profile.Profile) api.ProfileSnapshot {
 
 func printConnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
+  podlaz connect [profile]
 
-Start the stored profile through the daemon-managed lifecycle. The default mode
-is proxy-only. TUN mode requires daemon networking privileges. The TUN handoff
-policy defaults to block. ask fails in non-interactive daemon contexts;
-stop-known is retained for CLI compatibility but does not stop foreign VPNs;
-replace-podlaz performs controlled exact podlaz-owned disconnect/recovery before
-the new collision-aware TUN Network Session allocation.
+Connect the explicit profile once, or the selected profile when no argument is
+given. The normal connection is always a full VPN/TUN connection. Repeating the
+same healthy intent is a no-op; replacing another exact Podlaz-owned TUN session
+uses the protected replacement lifecycle automatically. Foreign or ambiguous
+state is never adopted or removed to make the connection succeed.
 `)
 }
 
@@ -212,7 +241,7 @@ func printDisconnectHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   podlaz disconnect
 
-Stop proxy-only Xray or roll back an active podlaz-owned TUN transaction.
-Repeated disconnects are safe and leave the connection inactive.
+Disconnect the Podlaz session. Repeating disconnect while Podlaz is already
+conclusively inactive succeeds without changing foreign network state.
 `)
 }

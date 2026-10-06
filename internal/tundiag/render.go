@@ -178,7 +178,7 @@ func Guidance(classification Classification) string {
 	case ClassServerBypassFailure:
 		return "inspect the VPN server bypass route before retrying the connection"
 	case ClassRouteFailure, ClassPolicyRuleFailure:
-		return "inspect TUN routes and policy rules with podlaz doctor --tun --verbose"
+		return "inspect TUN routes and policy rules with podlaz debug doctor --tun --verbose"
 	case ClassDNSApplyFailure, ClassForeignDNSConflict:
 		return "inspect systemd-resolved link ownership and route-only DNS domains"
 	case ClassDNSUDPFailure, ClassDNSTCPFailure, ClassDNSResolutionFailure, ClassDNSHijackDetected:
@@ -198,7 +198,7 @@ func Guidance(classification Classification) string {
 	case ClassTimeout, ClassCancelled:
 		return "rerun the bounded diagnostics and inspect which dependency stopped progress"
 	default:
-		return "run podlaz doctor --tun --verbose and inspect the saved report"
+		return "run podlaz debug doctor --tun --verbose and inspect the saved report"
 	}
 }
 

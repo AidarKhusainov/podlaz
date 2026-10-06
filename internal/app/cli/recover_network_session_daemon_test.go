@@ -30,7 +30,7 @@ func TestRecoverDryRunUsesDaemonNetworkSessionPlanWithoutTransactionCandidates(t
 			StartupScan: &api.StartupScanStatus{
 				Status:          api.StartupScanStatusStale,
 				NetworkSession:  state,
-				SuggestedAction: "podlaz recover",
+				SuggestedAction: "podlaz debug recover",
 			},
 		})
 	})
@@ -38,7 +38,7 @@ func TestRecoverDryRunUsesDaemonNetworkSessionPlanWithoutTransactionCandidates(t
 	t.Setenv(api.RuntimeDirEnv, runtimeDir)
 
 	var out bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"recover"}, &out, options{}); err != nil {
+	if err := runWithOptions(context.Background(), []string{"debug", "recover"}, &out, options{}); err != nil {
 		t.Fatalf("recover dry-run: %v", err)
 	}
 	got := out.String()
@@ -65,7 +65,7 @@ func TestRecoverExecuteUsesSameFailedNetworkSessionOutcomeAndExitCode(t *testing
 	t.Setenv(api.RuntimeDirEnv, runtimeDir)
 
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"recover", "--execute", "--yes"}, &out, options{})
+	err := runWithOptions(context.Background(), []string{"debug", "recover", "--execute"}, &out, options{})
 	if got := ExitCode(err); got != 1 {
 		t.Fatalf("execute exit=%d err=%v, want 1", got, err)
 	}

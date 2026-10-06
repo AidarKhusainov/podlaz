@@ -75,19 +75,19 @@ func TestImportShareURIRejectsUnsafeDisplayNames(t *testing.T) {
 		{
 			name:       "vmess-unsafe-ps",
 			uri:        "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(`{"v":"2","ps":"00000000-0000-0000-0000-000000000999","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","aid":"0","net":"tcp","tls":"tls"}`)),
-			wantName:   "vmess-example.com-443",
+			wantName:   "vmess-profile",
 			wantPrefix: "vmess-example.com-443-",
 		},
 		{
 			name:       "trojan-unsafe-fragment",
 			uri:        "trojan://secret@example.com:443?type=tcp&security=tls#00000000-0000-0000-0000-000000000999",
-			wantName:   "trojan-example.com-443",
+			wantName:   "trojan-profile",
 			wantPrefix: "trojan-example.com-443-",
 		},
 		{
 			name:       "shadowsocks-unsafe-fragment",
 			uri:        "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:secret")) + "@example.com:8388#00000000-0000-0000-0000-000000000999",
-			wantName:   "shadowsocks-example.com-8388",
+			wantName:   "shadowsocks-profile",
 			wantPrefix: "shadowsocks-example.com-8388-",
 		},
 	}

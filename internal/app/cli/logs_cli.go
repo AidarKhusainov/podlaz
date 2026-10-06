@@ -46,8 +46,6 @@ func parseLogsArgs(args []string) (logs.Options, error) {
 				return opts, usageError("logs --since requires a value")
 			}
 			opts.Since = args[i]
-		case "--json":
-			return opts, usageError("logs --json is not implemented yet")
 		default:
 			return opts, usageError("unsupported logs argument %q", arg)
 		}
@@ -60,7 +58,7 @@ func isLogsOption(arg string) bool {
 		return true
 	}
 	switch arg {
-	case "--follow", "-f", "--daemon", "--since", "--json", "--core":
+	case "--follow", "-f", "--daemon", "--since", "--core":
 		return true
 	default:
 		return false

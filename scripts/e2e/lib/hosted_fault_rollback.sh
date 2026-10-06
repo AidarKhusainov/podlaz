@@ -570,7 +570,7 @@ assert_owned_state_absent() {
 }
 
 assert_clean_recovery() {
-  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz recover --json >'${FAULT_GUEST_PRIVATE}/recover.json' 2>'${FAULT_GUEST_PRIVATE}/recover.stderr'"
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz debug recover --json >'${FAULT_GUEST_PRIVATE}/recover.json' 2>'${FAULT_GUEST_PRIVATE}/recover.stderr'"
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file '${FAULT_GUEST_PRIVATE}/recover.json'"
 }
 

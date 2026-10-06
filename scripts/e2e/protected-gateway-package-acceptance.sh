@@ -53,14 +53,10 @@ import_profile_privately() {
   local uri="$1" output error_output
   output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-profile-import.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-profile-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz profile import "${uri}" >"${output}" 2>"${error_output}"; then
+  if ! run_installed_podlaz import "${uri}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "protected-gateway profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
-  rm -f -- "${output}" "${error_output}"
-  assert_nonempty "${PROFILE_ID}" "protected-gateway imported profile id"
-  mask_value "${PROFILE_ID}"
   write_evidence profile_import pass
 }
 
@@ -263,7 +259,7 @@ assert_inactive_status() {
 assert_recover_json_clean() {
   local phase="$1" output
   output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-recover.XXXXXX")"
-  if ! run_installed_podlaz recover --json >"${output}" 2>/dev/null; then
+  if ! run_installed_podlaz debug recover --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "${phase}: recover --json returned non-zero"
   fi
@@ -296,7 +292,7 @@ PY
 assert_recover_execute_clean() {
   local phase="$1" output
   output="$(mktemp "${E2E_TMP_ROOT}/protected-gateway-${phase}-recover-execute.XXXXXX")"
-  if ! run_installed_podlaz recover --execute --yes --json >"${output}" 2>/dev/null; then
+  if ! run_installed_podlaz debug recover --execute --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "${phase}: recover --execute --yes --json returned non-zero"
   fi
@@ -325,7 +321,7 @@ PY
 
 run_cycle() {
   local phase="$1"
-  if ! run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1; then
+  if ! run_installed_podlaz connect >/dev/null 2>&1; then
     fail "${phase}: TUN connect failed"
   fi
   CONNECTED=true

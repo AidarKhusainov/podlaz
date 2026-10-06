@@ -371,7 +371,7 @@ churn_foreign_networkmanager() {
 }
 
 assert_recovery_does_not_claim_foreign_state() {
-  guest_exec /bin/bash -lc "/usr/bin/podlaz recover --execute --yes --json >'${FOREIGN_GUEST_PRIVATE}/recover-execute.json'"
+  guest_exec /bin/bash -lc "/usr/bin/podlaz debug recover --execute --json >'${FOREIGN_GUEST_PRIVATE}/recover-execute.json'"
   guest_exec python3 - "${FOREIGN_GUEST_PRIVATE}/recover-execute.json" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding="utf-8") as handle:

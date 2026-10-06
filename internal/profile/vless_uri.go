@@ -129,7 +129,7 @@ func importVLESSURI(raw string) (Profile, []string, error) {
 		return Profile{}, nil, err
 	}
 
-	name, acceptedName := ProviderProfileDisplayName(u.Fragment, "vless", host, port)
+	name, acceptedName := ProviderProfileDisplayName(u.Fragment, "vless")
 	if strings.TrimSpace(u.Fragment) != "" && !acceptedName {
 		warnings = append(warnings, DisplayNameRejectedWarning)
 	}

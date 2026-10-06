@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/storejson"
 )
@@ -16,8 +17,11 @@ const profilesFileName = "profiles.json"
 
 var ErrNotFound = errors.New("profile not found")
 var ErrAlreadyExists = errors.New("profile already exists")
+var ErrNoSelection = errors.New("no profile selected")
+var ErrAmbiguousSelector = errors.New("profile selector is ambiguous")
 
-// Store persists user-owned profiles under the documented podlaz user state location.
+// Store persists user-owned profiles and the selected profile ID under the
+// documented podlaz user state location.
 type Store struct {
 	path string
 }
@@ -60,55 +64,168 @@ func DefaultStorePath() (string, error) {
 func (s Store) Path() string { return s.path }
 
 func (s Store) List() ([]Profile, error) {
-	profiles, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return nil, err
 	}
+	profiles := append([]Profile(nil), state.Profiles...)
 	SortStable(profiles)
 	return profiles, nil
 }
 
 func (s Store) Get(id string) (Profile, error) {
-	profiles, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return Profile{}, err
 	}
-	for _, p := range profiles {
-		if p.ID == id {
-			return p, nil
-		}
+	if p, ok := profileByID(state.Profiles, id); ok {
+		return p, nil
 	}
 	return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+}
+
+// Resolve accepts an exact stable ID first, otherwise an exact trimmed,
+// case-insensitive display name. A display name must resolve uniquely.
+func (s Store) Resolve(selector string) (Profile, error) {
+	state, err := s.loadState()
+	if err != nil {
+		return Profile{}, err
+	}
+	return resolveProfile(state.Profiles, selector)
+}
+
+// Select persists the stable ID resolved from selector. Selection is user-owned
+// preference only; it does not change the current lifecycle or boot policy.
+func (s Store) Select(selector string) (Profile, error) {
+	state, err := s.loadState()
+	if err != nil {
+		return Profile{}, err
+	}
+	p, err := resolveProfile(state.Profiles, selector)
+	if err != nil {
+		return Profile{}, err
+	}
+	if state.SelectedProfileID == p.ID {
+		return p, nil
+	}
+	state.SelectedProfileID = p.ID
+	if err := s.saveState(state); err != nil {
+		return Profile{}, err
+	}
+	return p, nil
+}
+
+// SelectedID returns the currently valid selected stable ID without mutating
+// user state. Stale selection is treated as unselected here so read-only
+// surfaces such as list/completion remain read-only.
+func (s Store) SelectedID() (string, error) {
+	state, err := s.loadState()
+	if err != nil {
+		return "", err
+	}
+	if state.SelectedProfileID == "" {
+		return "", nil
+	}
+	if _, ok := profileByID(state.Profiles, state.SelectedProfileID); !ok {
+		return "", nil
+	}
+	return state.SelectedProfileID, nil
+}
+
+// ResolveSelected applies the deterministic selected-profile rules used by
+// normal user intent. It clears stale state by stable ID only and, when exactly
+// one profile remains, persists that profile as the selection before returning
+// it. It never retargets by display-name resemblance.
+func (s Store) ResolveSelected() (Profile, error) {
+	state, err := s.loadState()
+	if err != nil {
+		return Profile{}, err
+	}
+	changed := clearStaleSelection(&state)
+	if state.SelectedProfileID != "" {
+		if changed {
+			if err := s.saveState(state); err != nil {
+				return Profile{}, err
+			}
+		}
+		p, _ := profileByID(state.Profiles, state.SelectedProfileID)
+		return p, nil
+	}
+	if len(state.Profiles) == 1 {
+		state.SelectedProfileID = state.Profiles[0].ID
+		if err := s.saveState(state); err != nil {
+			return Profile{}, err
+		}
+		return state.Profiles[0], nil
+	}
+	if changed {
+		if err := s.saveState(state); err != nil {
+			return Profile{}, err
+		}
+	}
+	if len(state.Profiles) == 0 {
+		return Profile{}, fmt.Errorf("%w: import a profile with `podlaz import <uri|url|file>`", ErrNoSelection)
+	}
+	return Profile{}, fmt.Errorf("%w: multiple profiles exist; run `podlaz profile use <profile>`", ErrNoSelection)
+}
+
+// SelectIfUnset selects id only when no valid selection exists. It is used by
+// import workflows that produced exactly one logical profile. A stale selected
+// ID is cleared instead of being name-retargeted.
+func (s Store) SelectIfUnset(id string) (bool, error) {
+	state, err := s.loadState()
+	if err != nil {
+		return false, err
+	}
+	changed := clearStaleSelection(&state)
+	if state.SelectedProfileID != "" {
+		if changed {
+			if err := s.saveState(state); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
+	}
+	if _, ok := profileByID(state.Profiles, id); !ok {
+		return false, fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	state.SelectedProfileID = id
+	if err := s.saveState(state); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s Store) Add(p Profile) error {
 	if err := Validate(p); err != nil {
 		return err
 	}
-	profiles, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return err
 	}
-	for _, existing := range profiles {
+	clearStaleSelection(&state)
+	for _, existing := range state.Profiles {
 		if existing.ID == p.ID {
 			return fmt.Errorf("%w: %s", ErrAlreadyExists, p.ID)
 		}
 	}
-	profiles = append(profiles, p)
-	SortStable(profiles)
-	return s.save(profiles)
+	state.Profiles = append(state.Profiles, p)
+	SortStable(state.Profiles)
+	return s.saveState(state)
 }
 
 // AddProfiles atomically appends multiple imported profiles. The profile store is
 // left untouched when validation or duplicate detection fails before the atomic
 // file replacement.
 func (s Store) AddProfiles(next []Profile) error {
-	current, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return err
 	}
-	existingByID := make(map[string]struct{}, len(current))
-	for _, p := range current {
+	clearStaleSelection(&state)
+	existingByID := make(map[string]struct{}, len(state.Profiles))
+	for _, p := range state.Profiles {
 		existingByID[p.ID] = struct{}{}
 	}
 
@@ -126,21 +243,21 @@ func (s Store) AddProfiles(next []Profile) error {
 		seenNext[p.ID] = struct{}{}
 	}
 
-	profiles := make([]Profile, 0, len(current)+len(next))
-	profiles = append(profiles, current...)
-	profiles = append(profiles, next...)
-	SortStable(profiles)
-	return s.save(profiles)
+	state.Profiles = append(state.Profiles, next...)
+	SortStable(state.Profiles)
+	return s.saveState(state)
 }
 
+// Delete removes an exact stable profile ID and atomically clears selection when
+// that ID was selected.
 func (s Store) Delete(id string) error {
-	profiles, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return err
 	}
-	kept := profiles[:0]
+	kept := state.Profiles[:0]
 	deleted := false
-	for _, p := range profiles {
+	for _, p := range state.Profiles {
 		if p.ID == id {
 			deleted = true
 			continue
@@ -150,19 +267,24 @@ func (s Store) Delete(id string) error {
 	if !deleted {
 		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
-	SortStable(kept)
-	return s.save(kept)
+	state.Profiles = kept
+	if state.SelectedProfileID == id {
+		state.SelectedProfileID = ""
+	}
+	SortStable(state.Profiles)
+	return s.saveState(state)
 }
 
 // ReplaceSubscriptionProfiles atomically replaces the profiles previously owned
 // by a subscription with the latest successfully parsed subscription profiles.
-// Profiles not owned by the subscription are preserved. The existing store file
-// is left untouched when validation fails before the atomic file replacement.
+// Profiles not owned by the subscription are preserved. Removing the selected
+// stable ID clears selection in the same profile-store replacement.
 func (s Store) ReplaceSubscriptionProfiles(previousIDs []string, next []Profile) (SubscriptionUpdateDiff, error) {
-	current, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return SubscriptionUpdateDiff{}, err
 	}
+	current := state.Profiles
 
 	previous := make(map[string]struct{}, len(previousIDs))
 	for _, id := range previousIDs {
@@ -216,22 +338,37 @@ func (s Store) ReplaceSubscriptionProfiles(previousIDs []string, next []Profile)
 		kept = append(kept, p)
 	}
 
-	SortStable(kept)
-	return diff, s.save(kept)
+	state.Profiles = kept
+	if state.SelectedProfileID != "" {
+		if _, ok := profileByID(state.Profiles, state.SelectedProfileID); !ok {
+			state.SelectedProfileID = ""
+		}
+	}
+	SortStable(state.Profiles)
+	return diff, s.saveState(state)
 }
 
 type storeFile struct {
-	SchemaVersion string    `json:"schema_version"`
-	Profiles      []Profile `json:"profiles"`
+	SchemaVersion     string    `json:"schema_version"`
+	Profiles          []Profile `json:"profiles"`
+	SelectedProfileID string    `json:"selected_profile_id,omitempty"`
 }
 
 func (s Store) load() ([]Profile, error) {
+	state, err := s.loadState()
+	if err != nil {
+		return nil, err
+	}
+	return state.Profiles, nil
+}
+
+func (s Store) loadState() (storeFile, error) {
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return storeFile{SchemaVersion: "v1"}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read profile store %s: %w", s.path, err)
+		return storeFile{}, fmt.Errorf("read profile store %s: %w", s.path, err)
 	}
 	defer file.Close()
 
@@ -239,33 +376,56 @@ func (s Store) load() ([]Profile, error) {
 	decoder.DisallowUnknownFields()
 	var data storeFile
 	if err := decoder.Decode(&data); err != nil {
-		return nil, fmt.Errorf("read profile store %s: invalid JSON: %w", s.path, err)
+		return storeFile{}, fmt.Errorf("read profile store %s: invalid JSON: %w", s.path, err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("read profile store %s: invalid JSON: trailing data", s.path)
+		return storeFile{}, fmt.Errorf("read profile store %s: invalid JSON: trailing data", s.path)
 	}
 	if data.SchemaVersion != "v1" {
-		return nil, fmt.Errorf("read profile store %s: unsupported schema_version %q", s.path, data.SchemaVersion)
+		return storeFile{}, fmt.Errorf("read profile store %s: unsupported schema_version %q", s.path, data.SchemaVersion)
 	}
 	seen := make(map[string]struct{}, len(data.Profiles))
 	for _, p := range data.Profiles {
 		if err := Validate(p); err != nil {
-			return nil, fmt.Errorf("read profile store %s: stored profile %q is invalid: %w", s.path, p.ID, err)
+			return storeFile{}, fmt.Errorf("read profile store %s: stored profile %q is invalid: %w", s.path, p.ID, err)
 		}
 		if _, ok := seen[p.ID]; ok {
-			return nil, fmt.Errorf("read profile store %s: duplicate profile id %q", s.path, p.ID)
+			return storeFile{}, fmt.Errorf("read profile store %s: duplicate profile id %q", s.path, p.ID)
 		}
 		seen[p.ID] = struct{}{}
 	}
-	return data.Profiles, nil
+	return data, nil
 }
 
 func (s Store) save(profiles []Profile) error {
-	return s.saveWithDirectorySync(profiles, storejson.SyncDir)
+	state, err := s.loadState()
+	if err != nil {
+		return err
+	}
+	state.Profiles = profiles
+	if clearStaleSelection(&state) {
+		// The same atomic write below persists the cleared selection.
+	}
+	return s.saveState(state)
 }
 
 func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(string) error) error {
-	err := storejson.WriteFile(s.path, storeFile{SchemaVersion: "v1", Profiles: profiles}, storejson.Options{
+	state, err := s.loadState()
+	if err != nil {
+		return err
+	}
+	state.Profiles = profiles
+	clearStaleSelection(&state)
+	return s.saveStateWithDirectorySync(state, syncParentDir)
+}
+
+func (s Store) saveState(state storeFile) error {
+	return s.saveStateWithDirectorySync(state, storejson.SyncDir)
+}
+
+func (s Store) saveStateWithDirectorySync(state storeFile, syncParentDir func(string) error) error {
+	state.SchemaVersion = "v1"
+	err := storejson.WriteFile(s.path, state, storejson.Options{
 		TempPattern:   ".profiles-*.tmp",
 		DirectoryMode: storejson.DefaultDirectoryMode,
 		FileMode:      storejson.DefaultFileMode,
@@ -275,6 +435,51 @@ func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(stri
 		return profileStoreWriteError(err)
 	}
 	return nil
+}
+
+func resolveProfile(profiles []Profile, selector string) (Profile, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return Profile{}, fmt.Errorf("%w: empty selector", ErrNotFound)
+	}
+	if p, ok := profileByID(profiles, selector); ok {
+		return p, nil
+	}
+	key := displayNameKey(selector)
+	var matches []Profile
+	for _, p := range profiles {
+		if displayNameKey(p.Name) == key {
+			matches = append(matches, p)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, selector)
+	case 1:
+		return matches[0], nil
+	default:
+		return Profile{}, fmt.Errorf("%w: %q matches %d profiles; use a stable ID from `podlaz profile show`", ErrAmbiguousSelector, selector, len(matches))
+	}
+}
+
+func profileByID(profiles []Profile, id string) (Profile, bool) {
+	for _, p := range profiles {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Profile{}, false
+}
+
+func clearStaleSelection(state *storeFile) bool {
+	if state.SelectedProfileID == "" {
+		return false
+	}
+	if _, ok := profileByID(state.Profiles, state.SelectedProfileID); ok {
+		return false
+	}
+	state.SelectedProfileID = ""
+	return true
 }
 
 func profileStoreWriteError(err error) error {

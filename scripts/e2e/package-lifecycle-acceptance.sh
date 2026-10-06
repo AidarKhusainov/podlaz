@@ -120,18 +120,16 @@ capture_profile_import() {
   local uri="$1" out err
   out="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-profile-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-profile-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+  if ! run_installed_podlaz import "${uri}" >"${out}" 2>"${err}"; then
     fail "package-lifecycle profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  assert_nonempty "${PROFILE_ID}" "package-lifecycle imported profile id"
   rm -f -- "${out}" "${err}"
 }
 
 assert_recovery_plan_empty() {
   local phase="$1" output
   output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-recover-${phase}.XXXXXX")"
-  if ! run_installed_podlaz recover --json >"${output}" 2>/dev/null; then
+  if ! run_installed_podlaz debug recover --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "${phase}: recovery inspection failed"
   fi
@@ -224,7 +222,7 @@ run_orphan_routing_convergence_probe() {
 
   output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-orphan-connect.XXXXXX")"
   set +e
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${output}" 2>&1
+  run_installed_podlaz connect >"${output}" 2>&1
   code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "orphan-routing: TUN connect unexpectedly succeeded"
@@ -413,7 +411,7 @@ assert_doctor_resolved_clean() {
   local phase="$1" output code
   output="$(mktemp "${E2E_TMP_ROOT}/package-lifecycle-doctor-${phase}.XXXXXX")"
   set +e
-  run_installed_podlaz doctor >"${output}" 2>&1
+  run_installed_podlaz debug doctor >"${output}" 2>&1
   code=$?
   set -e
   [[ "${code}" == "0" ]] || fail "${phase}: base doctor returned exit ${code} after clean disconnect"
@@ -429,7 +427,7 @@ run_clean_disconnect_resolved_probe() {
   local manifest
   manifest="${E2E_TMP_ROOT}/package-lifecycle-clean-disconnect-network.json"
   verify_systemd_255
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "clean-disconnect: TUN connect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "clean-disconnect: TUN connect failed"
   ACTIVE_CONNECTION=1
   assert_tun_package_address_present clean-disconnect
   snapshot_tun_network_manifest clean-disconnect "${manifest}"
@@ -445,7 +443,7 @@ run_service_restart_probe() {
   local manifest retry_manifest
   manifest="${E2E_TMP_ROOT}/package-lifecycle-service-restart-network.json"
   retry_manifest="${E2E_TMP_ROOT}/package-lifecycle-service-restart-retry-network.json"
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "service-restart: TUN connect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "service-restart: TUN connect failed"
   ACTIVE_CONNECTION=1
   assert_tun_package_address_present service-restart
   snapshot_tun_network_manifest service-restart "${manifest}"
@@ -455,7 +453,7 @@ run_service_restart_probe() {
   assert_clean_after_owned_lifecycle service-restart "${manifest}"
   check_direct_connectivity service-restart
 
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "service-restart: fresh TUN reconnect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "service-restart: fresh TUN reconnect failed"
   ACTIVE_CONNECTION=1
   assert_tun_package_address_present service-restart-retry
   snapshot_tun_network_manifest service-restart-retry "${retry_manifest}"
@@ -514,7 +512,7 @@ run_package_upgrade_restart_probe() {
   assert_installed_commit package-baseline "${BASE_COMMIT}"
   assert_recovery_plan_empty package-baseline-precondition
 
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "package-upgrade: baseline TUN connect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "package-upgrade: baseline TUN connect failed"
   ACTIVE_CONNECTION=1
   assert_tun_package_address_present package-upgrade-baseline
   snapshot_tun_network_manifest package-upgrade-baseline "${manifest}"
@@ -527,7 +525,7 @@ run_package_upgrade_restart_probe() {
   assert_clean_after_owned_lifecycle package-upgrade "${manifest}"
   check_direct_connectivity package-upgrade
 
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "package-upgrade: fresh TUN reconnect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "package-upgrade: fresh TUN reconnect failed"
   ACTIVE_CONNECTION=1
   assert_tun_package_address_present package-upgrade-retry
   snapshot_tun_network_manifest package-upgrade-retry "${retry_manifest}"

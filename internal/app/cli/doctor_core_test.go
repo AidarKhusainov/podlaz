@@ -14,7 +14,7 @@ func TestRunCLIDoctorCoreRendersXrayDiagnostics(t *testing.T) {
 	var out bytes.Buffer
 	var gotPath string
 
-	err := runWithOptions(context.Background(), []string{"doctor", "--core", "--xray", "/usr/local/bin/xray"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"debug", "doctor", "--core", "--xray", "/usr/local/bin/xray"}, &out, options{
 		coreDoctor: func(_ context.Context, xrayPath string) doctor.Report {
 			gotPath = xrayPath
 			return cleanCoreDoctorReport(xrayPath)
@@ -37,7 +37,7 @@ func TestRunCLIDoctorCoreRendersXrayDiagnostics(t *testing.T) {
 func TestRunCLIDoctorCoreSupportsInlineXrayPathAndJSON(t *testing.T) {
 	var out bytes.Buffer
 
-	err := runWithOptions(context.Background(), []string{"doctor", "--core", "--xray=/usr/local/bin/xray", "--json"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"debug", "doctor", "--core", "--xray=/usr/local/bin/xray", "--json"}, &out, options{
 		coreDoctor: func(_ context.Context, xrayPath string) doctor.Report {
 			return cleanCoreDoctorReport(xrayPath)
 		},
@@ -82,7 +82,7 @@ func TestRunCLIDoctorCoreRedactsHumanAndJSONOutput(t *testing.T) {
 	}}
 
 	var human bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"doctor", "--core", "--xray", "/usr/local/bin/xray"}, &human, options{
+	err := runWithOptions(context.Background(), []string{"debug", "doctor", "--core", "--xray", "/usr/local/bin/xray"}, &human, options{
 		coreDoctor: func(context.Context, string) doctor.Report { return secretReport },
 	})
 	if err != nil {
@@ -90,7 +90,7 @@ func TestRunCLIDoctorCoreRedactsHumanAndJSONOutput(t *testing.T) {
 	}
 
 	var machine bytes.Buffer
-	err = runWithOptions(context.Background(), []string{"doctor", "--core", "--xray", "/usr/local/bin/xray", "--json"}, &machine, options{
+	err = runWithOptions(context.Background(), []string{"debug", "doctor", "--core", "--xray", "/usr/local/bin/xray", "--json"}, &machine, options{
 		coreDoctor: func(context.Context, string) doctor.Report { return secretReport },
 	})
 	if err != nil {
@@ -118,7 +118,7 @@ func TestRunCLIDoctorCoreRedactsHumanAndJSONOutput(t *testing.T) {
 func TestRunCLIDoctorCoreReturnsDiagnosticExitCodeForFailures(t *testing.T) {
 	var out bytes.Buffer
 
-	err := runWithOptions(context.Background(), []string{"doctor", "--core", "--xray", "/missing/xray"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"debug", "doctor", "--core", "--xray", "/missing/xray"}, &out, options{
 		coreDoctor: func(_ context.Context, xrayPath string) doctor.Report {
 			return doctor.Report{Source: doctor.SourceLocalCore, Checks: []doctor.Check{{Name: "xray", Severity: doctor.SeverityFail, Message: xrayPath + " does not exist; install Xray or pass the correct --xray path"}}}
 		},
@@ -136,7 +136,7 @@ func TestRunCLIDoctorCoreReturnsDiagnosticExitCodeForFailures(t *testing.T) {
 
 func TestRunCLIDoctorCoreRejectsMissingXrayValue(t *testing.T) {
 	var out bytes.Buffer
-	err := run(context.Background(), []string{"doctor", "--core", "--xray"}, &out)
+	err := run(context.Background(), []string{"debug", "doctor", "--core", "--xray"}, &out)
 	if err == nil {
 		t.Fatal("expected missing --xray value to fail")
 	}

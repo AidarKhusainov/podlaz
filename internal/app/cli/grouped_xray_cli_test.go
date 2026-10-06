@@ -7,35 +7,39 @@ import (
 	"strings"
 	"testing"
 
-	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/testfixtures"
 )
 
 const groupedCLIProfileID = "xray-json-redaction"
 
-func TestRunCLIPlanTunRejectsGroupedProviderBeforeSnapshot(t *testing.T) {
+func TestRunCLICanonicalConnectRejectsGroupedProviderBeforeDaemon(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	opts := options{
-		profileStorePath: storePath,
-		systemSnapshot: func(ctx context.Context, opts netsnapshot.Options) netsnapshot.Snapshot {
-			t.Fatal("TUN plan for grouped provider profiles must fail before collecting host networking snapshot")
-			return netsnapshot.Snapshot{}
-		},
-	}
+	opts := options{profileStorePath: storePath}
 	addGroupedCLIProfile(t, opts)
 
+	calledDaemon := false
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"plan", "--mode", "tun", groupedCLIProfileID}, &out, opts)
+	err := runWithOptions(context.Background(), []string{"connect", "Grouped provider"}, &out, options{
+		profileStorePath: storePath,
+		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+			calledDaemon = true
+			return api.LifecycleResponse{}, nil
+		},
+	})
 	if err == nil {
-		t.Fatal("expected grouped provider TUN plan to fail")
+		t.Fatal("expected grouped provider canonical connect to fail")
 	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected usage exit code 2, got %d", got)
+	if calledDaemon {
+		t.Fatal("grouped provider canonical connect reached daemon")
 	}
 	combined := out.String() + err.Error()
-	if !strings.Contains(combined, "TUN-mode grouped Xray profiles are not supported") {
-		t.Fatalf("expected grouped TUN unsupported diagnostic, got output=%q err=%v", out.String(), err)
+	for _, want := range []string{"Proxy only", "podlaz debug proxy"} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("missing %q: %q", want, combined)
+		}
 	}
 	assertGroupedCLINoSensitiveMaterial(t, combined)
 }
@@ -45,15 +49,10 @@ func TestRunCLIGroupedProviderProfileOutputRedaction(t *testing.T) {
 	opts := options{profileStorePath: storePath}
 	addGroupedCLIProfile(t, opts)
 
-	commands := [][]string{
+	for _, args := range [][]string{
 		{"profile", "list"},
-		{"profile", "list", "--json"},
 		{"profile", "show", groupedCLIProfileID},
-		{"profile", "show", groupedCLIProfileID, "--json"},
-		{"profile", "validate", groupedCLIProfileID, "--mode", "proxy-only"},
-		{"profile", "validate", groupedCLIProfileID, "--mode", "proxy-only", "--json"},
-	}
-	for _, args := range commands {
+	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var out bytes.Buffer
 			if err := runWithOptions(context.Background(), args, &out, opts); err != nil {
@@ -64,32 +63,29 @@ func TestRunCLIGroupedProviderProfileOutputRedaction(t *testing.T) {
 	}
 }
 
-func TestRunCLIGroupedProviderValidationErrorRedaction(t *testing.T) {
+func TestRunCLIDebugProxySupportsGroupedProviderWithoutLeakingSource(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	opts := options{profileStorePath: storePath}
-	addGroupedCLIProfile(t, opts)
+	addGroupedCLIProfile(t, options{profileStorePath: storePath})
 
-	commands := [][]string{
-		{"profile", "validate", groupedCLIProfileID, "--mode", "tun"},
-		{"profile", "validate", groupedCLIProfileID, "--mode", "tun", "--json"},
+	var request api.ConnectRequest
+	var out bytes.Buffer
+	err := runWithOptions(context.Background(), []string{"debug", "proxy", "Grouped provider"}, &out, options{
+		profileStorePath: storePath,
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			request = req
+			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeProxyOnly, Proxy: "active", TUN: "disabled"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("debug proxy failed: %v", err)
 	}
-	for _, args := range commands {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			var out bytes.Buffer
-			err := runWithOptions(context.Background(), args, &out, opts)
-			if err == nil {
-				t.Fatalf("expected %v to fail", args)
-			}
-			if got := ExitCode(err); got != 3 {
-				t.Fatalf("expected diagnostic exit code 3, got %d", got)
-			}
-			combined := out.String() + err.Error()
-			if !strings.Contains(combined, "TUN-mode grouped Xray profiles are not supported") {
-				t.Fatalf("expected grouped TUN unsupported diagnostic, got output=%q err=%v", out.String(), err)
-			}
-			assertGroupedCLINoSensitiveMaterial(t, combined)
-		})
+	if request.Mode != planner.ModeProxyOnly {
+		t.Fatalf("debug proxy mode=%q", request.Mode)
 	}
+	if !strings.Contains(out.String(), "Protection: Proxy only") {
+		t.Fatalf("debug proxy output=%q", out.String())
+	}
+	assertGroupedCLINoSensitiveMaterial(t, out.String())
 }
 
 func addGroupedCLIProfile(t *testing.T, opts options) {

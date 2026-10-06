@@ -213,7 +213,7 @@ cleanup() {
 }
 
 run_scenario() {
-  local profile boot_before boot_after generation attempt_before session_before
+  local profile_id boot_before boot_after generation attempt_before session_before
   local daemon_before daemon_after attempt_after session_after attempt_disconnected
 
   mark_failure capability vm.acceleration
@@ -257,13 +257,13 @@ run_scenario() {
   hosted_vm_tun_assert_foreign_state
   record_evidence fixture.foreign_state pass
 
-  profile="$(hosted_vm_tun_profile_id)"
+  profile_id="$(hosted_vm_tun_profile_id)"
   boot_before="$(hosted_vm_boot_id)"
-  [[ -n "${profile}" && -n "${boot_before}" ]]
+  [[ -n "${profile_id}" && -n "${boot_before}" ]]
 
   mark_failure product autostart.enable
-  hosted_vm_tun_run_podlaz autostart enable --mode tun "${profile}" >/dev/null
-  assert_manifest_exact "${boot_before}" "${profile}"
+  hosted_vm_tun_run_podlaz autostart enable >/dev/null
+  assert_manifest_exact "${boot_before}" "${profile_id}"
   generation="$(manifest_generation)"
   [[ "${generation}" =~ ^[0-9a-f]{32}$ ]]
   record_evidence autostart.manifest_exact pass
@@ -284,7 +284,7 @@ run_scenario() {
   record_evidence candidate.provenance_after_reboot pass
 
   mark_failure product autostart.boot_connect
-  wait_succeeded_attempt "${boot_after}" "${generation}" "${profile}"
+  wait_succeeded_attempt "${boot_after}" "${generation}" "${profile_id}"
   record_evidence autostart.succeeded_once pass
   record_evidence autostart.attempt_generation_exact pass
 
@@ -314,7 +314,7 @@ run_scenario() {
 
   attempt_after="$(attempt_sha)"
   [[ "${attempt_after}" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile}" succeeded
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
   record_evidence daemon_restart.attempt_unchanged pass
 
   session_after="$(hosted_vm_tun_session_id)"
@@ -332,7 +332,7 @@ run_scenario() {
   record_evidence explicit_disconnect.clean_inactive pass
   attempt_disconnected="$(attempt_sha)"
   [[ "${attempt_disconnected}" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile}" succeeded
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
   record_evidence explicit_disconnect.attempt_unchanged pass
 
   hosted_vm_tun_assert_exact_terminal_cleanup
@@ -343,7 +343,7 @@ run_scenario() {
   hosted_vm_tun_wait_status clean-inactive 100
   record_evidence same_boot_restart.clean_inactive pass
   [[ "$(attempt_sha)" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile}" succeeded
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
   record_evidence same_boot_restart.attempt_unchanged pass
   assert_session_absent
   record_evidence same_boot_restart.no_session pass

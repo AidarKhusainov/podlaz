@@ -9,36 +9,23 @@ import (
 func TestRunCLICompletionRuntimeSupportsZshAndFish(t *testing.T) {
 	opts := seedCompletionStores(t)
 	for _, shell := range []string{"zsh", "fish"} {
-		t.Run(shell+" profile ids", func(t *testing.T) {
+		t.Run(shell+" profile names", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "podlaz", "profile", "show", "")...)
-			assertContainsCandidateLine(t, got, "alpha", "Alpha")
-			assertContainsCandidateLine(t, got, "bravo", "Bravo")
-			assertNotContainsCandidateValue(t, got, "personal")
+			assertContainsCandidateValue(t, got, "Alpha")
+			assertContainsCandidateValue(t, got, "Bravo")
+			assertNotContainsCandidateValue(t, got, "alpha")
 		})
 		t.Run(shell+" subscription ids", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "podlaz", "subscription", "show", "")...)
-			assertContainsCandidateLine(t, got, "personal", "Personal")
-			assertContainsCandidateLine(t, got, "work", "Work")
-			assertNotContainsCandidateValue(t, got, "alpha")
+			assertContainsCandidateValue(t, got, "personal")
+			assertContainsCandidateValue(t, got, "work")
 		})
-		t.Run(shell+" mode values", func(t *testing.T) {
-			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "podlaz", "plan", "--mode", "")...)
-			assertContainsLine(t, got, "proxy-only")
-			assertContainsLine(t, got, "tun")
+		t.Run(shell+" debug doctor flags", func(t *testing.T) {
+			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 3, "podlaz", "debug", "doctor", "--")...)
+			assertContainsCandidateValue(t, got, "--tun")
+			assertContainsCandidateValue(t, got, "--json")
 		})
-		t.Run(shell+" protocol values", func(t *testing.T) {
-			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 4, "podlaz", "profile", "add", "--protocol", "")...)
-			assertContainsLine(t, got, "vless")
-			assertContainsLine(t, got, "vmess")
-			assertContainsLine(t, got, "trojan")
-			assertContainsLine(t, got, "shadowsocks")
-		})
-		t.Run(shell+" filters used flags", func(t *testing.T) {
-			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 4, "podlaz", "plan", "--mode", "tun", "-")...)
-			assertContainsCandidateLine(t, got, "--json", "Print JSON output")
-			assertNotContainsCandidateValue(t, got, "--mode")
-		})
-		t.Run(shell+" import keeps file completion", func(t *testing.T) {
+		t.Run(shell+" import files", func(t *testing.T) {
 			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 2, "podlaz", "import", "")...)
 			assertContainsLine(t, got, ":default-files")
 			assertNotContainsLine(t, got, ":no-files")
@@ -53,11 +40,9 @@ func TestRunCLICompletionRuntimeZshAndFishMissingStateIsQuiet(t *testing.T) {
 		subscriptionStorePath: filepath.Join(dir, "missing-subscriptions.json"),
 	}
 	for _, shell := range []string{"zsh", "fish"} {
-		t.Run(shell, func(t *testing.T) {
-			got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 2, "podlaz", "connect", "")...)
-			assertContainsLine(t, got, ":no-files")
-			assertNotContainsCandidateValue(t, got, "alpha")
-		})
+		got := runCompletionRuntime(t, opts, shellCompleteArgs(shell, 2, "podlaz", "connect", "")...)
+		assertContainsLine(t, got, ":no-files")
+		assertNotContainsCandidateValue(t, got, "Alpha")
 	}
 }
 

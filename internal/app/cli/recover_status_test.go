@@ -24,7 +24,7 @@ func TestRecoverPlanJSONDoesNotReportOKWhenCleanupCandidatesRemain(t *testing.T)
 
 func TestRecoverExecuteWarningsProduceWarnStatusAndNonzeroExit(t *testing.T) {
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"recover", "--execute", "--yes", "--json"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"debug", "recover", "--execute", "--json"}, &out, options{
 		recoverExecute: func(context.Context) (recovery.ExecuteResult, error) {
 			return recovery.ExecuteResult{Warnings: []recovery.Warning{{Target: "systemd-resolved", Message: "permission denied"}}}, nil
 		},

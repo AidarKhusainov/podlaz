@@ -10,9 +10,10 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
-func TestRunCLIConnectAcceptsHandoffPolicies(t *testing.T) {
+func TestRunCLIConnectUsesCanonicalTunAndBlockForInactiveState(t *testing.T) {
 	storePath := t.TempDir() + "/profiles.json"
 	p := testConnectProfile()
 	store, err := profile.NewStore(storePath)
@@ -23,71 +24,227 @@ func TestRunCLIConnectAcceptsHandoffPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, policy := range api.HandoffPolicies() {
-		var gotHandoff string
-		err := runWithOptions(context.Background(), []string{"connect", "--mode=tun", "--handoff=" + policy, p.ID}, &bytes.Buffer{}, options{
-			profileStorePath: storePath,
-			connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
-				gotHandoff = req.Handoff
-				return api.LifecycleResponse{Connection: "active", Mode: req.Mode, ProfileName: p.Name, Proxy: "ok", TUN: "enabled"}, nil
-			},
-		})
-		if err != nil {
-			t.Fatalf("connect with handoff %q failed: %v", policy, err)
-		}
-		if gotHandoff != policy {
-			t.Fatalf("handoff = %q, want %q", gotHandoff, policy)
-		}
-	}
-}
-
-func TestRunCLIConnectRendersProductSuccessOnly(t *testing.T) {
-	storePath := t.TempDir() + "/profiles.json"
-	p := testConnectProfile()
-	store, err := profile.NewStore(storePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Add(p); err != nil {
-		t.Fatal(err)
-	}
+	var got api.ConnectRequest
 	var out bytes.Buffer
-	err = runWithOptions(context.Background(), []string{"connect", "--mode=tun", p.ID}, &out, options{
+	err = runWithOptions(context.Background(), []string{"connect", p.Name}, &out, options{
 		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{Connection: "inactive"}, nil
+		},
 		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
-			return api.LifecycleResponse{
-				Connection: "active", Mode: req.Mode, ProfileName: p.Name,
-				Proxy: "active", TUN: "active", Routes: "private", DNS: "private", Firewall: "private", RuntimeConfigPath: "/private/config",
-			}, nil
+			got = req
+			return api.LifecycleResponse{Connection: "active", Mode: req.Mode, ProfileName: p.Name, Proxy: "active", TUN: "enabled"}, nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}
-	got := out.String()
-	for _, want := range []string{"Connected", "Profile: test vless", "Mode: TUN"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("connect output missing %q: %q", want, got)
-		}
+	if got.Mode != planner.ModeTun || got.Handoff != api.HandoffBlock || got.Profile.ID != p.ID {
+		t.Fatalf("canonical request = %+v", got)
 	}
-	for _, forbidden := range []string{"Proxy:", "TUN:", "Routes:", "DNS:", "Firewall:", "Runtime config:", "Profile ID:"} {
-		if strings.Contains(got, forbidden) {
-			t.Fatalf("connect output leaked %q: %q", forbidden, got)
+	if gotOut := out.String(); gotOut != "Connected\nProfile: test vless\nProtection: Active\n" {
+		t.Fatalf("connect output = %q", gotOut)
+	}
+}
+
+func TestRunCLIConnectReplacesDifferentHealthyPodlazTunSession(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	p.ID = "new-profile"
+	p.Name = "New profile"
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var got api.ConnectRequest
+	err := runWithOptions(context.Background(), []string{"connect", p.Name}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{
+				Connection:  "active",
+				Mode:        planner.ModeTun,
+				ProfileID:   "old-profile",
+				ProfileName: "Old profile",
+				TUN:         "enabled",
+			}, nil
+		},
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			got = req
+			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun, Proxy: "active", TUN: "enabled"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("replacement connect failed: %v", err)
+	}
+	if got.Handoff != api.HandoffReplacePodlaz {
+		t.Fatalf("handoff=%q, want %q", got.Handoff, api.HandoffReplacePodlaz)
+	}
+}
+
+func TestRunCLIConnectDoesNotGrantReplacementOnUnhealthyOrAmbiguousState(t *testing.T) {
+	for _, report := range []status.Report{
+		{Connection: "unknown (inspection incomplete)", Mode: planner.ModeTun, ProfileID: "old"},
+		{Connection: "active", Mode: planner.ModeProxyOnly, ProfileID: "old"},
+		{Connection: "active", Mode: planner.ModeTun, ProfileID: "old", Candidates: []status.Candidate{{Kind: "transaction-state"}}},
+	} {
+		if got := canonicalConnectHandoff(report); got != api.HandoffBlock {
+			t.Fatalf("report=%#v handoff=%q, want block", report, got)
 		}
 	}
 }
 
-func TestRunCLIConnectRejectsUnsupportedHandoffPolicy(t *testing.T) {
+func TestRunCLIConnectUsesSelectedProfile(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select(p.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	err := runWithOptions(context.Background(), []string{"connect"}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{Connection: "inactive"}, nil
+		},
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			calls++
+			if req.Profile.ID != p.ID {
+				t.Fatalf("connected profile %q, want %q", req.Profile.ID, p.ID)
+			}
+			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun, Proxy: "active", TUN: "enabled"}, nil
+		},
+	})
+	if err != nil || calls != 1 {
+		t.Fatalf("selected connect err=%v calls=%d", err, calls)
+	}
+}
+
+func TestRunCLIConnectExplicitProfileDoesNotChangeSelection(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	first := testConnectProfile()
+	first.ID = "first"
+	first.Name = "First"
+	second := testConnectProfile()
+	second.ID = "second"
+	second.Name = "Second"
+
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select(first.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runWithOptions(context.Background(), []string{"connect", second.Name}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{Connection: "inactive"}, nil
+		},
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			if req.Profile.ID != second.ID {
+				t.Fatalf("connected profile=%q want=%q", req.Profile.ID, second.ID)
+			}
+			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun, Proxy: "active", TUN: "enabled"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("explicit connect failed: %v", err)
+	}
+	selectedID, err := store.SelectedID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selectedID != first.ID {
+		t.Fatalf("explicit connect changed selection to %q, want %q", selectedID, first.ID)
+	}
+}
+
+func TestRunCLIConnectSameHealthyIntentIsNoOp(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
 	var out bytes.Buffer
-	err := run(context.Background(), []string{"connect", "--mode=tun", "--handoff=unsupported", "profile-id"}, &out)
-	if err == nil {
-		t.Fatal("expected unsupported handoff policy to fail")
+	err := runWithOptions(context.Background(), []string{"connect", p.ID}, &out, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{
+				Connection:  "active",
+				Mode:        planner.ModeTun,
+				ProfileID:   p.ID,
+				ProfileName: p.Name,
+				TUN:         "enabled",
+			}, nil
+		},
+		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+			calls++
+			return api.LifecycleResponse{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("idempotent connect failed: %v", err)
 	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
+	if calls != 0 {
+		t.Fatalf("healthy same intent rebuilt session %d time(s)", calls)
 	}
-	if !strings.Contains(err.Error(), "unsupported handoff policy") {
-		t.Fatalf("unexpected error: %v", err)
+	if !strings.Contains(out.String(), "Protection: Active") {
+		t.Fatalf("unexpected no-op output: %q", out.String())
+	}
+}
+
+func TestRunCLIConnectRejectsOperatorLifecycleFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"connect", "--mode=tun", "profile"},
+		{"connect", "--handoff=replace-podlaz", "profile"},
+		{"connect", "--json", "profile"},
+	} {
+		err := run(context.Background(), args, &bytes.Buffer{})
+		if err == nil || ExitCode(err) != 2 {
+			t.Fatalf("args=%v err=%v exit=%d, want usage error", args, err, ExitCode(err))
+		}
+	}
+}
+
+func TestRunDebugProxyIsExplicitReducedProtection(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var got api.ConnectRequest
+	var out bytes.Buffer
+	err := runWithOptions(context.Background(), []string{"debug", "proxy", p.Name}, &out, options{
+		profileStorePath: storePath,
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			got = req
+			return api.LifecycleResponse{Connection: "active", Mode: req.Mode, Proxy: "active", TUN: "disabled"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("debug proxy: %v", err)
+	}
+	if got.Mode != planner.ModeProxyOnly || got.Handoff != api.HandoffBlock {
+		t.Fatalf("debug proxy request = %+v", got)
+	}
+	for _, want := range []string{"Connected with reduced protection", "Profile: test vless", "Protection: Proxy only"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("debug proxy output missing %q: %q", want, out.String())
+		}
 	}
 }
 
@@ -95,28 +252,14 @@ func TestRunCLIDisconnectRendersProductSuccessOnly(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"disconnect"}, &out, options{
 		disconnect: func(context.Context) (api.LifecycleResponse, error) {
-			return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled", Routes: "removed", DNS: "restored", Firewall: "removed"}, nil
+			return api.LifecycleResponse{Connection: "inactive", Proxy: "inactive", TUN: "disabled"}, nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("disconnect failed: %v", err)
 	}
 	if got := out.String(); got != "Disconnected\n" {
-		t.Fatalf("disconnect output = %q, want concise product output", got)
-	}
-}
-
-func TestRunCLIConnectRejectsUnknownMode(t *testing.T) {
-	var out bytes.Buffer
-	err := run(context.Background(), []string{"connect", "--mode", "unknown", "profile-id"}, &out)
-	if err == nil {
-		t.Fatal("expected unsupported connect mode to fail")
-	}
-	if got := ExitCode(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
-	}
-	if !strings.Contains(err.Error(), "unsupported connect mode") {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("disconnect output = %q", got)
 	}
 }
 
@@ -141,5 +284,3 @@ func testVLESSUserIdentity() string {
 	part := "1111"
 	return fmt.Sprintf("%s%s-%s-%s-%s-%s%s%s", part, part, part, part, part, part, part, part)
 }
-
-var _ = planner.ModeTun

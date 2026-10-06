@@ -30,31 +30,33 @@ func runSubscriptionImport(ctx context.Context, sourceURL string, stdout io.Writ
 	if err != nil {
 		return subscriptionCommandError(err)
 	}
-	printSubscriptionImportResult(stdout, result)
-	return nil
+	if len(result.Subscription.ProfileIDs) == 1 {
+		if _, err := profileStore.SelectIfUnset(result.Subscription.ProfileIDs[0]); err != nil {
+			return err
+		}
+	}
+	return printSubscriptionImportResult(stdout, profileStore, result)
 }
 
-func printSubscriptionImportResult(stdout io.Writer, result sub.UpdateResult) {
-	out := subscriptionForOutput(result.Subscription)
-	fmt.Fprintf(stdout, "Subscription imported: %s\n", out.ID)
-	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
-	fmt.Fprintf(stdout, "Format: %s\n", result.Subscription.Format)
-	fmt.Fprintf(stdout, "Imported: %d\n", result.Imported)
-	fmt.Fprintf(stdout, "Updated: %d\n", result.Updated)
-	fmt.Fprintf(stdout, "Unchanged: %d\n", result.Unchanged)
-	fmt.Fprintf(stdout, "Removed: %d\n", result.Removed)
-	fmt.Fprintf(stdout, "Unsupported: %d\n", result.Unsupported)
-	fmt.Fprintf(stdout, "Warnings: %d\n", len(result.Warnings))
-	if len(result.Issues) > 0 {
-		fmt.Fprintln(stdout, "Unsupported entries:")
-		for _, issue := range result.Issues {
-			fmt.Fprintf(stdout, "- line %d: %s\n", issue.Line, render.Redact(issue.Message))
-		}
+func printSubscriptionImportResult(stdout io.Writer, store profile.Store, result sub.UpdateResult) error {
+	name := redactedSubscriptionName(result.Subscription)
+	fmt.Fprintln(stdout, "Subscription imported")
+	fmt.Fprintf(stdout, "Name: %s\n", name)
+	fmt.Fprintf(stdout, "Profiles: %d\n", len(result.Subscription.ProfileIDs))
+	if result.Unsupported > 0 {
+		fmt.Fprintf(stdout, "Skipped unsupported entries: %d\n", result.Unsupported)
 	}
-	if len(result.Warnings) > 0 {
-		fmt.Fprintln(stdout, "Warning details:")
-		for _, warning := range result.Warnings {
-			fmt.Fprintf(stdout, "- line %d: %s\n", warning.Line, render.Redact(warning.Message))
-		}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stdout, "Warning: %s\n", render.Redact(warning.Message))
 	}
+	selectedID, err := store.SelectedID()
+	if err != nil {
+		return err
+	}
+	if selectedID == "" {
+		fmt.Fprintln(stdout, "Next: podlaz profile use <profile>")
+		return nil
+	}
+	fmt.Fprintln(stdout, "Next: podlaz connect")
+	return nil
 }

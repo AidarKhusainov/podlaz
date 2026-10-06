@@ -5,7 +5,8 @@ import "strings"
 // DeleteSubscriptionProfiles removes profiles with source subscription whose IDs
 // are owned by the subscription being deleted. Missing owned IDs are ignored so
 // cleanup can finish after already-absent profile entries, but profiles with the
-// same IDs from manual or one-off imports are preserved.
+// same IDs from manual or one-off imports are preserved. Removing the selected
+// stable ID clears selection in the same atomic profile-store replacement.
 func (s Store) DeleteSubscriptionProfiles(ids []string) (int, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -16,14 +17,14 @@ func (s Store) DeleteSubscriptionProfiles(ids []string) (int, error) {
 		owned[id] = struct{}{}
 	}
 
-	profiles, err := s.load()
+	state, err := s.loadState()
 	if err != nil {
 		return 0, err
 	}
 
-	kept := profiles[:0]
+	kept := state.Profiles[:0]
 	removed := 0
-	for _, p := range profiles {
+	for _, p := range state.Profiles {
 		if _, shouldDelete := owned[p.ID]; shouldDelete && p.Source == SourceSubscription {
 			removed++
 			continue
@@ -34,8 +35,10 @@ func (s Store) DeleteSubscriptionProfiles(ids []string) (int, error) {
 		return 0, nil
 	}
 
-	SortStable(kept)
-	return removed, s.save(kept)
+	state.Profiles = kept
+	clearStaleSelection(&state)
+	SortStable(state.Profiles)
+	return removed, s.saveState(state)
 }
 
 // CountUnlinkedProfilesMatchingSubscriptionServers reports profiles that share a

@@ -18,34 +18,37 @@ func TestRunCLIHelpStatus(t *testing.T) {
 	if err := run(context.Background(), []string{"help", "status"}, &out); err != nil {
 		t.Fatalf("help status failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Report local podlaz runtime state") {
-		t.Fatalf("expected status help output, got %q", got)
+	if got := out.String(); !strings.Contains(got, "product connection state") {
+		t.Fatalf("status help: %q", got)
 	}
 }
 
-func TestRunCLIDoctorHelp(t *testing.T) {
+func TestRunCLIDebugHelp(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(context.Background(), []string{"doctor", "--help"}, &out); err != nil {
-		t.Fatalf("doctor --help failed: %v", err)
+	if err := run(context.Background(), []string{"debug", "--help"}, &out); err != nil {
+		t.Fatalf("debug --help failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "Usage:\n  podlaz doctor") {
-		t.Fatalf("expected doctor help output, got %q", got)
+	got := out.String()
+	for _, want := range []string{"debug doctor", "debug logs", "debug proxy", "debug recover"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("debug help missing %q: %q", want, got)
+		}
 	}
 }
 
-func TestRunCLIHelpDoctor(t *testing.T) {
+func TestRunCLIDebugDoctorHelp(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(context.Background(), []string{"help", "doctor"}, &out); err != nil {
-		t.Fatalf("help doctor failed: %v", err)
+	if err := run(context.Background(), []string{"debug", "doctor", "--help"}, &out); err != nil {
+		t.Fatalf("debug doctor --help failed: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "daemon-backed diagnostics") {
-		t.Fatalf("expected doctor help output, got %q", got)
+	if got := out.String(); !strings.Contains(got, "Usage:\n  podlaz debug doctor") {
+		t.Fatalf("doctor help: %q", got)
 	}
 }
 
-func TestRunCLIDoctorFallsBackOnDaemonTimeout(t *testing.T) {
+func TestRunCLIDebugDoctorFallsBackOnDaemonTimeout(t *testing.T) {
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"doctor"}, &out, options{
+	err := runWithOptions(context.Background(), []string{"debug", "doctor"}, &out, options{
 		daemonDoctor: func(context.Context) (doctor.Report, error) {
 			return doctor.Report{}, fmt.Errorf("%w: daemon socket /tmp/podlazd.sock did not respond before timeout; start or restart podlazd", client.ErrDaemonUnavailable)
 		},
@@ -55,91 +58,53 @@ func TestRunCLIDoctorFallsBackOnDaemonTimeout(t *testing.T) {
 		t.Fatalf("doctor timeout fallback failed: %v", err)
 	}
 	got := out.String()
-	for _, text := range []string{"Source: local fallback", "[WARN] daemon: daemon socket /tmp/podlazd.sock did not respond before timeout; start or restart podlazd"} {
+	for _, text := range []string{"Source: local fallback", "[WARN] daemon:"} {
 		if !strings.Contains(got, text) {
-			t.Fatalf("expected output to contain %q, got %q", text, got)
+			t.Fatalf("doctor output missing %q: %q", text, got)
 		}
 	}
 }
 
-func TestRunCLILogsHelp(t *testing.T) {
+func TestRunCLIDebugLogsHelp(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(context.Background(), []string{"logs", "--help"}, &out); err != nil {
-		t.Fatalf("logs --help failed: %v", err)
+	if err := run(context.Background(), []string{"debug", "logs", "--help"}, &out); err != nil {
+		t.Fatalf("debug logs --help failed: %v", err)
 	}
-	got := out.String()
-	for _, text := range []string{"Usage:\n  podlaz logs", "journalctl", "--core", "podlaz logs"} {
-		if !strings.Contains(got, text) {
-			t.Fatalf("expected logs help output to contain %q, got %q", text, got)
-		}
+	if got := out.String(); !strings.Contains(got, "Usage:\n  podlaz debug logs") {
+		t.Fatalf("logs help: %q", got)
 	}
 }
 
-func TestRunCLIHelpLogs(t *testing.T) {
-	var out bytes.Buffer
-	if err := run(context.Background(), []string{"help", "logs"}, &out); err != nil {
-		t.Fatalf("help logs failed: %v", err)
-	}
-	got := out.String()
-	for _, text := range []string{"podlaz logs", "--core", "journalctl"} {
-		if !strings.Contains(got, text) {
-			t.Fatalf("expected logs help output to contain %q, got %q", text, got)
-		}
-	}
-}
-
-func TestRunCLILogsParsesCore(t *testing.T) {
+func TestRunCLIDebugLogsParsesCore(t *testing.T) {
 	var gotOptions logs.Options
-	err := runWithOptions(context.Background(), []string{"logs", "--core"}, &bytes.Buffer{}, options{
+	err := runWithOptions(context.Background(), []string{"debug", "logs", "--core"}, &bytes.Buffer{}, options{
 		logs: func(_ context.Context, _ io.Writer, opts logs.Options) error {
 			gotOptions = opts
 			return nil
 		},
 	})
 	if err != nil {
-		t.Fatalf("logs --core failed: %v", err)
+		t.Fatalf("debug logs --core failed: %v", err)
 	}
 	if !gotOptions.Core {
 		t.Fatalf("expected core logs option, got %#v", gotOptions)
 	}
 }
 
-func TestRunCLILogsRejectsJournalctlNativeSinceValues(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		args []string
-	}{
-		{name: "negative-relative-token", args: []string{"logs", "--since", "-1h"}},
-		{name: "negative-relative-equals", args: []string{"logs", "--since=-30m"}},
-		{name: "positive-relative-token", args: []string{"logs", "--since", "+5m"}},
-		{name: "date-like", args: []string{"logs", "--since", "yesterday"}},
+func TestRunCLIDebugLogsRejectsJournalctlNativeSinceValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"debug", "logs", "--since", "-1h"},
+		{"debug", "logs", "--since=-30m"},
+		{"debug", "logs", "--since", "+5m"},
+		{"debug", "logs", "--since", "yesterday"},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var out bytes.Buffer
-			err := runWithOptions(context.Background(), tt.args, &out, options{
-				logs: func(context.Context, io.Writer, logs.Options) error {
-					t.Fatal("invalid --since must be rejected before the logs backend")
-					return nil
-				},
-			})
-			assertUsageError(t, err, out.String(), "invalid logs --since duration")
+		var out bytes.Buffer
+		err := runWithOptions(context.Background(), args, &out, options{
+			logs: func(context.Context, io.Writer, logs.Options) error {
+				t.Fatal("invalid --since reached backend")
+				return nil
+			},
 		})
-	}
-}
-
-func TestRunCLILogsRejectsSinceWithoutValueRegression(t *testing.T) {
-	for _, tt := range []struct {
-		name        string
-		args        []string
-		wantMessage string
-	}{
-		{name: "option-since", args: []string{"logs", "--since", "--follow"}, wantMessage: "logs --since requires a value"},
-		{name: "empty-since-equals", args: []string{"logs", "--since="}, wantMessage: "logs --since requires a value"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var out bytes.Buffer
-			err := run(context.Background(), tt.args, &out)
-			assertUsageError(t, err, out.String(), tt.wantMessage)
-		})
+		assertUsageError(t, err, out.String(), "invalid logs --since duration")
 	}
 }

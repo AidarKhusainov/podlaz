@@ -64,13 +64,15 @@ bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz
 bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
 zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _podlaz; whence _podlaz >/dev/null'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F completion'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan -" | grep -F -- "--mode"'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz plan --mode " | grep -F "proxy-only"'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz profile add --protocol " | grep -F "vless"'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz logs -" | grep -F -- "--follow"'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz recover --execute -" | grep -F -- "--yes"'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz recover --execute -" | grep -F -- "--yes"'
-fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz plan -" | grep -F -- "--mode"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F "Connect full VPN"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz debug " | grep -F "doctor"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz debug logs -" | grep -F -- "--follow"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz debug recover -" | grep -F -- "--execute"'
+fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish; complete -C "plz debug recover -" | grep -F -- "--execute"'
+if fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz connect -" | grep -Eq -- "--(mode|handoff)"'; then
+  echo "canonical connect completion exposed operator lifecycle flags" >&2
+  exit 1
+fi
 
 if [ "${validate_service}" = 1 ]; then
   sudo systemctl daemon-reload

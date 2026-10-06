@@ -253,10 +253,10 @@ func startupScanHumanStatus(status string) string {
 
 func startupScanSuggestedAction(scan recovery.PlanResult) string {
 	if len(scan.Candidates) > 0 {
-		return "podlaz recover"
+		return "podlaz debug recover"
 	}
 	if len(scan.Warnings) > 0 {
-		return "podlaz doctor"
+		return "podlaz debug doctor"
 	}
 	return ""
 }

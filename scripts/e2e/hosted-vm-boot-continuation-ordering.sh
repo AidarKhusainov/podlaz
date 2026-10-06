@@ -202,7 +202,7 @@ cleanup(){
 }
 
 run_scenario(){
-  local profile boot_before boot_after generation session_before session_restart session_after
+  local profile_id boot_before boot_after generation session_before session_restart session_after
   local daemon_before daemon_after reboot_ids attempt_after
 
   mark_failure capability vm.acceleration
@@ -246,7 +246,7 @@ run_scenario(){
   hosted_vm_tun_assert_foreign_state
   record_evidence fixture.foreign_state_persistent pass
 
-  profile="$(hosted_vm_tun_profile_id)"
+  profile_id="$(hosted_vm_tun_profile_id)"
   boot_before="$(hosted_vm_boot_id)"
 
   mark_failure product explicit_session.connect
@@ -262,8 +262,8 @@ run_scenario(){
   record_evidence explicit_session.no_boot_attempt pass
 
   mark_failure product autostart.enable_while_active
-  hosted_vm_tun_run_podlaz autostart enable --mode tun "${profile}" >/dev/null
-  assert_manifest_exact "${boot_before}" "${profile}"
+  hosted_vm_tun_run_podlaz autostart enable >/dev/null
+  assert_manifest_exact "${boot_before}" "${profile_id}"
   generation="$(manifest_generation)"
   [[ "${generation}" =~ ^[0-9a-f]{32}$ ]]
   record_evidence autostart.manifest_exact_while_active pass
@@ -301,7 +301,7 @@ run_scenario(){
   record_evidence candidate.provenance_after_reboot pass
 
   mark_failure product boot_autostart.after_continuation_boundary
-  wait_succeeded_attempt "${boot_after}" "${generation}" "${profile}"
+  wait_succeeded_attempt "${boot_after}" "${generation}" "${profile_id}"
   record_evidence boot_autostart.succeeded_once pass
   record_evidence boot_autostart.generation_exact pass
   hosted_vm_tun_wait_status verified-active 300

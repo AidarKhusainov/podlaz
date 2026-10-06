@@ -70,7 +70,7 @@ func TestPlanWithFakeScannerRendersRecoveryCandidates(t *testing.T) {
 
 	got := plan.String()
 	want := []string{
-		"podlaz recovery dry-run",
+		"Recovery dry-run",
 		"Would recover TUN interface: podlaz0",
 		"Would recover nftables table: inet podlaz",
 		"Would recover generated runtime configs: /run/podlaz/generated",
@@ -105,7 +105,7 @@ func TestPlanWithFakeScannerRendersTransactionCandidate(t *testing.T) {
 
 	got := plan.String()
 	want := []string{
-		"podlaz recovery dry-run",
+		"Recovery dry-run",
 		"Transaction: pending apply",
 		"Rollback available: yes",
 		"State path: /run/podlaz/transactions/tx-apply.json",
@@ -126,7 +126,7 @@ func TestPlanWithFakeScannerRendersCleanHost(t *testing.T) {
 
 	got := plan.String()
 	want := []string{
-		"podlaz recovery dry-run",
+		"Recovery dry-run",
 		"No podlaz-owned recovery candidates found.",
 		"No changes were applied.",
 	}
