@@ -18,7 +18,7 @@ var automaticPodlazRecover = func(ctx context.Context, runtimeDir string) error 
 	if automaticRecoveryComplete(result) {
 		return nil
 	}
-	return fmt.Errorf("automatic podlaz recovery did not fully complete before TUN connect: %s", strings.TrimSpace(result.String()))
+	return fmt.Errorf("automatic podlaz debug recovery did not fully complete before TUN connect: %s", strings.TrimSpace(result.String()))
 }
 
 func automaticRecoveryComplete(result recovery.ExecuteResult) bool {
@@ -59,7 +59,7 @@ func (m *XrayManager) autoRecoverTunOwnedState(ctx context.Context, s netsnapsho
 	refreshed := m.collectTunResourceSnapshot(ctx, opts)
 	remaining, _ := m.transactionFileStaleState()
 	if len(remaining) != 0 {
-		return refreshed, fmt.Errorf("automatic podlaz recovery left %d exact transaction state item(s); refusing a new network mutation", len(remaining))
+		return refreshed, fmt.Errorf("automatic podlaz debug recovery left %d exact transaction state item(s); refusing a new network mutation", len(remaining))
 	}
 	return refreshed, nil
 }
