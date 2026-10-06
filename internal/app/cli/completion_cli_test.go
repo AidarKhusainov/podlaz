@@ -92,7 +92,7 @@ func TestRunCLICompletionHelpExplainsHumanProfileSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.ToLower(out.String())
-	for _, want := range []string{"podlaz completion bash", "human names", "stable ids", "plz"} {
+	for _, want := range []string{"podlaz completion bash", "prefers human", "stable ids", "plz"} {
 		if !strings.Contains(got, strings.ToLower(want)) {
 			t.Fatalf("completion help missing %q: %q", want, out.String())
 		}
