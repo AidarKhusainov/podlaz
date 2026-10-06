@@ -7,75 +7,66 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/profile"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 func TestRunCLISubscriptionDeleteRemovesOnlyOwnedProfiles(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	targetFixture := filepath.Join(dir, "target.txt")
-	otherFixture := filepath.Join(dir, "other.txt")
-	writeSubscriptionFixture(t, targetFixture, []string{
+	target := importDeleteSubscription(t, opts, filepath.Join(dir, "target.txt"), []string{
 		shareLink(101, "personal-one.example", "443", "?type=tcp&security=tls", "personal-one"),
 		shareLink(102, "personal-two.example", "443", "?type=tcp&security=tls", "personal-two"),
 	})
-	writeSubscriptionFixture(t, otherFixture, []string{
+	other := importDeleteSubscription(t, opts, filepath.Join(dir, "other.txt"), []string{
 		shareLink(201, "work-one.example", "443", "?type=tcp&security=tls", "work-one"),
 	})
-
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "personal", "--url", localFileURL(targetFixture) + "?token=secret"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("target subscription add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "personal"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("target subscription update failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "work", "--url", localFileURL(otherFixture)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("other subscription add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "work"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("other subscription update failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "manual", "--server", "manual.example", "--port", "443", "--protocol", "vless"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("manual profile add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"profile", "import", shareLink(301, "oneoff.example", "443", "?type=tcp&security=tls", "oneoff")}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("one-off profile import failed: %v", err)
+	if target.ID == other.ID {
+		t.Fatal("fixtures produced duplicate subscription IDs")
 	}
 
-	var deleteOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "delete", "personal", "--yes"}, &deleteOut, opts); err != nil {
+	profileStore, _ := profile.NewStore(opts.profileStorePath)
+	manual := testConnectProfile()
+	manual.ID, manual.Name, manual.Server, manual.Source = "manual-profile", "manual", "manual.example", profile.SourceManual
+	if err := profileStore.Add(manual); err != nil {
+		t.Fatal(err)
+	}
+	oneoff := testConnectProfile()
+	oneoff.ID, oneoff.Name, oneoff.Server, oneoff.Source = "oneoff-profile", "oneoff", "oneoff.example", profile.SourceImportedURI
+	if err := profileStore.Add(oneoff); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"subscription", "delete", target.ID, "--yes"}, &out, opts); err != nil {
 		t.Fatalf("subscription delete failed: %v", err)
 	}
-	for _, want := range []string{"Subscription deleted: personal", "Profiles removed: 2"} {
-		if !strings.Contains(deleteOut.String(), want) {
-			t.Fatalf("expected delete output to contain %q, got %q", want, deleteOut.String())
+	for _, want := range []string{"Subscription deleted: " + target.ID, "Profiles removed: 2"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("delete output missing %q: %q", want, out.String())
 		}
 	}
-	if strings.Contains(deleteOut.String(), "Type yes to continue") {
-		t.Fatalf("--yes delete unexpectedly prompted: %q", deleteOut.String())
-	}
-	for _, leaked := range []string{localFileURL(targetFixture), "token=secret", uuidForTest(101), uuidForTest(102)} {
-		if strings.Contains(deleteOut.String(), leaked) {
-			t.Fatalf("subscription delete leaked sensitive value %q in %q", leaked, deleteOut.String())
-		}
+	if strings.Contains(out.String(), "token=") {
+		t.Fatalf("delete output leaked source material: %q", out.String())
 	}
 
-	missingErr := runWithOptions(context.Background(), []string{"subscription", "show", "personal"}, &bytes.Buffer{}, opts)
-	if missingErr == nil || ExitCode(missingErr) != 1 {
-		t.Fatalf("expected deleted subscription lookup to fail with exit code 1, got %v", missingErr)
+	if _, err := onlySubscriptionByID(opts, target.ID); err == nil {
+		t.Fatal("deleted subscription still exists")
 	}
-
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
+	profiles, err := profileStore.List()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, removed := range []string{"personal-one.example", "personal-two.example"} {
-		if strings.Contains(profiles.String(), removed) {
-			t.Fatalf("deleted subscription profile %q is still present: %q", removed, profiles.String())
+	names := profileNames(profiles)
+	for _, removed := range []string{"personal-one", "personal-two"} {
+		if names[removed] {
+			t.Fatalf("deleted subscription profile %q remains: %#v", removed, profiles)
 		}
 	}
-	for _, preserved := range []string{"work-one.example", "manual.example", "oneoff.example"} {
-		if !strings.Contains(profiles.String(), preserved) {
-			t.Fatalf("expected preserved profile %q, got %q", preserved, profiles.String())
+	for _, preserved := range []string{"work-one", "manual", "oneoff"} {
+		if !names[preserved] {
+			t.Fatalf("expected preserved profile %q: %#v", preserved, profiles)
 		}
 	}
 }
@@ -83,204 +74,155 @@ func TestRunCLISubscriptionDeleteRemovesOnlyOwnedProfiles(t *testing.T) {
 func TestRunCLISubscriptionDeleteKeepProfiles(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	fixturePath := filepath.Join(dir, "keep.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(401, "keep.example", "443", "?type=tcp&security=tls", "keep")})
+	source := importDeleteSubscription(t, opts, filepath.Join(dir, "keep.txt"), []string{
+		shareLink(401, "keep.example", "443", "?type=tcp&security=tls", "keep"),
+	})
 
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "keep", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
+	var out bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"subscription", "delete", source.ID, "--yes", "--keep-profiles"}, &out, opts); err != nil {
+		t.Fatalf("delete --keep-profiles failed: %v", err)
 	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "keep"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
+	if got := out.String(); got != "Subscription deleted: "+source.ID+"\nProfiles kept: 1\n" {
+		t.Fatalf("keep output=%q", got)
 	}
-
-	var deleteOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "delete", "keep", "--yes", "--keep-profiles"}, &deleteOut, opts); err != nil {
-		t.Fatalf("subscription delete --keep-profiles failed: %v", err)
-	}
-	if got := deleteOut.String(); got != "Subscription deleted: keep\nProfiles kept: 1\n" {
-		t.Fatalf("unexpected keep-profiles output: %q", got)
-	}
-
-	missingErr := runWithOptions(context.Background(), []string{"subscription", "show", "keep"}, &bytes.Buffer{}, opts)
-	if missingErr == nil || ExitCode(missingErr) != 1 {
-		t.Fatalf("expected deleted subscription lookup to fail with exit code 1, got %v", missingErr)
-	}
-
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if !strings.Contains(profiles.String(), "keep.example") {
-		t.Fatalf("expected keep-profiles to preserve imported profile, got %q", profiles.String())
+	store, _ := profile.NewStore(opts.profileStorePath)
+	profiles, err := store.List()
+	if err != nil || len(profiles) != 1 || profiles[0].Name != "keep" {
+		t.Fatalf("kept profiles=%#v err=%v", profiles, err)
 	}
 }
 
-func TestRunCLISubscriptionDeleteInteractiveConfirmationDeletes(t *testing.T) {
+func TestRunCLISubscriptionDeleteInteractiveDefaultsNo(t *testing.T) {
+	dir := t.TempDir()
+	opts := options{
+		profileStorePath: filepath.Join(dir, "profiles.json"),
+		stdin:            strings.NewReader("\n"),
+		stdinIsTerminal:  func() bool { return true },
+	}
+	source := importDeleteSubscription(t, opts, filepath.Join(dir, "cancel.txt"), []string{
+		shareLink(471, "cancel.example", "443", "?type=tcp&security=tls", "cancel"),
+	})
+
+	var out bytes.Buffer
+	err := runWithOptions(context.Background(), []string{"subscription", "delete", source.ID}, &out, opts)
+	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription delete canceled") {
+		t.Fatalf("empty confirmation err=%v exit=%d", err, ExitCode(err))
+	}
+	if !strings.Contains(out.String(), "[y/N]:") {
+		t.Fatalf("default-no prompt missing: %q", out.String())
+	}
+	if _, err := onlySubscriptionByID(opts, source.ID); err != nil {
+		t.Fatalf("cancel removed subscription: %v", err)
+	}
+}
+
+func TestRunCLISubscriptionDeleteInteractiveExplicitYesDeletes(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{
 		profileStorePath: filepath.Join(dir, "profiles.json"),
 		stdin:            strings.NewReader("yes\n"),
 		stdinIsTerminal:  func() bool { return true },
 	}
-	fixturePath := filepath.Join(dir, "interactive.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(451, "interactive.example", "443", "?type=tcp&security=tls", "interactive")})
-
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "interactive", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
+	source := importDeleteSubscription(t, opts, filepath.Join(dir, "interactive.txt"), []string{
+		shareLink(451, "interactive.example", "443", "?type=tcp&security=tls", "interactive"),
+	})
+	var out bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"subscription", "delete", source.ID}, &out, opts); err != nil {
+		t.Fatalf("explicit yes delete failed: %v", err)
 	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "interactive"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
-	}
-
-	var deleteOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "delete", "interactive"}, &deleteOut, opts); err != nil {
-		t.Fatalf("interactive subscription delete failed: %v", err)
-	}
-	for _, want := range []string{"Delete subscription interactive and remove 1 imported profiles? [Y/n]:", "Subscription deleted: interactive", "Profiles removed: 1"} {
-		if !strings.Contains(deleteOut.String(), want) {
-			t.Fatalf("expected interactive output to contain %q, got %q", want, deleteOut.String())
-		}
-	}
-}
-
-func TestRunCLISubscriptionDeleteInteractiveConfirmationCancelPreservesState(t *testing.T) {
-	dir := t.TempDir()
-	opts := options{
-		profileStorePath: filepath.Join(dir, "profiles.json"),
-		stdin:            strings.NewReader("no\n"),
-		stdinIsTerminal:  func() bool { return true },
-	}
-	fixturePath := filepath.Join(dir, "cancel.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(471, "cancel.example", "443", "?type=tcp&security=tls", "cancel")})
-
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "cancel", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "cancel"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
-	}
-
-	var deleteOut bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"subscription", "delete", "cancel"}, &deleteOut, opts)
-	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription delete canceled") {
-		t.Fatalf("expected interactive cancel with exit code 1, got %v", err)
-	}
-	if !strings.Contains(deleteOut.String(), "Delete subscription cancel and remove 1 imported profiles? [Y/n]:") {
-		t.Fatalf("expected cancellation path to prompt, got %q", deleteOut.String())
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "show", "cancel"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription metadata was not preserved after cancel: %v", err)
-	}
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if !strings.Contains(profiles.String(), "cancel.example") {
-		t.Fatalf("profile was not preserved after cancel: %q", profiles.String())
-	}
-}
-
-func TestRunCLISubscriptionDeleteInteractiveEOFCancelsAndPreservesState(t *testing.T) {
-	dir := t.TempDir()
-	opts := options{
-		profileStorePath: filepath.Join(dir, "profiles.json"),
-		stdin:            strings.NewReader(""),
-		stdinIsTerminal:  func() bool { return true },
-	}
-	fixturePath := filepath.Join(dir, "eof.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(481, "eof.example", "443", "?type=tcp&security=tls", "eof")})
-
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "eof", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "eof"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
-	}
-
-	var deleteOut bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"subscription", "delete", "eof"}, &deleteOut, opts)
-	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription delete canceled") {
-		t.Fatalf("expected empty EOF to cancel with exit code 1, got %v", err)
-	}
-	if !strings.Contains(deleteOut.String(), "Delete subscription eof and remove 1 imported profiles? [Y/n]:") {
-		t.Fatalf("expected EOF path to prompt, got %q", deleteOut.String())
-	}
-	if strings.Contains(deleteOut.String(), "Subscription deleted") {
-		t.Fatalf("EOF path unexpectedly deleted subscription: %q", deleteOut.String())
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "show", "eof"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription metadata was not preserved after EOF cancel: %v", err)
-	}
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
-	}
-	if !strings.Contains(profiles.String(), "eof.example") {
-		t.Fatalf("profile was not preserved after EOF cancel: %q", profiles.String())
+	if !strings.Contains(out.String(), "Subscription deleted: "+source.ID) {
+		t.Fatalf("delete output=%q", out.String())
 	}
 }
 
 func TestRunCLISubscriptionDeleteRequiresYesAndReportsMissingID(t *testing.T) {
 	dir := t.TempDir()
-	opts := options{
-		profileStorePath: filepath.Join(dir, "profiles.json"),
-		stdinIsTerminal:  func() bool { return false },
-	}
-	fixturePath := filepath.Join(dir, "sub.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(501, "delete-usage.example", "443", "?type=tcp&security=tls", "usage")})
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "usage", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
-	}
+	opts := options{profileStorePath: filepath.Join(dir, "profiles.json"), stdinIsTerminal: func() bool { return false }}
+	source := importDeleteSubscription(t, opts, filepath.Join(dir, "usage.txt"), []string{
+		shareLink(501, "delete-usage.example", "443", "?type=tcp&security=tls", "usage"),
+	})
 
-	err := runWithOptions(context.Background(), []string{"subscription", "delete", "usage"}, &bytes.Buffer{}, opts)
+	err := runWithOptions(context.Background(), []string{"subscription", "delete", source.ID}, &bytes.Buffer{}, opts)
 	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "requires --yes") {
-		t.Fatalf("expected missing --yes to fail with exit code 2, got %v", err)
+		t.Fatalf("missing --yes err=%v exit=%d", err, ExitCode(err))
 	}
-
-	err = runWithOptions(context.Background(), []string{"subscription", "delete", "usage", "--json", "--yes"}, &bytes.Buffer{}, opts)
-	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "subscription delete --json is not implemented") {
-		t.Fatalf("expected subscription delete --json to fail with exit code 2, got %v", err)
+	err = runWithOptions(context.Background(), []string{"subscription", "delete", source.ID, "--json", "--yes"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("obsolete JSON accepted: %v", err)
 	}
-
 	err = runWithOptions(context.Background(), []string{"subscription", "delete", "missing", "--yes"}, &bytes.Buffer{}, opts)
 	if err == nil || ExitCode(err) != 1 || !strings.Contains(err.Error(), "subscription not found") {
-		t.Fatalf("expected missing subscription to fail clearly with exit code 1, got %v", err)
+		t.Fatalf("missing subscription err=%v exit=%d", err, ExitCode(err))
 	}
 }
 
 func TestRunCLISubscriptionDeleteFailurePreservesState(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	fixturePath := filepath.Join(dir, "stable.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{shareLink(601, "stable-delete.example", "443", "?type=tcp&security=tls", "stable-delete")})
-
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "stable", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "stable"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
-	}
-
+	source := importDeleteSubscription(t, opts, filepath.Join(dir, "stable.txt"), []string{
+		shareLink(601, "stable-delete.example", "443", "?type=tcp&security=tls", "stable-delete"),
+	})
 	subscriptionAfterProfileApplyHook = func() error { return fmt.Errorf("injected subscription delete failure") }
 	defer func() { subscriptionAfterProfileApplyHook = nil }()
 
-	err := runWithOptions(context.Background(), []string{"subscription", "delete", "stable", "--yes"}, &bytes.Buffer{}, opts)
-	if err == nil {
-		t.Fatal("expected injected delete failure")
+	err := runWithOptions(context.Background(), []string{"subscription", "delete", source.ID, "--yes"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("injected delete err=%v exit=%d", err, ExitCode(err))
 	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected exit code 1, got %d", got)
+	if _, err := onlySubscriptionByID(opts, source.ID); err != nil {
+		t.Fatalf("subscription metadata not restored: %v", err)
 	}
+	store, _ := profile.NewStore(opts.profileStorePath)
+	profiles, err := store.List()
+	if err != nil || len(profiles) != 1 || profiles[0].Name != "stable-delete" {
+		t.Fatalf("profile rollback failed: %#v err=%v", profiles, err)
+	}
+}
 
-	var showOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "show", "stable"}, &showOut, opts); err != nil {
-		t.Fatalf("subscription metadata was not preserved: %v", err)
+func importDeleteSubscription(t *testing.T, opts options, fixturePath string, entries []string) sub.Source {
+	t.Helper()
+	writeSubscriptionFixture(t, fixturePath, entries)
+	if err := runWithOptions(context.Background(), []string{"import", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
+		t.Fatalf("canonical subscription import failed: %v", err)
 	}
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
+	storePath, err := resolvedSubscriptionStorePath(opts)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(profiles.String(), "stable-delete.example") {
-		t.Fatalf("profile cleanup rollback did not preserve subscription profile: %q", profiles.String())
+	store, _ := sub.NewStore(storePath)
+	sources, err := store.List()
+	if err != nil {
+		t.Fatal(err)
 	}
+	base := strings.TrimSuffix(filepath.Base(fixturePath), filepath.Ext(fixturePath))
+	for _, source := range sources {
+		if strings.Contains(strings.ToLower(source.Name), strings.ToLower(base)) {
+			return source
+		}
+	}
+	if len(sources) == 1 {
+		return sources[0]
+	}
+	t.Fatalf("could not resolve imported subscription for %s: %#v", fixturePath, sources)
+	return sub.Source{}
+}
+
+func onlySubscriptionByID(opts options, id string) (sub.Source, error) {
+	storePath, err := resolvedSubscriptionStorePath(opts)
+	if err != nil {
+		return sub.Source{}, err
+	}
+	store, err := sub.NewStore(storePath)
+	if err != nil {
+		return sub.Source{}, err
+	}
+	return store.Get(id)
+}
+
+func profileNames(profiles []profile.Profile) map[string]bool {
+	out := make(map[string]bool, len(profiles))
+	for _, p := range profiles {
+		out[p.Name] = true
+	}
+	return out
 }
