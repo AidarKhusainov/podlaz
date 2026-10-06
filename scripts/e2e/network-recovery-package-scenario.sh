@@ -860,7 +860,7 @@ run_historical_upgrade_terminal() {
   write_evidence historical_upgrade_terminal_cleanup
 
   recover_json="$(mktemp "${E2E_TMP_ROOT}/network-recovery-clean.XXXXXX")"
-  run_installed_podlaz recover --json >"${recover_json}"
+  run_installed_podlaz debug recover --json >"${recover_json}"
   assert_clean_recovery_json_file "${recover_json}"
   rm -f -- "${recover_json}"
   write_evidence historical_upgrade_recovery_clean
