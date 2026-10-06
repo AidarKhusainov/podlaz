@@ -46,7 +46,7 @@ func runRecoverCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		fmt.Fprint(stdout, plan.String())
 		return nil
 	}
- 	result, err := runRecoverExecute(ctx, opts)
+	result, err := runRecoverExecute(ctx, opts)
 	if err != nil {
 		return lifecycleCommandError(err)
 	}
@@ -72,13 +72,13 @@ func parseRecoverArgs(args []string) (recoverArgs, error) {
 		switch arg {
 		case "--execute":
 			parsed.execute = true
- 		case "--json":
+		case "--json":
 			parsed.json = true
 		default:
 			return parsed, usageError("unsupported recover argument %q", arg)
 		}
 	}
- 	return parsed, nil
+	return parsed, nil
 }
 
 func isStdinTerminal() bool {
