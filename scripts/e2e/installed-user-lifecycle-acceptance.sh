@@ -187,7 +187,7 @@ assert_connected_proxy() {
     run_user_podlaz 20s status >"${output}" 2>&1
     code=$?
     set -e
-    if [[ "${code}" == "0" ]] && grep -Fx 'Status: Connected' "${output}" >/dev/null && grep -Fx 'Mode: proxy-only' "${output}" >/dev/null; then
+    if [[ "${code}" == "0" ]] && grep -Fx 'Status: Connected' "${output}" >/dev/null && grep -Fx 'Protection: Proxy only' "${output}" >/dev/null; then
       rm -f -- "${output}"
       return 0
     fi
