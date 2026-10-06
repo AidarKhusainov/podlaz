@@ -295,7 +295,7 @@ func profilesFromXrayVLESSOutbound(outbound xrayOutbound) ([]Profile, []string, 
 		if len(server.Users) == 0 {
 			return nil, nil, fmt.Errorf("VLESS vnext %d: users must contain at least one user", serverIndex+1)
 		}
-		name, acceptedName := ProviderProfileDisplayName(outbound.Tag, "vless", host, port)
+		name, acceptedName := ProviderProfileDisplayName(outbound.Tag, "vless")
 		if strings.TrimSpace(outbound.Tag) != "" && !acceptedName && !warnedRejectedName {
 			warnings = append(warnings, DisplayNameRejectedWarning)
 			warnedRejectedName = true
