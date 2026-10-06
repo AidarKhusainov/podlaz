@@ -113,7 +113,7 @@ func ImportVMessURI(raw string) (Profile, []string, error) {
 		encryption = "auto"
 	}
 	warnings := vmessWarnings(share)
-	name, acceptedName := ProviderProfileDisplayName(share.Name, "vmess", host, port)
+	name, acceptedName := ProviderProfileDisplayName(share.Name, "vmess")
 	if strings.TrimSpace(share.Name) != "" && !acceptedName {
 		warnings = append(warnings, DisplayNameRejectedWarning)
 	}
@@ -247,7 +247,7 @@ func ImportShadowsocksURI(raw string) (Profile, []string, error) {
 	if !supportedShadowsocksMethod(method) {
 		warnings = append(warnings, fmt.Sprintf("Shadowsocks method %q is preserved but may be unsupported by the configured Xray build", method))
 	}
-	name, acceptedName := ProviderProfileDisplayName(u.Fragment, "shadowsocks", host, port)
+	name, acceptedName := ProviderProfileDisplayName(u.Fragment, "shadowsocks")
 	if strings.TrimSpace(u.Fragment) != "" && !acceptedName {
 		warnings = append(warnings, DisplayNameRejectedWarning)
 	}
@@ -378,7 +378,7 @@ func profileFromURIQuery(protocol string, u *url.URL, host string, port uint16, 
 	if err != nil {
 		return Profile{}, false, err
 	}
-	name, acceptedName := ProviderProfileDisplayName(u.Fragment, protocol, host, port)
+	name, acceptedName := ProviderProfileDisplayName(u.Fragment, protocol)
 	return Profile{
 		Name:         name,
 		Source:       SourceImportedURI,
