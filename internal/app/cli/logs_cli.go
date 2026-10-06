@@ -46,7 +46,7 @@ func parseLogsArgs(args []string) (logs.Options, error) {
 				return opts, usageError("logs --since requires a value")
 			}
 			opts.Since = args[i]
- 		default:
+		default:
 			return opts, usageError("unsupported logs argument %q", arg)
 		}
 	}
