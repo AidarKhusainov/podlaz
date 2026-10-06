@@ -51,7 +51,7 @@ verify_package_and_ordinary_identity() {
 assert_recovery_clean() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/remote-client-recover.XXXXXX")"
-  if ! run_ordinary_podlaz 20s recover --json >"${output}" 2>/dev/null; then
+  if ! run_ordinary_podlaz 20s debug recover --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "read-only recovery inspection failed"
   fi
@@ -73,7 +73,7 @@ assert_status_and_doctor() {
   grep -Fx 'Autostart: Disabled' "${status_output}" >/dev/null || fail "ordinary-user status reports unexpected autostart state"
 
   set +e
-  run_ordinary_podlaz 30s doctor >"${doctor_output}" 2>&1
+  run_ordinary_podlaz 30s debug doctor >"${doctor_output}" 2>&1
   doctor_code=$?
   set -e
   if [[ "${doctor_code}" != "0" && "${doctor_code}" != "3" ]]; then
