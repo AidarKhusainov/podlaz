@@ -97,13 +97,15 @@ capture_secret_import() {
   local uri="$1" out err
   out="$(mktemp "${E2E_TMP_ROOT}/profile-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/profile-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+  if ! run_installed_podlaz import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
+  grep -F 'Next: podlaz connect' "${out}" >/dev/null || {
+    rm -f -- "${out}" "${err}"
+    fail "single-profile import did not establish selected user intent"
+  }
   rm -f -- "${out}" "${err}"
-  assert_nonempty "${PROFILE_ID}" "imported profile id"
   write_evidence acceptance.txt profile_import pass
 }
 
@@ -232,7 +234,7 @@ assert_podlaz_resources_absent() {
 assert_no_recovery_candidates() {
   local phase="$1" output
   output="$(mktemp "${E2E_TMP_ROOT}/recover.XXXXXX")"
-  run_installed_podlaz recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
+  run_installed_podlaz debug recover --json >"${output}" 2>/dev/null || fail "${phase}: recovery inspection failed"
   python3 - "${output}" <<'PY'
 import json
 import sys
@@ -350,7 +352,7 @@ run_foreign_address_conflict_probe() {
   sudo -n ip address add "${TUN_PACKAGE_ADDRESS_CIDR}" dev "${FOREIGN_ADDRESS_LINK}"
   snapshot_tun_network_manifest foreign-address-conflict "${network_manifest}"
   set +e
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${output}" 2>&1
+  run_installed_podlaz connect >"${output}" 2>&1
   local code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "foreign-address-conflict: connect unexpectedly succeeded"
@@ -367,7 +369,7 @@ run_inactive_scope_probe() {
   network_manifest="${E2E_TMP_ROOT}/inactive-scope-network-manifest.json"
   configure_hook dns-inactive-scope
   tmp="$(mktemp "${E2E_TMP_ROOT}/inactive-scope-connect.XXXXXX")"
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${tmp}" 2>&1 || fail "Current Scopes: none package connect failed"
+  run_installed_podlaz connect >"${tmp}" 2>&1 || fail "Current Scopes: none package connect failed"
   assert_tun_package_address_present inactive-scope
   verify_tun_scoped_dns_query inactive-scope
   events="${E2E_ARTIFACT_DIR}/inactive-scope-events.log"
@@ -395,7 +397,7 @@ run_missing_link_probe() {
   network_manifest="${E2E_TMP_ROOT}/missing-link-network-manifest.json"
   retry_manifest="${E2E_TMP_ROOT}/retry-network-manifest.json"
   configure_hook dns-missing-link-rollback
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${E2E_TMP_ROOT}/missing-link-connect.stdout" 2>"${E2E_TMP_ROOT}/missing-link-connect.stderr" &
+  run_installed_podlaz connect >"${E2E_TMP_ROOT}/missing-link-connect.stdout" 2>"${E2E_TMP_ROOT}/missing-link-connect.stderr" &
   CONNECT_PID=$!
   CONNECT_START_TIME="$(process_start_time "${CONNECT_PID}")"
   [[ -n "${CONNECT_START_TIME}" ]] || fail "failed to record connect process identity"
@@ -453,7 +455,7 @@ run_missing_link_probe() {
   wait_for_daemon_socket "${DAEMON_SOCKET}" 15
   doctor_output="$(mktemp "${E2E_TMP_ROOT}/historical-doctor.XXXXXX")"
   set +e
-  run_installed_podlaz doctor --tun --json >"${doctor_output}" 2>/dev/null
+  run_installed_podlaz debug doctor --tun --json >"${doctor_output}" 2>/dev/null
   DOCTOR_CODE=$?
   set -e
   [[ "${DOCTOR_CODE}" == "3" ]] || fail "historical doctor returned unexpected exit code"
@@ -464,7 +466,7 @@ run_missing_link_probe() {
   assert_podlaz_resources_absent missing-link "${network_manifest}"
   assert_foreign_state missing-link
 
-  run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "immediate retry connect failed"
+  run_installed_podlaz connect >/dev/null 2>&1 || fail "immediate retry connect failed"
   assert_tun_package_address_present retry
   verify_tun_scoped_dns_query retry
   snapshot_tun_network_manifest retry "${retry_manifest}"

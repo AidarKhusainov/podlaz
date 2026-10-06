@@ -37,9 +37,9 @@ type tunFailureDiagnosticError struct {
 
 func (e tunFailureDiagnosticError) Error() string {
 	if e.cause == nil {
-		return e.summary.String()
+		return "Unable to connect.\n\nPodlaz could not verify the VPN connection.\n\nRun:\n  podlaz debug doctor --tun"
 	}
-	return fmt.Sprintf("%v; %s", e.cause, e.summary.String())
+	return e.cause.Error()
 }
 
 func (e tunFailureDiagnosticError) Unwrap() error { return e.cause }

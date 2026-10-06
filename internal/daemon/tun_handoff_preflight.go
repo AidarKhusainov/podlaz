@@ -100,28 +100,13 @@ type tunHandoffBlocker struct {
 }
 
 func (e *tunHandoffBlocker) Error() string {
-	if e == nil {
-		return "podlaz: TUN handoff blocked"
-	}
-	conflicts := e.Conflicts
-	if len(conflicts) == 0 {
-		conflicts = []string{"TUN lifecycle preflight could not prove a safe operation"}
-	}
-	next := strings.TrimSpace(e.NextStep)
-	if next == "" {
-		next = "Resolve the reported Podlaz lifecycle condition and retry."
-	}
-	return fmt.Sprintf(`podlaz: TUN handoff blocked before network mutation.
+	return `Unable to connect.
 
-Detected:
-  - %s
-
-Policy: %s
-podlaz did not change network state.
-Next step: %s
+Podlaz found network state it cannot safely replace.
+No new VPN connection was started.
 
 Run:
-  plz doctor`, strings.Join(conflicts, "\n  - "), fallbackUnknown(e.Policy), next)
+  podlaz debug doctor --tun`
 }
 
 type tunStalePodlazStateBlocker struct {
@@ -130,29 +115,22 @@ type tunStalePodlazStateBlocker struct {
 }
 
 func (e *tunStalePodlazStateBlocker) Error() string {
-	if e == nil || len(e.Resources) == 0 {
-		return "podlaz: stale podlaz-owned networking state blocks TUN connect"
-	}
-	if staleResourcesContainRouting(e.Resources) && !e.RoutingRecoveryAvailable {
-		return fmt.Sprintf(`podlaz: ambiguous stale routing state blocks TUN connect before network mutation.
+	if e != nil && staleResourcesContainRouting(e.Resources) && !e.RoutingRecoveryAvailable {
+		return `Unable to connect.
 
-Detected:
-  - %s
-
-The remaining policy-rule/route shape matches Podlaz's historical routing layout, but exact durable rollback ownership evidence is unavailable for every observed routing object. Recovery cannot safely delete unmatched kernel objects from historical priorities/table numbers alone.
-
-Next step: run plz doctor and inspect the reported rules/routes as administrator. Remove them manually only after independently proving ownership, then retry connect.`, strings.Join(e.Resources, "\n  - "))
-	}
-	return fmt.Sprintf(`podlaz: stale podlaz-owned networking state blocks TUN connect.
-
-Detected:
-  - %s
-
-podlaz did not change network state.
-Run daemon-owned recovery first, then retry connect.
+Podlaz found stale routing state it cannot safely prove it owns.
+No new VPN connection was started.
 
 Run:
-  plz recover --execute --yes`, strings.Join(e.Resources, "\n  - "))
+  podlaz debug doctor --tun`
+	}
+	return `Unable to connect.
+
+Podlaz found recovery state that did not converge automatically.
+No new VPN connection was started.
+
+Run:
+  podlaz debug recover`
 }
 
 func staleResourcesContainRouting(resources []string) bool {

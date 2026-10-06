@@ -95,8 +95,14 @@ func TestFullTunnelTransactionRunnerCapturesNetworkFailureDiagnosticsBeforeRollb
 			if phase, _, rollback := tunFailureLogFields(err); phase != tt.phase || rollback != "completed" {
 				t.Fatalf("unexpected lifecycle failure metadata: phase=%q rollback=%q err=%v", phase, rollback, err)
 			}
-			if !strings.Contains(err.Error(), "dns_apply_failure") || !strings.Contains(err.Error(), "doctor --tun") {
-				t.Fatalf("network failure must include classification and doctor guidance: %v", err)
+			classification, reportPath := tunFailureDiagnosticLogFields(err)
+			if classification != string(tundiag.ClassDNSApplyFailure) || reportPath != "/run/podlaz/diagnostics/tun-last.json" {
+				t.Fatalf("diagnostic log evidence lost: classification=%q report=%q err=%v", classification, reportPath, err)
+			}
+			for _, forbidden := range []string{"dns_apply_failure", "/run/podlaz/diagnostics/tun-last.json", "TUN diagnostics:"} {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Fatalf("normal network failure leaked diagnostic evidence %q: %v", forbidden, err)
+				}
 			}
 			summaries, warnings := transactionStatuses(runtimeDir)
 			if len(warnings) != 0 || len(summaries) != 0 {
