@@ -138,7 +138,7 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 		if m.state.Connection == "active" && m.state.Mode == planner.ModeTun {
 			m.mu.Unlock()
 			if transactionID == "" {
-				return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz recover")
+				return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz debug recover")
 			}
 			return m.disconnectTun(ctx, transactionID)
 		}
@@ -150,7 +150,7 @@ func (m *XrayManager) Disconnect(ctx context.Context) (api.LifecycleResponse, er
 	if mode == planner.ModeTun {
 		m.mu.Unlock()
 		if transactionID == "" {
-			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz recover")
+			return api.LifecycleResponse{}, errors.New("active TUN connection has no transaction id; run podlaz debug recover")
 		}
 		return m.disconnectActiveTun(ctx, transactionID, cmd, done, configPath)
 	}
