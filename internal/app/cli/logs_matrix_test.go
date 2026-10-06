@@ -15,13 +15,13 @@ func TestRunCLILogsParsesSupportedFlags(t *testing.T) {
 		args []string
 		want logs.Options
 	}{
-		{name: "daemon", args: []string{"logs", "--daemon"}, want: logs.Options{}},
-		{name: "core", args: []string{"logs", "--core"}, want: logs.Options{Core: true}},
-		{name: "since-inline", args: []string{"logs", "--since=1m"}, want: logs.Options{Since: "1m"}},
-		{name: "since-separate", args: []string{"logs", "--since", "1m"}, want: logs.Options{Since: "1m"}},
-		{name: "follow-short", args: []string{"logs", "-f"}, want: logs.Options{Follow: true}},
-		{name: "follow-long", args: []string{"logs", "--follow"}, want: logs.Options{Follow: true}},
-		{name: "combined", args: []string{"logs", "--core", "--since=1m", "--follow"}, want: logs.Options{Core: true, Since: "1m", Follow: true}},
+		{name: "daemon", args: []string{"debug", "logs", "--daemon"}, want: logs.Options{}},
+		{name: "core", args: []string{"debug", "logs", "--core"}, want: logs.Options{Core: true}},
+		{name: "since-inline", args: []string{"debug", "logs", "--since=1m"}, want: logs.Options{Since: "1m"}},
+		{name: "since-separate", args: []string{"debug", "logs", "--since", "1m"}, want: logs.Options{Since: "1m"}},
+		{name: "follow-short", args: []string{"debug", "logs", "-f"}, want: logs.Options{Follow: true}},
+		{name: "follow-long", args: []string{"debug", "logs", "--follow"}, want: logs.Options{Follow: true}},
+		{name: "combined", args: []string{"debug", "logs", "--core", "--since=1m", "--follow"}, want: logs.Options{Core: true, Since: "1m", Follow: true}},
 	}
 
 	for _, tt := range tests {
