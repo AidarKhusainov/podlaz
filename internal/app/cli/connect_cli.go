@@ -74,7 +74,7 @@ func runProxyConnectCommand(ctx context.Context, args []string, stdout io.Writer
 	if err := validateConnectProfile(p, planner.ModeProxyOnly); err != nil {
 		return err
 	}
-	response, err := runConnectWithHandoff(ctx, p, planner.ModeProxyOnly, api.HandoffBlock, opts)
+	_, err = runConnectWithHandoff(ctx, p, planner.ModeProxyOnly, api.HandoffBlock, opts)
 	if err != nil {
 		return lifecycleCommandError(err)
 	}
