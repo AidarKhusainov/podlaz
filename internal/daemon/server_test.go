@@ -176,7 +176,7 @@ func TestServerStartupScanReportsStaleOwnedResource(t *testing.T) {
 		t.Fatalf("expected generated runtime startup candidate, got %#v", status.StartupScan.Candidates)
 	}
 	check := findDoctorCheck(report.Checks, "startup-recovery-scan")
-	if check == nil || check.Severity != "WARN" || !strings.Contains(check.Message, "suggested action: podlaz recover") {
+	if check == nil || check.Severity != "WARN" || !strings.Contains(check.Message, "suggested action: podlaz debug recover") {
 		t.Fatalf("expected warning startup doctor check with recovery guidance, got %#v", check)
 	}
 }
