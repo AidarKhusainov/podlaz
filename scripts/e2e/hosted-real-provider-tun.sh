@@ -69,7 +69,6 @@ XRAY_PID=""
 CANDIDATE_DEB=""
 CANDIDATE_SHA256=""
 PROFILE_URI=""
-PROFILE_ID=""
 ORDINARY_EGRESS=""
 ACTIVE_EGRESS=""
 PROBE_IP=""
@@ -273,27 +272,14 @@ import_provider_profile() {
     XDG_CONFIG_HOME="${GUEST_XDG}/config" \
     XDG_STATE_HOME="${GUEST_XDG}/state" \
     XDG_CACHE_HOME="${GUEST_XDG}/cache" \
-    /bin/bash -lc "uri=\$(cat '${GUEST_PROVIDER_DIR}/profile-uri'); exec /usr/bin/podlaz profile import \"\${uri}\"" \
+    /bin/bash -lc "uri=\$(cat '${GUEST_PROVIDER_DIR}/profile-uri'); exec /usr/bin/podlaz import \"\${uri}\"" \
     >"${import_stdout}" 2>"${import_stderr}"
   local code=$?
   set -e
   (( code == 0 )) || return 1
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3; exit}' "${import_stdout}")"
-  [[ -n "${PROFILE_ID}" && "${PROFILE_ID}" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
-  mask_value "${PROFILE_ID}"
-  printf '%s\n' "${PROFILE_ID}" >"${PRIVATE_ROOT}/profile-id"
-  chmod 0600 "${PRIVATE_ROOT}/profile-id"
-  sudo -n machinectl copy-to "${MACHINE}" "${PRIVATE_ROOT}/profile-id" "${GUEST_PRIVATE}/profile-id" >/dev/null
-  guest_exec chown e2e:e2e "${GUEST_PRIVATE}/profile-id"
-  guest_exec chmod 0600 "${GUEST_PRIVATE}/profile-id"
-  rm -f -- "${PRIVATE_ROOT}/profile-id"
+  grep -F 'Next: podlaz connect' "${import_stdout}" >/dev/null || return 1
   guest_exec rm -rf "${GUEST_PROVIDER_DIR}"
   PROFILE_URI=""
-
-  run_guest_user /usr/bin/podlaz profile validate "${PROFILE_ID}" --mode tun \
-    >"${PRIVATE_ROOT}/profile-validate.stdout" 2>"${PRIVATE_ROOT}/profile-validate.stderr"
-  run_guest_user /usr/bin/podlaz plan --mode tun "${PROFILE_ID}" \
-    >"${PRIVATE_ROOT}/tun-plan.stdout" 2>"${PRIVATE_ROOT}/tun-plan.stderr"
 }
 
 capture_ordinary_egress() {
@@ -412,7 +398,7 @@ run_provider_scenario() {
   mark_failure diagnostic_unknown provider_tun.connect
   local connect_code
   set +e
-  run_guest_user /usr/bin/podlaz connect --mode tun "${PROFILE_ID}" \
+  run_guest_user /usr/bin/podlaz connect \
     >"${PRIVATE_ROOT}/tun-connect.stdout" 2>"${PRIVATE_ROOT}/tun-connect.stderr"
   connect_code=$?
   set -e
