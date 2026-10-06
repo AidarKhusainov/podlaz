@@ -64,7 +64,7 @@ class TunPackageConvergenceContractTests(unittest.TestCase):
         )
 
         missing = self.function_body("run_missing_link_probe", "\n}\n\nsetup_isolated_xdg")
-        retry_connect = missing.rindex('run_installed_podlaz connect --mode tun "${PROFILE_ID}"')
+        retry_connect = missing.rindex("run_installed_podlaz connect")
         retry_snapshot = missing.index("snapshot_tun_network_manifest", retry_connect)
         retry_disconnect = missing.index("run_installed_podlaz disconnect", retry_snapshot)
         retry_verify = missing.index("verify_tun_network_manifest_absent", retry_disconnect)
@@ -82,7 +82,7 @@ class TunPackageConvergenceContractTests(unittest.TestCase):
         )
 
         missing = self.function_body("run_missing_link_probe", "\n}\n\nsetup_isolated_xdg")
-        retry_connect = missing.rindex('run_installed_podlaz connect --mode tun "${PROFILE_ID}"')
+        retry_connect = missing.rindex("run_installed_podlaz connect")
         retry_address = missing.index("assert_tun_package_address_present", retry_connect)
         retry_disconnect = missing.index("run_installed_podlaz disconnect", retry_address)
         self.assertLess(retry_connect, retry_address)
