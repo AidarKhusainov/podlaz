@@ -56,7 +56,7 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
 
     def test_post_convergence_diagnostics_are_daemon_backed_and_forget_terminal_failure(self) -> None:
         body = self.function_body("assert_post_convergence_diagnostics", "\n}\n\nassert_v0240_stranded_shape")
-        self.assertIn('run_client doctor', body)
+        self.assertIn('run_client debug doctor', body)
         self.assertIn('Source: daemon', body)
         self.assertIn('run_client status', body)
         self.assertIn('Status: Disconnected', body)
@@ -184,7 +184,7 @@ class TunTerminalRecoveryContractTests(unittest.TestCase):
         self.assertLess(historical, classify)
         self.assertIn("check_https_and_dns package-restart-resumed-vpn", flow)
         self.assertIn("check_https_and_dns package-restart-terminal-ordinary", flow)
-        self.assertIn('run_client recover --execute --yes', flow)
+        self.assertIn('run_client debug recover --execute', flow)
         self.assertIn("assert_terminal_clean package-restart-first-recovery", flow)
         self.assertIn("assert_terminal_clean package-restart-second-recovery", flow)
         clean = self.function_body("assert_terminal_clean", "\n}\n\ncleanup", text)
