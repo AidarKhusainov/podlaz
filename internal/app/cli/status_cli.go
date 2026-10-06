@@ -8,6 +8,7 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
@@ -21,6 +22,11 @@ func runStatusCommand(ctx context.Context, args []string, stdout io.Writer, opts
 	}
 
 	report, terminalReason := runProductStatus(ctx, opts)
+	if report.ProfileName == "" {
+		if selected, err := selectedProfileForStatus(opts); err == nil {
+			report.ProfileName = selected.Name
+		}
+	}
 	autostart := productAutostartStatus(ctx, opts)
 	fmt.Fprint(stdout, report.ProductView(autostart, terminalReason).String())
 	if statusCommandShouldFail(report) {
@@ -121,4 +127,12 @@ func statusReportFromDaemonResponse(response api.StatusResponse) status.Report {
 
 func statusCommandShouldFail(report status.Report) bool {
 	return report.Health() == status.LifecycleHealthUnhealthy || report.HasUnhealthyState() || report.HasTerminalCleanup()
+}
+
+func selectedProfileForStatus(opts options) (profile.Profile, error) {
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		return profile.Profile{}, err
+	}
+	return store.ResolveSelected()
 }
