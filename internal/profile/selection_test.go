@@ -175,6 +175,32 @@ func TestStoreDeleteSelectedProfileClearsSelectionAtomically(t *testing.T) {
 	}
 }
 
+
+func TestStoreAddProfilesClearsStaleSelectionBeforeImport(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "profiles.json"))
+	existing := NewManual("Existing", "existing.example", 443, "vless")
+	existing.ID = "existing"
+	if err := store.saveState(storeFile{
+		SchemaVersion:     "v1",
+		Profiles:          []Profile{existing},
+		SelectedProfileID: "future-import-id",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	imported := NewManual("Imported", "imported.example", 443, "vless")
+	imported.ID = "future-import-id"
+	if err := store.AddProfiles([]Profile{imported}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SelectedProfileID != "" {
+		t.Fatalf("stale selection resurrected after import: %q", state.SelectedProfileID)
+	}
+}
+
 func TestStoreSubscriptionRemovalClearsSelectedStableID(t *testing.T) {
 	store, _ := NewStore(filepath.Join(t.TempDir(), "profiles.json"))
 	p := subscriptionProfile("sub-a", "sub.example")
