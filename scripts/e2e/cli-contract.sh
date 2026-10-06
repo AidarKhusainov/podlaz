@@ -39,180 +39,139 @@ expect_logs_follow_timeout() {
   expect_exit 124 "${name}" timeout --kill-after=2 3 env \
     "PATH=${FAKE_JOURNALCTL_DIR}:${PATH}" \
     "PODLAZ_FAKE_JOURNALCTL_ARGS=${FAKE_JOURNALCTL_ARGS}" \
-    "${PODLAZ[@]}" logs "$@"
+    "${PODLAZ[@]}" debug logs "$@"
   assert_contains "${LAST_STDOUT}" "podlaz daemon logs"
   assert_contains "${LAST_STDOUT}" "podlazd.service: fake follow line"
   assert_contains "${FAKE_JOURNALCTL_ARGS}" "--follow"
 }
 
-cat >"${FIXTURES}/xray-vless.json" <<'JSON'
-{
-  "outbounds": [
-    {
-      "tag": "json-cli",
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "address": "json.example.com",
-            "port": 443,
-            "users": [
-              {"id": "00000000-0000-0000-0000-000000000006", "encryption": "none", "flow": "xtls-rprx-vision"}
-            ]
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "serverName": "json.example.com",
-          "fingerprint": "chrome",
-          "publicKey": "public-key",
-          "shortId": "abcd",
-          "spiderX": "/"
-        }
-      }
-    }
-  ]
-}
-JSON
 printf '%s\nhysteria2://unsupported.example\n' "${LOCAL_URI}" >"${FIXTURES}/profiles.txt"
 printf '%s\n' "${LOCAL_B64_URI}" | base64 -w0 >"${FIXTURES}/profiles.base64"
 printf '%s\n' "${SUB_URI}" | base64 -w0 >"${FIXTURES}/subscription.txt"
 printf '{"outbounds":' >"${FIXTURES}/broken.json"
 printf '%s\n%s\n' "${LOCAL_URI}" "${LOCAL_URI}" >"${FIXTURES}/duplicates.txt"
 
-log "global help and version"
+log "primary help and version"
 expect_success root-help "${PODLAZ[@]}" --help
+for want in "podlaz import" "podlaz connect" "podlaz status" "podlaz disconnect" "podlaz debug"; do
+  assert_contains "${LAST_STDOUT}" "${want}"
+done
+for forbidden in "podlaz plan" "podlaz check" "podlaz recover" "podlaz doctor" "podlaz logs" "--mode" "--handoff"; do
+  assert_not_contains "${LAST_STDOUT}" "${forbidden}"
+done
 expect_success help "${PODLAZ[@]}" help
 expect_success version "${PODLAZ[@]}" version
 expect_success version-help "${PODLAZ[@]}" version --help
 expect_exit 2 version-extra "${PODLAZ[@]}" version extra
 expect_exit 2 unknown-command "${PODLAZ[@]}" definitely-not-a-command
 
-for command in profile subscription import plan connect disconnect status doctor logs recover completion; do
+for command in profile subscription import connect disconnect status autostart debug completion; do
   expect_success "help-${command}" "${PODLAZ[@]}" help "${command}"
+done
+for removed in plan check doctor logs recover; do
+  expect_exit 2 "removed-help-${removed}" "${PODLAZ[@]}" help "${removed}"
+  expect_exit 2 "removed-command-${removed}" "${PODLAZ[@]}" "${removed}" --help
 done
 
 log "completion command"
-expect_success completion-bash "${PODLAZ[@]}" completion bash
-expect_success completion-zsh "${PODLAZ[@]}" completion zsh
-expect_success completion-fish "${PODLAZ[@]}" completion fish
-expect_success completion-bash-help "${PODLAZ[@]}" completion --help
+for shell in bash zsh fish; do
+  expect_success "completion-${shell}" "${PODLAZ[@]}" completion "${shell}"
+done
+expect_success completion-help "${PODLAZ[@]}" completion --help
 expect_exit 2 completion-unsupported-shell "${PODLAZ[@]}" completion powershell
 
-log "profile command"
-expect_success profile-help-long "${PODLAZ[@]}" profile --help
-expect_success profile-help-short "${PODLAZ[@]}" profile -h
-expect_success profile-add-manual "${PODLAZ[@]}" profile add --name manual-vless --server example.com --port 443 --protocol vless
-assert_contains "${LAST_STDOUT}" "Profile added: manual-vless"
-expect_success profile-add-inline-flags "${PODLAZ[@]}" profile add --name=manual-vmess --server=vmess.example.com --port=443 --protocol=vmess
-expect_exit 2 profile-add-json-deferred "${PODLAZ[@]}" profile add --json --name bad --server example.com --port 443 --protocol vless
-expect_exit 2 profile-add-invalid-port "${PODLAZ[@]}" profile add --name bad-port --server example.com --port 0 --protocol vless
-expect_exit 2 profile-add-invalid-protocol "${PODLAZ[@]}" profile add --name bad-protocol --server example.com --port 443 --protocol hysteria2
-expect_success profile-list "${PODLAZ[@]}" profile list
-assert_contains "${LAST_STDOUT}" "manual-vless"
-expect_success profile-list-json "${PODLAZ[@]}" profile list --json
-assert_json_file "${LAST_STDOUT}"
-expect_success profile-show "${PODLAZ[@]}" profile show manual-vless
-assert_contains "${LAST_STDOUT}" "Name: manual-vless"
-expect_success profile-show-json "${PODLAZ[@]}" profile show manual-vless --json
-assert_json_file "${LAST_STDOUT}"
-expect_exit 3 profile-validate-manual-not-renderable "${PODLAZ[@]}" profile validate manual-vless
-expect_exit 3 profile-validate-manual-tun-not-renderable "${PODLAZ[@]}" profile validate manual-vless --mode tun
-expect_exit 2 profile-validate-invalid-mode "${PODLAZ[@]}" profile validate manual-vless --mode wireguard
-expect_exit 1 profile-validate-missing-profile "${PODLAZ[@]}" profile validate missing-profile
-expect_exit 2 profile-delete-without-yes "${PODLAZ[@]}" profile delete manual-vmess
-expect_exit 2 profile-delete-json-deferred "${PODLAZ[@]}" profile delete manual-vmess --json --yes
-expect_success profile-delete "${PODLAZ[@]}" profile delete manual-vmess --yes
-
-expect_success profile-import-valid "${PODLAZ[@]}" profile import "${VALID_PROFILE_URI}"
-PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
-assert_nonempty "${PROFILE_ID}" "imported profile id"
+log "canonical import and profile selection"
+expect_success import-share "${PODLAZ[@]}" import "${VALID_PROFILE_URI}"
+assert_contains "${LAST_STDOUT}" "Imported 1 profile"
+assert_contains "${LAST_STDOUT}" "Profile: e2e-valid"
+assert_contains "${LAST_STDOUT}" "Next: podlaz connect"
 assert_not_contains "${LAST_STDOUT}" "00000000-0000-0000-0000-000000000002"
-expect_exit 2 profile-import-json-deferred "${PODLAZ[@]}" profile import --json "${VALID_PROFILE_URI}"
-expect_success profile-validate-imported "${PODLAZ[@]}" profile validate "${PROFILE_ID}"
-expect_success profile-validate-imported-json "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --json
-assert_json_file "${LAST_STDOUT}"
-expect_success profile-validate-imported-tun "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode tun
 
-log "import convenience command"
-expect_success import-help "${PODLAZ[@]}" import --help
-expect_success import-local-xray-json "${PODLAZ[@]}" import "${FIXTURES}/xray-vless.json"
-assert_contains "${LAST_STDOUT}" "Format: xray-json"
-assert_not_contains "${LAST_STDOUT}" "00000000-0000-0000-0000-000000000006"
+expect_success profile-list "${PODLAZ[@]}" profile list
+assert_contains "${LAST_STDOUT}" "e2e-valid"
+assert_contains "${LAST_STDOUT}" "*"
+assert_not_contains "${LAST_STDOUT}" "example.net"
+assert_not_contains "${LAST_STDOUT}" "00000000-0000-0000-0000-000000000002"
+
+expect_success profile-show-name "${PODLAZ[@]}" profile show E2E-VALID
+assert_contains "${LAST_STDOUT}" "Name: e2e-valid"
+assert_not_contains "${LAST_STDOUT}" "00000000-0000-0000-0000-000000000002"
+expect_success profile-use "${PODLAZ[@]}" profile use e2e-valid
+assert_contains "${LAST_STDOUT}" "Selected profile: e2e-valid"
+
+for args in \
+  "profile add --name old" \
+  "profile import ${VALID_PROFILE_URI}" \
+  "profile validate e2e-valid" \
+  "profile list --json" \
+  "profile show e2e-valid --json"; do
+  # shellcheck disable=SC2086
+  expect_exit 2 "removed-${args// /-}" "${PODLAZ[@]}" ${args}
+done
+
+log "unified local import"
 expect_success import-local-uri-list "${PODLAZ[@]}" import "${FIXTURES}/profiles.txt"
-assert_contains "${LAST_STDOUT}" "Format: uri-list"
-assert_contains "${LAST_STDOUT}" "Skipped: 1"
-expect_success import-local-base64-uri-list "${PODLAZ[@]}" import "${FIXTURES}/profiles.base64"
-assert_contains "${LAST_STDOUT}" "Format: base64-uri-list"
+assert_contains "${LAST_STDOUT}" "Imported 1 profile"
+assert_contains "${LAST_STDOUT}" "Skipped unsupported entries: 1"
+expect_success import-local-base64 "${PODLAZ[@]}" import "${FIXTURES}/profiles.base64"
+assert_contains "${LAST_STDOUT}" "Imported 1 profile"
 expect_exit 2 import-malformed-json "${PODLAZ[@]}" import "${FIXTURES}/broken.json"
 expect_exit 2 import-duplicate-atomic "${PODLAZ[@]}" import "${FIXTURES}/duplicates.txt"
-expect_exit 2 import-json-deferred "${PODLAZ[@]}" import --json "${FIXTURES}/profiles.txt"
+expect_exit 2 import-json-removed "${PODLAZ[@]}" import --json "${FIXTURES}/profiles.txt"
 
-log "subscription command"
+log "subscription management after canonical import"
 SUB_URL="file://${FIXTURES}/subscription.txt"
-expect_success subscription-help "${PODLAZ[@]}" subscription --help
-expect_success subscription-add "${PODLAZ[@]}" subscription add --name fixture-sub --url "${SUB_URL}"
-SUB_ID="$(awk '/^Subscription added:/ {print $3}' "${LAST_STDOUT}")"
-assert_nonempty "${SUB_ID}" "subscription id"
-expect_exit 2 subscription-add-json-deferred "${PODLAZ[@]}" subscription add --json --name bad-sub --url "${SUB_URL}"
+expect_success import-subscription "${PODLAZ[@]}" import "${SUB_URL}"
+assert_contains "${LAST_STDOUT}" "Subscription imported"
+assert_contains "${LAST_STDOUT}" "Profiles: 1"
+assert_not_contains "${LAST_STDOUT}" "${SUB_URL}"
+assert_not_contains "${LAST_STDOUT}" "00000000-0000-0000-0000-000000000005"
+
 expect_success subscription-list "${PODLAZ[@]}" subscription list
-assert_contains "${LAST_STDOUT}" "fixture-sub"
-expect_success subscription-list-json "${PODLAZ[@]}" subscription list --json
-assert_json_file "${LAST_STDOUT}"
+SUB_ID="$(awk 'NR == 2 {print $1; exit}' "${LAST_STDOUT}")"
+assert_nonempty "${SUB_ID}" "subscription id"
 expect_success subscription-show "${PODLAZ[@]}" subscription show "${SUB_ID}"
-assert_contains "${LAST_STDOUT}" "URL: REDACTED"
-expect_success subscription-show-json "${PODLAZ[@]}" subscription show "${SUB_ID}" --json
-assert_json_file "${LAST_STDOUT}"
+assert_not_contains "${LAST_STDOUT}" "URL:"
+assert_not_contains "${LAST_STDOUT}" "${SUB_URL}"
 expect_success subscription-update "${PODLAZ[@]}" subscription update "${SUB_ID}"
 assert_contains "${LAST_STDOUT}" "Subscription updated"
-assert_not_contains "${LAST_STDOUT}" "00000000-0000-0000-0000-000000000005"
-expect_exit 2 subscription-update-json-deferred "${PODLAZ[@]}" subscription update "${SUB_ID}" --json
+expect_exit 2 subscription-add-removed "${PODLAZ[@]}" subscription add --name fixture-sub --url "${SUB_URL}"
+expect_exit 2 subscription-list-json-removed "${PODLAZ[@]}" subscription list --json
+expect_exit 2 subscription-show-json-removed "${PODLAZ[@]}" subscription show "${SUB_ID}" --json
 expect_exit 2 subscription-delete-without-yes "${PODLAZ[@]}" subscription delete "${SUB_ID}"
-expect_exit 2 subscription-delete-json-deferred "${PODLAZ[@]}" subscription delete "${SUB_ID}" --json --yes
 expect_success subscription-delete-keep-profiles "${PODLAZ[@]}" subscription delete "${SUB_ID}" --yes --keep-profiles
 
-log "plan command"
-expect_success plan-help "${PODLAZ[@]}" plan --help
-expect_success plan-proxy-only "${PODLAZ[@]}" plan --mode proxy-only "${PROFILE_ID}"
-assert_contains "${LAST_STDOUT}" "Proxy-only plan"
-expect_success plan-proxy-only-json "${PODLAZ[@]}" plan --mode=proxy-only "${PROFILE_ID}" --json
-assert_json_file "${LAST_STDOUT}"
-expect_exit 2 plan-missing-mode "${PODLAZ[@]}" plan "${PROFILE_ID}"
-expect_exit 2 plan-invalid-mode "${PODLAZ[@]}" plan --mode wireguard "${PROFILE_ID}"
-expect_exit 1 plan-missing-profile "${PODLAZ[@]}" plan --mode proxy-only missing-profile
-
-log "daemon-backed command argument gates"
+log "primary lifecycle argument gates"
 expect_success connect-help "${PODLAZ[@]}" connect --help
-expect_exit 2 connect-json-deferred "${PODLAZ[@]}" connect --json "${PROFILE_ID}"
-expect_exit 2 connect-invalid-mode "${PODLAZ[@]}" connect --mode wireguard "${PROFILE_ID}"
-expect_exit 2 connect-missing-profile-arg "${PODLAZ[@]}" connect --mode proxy-only
+expect_exit 2 connect-mode-removed "${PODLAZ[@]}" connect --mode tun e2e-valid
+expect_exit 2 connect-handoff-removed "${PODLAZ[@]}" connect --handoff replace-podlaz e2e-valid
+expect_exit 2 connect-json-removed "${PODLAZ[@]}" connect --json e2e-valid
 expect_success disconnect-help "${PODLAZ[@]}" disconnect --help
-expect_exit 2 disconnect-json-deferred "${PODLAZ[@]}" disconnect --json
 expect_exit 2 disconnect-unsupported-flag "${PODLAZ[@]}" disconnect --force
+expect_success autostart-help "${PODLAZ[@]}" autostart --help
+expect_exit 2 autostart-mode-removed "${PODLAZ[@]}" autostart enable --mode tun e2e-valid
 
-log "status, doctor, logs, and recover"
+log "status and progressive debug surface"
 expect_success status-help "${PODLAZ[@]}" status --help
 expect_exit_in "0 3 5" status-human "${PODLAZ[@]}" status
-expect_exit 2 status-json-deferred "${PODLAZ[@]}" status --json
-expect_success doctor-help "${PODLAZ[@]}" doctor --help
-expect_exit_in "0 3" doctor-human "${PODLAZ[@]}" doctor
-expect_exit 2 doctor-json-deferred "${PODLAZ[@]}" doctor --json
-expect_exit 2 doctor-core-without-xray "${PODLAZ[@]}" doctor --core
-expect_exit 2 doctor-scope-network "${PODLAZ[@]}" doctor --network
-expect_exit 2 doctor-scope-dns "${PODLAZ[@]}" doctor --dns
-expect_exit 2 doctor-scope-routes "${PODLAZ[@]}" doctor --routes
-expect_exit 2 doctor-scope-firewall "${PODLAZ[@]}" doctor --firewall
-expect_exit_in "0 3" doctor-core-xray-json-shape "${PODLAZ[@]}" doctor --core --xray "${PODLAZ_BIN}" --json
-assert_json_file "${LAST_STDOUT}"
-expect_success logs-help "${PODLAZ[@]}" logs --help
-expect_exit 2 logs-json-deferred "${PODLAZ[@]}" logs --json
-expect_exit 2 logs-invalid-since "${PODLAZ[@]}" logs --since
-expect_logs_follow_timeout logs-follow-short-bounded -f
-expect_logs_follow_timeout logs-follow-long-bounded --follow
-expect_success recover-help "${PODLAZ[@]}" recover --help
-expect_exit_in "0 3" recover-dry-run "${PODLAZ[@]}" recover
+expect_exit 2 status-json-removed "${PODLAZ[@]}" status --json
+
+expect_success debug-help "${PODLAZ[@]}" debug --help
+for subcommand in doctor logs proxy recover; do
+  assert_contains "${LAST_STDOUT}" "debug ${subcommand}"
+done
+expect_success debug-doctor-help "${PODLAZ[@]}" debug doctor --help
+expect_exit_in "0 3" debug-doctor-human "${PODLAZ[@]}" debug doctor
+expect_success debug-logs-help "${PODLAZ[@]}" debug logs --help
+expect_exit 2 debug-logs-invalid-since "${PODLAZ[@]}" debug logs --since
+expect_logs_follow_timeout debug-logs-follow-short -f
+expect_logs_follow_timeout debug-logs-follow-long --follow
+expect_success debug-recover-help "${PODLAZ[@]}" debug recover --help
+expect_exit_in "0 3" debug-recover-dry-run "${PODLAZ[@]}" debug recover
+expect_exit 2 debug-recover-yes-removed "${PODLAZ[@]}" debug recover --yes
+
+log "destructive confirmation remains explicit"
+expect_exit 2 profile-delete-noninteractive "${PODLAZ[@]}" profile delete e2e-valid
+expect_success profile-delete-yes "${PODLAZ[@]}" profile delete e2e-valid --yes
 
 log "CLI contract e2e completed"
