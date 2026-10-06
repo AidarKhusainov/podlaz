@@ -129,5 +129,12 @@ func selectedProfileForStatus(opts options) (profile.Profile, error) {
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	return store.ResolveSelected()
+	id, err := store.SelectedID()
+	if err != nil {
+		return profile.Profile{}, err
+	}
+	if id == "" {
+		return profile.Profile{}, profile.ErrNoSelection
+	}
+	return store.Get(id)
 }
