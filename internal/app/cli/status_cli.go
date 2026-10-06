@@ -65,12 +65,7 @@ func productAutostartStatus(ctx context.Context, opts options) *api.AutostartSta
 }
 
 func unsupportedStatusArgument(arg string) error {
-	switch arg {
-	case "--json":
-		return usageError("status --json is not implemented yet")
-	default:
-		return usageError("unsupported status argument %q", arg)
-	}
+	return usageError("unsupported status argument %q", arg)
 }
 
 func runStatus(ctx context.Context, opts options) status.Report {
