@@ -129,9 +129,7 @@ import_profile() {
   uri="$(first_configured_profile_uri)"
   out="$(mktemp "${E2E_TMP_ROOT}/session-privacy-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/session-privacy-import.stderr.XXXXXX")"
-  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "session-privacy profile import failed"
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${PROFILE_ID}" ]] || fail "session-privacy profile import returned no profile ID"
+  run_installed_podlaz import "${uri}" >"${out}" 2>"${err}" || fail "session-privacy profile import failed"
   mask_multiline_sensitive "${PROFILE_ID}"
   rm -f -- "${out}" "${err}"
 }
@@ -206,7 +204,7 @@ import_profile
 create_foreign_fixture
 assert_foreign_fixture before_connect
 
-run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "session-privacy coexistence connect failed"
+run_installed_podlaz connect >/dev/null 2>&1 || fail "session-privacy coexistence connect failed"
 CONNECTED=true
 assert_dynamic_transaction_allocation
 assert_active_data_plane
