@@ -257,7 +257,7 @@ run_scenario() {
   hosted_vm_tun_assert_foreign_state
   record_evidence fixture.foreign_state pass
 
-  profile="$(hosted_vm_tun_profile_id)"
+  profile="$(hosted_vm_tun_profile_selector)"
   boot_before="$(hosted_vm_boot_id)"
   [[ -n "${profile}" && -n "${boot_before}" ]]
 
