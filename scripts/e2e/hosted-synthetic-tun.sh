@@ -606,7 +606,7 @@ finally:
  s.close()
 raise SystemExit(0 if ok else 1)'
   set +e
-  guest_exec /bin/bash -lc "id=\$(cat ${GUEST_PRIVATE}/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode proxy-only \"\${id}\" >${GUEST_PRIVATE}/proxy-only.stdout 2>${GUEST_PRIVATE}/proxy-only.stderr"
+  guest_exec /bin/bash -lc "selector=\$(cat ${GUEST_PRIVATE}/profile-selector); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz debug proxy \"\${selector}\" >${GUEST_PRIVATE}/proxy-only.stdout 2>${GUEST_PRIVATE}/proxy-only.stderr"
   code=$?
   set -e
   [[ "${code}" == 1 ]] || return 1
@@ -711,7 +711,7 @@ run_active_traffic_checks() {
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
-  run_guest_user timeout 90 /usr/bin/podlaz doctor --tun --json >"${PRIVATE_ROOT}/doctor.json" 2>"${PRIVATE_ROOT}/doctor.stderr"
+  run_guest_user timeout 90 /usr/bin/podlaz debug doctor --tun --json >"${PRIVATE_ROOT}/doctor.json" 2>"${PRIVATE_ROOT}/doctor.stderr"
   doctor_code=$?
   set -e
   (( doctor_code == 0 )) || return 1
@@ -757,7 +757,7 @@ assert_terminal_authority_clean() {
 }
 
 run_clean_recovery() {
-  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz recover --json >'${GUEST_PRIVATE}/recover.json' 2>'${GUEST_PRIVATE}/recover.stderr'"
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz debug recover --json >'${GUEST_PRIVATE}/recover.json' 2>'${GUEST_PRIVATE}/recover.stderr'"
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/recovery_json.sh && assert_clean_recovery_json_file '${GUEST_PRIVATE}/recover.json'"
 }
 
@@ -781,12 +781,11 @@ run_scenario() {
 
   mark_failure diagnostic_unknown profile.import
   set +e
-  guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
+  guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
   import_code=$?
   set -e
   (( import_code == 0 )) || return 1
-  guest_exec /bin/bash -lc "awk '/^Imported profile:/ {print \$3; exit}' ${GUEST_PRIVATE}/import.stdout >${GUEST_PRIVATE}/profile-id && test -s ${GUEST_PRIVATE}/profile-id"
-  guest_exec /bin/bash -lc "id=\$(cat ${GUEST_PRIVATE}/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz profile validate \"\${id}\" --mode tun >${GUEST_PRIVATE}/validate.stdout 2>${GUEST_PRIVATE}/validate.stderr"
+  guest_exec /bin/bash -lc "sed -n 's/^Profile: //p' ${GUEST_PRIVATE}/import.stdout | head -n1 >${GUEST_PRIVATE}/profile-selector && test -s ${GUEST_PRIVATE}/profile-selector"
 
   mark_failure product ordinary_user.boundary
   assert_ordinary_user_boundary
@@ -797,7 +796,7 @@ run_scenario() {
 
   mark_failure diagnostic_unknown tun.connect
   set +e
-  guest_exec /bin/bash -lc "id=\$(cat ${GUEST_PRIVATE}/profile-id); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect --mode tun \"\${id}\" >${GUEST_PRIVATE}/connect.stdout 2>${GUEST_PRIVATE}/connect.stderr"
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect >${GUEST_PRIVATE}/connect.stdout 2>${GUEST_PRIVATE}/connect.stderr"
   connect_code=$?
   set -e
   if (( connect_code != 0 )) && [[ "${HOSTED_EXPECT_CONNECT_FAILURE}" == true ]]; then
