@@ -20,7 +20,7 @@ func withNetworkSessionRecoveryStatus(
 		})
 		status.StartupScan.Status = startupScanStatusFromPublished(*status.StartupScan)
 		if status.StartupScan.SuggestedAction == "" {
-			status.StartupScan.SuggestedAction = "podlaz doctor"
+			status.StartupScan.SuggestedAction = "podlaz debug doctor"
 		}
 		return status
 	}
