@@ -13,7 +13,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
-func TestRunCLIConnectUsesCanonicalTunAndProtectedReplacement(t *testing.T) {
+func TestRunCLIConnectUsesCanonicalTunAndBlockForInactiveState(t *testing.T) {
 	storePath := t.TempDir() + "/profiles.json"
 	p := testConnectProfile()
 	store, err := profile.NewStore(storePath)
@@ -39,11 +39,60 @@ func TestRunCLIConnectUsesCanonicalTunAndProtectedReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect failed: %v", err)
 	}
-	if got.Mode != planner.ModeTun || got.Handoff != api.HandoffReplacePodlaz || got.Profile.ID != p.ID {
+	if got.Mode != planner.ModeTun || got.Handoff != api.HandoffBlock || got.Profile.ID != p.ID {
 		t.Fatalf("canonical request = %+v", got)
 	}
 	if gotOut := out.String(); gotOut != "Connected\nProfile: test vless\nProtection: Active\n" {
 		t.Fatalf("connect output = %q", gotOut)
+	}
+}
+
+
+func TestRunCLIConnectReplacesDifferentHealthyPodlazTunSession(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	p.ID = "new-profile"
+	p.Name = "New profile"
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var got api.ConnectRequest
+	err := runWithOptions(context.Background(), []string{"connect", p.Name}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{
+				Connection:  "active",
+				Mode:        planner.ModeTun,
+				ProfileID:   "old-profile",
+				ProfileName: "Old profile",
+				TUN:         "enabled",
+			}, nil
+		},
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			got = req
+			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun, Proxy: "active", TUN: "enabled"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("replacement connect failed: %v", err)
+	}
+	if got.Handoff != api.HandoffReplacePodlaz {
+		t.Fatalf("handoff=%q, want %q", got.Handoff, api.HandoffReplacePodlaz)
+	}
+}
+
+func TestRunCLIConnectDoesNotGrantReplacementOnUnhealthyOrAmbiguousState(t *testing.T) {
+	p := testConnectProfile()
+	for _, report := range []status.Report{
+		{Connection: "unknown (inspection incomplete)", Mode: planner.ModeTun, ProfileID: "old"},
+		{Connection: "active", Mode: planner.ModeProxyOnly, ProfileID: "old"},
+		{Connection: "active", Mode: planner.ModeTun, ProfileID: "old", Candidates: []status.Candidate{{Kind: "transaction-state"}}},
+	} {
+		if got := canonicalConnectHandoff(report); got != api.HandoffBlock {
+			t.Fatalf("report=%#v handoff=%q, want block", report, got)
+		}
 	}
 }
 
