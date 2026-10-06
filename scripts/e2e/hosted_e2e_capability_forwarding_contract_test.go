@@ -35,7 +35,7 @@ func TestHostedE2ECapabilityReportsSyntheticTunStageBoundaries(t *testing.T) {
 		"tun.profile_import_command",
 		"tun.profile_import_output",
 		"tun.profile_import",
-		"tun.profile_validate",
+		"tun.profile_selected",
 		"tun.connect_requested",
 		"tun.verified_active",
 		"tun.clean_disconnect",
@@ -81,10 +81,10 @@ func TestHostedE2ECapabilityDisablesSystemdArgumentEnvironmentExpansion(t *testi
 func TestHostedE2ECapabilityKeepsImportedProfileIDInPrivateTmp(t *testing.T) {
 	script := readHostedCapabilityFile(t, hostedCapabilityScript)
 	requireHostedCapabilityMarkers(t, script,
-		"/tmp/podlaz-capability-tun-private/profile-id",
+		"/tmp/podlaz-capability-tun-private/profile-selector",
 	)
 	forbidHostedCapabilityMarkers(t, script,
-		"/run/podlaz-capability/profile-id",
+		"/run/podlaz-capability/profile-selector",
 	)
 }
 
@@ -95,12 +95,12 @@ func TestHostedE2ECapabilityUsesProductionOrdinaryUserBoundary(t *testing.T) {
 		"runuser -u e2e -- env",
 		"root:podlaz:660",
 		"errno.EACCES",
-		"connect --mode proxy-only",
+		"debug proxy",
 		"authorization (denied|unavailable)",
-		"/usr/bin/podlaz connect --mode tun",
-		"/usr/bin/podlaz doctor --tun",
+		"/usr/bin/podlaz connect",
+		"/usr/bin/podlaz debug doctor --tun",
 		"/usr/bin/podlaz disconnect",
-		"/usr/bin/podlaz recover --json",
+		"/usr/bin/podlaz debug recover --json",
 	)
 	forbidHostedCapabilityMarkers(t, script,
 		"runuser -u e2e -g podlaz",
@@ -118,7 +118,7 @@ mkdir -p "$E2E_TMP_ROOT" "$E2E_ARTIFACT_DIR"
 source ./hosted-e2e-capability.sh
 guest_exec() {
   case "$*" in
-    *"/usr/bin/podlaz connect --mode proxy-only"*) return 1 ;;
+    *"/usr/bin/podlaz debug proxy"*) return 1 ;;
     *"grep -F authorization denied"*) return 1 ;;
     *"grep -F authorization unavailable"*) return 0 ;;
     *"grep -Eq authorization (denied|unavailable)"*) return 0 ;;
