@@ -83,7 +83,6 @@ func TestRunCLIConnectReplacesDifferentHealthyPodlazTunSession(t *testing.T) {
 }
 
 func TestRunCLIConnectDoesNotGrantReplacementOnUnhealthyOrAmbiguousState(t *testing.T) {
-	p := testConnectProfile()
 	for _, report := range []status.Report{
 		{Connection: "unknown (inspection incomplete)", Mode: planner.ModeTun, ProfileID: "old"},
 		{Connection: "active", Mode: planner.ModeProxyOnly, ProfileID: "old"},
