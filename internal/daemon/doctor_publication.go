@@ -51,7 +51,7 @@ func (m *XrayManager) lifecycleDoctorChecksFromSnapshot(ctx context.Context, sna
 	switch {
 	case state.Connection == "error (core exited)":
 		coreSeverity = doctor.SeverityFail
-		coreMessage = "core exited unexpectedly; inspect podlaz logs --core"
+		coreMessage = "core exited unexpectedly; inspect podlaz debug logs --core"
 	case snapshot.coreRunning:
 		coreMessage = emptyAs(state.Proxy, "core process is running")
 	case state.Connection == "active":
@@ -145,7 +145,7 @@ func withIncompleteDoctorLifecycle(response api.DoctorResponse, scan recovery.Pl
 	response.Checks = append(response.Checks, api.DoctorCheck{
 		Name:     "lifecycle-consistency",
 		Severity: string(doctor.SeverityWarning),
-		Message:  "lifecycle changed during diagnostic inspection; this report is incomplete, rerun podlaz doctor",
+		Message:  "lifecycle changed during diagnostic inspection; this report is incomplete, rerun podlaz debug doctor",
 	})
 	incomplete := cloneRecoveryPlan(scan)
 	incomplete.Warnings = append(incomplete.Warnings, recovery.Warning{
