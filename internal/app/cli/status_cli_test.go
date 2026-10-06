@@ -14,8 +14,42 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
 	"github.com/AidarKhusainov/podlaz/internal/client"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/status"
 )
+
+func TestRunCLIStatusDoesNotAutoSelectSoleProfile(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "profiles.json")
+	store, err := profile.NewStore(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := testConnectProfile()
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err = runWithOptions(context.Background(), []string{"status"}, &out, options{
+		profileStorePath: storePath,
+		status: func(context.Context) status.Report {
+			return status.Report{Connection: "inactive"}
+		},
+	})
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if strings.Contains(out.String(), "Profile:") {
+		t.Fatalf("read-only status advertised an implicit selection: %q", out.String())
+	}
+	id, err := store.SelectedID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "" {
+		t.Fatalf("read-only status persisted selection %q", id)
+	}
+}
 
 func TestRunCLIStatusUsesAccessibleDaemonSocket(t *testing.T) {
 	runtimeDir := shortRuntimeDir(t)
