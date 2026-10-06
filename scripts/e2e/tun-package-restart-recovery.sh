@@ -857,7 +857,7 @@ PY_CLASSIFY
 }
 
 assert_clean_recovery_view() {
-  expect_secret_success "recover-clean-json" run_client recover --json
+  expect_secret_success "recover-clean-json" run_client debug recover --json
   python3 - "${LAST_STDOUT}" <<'PY_RECOVERY'
 import json,sys
 with open(sys.argv[1],encoding='utf-8') as handle: payload=json.load(handle)
@@ -967,10 +967,10 @@ assert_terminal_clean package-restart-terminal
 assert_tun_foreign_state package-restart-terminal
 
 log "prove package-restart recovery is clean and idempotent"
-expect_secret_success "package-restart-first-recovery" run_client recover --execute --yes
+expect_secret_success "package-restart-first-recovery" run_client debug recover --execute
 assert_terminal_clean package-restart-first-recovery
 assert_tun_foreign_state package-restart-first-recovery
-expect_secret_success "package-restart-second-recovery" run_client recover --execute --yes
+expect_secret_success "package-restart-second-recovery" run_client debug recover --execute
 assert_terminal_clean package-restart-second-recovery
 assert_tun_foreign_state package-restart-second-recovery
 printf 'package_restart_second_recovery_clean=true\n' >>"${E2E_ARTIFACT_DIR}/package-restart-result.txt"
