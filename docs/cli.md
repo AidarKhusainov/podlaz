@@ -1,188 +1,171 @@
 # CLI reference
 
-Canonical reference for command names, arguments, flags, modes, exit codes, and
-JSON support. Keep details out unless they affect users or scripts.
+This is the canonical public CLI contract. Privileged ownership, recovery,
+Privacy Envelope, restart, and package invariants are defined in
+[ARCHITECTURE.md](../ARCHITECTURE.md).
 
-## Rules
+## General rules
 
-- `podlaz` is canonical. `plz` is a packaged symlink alias with identical behavior.
-- Default output is human-readable. Errors go to stderr.
-- `--json` is stable only where implemented. Deferred JSON returns exit code `2`.
-- Read-only commands do not require root.
-- The CLI must not be SUID and must not directly mutate privileged Linux networking.
-- Output must redact secrets and generated runtime configuration.
-- Human output must be stable without ANSI color. Commands that use symbolic status markers also support `--plain` where documented.
+- `podlaz` is canonical. Packaged installs also provide the identical `plz` alias.
+- The CLI runs as the invoking user and never directly mutates privileged Linux networking.
+- Default output is human-readable and redacts credentials, endpoints where not needed for the user task, generated runtime configuration, transaction IDs, and ownership internals.
+- Normal lifecycle commands do not prompt.
+- `--yes` exists only for destructive profile/subscription deletion in non-interactive automation.
+- `--json`, verbose evidence, and low-level recovery controls are exposed only under the advanced surface where they have a concrete diagnostic contract.
 
-## Global
+Exit codes:
 
-```bash
-podlaz --help
-podlaz help [command]
-podlaz <command> --help
-plz --help
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `--json` | Stable JSON where implemented. |
-| `--yes` | Confirm destructive or recovery execution. Long-only. |
-
-| Mode | Meaning |
-| --- | --- |
-| `proxy-only` | Local proxy lifecycle. Default mode. |
-| `tun` | Full-tunnel lifecycle through daemon-owned privileged state and native Xray TUN packet ingestion. |
-
-| Exit | Meaning |
+| Code | Meaning |
 | ---: | --- |
-| `0` | Success. For active TUN status, current health must not contain a confirmed unhealthy/cleanup-required condition. |
-| `1` | Runtime or operation failure. |
-| `2` | Invalid usage, flags, arguments, or deferred JSON. |
-| `3` | Diagnostic command found confirmed unhealthy state, such as `degraded` or `cleanup-required`; `Connecting`/`Reconnecting` alone do not imply exit `3`. |
-| `4` | Permission or authorization failure. |
+| `0` | Success. |
+| `1` | Runtime/operation failure or an explicitly cancelled destructive action. |
+| `2` | Invalid command, argument, or flag. |
+| `3` | A diagnostic/status command found a confirmed unhealthy or cleanup-required condition. |
+| `4` | Permission/authorization failure. |
 | `5` | Required daemon access was unavailable. |
 
-Packaged daemon commands may retry through the packaged abstract socket when the regular filesystem socket fails with a transport-level permission error. Errors returned by a reachable daemon keep their daemon/protocol classification: an authorization denial remains exit code `4`, while an unreachable daemon remains exit code `5`.
+## Primary surface
 
-## Completion
+```text
+podlaz connect [profile]
+podlaz disconnect
+podlaz status
 
-```bash
-podlaz completion bash|zsh|fish
-plz completion bash|zsh|fish
-```
-
-Completion generation is read-only. It must not contact the daemon, start Xray,
-mutate networking, or require root.
-
-Generated scripts support both `podlaz` and `plz`. Interactive completion may
-read local profile and subscription IDs. bash, zsh, and fish expose short
-command/flag descriptions where the shell completion UI supports listing them.
-Single inserted completions must not include description text.
-
-## Commands
-
-```bash
+podlaz import <uri|url|file>
+podlaz profile <list|show|use|delete>
+podlaz subscription <list|show|update|delete>
+podlaz autostart <enable|disable|status>
+podlaz help
 podlaz version
-podlaz help [command]
+podlaz completion ...
 ```
 
-Read-only.
+Top-level help and completion expose this product surface plus the single
+`debug` namespace. They do not advertise the internal validation/planning/check
+or handoff policy machinery.
+
+## Import
 
 ```bash
-podlaz import <share-uri|local-path|file-or-http-url>
+podlaz import <uri|url|file>
 ```
 
-Imports supported profile or subscription input. Mutates user-owned podlaz state
-only. Does not connect, start Xray, contact the daemon, require root, or mutate
-host networking. `import --json` is deferred.
+The one import entry point detects supported share URIs, local files, and
+subscription sources and routes them through the existing validated/atomic
+profile/subscription persistence paths.
+
+Import never connects, starts Xray, contacts the daemon for lifecycle mutation,
+or changes privileged host networking.
+
+After import:
+
+- if exactly one profile was produced and no valid profile is selected, its stable ID is selected persistently;
+- if multiple profiles were produced, Podlaz never guesses which profile to select;
+- an existing valid selection is preserved;
+- output shows a concise count/name summary and the next ordinary action;
+- subscription URLs, credentials, raw provider JSON, endpoints, UUIDs, and stable profile IDs are not printed merely to support onboarding.
+
+Supported imported material includes VLESS/VMess/Trojan/Shadowsocks share URIs,
+Base64 URI-list subscriptions, and supported Xray JSON. Connection support is
+stricter than import support.
+
+## Profile selection
 
 ```bash
-podlaz profile add --name <name> --server <host> --port <port> --protocol <vless|vmess|trojan|shadowsocks>
-podlaz profile import <share-uri>
-podlaz profile list [--json]
-podlaz profile show <profile-id> [--json]
-podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json] [--plain]
-podlaz profile delete <profile-id> [--yes]
+podlaz profile list
+podlaz profile show <profile>
+podlaz profile use <profile>
+podlaz profile delete <profile> [--yes]
 ```
 
-`list`, `show`, and `validate` are read-only. `add`, `import`, and `delete`
-mutate user-owned profile state. `profile delete` requires confirmation in
-non-interactive and JSON contexts unless `--yes` is passed. Validation failures
-for an existing profile return exit code `3`.
+A `<profile>` selector resolves in this order:
 
-`profile validate` prints a compact structured human result by default: profile
-metadata, selected mode/backend/protocol, result, reason on failure, and next-step
-guidance. `--plain` replaces Unicode status markers with ASCII status words.
-`--json` preserves the existing machine-readable schema.
+1. exact stable profile ID;
+2. otherwise an exact trimmed, case-insensitive display name that matches exactly one profile.
 
-For ordinary normalized profiles, the generated Xray runtime currently supports
-VLESS only. VMess, Trojan, and Shadowsocks share URIs are valid import inputs
-and remain representable in user-owned profile state, but
-`profile validate --mode proxy-only|tun` rejects them for connection because
-the generated runtime does not render those protocols. Provider-owned grouped
-Xray JSON is the separate proxy-only exception described below.
+Ambiguous names fail without guessing. Display names are never ownership or
+cleanup authority.
+
+Selected-profile rules:
+
+- `profile use` is the only explicit command that changes persistent selection;
+- selection stores the stable profile ID, not the display name;
+- `connect <profile>` is a one-shot choice and does not change selection;
+- a stale selected ID is cleared rather than retargeted by name;
+- if there is no valid selection and exactly one profile exists, Podlaz selects it persistently;
+- zero or multiple profiles with no selection produce an actionable error;
+- deleting the selected profile clears selection in the same atomic profile-store update;
+- subscription refresh/removal that removes the selected stable ID clears selection and never retargets by display-name resemblance.
+
+`profile list` is human-oriented. It marks the selected profile and omits
+server endpoints, credentials, raw provider configuration, and opaque IDs needed
+only for advanced automation. `profile show` may show the stable ID and
+redacted technical metadata, but not credentials or raw provider JSON.
+
+Profile deletion is destructive persisted user-data removal. Interactive
+confirmation defaults to **No**; empty input and EOF never authorize deletion.
+Non-interactive deletion requires `--yes`.
+
+## Connect
 
 ```bash
-podlaz subscription add --name <name> --url <url>
-podlaz subscription update <subscription-id>
-podlaz subscription list [--json]
-podlaz subscription show <subscription-id> [--json]
-podlaz subscription delete <subscription-id> [--yes] [--keep-profiles]
+podlaz connect [profile]
 ```
 
-Supported source schemes: `file`, `http`, `https`. Supported response formats:
-Base64 URI list and Xray JSON. `list` and `show` are read-only. `add`, `update`,
-and `delete` mutate user-owned subscription/profile state. Failed update/delete
-must preserve existing state. `delete --keep-profiles` keeps imported profiles.
-`subscription update --json` and `subscription delete --json` are deferred.
+Canonical `connect` means full VPN/TUN protection.
 
-### Remote subscription identity and failure behavior
+For the explicit or selected profile, the normal connection path performs the
+existing safe lifecycle internally: profile validation, TUN capability
+validation, authoritative recovery/reconciliation, planning, protected connect,
+and publishable health verification. Users do not run separate validate, plan,
+check, doctor, or recover prerequisites.
 
-For HTTP(S) subscription fetches, podlaz sends `User-Agent: podlaz` and an
-`x-hwid` header. The header value is a stable, randomly generated UUID-shaped
-client identity created with cryptographic randomness and persisted under the
-invoking user's XDG state directory as `podlaz/client-id`. The parent directory
-is private user state and the identity file is created with mode `0600`.
-Podlaz does not read raw hardware identifiers to derive this value.
+Behavior:
 
-The same identity is reused across remote subscription imports and updates for
-that user. Deleting or replacing `client-id` changes the provider-visible
-identity on a later fetch and is therefore not a normal remedy for a provider
-device-limit rejection.
+- the same already-satisfied healthy full-VPN intent returns success without rebuilding the session;
+- another exact Podlaz-owned protected TUN session may be replaced automatically through the existing protected replacement authority;
+- TUN-to-TUN replacement preserves the Privacy Envelope and must not create an unprotected handoff gap;
+- ambiguous or incomplete ownership blocks replacement;
+- foreign VPN/network state is not stopped, adopted, or cleaned up to make connect succeed;
+- canonical connect never silently falls back to Proxy-only;
+- a profile that is renderable only as Proxy-only fails before privileged mutation and points to the explicit `podlaz debug proxy <profile>` action.
 
-Remote fetch, HTTP-status, parse, and persistence failures are returned as
-operation errors with subscription/client secrets redacted. A failed
-`subscription update` does not commit a partial replacement of the existing
-subscription/profile set. If a provider reports a device/account limit, resolve
-that condition at the provider and retry; podlaz does not bypass it by rotating
-identity or weakening validation.
+The old public `--mode` and `--handoff` policy matrices do not exist.
 
-### VLESS xhttp Xray JSON profiles
+Successful default output is product-oriented:
 
-Single-location VLESS profiles imported from Xray JSON subscriptions may use
-`streamSettings.network: "xhttp"`. In `proxy-only` mode podlaz treats these as
-renderable VLESS profiles, preserves the parsed `xhttpSettings.path` and
-`xhttpSettings.host` fields, and generates a runtime Xray outbound containing
-`streamSettings.network: "xhttp"` plus `xhttpSettings`. The daemon still owns
-only the local SOCKS/HTTP listeners and must not mutate TUN, routes, DNS,
-nftables, or firewall state for proxy-only connects.
+```text
+Connected
+Profile: Work
+Protection: Active
+```
 
-`xhttp` is not enabled for `tun` mode yet. TUN validation and planning must fail
-before host networking snapshots or mutations until the TUN bypass and routing
-semantics are explicitly designed and tested.
+It does not expose provider endpoint identity, generated runtime configuration,
+transaction IDs, route/DNS/firewall evidence, or reconciliation internals.
 
-### Grouped Remnawave/Xray JSON profiles
+## Disconnect
 
-Some Remnawave subscriptions return one provider-owned Xray JSON object with
-multiple `outbounds`, provider `routing`, and location selection/balancer rules
-instead of independent single-location profile objects. podlaz imports such an
-object as one subscription-owned `xray-json` grouped profile so duplicate
-location/user identifiers do not collapse or overwrite each other.
+```bash
+podlaz disconnect
+```
 
-Grouped `xray-json` support is intentionally mode-limited:
+Disconnect expresses desired inactive state. Repeating it while Podlaz is
+conclusively inactive succeeds. Cleanup remains exact-ownership-driven and never
+uses observation or historical resemblance as authority.
 
-- `proxy-only` is supported. podlaz preserves provider-owned `outbounds`,
-  `routing`, balancers, stream settings, and selection rules, then replaces
-  provider `inbounds` with podlaz-owned local SOCKS/HTTP listeners at runtime.
-- `tun` is not supported yet. `profile validate --mode tun`, `plan --mode tun`,
-  and `connect --mode tun` must fail before mutation with a clear unsupported
-  grouped-profile diagnostic, because podlaz cannot safely derive one VPN server
-  bypass from provider-owned routing.
-- CLI profile output must not print raw provider Xray JSON, UUIDs, user identity,
-  or generated runtime config. Stored provider source JSON is treated as
-  sensitive profile material and is redacted in human and JSON output.
+Successful output:
+
+```text
+Disconnected
+```
+
+## Status
 
 ```bash
 podlaz status
 ```
 
-Read-only. Uses daemon status when available and local fallback otherwise.
-Runtime lifecycle warnings are rendered separately from recovery/inspection
-failures and do not by themselves make an otherwise healthy active session
-unhealthy. A clean startup recovery scan is described relative to the current
-lifecycle state, so an active TUN session is never labelled as a clean inactive
-state. `status --json` is deferred.
-
-Default human `status` is a product view, not an operator dump. It renders one of:
+Default status is deliberately small and uses the product states:
 
 ```text
 Status: Connected
@@ -192,382 +175,173 @@ Status: Disconnected
 Status: Unknown
 ```
 
-`Disconnected` is used only when the lifecycle is conclusively `inactive`.
-Unavailable daemon access, inaccessible socket state, stale/incomplete local
-inspection, or any other state without evidence of inactivity is `Unknown`, not
-`Disconnected`. `Connecting` is an admitted explicit or boot connect that has not
-yet established the product session. `Reconnecting` is an established protected
-session while current evidence is being revalidated/rebuilt. These transient
-product states do not by themselves imply diagnostic exit `3`.
-
-The default human view may additionally show `Profile`, `Mode`, the persistent
-autostart policy, and a short stable `Reason` after a conclusively terminal
-lifecycle. It intentionally omits service/runtime configuration, proxy listener
-details, routes, DNS, firewall, transaction identifiers, recovery candidates,
-and other operator evidence. Those details remain available through daemon status
-internals, `doctor`, `doctor --tun`, and `recover`.
-
-For an active TUN session, durable transaction state and current health are
-separate contracts. `committed` means the transaction completed successfully for
-the generation verified at that time; it is not permanent proof that the current
-host network is still usable. Daemon status therefore exposes `tun_health` with:
-
-- `state`: `verified`, `revalidating`, `degraded`, or `cleanup-required`;
-- positive `network_generation`;
-- a stable classification while health is not `verified`, including
-  `uplink_revalidating`, `uplink_changed`, `uplink_fingerprint_unavailable`,
-  `ownership_invalid`, `owned_state_invalid`, `connectivity_failed`,
-  `revalidation_timeout`, and `revalidation_interrupted`.
-
-`revalidating` and `degraded` can be transient active publications while the
-current generation is being proved or a terminal verification outcome is being
-handed off. A proved verification failure or revalidation deadline is not a
-stable active `degraded` state. The daemon keeps the old health proof invalid,
-persists a bounded redacted TUN diagnostic report before cleanup, releases
-revalidation authority, and automatically invokes the normal bounded lifecycle
-`Disconnect`. Successful cleanup converges to inactive status. Failed rollback
-keeps the surviving owned state fail-closed as `cleanup-required` for recovery.
-Cancellation caused by an explicit user disconnect, recovery, or daemon shutdown
-is not treated as another terminal verification failure and does not schedule a
-second automatic disconnect.
-
-Generation 1 becomes `verified` only after a fresh post-commit observation has
-passed the canonical composition verifier and connectivity verifier for that
-exact observation. `resume` and event-source resubscription force a same-generation
-reproof even when the underlying fingerprint is unchanged. Ordinary duplicate
-link/address/route hints with an unchanged already-verified fingerprint are
-coalesced and do not run redundant probes.
-
-Lifecycle mutation has priority over revalidation without losing evidence. An
-event consumed while connect, disconnect, or recovery is pending waits for the
-mutation queue to become idle. An in-flight probe interrupted by mutation is
-requeued. The post-mutation attempt always starts with a fresh authoritative
-snapshot and then applies the normal fingerprint/generation decision. The
-verification phase itself is read-only and does not repair networking or expand
-cleanup authority. Only a terminal verification failure/deadline can hand off to
-the existing exact transaction-backed lifecycle disconnect described above;
-ambiguous observation or foreign ownership never gains cleanup authority.
-
-A confirmed active `degraded` or `cleanup-required` condition returns status exit
-code `3`. `Connecting`/`Reconnecting` are lifecycle phases and do not themselves
-make status unhealthy. A successful automatic fail-safe disconnect publishes the
-normal `Disconnected` state with a stable typed high-level reason when the
-terminal outcome is still the latest relevant lifecycle. Current-health failure
-does not rewrite historical commit evidence.
-
-```bash
-podlaz doctor
-podlaz doctor --tun [--verbose|-v|--json]
-podlaz doctor --core --xray <path> [--json]
-podlaz doctor --network|--dns|--routes|--firewall [--json]
-```
-
-Read-only diagnostics. `doctor --core --xray <path>` is local-only and may emit
-stable JSON. The `--network`, `--dns`, `--routes`, and `--firewall` scopes remain
-deferred.
-
-Daemon-backed base diagnostics interpret managed-looking resources through typed
-lifecycle authority instead of treating mere presence as stale state. During a
-clean committed active TUN session, the exact transaction-owned `podlaz0` link
-and `inet podlaz` table are expected. Missing resources, link identity mismatch,
-missing/incomplete transaction authority, cleanup-required state, and ambiguous
-ownership remain warnings. Local fallback has no daemon lifecycle authority and
-therefore stays conservative: managed-looking resources are not assumed owned.
-The check is read-only and never repairs or removes networking state.
-
-`doctor --tun` is daemon-backed and requires an active podlaz TUN session or a
-saved latest TUN report. It runs a bounded dependency-aware sequence for active
-session/ownership metadata, the VPN server bypass, IPv4 policy routing,
-`systemd-resolved` link ownership, DNS over UDP and TCP, positive system
-resolution, reserved `.invalid` NXDOMAIN integrity, TCP/443, TLS, small HTTPS,
-two independent RFC 8484 DoH providers, IPv6 state/leak detection, and guarded
-PMTU evidence. The command must not mutate routes, policy rules, DNS, MTU,
-nftables, services, other VPNs, or browser state.
-
-Compact human output identifies the failed layer, primary classification, latest
-report path, and next step. `--verbose` adds bounded route, DNS, TLS, HTTP, IPv6,
-command, and timing evidence. `--json` emits the same centrally redacted model
-with `schema_version: 1`. Historical failed-connect and terminal-revalidation
-reports expose stable `failure_phase` and `rollback_status`. A report with status
-`unhealthy` or `unavailable` returns exit code `3`.
-
-Stable classifications include session and ownership inconsistencies;
-`network_apply_failure` and `network_verify_failure`; server bypass, route, and
-policy-rule failures; DNS apply/conflict/UDP/TCP/resolution/hijack failures; TCP,
-TLS, HTTPS, DoH partial/full failures; IPv6 absent, unusable, or leak states;
-guarded `likely_pmtu_blackhole`; timeout, cancellation, and internal diagnostic
-failures. One DoH provider failure is degraded. PMTU is reported only when small
-HTTPS succeeds, two independent bounded 16 KiB transfers fail, and no lower-layer
-failure explains the symptom.
-
-The endpoint catalog is source-controlled and documents a stable target id,
-timeout, response-size bound, required/best-effort status, bootstrap addresses
-where applicable, and privacy note. Unit tests use local fixtures and do not
-contact live endpoints.
-
-```bash
-podlaz logs [--follow|-f] [--daemon] [--core] [--since <duration>]
-```
-
-Read-only journal output. `--daemon` selects daemon logs. `--core` selects
-structural Xray lifecycle and child-output-observed events. `--since` accepts
-exactly one positive decimal integer followed by one unit `s`, `m`, or `h`, for
-example `30s`, `15m`, `2h`, or `36h`, with a maximum of `720h`. Zero, signed,
-fractional, compound, unsupported-unit, date-like, and journalctl-native values
-are invalid usage and return exit code `2` before `journalctl` is started. Podlaz
-translates a valid duration to one relative journal argument such as
-`--since -36h`; the same normalization is used for daemon/core and follow modes.
-Raw Xray stdout/stderr payloads, profile identifiers, endpoints, UUIDs,
-runtime-config paths, and other opaque child text are not persisted to journald.
-`logs --json` is deferred.
-
-```bash
-podlaz plan --mode proxy-only <profile-id> [--json]
-podlaz plan --mode tun <profile-id> [--json] [--verbose|-v] [--plain]
-```
-
-Read-only dry-run. Must not start Xray, write runtime config, or mutate host
-networking. Grouped `xray-json` profiles support `proxy-only` planning only;
-`plan --mode tun` fails before collecting a host networking snapshot.
-
-`plan --mode tun` prints a compact human summary by default: profile status,
-the collision-free daemon-owned TUN IPv4 address selected from the current
-read-only host snapshot, planned high-level changes, blockers, warnings, safety
-notes, and next-step guidance. The historical `198.18.0.1/32` address, routing
-table `51820`, and priorities `9999`/`10000` are preferred candidates only. If a
-candidate is already occupied by unrelated host state, planning selects another
-verified-free session identity. If authoritative allocation evidence is
-incomplete or the bounded candidate space has no safe allocation, planning fails
-closed and renders no misleading applicable plan. It intentionally hides raw
-nftables rules, rollback keys, ownership labels, and long command stderr in
-default human output. Use `--verbose` or `-v` for the detailed
-TUN/route/policy-rule/DNS/nftables/snapshot/rollback dump. `--plain` replaces
-Unicode status markers with ASCII status words. `--json` preserves the existing
-automation schema and is not affected by `--verbose`.
-
-```bash
-podlaz connect [--mode proxy-only|tun] [--handoff=block|ask|stop-known|replace-podlaz] <profile-id>
-podlaz disconnect
-```
-
-Requires daemon access. `connect` defaults to `proxy-only`. Proxy-only must not
-mutate host networking. TUN mode is daemon-owned and transaction-backed. Xray
-owns `podlaz0` creation, lifetime, and packet ingestion through its native
-`tun` inbound. Before the first host-network mutation, podlazd selects a
-collision-free Network Session allocation from the authoritative host baseline
-and persists the exact TUN IPv4 `/32`, routing table, and policy priorities in
-transaction desired state. It then rolls back only exact resources that acquire
-durable applied/rollback ownership evidence. Before handoff or host changes,
-`connect --mode tun` checks that the packaged Xray helper accepts a minimal
-pinned-schema native TUN config. The profile-generated Xray runtime config is
-written later after the TUN transaction starts.
-
-For non-interactive TUN connects, the daemon automatically recovers only exact
-durable podlaz transaction state that requires cleanup, then recollects the host
-snapshot and allocates the new session independently around unrelated host
-networking. Foreign TUN devices, policy routing, route-only DNS owners,
-NetworkManager VPN connections, and unrelated firewall state are baseline rather
-than blockers merely because they exist. The daemon does not stop or rewrite
-such foreign state to make the host look clean. A connect is blocked only when
-recovery remains incomplete, authoritative allocation evidence is insufficient,
-the bounded candidate space is exhausted, or a concrete safe server bootstrap /
-data-plane plan cannot be built without colliding with or mutating unowned state.
-If a foreign object races into an already selected session identity before apply,
-apply fails instead of adopting that object as Podlaz-owned.
-
-`connect --mode tun` accepts explicit handoff policies. The default `block`
-policy still permits exact Podlaz self-recovery described above but never stops a
-foreign VPN or removes ambiguous state. `ask` is rejected in daemon/non-interactive
-connect paths and performs no recovery or handoff mutation. `stop-known` remains
-accepted for CLI compatibility but does not broaden new-session authority to stop
-foreign NetworkManager VPN connections; coexistence allocation treats them as
-baseline. `replace-podlaz` may disconnect the exact active Podlaz TUN session
-before starting a new allocation. Unsupported handoff values fail before network
-mutation. `disconnect` is safe to repeat. `connect --json` and `disconnect --json`
-are deferred.
-
-Successful human lifecycle output is intentionally concise:
+Where applicable it also shows:
 
 ```text
-Connected
-Profile: Example VPN
-Mode: TUN
+Profile: Work
+Protection: Active
+Autostart: Enabled for next boot
 ```
 
-and:
+`Protection: Proxy only` is shown when an explicitly requested advanced
+Proxy-only session is active. TUN is not printed as an implementation term in the
+normal product view.
 
-```text
-Disconnected
-```
+`Disconnected` requires conclusive inactivity. Unavailable or incomplete
+inspection is `Unknown`, not an optimistic disconnect claim. Confirmed unhealthy
+or cleanup-required status returns exit code `3`.
 
-For failures during `network-apply`, `network-verify`, later connect-time
-connectivity verification, or a proved post-commit revalidation failure/deadline,
-podlazd runs bounded redacted diagnostics while the relevant failed state still
-exists and atomically saves the report before the first rollback command. The
-report records a stable classification, `failure_phase`, and `rollback_status`;
-rollback finalizes the historical status as `completed` or `failed`. Diagnostic
-collection remains best-effort and cannot suppress cleanup. Post-commit terminal
-revalidation cleanup is the same normal exact transaction-backed `Disconnect`
-path; it is started only after revalidation authority is released. Explicit
-user/shutdown cancellation owns its own lifecycle cleanup and therefore does not
-schedule a duplicate automatic disconnect.
+Detailed lifecycle, ownership, routing, DNS, firewall, transaction, and recovery
+evidence belongs under `debug`.
 
-Before commit, static resolved ownership is followed by an uncached IPv4
-`resolvectl` query bound to the exact `podlaz0` link, a separate normal system
-resolver lookup, and route verification for at least one returned IPv4 address.
-`Current Scopes` remains diagnostic evidence only. The returned error includes
-the stable classification and safe report path when available and directs the
-user to `podlaz doctor --tun --verbose`.
+## Subscription management
 
 ```bash
-podlaz autostart enable [--mode proxy-only|tun] <profile-id>
+podlaz subscription list
+podlaz subscription show <subscription-id>
+podlaz subscription update <subscription-id>
+podlaz subscription delete <subscription-id> [--yes] [--keep-profiles]
+```
+
+Normal onboarding uses `podlaz import`; there is no separate public
+subscription-add flow.
+
+Remote HTTP(S) subscriptions use `User-Agent: podlaz` and the existing stable
+private `x-hwid` client identity. Fetch/parse/persistence failures preserve the
+last committed subscription/profile state.
+
+`subscription show` does not print the subscription URL. Deletion defaults to
+removing profiles owned by that subscription; `--keep-profiles` keeps them.
+Destructive confirmation defaults to **No**, and non-interactive deletion
+requires `--yes`.
+
+If an update/delete removes the selected stable profile ID, selection is cleared
+rather than retargeted.
+
+## Autostart
+
+```bash
+podlaz autostart enable [profile]
 podlaz autostart disable
 podlaz autostart status
 ```
 
-`autostart enable` reads and validates the selected user-owned profile exactly as
-normal `connect`, then submits a minimal canonical snapshot to the daemon-owned
-persistent Boot Autostart Manifest. It does not connect immediately. Configuration
-written in boot A is eligible only on a later boot, so restarting `podlazd` in
-boot A cannot turn `enable` into an immediate connect.
+`autostart enable` snapshots the explicit profile, or otherwise the selected
+profile, with canonical full-VPN intent. It validates the same connection
+material as canonical connect but does not connect immediately.
 
-`autostart disable` removes only future-boot policy. It does not disconnect an
-active session, cancel an already-admitted current-boot attempt, or reset the
-one-attempt/no-retry authority. `autostart status` is read-only. Human output is:
+The daemon-owned Boot Autostart Manifest remains durable boot policy. A later
+`profile use` does not silently rewrite an already-enabled manifest; users must
+explicitly re-enable policy to bind a different profile.
 
-```text
-Autostart: Enabled for next boot
-```
+`autostart status` shows the bound profile in human terms and shows
+`Protection: Proxy only` only for pre-existing durable Proxy-only policy that
+must remain interpretable for runtime safety. The redesigned CLI does not create
+new Proxy-only autostart policy.
 
-or:
-
-```text
-Autostart: Disabled
-```
-
-When enabled, profile name and mode may also be shown. `autostart --json` is not
-a public schema yet and returns deferred-JSON usage behavior.
-
-At daemon startup, current-boot Network Session continuation/recovery always has
-priority over fresh autostart. With no continuation, the daemon may admit at most
-one logical autostart attempt for the current boot. It first performs bounded
-fresh uplink-readiness observation inside that admitted attempt, then enters the
-same canonical `Connect` lifecycle as an explicit request. Daemon replacement
-continues the exact pinned attempt. `succeeded` or conclusively `terminal` consumes
-automatic-connect authority for the remainder of the boot; explicit disconnect
-or a later runtime terminal failure never causes a same-boot autostart retry.
-
-A stable terminal reason belongs to the latest relevant product lifecycle, not to
-the permanent current-boot no-retry authority. A newer admitted explicit
-lifecycle supersedes an older reason. If that new explicit connect itself reaches
-a conclusively clean terminal failure, it records a new typed reason. A request
-rejected before lifecycle admission leaves the previous valid reason unchanged.
+## Debug surface
 
 ```bash
-podlaz check <profile-id> [--target <target-id>] [--timeout <duration>] [--json]
-podlaz check --all [--target <target-id>] [--timeout <duration>] [--json]
+podlaz debug --help
+podlaz debug doctor ...
+podlaz debug logs ...
+podlaz debug recover ...
+podlaz debug proxy <profile>
 ```
 
-Explicit bounded proxy-only profile diagnostics. The command validates profile
-renderability first, measures direct server TCP reachability when the profile
-exposes one server endpoint, uses daemon status to avoid disrupting an already
-active connection, starts temporary proxy-only Xray only through `podlazd` when
-the daemon is inactive, probes local SOCKS/HTTP egress through loopback
-listeners, runs a small documented service target set, and disconnects only the
-temporary proxy connection that the check started.
+The top-level help does not enumerate diagnostic flags. Explicitly entering
+`debug` reveals them.
 
-`check` never mutates TUN devices, routes, DNS, nftables, firewall rules, or host
-resolver files. It does not replace or disconnect an existing active connection.
-Every network probe is bounded by `--timeout` and the default target set is
-conservative. `--all` runs profiles with deterministic output and a small default
-concurrency limit. A non-`ok` check returns exit code `3`.
-
-Supported target ids are `cloudflare`, `github`, `google`, `instagram`,
-`telegram`, and `youtube`. Each target is a best-effort diagnostic probe with a
-known hostname/URL, timeout, expected HTTP/TLS success condition, proxy-side DNS
-resolution, and a privacy note in the target catalog. A successful probe means the
-specific low-impact endpoint was reachable through the proxy path; it does not
-guarantee that the full application behavior works.
-
-`check --json` emits stable JSON with `schema_version`, `status`, `warnings`,
-`errors`, profile metadata, validation result, daemon result, server TCP result,
-proxy startup result, SOCKS/HTTP egress results, and per-service results. Human
-and JSON output use the same redaction rules.
+### Diagnostics
 
 ```bash
-podlaz debug recover
-podlaz debug recover --execute --yes [--json]
+podlaz debug doctor
+podlaz debug doctor --tun [--verbose|-v|--json]
+podlaz debug doctor --core --xray <path> [--json]
 ```
 
-`recover` is a read-only inspection of the same recovery model used by
-execution. When daemon startup evidence is available, dry-run projects the
-current startup scan plus the bounded `network_session` recovery state; otherwise
-it falls back to conservative local inspection and does not invent daemon
-authority. `recover --execute --yes` sends cleanup intent to the daemon and then
-runs the same Network Session follow-up lifecycle when startup recovery remains
-blocked. The CLI must not perform privileged host cleanup directly. Ambiguous or
-unowned resources are skipped, and non-interactive execution requires `--yes`.
+Diagnostics are read-only. TUN diagnostics inspect authoritative daemon/session,
+route, resolver, connectivity, IPv6, and bounded PMTU evidence without repairing
+networking or expanding cleanup authority.
 
-The stable `network_session` projection contains only semantic recovery evidence:
-`authority`, `intent`, `startup_gate`, optional `resume_stage`,
-`last_resume_outcome`, optional `last_tun_failure_phase`, optional
-`replay_disposition`, optional `network_apply_subphase`, optional
-`rollback_status`, `transaction_present`, `legacy_migration`,
-`cleanup_authority`, and `next_action`. It deliberately excludes profile/server
-identity, Network Session and transaction identifiers, generated config, and raw
-child output. `resume_stage` can identify state load, legacy migration, Privacy
-Envelope reconciliation, exact transaction recovery, generic recovery, connect
-replay, or terminal teardown. `last_resume_outcome` is one of `not-attempted`,
-`failed`, `incomplete`, or `succeeded`. When present, `replay_disposition` is one
-of `terminal`, `retryable`, `interrupted`, or `incomplete` for the current
-`connect-replay` blocker. `network_apply_subphase` is present only for a current
-`connect-replay` failure in `network-apply` and is one of `tun-address`, `routes`,
-`policy-rules`, `dns`, or `nftables`. A newer non-replay blocker clears these two
-optional top-level fields rather than presenting stale replay evidence.
-`next_action` is `retry-resume`, `continue-teardown`, `manual-diagnosis`, or
-`none`.
+### Logs
 
-Execution is complete only when ordinary cleanup has no failed/incomplete result
-and Network Session recovery has an open startup gate with `next_action: none`.
-A blocked gate or any remaining next action is incomplete and makes execute return
-exit code `1`; cleanup failure also returns `1`. JSON execute output reports
-`status: warn` for incomplete convergence and `status: fail` for cleanup failure.
-Dry-run JSON reports `status: warn` when cleanup candidates, Network Session
-authority requiring convergence, or incomplete inspection are present. In human
-output, `No podlaz-owned recovery candidates found.` is shown only when there are
-no ordinary cleanup candidates and no retained Network Session recovery plan; a
-retained Network Session plan is rendered instead of that empty-state message.
+```bash
+podlaz debug logs [--follow|-f] [--daemon] [--core] [--since <duration>]
+```
 
-For the validated podlaz-owned `podlaz0` target, only an exact `resolvectl` exit code `1`
-with one exact supported bounded `No such device` result is accepted as
-idempotent success. A successful `resolvectl status` is accepted as a clean
-transient record only when it has no stderr, its unique target section passes
-strict parsing, `Current Scopes` is exactly `none`, current/server/domain DNS
-state is empty, and `Protocols` contains explicit `-DefaultRoute` without
-`+DefaultRoute`. A stale `dns-link` candidate requires concrete podlaz per-link
-DNS configuration. Missing or conflicting DefaultRoute polarity, unexpected
-stderr, malformed or partial output, duplicate target sections, operational
-failure, or concrete non-podlaz DNS state remains unknown and fail-closed. The
-supported Ubuntu 24.04 missing-link form is `Failed to resolve interface
-"podlaz0", ignoring: No such device`; the older exact form without `, ignoring`
-remains supported. Timeout, cancellation, signals, launch or permission errors,
-other exit codes, extra output, and unrelated exit `1` results remain failures.
-A successful daemon scan is authoritative over older local evidence; a failed
-refresh is reported as incomplete rather than reusing stale candidates or
-top-level `ok`.
+`--since` accepts one positive decimal integer plus `s`, `m`, or `h`
+(maximum `720h`). Output uses the normal redaction boundary.
 
-## Files
+### Recovery
+
+```bash
+podlaz debug recover [--json]
+podlaz debug recover --execute [--json]
+```
+
+Recovery inspection/execution is retained because it is a distinct support and
+fault-qualification capability. Execution uses only existing exact durable
+Podlaz ownership authority. It does not prompt and has no `--yes` flag:
+ambiguous/unowned state remains fail-closed and untouched, so confirmation cannot
+broaden authority.
+
+JSON retains the existing redacted diagnostic recovery model for support and
+automated qualification.
+
+### Explicit Proxy-only operation
+
+```bash
+podlaz debug proxy <profile>
+```
+
+This is the single advanced reduced-protection connection path. It is not a mode
+matrix and is never an automatic fallback from canonical connect.
+
+Proxy-only does not mutate TUN, routes, DNS, nftables, or firewall state. Grouped
+provider Xray JSON and supported VLESS xhttp profiles may use this path when they
+cannot participate in safe TUN planning.
+
+Default success output makes the protection reduction explicit:
+
+```text
+Connected with reduced protection
+Profile: Work
+Protection: Proxy only
+```
+
+## Completion
+
+```bash
+podlaz completion bash
+podlaz completion zsh
+podlaz completion fish
+```
+
+Generated completion supports both `podlaz` and `plz`. Dynamic profile
+completion prefers human-readable names and descriptions. When normalized names
+are ambiguous, completion exposes stable IDs so automation remains deterministic.
+
+Completion is read-only and does not contact the daemon or mutate networking.
+
+## Removed public/operator surface
+
+The redesign is an intentional clean break. The following are not public
+commands/flags and have no compatibility aliases:
+
+- top-level `plan`, `check`, `doctor`, `logs`, or `recover`;
+- `profile add`, `profile import`, or `profile validate`;
+- `subscription add`;
+- public `--mode`, `--handoff`, `--plain`, or lifecycle `--yes`;
+- primary list/show JSON schemas that had no durable post-redesign consumer.
+
+The underlying safety-critical daemon/state machinery is not removed by this CLI
+cleanup.
+
+## User and daemon files
 
 - User state: `$XDG_CONFIG_HOME/podlaz`, `$XDG_STATE_HOME/podlaz`, `$XDG_CACHE_HOME/podlaz`.
-- Daemon runtime: `/run/podlaz`, `/run/podlaz/podlazd.sock`, `/run/podlaz/transactions`.
-- Persistent boot policy: `/var/lib/podlaz/boot-autostart-manifest.json` under systemd `StateDirectory=podlaz`.
-- Current-boot autostart authority: `/run/podlaz/boot-autostart-attempt.json`.
-- Current-boot product terminal outcome: `/run/podlaz/product-terminal-reason.json`.
-- Latest TUN diagnostic report: `/run/podlaz/diagnostics/tun-last.json` (daemon-owned, replacement-only, mode `0600`, bounded to 256 KiB).
-- Generated runtime config is not persistent source of truth and must not be logged in full.
-
-## Related project documentation
-
-- [Project overview](../README.md)
-- [Architecture](../ARCHITECTURE.md)
-- [Contributor workflow](../AGENTS.md)
+- Profiles and selected stable profile ID live in the atomic user-owned profile store.
+- Daemon runtime: `/run/podlaz`.
+- Persistent boot policy: `/var/lib/podlaz/boot-autostart-manifest.json`.
+- Current-boot Network Session and recovery authority remain daemon-owned state described in [ARCHITECTURE.md](../ARCHITECTURE.md).
