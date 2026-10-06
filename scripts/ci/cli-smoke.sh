@@ -25,7 +25,7 @@ grep -F '__complete fish' "${tmp}/podlaz.fish"
 top_level="$(go run ./cmd/podlaz __complete bash 1 podlaz "")"
 grep -F $'connect\tConnect full VPN' <<<"${top_level}"
 grep -F $'debug\tAdvanced diagnostics' <<<"${top_level}"
-! grep -Eq '^(plan|check|doctor|logs|recover)([[:space:]]|$)' <<<"${top_level}"
+if grep -Eq '^(plan|check|doctor|logs|recover)([[:space:]]|$)' <<<"${top_level}"; then exit 1; fi
 
 debug="$(go run ./cmd/podlaz __complete bash 2 podlaz debug "")"
 grep -F $'doctor\tRun diagnostics' <<<"${debug}"
@@ -34,8 +34,8 @@ grep -F $'proxy\tConnect with Proxy-only protection' <<<"${debug}"
 grep -F $'recover\tInspect or execute exact-owned recovery' <<<"${debug}"
 
 connect_flags="$(go run ./cmd/podlaz __complete bash 2 podlaz connect --)"
-! grep -Eq -- '--(mode|handoff|json|plain|verbose)' <<<"${connect_flags}"
+if grep -Eq -- '--(mode|handoff|json|plain|verbose)' <<<"${connect_flags}"; then exit 1; fi
 
 recover_flags="$(go run ./cmd/podlaz __complete bash 3 podlaz debug recover --)"
 grep -F -- '--execute' <<<"${recover_flags}"
-! grep -F -- '--yes' <<<"${recover_flags}"
+if grep -F -- '--yes' <<<"${recover_flags}"; then exit 1; fi
