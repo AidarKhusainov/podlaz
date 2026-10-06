@@ -12,6 +12,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/status"
 )
 
 type connectRunner func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error)
@@ -39,12 +40,13 @@ func runConnectCommand(ctx context.Context, args []string, stdout io.Writer, opt
 		return err
 	}
 
-	if currentSessionSatisfiesCanonicalIntent(ctx, p, opts) {
+	report, _ := runProductStatus(ctx, opts)
+	if canonicalIntentSatisfied(report, p) {
 		renderConnectResponse(stdout, p, api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun})
 		return nil
 	}
 
-	response, err := runConnectWithHandoff(ctx, p, planner.ModeTun, api.HandoffReplacePodlaz, opts)
+	response, err := runConnectWithHandoff(ctx, p, planner.ModeTun, canonicalConnectHandoff(report), opts)
 	if err != nil {
 		return lifecycleCommandError(err)
 	}
@@ -133,11 +135,20 @@ func validateCanonicalVPNProfile(p profile.Profile) error {
 	return nil
 }
 
-func currentSessionSatisfiesCanonicalIntent(ctx context.Context, p profile.Profile, opts options) bool {
-	report, _ := runProductStatus(ctx, opts)
+func canonicalIntentSatisfied(report status.Report, p profile.Profile) bool {
+	return canonicalHealthyTunSession(report) && report.ProfileID == p.ID
+}
+
+func canonicalConnectHandoff(report status.Report) string {
+	if canonicalHealthyTunSession(report) {
+		return api.HandoffReplacePodlaz
+	}
+	return api.HandoffBlock
+}
+
+func canonicalHealthyTunSession(report status.Report) bool {
 	return report.Connection == "active" &&
 		report.Mode == planner.ModeTun &&
-		report.ProfileID == p.ID &&
 		!report.ProductReconnecting &&
 		!statusCommandShouldFail(report)
 }
