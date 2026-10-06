@@ -175,7 +175,6 @@ func TestStoreDeleteSelectedProfileClearsSelectionAtomically(t *testing.T) {
 	}
 }
 
-
 func TestStoreAddProfilesClearsStaleSelectionBeforeImport(t *testing.T) {
 	store, _ := NewStore(filepath.Join(t.TempDir(), "profiles.json"))
 	existing := NewManual("Existing", "existing.example", 443, "vless")
