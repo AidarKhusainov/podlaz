@@ -194,7 +194,7 @@ func ExecuteWithOptions(ctx context.Context, opts Options) ExecuteResult {
 
 func (p PlanResult) String() string {
 	var b strings.Builder
-	b.WriteString("podlaz debug recovery dry-run\n")
+	b.WriteString("Recovery dry-run\n")
 	b.WriteString("Inspection: read-only; uses the authoritative daemon scan when available and local safe checks only as a fallback.\n")
 	switch {
 	case len(p.Candidates) > 0:
@@ -217,7 +217,7 @@ func (p PlanResult) String() string {
 
 func (r ExecuteResult) String() string {
 	var b strings.Builder
-	b.WriteString("podlaz debug recovery\n")
+	b.WriteString("Recovery\n")
 	b.WriteString("Mode: execute\n")
 	if len(r.Results) == 0 && len(r.Warnings) == 0 {
 		b.WriteString("No podlaz-owned recovery candidates found.\n")
