@@ -204,6 +204,7 @@ func (s Store) Add(p Profile) error {
 	if err != nil {
 		return err
 	}
+	clearStaleSelection(&state)
 	for _, existing := range state.Profiles {
 		if existing.ID == p.ID {
 			return fmt.Errorf("%w: %s", ErrAlreadyExists, p.ID)
@@ -222,6 +223,7 @@ func (s Store) AddProfiles(next []Profile) error {
 	if err != nil {
 		return err
 	}
+	clearStaleSelection(&state)
 	existingByID := make(map[string]struct{}, len(state.Profiles))
 	for _, p := range state.Profiles {
 		existingByID[p.ID] = struct{}{}
