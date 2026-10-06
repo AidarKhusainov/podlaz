@@ -35,7 +35,7 @@ func runImportCommand(ctx context.Context, args []string, stdout io.Writer, opts
 		if err != nil {
 			return err
 		}
-		return runProfileImport(store, []string{target}, stdout)
+		return importShareProfile(store, target, stdout)
 	case "file", "http", "https":
 		return runSubscriptionImport(ctx, target, stdout, opts)
 	default:
