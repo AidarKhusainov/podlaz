@@ -232,6 +232,7 @@ func completionRegistry() *completionCommand {
 					},
 				},
 				{Name: "proxy", Description: "Connect with Proxy-only protection", Dynamic: completionDynamicProfiles},
+				{Name: "recover", Description: "Inspect or execute exact-owned recovery", Flags: []completionFlag{longBoolFlag("--execute", "Execute recovery"), jsonFlag}},
 			},
 		},
 		{
