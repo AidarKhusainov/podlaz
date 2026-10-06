@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/engine"
@@ -31,16 +30,12 @@ func runProfileCommand(ctx context.Context, args []string, stdout io.Writer, opt
 	}
 
 	switch strings.ToLower(args[0]) {
-	case "add":
-		return runProfileAdd(store, args[1:], stdout)
-	case "import":
-		return runProfileImport(store, args[1:], stdout)
 	case "list":
 		return runProfileList(store, args[1:], stdout)
 	case "show":
 		return runProfileShow(store, args[1:], stdout)
-	case "validate":
-		return runProfileValidate(store, args[1:], stdout)
+	case "use":
+		return runProfileUse(store, args[1:], stdout)
 	case "delete":
 		return runProfileDelete(store, args[1:], stdout, opts)
 	default:
@@ -48,27 +43,8 @@ func runProfileCommand(ctx context.Context, args []string, stdout io.Writer, opt
 	}
 }
 
-func runProfileAdd(store profile.Store, args []string, stdout io.Writer) error {
-	parsed, err := parseProfileAddArgs(args)
-	if err != nil {
-		return err
-	}
-
-	p := profile.NewManual(parsed.name, parsed.server, parsed.port, parsed.protocol)
-	if err := store.Add(p); err != nil {
-		return profileCommandError(err)
-	}
-
-	fmt.Fprintf(stdout, "Profile added: %s\n", p.ID)
-	return nil
-}
-
-func runProfileImport(store profile.Store, args []string, stdout io.Writer) error {
-	uri, err := parseProfileImportArgs(args)
-	if err != nil {
-		return err
-	}
-
+// importShareProfile is the share-URI branch of the single public import command.
+func importShareProfile(store profile.Store, uri string, stdout io.Writer) error {
 	p, warnings, err := profile.ImportShareURI(uri)
 	if err != nil {
 		return usageError("%s", err.Error())
@@ -76,355 +52,132 @@ func runProfileImport(store profile.Store, args []string, stdout io.Writer) erro
 	if err := store.Add(p); err != nil {
 		return profileCommandError(err)
 	}
+	_, _ = store.SelectIfUnset(p.ID)
 
-	out := profileForOutput(p)
-	fmt.Fprintf(stdout, "Imported profile: %s\n", out.ID)
-	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
-	if len(warnings) > 0 {
-		fmt.Fprintf(stdout, "Warnings: %d\n", len(warnings))
-		for _, warning := range warnings {
-			fmt.Fprintf(stdout, "- %s\n", render.Redact(warning))
-		}
+	fmt.Fprintln(stdout, "Imported 1 profile")
+	fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(p.Name))
+	for _, warning := range warnings {
+		fmt.Fprintf(stdout, "Warning: %s\n", render.Redact(warning))
 	}
+	fmt.Fprintln(stdout, "Next: podlaz connect")
 	return nil
 }
 
 func runProfileList(store profile.Store, args []string, stdout io.Writer) error {
-	jsonOutput, err := parseOptionalJSON(args, "profile list")
-	if err != nil {
-		return err
+	if len(args) != 0 {
+		return usageError("profile list does not accept arguments")
 	}
-
 	profiles, err := store.List()
 	if err != nil {
 		return err
 	}
-
-	if jsonOutput {
-		return writeJSON(stdout, okJSON(map[string]any{"profiles": profilesForOutput(profiles)}))
-	}
-
-	rows := make([][]string, 0, len(profiles))
-	for _, p := range profiles {
-		out := profileForOutput(p)
-		rows = append(rows, []string{out.ID, out.Name, out.Protocol, out.Server, strconv.Itoa(int(out.Port))})
-	}
-	return writeTable(stdout, []string{"ID", "NAME", "PROTOCOL", "SERVER", "PORT"}, rows)
-}
-
-func runProfileShow(store profile.Store, args []string, stdout io.Writer) error {
-	id, jsonOutput, err := parseProfileShowArgs(args)
+	selectedID, err := store.SelectedID()
 	if err != nil {
 		return err
 	}
 
-	p, err := store.Get(id)
+	rows := make([][]string, 0, len(profiles))
+	for _, p := range profiles {
+		selected := ""
+		if p.ID == selectedID {
+			selected = "*"
+		}
+		rows = append(rows, []string{selected, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
+	}
+	return writeTable(stdout, []string{"SELECTED", "NAME", "PROTOCOL", "SOURCE"}, rows)
+}
+
+func runProfileShow(store profile.Store, args []string, stdout io.Writer) error {
+	selector, err := parseSingleProfileSelector(args, "profile show")
+	if err != nil {
+		return err
+	}
+	p, err := store.Resolve(selector)
 	if err != nil {
 		return profileCommandError(err)
 	}
 
 	out := profileForOutput(p)
-	if jsonOutput {
-		return writeJSON(stdout, okJSON(map[string]any{"profile": out}))
-	}
-
-	fmt.Fprintf(stdout, "ID: %s\n", out.ID)
 	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
+	fmt.Fprintf(stdout, "ID: %s\n", out.ID)
 	fmt.Fprintf(stdout, "Source: %s\n", out.Source)
 	fmt.Fprintf(stdout, "Engine: %s\n", out.Engine)
 	fmt.Fprintf(stdout, "Protocol: %s\n", out.Protocol)
 	fmt.Fprintf(stdout, "Server: %s\n", out.Server)
 	fmt.Fprintf(stdout, "Port: %d\n", out.Port)
-	printOptionalProfileField(stdout, "User identity", out.UserIdentity)
 	printOptionalProfileField(stdout, "Transport", out.Transport)
 	printOptionalProfileField(stdout, "Security", out.Security)
-	printOptionalProfileField(stdout, "Encryption", out.Encryption)
 	printOptionalProfileField(stdout, "Flow", out.Flow)
 	printOptionalProfileField(stdout, "Server name", out.ServerName)
-	printOptionalProfileField(stdout, "ALPN", out.ALPN)
-	printOptionalProfileField(stdout, "Fingerprint", out.Fingerprint)
-	printOptionalProfileField(stdout, "Path", out.Path)
-	printOptionalProfileField(stdout, "Host header", out.HostHeader)
-	printOptionalProfileField(stdout, "Service name", out.ServiceName)
-	printOptionalProfileField(stdout, "Reality public key", out.RealityPublicKey)
-	printOptionalProfileField(stdout, "Reality short ID", out.RealityShortID)
-	printOptionalProfileField(stdout, "Reality spider X", out.RealitySpiderX)
 	return nil
 }
 
-func runProfileValidate(store profile.Store, args []string, stdout io.Writer) error {
-	parsed, err := parseProfileValidateArgs(args)
+func runProfileUse(store profile.Store, args []string, stdout io.Writer) error {
+	selector, err := parseSingleProfileSelector(args, "profile use")
 	if err != nil {
 		return err
 	}
-
-	p, err := store.Get(parsed.id)
+	p, err := store.Select(selector)
 	if err != nil {
 		return profileCommandError(err)
 	}
-
-	validationErr := validateProfileForMode(p, parsed.mode)
-	out := profileForOutput(p)
-	if parsed.jsonOutput {
-		status := "ok"
-		valid := true
-		errors := []string{}
-		if validationErr != nil {
-			status = "fail"
-			valid = false
-			errors = []string{render.Redact(validationErr.Error())}
-		}
-		if err := writeJSON(stdout, map[string]any{
-			"schema_version": "v1",
-			"status":         status,
-			"warnings":       []string{},
-			"errors":         errors,
-			"profile":        out,
-			"mode":           parsed.mode,
-			"backend":        render.Redact(string(p.Engine)),
-			"valid":          valid,
-		}); err != nil {
-			return err
-		}
-	} else {
-		renderProfileValidateHuman(stdout, p, out, parsed, validationErr)
-	}
-
-	if validationErr != nil {
-		return exitError{code: 3, err: validationErr}
-	}
+	fmt.Fprintf(stdout, "Selected profile: %s\n", render.Redact(p.Name))
 	return nil
 }
 
-func renderProfileValidateHuman(w io.Writer, original profile.Profile, out profile.Profile, parsed profileValidateArgs, validationErr error) {
-	marks := outputStatusMarks(parsed.plainOutput)
-	commandID := safeCommandProfileID(out.ID)
-	fmt.Fprintln(w, "Profile check")
-	fmt.Fprintln(w)
-	renderAlignedField(w, "Name", out.Name)
-	renderAlignedField(w, "Mode", humanModeLabel(parsed.mode))
-	renderAlignedField(w, "Backend", humanBackendLabel(string(original.Engine)))
-	renderAlignedField(w, "Protocol", humanProtocolLabel(out.Protocol))
-	renderAlignedField(w, "Source", humanSourceLabel(string(original.Source)))
-
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Result")
-	if validationErr == nil {
-		fmt.Fprintf(w, "  %s Profile is valid for %s mode.\n", marks.OK, humanModeLabel(parsed.mode))
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Next step")
-		fmt.Fprintf(w, "  Run: plz plan --mode %s %s\n", parsed.mode, commandID)
-		return
-	}
-
-	fmt.Fprintf(w, "  %s This profile cannot be used in %s mode.\n", marks.Blocked, humanModeLabel(parsed.mode))
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Reason")
-	fmt.Fprintf(w, "  %s\n", render.Redact(validationErr.Error()))
-
-	fmt.Fprintln(w)
-	if parsed.mode == planner.ModeTun && validateProfileForMode(original, planner.ModeProxyOnly) == nil {
-		fmt.Fprintln(w, "Try instead")
-		fmt.Fprintf(w, "  plz connect --mode proxy-only %s\n", commandID)
-		return
-	}
-	fmt.Fprintln(w, "Next step")
-	fmt.Fprintf(w, "  Fix the profile and run: plz profile validate %s --mode %s\n", commandID, parsed.mode)
-}
-
 func runProfileDelete(store profile.Store, args []string, stdout io.Writer, opts options) error {
-	id, yes, err := parseProfileDeleteArgs(args)
+	selector, yes, err := parseProfileDeleteArgs(args)
 	if err != nil {
 		return err
+	}
+	p, err := store.Resolve(selector)
+	if err != nil {
+		return profileCommandError(err)
 	}
 	if !yes {
 		if !profileDeleteInputIsTerminal(opts) {
 			return usageError("profile delete requires --yes in non-interactive mode")
 		}
-		prompt := fmt.Sprintf("Delete profile %s? Type yes to continue", render.Redact(id))
-		if err := confirmDefaultYes(stdout, confirmationReader(opts), prompt, "profile delete", "profile delete canceled"); err != nil {
+		prompt := fmt.Sprintf("Delete profile %s?", render.Redact(p.Name))
+		if err := confirmDefaultNo(stdout, confirmationReader(opts), prompt, "profile delete", "profile delete canceled"); err != nil {
 			return err
 		}
 	}
-	if err := store.Delete(id); err != nil {
+	if err := store.Delete(p.ID); err != nil {
 		return profileCommandError(err)
 	}
-	fmt.Fprintf(stdout, "Profile deleted: %s\n", render.Redact(id))
+	fmt.Fprintf(stdout, "Profile deleted: %s\n", render.Redact(p.Name))
 	return nil
 }
 
-type profileAddArgs struct {
-	name     string
-	server   string
-	port     uint16
-	protocol string
-}
-
-type profileValidateArgs struct {
-	id          string
-	mode        string
-	jsonOutput  bool
-	plainOutput bool
-}
-
-func parseProfileAddArgs(args []string) (profileAddArgs, error) {
-	var parsed profileAddArgs
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value, hasInlineValue := cutFlagValue(arg)
-		switch {
-		case arg == "--name" || strings.HasPrefix(arg, "--name="):
-			v, next, err := flagValue("profile add --name", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.name = v
-			i = next
-		case arg == "--server" || strings.HasPrefix(arg, "--server="):
-			v, next, err := flagValue("profile add --server", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.server = v
-			i = next
-		case arg == "--protocol" || strings.HasPrefix(arg, "--protocol="):
-			v, next, err := flagValue("profile add --protocol", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.protocol = v
-			i = next
-		case arg == "--port" || strings.HasPrefix(arg, "--port="):
-			v, next, err := flagValue("profile add --port", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			port, err := strconv.ParseUint(v, 10, 16)
-			if err != nil || port == 0 {
-				return parsed, usageError("profile add --port must be a number between 1 and 65535")
-			}
-			parsed.port = uint16(port)
-			i = next
-		case arg == "--json":
-			return parsed, usageError("profile add --json is not implemented")
-		default:
-			return parsed, usageError("unsupported profile add argument %q", arg)
-		}
+func parseSingleProfileSelector(args []string, command string) (string, error) {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") || strings.TrimSpace(args[0]) == "" {
+		return "", usageError("%s requires exactly one profile", command)
 	}
-
-	p := profile.NewManual(parsed.name, parsed.server, parsed.port, parsed.protocol)
-	if err := profile.Validate(p); err != nil {
-		return parsed, usageError("%s", err.Error())
-	}
-	return parsed, nil
-}
-
-func parseProfileImportArgs(args []string) (string, error) {
-	var uri string
-	for _, arg := range args {
-		switch arg {
-		case "--json":
-			return "", usageError("profile import --json is not implemented")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return "", usageError("unsupported profile import argument %q", arg)
-			}
-			if uri != "" {
-				return "", usageError("profile import accepts exactly one share URI")
-			}
-			uri = arg
-		}
-	}
-	if uri == "" {
-		return "", usageError("profile import requires a share URI")
-	}
-	return uri, nil
-}
-
-func parseProfileShowArgs(args []string) (string, bool, error) {
-	var id string
-	var jsonOutput bool
-	for _, arg := range args {
-		switch arg {
-		case "--json":
-			jsonOutput = true
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return "", false, usageError("unsupported profile show argument %q", arg)
-			}
-			if id != "" {
-				return "", false, usageError("profile show accepts exactly one profile id")
-			}
-			id = arg
-		}
-	}
-	if id == "" {
-		return "", false, usageError("profile show requires a profile id")
-	}
-	return id, jsonOutput, nil
-}
-
-func parseProfileValidateArgs(args []string) (profileValidateArgs, error) {
-	parsed := profileValidateArgs{mode: planner.ModeProxyOnly}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value, hasInlineValue := cutFlagValue(arg)
-		switch {
-		case arg == "--mode" || strings.HasPrefix(arg, "--mode="):
-			v, next, err := flagValue("profile validate --mode", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.mode = strings.ToLower(strings.TrimSpace(v))
-			i = next
-		case arg == "--json":
-			parsed.jsonOutput = true
-		case arg == "--plain":
-			parsed.plainOutput = true
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return parsed, usageError("unsupported profile validate argument %q", arg)
-			}
-			if parsed.id != "" {
-				return parsed, usageError("profile validate accepts exactly one profile id")
-			}
-			parsed.id = arg
-		}
-	}
-	if parsed.id == "" {
-		return parsed, usageError("profile validate requires a profile id")
-	}
-	switch parsed.mode {
-	case planner.ModeProxyOnly, planner.ModeTun:
-	default:
-		return parsed, usageError("unsupported profile validate mode %q", parsed.mode)
-	}
-	return parsed, nil
+	return args[0], nil
 }
 
 func parseProfileDeleteArgs(args []string) (string, bool, error) {
-	var id string
+	var selector string
 	var yes bool
 	for _, arg := range args {
 		switch arg {
 		case "--yes":
 			yes = true
-		case "--json":
-			return "", false, usageError("profile delete --json is not implemented")
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return "", false, usageError("unsupported profile delete argument %q", arg)
 			}
-			if id != "" {
-				return "", false, usageError("profile delete accepts exactly one profile id")
+			if selector != "" {
+				return "", false, usageError("profile delete accepts exactly one profile")
 			}
-			id = arg
+			selector = arg
 		}
 	}
-	if id == "" {
-		return "", false, usageError("profile delete requires a profile id")
+	if selector == "" {
+		return "", false, usageError("profile delete requires a profile")
 	}
-	return id, yes, nil
+	return selector, yes, nil
 }
 
 func profileDeleteInputIsTerminal(opts options) bool {
@@ -432,36 +185,6 @@ func profileDeleteInputIsTerminal(opts options) bool {
 		return opts.stdinIsTerminal()
 	}
 	return isStdinTerminal()
-}
-
-func parseOptionalJSON(args []string, command string) (bool, error) {
-	var jsonOutput bool
-	for _, arg := range args {
-		if arg == "--json" {
-			jsonOutput = true
-			continue
-		}
-		return false, usageError("unsupported %s argument %q", command, arg)
-	}
-	return jsonOutput, nil
-}
-
-func cutFlagValue(arg string) (string, bool) {
-	_, value, ok := strings.Cut(arg, "=")
-	return value, ok
-}
-
-func flagValue(flag string, args []string, index int, inlineValue string, hasInlineValue bool) (string, int, error) {
-	if hasInlineValue {
-		if strings.TrimSpace(inlineValue) == "" {
-			return "", index, usageError("%s requires a value", flag)
-		}
-		return inlineValue, index, nil
-	}
-	if index+1 >= len(args) || strings.TrimSpace(args[index+1]) == "" || strings.HasPrefix(args[index+1], "--") {
-		return "", index, usageError("%s requires a value", flag)
-	}
-	return args[index+1], index + 1, nil
 }
 
 func writeJSON(stdout io.Writer, value any) error {
@@ -485,7 +208,9 @@ func okJSON(fields map[string]any) map[string]any {
 
 func profileCommandError(err error) error {
 	switch {
-	case errors.Is(err, profile.ErrNotFound):
+	case errors.Is(err, profile.ErrNotFound), errors.Is(err, profile.ErrNoSelection):
+		return exitError{code: 1, err: err}
+	case errors.Is(err, profile.ErrAmbiguousSelector):
 		return exitError{code: 1, err: err}
 	case errors.Is(err, profile.ErrAlreadyExists):
 		return exitError{code: 1, err: err}
@@ -494,14 +219,6 @@ func profileCommandError(err error) error {
 	default:
 		return err
 	}
-}
-
-func profilesForOutput(profiles []profile.Profile) []profile.Profile {
-	out := make([]profile.Profile, len(profiles))
-	for i, p := range profiles {
-		out[i] = profileForOutput(p)
-	}
-	return out
 }
 
 func profileForOutput(p profile.Profile) profile.Profile {
@@ -556,13 +273,14 @@ func printOptionalProfileField(w io.Writer, label string, value string) {
 
 func printProfileHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz profile add --name <name> --server <host> --port <port> --protocol <protocol>
-  podlaz profile import <share-uri>
-  podlaz profile list [--json]
-  podlaz profile show <profile-id> [--json]
-  podlaz profile validate <profile-id> [--mode proxy-only|tun] [--json] [--plain]
-  podlaz profile delete <profile-id> [--yes]
+  podlaz profile list
+  podlaz profile show <profile>
+  podlaz profile use <profile>
+  podlaz profile delete <profile> [--yes]
 
-Manage local VPN profiles. Profile validation uses compact human output by default; use --json for automation and --plain for ASCII status markers.
+Profiles may be addressed by exact stable ID or an exact unique display name.
+"profile use" changes only the selected profile for future user intent; it does
+not connect, disconnect, or rewrite an existing autostart policy. The list view
+marks the selected profile and intentionally omits endpoint and credential data.
 `)
 }
