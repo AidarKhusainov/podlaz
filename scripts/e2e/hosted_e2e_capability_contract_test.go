@@ -122,7 +122,7 @@ func TestHostedE2ECapabilityScriptContract(t *testing.T) {
 		"systemd-nspawn",
 		"NetworkManager",
 		"systemd-resolved",
-		"doctor --tun",
+		"debug doctor --tun",
 		"/proc/sys/kernel/random/boot_id",
 		"cloud-images.ubuntu.com/releases/noble",
 		"SHA256SUMS",
