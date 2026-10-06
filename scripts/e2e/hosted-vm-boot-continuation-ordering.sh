@@ -262,7 +262,7 @@ run_scenario(){
   record_evidence explicit_session.no_boot_attempt pass
 
   mark_failure product autostart.enable_while_active
-  hosted_vm_tun_run_podlaz autostart enable --mode tun "${profile}" >/dev/null
+  hosted_vm_tun_run_podlaz autostart enable "${profile}" >/dev/null
   assert_manifest_exact "${boot_before}" "${profile}"
   generation="$(manifest_generation)"
   [[ "${generation}" =~ ^[0-9a-f]{32}$ ]]
