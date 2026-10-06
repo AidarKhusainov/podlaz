@@ -24,33 +24,37 @@ func runLocalFileImport(path string, stdout io.Writer, opts options) error {
 	if err := store.AddProfiles(result.Profiles); err != nil {
 		return profileCommandError(err)
 	}
-	printLocalImportResult(stdout, result)
-	return nil
+	if len(result.Profiles) == 1 {
+		if _, err := store.SelectIfUnset(result.Profiles[0].ID); err != nil {
+			return err
+		}
+	}
+	return printLocalImportResult(stdout, store, result)
 }
 
-func printLocalImportResult(stdout io.Writer, result profile.LocalImportResult) {
-	fmt.Fprintln(stdout, "Local import completed")
-	fmt.Fprintf(stdout, "Format: %s\n", result.Format)
-	fmt.Fprintf(stdout, "Inspected: %d\n", result.Inspected)
-	fmt.Fprintf(stdout, "Imported: %d\n", len(result.Profiles))
-	fmt.Fprintf(stdout, "Skipped: %d\n", len(result.Unsupported))
-	fmt.Fprintf(stdout, "Warnings: %d\n", len(result.Warnings))
-	if len(result.Profiles) > 0 {
-		fmt.Fprintln(stdout, "Imported profiles:")
-		for _, p := range result.Profiles {
-			fmt.Fprintf(stdout, "- %s %s\n", render.Redact(p.ID), render.Redact(p.Name))
-		}
+func printLocalImportResult(stdout io.Writer, store profile.Store, result profile.LocalImportResult) error {
+	fmt.Fprintf(stdout, "Imported %d profile", len(result.Profiles))
+	if len(result.Profiles) != 1 {
+		fmt.Fprint(stdout, "s")
+	}
+	fmt.Fprintln(stdout)
+	if len(result.Profiles) == 1 {
+		fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(result.Profiles[0].Name))
 	}
 	if len(result.Unsupported) > 0 {
-		fmt.Fprintln(stdout, "Skipped entries:")
-		for _, issue := range result.Unsupported {
-			fmt.Fprintf(stdout, "- entry %d: %s\n", issue.Entry, render.Redact(issue.Message))
-		}
+		fmt.Fprintf(stdout, "Skipped unsupported entries: %d\n", len(result.Unsupported))
 	}
-	if len(result.Warnings) > 0 {
-		fmt.Fprintln(stdout, "Warning details:")
-		for _, warning := range result.Warnings {
-			fmt.Fprintf(stdout, "- entry %d: %s\n", warning.Entry, render.Redact(warning.Message))
-		}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(stdout, "Warning: %s\n", render.Redact(warning.Message))
 	}
+	selectedID, err := store.SelectedID()
+	if err != nil {
+		return err
+	}
+	if selectedID == "" {
+		fmt.Fprintln(stdout, "Next: podlaz profile use <profile>")
+		return nil
+	}
+	fmt.Fprintln(stdout, "Next: podlaz connect")
+	return nil
 }
