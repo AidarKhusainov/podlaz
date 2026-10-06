@@ -20,41 +20,27 @@ func newTunVerificationError(phase, summary string, err error) *TunVerificationE
 
 func (e *TunVerificationError) Error() string {
 	if e == nil {
-		return "podlaz: TUN verification failed"
+		return "Unable to connect.\n\nPodlaz could not verify the VPN connection.\n\nRun:\n  podlaz debug doctor --tun"
 	}
-	phase := e.Phase
-	if phase == "" {
-		phase = "connectivity"
+
+	reason := "Podlaz could not verify the VPN connection."
+	switch strings.TrimSpace(e.Phase) {
+	case "resolved-link", "resolved-link-query", "system-resolver", "dns-route", "dns", "dns-udp", "dns-tcp":
+		reason = "Podlaz could not verify DNS through the VPN."
+	case "route", "tcp", "https", "tls":
+		reason = "Podlaz could not verify full-VPN connectivity."
 	}
-	summary := e.Summary
-	if summary == "" && e.err != nil {
-		summary = e.err.Error()
-	}
-	if summary == "" {
-		summary = "TUN connectivity verification failed."
-	}
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "podlaz: TUN connection failed during %s verification.\n\n", phase)
-	b.WriteString(summary)
-	if !strings.HasSuffix(summary, ".") {
-		b.WriteString(".")
-	}
+	b.WriteString("Unable to connect.\n\n")
+	b.WriteString(reason)
 	b.WriteString("\n")
 	if e.RollbackCompleted {
-		b.WriteString("Rollback completed; no podlaz-owned network changes were left applied.\n")
+		b.WriteString("The attempted Podlaz-owned network changes were rolled back.\n")
+	} else {
+		b.WriteString("Podlaz did not publish an active VPN session.\n")
 	}
-	if len(e.Diagnostics) > 0 {
-		b.WriteString("\nDiagnostics:\n")
-		for _, diagnostic := range e.Diagnostics {
-			diagnostic = strings.TrimSpace(diagnostic)
-			if diagnostic != "" {
-				b.WriteString("  ")
-				b.WriteString(diagnostic)
-				b.WriteString("\n")
-			}
-		}
-	}
-	b.WriteString("\nRun:\n  podlaz debug doctor --tun --verbose")
+	b.WriteString("\nRun:\n  podlaz debug doctor --tun")
 	return b.String()
 }
 
