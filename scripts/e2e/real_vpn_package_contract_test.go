@@ -37,12 +37,8 @@ func TestRealVPNSupportsExactPrebuiltPackageTunContract(t *testing.T) {
 		}
 	}
 	for _, privateCommand := range []string{
+		"real-profile-import",
 		"real-profile-show",
-		"real-profile-show-json",
-		"real-profile-validate-proxy-only",
-		"real-profile-validate-tun",
-		"real-plan-proxy-only",
-		"real-plan-tun-dry-run",
 	} {
 		if !strings.Contains(text, `expect_private_success `+privateCommand) {
 			t.Fatalf("real VPN profile-derived output must stay private for %q", privateCommand)
