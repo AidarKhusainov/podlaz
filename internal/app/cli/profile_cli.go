@@ -8,8 +8,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/AidarKhusainov/podlaz/internal/engine"
-	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/render"
 )
@@ -241,20 +239,6 @@ func profileForOutput(p profile.Profile) profile.Profile {
 	p.RealityShortID = render.Redact(p.RealityShortID)
 	p.RealitySpiderX = render.Redact(p.RealitySpiderX)
 	return p
-}
-
-func validateProfileForMode(p profile.Profile, mode string) error {
-	if err := profile.Validate(p); err != nil {
-		return err
-	}
-	switch mode {
-	case planner.ModeProxyOnly:
-		return engine.ValidateXrayProxyOnlyProfile(p)
-	case planner.ModeTun:
-		return engine.ValidateXrayTunProfile(p)
-	default:
-		return fmt.Errorf("unsupported profile validation mode %q", mode)
-	}
 }
 
 func redactedProfileUserIdentity(p profile.Profile) string {
