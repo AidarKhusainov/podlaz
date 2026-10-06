@@ -590,11 +590,10 @@ run_private_profile_import() {
     rm -f -- "${out}" "${err}"
     fail "released-package profile import failed"
   fi
-  [[ -n "${PROFILE_ID}" ]] || {
+  grep -F 'Next: podlaz connect' "${out}" >/dev/null || {
     rm -f -- "${out}" "${err}"
-    fail "released-package profile import returned no profile ID"
+    fail "released-package import did not select the single profile"
   }
-  mask_multiline_sensitive "${PROFILE_ID}"
   rm -f -- "${out}" "${err}"
 }
 
