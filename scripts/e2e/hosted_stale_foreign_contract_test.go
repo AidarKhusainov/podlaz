@@ -85,7 +85,7 @@ func TestHostedStaleObservationUsesExistingMissingLinkPathWithoutRepair(t *testi
 		"rollback-failed",
 		"restart_without_missing_link_hook",
 		"assert_observation_only_foreign_link",
-		"recover --execute --yes --json",
+		"debug recover --execute --json",
 		"observation.never_authority",
 		"resolver.missing_link_classified",
 		"resolver.fail_closed_no_name_cleanup",
@@ -122,7 +122,7 @@ func TestHostedForeignStateSafetyProvesOccupiedAllocationAndBroadCoexistence(t *
 		"foreign.churn_preserved",
 		"foreign.recovery_preserved",
 		"foreign.cleanup_preserved",
-		"recover --execute --yes --json",
+		"debug recover --execute --json",
 		"verified-active",
 		"terminal-clean",
 	)
