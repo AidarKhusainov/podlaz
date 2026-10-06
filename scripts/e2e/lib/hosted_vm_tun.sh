@@ -143,6 +143,10 @@ hosted_vm_tun_profile_selector() {
   hosted_vm_ga_bash "cat ${HOSTED_VM_TUN_PRIVATE@Q}/profile-selector" | sed -e 's/[[:space:]]*$//'
 }
 
+hosted_vm_tun_profile_id() {
+  hosted_vm_ga_bash "jq -r '.selected_profile_id // empty' ${HOSTED_VM_TUN_XDG@Q}/state/podlaz/profiles.json" | tr -d '[:space:]'
+}
+
 hosted_vm_tun_assert_endpoint_reachable() {
   hosted_vm_ga_bash_stdin <<'EOF'
 set -Eeuo pipefail
