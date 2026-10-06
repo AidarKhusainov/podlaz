@@ -6,49 +6,46 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestRunCLISubscriptionDeleteReportsMatchingManualProfilesLeftUntouched(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	fixturePath := filepath.Join(dir, "diag.txt")
-	writeSubscriptionFixture(t, fixturePath, []string{
+	source := importDeleteSubscription(t, opts, filepath.Join(dir, "diag.txt"), []string{
 		shareLink(701, "matching-delete.example", "443", "?type=tcp&security=tls", "subscription-owned"),
 	})
 
-	if err := runWithOptions(context.Background(), []string{"subscription", "add", "--name", "diag", "--url", localFileURL(fixturePath)}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription add failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"subscription", "update", "diag"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("subscription update failed: %v", err)
-	}
-	if err := runWithOptions(context.Background(), []string{"profile", "add", "--name", "manual-match", "--server", "matching-delete.example", "--port", "443", "--protocol", "vless"}, &bytes.Buffer{}, opts); err != nil {
-		t.Fatalf("manual profile add failed: %v", err)
+	store, _ := profile.NewStore(opts.profileStorePath)
+	manual := testConnectProfile()
+	manual.ID = "manual-match"
+	manual.Name = "manual-match"
+	manual.Server = "matching-delete.example"
+	manual.Source = profile.SourceManual
+	if err := store.Add(manual); err != nil {
+		t.Fatalf("add matching manual profile: %v", err)
 	}
 
 	var deleteOut bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"subscription", "delete", "diag", "--yes"}, &deleteOut, opts); err != nil {
+	if err := runWithOptions(context.Background(), []string{"subscription", "delete", source.ID, "--yes"}, &deleteOut, opts); err != nil {
 		t.Fatalf("subscription delete failed: %v", err)
 	}
 	for _, want := range []string{
-		"Subscription deleted: diag",
+		"Subscription deleted: " + source.ID,
 		"Profiles removed: 1",
 		"Orphan or manual profiles with matching servers were left untouched: 1",
 	} {
 		if !strings.Contains(deleteOut.String(), want) {
-			t.Fatalf("expected delete output to contain %q, got %q", want, deleteOut.String())
+			t.Fatalf("delete output missing %q: %q", want, deleteOut.String())
 		}
 	}
 
-	var profiles bytes.Buffer
-	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &profiles, opts); err != nil {
-		t.Fatalf("profile list failed: %v", err)
+	profiles, err := store.List()
+	if err != nil {
+		t.Fatal(err)
 	}
-	got := profiles.String()
-	if !strings.Contains(got, "manual-match") || !strings.Contains(got, "matching-delete.example") {
-		t.Fatalf("expected matching manual profile to remain, got %q", got)
-	}
-	if strings.Contains(got, "subscription-owned") {
-		t.Fatalf("expected subscription-owned profile to be removed, got %q", got)
+	if len(profiles) != 1 || profiles[0].ID != manual.ID || profiles[0].Server != manual.Server {
+		t.Fatalf("matching manual profile not preserved: %#v", profiles)
 	}
 }
