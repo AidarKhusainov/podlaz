@@ -410,7 +410,7 @@ PY
 assert_recover_dry_run_noop() {
   local phase="$1" output
   output="${PRIVATE_ROOT}/${phase}-recover-dry.json"
-  run_e2e_podlaz recover --json >"${output}"
+  run_e2e_podlaz debug recover --json >"${output}"
   python3 - "${output}" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -431,7 +431,7 @@ assert_recover_execute_noop() {
   local phase="$1" output exit_code
   output="${PRIVATE_ROOT}/${phase}-recover-execute.json"
   set +e
-  run_e2e_podlaz recover --execute --yes --json >"${output}"
+  run_e2e_podlaz debug recover --execute --json >"${output}"
   exit_code=$?
   set -e
   (( exit_code == 1 )) || return 1
@@ -458,7 +458,7 @@ PY
 assert_recover_execute_clean() {
   local phase="$1" output
   output="${PRIVATE_ROOT}/${phase}-recover-execute-clean.json"
-  run_e2e_podlaz recover --execute --yes --json >"${output}"
+  run_e2e_podlaz debug recover --execute --json >"${output}"
   python3 - "${output}" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
@@ -676,7 +676,7 @@ assert_inactive_observation_clean() {
 }
 
 connect_once() {
-  run_e2e_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null
+  run_e2e_podlaz connect >/dev/null
   wait_guest_status verified-active
 }
 
