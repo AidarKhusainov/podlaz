@@ -312,8 +312,18 @@ func TestFullTunnelTransactionRunnerConnectivityFailureMarksRollbackCompleted(t 
 	if err == nil {
 		t.Fatal("expected connectivity verification failure")
 	}
-	if !strings.Contains(err.Error(), "Rollback completed; no podlaz-owned network changes were left applied.") {
-		t.Fatalf("expected friendly rollback completion marker, got:\n%s", err.Error())
+	if !strings.Contains(err.Error(), "attempted Podlaz-owned network changes were rolled back") {
+		t.Fatalf("expected product rollback completion marker, got:\n%s", err.Error())
+	}
+	var verification *TunVerificationError
+	if !errors.As(err, &verification) || !verification.RollbackCompleted {
+		t.Fatalf("typed verification rollback evidence missing: %T %v", err, err)
+	}
+	if verification.Phase != "dns" || verification.Summary != "DNS through the tunnel did not resolve example.com before timeout" {
+		t.Fatalf("typed verification detail changed unexpectedly: %#v", verification)
+	}
+	if strings.Contains(err.Error(), verification.Summary) || strings.Contains(err.Error(), "dns timeout") {
+		t.Fatalf("normal error leaked verification internals: %v", err)
 	}
 	if !errors.Is(err, errRunnerConnectivityFailed) {
 		t.Fatalf("expected wrapped connectivity cause, got %v", err)
