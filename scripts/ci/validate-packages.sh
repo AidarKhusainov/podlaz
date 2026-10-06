@@ -83,7 +83,7 @@ validate_bash_completion_protocol_boundary() {
   # validation script.
   # shellcheck disable=SC2016
   local -a required_literal_patterns=(
-    'value-only display fallback'
+    'values+=("$value")'
     'COMPREPLY=("${values[@]}")'
   )
   # shellcheck disable=SC2016
