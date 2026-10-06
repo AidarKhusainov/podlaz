@@ -32,10 +32,12 @@ func commandUsesUserOwnedState(command string, args []string) bool {
 		return false
 	}
 	switch command {
-	case "import", "profile", "subscription", "plan", "connect", "check":
+	case "import", "profile", "subscription", "connect":
 		return true
 	case "autostart":
 		return len(args) > 0 && strings.EqualFold(args[0], "enable")
+	case "debug":
+		return len(args) > 0 && strings.EqualFold(args[0], "proxy")
 	default:
 		return false
 	}
@@ -102,19 +104,17 @@ func sudoGuardCommandShape(command string, args []string) string {
 		}
 		return "podlaz <command>"
 	case "import":
-		return "podlaz import <target>"
+		return "podlaz import <uri|url|file>"
 	case "profile":
 		return sudoGuardProfileCommandShape(args)
 	case "subscription":
 		return sudoGuardSubscriptionCommandShape(args)
-	case "plan":
-		return "podlaz plan --mode <mode> <profile-id>"
 	case "connect":
-		return "podlaz connect [--mode proxy-only|tun] <profile-id>"
+		return "podlaz connect [profile]"
 	case "autostart":
-		return "podlaz autostart enable [--mode proxy-only|tun] <profile-id>"
-	case "check":
-		return "podlaz check <profile-id>"
+		return "podlaz autostart enable [profile]"
+	case "debug":
+		return "podlaz debug proxy <profile>"
 	default:
 		return "podlaz <command>"
 	}
@@ -129,19 +129,17 @@ func completionCommandArgs(words []string) []string {
 
 func sudoGuardProfileCommandShape(args []string) string {
 	if len(args) == 0 {
-		return "podlaz profile <subcommand>"
+		return "podlaz profile <list|show|use|delete>"
 	}
 	switch strings.ToLower(args[0]) {
-	case "add":
-		return "podlaz profile add --name <name> --server <host> --port <port> --protocol <protocol>"
-	case "import":
-		return "podlaz profile import <share-uri>"
 	case "list":
 		return "podlaz profile list"
 	case "show":
-		return "podlaz profile show <profile-id>"
+		return "podlaz profile show <profile>"
+	case "use":
+		return "podlaz profile use <profile>"
 	case "delete":
-		return "podlaz profile delete <profile-id> --yes"
+		return "podlaz profile delete <profile> --yes"
 	default:
 		return "podlaz profile <subcommand>"
 	}
@@ -149,11 +147,9 @@ func sudoGuardProfileCommandShape(args []string) string {
 
 func sudoGuardSubscriptionCommandShape(args []string) string {
 	if len(args) == 0 {
-		return "podlaz subscription <subcommand>"
+		return "podlaz subscription <list|show|update|delete>"
 	}
 	switch strings.ToLower(args[0]) {
-	case "add":
-		return "podlaz subscription add --name <name> --url <url>"
 	case "list":
 		return "podlaz subscription list"
 	case "show":
