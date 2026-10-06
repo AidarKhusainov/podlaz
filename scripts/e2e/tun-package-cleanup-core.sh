@@ -147,7 +147,7 @@ attempt_daemon_recovery() {
     XDG_CONFIG_HOME="${CLEANUP_XDG}/config" \
     XDG_STATE_HOME="${CLEANUP_XDG}/state" \
     XDG_CACHE_HOME="${CLEANUP_XDG}/cache" \
-    /usr/bin/podlaz recover --execute --yes >/dev/null 2>&1; then
+    /usr/bin/podlaz debug recover --execute >/dev/null 2>&1; then
     record_cleanup_evidence recovery_result completed
   else
     record_cleanup_evidence recovery_result failed_fallback_required
