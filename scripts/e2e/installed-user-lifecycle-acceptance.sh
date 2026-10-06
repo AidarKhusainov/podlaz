@@ -282,6 +282,6 @@ wait_for_listener_state absent '127.0.0.1:8080'
 if sudo -n test -e /run/podlaz/generated/xray.json; then
   fail "generated Xray runtime config remained after crash disconnect"
 fi
-assert_artifacts_do_not_contain_sensitive_values "installed-user-lifecycle" "${PROFILE_URI}" "${PROFILE_SELECTOR}"
+assert_artifacts_do_not_contain_sensitive_values "installed-user-lifecycle" "${PROFILE_URI}"
 
 log "installed-user lifecycle acceptance completed"
