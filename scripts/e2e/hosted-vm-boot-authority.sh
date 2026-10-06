@@ -343,7 +343,7 @@ run_scenario() {
   hosted_vm_tun_wait_status clean-inactive 100
   record_evidence same_boot_restart.clean_inactive pass
   [[ "$(attempt_sha)" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile}" succeeded
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
   record_evidence same_boot_restart.attempt_unchanged pass
   assert_session_absent
   record_evidence same_boot_restart.no_session pass
