@@ -247,7 +247,7 @@ assert_active_proxy_only_control_plane() {
       sudo -n test -f "${ACTIVE_RUNTIME_CONFIG_PATH}" || fail "${phase}: active runtime config is missing"
     fi
   done
-  expect_private_success "recover-${phase}-while-active-json" run_installed_podlaz recover --json
+  expect_private_success "recover-${phase}-while-active-json" run_installed_podlaz debug recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_plan_empty "${phase}-while-active"
 }
@@ -264,7 +264,7 @@ assert_no_stale_state() {
   local phase="$1"
   expect_private_success "status-${phase}-after-disconnect" run_installed_podlaz status
   grep -Fx "Status: Disconnected" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status is not disconnected after disconnect"
-  expect_private_success "recover-${phase}-dry-run-json" run_installed_podlaz recover --json
+  expect_private_success "recover-${phase}-dry-run-json" run_installed_podlaz debug recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_plan_empty "${phase}"
 }
