@@ -64,12 +64,13 @@ func runSubscriptionList(store sub.Store, args []string, stdout io.Writer) error
 	}
 	rows := make([][]string, 0, len(sources))
 	for _, source := range sources {
-		out := subscriptionForOutput(source)
+		id := redactedSubscriptionID(source)
+		name := redactedSubscriptionName(source)
 		updated := "never"
 		if !source.LastUpdatedAt.IsZero() {
 			updated = source.LastUpdatedAt.UTC().Format(time.RFC3339)
 		}
-		rows = append(rows, []string{out.ID, out.Name, string(out.Format), strconv.Itoa(len(source.ProfileIDs)), updated})
+		rows = append(rows, []string{id, name, string(source.Format), strconv.Itoa(len(source.ProfileIDs)), updated})
 	}
 	return writeTable(stdout, []string{"ID", "NAME", "FORMAT", "PROFILES", "UPDATED"}, rows)
 }
@@ -83,10 +84,11 @@ func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error
 	if err != nil {
 		return subscriptionCommandError(err)
 	}
-	out := subscriptionForOutput(source)
-	fmt.Fprintf(stdout, "ID: %s\n", out.ID)
-	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
-	fmt.Fprintf(stdout, "Format: %s\n", out.Format)
+	id := redactedSubscriptionID(source)
+	name := redactedSubscriptionName(source)
+	fmt.Fprintf(stdout, "ID: %s\n", id)
+	fmt.Fprintf(stdout, "Name: %s\n", name)
+	fmt.Fprintf(stdout, "Format: %s\n", source.Format)
 	fmt.Fprintf(stdout, "Imported profiles: %d\n", len(source.ProfileIDs))
 	if source.LastUpdatedAt.IsZero() {
 		fmt.Fprintln(stdout, "Last updated: never")
