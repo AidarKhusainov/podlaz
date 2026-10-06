@@ -495,8 +495,8 @@ proxy startup result, SOCKS/HTTP egress results, and per-service results. Human
 and JSON output use the same redaction rules.
 
 ```bash
-podlaz recover
-podlaz recover --execute --yes [--json]
+podlaz debug recover
+podlaz debug recover --execute --yes [--json]
 ```
 
 `recover` is a read-only inspection of the same recovery model used by
