@@ -420,7 +420,7 @@ assert_wifi_ordinary_connectivity() {
 diagnose_tun_connect_failure() {
   local doctor_json doctor_rc token
   set +e
-  doctor_json="$(hosted_vm_tun_run_podlaz doctor --tun --json 2>/dev/null)"
+  doctor_json="$(hosted_vm_tun_run_podlaz debug doctor --tun --json 2>/dev/null)"
   doctor_rc=$?
   set -e
   if (( doctor_rc != 0 && doctor_rc != 3 )); then
