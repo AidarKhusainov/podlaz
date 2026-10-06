@@ -380,7 +380,7 @@ assert_recovery_exact_transaction_only() {
   local session_after_execute="${PRIVATE_ROOT}/session-after-execute.sha256"
   local execute_code
 
-  run_e2e_podlaz recover --json >"${before}" 2>"${PRIVATE_ROOT}/recover-before.stderr" || return 1
+  run_e2e_podlaz debug recover --json >"${before}" 2>"${PRIVATE_ROOT}/recover-before.stderr" || return 1
   python3 - "${before}" <<'PY' || return 1
 import json
 import sys
@@ -427,7 +427,7 @@ PY
   cmp -s "${expected_session_fingerprint}" "${session_after_dry_run}" || return 1
 
   set +e
-  run_e2e_podlaz recover --execute --yes --json >"${execute}" 2>"${execute_stderr}"
+  run_e2e_podlaz debug recover --execute --json >"${execute}" 2>"${execute_stderr}"
   execute_code=$?
   set -e
   (( execute_code == 1 )) || return 1
