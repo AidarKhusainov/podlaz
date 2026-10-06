@@ -586,11 +586,10 @@ run_private_profile_import() {
   [[ -n "${uri}" ]] || fail "no profile URI available"
   out="$(mktemp "${E2E_TMP_ROOT}/network-recovery-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/network-recovery-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+  if ! run_installed_podlaz import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "released-package profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
   [[ -n "${PROFILE_ID}" ]] || {
     rm -f -- "${out}" "${err}"
     fail "released-package profile import returned no profile ID"
@@ -603,7 +602,7 @@ connect_once_on_released_package() {
   local out err
   out="$(mktemp "${E2E_TMP_ROOT}/network-recovery-connect.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/network-recovery-connect.stderr.XXXXXX")"
-  if ! run_installed_podlaz connect --mode tun "${PROFILE_ID}" >"${out}" 2>"${err}"; then
+  if ! run_installed_podlaz connect >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "released-package TUN connect failed"
   fi
