@@ -3,50 +3,22 @@ package cli
 import (
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/AidarKhusainov/podlaz/internal/render"
 	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
-type subscriptionOutput struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	URL           string     `json:"url"`
-	Format        sub.Format `json:"format"`
-	ProfileIDs    []string   `json:"profile_ids,omitempty"`
-	LastUpdatedAt string     `json:"last_updated_at,omitempty"`
+func redactedSubscriptionID(source sub.Source) string {
+	return render.Redact(source.ID)
 }
 
-func subscriptionsForOutput(sources []sub.Source) []subscriptionOutput {
-	out := make([]subscriptionOutput, len(sources))
-	for i, source := range sources {
-		out[i] = subscriptionForOutput(source)
-	}
-	return out
-}
-
-func subscriptionForOutput(source sub.Source) subscriptionOutput {
-	out := subscriptionOutput{
-		ID:         render.Redact(source.ID),
-		Name:       render.Redact(source.Name),
-		URL:        "REDACTED",
-		Format:     source.Format,
-		ProfileIDs: make([]string, len(source.ProfileIDs)),
-	}
-	for i, id := range source.ProfileIDs {
-		out.ProfileIDs[i] = render.Redact(id)
-	}
-	if !source.LastUpdatedAt.IsZero() {
-		out.LastUpdatedAt = source.LastUpdatedAt.UTC().Format(time.RFC3339)
-	}
-	return out
+func redactedSubscriptionName(source sub.Source) string {
+	return render.Redact(source.Name)
 }
 
 func printSubscriptionUpdateResult(stdout io.Writer, result sub.UpdateResult) {
-	out := subscriptionForOutput(result.Subscription)
-	fmt.Fprintf(stdout, "Subscription updated: %s\n", out.ID)
-	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
+	fmt.Fprintf(stdout, "Subscription updated: %s\n", redactedSubscriptionID(result.Subscription))
+	fmt.Fprintf(stdout, "Name: %s\n", redactedSubscriptionName(result.Subscription))
 	fmt.Fprintf(stdout, "Format: %s\n", result.Subscription.Format)
 	fmt.Fprintf(stdout, "Imported: %d\n", result.Imported)
 	fmt.Fprintf(stdout, "Updated: %d\n", result.Updated)
