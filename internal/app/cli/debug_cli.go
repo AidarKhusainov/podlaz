@@ -20,6 +20,8 @@ func runDebugCommand(ctx context.Context, args []string, stdout io.Writer, opts 
 		return runLogsCommand(ctx, args[1:], stdout, opts)
 	case "proxy":
 		return runProxyConnectCommand(ctx, args[1:], stdout, opts)
+	case "recover":
+		return runRecoverCommand(ctx, args[1:], stdout, opts)
 	default:
 		return usageError("unknown debug subcommand %q", args[0])
 	}
@@ -30,6 +32,7 @@ func printDebugHelp(w io.Writer) {
   podlaz debug doctor [options]
   podlaz debug logs [options]
   podlaz debug proxy <profile>
+  podlaz debug recover [--execute]
 
 Advanced diagnostics and reduced-protection operation. These commands are not
 part of the normal VPN workflow. "debug proxy" is explicit Proxy-only operation;
