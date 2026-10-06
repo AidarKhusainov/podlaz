@@ -96,7 +96,7 @@ Status is a projection over typed evidence. Lifecycle state, runtime warnings, r
 
 `Disconnected` requires conclusively inactive lifecycle evidence. Incomplete/unavailable inspection projects to `Unknown`. `Connecting`/`Reconnecting` are normal progress states. A committed transaction is historical transaction evidence, not proof of current TUN health.
 
-`doctor --tun` is daemon-backed because authoritative active-session, transaction, route, resolver, and ownership evidence belongs to the daemon. Diagnostic persistence failure must not leave or advertise a report as successfully written.
+`podlaz debug doctor --tun` is daemon-backed because authoritative active-session, transaction, route, resolver, and ownership evidence belongs to the daemon. Diagnostic persistence failure must not leave or advertise a report as successfully written.
 
 ## Package/runtime contract
 
