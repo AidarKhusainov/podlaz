@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func TestParseDefaultYesConfirmation(t *testing.T) {
+func TestParseDefaultNoConfirmation(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
 		confirmed bool
 		valid     bool
 	}{
-		{name: "empty", input: "\n", confirmed: true, valid: true},
+		{name: "empty", input: "\n", confirmed: false, valid: true},
 		{name: "y", input: "y\n", confirmed: true, valid: true},
 		{name: "yes uppercase", input: "YES\n", confirmed: true, valid: true},
 		{name: "n", input: "n\n", confirmed: false, valid: true},
@@ -23,7 +23,7 @@ func TestParseDefaultYesConfirmation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			confirmed, valid := parseDefaultYesConfirmation(tt.input)
+			confirmed, valid := parseDefaultNoConfirmation(tt.input)
 			if confirmed != tt.confirmed || valid != tt.valid {
 				t.Fatalf("expected confirmed=%v valid=%v, got confirmed=%v valid=%v", tt.confirmed, tt.valid, confirmed, valid)
 			}
@@ -31,42 +31,30 @@ func TestParseDefaultYesConfirmation(t *testing.T) {
 	}
 }
 
-func TestConfirmDefaultYesRetriesInvalidInput(t *testing.T) {
+func TestConfirmDefaultNoRetriesThenRequiresExplicitYes(t *testing.T) {
 	var out bytes.Buffer
-	err := confirmDefaultYes(&out, strings.NewReader("maybe\n\n"), "Continue", "test", "canceled")
+	err := confirmDefaultNo(&out, strings.NewReader("maybe\nyes\n"), "Continue", "test", "canceled")
 	if err != nil {
-		t.Fatalf("expected retry then default yes confirmation, got %v", err)
+		t.Fatalf("explicit yes after retry failed: %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, "Continue [Y/n]:") || !strings.Contains(got, "Please answer y or n.") {
-		t.Fatalf("expected visible default prompt and retry guidance, got %q", got)
+	if !strings.Contains(got, "Continue [y/N]:") || !strings.Contains(got, "Please answer y or n.") {
+		t.Fatalf("expected default-no prompt and retry guidance, got %q", got)
 	}
 }
 
-func TestConfirmDefaultYesCancel(t *testing.T) {
+func TestConfirmDefaultNoEmptyLineCancels(t *testing.T) {
 	var out bytes.Buffer
-	err := confirmDefaultYes(&out, strings.NewReader("no\n"), "Continue", "test", "canceled")
-	if err == nil {
-		t.Fatal("expected no to cancel")
-	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected cancel exit code 1, got %d", got)
-	}
-	if !strings.Contains(err.Error(), "canceled") {
-		t.Fatalf("expected cancel error, got %v", err)
+	err := confirmDefaultNo(&out, strings.NewReader("\n"), "Continue", "test", "canceled")
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("empty input err=%v exit=%d, want cancellation", err, ExitCode(err))
 	}
 }
 
-func TestConfirmDefaultYesEmptyEOFCancels(t *testing.T) {
+func TestConfirmDefaultNoEmptyEOFCancels(t *testing.T) {
 	var out bytes.Buffer
-	err := confirmDefaultYes(&out, strings.NewReader(""), "Continue", "test", "canceled")
-	if err == nil {
-		t.Fatal("expected empty EOF to cancel")
-	}
-	if got := ExitCode(err); got != 1 {
-		t.Fatalf("expected cancel exit code 1, got %d", got)
-	}
-	if !strings.Contains(err.Error(), "canceled") {
-		t.Fatalf("expected cancel error, got %v", err)
+	err := confirmDefaultNo(&out, strings.NewReader(""), "Continue", "test", "canceled")
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("empty EOF err=%v exit=%d, want cancellation", err, ExitCode(err))
 	}
 }
