@@ -29,7 +29,7 @@ func withNetworkSessionRecoveryStatus(
 	}
 	status.StartupScan.NetworkSession = plan
 	status.StartupScan.Status = startupScanStatusFromPublished(*status.StartupScan)
-	status.StartupScan.SuggestedAction = "podlaz recover"
+	status.StartupScan.SuggestedAction = "podlaz debug recover"
 	return status
 }
 
