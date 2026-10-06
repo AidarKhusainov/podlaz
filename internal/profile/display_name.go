@@ -58,7 +58,17 @@ func ProviderProfileDisplayName(raw, protocol, host string, port uint16) (string
 	if name, ok := SanitizeDisplayName(raw); ok {
 		return name, true
 	}
-	return FallbackProfileDisplayName(protocol, host, port), false
+	_ = host
+	_ = port
+	return SafeProfileDisplayName(protocol), false
+}
+
+func SafeProfileDisplayName(protocol string) string {
+	protocol = NormalizeID(protocol)
+	if protocol == "" {
+		return "profile"
+	}
+	return protocol + "-profile"
 }
 
 func FallbackProfileDisplayName(protocol, host string, port uint16) string {
