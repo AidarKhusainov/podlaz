@@ -47,7 +47,6 @@ func TestRunCLIConnectUsesCanonicalTunAndBlockForInactiveState(t *testing.T) {
 	}
 }
 
-
 func TestRunCLIConnectReplacesDifferentHealthyPodlazTunSession(t *testing.T) {
 	storePath := t.TempDir() + "/profiles.json"
 	p := testConnectProfile()
