@@ -33,8 +33,6 @@ func runSubscriptionCommand(ctx context.Context, args []string, stdout io.Writer
 	}
 
 	switch strings.ToLower(args[0]) {
-	case "add":
-		return runSubscriptionAdd(store, args[1:], stdout)
 	case "list":
 		return runSubscriptionList(store, args[1:], stdout)
 	case "show":
@@ -56,32 +54,13 @@ func runSubscriptionCommand(ctx context.Context, args []string, stdout io.Writer
 	}
 }
 
-func runSubscriptionAdd(store sub.Store, args []string, stdout io.Writer) error {
-	parsed, err := parseSubscriptionAddArgs(args)
-	if err != nil {
-		return err
-	}
-	source := sub.NewSource(parsed.name, parsed.url)
-	if err := store.Add(source); err != nil {
-		return subscriptionCommandError(err)
-	}
-	out := subscriptionForOutput(source)
-	fmt.Fprintf(stdout, "Subscription added: %s\n", out.ID)
-	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
-	return nil
-}
-
 func runSubscriptionList(store sub.Store, args []string, stdout io.Writer) error {
-	jsonOutput, err := parseOptionalJSON(args, "subscription list")
-	if err != nil {
-		return err
+	if len(args) != 0 {
+		return usageError("subscription list does not accept arguments")
 	}
 	sources, err := store.List()
 	if err != nil {
 		return err
-	}
-	if jsonOutput {
-		return writeJSON(stdout, okJSON(map[string]any{"subscriptions": subscriptionsForOutput(sources)}))
 	}
 	rows := make([][]string, 0, len(sources))
 	for _, source := range sources {
@@ -96,7 +75,7 @@ func runSubscriptionList(store sub.Store, args []string, stdout io.Writer) error
 }
 
 func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error {
-	id, jsonOutput, err := parseSubscriptionShowArgs(args)
+	id, err := parseSubscriptionShowArgs(args)
 	if err != nil {
 		return err
 	}
@@ -105,12 +84,8 @@ func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error
 		return subscriptionCommandError(err)
 	}
 	out := subscriptionForOutput(source)
-	if jsonOutput {
-		return writeJSON(stdout, okJSON(map[string]any{"subscription": out}))
-	}
 	fmt.Fprintf(stdout, "ID: %s\n", out.ID)
 	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
-	fmt.Fprintf(stdout, "URL: %s\n", out.URL)
 	fmt.Fprintf(stdout, "Format: %s\n", out.Format)
 	fmt.Fprintf(stdout, "Imported profiles: %d\n", len(source.ProfileIDs))
 	if source.LastUpdatedAt.IsZero() {
@@ -123,24 +98,14 @@ func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error
 
 func printSubscriptionHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz subscription add [--name <name>] --url <file-or-http-url>
+  podlaz subscription list
+  podlaz subscription show <subscription-id>
   podlaz subscription update <subscription-id>
-  podlaz subscription list [--json]
-  podlaz subscription show <subscription-id> [--json]
   podlaz subscription delete <subscription-id> [--yes] [--keep-profiles]
 
-Manage subscription sources and imported subscription profiles in local
-podlaz user state.
-
-Supported subscription sources:
-  file/http/https
-
-Supported subscription formats:
-  Base64 URI-list, Xray JSON
-
-Delete behavior:
-  subscription delete removes subscription metadata and, by default, profiles
-  owned by that subscription. Use --keep-profiles to remove only subscription
-  metadata and leave imported profiles in the profile store.
+Normal onboarding uses "podlaz import <uri|url|file>". Subscription commands only
+manage an already imported source. Source URLs and credentials are never printed.
+Deletion removes subscription-owned profiles by exact persisted ownership unless
+--keep-profiles is explicitly requested.
 `)
 }
