@@ -32,20 +32,13 @@ build_podlaz_binary
 setup_isolated_xdg "real-vpn"
 PODLAZ=("${PODLAZ_BIN}")
 
-expect_private_success real-profile-import "${PODLAZ[@]}" profile import "${PODLAZ_E2E_PROFILE_URI}"
-PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
-assert_nonempty "${PROFILE_ID}" "real imported profile id"
-mask_value "${PROFILE_ID}"
+expect_private_success real-profile-import "${PODLAZ[@]}" import "${PODLAZ_E2E_PROFILE_URI}"
+PROFILE_SELECTOR="$(sed -n 's/^Profile: //p' "${LAST_STDOUT}" | head -n1)"
+assert_nonempty "${PROFILE_SELECTOR}" "real imported profile selector"
+mask_value "${PROFILE_SELECTOR}"
 assert_not_contains "${LAST_STDOUT}" "${PODLAZ_E2E_PROFILE_URI}"
 
-expect_private_success real-profile-show "${PODLAZ[@]}" profile show "${PROFILE_ID}"
-expect_private_success real-profile-show-json "${PODLAZ[@]}" profile show "${PROFILE_ID}" --json
-assert_json_file "${LAST_STDOUT}"
-expect_private_success real-profile-validate-proxy-only "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
-expect_private_success real-profile-validate-tun "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode tun
-expect_private_success real-plan-proxy-only "${PODLAZ[@]}" plan --mode proxy-only "${PROFILE_ID}"
-expect_private_success real-plan-tun-dry-run "${PODLAZ[@]}" plan --mode tun "${PROFILE_ID}"
-assert_contains "${LAST_STDOUT}" "No changes were applied."
+expect_private_success real-profile-show "${PODLAZ[@]}" profile show "${PROFILE_SELECTOR}"
 
 if [[ "${PODLAZ_E2E_ENABLE_LIFECYCLE}" != "true" ]]; then
   log "real VPN lifecycle is disabled; set PODLAZ_E2E_ENABLE_LIFECYCLE=true to run daemon connect/disconnect checks"
@@ -166,7 +159,7 @@ mask_value "${BEFORE_IP}"
 printf '%s\n' "${BEFORE_IP}" >"${E2E_ARTIFACT_DIR}/public-ip-before.txt"
 
 run_podlaz_as_socket_user profile list >"${E2E_ARTIFACT_DIR}/socket-user-profile-list.stdout"
-run_podlaz_as_socket_user connect --mode proxy-only "${PROFILE_ID}" >"${E2E_ARTIFACT_DIR}/connect-proxy-only.stdout" 2>"${E2E_ARTIFACT_DIR}/connect-proxy-only.stderr"
+run_podlaz_as_socket_user debug proxy "${PROFILE_SELECTOR}" >"${E2E_ARTIFACT_DIR}/connect-proxy-only.stdout" 2>"${E2E_ARTIFACT_DIR}/connect-proxy-only.stderr"
 ACTIVE_CONNECTION=1
 run_podlaz_as_socket_user status >"${E2E_ARTIFACT_DIR}/status-proxy-only.stdout" 2>"${E2E_ARTIFACT_DIR}/status-proxy-only.stderr" || true
 run_podlaz_as_socket_user disconnect >"${E2E_ARTIFACT_DIR}/disconnect-proxy-only.stdout" 2>"${E2E_ARTIFACT_DIR}/disconnect-proxy-only.stderr"
@@ -178,7 +171,7 @@ if [[ "${PODLAZ_E2E_ENABLE_TUN}" != "true" ]]; then
 fi
 
 log "real VPN TUN lifecycle"
-run_podlaz_as_socket_user connect --mode tun "${PROFILE_ID}" >"${E2E_ARTIFACT_DIR}/connect-tun.stdout" 2>"${E2E_ARTIFACT_DIR}/connect-tun.stderr"
+run_podlaz_as_socket_user connect >"${E2E_ARTIFACT_DIR}/connect-tun.stdout" 2>"${E2E_ARTIFACT_DIR}/connect-tun.stderr"
 ACTIVE_CONNECTION=1
 wait_for_status_match "real TUN verified active" 120 daemon_status_is_verified_active
 fetch_daemon_status_json >"${E2E_ARTIFACT_DIR}/status-tun.json"
@@ -193,7 +186,7 @@ run_podlaz_as_socket_user disconnect >"${E2E_ARTIFACT_DIR}/disconnect-tun.stdout
 ACTIVE_CONNECTION=0
 wait_for_status_match "real TUN clean inactive" 80 daemon_status_is_clean_inactive
 fetch_daemon_status_json >"${E2E_ARTIFACT_DIR}/status-after-tun-disconnect.json"
-run_podlaz_as_socket_user recover --json >"${E2E_ARTIFACT_DIR}/recover-after-tun.json" 2>"${E2E_ARTIFACT_DIR}/recover-after-tun.stderr"
+run_podlaz_as_socket_user debug recover --json >"${E2E_ARTIFACT_DIR}/recover-after-tun.json" 2>"${E2E_ARTIFACT_DIR}/recover-after-tun.stderr"
 assert_clean_recovery_json_file "${E2E_ARTIFACT_DIR}/recover-after-tun.json"
 
 log "real VPN e2e completed"
