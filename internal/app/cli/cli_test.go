@@ -57,7 +57,7 @@ func TestRunCLIStatusRendersCleanLocalStatus(t *testing.T) {
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"status"}, &out, options{
 		profileStorePath: t.TempDir() + "/profiles.json",
-		status: func(context.Context) status.Report { return cleanStatusReport() },
+		status:           func(context.Context) status.Report { return cleanStatusReport() },
 	})
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
