@@ -25,7 +25,6 @@ if [[ -z "${PODLAZ_E2E_PROFILE_URI}" && -z "${PODLAZ_E2E_PROFILE_URI_LIST}" ]]; 
 fi
 
 EVIDENCE_FILE="${E2E_ARTIFACT_DIR}/stale-link-acceptance.txt"
-PROFILE_ID=""
 CONNECTED=false
 STALE_LINK_CREATED=false
 STALE_LINK_INDEX=""
@@ -132,14 +131,15 @@ import_profile_privately() {
   local uri="$1" output error_output
   output="$(mktemp "${E2E_TMP_ROOT}/stale-link-profile-import.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-profile-import.stderr.XXXXXX")"
-  if ! run_installed_podlaz_bounded 30s profile import "${uri}" >"${output}" 2>"${error_output}"; then
+  if ! run_installed_podlaz_bounded 30s import "${uri}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "stale-link profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
+  grep -F 'Next: podlaz connect' "${output}" >/dev/null || {
+    rm -f -- "${output}" "${error_output}"
+    fail "stale-link import did not select the single profile"
+  }
   rm -f -- "${output}" "${error_output}"
-  assert_nonempty "${PROFILE_ID}" "stale-link imported profile id"
-  mask_value "${PROFILE_ID}"
   write_evidence profile_import pass
 }
 
@@ -147,7 +147,7 @@ assert_inactive_doctor_clean() {
   local phase="$1" output exit_code
   output="$(mktemp "${E2E_TMP_ROOT}/stale-link-${phase}-inactive-doctor.XXXXXX")"
   set +e
-  run_installed_podlaz_bounded 20s doctor >"${output}" 2>&1
+  run_installed_podlaz_bounded 20s debug doctor >"${output}" 2>&1
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
@@ -270,7 +270,7 @@ assert_inactive_foreign_link_warns() {
 
   output="$(mktemp "${E2E_TMP_ROOT}/stale-link-inactive-stale-doctor.XXXXXX")"
   set +e
-  run_installed_podlaz_bounded 20s doctor >"${output}" 2>&1
+  run_installed_podlaz_bounded 20s debug doctor >"${output}" 2>&1
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
@@ -292,20 +292,20 @@ assert_logs_since_mode_36h() {
   output="$(mktemp "${E2E_TMP_ROOT}/stale-link-logs-${mode}-36h.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/stale-link-logs-${mode}-36h.stderr.XXXXXX")"
   set +e
-  run_installed_podlaz_bounded 20s logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"
+  run_installed_podlaz_bounded 20s debug logs "--${mode}" --since 36h >"${output}" 2>"${error_output}"
   exit_code=$?
   set -e
   if (( exit_code != 0 )); then
     rm -f -- "${output}" "${error_output}"
-    fail "installed podlaz logs --${mode} --since 36h failed"
+    fail "installed podlaz debug logs --${mode} --since 36h failed"
   fi
   grep -Fx "${header}" "${output}" >/dev/null || {
     rm -f -- "${output}" "${error_output}"
-    fail "installed podlaz logs --${mode} --since 36h did not render the expected header"
+    fail "installed podlaz debug logs --${mode} --since 36h did not render the expected header"
   }
   if grep -Eqi 'failed to parse timestamp|invalid argument.*since' "${error_output}"; then
     rm -f -- "${output}" "${error_output}"
-    fail "installed podlaz logs --${mode} --since 36h leaked backend timestamp grammar"
+    fail "installed podlaz debug logs --${mode} --since 36h leaked backend timestamp grammar"
   fi
   rm -f -- "${output}" "${error_output}"
   write_evidence "logs_since_36h_${key}" pass
@@ -327,8 +327,8 @@ assert_logs_lookback_is_bounded() {
 
   sleep 5
   invocation_start="$(date +%s)"
-  run_installed_podlaz_bounded 20s logs --daemon --since 1s >"${output}" 2>"${error_output}" || \
-    fail "installed podlaz logs --daemon --since 1s failed"
+  run_installed_podlaz_bounded 20s debug logs --daemon --since 1s >"${output}" 2>"${error_output}" || \
+    fail "installed podlaz debug logs --daemon --since 1s failed"
   grep -Fx 'podlaz daemon logs' "${output}" >/dev/null || fail "bounded lookback did not render the daemon header"
 
   if ! python3 - "${output}" "${invocation_start}" <<'PY'
@@ -368,7 +368,7 @@ with open(path, encoding="utf-8") as handle:
 PY
   then
     rm -f -- "${baseline}" "${output}" "${error_output}"
-    fail "podlaz logs did not enforce the requested short lookback"
+    fail "podlaz debug logs did not enforce the requested short lookback"
   fi
 
   rm -f -- "${baseline}" "${output}" "${error_output}"
@@ -387,7 +387,7 @@ assert_logs_follow_cancels_cleanly() {
       XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
       XDG_STATE_HOME="${XDG_STATE_HOME}" \
       XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
-      /usr/bin/podlaz logs --daemon --since 1s --follow >"${output}" 2>"${error_output}"
+      /usr/bin/podlaz debug logs --daemon --since 1s --follow >"${output}" 2>"${error_output}"
   exit_code=$?
   set -e
 
@@ -434,7 +434,7 @@ mask_value "${PROFILE_URI}"
 import_profile_privately "${PROFILE_URI}"
 unset PROFILE_URI
 
-if ! run_installed_podlaz_bounded 90s connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1; then
+if ! run_installed_podlaz_bounded 90s connect >/dev/null 2>&1; then
   fail "stale-link TUN connect failed"
 fi
 CONNECTED=true
