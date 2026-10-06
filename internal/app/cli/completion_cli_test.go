@@ -51,7 +51,7 @@ func TestRunCLIBashCompletionNeverAppendsRuntimeDescriptionsToValues(t *testing.
 	}
 	got := out.String()
 	for _, want := range []string{
-		`value="${line%%%%$'\t'*}"`,
+		`value="${line%%$'\t'*}"`,
 		`values+=("$value")`,
 		`COMPREPLY=("${values[@]}")`,
 	} {
