@@ -27,7 +27,7 @@ func TestRunCLIImportHTTPXrayJSONSubscriptionShowsUnicodeDisplayNames(t *testing
 	if err := runWithOptions(context.Background(), []string{"import", server.URL + "/subscription"}, &importOut, opts); err != nil {
 		t.Fatalf("Xray JSON subscription import with Unicode names failed: %v", err)
 	}
-	if got := importOut.String(); !strings.Contains(got, "Format: xray-json") || !strings.Contains(got, "Imported: 3") {
+	if got := importOut.String(); !strings.Contains(got, "Subscription imported") || !strings.Contains(got, "Profiles: 3") || !strings.Contains(got, "Next: podlaz profile use <profile>") {
 		t.Fatalf("unexpected import output: %q", got)
 	}
 
