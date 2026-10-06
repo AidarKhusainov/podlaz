@@ -167,4 +167,3 @@ func mustWriteLocalImportCLIFixture(t *testing.T, path string, data []byte) {
 		t.Fatalf("write fixture %s: %v", path, err)
 	}
 }
-
