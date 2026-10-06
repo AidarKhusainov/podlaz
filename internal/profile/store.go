@@ -115,42 +115,55 @@ func (s Store) Select(selector string) (Profile, error) {
 	return p, nil
 }
 
-// SelectedID returns the valid selected stable ID. Stale selection is cleared.
-// When exactly one profile exists without a valid selection, it becomes selected
-// persistently. Zero or multiple profiles leave selection empty.
+// SelectedID returns the currently valid selected stable ID without mutating
+// user state. Stale selection is treated as unselected here so read-only
+// surfaces such as list/completion remain read-only.
 func (s Store) SelectedID() (string, error) {
 	state, err := s.loadState()
 	if err != nil {
 		return "", err
 	}
-	changed := clearStaleSelection(&state)
-	if state.SelectedProfileID == "" && len(state.Profiles) == 1 {
-		state.SelectedProfileID = state.Profiles[0].ID
-		changed = true
+	if state.SelectedProfileID == "" {
+		return "", nil
 	}
-	if changed {
-		if err := s.saveState(state); err != nil {
-			return "", err
-		}
+	if _, ok := profileByID(state.Profiles, state.SelectedProfileID); !ok {
+		return "", nil
 	}
 	return state.SelectedProfileID, nil
 }
 
 // ResolveSelected applies the deterministic selected-profile rules used by
-// normal user intent. It never resolves stale state by display-name resemblance.
+// normal user intent. It clears stale state by stable ID only and, when exactly
+// one profile remains, persists that profile as the selection before returning
+// it. It never retargets by display-name resemblance.
 func (s Store) ResolveSelected() (Profile, error) {
-	id, err := s.SelectedID()
+	state, err := s.loadState()
 	if err != nil {
 		return Profile{}, err
 	}
-	if id != "" {
-		return s.Get(id)
+	changed := clearStaleSelection(&state)
+	if state.SelectedProfileID != "" {
+		if changed {
+			if err := s.saveState(state); err != nil {
+				return Profile{}, err
+			}
+		}
+		p, _ := profileByID(state.Profiles, state.SelectedProfileID)
+		return p, nil
 	}
-	profiles, err := s.List()
-	if err != nil {
-		return Profile{}, err
+	if len(state.Profiles) == 1 {
+		state.SelectedProfileID = state.Profiles[0].ID
+		if err := s.saveState(state); err != nil {
+			return Profile{}, err
+		}
+		return state.Profiles[0], nil
 	}
-	if len(profiles) == 0 {
+	if changed {
+		if err := s.saveState(state); err != nil {
+			return Profile{}, err
+		}
+	}
+	if len(state.Profiles) == 0 {
 		return Profile{}, fmt.Errorf("%w: import a profile with `podlaz import <uri|url|file>`", ErrNoSelection)
 	}
 	return Profile{}, fmt.Errorf("%w: multiple profiles exist; run `podlaz profile use <profile>`", ErrNoSelection)
