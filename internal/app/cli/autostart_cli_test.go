@@ -9,25 +9,26 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-func TestRunAutostartEnableLoadsValidatedProfileWithoutConnecting(t *testing.T) {
+func TestRunAutostartEnableUsesSelectedCanonicalVPNWithoutConnecting(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	store, err := profile.NewStore(storePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, _ := profile.NewStore(storePath)
 	p := testConnectProfile()
 	p.Name = "Example VPN"
 	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select(p.Name); err != nil {
 		t.Fatal(err)
 	}
 
 	var got api.AutostartConfigureRequest
 	connectCalls := 0
 	var out bytes.Buffer
-	err = runWithOptions(context.Background(), []string{"autostart", "enable", "--mode=tun", p.ID}, &out, options{
+	err := runWithOptions(context.Background(), []string{"autostart", "enable"}, &out, options{
 		profileStorePath: storePath,
 		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
 			connectCalls++
@@ -42,64 +43,55 @@ func TestRunAutostartEnableLoadsValidatedProfileWithoutConnecting(t *testing.T) 
 		t.Fatalf("autostart enable: %v", err)
 	}
 	if connectCalls != 0 {
-		t.Fatalf("autostart enable called normal connect %d time(s)", connectCalls)
+		t.Fatalf("autostart enable called connect %d time(s)", connectCalls)
 	}
-	if got.Mode != "tun" || got.Profile.ID != p.ID || got.Profile.Name != p.Name {
+	if got.Mode != planner.ModeTun || got.Profile.ID != p.ID || got.Profile.Name != p.Name {
 		t.Fatalf("autostart request = %+v", got)
 	}
-	if got.Profile.UserIdentity != p.UserIdentity {
-		t.Fatalf("autostart snapshot did not contain validated connection material")
-	}
-	if gotJSON := out.String(); gotJSON != "Autostart: Enabled for next boot\nProfile: Example VPN\nMode: TUN\n" {
-		t.Fatalf("autostart enable output = %q", gotJSON)
+	if out.String() != "Autostart: Enabled for next boot\nProfile: Example VPN\n" {
+		t.Fatalf("autostart output = %q", out.String())
 	}
 }
 
-func TestRunAutostartEnableUsesSameProfileValidationAsConnect(t *testing.T) {
+func TestRunAutostartEnableExplicitProfileDoesNotChangeSelection(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
-	store, err := profile.NewStore(storePath)
+	store, _ := profile.NewStore(storePath)
+	first := testConnectProfile()
+	first.ID, first.Name = "first", "First"
+	second := testConnectProfile()
+	second.ID, second.Name = "second", "Second"
+	if err := store.Add(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select(first.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runWithOptions(context.Background(), []string{"autostart", "enable", second.Name}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		autostartEnable: func(_ context.Context, request api.AutostartConfigureRequest) (api.AutostartStatusResponse, error) {
+			if request.Profile.ID != second.ID {
+				t.Fatalf("autostart profile = %q", request.Profile.ID)
+			}
+			return api.AutostartStatusResponse{Enabled: true, Mode: request.Mode, ProfileName: request.Profile.Name}, nil
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := testConnectProfile()
-	p.Server = ""
-	if err := store.Add(p); err == nil {
-		// Store validation may reject the invalid profile before the CLI can load
-		// it. Write a valid profile and then validate the mode-specific path below.
-		p = testConnectProfile()
-		if err := store.Add(p); err != nil {
-			t.Fatal(err)
-		}
+	selected, err := store.ResolveSelected()
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// xray-json is only valid when its canonical payload is present; this is the
-	// same planner validation run by explicit connect.
-	p = testConnectProfile()
-	p.ID = "invalid-autostart-profile"
-	p.Protocol = "xray-json"
-	p.RealitySpiderX = ""
-	if err := store.Add(p); err != nil {
-		// Profile-store validation is allowed to reject it earlier; the behavior
-		// under test is that daemon policy is never called for invalid material.
-		return
-	}
-	called := false
-	err = runWithOptions(context.Background(), []string{"autostart", "enable", p.ID}, &bytes.Buffer{}, options{
-		profileStorePath: storePath,
-		autostartEnable: func(context.Context, api.AutostartConfigureRequest) (api.AutostartStatusResponse, error) {
-			called = true
-			return api.AutostartStatusResponse{}, nil
-		},
-	})
-	if err == nil {
-		t.Fatal("invalid profile unexpectedly configured autostart")
-	}
-	if called {
-		t.Fatal("invalid profile reached daemon autostart configuration")
+	if selected.ID != first.ID {
+		t.Fatalf("explicit autostart changed selection to %q", selected.ID)
 	}
 }
 
-func TestRunAutostartDisableAndStatusAreConcise(t *testing.T) {
+func TestRunAutostartDisableAndProxyLegacyStatusAreConcise(t *testing.T) {
 	var disableOut bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"autostart", "disable"}, &disableOut, options{
 		autostartDisable: func(context.Context) (api.AutostartStatusResponse, error) {
@@ -116,22 +108,21 @@ func TestRunAutostartDisableAndStatusAreConcise(t *testing.T) {
 	var statusOut bytes.Buffer
 	err = runWithOptions(context.Background(), []string{"autostart", "status"}, &statusOut, options{
 		autostartStatus: func(context.Context) (api.AutostartStatusResponse, error) {
-			return api.AutostartStatusResponse{Enabled: true, Mode: "proxy-only", ProfileName: "Example VPN"}, nil
+			return api.AutostartStatusResponse{Enabled: true, Mode: planner.ModeProxyOnly, ProfileName: "Example VPN"}, nil
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if statusOut.String() != "Autostart: Enabled for next boot\nProfile: Example VPN\nMode: Proxy only\n" {
+	if statusOut.String() != "Autostart: Enabled for next boot\nProfile: Example VPN\nProtection: Proxy only\n" {
 		t.Fatalf("status output = %q", statusOut.String())
 	}
 }
 
-func TestRunAutostartRejectsUnreviewedJSONAndInvalidArguments(t *testing.T) {
+func TestRunAutostartRejectsRemovedPolicyFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"autostart", "status", "--json"},
-		{"autostart", "enable", "--json", "profile"},
-		{"autostart", "enable", "--mode=invalid", "profile"},
+		{"autostart", "enable", "--mode=tun", "profile"},
 		{"autostart", "disable", "extra"},
 		{"autostart", "unknown"},
 	} {
@@ -142,20 +133,17 @@ func TestRunAutostartRejectsUnreviewedJSONAndInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestCompletionAutostartEnableCompletesProfilesAndModes(t *testing.T) {
+func TestCompletionAutostartEnableCompletesProfileNames(t *testing.T) {
 	dir := t.TempDir()
 	opts := options{profileStorePath: filepath.Join(dir, "profiles.json")}
-	profileID := storeCompletionProfile(t, opts, "autostart-example", "Autostart Example")
+	storeCompletionProfile(t, opts, "autostart-example", "Autostart Example")
 
 	commands := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "autostart", ""}}, opts)
 	for _, want := range []string{"enable", "disable", "status"} {
 		assertCompletionCandidate(t, commands, want)
 	}
-	ids := completepodlaz(completionRequest{Shell: "zsh", Cursor: 3, Words: []string{"podlaz", "autostart", "enable", ""}}, opts)
-	assertCompletionCandidateDescription(t, ids, profileID, "Autostart Example")
-	modes := completepodlaz(completionRequest{Shell: "fish", Cursor: 4, Words: []string{"podlaz", "autostart", "enable", "--mode", ""}}, opts)
-	assertCompletionCandidate(t, modes, "proxy-only")
-	assertCompletionCandidate(t, modes, "tun")
+	profiles := completepodlaz(completionRequest{Shell: "zsh", Cursor: 3, Words: []string{"podlaz", "autostart", "enable", ""}}, opts)
+	assertCompletionCandidate(t, profiles, "Autostart Example")
 }
 
 func TestAutostartHelpDocumentsFutureBootScope(t *testing.T) {
@@ -163,7 +151,7 @@ func TestAutostartHelpDocumentsFutureBootScope(t *testing.T) {
 	if err := run(context.Background(), []string{"help", "autostart"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"autostart enable", "autostart disable", "autostart status", "next boot", "does not connect immediately"} {
+	for _, want := range []string{"autostart enable", "autostart disable", "autostart status", "does not connect immediately", "profile use"} {
 		if !strings.Contains(strings.ToLower(out.String()), strings.ToLower(want)) {
 			t.Fatalf("autostart help missing %q: %q", want, out.String())
 		}
