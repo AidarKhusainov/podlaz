@@ -361,7 +361,7 @@ PY
 
   guest_exec install -d -m 0700 "${STALE_GUEST_PRIVATE}"
   guest_exec /bin/bash -lc "set +e; resolvectl status podlaz0 --no-pager >'${STALE_GUEST_PRIVATE}/resolved-missing.stdout' 2>'${STALE_GUEST_PRIVATE}/resolved-missing.stderr'; code=\$?; set -e; test \$code -eq 1; test ! -s '${STALE_GUEST_PRIVATE}/resolved-missing.stdout'; python3 '${MISSING_LINK_HELPER}' '${STALE_GUEST_PRIVATE}/resolved-missing.stderr'"
-  guest_exec /bin/bash -lc "set +e; /usr/bin/podlaz doctor >'${STALE_GUEST_PRIVATE}/doctor-after-missing.txt' 2>&1; set -e; grep -F 'resolved:' '${STALE_GUEST_PRIVATE}/doctor-after-missing.txt' | grep -F 'no podlaz-owned DNS state found for podlaz0' >/dev/null"
+  guest_exec /bin/bash -lc "set +e; /usr/bin/podlaz debug doctor >'${STALE_GUEST_PRIVATE}/doctor-after-missing.txt' 2>&1; set -e; grep -F 'resolved:' '${STALE_GUEST_PRIVATE}/doctor-after-missing.txt' | grep -F 'no podlaz-owned DNS state found for podlaz0' >/dev/null"
 }
 
 wait_for_clean_inactive_status() {
@@ -440,10 +440,10 @@ create_observation_only_foreign_link() {
 assert_observation_only_foreign_link() {
   local doctor="${STALE_GUEST_PRIVATE}/doctor.txt" recovery="${STALE_GUEST_PRIVATE}/recover-execute.json" before after
   guest_exec install -d -m 0700 "${STALE_GUEST_PRIVATE}"
-  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz doctor >'${doctor}' 2>&1"
+  guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz debug doctor >'${doctor}' 2>&1"
   guest_exec grep -F '[WARN] stale-resources: found interface podlaz0 exists' "${doctor}" >/dev/null
   before="$(guest_exec stat -c '%d:%i:%y:%z' /sys/class/net/podlaz0)"
-  guest_exec /bin/bash -lc "/usr/bin/podlaz recover --execute --yes --json >'${recovery}'"
+  guest_exec /bin/bash -lc "/usr/bin/podlaz debug recover --execute --json >'${recovery}'"
   guest_exec python3 - "${recovery}" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
@@ -469,7 +469,7 @@ PY
 }
 
 assert_clean_recovery() {
-  guest_exec /bin/bash -lc "/usr/bin/podlaz recover --execute --yes --json >'${STALE_GUEST_PRIVATE}/recover-clean.json'"
+  guest_exec /bin/bash -lc "/usr/bin/podlaz debug recover --execute --json >'${STALE_GUEST_PRIVATE}/recover-clean.json'"
   guest_exec python3 - "${STALE_GUEST_PRIVATE}/recover-clean.json" <<'PY'
 import json,sys
 with open(sys.argv[1],encoding="utf-8") as handle:
