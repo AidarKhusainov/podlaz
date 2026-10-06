@@ -98,19 +98,3 @@ func assertHandoffBlockerContains(t *testing.T, err error, wants ...string) {
 	}
 }
 
-func assertStalePodlazBlockerContains(t *testing.T, err error, wants ...string) {
-	t.Helper()
-	if err == nil {
-		t.Fatal("expected stale podlaz state blocker")
-	}
-	var blocker *tunStalePodlazStateBlocker
-	if !errors.As(err, &blocker) {
-		t.Fatalf("expected tunStalePodlazStateBlocker, got %T: %v", err, err)
-	}
-	body := err.Error()
-	for _, want := range wants {
-		if !strings.Contains(body, want) {
-			t.Fatalf("expected stale blocker body to contain %q, got:\n%s", want, body)
-		}
-	}
-}
