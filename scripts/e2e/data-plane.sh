@@ -289,10 +289,9 @@ PY
   rm -f -- "${status_json}"
 }
 
-connect_profile() {
-  local label="$1" id="$2"
-  shift 2
-  expect_private_success "connect-${label}" run_installed_podlaz connect "$@" "${id}"
+connect_proxy_profile() {
+  local label="$1" selector="$2"
+  expect_private_success "connect-${label}" run_installed_podlaz debug proxy "${selector}"
   ACTIVE_CONNECTION=1
   ACTIVE_RUNTIME_CONFIG_PATH="${DAEMON_RUNTIME_CONFIG_PATH}"
   capture_private_command "status-${label}" run_installed_podlaz status || true
@@ -307,11 +306,10 @@ disconnect_profile() {
 log "import primary real profile for data-plane checks"
 PRIMARY_URI="$(first_configured_profile_uri)"
 assert_nonempty "${PRIMARY_URI}" "primary real profile URI"
-expect_private_success import-primary-profile "${PODLAZ[@]}" profile import "${PRIMARY_URI}"
-PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
-assert_nonempty "${PROFILE_ID}" "primary profile id"
+expect_private_success import-primary-profile "${PODLAZ[@]}" import "${PRIMARY_URI}"
+PROFILE_SELECTOR="$(sed -n 's/^Profile: //p' "${LAST_STDOUT}" | head -n1)"
+assert_nonempty "${PROFILE_SELECTOR}" "primary profile selector"
 assert_not_contains "${LAST_STDOUT}" "${PRIMARY_URI}"
-expect_private_success validate-primary-proxy "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode proxy-only
 
 if [[ -n "${PODLAZ_E2E_PACKAGE_PATH}" ]]; then
   log "use prebuilt package for data-plane checks"
@@ -340,7 +338,7 @@ SERVICE_TOUCHED=1
 wait_for_daemon_socket
 
 log "proxy-only explicit data-plane lifecycle"
-connect_profile "proxy-only-explicit" "${PROFILE_ID}" --mode proxy-only
+connect_proxy_profile "proxy-only-explicit" "${PROFILE_SELECTOR}"
 assert_active_proxy_only_control_plane "proxy-only-explicit"
 PROXY_ONLY_RUNTIME_CONFIG_PATH="${ACTIVE_RUNTIME_CONFIG_PATH}"
 assert_loopback_listeners "proxy-only-explicit"
@@ -352,26 +350,13 @@ assert_runtime_config_removed "proxy-only-explicit" "${PROXY_ONLY_RUNTIME_CONFIG
 assert_proxy_cleanup "proxy-only-explicit"
 assert_no_stale_state "proxy-only-explicit"
 
-log "default connect mode data-plane lifecycle"
-connect_profile "default-mode" "${PROFILE_ID}"
-assert_active_proxy_only_control_plane "default-mode"
-DEFAULT_RUNTIME_CONFIG_PATH="${ACTIVE_RUNTIME_CONFIG_PATH}"
-assert_loopback_listeners "default-mode"
-assert_proxy_egress socks "default-mode"
-assert_proxy_egress http "default-mode"
-assert_current_runtime_config_artifacts_safe "default-mode"
-disconnect_profile "default-mode"
-assert_runtime_config_removed "default-mode" "${DEFAULT_RUNTIME_CONFIG_PATH}"
-assert_proxy_cleanup "default-mode"
-assert_no_stale_state "default-mode"
-
 if [[ ! "${PODLAZ_E2E_RELIABILITY_CYCLES}" =~ ^[0-9]+$ ]]; then
   fail "PODLAZ_E2E_RELIABILITY_CYCLES must be a non-negative integer"
 fi
 if [[ "${PODLAZ_E2E_RELIABILITY_CYCLES}" -gt 0 ]]; then
   log "proxy-only reliability cycle gate: ${PODLAZ_E2E_RELIABILITY_CYCLES} cycles"
   for cycle in $(seq 1 "${PODLAZ_E2E_RELIABILITY_CYCLES}"); do
-    connect_profile "reliability-${cycle}" "${PROFILE_ID}" --mode proxy-only
+    connect_proxy_profile "reliability-${cycle}" "${PROFILE_SELECTOR}"
     assert_loopback_listeners "reliability-${cycle}"
     assert_proxy_egress socks "reliability-${cycle}"
     assert_proxy_egress http "reliability-${cycle}"
