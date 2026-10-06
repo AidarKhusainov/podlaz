@@ -145,9 +145,7 @@ import_profile() {
   uri="$(first_configured_profile_uri)"
   out="$(mktemp "${E2E_TMP_ROOT}/network-reconciliation-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/network-reconciliation-import.stderr.XXXXXX")"
-  run_installed_podlaz profile import "${uri}" >"${out}" 2>"${err}" || fail "network-reconciliation profile import failed"
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${PROFILE_ID}" ]] || fail "network-reconciliation profile import returned no profile ID"
+  run_installed_podlaz import "${uri}" >"${out}" 2>"${err}" || fail "network-reconciliation profile import failed"
   mask_multiline_sensitive "${PROFILE_ID}"
   rm -f -- "${out}" "${err}"
 }
@@ -301,7 +299,7 @@ setup_isolated_xdg "network-reconciliation-package-acceptance"
 : >"${EVIDENCE}"
 install_reconciliation_override
 import_profile
-run_installed_podlaz connect --mode tun "${PROFILE_ID}" >/dev/null 2>&1 || fail "network-reconciliation protected connect failed"
+run_installed_podlaz connect >/dev/null 2>&1 || fail "network-reconciliation protected connect failed"
 CONNECTED=true
 wait_for_verified_active protected_connected
 load_envelope_identity
