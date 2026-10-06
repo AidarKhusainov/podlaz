@@ -7,18 +7,18 @@ Podlaz is a command-line VPN client for Linux.
 
 ## Features
 
-- Import VPN profiles and subscriptions.
-- Connect through Xray.
-- Use proxy-only or full VPN mode.
-- Check connection status and run diagnostics.
-- Recover from interrupted or failed sessions.
-- Run the CLI without root.
+- Import VPN profiles and subscriptions through one command.
+- Connect the selected profile as a full VPN by default.
+- Keep privileged networking in the `podlazd` service, not the CLI.
+- Preserve fail-closed protection while Podlaz reconnects or replaces its own session.
+- Keep diagnostics and recovery available without making them part of the normal workflow.
 
 ## Install
 
-Podlaz is distributed as Debian packages for `amd64` and `arm64`.
+Podlaz is distributed as Debian packages for `amd64` and `arm64` on
+systemd-based Linux systems.
 
-Download the latest package from [GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases) and install it:
+Download a package from [GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases) and install it:
 
 ```bash
 sudo apt install ./podlaz_<version>_linux_<arch>.deb
@@ -31,135 +31,105 @@ podlaz version
 systemctl is-active podlazd.service
 ```
 
-Podlaz requires a systemd-based Linux system.
-
 Release assets include `SHA256SUMS` and GitHub build provenance attestations.
-
-<details>
-<summary>Verify a downloaded package</summary>
-
-```bash
-grep -F 'podlaz_<version>_linux_<arch>.deb' SHA256SUMS | sha256sum -c -
-```
-
-With GitHub CLI:
-
-```bash
-gh attestation verify podlaz_<version>_linux_<arch>.deb \
-  -R AidarKhusainov/podlaz
-```
-
-</details>
 
 ## Quick start
 
-Import a subscription:
+Import a share URI, subscription URL, or supported local file:
 
 ```bash
-podlaz import '<subscription-url>'
+podlaz import '<uri-or-url-or-file>'
 ```
 
-Or import a profile:
-
-```bash
-podlaz profile import '<share-uri>'
-```
-
-List profiles:
+If the import produces exactly one profile and no profile is selected, Podlaz
+selects it automatically. Otherwise choose one explicitly:
 
 ```bash
 podlaz profile list
+podlaz profile use work
 ```
 
-Validate and connect:
+Connect, inspect status, and disconnect:
 
 ```bash
-podlaz profile validate '<profile-id>' --mode proxy-only
-podlaz connect --mode proxy-only '<profile-id>'
-```
-
-Check the connection:
-
-```bash
+podlaz connect
 podlaz status
-podlaz check '<profile-id>'
-```
-
-Disconnect:
-
-```bash
 podlaz disconnect
 ```
 
-See [docs/cli.md](docs/cli.md) for all commands and options.
-
-## Connection modes
-
-### Proxy-only
-
-Runs Xray without changing system routes, DNS, or firewall state.
+An explicit profile is a one-shot choice and does not change the saved selection:
 
 ```bash
-podlaz connect --mode proxy-only '<profile-id>'
+podlaz connect work
 ```
 
-### TUN
+Canonical `connect` always requests full VPN/TUN protection. It never silently
+falls back to Proxy-only operation.
 
-Routes system traffic through a TUN interface.
+## Profiles and subscriptions
+
+Normal profile selectors accept an exact stable ID or an exact unique
+case-insensitive display name. Ordinary completion and list output prefer human
+names.
 
 ```bash
-podlaz profile validate '<profile-id>' --mode tun
-podlaz connect --mode tun '<profile-id>'
+podlaz profile list
+podlaz profile show work
+podlaz profile use work
+podlaz profile delete work
+
+podlaz subscription list
+podlaz subscription show <subscription-id>
+podlaz subscription update <subscription-id>
+podlaz subscription delete <subscription-id>
 ```
 
-TUN operations are handled by the `podlazd` system service. The CLI itself does not need to run as root.
+Profile/subscription deletion is destructive user-data removal and requires an
+explicit confirmation. In non-interactive use, pass `--yes`.
 
-## Supported profiles
+## Autostart
 
-Podlaz can import share links, subscriptions, and supported Xray JSON configurations.
-
-| Format | Import | Proxy-only | TUN |
-| --- | --- | --- | --- |
-| VLESS | Yes | Yes | Yes |
-| VMess | Yes | No | No |
-| Trojan | Yes | No | No |
-| Shadowsocks | Yes | No | No |
-| Base64 URI-list subscription | Yes | VLESS profiles | VLESS profiles |
-| Xray JSON | Yes | Supported configurations | Supported configurations |
-
-Some Xray configurations have mode-specific limits.
-
-See [docs/cli.md](docs/cli.md) for exact compatibility rules.
-
-## Diagnostics and recovery
+Enable the selected full-VPN intent for a future boot:
 
 ```bash
-podlaz status
-podlaz doctor
-podlaz doctor --tun
-podlaz logs --daemon --since 15m
+podlaz autostart enable
+podlaz autostart status
+podlaz autostart disable
 ```
 
-Inspect a recovery plan:
+`autostart enable` snapshots the selected profile at that time. A later
+`profile use` does not silently rewrite the saved boot policy.
+
+## Advanced diagnostics
+
+The normal workflow does not require manual validation, planning, health checks,
+or recovery commands. Advanced support tools are under `debug`:
 
 ```bash
+podlaz debug doctor
+podlaz debug doctor --tun
+podlaz debug logs --daemon --since 15m
 podlaz debug recover
 ```
 
-Run it after reviewing the proposed cleanup:
+Exact-owned recovery may be executed explicitly:
 
 ```bash
-podlaz debug recover --execute --yes
+podlaz debug recover --execute
 ```
 
-Podlaz only removes network state that it can identify as its own.
+Proxy-only is an explicit reduced-protection advanced capability:
 
-## Documentation
+```bash
+podlaz debug proxy work
+```
 
-- [CLI reference](docs/cli.md)
-- [Architecture](ARCHITECTURE.md)
-- [Releases](https://github.com/AidarKhusainov/podlaz/releases)
-- [Issues](https://github.com/AidarKhusainov/podlaz/issues)
+Podlaz does not use Proxy-only as a fallback when a full VPN connection cannot be
+established safely.
+
+See [docs/cli.md](docs/cli.md) for the full CLI contract and
+[ARCHITECTURE.md](ARCHITECTURE.md) for ownership, recovery, Privacy Envelope,
+restart, package-upgrade, and networking invariants.
 
 ## License
 
