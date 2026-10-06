@@ -89,6 +89,14 @@ func TestStoreResolveSelectedAutoSelectsExactlyOneProfile(t *testing.T) {
 	if err := store.Add(p); err != nil {
 		t.Fatal(err)
 	}
+	id, err := store.SelectedID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "" {
+		t.Fatalf("read-only selection lookup mutated state to %q", id)
+	}
+
 	got, err := store.ResolveSelected()
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +104,7 @@ func TestStoreResolveSelectedAutoSelectsExactlyOneProfile(t *testing.T) {
 	if got.ID != p.ID {
 		t.Fatalf("selected=%q want=%q", got.ID, p.ID)
 	}
-	id, err := store.SelectedID()
+	id, err = store.SelectedID()
 	if err != nil || id != p.ID {
 		t.Fatalf("persisted selected ID=%q err=%v", id, err)
 	}
@@ -144,12 +152,26 @@ func TestStoreDeleteSelectedProfileClearsSelectionAtomically(t *testing.T) {
 	if err := store.Delete(first.ID); err != nil {
 		t.Fatal(err)
 	}
+	state, err := store.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SelectedProfileID != "" {
+		t.Fatalf("delete did not atomically clear selection: %q", state.SelectedProfileID)
+	}
 	id, err := store.SelectedID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != second.ID {
-		t.Fatalf("single remaining profile should deterministically become selected, got %q", id)
+	if id != "" {
+		t.Fatalf("read-only selection lookup silently retargeted to %q", id)
+	}
+	selected, err := store.ResolveSelected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.ID != second.ID {
+		t.Fatalf("normal user intent selected %q, want %q", selected.ID, second.ID)
 	}
 }
 
