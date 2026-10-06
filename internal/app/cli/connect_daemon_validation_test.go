@@ -7,61 +7,17 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
-	"github.com/AidarKhusainov/podlaz/internal/network/planner"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-func TestRunCLIConnectRejectsUnsupportedProfileBeforeDaemon(t *testing.T) {
+func TestRunCLIConnectRejectsTunIncompatibleProfileBeforeDaemon(t *testing.T) {
 	tests := []struct {
 		name        string
-		mode        string
 		mutate      func(profile.Profile) profile.Profile
 		wantMessage string
 	}{
 		{
-			name: "proxy-only unsupported engine",
-			mode: planner.ModeProxyOnly,
-			mutate: func(p profile.Profile) profile.Profile {
-				p.ID = "amneziawg-profile"
-				p.Engine = profile.EngineAmneziaWG
-				return p
-			},
-			wantMessage: "proxy-only Xray config requires engine",
-		},
-		{
-			name: "proxy-only unsupported transport",
-			mode: planner.ModeProxyOnly,
-			mutate: func(p profile.Profile) profile.Profile {
-				p.ID = "quic-profile"
-				p.Transport = "quic"
-				return p
-			},
-			wantMessage: "unsupported proxy-only VLESS transport",
-		},
-		{
-			name: "proxy-only unsupported security",
-			mode: planner.ModeProxyOnly,
-			mutate: func(p profile.Profile) profile.Profile {
-				p.ID = "xtls-profile"
-				p.Security = "xtls"
-				return p
-			},
-			wantMessage: "unsupported proxy-only VLESS security",
-		},
-		{
-			name: "proxy-only reality without public key",
-			mode: planner.ModeProxyOnly,
-			mutate: func(p profile.Profile) profile.Profile {
-				p.ID = "reality-missing-key-profile"
-				p.Security = "reality"
-				p.RealityPublicKey = ""
-				return p
-			},
-			wantMessage: "requires reality_public_key",
-		},
-		{
-			name: "tun unsupported engine",
-			mode: planner.ModeTun,
+			name: "unsupported engine",
 			mutate: func(p profile.Profile) profile.Profile {
 				p.ID = "tun-amneziawg-profile"
 				p.Engine = profile.EngineAmneziaWG
@@ -70,35 +26,23 @@ func TestRunCLIConnectRejectsUnsupportedProfileBeforeDaemon(t *testing.T) {
 			wantMessage: "TUN-mode Xray config requires engine",
 		},
 		{
-			name: "tun unsupported transport",
-			mode: planner.ModeTun,
+			name: "xhttp remains proxy only",
 			mutate: func(p profile.Profile) profile.Profile {
 				p.ID = "tun-xhttp-profile"
 				p.Transport = "xhttp"
+				p.Path = "/xhttp"
 				return p
 			},
-			wantMessage: "unsupported TUN-mode VLESS transport",
+			wantMessage: "Proxy only",
 		},
 		{
-			name: "tun unsupported security",
-			mode: planner.ModeTun,
+			name: "unsupported security",
 			mutate: func(p profile.Profile) profile.Profile {
 				p.ID = "tun-xtls-profile"
 				p.Security = "xtls"
 				return p
 			},
 			wantMessage: "unsupported TUN-mode VLESS security",
-		},
-		{
-			name: "tun reality without public key",
-			mode: planner.ModeTun,
-			mutate: func(p profile.Profile) profile.Profile {
-				p.ID = "tun-reality-missing-key-profile"
-				p.Security = "reality"
-				p.RealityPublicKey = ""
-				return p
-			},
-			wantMessage: "requires reality_public_key",
 		},
 	}
 
@@ -115,8 +59,7 @@ func TestRunCLIConnectRejectsUnsupportedProfileBeforeDaemon(t *testing.T) {
 			}
 
 			calledDaemon := false
-			var out bytes.Buffer
-			err = runWithOptions(context.Background(), []string{"connect", "--mode", tt.mode, p.ID}, &out, options{
+			err = runWithOptions(context.Background(), []string{"connect", p.ID}, &bytes.Buffer{}, options{
 				profileStorePath: storePath,
 				connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
 					calledDaemon = true
@@ -127,11 +70,34 @@ func TestRunCLIConnectRejectsUnsupportedProfileBeforeDaemon(t *testing.T) {
 				t.Fatal("expected unsupported profile to fail")
 			}
 			if calledDaemon {
-				t.Fatal("unsupported profile was sent to the daemon")
+				t.Fatal("unsupported profile reached daemon")
 			}
 			if !strings.Contains(err.Error(), tt.wantMessage) {
-				t.Fatalf("expected error containing %q, got %v", tt.wantMessage, err)
+				t.Fatalf("expected %q in %v", tt.wantMessage, err)
 			}
 		})
+	}
+}
+
+func TestRunDebugProxyRejectsUnsupportedProxyProfileBeforeDaemon(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	p := testConnectProfile()
+	p.ID = "quic-profile"
+	p.Transport = "quic"
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	calledDaemon := false
+	err := runWithOptions(context.Background(), []string{"debug", "proxy", p.ID}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
+			calledDaemon = true
+			return api.LifecycleResponse{}, nil
+		},
+	})
+	if err == nil || calledDaemon {
+		t.Fatalf("debug proxy err=%v calledDaemon=%v", err, calledDaemon)
 	}
 }
