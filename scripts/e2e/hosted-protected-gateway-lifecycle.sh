@@ -53,7 +53,6 @@ FAILURE_CLASS=diagnostic_unknown
 FAILURE_STEP=bootstrap
 REPORT_FINALIZED=false
 BASE_PID=""
-PROFILE_ID=""
 RECOVERY_RULE_INSTALLED=false
 
 record_evidence() {
@@ -715,8 +714,6 @@ run_scenario() {
 
   mark_failure fixture recovery.authorization
   install_recovery_authorization
-  PROFILE_ID="$(guest_exec cat "${GUEST_PRIVATE}/profile-id" | tr -d '[:space:]')"
-  [[ -n "${PROFILE_ID}" ]] || fail "guest profile identity is unavailable"
   guest_exec install -d -m 0700 "${Q17_PRIVATE}"
   assert_foreign_sentinel || fail "base foreign sentinel is absent before protected-gateway lifecycle"
 
