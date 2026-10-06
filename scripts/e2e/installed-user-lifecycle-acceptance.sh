@@ -17,7 +17,7 @@ MODE_FILE="${FIXTURE_DIR}/pkcheck-mode"
 DROPIN_DIR="/run/systemd/system/podlazd.service.d"
 DROPIN_PATH="${DROPIN_DIR}/installed-user-lifecycle-acceptance.conf"
 PROFILE_URI="$(vless_uri installed-user)"
-PROFILE_ID=""
+PROFILE_SELECTOR=""
 CONNECTED=false
 FIXTURE_TOUCHED=false
 
@@ -128,14 +128,14 @@ import_profile_privately() {
   mask_value "${PROFILE_URI}"
   output="$(mktemp "${E2E_TMP_ROOT}/installed-user-import.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/installed-user-import.stderr.XXXXXX")"
-  if ! run_user_podlaz 30s profile import "${PROFILE_URI}" >"${output}" 2>"${error_output}"; then
+  if ! run_user_podlaz 30s import "${PROFILE_URI}" >"${output}" 2>"${error_output}"; then
     rm -f -- "${output}" "${error_output}"
     fail "ordinary-user profile import failed"
   fi
-  PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${output}")"
+  PROFILE_SELECTOR="$(sed -n 's/^Profile: //p' "${output}" | head -n1)"
   rm -f -- "${output}" "${error_output}"
-  assert_nonempty "${PROFILE_ID}" "ordinary-user imported profile id"
-  mask_value "${PROFILE_ID}"
+  assert_nonempty "${PROFILE_SELECTOR}" "ordinary-user imported profile selector"
+  mask_value "${PROFILE_SELECTOR}"
 }
 
 assert_status_disconnected() {
@@ -151,7 +151,7 @@ assert_authorization_unavailable() {
   output="$(mktemp "${E2E_TMP_ROOT}/installed-user-connect-unavailable.stdout.XXXXXX")"
   error_output="$(mktemp "${E2E_TMP_ROOT}/installed-user-connect-unavailable.stderr.XXXXXX")"
   set +e
-  run_user_podlaz 30s connect --mode proxy-only "${PROFILE_ID}" >"${output}" 2>"${error_output}"
+  run_user_podlaz 30s debug proxy "${PROFILE_SELECTOR}" >"${output}" 2>"${error_output}"
   code=$?
   set -e
   [[ "${code}" == "1" ]] || fail "authorization-unavailable connect returned ${code}, want 1"
@@ -222,11 +222,11 @@ assert_core_crash_visible() {
     set +e
     run_user_podlaz 20s status >"${status_output}" 2>&1
     status_code=$?
-    run_user_podlaz 20s doctor >"${doctor_output}" 2>&1
+    run_user_podlaz 20s debug doctor >"${doctor_output}" 2>&1
     doctor_code=$?
     set -e
     if [[ "${status_code}" == "3" && "${doctor_code}" == "3" ]] && \
-        grep -F 'core exited unexpectedly; inspect podlaz logs --core' "${doctor_output}" >/dev/null; then
+        grep -F 'core exited unexpectedly; inspect podlaz debug logs --core' "${doctor_output}" >/dev/null; then
       observed=true
       break
     fi
@@ -239,7 +239,7 @@ assert_core_crash_visible() {
 assert_recovery_clean() {
   local output
   output="$(mktemp "${E2E_TMP_ROOT}/installed-user-recover.XXXXXX")"
-  if ! run_user_podlaz 20s recover --json >"${output}" 2>/dev/null; then
+  if ! run_user_podlaz 20s debug recover --json >"${output}" 2>/dev/null; then
     rm -f -- "${output}"
     fail "ordinary-user recovery inspection failed"
   fi
@@ -260,7 +260,7 @@ assert_authorization_unavailable
 set_pkcheck_mode allow
 wait_for_listener_state absent '127.0.0.1:1080'
 wait_for_listener_state absent '127.0.0.1:8080'
-run_user_podlaz 60s connect --mode proxy-only "${PROFILE_ID}" >/dev/null 2>&1 || fail "authorized ordinary-user connect failed"
+run_user_podlaz 60s connect --mode proxy-only "${PROFILE_SELECTOR}" >/dev/null 2>&1 || fail "authorized ordinary-user connect failed"
 CONNECTED=true
 assert_connected_proxy
 wait_for_listener_state present '127.0.0.1:1080'
@@ -282,6 +282,6 @@ wait_for_listener_state absent '127.0.0.1:8080'
 if sudo -n test -e /run/podlaz/generated/xray.json; then
   fail "generated Xray runtime config remained after crash disconnect"
 fi
-assert_artifacts_do_not_contain_sensitive_values "installed-user-lifecycle" "${PROFILE_URI}" "${PROFILE_ID}"
+assert_artifacts_do_not_contain_sensitive_values "installed-user-lifecycle" "${PROFILE_URI}" "${PROFILE_SELECTOR}"
 
 log "installed-user lifecycle acceptance completed"
