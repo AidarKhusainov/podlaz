@@ -58,7 +58,7 @@ func isLogsOption(arg string) bool {
 		return true
 	}
 	switch arg {
-	case "--follow", "-f", "--daemon", "--since", "--json", "--core":
+	case "--follow", "-f", "--daemon", "--since", "--core":
 		return true
 	default:
 		return false
