@@ -45,7 +45,7 @@ func TestRunImportSendsClientHeaderForHTTPSubscription(t *testing.T) {
 		t.Fatal("expected subscription client header")
 	}
 	got := out.String()
-	for _, want := range []string{"Subscription imported:", "Format: xray-json", "Imported: 1"} {
+	for _, want := range []string{"Subscription imported", "Profiles: 1", "Next: podlaz connect"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected import output to contain %q, got %q", want, got)
 		}
