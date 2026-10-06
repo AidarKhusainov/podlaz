@@ -195,7 +195,7 @@ func completionRegistry() *completionCommand {
 				{Name: "update", Description: "Update subscription", Dynamic: completionDynamicSubscriptions},
 				{
 					Name: "delete", Description: "Delete subscription",
-					Flags: []completionFlag{yesFlag, longBoolFlag("--keep-profiles", "Keep imported profiles")},
+					Flags:   []completionFlag{yesFlag, longBoolFlag("--keep-profiles", "Keep imported profiles")},
 					Dynamic: completionDynamicSubscriptions,
 				},
 			},
