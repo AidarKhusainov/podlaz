@@ -75,7 +75,7 @@ CAPABILITY_KEYS=(
   tun.profile_import_command
   tun.profile_import_output
   tun.profile_import
-  tun.profile_validate
+  tun.profile_selected
   tun.connect_requested
   tun.verified_active
   tun.system_dns
