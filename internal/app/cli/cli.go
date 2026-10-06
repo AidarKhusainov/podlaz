@@ -10,7 +10,6 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/doctor"
 	"github.com/AidarKhusainov/podlaz/internal/logs"
-	netsnapshot "github.com/AidarKhusainov/podlaz/internal/network/snapshot"
 	"github.com/AidarKhusainov/podlaz/internal/recovery"
 	"github.com/AidarKhusainov/podlaz/internal/status"
 	"github.com/AidarKhusainov/podlaz/internal/tundiag"
@@ -52,8 +51,6 @@ type options struct {
 	autostartEnable       autostartEnableRunner
 	autostartDisable      autostartDisableRunner
 	autostartStatus       autostartStatusRunner
-	check                 checkRunner
-	checkProbes           checkProbeRunner
 	doctor                func(context.Context) doctor.Report
 	coreDoctor            func(context.Context, string) doctor.Report
 	daemonDoctor          func(context.Context) (doctor.Report, error)
@@ -65,8 +62,6 @@ type options struct {
 	recoverExecute        func(context.Context) (recovery.ExecuteResult, error)
 	status                func(context.Context) status.Report
 	daemonStatus          func(context.Context) (status.Report, error)
-	systemSnapshot        func(context.Context, netsnapshot.Options) netsnapshot.Snapshot
-	tunAllocationEvidence func(context.Context) (netsnapshot.TunAllocationEvidence, error)
 	stdin                 io.Reader
 	stdinIsTerminal       func() bool
 }
