@@ -77,7 +77,7 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 			}
 			parsed.xrayPath = v
 			i = next
- 		default:
+		default:
 			return parsed, usageError("unsupported doctor argument %q", arg)
 		}
 	}
