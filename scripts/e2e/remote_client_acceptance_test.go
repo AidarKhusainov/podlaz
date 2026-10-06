@@ -31,8 +31,8 @@ func TestRemoteClientAcceptancePreservesOrdinaryUserReadOnlyAccess(t *testing.T)
 		"Status: Disconnected",
 		"Autostart: Disabled",
 		"status",
-		"doctor",
-		"recover --json",
+		"debug doctor",
+		"debug recover --json",
 		`logs "--${mode}" --since 36h`,
 	} {
 		if !strings.Contains(script, required) {
