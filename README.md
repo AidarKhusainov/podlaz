@@ -143,13 +143,13 @@ podlaz logs --daemon --since 15m
 Inspect a recovery plan:
 
 ```bash
-podlaz recover
+podlaz debug recover
 ```
 
 Run it after reviewing the proposed cleanup:
 
 ```bash
-podlaz recover --execute --yes
+podlaz debug recover --execute --yes
 ```
 
 Podlaz only removes network state that it can identify as its own.
