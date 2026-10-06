@@ -36,8 +36,17 @@ func TestFullTunnelTransactionRunnerCollectsDiagnosticsBeforeRollback(t *testing
 	}
 
 	_, err := runner.run(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "dns_udp_failure") {
-		t.Fatalf("expected diagnostic summary in error, got %v", err)
+	if err == nil {
+		t.Fatal("expected connectivity failure")
+	}
+	classification, reportPath := tunFailureDiagnosticLogFields(err)
+	if classification != string(tundiag.ClassDNSUDPFailure) || reportPath != "/run/podlaz/diagnostics/tun-last.json" {
+		t.Fatalf("diagnostic evidence lost: classification=%q report=%q err=%v", classification, reportPath, err)
+	}
+	for _, forbidden := range []string{"dns_udp_failure", "/run/podlaz/diagnostics/tun-last.json", "TUN diagnostics:"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("normal error leaked diagnostic evidence %q: %v", forbidden, err)
+		}
 	}
 	if want := []string{"verify", "diagnostics", "rollback"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("unexpected event order: got %v want %v", events, want)
