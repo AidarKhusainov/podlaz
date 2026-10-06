@@ -46,18 +46,13 @@ func runImportCommand(ctx context.Context, args []string, stdout io.Writer, opts
 func parseImportArgs(args []string) (string, error) {
 	var target string
 	for _, arg := range args {
-		switch arg {
-		case "--json":
-			return "", usageError("import --json is not implemented")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return "", usageError("unsupported import argument %q", arg)
-			}
-			if target != "" {
-				return "", usageError("import accepts exactly one URI, URL, or local path")
-			}
-			target = arg
+		if strings.HasPrefix(arg, "-") {
+			return "", usageError("unsupported import argument %q", arg)
 		}
+		if target != "" {
+			return "", usageError("import accepts exactly one URI, URL, or local path")
+		}
+		target = arg
 	}
 	if strings.TrimSpace(target) == "" {
 		return "", usageError("import requires a URI, URL, or local path")
@@ -67,17 +62,10 @@ func parseImportArgs(args []string) (string, error) {
 
 func printImportHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz import <share-uri>
-  podlaz import <local-path>
-  podlaz import <subscription-url>
+  podlaz import <uri|url|file>
 
-Import a supported share URI, local import file, or subscription URL into
-user-owned podlaz state.
-
-Supported local files:
-  Xray JSON, plain URI-list, Base64 URI-list
-
-Supported subscription URLs:
-  Base64 URI-list and Xray JSON over file/http/https
+Import supported VPN material through one entry point. Podlaz detects share URIs,
+local files, and subscription sources, validates them, and persists them
+atomically without connecting or changing privileged networking.
 `)
 }
