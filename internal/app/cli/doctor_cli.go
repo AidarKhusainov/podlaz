@@ -77,9 +77,7 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 			}
 			parsed.xrayPath = v
 			i = next
-		case arg == "--network" || arg == "--dns" || arg == "--routes" || arg == "--firewall":
-			return parsed, usageError("doctor %s is not implemented yet", arg)
-		default:
+ 		default:
 			return parsed, usageError("unsupported doctor argument %q", arg)
 		}
 	}
@@ -101,7 +99,7 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 	}
 	if !parsed.core {
 		if parsed.json {
-			return parsed, usageError("doctor --json is not implemented yet without --tun or --core")
+			return parsed, usageError("doctor --json requires --tun or --core")
 		}
 		if parsed.xrayPath != "" {
 			return parsed, usageError("doctor --xray requires --core")
@@ -109,7 +107,7 @@ func parseDoctorArgs(args []string) (parsedDoctorArgs, error) {
 		return parsed, nil
 	}
 	if strings.TrimSpace(parsed.xrayPath) == "" {
-		return parsed, usageError("doctor --core is not implemented yet without --xray <path>; pass --xray <path> to validate a local Xray binary")
+		return parsed, usageError("doctor --core requires --xray <path>")
 	}
 	return parsed, nil
 }
