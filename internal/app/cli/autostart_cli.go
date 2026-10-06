@@ -39,53 +39,12 @@ func runAutostartCommand(ctx context.Context, args []string, stdout io.Writer, o
 	}
 }
 
-type autostartEnableArgs struct {
-	mode       string
-	profileRef string
-}
-
-func parseAutostartEnableArgs(args []string) (autostartEnableArgs, error) {
-	parsed := autostartEnableArgs{mode: planner.ModeProxyOnly}
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value, hasInlineValue := cutFlagValue(arg)
-		switch {
-		case arg == "--mode" || strings.HasPrefix(arg, "--mode="):
-			v, next, err := flagValue("autostart enable --mode", args, i, value, hasInlineValue)
-			if err != nil {
-				return parsed, err
-			}
-			parsed.mode = strings.ToLower(strings.TrimSpace(v))
-			i = next
-		case arg == "--json":
-			return parsed, usageError("autostart --json is not implemented yet")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return parsed, usageError("unsupported autostart enable argument %q", arg)
-			}
-			if parsed.profileRef != "" {
-				return parsed, usageError("autostart enable accepts exactly one profile id")
-			}
-			parsed.profileRef = arg
-		}
-	}
-	switch parsed.mode {
-	case planner.ModeProxyOnly, planner.ModeTun:
-	default:
-		return parsed, usageError("unsupported autostart mode %q", parsed.mode)
-	}
-	if parsed.profileRef == "" {
-		return parsed, usageError("autostart enable requires a profile id")
-	}
-	return parsed, nil
-}
-
 func runAutostartEnableCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
 	if isHelp(args) {
 		printAutostartHelp(stdout)
 		return nil
 	}
-	parsed, err := parseAutostartEnableArgs(args)
+	selector, err := parseAutostartEnableArgs(args)
 	if err != nil {
 		return err
 	}
@@ -93,14 +52,14 @@ func runAutostartEnableCommand(ctx context.Context, args []string, stdout io.Wri
 	if err != nil {
 		return err
 	}
-	p, err := store.Get(parsed.profileRef)
+	p, err := resolveIntentProfile(store, selector)
 	if err != nil {
 		return profileCommandError(err)
 	}
-	if err := validateConnectProfile(p, parsed.mode); err != nil {
+	if err := validateCanonicalVPNProfile(p); err != nil {
 		return err
 	}
-	request := api.AutostartConfigureRequest{Mode: parsed.mode, Profile: profileSnapshot(p)}
+	request := api.AutostartConfigureRequest{Mode: planner.ModeTun, Profile: profileSnapshot(p)}
 	status, err := runAutostartEnable(ctx, request, opts)
 	if err != nil {
 		return lifecycleCommandError(err)
@@ -109,15 +68,25 @@ func runAutostartEnableCommand(ctx context.Context, args []string, stdout io.Wri
 	return nil
 }
 
+func parseAutostartEnableArgs(args []string) (string, error) {
+	if len(args) > 1 {
+		return "", usageError("autostart enable accepts at most one profile")
+	}
+	if len(args) == 1 {
+		if strings.HasPrefix(args[0], "-") {
+			return "", usageError("unsupported autostart enable argument %q", args[0])
+		}
+		return args[0], nil
+	}
+	return "", nil
+}
+
 func runAutostartDisableCommand(ctx context.Context, args []string, stdout io.Writer, opts options) error {
 	if isHelp(args) {
 		printAutostartHelp(stdout)
 		return nil
 	}
 	if len(args) != 0 {
-		if args[0] == "--json" {
-			return usageError("autostart --json is not implemented yet")
-		}
 		return usageError("autostart disable does not accept arguments")
 	}
 	status, err := runAutostartDisable(ctx, opts)
@@ -134,9 +103,6 @@ func runAutostartStatusCommand(ctx context.Context, args []string, stdout io.Wri
 		return nil
 	}
 	if len(args) != 0 {
-		if args[0] == "--json" {
-			return usageError("autostart --json is not implemented yet")
-		}
 		return usageError("autostart status does not accept arguments")
 	}
 	status, err := runAutostartStatus(ctx, opts)
@@ -177,18 +143,7 @@ func renderAutostartStatus(w io.Writer, status api.AutostartStatusResponse) {
 	if status.ProfileName != "" {
 		fmt.Fprintf(w, "Profile: %s\n", render.Redact(status.ProfileName))
 	}
-	if status.Mode != "" {
-		fmt.Fprintf(w, "Mode: %s\n", productModeLabel(status.Mode))
-	}
-}
-
-func productModeLabel(mode string) string {
-	switch strings.TrimSpace(mode) {
-	case planner.ModeTun:
-		return "TUN"
-	case planner.ModeProxyOnly:
-		return "Proxy only"
-	default:
-		return render.Redact(mode)
+	if status.Mode == planner.ModeProxyOnly {
+		fmt.Fprintln(w, "Protection: Proxy only")
 	}
 }
