@@ -73,7 +73,7 @@ func TestRunCLIRecoverIncludesDaemonStartupScan(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"podlaz recovery dry-run",
+		"Recovery dry-run",
 		"Transaction: pending apply",
 		"Rollback available: yes",
 		"State path: " + filepath.Join(runtimeDir, "transactions", "tx-startup.json"),
