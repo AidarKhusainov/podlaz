@@ -228,8 +228,8 @@ assert_no_stale_state() {
   expect_secret_success "status-${phase}" run_podlaz_as_socket_user status
   grep -F "Connection: inactive" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status is not inactive"
   grep -F "Stale state: none" "${LAST_STDOUT}" >/dev/null || fail "${phase}: status reports stale state"
-  expect_secret_success "doctor-${phase}" run_podlaz_as_socket_user doctor
-  expect_secret_success "recover-${phase}-dry-run-json" run_podlaz_as_socket_user recover --json
+  expect_secret_success "doctor-${phase}" run_podlaz_as_socket_user debug doctor
+  expect_secret_success "recover-${phase}-dry-run-json" run_podlaz_as_socket_user debug recover --json
   assert_json_file "${LAST_STDOUT}"
   assert_recovery_candidates_empty "${phase}"
   assert_foreign_nft_sentinel "${phase}"
@@ -348,12 +348,12 @@ assert_tun_owned_runtime_absent() {
 }
 
 run_apply_failure_probe() {
-  local hook_phase="$1" id="$2" classification="$3" injected_event="$4"
+  local hook_phase="$1" classification="$2" injected_event="$3"
   log "TUN apply failure probe: ${hook_phase}"
   configure_tun_hook "${hook_phase}"
   collect_host_snapshot "before-${hook_phase}"
   set +e
-  capture_secret_command "connect-${hook_phase}" run_podlaz_as_socket_user connect --mode tun "${id}"
+  capture_secret_command "connect-${hook_phase}" run_podlaz_as_socket_user connect
   local code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "${hook_phase}: connect unexpectedly succeeded"
@@ -363,7 +363,7 @@ run_apply_failure_probe() {
   if [[ "${hook_phase}" == "tun-address-apply" ]]; then
     assert_tun_owned_runtime_absent "rollback-${hook_phase}"
     assert_no_stale_state "rollback-${hook_phase}"
-    expect_secret_success "connect-${hook_phase}-immediate-retry" run_podlaz_as_socket_user connect --mode tun "${id}"
+    expect_secret_success "connect-${hook_phase}-immediate-retry" run_podlaz_as_socket_user connect
     expect_secret_success "disconnect-${hook_phase}-immediate-retry" run_podlaz_as_socket_user disconnect
     assert_tun_owned_runtime_absent "after-${hook_phase}-retry"
     assert_no_stale_state "after-${hook_phase}-retry"
@@ -375,19 +375,19 @@ run_apply_failure_probe() {
   clear_tun_hook
   sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
-  expect_secret_success "recover-execute-${hook_phase}" run_podlaz_as_socket_user recover --execute --yes
+  expect_secret_success "recover-execute-${hook_phase}" run_podlaz_as_socket_user debug recover --execute
   check_direct_connectivity "after-${hook_phase}"
   assert_no_stale_state "after-${hook_phase}"
   collect_host_snapshot "after-${hook_phase}"
 }
 
 run_network_verify_probe() {
-  local id="$1" phase="network-verify"
+  local phase="network-verify"
   log "TUN network verification failure and diagnostic persistence probe"
   configure_tun_hook "${phase}"
   collect_host_snapshot "before-${phase}"
   set +e
-  capture_secret_command "connect-${phase}" run_podlaz_as_socket_user connect --mode tun "${id}"
+  capture_secret_command "connect-${phase}" run_podlaz_as_socket_user connect
   local code=$?
   set -e
   [[ "${code}" != "0" ]] || fail "${phase}: connect unexpectedly succeeded"
@@ -398,11 +398,11 @@ run_network_verify_probe() {
   clear_tun_hook
   sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
-  expect_secret_exit_code "doctor-${phase}-historical-json" 3 run_podlaz_as_socket_user doctor --tun --json
+  expect_secret_exit_code "doctor-${phase}-historical-json" 3 run_podlaz_as_socket_user debug doctor --tun --json
   assert_json_file "${LAST_STDOUT}"
   assert_failure_report "${LAST_STDOUT}" "${phase}" network_verify_failure completed true
 
-  expect_secret_success "connect-${phase}-immediate-retry" run_podlaz_as_socket_user connect --mode tun "${id}"
+  expect_secret_success "connect-${phase}-immediate-retry" run_podlaz_as_socket_user connect
   expect_secret_success "disconnect-${phase}-immediate-retry" run_podlaz_as_socket_user disconnect
   check_direct_connectivity "after-${phase}-retry"
   assert_no_stale_state "after-${phase}-retry"
@@ -410,11 +410,11 @@ run_network_verify_probe() {
 }
 
 run_inactive_scope_probe() {
-  local id="$1" phase="dns-inactive-scope"
+  local phase="dns-inactive-scope"
   log "Packaged resolved verification with synthetic Current Scopes: none"
   configure_tun_hook "${phase}"
   collect_host_snapshot "before-${phase}"
-  expect_secret_success "connect-${phase}" run_podlaz_as_socket_user connect --mode tun "${id}"
+  expect_secret_success "connect-${phase}" run_podlaz_as_socket_user connect
 
   local events="${E2E_ARTIFACT_DIR}/${phase}-events.log"
   local status="${E2E_ARTIFACT_DIR}/${phase}-resolvectl-status.txt"
@@ -443,7 +443,7 @@ run_resolved_subprocess_matrix() {
 }
 
 run_before_commit_probe() {
-  local id="$1" phase="before-commit-pause"
+  local phase="before-commit-pause"
   log "TUN pre-commit interruption probe"
   configure_tun_hook "${phase}"
   collect_host_snapshot "before-${phase}"
@@ -451,7 +451,7 @@ run_before_commit_probe() {
   local out="${E2E_ARTIFACT_DIR}/$(safe_name "${safe}").stdout"
   local err="${E2E_ARTIFACT_DIR}/$(safe_name "${safe}").stderr"
   set +e
-  run_podlaz_as_socket_user connect --mode tun "${id}" >"${out}" 2>"${err}" &
+  run_podlaz_as_socket_user connect >"${out}" 2>"${err}" &
   ACTIVE_CONNECT_PID=$!
   set -e
   local attempt
@@ -474,9 +474,9 @@ run_before_commit_probe() {
   sudo -n systemctl reset-failed podlazd.service || true
   sudo -n systemctl start podlazd.service || sudo -n systemctl restart podlazd.service
   wait_for_daemon_socket
-  expect_secret_success "recover-before-execute-${phase}" run_podlaz_as_socket_user recover
+  expect_secret_success "recover-before-execute-${phase}" run_podlaz_as_socket_user debug recover
   grep -F "Transaction:" "${LAST_STDOUT}" >/dev/null || fail "${phase}: recover did not report pending transaction evidence"
-  expect_secret_success "recover-execute-${phase}" run_podlaz_as_socket_user recover --execute --yes
+  expect_secret_success "recover-execute-${phase}" run_podlaz_as_socket_user debug recover --execute
   check_direct_connectivity "after-${phase}"
   assert_no_stale_state "after-${phase}"
   collect_host_snapshot "after-${phase}"
@@ -485,11 +485,9 @@ run_before_commit_probe() {
 log "import primary profile for TUN fault-injection checks"
 PRIMARY_URI="$(first_configured_profile_uri)"
 assert_nonempty "${PRIMARY_URI}" "primary real profile URI"
-expect_secret_success import-primary-profile "${PODLAZ[@]}" profile import "${PRIMARY_URI}"
-PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${LAST_STDOUT}")"
-assert_nonempty "${PROFILE_ID}" "primary profile id"
+expect_secret_success import-primary-profile "${PODLAZ[@]}" import "${PRIMARY_URI}"
+assert_contains "${LAST_STDOUT}" "Next: podlaz connect"
 assert_not_contains "${LAST_STDOUT}" "${PRIMARY_URI}"
-expect_success validate-primary-tun "${PODLAZ[@]}" profile validate "${PROFILE_ID}" --mode tun
 
 log "build and install package for TUN fault-injection checks"
 # shellcheck disable=SC1091
@@ -509,12 +507,12 @@ create_foreign_nft_sentinel
 assert_foreign_nft_sentinel initial
 
 run_resolved_subprocess_matrix
-run_apply_failure_probe tun-address-apply "${PROFILE_ID}" tun_address_apply_failure tun-address-apply-injected
-run_apply_failure_probe dns-apply "${PROFILE_ID}" network_apply_failure dns-apply-injected
-run_apply_failure_probe route-apply "${PROFILE_ID}" network_apply_failure route-apply-injected
-run_network_verify_probe "${PROFILE_ID}"
-run_inactive_scope_probe "${PROFILE_ID}"
-run_before_commit_probe "${PROFILE_ID}"
+run_apply_failure_probe tun-address-apply tun_address_apply_failure tun-address-apply-injected
+run_apply_failure_probe dns-apply network_apply_failure dns-apply-injected
+run_apply_failure_probe route-apply network_apply_failure route-apply-injected
+run_network_verify_probe
+run_inactive_scope_probe
+run_before_commit_probe
 assert_foreign_nft_sentinel final
 assert_artifacts_do_not_contain_sensitive_values "tun-fault-injection" "${PODLAZ_E2E_PROFILE_URI}" "${PODLAZ_E2E_PROFILE_URI_LIST}"
 
