@@ -39,9 +39,9 @@ func runSubscriptionImport(ctx context.Context, sourceURL string, stdout io.Writ
 }
 
 func printSubscriptionImportResult(stdout io.Writer, store profile.Store, result sub.UpdateResult) error {
-	out := subscriptionForOutput(result.Subscription)
+	name := redactedSubscriptionName(result.Subscription)
 	fmt.Fprintln(stdout, "Subscription imported")
-	fmt.Fprintf(stdout, "Name: %s\n", out.Name)
+	fmt.Fprintf(stdout, "Name: %s\n", name)
 	fmt.Fprintf(stdout, "Profiles: %d\n", len(result.Subscription.ProfileIDs))
 	if result.Unsupported > 0 {
 		fmt.Fprintf(stdout, "Skipped unsupported entries: %d\n", result.Unsupported)
