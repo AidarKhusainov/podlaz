@@ -23,9 +23,9 @@ func TestRunCLIDoctorTunRendersCompactVerboseAndJSONFromSameModel(t *testing.T) 
 		name string
 		args []string
 	}{
-		{name: "compact", args: []string{"doctor", "--tun"}},
-		{name: "verbose", args: []string{"doctor", "--tun", "--verbose"}},
-		{name: "json", args: []string{"doctor", "--tun", "--json"}},
+		{name: "compact", args: []string{"debug", "doctor", "--tun"}},
+		{name: "verbose", args: []string{"debug", "doctor", "--tun", "--verbose"}},
+		{name: "json", args: []string{"debug", "doctor", "--tun", "--json"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
@@ -61,7 +61,7 @@ func TestRunCLIDoctorTunRendersCompactVerboseAndJSONFromSameModel(t *testing.T) 
 
 func TestRunCLIDoctorTunReturnsDiagnosticExitCodeForUnhealthyReport(t *testing.T) {
 	var out bytes.Buffer
-	err := runWithOptions(context.Background(), []string{"doctor", "--tun"}, &out, options{tunDoctor: func(context.Context) (tundiag.Report, error) {
+	err := runWithOptions(context.Background(), []string{"debug", "doctor", "--tun"}, &out, options{tunDoctor: func(context.Context) (tundiag.Report, error) {
 		return tundiag.Finalize(tundiag.Report{Probes: []tundiag.ProbeResult{{ID: "dns-udp", Layer: tundiag.LayerDNS, Status: tundiag.ProbeFail, Classification: tundiag.ClassDNSUDPFailure}}}), nil
 	}})
 	if ExitCode(err) != 3 {
