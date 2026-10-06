@@ -157,7 +157,7 @@ func TestPublishedStartupRecoveryTreatsRetainedNetworkSessionAsRecoveryWork(t *t
 	if published.StartupScan == nil || published.StartupScan.Status == api.StartupScanStatusClean {
 		t.Fatalf("retained blocked Network Session published clean: %#v", published.StartupScan)
 	}
-	if published.StartupScan.SuggestedAction != "podlaz recover" {
+	if published.StartupScan.SuggestedAction != "podlaz debug recover" {
 		t.Fatalf("suggested action=%q", published.StartupScan.SuggestedAction)
 	}
 	if published.StartupScan.NetworkSession == nil || published.StartupScan.NetworkSession.NextAction != api.NetworkSessionRecoveryActionRetryResume {
