@@ -113,24 +113,16 @@ func runWithOptions(ctx context.Context, args []string, stdout io.Writer, opts o
 		return runProfileCommand(ctx, commandArgs, stdout, opts)
 	case "subscription":
 		return runSubscriptionCommand(ctx, commandArgs, stdout, opts)
-	case "plan":
-		return runPlanCommand(ctx, commandArgs, stdout, opts)
 	case "connect":
 		return runConnectCommand(ctx, commandArgs, stdout, opts)
 	case "disconnect":
 		return runDisconnectCommand(ctx, commandArgs, stdout, opts)
 	case "autostart":
 		return runAutostartCommand(ctx, commandArgs, stdout, opts)
-	case "check":
-		return runCheckCommand(ctx, commandArgs, stdout, opts)
 	case "status":
 		return runStatusCommand(ctx, commandArgs, stdout, opts)
-	case "doctor":
-		return runDoctorCommand(ctx, commandArgs, stdout, opts)
-	case "logs":
-		return runLogsCommand(ctx, commandArgs, stdout, opts)
-	case "recover":
-		return runRecoverCommand(ctx, commandArgs, stdout, opts)
+	case "debug":
+		return runDebugCommand(ctx, commandArgs, stdout, opts)
 	default:
 		return usageError("unknown command %q", args[0])
 	}
@@ -156,24 +148,16 @@ func runHelp(args []string, stdout io.Writer) error {
 		printProfileHelp(stdout)
 	case "subscription":
 		printSubscriptionHelp(stdout)
-	case "plan":
-		printPlanHelp(stdout)
 	case "connect":
 		printConnectHelp(stdout)
 	case "disconnect":
 		printDisconnectHelp(stdout)
 	case "autostart":
 		printAutostartHelp(stdout)
-	case "check":
-		printCheckHelp(stdout)
 	case "status":
 		printStatusHelp(stdout)
-	case "doctor":
-		printDoctorHelp(stdout)
-	case "logs":
-		printLogsHelp(stdout)
-	case "recover":
-		printRecoverHelp(stdout)
+	case "debug":
+		printDebugHelp(stdout)
 	default:
 		return usageError("unknown help topic %q", args[0])
 	}
