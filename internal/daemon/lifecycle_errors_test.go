@@ -138,8 +138,15 @@ func TestConnectHandlerTunVerificationFailureIsServiceUnavailable(t *testing.T) 
 		t.Fatalf("status = %d, want %d: %s", rr.Code, http.StatusServiceUnavailable, rr.Body.String())
 	}
 	body := rr.Body.String()
-	if strings.Contains(body, "Internal Server Error") || !strings.Contains(body, "Rollback completed") {
-		t.Fatalf("expected friendly non-500 verification body, got:\n%s", body)
+	for _, want := range []string{"Unable to connect.", "Podlaz could not verify DNS through the VPN.", "attempted Podlaz-owned network changes were rolled back", "podlaz debug doctor --tun"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected friendly verification body to contain %q, got:\n%s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"Internal Server Error", "DNS through the tunnel did not resolve example.com", "dns timeout", "Diagnostics:", "transaction"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("normal verification body leaked %q:\n%s", forbidden, body)
+		}
 	}
 }
 
