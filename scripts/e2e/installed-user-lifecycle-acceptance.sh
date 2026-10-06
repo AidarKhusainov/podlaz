@@ -260,7 +260,7 @@ assert_authorization_unavailable
 set_pkcheck_mode allow
 wait_for_listener_state absent '127.0.0.1:1080'
 wait_for_listener_state absent '127.0.0.1:8080'
-run_user_podlaz 60s connect --mode proxy-only "${PROFILE_SELECTOR}" >/dev/null 2>&1 || fail "authorized ordinary-user connect failed"
+run_user_podlaz 60s debug proxy "${PROFILE_SELECTOR}" >/dev/null 2>&1 || fail "authorized ordinary-user connect failed"
 CONNECTED=true
 assert_connected_proxy
 wait_for_listener_state present '127.0.0.1:1080'
