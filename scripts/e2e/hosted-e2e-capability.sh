@@ -763,7 +763,7 @@ run_synthetic_tun_lifecycle() {
   guest_exec test -s /tmp/podlaz-capability-tun-private/profile-selector
   record_capability tun.profile_import_output pass
   record_capability tun.profile_import pass
-  record_capability tun.profile_validate pass
+  record_capability tun.profile_selected pass
 
   capture_guest_network_baseline
   assert_tun_authorization_boundary
