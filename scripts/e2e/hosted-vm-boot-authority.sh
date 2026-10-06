@@ -332,7 +332,7 @@ run_scenario() {
   record_evidence explicit_disconnect.clean_inactive pass
   attempt_disconnected="$(attempt_sha)"
   [[ "${attempt_disconnected}" == "${attempt_before}" ]]
-  assert_attempt_exact "${boot_after}" "${generation}" "${profile}" succeeded
+  assert_attempt_exact "${boot_after}" "${generation}" "${profile_id}" succeeded
   record_evidence explicit_disconnect.attempt_unchanged pass
 
   hosted_vm_tun_assert_exact_terminal_cleanup
