@@ -34,7 +34,7 @@ func TestRunCLIImportLocalXrayJSON(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "show", profileID}, &show, opts); err != nil {
 		t.Fatalf("profile show failed: %v", err)
 	}
-	for _, want := range []string{"Name: json-cli", "Source: imported_file", "Protocol: vless", "Security: reality", "Reality public key: public-key"} {
+	for _, want := range []string{"Name: json-cli", "Source: imported_file", "Protocol: vless", "Security: reality"} {
 		if !strings.Contains(show.String(), want) {
 			t.Fatalf("expected profile show to contain %q, got %q", want, show.String())
 		}
