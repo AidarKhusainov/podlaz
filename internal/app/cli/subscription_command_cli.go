@@ -84,9 +84,9 @@ func runSubscriptionShow(store sub.Store, args []string, stdout io.Writer) error
 	if err != nil {
 		return subscriptionCommandError(err)
 	}
-	id := redactedSubscriptionID(source)
+	renderedID := redactedSubscriptionID(source)
 	name := redactedSubscriptionName(source)
-	fmt.Fprintf(stdout, "ID: %s\n", id)
+	fmt.Fprintf(stdout, "ID: %s\n", renderedID)
 	fmt.Fprintf(stdout, "Name: %s\n", name)
 	fmt.Fprintf(stdout, "Format: %s\n", source.Format)
 	fmt.Fprintf(stdout, "Imported profiles: %d\n", len(source.ProfileIDs))
