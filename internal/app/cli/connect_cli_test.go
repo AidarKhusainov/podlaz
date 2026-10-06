@@ -124,6 +124,50 @@ func TestRunCLIConnectUsesSelectedProfile(t *testing.T) {
 	}
 }
 
+func TestRunCLIConnectExplicitProfileDoesNotChangeSelection(t *testing.T) {
+	storePath := t.TempDir() + "/profiles.json"
+	first := testConnectProfile()
+	first.ID = "first"
+	first.Name = "First"
+	second := testConnectProfile()
+	second.ID = "second"
+	second.Name = "Second"
+
+	store, _ := profile.NewStore(storePath)
+	if err := store.Add(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select(first.Name); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runWithOptions(context.Background(), []string{"connect", second.Name}, &bytes.Buffer{}, options{
+		profileStorePath: storePath,
+		daemonStatus: func(context.Context) (status.Report, error) {
+			return status.Report{Connection: "inactive"}, nil
+		},
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			if req.Profile.ID != second.ID {
+				t.Fatalf("connected profile=%q want=%q", req.Profile.ID, second.ID)
+			}
+			return api.LifecycleResponse{Connection: "active", Mode: planner.ModeTun, Proxy: "active", TUN: "enabled"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("explicit connect failed: %v", err)
+	}
+	selectedID, err := store.SelectedID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selectedID != first.ID {
+		t.Fatalf("explicit connect changed selection to %q, want %q", selectedID, first.ID)
+	}
+}
+
 func TestRunCLIConnectSameHealthyIntentIsNoOp(t *testing.T) {
 	storePath := t.TempDir() + "/profiles.json"
 	p := testConnectProfile()
