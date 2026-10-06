@@ -288,9 +288,9 @@ func (r Report) String() string {
 	}
 	switch {
 	case len(r.Candidates) > 0 && len(r.Warnings) > 0:
-		b.WriteString("Guidance: run `podlaz recover` for the canonical read-only recovery dry-run and `podlaz doctor` for diagnostic detail.\n")
+		b.WriteString("Guidance: run `podlaz debug recover` for the canonical read-only recovery dry-run and `podlaz doctor` for diagnostic detail.\n")
 	case len(r.Candidates) > 0:
-		b.WriteString("Guidance: run `podlaz recover` for the canonical read-only recovery dry-run.\n")
+		b.WriteString("Guidance: run `podlaz debug recover` for the canonical read-only recovery dry-run.\n")
 	case len(r.Warnings) > 0:
 		b.WriteString("Guidance: run `podlaz doctor` for diagnostic detail.\n")
 	}
