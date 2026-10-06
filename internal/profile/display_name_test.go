@@ -2,6 +2,17 @@ package profile
 
 import "testing"
 
+
+func TestProviderProfileDisplayNameFallbackDoesNotExposeEndpoint(t *testing.T) {
+	name, accepted := ProviderProfileDisplayName("", "vless")
+	if accepted {
+		t.Fatal("empty provider name unexpectedly accepted")
+	}
+	if name != "vless-profile" {
+		t.Fatalf("fallback name=%q, want vless-profile", name)
+	}
+}
+
 func TestDeduplicateDisplayNamesAvoidsFinalNameCollisions(t *testing.T) {
 	profiles := []Profile{
 		{Name: "Name", Protocol: "vless", Server: "one.example", Port: 443},
