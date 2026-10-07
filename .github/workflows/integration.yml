@@ -9,13 +9,18 @@ on:
     - cron: '47 4 * * 0'
   workflow_dispatch:
     inputs:
-      real_provider:
-        description: Run the real-provider proxy data-plane check from master
+      remnawave_subscription:
+        description: Run the ephemeral Remnawave subscription/HWID check from master
         required: false
         default: false
         type: boolean
-      real_provider_tun:
-        description: Run proxy plus isolated real-provider TUN qualification from master
+      remnawave_proxy:
+        description: Run the ephemeral Remnawave proxy data-plane check from master
+        required: false
+        default: false
+        type: boolean
+      remnawave_tun:
+        description: Run proxy plus isolated ephemeral Remnawave TUN qualification from master
         required: false
         default: false
         type: boolean
@@ -62,21 +67,85 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  real-provider:
-    name: Real proxy data plane
+  remnawave-subscription:
+    name: Remnawave subscription and HWID lifecycle
     if: >-
       ${{ github.event_name == 'schedule' ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
-           (inputs.real_provider || inputs.real_provider_tun)) }}
+           inputs.remnawave_subscription) }}
     runs-on: ubuntu-24.04
-    environment: vpn-e2e
+    timeout-minutes: 45
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Build exact subscription candidate
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          bash scripts/ci/install-go-tool.sh nfpm
+          bash scripts/build-deb.sh
+          test -f "${DEV_DEB}"
+
+      - name: Run live Remnawave subscription and HWID qualification
+        id: qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-subscription-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-subscription-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/remnawave-subscription-acceptance.sh "${DEV_DEB}"
+
+      - name: Validate subscription public evidence
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-subscription-public
+        run: bash scripts/e2e/scan-remnawave-artifacts.sh subscription
+
+      - name: Remove subscription private state
+        id: private_cleanup
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-subscription-private"
+
+      - name: Upload subscription and HWID evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-remnawave-subscription
+          path: ${{ runner.temp }}/podlaz-remnawave-subscription-public/remnawave-subscription.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  remnawave-proxy:
+    name: Ephemeral Remnawave proxy data plane
+    if: >-
+      ${{ github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' &&
+           github.ref == 'refs/heads/master' &&
+           (inputs.remnawave_proxy || inputs.remnawave_tun)) }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
-      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
-      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
-      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
+      CANDIDATE_COMMIT: ${{ github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
       PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELIABILITY_CYCLES || '3' }}
     steps:
       - name: Checkout
@@ -93,66 +162,57 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Run real proxy data-plane integration
-        id: data_plane
+      - name: Build exact proxy candidate
         env:
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-e2e-tmp/real-provider-artifacts
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
-          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
-          bash scripts/e2e/data-plane.sh
+          bash scripts/ci/install-go-tool.sh nfpm
+          bash scripts/build-deb.sh
+          test -f "${DEV_DEB}"
 
-      - name: Purge package state
-        id: cleanup
-        if: always()
-        run: |
-          sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
-          sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
-          if command -v deb-systemd-helper >/dev/null 2>&1; then
-            sudo -n deb-systemd-helper purge podlazd.service >/dev/null 2>&1 || true
-          fi
-          sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
-          sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
-
-      - name: Prepare public result
-        if: always()
+      - name: Run ephemeral Remnawave proxy qualification
+        id: qualification
         env:
-          DATA_PLANE_OUTCOME: ${{ steps.data_plane.outcome }}
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-proxy-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-proxy-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_RELIABILITY_CYCLES: ${{ env.PODLAZ_E2E_RELIABILITY_CYCLES }}
         run: |
-          mkdir -p "${RUNNER_TEMP}/podlaz-e2e-artifacts"
-          printf 'real-provider data-plane: %s\n' "${DATA_PLANE_OUTCOME}" \
-            >"${RUNNER_TEMP}/podlaz-e2e-artifacts/real-provider-result.txt"
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/remnawave-proxy-acceptance.sh "${DEV_DEB}"
 
-      - name: Scan public artifacts
+      - name: Validate proxy public evidence
         id: evidence_scan
         if: always()
-        run: bash scripts/e2e/scan-public-artifacts.sh
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-proxy-public
+        run: bash scripts/e2e/scan-remnawave-artifacts.sh proxy
 
-      - name: Remove private E2E temp state
+      - name: Remove proxy private state
         id: private_cleanup
         if: always()
-        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-proxy-private"
 
-      - name: Upload real-provider diagnostics
-        if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+      - name: Upload proxy evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-real-provider-integration
-          path: ${{ runner.temp }}/podlaz-e2e-artifacts
-          if-no-files-found: ignore
+          name: podlaz-remnawave-proxy
+          path: ${{ runner.temp }}/podlaz-remnawave-proxy-public/remnawave-proxy.txt
+          if-no-files-found: error
           retention-days: 7
 
-
-  real-provider-tun:
-    name: Real provider full-TUN
-    needs: real-provider
+  remnawave-tun:
+    name: Isolated ephemeral Remnawave full-TUN
+    needs: remnawave-proxy
     if: >-
       ${{ (github.event_name == 'schedule' &&
            github.event.schedule == '47 4 * * 0') ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
-           inputs.real_provider_tun) }}
+           inputs.remnawave_tun) }}
     runs-on: ubuntu-24.04
-    environment: vpn-e2e
     timeout-minutes: 120
     env:
       CANDIDATE_COMMIT: ${{ github.sha }}
@@ -172,67 +232,53 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Install provider TUN qualification tools
+      - name: Install isolated TUN qualification tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
           bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact provider TUN candidate
+      - name: Build exact TUN candidate
         env:
           PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+        run: |
+          bash scripts/build-deb.sh
+          test -f "${DEV_DEB}"
 
       - name: Capture candidate digest
         id: candidate
-        run: |
-          printf 'sha256=%s\n' "$(sha256sum "${DEV_DEB}" | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
+        run: printf 'sha256=%s\n' "$(sha256sum "${DEV_DEB}" | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
 
-      - name: Provider TUN contracts
-        run: go test ./scripts/e2e -run '^TestHostedRealProviderTUN' -count=1
-
-      - name: Run isolated real-provider TUN qualification
-        id: provider_tun
+      - name: Run isolated ephemeral Remnawave TUN qualification
+        id: qualification
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-real-provider-tun-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-real-provider-tun-public
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-tun-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-          PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
-          PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
-          PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
-          PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          bash scripts/e2e/hosted-real-provider-tun.sh "${DEV_DEB}"
+          bash scripts/e2e/hosted-remnawave-tun.sh "${DEV_DEB}"
 
-      - name: Validate provider TUN public verdict
+      - name: Validate TUN public verdict
+        id: evidence_scan
         if: always()
         env:
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-real-provider-tun-public
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-tun-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
           PODLAZ_E2E_CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
-        run: bash scripts/e2e/hosted-real-provider-tun.sh validate-report
+        run: bash scripts/e2e/hosted-remnawave-tun.sh validate-report
 
-      - name: Scan provider TUN public artifacts
-        id: provider_tun_scan
+      - name: Remove TUN private state
+        id: private_cleanup
         if: always()
-        env:
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-real-provider-tun-public
-        run: bash scripts/e2e/scan-public-artifacts.sh real-provider-tun
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-tun-private"
 
-      - name: Remove provider TUN private state
-        id: provider_tun_private_cleanup
-        if: always()
-        env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-real-provider-tun-private
-        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
-
-      - name: Upload provider TUN evidence
-        if: ${{ always() && steps.provider_tun_scan.outcome == 'success' && steps.provider_tun_private_cleanup.outcome == 'success' }}
+      - name: Upload TUN evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-real-provider-tun
-          path: ${{ runner.temp }}/podlaz-real-provider-tun-public/hosted-real-provider-tun.txt
+          name: podlaz-remnawave-tun
+          path: ${{ runner.temp }}/podlaz-remnawave-tun-public/hosted-remnawave-tun.txt
           if-no-files-found: error
           retention-days: 7
