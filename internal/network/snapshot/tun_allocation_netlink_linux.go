@@ -158,7 +158,14 @@ func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink
 		if defaultKernelPolicyRuleNumeric(priority, table) {
 			continue
 		}
-		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, TunAllocationRule{Priority: priority, Table: table})
+		converted := TunAllocationRule{Priority: priority, Table: table, Mark: rule.Mark}
+		if rule.Mark != 0 {
+			converted.MarkMask = math.MaxUint32
+			if rule.Mask != nil {
+				converted.MarkMask = *rule.Mask
+			}
+		}
+		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, converted)
 	}
 
 	reserved := make(map[uint32]struct{})
