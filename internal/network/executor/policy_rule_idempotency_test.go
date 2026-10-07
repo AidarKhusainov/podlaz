@@ -93,3 +93,13 @@ func TestIPPolicyRuleVerifyFailsWhenSamePriorityHasNoMatchingRule(t *testing.T) 
 		t.Fatal("expected verify to fail when same-priority rules contain no matching planned rule")
 	}
 }
+
+
+func TestIPPolicyRuleVerifyAcceptsEquivalentHexFwmark(t *testing.T) {
+	runner := &recordingRunner{stdout: "9999: from all fwmark 0x505a lookup main"}
+	rule := planner.TunPolicyRulePlan{Priority: planner.ServerRulePriority, Selector: "fwmark 20570", Table: planner.MainRoutingTable, Action: "add"}
+
+	if err := (IPPolicyRuleExecutor{Runner: runner}).Verify(context.Background(), rule); err != nil {
+		t.Fatalf("expected equivalent decimal/hex fwmark to verify: %v", err)
+	}
+}
