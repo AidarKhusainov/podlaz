@@ -66,6 +66,7 @@ cleanup() {
     sudo -n ip netns exec "${CLIENT_NS}" ip route show table "${ROUTE_TABLE}" >&2 2>/dev/null || true
     sudo -n ip netns exec "${CLIENT_NS}" nft list table inet pzmark >&2 2>/dev/null || true
     sudo -n ip netns exec "${EDGE_NS}" nft list table inet pzedge >&2 2>/dev/null || true
+    sudo -n ip netns exec "${EDGE_NS}" ss -lntup >&2 2>/dev/null || true
   fi
   set +e
   [[ -z "${CLIENT_PID}" ]] || sudo -n kill "${CLIENT_PID}" >/dev/null 2>&1 || true
@@ -145,6 +146,8 @@ sudo -n ip netns exec "${CLIENT_NS}" nft add rule inet pzmark output oifname "${
 
 sudo -n ip netns exec "${EDGE_NS}" nft add table inet pzedge
 sudo -n ip netns exec "${EDGE_NS}" nft 'add chain inet pzedge input { type filter hook input priority 0; policy accept; }'
+sudo -n ip netns exec "${EDGE_NS}" nft add rule inet pzedge input tcp dport 53 counter comment dns-tcp
+sudo -n ip netns exec "${EDGE_NS}" nft add rule inet pzedge input udp dport 53 counter comment dns-udp
 sudo -n ip netns exec "${EDGE_NS}" nft add rule inet pzedge input tcp dport 20001 counter comment provider-a
 sudo -n ip netns exec "${EDGE_NS}" nft add rule inet pzedge input tcp dport 20002 counter comment provider-b
 
@@ -344,6 +347,11 @@ sudo -n ip netns exec "${EDGE_NS}" dnsmasq \
   --address=/provider-b.example.test/"${EDGE_IP}" \
   >"${PRIVATE_DIR}/dnsmasq.log" 2>&1 &
 DNS_PID=$!
+for _ in $(seq 1 100); do
+  sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q '${EDGE_IP}:53 ' && break
+  sleep 0.05
+done
+sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q '${EDGE_IP}:53 ' || fail "synthetic TCP DNS listener did not start"
 sudo -n ip netns exec "${EDGE_NS}" "${XRAY}" run -config "${SERVER_CONFIG}" >"${PRIVATE_DIR}/server.stdout" 2>"${SERVER_LOG}" &
 SERVER_PID=$!
 
