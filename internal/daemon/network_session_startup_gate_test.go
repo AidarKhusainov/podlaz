@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
@@ -16,9 +17,13 @@ func TestNetworkSessionStartupGateBlocksLifecycleMutationsUntilReleased(t *testi
 
 	if _, err := gate.Connect(context.Background(), testContinuationRequest()); !errors.Is(err, errNetworkSessionStartupRecoveryPending) {
 		t.Fatalf("blocked connect error = %v", err)
+	} else if !strings.Contains(err.Error(), "podlaz debug recover") || strings.Contains(err.Error(), "run podlaz recover") {
+		t.Fatalf("blocked connect guidance is stale: %v", err)
 	}
 	if _, err := gate.Disconnect(context.Background()); !errors.Is(err, errNetworkSessionStartupRecoveryPending) {
 		t.Fatalf("blocked disconnect error = %v", err)
+	} else if !strings.Contains(err.Error(), "podlaz debug recover") || strings.Contains(err.Error(), "run podlaz recover") {
+		t.Fatalf("blocked disconnect guidance is stale: %v", err)
 	}
 	if len(events) != 0 {
 		t.Fatalf("blocked lifecycle must not reach inner service: %#v", events)
