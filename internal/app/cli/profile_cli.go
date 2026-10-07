@@ -47,10 +47,9 @@ func importShareProfile(store profile.Store, uri string, stdout io.Writer) error
 	if err != nil {
 		return usageError("%s", err.Error())
 	}
-	if err := store.Add(p); err != nil {
+	if _, err := store.AddAndSelectIfUnset(p); err != nil {
 		return profileCommandError(err)
 	}
-	_, _ = store.SelectIfUnset(p.ID)
 
 	fmt.Fprintln(stdout, "Imported 1 profile")
 	fmt.Fprintf(stdout, "Profile: %s\n", render.Redact(p.Name))
@@ -62,8 +61,9 @@ func importShareProfile(store profile.Store, uri string, stdout io.Writer) error
 }
 
 func runProfileList(store profile.Store, args []string, stdout io.Writer) error {
-	if len(args) != 0 {
-		return usageError("profile list does not accept arguments")
+	showIDs, err := parseProfileListArgs(args)
+	if err != nil {
+		return err
 	}
 	profiles, err := store.List()
 	if err != nil {
@@ -80,9 +80,29 @@ func runProfileList(store profile.Store, args []string, stdout io.Writer) error 
 		if p.ID == selectedID {
 			selected = "*"
 		}
+		if showIDs {
+			rows = append(rows, []string{selected, p.ID, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
+			continue
+		}
 		rows = append(rows, []string{selected, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
 	}
+	if showIDs {
+		return writeTable(stdout, []string{"SELECTED", "ID", "NAME", "PROTOCOL", "SOURCE"}, rows)
+	}
 	return writeTable(stdout, []string{"SELECTED", "NAME", "PROTOCOL", "SOURCE"}, rows)
+}
+
+func parseProfileListArgs(args []string) (bool, error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	if len(args) == 1 && args[0] == "--ids" {
+		return true, nil
+	}
+	if len(args) == 1 && strings.HasPrefix(args[0], "-") {
+		return false, usageError("unsupported profile list argument %q", args[0])
+	}
+	return false, usageError("profile list accepts only --ids")
 }
 
 func runProfileShow(store profile.Store, args []string, stdout io.Writer) error {
@@ -257,14 +277,16 @@ func printOptionalProfileField(w io.Writer, label string, value string) {
 
 func printProfileHelp(w io.Writer) {
 	fmt.Fprint(w, `Usage:
-  podlaz profile list
+  podlaz profile list [--ids]
   podlaz profile show <profile>
   podlaz profile use <profile>
   podlaz profile delete <profile> [--yes]
 
 Profiles may be addressed by exact stable ID or an exact unique display name.
 "profile use" changes only the selected profile for future user intent; it does
-not connect, disconnect, or rewrite an existing autostart policy. The list view
-marks the selected profile and intentionally omits endpoint and credential data.
+not connect, disconnect, or rewrite an existing autostart policy. The default
+list view marks the selected profile and intentionally omits stable IDs,
+endpoints, and credential data. Use "profile list --ids" explicitly when a
+stable ID is needed to disambiguate duplicate display names.
 `)
 }
