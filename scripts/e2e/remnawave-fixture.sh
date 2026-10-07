@@ -13,7 +13,11 @@ COMPOSE_FILE="${PRIVATE_ROOT}/compose.yml"
 PANEL_ENV="${PRIVATE_ROOT}/panel.env"
 NODE_ENV="${PRIVATE_ROOT}/node.env"
 STATE_DIR="${PRIVATE_ROOT}/state"
-PANEL_URL="https://127.0.0.1:8443"
+PROXY_BIND_IP="${PODLAZ_REMNAWAVE_PROXY_BIND_IP:-127.0.0.1}"
+PUBLIC_HOST="${PODLAZ_REMNAWAVE_PUBLIC_HOST:-127.0.0.1}"
+NODE_BIND_IP="${PODLAZ_REMNAWAVE_NODE_BIND_IP:-127.0.0.1}"
+PROFILE_ADDRESS="${PODLAZ_REMNAWAVE_PROFILE_ADDRESS:-127.0.0.1}"
+PANEL_URL="https://${PUBLIC_HOST}:8443"
 PANEL_METRICS_URL="http://127.0.0.1:3001/health"
 TLS_DIR="${PRIVATE_ROOT}/tls"
 CA_CERT="${TLS_DIR}/ca.crt"
@@ -158,7 +162,7 @@ services:
       remnawave:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8443:8443"
+      - "${PROXY_BIND_IP}:8443:8443"
     volumes:
       - ${NGINX_CONF}:/etc/nginx/conf.d/default.conf:ro
       - ${SERVER_CERT}:/etc/nginx/tls/server.crt:ro
@@ -171,7 +175,7 @@ services:
     cap_add:
       - NET_ADMIN
     ports:
-      - "127.0.0.1:${XRAY_PORT}:${XRAY_PORT}"
+      - "${NODE_BIND_IP}:${XRAY_PORT}:${XRAY_PORT}"
     networks: [remnawave]
 
 networks:
@@ -236,9 +240,9 @@ DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@remnawave-db:5432/postgr
 REDIS_HOST=remnawave-redis
 REDIS_PORT=6379
 APP_SECRET=${APP_SECRET}
-PANEL_DOMAIN=127.0.0.1:8443
+PANEL_DOMAIN=${PUBLIC_HOST}:8443
 FRONT_END_DOMAIN=*
-SUB_PUBLIC_DOMAIN=127.0.0.1:8443/api/sub
+SUB_PUBLIC_DOMAIN=${PUBLIC_HOST}:8443/api/sub
 METRICS_USER=fixture
 METRICS_PASS=${METRICS_PASS}
 WEBHOOK_ENABLED=false
@@ -347,10 +351,10 @@ create_squad() {
 
 create_host() {
   local body="${STATE_DIR}/create-host.json" response="${STATE_DIR}/host-response.json"
-  jq -n     --arg profile "${PROFILE_UUID}"     --arg inbound "${INBOUND_UUID}"     --arg node "${NODE_UUID}"     --arg squad "${SQUAD_UUID}"     --argjson port "${XRAY_PORT}"     '{
+  jq -n     --arg profile "${PROFILE_UUID}"     --arg inbound "${INBOUND_UUID}"     --arg node "${NODE_UUID}"     --arg squad "${SQUAD_UUID}"     --arg address "${PROFILE_ADDRESS}"     --argjson port "${XRAY_PORT}"     '{
       inbound:{configProfileUuid:$profile,configProfileInboundUuid:$inbound},
       remark:"Podlaz Fixture",
-      address:"127.0.0.1",
+      address:$address,
       port:$port,
       securityLayer:"DEFAULT",
       nodes:[$node],
@@ -389,7 +393,7 @@ PY
   USER_ID="$(jq -er '.response.id' "${response}")"
   USER_SHORT_UUID="$(jq -er '.response.shortUuid' "${response}")"
   SUBSCRIPTION_URL="$(jq -er '.response.subscriptionUrl' "${response}")"
-  [[ "${SUBSCRIPTION_URL}" == https://127.0.0.1:8443/api/sub/* ]] || fail "Remnawave returned an unexpected subscription URL shape"
+  [[ "${SUBSCRIPTION_URL}" == "https://${PUBLIC_HOST}:8443/api/sub/"* ]] || fail "Remnawave returned an unexpected subscription URL shape"
   printf '%s' "${SUBSCRIPTION_URL}" >"${STATE_DIR}/subscription-url"
   chmod 0600 "${STATE_DIR}/subscription-url"
 }
