@@ -14,6 +14,7 @@ require_cmd docker jq sha256sum sudo systemctl
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 CANDIDATE_DEB=""
 PACKAGE_INSTALLED=0
+REPORT="${E2E_ARTIFACT_DIR}/remnawave-proxy.txt"
 
 validate_candidate() {
   local path="$1" arch
@@ -91,11 +92,16 @@ main() {
   expected_min=$((2 * (1 + PODLAZ_E2E_RELIABILITY_CYCLES)))
   (( delta >= expected_min )) || fail "Remnawave Node did not observe all proxy data-plane requests"
 
-  printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}"
-  printf 'candidate.package_sha256=%s\n' "$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
-  printf 'remnawave.proxy_data_plane=pass\n'
-  printf 'remnawave.proxy_path_attribution=pass\n'
-  printf 'remnawave.proxy_cleanup=pass\n'
+  cat >"${REPORT}" <<EOF
+candidate.commit=${EXPECTED_COMMIT,,}
+candidate.package_sha256=$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')
+remnawave.panel_version=3.4.5
+remnawave.node_version=3.4.2
+remnawave.proxy_data_plane=pass
+remnawave.proxy_path_attribution=pass
+remnawave.proxy_cleanup=pass
+EOF
+  chmod 0600 "${REPORT}"
 }
 
 main "$@"
