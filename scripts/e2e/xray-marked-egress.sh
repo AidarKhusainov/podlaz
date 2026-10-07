@@ -288,8 +288,8 @@ cat >"${SERVER_CONFIG}" <<JSON
 {
   "log": {"loglevel": "warning"},
   "inbounds": [
-    {"tag":"vless-a","listen":"${EDGE_IP}","port":20001,"protocol":"vless","settings":{"clients":[{"id":"${UUID}"}],"decryption":"none"}},
-    {"tag":"vless-b","listen":"${EDGE_IP}","port":20002,"protocol":"vless","settings":{"clients":[{"id":"${UUID}"}],"decryption":"none"}}
+    {"tag":"vless-a","listen":"${EDGE_IP}","port":20001,"protocol":"vless","settings":{"clients":[{"id":"${UUID}"}],"decryption":"none"},"streamSettings":{"security":"none"}},
+    {"tag":"vless-b","listen":"${EDGE_IP}","port":20002,"protocol":"vless","settings":{"clients":[{"id":"${UUID}"}],"decryption":"none"},"streamSettings":{"security":"none"}}
   ],
   "outbounds": [{"tag":"direct","protocol":"freedom"}]
 }
@@ -312,14 +312,14 @@ cat >"${CLIENT_CONFIG}" <<JSON
     {
       "tag":"provider-a",
       "protocol":"vless",
-      "settings":{"vnext":[{"address":"${EDGE_IP}","port":20001,"users":[{"id":"${UUID}","encryption":"none"}]}]},
-      "streamSettings":{"network":"tcp","sockopt":{"mark":${MARK_DEC},"domainStrategy":"UseIPv4","tcpKeepAliveIdle":30}}
+      "settings":{"vnext":[{"address":"provider-a.example.test","port":20001,"users":[{"id":"${UUID}","encryption":"none"}]}]},
+      "streamSettings":{"network":"tcp","security":"none","sockopt":{"mark":${MARK_DEC},"domainStrategy":"UseIPv4","tcpKeepAliveIdle":30}}
     },
     {
       "tag":"provider-b",
       "protocol":"vless",
-      "settings":{"vnext":[{"address":"${EDGE_IP}","port":20002,"users":[{"id":"${UUID}","encryption":"none"}]}]},
-      "streamSettings":{"network":"tcp","sockopt":{"mark":${MARK_DEC},"domainStrategy":"UseIPv4","tcpUserTimeout":10000}}
+      "settings":{"vnext":[{"address":"provider-b.example.test","port":20002,"users":[{"id":"${UUID}","encryption":"none"}]}]},
+      "streamSettings":{"network":"tcp","security":"none","sockopt":{"mark":${MARK_DEC},"domainStrategy":"UseIPv4","tcpUserTimeout":10000}}
     },
     {
       "tag":"udp-marked",
@@ -391,6 +391,15 @@ sudo -n ip netns exec "${CLIENT_NS}" python3 "${PROBE_HELPER}" tcp 1082 "${EDGE_
 record multiple_provider_routing
 sudo -n ip netns exec "${CLIENT_NS}" python3 "${PROBE_HELPER}" udp 1083 "${EDGE_IP}" 18081 gamma
 record udp_egress
+
+for _ in $(seq 1 100); do
+  grep -F 'dns:provider-a.example.test' "${EDGE_LOG}" >/dev/null 2>&1 && \
+    grep -F 'dns:provider-b.example.test' "${EDGE_LOG}" >/dev/null 2>&1 && break
+  sleep 0.05
+done
+grep -F 'dns:provider-a.example.test' "${EDGE_LOG}" >/dev/null || fail "provider-a bootstrap DNS was not observed"
+grep -F 'dns:provider-b.example.test' "${EDGE_LOG}" >/dev/null || fail "provider-b bootstrap DNS was not observed"
+record marked_bootstrap_dns
 
 
 nft_client="$(sudo -n ip netns exec "${CLIENT_NS}" nft list chain inet pzmark output)"
