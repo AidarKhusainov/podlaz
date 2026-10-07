@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import datetime as dt
+import http.client
 import json
 import os
 import pathlib
@@ -79,7 +80,13 @@ def http(method, path, body=None, token=None, *, expect=(200, 201), retries=1):
                     return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as error:
             last = RuntimeError(f"API {method} {path} status {error.code}")
-        except (urllib.error.URLError, TimeoutError, socket.timeout):
+        except (
+            urllib.error.URLError,
+            http.client.RemoteDisconnected,
+            ConnectionError,
+            TimeoutError,
+            socket.timeout,
+        ):
             last = RuntimeError(f"API {method} {path} unavailable")
         if attempt + 1 < retries:
             time.sleep(min(1 + attempt, 3))
@@ -217,6 +224,7 @@ def bootstrap(root: pathlib.Path):
         ["docker", "compose", "-f", str(compose), "up", "-d", "--wait"], env=env
     )
     wait_http(METRICS_BASE + "/health")
+    wait_http(PANEL_BASE + "/api/auth/status")
 
     registered = http(
         "POST",
