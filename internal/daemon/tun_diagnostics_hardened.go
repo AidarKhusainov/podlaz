@@ -39,6 +39,9 @@ func buildHardenedTunDiagnosticAdapters(input tunDiagnosticInput) tundiag.ProbeA
 }
 
 func probeTunServerBypassPath(ctx context.Context, plan planner.TunPlan) tundiag.ProbeResult {
+	if plan.EgressMark != 0 {
+		return probeTunMarkedEgressBypass(ctx, plan)
+	}
 	bypass := tunDiagnosticServerBypass(plan)
 	target := strings.TrimSuffix(strings.TrimSpace(bypass.Destination), "/32")
 	if net.ParseIP(target) == nil {
@@ -100,6 +103,77 @@ func probeTunServerBypassPath(ctx context.Context, plan planner.TunPlan) tundiag
 		return result
 	}
 	result.Status = tundiag.ProbePass
+	return result
+}
+
+func probeTunMarkedEgressBypass(ctx context.Context, plan planner.TunPlan) tundiag.ProbeResult {
+	expectedMark := strconv.FormatUint(uint64(plan.EgressMark), 10)
+	var planned planner.TunPolicyRulePlan
+	matches := 0
+	for _, rule := range plan.PolicyRules {
+		if rule.Priority <= 0 || strings.TrimSpace(rule.Table) != planner.MainRoutingTable {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSpace(rule.Selector))
+		if len(fields) != 2 || fields[0] != "fwmark" {
+			continue
+		}
+		got, ok := canonicalTunFwmarkIdentity(fields[1])
+		want, wantOK := canonicalTunFwmarkIdentity(expectedMark)
+		if !ok || !wantOK || got != want {
+			continue
+		}
+		planned = rule
+		matches++
+	}
+	if matches != 1 {
+		return diagnosticFailure(tundiag.ClassPolicyRuleFailure, "transaction has no exact persisted marked Xray egress policy rule")
+	}
+
+	ruleResult, err := tunDiagnosticCommandRunner(ctx, "ip", "-4", "rule", "show")
+	result := tundiag.ProbeResult{Evidence: tundiag.Evidence{
+		Commands: []tundiag.CommandEvidence{commandEvidence(ruleResult)},
+	}}
+	if err != nil {
+		result.Status = tundiag.ProbeFail
+		result.Classification = tundiag.ClassPolicyRuleFailure
+		result.Error = "inspect marked Xray egress policy rule: " + err.Error()
+		return result
+	}
+	wantMark, _ := canonicalTunFwmarkIdentity(expectedMark)
+	priority := strconv.Itoa(planned.Priority) + ":"
+	for _, raw := range strings.Split(ruleResult.stdout, "\n") {
+		line := strings.TrimSpace(raw)
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != priority {
+			continue
+		}
+		fromAll := false
+		toPresent := false
+		mainTable := false
+		mark := ""
+		for i := 1; i+1 < len(fields); i++ {
+			switch fields[i] {
+			case "from":
+				fromAll = fields[i+1] == "all"
+			case "to":
+				toPresent = true
+			case "fwmark":
+				mark = fields[i+1]
+			case "lookup", "table":
+				mainTable = fields[i+1] == planner.MainRoutingTable
+			}
+		}
+		gotMark, ok := canonicalTunFwmarkIdentity(mark)
+		if fromAll && !toPresent && mainTable && ok && gotMark == wantMark {
+			result.Evidence.PolicyRules = []string{line}
+			result.Status = tundiag.ProbePass
+			return result
+		}
+	}
+	result.Status = tundiag.ProbeFail
+	result.Classification = tundiag.ClassPolicyRuleFailure
+	result.Error = fmt.Sprintf("missing priority %d fwmark %d rule routing marked Xray egress through main", planned.Priority, plan.EgressMark)
 	return result
 }
 
