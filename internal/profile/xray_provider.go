@@ -10,13 +10,13 @@ import (
 	"strings"
 )
 
-const fallbackProviderXrayConfigProfileName = "Xray JSON grouped profile"
+const fallbackProviderXrayConfigProfileName = "Xray JSON profile"
 
-// NewSubscriptionProviderXrayConfig creates a subscription-owned profile that
-// keeps a provider Xray config object as source data. The stored config is
-// canonicalized for deterministic IDs and stable profile-store diffs; generated
-// runtime configs remain daemon-owned output at connect time.
-func NewSubscriptionProviderXrayConfig(rawName string, content []byte) (Profile, bool, error) {
+// NewProviderXrayConfig creates a profile that keeps a native Xray config object
+// as sensitive source data. The stored config is canonicalized for deterministic
+// IDs and stable profile-store diffs; generated runtime configs remain
+// daemon-owned output at connect time.
+func NewProviderXrayConfig(rawName string, source SourceType, content []byte) (Profile, bool, error) {
 	name, accepted := SanitizeDisplayName(rawName)
 	if !accepted {
 		name = fallbackProviderXrayConfigProfileName
@@ -29,7 +29,7 @@ func NewSubscriptionProviderXrayConfig(rawName string, content []byte) (Profile,
 	p := Profile{
 		ID:             "xray-json-" + hex.EncodeToString(sum[:])[:12],
 		Name:           name,
-		Source:         SourceSubscription,
+		Source:         source,
 		Engine:         EngineXray,
 		Protocol:       ProtocolXrayJSON,
 		RealitySpiderX: string(canonical),
@@ -38,6 +38,14 @@ func NewSubscriptionProviderXrayConfig(rawName string, content []byte) (Profile,
 		return Profile{}, accepted, err
 	}
 	return p, accepted, nil
+}
+
+func NewSubscriptionProviderXrayConfig(rawName string, content []byte) (Profile, bool, error) {
+	return NewProviderXrayConfig(rawName, SourceSubscription, content)
+}
+
+func NewImportedFileProviderXrayConfig(rawName string, content []byte) (Profile, bool, error) {
+	return NewProviderXrayConfig(rawName, SourceImportedFile, content)
 }
 
 // IsProviderXrayConfigProfile reports whether p is a provider-owned Xray config

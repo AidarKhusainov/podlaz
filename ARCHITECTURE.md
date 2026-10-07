@@ -50,13 +50,16 @@ parse, profile-apply, or metadata-persistence failure must preserve/restore the
 previous committed subscription/profile state rather than publish a partial
 update.
 
-Provider-owned grouped Xray JSON is preserved as sensitive source material and
-is one logical subscription-owned profile. Proxy-only runtime may preserve its
-provider outbounds, routing, balancers, stream settings, and selection rules.
-TUN validation/planning/connect must reject that grouped form before
-host-network mutation because one safe VPN-server bypass cannot be inferred from
-provider-owned routing. Mode support and public command syntax remain owned by
-`docs/cli.md`.
+Native Xray JSON from local imports or subscriptions is preserved as sensitive,
+schema-opaque source material rather than decoded through a Podlaz-owned Xray
+schema. Each top-level native config remains one logical profile; provider
+outbounds, routing, balancers, stream settings, and unknown future fields remain
+Xray-owned. Podlaz replaces only the runtime fields it owns and validates the
+small structural/safety surface required for that composition. Generated runtime
+config remains separate from persisted source material. TUN
+validation/planning/connect must reject native Xray profiles before host-network
+mutation until endpoint-independent Xray egress is integrated. Mode support and
+public command syntax remain owned by `docs/cli.md`.
 
 ## Ownership and fail-closed networking
 

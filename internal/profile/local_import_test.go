@@ -39,29 +39,57 @@ const localImportVLESSJSON = `{
   ]
 }`
 
-func TestImportLocalContentXrayJSONVLESS(t *testing.T) {
-	result, err := ImportLocalContent([]byte(localImportVLESSJSON))
+func TestImportLocalContentPreservesNativeXrayJSONOpaque(t *testing.T) {
+	content := strings.Replace(localImportVLESSJSON,
+		`"log": {"loglevel": "warning"},`,
+		`"log": {"loglevel": "warning"}, "futureTop": {"enabled": true}, "routing": {"rules": [], "futureRouting": 7}, "balancers": [{"tag":"auto","selector":["json-vless"],"futureBalancer":"kept"}],`,
+		1)
+	content = strings.Replace(content,
+		`"protocol": "vless",`,
+		`"protocol": "vless", "futureOutbound": {"mode":"next"},`,
+		1)
+	content = strings.Replace(content,
+		`"security": "reality",`,
+		`"security": "reality", "futureStream": ["alpha", 2],`,
+		1)
+	content = strings.Replace(content,
+		`"spiderX": "/"`,
+		`"spiderX": "/", "futureSecurity": {"flag":true}`,
+		1)
+
+	result, err := ImportLocalContent([]byte(content))
 	if err != nil {
-		t.Fatalf("import local Xray JSON: %v", err)
+		t.Fatalf("import native Xray JSON: %v", err)
 	}
 	if result.Format != LocalImportFormatXrayJSON || result.Inspected != 1 || len(result.Profiles) != 1 {
 		t.Fatalf("unexpected import result: %#v", result)
 	}
 	p := result.Profiles[0]
-	if p.Source != SourceImportedFile || p.Protocol != "vless" || p.Name != "json-vless" {
-		t.Fatalf("unexpected imported profile metadata: %#v", p)
+	if p.Source != SourceImportedFile || p.Protocol != ProtocolXrayJSON || p.Name != "json-vless" {
+		t.Fatalf("unexpected native Xray profile metadata: %#v", p)
 	}
-	if !strings.HasPrefix(p.ID, "vless-example.com-443-") {
-		t.Fatalf("expected endpoint-based ID independent of Xray tag, got %q", p.ID)
+	if p.Server != "" || p.Port != 0 || p.Transport != "" || p.Security != "" {
+		t.Fatalf("native Xray JSON must not be flattened into schema-bound fields: %#v", p)
 	}
-	if p.Server != "example.com" || p.Port != 443 || p.UserIdentity != "00000000-0000-0000-0000-000000000001" {
-		t.Fatalf("unexpected imported endpoint fields: %#v", p)
+	stored := ProviderXrayConfigJSON(p)
+	for _, want := range []string{"futureTop", "futureOutbound", "futureStream", "futureSecurity", "futureRouting", "futureBalancer"} {
+		if !strings.Contains(stored, want) {
+			t.Fatalf("native Xray source lost %q: %s", want, stored)
+		}
 	}
-	if p.Transport != "tcp" || p.Security != "reality" || p.Encryption != "none" || p.Flow != "xtls-rprx-vision" {
-		t.Fatalf("unexpected VLESS fields: %#v", p)
+}
+
+func TestImportLocalContentNativeXrayIdentityIsCanonical(t *testing.T) {
+	first, err := ImportLocalContent([]byte(localImportVLESSJSON))
+	if err != nil {
+		t.Fatalf("first import: %v", err)
 	}
-	if p.ServerName != "example.com" || p.Fingerprint != "chrome" || p.RealityPublicKey != "public-key" || p.RealityShortID != "abcd" || p.RealitySpiderX != "/" {
-		t.Fatalf("unexpected stream settings fields: %#v", p)
+	second, err := ImportLocalContent([]byte(strings.ReplaceAll(localImportVLESSJSON, "  ", "\t")))
+	if err != nil {
+		t.Fatalf("second import: %v", err)
+	}
+	if first.Profiles[0].ID != second.Profiles[0].ID {
+		t.Fatalf("semantic JSON formatting changed stable identity: %q != %q", first.Profiles[0].ID, second.Profiles[0].ID)
 	}
 }
 
@@ -72,7 +100,7 @@ func TestImportLocalContentXrayJSONRejectsUnsafeTag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import local Xray JSON with unsafe tag: %v", err)
 	}
-	if len(result.Profiles) != 1 || result.Profiles[0].Name != "vless-profile" {
+	if len(result.Profiles) != 1 || result.Profiles[0].Name != "Xray JSON profile" {
 		t.Fatalf("expected safe fallback name for unsafe tag, got %#v", result.Profiles)
 	}
 	if len(result.Warnings) != 1 || result.Warnings[0].Entry != 1 || result.Warnings[0].Message != DisplayNameRejectedWarning {
@@ -80,92 +108,15 @@ func TestImportLocalContentXrayJSONRejectsUnsafeTag(t *testing.T) {
 	}
 }
 
-func TestImportLocalContentXrayJSONDeduplicatesDisplayNames(t *testing.T) {
-	content := strings.Replace(localImportVLESSJSON,
-		`{"id": "00000000-0000-0000-0000-000000000001", "encryption": "none", "flow": "xtls-rprx-vision"}`,
-		`{"id": "00000000-0000-0000-0000-000000000001", "encryption": "none", "flow": "xtls-rprx-vision"},
-              {"id": "00000000-0000-0000-0000-000000000002", "encryption": "none", "flow": "xtls-rprx-vision"}`,
-		1)
-
+func TestImportLocalContentNativeXrayAcceptsFutureSchema(t *testing.T) {
+	content := strings.Replace(localImportVLESSJSON, `"network": "tcp"`, `"network": "future-transport"`, 1)
+	content = strings.Replace(content, `"security": "reality"`, `"security": "future-security"`, 1)
 	result, err := ImportLocalContent([]byte(content))
 	if err != nil {
-		t.Fatalf("import local Xray JSON with duplicate display names: %v", err)
+		t.Fatalf("Podlaz must not schema-reject future Xray fields: %v", err)
 	}
-	assertNames(t, result.Profiles, "json-vless", "json-vless (2)")
-}
-
-func TestImportLocalContentXrayJSONIgnoresServiceOutbounds(t *testing.T) {
-	content := strings.Replace(localImportVLESSJSON, `"outbounds": [`, `"outbounds": [
-    {"protocol":"freedom","tag":"direct"},
-    {"protocol":"blackhole","tag":"block"},
-    {"protocol":"dns","tag":"dns-out"},
-    {"protocol":"loopback","tag":"loopback"},`, 1)
-
-	result, err := ImportLocalContent([]byte(content))
-	if err != nil {
-		t.Fatalf("import mixed local Xray JSON: %v", err)
-	}
-	if len(result.Profiles) != 1 || len(result.Unsupported) != 0 {
-		t.Fatalf("expected one imported profile and no unsupported service outbounds, got %#v", result)
-	}
-	if result.Inspected != 5 {
-		t.Fatalf("expected all outbounds to be inspected, got %d", result.Inspected)
-	}
-}
-
-func TestImportLocalContentXrayJSONOnlyServiceOutboundsDoesNotReportUnsupportedProtocol(t *testing.T) {
-	_, err := ImportLocalContent([]byte(`{
-  "outbounds": [
-    {"protocol":"freedom","tag":"direct"},
-    {"protocol":"blackhole","tag":"block"},
-    {"protocol":"dns","tag":"dns-out"},
-    {"protocol":"loopback","tag":"loopback"}
-  ]
-}`))
-	if err == nil {
-		t.Fatal("expected service-only Xray JSON import to fail")
-	}
-	if !strings.Contains(err.Error(), "no supported importable outbounds") {
-		t.Fatalf("expected no importable outbounds error, got %v", err)
-	}
-	if strings.Contains(err.Error(), "unsupported outbound protocol") {
-		t.Fatalf("service outbounds should not be reported as unsupported protocols: %v", err)
-	}
-}
-
-func TestImportLocalContentXrayJSONRejectsUnsupportedTransportSecurity(t *testing.T) {
-	tests := []struct {
-		name        string
-		content     string
-		wantMessage string
-	}{
-		{
-			name:        "unsupported-network",
-			content:     strings.Replace(localImportVLESSJSON, `"network": "tcp"`, `"network": "ftp"`, 1),
-			wantMessage: "unsupported VLESS transport",
-		},
-		{
-			name:        "unsupported-security",
-			content:     strings.Replace(localImportVLESSJSON, `"security": "reality"`, `"security": "xtls"`, 1),
-			wantMessage: "unsupported VLESS security",
-		},
-		{
-			name:        "incompatible-reality-ws",
-			content:     strings.Replace(localImportVLESSJSON, `"network": "tcp"`, `"network": "ws"`, 1),
-			wantMessage: "transport/security combination",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ImportLocalContent([]byte(tt.content))
-			if err == nil {
-				t.Fatal("expected unsupported Xray JSON import to fail")
-			}
-			if !strings.Contains(err.Error(), tt.wantMessage) {
-				t.Fatalf("expected error containing %q, got %v", tt.wantMessage, err)
-			}
-		})
+	if len(result.Profiles) != 1 || result.Profiles[0].Protocol != ProtocolXrayJSON {
+		t.Fatalf("expected one opaque native Xray profile, got %#v", result.Profiles)
 	}
 }
 

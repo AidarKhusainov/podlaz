@@ -108,8 +108,8 @@ func Validate(p Profile) error {
 		if !strings.EqualFold(strings.TrimSpace(p.Protocol), ProtocolXrayJSON) {
 			messages = append(messages, fmt.Sprintf("provider Xray config profiles must use protocol %q", ProtocolXrayJSON))
 		}
-		if p.Source != SourceSubscription {
-			messages = append(messages, "provider Xray config profiles must have source subscription")
+		if p.Source != SourceSubscription && p.Source != SourceImportedFile {
+			messages = append(messages, "provider Xray config profiles must have source subscription or imported_file")
 		}
 		if p.Engine != EngineXray {
 			messages = append(messages, fmt.Sprintf("provider Xray config profiles require engine %q", EngineXray))

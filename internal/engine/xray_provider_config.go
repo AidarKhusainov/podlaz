@@ -163,5 +163,5 @@ func renderProviderXrayConfig(doc providerXrayConfigDocument, inbounds []xrayInb
 }
 
 func unsupportedProviderXrayTunModeError() error {
-	return fmt.Errorf("TUN-mode grouped Xray profiles are not supported yet: cannot derive a single VPN server bypass for provider-owned routing")
+	return fmt.Errorf("TUN-mode native Xray profiles are not supported yet: endpoint-independent Xray egress is not integrated")
 }
