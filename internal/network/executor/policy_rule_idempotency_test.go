@@ -94,7 +94,6 @@ func TestIPPolicyRuleVerifyFailsWhenSamePriorityHasNoMatchingRule(t *testing.T) 
 	}
 }
 
-
 func TestIPPolicyRuleVerifyAcceptsEquivalentHexFwmark(t *testing.T) {
 	runner := &recordingRunner{stdout: "9999: from all fwmark 0x505a lookup main"}
 	rule := planner.TunPolicyRulePlan{Priority: planner.ServerRulePriority, Selector: "fwmark 20570", Table: planner.MainRoutingTable, Action: "add"}
