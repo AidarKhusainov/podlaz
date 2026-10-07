@@ -152,10 +152,27 @@ func TestAllocateTunResourcesAllocatesCollisionFreeEgressMark(t *testing.T) {
 	}
 }
 
+func TestAllocateTunResourcesAvoidsMaskedZeroEgressMarkCollision(t *testing.T) {
+	evidence := snapshot.TunAllocationEvidence{
+		IPv4PolicyRules: []snapshot.TunAllocationRule{{
+			Priority: 100,
+			Table:    60000,
+			Mark:     0,
+			MarkMask: 0xff,
+		}},
+	}
+	allocation, err := AllocateTunResources(evidence)
+	if err != nil {
+		t.Fatalf("AllocateTunResources() error = %v", err)
+	}
+	if allocation.EgressMark&0xff == 0 {
+		t.Fatalf("allocator selected mark matching foreign fwmark 0/0xff: %#v", allocation)
+	}
+}
+
 func TestPlanTunForSessionUsesMarkedEgressWithoutEndpointBypass(t *testing.T) {
 	s := snapshot.FakeResolvedDesktop()
 	s.ServerRoute.Status = snapshot.StatusUnknown
-	s.ServerRoute.ServerAddress = ""
 	s.ServerRoute.Interface = ""
 	s.ServerRoute.Gateway = ""
 
