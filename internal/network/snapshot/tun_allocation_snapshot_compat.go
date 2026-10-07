@@ -63,6 +63,7 @@ func TunAllocationEvidenceFromSnapshot(s Snapshot) (TunAllocationEvidence, error
 		}
 		converted := TunAllocationRule{Priority: uint32(priority), Table: table}
 		if rawMark := strings.TrimSpace(rule.Fwmark); rawMark != "" {
+			converted.HasMark = true
 			valueText := strings.SplitN(rawMark, "/", 2)[0]
 			value, parseErr := strconv.ParseUint(valueText, 0, 32)
 			if parseErr != nil {
