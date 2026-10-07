@@ -7,6 +7,8 @@ on:
       - 'scripts/e2e/remnawave-fixture.sh'
       - 'scripts/e2e/remnawave-subscription-acceptance.sh'
       - 'scripts/e2e/remnawave-proxy-acceptance.sh'
+      - 'scripts/e2e/hosted-remnawave-tun.sh'
+      - 'scripts/e2e/hosted-synthetic-tun.sh'
       - 'scripts/e2e/lib/**'
   workflow_dispatch:
 
@@ -116,3 +118,48 @@ jobs:
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/remnawave-proxy-acceptance.sh "${DEV_DEB}"
+
+  full-tun:
+    name: Isolated ephemeral Remnawave full-TUN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install isolated TUN qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          bash scripts/build-deb.sh
+          test -f "${DEV_DEB}"
+
+      - name: Run isolated Remnawave full-TUN qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-tun-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-tun-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-remnawave-tun.sh "${DEV_DEB}"
