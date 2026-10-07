@@ -18,6 +18,7 @@ type XrayTunConfigOptions struct {
 	Name                    string
 	MTU                     int
 	OutboundAddressOverride string
+	EgressMark              uint32
 }
 
 func DefaultXrayTunConfigOptions() XrayTunConfigOptions {
@@ -52,10 +53,10 @@ type xrayTunInboundSettings struct {
 // around that link: route bypass, policy rules, DNS, nftables, rollback, and
 // recovery.
 func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte, error) {
-	if profile.IsProviderXrayConfigProfile(p) {
-		return nil, unsupportedProviderXrayTunModeError()
-	}
 	opts = normalizeXrayTunOptions(opts)
+	if profile.IsProviderXrayConfigProfile(p) {
+		return GenerateProviderXrayTunConfig(p, opts)
+	}
 	if opts.Name == "" {
 		return nil, errors.New("TUN-mode Xray config requires a TUN interface name")
 	}
