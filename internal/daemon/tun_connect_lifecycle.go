@@ -77,8 +77,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	preHandoffPlan = xrayOwnedTunPlan(preHandoffPlan)
-	if _, err := requireTunRuntimeServerBypass(preHandoffPlan); err != nil {
-		return api.LifecycleResponse{}, withTunFailurePhase("server-bypass", "", "not-started", err)
+	if preHandoffPlan.EgressMark == 0 {
+		if _, err := requireTunRuntimeServerBypass(preHandoffPlan); err != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("server-bypass", "", "not-started", err)
+		}
 	}
 	if err := requireTunPlanMutationFreePreflight(preHandoffPlan); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
