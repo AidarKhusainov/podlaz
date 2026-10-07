@@ -522,6 +522,37 @@ remnawave_fixture_feasibility() {
   printf 'remnawave.hwid_device_limit=pass\n'
 }
 
+remnawave_fixture_export_profile() {
+  (($# == 1)) || fail "usage: $0 export-profile OUTPUT"
+  local output="$1" response="${STATE_DIR}/connection-keys.json" uri
+
+  remnawave_fixture_start
+  api GET "/api/subscriptions/connection-keys/${USER_ID}" "" "${response}"
+  uri="$(jq -er '.response.enabledKeys | select(length == 1) | .[0]' "${response}")"
+  [[ "${uri}" == vless://* ]] || fail "Remnawave did not generate one VLESS connection key"
+  mask_value "${uri}"
+
+  install -d -m 0700 "$(dirname "${output}")"
+  printf '%s\n' "${uri}" >"${output}"
+  chmod 0600 "${output}"
+
+  # The caller owns fixture teardown from this point. Failures before here are
+  # still covered by cleanup_fixture through the process EXIT trap.
+  trap - EXIT INT TERM
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  remnawave_fixture_feasibility "$@"
+  case "${1:-feasibility}" in
+    feasibility)
+      shift || true
+      remnawave_fixture_feasibility "$@"
+      ;;
+    export-profile)
+      shift
+      remnawave_fixture_export_profile "$@"
+      ;;
+    *)
+      fail "usage: $0 [feasibility|export-profile OUTPUT]"
+      ;;
+  esac
 fi
