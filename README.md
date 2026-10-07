@@ -1,6 +1,6 @@
 # Podlaz
 
-Podlaz is a command-line VPN client for Linux.
+Podlaz is an open-source command-line VPN client for Linux written in Go.\nIt provides full-system TUN routing with fail-closed protection, DNS recovery,\nautomatic reconnection, exact-owned cleanup, and panic rollback.
 
 [![CI](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml/badge.svg)](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/AidarKhusainov/podlaz)](https://github.com/AidarKhusainov/podlaz/releases/latest)
