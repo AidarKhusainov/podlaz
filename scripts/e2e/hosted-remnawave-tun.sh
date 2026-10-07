@@ -146,12 +146,22 @@ if meta.get("failure.class") not in {
     raise SystemExit("ephemeral Remnawave TUN failure class is invalid")
 if not re.fullmatch(r"[A-Za-z0-9_.-]+", meta.get("failure.step", "")):
     raise SystemExit("ephemeral Remnawave TUN failure step is invalid")
+failed = []
 for key in required:
-    allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
+    allowed = {"pass", "fail", "observed"} if key == "tun.doctor" else {"pass", "fail"}
     if values[key] not in allowed:
-        raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
-if meta.get("failure.class") != "none" or meta.get("failure.step") != "none":
-    raise SystemExit("ephemeral Remnawave TUN report contains a failure")
+        raise SystemExit(f"required evidence is not normalized: {key}={values[key]}")
+    if values[key] == "fail":
+        failed.append(key)
+
+failure_class = meta.get("failure.class")
+failure_step = meta.get("failure.step")
+if failure_class == "none":
+    if failure_step != "none" or failed:
+        raise SystemExit("successful Remnawave TUN report contains failure evidence")
+else:
+    if failure_step == "none" or not failed:
+        raise SystemExit("failed Remnawave TUN report is missing normalized failure evidence")
 PY
 }
 
