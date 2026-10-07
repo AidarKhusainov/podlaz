@@ -395,26 +395,205 @@ PY
 }
 
 assert_hwid_limit() {
-  local first_hwid second_hwid first="${STATE_DIR}/subscription-first.out" second="${STATE_DIR}/subscription-second.out" devices="${STATE_DIR}/devices.json"
+  local first_hwid second_hwid first="${STATE_DIR}/subscription-first.out" second="${STATE_DIR}/subscription-second.out"
+  local second_headers="${STATE_DIR}/subscription-second.headers" devices="${STATE_DIR}/devices.json" status
   first_hwid="$(openssl rand -hex 18)"
   second_hwid="$(openssl rand -hex 18)"
   mask_value "${first_hwid}"
   mask_value "${second_hwid}"
 
-  curl --cacert "${CA_CERT}" -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}"
+  curl --cacert "${CA_CERT}" -fsS --max-time 20 \
+    -H 'user-agent: podlaz' \
+    -H "x-hwid: ${first_hwid}" \
+    "${SUBSCRIPTION_URL}" >"${first}"
   [[ -s "${first}" ]] || fail "first HWID subscription response is empty"
 
   api GET "/api/hwid/devices/${USER_ID}" "" "${devices}"
-  jq -e '.response.total == 1 and (.response.devices | length) == 1' "${devices}" >/dev/null ||     fail "Remnawave did not register exactly one HWID device"
+  jq -e '.response.total == 1 and (.response.devices | length) == 1' "${devices}" >/dev/null || \
+    fail "Remnawave did not register exactly one HWID device"
 
-  curl --cacert "${CA_CERT}" -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}.refresh"
+  curl --cacert "${CA_CERT}" -fsS --max-time 20 \
+    -H 'user-agent: podlaz' \
+    -H "x-hwid: ${first_hwid}" \
+    "${SUBSCRIPTION_URL}" >"${first}.refresh"
   [[ -s "${first}.refresh" ]] || fail "same HWID refresh failed"
 
-  status="$(curl --cacert "${CA_CERT}" -sS -o "${second}" -w '%{http_code}' --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${second_hwid}"     "${SUBSCRIPTION_URL}")"
-  [[ "${status}" == 404 ]] || fail "second HWID identity was not rejected by Remnawave: HTTP ${status}"
+  # Remnawave intentionally returns HTTP 200 for a device-limit rejection, with
+  # an empty subscription body and explicit HWID policy response headers.
+  status="$(curl --cacert "${CA_CERT}" -sS -D "${second_headers}" -o "${second}" -w '%{http_code}' --max-time 20 \
+    -H 'user-agent: podlaz' \
+    -H "x-hwid: ${second_hwid}" \
+    "${SUBSCRIPTION_URL}")"
+  [[ "${status}" == 200 ]] || fail "second HWID rejection returned unexpected HTTP ${status}"
+  [[ ! -s "${second}" ]] || fail "second HWID rejection returned usable subscription content"
+  grep -Eiq '^x-hwid-limit:[[:space:]]*true\r?
+record_image_digests() {
+  local image digest
+  for image in "${PANEL_IMAGE}" "${NODE_IMAGE}" "${POSTGRES_IMAGE}" "${VALKEY_IMAGE}" "${PROXY_IMAGE}"; do
+    docker pull "${image}" >/dev/null
+    digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${image}")"
+    [[ "${digest}" == *@sha256:* ]] || fail "image digest unavailable for ${image}"
+    printf 'fixture-image=%s\n' "${digest}"
+  done
+}
+
+cleanup_fixture() {
+  local code=$?
+  set +e
+  if [[ -f "${COMPOSE_FILE}" ]]; then
+    docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || code=1
+  fi
+  if docker ps -aq --filter 'label=com.docker.compose.project=remnawave-fixture' | grep -q .; then
+    code=1
+  fi
+  if docker network inspect podlaz-remnawave-fixture >/dev/null 2>&1; then
+    code=1
+  fi
+  if docker volume inspect podlaz-remnawave-db >/dev/null 2>&1; then
+    code=1
+  fi
+  rm -rf "${PRIVATE_ROOT}"
+  exit "${code}"
+}
+trap cleanup_fixture EXIT INT TERM
+
+main() {
+  install -d -m 0700 "${PRIVATE_ROOT}" "${STATE_DIR}"
+  APP_SECRET="$(openssl rand -hex 64)"
+  METRICS_PASS="$(openssl rand -hex 32)"
+  WEBHOOK_SECRET="$(openssl rand -hex 32)"
+  POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+  ADMIN_USER="fixture_$(openssl rand -hex 4)"
+  ADMIN_PASSWORD="A$(openssl rand -hex 16)a9Z$(openssl rand -hex 12)"
+
+  for value in "${APP_SECRET}" "${METRICS_PASS}" "${WEBHOOK_SECRET}" "${POSTGRES_PASSWORD}" "${ADMIN_USER}" "${ADMIN_PASSWORD}"; do
+    mask_value "${value}"
+  done
+
+  generate_tls
+  write_proxy_config
+  write_panel_env
+  write_compose
+
+  docker compose -f "${COMPOSE_FILE}" up -d remnawave-db remnawave-redis remnawave remnawave-proxy >/dev/null
+  FIXTURE_STARTED=1
+  wait_http "${PANEL_METRICS_URL}" || fail "Remnawave Panel health endpoint did not become ready"
+  wait_panel_api || fail "Remnawave Panel API did not become ready for registration"
+
+  register_body="${STATE_DIR}/register.json"
+  register_response="${STATE_DIR}/register-response.json"
+  jq -n --arg username "${ADMIN_USER}" --arg password "${ADMIN_PASSWORD}"     '{username:$username,password:$password}' >"${register_body}"
+  chmod 0600 "${register_body}"
+  api POST /api/auth/register "${register_body}" "${register_response}"
+  ADMIN_TOKEN="$(jq -er '.response.accessToken' "${register_response}")"
+  mask_value "${ADMIN_TOKEN}"
+
+  create_api_token
+  create_config_profile
+  create_node
+  start_node
+  create_squad
+  create_host
+  enable_hwid
+  create_user
+  assert_hwid_limit
+  record_image_digests
+
+  printf 'remnawave.fixture=pass\n'
+  printf 'remnawave.panel_version=3.4.5\n'
+  printf 'remnawave.node_version=3.4.2\n'
+  printf 'remnawave.hwid_device_limit=pass\n'
+}
+
+main "$@"
+ "${second_headers}" || \
+    fail "second HWID rejection omitted x-hwid-limit"
+  grep -Eiq '^x-hwid-max-devices-reached:[[:space:]]*true\r?
+record_image_digests() {
+  local image digest
+  for image in "${PANEL_IMAGE}" "${NODE_IMAGE}" "${POSTGRES_IMAGE}" "${VALKEY_IMAGE}" "${PROXY_IMAGE}"; do
+    docker pull "${image}" >/dev/null
+    digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${image}")"
+    [[ "${digest}" == *@sha256:* ]] || fail "image digest unavailable for ${image}"
+    printf 'fixture-image=%s\n' "${digest}"
+  done
+}
+
+cleanup_fixture() {
+  local code=$?
+  set +e
+  if [[ -f "${COMPOSE_FILE}" ]]; then
+    docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || code=1
+  fi
+  if docker ps -aq --filter 'label=com.docker.compose.project=remnawave-fixture' | grep -q .; then
+    code=1
+  fi
+  if docker network inspect podlaz-remnawave-fixture >/dev/null 2>&1; then
+    code=1
+  fi
+  if docker volume inspect podlaz-remnawave-db >/dev/null 2>&1; then
+    code=1
+  fi
+  rm -rf "${PRIVATE_ROOT}"
+  exit "${code}"
+}
+trap cleanup_fixture EXIT INT TERM
+
+main() {
+  install -d -m 0700 "${PRIVATE_ROOT}" "${STATE_DIR}"
+  APP_SECRET="$(openssl rand -hex 64)"
+  METRICS_PASS="$(openssl rand -hex 32)"
+  WEBHOOK_SECRET="$(openssl rand -hex 32)"
+  POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+  ADMIN_USER="fixture_$(openssl rand -hex 4)"
+  ADMIN_PASSWORD="A$(openssl rand -hex 16)a9Z$(openssl rand -hex 12)"
+
+  for value in "${APP_SECRET}" "${METRICS_PASS}" "${WEBHOOK_SECRET}" "${POSTGRES_PASSWORD}" "${ADMIN_USER}" "${ADMIN_PASSWORD}"; do
+    mask_value "${value}"
+  done
+
+  generate_tls
+  write_proxy_config
+  write_panel_env
+  write_compose
+
+  docker compose -f "${COMPOSE_FILE}" up -d remnawave-db remnawave-redis remnawave remnawave-proxy >/dev/null
+  FIXTURE_STARTED=1
+  wait_http "${PANEL_METRICS_URL}" || fail "Remnawave Panel health endpoint did not become ready"
+  wait_panel_api || fail "Remnawave Panel API did not become ready for registration"
+
+  register_body="${STATE_DIR}/register.json"
+  register_response="${STATE_DIR}/register-response.json"
+  jq -n --arg username "${ADMIN_USER}" --arg password "${ADMIN_PASSWORD}"     '{username:$username,password:$password}' >"${register_body}"
+  chmod 0600 "${register_body}"
+  api POST /api/auth/register "${register_body}" "${register_response}"
+  ADMIN_TOKEN="$(jq -er '.response.accessToken' "${register_response}")"
+  mask_value "${ADMIN_TOKEN}"
+
+  create_api_token
+  create_config_profile
+  create_node
+  start_node
+  create_squad
+  create_host
+  enable_hwid
+  create_user
+  assert_hwid_limit
+  record_image_digests
+
+  printf 'remnawave.fixture=pass\n'
+  printf 'remnawave.panel_version=3.4.5\n'
+  printf 'remnawave.node_version=3.4.2\n'
+  printf 'remnawave.hwid_device_limit=pass\n'
+}
+
+main "$@"
+ "${second_headers}" || \
+    fail "second HWID rejection omitted max-devices evidence"
 
   api GET "/api/hwid/devices/${USER_ID}" "" "${devices}"
-  jq -e '.response.total == 1 and (.response.devices | length) == 1' "${devices}" >/dev/null ||     fail "rejected HWID changed server-side device state"
+  jq -e '.response.total == 1 and (.response.devices | length) == 1' "${devices}" >/dev/null || \
+    fail "rejected HWID changed server-side device state"
 }
 
 record_image_digests() {
