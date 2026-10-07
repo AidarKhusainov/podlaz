@@ -95,8 +95,8 @@ start_remnawave_fixture() {
   install -d -m 0700 "${REMNAWAVE_FIXTURE_TMP}" "${XRAY_ROOT}"
   E2E_TMP_ROOT="${REMNAWAVE_FIXTURE_TMP}" \
   E2E_ARTIFACT_DIR="${REMNAWAVE_FIXTURE_TMP}/private-artifacts" \
-  PODLAZ_REMNAWAVE_NODE_BIND_IP="${HOST_IP}" \
-  PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${HOST_IP}" \
+  PODLAZ_REMNAWAVE_NODE_BIND_IP="${ENDPOINT_IP}" \
+  PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${ENDPOINT_IP}" \
     bash "${SCRIPT_DIR}/remnawave-fixture.sh" export-profile "${OUTER_PROFILE_FILE}"
   [[ -f "${OUTER_PROFILE_FILE}" && ! -L "${OUTER_PROFILE_FILE}" ]] ||     fail "Remnawave fixture did not export package-restart profile material"
   REMNAWAVE_ACTIVE=true
