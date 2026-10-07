@@ -47,6 +47,27 @@ func TestConnectTunActiveReplaceBlockedPlanDoesNotDisconnect(t *testing.T) {
 	}
 }
 
+func TestConnectTunNativeProviderMarkConflictFailsBeforeActiveReplacement(t *testing.T) {
+	installTunLifecyclePreflightTestHooks(t)
+	manager, done, stopFile := activeTunManagerForDestructivePreflight(t, netsnapshot.FakeResolvedDesktop())
+	req := tunConnectRequestForLifecyclePreflight(api.HandoffReplacePodlaz)
+	req.Profile.Protocol = "xray-json"
+	req.Profile.Server = ""
+	req.Profile.Port = 0
+	req.Profile.UserIdentity = ""
+	req.Profile.RealitySpiderX = `{"outbounds":[{"tag":"provider","protocol":"freedom","streamSettings":{"sockopt":{"mark":4242}}}]}`
+
+	_, err := manager.Connect(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "provider sockopt.mark 4242 conflicts with Podlaz egress mark") {
+		t.Fatalf("expected actionable provider mark conflict before active replacement, got %v", err)
+	}
+	assertLifecyclePreflightDidNotStopCore(t, done, stopFile)
+	summaries, warnings := txstate.ScanTransactions(manager.RuntimeDir)
+	if len(summaries) != 0 || len(warnings) != 0 {
+		t.Fatalf("provider mark conflict must not create transaction state: summaries=%#v warnings=%#v", summaries, warnings)
+	}
+}
+
 func TestConnectTunStopKnownBlockedPlanLeavesForeignBaselineUntouched(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
