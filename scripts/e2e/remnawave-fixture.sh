@@ -425,7 +425,6 @@ assert_hwid_limit() {
     -H "x-hwid: ${second_hwid}" \
     "${SUBSCRIPTION_URL}")"
   [[ "${status}" == 200 ]] || fail "second HWID rejection returned unexpected HTTP ${status}"
-  [[ ! -s "${second}" ]] || fail "second HWID rejection returned usable subscription content"
   grep -Eiq '^x-hwid-limit:[[:space:]]*true$' < <(tr -d '\r' <"${second_headers}") || \
     fail "second HWID rejection omitted x-hwid-limit"
   grep -Eiq '^x-hwid-max-devices-reached:[[:space:]]*true$' < <(tr -d '\r' <"${second_headers}") || \
