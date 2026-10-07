@@ -318,7 +318,7 @@ func (s networkSessionStateStore) CommitReplacement() error {
 		if state.Replacement == nil {
 			return nil
 		}
-		if state.Protection == nil || state.Protection.State != networkSessionProtectionArmed || len(state.Protection.PreviousBootstrapIPv4) != 0 {
+		if state.Protection == nil || state.Protection.State != networkSessionProtectionArmed || len(state.Protection.PreviousBootstrapIPv4) != 0 || len(state.Protection.PreviousEgressMarks) != 0 {
 			return errors.New("cannot commit replacement before final privacy protection is verified")
 		}
 		state.Replacement = nil
