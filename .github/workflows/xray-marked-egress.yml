@@ -39,7 +39,7 @@ jobs:
       - name: Install qualification tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nftables
+          sudo apt-get install -y --no-install-recommends nftables dnsmasq-base
 
       - name: Run Xray marked-egress qualification
         env:
