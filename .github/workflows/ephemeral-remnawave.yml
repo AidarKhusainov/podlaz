@@ -9,6 +9,8 @@ on:
       - 'scripts/e2e/remnawave-fixture.sh'
       - 'scripts/e2e/remnawave-subscription-acceptance.sh'
       - 'scripts/e2e/remnawave-proxy-acceptance.sh'
+      - 'scripts/e2e/data-plane.sh'
+      - 'scripts/e2e/scan-remnawave-artifacts.sh'
       - 'scripts/e2e/hosted-remnawave-tun.sh'
       - 'scripts/e2e/hosted-synthetic-tun.sh'
       - 'scripts/e2e/lib/**'
@@ -52,13 +54,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_COMMIT: ${{ github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Verify candidate checkout
+        run: test "$(git rev-parse HEAD)" = "${CANDIDATE_COMMIT}"
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -113,13 +118,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_COMMIT: ${{ github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Verify candidate checkout
+        run: test "$(git rev-parse HEAD)" = "${CANDIDATE_COMMIT}"
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -175,13 +183,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      CANDIDATE_COMMIT: ${{ github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Verify candidate checkout
+        run: test "$(git rev-parse HEAD)" = "${CANDIDATE_COMMIT}"
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
