@@ -15,11 +15,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  real-provider-package-restart:
-    name: Real-provider v0.2.40 package restart
+  remnawave-package-restart:
+    name: Ephemeral Remnawave v0.2.40 package restart
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-24.04
-    environment: vpn-e2e
     timeout-minutes: 120
     env:
       CANDIDATE_COMMIT: ${{ github.sha }}
@@ -74,16 +73,12 @@ jobs:
           go test ./scripts/e2e -run '^TestHostedPackageRestart' -count=1
           python3 -m unittest scripts/e2e/tests/test_tun_terminal_recovery_contract.py
 
-      - name: Run isolated real-provider package restart qualification
+      - name: Run isolated ephemeral Remnawave package restart qualification
         id: qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-package-restart-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-package-restart-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-          PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
-          PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
-          PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
-          PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
