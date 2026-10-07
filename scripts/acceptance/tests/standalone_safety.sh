@@ -21,6 +21,22 @@ fail() { printf 'standalone_safety: %s\n' "$*" >&2; exit 1; }
 CONTROLLER_SOURCE="$(cat -- "${CONTROLLER_FILES[@]}")"
 assert_controller_contains() { grep -Fq -- "$1" <<<"$CONTROLLER_SOURCE" || fail "expected controller source to contain [$1]"; }
 
+# Current-candidate release acceptance must use the clean-break CLI surface.
+for removed_pattern in \
+  'ra_product[[:space:]]+profile[[:space:]]+(add|import|validate)([[:space:]]|$)' \
+  'ra_product[[:space:]]+profile[[:space:]]+show[^;]*--json' \
+  'ra_product[[:space:]]+subscription[[:space:]]+add([[:space:]]|$)' \
+  'ra_product[[:space:]]+(plan|check|doctor|logs|recover)([[:space:]]|$)' \
+  'ra_product[[:space:]]+connect[^;]*--(mode|handoff)' \
+  'ra_product[[:space:]]+autostart[[:space:]]+enable[^;]*--mode'; do
+  if grep -Eq "$removed_pattern" <<<"$CONTROLLER_SOURCE"; then
+    fail "release acceptance still invokes removed current CLI surface: $removed_pattern"
+  fi
+done
+assert_controller_contains 'ra_product import "$RA_TERMINAL_URI"'
+assert_controller_contains 'ra_product debug doctor --tun --json'
+assert_controller_contains 'ra_profile_store_json'
+
 # Persistent privileged authority must not live in a user-writable state tree.
 [[ "$RA_STATE_DIR" == "${RELEASE_ACCEPTANCE_STATE_DIR:-/var/lib/podlaz-release-acceptance}" ]] || fail "unexpected privileged state directory: $RA_STATE_DIR"
 assert_controller_contains 'flock'
