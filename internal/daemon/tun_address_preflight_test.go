@@ -77,14 +77,17 @@ func TestPlanTunForSessionFailsClosedOnIncompleteAddressInventory(t *testing.T) 
 
 func TestConnectTunRecoversExactTransactionBeforeFinalSessionAllocation(t *testing.T) {
 	oldPreflight := preflightNativeTunSupport
+	oldRuntimeConfigPreflight := preflightTunRuntimeConfig
 	oldValidateDeps := validateTunRuntimeDependenciesHook
 	oldRecover := automaticPodlazRecover
 	t.Cleanup(func() {
 		preflightNativeTunSupport = oldPreflight
+		preflightTunRuntimeConfig = oldRuntimeConfigPreflight
 		validateTunRuntimeDependenciesHook = oldValidateDeps
 		automaticPodlazRecover = oldRecover
 	})
 	preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
+	preflightTunRuntimeConfig = func(context.Context, string, string, []byte, coreExecutionIdentity) error { return nil }
 	validateTunRuntimeDependenciesHook = func() error { return nil }
 	withCoreIdentityTestHooks(t, 0,
 		func(string) (*user.User, error) {
