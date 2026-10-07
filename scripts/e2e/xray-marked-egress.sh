@@ -134,6 +134,12 @@ sudo -n ip -n "${CLIENT_NS}" addr add "${CLIENT_IP}/32" dev "${CLIENT_IF}"
 sudo -n ip -n "${EDGE_NS}" addr add "${EDGE_IP}/32" dev "${EDGE_IF}"
 sudo -n ip -n "${CLIENT_NS}" link set "${CLIENT_IF}" up
 sudo -n ip -n "${EDGE_NS}" link set "${EDGE_IF}" up
+# Return packets are intentionally unmarked while the forward route exists only
+# in the mark-selected table. Disable reverse-path filtering only in this
+# disposable namespace so replies are not rejected for lacking a main-table
+# reverse route.
+sudo -n ip netns exec "${CLIENT_NS}" sysctl -q -w net.ipv4.conf.all.rp_filter=0
+sudo -n ip netns exec "${CLIENT_NS}" sysctl -q -w "net.ipv4.conf.${CLIENT_IF}.rp_filter=0"
 sudo -n ip -n "${CLIENT_NS}" route add "${EDGE_IP}/32" dev "${CLIENT_IF}" scope link src "${CLIENT_IP}" table "${ROUTE_TABLE}"
 sudo -n ip -n "${CLIENT_NS}" rule add priority "${RULE_PRIORITY}" fwmark "${MARK_HEX}/0xffffffff" lookup "${ROUTE_TABLE}"
 sudo -n ip -n "${EDGE_NS}" route add "${CLIENT_IP}/32" dev "${EDGE_IF}" scope link src "${EDGE_IP}"
