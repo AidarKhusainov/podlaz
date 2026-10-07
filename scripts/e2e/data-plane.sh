@@ -16,6 +16,7 @@ require_cmd bash go python3 grep awk sed mktemp sudo runuser systemctl journalct
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
 : "${PODLAZ_E2E_EXPECTED_EGRESS_IP:=}"
+: "${PODLAZ_E2E_PROVIDER_LOG_FILE:=}"
 : "${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:=https://api.ipify.org}"
 : "${PODLAZ_E2E_RELIABILITY_CYCLES:=0}"
 : "${PODLAZ_E2E_PACKAGE_PATH:=}"
@@ -155,6 +156,31 @@ assert_expected_egress() {
   fi
 }
 
+provider_log_offset() {
+  [[ -n "${PODLAZ_E2E_PROVIDER_LOG_FILE}" ]] || { printf 'disabled'; return 0; }
+  if [[ -f "${PODLAZ_E2E_PROVIDER_LOG_FILE}" ]]; then
+    stat -c '%s' "${PODLAZ_E2E_PROVIDER_LOG_FILE}"
+  else
+    printf '0'
+  fi
+}
+
+assert_provider_path_since() {
+  local before="$1" description="$2" attempt after
+  [[ "${before}" != "disabled" ]] || return 0
+  [[ -n "${PODLAZ_E2E_PROVIDER_LOG_FILE}" ]] || fail "${description}: provider log path is empty"
+  for attempt in $(seq 1 100); do
+    if [[ -f "${PODLAZ_E2E_PROVIDER_LOG_FILE}" ]]; then
+      after="$(stat -c '%s' "${PODLAZ_E2E_PROVIDER_LOG_FILE}")"
+      if [[ "${after}" =~ ^[0-9]+$ && "${after}" -gt "${before}" ]]; then
+        return 0
+      fi
+    fi
+    sleep 0.1
+  done
+  fail "${description}: Remnawave Node/Xray access evidence did not advance"
+}
+
 curl_proxy_ip() {
   local proxy_kind="$1" output="$2" stderr="$3"
   case "${proxy_kind}" in
@@ -170,12 +196,14 @@ curl_proxy_ip() {
 
 assert_proxy_egress() {
   local proxy_kind="$1" phase="$2"
-  local dir="${E2E_ARTIFACT_DIR}/data-plane-${phase}-${proxy_kind}"
+  local dir="${E2E_ARTIFACT_DIR}/data-plane-${phase}-${proxy_kind}" provider_before
   mkdir -p "${dir}"
+  provider_before="$(provider_log_offset)"
   curl_proxy_ip "${proxy_kind}" "${dir}/public-ipv4.txt" "${dir}/public-ipv4.stderr"
   local ip4
   ip4="$(tr -d '\r\n[:space:]' <"${dir}/public-ipv4.txt")"
   assert_expected_egress "${ip4}" "${phase} ${proxy_kind} egress"
+  assert_provider_path_since "${provider_before}" "${phase} ${proxy_kind} provider path"
 }
 
 assert_proxy_cleanup() {
