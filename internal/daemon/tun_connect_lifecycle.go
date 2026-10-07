@@ -17,6 +17,7 @@ import (
 
 var (
 	preflightNativeTunSupport          = preflightXrayNativeTunSupport
+	preflightTunRuntimeConfig          = preflightXrayTunSupport
 	validateTunRuntimeDependenciesHook = validateTunRuntimeDependencies
 )
 
@@ -87,6 +88,13 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	}
 	if err := m.requireTunAddressPreflightBeforeHandoff(ctx, preHandoffPlan, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
+	}
+	preHandoffCorePlan, err := planTunCoreRuntime(p, runtimeConfigPath, preHandoffPlan)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
+	}
+	if err := preflightTunRuntimeConfig(ctx, xrayPath, runtimeConfigPath, preHandoffCorePlan.XrayConfig, coreIdentity); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-config-preflight", "", "not-started", err)
 	}
 
 	sessionStore := newNetworkSessionStateStore(runtimeDir, nil)
@@ -192,6 +200,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		corePlan:   corePlan,
 		executor:   executor,
 		now:        time.Now,
+		preflightCore: func(preflightCtx context.Context) error {
+			return preflightTunRuntimeConfig(preflightCtx, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
+		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
