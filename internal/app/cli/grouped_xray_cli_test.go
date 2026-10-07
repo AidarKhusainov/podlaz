@@ -15,33 +15,41 @@ import (
 
 const groupedCLIProfileID = "xray-json-redaction"
 
-func TestRunCLICanonicalConnectRejectsGroupedProviderBeforeDaemon(t *testing.T) {
+func TestRunCLICanonicalConnectDispatchesGroupedProviderToTunDaemon(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	opts := options{profileStorePath: storePath}
 	addGroupedCLIProfile(t, opts)
 
-	calledDaemon := false
+	var request api.ConnectRequest
 	var out bytes.Buffer
 	err := runWithOptions(context.Background(), []string{"connect", "Grouped provider"}, &out, options{
 		profileStorePath: storePath,
-		connect: func(context.Context, api.ConnectRequest) (api.LifecycleResponse, error) {
-			calledDaemon = true
-			return api.LifecycleResponse{}, nil
+		connect: func(_ context.Context, req api.ConnectRequest) (api.LifecycleResponse, error) {
+			request = req
+			return api.LifecycleResponse{
+				Connection: "active",
+				Mode:       planner.ModeTun,
+				Proxy:      "disabled",
+				TUN:        "active",
+			}, nil
 		},
 	})
-	if err == nil {
-		t.Fatal("expected grouped provider canonical connect to fail")
+	if err != nil {
+		t.Fatalf("grouped provider canonical connect failed: %v", err)
 	}
-	if calledDaemon {
-		t.Fatal("grouped provider canonical connect reached daemon")
+	if request.Mode != planner.ModeTun {
+		t.Fatalf("canonical grouped provider mode=%q, want %q", request.Mode, planner.ModeTun)
 	}
-	combined := out.String() + err.Error()
-	for _, want := range []string{"Proxy only", "podlaz debug proxy"} {
-		if !strings.Contains(combined, want) {
-			t.Fatalf("missing %q: %q", want, combined)
-		}
+	if request.Profile.Protocol != profile.ProtocolXrayJSON {
+		t.Fatalf("canonical grouped provider protocol=%q", request.Profile.Protocol)
 	}
-	assertGroupedCLINoSensitiveMaterial(t, combined)
+	if request.Profile.Server != "" || request.Profile.Port != 0 || request.Profile.UserIdentity != "" {
+		t.Fatalf("canonical grouped provider acquired flattened endpoint authority: %#v", request.Profile)
+	}
+	if strings.TrimSpace(request.Profile.RealitySpiderX) == "" {
+		t.Fatal("canonical grouped provider request lost schema-opaque source authority")
+	}
+	assertGroupedCLINoSensitiveMaterial(t, out.String())
 }
 
 func TestRunCLIGroupedProviderProfileOutputRedaction(t *testing.T) {
