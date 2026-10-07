@@ -91,11 +91,11 @@ EOF
   chmod +x "${root}/bin/dpkg" "${root}/bin/curl" "${root}/bin/apt-get" "${root}/bin/sudo"
 }
 
-run_success_case() {
+run_success_case() (
   local arch="$1"
   local root
   root="$(mktemp -d)"
-  trap 'rm -rf -- "${root}"' RETURN
+  trap 'rm -rf -- "${root}"' EXIT
   make_fixture "${root}" "${arch}"
 
   : >"${root}/apt.log"
@@ -109,12 +109,12 @@ run_success_case() {
     || fail "installer did not install expected ${arch} package"
   grep -Fq "Checksum verified." "${root}/stdout" \
     || fail "installer did not report checksum verification"
-}
+)
 
-run_checksum_failure_case() {
+run_checksum_failure_case() (
   local root
   root="$(mktemp -d)"
-  trap 'rm -rf -- "${root}"' RETURN
+  trap 'rm -rf -- "${root}"' EXIT
   make_fixture "${root}" amd64 invalid
 
   : >"${root}/apt.log"
@@ -128,12 +128,12 @@ run_checksum_failure_case() {
 
   [[ ! -s "${root}/apt.log" ]] || fail "installer attempted installation after checksum failure"
   grep -Fq "checksum mismatch" "${root}/stderr" || fail "checksum failure was not classified clearly"
-}
+)
 
-run_unsupported_arch_case() {
+run_unsupported_arch_case() (
   local root
   root="$(mktemp -d)"
-  trap 'rm -rf -- "${root}"' RETURN
+  trap 'rm -rf -- "${root}"' EXIT
   mkdir -p "${root}/bin"
 
   cat >"${root}/bin/dpkg" <<'EOF'
@@ -148,7 +148,7 @@ EOF
   fi
   grep -Fq "unsupported Debian architecture: armhf" "${root}/stderr" \
     || fail "unsupported architecture failure was not classified clearly"
-}
+)
 
 run_success_case amd64
 run_success_case arm64
