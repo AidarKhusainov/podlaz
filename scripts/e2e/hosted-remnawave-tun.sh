@@ -533,6 +533,8 @@ run_provider_scenario() {
   guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PRIVATE}"
   prepare_provider_material || fail "ephemeral Remnawave material is unavailable"
   import_provider_profile || fail "ephemeral Remnawave profile import/validation failed"
+  record_evidence native.schema_opaque pass
+  record_evidence native.multi_outbound pass
   remove_provider_material
   record_evidence remnawave.material_private pass
 
@@ -577,8 +579,24 @@ run_provider_scenario() {
   mark_failure product tun.doctor
   run_tun_doctor || fail "doctor --tun failed against active Remnawave TUN"
 
+  mark_failure product tun.reconnect_prepare
+  run_guest_user /usr/bin/podlaz disconnect >"\${PRIVATE_ROOT}/reconnect-disconnect.stdout" 2>"\${PRIVATE_ROOT}/reconnect-disconnect.stderr" || \
+    fail "native Xray reconnect preparation disconnect failed"
+  wait_guest_status clean-inactive 90 || fail "native Xray reconnect preparation did not converge to clean-inactive"
+  assert_terminal_authority_clean || fail "native Xray reconnect preparation left owned authority"
+
+  mark_failure product tun.reconnect
+  run_guest_user /usr/bin/podlaz connect >"\${PRIVATE_ROOT}/reconnect.stdout" 2>"\${PRIVATE_ROOT}/reconnect.stderr" || \
+    fail "native Xray reconnect failed"
+  wait_guest_status verified-active 90 || fail "native Xray reconnect did not reach verified-active"
+  assert_verified_active_authority || fail "native Xray reconnect active authority is incomplete"
+  assert_direct_uplink_blocked || fail "ordinary direct uplink bypassed reconnected Privacy Envelope"
+  run_provider_traffic_checks || fail "native Xray reconnected data plane failed"
+  assert_foreign_sentinel || fail "foreign guest state changed across native Xray reconnect"
+  record_evidence tun.reconnect pass
+
   mark_failure product tun.disconnect
-  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr" || \
+  run_guest_user /usr/bin/podlaz disconnect >"\${PRIVATE_ROOT}/disconnect.stdout" 2>"\${PRIVATE_ROOT}/disconnect.stderr" || \
     fail "normal Remnawave TUN disconnect failed"
   wait_guest_status clean-inactive 90 || fail "Remnawave TUN did not converge to clean-inactive"
   record_evidence tun.clean_disconnect pass
