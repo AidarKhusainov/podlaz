@@ -99,6 +99,7 @@ finalize_report() {
 }
 
 validate_report() {
+  assert_public_artifact_privacy || return 1
   python3 - "${REPORT}" "${EXPECTED_COMMIT,,}" "${CANDIDATE_SHA256}" "${EVIDENCE_KEYS[@]}" <<'PY'
 import re
 import sys
@@ -168,7 +169,7 @@ allowed = [
     re.compile(r"candidate\.commit=[0-9a-f]{40}"),
     re.compile(r"candidate\.package_sha256=[0-9a-f]{64}"),
     re.compile(r"[a-z0-9_.-]+=(?:pass|fail|observed|unavailable)"),
-    re.compile(r"failure\\.class=(?:none|product|remnawave|fixture|infrastructure|capability|diagnostic_unknown)"),
+    re.compile(r"failure\.class=(?:none|product|remnawave|fixture|infrastructure|capability|diagnostic_unknown)"),
     re.compile(r"failure\.step=[A-Za-z0-9_.-]+"),
 ]
 for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
