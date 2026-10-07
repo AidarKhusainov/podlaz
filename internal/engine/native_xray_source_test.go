@@ -55,7 +55,6 @@ func TestNativeXrayProxyOnlyRejectsProviderInboundRoutingAuthority(t *testing.T)
 	}
 }
 
-
 func TestNativeXrayTunCompositionPreservesProviderAuthorityAndUnknownFields(t *testing.T) {
 	raw := []byte(`{
 	  "futureTop":{"enabled":true},
@@ -95,7 +94,7 @@ func TestNativeXrayTunCompositionPreservesProviderAuthorityAndUnknownFields(t *t
 	var inbounds []struct {
 		Tag      string `json:"tag"`
 		Protocol string `json:"protocol"`
-	} 
+	}
 	if err := json.Unmarshal(doc["inbounds"], &inbounds); err != nil {
 		t.Fatalf("decode TUN inbounds: %v", err)
 	}
