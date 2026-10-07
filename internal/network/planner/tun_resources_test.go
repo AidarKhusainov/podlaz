@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/snapshot"
+	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
 func TestAllocateTunResourcesPrefersHistoricalValuesWhenFree(t *testing.T) {
@@ -69,7 +70,11 @@ func TestPlanTunForSessionUsesAllocatedNumericIdentitiesAndActualServerPath(t *t
 		{Kind: "rule", Priority: strconv.Itoa(TunRulePriority), Selector: "from all", Table: strconv.Itoa(TunRoutingTableID)},
 	}
 
-	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
+	native, _, err := profile.NewImportedFileProviderXrayConfig("native", []byte(`{"outbounds":[{"tag":"provider","protocol":"freedom"}]}`))
+	if err != nil {
+		t.Fatalf("create native profile: %v", err)
+	}
+	plan, err := PlanTunForSession(native, s, TunOptions{})
 	if err != nil {
 		t.Fatalf("PlanTunForSession() error = %v", err)
 	}
