@@ -61,6 +61,25 @@ func TestHostedRemnawaveTUNPreservesQ29IsolationAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestHostedRemnawaveTUNSeparatesSuccessValidationFromNormalizedFailureScan(t *testing.T) {
+	data, err := os.ReadFile("hosted-remnawave-tun.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		`local mode="$1"`,
+		`"${mode}" "${EVIDENCE_KEYS[@]}"`,
+		"validate_report success",
+		"validate_report normalized",
+		"validate-report|scan-report",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Remnawave TUN validation-mode contract lost %q", required)
+		}
+	}
+}
+
 func TestIntegrationKeepsRemnawaveSignalsSeparateAndSecretFree(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/integration.yml")
 	if err != nil {
