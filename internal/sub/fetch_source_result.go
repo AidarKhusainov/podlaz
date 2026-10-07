@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var errSubscriptionClientPolicyRejected = errors.New("subscription provider rejected client identity by device policy")
+
 // FetchResult contains subscription response bytes plus response metadata that
 // can be used for safe provider display-name detection.
 type FetchResult struct {
@@ -89,6 +91,9 @@ func fetchHTTPSource(ctx context.Context, source Source) (FetchResult, error) {
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return FetchResult{}, fmt.Errorf("fetch subscription %s: unexpected HTTP status %d", source.ID, res.StatusCode)
+	}
+	if strings.EqualFold(strings.TrimSpace(res.Header.Get("X-Hwid-Limit")), "true") {
+		return FetchResult{}, fmt.Errorf("fetch subscription %s: %w", source.ID, errSubscriptionClientPolicyRejected)
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, 4*1024*1024+1))
 	if err != nil {
