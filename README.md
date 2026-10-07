@@ -42,6 +42,10 @@ podlaz version
 systemctl is-active podlazd.service
 ```
 
+`podlaz` is the canonical command name. Packaged installs also provide `plz`
+as an identical short alias, so commands such as `podlaz status` can be written
+as `plz status`. The examples below use the canonical `podlaz` form.
+
 Release assets include `SHA256SUMS` and GitHub build provenance attestations.
 
 ## Quick start
