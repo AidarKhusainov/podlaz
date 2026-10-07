@@ -343,9 +343,17 @@ cleanup_fixture() {
   local code=$?
   set +e
   if [[ -f "${COMPOSE_FILE}" ]]; then
-    docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1
+    docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || code=1
   fi
-  docker ps -a --format '{{.Names}}' | grep -E '^(remnawave|remnanode)' >/dev/null && code=1
+  if docker ps -aq --filter 'label=com.docker.compose.project=remnawave-fixture' | grep -q .; then
+    code=1
+  fi
+  if docker network inspect podlaz-remnawave-fixture >/dev/null 2>&1; then
+    code=1
+  fi
+  if docker volume inspect podlaz-remnawave-db >/dev/null 2>&1; then
+    code=1
+  fi
   rm -rf "${PRIVATE_ROOT}"
   exit "${code}"
 }
