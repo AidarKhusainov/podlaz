@@ -262,6 +262,8 @@ func TestRemnawaveTUNPublicScannerAcceptsNormalizedFailureAndRejectsRawEvidence(
 	keys := []string{
 		"candidate.provenance",
 		"remnawave.material_private",
+		"native.schema_opaque",
+		"native.multi_outbound",
 		"ordinary_user.boundary",
 		"tun.verified_active",
 		"tun.system_dns",
@@ -270,6 +272,7 @@ func TestRemnawaveTUNPublicScannerAcceptsNormalizedFailureAndRejectsRawEvidence(
 		"tun.https",
 		"tun.remnawave_path",
 		"tun.doctor",
+		"tun.reconnect",
 		"privacy.direct_uplink_blocked",
 		"foreign.state_preserved",
 		"tun.clean_disconnect",
