@@ -14,8 +14,8 @@ import urllib.request
 
 PANEL_VERSION = os.environ.get("REMNAWAVE_PANEL_VERSION", "3.4.5")
 NODE_VERSION = os.environ.get("REMNAWAVE_NODE_VERSION", "3.4.2")
-PANEL_IMAGE = os.environ.get("REMNAWAVE_PANEL_IMAGE", `ghcr.io/remnawave/backend:${PANEL_VERSION}`)
-NODE_IMAGE = os.environ.get("REMNAWAVE_NODE_IMAGE", `ghcr.io/remnawave/node:${NODE_VERSION}`)
+PANEL_IMAGE = os.environ.get("REMNAWAVE_PANEL_IMAGE", f"ghcr.io/remnawave/backend:{PANEL_VERSION}")
+NODE_IMAGE = os.environ.get("REMNAWAVE_NODE_IMAGE", f"ghcr.io/remnawave/node:{NODE_VERSION}")
 POSTGRES_IMAGE = os.environ.get("REMNAWAVE_POSTGRES_IMAGE", "postgres:18.4")
 VALKEY_IMAGE = os.environ.get("REMNAWAVE_VALKEY_IMAGE", "valkey/valkey:9-alpine")
 PANEL_BASE = "http://127.0.0.1:3000"
