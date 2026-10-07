@@ -8,7 +8,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
-func TestParseSubscriptionContentImportsXrayFixtureWithServiceOutbounds(t *testing.T) {
+func TestParseSubscriptionContentPreservesXrayFixtureWithServiceOutbounds(t *testing.T) {
 	body, err := os.ReadFile("testdata/xray-subscription-service-outbounds.json")
 	if err != nil {
 		t.Fatalf("read Xray subscription fixture: %v", err)
@@ -18,24 +18,21 @@ func TestParseSubscriptionContentImportsXrayFixtureWithServiceOutbounds(t *testi
 	if err != nil {
 		t.Fatalf("ParseSubscriptionContent failed: %v", err)
 	}
-	if format != FormatXrayJSON {
-		t.Fatalf("expected format %q, got %q", FormatXrayJSON, format)
-	}
-	if len(parsed.Profiles) != 1 {
-		t.Fatalf("expected one imported profile, got %#v", parsed.Profiles)
+	if format != FormatXrayJSON || len(parsed.Profiles) != 1 {
+		t.Fatalf("unexpected parsed fixture: format=%q profiles=%#v", format, parsed.Profiles)
 	}
 	p := parsed.Profiles[0]
-	if p.Source != profile.SourceSubscription || p.Name != "fixture-vless" || p.Protocol != "vless" {
-		t.Fatalf("unexpected imported profile metadata: %#v", p)
+	if p.Source != profile.SourceSubscription || p.Protocol != profile.ProtocolXrayJSON {
+		t.Fatalf("expected opaque native Xray profile, got %#v", p)
 	}
-	if p.Server != "fixture-vless.example" || p.Port != 443 || p.Transport != "tcp" || p.Security != "reality" {
-		t.Fatalf("unexpected imported profile endpoint fields: %#v", p)
-	}
-	if p.UserIdentity != "00000000-0000-0000-0000-000000000501" || p.Flow != "xtls-rprx-vision" {
-		t.Fatalf("unexpected imported profile identity fields: %#v", p)
+	stored := profile.ProviderXrayConfigJSON(p)
+	for _, want := range []string{`"protocol":"freedom"`, `"protocol":"blackhole"`, `"protocol":"dns"`, `"protocol":"loopback"`, `"protocol":"vless"`} {
+		if !strings.Contains(stored, want) {
+			t.Fatalf("expected source to preserve service outbound %s: %s", want, stored)
+		}
 	}
 	if len(parsed.Unsupported) != 0 {
-		t.Fatalf("service outbounds must not be reported as unsupported, got %#v", parsed.Unsupported)
+		t.Fatalf("native Xray service outbounds must remain Xray-owned, got %#v", parsed.Unsupported)
 	}
 }
 

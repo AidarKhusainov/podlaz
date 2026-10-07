@@ -34,50 +34,51 @@ func TestParseSubscriptionContentKeepsBase64SubscriptionBehavior(t *testing.T) {
 	}
 }
 
-func TestParseSubscriptionContentImportsXrayJSONObject(t *testing.T) {
-	format, parsed, err := ParseSubscriptionContent([]byte(remoteXrayConfigObject("00000000-0000-0000-0000-000000000102", "json-object.example", "json-object", "tcp", "tls")))
+func TestParseSubscriptionContentPreservesXrayJSONObjectOpaque(t *testing.T) {
+	body := xrayObjectWithTopLevelField(
+		remoteXrayConfigObject("00000000-0000-0000-0000-000000000102", "json-object.example", "json-object", "future-transport", "future-security"),
+		`"futureTop":{"mode":"next"}`,
+	)
+	format, parsed, err := ParseSubscriptionContent([]byte(body))
 	if err != nil {
 		t.Fatalf("ParseSubscriptionContent failed: %v", err)
 	}
-	if format != FormatXrayJSON {
-		t.Fatalf("expected format %q, got %q", FormatXrayJSON, format)
-	}
-	if got := len(parsed.Profiles); got != 1 {
-		t.Fatalf("expected 1 profile, got %d", got)
+	if format != FormatXrayJSON || len(parsed.Profiles) != 1 {
+		t.Fatalf("unexpected parsed subscription: format=%q parsed=%#v", format, parsed)
 	}
 	p := parsed.Profiles[0]
-	if p.Source != profile.SourceSubscription {
-		t.Fatalf("expected subscription profile source, got %q", p.Source)
+	if p.Source != profile.SourceSubscription || p.Protocol != profile.ProtocolXrayJSON {
+		t.Fatalf("expected opaque subscription Xray profile, got %#v", p)
 	}
-	if p.Server != "json-object.example" || p.Transport != "tcp" || p.Security != "tls" {
-		t.Fatalf("unexpected normalized profile: %#v", p)
+	if p.Server != "" || p.Transport != "" || p.Security != "" {
+		t.Fatalf("subscription Xray JSON must not be schema-flattened: %#v", p)
+	}
+	stored := profile.ProviderXrayConfigJSON(p)
+	for _, want := range []string{"futureTop", "future-transport", "future-security"} {
+		if !strings.Contains(stored, want) {
+			t.Fatalf("subscription Xray source lost %q: %s", want, stored)
+		}
 	}
 }
 
-func TestParseSubscriptionContentImportsVLESSRealityXHTTPAsRenderableProxyOnlyProfile(t *testing.T) {
+func TestParseSubscriptionContentNativeXrayRemainsRenderableProxyOnly(t *testing.T) {
 	format, parsed, err := ParseSubscriptionContent([]byte(remoteXrayConfigObject("00000000-0000-4000-8000-000000000181", "xhttp.edge.invalid", "xhttp-reality", "xhttp", "reality")))
 	if err != nil {
 		t.Fatalf("ParseSubscriptionContent failed: %v", err)
 	}
-	if format != FormatXrayJSON {
-		t.Fatalf("expected format %q, got %q", FormatXrayJSON, format)
-	}
-	if got := len(parsed.Profiles); got != 1 {
-		t.Fatalf("expected 1 profile, got %d", got)
+	if format != FormatXrayJSON || len(parsed.Profiles) != 1 {
+		t.Fatalf("unexpected parsed subscription: format=%q parsed=%#v", format, parsed)
 	}
 	p := parsed.Profiles[0]
-	if p.Source != profile.SourceSubscription || p.Protocol != "vless" || p.Transport != "xhttp" || p.Security != "reality" {
-		t.Fatalf("unexpected xhttp subscription profile: %#v", p)
-	}
-	if p.Server != "xhttp.edge.invalid" || p.Path != "/xhttp" || p.HostHeader != "xhttp.edge.invalid" || p.RealityPublicKey != "public-key" {
-		t.Fatalf("expected xhttp metadata to be preserved, got %#v", p)
+	if p.Source != profile.SourceSubscription || p.Protocol != profile.ProtocolXrayJSON {
+		t.Fatalf("unexpected native Xray subscription profile: %#v", p)
 	}
 	if err := engine.ValidateXrayProxyOnlyProfile(p); err != nil {
-		t.Fatalf("expected xhttp subscription profile to be proxy-only renderable: %v", err)
+		t.Fatalf("expected native Xray subscription profile to be proxy-only renderable: %v", err)
 	}
 	generated, err := engine.GenerateXrayProxyOnlyConfig(p, engine.DefaultXrayProxyOnlyConfigOptions())
 	if err != nil {
-		t.Fatalf("generate xhttp proxy-only config: %v", err)
+		t.Fatalf("generate native Xray proxy-only config: %v", err)
 	}
 	config := string(generated)
 	for _, want := range []string{`"network": "xhttp"`, `"xhttpSettings"`, `"path": "/xhttp"`, `"host": "xhttp.edge.invalid"`, `"realitySettings"`} {
@@ -180,44 +181,18 @@ func TestParseSubscriptionContentRejectsNestedUnsupportedClientXrayJSONError(t *
 	}
 }
 
-func TestParseXrayJSONSubscriptionReportsUnsupportedOutboundsClearly(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{
-			name: "unsupported protocol",
-			body: `{"outbounds":[{"protocol":"vmess"}]}`,
-			want: `unsupported outbound protocol "vmess"`,
-		},
-		{
-			name: "unsupported transport",
-			body: remoteXrayConfigObject("00000000-0000-0000-0000-000000000105", "bad-transport.example", "bad-transport", "splithttp", "tls"),
-			want: `unsupported VLESS transport "splithttp"`,
-		},
-		{
-			name: "unsupported security",
-			body: remoteXrayConfigObject("00000000-0000-0000-0000-000000000106", "bad-security.example", "bad-security", "tcp", "xtls"),
-			want: `unsupported VLESS security "xtls"`,
-		},
-		{
-			name: "unsupported transport security combination",
-			body: remoteXrayConfigObject("00000000-0000-0000-0000-000000000107", "bad-combo.example", "bad-combo", "ws", "reality"),
-			want: "transport/security combination",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := ParseSubscriptionContent([]byte(tt.body))
-			if err == nil {
-				t.Fatal("expected unsupported outbound to fail")
-			}
-			if !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected error containing %q, got %v", tt.want, err)
-			}
-		})
+func TestParseXrayJSONSubscriptionDoesNotSchemaRejectFutureOutbounds(t *testing.T) {
+	for _, body := range []string{
+		`{"outbounds":[{"protocol":"future-protocol","futureOutbound":true}]}`,
+		remoteXrayConfigObject("00000000-0000-0000-0000-000000000105", "future.example", "future", "future-transport", "future-security"),
+	} {
+		_, parsed, err := ParseSubscriptionContent([]byte(body))
+		if err != nil {
+			t.Fatalf("native Xray schema must remain Xray-owned: %v", err)
+		}
+		if len(parsed.Profiles) != 1 || parsed.Profiles[0].Protocol != profile.ProtocolXrayJSON {
+			t.Fatalf("expected one opaque native Xray profile, got %#v", parsed.Profiles)
+		}
 	}
 }
 

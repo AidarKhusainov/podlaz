@@ -66,8 +66,13 @@ After import:
 - subscription URLs, credentials, raw provider JSON, endpoints, UUIDs, and stable profile IDs are not printed merely to support onboarding.
 
 Supported imported material includes VLESS/VMess/Trojan/Shadowsocks share URIs,
-Base64 URI-list subscriptions, and supported Xray JSON. Connection support is
-stricter than import support.
+Base64 URI-list subscriptions, and native Xray JSON. Native Xray JSON is kept as
+sensitive schema-opaque source material so Xray-owned fields survive persistence
+and runtime composition; Podlaz does not expose the raw JSON in normal output.
+Typed share-URI imports remain normalized profiles. Connection support is
+stricter than import support: native Xray JSON currently uses the explicit
+Proxy-only path, while canonical full-TUN support remains unavailable until an
+endpoint-independent egress boundary is integrated.
 
 ## Profile selection
 
@@ -303,8 +308,8 @@ podlaz debug proxy <profile>
 This is the single advanced reduced-protection connection path. It is not a mode
 matrix and is never an automatic fallback from canonical connect.
 
-Proxy-only does not mutate TUN, routes, DNS, nftables, or firewall state. Grouped
-provider Xray JSON and supported VLESS xhttp profiles may use this path when they
+Proxy-only does not mutate TUN, routes, DNS, nftables, or firewall state. Native
+Xray JSON (including grouped provider profiles) and supported VLESS xhttp profiles may use this path when they
 cannot participate in safe TUN planning.
 
 Default success output makes the protection reduction explicit:

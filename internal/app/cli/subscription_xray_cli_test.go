@@ -57,7 +57,7 @@ func TestRunCLIImportHTTPXrayJSONSubscriptionPersistsFormat(t *testing.T) {
 		t.Fatalf("unexpected HTTP Xray JSON import output: %q", got)
 	}
 	assertPersistedSubscriptionFormat(t, opts, sub.FormatXrayJSON)
-	assertStoredProfileServer(t, opts.profileStorePath, "http-json.example")
+	assertStoredNativeXrayProfile(t, opts.profileStorePath, "http-json.example", userID)
 }
 
 func TestRunCLISubscriptionUpdateHTTPXrayJSONPreservesLastKnownGood(t *testing.T) {
@@ -90,7 +90,7 @@ func TestRunCLISubscriptionUpdateHTTPXrayJSONPreservesLastKnownGood(t *testing.T
 	if !strings.Contains(err.Error(), "Xray JSON") || strings.Contains(err.Error(), "Base64") {
 		t.Fatalf("expected JSON parse error without Base64 fallback, got %v", err)
 	}
-	assertStoredProfileServer(t, opts.profileStorePath, "stable-json.example")
+	assertStoredNativeXrayProfile(t, opts.profileStorePath, "stable-json.example", uuidForTest(22))
 }
 
 func TestRunCLIImportAndUpdateFileURLXrayJSONSubscription(t *testing.T) {
@@ -107,7 +107,7 @@ func TestRunCLIImportAndUpdateFileURLXrayJSONSubscription(t *testing.T) {
 	if source.Format != sub.FormatXrayJSON {
 		t.Fatalf("format=%q want=%q", source.Format, sub.FormatXrayJSON)
 	}
-	assertStoredProfileServer(t, profileStorePath, "stable-file-json.example")
+	assertStoredNativeXrayProfile(t, profileStorePath, "stable-file-json.example", uuidForTest(26))
 
 	if err := os.WriteFile(fixturePath, []byte(" {not-json"), 0o600); err != nil {
 		t.Fatalf("write malformed fixture: %v", err)
@@ -115,7 +115,7 @@ func TestRunCLIImportAndUpdateFileURLXrayJSONSubscription(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"subscription", "update", source.ID}, &bytes.Buffer{}, opts); err == nil {
 		t.Fatal("expected malformed JSON update to fail")
 	}
-	assertStoredProfileServer(t, profileStorePath, "stable-file-json.example")
+	assertStoredNativeXrayProfile(t, profileStorePath, "stable-file-json.example", uuidForTest(26))
 }
 
 func assertPersistedSubscriptionFormat(t *testing.T, opts options, want sub.Format) {
@@ -146,7 +146,7 @@ func onlySubscription(t *testing.T, opts options) sub.Source {
 	return sources[0]
 }
 
-func assertStoredProfileServer(t *testing.T, path, want string) {
+func assertStoredNativeXrayProfile(t *testing.T, path, wantHost, wantUserID string) {
 	t.Helper()
 	store, err := profile.NewStore(path)
 	if err != nil {
@@ -156,8 +156,18 @@ func assertStoredProfileServer(t *testing.T, path, want string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(profiles) != 1 || profiles[0].Server != want {
-		t.Fatalf("profiles=%#v, want server %q", profiles, want)
+	if len(profiles) != 1 {
+		t.Fatalf("profiles=%#v, want one native Xray profile", profiles)
+	}
+	p := profiles[0]
+	if p.Protocol != profile.ProtocolXrayJSON || p.Server != "" || p.Port != 0 || p.UserIdentity != "" {
+		t.Fatalf("native Xray subscription was flattened into endpoint fields: %#v", p)
+	}
+	raw := profile.ProviderXrayConfigJSON(p)
+	for _, want := range []string{wantHost, wantUserID} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("native Xray source lost %q: %s", want, raw)
+		}
 	}
 }
 

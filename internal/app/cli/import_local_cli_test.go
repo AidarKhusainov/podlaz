@@ -34,13 +34,20 @@ func TestRunCLIImportLocalXrayJSON(t *testing.T) {
 	if err := runWithOptions(context.Background(), []string{"profile", "show", profileID}, &show, opts); err != nil {
 		t.Fatalf("profile show failed: %v", err)
 	}
-	for _, want := range []string{"Name: json-cli", "Source: imported_file", "Protocol: vless", "Security: reality"} {
+	for _, want := range []string{"Name: json-cli", "Source: imported_file", "Protocol: xray-json"} {
 		if !strings.Contains(show.String(), want) {
 			t.Fatalf("expected profile show to contain %q, got %q", want, show.String())
 		}
 	}
-	if strings.Contains(show.String(), "00000000-0000-0000-0000-000000000001") {
-		t.Fatalf("profile show leaked full VLESS user identity: %q", show.String())
+	for _, secret := range []string{
+		"00000000-0000-0000-0000-000000000001",
+		"example.com",
+		"public-key",
+		`"realitySettings"`,
+	} {
+		if strings.Contains(show.String(), secret) {
+			t.Fatalf("profile show leaked native Xray source material %q: %q", secret, show.String())
+		}
 	}
 }
 
