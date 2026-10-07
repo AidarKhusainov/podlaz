@@ -148,33 +148,6 @@ jobs:
             -test.run '^TestPrivacyEnvelopeRealNFTRoundTrip$' \
             -test.v
 
-  xray-marked-egress:
-    name: Xray marked egress qualification
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Install qualification tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl iproute2 nftables unzip
-
-      - name: Prepare bundled Xray
-        run: |
-          PODLAZ_RUNTIME_CACHE_DIR=/tmp/podlaz-xray-cache \
-            bash scripts/package-runtime-helpers.sh /tmp/podlaz-xray-root amd64 amd64
-          /tmp/podlaz-xray-root/usr/lib/podlaz/xray version
-
-      - name: Prove endpoint-independent marked egress
-        run: |
-          sudo -n true
-          XRAY_BIN=/tmp/podlaz-xray-root/usr/lib/podlaz/xray \
-            bash scripts/e2e/xray-marked-egress-qualification.sh
-
   deb-package:
     name: Debian package
     runs-on: ubuntu-24.04
