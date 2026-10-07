@@ -88,7 +88,7 @@ func (p privacyEnvelopeLifecycle) armMarked(ctx context.Context, state networkSe
 		return err
 	}
 	if state.Protection != nil {
-		if state.Protection.CompositionVersion != privacyEnvelopeCompositionVersion {
+		if state.Protection.CompositionVersion != privacyEnvelopeMarkedCompositionVersion {
 			return errors.New("existing endpoint privacy envelope cannot be reused for marked native Xray without explicit replacement convergence")
 		}
 		if state.Protection.State == networkSessionProtectionRemoving {
@@ -123,7 +123,7 @@ func (p privacyEnvelopeLifecycle) armMarked(ctx context.Context, state networkSe
 }
 
 func (p privacyEnvelopeLifecycle) prepareMarkedReplacement(ctx context.Context, state networkSessionState, tunPlan planner.TunPlan) error {
-	if state.Protection == nil || state.Protection.CompositionVersion != privacyEnvelopeCompositionVersion {
+	if state.Protection == nil || state.Protection.CompositionVersion != privacyEnvelopeMarkedCompositionVersion {
 		return errors.New("marked privacy replacement requires existing marked privacy authority")
 	}
 	target, err := normalizePrivacyEnvelopeEgressMarks([]uint32{tunPlan.EgressMark})
