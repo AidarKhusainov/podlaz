@@ -22,7 +22,7 @@ func tunRevalidationPlanFromTransaction(tx txstate.Transaction) (planner.TunPlan
 	if tx.Mode != planner.ModeTun {
 		return planner.TunPlan{}, fmt.Errorf("persisted transaction mode %q is not TUN", tx.Mode)
 	}
-	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
+	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID, EgressMark: tx.DesiredPlan.EgressMark}
 
 	device, err := tunRevalidationDevicePlan(tx.DesiredPlan.TUN)
 	if err != nil {
@@ -96,11 +96,14 @@ func tunRevalidationAddressPlan(desired txstate.TUNAddressDesiredState, device s
 }
 
 func tunRevalidationRoutePlans(tx txstate.Transaction) ([]planner.TunRoutePlan, planner.TunRoutePlan, error) {
-	server, err := tunRevalidationServerAddress(tx)
-	if err != nil {
-		return nil, planner.TunRoutePlan{}, err
+	serverCIDR := ""
+	if tx.DesiredPlan.EgressMark == 0 {
+		server, err := tunRevalidationServerAddress(tx)
+		if err != nil {
+			return nil, planner.TunRoutePlan{}, err
+		}
+		serverCIDR = server + "/32"
 	}
-	serverCIDR := server + "/32"
 	seen := make(map[string]struct{}, len(tx.DesiredPlan.Routes))
 	routes := make([]planner.TunRoutePlan, 0, len(tx.DesiredPlan.Routes))
 	var serverBypass planner.TunRoutePlan
@@ -134,14 +137,14 @@ func tunRevalidationRoutePlans(tx txstate.Transaction) ([]planner.TunRoutePlan, 
 			Action:      action,
 		}
 		routes = append(routes, route)
-		if strings.EqualFold(desired.Table, planner.MainRoutingTable) && desired.CIDR == serverCIDR && desired.Dev != deviceNameForRevalidation(tx) {
+		if serverCIDR != "" && strings.EqualFold(desired.Table, planner.MainRoutingTable) && desired.CIDR == serverCIDR && desired.Dev != deviceNameForRevalidation(tx) {
 			if serverBypass.Destination != "" {
 				return nil, planner.TunRoutePlan{}, fmt.Errorf("multiple desired server bypass routes match %s", serverCIDR)
 			}
 			serverBypass = route
 		}
 	}
-	if serverBypass.Destination == "" {
+	if serverCIDR != "" && serverBypass.Destination == "" {
 		return nil, planner.TunRoutePlan{}, fmt.Errorf("desired server bypass route %s is missing", serverCIDR)
 	}
 	return routes, serverBypass, nil
@@ -187,7 +190,7 @@ func parsePersistedTunPolicyRule(target string) (planner.TunPolicyRulePlan, erro
 		return planner.TunPolicyRulePlan{}, fmt.Errorf("persisted policy-rule target %q has invalid priority", target)
 	}
 	selector := strings.Join(fields[2:len(fields)-2], " ")
-	if !(strings.HasPrefix(selector, "from ") || strings.HasPrefix(selector, "to ")) {
+	if !(strings.HasPrefix(selector, "from ") || strings.HasPrefix(selector, "to ") || strings.HasPrefix(selector, "fwmark ")) {
 		return planner.TunPolicyRulePlan{}, fmt.Errorf("persisted policy-rule target %q has invalid selector", target)
 	}
 	table := strings.TrimSpace(fields[len(fields)-1])
