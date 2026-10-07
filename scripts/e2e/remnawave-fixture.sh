@@ -13,12 +13,18 @@ COMPOSE_FILE="${PRIVATE_ROOT}/compose.yml"
 PANEL_ENV="${PRIVATE_ROOT}/panel.env"
 NODE_ENV="${PRIVATE_ROOT}/node.env"
 STATE_DIR="${PRIVATE_ROOT}/state"
-PANEL_URL="http://127.0.0.1:3000"
+PANEL_URL="https://127.0.0.1:8443"
 PANEL_METRICS_URL="http://127.0.0.1:3001/health"
+TLS_DIR="${PRIVATE_ROOT}/tls"
+CA_CERT="${TLS_DIR}/ca.crt"
+SERVER_CERT="${TLS_DIR}/server.crt"
+SERVER_KEY="${TLS_DIR}/server.key"
+NGINX_CONF="${PRIVATE_ROOT}/nginx.conf"
 PANEL_IMAGE="${PODLAZ_REMNAWAVE_PANEL_IMAGE:-ghcr.io/remnawave/backend:3.4.5}"
 NODE_IMAGE="${PODLAZ_REMNAWAVE_NODE_IMAGE:-ghcr.io/remnawave/node:3.4.2}"
 POSTGRES_IMAGE="${PODLAZ_REMNAWAVE_POSTGRES_IMAGE:-postgres:18.4}"
 VALKEY_IMAGE="${PODLAZ_REMNAWAVE_VALKEY_IMAGE:-valkey/valkey:9-alpine}"
+PROXY_IMAGE="${PODLAZ_REMNAWAVE_PROXY_IMAGE:-nginx:1.29-alpine}"
 NODE_PORT=2222
 XRAY_PORT=24443
 
@@ -29,7 +35,7 @@ FIXTURE_STARTED=0
 
 api() {
   local method="$1" path="$2" body="${3:-}" output="$4"
-  local args=(-fsS --max-time 20 -X "${method}" "${PANEL_URL}${path}" -H 'accept: application/json')
+  local args=(--cacert "${CA_CERT}" -fsS --max-time 20 -X "${method}" "${PANEL_URL}${path}" -H 'accept: application/json')
   if [[ -n "${ADMIN_TOKEN}" ]]; then
     args+=(-H "authorization: Bearer ${ADMIN_TOKEN}")
   fi
@@ -53,7 +59,7 @@ wait_http() {
 wait_panel_api() {
   local output="${STATE_DIR}/auth-status.json" i
   for i in $(seq 1 120); do
-    if curl -fsS --max-time 3 "${PANEL_URL}/api/auth/status" >"${output}" 2>/dev/null &&
+    if curl --cacert "${CA_CERT}" -fsS --max-time 3 "${PANEL_URL}/api/auth/status" >"${output}" 2>/dev/null &&
        jq -e '.response.isRegisterAllowed == true' "${output}" >/dev/null 2>&1; then
       return 0
     fi
@@ -116,7 +122,6 @@ services:
     image: ${PANEL_IMAGE}
     env_file: [${PANEL_ENV}]
     ports:
-      - "127.0.0.1:3000:3000"
       - "127.0.0.1:3001:3001"
     depends_on:
       remnawave-db:
@@ -131,9 +136,24 @@ services:
       start_period: 10s
     networks: [remnawave]
 
+  remnawave-proxy:
+    image: ${PROXY_IMAGE}
+    depends_on:
+      remnawave:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - ${NGINX_CONF}:/etc/nginx/conf.d/default.conf:ro
+      - ${SERVER_CERT}:/etc/nginx/tls/server.crt:ro
+      - ${SERVER_KEY}:/etc/nginx/tls/server.key:ro
+    networks: [remnawave]
+
   remnanode:
     image: ${NODE_IMAGE}
     env_file: [${NODE_ENV}]
+    cap_add:
+      - NET_ADMIN
     ports:
       - "127.0.0.1:${XRAY_PORT}:${XRAY_PORT}"
     networks: [remnawave]
@@ -149,6 +169,48 @@ EOF
   chmod 0600 "${COMPOSE_FILE}"
 }
 
+generate_tls() {
+  install -d -m 0700 "${TLS_DIR}"
+  openssl req -x509 -newkey rsa:2048 -sha256 -days 1 -nodes \
+    -subj '/CN=Podlaz Remnawave CI CA' \
+    -keyout "${TLS_DIR}/ca.key" -out "${CA_CERT}" >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -nodes -sha256 \
+    -subj '/CN=podlaz-remnawave.invalid' \
+    -keyout "${SERVER_KEY}" -out "${TLS_DIR}/server.csr" >/dev/null 2>&1
+  cat >"${TLS_DIR}/server.ext" <<'EOF'
+subjectAltName=DNS:podlaz-remnawave.invalid,IP:127.0.0.1,IP:172.31.249.1,IP:172.31.250.1
+extendedKeyUsage=serverAuth
+EOF
+  openssl x509 -req -sha256 -days 1 \
+    -in "${TLS_DIR}/server.csr" \
+    -CA "${CA_CERT}" -CAkey "${TLS_DIR}/ca.key" -CAcreateserial \
+    -extfile "${TLS_DIR}/server.ext" -out "${SERVER_CERT}" >/dev/null 2>&1
+  chmod 0600 "${TLS_DIR}/ca.key" "${SERVER_KEY}"
+  chmod 0644 "${CA_CERT}" "${SERVER_CERT}"
+}
+
+write_proxy_config() {
+  cat >"${NGINX_CONF}" <<'EOF'
+server {
+  listen 8443 ssl;
+  server_name _;
+  ssl_certificate /etc/nginx/tls/server.crt;
+  ssl_certificate_key /etc/nginx/tls/server.key;
+  ssl_protocols TLSv1.2 TLSv1.3;
+
+  location / {
+    proxy_pass http://remnawave:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Real-IP $remote_addr;
+  }
+}
+EOF
+  chmod 0600 "${NGINX_CONF}"
+}
+
 write_panel_env() {
   cat >"${PANEL_ENV}" <<EOF
 APP_PORT=3000
@@ -158,9 +220,9 @@ DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@remnawave-db:5432/postgr
 REDIS_HOST=remnawave-redis
 REDIS_PORT=6379
 APP_SECRET=${APP_SECRET}
-PANEL_DOMAIN=127.0.0.1
+PANEL_DOMAIN=127.0.0.1:8443
 FRONT_END_DOMAIN=*
-SUB_PUBLIC_DOMAIN=127.0.0.1:3000/api/sub
+SUB_PUBLIC_DOMAIN=127.0.0.1:8443/api/sub
 METRICS_USER=fixture
 METRICS_PASS=${METRICS_PASS}
 WEBHOOK_ENABLED=false
@@ -301,7 +363,8 @@ PY
   api POST /api/users "${body}" "${response}"
   USER_ID="$(jq -er '.response.id' "${response}")"
   USER_SHORT_UUID="$(jq -er '.response.shortUuid' "${response}")"
-  SUBSCRIPTION_URL="http://127.0.0.1:3000/api/sub/${USER_SHORT_UUID}"
+  SUBSCRIPTION_URL="$(jq -er '.response.subscriptionUrl' "${response}")"
+  [[ "${SUBSCRIPTION_URL}" == https://127.0.0.1:8443/api/sub/* ]] || fail "Remnawave returned an unexpected subscription URL shape"
   printf '%s' "${SUBSCRIPTION_URL}" >"${STATE_DIR}/subscription-url"
   chmod 0600 "${STATE_DIR}/subscription-url"
 }
@@ -313,7 +376,7 @@ assert_hwid_limit() {
   mask_value "${first_hwid}"
   mask_value "${second_hwid}"
 
-  curl -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}"
+  curl --cacert "${CA_CERT}" -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}"
   [[ -s "${first}" ]] || fail "first HWID subscription response is empty"
 
   api GET "/api/hwid/devices/${USER_ID}" "" "${devices}"
@@ -322,7 +385,7 @@ assert_hwid_limit() {
   curl -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}.refresh"
   [[ -s "${first}.refresh" ]] || fail "same HWID refresh failed"
 
-  status="$(curl -sS -o "${second}" -w '%{http_code}' --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${second_hwid}"     "${SUBSCRIPTION_URL}")"
+  status="$(curl --cacert "${CA_CERT}" -sS -o "${second}" -w '%{http_code}' --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${second_hwid}"     "${SUBSCRIPTION_URL}")"
   [[ "${status}" == 404 ]] || fail "second HWID identity was not rejected by Remnawave: HTTP ${status}"
 
   api GET "/api/hwid/devices/${USER_ID}" "" "${devices}"
@@ -331,7 +394,7 @@ assert_hwid_limit() {
 
 record_image_digests() {
   local image digest
-  for image in "${PANEL_IMAGE}" "${NODE_IMAGE}" "${POSTGRES_IMAGE}" "${VALKEY_IMAGE}"; do
+  for image in "${PANEL_IMAGE}" "${NODE_IMAGE}" "${POSTGRES_IMAGE}" "${VALKEY_IMAGE}" "${PROXY_IMAGE}"; do
     docker pull "${image}" >/dev/null
     digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${image}")"
     [[ "${digest}" == *@sha256:* ]] || fail "image digest unavailable for ${image}"
@@ -372,10 +435,12 @@ main() {
     mask_value "${value}"
   done
 
+  generate_tls
+  write_proxy_config
   write_panel_env
   write_compose
 
-  docker compose -f "${COMPOSE_FILE}" up -d remnawave-db remnawave-redis remnawave >/dev/null
+  docker compose -f "${COMPOSE_FILE}" up -d remnawave-db remnawave-redis remnawave remnawave-proxy >/dev/null
   FIXTURE_STARTED=1
   wait_http "${PANEL_METRICS_URL}" || fail "Remnawave Panel health endpoint did not become ready"
   wait_panel_api || fail "Remnawave Panel API did not become ready for registration"
