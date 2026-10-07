@@ -81,7 +81,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for cmd in bash curl ip nft python3 sha256sum sudo unzip; do
+for cmd in bash curl dnsmasq ip nft python3 sha256sum sudo unzip; do
   command -v "${cmd}" >/dev/null 2>&1 || fail "${cmd} is required"
 done
 sudo -n true || fail "passwordless sudo is required"
@@ -333,7 +333,6 @@ JSON
 sudo -n env EDGE_IP="${EDGE_IP}" EDGE_LOG="${EDGE_LOG}"   ip netns exec "${EDGE_NS}" python3 "${EDGE_HELPER}" >"${PRIVATE_DIR}/edge.stdout" 2>"${PRIVATE_DIR}/edge.stderr" &
 EDGE_PID=$!
 sudo -n ip netns exec "${EDGE_NS}" dnsmasq \
-  --no-daemon \
   --keep-in-foreground \
   --bind-interfaces \
   --listen-address="${EDGE_IP}" \
@@ -390,7 +389,7 @@ sudo -n ip netns exec "${CLIENT_NS}" python3 "${PROBE_HELPER}" udp 1083 "${EDGE_
 record udp_egress
 
 for _ in $(seq 1 100); do
-  grep -F 'dns:provider-a.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null 2>&1 && \
+  grep -F 'provider-a.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null 2>&1 && \
     grep -F 'provider-b.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null 2>&1 && break
   sleep 0.05
 done
