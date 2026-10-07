@@ -50,6 +50,18 @@ wait_http() {
   return 1
 }
 
+wait_panel_api() {
+  local output="${STATE_DIR}/auth-status.json" i
+  for i in $(seq 1 120); do
+    if curl -fsS --max-time 3 "${PANEL_URL}/api/auth/status" >"${output}" 2>/dev/null &&
+       jq -e '.response.isRegisterAllowed == true' "${output}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 wait_node_connected() {
   local node_uuid="$1" output="${STATE_DIR}/node-status.json" i
   for i in $(seq 1 90); do
@@ -358,6 +370,7 @@ main() {
   docker compose -f "${COMPOSE_FILE}" up -d remnawave-db remnawave-redis remnawave >/dev/null
   FIXTURE_STARTED=1
   wait_http "${PANEL_METRICS_URL}" || fail "Remnawave Panel health endpoint did not become ready"
+  wait_panel_api || fail "Remnawave Panel API did not become ready for registration"
 
   register_body="${STATE_DIR}/register.json"
   register_response="${STATE_DIR}/register-response.json"
