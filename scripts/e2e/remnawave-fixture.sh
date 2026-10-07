@@ -4,6 +4,8 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
+# shellcheck source=lib/remnawave.sh
+source "${SCRIPT_DIR}/lib/remnawave.sh"
 
 require_cmd curl docker jq openssl python3
 
@@ -24,8 +26,8 @@ CA_CERT="${TLS_DIR}/ca.crt"
 SERVER_CERT="${TLS_DIR}/server.crt"
 SERVER_KEY="${TLS_DIR}/server.key"
 NGINX_CONF="${PRIVATE_ROOT}/nginx.conf"
-PANEL_IMAGE="${PODLAZ_REMNAWAVE_PANEL_IMAGE:-ghcr.io/remnawave/backend@sha256:b16d724b90fd7c9fec2df04bd28938a671cafc62894105068e11550ee3449c56}"
-NODE_IMAGE="${PODLAZ_REMNAWAVE_NODE_IMAGE:-ghcr.io/remnawave/node@sha256:1f97485b4bc7e4944f1ae95cc57d176376813b0022e9567b705f384f1a2e909d}"
+PANEL_IMAGE="${PODLAZ_REMNAWAVE_PANEL_IMAGE:-${REMNAWAVE_PANEL_IMAGE_DEFAULT}}"
+NODE_IMAGE="${PODLAZ_REMNAWAVE_NODE_IMAGE:-${REMNAWAVE_NODE_IMAGE_DEFAULT}}"
 POSTGRES_IMAGE="${PODLAZ_REMNAWAVE_POSTGRES_IMAGE:-postgres@sha256:a02db8cac496f15b094798a38254f14d6e00741f709360e5e00bb6668ea31636}"
 VALKEY_IMAGE="${PODLAZ_REMNAWAVE_VALKEY_IMAGE:-valkey/valkey@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11}"
 PROXY_IMAGE="${PODLAZ_REMNAWAVE_PROXY_IMAGE:-nginx@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de}"
@@ -38,7 +40,9 @@ USER_ID=""
 USER_SHORT_UUID=""
 FIXTURE_STARTED=0
 
-api() {
+API_LAST_STATUS=""
+
+api_try() {
   local method="$1" path="$2" body="${3:-}" output="$4"
   local token="" status
   local args=(--cacert "${CA_CERT}" -sS --max-time 20 -X "${method}" "${PANEL_URL}${path}" -H 'accept: application/json')
@@ -59,10 +63,17 @@ api() {
     args+=(-H 'content-type: application/json' --data-binary "@${body}")
   fi
 
-  status="$(curl "${args[@]}" -o "${output}" -w '%{http_code}')"
-  if [[ ! "${status}" =~ ^2[0-9][0-9]$ ]]; then
-    fail "Remnawave API ${method} ${path} returned HTTP ${status}"
-  fi
+  status="$(curl "${args[@]}" -o "${output}" -w '%{http_code}')" || {
+    API_LAST_STATUS="transport_error"
+    return 1
+  }
+  API_LAST_STATUS="${status}"
+  [[ "${status}" =~ ^2[0-9][0-9]$ ]]
+}
+
+api() {
+  local method="$1" path="$2" body="${3:-}" output="$4"
+  api_try "${method}" "${path}" "${body}" "${output}" ||     fail "Remnawave API ${method} ${path} returned ${API_LAST_STATUS:-unknown_status}"
 }
 
 wait_http() {
@@ -91,7 +102,7 @@ wait_panel_api() {
 wait_node_connected() {
   local node_uuid="$1" output="${STATE_DIR}/node-status.json" i
   for i in $(seq 1 90); do
-    api GET "/api/nodes/${node_uuid}" "" "${output}" || true
+    api_try GET "/api/nodes/${node_uuid}" "" "${output}" || true
     if jq -e '.response.isConnected == true and .response.isDisabled == false' "${output}" >/dev/null 2>&1; then
       return 0
     fi
@@ -332,6 +343,7 @@ start_node() {
   local key_response="${STATE_DIR}/node-key.json"
   api GET /api/keygen "" "${key_response}"
   NODE_SECRET="$(jq -er '.response.secretKey' "${key_response}")"
+  mask_value "${NODE_SECRET}"
   cat >"${NODE_ENV}" <<EOF
 NODE_PORT=${NODE_PORT}
 SECRET_KEY=${NODE_SECRET}
@@ -449,22 +461,28 @@ record_image_digests() {
   done
 }
 
-cleanup_fixture() {
-  local code="${1:-$?}"
-  set +e
+remnawave_fixture_cleanup() {
+  local failed=0
   if [[ -f "${COMPOSE_FILE}" ]]; then
-    docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || code=1
+    docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || failed=1
   fi
   if docker ps -aq --filter 'label=com.docker.compose.project=remnawave-fixture' | grep -q .; then
-    code=1
+    failed=1
   fi
   if docker network inspect podlaz-remnawave-fixture >/dev/null 2>&1; then
-    code=1
+    failed=1
   fi
   if docker volume inspect podlaz-remnawave-db >/dev/null 2>&1; then
-    code=1
+    failed=1
   fi
-  rm -rf "${PRIVATE_ROOT}"
+  rm -rf "${PRIVATE_ROOT}" || failed=1
+  return "${failed}"
+}
+
+cleanup_fixture() {
+  local code="${1:-$?}"
+  trap - EXIT INT TERM
+  remnawave_fixture_cleanup || code=1
   exit "${code}"
 }
 trap cleanup_fixture EXIT INT TERM
@@ -517,8 +535,8 @@ remnawave_fixture_feasibility() {
   record_image_digests
 
   printf 'remnawave.fixture=pass\n'
-  printf 'remnawave.panel_version=3.4.5\n'
-  printf 'remnawave.node_version=3.4.2\n'
+  printf 'remnawave.panel_version=%s\n' "${REMNAWAVE_PANEL_VERSION}"
+  printf 'remnawave.node_version=%s\n' "${REMNAWAVE_NODE_VERSION}"
   printf 'remnawave.hwid_device_limit=pass\n'
 }
 
