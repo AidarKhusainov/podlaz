@@ -210,27 +210,46 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		Action:      "add",
 		Reason:      "route default IPv4 traffic through the Podlaz TUN interface using this session's allocated table",
 	}}
-	policyRules := []TunPolicyRulePlan{
-		{
+	policyRules := []TunPolicyRulePlan{{
+		Family:   "ipv4",
+		Priority: resources.TunnelRulePriority,
+		Selector: IPv4DefaultSelector,
+		Table:    table,
+		Action:   "add",
+		Reason:   "send default IPv4 traffic through this session's allocated routing table before pre-existing host policy rules",
+	}}
+	var serverBypass TunRoutePlan
+	egressMark := uint32(0)
+	dnsPlan := dnsPlan(s, device, normalizeDNSServers(opts.DNSServers))
+	var firewallPlan TunFirewallPlan
+	if profile.IsProviderXrayConfigProfile(p) {
+		egressMark = resources.EgressMark
+		policyRules = append([]TunPolicyRulePlan{{
 			Family:   "ipv4",
 			Priority: resources.ServerRulePriority,
 			Selector: "fwmark " + strconv.FormatUint(uint64(resources.EgressMark), 10),
 			Table:    MainRoutingTable,
 			Action:   "add",
 			Reason:   "keep Podlaz-marked Xray egress sockets on the ordinary main-table path before the full-tunnel policy rule",
-		},
-		{
-			Family:   "ipv4",
-			Priority: resources.TunnelRulePriority,
-			Selector: IPv4DefaultSelector,
-			Table:    table,
-			Action:   "add",
-			Reason:   "send default IPv4 traffic through this session's allocated routing table before pre-existing host policy rules",
-		},
+		}}, policyRules...)
+		firewallPlan = firewallPlanForEgressMark(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, resources.EgressMark)
+	} else {
+		serverIP := concreteServerBypassIP(s)
+		serverBypass = allocatedServerBypassRoute(s, serverIP)
+		if serverIP != "" {
+			routes = append(routes, serverBypass)
+			policyRules = append([]TunPolicyRulePlan{{
+				Family:   "ipv4",
+				Priority: resources.ServerRulePriority,
+				Selector: "to " + serverIP + "/32",
+				Table:    MainRoutingTable,
+				Action:   "add",
+				Reason:   "keep VPN server traffic on the concrete current bootstrap path before the full-tunnel policy rule",
+			}}, policyRules...)
+		}
+		firewallPlan = firewallPlan(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, serverIP)
 	}
 
-	dnsPlan := dnsPlan(s, device, normalizeDNSServers(opts.DNSServers))
-	firewallPlan := firewallPlanForEgressMark(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, resources.EgressMark)
 	loopRisks := tunRouteLoopRisks(s)
 	warnings := append([]string{}, s.Warnings...)
 	warnings = append(warnings, tunSnapshotWarnings(s)...)
@@ -244,7 +263,11 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		fmt.Sprintf("Plan Xray-owned TUN interface %s with MTU %d and daemon-side identity verification", device.Name, device.MTU),
 		fmt.Sprintf("Plan daemon-owned IPv4 address %s on %s", address.CIDR, address.Interface),
 		fmt.Sprintf("Plan routing table %d with IPv4 default route through %s", resources.RoutingTableID, device.Name),
-		fmt.Sprintf("Plan policy rule priority %d for Xray egress mark %d via %s", resources.ServerRulePriority, resources.EgressMark, MainRoutingTable),
+	}
+	if egressMark != 0 {
+		steps = append(steps, fmt.Sprintf("Plan policy rule priority %d for Xray egress mark %d via %s", resources.ServerRulePriority, egressMark, MainRoutingTable))
+	} else if serverBypass.Destination != "" {
+		steps = append(steps, fmt.Sprintf("Plan policy rule priority %d for VPN server bootstrap via %s", resources.ServerRulePriority, MainRoutingTable))
 	}
 	steps = append(steps,
 		fmt.Sprintf("Plan policy rule priority %d for default IPv4 traffic via table %d", resources.TunnelRulePriority, resources.RoutingTableID),
@@ -263,7 +286,8 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		TunAddress:    address,
 		Routes:        routes,
 		PolicyRules:   policyRules,
-		EgressMark:    resources.EgressMark,
+		ServerBypass:  serverBypass,
+		EgressMark:    egressMark,
 		DNS:           dnsPlan,
 		Firewall:      firewallPlan,
 		LoopRisks:     loopRisks,
