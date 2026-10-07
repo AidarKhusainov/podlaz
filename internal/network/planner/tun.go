@@ -19,7 +19,7 @@ const (
 	TunRoutingTableID   = 51820
 	TunRulePriority     = 10000
 	ServerRulePriority  = 9999
-	TunEgressMark        = uint32(20570)
+	TunEgressMark       = uint32(20570)
 	MainRoutingTable    = "main"
 	IPv4DefaultRoute    = "default"
 	IPv4DefaultSelector = "from all"
