@@ -286,7 +286,7 @@ PY
 
 cat >"${SERVER_CONFIG}" <<JSON
 {
-  "log": {"loglevel": "warning"},
+  "log": {"loglevel": "debug"},
   "inbounds": [
     {"tag":"vless-a","listen":"${EDGE_IP}","port":20001,"protocol":"vless","settings":{"clients":[{"id":"${UUID}"}],"decryption":"none"},"streamSettings":{"security":"none"}},
     {"tag":"vless-b","listen":"${EDGE_IP}","port":20002,"protocol":"vless","settings":{"clients":[{"id":"${UUID}"}],"decryption":"none"},"streamSettings":{"security":"none"}}
@@ -297,7 +297,7 @@ JSON
 
 cat >"${CLIENT_CONFIG}" <<JSON
 {
-  "log": {"loglevel": "warning"},
+  "log": {"loglevel": "debug"},
   "dns": {
     "queryStrategy": "UseIPv4",
     "disableFallback": true,
