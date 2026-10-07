@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	privacyEnvelopeEndpointCompositionVersion = 1
-	privacyEnvelopeCompositionVersion         = 2
+	privacyEnvelopeCompositionVersion       = 1
+	privacyEnvelopeMarkedCompositionVersion = 2
 	privacyEnvelopeCandidateLimit              = 16
 	privacyEnvelopeFamily                      = "inet"
 	privacyEnvelopeOutputChain                 = "output"
@@ -63,7 +63,7 @@ func allocatePrivacyEnvelope(
 
 		protection := networkSessionProtection{
 			State:              networkSessionProtectionArming,
-			CompositionVersion: privacyEnvelopeEndpointCompositionVersion,
+			CompositionVersion: privacyEnvelopeCompositionVersion,
 			Family:             privacyEnvelopeFamily,
 			Table:              table,
 			TunInterface:       tunInterface,
@@ -113,7 +113,7 @@ func allocateMarkedPrivacyEnvelope(
 		}
 		protection := networkSessionProtection{
 			State:              networkSessionProtectionArming,
-			CompositionVersion: privacyEnvelopeCompositionVersion,
+			CompositionVersion: privacyEnvelopeMarkedCompositionVersion,
 			Family:             privacyEnvelopeFamily,
 			Table:              table,
 			TunInterface:       tunInterface,
@@ -132,7 +132,7 @@ func privacyEnvelopePlanFromAuthority(protection networkSessionProtection) (nete
 	if err := validateNetworkSessionProtection(protection); err != nil {
 		return netexecutor.PrivacyEnvelopePlan{}, err
 	}
-	if protection.CompositionVersion != privacyEnvelopeEndpointCompositionVersion && protection.CompositionVersion != privacyEnvelopeCompositionVersion {
+	if protection.CompositionVersion != privacyEnvelopeCompositionVersion && protection.CompositionVersion != privacyEnvelopeMarkedCompositionVersion {
 		return netexecutor.PrivacyEnvelopePlan{}, fmt.Errorf("unsupported privacy envelope composition version %d", protection.CompositionVersion)
 	}
 
