@@ -73,7 +73,8 @@ api_try() {
 
 api() {
   local method="$1" path="$2" body="${3:-}" output="$4"
-  api_try "${method}" "${path}" "${body}" "${output}" ||     fail "Remnawave API ${method} ${path} returned ${API_LAST_STATUS:-unknown_status}"
+  api_try "${method}" "${path}" "${body}" "${output}" || \
+    fail "Remnawave API ${method} ${path} returned ${API_LAST_STATUS:-unknown_status}"
 }
 
 wait_http() {
