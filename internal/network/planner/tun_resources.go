@@ -221,7 +221,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 	var serverBypass TunRoutePlan
 	egressMark := uint32(0)
 	dnsPlan := dnsPlan(s, device, normalizeDNSServers(opts.DNSServers))
-	var firewallPlan TunFirewallPlan
+	var firewall TunFirewallPlan
 	if profile.IsProviderXrayConfigProfile(p) {
 		egressMark = resources.EgressMark
 		policyRules = append([]TunPolicyRulePlan{{
@@ -232,7 +232,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 			Action:   "add",
 			Reason:   "keep Podlaz-marked Xray egress sockets on the ordinary main-table path before the full-tunnel policy rule",
 		}}, policyRules...)
-		firewallPlan = firewallPlanForEgressMark(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, resources.EgressMark)
+		firewall = firewallPlanForEgressMark(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, resources.EgressMark)
 	} else {
 		serverIP := concreteServerBypassIP(s)
 		serverBypass = allocatedServerBypassRoute(s, serverIP)
@@ -247,14 +247,14 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 				Reason:   "keep VPN server traffic on the concrete current bootstrap path before the full-tunnel policy rule",
 			}}, policyRules...)
 		}
-		firewallPlan = firewallPlan(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, serverIP)
+		firewall = firewallPlan(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, serverIP)
 	}
 
 	loopRisks := tunRouteLoopRisks(s)
 	warnings := append([]string{}, s.Warnings...)
 	warnings = append(warnings, tunSnapshotWarnings(s)...)
 	warnings = append(warnings, dnsPlanWarnings(s, dnsPlan)...)
-	warnings = append(warnings, firewallPlanWarnings(s, firewallPlan)...)
+	warnings = append(warnings, firewallPlanWarnings(s, firewall)...)
 	warnings = append(warnings, loopRisks...)
 
 	steps := []string{
@@ -272,7 +272,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 	steps = append(steps,
 		fmt.Sprintf("Plan policy rule priority %d for default IPv4 traffic via table %d", resources.TunnelRulePriority, resources.RoutingTableID),
 		fmt.Sprintf("Plan DNS backend %s on link %s with server(s) %s", dnsPlan.Backend, dnsPlan.TargetLink, strings.Join(dnsPlan.Servers, ", ")),
-		fmt.Sprintf("Plan nftables table %s %s with %d chain(s), %d rule(s), and %s kill-switch policy", firewallPlan.Family, firewallPlan.Table, len(firewallPlan.Chains), len(firewallPlan.Rules), firewallPlan.KillSwitch.Policy),
+		fmt.Sprintf("Plan nftables table %s %s with %d chain(s), %d rule(s), and %s kill-switch policy", firewall.Family, firewall.Table, len(firewall.Chains), len(firewall.Rules), firewall.KillSwitch.Policy),
 		"Leave unrelated TUN devices, routes, policy rules, DNS links, and firewall objects unchanged",
 	)
 
@@ -289,11 +289,11 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		ServerBypass:  serverBypass,
 		EgressMark:    egressMark,
 		DNS:           dnsPlan,
-		Firewall:      firewallPlan,
+		Firewall:      firewall,
 		LoopRisks:     loopRisks,
 		Warnings:      compactWarnings(warnings),
 		Steps:         steps,
-		RollbackSteps: rollbackSteps(address, routes, policyRules, dnsPlan, firewallPlan),
+		RollbackSteps: rollbackSteps(address, routes, policyRules, dnsPlan, firewall),
 	}, nil
 }
 
