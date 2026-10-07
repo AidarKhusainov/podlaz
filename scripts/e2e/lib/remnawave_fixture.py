@@ -224,15 +224,35 @@ def bootstrap(root: pathlib.Path):
         ["docker", "compose", "-f", str(compose), "up", "-d", "--wait"], env=env
     )
     wait_http(METRICS_BASE + "/health")
-    wait_http(PANEL_BASE + "/api/auth/status")
+    print("remnawave fixture: panel health ready", flush=True)
 
-    registered = http(
-        "POST",
-        "/api/auth/register",
-        {"username": admin_user, "password": admin_pass},
-        expect=(200, 201),
-    )
-    token = registered["response"]["accessToken"]
+    token = None
+    credentials = {"username": admin_user, "password": admin_pass}
+    for _ in range(30):
+        try:
+            registered = http(
+                "POST",
+                "/api/auth/register",
+                credentials,
+                expect=(200, 201),
+            )
+            token = registered["response"]["accessToken"]
+            break
+        except RuntimeError:
+            try:
+                logged_in = http(
+                    "POST",
+                    "/api/auth/login",
+                    credentials,
+                    expect=(200, 201),
+                )
+                token = logged_in["response"]["accessToken"]
+                break
+            except RuntimeError:
+                time.sleep(2)
+    if not token:
+        fail("Remnawave admin API did not become ready")
+    print("remnawave fixture: admin API ready", flush=True)
     settings = http("GET", "/api/subscription-settings", token=token)["response"]
     http(
         "PATCH",
@@ -248,6 +268,7 @@ def bootstrap(root: pathlib.Path):
         token=token,
         expect=(200, 201),
     )
+    print("remnawave fixture: HWID policy enabled", flush=True)
 
     xray_config = {
         "log": {
@@ -280,6 +301,7 @@ def bootstrap(root: pathlib.Path):
     )["response"]
     if len(profile.get("inbounds", [])) != 1:
         fail("Remnawave config profile did not expose exactly one inbound")
+    print("remnawave fixture: config profile ready", flush=True)
     inbound_uuid = profile["inbounds"][0]["uuid"]
 
     secret_key = http("GET", "/api/keygen", token=token)["response"]["secretKey"]
@@ -341,6 +363,7 @@ def bootstrap(root: pathlib.Path):
         time.sleep(2)
     else:
         fail("Remnawave Node did not become connected")
+    print("remnawave fixture: node connected", flush=True)
 
     squad = http(
         "POST",
@@ -397,6 +420,7 @@ def bootstrap(root: pathlib.Path):
     save_state(root, state)
     create_user(root, "hwid", 1)
     create_user(root, "data-plane", 1)
+    print("remnawave fixture: disposable users ready", flush=True)
 
 
 def create_user(root, name, limit):
