@@ -276,18 +276,68 @@ remnawave_node_access_count() {
 }
 
 prepare_provider_material() {
-  local host_uri="${PRIVATE_ROOT}/provider-uri"
-  [[ -f "${REMNAWAVE_PROFILE_FILE}" && ! -L "${REMNAWAVE_PROFILE_FILE}" ]] || return 1
-  PROFILE_URI="$(cat "${REMNAWAVE_PROFILE_FILE}")"
-  [[ "${PROFILE_URI}" == vless://* ]] || return 1
-  mask_value "${PROFILE_URI}"
-  printf '%s\n' "${PROFILE_URI}" >"${host_uri}"
-  chmod 0600 "${host_uri}"
-  guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PROVIDER_DIR}"
-  sudo -n machinectl copy-to "${MACHINE}" "${host_uri}" "${GUEST_PROVIDER_DIR}/profile-uri" >/dev/null
-  guest_exec chown e2e:e2e "${GUEST_PROVIDER_DIR}/profile-uri"
-  guest_exec chmod 0600 "${GUEST_PROVIDER_DIR}/profile-uri"
-  rm -f -- "${host_uri}"
+  [[ -f "\${REMNAWAVE_PROFILE_FILE}" && ! -L "\${REMNAWAVE_PROFILE_FILE}" ]] || return 1
+  PROFILE_URI="$(cat "\${REMNAWAVE_PROFILE_FILE}")"
+  [[ "\${PROFILE_URI}" == vless://* ]] || return 1
+  mask_value "\${PROFILE_URI}"
+  python3 - "\${PROFILE_URI}" "\${NATIVE_XRAY_FILE}" <<'PY'
+import json
+import sys
+from urllib.parse import parse_qs, unquote, urlsplit
+
+uri, output = sys.argv[1:]
+parsed = urlsplit(uri)
+if parsed.scheme != "vless" or not parsed.username or not parsed.hostname or not parsed.port:
+    raise SystemExit("provider URI is not a complete VLESS endpoint")
+query = parse_qs(parsed.query)
+security = (query.get("security") or ["none"])[0]
+network = (query.get("type") or ["tcp"])[0]
+stream = {
+    "network": "raw" if network in {"tcp", "raw"} else network,
+    "security": security,
+    "sockopt": {"tcpKeepAliveIdle": 30},
+}
+doc = {
+    "log": {"loglevel": "warning"},
+    "stats": {},
+    "inbounds": [{"tag": "provider-owned-inbound", "protocol": "dokodemo-door", "port": 1}],
+    "outbounds": [
+        {
+            "tag": "provider-primary",
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": parsed.hostname,
+                    "port": parsed.port,
+                    "users": [{"id": unquote(parsed.username), "encryption": "none"}],
+                }]
+            },
+            "streamSettings": stream,
+        },
+        {
+            "tag": "provider-secondary",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"},
+        },
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [{
+            "type": "field",
+            "domain": ["domain:unused.example"],
+            "outboundTag": "provider-secondary",
+        }],
+    },
+}
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, separators=(",", ":"))
+    handle.write("\n")
+PY
+  chmod 0600 "\${NATIVE_XRAY_FILE}"
+  guest_exec install -d -o e2e -g e2e -m 0700 "\${GUEST_PROVIDER_DIR}"
+  sudo -n machinectl copy-to "\${MACHINE}" "\${NATIVE_XRAY_FILE}" "\${GUEST_PROVIDER_DIR}/native-xray.json" >/dev/null
+  guest_exec chown e2e:e2e "\${GUEST_PROVIDER_DIR}/native-xray.json"
+  guest_exec chmod 0600 "\${GUEST_PROVIDER_DIR}/native-xray.json"
 }
 
 remove_provider_material() {
