@@ -1,0 +1,68 @@
+name: Xray Marked Egress
+
+on:
+  pull_request:
+    paths:
+      - 'packaging/runtime-helpers.env'
+      - 'scripts/package-runtime-helpers.sh'
+      - 'scripts/e2e/lib/xray_mark_qualification.py'
+      - 'scripts/e2e/xray-marked-egress.sh'
+      - '.github/workflows/xray-marked-egress.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packaging/runtime-helpers.env'
+      - 'scripts/package-runtime-helpers.sh'
+      - 'scripts/e2e/lib/xray_mark_qualification.py'
+      - 'scripts/e2e/xray-marked-egress.sh'
+      - '.github/workflows/xray-marked-egress.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xray-marked-egress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualification:
+    name: Isolated SO_MARK qualification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nftables dnsmasq-base
+
+      - name: Run Xray marked-egress qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-xray-mark-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-xray-mark-public
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/xray-marked-egress.sh
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-xray-mark-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-xray-marked-egress
+          path: |
+            ${{ runner.temp }}/podlaz-xray-mark-public/xray-marked-egress.txt
+            ${{ runner.temp }}/podlaz-xray-mark-public/xray-version.txt
+          if-no-files-found: error
+          retention-days: 7
