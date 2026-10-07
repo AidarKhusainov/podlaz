@@ -371,8 +371,8 @@ PY
 
 assert_hwid_limit() {
   local first_hwid second_hwid first="${STATE_DIR}/subscription-first.out" second="${STATE_DIR}/subscription-second.out" devices="${STATE_DIR}/devices.json"
-  first_hwid="$(openssl rand -base64 24 | tr -d '/+' | head -c 24)"
-  second_hwid="$(openssl rand -base64 24 | tr -d '/+' | head -c 24)"
+  first_hwid="$(openssl rand -hex 18)"
+  second_hwid="$(openssl rand -hex 18)"
   mask_value "${first_hwid}"
   mask_value "${second_hwid}"
 
@@ -382,7 +382,7 @@ assert_hwid_limit() {
   api GET "/api/hwid/devices/${USER_ID}" "" "${devices}"
   jq -e '.response.total == 1 and (.response.devices | length) == 1' "${devices}" >/dev/null ||     fail "Remnawave did not register exactly one HWID device"
 
-  curl -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}.refresh"
+  curl --cacert "${CA_CERT}" -fsS --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${first_hwid}"     "${SUBSCRIPTION_URL}" >"${first}.refresh"
   [[ -s "${first}.refresh" ]] || fail "same HWID refresh failed"
 
   status="$(curl --cacert "${CA_CERT}" -sS -o "${second}" -w '%{http_code}' --max-time 20     -H 'user-agent: podlaz'     -H "x-hwid: ${second_hwid}"     "${SUBSCRIPTION_URL}")"
