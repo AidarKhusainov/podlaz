@@ -139,7 +139,6 @@ func TestPlanTunForSessionAllowsDegradedSoftBaselineWhenBootstrapAndAllocationEv
 	}
 }
 
-
 func TestAllocateTunResourcesAllocatesCollisionFreeEgressMark(t *testing.T) {
 	evidence := snapshot.TunAllocationEvidence{
 		IPv4PolicyRules: []snapshot.TunAllocationRule{{Priority: 100, Table: 60000, Mark: TunEgressMark}},
