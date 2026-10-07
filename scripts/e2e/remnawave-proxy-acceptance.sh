@@ -62,19 +62,21 @@ main() {
 
   remnawave_fixture_start
 
-  local profile_uri before after delta
+  local profile_uri before after delta proxy_tmp proxy_artifacts
   profile_uri="$(get_profile_uri)"
   mask_value "${profile_uri}"
   before="$(node_access_count)"
 
+  proxy_tmp="${E2E_TMP_ROOT}/proxy-client"
+  proxy_artifacts="${proxy_tmp}/proxy-private-artifacts"
   PODLAZ_E2E_PROFILE_URI="${profile_uri}" \
   PODLAZ_E2E_PROFILE_URI_LIST="" \
   PODLAZ_E2E_EXPECTED_EGRESS_IP="" \
   PODLAZ_E2E_RELIABILITY_CYCLES="${PODLAZ_E2E_RELIABILITY_CYCLES:-3}" \
   PODLAZ_E2E_PACKAGE_PATH="${CANDIDATE_DEB}" \
   PODLAZ_E2E_KEEP_PACKAGE=true \
-  E2E_TMP_ROOT="${E2E_TMP_ROOT}/proxy-client" \
-  E2E_ARTIFACT_DIR="${E2E_TMP_ROOT}/proxy-private-artifacts" \
+  E2E_TMP_ROOT="${proxy_tmp}" \
+  E2E_ARTIFACT_DIR="${proxy_artifacts}" \
     bash "${SCRIPT_DIR}/data-plane.sh"
 
   PACKAGE_INSTALLED=1
