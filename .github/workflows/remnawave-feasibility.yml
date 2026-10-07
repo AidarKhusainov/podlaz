@@ -1,0 +1,75 @@
+name: Remnawave Feasibility
+
+on:
+  push:
+    branches:
+      - ci/ephemeral-remnawave-qualification
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remnawave-feasibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proxy-hwid:
+    name: Ephemeral Remnawave proxy + HWID
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Run ephemeral Remnawave qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-public
+          PODLAZ_E2E_RELIABILITY_CYCLES: '1'
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/remnawave-proxy-acceptance.sh
+
+      - name: Validate normalized verdict
+        if: always()
+        env:
+          REPORT: ${{ runner.temp }}/podlaz-remnawave-public/remnawave-proxy-result.txt
+        run: |
+          test -f "${REPORT}"
+          grep -Fx 'result=PASS' "${REPORT}"
+          grep -Fx 'remnawave.panel.version=3.4.5' "${REPORT}"
+          grep -Fx 'remnawave.node.version=3.4.2' "${REPORT}"
+          grep -Eq '^remnawave\.panel\.digest=sha256:[0-9a-f]{64}$' "${REPORT}"
+          grep -Eq '^remnawave\.node\.digest=sha256:[0-9a-f]{64}$' "${REPORT}"
+          grep -Fx 'fixture.cleanup=pass' "${REPORT}"
+          grep -Fx 'failure.class=none' "${REPORT}"
+          grep -Fx 'failure.step=none' "${REPORT}"
+
+      - name: Remove private state
+        id: private_cleanup
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload sanitized feasibility evidence
+        if: ${{ always() && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: remnawave-feasibility
+          path: ${{ runner.temp }}/podlaz-remnawave-public/remnawave-proxy-result.txt
+          if-no-files-found: error
+          retention-days: 7
