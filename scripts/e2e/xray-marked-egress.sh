@@ -49,9 +49,13 @@ fail() {
 cleanup() {
   local saved=$?
   if [[ "${saved}" -ne 0 ]]; then
-    printf '%s\n' '--- client Xray log ---' >&2
+    printf '%s\n' '--- client Xray stdout ---' >&2
+    cat "${PRIVATE_DIR}/client.stdout" >&2 2>/dev/null || true
+    printf '%s\n' '--- client Xray stderr ---' >&2
     cat "${CLIENT_LOG}" >&2 2>/dev/null || true
-    printf '%s\n' '--- server Xray log ---' >&2
+    printf '%s\n' '--- server Xray stdout ---' >&2
+    cat "${PRIVATE_DIR}/server.stdout" >&2 2>/dev/null || true
+    printf '%s\n' '--- server Xray stderr ---' >&2
     cat "${SERVER_LOG}" >&2 2>/dev/null || true
     printf '%s\n' '--- synthetic edge log ---' >&2
     cat "${EDGE_LOG}" >&2 2>/dev/null || true
