@@ -86,8 +86,8 @@ func TestHostedPackageRestartReusesHostedSyntheticGuestSubstrate(t *testing.T) {
 			t.Fatalf("hosted package restart scenario lost %q", required)
 		}
 	}
-	if got := strings.Count(scenario, `FOREIGN_NFT_TABLE="${FOREIGN_NFT_TABLE}"`); got != 2 {
-		t.Fatalf("hosted package restart must hand the v0.2.40-safe foreign nft sentinel to both focused branches, got %d", got)
+	if got := strings.Count(scenario, `FOREIGN_NFT_TABLE="${FOREIGN_NFT_TABLE}"`); got != 1 {
+		t.Fatalf("hosted package restart must hand the v0.2.40-safe foreign nft sentinel to the focused run, got %d", got)
 	}
 
 	for _, forbidden := range []string{
