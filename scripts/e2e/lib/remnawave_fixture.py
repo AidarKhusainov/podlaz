@@ -196,6 +196,20 @@ def bootstrap(root: pathlib.Path):
     write_private(
         compose, compose_text(app_secret, db_pass, metrics_user, metrics_pass)
     )
+    save_state(
+        root,
+        {
+            "project": project,
+            "compose": str(compose),
+            "images": {
+                "panel": PANEL_IMAGE,
+                "node": NODE_IMAGE,
+                "postgres": POSTGRES_IMAGE,
+                "valkey": VALKEY_IMAGE,
+            },
+            "users": {},
+        },
+    )
     env = dict(os.environ)
     env["COMPOSE_PROJECT_NAME"] = project
     run(["docker", "compose", "-f", str(compose), "pull"], env=env)
@@ -264,6 +278,9 @@ def bootstrap(root: pathlib.Path):
     log_dir = root / "node-logs"
     log_dir.mkdir(mode=0o700)
     node_name = project + "-node"
+    state = load_state(root)
+    state["node_container"] = node_name
+    save_state(root, state)
     node_env = dict(os.environ)
     node_env["NODE_PORT"] = str(NODE_PORT)
     node_env["SECRET_KEY"] = secret_key
@@ -352,30 +369,23 @@ def bootstrap(root: pathlib.Path):
         expect=(200, 201),
     )["response"]
 
-    state = {
-        "project": project,
-        "compose": str(compose),
-        "token": token,
-        "admin_user": admin_user,
-        "admin_pass": admin_pass,
-        "panel_version": PANEL_VERSION,
-        "node_version": NODE_VERSION,
-        "images": {
-            "panel": PANEL_IMAGE,
-            "node": NODE_IMAGE,
-            "postgres": POSTGRES_IMAGE,
-            "valkey": VALKEY_IMAGE,
-        },
-        "node_container": node_name,
-        "node_uuid": node["uuid"],
-        "profile_uuid": profile["uuid"],
-        "inbound_uuid": inbound_uuid,
-        "squad_uuid": squad["uuid"],
-        "host_uuid": host["uuid"],
-        "runner_ip": runner_ip,
-        "node_access_log": str(log_dir / "access.log"),
-        "users": {},
-    }
+    state = load_state(root)
+    state.update(
+        {
+            "token": token,
+            "admin_user": admin_user,
+            "admin_pass": admin_pass,
+            "panel_version": PANEL_VERSION,
+            "node_version": NODE_VERSION,
+            "node_uuid": node["uuid"],
+            "profile_uuid": profile["uuid"],
+            "inbound_uuid": inbound_uuid,
+            "squad_uuid": squad["uuid"],
+            "host_uuid": host["uuid"],
+            "runner_ip": runner_ip,
+            "node_access_log": str(log_dir / "access.log"),
+        }
+    )
     save_state(root, state)
     create_user(root, "hwid", 1)
     create_user(root, "data-plane", 1)
