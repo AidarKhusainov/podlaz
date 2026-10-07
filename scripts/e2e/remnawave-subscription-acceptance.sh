@@ -10,12 +10,16 @@ source "${SCRIPT_DIR}/lib/private_command.sh"
 source "${SCRIPT_DIR}/lib/package_provenance.sh"
 # shellcheck source=remnawave-fixture.sh
 source "${SCRIPT_DIR}/remnawave-fixture.sh"
+# shellcheck source=lib/remnawave_evidence.sh
+source "${SCRIPT_DIR}/lib/remnawave_evidence.sh"
 
 require_cmd apt cmp cp dpkg dpkg-deb jq sha256sum stat sudo systemctl
 
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 CANDIDATE_DEB=""
+CANDIDATE_SHA256=""
 PACKAGE_INSTALLED=0
+EVIDENCE_KEYS=(remnawave.subscription_import remnawave.subscription_refresh remnawave.hwid_registration remnawave.hwid_stable remnawave.hwid_device_limit remnawave.rejected_state_preserved fixture.cleanup)
 LOGIN_USER="$(id -un)"
 FIRST_XDG="${E2E_TMP_ROOT}/remnawave-client-primary"
 SECOND_XDG="${E2E_TMP_ROOT}/remnawave-client-secondary"
@@ -155,42 +159,64 @@ install_candidate() {
 }
 
 cleanup_acceptance() {
-  local code=$?
+  local code=$? cleanup_code=0
+  trap - EXIT INT TERM
   set +e
+  if (( code != 0 )); then
+    remnawave_mark_private_command_failure "${E2E_TMP_ROOT}" "${REMNAWAVE_FAILURE_CLASS}" "${REMNAWAVE_FAILURE_STEP}"
+  fi
   if [[ "${PACKAGE_INSTALLED}" == 1 ]]; then
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
     sudo -n apt purge -y podlaz >/dev/null 2>&1 || true
     sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
     sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
   fi
-  cleanup_fixture "${code}"
+  cleanup_fixture 0 || cleanup_code=1
+  if (( cleanup_code == 0 )); then
+    remnawave_record fixture.cleanup pass
+  else
+    remnawave_record fixture.cleanup fail
+    remnawave_mark_failure fixture fixture.cleanup
+    code=1
+  fi
+  if [[ -n "${CANDIDATE_SHA256}" ]]; then
+    remnawave_finalize_report "${REPORT}" "${EXPECTED_COMMIT}" "${CANDIDATE_SHA256}" "${PANEL_VERSION}" "${NODE_VERSION}" "${EVIDENCE_KEYS[@]}"
+  fi
+  exit "${code}"
 }
 trap cleanup_acceptance EXIT INT TERM
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   validate_candidate "$1"
+  CANDIDATE_SHA256="$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
   install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
 
+  remnawave_mark_failure fixture remnawave.bootstrap
   remnawave_fixture_start
   mask_value "${SUBSCRIPTION_URL}"
   install_candidate
 
   prepare_xdg "${FIRST_XDG}"
+  remnawave_mark_failure product subscription.import
   expect_private_success remnawave-primary-import run_client "${FIRST_XDG}" import "${SUBSCRIPTION_URL}"
   assert_one_profile_and_subscription "${FIRST_XDG}"
+  remnawave_record remnawave.subscription_import pass
 
   local primary_client_id primary_subscription_id primary_client_id_after
   primary_client_id="$(read_client_id "${FIRST_XDG}")"
   mask_value "${primary_client_id}"
   assert_single_server_hwid "${primary_client_id}"
+  remnawave_record remnawave.hwid_registration pass
   primary_subscription_id="$(read_subscription_id "${FIRST_XDG}")"
   mask_value "${primary_subscription_id}"
 
+  remnawave_mark_failure product subscription.refresh
   expect_private_success remnawave-primary-refresh run_client "${FIRST_XDG}" subscription update "${primary_subscription_id}"
   primary_client_id_after="$(read_client_id "${FIRST_XDG}")"
   [[ "${primary_client_id_after}" == "${primary_client_id}" ]] || fail "primary refresh rotated client identity"
   assert_single_server_hwid "${primary_client_id}"
+  # Final refresh/stability evidence is recorded only after the post-rejection primary refresh.
 
   # Prepare a real committed secondary state without weakening the final policy:
   # temporarily admit one more device, import through Podlaz, then remove only
@@ -220,8 +246,11 @@ main() {
     run_client "${SECOND_XDG}" subscription update "${secondary_subscription_id}"
   rejection_rc=$?
   set -e
+  remnawave_mark_failure remnawave hwid.device_limit
   [[ "${rejection_rc}" == 1 ]] || fail "secondary refresh was not rejected with runtime failure"
   assert_committed_state_unchanged "${SECOND_XDG}" "${secondary_snapshot}"
+  remnawave_record remnawave.hwid_device_limit pass
+  remnawave_record remnawave.rejected_state_preserved pass
   assert_single_server_hwid "${primary_client_id}"
 
   expect_private_success remnawave-primary-refresh-after-rejection \
@@ -229,20 +258,11 @@ main() {
   [[ "$(read_client_id "${FIRST_XDG}")" == "${primary_client_id}" ]] || \
     fail "primary identity rotated after secondary rejection"
   assert_single_server_hwid "${primary_client_id}"
+  remnawave_record remnawave.subscription_refresh pass
+  remnawave_record remnawave.hwid_stable pass
 
-  cat >"${REPORT}" <<EOF
-candidate.commit=${EXPECTED_COMMIT,,}
-candidate.package_sha256=$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')
-remnawave.panel_version=3.4.5
-remnawave.node_version=3.4.2
-remnawave.subscription_import=pass
-remnawave.subscription_refresh=pass
-remnawave.hwid_registration=pass
-remnawave.hwid_stable=pass
-remnawave.hwid_device_limit=pass
-remnawave.rejected_state_preserved=pass
-EOF
-  chmod 0600 "${REPORT}"
+  REMNAWAVE_FAILURE_CLASS=none
+  REMNAWAVE_FAILURE_STEP=none
 }
 
 main "$@"

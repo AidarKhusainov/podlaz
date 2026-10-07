@@ -267,7 +267,7 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-tun-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
           PODLAZ_E2E_CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
-        run: bash scripts/e2e/hosted-remnawave-tun.sh validate-report
+        run: bash scripts/e2e/hosted-remnawave-tun.sh scan-report
 
       - name: Remove TUN private state
         id: private_cleanup
