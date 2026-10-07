@@ -61,6 +61,8 @@ func TestHostedPackageRestartReusesHostedSyntheticGuestSubstrate(t *testing.T) {
 		"start_system_guest",
 		"start_remnawave_fixture",
 		"remnawave-fixture.sh",
+		`PODLAZ_REMNAWAVE_NODE_BIND_IP="${ENDPOINT_IP}"`,
+		`PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${ENDPOINT_IP}"`,
 		"remnawave_node_access_count",
 		"source.remnawave_path",
 		"install_tun_authorization",
