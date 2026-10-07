@@ -447,7 +447,7 @@ record_image_digests() {
 }
 
 cleanup_fixture() {
-  local code=$?
+  local code="${1:-$?}"
   set +e
   if [[ -f "${COMPOSE_FILE}" ]]; then
     docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans >/dev/null 2>&1 || code=1
