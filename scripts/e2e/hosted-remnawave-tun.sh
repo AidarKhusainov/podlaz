@@ -194,24 +194,12 @@ mask_provider_material() {
 
 start_remnawave_fixture() {
   install -d -m 0700 "${REMNAWAVE_FIXTURE_TMP}" "${PRIVATE_ROOT}"
-  (
-    export E2E_TMP_ROOT="${REMNAWAVE_FIXTURE_TMP}"
-    export E2E_ARTIFACT_DIR="${REMNAWAVE_FIXTURE_TMP}/private-artifacts"
-    export PODLAZ_REMNAWAVE_NODE_BIND_IP="${HOST_IP}"
-    export PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${HOST_IP}"
-    # shellcheck source=remnawave-fixture.sh
-    source "${SCRIPT_DIR}/remnawave-fixture.sh"
-    remnawave_fixture_start
-    local response uri
-    response="${STATE_DIR}/connection-keys.json"
-    api GET "/api/subscriptions/connection-keys/${USER_ID}" "" "${response}"
-    uri="$(jq -er '.response.enabledKeys | select(length == 1) | .[0]' "${response}")"
-    [[ "${uri}" == vless://* ]] || fail "Remnawave did not generate one VLESS connection key"
-    mask_value "${uri}"
-    printf '%s\n' "${uri}" >"${REMNAWAVE_PROFILE_FILE}"
-    chmod 0600 "${REMNAWAVE_PROFILE_FILE}"
-    trap - EXIT INT TERM
-  )
+  E2E_TMP_ROOT="${REMNAWAVE_FIXTURE_TMP}" \
+  E2E_ARTIFACT_DIR="${REMNAWAVE_FIXTURE_TMP}/private-artifacts" \
+  PODLAZ_REMNAWAVE_NODE_BIND_IP="${HOST_IP}" \
+  PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${HOST_IP}" \
+    bash "${SCRIPT_DIR}/remnawave-fixture.sh" export-profile "${REMNAWAVE_PROFILE_FILE}"
+  [[ -f "${REMNAWAVE_PROFILE_FILE}" && ! -L "${REMNAWAVE_PROFILE_FILE}" ]] ||     fail "Remnawave fixture did not export provider material"
   REMNAWAVE_ACTIVE=true
 }
 
