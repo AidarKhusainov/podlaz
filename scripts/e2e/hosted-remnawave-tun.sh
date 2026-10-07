@@ -37,6 +37,8 @@ PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
 EVIDENCE_KEYS=(
   candidate.provenance
   remnawave.material_private
+  native.schema_opaque
+  native.multi_outbound
   ordinary_user.boundary
   tun.verified_active
   tun.system_dns
@@ -45,6 +47,7 @@ EVIDENCE_KEYS=(
   tun.https
   tun.remnawave_path
   tun.doctor
+  tun.reconnect
   privacy.direct_uplink_blocked
   foreign.state_preserved
   tun.clean_disconnect
@@ -72,6 +75,7 @@ PROBE_IP=""
 REMNAWAVE_FIXTURE_TMP="${E2E_TMP_ROOT}/remnawave-tun-fixture"
 REMNAWAVE_COMPOSE="${REMNAWAVE_FIXTURE_TMP}/remnawave-fixture/compose.yml"
 REMNAWAVE_PROFILE_FILE="${PRIVATE_ROOT}/remnawave-profile-uri"
+NATIVE_XRAY_FILE="${PRIVATE_ROOT}/native-xray.json"
 REMNAWAVE_ACTIVE=false
 REMNAWAVE_ACCESS_BEFORE=0
 
