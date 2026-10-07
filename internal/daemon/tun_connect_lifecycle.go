@@ -44,6 +44,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 	runtimeDir := m.runtimeDir()
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
+	preflightConfigPath := filepath.Join(runtimeDir, "preflight", generatedXrayName)
 	xrayPath, err := m.resolveXrayPath()
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", wrapRuntimeUnavailable("Xray", err))
@@ -93,7 +94,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
-	if err := preflightTunRuntimeConfig(ctx, xrayPath, runtimeConfigPath, preHandoffCorePlan.XrayConfig, coreIdentity); err != nil {
+	if err := preflightTunRuntimeConfig(ctx, xrayPath, preflightConfigPath, preHandoffCorePlan.XrayConfig, coreIdentity); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-config-preflight", "", "not-started", err)
 	}
 
@@ -201,7 +202,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		executor:   executor,
 		now:        time.Now,
 		preflightCore: func(preflightCtx context.Context) error {
-			return preflightTunRuntimeConfig(preflightCtx, xrayPath, corePlan.RuntimeConfigPath, corePlan.XrayConfig, coreIdentity)
+			return preflightTunRuntimeConfig(preflightCtx, xrayPath, preflightConfigPath, corePlan.XrayConfig, coreIdentity)
 		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
