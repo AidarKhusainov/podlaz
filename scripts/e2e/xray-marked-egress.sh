@@ -288,7 +288,7 @@ cat >"${CLIENT_CONFIG}" <<JSON
   "dns": {
     "queryStrategy": "UseIPv4",
     "disableFallback": true,
-    "servers": [{"address":"tcp://${EDGE_IP}","port":53,"tag":"bootstrap-dns","queryStrategy":"UseIPv4","skipFallback":true}]
+    "servers": [{"address":"${EDGE_IP}","port":53,"tag":"bootstrap-dns","queryStrategy":"UseIPv4","skipFallback":true}]
   },
   "inbounds": [
     {"tag":"client-a","listen":"127.0.0.1","port":1081,"protocol":"socks","settings":{"udp":true}},
@@ -324,7 +324,7 @@ cat >"${CLIENT_CONFIG}" <<JSON
   "routing": {
     "domainStrategy": "AsIs",
     "rules": [
-      {"type":"field","inboundTag":["bootstrap-dns"],"network":"tcp","port":"53","outboundTag":"dns-marked"},
+      {"type":"field","inboundTag":["bootstrap-dns"],"network":"udp","port":"53","outboundTag":"dns-marked"},
       {"type":"field","inboundTag":["client-a"],"outboundTag":"provider-a"},
       {"type":"field","inboundTag":["client-b"],"outboundTag":"provider-b"},
       {"type":"field","inboundTag":["client-udp"],"outboundTag":"udp-marked"}
@@ -348,10 +348,10 @@ sudo -n ip netns exec "${EDGE_NS}" dnsmasq \
   >"${PRIVATE_DIR}/dnsmasq.log" 2>&1 &
 DNS_PID=$!
 for _ in $(seq 1 100); do
-  sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q "${EDGE_IP}:53 " && break
+  sudo -n ip netns exec "${EDGE_NS}" ss -lnu | grep -q "${EDGE_IP}:53 " && break
   sleep 0.05
 done
-sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q "${EDGE_IP}:53 " || fail "synthetic TCP DNS listener did not start"
+sudo -n ip netns exec "${EDGE_NS}" ss -lnu | grep -q "${EDGE_IP}:53 " || fail "synthetic UDP DNS listener did not start"
 sudo -n ip netns exec "${EDGE_NS}" "${XRAY}" run -config "${SERVER_CONFIG}" >"${PRIVATE_DIR}/server.stdout" 2>"${SERVER_LOG}" &
 SERVER_PID=$!
 
