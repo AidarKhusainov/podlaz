@@ -276,11 +276,11 @@ remnawave_node_access_count() {
 }
 
 prepare_provider_material() {
-  [[ -f "\${REMNAWAVE_PROFILE_FILE}" && ! -L "\${REMNAWAVE_PROFILE_FILE}" ]] || return 1
-  PROFILE_URI="$(cat "\${REMNAWAVE_PROFILE_FILE}")"
-  [[ "\${PROFILE_URI}" == vless://* ]] || return 1
-  mask_value "\${PROFILE_URI}"
-  python3 - "\${PROFILE_URI}" "\${NATIVE_XRAY_FILE}" <<'PY'
+  [[ -f "${REMNAWAVE_PROFILE_FILE}" && ! -L "${REMNAWAVE_PROFILE_FILE}" ]] || return 1
+  PROFILE_URI="$(cat "${REMNAWAVE_PROFILE_FILE}")"
+  [[ "${PROFILE_URI}" == vless://* ]] || return 1
+  mask_value "${PROFILE_URI}"
+  python3 - "${PROFILE_URI}" "${NATIVE_XRAY_FILE}" <<'PY'
 import json
 import sys
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -333,11 +333,11 @@ with open(output, "w", encoding="utf-8") as handle:
     json.dump(doc, handle, separators=(",", ":"))
     handle.write("\n")
 PY
-  chmod 0600 "\${NATIVE_XRAY_FILE}"
-  guest_exec install -d -o e2e -g e2e -m 0700 "\${GUEST_PROVIDER_DIR}"
-  sudo -n machinectl copy-to "\${MACHINE}" "\${NATIVE_XRAY_FILE}" "\${GUEST_PROVIDER_DIR}/native-xray.json" >/dev/null
-  guest_exec chown e2e:e2e "\${GUEST_PROVIDER_DIR}/native-xray.json"
-  guest_exec chmod 0600 "\${GUEST_PROVIDER_DIR}/native-xray.json"
+  chmod 0600 "${NATIVE_XRAY_FILE}"
+  guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PROVIDER_DIR}"
+  sudo -n machinectl copy-to "${MACHINE}" "${NATIVE_XRAY_FILE}" "${GUEST_PROVIDER_DIR}/native-xray.json" >/dev/null
+  guest_exec chown e2e:e2e "${GUEST_PROVIDER_DIR}/native-xray.json"
+  guest_exec chmod 0600 "${GUEST_PROVIDER_DIR}/native-xray.json"
 }
 
 remove_provider_material() {
@@ -395,19 +395,19 @@ PY
 }
 
 import_provider_profile() {
-  local import_stdout="\${PRIVATE_ROOT}/profile-import.stdout" import_stderr="\${PRIVATE_ROOT}/profile-import.stderr"
+  local import_stdout="${PRIVATE_ROOT}/profile-import.stdout" import_stderr="${PRIVATE_ROOT}/profile-import.stderr"
   set +e
   guest_exec runuser -u e2e -- env \
-    XDG_CONFIG_HOME="\${GUEST_XDG}/config" \
-    XDG_STATE_HOME="\${GUEST_XDG}/state" \
-    XDG_CACHE_HOME="\${GUEST_XDG}/cache" \
-    /usr/bin/podlaz import "\${GUEST_PROVIDER_DIR}/native-xray.json" \
-    >"\${import_stdout}" 2>"\${import_stderr}"
+    XDG_CONFIG_HOME="${GUEST_XDG}/config" \
+    XDG_STATE_HOME="${GUEST_XDG}/state" \
+    XDG_CACHE_HOME="${GUEST_XDG}/cache" \
+    /usr/bin/podlaz import "${GUEST_PROVIDER_DIR}/native-xray.json" \
+    >"${import_stdout}" 2>"${import_stderr}"
   local code=$?
   set -e
   (( code == 0 )) || return 1
-  grep -F 'Next: podlaz connect' "\${import_stdout}" >/dev/null || return 1
-  guest_exec python3 - "\${GUEST_XDG}/state/podlaz/profiles.json" <<'PY'
+  grep -F 'Next: podlaz connect' "${import_stdout}" >/dev/null || return 1
+  guest_exec python3 - "${GUEST_XDG}/state/podlaz/profiles.json" <<'PY'
 import json
 import sys
 
@@ -429,7 +429,7 @@ if len(doc.get("outbounds") or []) != 2:
 if not (doc.get("stats") == {} and (doc.get("routing") or {}).get("rules")):
     raise SystemExit("schema-opaque provider fields were not preserved")
 PY
-  guest_exec rm -rf "\${GUEST_PROVIDER_DIR}"
+  guest_exec rm -rf "${GUEST_PROVIDER_DIR}"
   PROFILE_URI=""
 }
 
@@ -580,13 +580,13 @@ run_provider_scenario() {
   run_tun_doctor || fail "doctor --tun failed against active Remnawave TUN"
 
   mark_failure product tun.reconnect_prepare
-  run_guest_user /usr/bin/podlaz disconnect >"\${PRIVATE_ROOT}/reconnect-disconnect.stdout" 2>"\${PRIVATE_ROOT}/reconnect-disconnect.stderr" || \
+  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/reconnect-disconnect.stdout" 2>"${PRIVATE_ROOT}/reconnect-disconnect.stderr" || \
     fail "native Xray reconnect preparation disconnect failed"
   wait_guest_status clean-inactive 90 || fail "native Xray reconnect preparation did not converge to clean-inactive"
   assert_terminal_authority_clean || fail "native Xray reconnect preparation left owned authority"
 
   mark_failure product tun.reconnect
-  run_guest_user /usr/bin/podlaz connect >"\${PRIVATE_ROOT}/reconnect.stdout" 2>"\${PRIVATE_ROOT}/reconnect.stderr" || \
+  run_guest_user /usr/bin/podlaz connect >"${PRIVATE_ROOT}/reconnect.stdout" 2>"${PRIVATE_ROOT}/reconnect.stderr" || \
     fail "native Xray reconnect failed"
   wait_guest_status verified-active 90 || fail "native Xray reconnect did not reach verified-active"
   assert_verified_active_authority || fail "native Xray reconnect active authority is incomplete"
@@ -596,7 +596,7 @@ run_provider_scenario() {
   record_evidence tun.reconnect pass
 
   mark_failure product tun.disconnect
-  run_guest_user /usr/bin/podlaz disconnect >"\${PRIVATE_ROOT}/disconnect.stdout" 2>"\${PRIVATE_ROOT}/disconnect.stderr" || \
+  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr" || \
     fail "normal Remnawave TUN disconnect failed"
   wait_guest_status clean-inactive 90 || fail "Remnawave TUN did not converge to clean-inactive"
   record_evidence tun.clean_disconnect pass
