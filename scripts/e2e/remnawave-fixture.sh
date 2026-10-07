@@ -466,7 +466,7 @@ cleanup_fixture() {
 }
 trap cleanup_fixture EXIT INT TERM
 
-main() {
+remnawave_fixture_start() {
   install -d -m 0700 "${PRIVATE_ROOT}" "${STATE_DIR}"
   APP_SECRET="$(openssl rand -hex 64)"
   METRICS_PASS="$(openssl rand -hex 32)"
@@ -491,7 +491,8 @@ main() {
 
   register_body="${STATE_DIR}/register.json"
   register_response="${STATE_DIR}/register-response.json"
-  jq -n --arg username "${ADMIN_USER}" --arg password "${ADMIN_PASSWORD}"     '{username:$username,password:$password}' >"${register_body}"
+  jq -n --arg username "${ADMIN_USER}" --arg password "${ADMIN_PASSWORD}" \
+    '{username:$username,password:$password}' >"${register_body}"
   chmod 0600 "${register_body}"
   api POST /api/auth/register "${register_body}" "${register_response}"
   ADMIN_TOKEN="$(jq -er '.response.accessToken' "${register_response}")"
@@ -505,6 +506,10 @@ main() {
   create_host
   enable_hwid
   create_user
+}
+
+remnawave_fixture_feasibility() {
+  remnawave_fixture_start
   assert_hwid_limit
   record_image_digests
 
@@ -514,4 +519,6 @@ main() {
   printf 'remnawave.hwid_device_limit=pass\n'
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  remnawave_fixture_feasibility "$@"
+fi
