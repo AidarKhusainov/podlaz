@@ -2,6 +2,8 @@ package e2e_test
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -35,6 +37,8 @@ func TestHostedRemnawaveTUNPreservesQ29IsolationAndLifecycle(t *testing.T) {
 		"assert_ordinary_connectivity_restored",
 		"fixture.cleanup",
 		"artifact.privacy",
+		"assert_public_artifact_privacy || return 1",
+		"failure\\.class=(?:none|product|remnawave|fixture|infrastructure|capability|diagnostic_unknown)",
 		"product|remnawave|fixture|infrastructure|capability|diagnostic_unknown|none",
 	} {
 		if !strings.Contains(text, required) {
@@ -47,10 +51,64 @@ func TestHostedRemnawaveTUNPreservesQ29IsolationAndLifecycle(t *testing.T) {
 		"PODLAZ_E2E_PROFILE_URI_LIST",
 		"PODLAZ_E2E_EXPECTED_EGRESS_IP",
 		`[[ "${ACTIVE_EGRESS}" != "${ORDINARY_EGRESS}" ]]`,
+		"failure\\\\.class=",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("ephemeral Remnawave TUN scenario contains retired provider assumption %q", forbidden)
 		}
+	}
+}
+
+func TestHostedRemnawaveTUNFinalScannerRejectsRawPublicData(t *testing.T) {
+	dir := t.TempDir()
+	report := filepath.Join(dir, "hosted-remnawave-tun.txt")
+	lines := []string{
+		"candidate.commit=" + strings.Repeat("a", 40),
+		"candidate.package_sha256=" + strings.Repeat("b", 64),
+		"candidate.provenance=pass",
+		"remnawave.material_private=pass",
+		"ordinary_user.boundary=pass",
+		"tun.verified_active=pass",
+		"tun.system_dns=pass",
+		"tun.ipv4_tcp=pass",
+		"tun.tls=pass",
+		"tun.https=pass",
+		"tun.remnawave_path=pass",
+		"tun.doctor=observed",
+		"privacy.direct_uplink_blocked=pass",
+		"foreign.state_preserved=pass",
+		"tun.clean_disconnect=pass",
+		"tun.terminal_cleanup=pass",
+		"tun.recovery_clean=pass",
+		"guest.baseline_restored=pass",
+		"guest.ordinary_connectivity_restored=pass",
+		"outer.cleanup=pass",
+		"artifact.privacy=pass",
+		"fixture.cleanup=pass",
+		"failure.class=none",
+		"failure.step=none",
+	}
+	if err := os.WriteFile(report, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func() error {
+		cmd := exec.Command("bash", "hosted-remnawave-tun.sh", "validate-report")
+		cmd.Env = append(os.Environ(),
+			"E2E_ARTIFACT_DIR="+dir,
+			"PODLAZ_E2E_CANDIDATE_COMMIT="+strings.Repeat("a", 40),
+			"PODLAZ_E2E_CANDIDATE_SHA256="+strings.Repeat("b", 64),
+		)
+		return cmd.Run()
+	}
+	if err := run(); err != nil {
+		t.Fatalf("normalized final TUN report rejected: %v", err)
+	}
+	if err := os.WriteFile(report, []byte(strings.Join(append(lines, "raw.provider=secret"), "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(); err == nil {
+		t.Fatal("final TUN scanner accepted non-normalized public data")
 	}
 }
 
