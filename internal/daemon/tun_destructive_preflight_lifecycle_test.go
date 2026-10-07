@@ -88,6 +88,11 @@ func TestConnectTunStopKnownBlockedPlanLeavesForeignBaselineUntouched(t *testing
 
 func TestConnectTunActiveReplaceValidateOrReplaceReachesDisconnect(t *testing.T) {
 	installTunLifecyclePreflightTestHooks(t)
+	var preflightPaths []string
+	preflightTunRuntimeConfig = func(_ context.Context, _ string, path string, _ []byte, _ coreExecutionIdentity) error {
+		preflightPaths = append(preflightPaths, filepath.Clean(path))
+		return nil
+	}
 	snapshot := tunLifecycleSnapshotWithExactActiveOwnedState()
 	manager, done, stopFile := activeTunManagerForDestructivePreflight(t, snapshot)
 	persistActiveOwnedTunTransactionForPreflight(
@@ -103,6 +108,18 @@ func TestConnectTunActiveReplaceValidateOrReplaceReachesDisconnect(t *testing.T)
 		t.Fatal("expected later connect failure after active replacement reached disconnect boundary")
 	}
 	assertLifecyclePreflightStoppedCore(t, done, stopFile)
+	liveConfig := filepath.Clean(manager.state.RuntimeConfigPath)
+	if len(preflightPaths) == 0 {
+		t.Fatal("active replacement did not validate the composed Xray config")
+	}
+	for _, path := range preflightPaths {
+		if path == liveConfig {
+			t.Fatalf("active replacement config preflight touched live runtime config path %s", path)
+		}
+		if filepath.Dir(path) != filepath.Join(filepath.Clean(manager.RuntimeDir), "preflight") {
+			t.Fatalf("config preflight path escaped dedicated ephemeral directory: %s", path)
+		}
+	}
 }
 
 func installTunLifecyclePreflightTestHooks(t *testing.T) {
