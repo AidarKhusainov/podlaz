@@ -25,6 +25,10 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 		"vpn-e2e, ubuntu-24.04",
 		"release-laptop.sh",
 		"scripts/acceptance/",
+		"environment: vpn-e2e",
+		"PODLAZ_E2E_PROFILE_URI: ${{ secrets.",
+		"PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.",
+		"PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.",
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow still depends on retired/manual infrastructure %q", forbidden)
@@ -36,7 +40,7 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 		t.Fatal("release publication needs block is missing")
 	}
 	needs := publish[1]
-	for _, required := range []string{"- resolve", "- build", "- installed-runtime", "- synthetic-tun", "- real-provider"} {
+	for _, required := range []string{"- resolve", "- build", "- installed-runtime", "- synthetic-tun", "- remnawave-proxy"} {
 		if !strings.Contains(needs, required) {
 			t.Fatalf("release publication lost required qualification dependency %q", required)
 		}
