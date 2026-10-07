@@ -99,6 +99,11 @@ func runSourceWorkflow(ctx context.Context, req sourceWorkflowRequest) (UpdateRe
 	rollbackUserState := func(applyErr error) error {
 		return rollbackSourceWorkflowState(applyErr, profileSnapshot, subscriptionSnapshot)
 	}
+	if req.addSource && len(prepared.parsed.Profiles) == 1 {
+		if _, err := req.profileStore.SelectIfUnset(prepared.parsed.Profiles[0].ID); err != nil {
+			return UpdateResult{}, rollbackUserState(err)
+		}
+	}
 	if req.options.AfterProfileApply != nil {
 		if err := req.options.AfterProfileApply(); err != nil {
 			return UpdateResult{}, rollbackUserState(err)

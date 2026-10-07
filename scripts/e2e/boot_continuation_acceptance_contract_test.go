@@ -21,13 +21,48 @@ func TestBootContinuationPackageAcceptanceCoversBootAutostartLifecycle(t *testin
 		"terminal_autostart_failure",
 		"terminal_no_same_boot_retry",
 		"autostart disable",
-		"autostart enable --mode tun",
+		"autostart enable \"${BOOT_CONTINUATION_PROFILE_ID}\"",
 		"boot_continuation_restart_daemon",
 		"dpkg -i",
 	} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("boot-continuation acceptance must contain %q", required)
 		}
+	}
+}
+
+func TestBootContinuationCurrentCandidateUsesCanonicalCLI(t *testing.T) {
+	helperData, err := os.ReadFile("lib/boot_continuation.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptanceData, err := os.ReadFile("boot-continuation-package-acceptance.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := string(helperData)
+	acceptance := string(acceptanceData)
+
+	for _, want := range []string{
+		"boot_continuation_run_podlaz import",
+		"profiles.json",
+		"selected_profile_id",
+	} {
+		if !strings.Contains(helper, want) {
+			t.Fatalf("boot-continuation helper missing canonical import state %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"podlaz profile import",
+		"boot_continuation_run_podlaz profile import",
+		"Imported profile:",
+	} {
+		if strings.Contains(helper, forbidden) {
+			t.Fatalf("boot-continuation helper retained old CLI contract %q", forbidden)
+		}
+	}
+	if strings.Contains(acceptance, "--mode tun") {
+		t.Fatalf("boot-continuation acceptance retained public mode matrix")
 	}
 }
 

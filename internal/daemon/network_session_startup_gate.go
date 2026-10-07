@@ -8,7 +8,7 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-var errNetworkSessionStartupRecoveryPending = errors.New("network session startup recovery is incomplete; run podlaz recover and retry")
+var errNetworkSessionStartupRecoveryPending = errors.New("network session startup recovery is incomplete; run podlaz debug recover and retry")
 
 const networkSessionResumeWarningMessage = "cleanup completed but the current-boot network session could not be resumed"
 

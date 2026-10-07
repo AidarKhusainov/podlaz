@@ -21,13 +21,12 @@ func runLocalFileImport(path string, stdout io.Writer, opts options) error {
 	if err != nil {
 		return err
 	}
-	if err := store.AddProfiles(result.Profiles); err != nil {
-		return profileCommandError(err)
-	}
 	if len(result.Profiles) == 1 {
-		if _, err := store.SelectIfUnset(result.Profiles[0].ID); err != nil {
-			return err
+		if _, err := store.AddAndSelectIfUnset(result.Profiles[0]); err != nil {
+			return profileCommandError(err)
 		}
+	} else if err := store.AddProfiles(result.Profiles); err != nil {
+		return profileCommandError(err)
 	}
 	return printLocalImportResult(stdout, store, result)
 }

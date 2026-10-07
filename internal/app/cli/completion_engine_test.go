@@ -31,6 +31,12 @@ func TestCompletionProfileSurfaceIsSmallAndHumanOriented(t *testing.T) {
 	}
 }
 
+func TestCompletionProfileListOffersExplicitIDsFlag(t *testing.T) {
+	flags := completepodlaz(completionRequest{Shell: "bash", Cursor: 3, Words: []string{"podlaz", "profile", "list", "--"}}, options{})
+	assertCompletionCandidate(t, flags, "--ids")
+	assertNoCompletionCandidate(t, flags, "--json")
+}
+
 func TestCompletionDebugOwnsAdvancedSurface(t *testing.T) {
 	debug := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "debug", ""}}, options{})
 	for _, want := range []string{"doctor", "logs", "proxy", "recover"} {

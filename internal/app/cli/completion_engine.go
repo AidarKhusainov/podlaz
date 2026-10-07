@@ -182,7 +182,7 @@ func completionRegistry() *completionCommand {
 		{Name: "import", Description: "Import profile or subscription", DefaultFiles: true},
 		{
 			Name: "profile", Description: "Manage profiles", Children: []*completionCommand{
-				{Name: "list", Description: "List profiles"},
+				{Name: "list", Description: "List profiles", Flags: []completionFlag{longBoolFlag("--ids", "Show exact stable profile IDs")}},
 				{Name: "show", Description: "Show profile", Dynamic: completionDynamicProfiles},
 				{Name: "use", Description: "Select profile", Dynamic: completionDynamicProfiles},
 				{Name: "delete", Description: "Delete profile", Flags: []completionFlag{yesFlag}, Dynamic: completionDynamicProfiles},

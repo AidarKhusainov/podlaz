@@ -73,6 +73,41 @@ func TestRunCLIProfileListShowUseAndDelete(t *testing.T) {
 	}
 }
 
+func TestRunCLIProfileListIDsIsExplicitDisambiguationSurface(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "profiles.json")
+	opts := options{profileStorePath: storePath}
+	addTestProfile(t, opts, "work-a", "Work")
+	addTestProfile(t, opts, "work-b", " work ")
+
+	var normal bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"profile", "list"}, &normal, opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"work-a", "work-b"} {
+		if strings.Contains(normal.String(), forbidden) {
+			t.Fatalf("normal profile list exposed stable ID %q: %q", forbidden, normal.String())
+		}
+	}
+
+	var detailed bytes.Buffer
+	if err := runWithOptions(context.Background(), []string{"profile", "list", "--ids"}, &detailed, opts); err != nil {
+		t.Fatalf("profile list --ids failed: %v", err)
+	}
+	for _, want := range []string{"ID", "work-a", "work-b", "Work"} {
+		if !strings.Contains(detailed.String(), want) {
+			t.Fatalf("profile list --ids missing %q: %q", want, detailed.String())
+		}
+	}
+
+	err := runWithOptions(context.Background(), []string{"profile", "show", "WORK"}, &bytes.Buffer{}, opts)
+	if err == nil || ExitCode(err) != 1 {
+		t.Fatalf("ambiguous selector err=%v exit=%d", err, ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "podlaz profile list --ids") {
+		t.Fatalf("ambiguous selector has no usable disambiguation path: %v", err)
+	}
+}
+
 func TestRunCLIProfileUseIsOnlySelectionMutation(t *testing.T) {
 	storePath := filepath.Join(t.TempDir(), "profiles.json")
 	opts := options{profileStorePath: storePath}

@@ -80,18 +80,55 @@ boot_continuation_wait_for_inactive() {
     boot_continuation_daemon_status_matches inactive disabled false
 }
 
+boot_continuation_selected_profile_id() {
+  python3 - "${XDG_STATE_HOME}/podlaz/profiles.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    state = json.load(handle)
+value = state.get("selected_profile_id")
+if not isinstance(value, str) or not value.strip():
+    raise SystemExit("selected profile id is missing")
+print(value.strip())
+PY
+}
+
+boot_continuation_profile_id_by_name() {
+  local expected_name="$1"
+  python3 - "${XDG_STATE_HOME}/podlaz/profiles.json" "${expected_name}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    state = json.load(handle)
+want = sys.argv[2].strip().casefold()
+matches = []
+for profile in state.get("profiles") or []:
+    if not isinstance(profile, dict):
+        continue
+    name = profile.get("name")
+    profile_id = profile.get("id")
+    if isinstance(name, str) and isinstance(profile_id, str) and name.strip().casefold() == want:
+        matches.append(profile_id.strip())
+if len(matches) != 1 or not matches[0]:
+    raise SystemExit(f"expected exactly one profile named {sys.argv[2]!r}")
+print(matches[0])
+PY
+}
+
 boot_continuation_import_real_profile() {
   local uri out err
   uri="$(boot_continuation_first_profile_uri)"
   [[ -n "${uri}" ]] || fail "boot-continuation acceptance requires a profile URI"
   out="$(mktemp "${E2E_TMP_ROOT}/boot-continuation-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/boot-continuation-import.stderr.XXXXXX")"
-  if ! boot_continuation_run_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+  if ! boot_continuation_run_podlaz import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "boot-continuation profile import failed"
   fi
-  BOOT_CONTINUATION_PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${BOOT_CONTINUATION_PROFILE_ID}" ]] || fail "boot-continuation profile import returned no profile ID"
+  BOOT_CONTINUATION_PROFILE_ID="$(boot_continuation_selected_profile_id)"
+  [[ -n "${BOOT_CONTINUATION_PROFILE_ID}" ]] || fail "boot-continuation import did not persist selected profile ID"
   boot_continuation_mask_multiline_sensitive "${BOOT_CONTINUATION_PROFILE_ID}"
   export BOOT_CONTINUATION_PROFILE_ID
   rm -f -- "${out}" "${err}"
@@ -102,12 +139,12 @@ boot_continuation_import_terminal_failure_profile() {
   uri='vless://00000000-0000-4000-8000-000000000001@vpn.invalid:443?security=tls&type=tcp&sni=vpn.invalid#BootContinuationFailure'
   out="$(mktemp "${E2E_TMP_ROOT}/boot-continuation-failure-import.stdout.XXXXXX")"
   err="$(mktemp "${E2E_TMP_ROOT}/boot-continuation-failure-import.stderr.XXXXXX")"
-  if ! boot_continuation_run_podlaz profile import "${uri}" >"${out}" 2>"${err}"; then
+  if ! boot_continuation_run_podlaz import "${uri}" >"${out}" 2>"${err}"; then
     rm -f -- "${out}" "${err}"
     fail "boot-continuation failure-profile import failed"
   fi
-  BOOT_CONTINUATION_FAILURE_PROFILE_ID="$(awk '/^Imported profile:/ {print $3}' "${out}")"
-  [[ -n "${BOOT_CONTINUATION_FAILURE_PROFILE_ID}" ]] || fail "boot-continuation failure-profile import returned no profile ID"
+  BOOT_CONTINUATION_FAILURE_PROFILE_ID="$(boot_continuation_profile_id_by_name "BootContinuationFailure")"
+  [[ -n "${BOOT_CONTINUATION_FAILURE_PROFILE_ID}" ]] || fail "boot-continuation failure profile ID is unavailable"
   boot_continuation_mask_multiline_sensitive "${BOOT_CONTINUATION_FAILURE_PROFILE_ID}"
   export BOOT_CONTINUATION_FAILURE_PROFILE_ID
   rm -f -- "${out}" "${err}"

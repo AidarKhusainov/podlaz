@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/lib/e2e.sh"
 # shellcheck source=lib/boot_continuation.sh
 source "${SCRIPT_DIR}/lib/boot_continuation.sh"
 
-require_cmd awk curl dpkg grep mktemp python3 runuser seq sleep sudo systemctl
+require_cmd curl dpkg grep mktemp python3 runuser seq sleep sudo systemctl
 
 : "${PODLAZ_E2E_PROFILE_URI:=}"
 : "${PODLAZ_E2E_PROFILE_URI_LIST:=}"
@@ -88,7 +88,7 @@ write_evidence autostart_disabled_same_boot
 
 # Enabling during this boot is intentionally next-boot-only. A same-boot daemon
 # restart must not treat configuration time as a boot boundary.
-boot_continuation_run_podlaz autostart enable --mode tun "${BOOT_CONTINUATION_PROFILE_ID}" >/dev/null
+boot_continuation_run_podlaz autostart enable "${BOOT_CONTINUATION_PROFILE_ID}" >/dev/null
 boot_continuation_assert_autostart_line "Autostart: Enabled for next boot"
 boot_continuation_restart_daemon
 boot_continuation_wait_for_inactive
@@ -140,7 +140,7 @@ write_evidence explicit_disconnect_no_restart_reconnect
 # typed reason, and remain consumed across a same-boot daemon restart.
 boot_continuation_run_podlaz autostart disable >/dev/null
 sudo -n rm -f -- "${BOOT_CONTINUATION_ATTEMPT_PATH}" "${BOOT_CONTINUATION_PRODUCT_REASON_PATH}"
-boot_continuation_run_podlaz autostart enable --mode tun "${BOOT_CONTINUATION_FAILURE_PROFILE_ID}" >/dev/null
+boot_continuation_run_podlaz autostart enable "${BOOT_CONTINUATION_FAILURE_PROFILE_ID}" >/dev/null
 boot_continuation_prepare_simulated_later_boot "boot-continuation-simulated-boot-c"
 boot_continuation_restart_daemon
 boot_continuation_wait_for_inactive
