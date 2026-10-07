@@ -13,8 +13,55 @@ require_cmd docker jq sha256sum sudo systemctl
 
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 CANDIDATE_DEB=""
+CANDIDATE_SHA256=""
 PACKAGE_INSTALLED=0
 REPORT="${E2E_ARTIFACT_DIR}/remnawave-proxy.txt"
+EVIDENCE_KEYS=(
+  remnawave.proxy_data_plane
+  remnawave.proxy_path_attribution
+  remnawave.proxy_cleanup
+  fixture.cleanup
+)
+FAILURE_CLASS=diagnostic_unknown
+FAILURE_STEP=bootstrap
+REPORT_FINALIZED=false
+
+mark_failure() {
+  local class="$1" step="$2"
+  case "${class}" in
+    product|remnawave|fixture|infrastructure|capability|diagnostic_unknown|none) ;;
+    *) class=diagnostic_unknown ;;
+  esac
+  FAILURE_CLASS="${class}"
+  FAILURE_STEP="${step//[^A-Za-z0-9_.-]/_}"
+}
+
+evidence_recorded() {
+  grep -q "^$1=" "${REPORT}" 2>/dev/null
+}
+
+record_evidence() {
+  local key="$1" value="$2"
+  [[ "${key}" =~ ^[a-z0-9_.-]+$ ]] || fail "invalid Remnawave proxy evidence key"
+  case "${value}" in pass|fail) ;; *) fail "invalid Remnawave proxy evidence value" ;; esac
+  ! evidence_recorded "${key}" || fail "duplicate Remnawave proxy evidence key: ${key}"
+  printf '%s=%s\n' "${key}" "${value}" >>"${REPORT}"
+}
+
+record_if_missing() {
+  evidence_recorded "$1" || record_evidence "$1" "$2"
+}
+
+finalize_report() {
+  local key
+  [[ "${REPORT_FINALIZED}" == false ]] || return 0
+  for key in "${EVIDENCE_KEYS[@]}"; do
+    record_if_missing "${key}" fail
+  done
+  printf 'failure.class=%s\n' "${FAILURE_CLASS}" >>"${REPORT}"
+  printf 'failure.step=%s\n' "${FAILURE_STEP}" >>"${REPORT}"
+  REPORT_FINALIZED=true
+}
 
 validate_candidate() {
   local path="$1" arch
@@ -45,6 +92,7 @@ get_profile_uri() {
 
 cleanup_proxy_acceptance() {
   local code=$?
+  trap - EXIT INT TERM
   set +e
   if dpkg-query -W -f='${db:Status-Status}' podlaz 2>/dev/null | grep -Fx installed >/dev/null 2>&1; then
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
@@ -52,24 +100,47 @@ cleanup_proxy_acceptance() {
     sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
     sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
   fi
-  cleanup_fixture "${code}"
+  if remnawave_fixture_cleanup; then
+    record_if_missing fixture.cleanup pass
+  else
+    record_if_missing fixture.cleanup fail
+    mark_failure fixture remnawave.cleanup
+    code=1
+  fi
+  if (( code != 0 )) && [[ "${FAILURE_CLASS}" == none ]]; then
+    mark_failure diagnostic_unknown scenario
+  fi
+  finalize_report
+  exit "${code}"
 }
 trap cleanup_proxy_acceptance EXIT INT TERM
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  validate_candidate "$1"
   install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+  : >"${REPORT}"
+  chmod 0600 "${REPORT}"
 
+  mark_failure fixture candidate.provenance
+  validate_candidate "$1"
+  CANDIDATE_SHA256="$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
+  printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}" >>"${REPORT}"
+  printf 'candidate.package_sha256=%s\n' "${CANDIDATE_SHA256}" >>"${REPORT}"
+  printf 'remnawave.panel_version=%s\n' "${REMNAWAVE_PANEL_VERSION}" >>"${REPORT}"
+  printf 'remnawave.node_version=%s\n' "${REMNAWAVE_NODE_VERSION}" >>"${REPORT}"
+
+  mark_failure fixture remnawave.bootstrap
   remnawave_fixture_start
 
-  local profile_uri before after delta proxy_tmp proxy_artifacts
+  local profile_uri before after delta expected_min proxy_tmp proxy_artifacts
+  mark_failure remnawave provider.material
   profile_uri="$(get_profile_uri)"
   mask_value "${profile_uri}"
   before="$(node_access_count)"
 
   proxy_tmp="${E2E_TMP_ROOT}/proxy-client"
   proxy_artifacts="${proxy_tmp}/proxy-private-artifacts"
+  mark_failure diagnostic_unknown proxy.data_plane
   PODLAZ_E2E_PROFILE_URI="${profile_uri}" \
   PODLAZ_E2E_PROFILE_URI_LIST="" \
   PODLAZ_E2E_EXPECTED_EGRESS_IP="" \
@@ -79,29 +150,25 @@ main() {
   E2E_TMP_ROOT="${proxy_tmp}" \
   E2E_ARTIFACT_DIR="${proxy_artifacts}" \
     bash "${SCRIPT_DIR}/data-plane.sh"
+  record_evidence remnawave.proxy_data_plane pass
+  record_evidence remnawave.proxy_cleanup pass
 
   PACKAGE_INSTALLED=1
+  mark_failure fixture candidate.provenance
   assert_installed_package_version_matches_deb "${CANDIDATE_DEB}" podlaz
   assert_installed_podlaz_files_match_deb "${CANDIDATE_DEB}"
   assert_installed_podlaz_commit "${EXPECTED_COMMIT}"
 
+  mark_failure remnawave proxy.path_attribution
   after="$(node_access_count)"
   delta=$((after - before))
   # One explicit phase plus every reliability cycle performs one SOCKS and one
   # HTTP external request. Count-only attribution avoids publishing Node logs.
   expected_min=$((2 * (1 + PODLAZ_E2E_RELIABILITY_CYCLES)))
   (( delta >= expected_min )) || fail "Remnawave Node did not observe all proxy data-plane requests"
+  record_evidence remnawave.proxy_path_attribution pass
 
-  cat >"${REPORT}" <<EOF
-candidate.commit=${EXPECTED_COMMIT,,}
-candidate.package_sha256=$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')
-remnawave.panel_version=3.4.5
-remnawave.node_version=3.4.2
-remnawave.proxy_data_plane=pass
-remnawave.proxy_path_attribution=pass
-remnawave.proxy_cleanup=pass
-EOF
-  chmod 0600 "${REPORT}"
+  mark_failure none none
 }
 
 main "$@"
