@@ -70,11 +70,7 @@ func TestPlanTunForSessionUsesAllocatedNumericIdentitiesAndActualServerPath(t *t
 		{Kind: "rule", Priority: strconv.Itoa(TunRulePriority), Selector: "from all", Table: strconv.Itoa(TunRoutingTableID)},
 	}
 
-	native, _, err := profile.NewImportedFileProviderXrayConfig("native", []byte(`{"outbounds":[{"tag":"provider","protocol":"freedom"}]}`))
-	if err != nil {
-		t.Fatalf("create native profile: %v", err)
-	}
-	plan, err := PlanTunForSession(native, s, TunOptions{})
+	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
 	if err != nil {
 		t.Fatalf("PlanTunForSession() error = %v", err)
 	}
@@ -164,7 +160,11 @@ func TestPlanTunForSessionUsesMarkedEgressWithoutEndpointBypass(t *testing.T) {
 	s.ServerRoute.Interface = ""
 	s.ServerRoute.Gateway = ""
 
-	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
+	native, _, err := profile.NewImportedFileProviderXrayConfig("native", []byte(`{"outbounds":[{"tag":"provider","protocol":"freedom"}]}`))
+	if err != nil {
+		t.Fatalf("create native profile: %v", err)
+	}
+	plan, err := PlanTunForSession(native, s, TunOptions{})
 	if err != nil {
 		t.Fatalf("PlanTunForSession() error = %v", err)
 	}
