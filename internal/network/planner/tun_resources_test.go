@@ -137,3 +137,46 @@ func TestPlanTunForSessionAllowsDegradedSoftBaselineWhenBootstrapAndAllocationEv
 		t.Fatalf("unrelated degraded diagnostics must not block an otherwise safe plan: DNS=%#v firewall=%#v", plan.DNS, plan.Firewall)
 	}
 }
+
+
+func TestAllocateTunResourcesAllocatesCollisionFreeEgressMark(t *testing.T) {
+	evidence := snapshot.TunAllocationEvidence{
+		IPv4PolicyRules: []snapshot.TunAllocationRule{{Priority: 100, Table: 60000, Mark: TunEgressMark}},
+	}
+	allocation, err := AllocateTunResources(evidence)
+	if err != nil {
+		t.Fatalf("AllocateTunResources() error = %v", err)
+	}
+	if allocation.EgressMark == 0 || allocation.EgressMark == TunEgressMark {
+		t.Fatalf("allocator reused occupied egress mark: %#v", allocation)
+	}
+}
+
+func TestPlanTunForSessionUsesMarkedEgressWithoutEndpointBypass(t *testing.T) {
+	s := snapshot.FakeResolvedDesktop()
+	s.ServerRoute.Status = snapshot.StatusUnknown
+	s.ServerRoute.ServerAddress = ""
+	s.ServerRoute.Interface = ""
+	s.ServerRoute.Gateway = ""
+
+	plan, err := PlanTunForSession(testVLESSProfile(), s, TunOptions{})
+	if err != nil {
+		t.Fatalf("PlanTunForSession() error = %v", err)
+	}
+	if plan.EgressMark == 0 {
+		t.Fatalf("missing Podlaz-owned egress mark: %#v", plan)
+	}
+	if plan.ServerBypass.Destination != "" {
+		t.Fatalf("endpoint-specific bypass must not be required: %#v", plan.ServerBypass)
+	}
+	wantSelector := "fwmark " + strconv.FormatUint(uint64(plan.EgressMark), 10)
+	found := false
+	for _, rule := range plan.PolicyRules {
+		if rule.Selector == wantSelector && rule.Table == MainRoutingTable {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing mark-based main-table egress rule %q: %#v", wantSelector, plan.PolicyRules)
+	}
+}
