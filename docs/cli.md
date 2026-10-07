@@ -72,7 +72,7 @@ stricter than import support.
 ## Profile selection
 
 ```bash
-podlaz profile list
+podlaz profile list [--ids]
 podlaz profile show <profile>
 podlaz profile use <profile>
 podlaz profile delete <profile> [--yes]
@@ -83,7 +83,9 @@ A `<profile>` selector resolves in this order:
 1. exact stable profile ID;
 2. otherwise an exact trimmed, case-insensitive display name that matches exactly one profile.
 
-Ambiguous names fail without guessing. Display names are never ownership or
+Ambiguous names fail without guessing. When a stable ID is needed for
+disambiguation, `podlaz profile list --ids` explicitly reveals the exact IDs;
+the default list continues to hide them. Display names are never ownership or
 cleanup authority.
 
 Selected-profile rules:
@@ -98,9 +100,12 @@ Selected-profile rules:
 - subscription refresh/removal that removes the selected stable ID clears selection and never retargets by display-name resemblance.
 
 `profile list` is human-oriented. It marks the selected profile and omits
-server endpoints, credentials, raw provider configuration, and opaque IDs needed
-only for advanced automation. `profile show` may show the stable ID and
-redacted technical metadata, but not credentials or raw provider JSON.
+server endpoints, credentials, raw provider configuration, and stable IDs by
+default. `profile list --ids` is the explicit disambiguation/automation view
+that adds exact stable IDs; those IDs can be opaque and may encode provider
+address material, so they are not shown by the normal list. `profile show` may
+show the stable ID and redacted technical metadata, but not credentials or raw
+provider JSON.
 
 Profile deletion is destructive persisted user-data removal. Interactive
 confirmation defaults to **No**; empty input and EOF never authorize deletion.
