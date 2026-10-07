@@ -53,7 +53,6 @@ EVIDENCE_KEYS=(
   guest.baseline_restored
   guest.ordinary_connectivity_restored
   outer.cleanup
-  artifact.privacy
   fixture.cleanup
 )
 
@@ -99,7 +98,8 @@ finalize_report() {
 }
 
 validate_report() {
-  python3 - "${REPORT}" "${EXPECTED_COMMIT,,}" "${CANDIDATE_SHA256}" "${EVIDENCE_KEYS[@]}" <<'PY'
+  local mode="$1"
+  python3 - "${REPORT}" "${EXPECTED_COMMIT,,}" "${CANDIDATE_SHA256}" "${mode}" "${EVIDENCE_KEYS[@]}" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -107,7 +107,8 @@ from pathlib import Path
 path = Path(sys.argv[1])
 expected_commit = sys.argv[2]
 expected_digest = sys.argv[3]
-required = sys.argv[4:]
+mode = sys.argv[4]
+required = sys.argv[5:]
 if not path.is_file() or path.is_symlink():
     raise SystemExit("ephemeral Remnawave TUN report is missing")
 values = {}
@@ -145,12 +146,26 @@ if meta.get("failure.class") not in {
     raise SystemExit("ephemeral Remnawave TUN failure class is invalid")
 if not re.fullmatch(r"[A-Za-z0-9_.-]+", meta.get("failure.step", "")):
     raise SystemExit("ephemeral Remnawave TUN failure step is invalid")
-for key in required:
-    allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
-    if values[key] not in allowed:
-        raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
-if meta.get("failure.class") != "none" or meta.get("failure.step") != "none":
-    raise SystemExit("ephemeral Remnawave TUN report contains a failure")
+if mode == "normalized":
+    allowed_values = {"pass", "fail", "observed", "unavailable"}
+    if any(value not in allowed_values for value in values.values()):
+        raise SystemExit("ephemeral Remnawave TUN report contains invalid evidence")
+    failed = any(value in {"fail", "unavailable"} for value in values.values())
+    if meta.get("failure.class") == "none":
+        if meta.get("failure.step") != "none" or failed:
+            raise SystemExit("successful normalized Remnawave TUN report is inconsistent")
+    else:
+        if meta.get("failure.step") == "none" or not failed:
+            raise SystemExit("failed normalized Remnawave TUN report is inconsistent")
+elif mode == "success":
+    for key in required:
+        allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
+        if values[key] not in allowed:
+            raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
+    if meta.get("failure.class") != "none" or meta.get("failure.step") != "none":
+        raise SystemExit("ephemeral Remnawave TUN report contains a failure")
+else:
+    raise SystemExit("unknown Remnawave TUN report validation mode")
 PY
 }
 
@@ -168,13 +183,46 @@ allowed = [
     re.compile(r"candidate\.commit=[0-9a-f]{40}"),
     re.compile(r"candidate\.package_sha256=[0-9a-f]{64}"),
     re.compile(r"[a-z0-9_.-]+=(?:pass|fail|observed|unavailable)"),
-    re.compile(r"failure\\.class=(?:none|product|remnawave|fixture|infrastructure|capability|diagnostic_unknown)"),
+    re.compile(r"failure\.class=(?:none|product|remnawave|fixture|infrastructure|capability|diagnostic_unknown)"),
     re.compile(r"failure\.step=[A-Za-z0-9_.-]+"),
 ]
 for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     if not any(pattern.fullmatch(raw) for pattern in allowed):
         raise SystemExit("public Remnawave TUN evidence contains non-normalized data")
 PY
+}
+
+teardown_all() {
+  local saved=$? cleanup_failed=0
+  [[ "${TEARDOWN_RUNNING}" == false ]] || return
+  TEARDOWN_RUNNING=true
+  trap - EXIT
+  set +e
+  stop_synthetic_xray_endpoint || cleanup_failed=1
+  stop_system_guest || cleanup_failed=1
+  cleanup_outer_plumbing || cleanup_failed=1
+  if [[ -n "${OUTER_DEFAULT_ROUTE}" ]]; then
+    assert_outer_baseline_restored || cleanup_failed=1
+  fi
+  if (( cleanup_failed == 0 )); then
+    record_if_missing outer.cleanup pass
+  else
+    record_if_missing outer.cleanup fail
+    mark_failure infrastructure outer.cleanup
+  fi
+  if (( saved != 0 )) && [[ "${FAILURE_CLASS}" == none ]]; then
+    mark_failure infrastructure scenario
+  fi
+  finalize_report
+  assert_public_artifact_privacy || cleanup_failed=1
+  if (( saved == 0 && cleanup_failed == 0 )); then
+    validate_report success || cleanup_failed=1
+  else
+    validate_report normalized || cleanup_failed=1
+  fi
+  set -e
+  if (( saved == 0 && cleanup_failed != 0 )); then saved=1; fi
+  exit "${saved}"
 }
 
 mask_multiline_sensitive() {
@@ -503,14 +551,22 @@ main() {
   teardown_all
 }
 
-if [[ "${1:-}" == validate-report ]]; then
-  require_cmd python3 sha256sum
-  EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
-  CANDIDATE_SHA256="${PODLAZ_E2E_CANDIDATE_SHA256:-}"
-  [[ "${EXPECTED_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "PODLAZ_E2E_CANDIDATE_COMMIT must be an exact 40-hex commit"
-  [[ "${CANDIDATE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || fail "PODLAZ_E2E_CANDIDATE_SHA256 must be an exact package digest"
-  validate_report
-  exit 0
-fi
+case "${1:-}" in
+  validate-report|scan-report)
+    require_cmd find python3 sha256sum
+    mode="${1}"
+    EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
+    CANDIDATE_SHA256="${PODLAZ_E2E_CANDIDATE_SHA256:-}"
+    [[ "${EXPECTED_COMMIT}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "PODLAZ_E2E_CANDIDATE_COMMIT must be an exact 40-hex commit"
+    [[ "${CANDIDATE_SHA256}" =~ ^[0-9a-f]{64}$ ]] || fail "PODLAZ_E2E_CANDIDATE_SHA256 must be an exact package digest"
+    assert_public_artifact_privacy || fail "ephemeral Remnawave TUN public artifact is not normalized"
+    if [[ "${mode}" == validate-report ]]; then
+      validate_report success
+    else
+      validate_report normalized
+    fi
+    exit 0
+    ;;
+esac
 
 main "$@"

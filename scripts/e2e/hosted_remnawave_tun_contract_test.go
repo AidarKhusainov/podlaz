@@ -16,6 +16,12 @@ func TestHostedRemnawaveTUNPreservesQ29IsolationAndLifecycle(t *testing.T) {
 		`source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"`,
 		"remnawave-fixture.sh",
 		"export-profile",
+		"machinectl copy-to",
+		"chmod 0600",
+		"remove_guest_private_state",
+		"classify_provider_tun_connect_failure",
+		"network_apply_failure|network_verify_failure|ownership_invalid|owned_state_invalid",
+		"server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout",
 		"assert_guest_package_provenance",
 		"assert_ordinary_user_boundary",
 		"wait_guest_status verified-active",
@@ -34,7 +40,8 @@ func TestHostedRemnawaveTUNPreservesQ29IsolationAndLifecycle(t *testing.T) {
 		"assert_guest_network_baseline_restored",
 		"assert_ordinary_connectivity_restored",
 		"fixture.cleanup",
-		"artifact.privacy",
+		"finalize_report\n  assert_public_artifact_privacy",
+		`re.compile(r"failure\.class=`,
 		"product|remnawave|fixture|infrastructure|capability|diagnostic_unknown|none",
 	} {
 		if !strings.Contains(text, required) {
