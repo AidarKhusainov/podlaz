@@ -46,8 +46,10 @@ type networkSessionProtection struct {
 	Family                string                        `json:"family"`
 	Table                 string                        `json:"table"`
 	TunInterface          string                        `json:"tun_interface"`
-	BootstrapIPv4         []string                      `json:"bootstrap_ipv4"`
+	BootstrapIPv4         []string                      `json:"bootstrap_ipv4,omitempty"`
 	PreviousBootstrapIPv4 []string                      `json:"previous_bootstrap_ipv4,omitempty"`
+	EgressMarks           []uint32                      `json:"egress_marks,omitempty"`
+	PreviousEgressMarks   []uint32                      `json:"previous_egress_marks,omitempty"`
 }
 
 type networkSessionReplacement struct {
@@ -543,14 +545,37 @@ func validateNetworkSessionProtection(protection networkSessionProtection) error
 	if err := validateNetworkSessionInterface(protection.TunInterface); err != nil {
 		return err
 	}
-	if err := validateBootstrapIPv4(protection.BootstrapIPv4, "bootstrap"); err != nil {
-		return err
+	switch protection.CompositionVersion {
+	case 1:
+		if err := validateBootstrapIPv4(protection.BootstrapIPv4, "bootstrap"); err != nil {
+			return err
+		}
+		if len(protection.EgressMarks) != 0 || len(protection.PreviousEgressMarks) != 0 {
+			return errors.New("endpoint privacy composition cannot carry egress marks")
+		}
+	case 2:
+		if len(protection.BootstrapIPv4) != 0 || len(protection.PreviousBootstrapIPv4) != 0 {
+			return errors.New("marked privacy composition cannot carry bootstrap endpoints")
+		}
+		if err := validateEgressMarks(protection.EgressMarks, "egress"); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("network session protection has unsupported composition version %d", protection.CompositionVersion)
 	}
 	if len(protection.PreviousBootstrapIPv4) != 0 {
 		if protection.State != networkSessionProtectionArming {
 			return errors.New("previous privacy composition is only valid while arming")
 		}
 		if err := validateBootstrapIPv4(protection.PreviousBootstrapIPv4, "previous bootstrap"); err != nil {
+			return err
+		}
+	}
+	if len(protection.PreviousEgressMarks) != 0 {
+		if protection.State != networkSessionProtectionArming {
+			return errors.New("previous privacy composition is only valid while arming")
+		}
+		if err := validateEgressMarks(protection.PreviousEgressMarks, "previous egress"); err != nil {
 			return err
 		}
 	}
@@ -575,6 +600,28 @@ func validateBootstrapIPv4(values []string, label string) error {
 			return fmt.Errorf("network session protection has duplicate %s IPv4 endpoint", label)
 		}
 		seen[normalized] = struct{}{}
+	}
+	return nil
+}
+
+func validateEgressMarks(values []uint32, label string) error {
+	if len(values) == 0 {
+		return fmt.Errorf("network session protection has no %s mark", label)
+	}
+	seen := make(map[uint32]struct{}, len(values))
+	var previous uint32
+	for i, value := range values {
+		if value == 0 {
+			return fmt.Errorf("network session protection has invalid %s mark", label)
+		}
+		if _, exists := seen[value]; exists {
+			return fmt.Errorf("network session protection has duplicate %s mark", label)
+		}
+		if i > 0 && value <= previous {
+			return fmt.Errorf("network session protection %s marks are not normalized", label)
+		}
+		seen[value] = struct{}{}
+		previous = value
 	}
 	return nil
 }
@@ -620,5 +667,7 @@ func cloneNetworkSessionProtection(protection networkSessionProtection) networkS
 	clone := protection
 	clone.BootstrapIPv4 = append([]string(nil), protection.BootstrapIPv4...)
 	clone.PreviousBootstrapIPv4 = append([]string(nil), protection.PreviousBootstrapIPv4...)
+	clone.EgressMarks = append([]uint32(nil), protection.EgressMarks...)
+	clone.PreviousEgressMarks = append([]uint32(nil), protection.PreviousEgressMarks...)
 	return clone
 }
