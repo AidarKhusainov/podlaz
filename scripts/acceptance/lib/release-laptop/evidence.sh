@@ -114,7 +114,7 @@ ra_failure_capture_doctor_tun() {
   RA_FAILURE_DOCTOR_STATUS=""
   RA_FAILURE_DOCTOR_RC=0
 
-  if ra_product doctor --tun --json >/dev/null; then
+  if ra_product debug doctor --tun --json >/dev/null; then
     rc="$RA_CAPTURE_RC"
   else
     rc="$RA_CAPTURE_RC"

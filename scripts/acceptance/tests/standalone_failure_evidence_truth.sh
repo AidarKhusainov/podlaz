@@ -111,7 +111,7 @@ ra_status_json() {
 }
 TEST_DOCTOR_CASE=unhealthy
 ra_product() {
-  if [[ "${1:-}" == doctor && "${2:-}" == --tun && "${3:-}" == --json ]]; then
+  if [[ "${1:-}" == debug && "${2:-}" == doctor && "${3:-}" == --tun && "${4:-}" == --json ]]; then
     case "${TEST_DOCTOR_CASE:-unhealthy}" in
       healthy)
         RA_CAPTURE='{"schema_version":1,"status":"healthy","primary_classification":"healthy"}'
