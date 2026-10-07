@@ -49,8 +49,12 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 	for _, required := range []string{
 		"release_manifest_sha256: ${{ steps.release-manifest.outputs.sha256 }}",
 		"name: Qualify exact synthetic full-TUN package",
+		"name: Qualify exact ephemeral Remnawave proxy data plane",
 		"PODLAZ_E2E_CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}",
 		`bash scripts/e2e/hosted-synthetic-tun.sh "dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"`,
+		"remnawave-proxy-acceptance.sh",
+		`"dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"`,
+		"scan-remnawave-artifacts.sh proxy",
 		"name: Verify exact qualified release artifact handoff",
 	} {
 		if !strings.Contains(workflow, required) {
