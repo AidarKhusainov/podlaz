@@ -61,7 +61,24 @@ func TunAllocationEvidenceFromSnapshot(s Snapshot) (TunAllocationEvidence, error
 		if !ok {
 			return TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule routing table %q", rule.Table)
 		}
-		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, TunAllocationRule{Priority: uint32(priority), Table: table})
+		converted := TunAllocationRule{Priority: uint32(priority), Table: table}
+		if rawMark := strings.TrimSpace(rule.Fwmark); rawMark != "" {
+			valueText := strings.SplitN(rawMark, "/", 2)[0]
+			value, parseErr := strconv.ParseUint(valueText, 0, 32)
+			if parseErr != nil {
+				return TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule fwmark")
+			}
+			converted.Mark = uint32(value)
+			converted.MarkMask = ^uint32(0)
+			if parts := strings.SplitN(rawMark, "/", 2); len(parts) == 2 {
+				mask, maskErr := strconv.ParseUint(parts[1], 0, 32)
+				if maskErr != nil {
+					return TunAllocationEvidence{}, fmt.Errorf("allocate TUN resources: malformed policy-rule fwmark mask")
+				}
+				converted.MarkMask = uint32(mask)
+			}
+		}
+		evidence.IPv4PolicyRules = append(evidence.IPv4PolicyRules, converted)
 	}
 	return evidence, nil
 }
