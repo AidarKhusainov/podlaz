@@ -321,7 +321,7 @@ run_scenario() {
 
 main() {
   (($# == 2)) || fail "usage: $0 CANDIDATE.deb EXACT-V0.2.40.deb"
-  require_cmd awk bash chmod cmp curl debootstrap dpkg dpkg-deb find git grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
+  require_cmd awk bash chmod cmp curl debootstrap docker dpkg dpkg-deb find git grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate_for_restart "$1"
   validate_previous "$2"
 
