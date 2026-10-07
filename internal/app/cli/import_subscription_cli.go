@@ -30,11 +30,6 @@ func runSubscriptionImport(ctx context.Context, sourceURL string, stdout io.Writ
 	if err != nil {
 		return subscriptionCommandError(err)
 	}
-	if len(result.Subscription.ProfileIDs) == 1 {
-		if _, err := profileStore.SelectIfUnset(result.Subscription.ProfileIDs[0]); err != nil {
-			return err
-		}
-	}
 	return printSubscriptionImportResult(stdout, profileStore, result)
 }
 
