@@ -234,7 +234,7 @@ func networkSessionBootstrapServer(store networkSessionStateStore, profileID str
 	if _, err := privacyEnvelopePlanFromAuthority(*state.Protection); err != nil {
 		return "", false, fmt.Errorf("validate Network Session bootstrap authority: %w", err)
 	}
-	if state.Protection.CompositionVersion == privacyEnvelopeCompositionVersion {
+	if state.Protection.CompositionVersion == privacyEnvelopeMarkedCompositionVersion {
 		return "", false, nil
 	}
 	if len(state.Protection.BootstrapIPv4) == 0 {
