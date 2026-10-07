@@ -196,6 +196,36 @@ func (s Store) SelectIfUnset(id string) (bool, error) {
 	return true, nil
 }
 
+// AddAndSelectIfUnset atomically appends one imported profile and, when no
+// valid selection exists, selects that profile in the same profile-store write.
+// An existing valid selection is preserved.
+func (s Store) AddAndSelectIfUnset(p Profile) (bool, error) {
+	if err := Validate(p); err != nil {
+		return false, err
+	}
+	state, err := s.loadState()
+	if err != nil {
+		return false, err
+	}
+	clearStaleSelection(&state)
+	for _, existing := range state.Profiles {
+		if existing.ID == p.ID {
+			return false, fmt.Errorf("%w: %s", ErrAlreadyExists, p.ID)
+		}
+	}
+	state.Profiles = append(state.Profiles, p)
+	SortStable(state.Profiles)
+	selected := false
+	if state.SelectedProfileID == "" {
+		state.SelectedProfileID = p.ID
+		selected = true
+	}
+	if err := s.saveState(state); err != nil {
+		return false, err
+	}
+	return selected, nil
+}
+
 func (s Store) Add(p Profile) error {
 	if err := Validate(p); err != nil {
 		return err
