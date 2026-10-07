@@ -546,14 +546,14 @@ func validateNetworkSessionProtection(protection networkSessionProtection) error
 		return err
 	}
 	switch protection.CompositionVersion {
-	case 1:
+	case privacyEnvelopeCompositionVersion:
 		if err := validateBootstrapIPv4(protection.BootstrapIPv4, "bootstrap"); err != nil {
 			return err
 		}
 		if len(protection.EgressMarks) != 0 || len(protection.PreviousEgressMarks) != 0 {
 			return errors.New("endpoint privacy composition cannot carry egress marks")
 		}
-	case 2:
+	case privacyEnvelopeMarkedCompositionVersion:
 		if len(protection.BootstrapIPv4) != 0 || len(protection.PreviousBootstrapIPv4) != 0 {
 			return errors.New("marked privacy composition cannot carry bootstrap endpoints")
 		}
