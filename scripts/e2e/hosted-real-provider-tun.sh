@@ -36,6 +36,7 @@ GUEST_PROVIDER_DIR="/tmp/podlaz-provider-material"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
 EXPECTED_EGRESS_IP="${PODLAZ_E2E_EXPECTED_EGRESS_IP:-}"
+PROVIDER_LOG_FILE="${PODLAZ_E2E_PROVIDER_LOG_FILE:-}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -300,6 +301,31 @@ prepare_direct_probe() {
   [[ -n "${PROBE_IP}" ]]
 }
 
+provider_log_offset() {
+  [[ -n "${PROVIDER_LOG_FILE}" ]] || { printf 'disabled'; return 0; }
+  if [[ -f "${PROVIDER_LOG_FILE}" ]]; then
+    stat -c '%s' "${PROVIDER_LOG_FILE}"
+  else
+    printf '0'
+  fi
+}
+
+assert_provider_path_since() {
+  local before="$1" attempt after
+  [[ "${before}" != disabled ]] || return 0
+  for attempt in $(seq 1 100); do
+    if [[ -f "${PROVIDER_LOG_FILE}" ]]; then
+      after="$(stat -c '%s' "${PROVIDER_LOG_FILE}")"
+      if [[ "${after}" =~ ^[0-9]+$ && "${after}" -gt "${before}" ]]; then
+        return 0
+      fi
+    fi
+    sleep 0.1
+  done
+  mark_failure provider provider.node_path_not_observed
+  return 1
+}
+
 assert_direct_uplink_blocked() {
   guest_exec ip link show dev "${GUEST_IF}" >/dev/null 2>&1 || return 1
   if guest_exec timeout 6 curl -4 -fsSk --interface "${GUEST_IF}" \
@@ -311,6 +337,8 @@ assert_direct_uplink_blocked() {
 }
 
 run_provider_traffic_checks() {
+  local provider_before
+  provider_before="$(provider_log_offset)"
   guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   record_evidence tun.system_dns pass
@@ -335,19 +363,23 @@ if value.version != 4:
     raise SystemExit("active provider egress is not IPv4")
 PY
   mask_value "${ACTIVE_EGRESS}"
-  [[ "${ACTIVE_EGRESS}" != "${ORDINARY_EGRESS}" ]] || {
-    mark_failure capability provider.egress_not_distinguishable
-    return 1
-  }
-  if [[ -n "${EXPECTED_EGRESS_IP}" ]]; then
-    [[ "${ACTIVE_EGRESS}" == "${EXPECTED_EGRESS_IP}" ]] || {
-      mark_failure provider provider.egress_mismatch
-      return 1
-    }
-    [[ "${ORDINARY_EGRESS}" != "${EXPECTED_EGRESS_IP}" ]] || {
+  if [[ -n "${PROVIDER_LOG_FILE}" ]]; then
+    assert_provider_path_since "${provider_before}" || return 1
+  else
+    [[ "${ACTIVE_EGRESS}" != "${ORDINARY_EGRESS}" ]] || {
       mark_failure capability provider.egress_not_distinguishable
       return 1
     }
+    if [[ -n "${EXPECTED_EGRESS_IP}" ]]; then
+      [[ "${ACTIVE_EGRESS}" == "${EXPECTED_EGRESS_IP}" ]] || {
+        mark_failure provider provider.egress_mismatch
+        return 1
+      }
+      [[ "${ORDINARY_EGRESS}" != "${EXPECTED_EGRESS_IP}" ]] || {
+        mark_failure capability provider.egress_not_distinguishable
+        return 1
+      }
+    fi
   fi
   record_evidence tun.provider_egress pass
 }
