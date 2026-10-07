@@ -52,6 +52,7 @@ func TestConnectTunNativeProviderMarkConflictFailsBeforeActiveReplacement(t *tes
 	manager, done, stopFile := activeTunManagerForDestructivePreflight(t, netsnapshot.FakeResolvedDesktop())
 	req := tunConnectRequestForLifecyclePreflight(api.HandoffReplacePodlaz)
 	req.Profile.Protocol = "xray-json"
+	req.Profile.Source = "imported_file"
 	req.Profile.Server = ""
 	req.Profile.Port = 0
 	req.Profile.UserIdentity = ""
