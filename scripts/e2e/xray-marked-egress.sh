@@ -31,6 +31,7 @@ EDGE_LOG="${PRIVATE_DIR}/edge.log"
 CLIENT_PID=""
 SERVER_PID=""
 EDGE_PID=""
+DNS_PID=""
 OWN_TMP=false
 
 if [[ -z "${E2E_TMP_ROOT:-}" ]]; then
@@ -59,6 +60,8 @@ cleanup() {
     cat "${SERVER_LOG}" >&2 2>/dev/null || true
     printf '%s\n' '--- synthetic edge log ---' >&2
     cat "${EDGE_LOG}" >&2 2>/dev/null || true
+    printf '%s\n' '--- synthetic DNS log ---' >&2
+    cat "${PRIVATE_DIR}/dnsmasq.log" >&2 2>/dev/null || true
     sudo -n ip netns exec "${CLIENT_NS}" ip rule show >&2 2>/dev/null || true
     sudo -n ip netns exec "${CLIENT_NS}" ip route show table "${ROUTE_TABLE}" >&2 2>/dev/null || true
     sudo -n ip netns exec "${CLIENT_NS}" nft list table inet pzmark >&2 2>/dev/null || true
@@ -68,6 +71,7 @@ cleanup() {
   [[ -z "${CLIENT_PID}" ]] || sudo -n kill "${CLIENT_PID}" >/dev/null 2>&1 || true
   [[ -z "${SERVER_PID}" ]] || sudo -n kill "${SERVER_PID}" >/dev/null 2>&1 || true
   [[ -z "${EDGE_PID}" ]] || sudo -n kill "${EDGE_PID}" >/dev/null 2>&1 || true
+  [[ -z "${DNS_PID}" ]] || sudo -n kill "${DNS_PID}" >/dev/null 2>&1 || true
   sudo -n ip netns del "${CLIENT_NS}" >/dev/null 2>&1 || true
   sudo -n ip netns del "${EDGE_NS}" >/dev/null 2>&1 || true
   if [[ "${OWN_TMP}" == true && "${saved}" -eq 0 ]]; then
@@ -182,32 +186,8 @@ def udp_server():
         data,addr=s.recvfrom(4096)
         s.sendto(data,addr)
 
-def dns_server():
-    s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.bind((EDGE_IP, 53))
-    while True:
-        query,addr=s.recvfrom(4096)
-        if len(query) < 12:
-            continue
-        pos=12
-        labels=[]
-        while pos < len(query):
-            n=query[pos]
-            pos += 1
-            if n == 0:
-                break
-            labels.append(query[pos:pos+n].decode("ascii"))
-            pos += n
-        if pos + 4 > len(query):
-            continue
-        question=query[12:pos+4]
-        name=".".join(labels)
-        log("dns:" + name)
-        header=query[:2] + b"\x81\x80" + b"\x00\x01\x00\x01\x00\x00\x00\x00"
-        answer=b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04" + socket.inet_aton(EDGE_IP)
-        s.sendto(header + question + answer, addr)
 
-for fn in (tcp_server, udp_server, dns_server):
+for fn in (tcp_server, udp_server):
     threading.Thread(target=fn, daemon=True).start()
 threading.Event().wait()
 PY
@@ -352,6 +332,19 @@ JSON
 
 sudo -n env EDGE_IP="${EDGE_IP}" EDGE_LOG="${EDGE_LOG}"   ip netns exec "${EDGE_NS}" python3 "${EDGE_HELPER}" >"${PRIVATE_DIR}/edge.stdout" 2>"${PRIVATE_DIR}/edge.stderr" &
 EDGE_PID=$!
+sudo -n ip netns exec "${EDGE_NS}" dnsmasq \
+  --no-daemon \
+  --keep-in-foreground \
+  --bind-interfaces \
+  --listen-address="${EDGE_IP}" \
+  --port=53 \
+  --no-resolv \
+  --log-queries=extra \
+  --log-facility=- \
+  --address=/provider-a.example.test/"${EDGE_IP}" \
+  --address=/provider-b.example.test/"${EDGE_IP}" \
+  >"${PRIVATE_DIR}/dnsmasq.log" 2>&1 &
+DNS_PID=$!
 sudo -n ip netns exec "${EDGE_NS}" "${XRAY}" run -config "${SERVER_CONFIG}" >"${PRIVATE_DIR}/server.stdout" 2>"${SERVER_LOG}" &
 SERVER_PID=$!
 
@@ -397,12 +390,12 @@ sudo -n ip netns exec "${CLIENT_NS}" python3 "${PROBE_HELPER}" udp 1083 "${EDGE_
 record udp_egress
 
 for _ in $(seq 1 100); do
-  grep -F 'dns:provider-a.example.test' "${EDGE_LOG}" >/dev/null 2>&1 && \
-    grep -F 'dns:provider-b.example.test' "${EDGE_LOG}" >/dev/null 2>&1 && break
+  grep -F 'dns:provider-a.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null 2>&1 && \
+    grep -F 'provider-b.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null 2>&1 && break
   sleep 0.05
 done
-grep -F 'dns:provider-a.example.test' "${EDGE_LOG}" >/dev/null || fail "provider-a bootstrap DNS was not observed"
-grep -F 'dns:provider-b.example.test' "${EDGE_LOG}" >/dev/null || fail "provider-b bootstrap DNS was not observed"
+grep -F 'provider-a.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null || fail "provider-a bootstrap DNS was not observed"
+grep -F 'provider-b.example.test' "${PRIVATE_DIR}/dnsmasq.log" >/dev/null || fail "provider-b bootstrap DNS was not observed"
 record marked_bootstrap_dns
 
 
