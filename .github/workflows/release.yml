@@ -286,19 +286,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  real-provider:
-    name: Qualify exact real proxy data plane
+  remnawave-proxy:
+    name: Qualify exact ephemeral Remnawave proxy data plane
     needs:
       - resolve
       - build
     runs-on: ubuntu-24.04
-    environment: vpn-e2e
     timeout-minutes: 90
     env:
-      PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}
-      PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}
-      PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}
-      PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}
       PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELEASE_RELIABILITY_CYCLES || '10' }}
     steps:
       - name: Checkout exact release tag
@@ -328,14 +323,17 @@ jobs:
           EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
         run: bash scripts/ci/verify-release-artifacts.sh
 
-      - name: Run exact-package real proxy data-plane integration
-        id: data_plane
+      - name: Run exact-package ephemeral Remnawave proxy qualification
+        id: qualification
         env:
-          PODLAZ_E2E_PACKAGE_PATH: ${{ github.workspace }}/dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-e2e-tmp/real-provider-artifacts
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-remnawave-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-remnawave-public
+          PODLAZ_E2E_RELIABILITY_CYCLES: ${{ env.PODLAZ_E2E_RELIABILITY_CYCLES }}
         run: |
-          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
-          bash scripts/e2e/data-plane.sh
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/remnawave-proxy-acceptance.sh             "dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"
 
       - name: Purge package state
         id: cleanup
@@ -349,32 +347,25 @@ jobs:
           sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
           sudo -n systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
 
-      - name: Prepare public result
-        if: always()
-        env:
-          DATA_PLANE_OUTCOME: ${{ steps.data_plane.outcome }}
-        run: |
-          mkdir -p "${RUNNER_TEMP}/podlaz-e2e-artifacts"
-          printf 'real-provider data-plane: %s\n' "${DATA_PLANE_OUTCOME}" \
-            >"${RUNNER_TEMP}/podlaz-e2e-artifacts/real-provider-result.txt"
-
-      - name: Scan public artifacts
+      - name: Validate Remnawave proxy public evidence
         id: evidence_scan
         if: always()
-        run: bash scripts/e2e/scan-public-artifacts.sh
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-remnawave-public
+        run: bash scripts/e2e/scan-remnawave-artifacts.sh proxy
 
-      - name: Remove private E2E temp state
+      - name: Remove private Remnawave state
         id: private_cleanup
         if: always()
-        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-e2e-tmp"
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-release-remnawave-private"
 
-      - name: Upload exact data-plane diagnostics
+      - name: Upload exact Remnawave proxy evidence
         if: ${{ always() && steps.cleanup.outcome == 'success' && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-release-real-provider-${{ needs.resolve.outputs.version }}
-          path: ${{ runner.temp }}/podlaz-e2e-artifacts
-          if-no-files-found: ignore
+          name: podlaz-release-remnawave-proxy-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-release-remnawave-public/remnawave-proxy.txt
+          if-no-files-found: error
           retention-days: 7
 
   attest-and-publish:
@@ -384,7 +375,7 @@ jobs:
       - build
       - installed-runtime
       - synthetic-tun
-      - real-provider
+      - remnawave-proxy
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
