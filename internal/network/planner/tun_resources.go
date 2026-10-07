@@ -378,6 +378,8 @@ func TunResourceAllocationFromPlan(plan TunPlan) (TunResourceAllocation, error) 
 	}
 	for _, rule := range plan.PolicyRules {
 		switch {
+		case rule.Table == MainRoutingTable && strings.HasPrefix(strings.TrimSpace(rule.Selector), "to "):
+			allocation.ServerRulePriority = rule.Priority
 		case rule.Table == MainRoutingTable && strings.HasPrefix(strings.TrimSpace(rule.Selector), "fwmark "):
 			mark, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rule.Selector), "fwmark ")), 0, 32)
 			if err != nil || mark == 0 {
@@ -389,7 +391,7 @@ func TunResourceAllocationFromPlan(plan TunPlan) (TunResourceAllocation, error) 
 			allocation.TunnelRulePriority = rule.Priority
 		}
 	}
-	if allocation.TunIPv4CIDR == "" || allocation.RoutingTableID <= 0 || allocation.ServerRulePriority <= 0 || allocation.TunnelRulePriority <= 0 || allocation.ServerRulePriority >= allocation.TunnelRulePriority || allocation.EgressMark == 0 {
+	if allocation.TunIPv4CIDR == "" || allocation.RoutingTableID <= 0 || allocation.ServerRulePriority <= 0 || allocation.TunnelRulePriority <= 0 || allocation.ServerRulePriority >= allocation.TunnelRulePriority {
 		return TunResourceAllocation{}, fmt.Errorf("TUN plan is missing a complete exact session resource allocation")
 	}
 	return allocation, nil
