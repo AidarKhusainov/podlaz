@@ -56,10 +56,14 @@ schema. Each top-level native config remains one logical profile; provider
 outbounds, routing, balancers, stream settings, and unknown future fields remain
 Xray-owned. Podlaz replaces only the runtime fields it owns and validates the
 small structural/safety surface required for that composition. Generated runtime
-config remains separate from persisted source material. TUN
-validation/planning/connect must reject native Xray profiles before host-network
-mutation until endpoint-independent Xray egress is integrated. Mode support and
-public command syntax remain owned by `docs/cli.md`.
+config remains separate from persisted source material. Canonical TUN
+composition replaces only Podlaz-owned runtime fields, assigns one
+collision-free Podlaz egress mark to provider outbounds, validates the generated
+config with the bundled Xray build before unsafe host-network mutation, and
+routes only that marked transport traffic around the TUN. Provider endpoint
+extraction is not generic authority. Conflicting provider marks or incompatible
+runtime structure fail closed before host mutation. Mode support and public
+command syntax remain owned by `docs/cli.md`.
 
 ## Ownership and fail-closed networking
 
@@ -81,7 +85,7 @@ The exact envelope family/table identity and composition metadata are persisted 
 
 A protected connection is publishable as connected only after the data plane verifies, envelope authority is durable, the envelope applies/verifies, protection becomes armed, and critical connectivity is proven with the barrier active. If data-plane cleanup is incomplete, the envelope remains armed and its cleanup authority remains durable.
 
-Replacement is a generation transition within one Network Session. Endpoint changes use durable replacement authority so protection is widened before destructive handoff and narrowed only after the new generation is proven. Cleanup ordering must never create an unprotected gap.
+Replacement is a generation transition within one Network Session. Endpoint-based sessions widen the durable endpoint allow-set before destructive handoff. Mark-based native Xray sessions widen the durable Podlaz egress-mark allow-set instead. Both narrow only after the new generation is proven. Cleanup ordering must never create an unprotected gap.
 
 ## Startup, recovery, and lifecycle ordering
 
