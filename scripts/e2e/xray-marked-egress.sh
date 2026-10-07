@@ -48,6 +48,18 @@ fail() {
 
 cleanup() {
   local saved=$?
+  if [[ "${saved}" -ne 0 ]]; then
+    printf '%s\n' '--- client Xray log ---' >&2
+    cat "${CLIENT_LOG}" >&2 2>/dev/null || true
+    printf '%s\n' '--- server Xray log ---' >&2
+    cat "${SERVER_LOG}" >&2 2>/dev/null || true
+    printf '%s\n' '--- synthetic edge log ---' >&2
+    cat "${EDGE_LOG}" >&2 2>/dev/null || true
+    sudo -n ip netns exec "${CLIENT_NS}" ip rule show >&2 2>/dev/null || true
+    sudo -n ip netns exec "${CLIENT_NS}" ip route show table "${ROUTE_TABLE}" >&2 2>/dev/null || true
+    sudo -n ip netns exec "${CLIENT_NS}" nft list table inet pzmark >&2 2>/dev/null || true
+    sudo -n ip netns exec "${EDGE_NS}" nft list table inet pzedge >&2 2>/dev/null || true
+  fi
   set +e
   [[ -z "${CLIENT_PID}" ]] || sudo -n kill "${CLIENT_PID}" >/dev/null 2>&1 || true
   [[ -z "${SERVER_PID}" ]] || sudo -n kill "${SERVER_PID}" >/dev/null 2>&1 || true
