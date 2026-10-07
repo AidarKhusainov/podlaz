@@ -29,20 +29,36 @@ NODE_PORT=2222
 XRAY_PORT=24443
 
 ADMIN_TOKEN=""
+API_TOKEN=""
 USER_ID=""
 USER_SHORT_UUID=""
 FIXTURE_STARTED=0
 
 api() {
   local method="$1" path="$2" body="${3:-}" output="$4"
-  local args=(--cacert "${CA_CERT}" -fsS --max-time 20 -X "${method}" "${PANEL_URL}${path}" -H 'accept: application/json')
-  if [[ -n "${ADMIN_TOKEN}" ]]; then
-    args+=(-H "authorization: Bearer ${ADMIN_TOKEN}")
+  local token="" status
+  local args=(--cacert "${CA_CERT}" -sS --max-time 20 -X "${method}" "${PANEL_URL}${path}" -H 'accept: application/json')
+
+  if [[ -n "${API_TOKEN}" ]]; then
+    token="${API_TOKEN}"
+  elif [[ -n "${ADMIN_TOKEN}" ]]; then
+    token="${ADMIN_TOKEN}"
+    args+=(-H 'X-Remnawave-Client-Type: browser')
+  else
+    # Registration is a browser-shaped bootstrap operation in Remnawave.
+    args+=(-H 'X-Remnawave-Client-Type: browser')
+  fi
+  if [[ -n "${token}" ]]; then
+    args+=(-H "authorization: Bearer ${token}")
   fi
   if [[ -n "${body}" ]]; then
     args+=(-H 'content-type: application/json' --data-binary "@${body}")
   fi
-  curl "${args[@]}" >"${output}"
+
+  status="$(curl "${args[@]}" -o "${output}" -w '%{http_code}')"
+  if [[ ! "${status}" =~ ^2[0-9][0-9]$ ]]; then
+    fail "Remnawave API ${method} ${path} returned HTTP ${status}"
+  fi
 }
 
 wait_http() {
@@ -235,6 +251,15 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=postgres
 EOF
   chmod 0600 "${PANEL_ENV}"
+}
+
+create_api_token() {
+  local body="${STATE_DIR}/create-api-token.json" response="${STATE_DIR}/api-token-response.json"
+  jq -n '{name:"Podlaz CI",expiresInDays:1,scopes:["*"]}' >"${body}"
+  chmod 0600 "${body}"
+  api POST /api/tokens "${body}" "${response}"
+  API_TOKEN="$(jq -er '.response.token' "${response}")"
+  mask_value "${API_TOKEN}"
 }
 
 create_config_profile() {
@@ -453,6 +478,7 @@ main() {
   ADMIN_TOKEN="$(jq -er '.response.accessToken' "${register_response}")"
   mask_value "${ADMIN_TOKEN}"
 
+  create_api_token
   create_config_profile
   create_node
   start_node
