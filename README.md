@@ -18,7 +18,18 @@ Podlaz is a command-line VPN client for Linux.
 Podlaz is distributed as Debian packages for `amd64` and `arm64` on
 systemd-based Linux systems.
 
-Download a package from [GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases) and install it:
+Install the latest release with one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/scripts/install.sh | bash
+```
+
+The installer detects the Debian architecture, downloads the matching package
+and `SHA256SUMS` from the latest GitHub Release, verifies the package checksum,
+and elevates privileges only for the package installation.
+
+For manual installation, download a package from
+[GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases) and install it:
 
 ```bash
 sudo apt install ./podlaz_<version>_linux_<arch>.deb
@@ -29,6 +40,12 @@ Check the installation:
 ```bash
 podlaz version
 systemctl is-active podlazd.service
+```
+
+`plz` is a short alias for `podlaz`:
+
+```bash
+plz status
 ```
 
 Release assets include `SHA256SUMS` and GitHub build provenance attestations.
