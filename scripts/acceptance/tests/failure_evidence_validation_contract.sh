@@ -69,7 +69,7 @@ JSON
 
 ra_status_json() { printf '%s' '{"connection":"inactive","transactions":[]}'; }
 ra_product() {
-  if [[ "${1:-}" == doctor && "${2:-}" == --tun && "${3:-}" == --json ]]; then
+  if [[ "${1:-}" == debug && "${2:-}" == doctor && "${3:-}" == --tun && "${4:-}" == --json ]]; then
     RA_CAPTURE='{"schema_version":1,"status":"unhealthy","primary_classification":"network_apply_failure"}'
     RA_CAPTURE_RC=3
     return 3
