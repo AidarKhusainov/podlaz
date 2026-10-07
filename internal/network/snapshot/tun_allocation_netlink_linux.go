@@ -158,7 +158,12 @@ func tunAllocationEvidenceFromNetlink(addresses []netlink.Addr, routes []netlink
 		if defaultKernelPolicyRuleNumeric(priority, table) {
 			continue
 		}
-		converted := TunAllocationRule{Priority: priority, Table: table, Mark: rule.Mark}
+		converted := TunAllocationRule{
+			Priority: priority,
+			Table:    table,
+			HasMark:  rule.Mark != 0 || rule.Mask != nil,
+			Mark:     rule.Mark,
+		}
 		switch {
 		case rule.Mask != nil:
 			converted.MarkMask = *rule.Mask
