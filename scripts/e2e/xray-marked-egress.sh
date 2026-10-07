@@ -285,7 +285,7 @@ cat >"${CLIENT_CONFIG}" <<JSON
   "dns": {
     "queryStrategy": "UseIPv4",
     "disableFallback": true,
-    "servers": [{"address":"${EDGE_IP}","port":53,"tag":"bootstrap-dns","queryStrategy":"UseIPv4","skipFallback":true}]
+    "servers": [{"address":"tcp://${EDGE_IP}","port":53,"tag":"bootstrap-dns","queryStrategy":"UseIPv4","skipFallback":true}]
   },
   "inbounds": [
     {"tag":"client-a","listen":"127.0.0.1","port":1081,"protocol":"socks","settings":{"udp":true}},
@@ -321,7 +321,7 @@ cat >"${CLIENT_CONFIG}" <<JSON
   "routing": {
     "domainStrategy": "AsIs",
     "rules": [
-      {"type":"field","inboundTag":["bootstrap-dns"],"outboundTag":"dns-marked"},
+      {"type":"field","inboundTag":["bootstrap-dns"],"network":"tcp","port":"53","outboundTag":"dns-marked"},
       {"type":"field","inboundTag":["client-a"],"outboundTag":"provider-a"},
       {"type":"field","inboundTag":["client-b"],"outboundTag":"provider-b"},
       {"type":"field","inboundTag":["client-udp"],"outboundTag":"udp-marked"}
