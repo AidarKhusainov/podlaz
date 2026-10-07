@@ -1,83 +1,58 @@
-name: Integration
+name: Ephemeral Remnawave
 
 on:
-  push:
-    branches:
-      - master
-  schedule:
-    - cron: '17 3 * * *'
-    - cron: '47 4 * * 0'
+  pull_request:
+    paths:
+      - '.github/workflows/ephemeral-remnawave.yml'
+      - '.github/workflows/integration.yml'
+      - '.github/workflows/release.yml'
+      - 'scripts/e2e/remnawave-fixture.sh'
+      - 'scripts/e2e/remnawave-subscription-acceptance.sh'
+      - 'scripts/e2e/remnawave-proxy-acceptance.sh'
+      - 'scripts/e2e/hosted-remnawave-tun.sh'
+      - 'scripts/e2e/hosted-synthetic-tun.sh'
+      - 'scripts/e2e/lib/**'
+      - 'internal/sub/**'
+      - 'internal/app/cli/*subscription*'
+      - 'internal/app/cli/import_*'
   workflow_dispatch:
-    inputs:
-      remnawave_subscription:
-        description: Run the ephemeral Remnawave subscription/HWID check from master
-        required: false
-        default: false
-        type: boolean
-      remnawave_proxy:
-        description: Run the ephemeral Remnawave proxy data-plane check from master
-        required: false
-        default: false
-        type: boolean
-      remnawave_tun:
-        description: Run proxy plus isolated ephemeral Remnawave TUN qualification from master
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: integration-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: ephemeral-remnawave-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  installed-product:
-    name: Installed package runtime
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+  feasibility:
+    name: Hosted fixture feasibility
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version-file: 'go.mod'
-          cache: true
-          cache-dependency-path: |
-            go.mod
-            packaging/package-toolchain.env
-
-      - name: Run installed package integration
+      - name: Prove ephemeral Remnawave fixture
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-private
         run: |
-          rm -rf "${RUNNER_TEMP}/podlaz-e2e-artifacts" "${RUNNER_TEMP}/podlaz-e2e-tmp"
-          bash scripts/e2e/installed-package-integration.sh
+          rm -rf "${E2E_TMP_ROOT}"
+          install -d -m 0700 "${E2E_TMP_ROOT}"
+          bash scripts/e2e/remnawave-fixture.sh
 
-      - name: Upload integration diagnostics
+      - name: Remove feasibility private state
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: podlaz-installed-product-integration
-          path: ${{ runner.temp }}/podlaz-e2e-artifacts
-          if-no-files-found: ignore
-          retention-days: 7
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-private"
 
-  remnawave-subscription:
-    name: Remnawave subscription and HWID lifecycle
-    if: >-
-      ${{ github.event_name == 'schedule' ||
-          (github.event_name == 'workflow_dispatch' &&
-           github.ref == 'refs/heads/master' &&
-           inputs.remnawave_subscription) }}
+  subscription-hwid:
+    name: Live subscription and HWID lifecycle
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
-      CANDIDATE_COMMIT: ${{ github.sha }}
+      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
@@ -94,7 +69,7 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Build exact subscription candidate
+      - name: Build exact candidate package
         env:
           PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
@@ -102,11 +77,10 @@ jobs:
           bash scripts/build-deb.sh
           test -f "${DEV_DEB}"
 
-      - name: Run live Remnawave subscription and HWID qualification
-        id: qualification
+      - name: Prove Podlaz subscription and HWID lifecycle
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-subscription-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-subscription-public
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-client-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-client-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
@@ -117,36 +91,30 @@ jobs:
         id: evidence_scan
         if: always()
         env:
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-subscription-public
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-client-public
         run: bash scripts/e2e/scan-remnawave-artifacts.sh subscription
 
       - name: Remove subscription private state
         id: private_cleanup
         if: always()
-        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-subscription-private"
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-client-private"
 
       - name: Upload subscription and HWID evidence
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-remnawave-subscription
-          path: ${{ runner.temp }}/podlaz-remnawave-subscription-public/remnawave-subscription.txt
+          name: podlaz-remnawave-subscription-pr
+          path: ${{ runner.temp }}/podlaz-remnawave-client-public/remnawave-subscription.txt
           if-no-files-found: error
           retention-days: 7
 
-  remnawave-proxy:
+  proxy:
     name: Ephemeral Remnawave proxy data plane
-    if: >-
-      ${{ github.event_name == 'schedule' ||
-          (github.event_name == 'workflow_dispatch' &&
-           github.ref == 'refs/heads/master' &&
-           (inputs.remnawave_proxy || inputs.remnawave_tun)) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
     env:
-      CANDIDATE_COMMIT: ${{ github.sha }}
+      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
-      PODLAZ_E2E_RELIABILITY_CYCLES: ${{ vars.PODLAZ_E2E_RELIABILITY_CYCLES || '3' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -162,7 +130,7 @@ jobs:
             go.mod
             packaging/package-toolchain.env
 
-      - name: Build exact proxy candidate
+      - name: Build exact candidate package
         env:
           PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
@@ -170,13 +138,12 @@ jobs:
           bash scripts/build-deb.sh
           test -f "${DEV_DEB}"
 
-      - name: Run ephemeral Remnawave proxy qualification
-        id: qualification
+      - name: Prove proxy data plane through ephemeral Remnawave
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-proxy-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-proxy-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-          PODLAZ_E2E_RELIABILITY_CYCLES: ${{ env.PODLAZ_E2E_RELIABILITY_CYCLES }}
+          PODLAZ_E2E_RELIABILITY_CYCLES: '3'
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
@@ -198,24 +165,17 @@ jobs:
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-remnawave-proxy
+          name: podlaz-remnawave-proxy-pr
           path: ${{ runner.temp }}/podlaz-remnawave-proxy-public/remnawave-proxy.txt
           if-no-files-found: error
           retention-days: 7
 
-  remnawave-tun:
+  full-tun:
     name: Isolated ephemeral Remnawave full-TUN
-    needs: remnawave-proxy
-    if: >-
-      ${{ (github.event_name == 'schedule' &&
-           github.event.schedule == '47 4 * * 0') ||
-          (github.event_name == 'workflow_dispatch' &&
-           github.ref == 'refs/heads/master' &&
-           inputs.remnawave_tun) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      CANDIDATE_COMMIT: ${{ github.sha }}
+      CANDIDATE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       DEV_DEB: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
     steps:
       - name: Checkout
@@ -238,7 +198,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
           bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact TUN candidate
+      - name: Build exact candidate package
         env:
           PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
@@ -249,8 +209,7 @@ jobs:
         id: candidate
         run: printf 'sha256=%s\n' "$(sha256sum "${DEV_DEB}" | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
 
-      - name: Run isolated ephemeral Remnawave TUN qualification
-        id: qualification
+      - name: Run isolated Remnawave full-TUN qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-tun-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-tun-public
@@ -278,7 +237,7 @@ jobs:
         if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-remnawave-tun
+          name: podlaz-remnawave-tun-pr
           path: ${{ runner.temp }}/podlaz-remnawave-tun-public/hosted-remnawave-tun.txt
           if-no-files-found: error
           retention-days: 7

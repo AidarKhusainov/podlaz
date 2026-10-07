@@ -5,48 +5,45 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
-# shellcheck source=lib/profile_input.sh
-source "${SCRIPT_DIR}/lib/profile_input.sh"
 # Reuse the permanent hosted nspawn/TUN substrate. This scenario owns only
-# trusted-provider material handling and provider compatibility assertions.
+# ephemeral Remnawave material handling and compatibility assertions.
 # shellcheck source=hosted-synthetic-tun.sh
 source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"
 
-REPORT="${E2E_ARTIFACT_DIR}/hosted-real-provider-tun.txt"
-MACHINE="podlaz-real-provider-tun"
-HOST_VETH="pzrealtun0"
-HOST_ENDPOINT_DEV="pzrealstub0"
+REPORT="${E2E_ARTIFACT_DIR}/hosted-remnawave-tun.txt"
+MACHINE="podlaz-remnawave-tun"
+HOST_VETH="pzremtun0"
+HOST_ENDPOINT_DEV="pzremstub0"
 GUEST_IF="host0"
-NFT_TABLE="pzreal_hosted"
-FOREIGN_NFT_TABLE="pzreal_foreign"
+NFT_TABLE="pzrem_hosted"
+FOREIGN_NFT_TABLE="pzrem_foreign"
 NETWORK_CIDR="172.31.250.0/30"
 HOST_CIDR="172.31.250.1/30"
 GUEST_CIDR="172.31.250.2/30"
 HOST_IP="172.31.250.1"
 ENDPOINT_CIDR="172.31.249.1/32"
 ENDPOINT_IP="172.31.249.1"
-GUEST_ROOT="${E2E_TMP_ROOT}/real-provider-system-guest"
-PRIVATE_ROOT="${E2E_TMP_ROOT}/real-provider-private"
+GUEST_ROOT="${E2E_TMP_ROOT}/remnawave-system-guest"
+PRIVATE_ROOT="${E2E_TMP_ROOT}/remnawave-private"
 XRAY_ROOT="${PRIVATE_ROOT}/unused-synthetic-bind"
-GUEST_CANDIDATE="/opt/podlaz-real-provider-candidate.deb"
-GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-real-provider-tun"
-GUEST_PRIVATE="/tmp/podlaz-hosted-real-provider-tun"
+GUEST_CANDIDATE="/opt/podlaz-remnawave-candidate.deb"
+GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-remnawave-tun"
+GUEST_PRIVATE="/tmp/podlaz-hosted-remnawave-tun"
 GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
-GUEST_PROVIDER_DIR="/tmp/podlaz-provider-material"
+GUEST_PROVIDER_DIR="/tmp/podlaz-remnawave-material"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
-EXPECTED_EGRESS_IP="${PODLAZ_E2E_EXPECTED_EGRESS_IP:-}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
-  provider.material_private
+  remnawave.material_private
   ordinary_user.boundary
   tun.verified_active
   tun.system_dns
   tun.ipv4_tcp
   tun.tls
   tun.https
-  tun.provider_egress
+  tun.remnawave_path
   tun.doctor
   privacy.direct_uplink_blocked
   foreign.state_preserved
@@ -57,6 +54,7 @@ EVIDENCE_KEYS=(
   guest.ordinary_connectivity_restored
   outer.cleanup
   artifact.privacy
+  fixture.cleanup
 )
 
 FAILURE_CLASS=diagnostic_unknown
@@ -72,11 +70,17 @@ PROFILE_URI=""
 ORDINARY_EGRESS=""
 ACTIVE_EGRESS=""
 PROBE_IP=""
+REMNAWAVE_FIXTURE_TMP="${E2E_TMP_ROOT}/remnawave-tun-fixture"
+REMNAWAVE_COMPOSE="${REMNAWAVE_FIXTURE_TMP}/remnawave-fixture/compose.yml"
+REMNAWAVE_PROFILE_FILE="${PRIVATE_ROOT}/remnawave-profile-uri"
+REMNAWAVE_ACTIVE=false
+REMNAWAVE_ACCESS_BEFORE=0
+
 
 mark_failure() {
   local class="$1" step="$2"
   case "${class}" in
-    product|provider|fixture|infrastructure|capability|diagnostic_unknown|none) ;;
+    product|remnawave|fixture|infrastructure|capability|diagnostic_unknown|none) ;;
     *) class=diagnostic_unknown ;;
   esac
   FAILURE_CLASS="${class}"
@@ -105,7 +109,7 @@ expected_commit = sys.argv[2]
 expected_digest = sys.argv[3]
 required = sys.argv[4:]
 if not path.is_file() or path.is_symlink():
-    raise SystemExit("trusted provider TUN report is missing")
+    raise SystemExit("ephemeral Remnawave TUN report is missing")
 values = {}
 meta = {}
 for line in path.read_text(encoding="utf-8").splitlines():
@@ -130,29 +134,29 @@ for line in path.read_text(encoding="utf-8").splitlines():
             raise SystemExit(f"duplicate failure metadata: {key}")
         meta[f"failure.{key}"] = value
         continue
-    raise SystemExit("trusted provider TUN report contains non-normalized data")
+    raise SystemExit("ephemeral Remnawave TUN report contains non-normalized data")
 if set(values) != set(required):
-    raise SystemExit("trusted provider TUN evidence schema mismatch")
+    raise SystemExit("ephemeral Remnawave TUN evidence schema mismatch")
 if meta.get("commit") != expected_commit or meta.get("package_sha256") != expected_digest:
-    raise SystemExit("trusted provider TUN provenance metadata mismatch")
+    raise SystemExit("ephemeral Remnawave TUN provenance metadata mismatch")
 if meta.get("failure.class") not in {
-    "none", "product", "provider", "fixture", "infrastructure", "capability", "diagnostic_unknown"
+    "none", "product", "remnawave", "fixture", "infrastructure", "capability", "diagnostic_unknown"
 }:
-    raise SystemExit("trusted provider TUN failure class is invalid")
+    raise SystemExit("ephemeral Remnawave TUN failure class is invalid")
 if not re.fullmatch(r"[A-Za-z0-9_.-]+", meta.get("failure.step", "")):
-    raise SystemExit("trusted provider TUN failure step is invalid")
+    raise SystemExit("ephemeral Remnawave TUN failure step is invalid")
 for key in required:
     allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
     if values[key] not in allowed:
         raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
 if meta.get("failure.class") != "none" or meta.get("failure.step") != "none":
-    raise SystemExit("trusted provider TUN report contains a failure")
+    raise SystemExit("ephemeral Remnawave TUN report contains a failure")
 PY
 }
 
 assert_public_artifact_privacy() {
   local extra
-  extra="$(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 ! -name 'hosted-real-provider-tun.txt' -print -quit)"
+  extra="$(find "${E2E_ARTIFACT_DIR}" -mindepth 1 -maxdepth 1 ! -name 'hosted-remnawave-tun.txt' -print -quit)"
   [[ -z "${extra}" ]] || return 1
   [[ -f "${REPORT}" && ! -L "${REPORT}" ]] || return 1
   python3 - "${REPORT}" <<'PY'
@@ -164,12 +168,12 @@ allowed = [
     re.compile(r"candidate\.commit=[0-9a-f]{40}"),
     re.compile(r"candidate\.package_sha256=[0-9a-f]{64}"),
     re.compile(r"[a-z0-9_.-]+=(?:pass|fail|observed|unavailable)"),
-    re.compile(r"failure\.class=(?:none|product|provider|fixture|infrastructure|capability|diagnostic_unknown)"),
+    re.compile(r"failure\\.class=(?:none|product|remnawave|fixture|infrastructure|capability|diagnostic_unknown)"),
     re.compile(r"failure\.step=[A-Za-z0-9_.-]+"),
 ]
 for raw in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     if not any(pattern.fullmatch(raw) for pattern in allowed):
-        raise SystemExit("public provider TUN evidence contains non-normalized data")
+        raise SystemExit("public Remnawave TUN evidence contains non-normalized data")
 PY
 }
 
@@ -184,24 +188,47 @@ mask_multiline_sensitive() {
 }
 
 mask_provider_material() {
-  [[ -n "${PODLAZ_E2E_PROFILE_URI:-}" ]] && mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI}"
-  [[ -n "${PODLAZ_E2E_PROFILE_URI_LIST:-}" ]] && mask_multiline_sensitive "${PODLAZ_E2E_PROFILE_URI_LIST}"
-  [[ -n "${EXPECTED_EGRESS_IP}" ]] && mask_value "${EXPECTED_EGRESS_IP}"
   return 0
+}
+
+start_remnawave_fixture() {
+  install -d -m 0700 "${REMNAWAVE_FIXTURE_TMP}" "${PRIVATE_ROOT}"
+  E2E_TMP_ROOT="${REMNAWAVE_FIXTURE_TMP}" \
+  E2E_ARTIFACT_DIR="${REMNAWAVE_FIXTURE_TMP}/private-artifacts" \
+  PODLAZ_REMNAWAVE_NODE_BIND_IP="${HOST_IP}" \
+  PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${HOST_IP}" \
+    bash "${SCRIPT_DIR}/remnawave-fixture.sh" export-profile "${REMNAWAVE_PROFILE_FILE}"
+  [[ -f "${REMNAWAVE_PROFILE_FILE}" && ! -L "${REMNAWAVE_PROFILE_FILE}" ]] ||     fail "Remnawave fixture did not export provider material"
+  REMNAWAVE_ACTIVE=true
+}
+
+stop_remnawave_fixture() {
+  local failed=0
+  [[ "${REMNAWAVE_ACTIVE}" == true ]] || return 0
+  docker compose -f "${REMNAWAVE_COMPOSE}" down -v --remove-orphans >/dev/null 2>&1 || failed=1
+  if docker ps -aq --filter 'label=com.docker.compose.project=remnawave-fixture' | grep -q .; then failed=1; fi
+  if docker network inspect podlaz-remnawave-fixture >/dev/null 2>&1; then failed=1; fi
+  if docker volume inspect podlaz-remnawave-db >/dev/null 2>&1; then failed=1; fi
+  rm -rf "${REMNAWAVE_FIXTURE_TMP}"
+  REMNAWAVE_ACTIVE=false
+  (( failed == 0 ))
+}
+
+remnawave_node_access_count() {
+  local value
+  value="$(docker compose -f "${REMNAWAVE_COMPOSE}" exec -T remnanode sh -c \
+    'if [ -f /tmp/podlaz-remnawave-access.log ]; then wc -l </tmp/podlaz-remnawave-access.log; else printf 0; fi' \
+    2>/dev/null | tr -d '[:space:]')"
+  [[ "${value}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "${value}"
 }
 
 prepare_provider_material() {
   local host_uri="${PRIVATE_ROOT}/provider-uri"
-  [[ -n "${PODLAZ_E2E_PROFILE_URI:-}" || -n "${PODLAZ_E2E_PROFILE_URI_LIST:-}" ]] || {
-    mark_failure capability provider.credentials_unavailable
-    return 1
-  }
-  PROFILE_URI="$(first_configured_profile_uri)"
-  [[ -n "${PROFILE_URI}" ]] || {
-    mark_failure capability provider.credentials_unavailable
-    return 1
-  }
-  install -d -m 0700 "${PRIVATE_ROOT}"
+  [[ -f "${REMNAWAVE_PROFILE_FILE}" && ! -L "${REMNAWAVE_PROFILE_FILE}" ]] || return 1
+  PROFILE_URI="$(cat "${REMNAWAVE_PROFILE_FILE}")"
+  [[ "${PROFILE_URI}" == vless://* ]] || return 1
+  mask_value "${PROFILE_URI}"
   printf '%s\n' "${PROFILE_URI}" >"${host_uri}"
   chmod 0600 "${host_uri}"
   guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PROVIDER_DIR}"
@@ -212,7 +239,7 @@ prepare_provider_material() {
 }
 
 remove_provider_material() {
-  rm -f -- "${PRIVATE_ROOT}/provider-uri" "${PRIVATE_ROOT}/profile-id"
+  rm -f -- "${PRIVATE_ROOT}/provider-uri" "${PRIVATE_ROOT}/profile-id" "${REMNAWAVE_PROFILE_FILE}"
   if [[ "${SYSTEM_GUEST_ACTIVE}" == true ]]; then
     guest_exec rm -rf "${GUEST_PROVIDER_DIR}" >/dev/null 2>&1 || true
   fi
@@ -256,7 +283,7 @@ PY
       domain=product
       ;;
     server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout)
-      domain=provider
+      domain=remnawave
       ;;
     *)
       domain=diagnostic_unknown
@@ -311,6 +338,9 @@ assert_direct_uplink_blocked() {
 }
 
 run_provider_traffic_checks() {
+  local before after
+  before="$(remnawave_node_access_count)" || return 1
+
   guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
   record_evidence tun.system_dns pass
@@ -332,24 +362,16 @@ run_provider_traffic_checks() {
 import ipaddress,sys
 value=ipaddress.ip_address(sys.argv[1])
 if value.version != 4:
-    raise SystemExit("active provider egress is not IPv4")
+    raise SystemExit("active Remnawave egress is not IPv4")
 PY
   mask_value "${ACTIVE_EGRESS}"
-  [[ "${ACTIVE_EGRESS}" != "${ORDINARY_EGRESS}" ]] || {
-    mark_failure capability provider.egress_not_distinguishable
+
+  after="$(remnawave_node_access_count)" || return 1
+  (( after > before )) || {
+    mark_failure remnawave remnawave.path_not_observed
     return 1
   }
-  if [[ -n "${EXPECTED_EGRESS_IP}" ]]; then
-    [[ "${ACTIVE_EGRESS}" == "${EXPECTED_EGRESS_IP}" ]] || {
-      mark_failure provider provider.egress_mismatch
-      return 1
-    }
-    [[ "${ORDINARY_EGRESS}" != "${EXPECTED_EGRESS_IP}" ]] || {
-      mark_failure capability provider.egress_not_distinguishable
-      return 1
-    }
-  fi
-  record_evidence tun.provider_egress pass
+  record_evidence tun.remnawave_path pass
 }
 
 assert_ordinary_connectivity_restored() {
@@ -371,7 +393,10 @@ run_provider_scenario() {
   mark_failure infrastructure guest.prepare
   prepare_system_guest || fail "could not prepare isolated provider guest"
   install_tun_authorization || fail "could not install production authorization fixture"
-  start_system_guest || fail "could not start isolated provider guest"
+  start_system_guest || fail "could not start isolated Remnawave guest"
+
+  mark_failure fixture remnawave.bootstrap
+  start_remnawave_fixture || fail "could not start ephemeral Remnawave fixture"
 
   mark_failure infrastructure guest.ordinary_connectivity
   capture_ordinary_egress || fail "isolated guest ordinary connectivity is unavailable"
@@ -382,13 +407,13 @@ run_provider_scenario() {
 
   mark_failure fixture provider.material
   guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PRIVATE}"
-  prepare_provider_material || fail "trusted provider material is unavailable"
-  import_provider_profile || fail "trusted provider profile import/validation failed"
+  prepare_provider_material || fail "ephemeral Remnawave material is unavailable"
+  import_provider_profile || fail "ephemeral Remnawave profile import/validation failed"
   remove_provider_material
-  record_evidence provider.material_private pass
+  record_evidence remnawave.material_private pass
 
   mark_failure product ordinary_user.boundary
-  assert_ordinary_user_boundary || fail "provider TUN did not use the ordinary-user authorization boundary"
+  assert_ordinary_user_boundary || fail "Remnawave TUN did not use the ordinary-user authorization boundary"
   record_evidence ordinary_user.boundary pass
 
   mark_failure fixture foreign.state
@@ -404,52 +429,56 @@ run_provider_scenario() {
   set -e
   if (( connect_code != 0 )); then
     classify_provider_tun_connect_failure "${connect_code}"
-    fail "trusted provider TUN connect failed"
+    fail "ephemeral Remnawave TUN connect failed"
   fi
   if ! wait_guest_status verified-active 90; then
     classify_provider_tun_connect_failure 1
-    fail "trusted provider TUN did not reach verified-active state"
+    fail "ephemeral Remnawave TUN did not reach verified-active state"
   fi
 
   mark_failure product tun.active_authority
-  assert_verified_active_authority || fail "trusted provider TUN active authority is incomplete"
+  assert_verified_active_authority || fail "ephemeral Remnawave TUN active authority is incomplete"
   record_evidence tun.verified_active pass
 
-  mark_failure provider provider_tun.data_plane
-  run_provider_traffic_checks || fail "trusted provider TUN data plane failed"
+  mark_failure remnawave provider_tun.data_plane
+  run_provider_traffic_checks || fail "ephemeral Remnawave TUN data plane failed"
 
   mark_failure product privacy.direct_uplink
   prepare_direct_probe || fail "could not prepare direct-uplink privacy probe"
   assert_direct_uplink_blocked || fail "ordinary direct uplink bypassed active Privacy Envelope"
   record_evidence privacy.direct_uplink_blocked pass
-  assert_foreign_sentinel || fail "foreign guest state changed while provider TUN was active"
+  assert_foreign_sentinel || fail "foreign guest state changed while Remnawave TUN was active"
   record_evidence foreign.state_preserved pass
 
   mark_failure product tun.doctor
-  run_tun_doctor || fail "doctor --tun failed against active provider TUN"
+  run_tun_doctor || fail "doctor --tun failed against active Remnawave TUN"
 
   mark_failure product tun.disconnect
   run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr" || \
-    fail "normal provider TUN disconnect failed"
-  wait_guest_status clean-inactive 90 || fail "provider TUN did not converge to clean-inactive"
+    fail "normal Remnawave TUN disconnect failed"
+  wait_guest_status clean-inactive 90 || fail "Remnawave TUN did not converge to clean-inactive"
   record_evidence tun.clean_disconnect pass
 
   mark_failure product tun.terminal_cleanup
-  assert_terminal_authority_clean || fail "provider TUN left owned authority or runtime state"
+  assert_terminal_authority_clean || fail "Remnawave TUN left owned authority or runtime state"
   record_evidence tun.terminal_cleanup pass
 
   mark_failure product tun.recovery
-  run_clean_recovery || fail "provider TUN recovery plan is not clean after disconnect"
+  run_clean_recovery || fail "Remnawave TUN recovery plan is not clean after disconnect"
   record_evidence tun.recovery_clean pass
 
   mark_failure product guest.baseline_restore
-  assert_guest_network_baseline_restored || fail "provider TUN did not restore guest network baseline"
+  assert_guest_network_baseline_restored || fail "Remnawave TUN did not restore guest network baseline"
   record_evidence guest.baseline_restored pass
-  assert_ordinary_connectivity_restored || fail "ordinary guest connectivity did not recover after provider TUN"
+  assert_ordinary_connectivity_restored || fail "ordinary guest connectivity did not recover after Remnawave TUN"
   record_evidence guest.ordinary_connectivity_restored pass
 
   mark_failure fixture guest.private_cleanup
-  remove_guest_private_state || fail "provider private guest state could not be removed"
+  remove_guest_private_state || fail "Remnawave private guest state could not be removed"
+
+  mark_failure fixture remnawave.cleanup
+  stop_remnawave_fixture || fail "ephemeral Remnawave fixture cleanup failed"
+  record_evidence fixture.cleanup pass
 
   FAILURE_CLASS=none
   FAILURE_STEP=none
@@ -466,10 +495,11 @@ main() {
   chmod 0600 "${REPORT}"
   printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}" >>"${REPORT}"
   printf 'candidate.package_sha256=%s\n' "${CANDIDATE_SHA256}" >>"${REPORT}"
-  trap 'remove_provider_material; teardown_all' EXIT INT TERM
+  trap 'remove_provider_material; stop_remnawave_fixture; teardown_all' EXIT INT TERM
   mask_provider_material
   run_provider_scenario
   remove_provider_material
+  stop_remnawave_fixture
   teardown_all
 }
 

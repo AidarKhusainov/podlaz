@@ -242,7 +242,7 @@ assert_active_proxy_only_control_plane() {
   for pass in 1 2; do
     expect_private_success "status-${phase}-active-${pass}" run_installed_podlaz status
     grep -Fx "Status: Connected" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not connected"
-    grep -Fx "Mode: proxy-only" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not proxy-only"
+    grep -Fx "Protection: Proxy only" "${LAST_STDOUT}" >/dev/null || fail "${phase}: active status pass ${pass} is not proxy-only"
     if [[ "${pass}" == "1" ]]; then
       sudo -n test -f "${ACTIVE_RUNTIME_CONFIG_PATH}" || fail "${phase}: active runtime config is missing"
     fi

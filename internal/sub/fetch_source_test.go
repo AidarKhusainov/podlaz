@@ -133,6 +133,50 @@ func TestFetchSourceRejectsInvalidClientIDPlaceholderURLsBeforeCreatingIdentity(
 	}
 }
 
+func TestFetchSourceRejectsProviderHWIDPolicyResponse(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	const rejectionBody = "provider-device-limit-response"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientID := r.Header.Get(subscriptionClientHeader)
+		if !validClientID(clientID) {
+			t.Fatalf("expected stable client identity header, got %q", clientID)
+		}
+		w.Header().Set("X-Hwid-Limit", "true")
+		w.Header().Set("X-Hwid-Max-Devices-Reached", "true")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(rejectionBody))
+	}))
+	defer server.Close()
+
+	sourceURL := server.URL + "/sub?token=sensitive"
+	_, err := FetchSource(context.Background(), Source{
+		ID:     "provider-policy",
+		Name:   "provider-policy",
+		URL:    sourceURL,
+		Format: FormatBase64,
+	})
+	if err == nil {
+		t.Fatal("expected provider HWID policy rejection")
+	}
+	if !errors.Is(err, errSubscriptionClientPolicyRejected) {
+		t.Fatalf("expected provider client-policy rejection, got %v", err)
+	}
+
+	clientIDBytes, readErr := os.ReadFile(filepath.Join(stateHome, "podlaz", clientIDFileName))
+	if readErr != nil {
+		t.Fatalf("read persisted client-id: %v", readErr)
+	}
+	clientID := strings.TrimSpace(string(clientIDBytes))
+	errText := err.Error()
+	for _, sensitive := range []string{clientID, sourceURL, "token=sensitive", rejectionBody} {
+		if strings.Contains(errText, sensitive) {
+			t.Fatalf("provider policy error leaked sensitive data %q in %q", sensitive, errText)
+		}
+	}
+}
+
 func TestFetchSourceRedactsClientIdentityAndSubscriptionURLFromFetchErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

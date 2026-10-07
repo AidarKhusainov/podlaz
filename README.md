@@ -131,6 +131,16 @@ See [docs/cli.md](docs/cli.md) for the full CLI contract and
 [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, recovery, Privacy Envelope,
 restart, package-upgrade, and networking invariants.
 
+## Provider compatibility evidence
+
+Permanent hosted qualification pins and exercises Remnawave Panel 3.4.5 with
+Remnawave Node 3.4.2. The acceptance path provisions a disposable fixture from
+empty runner state and proves subscription import/refresh, stable private
+`x-hwid` identity with a one-device policy, proxy traffic, and isolated
+full-TUN DNS/TCP/TLS/HTTPS plus privacy/cleanup invariants. No maintainer-owned
+Remnawave account, subscription, API credential, or production provider state is
+required by these permanent checks.
+
 ## License
 
 Podlaz is licensed under the [MIT License](LICENSE).

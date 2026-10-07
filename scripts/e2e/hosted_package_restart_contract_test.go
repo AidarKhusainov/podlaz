@@ -17,16 +17,12 @@ const (
 	packageRestartScenario       = "tun-package-restart-recovery.sh"
 )
 
-func TestHostedPackageRestartUsesIsolatedRealProviderGuest(t *testing.T) {
+func TestHostedPackageRestartUsesIsolatedEphemeralRemnawaveGuest(t *testing.T) {
 	workflow := readRequiredFile(t, hostedPackageRestartWorkflow)
 	for _, required := range []string{
 		"name: Hosted Package Restart",
+		"name: Ephemeral Remnawave v0.2.40 package restart",
 		"runs-on: ubuntu-24.04",
-		"environment: vpn-e2e",
-		"PODLAZ_E2E_PROFILE_URI: ${{ secrets.PODLAZ_E2E_PROFILE_URI }}",
-		"PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.PODLAZ_E2E_PROFILE_URI_LIST }}",
-		"PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.PODLAZ_E2E_EXPECTED_EGRESS_IP }}",
-		"PODLAZ_E2E_PUBLIC_IP_CHECK_URL: ${{ vars.PODLAZ_E2E_PUBLIC_IP_CHECK_URL }}",
 		"podlaz_0.2.40_linux_amd64.deb",
 		"c9d8f76838292d39355506123e2f03ca1f0a96227fb2c22af8324ac6baf3b278",
 		"0.2.42+git.",
@@ -38,6 +34,8 @@ func TestHostedPackageRestartUsesIsolatedRealProviderGuest(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"runs-on: self-hosted",
+		"environment: vpn-e2e",
+		"${{ secrets.",
 		"PODLAZ_E2E_PROFILE_URI='<",
 		"sudo bash scripts/e2e/tun-package-restart-recovery.sh",
 	} {
@@ -61,6 +59,12 @@ func TestHostedPackageRestartReusesHostedSyntheticGuestSubstrate(t *testing.T) {
 		"source \"${SCRIPT_DIR}/hosted-synthetic-tun.sh\"",
 		"prepare_system_guest",
 		"start_system_guest",
+		"start_remnawave_fixture",
+		"remnawave-fixture.sh",
+		`PODLAZ_REMNAWAVE_NODE_BIND_IP="${ENDPOINT_IP}"`,
+		`PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${ENDPOINT_IP}"`,
+		"remnawave_node_access_count",
+		"source.remnawave_path",
 		"install_tun_authorization",
 		"install_package_restart_recovery_authorization",
 		`action.id == "io.github.aidarkhusainov.podlaz.recover-execute"`,
@@ -84,8 +88,8 @@ func TestHostedPackageRestartReusesHostedSyntheticGuestSubstrate(t *testing.T) {
 			t.Fatalf("hosted package restart scenario lost %q", required)
 		}
 	}
-	if got := strings.Count(scenario, `FOREIGN_NFT_TABLE="${FOREIGN_NFT_TABLE}"`); got != 2 {
-		t.Fatalf("hosted package restart must hand the v0.2.40-safe foreign nft sentinel to both focused branches, got %d", got)
+	if got := strings.Count(scenario, `FOREIGN_NFT_TABLE="${FOREIGN_NFT_TABLE}"`); got != 1 {
+		t.Fatalf("hosted package restart must hand the v0.2.40-safe foreign nft sentinel to the focused run, got %d", got)
 	}
 
 	for _, forbidden := range []string{

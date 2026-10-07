@@ -5,8 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=lib/e2e.sh
 source "${SCRIPT_DIR}/lib/e2e.sh"
-# shellcheck source=lib/profile_input.sh
-source "${SCRIPT_DIR}/lib/profile_input.sh"
 # shellcheck source=hosted-synthetic-tun.sh
 source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"
 
@@ -31,15 +29,17 @@ GUEST_RUN_ROOT="/run/podlaz-hosted-package-restart"
 GUEST_FOCUSED_PRIVATE="${GUEST_RUN_ROOT}/private"
 GUEST_FOCUSED_PUBLIC="/opt/podlaz-hosted-package-restart-public"
 GUEST_PROFILE_FILE="${GUEST_RUN_ROOT}/profile-uri"
-GUEST_EGRESS_FILE="${GUEST_RUN_ROOT}/expected-egress"
 GUEST_PREVIOUS="${GUEST_RUN_ROOT}/podlaz-v0.2.40.deb"
 PACKAGE_RESTART_RECOVERY_RULE="/etc/polkit-1/rules.d/50-podlaz-hosted-package-restart.rules"
 OUTER_PROFILE_FILE="${XRAY_ROOT}/profile-uri"
-OUTER_EGRESS_FILE="${XRAY_ROOT}/expected-egress"
 OUTER_PREVIOUS="${XRAY_ROOT}/podlaz-v0.2.40.deb"
 PREVIOUS_SHA256="c9d8f76838292d39355506123e2f03ca1f0a96227fb2c22af8324ac6baf3b278"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
+REMNAWAVE_FIXTURE_TMP="${E2E_TMP_ROOT}/remnawave-package-restart-fixture"
+REMNAWAVE_COMPOSE="${REMNAWAVE_FIXTURE_TMP}/remnawave-fixture/compose.yml"
+REMNAWAVE_ACTIVE=false
+REMNAWAVE_ACCESS_BEFORE=0
 PREVIOUS_DEB=""
 CANDIDATE_SHA256=""
 PREVIOUS_ACTUAL_SHA256=""
@@ -59,7 +59,7 @@ EVIDENCE_KEYS=(
   source.release
   candidate.provenance
   source.vpn_traffic
-  source.vpn_egress
+  source.remnawave_path
   package.restart_converged
   post_convergence.traffic
   foreign.state
@@ -91,34 +91,44 @@ validate_candidate_for_restart() {
   CANDIDATE_SHA256="$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
 }
 
+start_remnawave_fixture() {
+  install -d -m 0700 "${REMNAWAVE_FIXTURE_TMP}" "${XRAY_ROOT}"
+  E2E_TMP_ROOT="${REMNAWAVE_FIXTURE_TMP}" \
+  E2E_ARTIFACT_DIR="${REMNAWAVE_FIXTURE_TMP}/private-artifacts" \
+  PODLAZ_REMNAWAVE_NODE_BIND_IP="${ENDPOINT_IP}" \
+  PODLAZ_REMNAWAVE_PROFILE_ADDRESS="${ENDPOINT_IP}" \
+    bash "${SCRIPT_DIR}/remnawave-fixture.sh" export-profile "${OUTER_PROFILE_FILE}"
+  [[ -f "${OUTER_PROFILE_FILE}" && ! -L "${OUTER_PROFILE_FILE}" ]] ||     fail "Remnawave fixture did not export package-restart profile material"
+  REMNAWAVE_ACTIVE=true
+}
+
+stop_remnawave_fixture() {
+  local failed=0
+  [[ "${REMNAWAVE_ACTIVE}" == true ]] || return 0
+  docker compose -f "${REMNAWAVE_COMPOSE}" down -v --remove-orphans >/dev/null 2>&1 || failed=1
+  if docker ps -aq --filter 'label=com.docker.compose.project=remnawave-fixture' | grep -q .; then failed=1; fi
+  if docker network inspect podlaz-remnawave-fixture >/dev/null 2>&1; then failed=1; fi
+  if docker volume inspect podlaz-remnawave-db >/dev/null 2>&1; then failed=1; fi
+  rm -rf "${REMNAWAVE_FIXTURE_TMP}"
+  REMNAWAVE_ACTIVE=false
+  (( failed == 0 ))
+}
+
+remnawave_node_access_count() {
+  local value
+  value="$(docker compose -f "${REMNAWAVE_COMPOSE}" exec -T remnanode sh -c     'if [ -f /tmp/podlaz-remnawave-access.log ]; then wc -l </tmp/podlaz-remnawave-access.log; else printf 0; fi'     2>/dev/null | tr -d '[:space:]')"
+  [[ "${value}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "${value}"
+}
+
 stage_private_inputs() {
   local profile
-  profile="$(first_configured_profile_uri)" || fail "real-provider profile input is unavailable"
-  [[ -n "${profile}" ]] || fail "real-provider profile input is empty"
-  if [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP:-}" ]]; then
-    python3 - "${PODLAZ_E2E_EXPECTED_EGRESS_IP}" <<'PY' || fail "configured expected egress is not one IPv4 address"
-import ipaddress
-import sys
-try:
-    value = ipaddress.ip_address(sys.argv[1])
-except ValueError:
-    raise SystemExit(1)
-raise SystemExit(0 if value.version == 4 else 1)
-PY
-    mask_value "${PODLAZ_E2E_EXPECTED_EGRESS_IP}"
-  fi
+  [[ -f "${OUTER_PROFILE_FILE}" && ! -L "${OUTER_PROFILE_FILE}" ]] || fail "ephemeral Remnawave profile input is unavailable"
+  profile="$(cat "${OUTER_PROFILE_FILE}")"
+  [[ "${profile}" == vless://* ]] || fail "ephemeral Remnawave profile input is invalid"
   [[ "${PUBLIC_IP_CHECK_URL}" == https://* ]] || fail "PODLAZ_E2E_PUBLIC_IP_CHECK_URL must use HTTPS"
-
   mask_value "${profile}"
 
-  install -d -m 0700 "${XRAY_ROOT}"
-  printf '%s\n' "${profile}" >"${OUTER_PROFILE_FILE}"
-  if [[ -n "${PODLAZ_E2E_EXPECTED_EGRESS_IP:-}" ]]; then
-    printf '%s\n' "${PODLAZ_E2E_EXPECTED_EGRESS_IP}" >"${OUTER_EGRESS_FILE}"
-    chmod 0600 "${OUTER_EGRESS_FILE}"
-  else
-    rm -f -- "${OUTER_EGRESS_FILE}"
-  fi
   install -m 0600 "${PREVIOUS_DEB}" "${OUTER_PREVIOUS}"
   chmod 0600 "${OUTER_PROFILE_FILE}" "${OUTER_PREVIOUS}"
 }
@@ -132,10 +142,6 @@ prepare_guest_private_inputs() {
     fail "could not materialize guest-private profile input"
   guest_exec install -o e2e -g e2e -m 0600 /run/podlaz-synthetic-xray/podlaz-v0.2.40.deb "${GUEST_PREVIOUS}" || \
     fail "could not materialize guest-readable v0.2.40 package"
-  if [[ -f "${OUTER_EGRESS_FILE}" ]]; then
-    guest_exec install -o e2e -g e2e -m 0600 /run/podlaz-synthetic-xray/expected-egress "${GUEST_EGRESS_FILE}" || \
-      fail "could not materialize guest-private expected egress input"
-  fi
 }
 
 install_package_restart_recovery_authorization() {
@@ -155,24 +161,12 @@ EOF_RULE
 }
 
 run_focused_acceptance() {
-  if [[ -f "${OUTER_EGRESS_FILE}" ]]; then
-    guest_exec runuser -u e2e -- env \
-      E2E_TMP_ROOT="${GUEST_FOCUSED_PRIVATE}" \
-      E2E_ARTIFACT_DIR="${GUEST_FOCUSED_PUBLIC}" \
-      PODLAZ_E2E_PROFILE_URI_FILE="${GUEST_PROFILE_FILE}" \
-      FOREIGN_NFT_TABLE="${FOREIGN_NFT_TABLE}" \
-      PODLAZ_E2E_EXPECTED_EGRESS_IP_FILE="${GUEST_EGRESS_FILE}" \
-      PODLAZ_E2E_REQUIRE_EGRESS_CHANGE=true \
-      PODLAZ_E2E_PUBLIC_IP_CHECK_URL="${PUBLIC_IP_CHECK_URL}" \
-      bash /workspace/scripts/e2e/tun-package-restart-recovery.sh "${GUEST_CANDIDATE}" "${GUEST_PREVIOUS}"
-    return
-  fi
   guest_exec runuser -u e2e -- env \
     E2E_TMP_ROOT="${GUEST_FOCUSED_PRIVATE}" \
     E2E_ARTIFACT_DIR="${GUEST_FOCUSED_PUBLIC}" \
     PODLAZ_E2E_PROFILE_URI_FILE="${GUEST_PROFILE_FILE}" \
     FOREIGN_NFT_TABLE="${FOREIGN_NFT_TABLE}" \
-    PODLAZ_E2E_REQUIRE_EGRESS_CHANGE=true \
+    PODLAZ_E2E_REQUIRE_EGRESS_CHANGE=false \
     PODLAZ_E2E_PUBLIC_IP_CHECK_URL="${PUBLIC_IP_CHECK_URL}" \
     bash /workspace/scripts/e2e/tun-package-restart-recovery.sh "${GUEST_CANDIDATE}" "${GUEST_PREVIOUS}"
 }
@@ -197,7 +191,6 @@ validate_focused_evidence() {
   [[ -f "${result}" && ! -L "${result}" ]] || return 1
 
   require_result_line "traffic_v0.2.40-package-restart-vpn=passed" || return 1
-  require_result_line "egress_v0.2.40-package-restart-vpn=passed" || return 1
   require_result_line "historical_package_restart_failure=missing nftables chains" || return 1
   require_result_line "intent=resume" || return 1
   require_result_line "traffic_package-restart-terminal-ordinary=passed" || return 1
@@ -207,7 +200,6 @@ validate_focused_evidence() {
   case "${outcome}" in
     resumed)
       require_result_line "traffic_package-restart-resumed-vpn=passed" || return 1
-      require_result_line "egress_package-restart-resumed-vpn=passed" || return 1
       ;;
     terminal)
       require_result_line "typed_terminal_replay=true" || return 1
@@ -230,9 +222,6 @@ scan_public_artifacts() {
   local privacy_report="${E2E_ARTIFACT_DIR}/hosted-package-restart-redaction-scan.txt"
   local sources=("${OUTER_PROFILE_FILE}")
   [[ -f "${OUTER_PROFILE_FILE}" ]] || return 1
-  if [[ -f "${OUTER_EGRESS_FILE}" ]]; then
-    sources+=("${OUTER_EGRESS_FILE}")
-  fi
   python3 "${SCRIPT_DIR}/lib/redaction_scan.py" file-contents \
     "${E2E_ARTIFACT_DIR}" "${privacy_report}" "${sources[@]}"
 }
@@ -247,6 +236,7 @@ teardown_hosted_package_restart() {
   if [[ -d "${GUEST_ROOT}${GUEST_FOCUSED_PUBLIC}" ]]; then
     collect_focused_artifacts || cleanup_failed=1
   fi
+  stop_remnawave_fixture || cleanup_failed=1
   stop_system_guest || cleanup_failed=1
   cleanup_outer_plumbing || cleanup_failed=1
   if [[ -n "${OUTER_DEFAULT_ROUTE}" ]]; then
@@ -270,7 +260,7 @@ teardown_hosted_package_restart() {
     mark_failure fixture artifact.privacy
   fi
 
-  rm -f -- "${OUTER_PROFILE_FILE}" "${OUTER_EGRESS_FILE}" >/dev/null 2>&1 || true
+  rm -f -- "${OUTER_PROFILE_FILE}" >/dev/null 2>&1 || true
 
   if (( saved != 0 )) && [[ "${FAILURE_CLASS}" == none ]]; then
     mark_failure diagnostic_unknown package.restart
@@ -293,6 +283,11 @@ run_scenario() {
   start_system_guest
   record_evidence guest.substrate pass
 
+  mark_failure fixture remnawave.bootstrap
+  start_remnawave_fixture
+  stage_private_inputs
+  REMNAWAVE_ACCESS_BEFORE="$(remnawave_node_access_count)" || return 1
+
   mark_failure fixture private-input.handoff
   prepare_guest_private_inputs
   mark_failure fixture tun.authorization
@@ -303,10 +298,17 @@ run_scenario() {
   collect_focused_artifacts
   validate_focused_evidence || return 1
 
+  local remnawave_after remnawave_delta outcome required_delta=1
+  remnawave_after="$(remnawave_node_access_count)" || return 1
+  remnawave_delta=$((remnawave_after - REMNAWAVE_ACCESS_BEFORE))
+  outcome="$(awk -F= '$1=="candidate_outcome" {print $2}' "${FOCUSED_ARTIFACT_DIR}/package-restart-result.txt")"
+  [[ "${outcome}" != resumed ]] || required_delta=2
+  (( remnawave_delta >= required_delta )) || return 1
+
   record_evidence source.release pass
   record_evidence candidate.provenance pass
   record_evidence source.vpn_traffic pass
-  record_evidence source.vpn_egress pass
+  record_evidence source.remnawave_path pass
   record_evidence package.restart_converged pass
   record_evidence post_convergence.traffic pass
   record_evidence foreign.state pass
@@ -319,14 +321,13 @@ run_scenario() {
 
 main() {
   (($# == 2)) || fail "usage: $0 CANDIDATE.deb EXACT-V0.2.40.deb"
-  require_cmd awk bash chmod cmp curl debootstrap dpkg dpkg-deb find git grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
+  require_cmd awk bash chmod cmp curl debootstrap docker dpkg dpkg-deb find git grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate_for_restart "$1"
   validate_previous "$2"
 
   install -d -m 0700 "${PRIVATE_ROOT}" "${E2E_ARTIFACT_DIR}" "${XRAY_ROOT}"
   : >"${REPORT}"
   chmod 0600 "${REPORT}"
-  stage_private_inputs
 
   trap teardown_hosted_package_restart EXIT
   run_scenario

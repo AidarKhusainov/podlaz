@@ -25,6 +25,10 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 		"vpn-e2e, ubuntu-24.04",
 		"release-laptop.sh",
 		"scripts/acceptance/",
+		"environment: vpn-e2e",
+		"PODLAZ_E2E_PROFILE_URI: ${{ secrets.",
+		"PODLAZ_E2E_PROFILE_URI_LIST: ${{ secrets.",
+		"PODLAZ_E2E_EXPECTED_EGRESS_IP: ${{ secrets.",
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("release workflow still depends on retired/manual infrastructure %q", forbidden)
@@ -36,7 +40,7 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 		t.Fatal("release publication needs block is missing")
 	}
 	needs := publish[1]
-	for _, required := range []string{"- resolve", "- build", "- installed-runtime", "- synthetic-tun", "- real-provider"} {
+	for _, required := range []string{"- resolve", "- build", "- installed-runtime", "- synthetic-tun", "- remnawave-proxy"} {
 		if !strings.Contains(needs, required) {
 			t.Fatalf("release publication lost required qualification dependency %q", required)
 		}
@@ -45,8 +49,12 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 	for _, required := range []string{
 		"release_manifest_sha256: ${{ steps.release-manifest.outputs.sha256 }}",
 		"name: Qualify exact synthetic full-TUN package",
+		"name: Qualify exact ephemeral Remnawave proxy data plane",
 		"PODLAZ_E2E_CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}",
 		`bash scripts/e2e/hosted-synthetic-tun.sh "dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"`,
+		"remnawave-proxy-acceptance.sh",
+		`"dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"`,
+		"scan-remnawave-artifacts.sh proxy",
 		"name: Verify exact qualified release artifact handoff",
 	} {
 		if !strings.Contains(workflow, required) {

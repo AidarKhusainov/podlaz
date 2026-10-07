@@ -16,7 +16,7 @@ func TestDataPlaneUsesPublicStatusContract(t *testing.T) {
 	for _, required := range []string{
 		`Status: Connected`,
 		`Status: Disconnected`,
-		`Mode: proxy-only`,
+		`Protection: Proxy only`,
 		`DAEMON_RUNTIME_CONFIG_PATH="${DAEMON_SOCKET%/*}/generated/xray.json"`,
 	} {
 		if !strings.Contains(script, required) {
