@@ -341,7 +341,7 @@ PY
 }
 
 remove_provider_material() {
-  rm -f -- "${PRIVATE_ROOT}/provider-uri" "${PRIVATE_ROOT}/profile-id" "${REMNAWAVE_PROFILE_FILE}"
+  rm -f -- "${PRIVATE_ROOT}/provider-uri" "${PRIVATE_ROOT}/profile-id" "${REMNAWAVE_PROFILE_FILE}" "${NATIVE_XRAY_FILE}"
   if [[ "${SYSTEM_GUEST_ACTIVE}" == true ]]; then
     guest_exec rm -rf "${GUEST_PROVIDER_DIR}" >/dev/null 2>&1 || true
   fi
@@ -395,19 +395,41 @@ PY
 }
 
 import_provider_profile() {
-  local import_stdout="${PRIVATE_ROOT}/profile-import.stdout" import_stderr="${PRIVATE_ROOT}/profile-import.stderr"
+  local import_stdout="\${PRIVATE_ROOT}/profile-import.stdout" import_stderr="\${PRIVATE_ROOT}/profile-import.stderr"
   set +e
   guest_exec runuser -u e2e -- env \
-    XDG_CONFIG_HOME="${GUEST_XDG}/config" \
-    XDG_STATE_HOME="${GUEST_XDG}/state" \
-    XDG_CACHE_HOME="${GUEST_XDG}/cache" \
-    /bin/bash -lc "uri=\$(cat '${GUEST_PROVIDER_DIR}/profile-uri'); exec /usr/bin/podlaz import \"\${uri}\"" \
-    >"${import_stdout}" 2>"${import_stderr}"
+    XDG_CONFIG_HOME="\${GUEST_XDG}/config" \
+    XDG_STATE_HOME="\${GUEST_XDG}/state" \
+    XDG_CACHE_HOME="\${GUEST_XDG}/cache" \
+    /usr/bin/podlaz import "\${GUEST_PROVIDER_DIR}/native-xray.json" \
+    >"\${import_stdout}" 2>"\${import_stderr}"
   local code=$?
   set -e
   (( code == 0 )) || return 1
-  grep -F 'Next: podlaz connect' "${import_stdout}" >/dev/null || return 1
-  guest_exec rm -rf "${GUEST_PROVIDER_DIR}"
+  grep -F 'Next: podlaz connect' "\${import_stdout}" >/dev/null || return 1
+  guest_exec python3 - "\${GUEST_XDG}/state/podlaz/profiles.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    store = json.load(handle)
+selected = store.get("selected_profile_id")
+profiles = [item for item in store.get("profiles", []) if item.get("id") == selected]
+if len(profiles) != 1:
+    raise SystemExit("selected native profile is missing")
+profile = profiles[0]
+if profile.get("protocol") != "xray-json":
+    raise SystemExit("native profile protocol was flattened")
+if profile.get("server") or profile.get("port") or profile.get("user_identity"):
+    raise SystemExit("native profile acquired endpoint authority")
+raw = profile.get("reality_spider_x") or ""
+doc = json.loads(raw)
+if len(doc.get("outbounds") or []) != 2:
+    raise SystemExit("native multi-outbound source was not preserved")
+if not (doc.get("stats") == {} and (doc.get("routing") or {}).get("rules")):
+    raise SystemExit("schema-opaque provider fields were not preserved")
+PY
+  guest_exec rm -rf "\${GUEST_PROVIDER_DIR}"
   PROFILE_URI=""
 }
 
