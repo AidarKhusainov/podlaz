@@ -183,6 +183,26 @@ func privacyEnvelopePlanFromAuthority(protection networkSessionProtection) (nete
 	return plan, nil
 }
 
+func normalizePrivacyEnvelopeEgressMarks(rawMarks []uint32) ([]uint32, error) {
+	if len(rawMarks) == 0 {
+		return nil, errors.New("privacy envelope requires at least one Podlaz egress mark")
+	}
+	seen := make(map[uint32]struct{}, len(rawMarks))
+	marks := make([]uint32, 0, len(rawMarks))
+	for _, mark := range rawMarks {
+		if mark == 0 {
+			return nil, errors.New("privacy envelope egress mark must be non-zero")
+		}
+		if _, exists := seen[mark]; exists {
+			continue
+		}
+		seen[mark] = struct{}{}
+		marks = append(marks, mark)
+	}
+	sort.Slice(marks, func(i, j int) bool { return marks[i] < marks[j] })
+	return marks, nil
+}
+
 func normalizePrivacyEnvelopeBootstrapIPv4(rawEndpoints []string) ([]string, error) {
 	if len(rawEndpoints) == 0 {
 		return nil, errors.New("privacy envelope requires at least one exact bootstrap IPv4 endpoint")
