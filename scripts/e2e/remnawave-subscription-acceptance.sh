@@ -238,10 +238,12 @@ main() {
   mark_failure fixture candidate.provenance
   validate_candidate "$1"
   CANDIDATE_SHA256="$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
-  printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}" >>"${REPORT}"
-  printf 'candidate.package_sha256=%s\n' "${CANDIDATE_SHA256}" >>"${REPORT}"
-  printf 'remnawave.panel_version=%s\n' "${REMNAWAVE_PANEL_VERSION}" >>"${REPORT}"
-  printf 'remnawave.node_version=%s\n' "${REMNAWAVE_NODE_VERSION}" >>"${REPORT}"
+  {
+    printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}"
+    printf 'candidate.package_sha256=%s\n' "${CANDIDATE_SHA256}"
+    printf 'remnawave.panel_version=%s\n' "${REMNAWAVE_PANEL_VERSION}"
+    printf 'remnawave.node_version=%s\n' "${REMNAWAVE_NODE_VERSION}"
+  } >>"${REPORT}"
 
   mark_failure fixture remnawave.bootstrap
   remnawave_fixture_start
