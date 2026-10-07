@@ -10,6 +10,9 @@ on:
       - 'scripts/e2e/hosted-remnawave-tun.sh'
       - 'scripts/e2e/hosted-synthetic-tun.sh'
       - 'scripts/e2e/lib/**'
+      - 'internal/sub/**'
+      - 'internal/app/cli/*subscription*'
+      - 'internal/app/cli/import_*'
   workflow_dispatch:
 
 permissions:
