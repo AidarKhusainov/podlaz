@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/ephemeral-remnawave.yml'
+      - '.github/workflows/integration.yml'
+      - '.github/workflows/release.yml'
       - 'scripts/e2e/remnawave-fixture.sh'
       - 'scripts/e2e/remnawave-subscription-acceptance.sh'
       - 'scripts/e2e/remnawave-proxy-acceptance.sh'
