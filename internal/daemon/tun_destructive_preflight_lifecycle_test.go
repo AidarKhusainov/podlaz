@@ -110,15 +110,18 @@ func installTunLifecyclePreflightTestHooks(t *testing.T) {
 	oldEUID := currentEUID
 	oldDeps := validateTunRuntimeDependenciesHook
 	oldNative := preflightNativeTunSupport
+	oldRuntimeConfig := preflightTunRuntimeConfig
 	oldStale := podlazRuntimeRoutingStaleResources
 	currentEUID = func() int { return 1000 }
 	validateTunRuntimeDependenciesHook = func() error { return nil }
 	preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
+	preflightTunRuntimeConfig = func(context.Context, string, string, []byte, coreExecutionIdentity) error { return nil }
 	podlazRuntimeRoutingStaleResources = func(context.Context) []netsnapshot.StaleResource { return nil }
 	t.Cleanup(func() {
 		currentEUID = oldEUID
 		validateTunRuntimeDependenciesHook = oldDeps
 		preflightNativeTunSupport = oldNative
+		preflightTunRuntimeConfig = oldRuntimeConfig
 		podlazRuntimeRoutingStaleResources = oldStale
 	})
 }
