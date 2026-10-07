@@ -19,6 +19,7 @@ const (
 	TunRoutingTableID   = 51820
 	TunRulePriority     = 10000
 	ServerRulePriority  = 9999
+	TunEgressMark        = uint32(20570)
 	MainRoutingTable    = "main"
 	IPv4DefaultRoute    = "default"
 	IPv4DefaultSelector = "from all"
@@ -174,6 +175,7 @@ type TunPlan struct {
 	Routes        []TunRoutePlan
 	PolicyRules   []TunPolicyRulePlan
 	ServerBypass  TunRoutePlan
+	EgressMark    uint32
 	DNS           TunDNSPlan
 	Firewall      TunFirewallPlan
 	LoopRisks     []string
