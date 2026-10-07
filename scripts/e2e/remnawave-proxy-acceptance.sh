@@ -67,8 +67,8 @@ cleanup() {
     sudo -n systemctl stop podlazd.service >/dev/null 2>&1 || true
     sudo -n apt remove -y podlaz >/dev/null 2>&1 || true
   fi
-  rm -rf -- "${PRIVATE_ROOT}"
   write_report
+  rm -rf -- "${PRIVATE_ROOT}"
   if [[ "${RESULT}" != PASS ]]; then
     rc=1
   fi
