@@ -52,10 +52,12 @@ const (
 	FirewallVerdictReject      = "reject"
 	FirewallVerdictDrop        = "drop"
 	FirewallServerBypassOwner  = "podlaz:firewall:server-bypass"
+	FirewallMarkedEgressOwner = "podlaz:firewall:xray-egress"
 	FirewallLoopbackOwner      = "podlaz:firewall:loopback"
 	FirewallTunEgressOwner     = "podlaz:firewall:tun-egress"
 	FirewallKillSwitchOwner    = "podlaz:firewall:kill-switch"
 	FirewallServerBypassKey    = "inet/podlaz/output/server-bypass"
+	FirewallMarkedEgressKey   = "inet/podlaz/output/xray-egress"
 	FirewallLoopbackKey        = "inet/podlaz/output/loopback"
 	FirewallTunEgressKey       = "inet/podlaz/output/tun-egress"
 	FirewallKillSwitchKey      = "inet/podlaz/output/kill-switch"
@@ -422,6 +424,34 @@ func firewallPlan(s snapshot.Snapshot, policy string, device TunDevicePlan, serv
 			fmt.Sprintf("Remove nftables table %s %s if created by this transaction", snapshot.DefaultNFTFamily, snapshot.DefaultNFTTable),
 		},
 	}
+}
+
+func firewallPlanForEgressMark(s snapshot.Snapshot, policy string, device TunDevicePlan, mark uint32) TunFirewallPlan {
+	plan := firewallPlan(s, policy, device, "")
+	ruleAction := firewallRuleAction(plan.TableAction)
+	if mark == 0 {
+		plan.Rules[0] = TunFirewallRulePlan{
+			Chain:       FirewallOutputChain,
+			Expr:        "meta mark <podlaz-egress-mark>",
+			Verdict:     FirewallVerdictAccept,
+			Action:      FirewallActionBlocked,
+			Reason:      "Podlaz Xray egress mark is unknown; marked bypass cannot be applied safely",
+			Ownership:   FirewallMarkedEgressOwner,
+			RollbackKey: FirewallMarkedEgressKey,
+		}
+		return plan
+	}
+	plan.Rules[0] = TunFirewallRulePlan{
+		Chain:       FirewallOutputChain,
+		Expr:        fmt.Sprintf("meta mark %d", mark),
+		Verdict:     FirewallVerdictAccept,
+		Action:      ruleAction,
+		Reason:      "allow only Podlaz-marked Xray transport traffic outside TUN before non-TUN blocking",
+		Ownership:   FirewallMarkedEgressOwner,
+		RollbackKey: FirewallMarkedEgressKey,
+	}
+	plan.KillSwitch.Scope = fmt.Sprintf("allow traffic through %s, local loopback, and Podlaz-marked Xray egress; block other non-TUN traffic according to policy", device.Name)
+	return plan
 }
 
 func firewallRuleAction(tableAction string) string {
