@@ -62,6 +62,59 @@ func TestStoreResolveRejectsAmbiguousDisplayName(t *testing.T) {
 	}
 }
 
+func TestStoreAddAndSelectIfUnsetPersistsProfileAndSelectionTogether(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "profiles.json"))
+	p := NewManual("Imported", "one.example", 443, "vless")
+	p.ID = "imported"
+
+	selected, err := store.AddAndSelectIfUnset(p)
+	if err != nil {
+		t.Fatalf("AddAndSelectIfUnset: %v", err)
+	}
+	if !selected {
+		t.Fatal("first imported profile was not selected")
+	}
+	state, err := store.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Profiles) != 1 || state.Profiles[0].ID != p.ID || state.SelectedProfileID != p.ID {
+		t.Fatalf("atomic imported state = %#v", state)
+	}
+}
+
+func TestStoreAddAndSelectIfUnsetPreservesExistingSelection(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "profiles.json"))
+	first := NewManual("First", "one.example", 443, "vless")
+	first.ID = "first"
+	if err := store.Add(first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second := NewManual("Second", "two.example", 443, "vless")
+	second.ID = "second"
+
+	selected, err := store.AddAndSelectIfUnset(second)
+	if err != nil {
+		t.Fatalf("AddAndSelectIfUnset: %v", err)
+	}
+	if selected {
+		t.Fatal("existing selection was unexpectedly replaced")
+	}
+	state, err := store.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SelectedProfileID != first.ID {
+		t.Fatalf("selection changed to %q", state.SelectedProfileID)
+	}
+	if _, ok := profileByID(state.Profiles, second.ID); !ok {
+		t.Fatalf("second profile was not persisted: %#v", state.Profiles)
+	}
+}
+
 func TestStoreSelectionPersistsStableID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "profiles.json")
 	store, _ := NewStore(path)
