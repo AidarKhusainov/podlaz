@@ -348,10 +348,10 @@ sudo -n ip netns exec "${EDGE_NS}" dnsmasq \
   >"${PRIVATE_DIR}/dnsmasq.log" 2>&1 &
 DNS_PID=$!
 for _ in $(seq 1 100); do
-  sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q '${EDGE_IP}:53 ' && break
+  sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q "${EDGE_IP}:53 " && break
   sleep 0.05
 done
-sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q '${EDGE_IP}:53 ' || fail "synthetic TCP DNS listener did not start"
+sudo -n ip netns exec "${EDGE_NS}" ss -lnt | grep -q "${EDGE_IP}:53 " || fail "synthetic TCP DNS listener did not start"
 sudo -n ip netns exec "${EDGE_NS}" "${XRAY}" run -config "${SERVER_CONFIG}" >"${PRIVATE_DIR}/server.stdout" 2>"${SERVER_LOG}" &
 SERVER_PID=$!
 
