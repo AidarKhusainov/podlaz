@@ -488,7 +488,7 @@ func resolveProfile(profiles []Profile, selector string) (Profile, error) {
 	case 1:
 		return matches[0], nil
 	default:
-		return Profile{}, fmt.Errorf("%w: %q matches %d profiles; use a stable ID from `podlaz profile show`", ErrAmbiguousSelector, selector, len(matches))
+		return Profile{}, fmt.Errorf("%w: %q matches %d profiles; run `podlaz profile list --ids` and retry with an exact stable ID", ErrAmbiguousSelector, selector, len(matches))
 	}
 }
 
