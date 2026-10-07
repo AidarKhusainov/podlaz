@@ -78,6 +78,9 @@ func probeTunDiagnosticSession(input tunDiagnosticInput) tundiag.ProbeResult {
 }
 
 func probeTunServerBypass(ctx context.Context, plan planner.TunPlan) tundiag.ProbeResult {
+	if plan.EgressMark != 0 {
+		return probeTunMarkedEgressBypass(ctx, plan)
+	}
 	bypass := tunDiagnosticServerBypass(plan)
 	target := strings.TrimSuffix(bypass.Destination, "/32")
 	if net.ParseIP(target) == nil {
