@@ -38,6 +38,10 @@ jobs:
           install -d -m 0700 "${E2E_TMP_ROOT}"
           bash scripts/e2e/remnawave-fixture.sh
 
+      - name: Remove feasibility private state
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-private"
+
   subscription-hwid:
     name: Live subscription and HWID lifecycle
     runs-on: ubuntu-24.04
@@ -77,6 +81,27 @@ jobs:
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/remnawave-subscription-acceptance.sh "${DEV_DEB}"
+
+      - name: Validate subscription public evidence
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-client-public
+        run: bash scripts/e2e/scan-remnawave-artifacts.sh subscription
+
+      - name: Remove subscription private state
+        id: private_cleanup
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-client-private"
+
+      - name: Upload subscription and HWID evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-remnawave-subscription-pr
+          path: ${{ runner.temp }}/podlaz-remnawave-client-public/remnawave-subscription.txt
+          if-no-files-found: error
+          retention-days: 7
 
   proxy:
     name: Ephemeral Remnawave proxy data plane
@@ -119,6 +144,27 @@ jobs:
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/remnawave-proxy-acceptance.sh "${DEV_DEB}"
 
+      - name: Validate proxy public evidence
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-proxy-public
+        run: bash scripts/e2e/scan-remnawave-artifacts.sh proxy
+
+      - name: Remove proxy private state
+        id: private_cleanup
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-proxy-private"
+
+      - name: Upload proxy evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-remnawave-proxy-pr
+          path: ${{ runner.temp }}/podlaz-remnawave-proxy-public/remnawave-proxy.txt
+          if-no-files-found: error
+          retention-days: 7
+
   full-tun:
     name: Isolated ephemeral Remnawave full-TUN
     runs-on: ubuntu-24.04
@@ -154,6 +200,10 @@ jobs:
           bash scripts/build-deb.sh
           test -f "${DEV_DEB}"
 
+      - name: Capture candidate digest
+        id: candidate
+        run: printf 'sha256=%s\n' "$(sha256sum "${DEV_DEB}" | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
+
       - name: Run isolated Remnawave full-TUN qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-remnawave-tun-private
@@ -163,3 +213,26 @@ jobs:
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/hosted-remnawave-tun.sh "${DEV_DEB}"
+
+      - name: Validate TUN public verdict
+        id: evidence_scan
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-remnawave-tun-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_CANDIDATE_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        run: bash scripts/e2e/hosted-remnawave-tun.sh validate-report
+
+      - name: Remove TUN private state
+        id: private_cleanup
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-remnawave-tun-private"
+
+      - name: Upload TUN evidence
+        if: ${{ always() && steps.evidence_scan.outcome == 'success' && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-remnawave-tun-pr
+          path: ${{ runner.temp }}/podlaz-remnawave-tun-public/hosted-remnawave-tun.txt
+          if-no-files-found: error
+          retention-days: 7
