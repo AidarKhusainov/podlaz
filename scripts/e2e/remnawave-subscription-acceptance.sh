@@ -19,6 +19,7 @@ PACKAGE_INSTALLED=0
 LOGIN_USER="$(id -un)"
 FIRST_XDG="${E2E_TMP_ROOT}/remnawave-client-primary"
 SECOND_XDG="${E2E_TMP_ROOT}/remnawave-client-secondary"
+REPORT="${E2E_ARTIFACT_DIR}/remnawave-subscription.txt"
 
 validate_candidate() {
   local path="$1" arch
@@ -229,14 +230,19 @@ main() {
     fail "primary identity rotated after secondary rejection"
   assert_single_server_hwid "${primary_client_id}"
 
-  printf 'candidate.commit=%s\n' "${EXPECTED_COMMIT,,}"
-  printf 'candidate.package_sha256=%s\n' "$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')"
-  printf 'remnawave.subscription_import=pass\n'
-  printf 'remnawave.subscription_refresh=pass\n'
-  printf 'remnawave.hwid_registration=pass\n'
-  printf 'remnawave.hwid_stable=pass\n'
-  printf 'remnawave.hwid_device_limit=pass\n'
-  printf 'remnawave.rejected_state_preserved=pass\n'
+  cat >"${REPORT}" <<EOF
+candidate.commit=${EXPECTED_COMMIT,,}
+candidate.package_sha256=$(sha256sum "${CANDIDATE_DEB}" | awk '{print $1}')
+remnawave.panel_version=3.4.5
+remnawave.node_version=3.4.2
+remnawave.subscription_import=pass
+remnawave.subscription_refresh=pass
+remnawave.hwid_registration=pass
+remnawave.hwid_stable=pass
+remnawave.hwid_device_limit=pass
+remnawave.rejected_state_preserved=pass
+EOF
+  chmod 0600 "${REPORT}"
 }
 
 main "$@"
