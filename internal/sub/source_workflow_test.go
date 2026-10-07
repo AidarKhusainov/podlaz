@@ -44,6 +44,13 @@ func TestSourceWorkflowImportAndUpdateUseSharedPipeline(t *testing.T) {
 	if len(profiles) != 1 || profiles[0].Name != "stable" {
 		t.Fatalf("unexpected imported profiles: %+v", profiles)
 	}
+	selectedID, err := profileStore.SelectedID()
+	if err != nil {
+		t.Fatalf("read selected profile after import: %v", err)
+	}
+	if selectedID != profiles[0].ID {
+		t.Fatalf("single-profile subscription import selected %q, want %q", selectedID, profiles[0].ID)
+	}
 
 	writeSourceWorkflowFixture(t, fixturePath, workflowShareLink(1, "workflow.example", "443", "refreshed"))
 	updatedAt := importedAt.Add(time.Hour)
@@ -100,6 +107,13 @@ func TestSourceWorkflowImportRollbackRemovesNewSubscriptionAndProfiles(t *testin
 	}
 	if len(profiles) != 0 {
 		t.Fatalf("failed import left profiles behind: %+v", profiles)
+	}
+	selectedID, err := profileStore.SelectedID()
+	if err != nil {
+		t.Fatalf("read selection after import rollback: %v", err)
+	}
+	if selectedID != "" {
+		t.Fatalf("failed import left selected profile behind: %q", selectedID)
 	}
 }
 
