@@ -14,7 +14,7 @@ import (
 const dnsRouteOnlyDomain = "~."
 
 func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
-	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID}
+	plan := planner.TunPlan{Mode: tx.Mode, ProfileID: tx.ProfileID, EgressMark: tx.DesiredPlan.EgressMark}
 	if err := validateTunRollbackProjection(tx); err != nil {
 		plan.TunDevice = planner.TunDevicePlan{Name: "podlaz0", Action: "invalid-rollback-projection", Reason: err.Error()}
 		return plan
