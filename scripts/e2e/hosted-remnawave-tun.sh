@@ -477,19 +477,27 @@ run_provider_traffic_checks() {
 
   guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
-  [[ "${record_initial}" == true ]] && record_evidence tun.system_dns pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.system_dns pass
+  fi
 
   PROBE_IP="$(guest_exec getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
   [[ -n "${PROBE_IP}" ]] || return 1
   guest_exec timeout 15 /bin/bash -lc "exec 3<>/dev/tcp/${PROBE_IP}/443; exec 3>&-"
-  [[ "${record_initial}" == true ]] && record_evidence tun.ipv4_tcp pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.ipv4_tcp pass
+  fi
 
   guest_exec timeout 20 openssl s_client -connect "${PROBE_IP}:443" -servername example.com -brief </dev/null \
     >"${PRIVATE_ROOT}/tls.stdout" 2>"${PRIVATE_ROOT}/tls.stderr"
-  [[ "${record_initial}" == true ]] && record_evidence tun.tls pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.tls pass
+  fi
 
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
-  [[ "${record_initial}" == true ]] && record_evidence tun.https pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.https pass
+  fi
 
   ACTIVE_EGRESS="$(guest_exec timeout 30 curl -4 -fsS --max-time 15 "${PUBLIC_IP_CHECK_URL}" | tr -d '[:space:]')"
   python3 - "${ACTIVE_EGRESS}" <<'PY'
@@ -505,7 +513,9 @@ PY
     mark_failure remnawave remnawave.path_not_observed
     return 1
   }
-  [[ "${record_initial}" == true ]] && record_evidence tun.remnawave_path pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.remnawave_path pass
+  fi
 }
 
 assert_ordinary_connectivity_restored() {
