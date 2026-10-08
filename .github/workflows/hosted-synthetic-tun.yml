@@ -121,7 +121,7 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
           set -euo pipefail
-          for protocol in vmess trojan shadowsocks; do
+          for protocol in trojan shadowsocks vmess; do
             export PODLAZ_E2E_SYNTHETIC_PROTOCOL="${protocol}"
             export E2E_TMP_ROOT="${RUNNER_TEMP}/podlaz-hosted-${protocol}-private"
             export E2E_ARTIFACT_DIR="${RUNNER_TEMP}/podlaz-hosted-${protocol}-public"
