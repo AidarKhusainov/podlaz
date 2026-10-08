@@ -269,7 +269,6 @@ func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (
 	return m.runTunCleanup(ctx, transactionID)
 }
 
-
 func tunRuntimePreflightConfig(p profile.Profile, runtimeConfigPath string, plan planner.TunPlan) ([]byte, error) {
 	preflightPlan := plan
 	preflightPlan.TunDevice.Name = xrayTunPreflightInterfaceName
