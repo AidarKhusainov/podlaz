@@ -536,7 +536,7 @@ PY
         }],
         "alpn": ["h3"]
       },
-      "hysteriaSettings": {"version": 2}
+      "hysteriaSettings": {"version": 2, "auth": "${auth}"}
     }
   }],
   "outbounds": [{"protocol": "freedom", "settings": {}}]
