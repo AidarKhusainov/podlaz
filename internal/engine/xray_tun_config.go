@@ -63,6 +63,9 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 	if opts.MTU <= 0 {
 		return nil, errors.New("TUN-mode Xray config requires a positive MTU")
 	}
+	if !strings.EqualFold(p.Protocol, "vless") && opts.EgressMark == 0 {
+		return nil, fmt.Errorf("TUN-mode typed %s Xray config requires a non-zero Podlaz egress mark", p.Protocol)
+	}
 	if err := ValidateXrayTunProfile(p); err != nil {
 		return nil, err
 	}
