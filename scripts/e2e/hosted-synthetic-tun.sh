@@ -725,11 +725,36 @@ EOF_VMESS_PROBE
     kill -0 "${XRAY_HTTP_PID}" >/dev/null 2>&1 || return 1
     sleep 0.1
   done
-  timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 \
+  if timeout 10 curl -4 -fsS --noproxy "" --max-time 5 \
+    -o /dev/null "http://127.0.0.1:${backend_port}/"; then
+    printf 'vmess-fixture-local-backend=pass\n'
+  else
+    printf 'vmess-fixture-local-backend=fail\n'
+    return 1
+  fi
+  timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 \
     -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/vmess-probe-curl.log" 2>&1 || probe_result=$?
   if (( probe_result != 0 )); then
     printf 'vmess-fixture-direct-transport=fail\n'
     printf 'vmess-fixture-probe-exit=%d\n' "${probe_result}"
+    if grep -qF 'SOCKS5 request granted' "${XRAY_ROOT}/vmess-probe-curl.log"; then
+      printf 'vmess-fixture-socks=granted\n'
+    else
+      printf 'vmess-fixture-socks=not_granted\n'
+    fi
+    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/vmess-probe-http.log"; then
+      printf 'vmess-fixture-backend=reached\n'
+    else
+      printf 'vmess-fixture-backend=not_reached\n'
+    fi
+    for signature in "failed to dial" "failed to read" "failed to send" "invalid user" "not authenticated" "connection refused" "context canceled" "timeout" "proxy/vmess"; do
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/vmess-probe-client.log"; then
+        printf 'vmess-fixture-client-class=%s\n' "${signature// /_}"
+      fi
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
+        printf 'vmess-fixture-server-class=%s\n' "${signature// /_}"
+      fi
+    done
     return 1
   fi
   printf 'vmess-fixture-direct-transport=pass\n'
@@ -1234,7 +1259,26 @@ main() {
   run_scenario
 }
 
+verify_packaged_vmess_transport() {
+  (($# == 1)) || fail "usage: $0 verify-vmess-transport CANDIDATE.deb"
+  require_cmd curl dpkg-deb openssl python3 ss timeout
+  local direct_root
+  direct_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/podlaz-vmess-transport.XXXXXX")"
+  XRAY_ROOT="${direct_root}/xray"
+  ENDPOINT_IP="127.0.0.1"
+  PODLAZ_E2E_SYNTHETIC_PROTOCOL=vmess
+  install -d -m 0700 "${XRAY_ROOT}"
+  trap 'stop_synthetic_xray_endpoint; rm -rf -- "${direct_root}"' EXIT
+  validate_candidate "$1"
+  start_synthetic_xray_endpoint
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ "${1:-}" == verify-vmess-transport ]]; then
+    shift
+    verify_packaged_vmess_transport "$@"
+    exit
+  fi
   if [[ "${1:-}" == validate-report ]]; then
     validate_report
     exit 0
