@@ -170,3 +170,29 @@ func tunRuntimeProfileForTest() profile.Profile {
 		RealitySpiderX:   "/",
 	}
 }
+
+func TestTunRuntimePreflightConfigUsesCollisionFreeTunNameWithoutChangingRuntimePlan(t *testing.T) {
+	p := tunRuntimeProfileForTest()
+	plan := planner.TunPlan{
+		TunDevice:    planner.TunDevicePlan{Name: "podlaz0", MTU: 1500, Action: "verify"},
+		TunAddress:   planner.TunAddressPlan{Interface: "podlaz0", CIDR: planner.DefaultTunIPv4CIDR},
+		ServerBypass: planner.TunRoutePlan{Destination: "203.0.113.10/32"},
+	}
+	runtime, err := planTunCoreRuntime(p, "/run/podlaz/generated/xray.json", plan)
+	if err != nil {
+		t.Fatalf("plan runtime config: %v", err)
+	}
+	preflight, err := tunRuntimePreflightConfig(p, "/run/podlaz/generated/xray.json", plan)
+	if err != nil {
+		t.Fatalf("plan preflight config: %v", err)
+	}
+	if !strings.Contains(string(runtime.XrayConfig), ""name": "podlaz0"") {
+		t.Fatalf("runtime config lost canonical TUN name: %s", runtime.XrayConfig)
+	}
+	if strings.Contains(string(preflight), ""name": "podlaz0"") || !strings.Contains(string(preflight), ""name": "podlaz-pf0"") {
+		t.Fatalf("preflight config must use collision-free TUN name: %s", preflight)
+	}
+	if plan.TunDevice.Name != "podlaz0" || plan.TunAddress.Interface != "podlaz0" {
+		t.Fatalf("preflight projection mutated runtime plan: %#v", plan)
+	}
+}
