@@ -48,16 +48,22 @@ func (b *productionTunRevalidationBackend) inspect(ctx context.Context) (tunReva
 	if err := verifyCommittedTunRuntimeIdentity(state, cmd, tx); err != nil {
 		return tunRevalidationObservation{}, newTunRevalidationObservationError(api.TunHealthOwnershipInvalid, err)
 	}
-	server, err := tunRevalidationServerAddress(tx)
-	if err != nil {
-		return tunRevalidationObservation{}, newTunRevalidationObservationError(api.TunHealthOwnershipInvalid, err)
-	}
 	plan, err := tunRevalidationPlanFromTransaction(tx)
 	if err != nil {
 		return tunRevalidationObservation{}, newTunRevalidationObservationError(api.TunHealthOwnershipInvalid, err)
 	}
-	snapshot := b.manager.collectTunSnapshot(ctx, netsnapshot.Options{Server: server})
-	fingerprint, err := deriveTunUplinkFingerprint(snapshot, operatingSystemInterfaceIndex)
+	snapshotOptions := netsnapshot.Options{}
+	fingerprintBuilder := deriveTunEndpointIndependentUplinkFingerprint
+	if plan.EgressMark == 0 {
+		server, serverErr := tunRevalidationServerAddress(tx)
+		if serverErr != nil {
+			return tunRevalidationObservation{}, newTunRevalidationObservationError(api.TunHealthOwnershipInvalid, serverErr)
+		}
+		snapshotOptions.Server = server
+		fingerprintBuilder = deriveTunUplinkFingerprint
+	}
+	snapshot := b.manager.collectTunSnapshot(ctx, snapshotOptions)
+	fingerprint, err := fingerprintBuilder(snapshot, operatingSystemInterfaceIndex)
 	if err != nil {
 		return tunRevalidationObservation{}, newTunRevalidationObservationError(api.TunHealthUplinkFingerprintUnavailable, err)
 	}
