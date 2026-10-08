@@ -7,6 +7,7 @@ Only protocol/version/outcome labels are printed to CI.
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -140,6 +141,17 @@ def test(binary, protocol, root):
                         ("outbound", "outbound"),
                     ):
                         print(f"{protocol}.{role}.{label}={source.count(token)}")
+                    diagnostic_lines = []
+                    for raw in source.splitlines():
+                        if not any(word in raw for word in ("failed", "connection ends", "rejected", "error")):
+                            continue
+                        message = re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27,}", "<uuid>", raw)
+                        message = re.sub(r"[0-9a-f]{18,}", "<token>", message)
+                        message = re.sub(r"(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?::[0-9]+)?", "<ip>", message)
+                        message = re.sub(r"/[^ \\t>]+", "<path>", message)
+                        diagnostic_lines.append(message[-260:])
+                    for message in diagnostic_lines[:5]:
+                        print(f"{protocol}.{role}.diagnostic={message}")
             return success
         finally:
             for proc in (client_proc, server_proc):
