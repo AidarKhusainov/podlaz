@@ -23,9 +23,12 @@ def port():
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    requests = 0
+    replies = 0
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
+        Handler.requests += 1
         body = b"synthetic transport comparison\n"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -34,6 +37,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         self.wfile.flush()
+        Handler.replies += 1
 
     def log_message(self, *_args):
         pass
@@ -81,12 +85,13 @@ def test(binary, protocol, root):
                              "id": identifier, "security": "auto"}
         server_stream = client_stream = {"network": "raw", "security": "none"}
 
-    server_config = {"log": {"loglevel": "warning"},
+    Handler.requests = Handler.replies = 0
+    server_config = {"log": {"loglevel": "debug"},
                      "inbounds": [{"listen": "127.0.0.1", "port": endpoint,
                                    "protocol": protocol, "settings": inbound_settings,
                                    "streamSettings": server_stream}],
                      "outbounds": [{"protocol": "freedom", "settings": {}}]}
-    client_config = {"log": {"loglevel": "warning"},
+    client_config = {"log": {"loglevel": "debug"},
                      "inbounds": [{"listen": "127.0.0.1", "port": socks,
                                    "protocol": "socks", "settings": {"auth": "noauth"}}],
                      "outbounds": [{"protocol": protocol, "settings": outbound_settings,
@@ -122,6 +127,19 @@ def test(binary, protocol, root):
             print(f"{protocol}.data_plane={'pass' if success else 'fail'}")
             if not success:
                 print(f"{protocol}.curl_exit={result.returncode}")
+                print(f"{protocol}.backend_get={Handler.requests}")
+                print(f"{protocol}.backend_reply_written={Handler.replies}")
+                for role in ("server", "client"):
+                    source = (root / (role + ".log")).read_text(errors="replace").lower()
+                    for label, token in (
+                        ("context_cancel", "context canceled"),
+                        ("connection_end", "connection ends"),
+                        ("failed", "failed"),
+                        ("eof", "eof"),
+                        ("inbound", "inbound"),
+                        ("outbound", "outbound"),
+                    ):
+                        print(f"{protocol}.{role}.{label}={source.count(token)}")
             return success
         finally:
             for proc in (client_proc, server_proc):
