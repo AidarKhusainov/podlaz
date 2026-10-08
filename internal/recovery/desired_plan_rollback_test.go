@@ -125,7 +125,6 @@ func assertMutationFreeOwnershipBlocker(t *testing.T, metadata txstate.RollbackM
 	}
 }
 
-
 func TestProjectRollbackMetadataPreservesExactMarkedPolicyRule(t *testing.T) {
 	target := "priority 9999 fwmark 20570 lookup main"
 	tx := txstate.NewTransaction("tx-marked-policy-rule", "native-profile", planner.ModeTun, time.Now().UTC())
