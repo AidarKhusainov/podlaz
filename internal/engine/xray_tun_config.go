@@ -67,7 +67,7 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 		return nil, err
 	}
 
-	streamSettings, err := vlessStreamSettings("TUN-mode", p)
+	outbound, err := typedXrayOutboundConfig(p, p.Server, "podlaz-tun-proxy", "TUN-mode")
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 				UserLevel: 0,
 			},
 		}},
-		Outbounds: []map[string]any{xrayTunOutboundConfig(p, outboundAddress, streamSettings)},
+		Outbounds: []map[string]any{typedXrayTunOutbound(p, outboundAddress, outbound)},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -108,4 +108,20 @@ func normalizeXrayTunOptions(opts XrayTunConfigOptions) XrayTunConfigOptions {
 	}
 	opts.OutboundAddressOverride = strings.TrimSpace(opts.OutboundAddressOverride)
 	return opts
+}
+
+func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound) map[string]any {
+ if strings.EqualFold(p.Protocol, "vless") {
+  return xrayTunOutboundConfig(p,address,outbound.StreamSettings)
+ }
+ // The typed subset uses precisely one Xray outbound and the same marked
+ // host-network lifecycle as native provider configurations.
+ var result map[string]any
+ raw, _ := json.Marshal(outbound)
+ _ = json.Unmarshal(raw,&result)
+ switch settings := result["settings"].(type) {
+ case map[string]any:
+  settings["address"] = address
+ }
+ return result
 }
