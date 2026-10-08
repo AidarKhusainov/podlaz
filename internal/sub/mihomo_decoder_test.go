@@ -50,14 +50,14 @@ func TestMihomoDecodersShareStableProfileIdentity(t *testing.T) {
 
 func TestMihomoSupportedTransportAndRealityMapping(t *testing.T) {
 	for _, tt := range []struct {
-		name    string
-		extra   string
-		network string
+		name     string
+		extra    string
+		network  string
 		security string
-		path    string
-		host    string
-		service string
-		key     string
+		path     string
+		host     string
+		service  string
+		key      string
 	}{
 		{name: "websocket", extra: "    tls: true\n    network: ws\n    ws-opts:\n      path: /ws\n      headers:\n        Host: edge.example.com\n", network: "ws", security: "tls", path: "/ws", host: "edge.example.com"},
 		{name: "grpc", extra: "    tls: true\n    network: grpc\n    grpc-opts:\n      grpc-service-name: api\n", network: "grpc", security: "tls", service: "api"},
@@ -179,5 +179,42 @@ func TestMihomoRemoteRefreshPreservesCommittedProfilesOnDecoderFailure(t *testin
 		if err != nil || string(actualSource) != string(originalSource) {
 			t.Fatal("failed refresh changed committed subscription metadata")
 		}
+	}
+}
+
+func TestMihomoRefreshKeepsIdentityAndSelectionForRenamedProxy(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	profiles, subscriptions := newSourceWorkflowStores(t, dir)
+	path := filepath.Join(dir, "mihomo.yaml")
+	if err := os.WriteFile(path, []byte(mihomoBasicFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ImportSource(context.Background(), subscriptions, profiles, localSourceWorkflowFileURL(path), SourceWorkflowOptions{})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	selected, err := profiles.SelectedID()
+	if err != nil || selected == "" {
+		t.Fatalf("missing initial selection: %s %v", selected, err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(mihomoBasicFixture, "example-vless", "renamed-profile", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := UpdateSource(context.Background(), subscriptions, profiles, first.Subscription.ID, SourceWorkflowOptions{})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if updated.Subscription.ID != first.Subscription.ID || updated.Subscription.Format != FormatMihomo ||
+		len(updated.Subscription.ProfileIDs) != 1 || updated.Subscription.ProfileIDs[0] != selected {
+		t.Fatalf("refresh retargeted identity")
+	}
+	currentSelection, err := profiles.SelectedID()
+	if err != nil || currentSelection != selected {
+		t.Fatalf("refresh changed selection: %s %v", currentSelection, err)
+	}
+	current, err := profiles.List()
+	if err != nil || len(current) != 1 || current[0].Name != "renamed-profile" {
+		t.Fatalf("refresh failed to update display name: %v", err)
 	}
 }
