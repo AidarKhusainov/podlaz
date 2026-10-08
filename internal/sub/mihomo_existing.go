@@ -181,7 +181,7 @@ func mihomoVMessTrojan(entry *yaml.Node, fields map[string]*yaml.Node, kind, nam
 			return p, nil, err
 		}
 		switch cipher {
-		case "auto", "none", "aes-128-gcm", "chacha20-poly1305":
+		case "auto", "aes-128-gcm", "chacha20-poly1305":
 		default:
 			return p, nil, fmt.Errorf("unsupported Clash/Mihomo vmess cipher at line %d", entry.Line)
 		}
