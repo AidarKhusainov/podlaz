@@ -121,7 +121,7 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
           set -euo pipefail
-          for protocol in vmess shadowsocks; do
+          for protocol in vmess trojan shadowsocks; do
             export PODLAZ_E2E_SYNTHETIC_PROTOCOL="${protocol}"
             export E2E_TMP_ROOT="${RUNNER_TEMP}/podlaz-hosted-${protocol}-private"
             export E2E_ARTIFACT_DIR="${RUNNER_TEMP}/podlaz-hosted-${protocol}-public"
@@ -134,7 +134,7 @@ jobs:
       - name: Remove private imported typed Xray qualification state
         if: always()
         run: |
-          sudo -n rm -rf "${RUNNER_TEMP}/podlaz-hosted-vmess-private" "${RUNNER_TEMP}/podlaz-hosted-shadowsocks-private"
+          sudo -n rm -rf "${RUNNER_TEMP}/podlaz-hosted-vmess-private" "${RUNNER_TEMP}/podlaz-hosted-trojan-private" "${RUNNER_TEMP}/podlaz-hosted-shadowsocks-private"
 
       - name: Upload imported typed Xray public evidence
         if: always()
@@ -143,6 +143,7 @@ jobs:
           name: podlaz-hosted-typed-xray-tun
           path: |
             ${{ runner.temp }}/podlaz-hosted-vmess-public/hosted-synthetic-tun.txt
+            ${{ runner.temp }}/podlaz-hosted-trojan-public/hosted-synthetic-tun.txt
             ${{ runner.temp }}/podlaz-hosted-shadowsocks-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
