@@ -16,6 +16,15 @@ func ParseBase64Subscription(content []byte) (Parsed, error) {
 		return Parsed{}, fmt.Errorf("parse Base64 subscription: %w", err)
 	}
 
+	return parseURIListEntries(decoded, false)
+}
+
+// ParsePlainURIListSubscription shares the established URI validation and identity path.
+func ParsePlainURIListSubscription(content []byte) (Parsed, error) {
+	return parseURIListEntries(content, true)
+}
+
+func parseURIListEntries(decoded []byte, redactErrors bool) (Parsed, error) {
 	var parsed Parsed
 	seenProfiles := map[string]struct{}{}
 	lines := strings.Split(strings.ReplaceAll(string(decoded), "\r\n", "\n"), "\n")
@@ -27,7 +36,11 @@ func ParseBase64Subscription(content []byte) (Parsed, error) {
 		}
 		p, warnings, err := importEntry(entry)
 		if err != nil {
-			parsed.Unsupported = append(parsed.Unsupported, Issue{Line: lineNo, Message: err.Error()})
+			message := err.Error()
+			if redactErrors {
+				message = "invalid or unsupported share URI"
+			}
+			parsed.Unsupported = append(parsed.Unsupported, Issue{Line: lineNo, Message: message})
 			continue
 		}
 		if _, duplicate := seenProfiles[p.ID]; duplicate {
