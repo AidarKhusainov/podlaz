@@ -65,45 +65,24 @@ func TestMihomoExistingProtocolsLocalAndSubscriptionImport(t *testing.T) {
 func TestMihomoExistingProtocolsRejectBehaviorChangingOptions(t *testing.T) {
  const secret="provider-secret-must-stay-redacted"
  for _,tt:=range []struct{name,fragment,extra string}{
-  {"vmess legacy","vmess", "    alterId: 1
-"},
-  {"vmess header","vmess", "    header: "+secret+"
-"},
-  {"vmess packet","vmess", "    packet-encoding: xudp
-"},
-  {"vmess cipher","vmess", "    cipher: unsupported
-"},
-  {"trojan tls","trojan", "    tls: false
-"},
-  {"trojan insecure","trojan", "    skip-cert-verify: true
-"},
-  {"trojan plugin","trojan", "    ss-opts:
-      enabled: true
-"},
-  {"ss plugin","ss", "    plugin: obfs
-"},
-  {"ss cipher","ss", "    cipher: unsupported
-"},
+  {"vmess legacy","vmess", "    alterId: 1\n"},
+  {"vmess header","vmess", "    header: "+secret+"\n"},
+  {"vmess packet","vmess", "    packet-encoding: xudp\n"},
+  {"vmess cipher","vmess", "    cipher: unsupported\n"},
+  {"trojan tls","trojan", "    tls: false\n"},
+  {"trojan insecure","trojan", "    skip-cert-verify: true\n"},
+  {"trojan plugin","trojan", "    ss-opts:\n      enabled: true\n"},
+  {"ss plugin","ss", "    plugin: obfs\n"},
+  {"ss cipher","ss", "    cipher: unsupported\n"},
  }{
   t.Run(tt.name,func(t *testing.T){
    var base string
    switch tt.fragment {
-   case "vmess":base="    uuid: 00000000-0000-0000-0000-000000000002
-    cipher: auto
-"
-   case "trojan","ss":base="    password: example-password
-";if tt.fragment=="ss"{base+="    cipher: aes-128-gcm
-"}
+   case "vmess":base="    uuid: 00000000-0000-0000-0000-000000000002\n    cipher: auto\n"
+   case "trojan","ss":base="    password: example-password\n";if tt.fragment=="ss"{base+="    cipher: aes-128-gcm\n"}
    }
-   if strings.Contains(tt.extra,"    cipher:") || strings.Contains(tt.extra,"    alterId:"){base=strings.ReplaceAll(base,"    cipher: auto
-","");base=strings.ReplaceAll(base,"    cipher: aes-128-gcm
-","")}
-   input:="proxies:
-  - name: example
-    type: "+tt.fragment+"
-    server: vpn.example.com
-    port: 443
-"+base+tt.extra
+   if strings.Contains(tt.extra,"    cipher:") || strings.Contains(tt.extra,"    alterId:"){base=strings.ReplaceAll(base,"    cipher: auto\n","");base=strings.ReplaceAll(base,"    cipher: aes-128-gcm\n","")}
+   input:="proxies:\n  - name: example\n    type: "+tt.fragment+"\n    server: vpn.example.com\n    port: 443\n"+base+tt.extra
    _,err:=ParseLocalImportContent([]byte(input))
    if err==nil {t.Fatal("expected strict rejection")}
    if strings.Contains(err.Error(),secret) || strings.Contains(err.Error(),"example-password"){t.Fatal("error leaked credentials")}
@@ -112,21 +91,7 @@ func TestMihomoExistingProtocolsRejectBehaviorChangingOptions(t *testing.T) {
 }
 
 func TestMihomoExistingProtocolsRejectDuplicateIdentity(t *testing.T) {
- input:=strings.Replace(mihomoExistingFixture,"  - name: trojan", "  - name: vmess-copy
-    type: vmess
-    server: vpn.example.com
-    port: 443
-    uuid: 00000000-0000-0000-0000-000000000002
-    alterId: 0
-    cipher: auto
-    tls: true
-    servername: vpn.example.com
-    network: ws
-    ws-opts:
-      path: /api
-      headers:
-        Host: edge.example.com
-  - name: trojan",1)
+ input:=strings.Replace(mihomoExistingFixture,"  - name: trojan", "  - name: vmess-copy\n    type: vmess\n    server: vpn.example.com\n    port: 443\n    uuid: 00000000-0000-0000-0000-000000000002\n    alterId: 0\n    cipher: auto\n    tls: true\n    servername: vpn.example.com\n    network: ws\n    ws-opts:\n      path: /api\n      headers:\n        Host: edge.example.com\n  - name: trojan",1)
  _,err:=ParseLocalImportContent([]byte(input))
  if err==nil || !strings.Contains(err.Error(),"duplicate Clash/Mihomo profile id"){t.Fatalf("expected duplicate rejection: %v",err)}
 }
