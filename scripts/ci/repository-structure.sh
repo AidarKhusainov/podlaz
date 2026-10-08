@@ -41,7 +41,7 @@ is_generated_or_vendor() {
 
 is_operational_markdown() {
   case "$1" in
-    .github/pull_request_template.md)
+    .github/pull_request_template.md|.github/CODE_OF_CONDUCT.md|.github/CONTRIBUTING.md|.github/SECURITY.md|.github/ACCESSIBILITY.md)
       return 0
       ;;
   esac
