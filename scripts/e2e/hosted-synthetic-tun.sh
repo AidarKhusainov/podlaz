@@ -40,6 +40,9 @@ HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-f
 EVIDENCE_KEYS=(
   candidate.provenance
   ordinary_user.boundary
+  proxy_only.connect
+  proxy_only.data_plane
+  proxy_only.clean_disconnect
   tun.verified_active
   tun.system_dns
   tun.https_tls
@@ -56,6 +59,9 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
   EVIDENCE_KEYS=(
     candidate.provenance
     ordinary_user.boundary
+    proxy_only.connect
+    proxy_only.data_plane
+    proxy_only.clean_disconnect
     tun.verified_active
     tun.terminal_cleanup
     tun.recovery_clean
@@ -807,13 +813,16 @@ qualify_explicit_proxy_only() {
   install_proxy_qualification_authorization
   mark_failure product proxy_only.connect
   run_guest_user /usr/bin/podlaz debug proxy "${selector}" >"${PRIVATE_ROOT}/proxy-connect.stdout" 2>"${PRIVATE_ROOT}/proxy-connect.stderr"
+  record_evidence proxy_only.connect pass
   mark_failure product proxy_only.data_plane
   guest_exec timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname 127.0.0.1:1080 --max-time 30 -o /dev/null https://example.com/
+  record_evidence proxy_only.data_plane pass
   mark_failure product proxy_only.disconnect
   run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/proxy-disconnect.stdout" 2>"${PRIVATE_ROOT}/proxy-disconnect.stderr"
   wait_guest_status clean-inactive 80
   assert_guest_network_baseline_restored
   assert_foreign_sentinel
+  record_evidence proxy_only.clean_disconnect pass
 }
 
 wait_guest_status() {
