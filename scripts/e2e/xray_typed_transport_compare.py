@@ -44,12 +44,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def wait_listen(port_number, process):
+def wait_listen(port_number, process, host="127.0.0.1"):
     for _ in range(100):
         if process.poll() is not None:
             return False
         try:
-            with socket.create_connection(("127.0.0.1", port_number), 0.1):
+            with socket.create_connection((host, port_number), 0.1):
                 return True
         except OSError:
             time.sleep(0.05)
@@ -61,6 +61,7 @@ def test(binary, protocol, root):
 
     password = "synthetic-" + uuid4().hex
     endpoint, socks, backend = port(), port(), port()
+    endpoint_host = "127.0.0.2"
     cert = root / "server.crt"
     key = root / "server.key"
     if protocol == "trojan":
@@ -73,7 +74,7 @@ def test(binary, protocol, root):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True,
         )
         inbound_settings = {"users": [{"password": password}]}
-        outbound_settings = {"address": "127.0.0.1", "port": endpoint, "password": password}
+        outbound_settings = {"address": endpoint_host, "port": endpoint, "password": password}
         server_stream = {"network": "raw", "security": "tls", "tlsSettings": {
             "certificates": [{"certificateFile": str(cert), "keyFile": str(key)}]}}
         client_stream = {"network": "raw", "security": "tls", "tlsSettings": {
@@ -82,13 +83,13 @@ def test(binary, protocol, root):
     else:
         identifier = str(uuid4())
         inbound_settings = {"users": [{"id": identifier, "level": 0}]}
-        outbound_settings = {"address": "127.0.0.1", "port": endpoint,
+        outbound_settings = {"address": endpoint_host, "port": endpoint,
                              "id": identifier, "security": "auto"}
         server_stream = client_stream = {"network": "raw", "security": "none"}
 
     Handler.requests = Handler.replies = 0
     server_config = {"log": {"loglevel": "debug"},
-                     "inbounds": [{"listen": "127.0.0.1", "port": endpoint,
+                     "inbounds": [{"listen": endpoint_host, "port": endpoint,
                                    "protocol": protocol, "settings": inbound_settings,
                                    "streamSettings": server_stream}],
                      "outbounds": [{"protocol": "freedom", "settings": {}}]}
@@ -117,7 +118,7 @@ def test(binary, protocol, root):
         client_proc = subprocess.Popen([binary, "run", "-config", str(client_path)],
                                        stdout=client_log, stderr=subprocess.STDOUT)
         try:
-            if not wait_listen(endpoint, server_proc) or not wait_listen(socks, client_proc):
+            if not wait_listen(endpoint, server_proc, endpoint_host) or not wait_listen(socks, client_proc):
                 print(f"{protocol}.listeners=fail")
                 return False
             url = f"http://127.0.0.1:{backend}/"
