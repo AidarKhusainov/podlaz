@@ -19,8 +19,8 @@ func ParseBase64Subscription(content []byte) (Parsed, error) {
 	return parseURIListEntries(decoded, false)
 }
 
-// ParsePlainURIListSubscription shares the established URI validation and identity path.
-func ParsePlainURIListSubscription(content []byte) (Parsed, error) {
+// parsePlainURIListSubscription shares the established URI validation and identity path.
+func parsePlainURIListSubscription(content []byte) (Parsed, error) {
 	return parseURIListEntries(content, true)
 }
 
