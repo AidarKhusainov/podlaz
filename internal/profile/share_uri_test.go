@@ -132,3 +132,24 @@ func TestImportShareURIRejectsMalformedInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestVMessShareURIRejectsUnsupportedLegacySemanticsWithoutCredentialDisclosure(t *testing.T) {
+	const secret = "example-private-credential"
+	for _, tc := range []struct {
+		name, extra string
+	}{
+		{name: "nonzero alterId", extra: `"aid":1`},
+		{name: "legacy header", extra: `"type":"http"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := `{"v":"2","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","ps":"` + secret + `",` + tc.extra + `}`
+			_, _, err := ImportShareURI("vmess://" + base64.StdEncoding.EncodeToString([]byte(payload)))
+			if err == nil || !strings.Contains(err.Error(), "unsupported VMess URI") {
+				t.Fatalf("expected explicit unsupported VMess rejection, got %v", err)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatal("VMess rejection exposed private provider input")
+			}
+		})
+	}
+}
