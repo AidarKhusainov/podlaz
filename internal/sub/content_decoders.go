@@ -73,6 +73,10 @@ func ParseLocalImportContent(data []byte) (profile.LocalImportResult, error) {
 	}
 	for _, decoder := range importContentDecoders {
 		if decoder.recognizes(data) {
+			trimmed := bytes.TrimSpace(data)
+			if trimmed[0] == '[' && !json.Valid(trimmed) {
+				return profile.LocalImportResult{}, fmt.Errorf("malformed Xray JSON config: invalid array")
+			}
 			return decoder.local(data)
 		}
 	}
