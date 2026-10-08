@@ -69,7 +69,12 @@ def test(binary, protocol, root):
     endpoint_host = "127.0.0.2"
     cert = root / "server.crt"
     key = root / "server.key"
-    if protocol == "trojan":
+    if protocol == "shadowsocks":
+        inbound_settings = {"method": "aes-128-gcm", "password": password, "network": "tcp,udp"}
+        outbound_settings = {"address": endpoint_host, "port": endpoint,
+                             "method": "aes-128-gcm", "password": password}
+        server_stream = client_stream = {"network": "raw", "security": "none"}
+    elif protocol == "trojan":
         subprocess.run(
             ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
              "-sha256", "-days", "1", "-keyout", str(key), "-out", str(cert),
@@ -177,7 +182,7 @@ def main():
     binary = str(Path(sys.argv[1]).resolve())
     with tempfile.TemporaryDirectory(prefix="podlaz-xray-compare-") as tmp:
         os.chmod(tmp, 0o700)
-        for protocol in ("vmess", "trojan"):
+        for protocol in ("shadowsocks", "vmess", "trojan"):
             root = Path(tmp) / protocol
             root.mkdir(mode=0o700)
             test(binary, protocol, root)
