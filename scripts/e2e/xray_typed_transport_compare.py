@@ -85,9 +85,9 @@ def test(binary, protocol, root, reference_binary=None):
         )
         inbound_settings = {"users": [{"password": password}]}
         outbound_settings = {"address": endpoint_host, "port": endpoint, "password": password}
-        server_stream = {"network": "tcp", "security": "tls", "tlsSettings": {
+        server_stream = {"network": "raw", "security": "tls", "tlsSettings": {
             "certificates": [{"certificateFile": str(cert), "keyFile": str(key)}]}}
-        client_stream = {"network": "tcp", "security": "tls", "tlsSettings": {
+        client_stream = {"network": "raw", "security": "tls", "tlsSettings": {
             "serverName": "trojan.example.com",
             "certificates": [{"usage": "verify", "certificateFile": str(cert)}]}}
     else:
