@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
@@ -37,8 +38,27 @@ func TestImportedXrayProtocolsCanRenderBothConnectionModes(t *testing.T) {
 			}
 			opts := DefaultXrayTunConfigOptions()
 			opts.EgressMark = 12345
-			if _, err := GenerateXrayTunConfig(p, opts); err != nil {
+			raw, err := GenerateXrayTunConfig(p, opts)
+			if err != nil {
 				t.Fatalf("render marked TUN: %v", err)
+			}
+			var runtime struct {
+				Outbounds []struct {
+					Protocol       string         `json:"protocol"`
+					StreamSettings map[string]any `json:"streamSettings"`
+				} `json:"outbounds"`
+			}
+			if err := json.Unmarshal(raw, &runtime); err != nil {
+				t.Fatalf("decode rendered TUN: %v", err)
+			}
+			if len(runtime.Outbounds) != 1 || runtime.Outbounds[0].Protocol != tc.name {
+				t.Fatalf("incorrect typed outbound protocol: %s", tc.name)
+			}
+			if tc.name != "vless" {
+				sockopt, ok := runtime.Outbounds[0].StreamSettings["sockopt"].(map[string]any)
+				if !ok || sockopt["mark"] != float64(opts.EgressMark) {
+					t.Fatalf("missing exact protected egress mark for %s", tc.name)
+				}
 			}
 		})
 	}
