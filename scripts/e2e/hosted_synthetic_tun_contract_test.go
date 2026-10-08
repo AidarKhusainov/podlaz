@@ -355,3 +355,33 @@ func TestHostedSyntheticTUNPolkitFixtureIsNarrow(t *testing.T) {
 		"action.id.indexOf(\"io.github.aidarkhusainov.podlaz.\")",
 	)
 }
+
+func TestHostedSyntheticTUNHysteria2UsesCanonicalGuestLifecycle(t *testing.T) {
+	workflow := readHostedSyntheticTUNFile(t, hostedSyntheticTUNWorkflow)
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	requireHostedSyntheticTUNMarkers(t, workflow,
+		"PODLAZ_E2E_SYNTHETIC_PROTOCOL: hysteria2",
+		"Run hosted Hysteria2 full-TUN qualification",
+		"podlaz-hosted-hysteria2-tun",
+	)
+	requireHostedSyntheticTUNMarkers(t, script,
+		"start_synthetic_hysteria2_endpoint()",
+		"start_synthetic_xray_endpoint()",
+		"run_scenario()",
+		"guest_exec update-ca-certificates",
+		"protocol\": \"hysteria\"",
+		"type: hysteria2",
+		"password: ${auth}",
+		"sni: hy2.example.com",
+		"alpn: [h3]",
+		"run_guest_user /usr/bin/podlaz",
+		"assert_verified_active_authority",
+		"run_active_traffic_checks",
+		"assert_guest_network_baseline_restored",
+	)
+	forbidHostedSyntheticTUNMarkers(t, script,
+		"skip-cert-verify: true",
+		"insecure\": true",
+		"podlaz-hysteria2-route",
+	)
+}
