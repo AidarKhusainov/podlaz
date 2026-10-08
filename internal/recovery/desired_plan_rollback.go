@@ -463,6 +463,11 @@ func desiredPolicyRuleRollback(step txstate.PlannedStep) (txstate.PolicyRuleRoll
 		rule.From = fields[3]
 	case "to":
 		rule.To = fields[3]
+	case "fwmark":
+		if _, err := strconv.ParseUint(fields[3], 0, 32); err != nil {
+			return txstate.PolicyRuleRollback{}, false
+		}
+		rule.Mark = fields[3]
 	default:
 		return txstate.PolicyRuleRollback{}, false
 	}
