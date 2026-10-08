@@ -385,3 +385,35 @@ func TestHostedSyntheticTUNHysteria2UsesCanonicalGuestLifecycle(t *testing.T) {
 		"podlaz-hysteria2-route",
 	)
 }
+
+
+func TestHostedSyntheticTUNMarkedMainTableRuleIsExact(t *testing.T) {
+	const program = `import hosted_synthetic_network_authority as authority
+item = {
+    "owner": "podlaz:policy-rule",
+    "priority": 9876,
+    "mark": "32191",
+    "table": "main",
+}
+rule = authority._rule_from_mapping(item, "marked native Xray rule")
+if rule.mark != "32191" or rule.table != "main":
+    raise SystemExit("marked main-table rule lost its exact identity")
+if authority._exact_fwmark("0x7dbf/0xffffffff", "observed") != "32191":
+    raise SystemExit("observed kernel mark was not normalized")
+for changed in (
+    {**item, "mark": "0"},
+    {**item, "mark": "32191/0xff"},
+    {**item, "mark": "32191", "to": "203.0.113.8/32"},
+    {**item, "mark": "", "from": "all"},
+):
+    try:
+        authority._rule_from_mapping(changed, "invalid marked rule")
+    except authority.AuthorityError:
+        continue
+    raise SystemExit("ambiguous or non-exact main-table policy rule accepted")
+`
+	cmd := exec.Command("python3", "-c", program)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("marked native Xray main-table rule contract failed: %v: %s", err, output)
+	}
+}
