@@ -19,6 +19,7 @@ const (
 	LocalImportFormatXrayJSON      LocalImportFormat = "xray-json"
 	LocalImportFormatURIList       LocalImportFormat = "uri-list"
 	LocalImportFormatBase64URIList LocalImportFormat = "base64-uri-list"
+	LocalImportFormatMihomo        LocalImportFormat = "mihomo"
 )
 
 type LocalImportIssue struct {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 func runLocalFileImport(path string, stdout io.Writer, opts options) error {
@@ -13,7 +14,7 @@ func runLocalFileImport(path string, stdout io.Writer, opts options) error {
 	if err != nil {
 		return err
 	}
-	result, err := profile.ImportLocalContent(content)
+	result, err := sub.ParseLocalImportContent(content)
 	if err != nil {
 		return usageError("%s", render.Redact(err.Error()))
 	}

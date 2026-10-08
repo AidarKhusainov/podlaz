@@ -20,7 +20,7 @@ func ValidateSource(source Source) error {
 		messages = append(messages, err.Error())
 	}
 	switch source.Format {
-	case FormatBase64, FormatXrayJSON:
+	case FormatBase64, FormatXrayJSON, FormatMihomo:
 	case "":
 		messages = append(messages, "format is required")
 	default:
