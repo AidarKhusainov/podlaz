@@ -701,7 +701,7 @@ PY
       ;;
     vmess)
       inbound_protocol=vmess
-      inbound_settings="{\"clients\":[{\"id\":\"${uuid}\",\"alterId\":0}]}"
+      inbound_settings="{\"users\":[{\"id\":\"${uuid}\",\"level\":0}]}"
       encoded="$(printf '{"v":"2","ps":"hosted-synthetic","add":"%s","port":"%s","id":"%s","aid":0,"scy":"auto","net":"tcp","tls":"none"}' "${ENDPOINT_IP}" "${port}" "${uuid}" | base64 -w0)"
       client_uri="vmess://${encoded}"
       ;;
