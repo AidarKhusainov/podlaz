@@ -1,0 +1,44 @@
+name: Xray Transport Version Diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  transport-comparison:
+    name: Isolated VMess/Trojan response comparison
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Download, verify and compare official Xray binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${RUNNER_TEMP}/xray-version-comparison"
+          for version in v26.3.27 v26.9.9; do
+            root="${RUNNER_TEMP}/xray-version-comparison/${version}"
+            install -d -m 0700 "${root}"
+            base="https://github.com/XTLS/Xray-core/releases/download/${version}"
+            curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 2 \
+              --output "${root}/xray.zip.dgst" "${base}/Xray-linux-64.zip.dgst"
+            curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 2 \
+              --output "${root}/xray.zip" "${base}/Xray-linux-64.zip"
+            expected="$(sed -n -E 's/^SHA2-256=[[:space:]]*([0-9a-fA-F]{64})[[:space:]]*$/\1/p' "${root}/xray.zip.dgst" | head -n 1)"
+            [[ "${expected}" =~ ^[0-9a-fA-F]{64}$ ]]
+            printf '%s  %s\n' "${expected}" "${root}/xray.zip" | sha256sum --check --status
+            unzip -p "${root}/xray.zip" xray >"${root}/xray"
+            chmod 0700 "${root}/xray"
+            printf 'version=%s verified_archive=yes\n' "${version}"
+            python3 scripts/e2e/xray_typed_transport_compare.py "${root}/xray"
+          done
+      - name: Delete private diagnostic state
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/xray-version-comparison"
