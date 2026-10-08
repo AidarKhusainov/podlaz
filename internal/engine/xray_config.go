@@ -66,7 +66,7 @@ type xrayOutbound struct {
 	Tag            string            `json:"tag"`
 	Protocol       string            `json:"protocol"`
 	Settings       any               `json:"settings"`
-	StreamSettings map[string]any    `json:"streamSettings"`
+	StreamSettings map[string]any `json:"streamSettings"`
 }
 
 type xrayVLESSSettings struct {
