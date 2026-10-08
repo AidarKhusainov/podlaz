@@ -116,6 +116,10 @@ expect_fail 'issue-oriented workflow label' "${fixture}" 'issue-oriented workflo
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
 printf '## Checklist\n' > "${fixture}/.github/pull_request_template.md"
+printf '# Conduct\n' > "${fixture}/.github/CODE_OF_CONDUCT.md"
+printf '# Contributing\n' > "${fixture}/.github/CONTRIBUTING.md"
+printf '# Security\n' > "${fixture}/.github/SECURITY.md"
+printf '# Accessibility\n' > "${fixture}/.github/ACCESSIBILITY.md"
 mkdir -p "${fixture}/vendor/example"
 printf '# Generated vendor notes\n' > "${fixture}/vendor/example/README.md"
 printf '// Historical context: Issue #321.\npackage app\n' > "${fixture}/internal/app/app.go"
@@ -127,13 +131,13 @@ if ! grep -Fq -- 'types: [opened, synchronize, reopened, ready_for_review, conve
   fail 'pull-request CI must rerun repository structure checks when draft state changes'
 fi
 active_block="$(grep -F -A2 -- '- name: Active repository structure' "${ci_workflow}" || true)"
-if ! grep -Fq -- "if: \${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}" <<<"${active_block}" \
+if ! grep -Fq -- "if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}" <<<"${active_block}" \
   || ! grep -Fq -- 'run: bash scripts/ci/repository-structure.sh' <<<"${active_block}" \
   || grep -Fq -- '--final' <<<"${active_block}"; then
   fail 'draft pull-request CI must allow active repository structure without --final'
 fi
 final_block="$(grep -F -A2 -- '- name: Final repository structure' "${ci_workflow}" || true)"
-if ! grep -Fq -- "if: \${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}" <<<"${final_block}" \
+if ! grep -Fq -- "if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}" <<<"${final_block}" \
   || ! grep -Fq -- 'run: bash scripts/ci/repository-structure.sh --final' <<<"${final_block}"; then
   fail 'merge-ready pull-request CI must enforce repository-structure.sh --final'
 fi
