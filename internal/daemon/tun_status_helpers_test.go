@@ -90,7 +90,6 @@ func TestValidateTunRollbackProjectionAcceptsExactMarkedPolicyRule(t *testing.T)
 	}
 }
 
-
 func TestTunPlanFromTransactionRestoresMarkedEgressAuthority(t *testing.T) {
 	tx := txstate.NewTransaction("tun-status-mark-plan", "native-profile", planner.ModeTun, fixedClock()())
 	tx.DesiredPlan.EgressMark = planner.TunEgressMark
