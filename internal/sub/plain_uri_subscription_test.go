@@ -13,8 +13,8 @@ func TestRemotePlainURIListAndLegacyBase64(t *testing.T) {
 	first := workflowShareLink(1, "example.com", "443", "first")
 	second := workflowShareLink(2, "example.org", "443", "second")
 	for _, tt := range []struct {
-		name, body string
-		format Format
+		name, body       string
+		format           Format
 		profiles, issues int
 	}{
 		{"plain", first + "\r\n" + second + "\n", FormatURIList, 2, 0},
@@ -36,7 +36,7 @@ func TestRemotePlainURIListAndLegacyBase64(t *testing.T) {
 func TestPlainURIListRecognitionDoesNotMaskErrors(t *testing.T) {
 	for _, tt := range []struct {
 		name, body string
-		format Format
+		format     Format
 	}{
 		{"invalid uri", "vless://invalid-credential@example.net:443", FormatURIList},
 		{"unsupported only", "hysteria2://credential@example.net:443", FormatURIList},
@@ -84,5 +84,22 @@ func TestHTTPPlainURIListRefreshPreservesLastGoodState(t *testing.T) {
 	stored, err := profiles.List()
 	if err != nil || len(stored) != 1 || stored[0].Name != "last-good" {
 		t.Fatalf("last-known-good profiles: %+v %v", stored, err)
+	}
+}
+
+func TestPlainURIListSupportsAllShareProtocols(t *testing.T) {
+	vmessJSON := `{"v":"2","ps":"vmess","add":"example.com","port":"443","id":"00000000-0000-0000-0000-000000000002","aid":"0","scy":"auto","net":"tcp","tls":"tls"}`
+	links := []string{
+		workflowShareLink(1, "example.com", "443", "vless"),
+		"vmess://" + base64.RawStdEncoding.EncodeToString([]byte(vmessJSON)),
+		"trojan://example-password@example.net:443?type=tcp&security=tls#trojan",
+		"ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:example-password")) + "@example.org:8388#shadowsocks",
+	}
+	format, parsed, err := ParseSubscriptionContent([]byte(strings.Join(links, "\n")))
+	if err != nil {
+		t.Fatalf("parse mixed share URIs: %v", err)
+	}
+	if format != FormatURIList || len(parsed.Profiles) != len(links) || len(parsed.Unsupported) != 0 {
+		t.Fatalf("format=%q profiles=%d unsupported=%d", format, len(parsed.Profiles), len(parsed.Unsupported))
 	}
 }
