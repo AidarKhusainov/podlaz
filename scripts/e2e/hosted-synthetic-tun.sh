@@ -518,29 +518,29 @@ PY
     -CA "${XRAY_ROOT}/ca.crt" -CAkey "${XRAY_ROOT}/ca.key" \
     -CAcreateserial -days 1 -out "${XRAY_ROOT}/server.crt" \
     -extfile "${XRAY_ROOT}/server.ext" >"${XRAY_ROOT}/server-cert.log" 2>&1
+  # Reference Hysteria2 is a test-only remote endpoint, never a Podlaz runtime
+  # helper. Verify an immutable release checksum list before executing its binary.
+  local reference_binary="${XRAY_ROOT}/hysteria-linux-amd64" hashes="${XRAY_ROOT}/hysteria-hashes.txt" reference_sha
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+    --output "${hashes}" \
+    "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hashes.txt"
+  printf '%s  %s\\n' 'e1d2c80994cf57fcef494ea799eedf80088e11fd7243b5b3b23f1288fe1266b5' "${hashes}" | sha256sum --check --status
+  reference_sha="$(awk '$2 == "hysteria-linux-amd64" {print $1}' "${hashes}")"
+  [[ "${reference_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+    --output "${reference_binary}" \
+    "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hysteria-linux-amd64"
+  printf '%s  %s\\n' "${reference_sha}" "${reference_binary}" | sha256sum --check --status
+  chmod 0700 "${reference_binary}"
+  config="${XRAY_ROOT}/reference-server.yaml"
   cat >"${config}" <<EOF_HYSTERIA
-{
-  "log": {"loglevel": "warning"},
-  "inbounds": [{
-    "listen": "${ENDPOINT_IP}",
-    "port": ${port},
-    "protocol": "hysteria",
-    "settings": {"version": 2, "users": [{"auth": "${auth}"}]},
-    "streamSettings": {
-      "network": "hysteria",
-      "security": "tls",
-      "tlsSettings": {
-        "certificates": [{
-          "certificateFile": "${XRAY_ROOT}/server.crt",
-          "keyFile": "${XRAY_ROOT}/server.key"
-        }],
-        "alpn": ["h3"]
-      },
-      "hysteriaSettings": {"version": 2, "auth": "${auth}"}
-    }
-  }],
-  "outbounds": [{"protocol": "freedom", "settings": {}}]
-}
+listen: "${ENDPOINT_IP}:${port}"
+tls:
+  cert: "${XRAY_ROOT}/server.crt"
+  key: "${XRAY_ROOT}/server.key"
+auth:
+  type: password
+  password: "${auth}"
 EOF_HYSTERIA
   cat >"${XRAY_ROOT}/client.yaml" <<EOF_HYSTERIA_CLIENT
 proxies:
@@ -555,8 +555,7 @@ EOF_HYSTERIA_CLIENT
   chmod 0600 "${config}" "${XRAY_ROOT}/client.yaml" "${XRAY_ROOT}/ca.key" "${XRAY_ROOT}/server.key"
   guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
   guest_exec update-ca-certificates >/dev/null
-  "${xray_binary}" run -test -config "${config}" >"${XRAY_ROOT}/config-test.log" 2>&1
-  "${xray_binary}" run -config "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
+  "${reference_binary}" server -c "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
   XRAY_PID=$!
   for _ in $(seq 1 100); do
     if ss -H -lun | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null; then break; fi
