@@ -61,13 +61,19 @@ func parseMihomoYAML(data []byte, source profile.SourceType) (profile.LocalImpor
 		if err != nil {
 			return profile.LocalImportResult{}, err
 		}
-		if kind != "vless" {
+		if kind != "vless" && kind != "vmess" && kind != "trojan" && kind != "ss" {
 			result.Unsupported = append(result.Unsupported, profile.LocalImportIssue{
-				Entry: i + 1, Message: "unsupported Clash/Mihomo proxy protocol: only VLESS is supported",
+				Entry: i + 1, Message: "unsupported Clash/Mihomo proxy protocol",
 			})
 			continue
 		}
-		p, warnings, err := mihomoVLESS(entry, fields, source)
+		var p profile.Profile
+		var warnings []string
+		if kind == "vless" {
+			p, warnings, err = mihomoVLESS(entry, fields, source)
+		} else {
+			p, warnings, err = mihomoExisting(entry, fields, source, kind)
+		}
 		if err != nil {
 			return profile.LocalImportResult{}, err
 		}
