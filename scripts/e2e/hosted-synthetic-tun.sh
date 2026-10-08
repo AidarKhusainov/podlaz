@@ -530,8 +530,10 @@ PY
     {
       first=$1; second=$2
       sub(/^\\*/, "", first); sub(/^\\*/, "", second)
-      if (second ~ /(^|\\/)hysteria-linux-amd64$/ && first ~ /^[[:xdigit:]]{64}$/) print tolower(first)
-      if (first ~ /(^|\\/)hysteria-linux-amd64$/ && second ~ /^[[:xdigit:]]{64}$/) print tolower(second)
+      count=split(first, segments, "/"); first_name=segments[count]
+      count=split(second, segments, "/"); second_name=segments[count]
+      if (second_name == "hysteria-linux-amd64" && length(first) == 64) print tolower(first)
+      if (first_name == "hysteria-linux-amd64" && length(second) == 64) print tolower(second)
     }
   ' "${hashes}")"
   [[ "${reference_sha}" =~ ^[0-9a-f]{64}$ ]] || { printf "hysteria-reference-phase=missing-binary-hash\n"; return 1; }
