@@ -111,15 +111,24 @@ func normalizeXrayTunOptions(opts XrayTunConfigOptions) XrayTunConfigOptions {
 }
 
 func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound, mark uint32) map[string]any {
- if strings.EqualFold(p.Protocol, "vless") {
-  return xrayTunOutboundConfig(p, address, outbound.StreamSettings)
- }
- stream := make(map[string]any,len(outbound.StreamSettings)+1)
- for key,value := range outbound.StreamSettings { stream[key]=value }
- if mark != 0 { stream["sockopt"]=map[string]any{"mark":mark} }
- settings := outbound.Settings.(map[string]any)
- fields := make(map[string]any,len(settings))
- for key,value := range settings { fields[key]=value }
- fields["address"]=address
- return map[string]any{"tag":outbound.Tag,"protocol":outbound.Protocol,"settings":fields,"streamSettings":stream}
+	if strings.EqualFold(p.Protocol, "vless") {
+		return xrayTunOutboundConfig(p, address, outbound.StreamSettings)
+	}
+	stream := make(map[string]any, len(outbound.StreamSettings)+1)
+	for key, value := range outbound.StreamSettings {
+		stream[key] = value
+	}
+	if mark != 0 {
+		stream["sockopt"] = map[string]any{"mark": mark}
+	}
+	settings := outbound.Settings.(map[string]any)
+	fields := make(map[string]any, len(settings))
+	for key, value := range settings {
+		fields[key] = value
+	}
+	fields["address"] = address
+	return map[string]any{
+		"tag": outbound.Tag, "protocol": outbound.Protocol,
+		"settings": fields, "streamSettings": stream,
+	}
 }
