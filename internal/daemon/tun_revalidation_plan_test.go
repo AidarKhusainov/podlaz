@@ -157,7 +157,6 @@ func issue245DesiredRevalidationTransaction() txstate.Transaction {
 	}
 }
 
-
 func TestTunRevalidationPlanRestoresMarkedEgressWithoutServerBypass(t *testing.T) {
 	tx := issue245DesiredRevalidationTransaction()
 	tx.DesiredPlan.EgressMark = planner.TunEgressMark
