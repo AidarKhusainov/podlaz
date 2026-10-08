@@ -25,6 +25,14 @@ type tunUplinkFingerprint struct {
 }
 
 func deriveTunUplinkFingerprint(s netsnapshot.Snapshot, indexLookup tunUplinkInterfaceIndexLookup) (tunUplinkFingerprint, error) {
+	return deriveTunUplinkFingerprintWithServerRoute(s, indexLookup, true)
+}
+
+func deriveTunEndpointIndependentUplinkFingerprint(s netsnapshot.Snapshot, indexLookup tunUplinkInterfaceIndexLookup) (tunUplinkFingerprint, error) {
+	return deriveTunUplinkFingerprintWithServerRoute(s, indexLookup, false)
+}
+
+func deriveTunUplinkFingerprintWithServerRoute(s netsnapshot.Snapshot, indexLookup tunUplinkInterfaceIndexLookup, requireServerRoute bool) (tunUplinkFingerprint, error) {
 	if s.DefaultIPv4.Status != netsnapshot.StatusDetected {
 		return tunUplinkFingerprint{}, fmt.Errorf("default IPv4 route is %s", s.DefaultIPv4.Status)
 	}
@@ -65,15 +73,20 @@ func deriveTunUplinkFingerprint(s netsnapshot.Snapshot, indexLookup tunUplinkInt
 	sort.Strings(addresses)
 	addresses = compactSortedStrings(addresses)
 
-	if s.ServerRoute.Status != netsnapshot.StatusDetected {
-		return tunUplinkFingerprint{}, fmt.Errorf("server route is %s", s.ServerRoute.Status)
-	}
-	serverInterface := strings.TrimSpace(s.ServerRoute.Interface)
-	if serverInterface == "" || serverInterface == netsnapshot.DefaultTunName {
-		return tunUplinkFingerprint{}, fmt.Errorf("invalid server-route interface %q", serverInterface)
-	}
-	if serverInterface != uplink {
-		return tunUplinkFingerprint{}, fmt.Errorf("server route uses %s while default uplink is %s", serverInterface, uplink)
+	serverInterface := ""
+	serverGateway := ""
+	if requireServerRoute {
+		if s.ServerRoute.Status != netsnapshot.StatusDetected {
+			return tunUplinkFingerprint{}, fmt.Errorf("server route is %s", s.ServerRoute.Status)
+		}
+		serverInterface = strings.TrimSpace(s.ServerRoute.Interface)
+		if serverInterface == "" || serverInterface == netsnapshot.DefaultTunName {
+			return tunUplinkFingerprint{}, fmt.Errorf("invalid server-route interface %q", serverInterface)
+		}
+		if serverInterface != uplink {
+			return tunUplinkFingerprint{}, fmt.Errorf("server route uses %s while default uplink is %s", serverInterface, uplink)
+		}
+		serverGateway = strings.TrimSpace(s.ServerRoute.Gateway)
 	}
 
 	nmID, err := activeNetworkManagerConnectionID(s.NetworkManager, uplink)
@@ -88,7 +101,7 @@ func deriveTunUplinkFingerprint(s netsnapshot.Snapshot, indexLookup tunUplinkInt
 		Addresses:            strings.Join(addresses, ","),
 		NetworkManagerID:     nmID,
 		ServerRouteInterface: serverInterface,
-		ServerRouteGateway:   strings.TrimSpace(s.ServerRoute.Gateway),
+		ServerRouteGateway:   serverGateway,
 	}, nil
 }
 
