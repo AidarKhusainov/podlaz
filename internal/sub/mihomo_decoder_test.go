@@ -121,7 +121,7 @@ func TestMihomoMalformedAndUnsupportedDoNotFallbackOrLeak(t *testing.T) {
 func TestMihomoUnsupportedProtocolIsReportedWithoutSilentLoss(t *testing.T) {
 	input := `proxies:
   - name: unused
-    type: trojan
+    type: hysteria2
     server: vpn.example.com
     password: example-password
   - name: supported
@@ -134,7 +134,7 @@ func TestMihomoUnsupportedProtocolIsReportedWithoutSilentLoss(t *testing.T) {
 	if err != nil || format != FormatMihomo || len(parsed.Profiles) != 1 || len(parsed.Unsupported) != 1 {
 		t.Fatalf("unexpected parse result: format=%s count=%d unsupported=%d err=%v", format, len(parsed.Profiles), len(parsed.Unsupported), err)
 	}
-	if !strings.Contains(parsed.Unsupported[0].Message, "only VLESS") || strings.Contains(parsed.Unsupported[0].Message, "example-password") {
+	if !strings.Contains(parsed.Unsupported[0].Message, "unsupported Clash/Mihomo proxy protocol") || strings.Contains(parsed.Unsupported[0].Message, "example-password") {
 		t.Fatalf("unsafe or missing explicit unsupported reason")
 	}
 }
