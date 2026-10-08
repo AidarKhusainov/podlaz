@@ -166,6 +166,13 @@ func replacementRecoveryPlans(state networkSessionState) ([]netexecutor.PrivacyE
 		transition.PreviousBootstrapIPv4 = nil
 		authorities = append(authorities, transition)
 	}
+	if len(state.Protection.PreviousEgressMarks) != 0 {
+		transition := cloneNetworkSessionProtection(*state.Protection)
+		transition.State = networkSessionProtectionArmed
+		transition.EgressMarks = append([]uint32(nil), state.Protection.PreviousEgressMarks...)
+		transition.PreviousEgressMarks = nil
+		authorities = append(authorities, transition)
+	}
 
 	plans := make([]netexecutor.PrivacyEnvelopePlan, 0, len(authorities))
 	for _, authority := range authorities {
@@ -226,6 +233,9 @@ func networkSessionBootstrapServer(store networkSessionStateStore, profileID str
 	}
 	if _, err := privacyEnvelopePlanFromAuthority(*state.Protection); err != nil {
 		return "", false, fmt.Errorf("validate Network Session bootstrap authority: %w", err)
+	}
+	if state.Protection.CompositionVersion == privacyEnvelopeMarkedCompositionVersion {
+		return "", false, nil
 	}
 	if len(state.Protection.BootstrapIPv4) == 0 {
 		return "", false, errors.New("Network Session privacy authority has no bootstrap IPv4 endpoint")

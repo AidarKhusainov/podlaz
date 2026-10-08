@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
+	"github.com/google/nftables"
+	"github.com/google/nftables/expr"
 )
 
 func TestObserveVerifiedNftTableRetriesOnlyReadWhenGenerationChanges(t *testing.T) {
@@ -233,4 +235,26 @@ func uintString(value uint64) string {
 		value /= 10
 	}
 	return string(digits[index:])
+}
+
+func TestNftRuleNetlinkExpressionsEncodesExactMetaMark(t *testing.T) {
+	got, err := nftRuleNetlinkExpressions(
+		&nftables.Conn{},
+		&nftables.Table{Family: nftables.TableFamilyINet, Name: "podlaz"},
+		planner.TunFirewallRulePlan{Expr: "meta mark 20570"},
+	)
+	if err != nil {
+		t.Fatalf("encode meta mark: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("meta mark expression count=%d, want 2: %#v", len(got), got)
+	}
+	meta, ok := got[0].(*expr.Meta)
+	if !ok || meta.Key != expr.MetaKeyMARK || meta.Register != 1 || meta.SourceRegister {
+		t.Fatalf("unexpected meta mark load: %#v", got[0])
+	}
+	cmp, ok := got[1].(*expr.Cmp)
+	if !ok || cmp.Op != expr.CmpOpEq || cmp.Register != 1 || !reflect.DeepEqual(cmp.Data, []byte{0x00, 0x00, 0x50, 0x5a}) {
+		t.Fatalf("unexpected meta mark comparison: %#v", got[1])
+	}
 }

@@ -29,7 +29,7 @@ XRAY_ROOT="${PRIVATE_ROOT}/unused-synthetic-bind"
 GUEST_CANDIDATE="/opt/podlaz-remnawave-candidate.deb"
 GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-remnawave-tun"
 GUEST_PRIVATE="/tmp/podlaz-hosted-remnawave-tun"
-GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
+GUEST_MANIFEST="/var/tmp/podlaz-remnawave-tun-network-manifest.json"
 GUEST_PROVIDER_DIR="/tmp/podlaz-remnawave-material"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
@@ -37,6 +37,8 @@ PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
 EVIDENCE_KEYS=(
   candidate.provenance
   remnawave.material_private
+  native.schema_opaque
+  native.multi_outbound
   ordinary_user.boundary
   tun.verified_active
   tun.system_dns
@@ -45,6 +47,7 @@ EVIDENCE_KEYS=(
   tun.https
   tun.remnawave_path
   tun.doctor
+  tun.reconnect
   privacy.direct_uplink_blocked
   foreign.state_preserved
   tun.clean_disconnect
@@ -72,6 +75,7 @@ PROBE_IP=""
 REMNAWAVE_FIXTURE_TMP="${E2E_TMP_ROOT}/remnawave-tun-fixture"
 REMNAWAVE_COMPOSE="${REMNAWAVE_FIXTURE_TMP}/remnawave-fixture/compose.yml"
 REMNAWAVE_PROFILE_FILE="${PRIVATE_ROOT}/remnawave-profile-uri"
+NATIVE_XRAY_FILE="${PRIVATE_ROOT}/native-xray.json"
 REMNAWAVE_ACTIVE=false
 REMNAWAVE_ACCESS_BEFORE=0
 
@@ -272,22 +276,72 @@ remnawave_node_access_count() {
 }
 
 prepare_provider_material() {
-  local host_uri="${PRIVATE_ROOT}/provider-uri"
   [[ -f "${REMNAWAVE_PROFILE_FILE}" && ! -L "${REMNAWAVE_PROFILE_FILE}" ]] || return 1
   PROFILE_URI="$(cat "${REMNAWAVE_PROFILE_FILE}")"
   [[ "${PROFILE_URI}" == vless://* ]] || return 1
   mask_value "${PROFILE_URI}"
-  printf '%s\n' "${PROFILE_URI}" >"${host_uri}"
-  chmod 0600 "${host_uri}"
+  python3 - "${PROFILE_URI}" "${NATIVE_XRAY_FILE}" <<'PY'
+import json
+import sys
+from urllib.parse import parse_qs, unquote, urlsplit
+
+uri, output = sys.argv[1:]
+parsed = urlsplit(uri)
+if parsed.scheme != "vless" or not parsed.username or not parsed.hostname or not parsed.port:
+    raise SystemExit("provider URI is not a complete VLESS endpoint")
+query = parse_qs(parsed.query)
+security = (query.get("security") or ["none"])[0]
+network = (query.get("type") or ["tcp"])[0]
+stream = {
+    "network": "raw" if network in {"tcp", "raw"} else network,
+    "security": security,
+    "sockopt": {"tcpKeepAliveIdle": 30},
+}
+doc = {
+    "log": {"loglevel": "warning"},
+    "stats": {},
+    "inbounds": [{"tag": "provider-owned-inbound", "protocol": "dokodemo-door", "port": 1}],
+    "outbounds": [
+        {
+            "tag": "provider-primary",
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": parsed.hostname,
+                    "port": parsed.port,
+                    "users": [{"id": unquote(parsed.username), "encryption": "none"}],
+                }]
+            },
+            "streamSettings": stream,
+        },
+        {
+            "tag": "provider-secondary",
+            "protocol": "freedom",
+            "settings": {"domainStrategy": "UseIPv4"},
+        },
+    ],
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [{
+            "type": "field",
+            "domain": ["domain:unused.example"],
+            "outboundTag": "provider-secondary",
+        }],
+    },
+}
+with open(output, "w", encoding="utf-8") as handle:
+    json.dump(doc, handle, separators=(",", ":"))
+    handle.write("\n")
+PY
+  chmod 0600 "${NATIVE_XRAY_FILE}"
   guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PROVIDER_DIR}"
-  sudo -n machinectl copy-to "${MACHINE}" "${host_uri}" "${GUEST_PROVIDER_DIR}/profile-uri" >/dev/null
-  guest_exec chown e2e:e2e "${GUEST_PROVIDER_DIR}/profile-uri"
-  guest_exec chmod 0600 "${GUEST_PROVIDER_DIR}/profile-uri"
-  rm -f -- "${host_uri}"
+  sudo -n machinectl copy-to "${MACHINE}" "${NATIVE_XRAY_FILE}" "${GUEST_PROVIDER_DIR}/native-xray.json" >/dev/null
+  guest_exec chown e2e:e2e "${GUEST_PROVIDER_DIR}/native-xray.json"
+  guest_exec chmod 0600 "${GUEST_PROVIDER_DIR}/native-xray.json"
 }
 
 remove_provider_material() {
-  rm -f -- "${PRIVATE_ROOT}/provider-uri" "${PRIVATE_ROOT}/profile-id" "${REMNAWAVE_PROFILE_FILE}"
+  rm -f -- "${PRIVATE_ROOT}/provider-uri" "${PRIVATE_ROOT}/profile-id" "${REMNAWAVE_PROFILE_FILE}" "${NATIVE_XRAY_FILE}"
   if [[ "${SYSTEM_GUEST_ACTIVE}" == true ]]; then
     guest_exec rm -rf "${GUEST_PROVIDER_DIR}" >/dev/null 2>&1 || true
   fi
@@ -307,7 +361,12 @@ classify_provider_tun_connect_failure() {
       ;;
   esac
 
-  if guest_exec test -f /run/podlaz/diagnostics/tun-last.json >/dev/null 2>&1; then
+  guest_exec install -d -m 0700 "${GUEST_PRIVATE}" >/dev/null 2>&1 || true
+  if guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >'${GUEST_PRIVATE}/connect-status.json' 2>/dev/null"; then
+    classification="$(guest_exec python3 /workspace/scripts/e2e/lib/daemon_status_semantics.py diagnose-active "${GUEST_PRIVATE}/connect-status.json" /run/podlaz/diagnostics/tun-last.json 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+
+  if [[ -z "${classification}" ]] && guest_exec test -f /run/podlaz/diagnostics/tun-last.json >/dev/null 2>&1; then
     classification="$(guest_exec python3 - /run/podlaz/diagnostics/tun-last.json <<'PY'
 import json
 import re
@@ -325,13 +384,17 @@ if value:
 PY
 )" || classification=""
   fi
+  classification="$(printf '%s' "${classification}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//')"
 
   case "${classification}" in
-    network_apply_failure|network_verify_failure|ownership_invalid|owned_state_invalid)
+    active.cleanup-required*|active.degraded.ownership_invalid*|active.degraded.owned_state_invalid*|network_apply_failure|network_verify_failure|ownership_invalid|owned_state_invalid)
       domain=product
       ;;
-    server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout)
+    active.degraded.connectivity_failed*|server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout)
       domain=remnawave
+      ;;
+    active.revalidating.*|active.degraded.network_converging*)
+      domain=product
       ;;
     *)
       domain=diagnostic_unknown
@@ -347,12 +410,35 @@ import_provider_profile() {
     XDG_CONFIG_HOME="${GUEST_XDG}/config" \
     XDG_STATE_HOME="${GUEST_XDG}/state" \
     XDG_CACHE_HOME="${GUEST_XDG}/cache" \
-    /bin/bash -lc "uri=\$(cat '${GUEST_PROVIDER_DIR}/profile-uri'); exec /usr/bin/podlaz import \"\${uri}\"" \
+    /usr/bin/podlaz import "${GUEST_PROVIDER_DIR}/native-xray.json" \
     >"${import_stdout}" 2>"${import_stderr}"
   local code=$?
   set -e
   (( code == 0 )) || return 1
   grep -F 'Next: podlaz connect' "${import_stdout}" >/dev/null || return 1
+  guest_exec /bin/bash -lc "jq -r '.selected_profile_id // empty' '${GUEST_XDG}/state/podlaz/profiles.json' >'${GUEST_PRIVATE}/profile-selector' && test -s '${GUEST_PRIVATE}/profile-selector'" || return 1
+  guest_exec python3 - "${GUEST_XDG}/state/podlaz/profiles.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    store = json.load(handle)
+selected = store.get("selected_profile_id")
+profiles = [item for item in store.get("profiles", []) if item.get("id") == selected]
+if len(profiles) != 1:
+    raise SystemExit("selected native profile is missing")
+profile = profiles[0]
+if profile.get("protocol") != "xray-json":
+    raise SystemExit("native profile protocol was flattened")
+if profile.get("server") or profile.get("port") or profile.get("user_identity"):
+    raise SystemExit("native profile acquired endpoint authority")
+raw = profile.get("reality_spider_x") or ""
+doc = json.loads(raw)
+if len(doc.get("outbounds") or []) != 2:
+    raise SystemExit("native multi-outbound source was not preserved")
+if not (doc.get("stats") == {} and (doc.get("routing") or {}).get("rules")):
+    raise SystemExit("schema-opaque provider fields were not preserved")
+PY
   guest_exec rm -rf "${GUEST_PROVIDER_DIR}"
   PROFILE_URI=""
 }
@@ -386,24 +472,32 @@ assert_direct_uplink_blocked() {
 }
 
 run_provider_traffic_checks() {
-  local before after
+  local record_initial="${1:-true}" before after
   before="$(remnawave_node_access_count)" || return 1
 
   guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
-  record_evidence tun.system_dns pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.system_dns pass
+  fi
 
   PROBE_IP="$(guest_exec getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
   [[ -n "${PROBE_IP}" ]] || return 1
   guest_exec timeout 15 /bin/bash -lc "exec 3<>/dev/tcp/${PROBE_IP}/443; exec 3>&-"
-  record_evidence tun.ipv4_tcp pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.ipv4_tcp pass
+  fi
 
   guest_exec timeout 20 openssl s_client -connect "${PROBE_IP}:443" -servername example.com -brief </dev/null \
     >"${PRIVATE_ROOT}/tls.stdout" 2>"${PRIVATE_ROOT}/tls.stderr"
-  record_evidence tun.tls pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.tls pass
+  fi
 
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
-  record_evidence tun.https pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.https pass
+  fi
 
   ACTIVE_EGRESS="$(guest_exec timeout 30 curl -4 -fsS --max-time 15 "${PUBLIC_IP_CHECK_URL}" | tr -d '[:space:]')"
   python3 - "${ACTIVE_EGRESS}" <<'PY'
@@ -419,7 +513,9 @@ PY
     mark_failure remnawave remnawave.path_not_observed
     return 1
   }
-  record_evidence tun.remnawave_path pass
+  if [[ "${record_initial}" == true ]]; then
+    record_evidence tun.remnawave_path pass
+  fi
 }
 
 assert_ordinary_connectivity_restored() {
@@ -430,7 +526,7 @@ assert_ordinary_connectivity_restored() {
 }
 
 remove_guest_private_state() {
-  guest_exec rm -rf "${GUEST_PROVIDER_DIR}" "${GUEST_PRIVATE}" "${GUEST_XDG}" >/dev/null
+  guest_exec rm -rf "${GUEST_PROVIDER_DIR}" "${GUEST_PRIVATE}" "${GUEST_XDG}" "${GUEST_MANIFEST}" >/dev/null
 }
 
 run_provider_scenario() {
@@ -457,6 +553,8 @@ run_provider_scenario() {
   guest_exec install -d -o e2e -g e2e -m 0700 "${GUEST_PRIVATE}"
   prepare_provider_material || fail "ephemeral Remnawave material is unavailable"
   import_provider_profile || fail "ephemeral Remnawave profile import/validation failed"
+  record_evidence native.schema_opaque pass
+  record_evidence native.multi_outbound pass
   remove_provider_material
   record_evidence remnawave.material_private pass
 
@@ -500,6 +598,22 @@ run_provider_scenario() {
 
   mark_failure product tun.doctor
   run_tun_doctor || fail "doctor --tun failed against active Remnawave TUN"
+
+  mark_failure product tun.reconnect_prepare
+  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/reconnect-disconnect.stdout" 2>"${PRIVATE_ROOT}/reconnect-disconnect.stderr" || \
+    fail "native Xray reconnect preparation disconnect failed"
+  wait_guest_status clean-inactive 90 || fail "native Xray reconnect preparation did not converge to clean-inactive"
+  assert_terminal_authority_clean || fail "native Xray reconnect preparation left owned authority"
+
+  mark_failure product tun.reconnect
+  run_guest_user /usr/bin/podlaz connect >"${PRIVATE_ROOT}/reconnect.stdout" 2>"${PRIVATE_ROOT}/reconnect.stderr" || \
+    fail "native Xray reconnect failed"
+  wait_guest_status verified-active 90 || fail "native Xray reconnect did not reach verified-active"
+  assert_verified_active_authority || fail "native Xray reconnect active authority is incomplete"
+  assert_direct_uplink_blocked || fail "ordinary direct uplink bypassed reconnected Privacy Envelope"
+  run_provider_traffic_checks false || fail "native Xray reconnected data plane failed"
+  assert_foreign_sentinel || fail "foreign guest state changed across native Xray reconnect"
+  record_evidence tun.reconnect pass
 
   mark_failure product tun.disconnect
   run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr" || \

@@ -74,6 +74,7 @@ type persistedNetworkSessionAllocation struct {
 	RoutingTable       string
 	ServerRulePriority int
 	TunnelRulePriority int
+	EgressMark         uint32
 }
 
 func exactPersistedNetworkSessionAllocation(tx txstate.Transaction) (persistedNetworkSessionAllocation, bool) {
@@ -82,7 +83,7 @@ func exactPersistedNetworkSessionAllocation(tx txstate.Transaction) (persistedNe
 		return persistedNetworkSessionAllocation{}, false
 	}
 
-	allocation := persistedNetworkSessionAllocation{TunIPv4CIDR: strings.TrimSpace(address.CIDR)}
+	allocation := persistedNetworkSessionAllocation{TunIPv4CIDR: strings.TrimSpace(address.CIDR), EgressMark: tx.DesiredPlan.EgressMark}
 	routeMatches := 0
 	for _, route := range tx.DesiredPlan.Routes {
 		if route.Kind != "route" || route.Operation != "add" || !ownedRollbackMetadata(route.Owner, netexecutor.OwnerRoute) {
@@ -108,9 +109,16 @@ func exactPersistedNetworkSessionAllocation(tx txstate.Transaction) (persistedNe
 			return persistedNetworkSessionAllocation{}, false
 		}
 		switch {
-		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "to "):
+		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "to ") && allocation.EgressMark == 0:
 			prefix, err := netip.ParsePrefix(strings.TrimPrefix(selector, "to "))
 			if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
+				return persistedNetworkSessionAllocation{}, false
+			}
+			serverMatches++
+			allocation.ServerRulePriority = priority
+		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "fwmark ") && allocation.EgressMark != 0:
+			mark, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(selector, "fwmark ")), 0, 32)
+			if err != nil || uint32(mark) != allocation.EgressMark {
 				return persistedNetworkSessionAllocation{}, false
 			}
 			serverMatches++
@@ -389,7 +397,20 @@ func rollbackNetworkSessionPolicyRules(ctx context.Context, osExec OSCleanupExec
 }
 
 func exactNetworkSessionPolicyRuleDeleteArgs(rule txstate.PolicyRuleRollback, allocation persistedNetworkSessionAllocation) ([]string, bool) {
-	if rule.Priority == allocation.ServerRulePriority && strings.TrimSpace(rule.Table) == planner.MainRoutingTable && strings.TrimSpace(rule.From) == "" && strings.TrimSpace(rule.Mark) == "" {
+	if rule.Priority == allocation.ServerRulePriority && strings.TrimSpace(rule.Table) == planner.MainRoutingTable && strings.TrimSpace(rule.From) == "" {
+		if allocation.EgressMark != 0 {
+			if strings.TrimSpace(rule.To) != "" {
+				return nil, false
+			}
+			mark, err := strconv.ParseUint(strings.TrimSpace(rule.Mark), 0, 32)
+			if err != nil || uint32(mark) != allocation.EgressMark {
+				return nil, false
+			}
+			return []string{"-4", "rule", "del", "priority", strconv.Itoa(rule.Priority), "fwmark", strconv.FormatUint(mark, 10), "lookup", planner.MainRoutingTable}, true
+		}
+		if strings.TrimSpace(rule.Mark) != "" {
+			return nil, false
+		}
 		prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.To))
 		if err != nil || !prefix.Addr().Is4() || prefix.Bits() != 32 {
 			return nil, false

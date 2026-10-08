@@ -47,6 +47,28 @@ func TestConnectTunActiveReplaceBlockedPlanDoesNotDisconnect(t *testing.T) {
 	}
 }
 
+func TestConnectTunNativeProviderMarkConflictFailsBeforeActiveReplacement(t *testing.T) {
+	installTunLifecyclePreflightTestHooks(t)
+	manager, done, stopFile := activeTunManagerForDestructivePreflight(t, netsnapshot.FakeResolvedDesktop())
+	req := tunConnectRequestForLifecyclePreflight(api.HandoffReplacePodlaz)
+	req.Profile.Protocol = "xray-json"
+	req.Profile.Source = "imported_file"
+	req.Profile.Server = ""
+	req.Profile.Port = 0
+	req.Profile.UserIdentity = ""
+	req.Profile.RealitySpiderX = `{"outbounds":[{"tag":"provider","protocol":"freedom","streamSettings":{"sockopt":{"mark":4242}}}]}`
+
+	_, err := manager.Connect(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "provider sockopt.mark 4242 conflicts with Podlaz egress mark") {
+		t.Fatalf("expected actionable provider mark conflict before active replacement, got %v", err)
+	}
+	assertLifecyclePreflightDidNotStopCore(t, done, stopFile)
+	summaries, warnings := txstate.ScanTransactions(manager.RuntimeDir)
+	if len(summaries) != 0 || len(warnings) != 0 {
+		t.Fatalf("provider mark conflict must not create transaction state: summaries=%#v warnings=%#v", summaries, warnings)
+	}
+}
+
 func TestConnectTunStopKnownBlockedPlanLeavesForeignBaselineUntouched(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -88,6 +110,11 @@ func TestConnectTunStopKnownBlockedPlanLeavesForeignBaselineUntouched(t *testing
 
 func TestConnectTunActiveReplaceValidateOrReplaceReachesDisconnect(t *testing.T) {
 	installTunLifecyclePreflightTestHooks(t)
+	var preflightPaths []string
+	preflightTunRuntimeConfig = func(_ context.Context, _ string, path string, _ []byte, _ coreExecutionIdentity) error {
+		preflightPaths = append(preflightPaths, filepath.Clean(path))
+		return nil
+	}
 	snapshot := tunLifecycleSnapshotWithExactActiveOwnedState()
 	manager, done, stopFile := activeTunManagerForDestructivePreflight(t, snapshot)
 	persistActiveOwnedTunTransactionForPreflight(
@@ -103,6 +130,18 @@ func TestConnectTunActiveReplaceValidateOrReplaceReachesDisconnect(t *testing.T)
 		t.Fatal("expected later connect failure after active replacement reached disconnect boundary")
 	}
 	assertLifecyclePreflightStoppedCore(t, done, stopFile)
+	liveConfig := filepath.Clean(manager.state.RuntimeConfigPath)
+	if len(preflightPaths) == 0 {
+		t.Fatal("active replacement did not validate the composed Xray config")
+	}
+	for _, path := range preflightPaths {
+		if path == liveConfig {
+			t.Fatalf("active replacement config preflight touched live runtime config path %s", path)
+		}
+		if filepath.Dir(path) != filepath.Join(filepath.Clean(manager.RuntimeDir), "preflight") {
+			t.Fatalf("config preflight path escaped dedicated ephemeral directory: %s", path)
+		}
+	}
 }
 
 func installTunLifecyclePreflightTestHooks(t *testing.T) {
@@ -110,15 +149,18 @@ func installTunLifecyclePreflightTestHooks(t *testing.T) {
 	oldEUID := currentEUID
 	oldDeps := validateTunRuntimeDependenciesHook
 	oldNative := preflightNativeTunSupport
+	oldRuntimeConfig := preflightTunRuntimeConfig
 	oldStale := podlazRuntimeRoutingStaleResources
 	currentEUID = func() int { return 1000 }
 	validateTunRuntimeDependenciesHook = func() error { return nil }
 	preflightNativeTunSupport = func(context.Context, string, coreExecutionIdentity) error { return nil }
+	preflightTunRuntimeConfig = func(context.Context, string, string, []byte, coreExecutionIdentity) error { return nil }
 	podlazRuntimeRoutingStaleResources = func(context.Context) []netsnapshot.StaleResource { return nil }
 	t.Cleanup(func() {
 		currentEUID = oldEUID
 		validateTunRuntimeDependenciesHook = oldDeps
 		preflightNativeTunSupport = oldNative
+		preflightTunRuntimeConfig = oldRuntimeConfig
 		podlazRuntimeRoutingStaleResources = oldStale
 	})
 }

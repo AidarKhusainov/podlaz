@@ -53,25 +53,34 @@ func (b *productionTunRevalidationBackend) observeReconciliation(ctx context.Con
 	round.Evidence.Mandatory.SessionOwnership = tunLocalProofProven
 	round.TransactionID = source.Transaction.ID
 
-	server, err := tunRevalidationServerAddress(source.Transaction)
-	if err != nil {
-		round.OwnershipBlocked = true
-		return round, err
-	}
 	plan, err := tunRevalidationPlanFromTransaction(source.Transaction)
 	if err != nil {
 		round.OwnershipBlocked = true
 		return round, err
 	}
-	snapshot := b.manager.collectTunSnapshot(ctx, netsnapshot.Options{Server: server})
-	local := tunMandatoryEvidenceFromSnapshot(snapshot)
+	snapshotOptions := netsnapshot.Options{}
+	fingerprintBuilder := deriveTunEndpointIndependentUplinkFingerprint
+	if plan.EgressMark == 0 {
+		server, serverErr := tunRevalidationServerAddress(source.Transaction)
+		if serverErr != nil {
+			round.OwnershipBlocked = true
+			return round, serverErr
+		}
+		snapshotOptions.Server = server
+		fingerprintBuilder = deriveTunUplinkFingerprint
+	}
+	snapshot := b.manager.collectTunSnapshot(ctx, snapshotOptions)
+	local := tunMandatoryEndpointIndependentEvidenceFromSnapshot(snapshot)
+	if plan.EgressMark == 0 {
+		local = tunMandatoryEvidenceFromSnapshot(snapshot)
+	}
 	round.Evidence.Mandatory.UplinkPath = local.UplinkPath
 	round.Evidence.Mandatory.NetworkManager = local.NetworkManager
 	round.Evidence.Mandatory.ResolvedDNS = local.ResolvedDNS
 	plan.Snapshot = snapshot
 	round.Plan = plan
 
-	fingerprint, fingerprintErr := deriveTunUplinkFingerprint(snapshot, operatingSystemInterfaceIndex)
+	fingerprint, fingerprintErr := fingerprintBuilder(snapshot, operatingSystemInterfaceIndex)
 	if fingerprintErr != nil {
 		round.Evidence.Mandatory.UplinkPath = tunLocalProofUnknown
 		round.Cause = errors.Join(round.Cause, fmt.Errorf("observe current uplink fingerprint: %w", fingerprintErr))

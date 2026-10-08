@@ -12,6 +12,7 @@ import (
 
 const tunAddressAllocationLastHost = 254
 const tunRoutingTableAllocationLast = TunRoutingTableID + 99
+const tunEgressMarkAllocationLast = TunEgressMark + 99
 
 // TunResourceAllocation is the immutable set of collision-sensitive identities
 // selected for one new TUN Network Session. It is derived from authoritative
@@ -21,6 +22,7 @@ type TunResourceAllocation struct {
 	RoutingTableID     int
 	ServerRulePriority int
 	TunnelRulePriority int
+	EgressMark         uint32
 }
 
 // AllocateTunResources selects deterministic, verified-free resources for one
@@ -43,11 +45,16 @@ func AllocateTunResources(evidence snapshot.TunAllocationEvidence) (TunResourceA
 	if err != nil {
 		return TunResourceAllocation{}, err
 	}
+	egressMark, err := allocateTunEgressMark(evidence)
+	if err != nil {
+		return TunResourceAllocation{}, err
+	}
 	return TunResourceAllocation{
 		TunIPv4CIDR:        cidr,
 		RoutingTableID:     tableID,
 		ServerRulePriority: serverPriority,
 		TunnelRulePriority: tunnelPriority,
+		EgressMark:         egressMark,
 	}, nil
 }
 
@@ -151,6 +158,26 @@ func allocateTunRulePriorities(evidence snapshot.TunAllocationEvidence) (serverP
 	return 0, 0, fmt.Errorf("allocate TUN resources: no collision-free policy-rule priority pair can precede the existing host policy rules")
 }
 
+func allocateTunEgressMark(evidence snapshot.TunAllocationEvidence) (uint32, error) {
+	for candidate := TunEgressMark; candidate <= tunEgressMarkAllocationLast; candidate++ {
+		occupied := false
+		for _, rule := range evidence.IPv4PolicyRules {
+			mask := rule.MarkMask
+			if mask == 0 && rule.Mark != 0 {
+				mask = ^uint32(0)
+			}
+			if mask != 0 && candidate&mask == rule.Mark&mask {
+				occupied = true
+				break
+			}
+		}
+		if !occupied {
+			return candidate, nil
+		}
+	}
+	return 0, fmt.Errorf("allocate TUN resources: no collision-free Xray egress mark is available in the bounded session pool")
+}
+
 // PlanTunForSession builds a read-only plan from diagnostic snapshot evidence.
 // Production mutation callers must use PlanTunForSessionWithAllocationEvidence.
 func PlanTunForSession(p profile.Profile, s snapshot.Snapshot, opts TunOptions) (TunPlan, error) {
@@ -174,8 +201,6 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 
 	device := TunDevicePlan{Name: snapshot.DefaultTunName, MTU: DefaultTunMTU, Action: "verify", Reason: "Xray owns TUN link creation and lifetime; podlazd verifies the existing link before L3 mutations"}
 	address := allocatedTunAddressPlan(device, resources.TunIPv4CIDR)
-	serverIP := concreteServerBypassIP(s)
-	serverBypass := allocatedServerBypassRoute(s, serverIP)
 	table := strconv.Itoa(resources.RoutingTableID)
 	routes := []TunRoutePlan{{
 		Family:      "ipv4",
@@ -193,26 +218,43 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		Action:   "add",
 		Reason:   "send default IPv4 traffic through this session's allocated routing table before pre-existing host policy rules",
 	}}
-	if serverIP != "" {
-		routes = append(routes, serverBypass)
+	var serverBypass TunRoutePlan
+	egressMark := uint32(0)
+	dnsPlan := dnsPlan(s, device, normalizeDNSServers(opts.DNSServers))
+	var firewall TunFirewallPlan
+	if profile.IsProviderXrayConfigProfile(p) {
+		egressMark = resources.EgressMark
 		policyRules = append([]TunPolicyRulePlan{{
 			Family:   "ipv4",
 			Priority: resources.ServerRulePriority,
-			Selector: "to " + serverIP + "/32",
+			Selector: "fwmark " + strconv.FormatUint(uint64(resources.EgressMark), 10),
 			Table:    MainRoutingTable,
 			Action:   "add",
-			Reason:   "keep VPN server traffic on the concrete current bootstrap path before the full-tunnel policy rule",
+			Reason:   "keep Podlaz-marked Xray egress sockets on the ordinary main-table path before the full-tunnel policy rule",
 		}}, policyRules...)
+		firewall = firewallPlanForEgressMark(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, resources.EgressMark)
+	} else {
+		serverIP := concreteServerBypassIP(s)
+		serverBypass = allocatedServerBypassRoute(s, serverIP)
+		if serverIP != "" {
+			routes = append(routes, serverBypass)
+			policyRules = append([]TunPolicyRulePlan{{
+				Family:   "ipv4",
+				Priority: resources.ServerRulePriority,
+				Selector: "to " + serverIP + "/32",
+				Table:    MainRoutingTable,
+				Action:   "add",
+				Reason:   "keep VPN server traffic on the concrete current bootstrap path before the full-tunnel policy rule",
+			}}, policyRules...)
+		}
+		firewall = firewallPlan(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, serverIP)
 	}
 
-	dnsPlan := dnsPlan(s, device, normalizeDNSServers(opts.DNSServers))
-	firewallPlan := firewallPlan(s, normalizeKillSwitchPolicy(opts.KillSwitchPolicy), device, serverIP)
 	loopRisks := tunRouteLoopRisks(s)
 	warnings := append([]string{}, s.Warnings...)
 	warnings = append(warnings, tunSnapshotWarnings(s)...)
-	warnings = append(warnings, tunDesiredStateWarnings(s, serverIP)...)
 	warnings = append(warnings, dnsPlanWarnings(s, dnsPlan)...)
-	warnings = append(warnings, firewallPlanWarnings(s, firewallPlan)...)
+	warnings = append(warnings, firewallPlanWarnings(s, firewall)...)
 	warnings = append(warnings, loopRisks...)
 
 	steps := []string{
@@ -222,13 +264,15 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		fmt.Sprintf("Plan daemon-owned IPv4 address %s on %s", address.CIDR, address.Interface),
 		fmt.Sprintf("Plan routing table %d with IPv4 default route through %s", resources.RoutingTableID, device.Name),
 	}
-	if serverIP != "" {
+	if egressMark != 0 {
+		steps = append(steps, fmt.Sprintf("Plan policy rule priority %d for Xray egress mark %d via %s", resources.ServerRulePriority, egressMark, MainRoutingTable))
+	} else if serverBypass.Destination != "" {
 		steps = append(steps, fmt.Sprintf("Plan policy rule priority %d for VPN server bootstrap via %s", resources.ServerRulePriority, MainRoutingTable))
 	}
 	steps = append(steps,
 		fmt.Sprintf("Plan policy rule priority %d for default IPv4 traffic via table %d", resources.TunnelRulePriority, resources.RoutingTableID),
 		fmt.Sprintf("Plan DNS backend %s on link %s with server(s) %s", dnsPlan.Backend, dnsPlan.TargetLink, strings.Join(dnsPlan.Servers, ", ")),
-		fmt.Sprintf("Plan nftables table %s %s with %d chain(s), %d rule(s), and %s kill-switch policy", firewallPlan.Family, firewallPlan.Table, len(firewallPlan.Chains), len(firewallPlan.Rules), firewallPlan.KillSwitch.Policy),
+		fmt.Sprintf("Plan nftables table %s %s with %d chain(s), %d rule(s), and %s kill-switch policy", firewall.Family, firewall.Table, len(firewall.Chains), len(firewall.Rules), firewall.KillSwitch.Policy),
 		"Leave unrelated TUN devices, routes, policy rules, DNS links, and firewall objects unchanged",
 	)
 
@@ -243,12 +287,13 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 		Routes:        routes,
 		PolicyRules:   policyRules,
 		ServerBypass:  serverBypass,
+		EgressMark:    egressMark,
 		DNS:           dnsPlan,
-		Firewall:      firewallPlan,
+		Firewall:      firewall,
 		LoopRisks:     loopRisks,
 		Warnings:      compactWarnings(warnings),
 		Steps:         steps,
-		RollbackSteps: rollbackSteps(address, routes, policyRules, dnsPlan, firewallPlan),
+		RollbackSteps: rollbackSteps(address, routes, policyRules, dnsPlan, firewall),
 	}, nil
 }
 
@@ -335,6 +380,13 @@ func TunResourceAllocationFromPlan(plan TunPlan) (TunResourceAllocation, error) 
 		switch {
 		case rule.Table == MainRoutingTable && strings.HasPrefix(strings.TrimSpace(rule.Selector), "to "):
 			allocation.ServerRulePriority = rule.Priority
+		case rule.Table == MainRoutingTable && strings.HasPrefix(strings.TrimSpace(rule.Selector), "fwmark "):
+			mark, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rule.Selector), "fwmark ")), 0, 32)
+			if err != nil || mark == 0 {
+				return TunResourceAllocation{}, fmt.Errorf("TUN plan has invalid Xray egress mark")
+			}
+			allocation.ServerRulePriority = rule.Priority
+			allocation.EgressMark = uint32(mark)
 		case rule.Priority > 0 && rule.Table == strconv.Itoa(allocation.RoutingTableID):
 			allocation.TunnelRulePriority = rule.Priority
 		}

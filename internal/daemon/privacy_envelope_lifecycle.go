@@ -38,6 +38,9 @@ func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPl
 	if state.Intent != networkSessionIntentResume {
 		return fmt.Errorf("privacy envelope arm requires resume intent, found %q", state.Intent)
 	}
+	if tunPlan.EgressMark != 0 {
+		return p.armMarked(ctx, state, tunPlan)
+	}
 
 	bootstrap, err := privacyEnvelopeBootstrapForTunPlan(tunPlan)
 	if err != nil {
@@ -79,6 +82,92 @@ func (p privacyEnvelopeLifecycle) Arm(ctx context.Context, tunPlan planner.TunPl
 // PrepareReplacement widens an already verified session barrier to the exact
 // union of the old and target bootstrap endpoints before the old Data Plane
 // Generation is allowed to tear down. The nftables swap is one atomic batch.
+func (p privacyEnvelopeLifecycle) armMarked(ctx context.Context, state networkSessionState, tunPlan planner.TunPlan) error {
+	target, err := normalizePrivacyEnvelopeEgressMarks([]uint32{tunPlan.EgressMark})
+	if err != nil {
+		return err
+	}
+	if state.Protection != nil {
+		if state.Protection.CompositionVersion != privacyEnvelopeMarkedCompositionVersion {
+			return errors.New("existing endpoint privacy envelope cannot be reused for marked native Xray without explicit replacement convergence")
+		}
+		if state.Protection.State == networkSessionProtectionRemoving {
+			return errors.New("privacy envelope is already being removed")
+		}
+		if state.Protection.TunInterface != tunPlan.TunDevice.Name {
+			return errors.New("existing privacy envelope authority does not match the reconnect TUN interface")
+		}
+		if state.Replacement != nil && !reflect.DeepEqual(state.Protection.EgressMarks, target) {
+			return p.replaceMarkedProtection(ctx, *state.Protection, target, state.Protection.EgressMarks)
+		}
+		if !reflect.DeepEqual(state.Protection.EgressMarks, target) {
+			return errors.New("existing privacy envelope authority does not match the reconnect marked data plane")
+		}
+		if _, err := privacyEnvelopePlanFromAuthority(*state.Protection); err != nil {
+			return fmt.Errorf("reconstruct existing marked privacy envelope authority: %w", err)
+		}
+		return nil
+	}
+	observer := privacyEnvelopeLifecycleAllocationObserver{executor: p.executor}
+	protection, plan, err := allocateMarkedPrivacyEnvelope(ctx, state.SessionID, tunPlan.TunDevice.Name, tunPlan.EgressMark, observer)
+	if err != nil {
+		return err
+	}
+	if err := p.store.SetProtection(&protection); err != nil {
+		return fmt.Errorf("persist marked privacy envelope authority before nftables apply: %w", err)
+	}
+	if err := p.executor.Apply(ctx, plan); err != nil {
+		return fmt.Errorf("apply marked privacy envelope: %w", err)
+	}
+	return nil
+}
+
+func (p privacyEnvelopeLifecycle) prepareMarkedReplacement(ctx context.Context, state networkSessionState, tunPlan planner.TunPlan) error {
+	if state.Protection == nil || state.Protection.CompositionVersion != privacyEnvelopeMarkedCompositionVersion {
+		return errors.New("marked privacy replacement requires existing marked privacy authority")
+	}
+	target, err := normalizePrivacyEnvelopeEgressMarks([]uint32{tunPlan.EgressMark})
+	if err != nil {
+		return err
+	}
+	union, err := normalizePrivacyEnvelopeEgressMarks(append(append([]uint32(nil), state.Protection.EgressMarks...), target...))
+	if err != nil {
+		return err
+	}
+	if reflect.DeepEqual(union, state.Protection.EgressMarks) {
+		return nil
+	}
+	if err := p.replaceMarkedProtection(ctx, *state.Protection, union, state.Protection.EgressMarks); err != nil {
+		return fmt.Errorf("widen marked privacy envelope for protected replacement: %w", err)
+	}
+	if err := p.Verify(ctx); err != nil {
+		return fmt.Errorf("verify widened marked privacy envelope for protected replacement: %w", err)
+	}
+	return nil
+}
+
+func (p privacyEnvelopeLifecycle) replaceMarkedProtection(ctx context.Context, current networkSessionProtection, target, previous []uint32) error {
+	currentPlan, err := privacyEnvelopePlanFromAuthority(current)
+	if err != nil {
+		return fmt.Errorf("reconstruct current marked privacy envelope: %w", err)
+	}
+	next := cloneNetworkSessionProtection(current)
+	next.State = networkSessionProtectionArming
+	next.EgressMarks = append([]uint32(nil), target...)
+	next.PreviousEgressMarks = append([]uint32(nil), previous...)
+	nextPlan, err := privacyEnvelopePlanFromAuthority(next)
+	if err != nil {
+		return fmt.Errorf("reconstruct marked replacement privacy envelope: %w", err)
+	}
+	if err := p.store.SetProtection(&next); err != nil {
+		return fmt.Errorf("persist marked privacy replacement authority before nftables mutation: %w", err)
+	}
+	if err := p.executor.Replace(ctx, currentPlan, nextPlan); err != nil {
+		return fmt.Errorf("atomically replace marked privacy envelope: %w", err)
+	}
+	return nil
+}
+
 func (p privacyEnvelopeLifecycle) PrepareReplacement(ctx context.Context, tunPlan planner.TunPlan) error {
 	if p.executor == nil {
 		return errors.New("privacy envelope lifecycle has no executor")
@@ -98,6 +187,9 @@ func (p privacyEnvelopeLifecycle) PrepareReplacement(ctx context.Context, tunPla
 	}
 	if state.Protection.TunInterface != tunPlan.TunDevice.Name {
 		return errors.New("privacy replacement TUN interface does not match existing protection")
+	}
+	if tunPlan.EgressMark != 0 {
+		return p.prepareMarkedReplacement(ctx, state, tunPlan)
 	}
 	target, err := privacyEnvelopeBootstrapForTunPlan(tunPlan)
 	if err != nil {
@@ -140,12 +232,13 @@ func (p privacyEnvelopeLifecycle) Verify(ctx context.Context) error {
 	if err := p.executor.Verify(ctx, plan); err != nil {
 		return err
 	}
-	if state.Protection.State == networkSessionProtectionArmed && len(state.Protection.PreviousBootstrapIPv4) == 0 {
+	if state.Protection.State == networkSessionProtectionArmed && len(state.Protection.PreviousBootstrapIPv4) == 0 && len(state.Protection.PreviousEgressMarks) == 0 {
 		return nil
 	}
 	protection := cloneNetworkSessionProtection(*state.Protection)
 	protection.State = networkSessionProtectionArmed
 	protection.PreviousBootstrapIPv4 = nil
+	protection.PreviousEgressMarks = nil
 	if err := p.store.SetProtection(&protection); err != nil {
 		return fmt.Errorf("persist verified privacy envelope state: %w", err)
 	}

@@ -15,7 +15,7 @@ import (
 // from desired identities persisted before mutation. It never treats these
 // planned identities as cleanup authority; rollback remains applied-step-backed.
 func persistedTunResourceAllocation(tx txstate.Transaction) (planner.TunResourceAllocation, error) {
-	allocation := planner.TunResourceAllocation{TunIPv4CIDR: strings.TrimSpace(tx.DesiredPlan.TUNAddress.CIDR)}
+	allocation := planner.TunResourceAllocation{TunIPv4CIDR: strings.TrimSpace(tx.DesiredPlan.TUNAddress.CIDR), EgressMark: tx.DesiredPlan.EgressMark}
 	if allocation.TunIPv4CIDR == "" {
 		return planner.TunResourceAllocation{}, fmt.Errorf("persisted TUN transaction has no allocated TUN IPv4 address")
 	}
@@ -48,7 +48,14 @@ func persistedTunResourceAllocation(tx txstate.Transaction) (planner.TunResource
 			return planner.TunResourceAllocation{}, fmt.Errorf("persisted TUN transaction has malformed planned policy-rule identity")
 		}
 		switch {
-		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "to "):
+		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "to ") && allocation.EgressMark == 0:
+			serverMatches++
+			allocation.ServerRulePriority = priority
+		case table == planner.MainRoutingTable && strings.HasPrefix(selector, "fwmark ") && allocation.EgressMark != 0:
+			mark, err := strconv.ParseUint(strings.TrimSpace(strings.TrimPrefix(selector, "fwmark ")), 0, 32)
+			if err != nil || uint32(mark) != allocation.EgressMark {
+				return planner.TunResourceAllocation{}, fmt.Errorf("persisted TUN transaction Xray egress mark does not match desired authority")
+			}
 			serverMatches++
 			allocation.ServerRulePriority = priority
 		case table == strconv.Itoa(allocation.RoutingTableID) && selector == planner.IPv4DefaultSelector:

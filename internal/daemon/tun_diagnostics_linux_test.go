@@ -104,6 +104,38 @@ func TestProbeTunServerBypassUsesAllocatedPolicyRule(t *testing.T) {
 	}
 }
 
+func TestProbeTunMarkedEgressBypassAcceptsKernelHexMark(t *testing.T) {
+	original := tunDiagnosticCommandRunner
+	t.Cleanup(func() { tunDiagnosticCommandRunner = original })
+
+	plan := planner.TunPlan{
+		EgressMark: 20570,
+		PolicyRules: []planner.TunPolicyRulePlan{
+			{Priority: 9997, Selector: "fwmark 20570", Table: planner.MainRoutingTable},
+			{Priority: 9998, Selector: planner.IPv4DefaultSelector, Table: "51821"},
+		},
+	}
+	ruleOutput := "9997: from all fwmark 0x505a lookup main\n9998: from all lookup 51821\n"
+	tunDiagnosticCommandRunner = func(_ context.Context, name string, args ...string) (tunDiagnosticCommandResult, error) {
+		command := strings.TrimSpace(name + " " + strings.Join(args, " "))
+		if command != "ip -4 rule show" {
+			t.Fatalf("unexpected diagnostic command: %s", command)
+		}
+		return tunDiagnosticCommandResult{command: command, stdout: ruleOutput, exitCode: 0}, nil
+	}
+
+	result := probeTunServerBypassPath(context.Background(), plan)
+	if result.Status != tundiag.ProbePass {
+		t.Fatalf("marked egress bypass must pass diagnostics: %#v", result)
+	}
+
+	ruleOutput = "9997: from all fwmark 0x505b lookup main\n"
+	result = probeTunServerBypassPath(context.Background(), plan)
+	if result.Status != tundiag.ProbeFail || result.Classification != tundiag.ClassPolicyRuleFailure {
+		t.Fatalf("wrong marked egress rule must fail exact diagnostics: %#v", result)
+	}
+}
+
 func TestProbeTunDNSStateRejectsForeignRouteOnlyOwner(t *testing.T) {
 	result := probeTunDNSState(planner.TunPlan{DNS: planner.TunDNSPlan{TargetLink: "podlaz0", Servers: []string{"1.1.1.1"}}}, netsnapshot.Snapshot{
 		DNS: netsnapshot.DNS{ResolvedLinks: []netsnapshot.ResolvedLink{

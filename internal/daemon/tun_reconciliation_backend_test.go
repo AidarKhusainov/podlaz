@@ -54,3 +54,18 @@ func TestMandatoryEvidenceMarksTransientRouteGapUnknown(t *testing.T) {
 		t.Fatalf("uplink proof=%v, want unknown", evidence.UplinkPath)
 	}
 }
+
+func TestMandatoryEvidenceAllowsEndpointIndependentMarkedUplinkWithoutServerRoute(t *testing.T) {
+	snapshot := authoritativeReconciliationSnapshot()
+	snapshot.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusUnknown}
+
+	typed := tunMandatoryEvidenceFromSnapshot(snapshot)
+	if typed.UplinkPath != tunLocalProofUnknown {
+		t.Fatalf("typed endpoint evidence must still require server route, got %v", typed.UplinkPath)
+	}
+
+	marked := tunMandatoryEndpointIndependentEvidenceFromSnapshot(snapshot)
+	if marked.UplinkPath != tunLocalProofProven {
+		t.Fatalf("marked endpoint-independent uplink proof=%v, want proven", marked.UplinkPath)
+	}
+}

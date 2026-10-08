@@ -133,3 +133,19 @@ func issue245UplinkSnapshot() netsnapshot.Snapshot {
 		TunDevices: []netsnapshot.TunDevice{{Name: netsnapshot.DefaultTunName, Status: netsnapshot.StatusMissing}},
 	}
 }
+
+func TestEndpointIndependentTunUplinkFingerprintDoesNotRequireServerRoute(t *testing.T) {
+	snapshot := issue245UplinkSnapshot()
+	snapshot.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusUnknown}
+
+	got, err := deriveTunEndpointIndependentUplinkFingerprint(snapshot, issue245InterfaceIndex)
+	if err != nil {
+		t.Fatalf("derive endpoint-independent fingerprint: %v", err)
+	}
+	if got.Interface != "wlan0" || got.ServerRouteInterface != "" || got.ServerRouteGateway != "" {
+		t.Fatalf("unexpected endpoint-independent fingerprint: %+v", got)
+	}
+	if _, err := deriveTunUplinkFingerprint(snapshot, issue245InterfaceIndex); err == nil {
+		t.Fatal("typed endpoint-based fingerprint must remain strict about server-route evidence")
+	}
+}

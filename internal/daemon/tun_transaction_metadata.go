@@ -63,6 +63,7 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		PlanID:     plan.ProfileID + ":" + planner.ModeTun,
 		TUN:        txstate.TUNDesiredState{InterfaceName: plan.TunDevice.Name, MTU: plan.TunDevice.MTU, Owner: tunDesiredOwner(plan.TunDevice.Action)},
 		TUNAddress: tunAddressDesiredState(plan.TunAddress),
+		EgressMark: plan.EgressMark,
 		Routes:     routes,
 		DNS:        txstate.DNSPlan{Backend: plan.DNS.Backend, Link: plan.DNS.TargetLink, Servers: append([]string{}, plan.DNS.Servers...), SearchDomains: dnsSearchDomains(plan.DNS), Owner: txstate.TransactionOwner},
 		NFT:        txstate.NFTPlan{Family: plan.Firewall.Family, Table: plan.Firewall.Table, Chains: nftChains(plan.Firewall), Owner: netexecutor.OwnerFirewall},
@@ -146,6 +147,8 @@ func policyRuleRollback(rule planner.TunPolicyRulePlan) txstate.PolicyRuleRollba
 		rollback.To = strings.TrimSpace(strings.TrimPrefix(selector, "to "))
 	case strings.HasPrefix(selector, "from "):
 		rollback.From = strings.TrimSpace(strings.TrimPrefix(selector, "from "))
+	case strings.HasPrefix(selector, "fwmark "):
+		rollback.Mark = strings.TrimSpace(strings.TrimPrefix(selector, "fwmark "))
 	default:
 		rollback.From = selector
 	}

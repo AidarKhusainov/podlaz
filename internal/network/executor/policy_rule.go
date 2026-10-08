@@ -190,7 +190,7 @@ func verifyPolicyRuleLine(line string, plan planner.TunPolicyRulePlan) error {
 		return fmt.Errorf("priority mismatch: expected %d in %q", plan.Priority, line)
 	}
 
-	wantFrom, wantTo, err := policyRuleSelectorIdentity(plan.Selector)
+	wantFrom, wantTo, wantMark, err := policyRuleSelectorIdentity(plan.Selector)
 	if err != nil {
 		return err
 	}
@@ -217,6 +217,15 @@ func verifyPolicyRuleLine(line string, plan planner.TunPolicyRulePlan) error {
 		return fmt.Errorf("unexpected destination selector in %q", line)
 	}
 
+	if wantMark != "" {
+		if i+1 >= len(fields) || fields[i] != "fwmark" || !samePolicyRuleMark(fields[i+1], wantMark) {
+			return fmt.Errorf("fwmark selector mismatch: expected %s in %q", wantMark, line)
+		}
+		i += 2
+	} else if i < len(fields) && fields[i] == "fwmark" {
+		return fmt.Errorf("unexpected fwmark selector in %q", line)
+	}
+
 	if i+1 >= len(fields) || (fields[i] != "lookup" && fields[i] != "table") {
 		return fmt.Errorf("lookup table missing in %q", line)
 	}
@@ -231,18 +240,49 @@ func verifyPolicyRuleLine(line string, plan planner.TunPolicyRulePlan) error {
 	return nil
 }
 
-func policyRuleSelectorIdentity(selector string) (from, to string, err error) {
+func policyRuleSelectorIdentity(selector string) (from, to, mark string, err error) {
 	fields := strings.Fields(strings.TrimSpace(selector))
 	switch {
 	case len(fields) == 2 && fields[0] == "from":
-		return fields[1], "", nil
+		return fields[1], "", "", nil
 	case len(fields) == 2 && fields[0] == "to":
-		return "all", fields[1], nil
+		return "all", fields[1], "", nil
+	case len(fields) == 2 && fields[0] == "fwmark":
+		if !validPolicyRuleMark(fields[1]) {
+			return "", "", "", fmt.Errorf("unsupported policy-rule selector %q", selector)
+		}
+		return "all", "", fields[1], nil
 	case len(fields) == 4 && fields[0] == "from" && fields[2] == "to":
-		return fields[1], fields[3], nil
+		return fields[1], fields[3], "", nil
 	default:
-		return "", "", fmt.Errorf("unsupported policy-rule selector %q", selector)
+		return "", "", "", fmt.Errorf("unsupported policy-rule selector %q", selector)
 	}
+}
+
+func validPolicyRuleMark(value string) bool {
+	_, ok := parsePolicyRuleMark(value)
+	return ok
+}
+
+func samePolicyRuleMark(got, want string) bool {
+	gotValue, gotOK := parsePolicyRuleMark(got)
+	wantValue, wantOK := parsePolicyRuleMark(want)
+	return gotOK && wantOK && gotValue == wantValue
+}
+
+func parsePolicyRuleMark(value string) (uint32, bool) {
+	parts := strings.SplitN(strings.TrimSpace(value), "/", 2)
+	raw, err := strconv.ParseUint(parts[0], 0, 32)
+	if err != nil || raw == 0 {
+		return 0, false
+	}
+	if len(parts) == 2 {
+		mask, maskErr := strconv.ParseUint(parts[1], 0, 32)
+		if maskErr != nil || uint32(mask) != ^uint32(0) {
+			return 0, false
+		}
+	}
+	return uint32(raw), true
 }
 
 func samePolicyRuleTable(got, want string) bool {

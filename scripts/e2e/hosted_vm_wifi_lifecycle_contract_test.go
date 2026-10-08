@@ -33,6 +33,8 @@ func TestHostedVMWiFiLifecycleOwnsWiFiAssociationBoundary(t *testing.T) {
 		"privacy.envelope_retained",
 		"privacy.direct_uplink_blocked",
 		"tun.same_network_session",
+		"capture_exact_active_authority_after_verified",
+		`.tun_health.state != \"verified\"`,
 		"tun.exact_authority_after_reconnect",
 		"fixture.foreign_state_after_reconnect",
 		"tun.traffic_after_reconnect",

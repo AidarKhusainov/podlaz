@@ -3,6 +3,7 @@ package recovery
 import (
 	"fmt"
 	"net/netip"
+	"strconv"
 	"strings"
 
 	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
@@ -216,10 +217,19 @@ func rawPolicyRuleRollbackEntryValid(item txstate.PolicyRuleRollback) bool {
 }
 
 func safeMainServerBypassPolicyRuleShape(rule txstate.PolicyRuleRollback) bool {
-	if strings.TrimSpace(rule.Table) != planner.MainRoutingTable || strings.TrimSpace(rule.From) != "" || strings.TrimSpace(rule.Mark) != "" {
+	if strings.TrimSpace(rule.Table) != planner.MainRoutingTable || strings.TrimSpace(rule.From) != "" {
 		return false
 	}
-	prefix, err := netip.ParsePrefix(strings.TrimSpace(rule.To))
+	mark := strings.TrimSpace(rule.Mark)
+	to := strings.TrimSpace(rule.To)
+	if mark != "" {
+		if to != "" {
+			return false
+		}
+		value, err := strconv.ParseUint(mark, 0, 32)
+		return err == nil && value != 0
+	}
+	prefix, err := netip.ParsePrefix(to)
 	return err == nil && prefix.Addr().Is4() && prefix.Bits() == 32
 }
 

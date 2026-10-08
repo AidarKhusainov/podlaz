@@ -334,7 +334,7 @@ func canonicalNftJSONLeft(raw json.RawMessage) (string, error) {
 				return "", fmt.Errorf("invalid meta expression: %w", err)
 			}
 			switch meta.Key {
-			case "oifname", "nfproto", "l4proto":
+			case "oifname", "nfproto", "l4proto", "mark":
 				return "meta:" + meta.Key + ":", nil
 			default:
 				return "", fmt.Errorf("unsupported meta key %q", meta.Key)
@@ -422,6 +422,12 @@ func canonicalNftScalar(left, value string) (string, error) {
 		default:
 			return "", fmt.Errorf("unsupported nfproto %q", value)
 		}
+	case "meta:mark:":
+		mark, err := strconv.ParseUint(value, 0, 32)
+		if err != nil {
+			return "", fmt.Errorf("invalid mark %q", value)
+		}
+		return strconv.FormatUint(mark, 10), nil
 	case "meta:l4proto:":
 		switch value {
 		case "udp", "17":
@@ -601,14 +607,20 @@ func canonicalPlannedNftExpression(expr string) ([]string, error) {
 			statements = append(statements, "match=payload:ip:daddr:=="+value)
 			i += 3
 		case "meta":
-			if i+2 >= len(fields) || fields[i+1] != "nfproto" {
+			if i+2 >= len(fields) {
+				return nil, fmt.Errorf("incomplete meta nft expression near %q", strings.Join(fields[i:], " "))
+			}
+			left := "meta:" + fields[i+1] + ":"
+			switch fields[i+1] {
+			case "nfproto", "mark":
+			default:
 				return nil, fmt.Errorf("unsupported meta nft expression near %q", strings.Join(fields[i:], " "))
 			}
-			value, err := canonicalNftScalar("meta:nfproto:", fields[i+2])
+			value, err := canonicalNftScalar(left, fields[i+2])
 			if err != nil {
 				return nil, err
 			}
-			statements = append(statements, "match=meta:nfproto:=="+value)
+			statements = append(statements, "match="+left+"=="+value)
 			i += 3
 		case "udp":
 			if i+2 >= len(fields) || (fields[i+1] != "sport" && fields[i+1] != "dport") {

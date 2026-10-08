@@ -91,7 +91,7 @@ func ValidateXrayProxyOnlyProfile(p profile.Profile) error {
 // supported TUN-mode Xray config without writing runtime state.
 func ValidateXrayTunProfile(p profile.Profile) error {
 	if profile.IsProviderXrayConfigProfile(p) {
-		return unsupportedProviderXrayTunModeError()
+		return ValidateProviderXrayTunProfile(p)
 	}
 	return validateXrayVLESSProfile(p, "TUN-mode")
 }

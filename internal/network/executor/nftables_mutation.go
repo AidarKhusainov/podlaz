@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/network/planner"
@@ -294,22 +295,36 @@ func nftRuleNetlinkExpressions(conn *nftables.Conn, table *nftables.Table, rule 
 			)
 			i += 3
 		case "meta":
-			if i+2 >= len(fields) || fields[i+1] != "nfproto" {
+			if i+2 >= len(fields) {
+				return nil, fmt.Errorf("incomplete meta expression near %q", strings.Join(fields[i:], " "))
+			}
+			switch fields[i+1] {
+			case "nfproto":
+				var family byte
+				switch fields[i+2] {
+				case "ipv4":
+					family = byte(unix.NFPROTO_IPV4)
+				case "ipv6":
+					family = byte(unix.NFPROTO_IPV6)
+				default:
+					return nil, fmt.Errorf("unsupported nfproto %q", fields[i+2])
+				}
+				out = append(out,
+					&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1},
+					&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{family}},
+				)
+			case "mark":
+				mark, err := parseNftUint32(fields[i+2])
+				if err != nil {
+					return nil, fmt.Errorf("invalid meta mark %q: %w", fields[i+2], err)
+				}
+				out = append(out,
+					&expr.Meta{Key: expr.MetaKeyMARK, Register: 1},
+					&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryutil.BigEndian.PutUint32(mark)},
+				)
+			default:
 				return nil, fmt.Errorf("unsupported meta expression near %q", strings.Join(fields[i:], " "))
 			}
-			var family byte
-			switch fields[i+2] {
-			case "ipv4":
-				family = byte(unix.NFPROTO_IPV4)
-			case "ipv6":
-				family = byte(unix.NFPROTO_IPV6)
-			default:
-				return nil, fmt.Errorf("unsupported nfproto %q", fields[i+2])
-			}
-			out = append(out,
-				&expr.Meta{Key: expr.MetaKeyNFPROTO, Register: 1},
-				&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{family}},
-			)
 			i += 3
 		case "udp":
 			if i+2 >= len(fields) || (fields[i+1] != "sport" && fields[i+1] != "dport") {
@@ -377,6 +392,14 @@ func nftIfname(name string) []byte {
 	value := make([]byte, 16)
 	copy(value, name+"\x00")
 	return value
+}
+
+func parseNftUint32(value string) (uint32, error) {
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 0, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint32(parsed), nil
 }
 
 func parseNftPort(value string) (uint16, error) {

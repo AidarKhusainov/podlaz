@@ -30,4 +30,7 @@ type TunAllocationRoute struct {
 type TunAllocationRule struct {
 	Priority uint32
 	Table    uint32
+	HasMark  bool
+	Mark     uint32
+	MarkMask uint32
 }

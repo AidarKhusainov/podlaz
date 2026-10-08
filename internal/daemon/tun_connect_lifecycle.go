@@ -17,6 +17,7 @@ import (
 
 var (
 	preflightNativeTunSupport          = preflightXrayNativeTunSupport
+	preflightTunRuntimeConfig          = preflightXrayTunSupport
 	validateTunRuntimeDependenciesHook = validateTunRuntimeDependencies
 )
 
@@ -43,6 +44,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 	runtimeDir := m.runtimeDir()
 	runtimeConfigPath := filepath.Join(runtimeDir, generatedDirName, generatedXrayName)
+	preflightConfigPath := filepath.Join(runtimeDir, "preflight", generatedXrayName)
 	xrayPath, err := m.resolveXrayPath()
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", wrapRuntimeUnavailable("Xray", err))
@@ -77,14 +79,23 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	preHandoffPlan = xrayOwnedTunPlan(preHandoffPlan)
-	if _, err := requireTunRuntimeServerBypass(preHandoffPlan); err != nil {
-		return api.LifecycleResponse{}, withTunFailurePhase("server-bypass", "", "not-started", err)
+	if preHandoffPlan.EgressMark == 0 {
+		if _, err := requireTunRuntimeServerBypass(preHandoffPlan); err != nil {
+			return api.LifecycleResponse{}, withTunFailurePhase("server-bypass", "", "not-started", err)
+		}
 	}
 	if err := requireTunPlanMutationFreePreflight(preHandoffPlan); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
 	if err := m.requireTunAddressPreflightBeforeHandoff(ctx, preHandoffPlan, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
+	}
+	preHandoffPreflightConfig, err := tunRuntimePreflightConfig(p, runtimeConfigPath, preHandoffPlan)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
+	}
+	if err := preflightTunRuntimeConfig(ctx, xrayPath, preflightConfigPath, preHandoffPreflightConfig, coreIdentity); err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-config-preflight", "", "not-started", err)
 	}
 
 	sessionStore := newNetworkSessionStateStore(runtimeDir, nil)
@@ -181,6 +192,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
+	runtimePreflightConfig, err := tunRuntimePreflightConfig(p, runtimeConfigPath, plan)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
+	}
 
 	executor := m.tunPlanExecutor()
 	runner := fullTunnelTransactionRunner{
@@ -190,6 +205,9 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		corePlan:   corePlan,
 		executor:   executor,
 		now:        time.Now,
+		preflightCore: func(preflightCtx context.Context) error {
+			return preflightTunRuntimeConfig(preflightCtx, xrayPath, preflightConfigPath, runtimePreflightConfig, coreIdentity)
+		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -245,4 +263,17 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
 	return m.runTunCleanup(ctx, transactionID)
+}
+
+func tunRuntimePreflightConfig(p profile.Profile, runtimeConfigPath string, plan planner.TunPlan) ([]byte, error) {
+	preflightPlan := plan
+	preflightPlan.TunDevice.Name = xrayTunPreflightInterfaceName
+	if preflightPlan.TunAddress.Interface != "" {
+		preflightPlan.TunAddress.Interface = xrayTunPreflightInterfaceName
+	}
+	corePlan, err := planTunCoreRuntime(p, runtimeConfigPath, preflightPlan)
+	if err != nil {
+		return nil, err
+	}
+	return corePlan.XrayConfig, nil
 }

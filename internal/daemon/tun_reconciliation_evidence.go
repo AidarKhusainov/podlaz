@@ -25,10 +25,21 @@ type tunMandatoryEvidence struct {
 }
 
 func tunMandatoryEvidenceFromSnapshot(snapshot netsnapshot.Snapshot) tunMandatoryEvidence {
+	return tunMandatoryEvidenceFromSnapshotWithServerRoute(snapshot, true)
+}
+
+func tunMandatoryEndpointIndependentEvidenceFromSnapshot(snapshot netsnapshot.Snapshot) tunMandatoryEvidence {
+	return tunMandatoryEvidenceFromSnapshotWithServerRoute(snapshot, false)
+}
+
+func tunMandatoryEvidenceFromSnapshotWithServerRoute(snapshot netsnapshot.Snapshot, requireServerRoute bool) tunMandatoryEvidence {
 	evidence := tunMandatoryEvidence{}
-	if snapshot.DefaultIPv4.Status == netsnapshot.StatusDetected &&
-		snapshot.ServerRoute.Status == netsnapshot.StatusDetected &&
-		snapshot.IPv4Addresses.Inspection.Status == netsnapshot.StatusDetected {
+	uplinkProven := snapshot.DefaultIPv4.Status == netsnapshot.StatusDetected &&
+		snapshot.IPv4Addresses.Inspection.Status == netsnapshot.StatusDetected
+	if requireServerRoute {
+		uplinkProven = uplinkProven && snapshot.ServerRoute.Status == netsnapshot.StatusDetected
+	}
+	if uplinkProven {
 		evidence.UplinkPath = tunLocalProofProven
 	}
 

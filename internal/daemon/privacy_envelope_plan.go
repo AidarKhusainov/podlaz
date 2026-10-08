@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	privacyEnvelopeCompositionVersion = 1
-	privacyEnvelopeCandidateLimit     = 16
-	privacyEnvelopeFamily             = "inet"
-	privacyEnvelopeOutputChain        = "output"
-	privacyEnvelopeOutputPriority     = -10
-	privacyEnvelopeReason             = "preserve a fail-closed network session privacy boundary"
+	privacyEnvelopeCompositionVersion       = 1
+	privacyEnvelopeMarkedCompositionVersion = 2
+	privacyEnvelopeCandidateLimit           = 16
+	privacyEnvelopeFamily                   = "inet"
+	privacyEnvelopeOutputChain              = "output"
+	privacyEnvelopeOutputPriority           = -10
+	privacyEnvelopeReason                   = "preserve a fail-closed network session privacy boundary"
 )
 
 type privacyEnvelopeObserver interface {
@@ -78,11 +79,60 @@ func allocatePrivacyEnvelope(
 	return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, fmt.Errorf("no collision-free privacy envelope table available in bounded candidate set of %d", privacyEnvelopeCandidateLimit)
 }
 
+func allocateMarkedPrivacyEnvelope(
+	ctx context.Context,
+	sessionID string,
+	tunInterface string,
+	egressMark uint32,
+	observer privacyEnvelopeObserver,
+) (networkSessionProtection, netexecutor.PrivacyEnvelopePlan, error) {
+	if !networkSessionIDPattern.MatchString(sessionID) {
+		return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, errors.New("invalid network session identity for privacy envelope allocation")
+	}
+	if err := validateNetworkSessionInterface(tunInterface); err != nil {
+		return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, err
+	}
+	if egressMark == 0 {
+		return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, errors.New("privacy envelope requires a non-zero Podlaz egress mark")
+	}
+	if observer == nil {
+		return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, errors.New("privacy envelope allocation requires authoritative table observation")
+	}
+	baseTable := "podlaz_pe_" + sessionID[:12]
+	for candidateIndex := 0; candidateIndex < privacyEnvelopeCandidateLimit; candidateIndex++ {
+		table := baseTable
+		if candidateIndex != 0 {
+			table = fmt.Sprintf("%s_%d", baseTable, candidateIndex)
+		}
+		occupied, observeErr := observer.PrivacyEnvelopeTableExists(ctx, privacyEnvelopeFamily, table)
+		if observeErr != nil {
+			return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, fmt.Errorf("observe privacy envelope candidate %s %s: %w", privacyEnvelopeFamily, table, observeErr)
+		}
+		if occupied {
+			continue
+		}
+		protection := networkSessionProtection{
+			State:              networkSessionProtectionArming,
+			CompositionVersion: privacyEnvelopeMarkedCompositionVersion,
+			Family:             privacyEnvelopeFamily,
+			Table:              table,
+			TunInterface:       tunInterface,
+			EgressMarks:        []uint32{egressMark},
+		}
+		plan, err := privacyEnvelopePlanFromAuthority(protection)
+		if err != nil {
+			return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, err
+		}
+		return protection, plan, nil
+	}
+	return networkSessionProtection{}, netexecutor.PrivacyEnvelopePlan{}, fmt.Errorf("no collision-free privacy envelope table available in bounded candidate set of %d", privacyEnvelopeCandidateLimit)
+}
+
 func privacyEnvelopePlanFromAuthority(protection networkSessionProtection) (netexecutor.PrivacyEnvelopePlan, error) {
 	if err := validateNetworkSessionProtection(protection); err != nil {
 		return netexecutor.PrivacyEnvelopePlan{}, err
 	}
-	if protection.CompositionVersion != privacyEnvelopeCompositionVersion {
+	if protection.CompositionVersion != privacyEnvelopeCompositionVersion && protection.CompositionVersion != privacyEnvelopeMarkedCompositionVersion {
 		return netexecutor.PrivacyEnvelopePlan{}, fmt.Errorf("unsupported privacy envelope composition version %d", protection.CompositionVersion)
 	}
 
@@ -117,6 +167,9 @@ func privacyEnvelopePlanFromAuthority(protection networkSessionProtection) (nete
 	for _, endpoint := range protection.BootstrapIPv4 {
 		appendAccept("ip daddr "+endpoint, "podlaz:privacy-envelope:bootstrap")
 	}
+	for _, mark := range protection.EgressMarks {
+		appendAccept(fmt.Sprintf("meta mark %d", mark), "podlaz:privacy-envelope:xray-egress")
+	}
 	appendAccept("meta nfproto ipv4 udp sport 68 udp dport 67", "podlaz:privacy-envelope:dhcp4")
 	appendAccept("meta nfproto ipv6 udp sport 546 udp dport 547", "podlaz:privacy-envelope:dhcp6")
 	appendAccept("icmpv6 type { nd-router-solicit, nd-neighbor-solicit, nd-neighbor-advert }", "podlaz:privacy-envelope:ipv6-link-control")
@@ -128,6 +181,26 @@ func privacyEnvelopePlanFromAuthority(protection networkSessionProtection) (nete
 		Ownership: "podlaz:privacy-envelope:block-direct",
 	})
 	return plan, nil
+}
+
+func normalizePrivacyEnvelopeEgressMarks(rawMarks []uint32) ([]uint32, error) {
+	if len(rawMarks) == 0 {
+		return nil, errors.New("privacy envelope requires at least one Podlaz egress mark")
+	}
+	seen := make(map[uint32]struct{}, len(rawMarks))
+	marks := make([]uint32, 0, len(rawMarks))
+	for _, mark := range rawMarks {
+		if mark == 0 {
+			return nil, errors.New("privacy envelope egress mark must be non-zero")
+		}
+		if _, exists := seen[mark]; exists {
+			continue
+		}
+		seen[mark] = struct{}{}
+		marks = append(marks, mark)
+	}
+	sort.Slice(marks, func(i, j int) bool { return marks[i] < marks[j] })
+	return marks, nil
 }
 
 func normalizePrivacyEnvelopeBootstrapIPv4(rawEndpoints []string) ([]string, error) {

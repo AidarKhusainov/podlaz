@@ -65,6 +65,7 @@ type DesiredPlan struct {
 	PlanID     string                 `json:"plan_id,omitempty"`
 	TUN        TUNDesiredState        `json:"tun,omitempty"`
 	TUNAddress TUNAddressDesiredState `json:"tun_address,omitempty"`
+	EgressMark uint32                 `json:"egress_mark,omitempty"`
 	Routes     []RoutePlan            `json:"routes,omitempty"`
 	DNS        DNSPlan                `json:"dns,omitempty"`
 	NFT        NFTPlan                `json:"nftables,omitempty"`

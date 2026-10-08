@@ -624,7 +624,10 @@ run_scenario() {
   record_evidence privacy.direct_uplink_blocked_after_wakeup pass
 
   mark_failure product tun.convergence_after_wakeup
-  wait_status verified-active 150
+  if ! wait_status verified-active 150; then
+    mark_failure product "tun.convergence_after_wakeup.$(diagnose_connect_failure)"
+    return 1
+  fi
   record_evidence tun.verified_active_after_wakeup pass
 
   session_after="$(session_id)"

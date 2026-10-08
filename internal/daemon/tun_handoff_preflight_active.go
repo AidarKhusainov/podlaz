@@ -279,7 +279,7 @@ func rollbackRuleKey(rule txstate.PolicyRuleRollback) string {
 		from,
 		to,
 		canonicalRoutingTable(rule.Table),
-		strings.TrimSpace(rule.Mark),
+		normalizedTunFwmarkIdentity(rule.Mark),
 	}, "\x00")
 }
 
@@ -294,7 +294,7 @@ func currentRuleKey(rule currentRuleEvidence) string {
 		from,
 		to,
 		canonicalRoutingTable(rule.Table),
-		strings.TrimSpace(rule.Fwmark),
+		normalizedTunFwmarkIdentity(rule.Fwmark),
 	}, "\x00")
 }
 

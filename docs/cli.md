@@ -69,10 +69,12 @@ Supported imported material includes VLESS/VMess/Trojan/Shadowsocks share URIs,
 Base64 URI-list subscriptions, and native Xray JSON. Native Xray JSON is kept as
 sensitive schema-opaque source material so Xray-owned fields survive persistence
 and runtime composition; Podlaz does not expose the raw JSON in normal output.
-Typed share-URI imports remain normalized profiles. Connection support is
-stricter than import support: native Xray JSON currently uses the explicit
-Proxy-only path, while canonical full-TUN support remains unavailable until an
-endpoint-independent egress boundary is integrated.
+Typed share-URI imports remain normalized profiles. Connection support is stricter than import support. Native Xray JSON uses
+schema-opaque runtime composition for canonical full-TUN: Podlaz replaces its
+owned TUN inbound, preserves provider-owned egress/routing material, and applies
+a collision-free Podlaz egress mark validated by the bundled Xray build before
+unsafe host-network mutation. Explicit proxy-only remains a reduced-protection
+alternative rather than an automatic fallback.
 
 ## Profile selection
 
@@ -308,9 +310,12 @@ podlaz debug proxy <profile>
 This is the single advanced reduced-protection connection path. It is not a mode
 matrix and is never an automatic fallback from canonical connect.
 
-Proxy-only does not mutate TUN, routes, DNS, nftables, or firewall state. Native
-Xray JSON (including grouped provider profiles) and supported VLESS xhttp profiles may use this path when they
-cannot participate in safe TUN planning.
+Proxy-only does not mutate TUN, routes, DNS, nftables, or firewall state.
+Native Xray JSON (including grouped provider profiles) can use canonical
+full-TUN when the bundled Xray build accepts the composed runtime config.
+Proxy-only remains available as an explicit reduced-protection path, including
+for provider material that conflicts with Podlaz-owned full-TUN requirements or
+otherwise cannot participate in safe TUN planning.
 
 Default success output makes the protection reduction explicit:
 

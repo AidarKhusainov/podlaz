@@ -124,3 +124,34 @@ func assertMutationFreeOwnershipBlocker(t *testing.T, metadata txstate.RollbackM
 		t.Fatalf("expected ownership blocker marker to preserve transaction/config metadata, got %#v", metadata)
 	}
 }
+
+func TestProjectRollbackMetadataPreservesExactMarkedPolicyRule(t *testing.T) {
+	target := "priority 9999 fwmark 20570 lookup main"
+	tx := txstate.NewTransaction("tx-marked-policy-rule", "native-profile", planner.ModeTun, time.Now().UTC())
+	tx.State = txstate.TransactionCommitted
+	tx.DesiredPlan.Steps = []txstate.PlannedStep{{
+		Kind:   "policy-rule",
+		Target: target,
+		Owner:  netexecutor.OwnerPolicyRule,
+	}}
+	tx.Rollback.PolicyRules = []txstate.PolicyRuleRollback{{
+		Priority: 9999,
+		Mark:     "20570",
+		Table:    planner.MainRoutingTable,
+		Owner:    netexecutor.OwnerPolicyRule,
+	}}
+	tx.AppliedSteps = []txstate.AppliedStep{{
+		Kind:      "policy-rule",
+		Target:    target,
+		Owner:     netexecutor.OwnerPolicyRule,
+		AppliedAt: time.Now().UTC(),
+	}}
+
+	projection := ProjectRollbackMetadata(tx)
+	if projection.Incomplete {
+		t.Fatalf("exact marked rule lost rollback authority: %v", projection.Reasons)
+	}
+	if len(projection.Rollback.PolicyRules) != 1 || projection.Rollback.PolicyRules[0].Mark != "20570" {
+		t.Fatalf("unexpected marked rollback projection: %#v", projection.Rollback.PolicyRules)
+	}
+}
