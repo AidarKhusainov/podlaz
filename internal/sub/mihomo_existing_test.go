@@ -221,7 +221,7 @@ func TestMihomoExistingProtocolsMatchShareURIConnectCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	share := map[string]string{
-		"vmess": "vmess://" + base64.StdEncoding.EncodeToString(vmessJSON),
+		"vmess":       "vmess://" + base64.StdEncoding.EncodeToString(vmessJSON),
 		"trojan": "trojan://example-trojan-password@vpn.example.com:443?security=tls&type=grpc&serviceName=api&sni=vpn.example.com#trojan",
 		"shadowsocks": "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-128-gcm:example-shadowsocks-password")) + "@vpn.example.com:8388#shadowsocks",
 	}
