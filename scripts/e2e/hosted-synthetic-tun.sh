@@ -525,12 +525,14 @@ PY
     --output "${hashes}" \
     "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hashes.txt"
   printf '%s  %s\n' 'e1d2c80994cf57fcef494ea799eedf80088e11fd7243b5b3b23f1288fe1266b5' "${hashes}" | sha256sum --check --status
+  printf 'hysteria-reference-phase=hash-list-verified\n'
   reference_sha="$(awk '$2 == "hysteria-linux-amd64" {print $1}' "${hashes}")"
   [[ "${reference_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
   curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
     --output "${reference_binary}" \
     "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hysteria-linux-amd64"
   printf '%s  %s\n' "${reference_sha}" "${reference_binary}" | sha256sum --check --status
+  printf 'hysteria-reference-phase=binary-verified\n'
   chmod 0700 "${reference_binary}"
   config="${XRAY_ROOT}/reference-server.yaml"
   cat >"${config}" <<EOF_HYSTERIA
@@ -555,6 +557,7 @@ EOF_HYSTERIA_CLIENT
   chmod 0600 "${config}" "${XRAY_ROOT}/client.yaml" "${XRAY_ROOT}/ca.key" "${XRAY_ROOT}/server.key"
   guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
   guest_exec update-ca-certificates >/dev/null
+  printf 'hysteria-reference-phase=ca-installed\n'
   "${reference_binary}" server -c "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
   XRAY_PID=$!
   for _ in $(seq 1 100); do
@@ -563,6 +566,7 @@ EOF_HYSTERIA_CLIENT
     sleep 0.1
   done
   ss -H -lun | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null
+  printf 'hysteria-reference-phase=udp-bound\n'
   local probe_port probe_config="${XRAY_ROOT}/client-check.json"
   probe_port="$(python3 - <<'PY'
 import socket
