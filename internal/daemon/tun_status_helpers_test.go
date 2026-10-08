@@ -89,3 +89,14 @@ func TestValidateTunRollbackProjectionAcceptsExactMarkedPolicyRule(t *testing.T)
 		t.Fatalf("exact marked policy rule must preserve rollback authority: %v", err)
 	}
 }
+
+
+func TestTunPlanFromTransactionRestoresMarkedEgressAuthority(t *testing.T) {
+	tx := txstate.NewTransaction("tun-status-mark-plan", "native-profile", planner.ModeTun, fixedClock()())
+	tx.DesiredPlan.EgressMark = planner.TunEgressMark
+
+	plan := tunPlanFromTransaction(tx)
+	if plan.EgressMark != planner.TunEgressMark {
+		t.Fatalf("restored egress mark=%d, want %d", plan.EgressMark, planner.TunEgressMark)
+	}
+}
