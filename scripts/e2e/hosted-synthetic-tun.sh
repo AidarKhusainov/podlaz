@@ -524,13 +524,13 @@ PY
   curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
     --output "${hashes}" \
     "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hashes.txt"
-  printf '%s  %s\\n' 'e1d2c80994cf57fcef494ea799eedf80088e11fd7243b5b3b23f1288fe1266b5' "${hashes}" | sha256sum --check --status
+  printf '%s  %s\n' 'e1d2c80994cf57fcef494ea799eedf80088e11fd7243b5b3b23f1288fe1266b5' "${hashes}" | sha256sum --check --status
   reference_sha="$(awk '$2 == "hysteria-linux-amd64" {print $1}' "${hashes}")"
   [[ "${reference_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
   curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
     --output "${reference_binary}" \
     "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hysteria-linux-amd64"
-  printf '%s  %s\\n' "${reference_sha}" "${reference_binary}" | sha256sum --check --status
+  printf '%s  %s\n' "${reference_sha}" "${reference_binary}" | sha256sum --check --status
   chmod 0700 "${reference_binary}"
   config="${XRAY_ROOT}/reference-server.yaml"
   cat >"${config}" <<EOF_HYSTERIA
@@ -607,7 +607,7 @@ with socket.socket() as sock:
 PY
 )"
   install -d -m 0700 "${XRAY_ROOT}/probe-public"
-  printf 'podlaz synthetic transport probe\\n' >"${XRAY_ROOT}/probe-public/index.html"
+  printf 'podlaz synthetic transport probe\n' >"${XRAY_ROOT}/probe-public/index.html"
   python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-public" >"${XRAY_ROOT}/probe-http.log" 2>&1 &
   XRAY_HTTP_PID=$!
   for _ in $(seq 1 100); do
@@ -618,36 +618,36 @@ PY
   local probe_code=0
   timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/client-check-curl.log" 2>&1 || probe_code=$?
   if (( probe_code != 0 )); then
-    printf 'hysteria-fixture-probe-exit=%d\\n' "${probe_code}"
+    printf 'hysteria-fixture-probe-exit=%d\n' "${probe_code}"
     for spec in "SOCKS5 request granted|socks_granted" "SOCKS5 request failed|socks_rejected" "Proxy CONNECT aborted|proxy_aborted" "Empty reply from server|empty_reply" "Recv failure|connection_reset" "HTTP/1.0 200|http_ok" "HTTP/1.1 200|http_ok"; do
       local marker="${spec%%|*}" label="${spec#*|}"
       if grep -qF -- "${marker}" "${XRAY_ROOT}/client-check-curl.log"; then
-        printf 'hysteria-fixture-phase=%s\\n' "${label}"
+        printf 'hysteria-fixture-phase=%s\n' "${label}"
       fi
     done
     if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/probe-http.log"; then
-      printf 'hysteria-fixture-backend=reached\\n'
+      printf 'hysteria-fixture-backend=reached\n'
     else
-      printf 'hysteria-fixture-backend=not_reached\\n'
+      printf 'hysteria-fixture-backend=not_reached\n'
     fi
 
     for signature in "SSL certificate problem" "certificate" "SOCKS" "socks" "Operation timed out" "Connection refused" "Empty reply" "HTTP" "Could not resolve" "Failed to connect"; do
       if grep -qiF -- "${signature}" "${XRAY_ROOT}/client-check-curl.log"; then
-        printf 'hysteria-fixture-curl-class=%s\\n' "${signature// /_}"
+        printf 'hysteria-fixture-curl-class=%s\n' "${signature// /_}"
       fi
     done
     for signature in "certificate" "handshake" "authentication" "timeout" "failed to dial" "failed to send" "no route" "network is unreachable" "connection refused" "tls" "hysteria" "quic"; do
       if grep -qiF -- "${signature}" "${XRAY_ROOT}/client-check.log"; then
-        printf 'hysteria-fixture-client-class=%s\\n' "${signature// /_}"
+        printf 'hysteria-fixture-client-class=%s\n' "${signature// /_}"
       fi
       if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
-        printf 'hysteria-fixture-server-class=%s\\n' "${signature// /_}"
+        printf 'hysteria-fixture-server-class=%s\n' "${signature// /_}"
       fi
     done
-    printf 'hysteria-fixture-direct-transport=fail\\n'
+    printf 'hysteria-fixture-direct-transport=fail\n'
     return 1
   fi
-  printf 'hysteria-fixture-direct-transport=pass\\n'
+  printf 'hysteria-fixture-direct-transport=pass\n'
   kill "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
   wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
   XRAY_PROBE_PID=""
