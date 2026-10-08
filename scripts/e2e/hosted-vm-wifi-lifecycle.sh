@@ -417,6 +417,24 @@ assert_wifi_ordinary_connectivity() {
   hosted_vm_ga_bash 'timeout 20 getent ahostsv4 example.com >/dev/null && timeout 30 curl -4 -fsS -o /dev/null https://example.com/'
 }
 
+capture_exact_active_authority_after_verified() {
+  local snapshot="$1" status_path="${HOSTED_VM_TUN_PRIVATE}/status.json"
+  for _ in $(seq 1 12); do
+    if ! hosted_vm_tun_wait_status verified-active 15; then
+      continue
+    fi
+    if hosted_vm_tun_capture_exact_active_authority "${snapshot}"; then
+      return 0
+    fi
+    if hosted_vm_ga_bash "jq -e '.connection == \"active\" and .mode == \"tun\" and .tun_health.state != \"verified\"' ${status_path@Q} >/dev/null"; then
+      sleep 1
+      continue
+    fi
+    return 1
+  done
+  return 1
+}
+
 diagnose_tun_connect_failure() {
   local doctor_json doctor_rc token
   set +e
@@ -553,7 +571,7 @@ run_scenario() {
   record_evidence tun.verified_active_before_disconnect pass
 
   mark_failure product tun.authority_before_disconnect
-  hosted_vm_tun_capture_exact_active_authority yes
+  capture_exact_active_authority_after_verified yes
   SESSION_BEFORE="$(hosted_vm_tun_session_id)"
   [[ -n "${SESSION_BEFORE}" ]]
   record_evidence tun.exact_authority_before_disconnect pass
@@ -593,7 +611,7 @@ run_scenario() {
   [[ "$(hosted_vm_tun_session_id)" == "${SESSION_BEFORE}" ]]
   record_evidence tun.same_network_session pass
 
-  hosted_vm_tun_capture_exact_active_authority no
+  capture_exact_active_authority_after_verified no
   record_evidence tun.exact_authority_after_reconnect pass
 
   hosted_vm_tun_assert_direct_blocked
