@@ -722,7 +722,24 @@ EOF_TYPED_PROBE
   XRAY_PROBE_PID=$!
   install -d -m 0700 "${XRAY_ROOT}/probe-web"
   printf 'synthetic typed direct probe\n' >"${XRAY_ROOT}/probe-web/index.html"
-  python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-web" >"${XRAY_ROOT}/${protocol}-probe-http.log" 2>&1 &
+  python3 - "${backend_port}" >"${XRAY_ROOT}/${protocol}-probe-http.log" 2>&1 <<'PY' &
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body=b"synthetic typed direct probe\\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+    def log_message(self, fmt, *args):
+        if fmt.startswith('"%s"'):
+            print("backend_request=received", flush=True)
+HTTPServer(("127.0.0.1",int(sys.argv[1])),Handler).serve_forever()
+PY
   XRAY_HTTP_PID=$!
   for _ in $(seq 1 100); do
     if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null &&
@@ -750,7 +767,7 @@ EOF_TYPED_PROBE
     else
       printf '%s-fixture-socks=not_granted\n' "${protocol}"
     fi
-    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/${protocol}-probe-http.log"; then
+    if grep -qF 'backend_request=received' "${XRAY_ROOT}/${protocol}-probe-http.log"; then
       printf '%s-fixture-backend=reached\n' "${protocol}"
     else
       printf '%s-fixture-backend=not_reached\n' "${protocol}"
