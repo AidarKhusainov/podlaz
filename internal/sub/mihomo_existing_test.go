@@ -1,6 +1,11 @@
 package sub
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -136,5 +141,56 @@ func TestMihomoExistingProtocolsRejectDuplicateIdentity(t *testing.T) {
 	_, err := ParseLocalImportContent([]byte(input))
 	if err == nil || !strings.Contains(err.Error(), "duplicate Clash/Mihomo profile id") {
 		t.Fatalf("expected duplicate rejection: %v", err)
+	}
+}
+
+func TestMihomoExistingProtocolsHTTPRefreshAtomicityAndSelection(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	profiles, subscriptions := newSourceWorkflowStores(t, dir)
+	body := mihomoExistingFixture
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+	first, err := ImportSource(context.Background(), subscriptions, profiles, server.URL, SourceWorkflowOptions{})
+	if err != nil {
+		t.Fatalf("initial HTTP import: %v", err)
+	}
+	if len(first.Subscription.ProfileIDs) != 4 {
+		t.Fatalf("expected four imported profiles, got %d", len(first.Subscription.ProfileIDs))
+	}
+	originalProfiles, err := os.ReadFile(profiles.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalSubscription, err := os.ReadFile(subscriptions.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = strings.Replace(mihomoExistingFixture, "    cipher: auto", "    packet-encoding: xudp\\n    cipher: auto", 1)
+	if _, err := UpdateSource(context.Background(), subscriptions, profiles, first.Subscription.ID, SourceWorkflowOptions{}); err == nil {
+		t.Fatal("expected unsupported option to abort refresh")
+	}
+	currentProfiles, err := os.ReadFile(profiles.Path())
+	if err != nil || string(currentProfiles) != string(originalProfiles) {
+		t.Fatal("failed refresh changed stored profiles")
+	}
+	currentSubscription, err := os.ReadFile(subscriptions.Path())
+	if err != nil || string(currentSubscription) != string(originalSubscription) {
+		t.Fatal("failed refresh changed stored subscription")
+	}
+	body = strings.Replace(mihomoExistingFixture, "  - name: vmess", "  - name: renamed-vmess", 1)
+	updated, err := UpdateSource(context.Background(), subscriptions, profiles, first.Subscription.ID, SourceWorkflowOptions{})
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(updated.Subscription.ProfileIDs) != len(first.Subscription.ProfileIDs) {
+		t.Fatal("refresh changed profile count")
+	}
+	for i, id := range first.Subscription.ProfileIDs {
+		if updated.Subscription.ProfileIDs[i] != id {
+			t.Fatal("rename changed stable profile identity")
+		}
 	}
 }
