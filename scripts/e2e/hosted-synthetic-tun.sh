@@ -699,6 +699,26 @@ PY
       encoded="$(printf '{"v":"2","ps":"hosted-synthetic","add":"%s","port":"%s","id":"%s","aid":0,"scy":"auto","net":"tcp","tls":"none"}' "${ENDPOINT_IP}" "${port}" "${uuid}" | base64 -w0)"
       client_uri="vmess://${encoded}"
       ;;
+    trojan)
+      inbound_protocol=trojan
+      credential="$(openssl rand -hex 24)"
+      inbound_settings="{\"users\":[{\"password\":\"${credential}\"}]}"
+      openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+        -keyout "${XRAY_ROOT}/ca.key" -out "${XRAY_ROOT}/ca.crt" \
+        -subj "/CN=Podlaz Synthetic Trojan CA" \
+        -addext "basicConstraints=critical,CA:TRUE" >"${XRAY_ROOT}/ca.log" 2>&1
+      openssl req -new -newkey rsa:2048 -nodes -sha256 \
+        -keyout "${XRAY_ROOT}/server.key" -out "${XRAY_ROOT}/server.csr" \
+        -subj "/CN=trojan.example.com" >"${XRAY_ROOT}/server-csr.log" 2>&1
+      printf 'subjectAltName=DNS:trojan.example.com\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' >"${XRAY_ROOT}/server.ext"
+      openssl x509 -req -sha256 -in "${XRAY_ROOT}/server.csr" \
+        -CA "${XRAY_ROOT}/ca.crt" -CAkey "${XRAY_ROOT}/ca.key" \
+        -CAcreateserial -days 1 -out "${XRAY_ROOT}/server.crt" \
+        -extfile "${XRAY_ROOT}/server.ext" >"${XRAY_ROOT}/server-cert.log" 2>&1
+      guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
+      guest_exec update-ca-certificates >/dev/null
+      client_uri="trojan://${credential}@${ENDPOINT_IP}:${port}?security=tls&type=tcp&sni=trojan.example.com#hosted-synthetic"
+      ;;
     shadowsocks)
       inbound_protocol=shadowsocks
       credential="$(openssl rand -hex 24)"
@@ -708,6 +728,10 @@ PY
       ;;
     *) return 1 ;;
   esac
+  local server_stream_settings='{"security":"none"}'
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+    server_stream_settings="{\"security\":\"tls\",\"tlsSettings\":{\"certificates\":[{\"certificateFile\":\"${XRAY_ROOT}/server.crt\",\"keyFile\":\"${XRAY_ROOT}/server.key\"}]}}"
+  fi
   cat >"${config}" <<EOF_XRAY
 {
   "log": {"loglevel": "warning"},
@@ -716,7 +740,7 @@ PY
     "port": ${port},
     "protocol": "${inbound_protocol}",
     "settings": ${inbound_settings},
-    "streamSettings": {"security": "none"}
+    "streamSettings": ${server_stream_settings}
   }],
   "outbounds": [{"protocol": "freedom", "settings": {}}]
 }
@@ -1085,7 +1109,7 @@ main() {
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
   case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
-    vless|vmess|shadowsocks|hysteria2) ;;
+    vless|vmess|trojan|shadowsocks|hysteria2) ;;
     *) fail "unsupported synthetic endpoint protocol" ;;
   esac
   case "${HOSTED_EXPECT_CONNECT_FAILURE}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}" in
