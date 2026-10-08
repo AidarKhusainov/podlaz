@@ -416,7 +416,7 @@ import_provider_profile() {
   set -e
   (( code == 0 )) || return 1
   grep -F 'Next: podlaz connect' "${import_stdout}" >/dev/null || return 1
-  guest_exec /bin/bash -lc "sed -n 's/^Profile: //p' '${import_stdout}' | head -n1 >'${GUEST_PRIVATE}/profile-selector' && test -s '${GUEST_PRIVATE}/profile-selector'" || return 1
+  guest_exec /bin/bash -lc "jq -r '.selected_profile_id // empty' '${GUEST_XDG}/state/podlaz/profiles.json' >'${GUEST_PRIVATE}/profile-selector' && test -s '${GUEST_PRIVATE}/profile-selector'" || return 1
   guest_exec python3 - "${GUEST_XDG}/state/podlaz/profiles.json" <<'PY'
 import json
 import sys
