@@ -131,13 +131,13 @@ if ! grep -Fq -- 'types: [opened, synchronize, reopened, ready_for_review, conve
   fail 'pull-request CI must rerun repository structure checks when draft state changes'
 fi
 active_block="$(grep -F -A2 -- '- name: Active repository structure' "${ci_workflow}" || true)"
-if ! grep -Fq -- "if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}" <<<"${active_block}" \
+if ! grep -Fq -- "if: \${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}" <<<"${active_block}" \
   || ! grep -Fq -- 'run: bash scripts/ci/repository-structure.sh' <<<"${active_block}" \
   || grep -Fq -- '--final' <<<"${active_block}"; then
   fail 'draft pull-request CI must allow active repository structure without --final'
 fi
 final_block="$(grep -F -A2 -- '- name: Final repository structure' "${ci_workflow}" || true)"
-if ! grep -Fq -- "if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}" <<<"${final_block}" \
+if ! grep -Fq -- "if: \${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}" <<<"${final_block}" \
   || ! grep -Fq -- 'run: bash scripts/ci/repository-structure.sh --final' <<<"${final_block}"; then
   fail 'merge-ready pull-request CI must enforce repository-structure.sh --final'
 fi
