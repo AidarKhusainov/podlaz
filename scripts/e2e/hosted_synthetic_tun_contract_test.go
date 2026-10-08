@@ -386,7 +386,6 @@ func TestHostedSyntheticTUNHysteria2UsesCanonicalGuestLifecycle(t *testing.T) {
 	)
 }
 
-
 func TestHostedSyntheticTUNMarkedMainTableRuleIsExact(t *testing.T) {
 	const program = `import hosted_synthetic_network_authority as authority
 item = {
