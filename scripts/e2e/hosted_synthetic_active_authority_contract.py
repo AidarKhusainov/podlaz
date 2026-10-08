@@ -159,6 +159,50 @@ def main() -> int:
                 body["comment"] = "podlaz:privacy-envelope:foreign"
         write(root / "nft.json", bad_nft)
         expect_mismatch(root, "wrong Privacy Envelope composition was accepted")
+
+        # Native Xray uses the marked Privacy Envelope. Assert exact persisted
+        # egress mark, nft rule, and every outbound's generated sockopt mark.
+        marked = copy.deepcopy(exact_nft)
+        for item in marked["nftables"]:
+            body = item.get("rule")
+            if body and body.get("comment") == "podlaz:privacy-envelope:bootstrap":
+                body["comment"] = "podlaz:privacy-envelope:xray-egress"
+                body["expr"] = [
+                    match({"meta": {"key": "mark"}}, 32191),
+                    {"counter": {"packets": 1, "bytes": 2}},
+                    verdict("accept"),
+                ]
+        marked_session = session()
+        marked_session["protection"] = {
+            "state": "armed", "composition_version": 2,
+            "family": "inet", "table": "podlaz_pe_0123456789ab",
+            "tun_interface": "podlaz0", "egress_marks": [32191],
+        }
+        write(root / "session.json", marked_session)
+        write(root / "nft.json", marked)
+        write(root / "xray.json", {"outbounds": [
+            {"protocol": "hysteria", "streamSettings": {"sockopt": {"mark": 32191}}}
+        ]})
+        verify(root)
+
+        write(root / "xray.json", {"outbounds": [
+            {"protocol": "hysteria", "streamSettings": {"sockopt": {"mark": 32192}}}
+        ]})
+        expect_mismatch(root, "foreign Xray mark accepted as managed egress")
+        write(root / "xray.json", {"outbounds": [
+            {"protocol": "hysteria", "streamSettings": {"sockopt": {"mark": 32191}}}
+        ]})
+        foreign = copy.deepcopy(marked)
+        for item in foreign["nftables"]:
+            body = item.get("rule")
+            if body and body.get("comment") == "podlaz:privacy-envelope:xray-egress":
+                body["expr"][0]["match"]["right"] = 32192
+        write(root / "nft.json", foreign)
+        expect_mismatch(root, "foreign nft egress mark accepted")
+        write(root / "nft.json", marked)
+        marked_session["protection"]["egress_marks"] = [32191, 32192]
+        write(root / "session.json", marked_session)
+        expect_mismatch(root, "unowned second persisted egress mark accepted")
     return 0
 
 
