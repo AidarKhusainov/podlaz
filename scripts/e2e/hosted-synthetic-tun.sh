@@ -674,6 +674,72 @@ PY
   XRAY_PROBE_PID=""
 }
 
+qualify_synthetic_vmess_direct() {
+  local xray_binary="$1" endpoint_port="$2" user_id="$3"
+  local probe_port backend_port probe_config="${XRAY_ROOT}/vmess-probe.json" probe_result=0
+  probe_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  backend_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  cat >"${probe_config}" <<EOF_VMESS_PROBE
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{
+    "listen": "127.0.0.1", "port": ${probe_port},
+    "protocol": "socks", "settings": {"auth": "noauth"}
+  }],
+  "outbounds": [{
+    "protocol": "vmess",
+    "settings": {
+      "address": "${ENDPOINT_IP}", "port": ${endpoint_port},
+      "id": "${user_id}", "security": "auto"
+    },
+    "streamSettings": {"network": "raw", "security": "none"}
+  }]
+}
+EOF_VMESS_PROBE
+  chmod 0600 "${probe_config}"
+  "${xray_binary}" run -test -config "${probe_config}" >"${XRAY_ROOT}/vmess-probe-test.log" 2>&1 || return 1
+  "${xray_binary}" run -config "${probe_config}" >"${XRAY_ROOT}/vmess-probe-client.log" 2>&1 &
+  XRAY_PROBE_PID=$!
+  install -d -m 0700 "${XRAY_ROOT}/probe-web"
+  printf 'synthetic VMess direct probe\n' >"${XRAY_ROOT}/probe-web/index.html"
+  python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-web" >"${XRAY_ROOT}/vmess-probe-http.log" 2>&1 &
+  XRAY_HTTP_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null &&
+       ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${backend_port}" >/dev/null; then
+      break
+    fi
+    kill -0 "${XRAY_PROBE_PID}" >/dev/null 2>&1 || return 1
+    kill -0 "${XRAY_HTTP_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 \
+    -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/vmess-probe-curl.log" 2>&1 || probe_result=$?
+  if (( probe_result != 0 )); then
+    printf 'vmess-fixture-direct-transport=fail\n'
+    printf 'vmess-fixture-probe-exit=%d\n' "${probe_result}"
+    return 1
+  fi
+  printf 'vmess-fixture-direct-transport=pass\n'
+  kill "${XRAY_PROBE_PID}" "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
+  wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
+  wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
+  XRAY_PROBE_PID=""
+  XRAY_HTTP_PID=""
+}
+
 start_synthetic_xray_endpoint() {
   local extract="${XRAY_ROOT}/package" config="${XRAY_ROOT}/server.json" uuid port
   install -d -m 0700 "${XRAY_ROOT}" "${extract}"
@@ -763,6 +829,9 @@ EOF_XRAY
     sleep 0.1
   done
   ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
+    qualify_synthetic_vmess_direct "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+  fi
 }
 
 install_tun_authorization() {
