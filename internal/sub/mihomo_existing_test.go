@@ -2,6 +2,8 @@ package sub
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AidarKhusainov/podlaz/internal/engine"
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
 
@@ -200,5 +203,52 @@ func TestMihomoExistingProtocolsHTTPRefreshAtomicityAndSelection(t *testing.T) {
 	selectedID, err := profiles.SelectedID()
 	if err != nil || selectedID != selectedProfile.ID {
 		t.Fatalf("refresh changed selected profile: %s, %v", selectedID, err)
+	}
+}
+
+func TestMihomoExistingProtocolsMatchShareURIConnectCapability(t *testing.T) {
+	result, err := ParseLocalImportContent([]byte(mihomoExistingFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmessJSON, err := json.Marshal(map[string]string{
+		"v": "2", "ps": "vmess", "add": "vpn.example.com", "port": "443",
+		"id": "00000000-0000-0000-0000-000000000002", "aid": "0",
+		"scy": "auto", "net": "ws", "tls": "tls", "sni": "vpn.example.com",
+		"path": "/api", "host": "edge.example.com",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	share := map[string]string{
+		"vmess": "vmess://" + base64.StdEncoding.EncodeToString(vmessJSON),
+		"trojan": "trojan://example-trojan-password@vpn.example.com:443?security=tls&type=grpc&serviceName=api&sni=vpn.example.com#trojan",
+		"shadowsocks": "ss://" + base64.RawURLEncoding.EncodeToString([]byte("aes-128-gcm:example-shadowsocks-password")) + "@vpn.example.com:8388#shadowsocks",
+	}
+	for _, imported := range result.Profiles {
+		link, ok := share[imported.Protocol]
+		if !ok {
+			continue
+		}
+		equivalent, _, err := profile.ImportShareURI(link)
+		if err != nil {
+			t.Fatalf("import equivalent %s share URI: %v", imported.Protocol, err)
+		}
+		if imported.Protocol != equivalent.Protocol || imported.UserIdentity != equivalent.UserIdentity ||
+			imported.Server != equivalent.Server || imported.Port != equivalent.Port {
+			t.Fatalf("%s import differs from equivalent share profile", imported.Protocol)
+		}
+		for _, validate := range []func(profile.Profile) error{
+			engine.ValidateXrayProxyOnlyProfile,
+			engine.ValidateXrayTunProfile,
+		} {
+			a, b := validate(imported), validate(equivalent)
+			if (a == nil) != (b == nil) {
+				t.Fatalf("%s YAML/share runtime acceptance differs", imported.Protocol)
+			}
+			if a == nil {
+				t.Fatalf("%s unexpectedly accepted by VLESS-only runtime; verify actual connectivity first", imported.Protocol)
+			}
+		}
 	}
 }
