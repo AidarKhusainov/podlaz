@@ -62,7 +62,7 @@ Also run repository shell/workflow/package checks, race checks for concurrency-s
 
 ## Repository simplification guardrails
 
-Permanent prose is intentionally limited to `README.md`, `docs/cli.md`, `ARCHITECTURE.md`, and `AGENTS.md`. New prose needs a durable ownership reason that cannot fit one of those surfaces.
+Permanent product prose is intentionally limited to `README.md`, `docs/cli.md`, `ARCHITECTURE.md`, and `AGENTS.md`. GitHub-native community-health files under `.github/` are allowed only for repository governance, contribution, security, accessibility, and issue/PR intake. Other new prose needs a durable ownership reason that cannot fit one of those surfaces.
 
 Permanent source/test/workflow artifact names must be domain/invariant-oriented. Do not introduce `issueNNN`/`IssueNNN` names or permanent issue-number labels. Temporary plan/spec files may exist while a plan is actively being executed; `repository-structure.sh --final` requires them to be removed before completion.
 
