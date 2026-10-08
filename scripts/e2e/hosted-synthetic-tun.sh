@@ -1261,14 +1261,13 @@ main() {
 
 verify_packaged_vmess_transport() {
   (($# == 1)) || fail "usage: $0 verify-vmess-transport CANDIDATE.deb"
-  require_cmd curl dpkg-deb openssl python3 ss timeout
-  local direct_root
-  direct_root="$(mktemp -d "${RUNNER_TEMP:-/tmp}/podlaz-vmess-transport.XXXXXX")"
-  XRAY_ROOT="${direct_root}/xray"
+  require_cmd curl dpkg dpkg-deb mktemp openssl python3 ss timeout
+  VMESS_DIRECT_ROOT="$(mktemp -d "${RUNNER_TEMP:-/tmp}/podlaz-vmess-transport.XXXXXX")"
+  XRAY_ROOT="${VMESS_DIRECT_ROOT}/xray"
   ENDPOINT_IP="127.0.0.1"
   PODLAZ_E2E_SYNTHETIC_PROTOCOL=vmess
   install -d -m 0700 "${XRAY_ROOT}"
-  trap 'stop_synthetic_xray_endpoint; rm -rf -- "${direct_root}"' EXIT
+  trap 'stop_synthetic_xray_endpoint; rm -rf -- "${VMESS_DIRECT_ROOT}"' EXIT
   validate_candidate "$1"
   start_synthetic_xray_endpoint
 }
