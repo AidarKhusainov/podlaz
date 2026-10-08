@@ -45,14 +45,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def wait_listen(port_number, process, host="127.0.0.1"):
+    # Opening an unauthenticated TCP socket into VMess/Trojan can be treated as
+    # active probing. Observe LISTEN only; never touch protocol handshake state.
+    target = f"{host}:{port_number}"
     for _ in range(100):
         if process.poll() is not None:
             return False
-        try:
-            with socket.create_connection((host, port_number), 0.1):
-                return True
-        except OSError:
-            time.sleep(0.05)
+        listing = subprocess.run(["ss", "-H", "-ltn"], capture_output=True, text=True)
+        if listing.returncode == 0 and any(
+            line.split()[3] == target for line in listing.stdout.splitlines()
+            if len(line.split()) >= 4
+        ):
+            return True
+        time.sleep(0.05)
     return False
 
 
