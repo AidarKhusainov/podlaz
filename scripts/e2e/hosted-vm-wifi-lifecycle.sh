@@ -584,7 +584,10 @@ run_scenario() {
   record_evidence wifi.reassociated pass
 
   mark_failure product tun.revalidate
-  hosted_vm_tun_wait_status verified-active 150
+  if ! hosted_vm_tun_wait_status verified-active 150; then
+    mark_failure product "tun.revalidate.$(diagnose_tun_connect_failure)"
+    return 1
+  fi
   record_evidence tun.verified_active_after_reconnect pass
 
   [[ "$(hosted_vm_tun_session_id)" == "${SESSION_BEFORE}" ]]
