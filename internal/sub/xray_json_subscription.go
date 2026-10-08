@@ -12,26 +12,7 @@ import (
 )
 
 func ParseSubscriptionContent(content []byte) (Format, Parsed, error) {
-	trimmed := bytes.TrimSpace(content)
-	if len(trimmed) == 0 {
-		return FormatUnknown, Parsed{}, fmt.Errorf("subscription content is empty")
-	}
-	switch trimmed[0] {
-	case '{', '[':
-		parsed, err := ParseXrayJSONSubscription(trimmed)
-		return FormatXrayJSON, parsed, err
-	default:
-		if json.Valid(trimmed) {
-			var value any
-			decoder := json.NewDecoder(bytes.NewReader(trimmed))
-			decoder.UseNumber()
-			if err := decoder.Decode(&value); err == nil {
-				return FormatXrayJSON, Parsed{}, fmt.Errorf("unsupported subscription JSON top-level type %s; expected Xray JSON object or array", subscriptionJSONTopLevelType(value))
-			}
-		}
-		parsed, err := ParseBase64Subscription(content)
-		return FormatBase64, parsed, err
-	}
+	return parseSubscriptionWithDecoders(content)
 }
 
 func ParseXrayJSONSubscription(content []byte) (Parsed, error) {
