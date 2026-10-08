@@ -61,7 +61,7 @@ def wait_listen(port_number, process, host="127.0.0.1"):
     return False
 
 
-def test(binary, protocol, root):
+def test(binary, protocol, root, reference_binary=None):
     from uuid import uuid4
 
     password = "synthetic-" + uuid4().hex
@@ -98,11 +98,32 @@ def test(binary, protocol, root):
         server_stream = client_stream = {"network": "raw", "security": "none"}
 
     Handler.requests = Handler.replies = 0
-    server_config = {"log": {"loglevel": "debug"},
-                     "inbounds": [{"listen": endpoint_host, "port": endpoint,
-                                   "protocol": protocol, "settings": inbound_settings,
-                                   "streamSettings": server_stream}],
-                     "outbounds": [{"protocol": "freedom", "settings": {}}]}
+    if reference_binary:
+        reference_inbound = {
+            "type": protocol, "listen": endpoint_host, "listen_port": endpoint,
+        }
+        if protocol == "vmess":
+            reference_inbound["users"] = [{"name": "synthetic", "uuid": identifier, "alterId": 0}]
+        elif protocol == "trojan":
+            reference_inbound["users"] = [{"name": "synthetic", "password": password}]
+            reference_inbound["tls"] = {
+                "enabled": True, "server_name": "trojan.example.com",
+                "certificate_path": str(cert), "key_path": str(key),
+            }
+        else:
+            reference_inbound["method"] = "aes-128-gcm"
+            reference_inbound["password"] = password
+        server_config = {
+            "log": {"level": "warn"},
+            "inbounds": [reference_inbound],
+            "outbounds": [{"type": "direct"}],
+        }
+    else:
+        server_config = {"log": {"loglevel": "debug"},
+                         "inbounds": [{"listen": endpoint_host, "port": endpoint,
+                                       "protocol": protocol, "settings": inbound_settings,
+                                       "streamSettings": server_stream}],
+                         "outbounds": [{"protocol": "freedom", "settings": {}}]}
     client_config = {"log": {"loglevel": "debug"},
                      "inbounds": [{"listen": "127.0.0.1", "port": socks,
                                    "protocol": "socks", "settings": {"auth": "noauth"}}],
@@ -113,7 +134,9 @@ def test(binary, protocol, root):
     client_path.write_text(json.dumps(client_config))
     for path in (server_path, client_path):
         path.chmod(0o600)
-        check = subprocess.run([binary, "run", "-test", "-config", str(path)],
+        command = ([reference_binary, "check", "-c", str(path)] if reference_binary and path == server_path
+                   else [binary, "run", "-test", "-config", str(path)])
+        check = subprocess.run(command,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if check.returncode != 0:
             print(f"{protocol}.config=fail")
@@ -123,7 +146,9 @@ def test(binary, protocol, root):
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     with open(root / "server.log", "w") as server_log, open(root / "client.log", "w") as client_log:
-        server_proc = subprocess.Popen([binary, "run", "-config", str(server_path)],
+        server_command = ([reference_binary, "run", "-c", str(server_path)] if reference_binary
+                          else [binary, "run", "-config", str(server_path)])
+        server_proc = subprocess.Popen(server_command,
                                        stdout=server_log, stderr=subprocess.STDOUT)
         client_proc = subprocess.Popen([binary, "run", "-config", str(client_path)],
                                        stdout=client_log, stderr=subprocess.STDOUT)
@@ -177,15 +202,16 @@ def test(binary, protocol, root):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         return 2
     binary = str(Path(sys.argv[1]).resolve())
+    reference_binary = str(Path(sys.argv[2]).resolve()) if len(sys.argv) == 3 else None
     with tempfile.TemporaryDirectory(prefix="podlaz-xray-compare-") as tmp:
         os.chmod(tmp, 0o700)
         for protocol in ("shadowsocks", "vmess", "trojan"):
             root = Path(tmp) / protocol
             root.mkdir(mode=0o700)
-            test(binary, protocol, root)
+            test(binary, protocol, root, reference_binary)
     return 0  # Comparison reports are diagnostic, not the permanent acceptance gate.
 
 
