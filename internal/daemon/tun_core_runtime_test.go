@@ -186,10 +186,10 @@ func TestTunRuntimePreflightConfigUsesCollisionFreeTunNameWithoutChangingRuntime
 	if err != nil {
 		t.Fatalf("plan preflight config: %v", err)
 	}
-	if !strings.Contains(string(runtime.XrayConfig), ""name": "podlaz0"") {
+	if !strings.Contains(string(runtime.XrayConfig), `"name": "podlaz0"`) {
 		t.Fatalf("runtime config lost canonical TUN name: %s", runtime.XrayConfig)
 	}
-	if strings.Contains(string(preflight), ""name": "podlaz0"") || !strings.Contains(string(preflight), ""name": "podlaz-pf0"") {
+	if strings.Contains(string(preflight), `"name": "podlaz0"`) || !strings.Contains(string(preflight), `"name": "podlaz-pf0"`) {
 		t.Fatalf("preflight config must use collision-free TUN name: %s", preflight)
 	}
 	if plan.TunDevice.Name != "podlaz0" || plan.TunAddress.Interface != "podlaz0" {
