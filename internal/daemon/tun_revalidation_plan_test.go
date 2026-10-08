@@ -156,3 +156,39 @@ func issue245DesiredRevalidationTransaction() txstate.Transaction {
 		},
 	}
 }
+
+
+func TestTunRevalidationPlanRestoresMarkedEgressWithoutServerBypass(t *testing.T) {
+	tx := issue245DesiredRevalidationTransaction()
+	tx.DesiredPlan.EgressMark = planner.TunEgressMark
+	tx.DesiredPlan.Routes = tx.DesiredPlan.Routes[:1]
+	tx.DesiredPlan.Steps = []txstate.PlannedStep{
+		{
+			Kind:   "policy-rule",
+			Target: fmt.Sprintf("priority %d fwmark %d lookup %s", planner.ServerRulePriority, planner.TunEgressMark, planner.MainRoutingTable),
+			Owner:  netexecutor.OwnerPolicyRule,
+		},
+		{
+			Kind:   "policy-rule",
+			Target: fmt.Sprintf("priority %d from all lookup %s", planner.TunRulePriority, planner.TunRoutingTable),
+			Owner:  netexecutor.OwnerPolicyRule,
+		},
+	}
+
+	plan, err := tunRevalidationPlanFromTransaction(tx)
+	if err != nil {
+		t.Fatalf("restore marked revalidation plan: %v", err)
+	}
+	if plan.EgressMark != planner.TunEgressMark {
+		t.Fatalf("egress mark=%d, want %d", plan.EgressMark, planner.TunEgressMark)
+	}
+	if plan.ServerBypass.Destination != "" {
+		t.Fatalf("marked revalidation must not require endpoint bypass: %#v", plan.ServerBypass)
+	}
+	if len(plan.Routes) != 1 || len(plan.PolicyRules) != 2 {
+		t.Fatalf("unexpected marked revalidation authority: routes=%#v rules=%#v", plan.Routes, plan.PolicyRules)
+	}
+	if got := plan.PolicyRules[0].Selector; got != fmt.Sprintf("fwmark %d", planner.TunEgressMark) {
+		t.Fatalf("marked egress selector=%q", got)
+	}
+}
