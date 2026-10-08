@@ -790,6 +790,55 @@ PY
   XRAY_HTTP_PID=""
 }
 
+start_synthetic_typed_reference_endpoint() {
+  local protocol="$1" port="$2" uuid="$3" password="$4"
+  local root="${XRAY_ROOT}/reference" asset url digest binary config="${XRAY_ROOT}/server.json"
+  install -d -m 0700 "${root}"
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 3 \
+    "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.2" >"${root}/release.json"
+  asset="sing-box-1.14.2-linux-amd64.tar.gz"
+  url="$(jq -er --arg asset "${asset}" '.assets[] | select(.name == $asset) | .browser_download_url' "${root}/release.json")"
+  digest="$(jq -er --arg asset "${asset}" '.assets[] | select(.name == $asset) | .digest' "${root}/release.json")"
+  [[ "${url}" == "https://github.com/SagerNet/sing-box/releases/download/v1.14.2/${asset}" ]] || return 1
+  [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 3 \
+    --output "${root}/reference.tar.gz" "${url}"
+  printf '%s  %s\n' "${digest#sha256:}" "${root}/reference.tar.gz" | sha256sum --check --status
+  tar -xzf "${root}/reference.tar.gz" -C "${root}"
+  binary="$(find "${root}" -type f -name sing-box -print -quit)"
+  [[ -n "${binary}" && -f "${binary}" ]] || return 1
+  chmod 0700 "${binary}"
+  jq -n --arg protocol "${protocol}" --arg listen "${ENDPOINT_IP}" \
+    --argjson port "${port}" --arg uuid "${uuid}" --arg password "${password}" \
+    --arg cert "${XRAY_ROOT}/server.crt" --arg key "${XRAY_ROOT}/server.key" '
+    {
+      log: {level:"warn"},
+      inbounds: [
+        (if $protocol == "vmess" then {
+          type:"vmess",listen:$listen,listen_port:$port,
+          users:[{name:"synthetic",uuid:$uuid,alterId:0}]
+        } else {
+          type:"trojan",listen:$listen,listen_port:$port,
+          users:[{name:"synthetic",password:$password}],
+          tls:{enabled:true,server_name:"trojan.example.com",
+               certificate_path:$cert,key_path:$key}
+        } end)
+      ],
+      outbounds:[{type:"direct"}]
+    }' >"${config}"
+  chmod 0600 "${config}"
+  "${binary}" check -c "${config}" >"${XRAY_ROOT}/config-test.log" 2>&1
+  "${binary}" run -c "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
+  XRAY_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null; then break; fi
+    kill -0 "${XRAY_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
+  printf 'independent-synthetic-reference=verified\n'
+}
+
 start_synthetic_xray_endpoint() {
   local extract="${XRAY_ROOT}/package" config="${XRAY_ROOT}/server.json" uuid port
   install -d -m 0700 "${XRAY_ROOT}" "${extract}"
@@ -869,6 +918,15 @@ PY
 EOF_XRAY
   printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+    start_synthetic_typed_reference_endpoint "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" "${port}" "${uuid}" "${credential:-}"
+    if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
+      qualify_synthetic_typed_direct vmess "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+    else
+      qualify_synthetic_typed_direct trojan "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
+    fi
+    return
+  fi
   chmod 0600 "${config}"
   "${extract}/usr/lib/podlaz/xray" run -test -config "${config}" >"${XRAY_ROOT}/config-test.log" 2>&1
   "${extract}/usr/lib/podlaz/xray" run -config "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
