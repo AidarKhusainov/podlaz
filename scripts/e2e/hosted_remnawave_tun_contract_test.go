@@ -21,6 +21,8 @@ func TestHostedRemnawaveTUNPreservesQ29IsolationAndLifecycle(t *testing.T) {
 		"native.schema_opaque",
 		"native.multi_outbound",
 		"tun.reconnect",
+		`GUEST_MANIFEST="/var/tmp/podlaz-remnawave-tun-network-manifest.json"`,
+		"run_provider_traffic_checks false",
 		"machinectl copy-to",
 		"chmod 0600",
 		"remove_guest_private_state",
