@@ -674,9 +674,9 @@ PY
   XRAY_PROBE_PID=""
 }
 
-qualify_synthetic_vmess_direct() {
-  local xray_binary="$1" endpoint_port="$2" user_id="$3"
-  local probe_port backend_port probe_config="${XRAY_ROOT}/vmess-probe.json" probe_result=0
+qualify_synthetic_typed_direct() {
+  local protocol="$1" xray_binary="$2" endpoint_port="$3" auth="$4"
+  local probe_port backend_port probe_config="${XRAY_ROOT}/${protocol}-probe.json" probe_result=0 outbound_settings stream_settings
   probe_port="$(python3 - <<'PY'
 import socket
 with socket.socket() as sock:
@@ -691,7 +691,18 @@ with socket.socket() as sock:
     print(sock.getsockname()[1])
 PY
 )"
-  cat >"${probe_config}" <<EOF_VMESS_PROBE
+  case "${protocol}" in
+    vmess)
+      outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"id\":\"${auth}\",\"security\":\"auto\"}"
+      stream_settings='{"network":"raw","security":"none"}'
+      ;;
+    trojan)
+      outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"password\":\"${auth}\"}"
+      stream_settings="{\"network\":\"raw\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"trojan.example.com\",\"certificates\":[{\"usage\":\"verify\",\"certificateFile\":\"${XRAY_ROOT}/ca.crt\"}]}}"
+      ;;
+    *) return 1 ;;
+  esac
+  cat >"${probe_config}" <<EOF_TYPED_PROBE
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
@@ -699,22 +710,19 @@ PY
     "protocol": "socks", "settings": {"auth": "noauth"}
   }],
   "outbounds": [{
-    "protocol": "vmess",
-    "settings": {
-      "address": "${ENDPOINT_IP}", "port": ${endpoint_port},
-      "id": "${user_id}", "security": "auto"
-    },
-    "streamSettings": {"network": "raw", "security": "none"}
+    "protocol": "${protocol}",
+    "settings": ${outbound_settings},
+    "streamSettings": ${stream_settings}
   }]
 }
-EOF_VMESS_PROBE
+EOF_TYPED_PROBE
   chmod 0600 "${probe_config}"
-  "${xray_binary}" run -test -config "${probe_config}" >"${XRAY_ROOT}/vmess-probe-test.log" 2>&1 || return 1
-  "${xray_binary}" run -config "${probe_config}" >"${XRAY_ROOT}/vmess-probe-client.log" 2>&1 &
+  "${xray_binary}" run -test -config "${probe_config}" >"${XRAY_ROOT}/${protocol}-probe-test.log" 2>&1 || return 1
+  "${xray_binary}" run -config "${probe_config}" >"${XRAY_ROOT}/${protocol}-probe-client.log" 2>&1 &
   XRAY_PROBE_PID=$!
   install -d -m 0700 "${XRAY_ROOT}/probe-web"
-  printf 'synthetic VMess direct probe\n' >"${XRAY_ROOT}/probe-web/index.html"
-  python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-web" >"${XRAY_ROOT}/vmess-probe-http.log" 2>&1 &
+  printf 'synthetic typed direct probe\n' >"${XRAY_ROOT}/probe-web/index.html"
+  python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-web" >"${XRAY_ROOT}/${protocol}-probe-http.log" 2>&1 &
   XRAY_HTTP_PID=$!
   for _ in $(seq 1 100); do
     if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null &&
@@ -727,134 +735,37 @@ EOF_VMESS_PROBE
   done
   if timeout 10 curl -4 -fsS --noproxy "" --max-time 5 \
     -o /dev/null "http://127.0.0.1:${backend_port}/"; then
-    printf 'vmess-fixture-local-backend=pass\n'
+    printf '%s-fixture-local-backend=pass\n' "${protocol}"
   else
-    printf 'vmess-fixture-local-backend=fail\n'
+    printf '%s-fixture-local-backend=fail\n' "${protocol}"
     return 1
   fi
   timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 \
-    -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/vmess-probe-curl.log" 2>&1 || probe_result=$?
+    -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/${protocol}-probe-curl.log" 2>&1 || probe_result=$?
   if (( probe_result != 0 )); then
-    printf 'vmess-fixture-direct-transport=fail\n'
-    printf 'vmess-fixture-probe-exit=%d\n' "${probe_result}"
-    if grep -qF 'SOCKS5 request granted' "${XRAY_ROOT}/vmess-probe-curl.log"; then
-      printf 'vmess-fixture-socks=granted\n'
+    printf '%s-fixture-direct-transport=fail\n' "${protocol}"
+    printf '%s-fixture-probe-exit=%d\n' "${protocol}" "${probe_result}"
+    if grep -qF 'SOCKS5 request granted' "${XRAY_ROOT}/${protocol}-probe-curl.log"; then
+      printf '%s-fixture-socks=granted\n' "${protocol}"
     else
-      printf 'vmess-fixture-socks=not_granted\n'
+      printf '%s-fixture-socks=not_granted\n' "${protocol}"
     fi
-    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/vmess-probe-http.log"; then
-      printf 'vmess-fixture-backend=reached\n'
+    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/${protocol}-probe-http.log"; then
+      printf '%s-fixture-backend=reached\n' "${protocol}"
     else
-      printf 'vmess-fixture-backend=not_reached\n'
+      printf '%s-fixture-backend=not_reached\n' "${protocol}"
     fi
     for signature in "failed to dial" "failed to read" "failed to send" "invalid user" "not authenticated" "connection refused" "context canceled" "timeout" "proxy/vmess"; do
-      if grep -qiF -- "${signature}" "${XRAY_ROOT}/vmess-probe-client.log"; then
-        printf 'vmess-fixture-client-class=%s\n' "${signature// /_}"
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/${protocol}-probe-client.log"; then
+        printf '%s-fixture-client-class=%s\n' "${protocol}" "${signature// /_}"
       fi
       if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
-        printf 'vmess-fixture-server-class=%s\n' "${signature// /_}"
+        printf '%s-fixture-server-class=%s\n' "${protocol}" "${signature// /_}"
       fi
     done
     return 1
   fi
-  printf 'vmess-fixture-direct-transport=pass\n'
-  kill "${XRAY_PROBE_PID}" "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
-  wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
-  wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
-  XRAY_PROBE_PID=""
-  XRAY_HTTP_PID=""
-}
-
-qualify_synthetic_trojan_direct() {
-  local xray_binary="$1" endpoint_port="$2" password="$3"
-  local probe_port backend_port probe_config="${XRAY_ROOT}/trojan-probe.json" probe_result=0
-  probe_port="$(python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
-  backend_port="$(python3 - <<'PY'
-import socket
-with socket.socket() as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-)"
-  cat >"${probe_config}" <<EOF_VMESS_PROBE
-{
-  "log": {"loglevel": "warning"},
-  "inbounds": [{
-    "listen": "127.0.0.1", "port": ${probe_port},
-    "protocol": "socks", "settings": {"auth": "noauth"}
-  }],
-  "outbounds": [{
-    "protocol": "trojan",
-    "settings": {
-      "address": "${ENDPOINT_IP}", "port": ${endpoint_port},
-      "password": "${password}"
-    },
-    "streamSettings": {
-      "network": "raw", "security": "tls",
-      "tlsSettings": {
-        "serverName": "trojan.example.com",
-        "certificates": [{"usage": "verify", "certificateFile": "${XRAY_ROOT}/ca.crt"}]
-      }
-    }
-  }]
-}
-EOF_VMESS_PROBE
-  chmod 0600 "${probe_config}"
-  "${xray_binary}" run -test -config "${probe_config}" >"${XRAY_ROOT}/trojan-probe-test.log" 2>&1 || return 1
-  "${xray_binary}" run -config "${probe_config}" >"${XRAY_ROOT}/trojan-probe-client.log" 2>&1 &
-  XRAY_PROBE_PID=$!
-  install -d -m 0700 "${XRAY_ROOT}/probe-web"
-  printf 'synthetic Trojan direct probe\n' >"${XRAY_ROOT}/probe-web/index.html"
-  python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-web" >"${XRAY_ROOT}/trojan-probe-http.log" 2>&1 &
-  XRAY_HTTP_PID=$!
-  for _ in $(seq 1 100); do
-    if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null &&
-       ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${backend_port}" >/dev/null; then
-      break
-    fi
-    kill -0 "${XRAY_PROBE_PID}" >/dev/null 2>&1 || return 1
-    kill -0 "${XRAY_HTTP_PID}" >/dev/null 2>&1 || return 1
-    sleep 0.1
-  done
-  if timeout 10 curl -4 -fsS --noproxy "" --max-time 5 \
-    -o /dev/null "http://127.0.0.1:${backend_port}/"; then
-    printf 'trojan-fixture-local-backend=pass\n'
-  else
-    printf 'trojan-fixture-local-backend=fail\n'
-    return 1
-  fi
-  timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 \
-    -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/trojan-probe-curl.log" 2>&1 || probe_result=$?
-  if (( probe_result != 0 )); then
-    printf 'trojan-fixture-direct-transport=fail\n'
-    printf 'trojan-fixture-probe-exit=%d\n' "${probe_result}"
-    if grep -qF 'SOCKS5 request granted' "${XRAY_ROOT}/trojan-probe-curl.log"; then
-      printf 'trojan-fixture-socks=granted\n'
-    else
-      printf 'trojan-fixture-socks=not_granted\n'
-    fi
-    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/trojan-probe-http.log"; then
-      printf 'trojan-fixture-backend=reached\n'
-    else
-      printf 'trojan-fixture-backend=not_reached\n'
-    fi
-    for signature in "failed to dial" "failed to read" "failed to send" "invalid user" "not authenticated" "connection refused" "context canceled" "timeout" "proxy/trojan"; do
-      if grep -qiF -- "${signature}" "${XRAY_ROOT}/trojan-probe-client.log"; then
-        printf 'trojan-fixture-client-class=%s\n' "${signature// /_}"
-      fi
-      if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
-        printf 'trojan-fixture-server-class=%s\n' "${signature// /_}"
-      fi
-    done
-    return 1
-  fi
-  printf 'trojan-fixture-direct-transport=pass\n'
+  printf '%s-fixture-direct-transport=pass\n' "${protocol}"
   kill "${XRAY_PROBE_PID}" "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
   wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
   wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
@@ -952,9 +863,9 @@ EOF_XRAY
   done
   ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
   if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
-    qualify_synthetic_vmess_direct "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+    qualify_synthetic_typed_direct vmess "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
   elif [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
-    qualify_synthetic_trojan_direct "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
+    qualify_synthetic_typed_direct trojan "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
   fi
 }
 
