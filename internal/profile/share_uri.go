@@ -88,6 +88,12 @@ func ImportVMessURI(raw string) (Profile, []string, error) {
 		return Profile{}, nil, fmt.Errorf("invalid VMess URI: payload JSON has trailing data")
 	}
 
+	if share.AlterID != nil && strings.TrimSpace(fmt.Sprint(share.AlterID)) != "0" {
+		return Profile{}, nil, fmt.Errorf("unsupported VMess URI alterId: only zero is supported")
+	}
+	if share.Type != "" && !strings.EqualFold(share.Type, "none") {
+		return Profile{}, nil, fmt.Errorf("unsupported VMess URI header type")
+	}
 	host := strings.TrimSpace(share.Address)
 	if host == "" {
 		return Profile{}, nil, fmt.Errorf("invalid VMess URI: server host is required")
@@ -112,7 +118,7 @@ func ImportVMessURI(raw string) (Profile, []string, error) {
 	if encryption == "" {
 		encryption = "auto"
 	}
-	warnings := vmessWarnings(share)
+	warnings := []string{}
 	name, acceptedName := ProviderProfileDisplayName(share.Name, "vmess")
 	if strings.TrimSpace(share.Name) != "" && !acceptedName {
 		warnings = append(warnings, DisplayNameRejectedWarning)
@@ -431,17 +437,6 @@ func riskyQueryWarnings(protocol string, query url.Values) []string {
 		return []string{fmt.Sprintf("%s option %q enables insecure TLS verification", protocol, "allowInsecure")}
 	}
 	return nil
-}
-
-func vmessWarnings(share vmessShare) []string {
-	var warnings []string
-	if strings.TrimSpace(fmt.Sprint(share.AlterID)) != "" && strings.TrimSpace(fmt.Sprint(share.AlterID)) != "0" {
-		warnings = append(warnings, "VMess alterId is preserved in source-compatible identity only partially; non-zero alterId may be unsupported by generated Xray config")
-	}
-	if strings.TrimSpace(share.Type) != "" && strings.TrimSpace(share.Type) != "none" {
-		warnings = append(warnings, fmt.Sprintf("VMess header type %q is preserved as imported metadata only", share.Type))
-	}
-	return warnings
 }
 
 func parseShadowsocksURI(raw string) (*url.URL, string, string, error) {
