@@ -312,7 +312,7 @@ func mihomoVLESS(entry *yaml.Node, fields map[string]*yaml.Node, source profile.
 	}
 	link := (&url.URL{
 		Scheme: "vless", User: url.User(uuid),
-		Host: net.JoinHostPort(host, strconv.FormatUint(port, 10)),
+		Host:     net.JoinHostPort(host, strconv.FormatUint(port, 10)),
 		RawQuery: query.Encode(), Fragment: name,
 	}).String()
 	p, warnings, err := profile.ImportVLESSURI(link)
