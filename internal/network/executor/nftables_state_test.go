@@ -158,3 +158,22 @@ func testNftablesPlanForExclusiveCreate() planner.TunFirewallPlan {
 		}},
 	}
 }
+
+func TestNftMarkCanonicalizationMatchesPlannedAndObservedForms(t *testing.T) {
+	planned, err := canonicalPlannedNftExpression("meta mark 0x505a")
+	if err != nil {
+		t.Fatalf("canonicalize planned mark: %v", err)
+	}
+	want := []string{"match=meta:mark:==20570"}
+	if !reflect.DeepEqual(planned, want) {
+		t.Fatalf("planned mark=%#v, want %#v", planned, want)
+	}
+
+	observed, err := canonicalObservedNftJSONStatement([]byte(`{"match":{"op":"==","left":{"meta":{"key":"mark"}},"right":20570}}`))
+	if err != nil {
+		t.Fatalf("canonicalize observed mark: %v", err)
+	}
+	if observed != want[0] {
+		t.Fatalf("observed mark=%q, want %q", observed, want[0])
+	}
+}
