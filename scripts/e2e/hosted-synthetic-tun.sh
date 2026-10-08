@@ -784,6 +784,38 @@ run_guest_user() {
     "$@"
 }
 
+install_proxy_qualification_authorization() {
+  local rule_tmp
+  rule_tmp="$(mktemp "${PRIVATE_ROOT}/proxy-polkit.XXXXXX")"
+  cat >"${rule_tmp}" <<'EOF_RULE'
+polkit.addRule(function(action, subject) {
+    if (subject.user == "e2e" &&
+        action.id == "io.github.aidarkhusainov.podlaz.connect-proxy-only") {
+        return polkit.Result.YES;
+    }
+});
+EOF_RULE
+  sudo -n install -D -m 0644 "${rule_tmp}" "${GUEST_ROOT}/etc/polkit-1/rules.d/50-podlaz-hosted-proxy-qualification.rules"
+  rm -f "${rule_tmp}"
+  sleep 1
+}
+
+qualify_explicit_proxy_only() {
+  local selector
+  selector="$(guest_exec cat "${GUEST_PRIVATE}/profile-selector")"
+  [[ -n "${selector}" ]] || return 1
+  install_proxy_qualification_authorization
+  mark_failure product proxy_only.connect
+  run_guest_user /usr/bin/podlaz debug proxy "${selector}" >"${PRIVATE_ROOT}/proxy-connect.stdout" 2>"${PRIVATE_ROOT}/proxy-connect.stderr"
+  mark_failure product proxy_only.data_plane
+  guest_exec timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname 127.0.0.1:1080 --max-time 30 -o /dev/null https://example.com/
+  mark_failure product proxy_only.disconnect
+  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/proxy-disconnect.stdout" 2>"${PRIVATE_ROOT}/proxy-disconnect.stderr"
+  wait_guest_status clean-inactive 80
+  assert_guest_network_baseline_restored
+  assert_foreign_sentinel
+}
+
 wait_guest_status() {
   local target="$1" attempts="$2"
   for _ in $(seq 1 "${attempts}"); do
@@ -1032,6 +1064,7 @@ run_scenario() {
   record_evidence ordinary_user.boundary pass
   create_foreign_sentinel
   capture_guest_network_baseline
+  qualify_explicit_proxy_only
   hosted_control_pause candidate-ready
 
   mark_failure diagnostic_unknown tun.connect
