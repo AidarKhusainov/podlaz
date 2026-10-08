@@ -65,6 +65,9 @@ func mihomoExisting(entry *yaml.Node, fields map[string]*yaml.Node, source profi
 		if err != nil {
 			return p, nil, err
 		}
+		if strings.TrimSpace(password) != password {
+			return p, nil, fmt.Errorf("unsupported Clash/Mihomo ss password whitespace at line %d", entry.Line)
+		}
 		switch method {
 		case "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305", "chacha20-poly1305":
 		default:
@@ -168,6 +171,9 @@ func mihomoVMessTrojan(entry *yaml.Node, fields map[string]*yaml.Node, kind, nam
 		password, err := mihomoRequiredString(fields, "password", entry.Line)
 		if err != nil {
 			return p, nil, err
+		}
+		if strings.TrimSpace(password) != password {
+			return p, nil, fmt.Errorf("unsupported Clash/Mihomo trojan password whitespace at line %d", entry.Line)
 		}
 		link := (&url.URL{Scheme: "trojan", User: url.User(strings.ReplaceAll(password, "%", "%25")), Host: endpoint, RawQuery: query.Encode(), Fragment: name}).String()
 		p, warnings, err = profile.ImportTrojanURI(link)
