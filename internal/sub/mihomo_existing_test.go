@@ -252,3 +252,39 @@ func TestMihomoExistingProtocolsMatchShareURIConnectCapability(t *testing.T) {
 		}
 	}
 }
+
+func TestMihomoExistingProtocolsPreservePercentInPasswords(t *testing.T) {
+	const password = "pa%2Fss%word"
+	for _, tc := range []struct {
+		protocol, fields, want string
+	}{
+		{"trojan", "    password: " + password + "\n", password},
+		{"ss", "    cipher: aes-128-gcm\n    password: " + password + "\n", "aes-128-gcm:" + password},
+	} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			input := "proxies:\n  - name: example\n    type: " + tc.protocol + "\n    server: vpn.example.com\n    port: 443\n" + tc.fields
+			got, err := ParseLocalImportContent([]byte(input))
+			if err != nil || len(got.Profiles) != 1 {
+				t.Fatalf("import failed: count=%d err=%v", len(got.Profiles), err)
+			}
+			if got.Profiles[0].UserIdentity != tc.want {
+				t.Fatal("Mihomo password changed during import")
+			}
+		})
+	}
+}
+
+func TestMihomoExistingProtocolsRejectLossyPasswordNormalization(t *testing.T) {
+	for _, protocol := range []string{"trojan", "ss"} {
+		t.Run(protocol, func(t *testing.T) {
+			fields := "    password: \" padded-secret \"\n"
+			if protocol == "ss" {
+				fields += "    cipher: aes-128-gcm\n"
+			}
+			input := "proxies:\n  - name: example\n    type: " + protocol + "\n    server: vpn.example.com\n    port: 443\n" + fields
+			if _, err := ParseLocalImportContent([]byte(input)); err == nil || strings.Contains(err.Error(), "padded-secret") {
+				t.Fatal("expected redacted rejection of lossy password")
+			}
+		})
+	}
+}
