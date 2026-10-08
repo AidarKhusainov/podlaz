@@ -5,8 +5,8 @@ import (
 	"io"
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
-	"github.com/AidarKhusainov/podlaz/internal/sub"
 	"github.com/AidarKhusainov/podlaz/internal/render"
+	"github.com/AidarKhusainov/podlaz/internal/sub"
 )
 
 func runLocalFileImport(path string, stdout io.Writer, opts options) error {
