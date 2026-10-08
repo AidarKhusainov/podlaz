@@ -69,7 +69,7 @@ Supported imported material includes VLESS/VMess/Trojan/Shadowsocks share URIs,
 Base64 URI-list subscriptions, and native Xray JSON. Native Xray JSON is kept as
 sensitive schema-opaque source material so Xray-owned fields survive persistence
 and runtime composition; Podlaz does not expose the raw JSON in normal output.
-Typed share-URI imports remain normalized profiles. Connection support is stricter than import support. Native Xray JSON uses
+Typed share-URI imports remain normalized profiles. Local and HTTP(S) imports also accept Clash/Mihomo YAML `proxies` lists with VLESS TCP, WebSocket, or gRPC transport and supported TLS/REALITY settings. Only the proxy definitions are imported: full Clash client configuration (rules, groups, DNS, mixed-port, unsupported proxy options and other protocols) is not translated. Unsupported semantics are reported, never silently applied or dropped. A recognized malformed JSON or YAML document does not fall back to URI/Base64 decoding. Connection support is stricter than import support. Native Xray JSON uses
 schema-opaque runtime composition for canonical full-TUN: Podlaz replaces its
 owned TUN inbound, preserves provider-owned egress/routing material, and applies
 a collision-free Podlaz egress mark validated by the bundled Xray build before
