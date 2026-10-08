@@ -64,7 +64,6 @@ func TestTunPlanFromTransactionDoesNotGrantAddressRollbackFromDesiredIntentAlone
 	}
 }
 
-
 func TestValidateTunRollbackProjectionAcceptsExactMarkedPolicyRule(t *testing.T) {
 	target := "priority 9999 fwmark 20570 lookup main"
 	tx := txstate.NewTransaction("tun-status-mark", "native-profile", planner.ModeTun, fixedClock()())
