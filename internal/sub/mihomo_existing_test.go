@@ -168,7 +168,7 @@ func TestMihomoExistingProtocolsHTTPRefreshAtomicityAndSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body = strings.Replace(mihomoExistingFixture, "    cipher: auto", "    packet-encoding: xudp\\n    cipher: auto", 1)
+	body = strings.Replace(mihomoExistingFixture, "    cipher: auto", "    packet-encoding: xudp\n    cipher: auto", 1)
 	if _, err := UpdateSource(context.Background(), subscriptions, profiles, first.Subscription.ID, SourceWorkflowOptions{}); err == nil {
 		t.Fatal("expected unsupported option to abort refresh")
 	}
