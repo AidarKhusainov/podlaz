@@ -27,6 +27,7 @@ TUN_OWNER = "xray:tun-inbound"
 DNS_OWNER = "podlaz:dns-link"
 FIREWALL_OWNER = "podlaz:nftables"
 PRIVACY_COMPOSITION_VERSION = 1
+PRIVACY_MARKED_COMPOSITION_VERSION = 2
 SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 TRANSACTION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 PE_TABLE_RE = re.compile(r"^podlaz_pe_([0-9a-f]{12})(?:_[1-9][0-9]{0,2})?$")
@@ -163,23 +164,33 @@ def validate_session(
 
     protection = dict_value(session.get("protection") or {}, "Privacy Envelope authority")
     require(protection.get("state") == "armed", "Privacy Envelope state")
-    require(protection.get("composition_version") == PRIVACY_COMPOSITION_VERSION, "Privacy Envelope composition version")
+    version = protection.get("composition_version")
+    require(version in {PRIVACY_COMPOSITION_VERSION, PRIVACY_MARKED_COMPOSITION_VERSION}, "Privacy Envelope composition version")
     require(protection.get("family") == "inet", "Privacy Envelope family")
     require(clean_string(protection.get("tun_interface")) == tun_interface, "Privacy Envelope TUN identity")
     table = clean_string(protection.get("table"))
     match = PE_TABLE_RE.fullmatch(table)
     require(match is not None and match.group(1) == session_id[:12], "Privacy Envelope table identity")
 
-    bootstrap = normalize_ipv4_list(protection.get("bootstrap_ipv4"), "Privacy Envelope bootstrap")
-    previous = normalize_ipv4_list(
-        protection.get("previous_bootstrap_ipv4") or [],
-        "Privacy Envelope previous bootstrap",
-        allow_empty=True,
-    )
-    combined = sorted(set(bootstrap + previous))
-    require(bool(combined), "Privacy Envelope bootstrap authority")
     result = dict(protection)
-    result["bootstrap_ipv4"] = combined
+    if version == PRIVACY_MARKED_COMPOSITION_VERSION:
+        require(not protection.get("bootstrap_ipv4") and not protection.get("previous_bootstrap_ipv4"), "marked Privacy Envelope bootstrap separation")
+        require(not protection.get("previous_egress_marks"), "marked Privacy Envelope previous mark authority")
+        marks = list_value(protection.get("egress_marks"), "Privacy Envelope egress marks")
+        require(len(marks) == 1, "Privacy Envelope exact egress mark cardinality")
+        mark = marks[0]
+        require(type(mark) is int and 0 < mark <= 0xFFFFFFFF, "Privacy Envelope exact egress mark")
+        result["egress_marks"] = [mark]
+        result["bootstrap_ipv4"] = []
+    else:
+        require(not protection.get("egress_marks") and not protection.get("previous_egress_marks"), "legacy Privacy Envelope mark separation")
+        bootstrap = normalize_ipv4_list(protection.get("bootstrap_ipv4"), "Privacy Envelope bootstrap")
+        previous = normalize_ipv4_list(
+            protection.get("previous_bootstrap_ipv4") or [],
+            "Privacy Envelope previous bootstrap",
+            allow_empty=True,
+        )
+        result["bootstrap_ipv4"] = sorted(set(bootstrap + previous))
     return result
 
 
@@ -379,7 +390,7 @@ def canonical_observed_left(value: Any) -> str:
     data = dict_value(body, "nftables match left body")
     if kind == "meta":
         key = clean_string(data.get("key"))
-        require(key in {"oifname", "nfproto", "l4proto"}, "nftables meta key")
+        require(key in {"oifname", "nfproto", "l4proto", "mark"}, "nftables meta key")
         return f"meta:{key}:"
     require(kind == "payload", "nftables match left kind")
     protocol = clean_string(data.get("protocol"))
@@ -408,6 +419,13 @@ def canonical_observed_right(left: str, value: Any) -> str:
 
 def canonical_nft_scalar(left: str, value: Any) -> str:
     text = clean_string(value)
+    if left == "meta:mark:":
+        try:
+            mark = int(text, 0)
+        except ValueError as exc:
+            raise AuthorityMismatch("nftables egress mark") from exc
+        require(0 < mark <= 0xFFFFFFFF, "nftables exact egress mark")
+        return str(mark)
     if left == "meta:oifname:":
         require(bool(text), "nftables output interface")
         return text
@@ -517,11 +535,12 @@ def canonical_planned_expression(fields: list[str]) -> list[str]:
             index += 3
         elif token == "meta":
             require(
-                index + 2 < len(fields) and fields[index + 1] == "nfproto",
+                index + 2 < len(fields) and fields[index + 1] in {"nfproto", "mark"},
                 "persisted meta expression",
             )
-            value = canonical_nft_scalar("meta:nfproto:", fields[index + 2])
-            result.append("match=meta:nfproto:==" + value)
+            key = fields[index + 1]
+            value = canonical_nft_scalar(f"meta:{key}:", fields[index + 2])
+            result.append(f"match=meta:{key}:==" + value)
             index += 3
         elif token == "udp":
             require(
@@ -663,6 +682,10 @@ def privacy_expected(
         for endpoint in endpoints
     )
     raw_rules.extend(
+        f"meta mark {mark} accept owner podlaz:privacy-envelope:xray-egress"
+        for mark in protection.get("egress_marks") or []
+    )
+    raw_rules.extend(
         [
             "meta nfproto ipv4 udp sport 68 udp dport 67 accept owner podlaz:privacy-envelope:dhcp4",
             "meta nfproto ipv6 udp sport 546 udp dport 547 accept owner podlaz:privacy-envelope:dhcp6",
@@ -691,6 +714,19 @@ def validate_privacy_envelope(
     table = clean_string(protection.get("table"))
     chains, rules = privacy_expected(protection)
     require_exact_table(tables, family, table, chains, rules, "Privacy Envelope")
+
+
+def validate_marked_runtime_config(protection: dict[str, Any], runtime_config: Path) -> None:
+    if protection.get("composition_version") != PRIVACY_MARKED_COMPOSITION_VERSION:
+        return
+    config = load_json(runtime_config, "generated Xray runtime")
+    outbounds = list_value(config.get("outbounds"), "generated Xray outbounds")
+    require(bool(outbounds), "generated Xray outbound count")
+    expected_mark = protection["egress_marks"][0]
+    for outbound in outbounds:
+        stream = dict_value(dict_value(outbound, "generated Xray outbound").get("streamSettings") or {}, "generated Xray stream")
+        sockopt = dict_value(stream.get("sockopt") or {}, "generated Xray sockopt")
+        require(type(sockopt.get("mark")) is int and sockopt["mark"] == expected_mark, "persisted Privacy Envelope mark matches every Xray outbound")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -735,6 +771,7 @@ def verify(args: argparse.Namespace) -> None:
     protection = validate_session(
         session, tx, read_current_boot_id(boot_path), tun_interface
     )
+    validate_marked_runtime_config(protection, runtime_config)
     validate_resolved(tx, dns_path, domain_path, default_path, tun_interface)
     tables = parse_nft_ruleset(nft_path)
     validate_data_plane_nft(tx, tables)

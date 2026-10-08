@@ -34,6 +34,7 @@ HOSTED_CONTROL_DIR="${PODLAZ_E2E_HOSTED_CONTROL_DIR:-}"
 HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180}"
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
+PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 
 EVIDENCE_KEYS=(
@@ -73,6 +74,8 @@ OUTER_IP_FORWARD=""
 OUTER_EGRESS_IF=""
 NSPAWN_PID=""
 XRAY_PID=""
+XRAY_PROBE_PID=""
+XRAY_HTTP_PID=""
 SYSTEM_GUEST_ACTIVE=false
 TEARDOWN_RUNNING=false
 FAILURE_CLASS=none
@@ -299,6 +302,16 @@ cleanup_outer_plumbing() {
 }
 
 stop_synthetic_xray_endpoint() {
+  if [[ -n "${XRAY_HTTP_PID}" ]]; then
+    kill "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
+    wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
+    XRAY_HTTP_PID=""
+  fi
+  if [[ -n "${XRAY_PROBE_PID}" ]]; then
+    kill "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
+    wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
+    XRAY_PROBE_PID=""
+  fi
   if [[ -n "${XRAY_PID}" ]]; then
     kill "${XRAY_PID}" >/dev/null 2>&1 || true
     wait "${XRAY_PID}" >/dev/null 2>&1 || true
@@ -482,10 +495,187 @@ assert_guest_package_provenance() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/package_provenance.sh && assert_native_deb_arch '${GUEST_CANDIDATE}' \"\$(dpkg --print-architecture)\" && assert_exact_podlaz_package_runtime_provenance '${GUEST_CANDIDATE}' '${EXPECTED_COMMIT}'"
 }
 
+start_synthetic_hysteria2_endpoint() {
+  local xray_binary="$1" config="${XRAY_ROOT}/server.json" port auth
+  auth="$(openssl rand -hex 24)"
+  port="$(python3 - "${ENDPOINT_IP}" <<'PY'
+import socket, sys
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind((sys.argv[1], 0))
+print(sock.getsockname()[1])
+sock.close()
+PY
+)"
+  openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+    -keyout "${XRAY_ROOT}/ca.key" -out "${XRAY_ROOT}/ca.crt" \
+    -subj "/CN=Podlaz Synthetic Qualification CA" \
+    -addext "basicConstraints=critical,CA:TRUE" >"${XRAY_ROOT}/ca.log" 2>&1
+  openssl req -new -newkey rsa:2048 -nodes -sha256 \
+    -keyout "${XRAY_ROOT}/server.key" -out "${XRAY_ROOT}/server.csr" \
+    -subj "/CN=hy2.example.com" >"${XRAY_ROOT}/server-csr.log" 2>&1
+  printf 'subjectAltName=DNS:hy2.example.com\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' >"${XRAY_ROOT}/server.ext"
+  openssl x509 -req -sha256 -in "${XRAY_ROOT}/server.csr" \
+    -CA "${XRAY_ROOT}/ca.crt" -CAkey "${XRAY_ROOT}/ca.key" \
+    -CAcreateserial -days 1 -out "${XRAY_ROOT}/server.crt" \
+    -extfile "${XRAY_ROOT}/server.ext" >"${XRAY_ROOT}/server-cert.log" 2>&1
+  # Reference Hysteria2 is a test-only remote endpoint, never a Podlaz runtime
+  # helper. Verify an immutable release checksum list before executing its binary.
+  local reference_binary="${XRAY_ROOT}/hysteria-linux-amd64" hashes="${XRAY_ROOT}/hysteria-hashes.txt" reference_sha
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+    --output "${hashes}" \
+    "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hashes.txt"
+  printf '%s  %s\n' 'e1d2c80994cf57fcef494ea799eedf80088e11fd7243b5b3b23f1288fe1266b5' "${hashes}" | sha256sum --check --status
+  printf 'hysteria-reference-phase=hash-list-verified\n'
+  reference_sha="$(awk '
+    {
+      first=$1; second=$2
+      sub(/^\\*/, "", first); sub(/^\\*/, "", second)
+      count=split(first, segments, "/"); first_name=segments[count]
+      count=split(second, segments, "/"); second_name=segments[count]
+      if (second_name == "hysteria-linux-amd64" && length(first) == 64) print tolower(first)
+      if (first_name == "hysteria-linux-amd64" && length(second) == 64) print tolower(second)
+    }
+  ' "${hashes}")"
+  [[ "${reference_sha}" =~ ^[0-9a-f]{64}$ ]] || { printf "hysteria-reference-phase=missing-binary-hash\n"; return 1; }
+  printf "hysteria-reference-phase=binary-hash-selected\n"
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+    --output "${reference_binary}" \
+    "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hysteria-linux-amd64"
+  printf "hysteria-reference-phase=binary-downloaded\n"
+  printf '%s  %s\n' "${reference_sha}" "${reference_binary}" | sha256sum --check --status
+  printf 'hysteria-reference-phase=binary-verified\n'
+  chmod 0700 "${reference_binary}"
+  config="${XRAY_ROOT}/reference-server.yaml"
+  cat >"${config}" <<EOF_HYSTERIA
+listen: "${ENDPOINT_IP}:${port}"
+tls:
+  cert: "${XRAY_ROOT}/server.crt"
+  key: "${XRAY_ROOT}/server.key"
+auth:
+  type: password
+  password: "${auth}"
+EOF_HYSTERIA
+  cat >"${XRAY_ROOT}/client.yaml" <<EOF_HYSTERIA_CLIENT
+proxies:
+  - name: hosted-hysteria2
+    type: hysteria2
+    server: ${ENDPOINT_IP}
+    port: ${port}
+    password: ${auth}
+    sni: hy2.example.com
+    alpn: [h3]
+EOF_HYSTERIA_CLIENT
+  chmod 0600 "${config}" "${XRAY_ROOT}/client.yaml" "${XRAY_ROOT}/ca.key" "${XRAY_ROOT}/server.key"
+  guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
+  guest_exec update-ca-certificates >/dev/null
+  printf 'hysteria-reference-phase=ca-installed\n'
+  "${reference_binary}" server -c "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
+  XRAY_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -lun | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null; then break; fi
+    kill -0 "${XRAY_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  ss -H -lun | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null
+  printf 'hysteria-reference-phase=udp-bound\n'
+  local probe_port probe_config="${XRAY_ROOT}/client-check.json"
+  probe_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  cat >"${probe_config}" <<EOF_HYSTERIA_PROBE
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{
+    "listen": "127.0.0.1", "port": ${probe_port}, "protocol": "socks",
+    "settings": {"auth": "noauth"}
+  }],
+  "outbounds": [{
+    "protocol": "hysteria",
+    "settings": {"version": 2, "address": "${ENDPOINT_IP}", "port": ${port}},
+    "streamSettings": {
+      "network": "hysteria", "security": "tls",
+      "hysteriaSettings": {"version": 2, "auth": "${auth}"},
+      "tlsSettings": {"serverName": "hy2.example.com", "alpn": ["h3"], "certificates": [{"usage": "verify", "certificateFile": "${XRAY_ROOT}/ca.crt"}]}
+    }
+  }]
+}
+EOF_HYSTERIA_PROBE
+  chmod 0600 "${probe_config}"
+  SSL_CERT_FILE="${XRAY_ROOT}/ca.crt" "${xray_binary}" run -config "${probe_config}" >"${XRAY_ROOT}/client-check.log" 2>&1 &
+  XRAY_PROBE_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null; then break; fi
+    kill -0 "${XRAY_PROBE_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null || return 1
+  local backend_port
+  backend_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  install -d -m 0700 "${XRAY_ROOT}/probe-public"
+  printf 'podlaz synthetic transport probe\n' >"${XRAY_ROOT}/probe-public/index.html"
+  python3 -m http.server "${backend_port}" --bind 127.0.0.1 --directory "${XRAY_ROOT}/probe-public" >"${XRAY_ROOT}/probe-http.log" 2>&1 &
+  XRAY_HTTP_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${backend_port}" >/dev/null; then break; fi
+    kill -0 "${XRAY_HTTP_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  local probe_code=0
+  timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/client-check-curl.log" 2>&1 || probe_code=$?
+  if (( probe_code != 0 )); then
+    printf 'hysteria-fixture-probe-exit=%d\n' "${probe_code}"
+    for spec in "SOCKS5 request granted|socks_granted" "SOCKS5 request failed|socks_rejected" "Proxy CONNECT aborted|proxy_aborted" "Empty reply from server|empty_reply" "Recv failure|connection_reset" "HTTP/1.0 200|http_ok" "HTTP/1.1 200|http_ok"; do
+      local marker="${spec%%|*}" label="${spec#*|}"
+      if grep -qF -- "${marker}" "${XRAY_ROOT}/client-check-curl.log"; then
+        printf 'hysteria-fixture-phase=%s\n' "${label}"
+      fi
+    done
+    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/probe-http.log"; then
+      printf 'hysteria-fixture-backend=reached\n'
+    else
+      printf 'hysteria-fixture-backend=not_reached\n'
+    fi
+
+    for signature in "SSL certificate problem" "certificate" "SOCKS" "socks" "Operation timed out" "Connection refused" "Empty reply" "HTTP" "Could not resolve" "Failed to connect"; do
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/client-check-curl.log"; then
+        printf 'hysteria-fixture-curl-class=%s\n' "${signature// /_}"
+      fi
+    done
+    for signature in "certificate" "handshake" "authentication" "timeout" "failed to dial" "failed to send" "no route" "network is unreachable" "connection refused" "tls" "hysteria" "quic"; do
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/client-check.log"; then
+        printf 'hysteria-fixture-client-class=%s\n' "${signature// /_}"
+      fi
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
+        printf 'hysteria-fixture-server-class=%s\n' "${signature// /_}"
+      fi
+    done
+    printf 'hysteria-fixture-direct-transport=fail\n'
+    return 1
+  fi
+  printf 'hysteria-fixture-direct-transport=pass\n'
+  kill "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
+  wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
+  XRAY_PROBE_PID=""
+}
+
 start_synthetic_xray_endpoint() {
   local extract="${XRAY_ROOT}/package" config="${XRAY_ROOT}/server.json" uuid port
   install -d -m 0700 "${XRAY_ROOT}" "${extract}"
   dpkg-deb -x "${CANDIDATE_DEB}" "${extract}"
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == hysteria2 ]]; then
+    start_synthetic_hysteria2_endpoint "${extract}/usr/lib/podlaz/xray"
+    return
+  fi
   uuid="$("${extract}/usr/lib/podlaz/xray" uuid | tr -d '[:space:]')"
   [[ "${uuid}" =~ ^[0-9a-fA-F-]{36}$ ]] || return 1
   port="$(python3 - "${ENDPOINT_IP}" <<'PY'
@@ -781,7 +971,11 @@ run_scenario() {
 
   mark_failure diagnostic_unknown profile.import
   set +e
-  guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == hysteria2 ]]; then
+    guest_exec /bin/bash -lc "install -o e2e -g e2e -m 0600 /run/podlaz-synthetic-xray/client.yaml '${GUEST_XDG}/client.yaml' && runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import '${GUEST_XDG}/client.yaml' >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
+  else
+    guest_exec /bin/bash -lc "URI=\$(cat /run/podlaz-synthetic-xray/client-uri); runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz import \"\${URI}\" >${GUEST_PRIVATE}/import.stdout 2>${GUEST_PRIVATE}/import.stderr"
+  fi
   import_code=$?
   set -e
   (( import_code == 0 )) || return 1
@@ -801,6 +995,28 @@ run_scenario() {
   set -e
   if (( connect_code != 0 )) && [[ "${HOSTED_EXPECT_CONNECT_FAILURE}" == true ]]; then
     hosted_control_pause connect-failed
+  fi
+  if (( connect_code != 0 )) && [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == hysteria2 ]]; then
+    # Only static diagnostic labels enter CI logs. Private command output stays
+    # inside disposable guest and is never uploaded or echoed.
+    for signature in "certificate signed by unknown authority" "certificate verify" "TLS handshake" "authentication failed" "invalid argument" "connection refused" "context deadline exceeded" "timeout" "operation not permitted" "failed to create server" "failed to initialize" "failed to verify" "unable to connect" "failed to detect" "failed to retrieve"; do
+      if guest_exec grep -qiF -- "${signature}" "${GUEST_PRIVATE}/connect.stderr" >/dev/null 2>&1; then
+        printf 'hysteria-connect-class=%s\\n' "${signature// /_}"
+      fi
+    done
+    for signature in "could not verify DNS" "could not verify full-VPN" "could not verify the VPN connection" "TUN mode requires" "no network changes" "rolled back" "daemon did not publish" "unable to connect" "connection failed" "profile cannot" "invalid profile"; do
+      if guest_exec grep -qiF -- "${signature}" "${GUEST_PRIVATE}/connect.stderr" >/dev/null 2>&1; then
+        printf 'hysteria-phase=%s\\n' "${signature// /_}"
+      fi
+    done
+    for signature in "authentication failed" "tls: bad certificate" "certificate signed by unknown authority" "handshake" "timeout" "failed to accept" "failed to create server" "invalid argument"; do
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
+        printf 'hysteria-endpoint-class=%s\\n' "${signature// /_}"
+      fi
+    done
+    if grep -qiF 'failed to start' "${XRAY_ROOT}/server.log"; then
+      printf 'hysteria-server-class=start_failed\\n'
+    fi
   fi
   (( connect_code == 0 )) || return "${connect_code}"
   wait_guest_status verified-active 120
@@ -844,8 +1060,12 @@ run_scenario() {
 
 main() {
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
-  require_cmd awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
+  require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
+  case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
+    vless|hysteria2) ;;
+    *) fail "unsupported synthetic endpoint protocol" ;;
+  esac
   case "${HOSTED_EXPECT_CONNECT_FAILURE}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}" in
     false:false|true:false|false:true) ;;
     *) fail "hosted failure mode flags are invalid or conflicting" ;;

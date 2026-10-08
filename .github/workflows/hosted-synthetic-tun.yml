@@ -82,3 +82,36 @@ jobs:
           path: ${{ runner.temp }}/podlaz-hosted-synthetic-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: Run hosted Hysteria2 full-TUN qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-hysteria2-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-hysteria2-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+          PODLAZ_E2E_SYNTHETIC_PROTOCOL: hysteria2
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"
+
+      - name: Validate hosted Hysteria2 public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-hysteria2-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-hosted-hysteria2-public
+        run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+
+      - name: Remove private Hysteria2 qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-hosted-hysteria2-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public Hysteria2 qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-hosted-hysteria2-tun
+          path: ${{ runner.temp }}/podlaz-hosted-hysteria2-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7

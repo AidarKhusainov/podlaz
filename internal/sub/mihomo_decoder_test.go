@@ -121,7 +121,7 @@ func TestMihomoMalformedAndUnsupportedDoNotFallbackOrLeak(t *testing.T) {
 func TestMihomoUnsupportedProtocolIsReportedWithoutSilentLoss(t *testing.T) {
 	input := `proxies:
   - name: unused
-    type: hysteria2
+    type: tuic
     server: vpn.example.com
     password: example-password
   - name: supported

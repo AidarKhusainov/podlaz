@@ -61,7 +61,7 @@ func parseMihomoYAML(data []byte, source profile.SourceType) (profile.LocalImpor
 		if err != nil {
 			return profile.LocalImportResult{}, err
 		}
-		if kind != "vless" && kind != "vmess" && kind != "trojan" && kind != "ss" {
+		if kind != "vless" && kind != "vmess" && kind != "trojan" && kind != "ss" && kind != "hysteria2" {
 			result.Unsupported = append(result.Unsupported, profile.LocalImportIssue{
 				Entry: i + 1, Message: "unsupported Clash/Mihomo proxy protocol",
 			})
@@ -69,7 +69,9 @@ func parseMihomoYAML(data []byte, source profile.SourceType) (profile.LocalImpor
 		}
 		var p profile.Profile
 		var warnings []string
-		if kind == "vless" {
+		if kind == "hysteria2" {
+			p, warnings, err = mihomoHysteria2(entry, fields, source)
+		} else if kind == "vless" {
 			p, warnings, err = mihomoVLESS(entry, fields, source)
 		} else {
 			p, warnings, err = mihomoExisting(entry, fields, source, kind)

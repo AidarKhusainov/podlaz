@@ -193,6 +193,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Validate Mihomo Hysteria2 synthetic config with bundled Xray
+        env:
+          GOFLAGS: -mod=readonly
+        run: |
+          PODLAZ_TEST_XRAY_BINARY="${PWD}/dist/package-root/usr/lib/podlaz/xray" \
+            go test ./internal/sub -run '^TestMihomoHysteria2PackagedXrayAcceptsMarkedNativeConfig$' -count=1
+
       - name: Validate package metadata and contents
         env:
           PODLAZ_LINKAGE_ROOT: dist/package-root

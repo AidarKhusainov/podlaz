@@ -152,6 +152,21 @@ def _selector_prefix(value: str, *, allow_all: bool) -> str:
     return _prefix(text)
 
 
+def _exact_fwmark(raw: str, label: str) -> str:
+    if not MARK_RE.fullmatch(raw):
+        raise AuthorityError(f"{label} has invalid fwmark")
+    value, separator, mask = raw.partition("/")
+    try:
+        number = int(value, 0)
+        if separator and int(mask, 0) != 0xFFFFFFFF:
+            raise AuthorityError(f"{label} fwmark mask is not exact")
+    except ValueError as exc:
+        raise AuthorityError(f"{label} has invalid fwmark") from exc
+    if number <= 0 or number > 0xFFFFFFFF:
+        raise AuthorityError(f"{label} fwmark is out of range")
+    return str(number)
+
+
 def _rule_from_mapping(value: object, label: str) -> Rule:
     item = _dict(value, label)
     if str(item.get("owner") or "").strip() != RULE_OWNER:
@@ -168,11 +183,11 @@ def _rule_from_mapping(value: object, label: str) -> Rule:
         source = _selector_prefix(source, allow_all=True)
     if destination:
         destination = _selector_prefix(destination, allow_all=False)
-    if mark and not MARK_RE.fullmatch(mark):
-        raise AuthorityError(f"{label} has invalid fwmark")
+    if mark:
+        mark = _exact_fwmark(mark, label)
     table = _table(item.get("table"))
-    if table == "main" and (not destination or source or mark):
-        raise AuthorityError(f"{label} main-table rule is not an exact destination bypass")
+    if table == "main" and (source or bool(destination) == bool(mark)):
+        raise AuthorityError(f"{label} main-table rule is not an exact destination or marked-egress bypass")
     return Rule("ipv4", priority, source, destination, mark, table)
 
 
@@ -433,7 +448,11 @@ def _rule_present(rule: Rule) -> bool:
         if (
             source == rule.source
             and destination == rule.destination
-            and observed["fwmark"] == rule.mark
+            and (
+                (not rule.mark and not observed["fwmark"])
+                or (bool(rule.mark) and bool(observed["fwmark"]) and
+                    _exact_fwmark(observed["fwmark"], "observed policy rule") == rule.mark)
+            )
             and _normalize_lookup(observed["lookup"]) == rule.table
         ):
             return True
