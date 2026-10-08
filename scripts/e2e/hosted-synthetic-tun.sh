@@ -526,7 +526,14 @@ PY
     "https://github.com/HyNetworks/hysteria/releases/download/app%2Fv2.13.0/hashes.txt"
   printf '%s  %s\n' 'e1d2c80994cf57fcef494ea799eedf80088e11fd7243b5b3b23f1288fe1266b5' "${hashes}" | sha256sum --check --status
   printf 'hysteria-reference-phase=hash-list-verified\n'
-  reference_sha="$(awk '$2 ~ /(^|\\/)hysteria-linux-amd64$/ {print $1}' "${hashes}")"
+  reference_sha="$(awk '
+    {
+      first=$1; second=$2
+      sub(/^\\*/, "", first); sub(/^\\*/, "", second)
+      if (second ~ /(^|\\/)hysteria-linux-amd64$/ && first ~ /^[[:xdigit:]]{64}$/) print tolower(first)
+      if (first ~ /(^|\\/)hysteria-linux-amd64$/ && second ~ /^[[:xdigit:]]{64}$/) print tolower(second)
+    }
+  ' "${hashes}")"
   [[ "${reference_sha}" =~ ^[0-9a-f]{64}$ ]] || { printf "hysteria-reference-phase=missing-binary-hash\n"; return 1; }
   printf "hysteria-reference-phase=binary-hash-selected\n"
   curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
