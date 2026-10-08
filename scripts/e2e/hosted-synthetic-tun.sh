@@ -686,19 +686,43 @@ print(sock.getsockname()[1])
 sock.close()
 PY
 )"
+  local inbound_protocol inbound_settings client_uri credential encoded
+  case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
+    vless)
+      inbound_protocol=vless
+      inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
+      client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
+      ;;
+    vmess)
+      inbound_protocol=vmess
+      inbound_settings="{\"clients\":[{\"id\":\"${uuid}\",\"alterId\":0}]}"
+      encoded="$(printf '{"v":"2","ps":"hosted-synthetic","add":"%s","port":"%s","id":"%s","aid":0,"scy":"auto","net":"tcp","tls":"none"}' "${ENDPOINT_IP}" "${port}" "${uuid}" | base64 -w0)"
+      client_uri="vmess://${encoded}"
+      ;;
+    shadowsocks)
+      inbound_protocol=shadowsocks
+      credential="$(openssl rand -hex 24)"
+      inbound_settings="{\"method\":\"aes-128-gcm\",\"password\":\"${credential}\",\"network\":\"tcp,udp\"}"
+      encoded="$(printf 'aes-128-gcm:%s' "${credential}" | base64 -w0)"
+      client_uri="ss://${encoded}@${ENDPOINT_IP}:${port}#hosted-synthetic"
+      ;;
+    *) return 1 ;;
+  esac
   cat >"${config}" <<EOF_XRAY
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
     "listen": "${ENDPOINT_IP}",
     "port": ${port},
-    "protocol": "vless",
-    "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
+    "protocol": "${inbound_protocol}",
+    "settings": ${inbound_settings},
     "streamSettings": {"security": "none"}
   }],
   "outbounds": [{"protocol": "freedom", "settings": {}}]
 }
 EOF_XRAY
+  printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
+  chmod 0600 "${XRAY_ROOT}/client-uri"
   chmod 0600 "${config}"
   "${extract}/usr/lib/podlaz/xray" run -test -config "${config}" >"${XRAY_ROOT}/config-test.log" 2>&1
   "${extract}/usr/lib/podlaz/xray" run -config "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
@@ -709,8 +733,6 @@ EOF_XRAY
     sleep 0.1
   done
   ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
-  printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic\n' "${uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
-  chmod 0600 "${XRAY_ROOT}/client-uri"
 }
 
 install_tun_authorization() {
@@ -1063,7 +1085,7 @@ main() {
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
   case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
-    vless|hysteria2) ;;
+    vless|vmess|shadowsocks|hysteria2) ;;
     *) fail "unsupported synthetic endpoint protocol" ;;
   esac
   case "${HOSTED_EXPECT_CONNECT_FAILURE}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}" in
