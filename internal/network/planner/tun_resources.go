@@ -222,7 +222,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 	egressMark := uint32(0)
 	dnsPlan := dnsPlan(s, device, normalizeDNSServers(opts.DNSServers))
 	var firewall TunFirewallPlan
-	if profile.IsProviderXrayConfigProfile(p) {
+	if profile.IsProviderXrayConfigProfile(p) || (p.Engine == profile.EngineXray && (p.Protocol == "vmess" || p.Protocol == "trojan" || p.Protocol == "shadowsocks")) {
 		egressMark = resources.EgressMark
 		policyRules = append([]TunPolicyRulePlan{{
 			Family:   "ipv4",
