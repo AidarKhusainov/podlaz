@@ -94,7 +94,11 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
-	if err := preflightTunRuntimeConfig(ctx, xrayPath, preflightConfigPath, preHandoffCorePlan.XrayConfig, coreIdentity); err != nil {
+	preHandoffPreflightConfig, err := tunRuntimePreflightConfig(p, runtimeConfigPath, preHandoffPlan)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
+	}
+	if err := preflightTunRuntimeConfig(ctx, xrayPath, preflightConfigPath, preHandoffPreflightConfig, coreIdentity); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-config-preflight", "", "not-started", err)
 	}
 
@@ -192,6 +196,10 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
 	}
+	runtimePreflightConfig, err := tunRuntimePreflightConfig(p, runtimeConfigPath, plan)
+	if err != nil {
+		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
+	}
 
 	executor := m.tunPlanExecutor()
 	runner := fullTunnelTransactionRunner{
@@ -202,7 +210,7 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 		executor:   executor,
 		now:        time.Now,
 		preflightCore: func(preflightCtx context.Context) error {
-			return preflightTunRuntimeConfig(preflightCtx, xrayPath, preflightConfigPath, corePlan.XrayConfig, coreIdentity)
+			return preflightTunRuntimeConfig(preflightCtx, xrayPath, preflightConfigPath, runtimePreflightConfig, coreIdentity)
 		},
 		startCore: func(context.Context) (fullTunnelCoreHandle, error) {
 			m.mu.Lock()
@@ -259,4 +267,18 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 
 func (m *XrayManager) disconnectTun(ctx context.Context, transactionID string) (api.LifecycleResponse, error) {
 	return m.runTunCleanup(ctx, transactionID)
+}
+
+
+func tunRuntimePreflightConfig(p profile.Profile, runtimeConfigPath string, plan planner.TunPlan) ([]byte, error) {
+	preflightPlan := plan
+	preflightPlan.TunDevice.Name = xrayTunPreflightInterfaceName
+	if preflightPlan.TunAddress.Interface != "" {
+		preflightPlan.TunAddress.Interface = xrayTunPreflightInterfaceName
+	}
+	corePlan, err := planTunCoreRuntime(p, runtimeConfigPath, preflightPlan)
+	if err != nil {
+		return nil, err
+	}
+	return corePlan.XrayConfig, nil
 }
