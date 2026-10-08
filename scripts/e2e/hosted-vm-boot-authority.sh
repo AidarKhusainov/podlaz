@@ -198,6 +198,31 @@ printf 'service-%s-%s.socket-%s.transport-%s.status-%s\n' \
 EOF
 }
 
+daemon_restart_failure_token() {
+  hosted_vm_ga_bash_stdin <<'EOF' 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//' || true
+set -Eeuo pipefail
+if ! systemctl is-active --quiet podlazd.service; then
+  printf 'service-inactive\n'
+  exit 0
+fi
+if ! test -S /run/podlaz/podlazd.sock; then
+  printf 'socket-unavailable\n'
+  exit 0
+fi
+if ! test -e /run/podlaz/network-session-continuation.json; then
+  printf 'authority-missing\n'
+  exit 0
+fi
+status=/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json
+if ! curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
+    http://localhost/v1/status >"$status" 2>/dev/null; then
+  printf 'status-unavailable\n'
+  exit 0
+fi
+python3 /tmp/daemon_status_semantics.py diagnose-active "$status" /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf 'status-unclassified\n'
+EOF
+}
+
 cleanup() {
   local saved=$? failed=0
   trap - EXIT
@@ -307,7 +332,10 @@ run_scenario() {
 
   mark_failure product daemon.same_boot_restart
   hosted_vm_ga_bash 'systemctl restart podlazd.service'
-  hosted_vm_tun_wait_status verified-active 180
+  if ! hosted_vm_tun_wait_status verified-active 180; then
+    mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
+    return 1
+  fi
   daemon_after="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
   [[ -n "${daemon_after}" && "${daemon_after}" != "${daemon_before}" ]]
   record_evidence daemon_restart.new_process pass
