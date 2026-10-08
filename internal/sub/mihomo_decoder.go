@@ -317,9 +317,9 @@ func mihomoVLESS(entry *yaml.Node, fields map[string]*yaml.Node, source profile.
 	}).String()
 	p, warnings, err := profile.ImportVLESSURI(link)
 	if err != nil {
-		// Existing URI validation uses fixed field-level messages and does not
-		// echo supplied UUID, hostname, key, or configuration content.
-		return profile.Profile{}, nil, err
+		// url.Parse and validation errors may contain provider-controlled URL
+		// fragments. Keep this boundary error stable and secret-free.
+		return profile.Profile{}, nil, fmt.Errorf("invalid Clash/Mihomo VLESS profile at line %d", entry.Line)
 	}
 	p.Source = source
 	return p, warnings, nil
