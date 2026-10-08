@@ -116,6 +116,10 @@ expect_fail 'issue-oriented workflow label' "${fixture}" 'issue-oriented workflo
 
 fixture="$(new_fixture)"; fixtures+=("${fixture}")
 printf '## Checklist\n' > "${fixture}/.github/pull_request_template.md"
+printf '# Conduct\n' > "${fixture}/.github/CODE_OF_CONDUCT.md"
+printf '# Contributing\n' > "${fixture}/.github/CONTRIBUTING.md"
+printf '# Security\n' > "${fixture}/.github/SECURITY.md"
+printf '# Accessibility\n' > "${fixture}/.github/ACCESSIBILITY.md"
 mkdir -p "${fixture}/vendor/example"
 printf '# Generated vendor notes\n' > "${fixture}/vendor/example/README.md"
 printf '// Historical context: Issue #321.\npackage app\n' > "${fixture}/internal/app/app.go"

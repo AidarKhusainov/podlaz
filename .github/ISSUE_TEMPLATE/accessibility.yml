@@ -1,0 +1,37 @@
+name: Accessibility barrier
+description: Report a barrier using Podlaz with assistive technology or an accessible workflow
+title: "[accessibility] "
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Affected workflow
+      description: Which command or task is difficult or inaccessible?
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Linux distribution, terminal, shell, and relevant assistive technology.
+    validations:
+      required: true
+  - type: textarea
+    id: barrier
+    attributes:
+      label: Barrier
+      description: What prevents or complicates completing the task?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Desired accessible behavior
+      description: What would make this workflow work better?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional context
+      description: Add sanitized output or examples if useful. Do not include secrets or private endpoint data.

@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a product or developer-experience improvement
+title: "[feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem first. A concrete use case is more useful than a solution-only request.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to accomplish, and what is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the behavior you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional workarounds or alternative designs you considered.
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility or migration concerns
+      description: Note any CLI, API, package, networking, or state compatibility concerns you are aware of.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing open and closed issues for related requests.
+          required: true
