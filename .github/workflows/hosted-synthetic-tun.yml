@@ -121,15 +121,24 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: |
           set -euo pipefail
+          failures=0
           for protocol in trojan shadowsocks vmess; do
             export PODLAZ_E2E_SYNTHETIC_PROTOCOL="${protocol}"
             export E2E_TMP_ROOT="${RUNNER_TEMP}/podlaz-hosted-${protocol}-private"
             export E2E_ARTIFACT_DIR="${RUNNER_TEMP}/podlaz-hosted-${protocol}-public"
             rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
             install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-            bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"
-            bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+            if ! bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"; then
+              printf 'typed-xray-%s=result-fail\\n' "${protocol}"
+              failures=$((failures + 1))
+            elif ! bash scripts/e2e/hosted-synthetic-tun.sh validate-report; then
+              printf 'typed-xray-%s=report-fail\\n' "${protocol}"
+              failures=$((failures + 1))
+            else
+              printf 'typed-xray-%s=pass\\n' "${protocol}"
+            fi
           done
+          ((failures == 0))
 
       - name: Remove private imported typed Xray qualification state
         if: always()
