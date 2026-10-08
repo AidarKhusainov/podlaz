@@ -19,7 +19,7 @@ func TestSubscriptionFormatPrecedenceCharacterization(t *testing.T) {
 		{name: "malformed object is JSON", content: `{"outbounds":`, format: FormatXrayJSON, wantErr: "Xray JSON"},
 		{name: "malformed array is JSON", content: `[{"outbounds":`, format: FormatXrayJSON, wantErr: "Xray JSON"},
 		{name: "scalar JSON never falls through", content: `true`, format: FormatXrayJSON, wantErr: "top-level type boolean"},
-		{name: "plain URI is not a subscription format", content: uri, format: FormatBase64, wantErr: "Base64"},
+		{name: "plain URI list", content: uri, format: FormatURIList, count: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
