@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/profile"
 )
@@ -46,8 +47,16 @@ var importContentDecoders = []contentDecoder{
 		},
 	},
 	{
+		recognizes: recognizesPlainURIList,
+		local: profile.ImportLocalContent,
+		remote: func(data []byte) (Format, Parsed, error) {
+			parsed, err := ParsePlainURIListSubscription(data)
+			return FormatURIList, parsed, err
+		},
+	},
+	{
 		// Legacy fallbacks intentionally retain their separate historical
-		// behavior: local URI-list then Base64; subscriptions Base64 only.
+		// behavior: local URI-list then Base64; subscriptions Base64.
 		recognizes: func([]byte) bool { return true },
 		local:      profile.ImportLocalContent,
 		remote: func(data []byte) (Format, Parsed, error) {
@@ -93,4 +102,16 @@ func parseSubscriptionWithDecoders(data []byte) (Format, Parsed, error) {
 		}
 	}
 	panic("missing subscription fallback decoder")
+}
+
+// A URI scheme marker is not valid Base64 text. Detect the raw text before
+// the Base64 fallback without assuming all schemes are supported.
+func recognizesPlainURIList(data []byte) bool {
+ for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+  entry := strings.TrimSpace(line)
+  if entry == "" {continue}
+  lower := strings.ToLower(entry)
+  if strings.Contains(entry, "://") || strings.HasPrefix(lower,"vless:") || strings.HasPrefix(lower,"vmess:") || strings.HasPrefix(lower,"trojan:") || strings.HasPrefix(lower,"ss:") {return true}
+ }
+ return false
 }
