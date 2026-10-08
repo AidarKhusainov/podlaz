@@ -71,7 +71,7 @@ func mihomoExisting(entry *yaml.Node, fields map[string]*yaml.Node, source profi
 			return p, nil, fmt.Errorf("unsupported Clash/Mihomo ss cipher at line %d", entry.Line)
 		}
 		credentials := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + password))
-		link := "ss://" + credentials + "@" + endpoint + "#" + url.QueryEscape(name)
+		link := "ss://" + credentials + "@" + endpoint + "#" + url.PathEscape(name)
 		p, warnings, err = profile.ImportShadowsocksURI(link)
 		if err != nil {
 			return profile.Profile{}, nil, fmt.Errorf("invalid Clash/Mihomo ss profile at line %d", entry.Line)
