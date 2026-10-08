@@ -70,7 +70,10 @@ func (b *productionTunRevalidationBackend) observeReconciliation(ctx context.Con
 		fingerprintBuilder = deriveTunUplinkFingerprint
 	}
 	snapshot := b.manager.collectTunSnapshot(ctx, snapshotOptions)
-	local := tunMandatoryEvidenceFromSnapshot(snapshot)
+	local := tunMandatoryEndpointIndependentEvidenceFromSnapshot(snapshot)
+	if plan.EgressMark == 0 {
+		local = tunMandatoryEvidenceFromSnapshot(snapshot)
+	}
 	round.Evidence.Mandatory.UplinkPath = local.UplinkPath
 	round.Evidence.Mandatory.NetworkManager = local.NetworkManager
 	round.Evidence.Mandatory.ResolvedDNS = local.ResolvedDNS
