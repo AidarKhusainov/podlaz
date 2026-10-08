@@ -187,7 +187,11 @@ func mihomoVLESS(entry *yaml.Node, fields map[string]*yaml.Node, source profile.
 		if tlsNode.Kind != yaml.ScalarNode || tlsNode.Tag != "!!bool" {
 			return profile.Profile{}, nil, fmt.Errorf("malformed Clash/Mihomo YAML: tls must be a boolean at line %d", tlsNode.Line)
 		}
-		if tlsNode.Value == "true" {
+		enabled, err := strconv.ParseBool(tlsNode.Value)
+		if err != nil {
+			return profile.Profile{}, nil, fmt.Errorf("malformed Clash/Mihomo YAML: tls must be a boolean at line %d", tlsNode.Line)
+		}
+		if enabled {
 			security = "tls"
 		}
 	}
@@ -257,7 +261,7 @@ func mihomoVLESS(entry *yaml.Node, fields map[string]*yaml.Node, source profile.
 		if err != nil {
 			return profile.Profile{}, nil, err
 		}
-		if options["public-key"] == nil {
+		if options["public-key"] == nil || strings.TrimSpace(options["public-key"].Value) == "" {
 			return profile.Profile{}, nil, fmt.Errorf("malformed Clash/Mihomo YAML: reality-opts.public-key is required at line %d", node.Line)
 		}
 		query.Set("security", "reality")
