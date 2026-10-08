@@ -90,10 +90,6 @@ func (m *XrayManager) connectTun(ctx context.Context, req api.ConnectRequest) (r
 	if err := m.requireTunAddressPreflightBeforeHandoff(ctx, preHandoffPlan, req.Handoff); err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("preflight", "", "not-started", err)
 	}
-	preHandoffCorePlan, err := planTunCoreRuntime(p, runtimeConfigPath, preHandoffPlan)
-	if err != nil {
-		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
-	}
 	preHandoffPreflightConfig, err := tunRuntimePreflightConfig(p, runtimeConfigPath, preHandoffPlan)
 	if err != nil {
 		return api.LifecycleResponse{}, withTunFailurePhase("core-preflight", "", "not-started", err)
