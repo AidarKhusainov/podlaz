@@ -361,7 +361,12 @@ classify_provider_tun_connect_failure() {
       ;;
   esac
 
-  if guest_exec test -f /run/podlaz/diagnostics/tun-last.json >/dev/null 2>&1; then
+  guest_exec install -d -m 0700 "${GUEST_PRIVATE}" >/dev/null 2>&1 || true
+  if guest_exec /bin/bash -lc "curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock http://localhost/v1/status >'${GUEST_PRIVATE}/connect-status.json' 2>/dev/null"; then
+    classification="$(guest_exec python3 /workspace/scripts/e2e/lib/daemon_status_semantics.py diagnose-active "${GUEST_PRIVATE}/connect-status.json" /run/podlaz/diagnostics/tun-last.json 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+
+  if [[ -z "${classification}" ]] && guest_exec test -f /run/podlaz/diagnostics/tun-last.json >/dev/null 2>&1; then
     classification="$(guest_exec python3 - /run/podlaz/diagnostics/tun-last.json <<'PY'
 import json
 import re
@@ -379,13 +384,17 @@ if value:
 PY
 )" || classification=""
   fi
+  classification="$(printf '%s' "${classification}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed 's/^-*//; s/-*$//')"
 
   case "${classification}" in
-    network_apply_failure|network_verify_failure|ownership_invalid|owned_state_invalid)
+    active.cleanup-required*|active.degraded.ownership_invalid*|active.degraded.owned_state_invalid*|network_apply_failure|network_verify_failure|ownership_invalid|owned_state_invalid)
       domain=product
       ;;
-    server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout)
+    active.degraded.connectivity_failed*|server_bypass*|dns_*|tcp_*|tls_*|https_*|doh_*|ipv6_*|likely_pmtu_blackhole|timeout)
       domain=remnawave
+      ;;
+    active.revalidating.*|active.degraded.network_converging*)
+      domain=product
       ;;
     *)
       domain=diagnostic_unknown
