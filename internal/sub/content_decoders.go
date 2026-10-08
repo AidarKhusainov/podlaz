@@ -48,7 +48,7 @@ var importContentDecoders = []contentDecoder{
 	},
 	{
 		recognizes: recognizesPlainURIList,
-		local: profile.ImportLocalContent,
+		local:      profile.ImportLocalContent,
 		remote: func(data []byte) (Format, Parsed, error) {
 			parsed, err := parsePlainURIListSubscription(data)
 			return FormatURIList, parsed, err
