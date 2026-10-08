@@ -87,7 +87,7 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 				UserLevel: 0,
 			},
 		}},
-		Outbounds: []map[string]any{typedXrayTunOutbound(p, outboundAddress, outbound)},
+		Outbounds: []map[string]any{typedXrayTunOutbound(p, outboundAddress, outbound, opts.EgressMark)},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -110,18 +110,16 @@ func normalizeXrayTunOptions(opts XrayTunConfigOptions) XrayTunConfigOptions {
 	return opts
 }
 
-func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound) map[string]any {
+func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound, mark uint32) map[string]any {
  if strings.EqualFold(p.Protocol, "vless") {
-  return xrayTunOutboundConfig(p,address,outbound.StreamSettings)
+  return xrayTunOutboundConfig(p, address, outbound.StreamSettings)
  }
- // The typed subset uses precisely one Xray outbound and the same marked
- // host-network lifecycle as native provider configurations.
- var result map[string]any
- raw, _ := json.Marshal(outbound)
- _ = json.Unmarshal(raw,&result)
- switch settings := result["settings"].(type) {
- case map[string]any:
-  settings["address"] = address
- }
- return result
+ stream := make(map[string]any,len(outbound.StreamSettings)+1)
+ for key,value := range outbound.StreamSettings { stream[key]=value }
+ if mark != 0 { stream["sockopt"]=map[string]any{"mark":mark} }
+ settings := outbound.Settings.(map[string]any)
+ fields := make(map[string]any,len(settings))
+ for key,value := range settings { fields[key]=value }
+ fields["address"]=address
+ return map[string]any{"tag":outbound.Tag,"protocol":outbound.Protocol,"settings":fields,"streamSettings":stream}
 }
