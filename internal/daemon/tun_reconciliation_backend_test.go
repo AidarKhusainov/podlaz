@@ -55,7 +55,6 @@ func TestMandatoryEvidenceMarksTransientRouteGapUnknown(t *testing.T) {
 	}
 }
 
-
 func TestMandatoryEvidenceAllowsEndpointIndependentMarkedUplinkWithoutServerRoute(t *testing.T) {
 	snapshot := authoritativeReconciliationSnapshot()
 	snapshot.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusUnknown}
