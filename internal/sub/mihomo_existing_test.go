@@ -160,6 +160,10 @@ func TestMihomoExistingProtocolsHTTPRefreshAtomicityAndSelection(t *testing.T) {
 	if len(first.Subscription.ProfileIDs) != 4 {
 		t.Fatalf("expected four imported profiles, got %d", len(first.Subscription.ProfileIDs))
 	}
+	selectedProfile, err := profiles.Select("vmess")
+	if err != nil {
+		t.Fatalf("select VMess profile: %v", err)
+	}
 	originalProfiles, err := os.ReadFile(profiles.Path())
 	if err != nil {
 		t.Fatal(err)
@@ -192,5 +196,9 @@ func TestMihomoExistingProtocolsHTTPRefreshAtomicityAndSelection(t *testing.T) {
 		if updated.Subscription.ProfileIDs[i] != id {
 			t.Fatal("rename changed stable profile identity")
 		}
+	}
+	selectedID, err := profiles.SelectedID()
+	if err != nil || selectedID != selectedProfile.ID {
+		t.Fatalf("refresh changed selected profile: %s, %v", selectedID, err)
 	}
 }
