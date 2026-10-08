@@ -134,7 +134,6 @@ func issue245UplinkSnapshot() netsnapshot.Snapshot {
 	}
 }
 
-
 func TestEndpointIndependentTunUplinkFingerprintDoesNotRequireServerRoute(t *testing.T) {
 	snapshot := issue245UplinkSnapshot()
 	snapshot.ServerRoute = netsnapshot.Route{Status: netsnapshot.StatusUnknown}
