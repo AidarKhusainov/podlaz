@@ -114,11 +114,11 @@ func validateXrayVLESSProfile(p profile.Profile, modeName string) error {
 }
 
 func validateTypedXrayProfile(p profile.Profile, modeName string) error {
- if strings.EqualFold(p.Protocol, "vless") {
-  return validateXrayVLESSProfile(p, modeName)
- }
- _, err := typedXrayOutboundConfig(p, p.Server, "podlaz-proxy", modeName)
- return err
+	if strings.EqualFold(p.Protocol, "vless") {
+		return validateXrayVLESSProfile(p, modeName)
+	}
+	_, err := typedXrayOutboundConfig(p, p.Server, "podlaz-proxy", modeName)
+	return err
 }
 
 // GenerateXrayProxyOnlyConfig builds deterministic Xray JSON for a proxy-only plan.
