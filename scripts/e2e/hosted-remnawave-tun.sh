@@ -29,7 +29,7 @@ XRAY_ROOT="${PRIVATE_ROOT}/unused-synthetic-bind"
 GUEST_CANDIDATE="/opt/podlaz-remnawave-candidate.deb"
 GUEST_XDG="/home/e2e/.local/share/podlaz-hosted-remnawave-tun"
 GUEST_PRIVATE="/tmp/podlaz-hosted-remnawave-tun"
-GUEST_MANIFEST="${GUEST_PRIVATE}/network-manifest.json"
+GUEST_MANIFEST="/var/tmp/podlaz-remnawave-tun-network-manifest.json"
 GUEST_PROVIDER_DIR="/tmp/podlaz-remnawave-material"
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 PUBLIC_IP_CHECK_URL="${PODLAZ_E2E_PUBLIC_IP_CHECK_URL:-https://api.ipify.org}"
@@ -472,24 +472,24 @@ assert_direct_uplink_blocked() {
 }
 
 run_provider_traffic_checks() {
-  local before after
+  local record_initial="${1:-true}" before after
   before="$(remnawave_node_access_count)" || return 1
 
   guest_exec resolvectl flush-caches
   guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
-  record_evidence tun.system_dns pass
+  [[ "${record_initial}" == true ]] && record_evidence tun.system_dns pass
 
   PROBE_IP="$(guest_exec getent ahostsv4 example.com | awk 'NR == 1 {print $1}')"
   [[ -n "${PROBE_IP}" ]] || return 1
   guest_exec timeout 15 /bin/bash -lc "exec 3<>/dev/tcp/${PROBE_IP}/443; exec 3>&-"
-  record_evidence tun.ipv4_tcp pass
+  [[ "${record_initial}" == true ]] && record_evidence tun.ipv4_tcp pass
 
   guest_exec timeout 20 openssl s_client -connect "${PROBE_IP}:443" -servername example.com -brief </dev/null \
     >"${PRIVATE_ROOT}/tls.stdout" 2>"${PRIVATE_ROOT}/tls.stderr"
-  record_evidence tun.tls pass
+  [[ "${record_initial}" == true ]] && record_evidence tun.tls pass
 
   guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
-  record_evidence tun.https pass
+  [[ "${record_initial}" == true ]] && record_evidence tun.https pass
 
   ACTIVE_EGRESS="$(guest_exec timeout 30 curl -4 -fsS --max-time 15 "${PUBLIC_IP_CHECK_URL}" | tr -d '[:space:]')"
   python3 - "${ACTIVE_EGRESS}" <<'PY'
@@ -505,7 +505,7 @@ PY
     mark_failure remnawave remnawave.path_not_observed
     return 1
   }
-  record_evidence tun.remnawave_path pass
+  [[ "${record_initial}" == true ]] && record_evidence tun.remnawave_path pass
 }
 
 assert_ordinary_connectivity_restored() {
@@ -516,7 +516,7 @@ assert_ordinary_connectivity_restored() {
 }
 
 remove_guest_private_state() {
-  guest_exec rm -rf "${GUEST_PROVIDER_DIR}" "${GUEST_PRIVATE}" "${GUEST_XDG}" >/dev/null
+  guest_exec rm -rf "${GUEST_PROVIDER_DIR}" "${GUEST_PRIVATE}" "${GUEST_XDG}" "${GUEST_MANIFEST}" >/dev/null
 }
 
 run_provider_scenario() {
@@ -601,7 +601,7 @@ run_provider_scenario() {
   wait_guest_status verified-active 90 || fail "native Xray reconnect did not reach verified-active"
   assert_verified_active_authority || fail "native Xray reconnect active authority is incomplete"
   assert_direct_uplink_blocked || fail "ordinary direct uplink bypassed reconnected Privacy Envelope"
-  run_provider_traffic_checks || fail "native Xray reconnected data plane failed"
+  run_provider_traffic_checks false || fail "native Xray reconnected data plane failed"
   assert_foreign_sentinel || fail "foreign guest state changed across native Xray reconnect"
   record_evidence tun.reconnect pass
 
