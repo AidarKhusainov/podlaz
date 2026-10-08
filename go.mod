@@ -9,6 +9,7 @@ require (
 	github.com/google/nftables v0.3.1-0.20260430172505-f9b52ed2ba65
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/sys v0.48.0
+	go.yaml.in/yaml/v3 v3.0.5
 )
 
 require (
