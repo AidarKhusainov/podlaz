@@ -617,9 +617,21 @@ PY
     sleep 0.1
   done
   local probe_code=0
-  timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/client-check-curl.log" 2>&1 || probe_code=$?
+  timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/client-check-curl.log" 2>&1 || probe_code=$?
   if (( probe_code != 0 )); then
     printf 'hysteria-fixture-probe-exit=%d\\n' "${probe_code}"
+    for spec in "SOCKS5 request granted|socks_granted" "SOCKS5 request failed|socks_rejected" "Proxy CONNECT aborted|proxy_aborted" "Empty reply from server|empty_reply" "Recv failure|connection_reset" "HTTP/1.0 200|http_ok" "HTTP/1.1 200|http_ok"; do
+      local marker="${spec%%|*}" label="${spec#*|}"
+      if grep -qF -- "${marker}" "${XRAY_ROOT}/client-check-curl.log"; then
+        printf 'hysteria-fixture-phase=%s\\n' "${label}"
+      fi
+    done
+    if grep -qF 'GET / HTTP/' "${XRAY_ROOT}/probe-http.log"; then
+      printf 'hysteria-fixture-backend=reached\\n'
+    else
+      printf 'hysteria-fixture-backend=not_reached\\n'
+    fi
+
     for signature in "SSL certificate problem" "certificate" "SOCKS" "socks" "Operation timed out" "Connection refused" "Empty reply" "HTTP" "Could not resolve" "Failed to connect"; do
       if grep -qiF -- "${signature}" "${XRAY_ROOT}/client-check-curl.log"; then
         printf 'hysteria-fixture-curl-class=%s\\n' "${signature// /_}"
