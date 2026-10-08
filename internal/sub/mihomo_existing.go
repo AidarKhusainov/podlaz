@@ -70,10 +70,10 @@ func mihomoExisting(entry *yaml.Node, fields map[string]*yaml.Node, source profi
 		default:
 			return p, nil, fmt.Errorf("unsupported Clash/Mihomo ss cipher at line %d", entry.Line)
 		}
-		credentials := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + password))
+		credentials := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + strings.ReplaceAll(password, "%", "%25")))
 		link := "ss://" + credentials + "@" + endpoint + "#" + url.PathEscape(name)
 		p, warnings, err = profile.ImportShadowsocksURI(link)
-		if err != nil {
+		if err != nil || p.UserIdentity != method+":"+password {
 			return profile.Profile{}, nil, fmt.Errorf("invalid Clash/Mihomo ss profile at line %d", entry.Line)
 		}
 	case "vmess", "trojan":
@@ -169,8 +169,11 @@ func mihomoVMessTrojan(entry *yaml.Node, fields map[string]*yaml.Node, kind, nam
 		if err != nil {
 			return p, nil, err
 		}
-		link := (&url.URL{Scheme: "trojan", User: url.User(password), Host: endpoint, RawQuery: query.Encode(), Fragment: name}).String()
+		link := (&url.URL{Scheme: "trojan", User: url.User(strings.ReplaceAll(password, "%", "%25")), Host: endpoint, RawQuery: query.Encode(), Fragment: name}).String()
 		p, warnings, err = profile.ImportTrojanURI(link)
+		if err == nil && p.UserIdentity != password {
+			return profile.Profile{}, nil, fmt.Errorf("invalid Clash/Mihomo trojan profile at line %d", entry.Line)
+		}
 	} else {
 		uuid, err := mihomoRequiredString(fields, "uuid", entry.Line)
 		if err != nil {
