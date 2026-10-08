@@ -270,9 +270,12 @@ func routeRollbackAppliedTarget(route txstate.RouteRollback) string {
 
 func policyRuleRollbackSelector(rule txstate.PolicyRuleRollback) string {
 	selector := strings.TrimSpace(rule.From)
-	if rule.To != "" {
-		selector = "to " + rule.To
-	} else if selector != "" && !strings.HasPrefix(selector, "from ") {
+	switch {
+	case strings.TrimSpace(rule.To) != "":
+		selector = "to " + strings.TrimSpace(rule.To)
+	case strings.TrimSpace(rule.Mark) != "":
+		selector = "fwmark " + strings.TrimSpace(rule.Mark)
+	case selector != "" && !strings.HasPrefix(selector, "from "):
 		selector = "from " + selector
 	}
 	return selector
