@@ -107,11 +107,19 @@ func parseSubscriptionWithDecoders(data []byte) (Format, Parsed, error) {
 // A URI scheme marker is not valid Base64 text. Detect the raw text before
 // the Base64 fallback without assuming all schemes are supported.
 func recognizesPlainURIList(data []byte) bool {
- for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
-  entry := strings.TrimSpace(line)
-  if entry == "" {continue}
-  lower := strings.ToLower(entry)
-  if strings.Contains(entry, "://") || strings.HasPrefix(lower,"vless:") || strings.HasPrefix(lower,"vmess:") || strings.HasPrefix(lower,"trojan:") || strings.HasPrefix(lower,"ss:") {return true}
- }
- return false
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		entry := strings.TrimSpace(line)
+		if entry == "" {
+			continue
+		}
+		lower := strings.ToLower(entry)
+		if strings.Contains(entry, "://") ||
+			strings.HasPrefix(lower, "vless:") ||
+			strings.HasPrefix(lower, "vmess:") ||
+			strings.HasPrefix(lower, "trojan:") ||
+			strings.HasPrefix(lower, "ss:") {
+			return true
+		}
+	}
+	return false
 }
