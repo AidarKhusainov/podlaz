@@ -1,0 +1,50 @@
+name: Public APT Availability
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published Podlaz release version; empty means latest complete GitHub Release
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-apt-availability
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify public APT trust and installation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: apt-production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve expected published version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REQUESTED_VERSION}" ]]; then
+            version="${REQUESTED_VERSION}"
+          else
+            tag="$(gh release view --json tagName --jq .tagName)"
+            version="${tag#v}"
+          fi
+          [[ "${version}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || exit 1
+          echo "PODLAZ_APT_EXPECTED_VERSION=${version}" >>"${GITHUB_ENV}"
+
+      - name: Verify public signed index and installed package
+        env:
+          PODLAZ_APT_SIGNING_FINGERPRINT: ${{ vars.PODLAZ_APT_SIGNING_FINGERPRINT }}
+        run: bash scripts/ci/public-apt-smoke.sh
