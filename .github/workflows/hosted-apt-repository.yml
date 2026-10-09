@@ -42,7 +42,7 @@ jobs:
       - name: Install package and repository tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends apt-utils debootstrap gnupg systemd-container
+          sudo apt-get install -y --no-install-recommends apt-utils debootstrap gnupg systemd-container gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           bash scripts/ci/install-go-tool.sh nfpm
 
       - name: Resolve candidate package
@@ -53,16 +53,16 @@ jobs:
           {
             echo "CANDIDATE_VERSION=${candidate_version}"
             echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb"
+            echo "CANDIDATE_ARM64_DEB=dist-arm64/podlaz_${candidate_version}_linux_arm64.deb"
             echo "PREVIOUS_DEB=dist/podlaz_${MAINTAINED_RELEASE_VERSION}_linux_amd64.deb"
           } >>"${GITHUB_ENV}"
 
-      - name: Build exact candidate package
+      - name: Build exact candidate packages
         run: |
-          PODLAZ_VERSION="${CANDIDATE_VERSION}" \
-            PODLAZ_DEB_VERSION="${CANDIDATE_VERSION}" \
-            PODLAZ_COMMIT="${GITHUB_SHA}" \
-            PODLAZ_BUILT="hosted-apt-qualification" \
-            bash scripts/build-deb.sh
+          VERSION="${CANDIDATE_VERSION}" \
+            COMMIT_SHA="${GITHUB_SHA}" \
+            BUILT_DATE="hosted-apt-qualification" \
+            bash scripts/ci/build-release-packages.sh
 
       - name: Fetch exact maintained previous release
         run: |
@@ -109,7 +109,7 @@ jobs:
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          bash scripts/e2e/hosted-apt-repository.sh "${CANDIDATE_DEB}" "${PREVIOUS_DEB}"
+          bash scripts/e2e/hosted-apt-repository.sh "${CANDIDATE_DEB}" "${PREVIOUS_DEB}" "${CANDIDATE_ARM64_DEB}"
 
       - name: Validate public qualification report
         if: always()
