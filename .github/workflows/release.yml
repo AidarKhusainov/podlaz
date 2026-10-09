@@ -433,8 +433,8 @@ jobs:
           Release commit: ${COMMIT_SHA}
           Built: ${BUILT_DATE}
 
-          Install / upgrade: https://github.com/${GH_REPO}#install-from-a-github-release
-          Upgrade / rollback / uninstall: https://github.com/${GH_REPO}#upgrade-rollback-and-uninstall
+          Install / upgrade: https://github.com/${GH_REPO}#install
+          Upgrade / rollback / uninstall: https://github.com/${GH_REPO}#recovery-upgrade-and-removal
           Verify downloaded artifacts against SHA256SUMS and the GitHub build-provenance attestations documented in the README.
           EOF
           )"
