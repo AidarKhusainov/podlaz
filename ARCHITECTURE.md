@@ -158,9 +158,11 @@ signature verification, exact-package checksum/provenance checks, and isolated
 APT install/upgrade acceptance succeed. Metadata/signing failures therefore
 cannot deploy an unsigned or partial replacement; the previously deployed Pages
 snapshot remains authoritative. Reruns regenerate and requalify the same exact
-package set before another complete-snapshot deployment. The initial stable APT
-boundary is Ubuntu 24.04 `amd64`; GitHub Releases remain the package channel for
-the wider documented Debian/Ubuntu `amd64`/`arm64` boundary.
+package set before another complete-snapshot deployment. The stable APT channel preserves the documented systemd-based Debian/Ubuntu
+`amd64`/`arm64` package boundary. Full APT install/upgrade runtime acceptance
+runs on Ubuntu 24.04 `amd64`; the `arm64` repository index is generated from
+and checksum-bound to the exact release-qualified `arm64` package, matching the
+project's existing architecture qualification depth.
 
 The key file used by clients is scoped through deb822 `Signed-By`; global
 `apt-key` trust is not part of the distribution contract. Key rotation is
