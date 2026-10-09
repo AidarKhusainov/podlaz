@@ -92,8 +92,10 @@ jobs:
           GNUPGHOME="${signing_home}" gpg --batch --pinentry-mode loopback --passphrase '' \
             --armor --export-secret-keys "${fingerprint}" >"${signing_key}"
           chmod 0600 "${signing_key}"
-          echo "APT_CI_SIGNING_KEY=${signing_key}" >>"${GITHUB_ENV}"
-          echo "APT_CI_SIGNING_FINGERPRINT=${fingerprint}" >>"${GITHUB_ENV}"
+          {
+            echo "APT_CI_SIGNING_KEY=${signing_key}"
+            echo "APT_CI_SIGNING_FINGERPRINT=${fingerprint}"
+          } >>"${GITHUB_ENV}"
 
       - name: Run isolated signed-repository qualification
         env:
