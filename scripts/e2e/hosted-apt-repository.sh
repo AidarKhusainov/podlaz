@@ -24,6 +24,7 @@ EVIDENCE_KEYS=(
   repository.signature
   repository.fingerprint
   repository.checksum_provenance
+  repository.arm64_index
   repository.rerun
   repository.failure_atomicity
   repository.key_failure
@@ -106,7 +107,7 @@ primary_builder() {
   if [[ -n "${PODLAZ_APT_SIGNING_PASSPHRASE_FILE:-}" ]]; then
     env_args+=("PODLAZ_APT_SIGNING_PASSPHRASE_FILE=${PODLAZ_APT_SIGNING_PASSPHRASE_FILE}")
   fi
-  env "${env_args[@]}" "$@" bash "${BUILDER}" "${output}" "${CANDIDATE_DEB}" "${PREVIOUS_DEB}"
+  env "${env_args[@]}" "$@" bash "${BUILDER}" "${output}" "${REPOSITORY_PACKAGES[@]}"
 }
 
 expect_builder_failure() {
@@ -122,19 +123,26 @@ expect_builder_failure() {
 }
 
 validate_inputs() {
-  (($# == 2)) || fail "usage: $0 CANDIDATE.deb PREVIOUS.deb"
+  (($# == 3)) || fail "usage: $0 CANDIDATE_AMD64.deb PREVIOUS_AMD64.deb CANDIDATE_ARM64.deb"
   CANDIDATE_DEB="$(readlink -f -- "$1")"
   PREVIOUS_DEB="$(readlink -f -- "$2")"
-  [[ -f "${CANDIDATE_DEB}" && -f "${PREVIOUS_DEB}" ]] || fail "candidate and previous packages must exist"
-  [[ "$(dpkg-deb --field "${CANDIDATE_DEB}" Package)" == podlaz ]] || fail "candidate package is not podlaz"
+  CANDIDATE_ARM64_DEB="$(readlink -f -- "$3")"
+  [[ -f "${CANDIDATE_DEB}" && -f "${PREVIOUS_DEB}" && -f "${CANDIDATE_ARM64_DEB}" ]] ||
+    fail "candidate amd64/arm64 and previous amd64 packages must exist"
+  [[ "$(dpkg-deb --field "${CANDIDATE_DEB}" Package)" == podlaz ]] || fail "candidate amd64 package is not podlaz"
+  [[ "$(dpkg-deb --field "${CANDIDATE_ARM64_DEB}" Package)" == podlaz ]] || fail "candidate arm64 package is not podlaz"
   [[ "$(dpkg-deb --field "${PREVIOUS_DEB}" Package)" == podlaz ]] || fail "previous package is not podlaz"
-  [[ "$(dpkg-deb --field "${CANDIDATE_DEB}" Architecture)" == amd64 ]] || fail "candidate package must be amd64"
+  [[ "$(dpkg-deb --field "${CANDIDATE_DEB}" Architecture)" == amd64 ]] || fail "candidate amd64 package has wrong architecture"
+  [[ "$(dpkg-deb --field "${CANDIDATE_ARM64_DEB}" Architecture)" == arm64 ]] || fail "candidate arm64 package has wrong architecture"
   [[ "$(dpkg-deb --field "${PREVIOUS_DEB}" Architecture)" == amd64 ]] || fail "previous package must be amd64"
 
   CANDIDATE_VERSION="$(dpkg-deb --field "${CANDIDATE_DEB}" Version)"
+  CANDIDATE_ARM64_VERSION="$(dpkg-deb --field "${CANDIDATE_ARM64_DEB}" Version)"
   PREVIOUS_VERSION="$(dpkg-deb --field "${PREVIOUS_DEB}" Version)"
+  [[ "${CANDIDATE_ARM64_VERSION}" == "${CANDIDATE_VERSION}" ]] || fail "candidate architectures have different versions"
   [[ "${CANDIDATE_VERSION}" =~ ^[0-9A-Za-z.+~:-]+$ ]] || fail "candidate version is not safe for repository paths"
   [[ "${PREVIOUS_VERSION}" =~ ^[0-9A-Za-z.+~:-]+$ ]] || fail "previous version is not safe for repository paths"
+  REPOSITORY_PACKAGES=("${CANDIDATE_DEB}" "${PREVIOUS_DEB}" "${CANDIDATE_ARM64_DEB}")
   [[ "${PREVIOUS_VERSION%%-*}" == "${PREVIOUS_VERSION_EXPECTED}" ]] || fail "previous package version mismatch"
   dpkg --compare-versions "${CANDIDATE_VERSION}" gt "${PREVIOUS_VERSION}" || fail "candidate package must be newer than previous package"
 
@@ -175,13 +183,13 @@ exercise_repository_build_failures() {
   expect_builder_failure "${missing_output}" \
     env PODLAZ_APT_SIGNING_KEY_FILE="${PRIVATE_ROOT}/does-not-exist.asc" \
       PODLAZ_APT_SIGNING_FINGERPRINT="${PODLAZ_APT_SIGNING_FINGERPRINT}" \
-      bash "${BUILDER}" "${missing_output}" "${CANDIDATE_DEB}" "${PREVIOUS_DEB}"
+      bash "${BUILDER}" "${missing_output}" "${REPOSITORY_PACKAGES[@]}"
 
   expect_builder_failure "${wrong_output}" \
     env -u PODLAZ_APT_SIGNING_PASSPHRASE_FILE \
       PODLAZ_APT_SIGNING_KEY_FILE="${WRONG_KEY}" \
       PODLAZ_APT_SIGNING_FINGERPRINT="${PODLAZ_APT_SIGNING_FINGERPRINT}" \
-      bash "${BUILDER}" "${wrong_output}" "${CANDIDATE_DEB}" "${PREVIOUS_DEB}"
+      bash "${BUILDER}" "${wrong_output}" "${REPOSITORY_PACKAGES[@]}"
 
   expect_builder_failure "${metadata_output}" \
     primary_builder "${metadata_output}" PODLAZ_APT_TEST_FAIL_STAGE=after-metadata
@@ -193,9 +201,15 @@ exercise_repository_build_failures() {
 validate_repository_bytes() {
   local site="$1"
   local candidate_pool="${site}/apt/pool/main/p/podlaz/podlaz_${CANDIDATE_VERSION}_linux_amd64.deb"
+  local candidate_arm64_pool="${site}/apt/pool/main/p/podlaz/podlaz_${CANDIDATE_VERSION}_linux_arm64.deb"
   local previous_pool="${site}/apt/pool/main/p/podlaz/podlaz_${PREVIOUS_VERSION}_linux_amd64.deb"
-  cmp -s -- "${CANDIDATE_DEB}" "${candidate_pool}" || fail "candidate package changed in repository"
+  cmp -s -- "${CANDIDATE_DEB}" "${candidate_pool}" || fail "candidate amd64 package changed in repository"
+  cmp -s -- "${CANDIDATE_ARM64_DEB}" "${candidate_arm64_pool}" || fail "candidate arm64 package changed in repository"
   cmp -s -- "${PREVIOUS_DEB}" "${previous_pool}" || fail "previous package changed in repository"
+  grep -Fx 'Architecture: arm64' "${site}/apt/dists/stable/main/binary-arm64/Packages" >/dev/null ||
+    fail "arm64 package index is missing candidate architecture"
+  grep -F "Filename: pool/main/p/podlaz/podlaz_${CANDIDATE_VERSION}_linux_arm64.deb"     "${site}/apt/dists/stable/main/binary-arm64/Packages" >/dev/null ||
+    fail "arm64 package index is missing exact candidate package"
   [[ "$(cat "${site}/apt/podlaz-archive-keyring.fingerprint")" == "${PODLAZ_APT_SIGNING_FINGERPRINT}" ]] || fail "published fingerprint mismatch"
   gpgv --keyring "${site}/apt/podlaz-archive-keyring.gpg" "${site}/apt/dists/stable/InRelease" >/dev/null 2>&1 ||
     fail "InRelease signature verification failed"
@@ -216,13 +230,17 @@ exercise_idempotence_and_rotation() {
     cmp -s \
       "${PODLAZ_APT_OUTPUT_DIR}/apt/pool/main/p/podlaz/podlaz_${version}_linux_amd64.deb" \
       "${rerun_site}/apt/pool/main/p/podlaz/podlaz_${version}_linux_amd64.deb" ||
-      fail "idempotent repository rebuild changed package bytes"
+      fail "idempotent repository rebuild changed amd64 package bytes"
   done
+  cmp -s \
+    "${PODLAZ_APT_OUTPUT_DIR}/apt/pool/main/p/podlaz/podlaz_${CANDIDATE_VERSION}_linux_arm64.deb" \
+    "${rerun_site}/apt/pool/main/p/podlaz/podlaz_${CANDIDATE_VERSION}_linux_arm64.deb" ||
+    fail "idempotent repository rebuild changed arm64 package bytes"
 
   env -u PODLAZ_APT_SIGNING_PASSPHRASE_FILE \
     PODLAZ_APT_SIGNING_KEY_FILE="${WRONG_KEY}" \
     PODLAZ_APT_SIGNING_FINGERPRINT="${WRONG_FINGERPRINT}" \
-    bash "${BUILDER}" "${rotation_site}" "${CANDIDATE_DEB}" "${PREVIOUS_DEB}" >/dev/null
+    bash "${BUILDER}" "${rotation_site}" "${REPOSITORY_PACKAGES[@]}" >/dev/null
   set +e
   gpgv --keyring "${PODLAZ_APT_OUTPUT_DIR}/apt/podlaz-archive-keyring.gpg" \
     "${rotation_site}/apt/dists/stable/InRelease" >/dev/null 2>&1
