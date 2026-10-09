@@ -137,6 +137,42 @@ Automated evidence has explicit roles instead of one undifferentiated acceptance
 
 Release provenance is build-once/promote-exactly. The release job builds the amd64/arm64 artifact set once, creates `SHA256SUMS`, and exports the checksum-manifest digest. Every required qualifier downloads that same workflow artifact set and verifies both the manifest digest and every asset checksum before exercising it. The publisher performs the same verification, attests those downloaded files, and publishes those exact files. A downstream retry may reuse the immutable uploaded candidate; it must not silently substitute a rebuild.
 
+Signed APT distribution is a downstream promotion of that release evidence, never
+another package build. When explicitly enabled, the release workflow passes the
+same qualified artifact-set identity to a reusable APT publisher after GitHub
+Release publication. Manual recovery publication is allowed only from immutable
+GitHub Release assets whose checksum manifest and GitHub provenance attestations
+verify. The stable APT snapshot contains exact package bytes, standard
+`Packages`/`Release` metadata, and an inline-signed `InRelease`.
+
+APT signing authority is independent of GitHub release provenance. The private
+OpenPGP key and optional passphrase live only in the protected
+`apt-production` environment; the configured public fingerprint must match the
+single imported secret key before signing. A missing, inaccessible, or
+different key fails closed. `PODLAZ_APT_PUBLISH_ENABLED` is the explicit
+production enablement gate, so repository code can be merged and qualified
+without pretending that signing or hosting has been provisioned.
+
+Publication uses a complete GitHub Pages deployment artifact only after signing,
+signature verification, exact-package checksum/provenance checks, and isolated
+APT install/upgrade acceptance succeed. Metadata/signing failures therefore
+cannot deploy an unsigned or partial replacement; the previously deployed Pages
+snapshot remains authoritative. Reruns regenerate and requalify the same exact
+package set before another complete-snapshot deployment. The initial stable APT
+boundary is Ubuntu 24.04 `amd64`; GitHub Releases remain the package channel for
+the wider documented Debian/Ubuntu `amd64`/`arm64` boundary.
+
+The key file used by clients is scoped through deb822 `Signed-By`; global
+`apt-key` trust is not part of the distribution contract. Key rotation is
+deliberately non-silent: publish and independently communicate the new
+fingerprint, keep the old signing key active through the migration window, and
+require clients to replace the scoped keyring before switching repository
+signatures. An emergency key compromise freezes APT publication and falls back
+to verified immutable GitHub Release installation until a replacement
+fingerprint is published. Qualification proves that a different signing key is
+not accepted by the old keyring; it does not weaken that trust boundary to make
+rotation automatic.
+
 The deepest runtime qualification is amd64 because that is the hosted environment proven for the isolated guest/VM scenarios. arm64 is still built and package-validated as a release artifact; lack of an equivalent hosted virtualization path is not classified as a Podlaz product failure. Ephemeral Remnawave proxy and isolated Remnawave TUN signals remain distinct from synthetic evidence; neither depends on maintainer-owned provider credentials or production state.
 
 No physical HIL runner is part of the current release contract because no retained invariant requires one. `scripts/acceptance/release-laptop.sh` is retained only as an optional developer diagnostic/reproducer; release acceptance, merge readiness, and publication do not require a developer laptop, DUT, manual Wi-Fi action, manual suspend/reboot, manual soak, or manual provider execution.
