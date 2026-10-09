@@ -50,6 +50,8 @@ func TestPublicAPTSmokeRunsAfterDeploymentAndDaily(t *testing.T) {
 	for _, required := range []string{
 		"  schedule:", "  workflow_dispatch:", "environment: apt-production",
 		"PODLAZ_APT_SIGNING_FINGERPRINT", "bash scripts/ci/public-apt-smoke.sh",
+		`version="${version#v}"`,
+		`[[ ! "${version}" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]`,
 	} {
 		if !strings.Contains(d, required) {
 			t.Errorf("daily verification missing: %q", required)
