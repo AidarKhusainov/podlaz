@@ -499,3 +499,23 @@ jobs:
           echo "release ${TAG} already has expected assets, but SHA256SUMS differs" >&2
           echo "release assets are immutable; publish a new tag instead of replacing them" >&2
           exit 1
+
+
+  apt-repository:
+    name: Publish signed APT repository
+    if: ${{ vars.PODLAZ_APT_PUBLISH_ENABLED == 'true' }}
+    needs:
+      - resolve
+      - build
+      - attest-and-publish
+    permissions:
+      contents: read
+      attestations: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/apt-repository.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}
+      version: ${{ needs.resolve.outputs.version }}
+      commit_sha: ${{ needs.build.outputs.commit_sha }}
+      release_manifest_sha256: ${{ needs.build.outputs.release_manifest_sha256 }}

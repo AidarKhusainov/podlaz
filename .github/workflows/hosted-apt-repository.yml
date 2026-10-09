@@ -1,0 +1,137 @@
+name: Hosted APT Repository
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '23 5 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-apt-repository-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  MAINTAINED_RELEASE_VERSION: 0.2.42
+  MAINTAINED_RELEASE_COMMIT: 6e933a9f1b471c83ba884ee1f0569286f1dafdce
+  MAINTAINED_RELEASE_SHA256: 62acca173c0618ef3c13c7bdd810a128d42fd8c9df38d951dfb314167e2659da
+
+jobs:
+  signed-repository:
+    name: Signed repository install and upgrade
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install package and repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils debootstrap gnupg systemd-container gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Resolve candidate package
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          candidate_version="${MAINTAINED_RELEASE_VERSION}+git.${short_sha}"
+          {
+            echo "CANDIDATE_VERSION=${candidate_version}"
+            echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb"
+            echo "CANDIDATE_ARM64_DEB=dist-arm64/podlaz_${candidate_version}_linux_arm64.deb"
+            echo "PREVIOUS_DEB=dist/podlaz_${MAINTAINED_RELEASE_VERSION}_linux_amd64.deb"
+          } >>"${GITHUB_ENV}"
+
+      - name: Build exact candidate packages
+        run: |
+          VERSION="${CANDIDATE_VERSION}" \
+            COMMIT_SHA="${GITHUB_SHA}" \
+            BUILT_DATE="hosted-apt-qualification" \
+            bash scripts/ci/build-release-packages.sh
+
+      - name: Fetch exact maintained previous release
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${PREVIOUS_DEB}" \
+            "https://github.com/AidarKhusainov/podlaz/releases/download/v${MAINTAINED_RELEASE_VERSION}/podlaz_${MAINTAINED_RELEASE_VERSION}_linux_amd64.deb"
+          printf '%s  %s\n' "${MAINTAINED_RELEASE_SHA256}" "${PREVIOUS_DEB}" | sha256sum -c -
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestSignedAPTRepository' -count=1
+
+      - name: Create ephemeral qualification signing key
+        run: |
+          set -euo pipefail
+          signing_home="${RUNNER_TEMP}/podlaz-apt-ci-gnupg"
+          signing_key="${RUNNER_TEMP}/podlaz-apt-ci-secret.asc"
+          rm -rf "${signing_home}" "${signing_key}"
+          install -d -m 0700 "${signing_home}"
+          GNUPGHOME="${signing_home}" gpg --batch --pinentry-mode loopback --passphrase '' \
+            --quick-generate-key 'Podlaz APT CI <apt-ci@example.invalid>' rsa2048 default 0 >/dev/null 2>&1
+          fingerprint="$(
+            GNUPGHOME="${signing_home}" gpg --batch --with-colons --list-secret-keys 2>/dev/null |
+              awk -F: '$1 == "fpr" { print toupper($10); exit }'
+          )"
+          test -n "${fingerprint}"
+          GNUPGHOME="${signing_home}" gpg --batch --pinentry-mode loopback --passphrase '' \
+            --armor --export-secret-keys "${fingerprint}" >"${signing_key}"
+          chmod 0600 "${signing_key}"
+          {
+            echo "APT_CI_SIGNING_KEY=${signing_key}"
+            echo "APT_CI_SIGNING_FINGERPRINT=${fingerprint}"
+          } >>"${GITHUB_ENV}"
+
+      - name: Run isolated signed-repository qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-apt-repository-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-apt-repository-public
+          PODLAZ_APT_OUTPUT_DIR: ${{ runner.temp }}/podlaz-apt-repository-private/site
+          PODLAZ_APT_SIGNING_KEY_FILE: ${{ env.APT_CI_SIGNING_KEY }}
+          PODLAZ_APT_SIGNING_FINGERPRINT: ${{ env.APT_CI_SIGNING_FINGERPRINT }}
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_PREVIOUS_VERSION: ${{ env.MAINTAINED_RELEASE_VERSION }}
+          PODLAZ_E2E_PREVIOUS_COMMIT: ${{ env.MAINTAINED_RELEASE_COMMIT }}
+          PODLAZ_E2E_PREVIOUS_SHA256: ${{ env.MAINTAINED_RELEASE_SHA256 }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-apt-repository.sh "${CANDIDATE_DEB}" "${PREVIOUS_DEB}" "${CANDIDATE_ARM64_DEB}"
+
+      - name: Validate public qualification report
+        if: always()
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-apt-repository-public
+        run: bash scripts/e2e/hosted-apt-repository.sh validate-report
+
+      - name: Remove private signing and guest state
+        id: private_cleanup
+        if: always()
+        run: |
+          sudo -n rm -rf "${RUNNER_TEMP}/podlaz-apt-repository-private"
+          rm -rf "${RUNNER_TEMP}/podlaz-apt-ci-gnupg"
+          rm -f "${RUNNER_TEMP}/podlaz-apt-ci-secret.asc"
+
+      - name: Upload signed-repository evidence
+        if: ${{ always() && steps.private_cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-hosted-apt-repository
+          path: ${{ runner.temp }}/podlaz-apt-repository-public/hosted-apt-repository.txt
+          if-no-files-found: error
+          retention-days: 7
