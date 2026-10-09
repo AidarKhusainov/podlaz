@@ -21,7 +21,7 @@ reconnection, exact-owned cleanup, and panic rollback.
 - Keep diagnostics and exact-owned recovery available without making them
   prerequisites for a normal connection.
 
-## Install
+## Install from a GitHub Release
 
 The supported packaged path is a Debian package on a systemd-based Linux
 userspace. Release packaging targets `amd64` and `arm64`.
@@ -240,7 +240,7 @@ endpoints, raw runtime configs, or `x-hwid` values in public issues.
 The durable privilege, ownership, fail-closed, redaction, recovery, and package
 invariants are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Release integrity, upgrade, rollback, and uninstall
+## Upgrade, rollback, and uninstall
 
 Qualified release publication builds the `amd64`/`arm64` artifact set once,
 creates `SHA256SUMS`, passes the exact same artifacts through package/runtime,
