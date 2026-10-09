@@ -19,10 +19,9 @@ func readAPTContractFile(t *testing.T, path string) string {
 func TestSignedAPTRepositoryBuilderUsesExactPackagesAndSignedMetadata(t *testing.T) {
 	builder := readAPTContractFile(t, "../ci/build-apt-repository.sh")
 	for _, required := range []string{
-		"apt-ftparchive packages pool/main/p/podlaz",
+		"apt-ftparchive --arch",
 		"APT::FTPArchive::Release::Suite=stable",
 		"APT::FTPArchive::Release::Components=main",
-		"apt-ftparchive --arch",
 		"binary-${architecture}",
 		"dists/stable/InRelease",
 		"dists/stable/Release.gpg",
@@ -63,6 +62,7 @@ func TestSignedAPTRepositoryQualificationDoesNotMutateRunnerNetworking(t *testin
 		"after-metadata",
 		"after-signing",
 		"rotation-site",
+		"repository.arm64_index",
 		"repository.rerun",
 		"repository.failure_atomicity",
 		"repository.rotation_boundary",
