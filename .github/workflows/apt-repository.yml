@@ -1,0 +1,267 @@
+name: Signed APT Repository
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      commit_sha:
+        required: true
+        type: string
+      release_manifest_sha256:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing published vMAJOR.MINOR.PATCH release to publish to the stable APT channel
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: signed-apt-repository-production
+  cancel-in-progress: false
+
+env:
+  MAINTAINED_APT_BASELINE_VERSION: 0.2.42
+  MAINTAINED_APT_BASELINE_COMMIT: 6e933a9f1b471c83ba884ee1f0569286f1dafdce
+  MAINTAINED_APT_BASELINE_SHA256: 62acca173c0618ef3c13c7bdd810a128d42fd8c9df38d951dfb314167e2659da
+
+jobs:
+  resolve:
+    name: Resolve exact published release
+    if: ${{ vars.PODLAZ_APT_PUBLISH_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      commit_sha: ${{ steps.resolve.outputs.commit_sha }}
+      release_manifest_sha256: ${{ steps.resolve.outputs.release_manifest_sha256 }}
+    steps:
+      - name: Resolve publication inputs
+        id: resolve
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          PROVIDED_VERSION: ${{ inputs.version || '' }}
+          PROVIDED_COMMIT: ${{ inputs.commit_sha || '' }}
+          PROVIDED_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 || '' }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG}"
+          [[ "${tag}" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] || {
+            echo "APT publication tag must use vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          }
+          version="${tag#v}"
+          if [[ -n "${PROVIDED_VERSION}" && "${PROVIDED_VERSION}" != "${version}" ]]; then
+            echo "APT publication version does not match tag" >&2
+            exit 1
+          fi
+          if [[ -n "${PROVIDED_COMMIT}" && ! "${PROVIDED_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "APT publication commit identity is invalid" >&2
+            exit 1
+          fi
+          if [[ -n "${PROVIDED_MANIFEST_SHA256}" && ! "${PROVIDED_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "APT publication release-manifest digest is invalid" >&2
+            exit 1
+          fi
+          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
+          echo "version=${version}" >>"${GITHUB_OUTPUT}"
+          echo "commit_sha=${PROVIDED_COMMIT}" >>"${GITHUB_OUTPUT}"
+          echo "release_manifest_sha256=${PROVIDED_MANIFEST_SHA256}" >>"${GITHUB_OUTPUT}"
+
+  qualify:
+    name: Sign and qualify complete repository snapshot
+    if: ${{ vars.PODLAZ_APT_PUBLISH_ENABLED == 'true' }}
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    environment: apt-production
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Resolve exact release commit
+        id: exact-commit
+        env:
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          commit_sha="$(git rev-parse HEAD)"
+          if [[ -n "${EXPECTED_COMMIT}" && "${commit_sha}" != "${EXPECTED_COMMIT}" ]]; then
+            echo "APT publication tag moved away from qualified release commit" >&2
+            exit 1
+          fi
+          echo "commit_sha=${commit_sha}" >>"${GITHUB_OUTPUT}"
+
+      - name: Download qualified workflow artifact set
+        if: ${{ needs.resolve.outputs.release_manifest_sha256 != '' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify qualified workflow artifact handoff
+        if: ${{ needs.resolve.outputs.release_manifest_sha256 != '' }}
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.resolve.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Download immutable GitHub Release assets for manual publication
+        if: ${{ needs.resolve.outputs.release_manifest_sha256 == '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 dist/release
+          expected_assets=(
+            "podlaz_${VERSION}_linux_amd64.tar.gz"
+            "podlaz_${VERSION}_linux_arm64.tar.gz"
+            "podlaz_${VERSION}_linux_amd64.deb"
+            "podlaz_${VERSION}_linux_arm64.deb"
+            "SHA256SUMS"
+          )
+          for asset in "${expected_assets[@]}"; do
+            gh release download "${TAG}" --pattern "${asset}" --dir dist/release
+          done
+          (
+            cd dist/release
+            sha256sum -c SHA256SUMS
+          )
+          for asset in "${expected_assets[@]}"; do
+            gh attestation verify "dist/release/${asset}" -R "${GITHUB_REPOSITORY}" >/dev/null
+          done
+
+      - name: Verify published package provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "dist/release/podlaz_${VERSION}_linux_amd64.deb" -R "${GITHUB_REPOSITORY}" >/dev/null
+
+      - name: Fetch exact maintained APT baseline
+        env:
+          VERSION: ${{ env.MAINTAINED_APT_BASELINE_VERSION }}
+          SHA256: ${{ env.MAINTAINED_APT_BASELINE_SHA256 }}
+        run: |
+          set -euo pipefail
+          baseline="dist/release/podlaz_${VERSION}_linux_amd64.deb"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "${baseline}" \
+            "https://github.com/AidarKhusainov/podlaz/releases/download/v${VERSION}/podlaz_${VERSION}_linux_amd64.deb"
+          printf '%s  %s\n' "${SHA256}" "${baseline}" | sha256sum -c -
+
+      - name: Install repository qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apt-utils debootstrap gnupg systemd-container
+
+      - name: Materialize protected signing input
+        env:
+          SIGNING_PRIVATE_KEY: ${{ secrets.PODLAZ_APT_SIGNING_PRIVATE_KEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.PODLAZ_APT_SIGNING_PASSPHRASE }}
+          SIGNING_FINGERPRINT: ${{ vars.PODLAZ_APT_SIGNING_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          [[ -n "${SIGNING_PRIVATE_KEY}" ]] || {
+            echo "PODLAZ_APT_SIGNING_PRIVATE_KEY is not configured in apt-production" >&2
+            exit 1
+          }
+          fingerprint="$(tr -d '[:space:]' <<<"${SIGNING_FINGERPRINT}" | tr '[:lower:]' '[:upper:]')"
+          [[ "${fingerprint}" =~ ^[0-9A-F]{40,64}$ ]] || {
+            echo "PODLAZ_APT_SIGNING_FINGERPRINT is not configured with a valid fingerprint" >&2
+            exit 1
+          }
+          key_file="${RUNNER_TEMP}/podlaz-apt-signing-private.asc"
+          printf '%s' "${SIGNING_PRIVATE_KEY}" >"${key_file}"
+          chmod 0600 "${key_file}"
+          echo "PODLAZ_APT_SIGNING_KEY_FILE=${key_file}" >>"${GITHUB_ENV}"
+          echo "PODLAZ_APT_SIGNING_FINGERPRINT=${fingerprint}" >>"${GITHUB_ENV}"
+          if [[ -n "${SIGNING_PASSPHRASE}" ]]; then
+            passphrase_file="${RUNNER_TEMP}/podlaz-apt-signing-passphrase"
+            printf '%s' "${SIGNING_PASSPHRASE}" >"${passphrase_file}"
+            chmod 0600 "${passphrase_file}"
+            echo "PODLAZ_APT_SIGNING_PASSPHRASE_FILE=${passphrase_file}" >>"${GITHUB_ENV}"
+          fi
+
+      - name: Run isolated repository acceptance
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-apt-production-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-apt-production-public
+          PODLAZ_APT_OUTPUT_DIR: ${{ github.workspace }}/dist/apt-site
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ steps.exact-commit.outputs.commit_sha }}
+          PODLAZ_E2E_PREVIOUS_VERSION: ${{ env.MAINTAINED_APT_BASELINE_VERSION }}
+          PODLAZ_E2E_PREVIOUS_COMMIT: ${{ env.MAINTAINED_APT_BASELINE_COMMIT }}
+          PODLAZ_E2E_PREVIOUS_SHA256: ${{ env.MAINTAINED_APT_BASELINE_SHA256 }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}" dist/apt-site
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-apt-repository.sh \
+            "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
+            "dist/release/podlaz_${MAINTAINED_APT_BASELINE_VERSION}_linux_amd64.deb"
+
+      - name: Validate repository acceptance report
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-apt-production-public
+        run: bash scripts/e2e/hosted-apt-repository.sh validate-report
+
+      - name: Remove protected signing and guest state
+        id: private-cleanup
+        if: always()
+        run: |
+          sudo -n rm -rf "${RUNNER_TEMP}/podlaz-apt-production-private"
+          rm -f "${RUNNER_TEMP}/podlaz-apt-signing-private.asc"
+          rm -f "${RUNNER_TEMP}/podlaz-apt-signing-passphrase"
+
+      - name: Upload production qualification evidence
+        if: ${{ success() && steps.private-cleanup.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-apt-production-qualification-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-apt-production-public/hosted-apt-repository.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload complete Pages snapshot
+        if: ${{ success() && steps.private-cleanup.outcome == 'success' }}
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: dist/apt-site
+
+  deploy:
+    name: Atomically deploy signed repository snapshot
+    if: ${{ vars.PODLAZ_APT_PUBLISH_ENABLED == 'true' }}
+    needs:
+      - resolve
+      - qualify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy complete Pages snapshot
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
