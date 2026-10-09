@@ -66,6 +66,32 @@ func TestReleaseUsesExactHostedQualificationWithoutRetiredRunner(t *testing.T) {
 	}
 }
 
+func TestReleaseRequiresEverySupportedProtocolOnExactPackagedTUN(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	start := strings.Index(workflow, "  synthetic-tun:\n")
+	end := strings.Index(workflow, "\n  remnawave-proxy:\n")
+	if start < 0 || end <= start {
+		t.Fatal("release synthetic TUN job not found")
+	}
+	job := workflow[start:end]
+	for _, expected := range []string{
+		"fail-fast: false",
+		"protocol: [vless, vmess, trojan, shadowsocks, hysteria2]",
+		"PODLAZ_E2E_SYNTHETIC_PROTOCOL: ${{ matrix.protocol }}",
+		"podlaz-release-synthetic-tun-${{ matrix.protocol }}-${{ needs.resolve.outputs.version }}",
+		"bash scripts/ci/verify-release-artifacts.sh",
+		"bash scripts/e2e/hosted-synthetic-tun.sh validate-report",
+	} {
+		if !strings.Contains(job, expected) {
+			t.Fatalf("release synthetic qualification missing %q", expected)
+		}
+	}
+}
+
 func TestReleasePublisherChecksOutTagBeforeRepositoryScripts(t *testing.T) {
 	contents, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
@@ -124,8 +150,8 @@ func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	for _, required := range []string{
 		"--generate-notes",
 		"Install / upgrade:",
-		"https://github.com/${GH_REPO}#install-from-a-github-release",
-		"https://github.com/${GH_REPO}#upgrade-rollback-and-uninstall",
+		"https://github.com/${GH_REPO}#install",
+		"https://github.com/${GH_REPO}#recovery-upgrade-and-removal",
 		"SHA256SUMS",
 	} {
 		if !strings.Contains(workflow, required) {

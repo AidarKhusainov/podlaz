@@ -224,12 +224,18 @@ jobs:
           retention-days: 7
 
   synthetic-tun:
-    name: Qualify exact synthetic full-TUN package
+    name: Qualify exact synthetic full-TUN package (${{ matrix.protocol }})
     needs:
       - resolve
       - build
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        protocol: [vless, vmess, trojan, shadowsocks, hysteria2]
+    env:
+      PODLAZ_E2E_SYNTHETIC_PROTOCOL: ${{ matrix.protocol }}
     steps:
       - name: Checkout exact release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -281,7 +287,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: podlaz-release-synthetic-tun-${{ needs.resolve.outputs.version }}
+          name: podlaz-release-synthetic-tun-${{ matrix.protocol }}-${{ needs.resolve.outputs.version }}
           path: ${{ runner.temp }}/podlaz-release-synthetic-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
@@ -427,8 +433,8 @@ jobs:
           Release commit: ${COMMIT_SHA}
           Built: ${BUILT_DATE}
 
-          Install / upgrade: https://github.com/${GH_REPO}#install-from-a-github-release
-          Upgrade / rollback / uninstall: https://github.com/${GH_REPO}#upgrade-rollback-and-uninstall
+          Install / upgrade: https://github.com/${GH_REPO}#install
+          Upgrade / rollback / uninstall: https://github.com/${GH_REPO}#recovery-upgrade-and-removal
           Verify downloaded artifacts against SHA256SUMS and the GitHub build-provenance attestations documented in the README.
           EOF
           )"

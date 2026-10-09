@@ -15,8 +15,11 @@ Podlaz is an open-source command-line VPN client for Linux written in Go.\nIt pr
 
 ## Install
 
-Podlaz is distributed as Debian packages for `amd64` and `arm64` on
-systemd-based Linux systems.
+Podlaz targets systemd-based Debian/Ubuntu Linux on `amd64` and `arm64`.
+Packages require `libc6 >= 2.34`, `iproute2`, `nftables`, systemd, and Polkit;
+`apt` resolves packaged dependencies. Full-TUN authorization may require an
+interactive Polkit agent. The deepest hosted runtime qualification covers
+Ubuntu 24.04 `amd64`; `arm64` packages are built and package-validated.
 
 Install the latest release with one command:
 
@@ -26,7 +29,15 @@ curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/script
 
 The installer detects the Debian architecture, downloads the matching package
 and `SHA256SUMS` from the latest GitHub Release, verifies the package checksum,
-and elevates privileges only for the package installation.
+and elevates privileges only for the package installation. **Before running it,
+check that the latest release contains the matching `.deb` and `SHA256SUMS`.**
+If either asset is missing, that release is incomplete: do not bypass
+verification or try to build from source as an installation workaround. Use a
+complete, verified earlier release until publication is repaired.
+
+For a downloaded package, compare its SHA256 with the matching entry in
+`SHA256SUMS`. Where GitHub build provenance is available, verify it with
+`gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`.
 
 For manual installation, download a package from
 [GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases) and install it:
@@ -66,11 +77,12 @@ podlaz profile list
 podlaz profile use work
 ```
 
-Connect, inspect status, and disconnect:
+Connect, inspect status, run a read-only connection diagnostic, and disconnect:
 
 ```bash
 podlaz connect
 podlaz status
+podlaz debug doctor --tun
 podlaz disconnect
 ```
 
@@ -142,11 +154,94 @@ podlaz debug proxy work
 ```
 
 Podlaz does not use Proxy-only as a fallback when a full VPN connection cannot be
-established safely.
+established safely. Proxy-only does not redirect the host's system traffic.
 
 See [docs/cli.md](docs/cli.md) for the full CLI contract and
 [ARCHITECTURE.md](ARCHITECTURE.md) for ownership, recovery, Privacy Envelope,
 restart, package-upgrade, and networking invariants.
+
+## Supported formats and limitations
+
+| Input | Import | Full-TUN | Explicit Proxy-only |
+| --- | --- | --- | --- |
+| VLESS share URI | Yes | Supported subset | Supported subset |
+| VMess share URI (alterId 0) | Yes | Supported subset | Supported subset |
+| Trojan (TLS) share URI | Yes | Supported subset | Supported subset |
+| Shadowsocks (supported AEAD) share URI | Yes | Supported subset | Supported subset |
+| HTTP(S) Base64 URI-list subscriptions | Yes | Per supported imported profile | Per supported imported profile |
+| Native Xray JSON, including grouped/provider-owned configurations | Yes | When safe composed Xray config validates | When supported by bundled Xray |
+| Clash/Mihomo YAML `proxies` list | Supported subset | Per imported profile | Per imported profile |
+| Mihomo Hysteria2 proxy definition | Strict subset | Supported subset | Supported subset |
+
+Importing a profile is not a guarantee that every transport and security
+combination can connect. The YAML importer does not translate full Clash
+configuration (rules, proxy groups, DNS, or unrelated protocols). Hysteria2
+share URIs and unsupported Hysteria2 options are not claimed. Native grouped
+Xray JSON is no longer unconditionally Proxy-only: full-TUN is attempted only
+when Podlaz can compose and validate a safe configuration before host-network
+mutation. See [the precise import and connection boundaries](docs/cli.md#import).
+
+## Remnawave subscriptions and privacy
+
+Import an authorized Remnawave HTTPS subscription using `podlaz import
+'<subscription-url>'`, then use `podlaz subscription list`, `podlaz profile
+list`, and `podlaz connect`. Refresh with `podlaz subscription update
+<subscription-id>`. HTTP(S) subscription fetches send a locally generated,
+stable, private `x-hwid` identity; it is **not** derived from physical hardware.
+Do not rotate it to bypass a provider's device limit. On fetch or device-limit
+failure, check the provider account and the redacted CLI error; the last
+committed subscription state is preserved by the update contract.
+
+Disposable hosted qualification exercises Remnawave Panel **3.4.5**, Node
+**3.4.2**, subscription/HWID lifecycle (including a one-device limit), proxy
+traffic and isolated full-TUN. This is not a blanket claim for every Remnawave
+version or protocol/transport combination.
+
+Podlaz has no application analytics/telemetry subsystem. Expected network
+activity includes remote subscription requests, VPN/proxy traffic and explicit
+diagnostics. User-owned profile, subscription and client-identity state lives
+under the invoking user's XDG directories; privileged runtime and recovery
+state belongs to `podlazd`. Do not publish real subscription URLs, share URIs,
+credentials, endpoints, `x-hwid`, stored provider JSON or raw runtime configs.
+For sensitive reports, follow [private security reporting](.github/SECURITY.md),
+not a public issue.
+
+## Recovery, upgrade and removal
+
+If connection fails, inspect the current state and daemon diagnostics:
+
+```bash
+podlaz status
+podlaz debug doctor
+podlaz debug logs --daemon --since 15m
+podlaz debug recover
+```
+
+Review the recovery plan before explicitly applying exact-owned recovery with
+`podlaz debug recover --execute`. Unknown or unowned network state is never
+cleanup authority; do not manually remove foreign routing, DNS or firewall
+resources. If Polkit authorization is unavailable, use an authorized desktop
+or TTY session with a working Polkit agent rather than running the CLI as root.
+
+For an upgrade, install the verified newer `.deb` using `sudo apt install
+./<downloaded-package>.deb`, then check `podlaz version` and `podlaz status`.
+If an upgrade fails, inspect recovery rather than assuming the VPN is active.
+To roll back, install a separately verified earlier release package and inspect
+status again. There is no signed Podlaz APT repository yet (tracked in
+[#73](https://github.com/AidarKhusainov/podlaz/issues/73)).
+
+To uninstall:
+
+```bash
+podlaz disconnect
+sudo apt purge podlaz
+```
+
+Purging the package does not erase user-owned XDG profile, subscription or
+client-identity data. Delete those deliberately only if the data is no longer
+needed. Read [Security](.github/SECURITY.md), [Releases](https://github.com/AidarKhusainov/podlaz/releases),
+and [Issues](https://github.com/AidarKhusainov/podlaz/issues) for trust,
+downloads and support.
 
 ## Provider compatibility evidence
 
