@@ -130,6 +130,31 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 	}
 }
 
+func TestHostedSyntheticTUNProxyOnlyMaintainsHostNetworkAndShowsReducedProtection(t *testing.T) {
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	start := strings.Index(script, "qualify_explicit_proxy_only() {")
+	end := strings.Index(script, "\nwait_guest_status() {")
+	if start < 0 || end <= start {
+		t.Fatal("proxy-only qualification function boundaries not found")
+	}
+	proxy := script[start:end]
+	requireHostedSyntheticTUNMarkers(t, proxy,
+		"podlaz debug proxy",
+		"grep -Fx 'Status: Connected'",
+		"grep -Fx 'Protection: Proxy only'",
+		"assert_guest_network_baseline_restored",
+		"assert_foreign_sentinel",
+		"--socks5-hostname 127.0.0.1:1080",
+		"wait_guest_status clean-inactive",
+	)
+	connected := strings.Index(proxy, "record_evidence proxy_only.connect pass")
+	traffic := strings.Index(proxy, "record_evidence proxy_only.data_plane pass")
+	disconnect := strings.Index(proxy, "podlaz disconnect")
+	if !(connected > 0 && traffic > connected && disconnect > traffic) {
+		t.Fatal("proxy-only must prove active state and traffic before disconnect")
+	}
+}
+
 func TestHostedSyntheticTUNVerifiedActiveChecksExactRouteRulePresence(t *testing.T) {
 	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
 	activeStart := strings.Index(script, "assert_verified_active_authority() {")
