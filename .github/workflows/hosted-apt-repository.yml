@@ -50,9 +50,11 @@ jobs:
           set -euo pipefail
           short_sha="${GITHUB_SHA:0:12}"
           candidate_version="${MAINTAINED_RELEASE_VERSION}+git.${short_sha}"
-          echo "CANDIDATE_VERSION=${candidate_version}" >>"${GITHUB_ENV}"
-          echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb" >>"${GITHUB_ENV}"
-          echo "PREVIOUS_DEB=dist/podlaz_${MAINTAINED_RELEASE_VERSION}_linux_amd64.deb" >>"${GITHUB_ENV}"
+          {
+            echo "CANDIDATE_VERSION=${candidate_version}"
+            echo "CANDIDATE_DEB=dist/podlaz_${candidate_version}_linux_amd64.deb"
+            echo "PREVIOUS_DEB=dist/podlaz_${MAINTAINED_RELEASE_VERSION}_linux_amd64.deb"
+          } >>"${GITHUB_ENV}"
 
       - name: Build exact candidate package
         run: |
