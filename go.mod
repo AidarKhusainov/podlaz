@@ -2,7 +2,7 @@ module github.com/AidarKhusainov/podlaz
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.26.9
 
 require (
 	github.com/godbus/dbus/v5 v5.2.2
@@ -17,6 +17,6 @@ require (
 	github.com/mdlayher/netlink v1.8.1-0.20251028132421-dcc6cab9a6eb // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
-	golang.org/x/net v0.43.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.6.0 // indirect
 )
