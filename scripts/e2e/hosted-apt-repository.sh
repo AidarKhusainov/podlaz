@@ -266,6 +266,8 @@ start_guest() {
     sleep 0.2
   done
   guest_exec /bin/true >/dev/null
+  # Expansion is intentionally evaluated by guest bash.
+  # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'state="$(timeout 30 systemctl is-system-running --wait 2>/dev/null || true)"; [[ "$state" == running || "$state" == degraded ]]'
 }
 
@@ -302,7 +304,7 @@ run_apt_install_upgrade() {
   assert_guest_provenance "${PREVIOUS_VERSION}" "${PREVIOUS_COMMIT}"
 
   guest_exec /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-  [[ "$(guest_exec dpkg-query -W -f='${Version}' podlaz)" == "${CANDIDATE_VERSION}" ]] || fail "APT upgrade did not install candidate version"
+  [[ "$(guest_exec dpkg-query -W "-f=\${Version}" podlaz)" == "${CANDIDATE_VERSION}" ]] || fail "APT upgrade did not install candidate version"
   guest_exec podlaz version | grep -Fx "podlaz version ${CANDIDATE_VERSION}" >/dev/null
   guest_exec podlaz version | grep -Fx "commit: ${CANDIDATE_COMMIT}" >/dev/null
   guest_exec systemctl is-active --quiet podlazd.service
