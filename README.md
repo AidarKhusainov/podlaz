@@ -61,64 +61,80 @@ plz status
 
 Release assets include `SHA256SUMS` and GitHub build provenance attestations.
 
-### Signed APT repository (pending production publication)
+### Signed APT repository
 
-The signed APT publication path is implemented but is **not yet a supported
-public install method**. Issue [#423](https://github.com/AidarKhusainov/podlaz/issues/423)
-remains open until the production signing key and GitHub Pages endpoint are
-configured, the repository is actually deployed, and the public URL and exact
-key fingerprint below can be replaced with real values. Until then, keep using
-the verified GitHub Release installation above.
+The `stable` repository is deployed through GitHub Pages at
+`https://aidarkhusainov.github.io/podlaz/apt`. Its published snapshot is
+signed with a dedicated APT OpenPGP key and contains the same immutable
+release-qualified `.deb` packages as GitHub Releases. GitHub Actions verifies
+`InRelease`, checksums, and an isolated Ubuntu 24.04 `amd64`
+install/upgrade before deployment. The package indexes also include `arm64`,
+but equivalent native `arm64` runtime qualification is not claimed.
 
-The APT channel serves the existing systemd-based Debian/Ubuntu package boundary
-for `amd64` and `arm64`. Its deepest automated install/upgrade runtime
-qualification is Ubuntu 24.04 `amd64`; the `arm64` index is generated from
-the exact release-qualified `arm64` package and checksum-validated without
-pretending that GitHub-hosted runners provide native `arm64` runtime coverage.
+Before adding the source, **verify the repository signing-key fingerprint
+independently** against the production key fingerprint retained by the
+maintainer. Do not treat a fingerprint downloaded from the same website as an
+independent trust anchor. For the key created during provisioning, the
+maintainer can obtain the expected fingerprint from the isolated signing
+keyring using `gpg --list-secret-keys --fingerprint` or from the protected
+`PODLAZ_APT_SIGNING_FINGERPRINT` environment variable. Never export or share
+the private key when verifying the fingerprint.
 
-Once #423 is complete, setup uses a deb822 source with a repository-scoped key;
-it does not use `apt-key`. The production URL and fingerprint must be copied
-from this README after publication, not guessed:
+On systemd-based Debian/Ubuntu with `amd64` or `arm64`, configure a scoped
+deb822 source (not `apt-key`):
 
 ```bash
-APT_BASE_URL='<published APT base URL>'
-PUBLISHED_FINGERPRINT='<published uppercase signing-key fingerprint>'
+set -euo pipefail
+APT_BASE_URL="https://aidarkhusainov.github.io/podlaz/apt"
+PUBLISHED_FINGERPRINT="<verified production key fingerprint>"
 APT_ARCH="$(dpkg --print-architecture)"
 case "$APT_ARCH" in
   amd64|arm64) ;;
   *) echo "unsupported Podlaz APT architecture: $APT_ARCH" >&2; exit 1 ;;
 esac
 
-sudo apt update
-sudo apt install -y gnupg
+[[ "$PUBLISHED_FINGERPRINT" =~ ^[0-9A-Fa-f]{40,64}$ ]] || {
+  echo "set the independently verified production signing fingerprint" >&2
+  exit 1
+}
+
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
 
 key_tmp="$(mktemp)"
-trap 'rm -f "$key_tmp"' EXIT
-curl -fsSL "$APT_BASE_URL/podlaz-archive-keyring.gpg" -o "$key_tmp"
+trap 'rm -f -- "$key_tmp"' EXIT
+curl --fail --silent --show-error --location --proto '=https' \
+  "$APT_BASE_URL/podlaz-archive-keyring.gpg" -o "$key_tmp"
 
 actual_fingerprint="$(
   gpg --batch --show-keys --with-colons "$key_tmp" 2>/dev/null |
     awk -F: '$1 == "fpr" { print toupper($10); exit }'
 )"
-test "$actual_fingerprint" = "$PUBLISHED_FINGERPRINT"
+test "$actual_fingerprint" = "${PUBLISHED_FINGERPRINT^^}" || {
+  echo "APT signing fingerprint mismatch" >&2
+  exit 1
+}
 
 sudo install -d -m 0755 /etc/apt/keyrings
 sudo install -m 0644 "$key_tmp" /etc/apt/keyrings/podlaz-archive-keyring.gpg
+printf 'Types: deb\nURIs: %s\nSuites: stable\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/podlaz-archive-keyring.gpg\n' \
+  "$APT_BASE_URL" "$APT_ARCH" |
+  sudo tee /etc/apt/sources.list.d/podlaz.sources >/dev/null
 
-sudo tee /etc/apt/sources.list.d/podlaz.sources >/dev/null <<EOF
-Types: deb
-URIs: $APT_BASE_URL
-Suites: stable
-Components: main
-Architectures: $APT_ARCH
-Signed-By: /etc/apt/keyrings/podlaz-archive-keyring.gpg
-EOF
-
-sudo apt update
-sudo apt install podlaz
+sudo apt-get update
+apt-cache policy podlaz
+sudo apt-get install -y podlaz
 podlaz version
 systemctl is-active podlazd.service
 ```
+
+After repository setup, `apt-cache policy podlaz` must show the `stable/main`
+source and a candidate from that source; a version shown only at
+`/var/lib/dpkg/status` means no Podlaz repository candidate was indexed.
+Regular updates use `sudo apt-get update && sudo apt-get upgrade`. If the
+repository is unreachable, the signature is rejected, or metadata is missing,
+stop rather than setting `Trusted: yes` or disabling APT signature checks.
+The existing GitHub Release `.deb` installation path above remains supported.
 
 ## Quick start
 
@@ -286,8 +302,7 @@ For an upgrade, install the verified newer `.deb` using `sudo apt install
 ./<downloaded-package>.deb`, then check `podlaz version` and `podlaz status`.
 If an upgrade fails, inspect recovery rather than assuming the VPN is active.
 To roll back, install a separately verified earlier release package and inspect
-status again. There is no published signed Podlaz APT repository yet (tracked in
-[#423](https://github.com/AidarKhusainov/podlaz/issues/423)); use the verified GitHub Release path until that issue is closed.
+status again. A signed APT repository is also available as described in [Install](#signed-apt-repository); keep the repository signing key scoped with `Signed-By`.
 
 To uninstall:
 
