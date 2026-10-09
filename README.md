@@ -83,6 +83,11 @@ from this README after publication, not guessed:
 ```bash
 APT_BASE_URL='<published APT base URL>'
 PUBLISHED_FINGERPRINT='<published uppercase signing-key fingerprint>'
+APT_ARCH="$(dpkg --print-architecture)"
+case "$APT_ARCH" in
+  amd64|arm64) ;;
+  *) echo "unsupported Podlaz APT architecture: $APT_ARCH" >&2; exit 1 ;;
+esac
 
 sudo apt update
 sudo apt install -y gnupg
@@ -105,7 +110,7 @@ Types: deb
 URIs: $APT_BASE_URL
 Suites: stable
 Components: main
-Architectures: amd64 arm64
+Architectures: $APT_ARCH
 Signed-By: /etc/apt/keyrings/podlaz-archive-keyring.gpg
 EOF
 
