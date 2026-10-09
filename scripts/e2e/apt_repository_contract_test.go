@@ -22,6 +22,8 @@ func TestSignedAPTRepositoryBuilderUsesExactPackagesAndSignedMetadata(t *testing
 		"apt-ftparchive packages pool/main/p/podlaz",
 		"APT::FTPArchive::Release::Suite=stable",
 		"APT::FTPArchive::Release::Components=main",
+		"apt-ftparchive --arch",
+		"binary-${architecture}",
 		"dists/stable/InRelease",
 		"dists/stable/Release.gpg",
 		"gpgv --keyring",
@@ -32,7 +34,7 @@ func TestSignedAPTRepositoryBuilderUsesExactPackagesAndSignedMetadata(t *testing
 		"PODLAZ_APT_TEST_FAIL_STAGE",
 		"after-metadata",
 		"after-signing",
-		"stable APT channel currently accepts amd64 packages only",
+		"unsupported Debian architecture",
 	} {
 		if !strings.Contains(builder, required) {
 			t.Fatalf("signed APT repository builder is missing %q", required)
@@ -151,6 +153,8 @@ func TestSignedAPTRepositoryHostedWorkflowUsesOnlyEphemeralSigningAuthority(t *t
 		"apt-ci@example.invalid",
 		"PODLAZ_APT_SIGNING_KEY_FILE:",
 		"PODLAZ_APT_SIGNING_FINGERPRINT:",
+		"CANDIDATE_ARM64_DEB",
+		"gcc-aarch64-linux-gnu",
 		"bash scripts/e2e/hosted-apt-repository.sh",
 		"Remove private signing and guest state",
 		"podlaz-hosted-apt-repository",
