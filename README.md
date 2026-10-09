@@ -63,11 +63,11 @@ Packaged installs also provide `plz` as an alias for `podlaz`.
 
 | Surface | Support |
 | --- | --- |
-| Runtime | Linux/systemd Debian package with `libc6 >= 2.34`, systemd, CA certificates, `iproute2`, `nftables`, `systemd-resolved | systemd`, and Polkit dependencies declared by the package. |
+| Runtime | Linux/systemd Debian package with `libc6 >= 2.34`, systemd, CA certificates, `iproute2`, `nftables`, `systemd-resolved \| systemd`, and Polkit dependencies declared by the package. |
 | `amd64` | Release target with the deepest hosted installed-package, isolated-guest, VM, recovery, and full-TUN qualification. |
 | `arm64` | Release target with automated build and package validation; it does not have the same hosted virtualization depth as `amd64`. |
 | Other architectures | No release package is published. |
-| Signed APT repository | Not published yet; use verified GitHub Release packages. The existing workstream is [#73](https://github.com/AidarKhusainov/podlaz/issues/73). |
+| Signed APT repository | Not published yet; use verified GitHub Release packages. The scoped follow-up is [#423](https://github.com/AidarKhusainov/podlaz/issues/423). |
 
 An interactive desktop or TTY Polkit agent is required when an ordinary user
 needs to authorize privileged daemon actions.
