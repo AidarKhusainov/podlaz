@@ -992,6 +992,13 @@ qualify_explicit_proxy_only() {
   install_proxy_qualification_authorization
   mark_failure product proxy_only.connect
   run_guest_user /usr/bin/podlaz debug proxy "${selector}" >"${PRIVATE_ROOT}/proxy-connect.stdout" 2>"${PRIVATE_ROOT}/proxy-connect.stderr"
+  run_guest_user /usr/bin/podlaz status >"${PRIVATE_ROOT}/proxy-status.stdout" 2>"${PRIVATE_ROOT}/proxy-status.stderr"
+  grep -Fx 'Status: Connected' "${PRIVATE_ROOT}/proxy-status.stdout" >/dev/null
+  grep -Fx 'Protection: Proxy only' "${PRIVATE_ROOT}/proxy-status.stdout" >/dev/null
+  # Verify the reduced-protection mode does not acquire any privileged
+  # TUN/route/rule/DNS/firewall or NetworkManager state while active.
+  assert_guest_network_baseline_restored
+  assert_foreign_sentinel
   record_evidence proxy_only.connect pass
   mark_failure product proxy_only.data_plane
   guest_exec timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname 127.0.0.1:1080 --max-time 30 -o /dev/null https://example.com/
