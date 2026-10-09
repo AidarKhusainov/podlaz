@@ -34,7 +34,7 @@ EVIDENCE_KEYS=(
   apt.service
   apt.upgrade
   apt.runtime_provenance
-  runner.network_mutation
+  runner.network_isolation
 )
 
 fail() {
@@ -273,7 +273,7 @@ configure_guest_repository() {
   guest_exec install -m 0644 \
     /opt/podlaz-apt-site/apt/podlaz-archive-keyring.gpg \
     /etc/apt/keyrings/podlaz-archive-keyring.gpg
-  guest_exec /bin/bash -lc "fingerprint=\$(gpg --batch --show-keys --with-colons /etc/apt/keyrings/podlaz-archive-keyring.gpg 2>/dev/null | awk -F: '\$1 == \"fpr\" { print toupper(\$10); exit }'); [[ \"${fingerprint}\" == '${PODLAZ_APT_SIGNING_FINGERPRINT}' ]]"
+  guest_exec /bin/bash -lc "fingerprint=\$(gpg --batch --show-keys --with-colons /etc/apt/keyrings/podlaz-archive-keyring.gpg 2>/dev/null | awk -F: '\$1 == \"fpr\" { print toupper(\$10); exit }'); [[ \"\${fingerprint}\" == '${PODLAZ_APT_SIGNING_FINGERPRINT}' ]]"
   guest_exec /bin/bash -lc "cat >/etc/apt/sources.list.d/podlaz.sources <<'EOF_SOURCES'
 Types: deb
 URIs: file:/opt/podlaz-apt-site/apt
