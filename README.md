@@ -70,9 +70,11 @@ configured, the repository is actually deployed, and the public URL and exact
 key fingerprint below can be replaced with real values. Until then, keep using
 the verified GitHub Release installation above.
 
-The initial APT channel is intentionally scoped to Ubuntu 24.04 on `amd64`.
-GitHub Release packages remain available for the broader documented Debian/Ubuntu
-`amd64` and `arm64` package boundary.
+The APT channel serves the existing systemd-based Debian/Ubuntu package boundary
+for `amd64` and `arm64`. Its deepest automated install/upgrade runtime
+qualification is Ubuntu 24.04 `amd64`; the `arm64` index is generated from
+the exact release-qualified `arm64` package and checksum-validated without
+pretending that GitHub-hosted runners provide native `arm64` runtime coverage.
 
 Once #423 is complete, setup uses a deb822 source with a repository-scoped key;
 it does not use `apt-key`. The production URL and fingerprint must be copied
@@ -103,7 +105,7 @@ Types: deb
 URIs: $APT_BASE_URL
 Suites: stable
 Components: main
-Architectures: amd64
+Architectures: amd64 arm64
 Signed-By: /etc/apt/keyrings/podlaz-archive-keyring.gpg
 EOF
 
