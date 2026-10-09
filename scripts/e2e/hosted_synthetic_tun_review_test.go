@@ -12,6 +12,9 @@ func TestHostedSyntheticTUNReportValidationIsFailClosed(t *testing.T) {
 	keys := []string{
 		"candidate.provenance",
 		"ordinary_user.boundary",
+		"proxy_only.connect",
+		"proxy_only.data_plane",
+		"proxy_only.clean_disconnect",
 		"tun.verified_active",
 		"tun.system_dns",
 		"tun.https_tls",

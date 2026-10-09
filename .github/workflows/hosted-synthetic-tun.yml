@@ -115,3 +115,44 @@ jobs:
           path: ${{ runner.temp }}/podlaz-hosted-hysteria2-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: Run imported typed Xray full-TUN qualification
+        env:
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          set -euo pipefail
+          failures=0
+          for protocol in trojan shadowsocks vmess; do
+            export PODLAZ_E2E_SYNTHETIC_PROTOCOL="${protocol}"
+            export E2E_TMP_ROOT="${RUNNER_TEMP}/podlaz-hosted-${protocol}-private"
+            export E2E_ARTIFACT_DIR="${RUNNER_TEMP}/podlaz-hosted-${protocol}-public"
+            rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+            install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+            if ! bash scripts/e2e/hosted-synthetic-tun.sh "${DEV_DEB}"; then
+              printf 'typed-xray-%s=result-fail\\n' "${protocol}"
+              failures=$((failures + 1))
+            elif ! bash scripts/e2e/hosted-synthetic-tun.sh validate-report; then
+              printf 'typed-xray-%s=report-fail\\n' "${protocol}"
+              failures=$((failures + 1))
+            else
+              printf 'typed-xray-%s=pass\\n' "${protocol}"
+            fi
+          done
+          ((failures == 0))
+
+      - name: Remove private imported typed Xray qualification state
+        if: always()
+        run: |
+          sudo -n rm -rf "${RUNNER_TEMP}/podlaz-hosted-vmess-private" "${RUNNER_TEMP}/podlaz-hosted-trojan-private" "${RUNNER_TEMP}/podlaz-hosted-shadowsocks-private"
+
+      - name: Upload imported typed Xray public evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-hosted-typed-xray-tun
+          path: |
+            ${{ runner.temp }}/podlaz-hosted-vmess-public/hosted-synthetic-tun.txt
+            ${{ runner.temp }}/podlaz-hosted-trojan-public/hosted-synthetic-tun.txt
+            ${{ runner.temp }}/podlaz-hosted-shadowsocks-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7

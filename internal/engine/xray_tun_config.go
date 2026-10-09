@@ -63,11 +63,14 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 	if opts.MTU <= 0 {
 		return nil, errors.New("TUN-mode Xray config requires a positive MTU")
 	}
+	if !strings.EqualFold(p.Protocol, "vless") && opts.EgressMark == 0 {
+		return nil, fmt.Errorf("TUN-mode typed %s Xray config requires a non-zero Podlaz egress mark", p.Protocol)
+	}
 	if err := ValidateXrayTunProfile(p); err != nil {
 		return nil, err
 	}
 
-	streamSettings, err := vlessStreamSettings("TUN-mode", p)
+	outbound, err := typedXrayOutboundConfig(p, p.Server, "podlaz-tun-proxy", "TUN-mode")
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +90,7 @@ func GenerateXrayTunConfig(p profile.Profile, opts XrayTunConfigOptions) ([]byte
 				UserLevel: 0,
 			},
 		}},
-		Outbounds: []map[string]any{xrayTunOutboundConfig(p, outboundAddress, streamSettings)},
+		Outbounds: []map[string]any{typedXrayTunOutbound(p, outboundAddress, outbound, opts.EgressMark)},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -108,4 +111,27 @@ func normalizeXrayTunOptions(opts XrayTunConfigOptions) XrayTunConfigOptions {
 	}
 	opts.OutboundAddressOverride = strings.TrimSpace(opts.OutboundAddressOverride)
 	return opts
+}
+
+func typedXrayTunOutbound(p profile.Profile, address string, outbound xrayOutbound, mark uint32) map[string]any {
+	if strings.EqualFold(p.Protocol, "vless") {
+		return xrayTunOutboundConfig(p, address, outbound.StreamSettings)
+	}
+	stream := make(map[string]any, len(outbound.StreamSettings)+1)
+	for key, value := range outbound.StreamSettings {
+		stream[key] = value
+	}
+	if mark != 0 {
+		stream["sockopt"] = map[string]any{"mark": mark}
+	}
+	settings := outbound.Settings.(map[string]any)
+	fields := make(map[string]any, len(settings))
+	for key, value := range settings {
+		fields[key] = value
+	}
+	fields["address"] = address
+	return map[string]any{
+		"tag": outbound.Tag, "protocol": outbound.Protocol,
+		"settings": fields, "streamSettings": stream,
+	}
 }

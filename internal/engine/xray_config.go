@@ -63,10 +63,10 @@ type xrayHTTPInboundSettings struct {
 }
 
 type xrayOutbound struct {
-	Tag            string            `json:"tag"`
-	Protocol       string            `json:"protocol"`
-	Settings       xrayVLESSSettings `json:"settings"`
-	StreamSettings map[string]any    `json:"streamSettings"`
+	Tag            string         `json:"tag"`
+	Protocol       string         `json:"protocol"`
+	Settings       any            `json:"settings"`
+	StreamSettings map[string]any `json:"streamSettings"`
 }
 
 type xrayVLESSSettings struct {
@@ -84,7 +84,7 @@ func ValidateXrayProxyOnlyProfile(p profile.Profile) error {
 	if profile.IsProviderXrayConfigProfile(p) {
 		return ValidateProviderXrayProxyOnlyProfile(p)
 	}
-	return validateXrayVLESSProfile(p, "proxy-only")
+	return validateTypedXrayProfile(p, "proxy-only")
 }
 
 // ValidateXrayTunProfile checks whether a normalized profile can produce a
@@ -93,7 +93,7 @@ func ValidateXrayTunProfile(p profile.Profile) error {
 	if profile.IsProviderXrayConfigProfile(p) {
 		return ValidateProviderXrayTunProfile(p)
 	}
-	return validateXrayVLESSProfile(p, "TUN-mode")
+	return validateTypedXrayProfile(p, "TUN-mode")
 }
 
 func validateXrayVLESSProfile(p profile.Profile, modeName string) error {
@@ -110,6 +110,14 @@ func validateXrayVLESSProfile(p profile.Profile, modeName string) error {
 		return fmt.Errorf("unsupported %s VLESS encryption %q", modeName, p.Encryption)
 	}
 	_, err := vlessStreamSettings(modeName, p)
+	return err
+}
+
+func validateTypedXrayProfile(p profile.Profile, modeName string) error {
+	if strings.EqualFold(p.Protocol, "vless") {
+		return validateXrayVLESSProfile(p, modeName)
+	}
+	_, err := typedXrayOutboundConfig(p, p.Server, "podlaz-proxy", modeName)
 	return err
 }
 
@@ -134,7 +142,7 @@ func GenerateXrayProxyOnlyConfig(p profile.Profile, opts XrayProxyOnlyConfigOpti
 		return nil, err
 	}
 
-	streamSettings, err := vlessStreamSettings("proxy-only", p)
+	outbound, err := typedXrayOutboundConfig(p, p.Server, "podlaz-proxy", "proxy-only")
 	if err != nil {
 		return nil, err
 	}
@@ -157,21 +165,7 @@ func GenerateXrayProxyOnlyConfig(p profile.Profile, opts XrayProxyOnlyConfigOpti
 				Settings: xrayHTTPInboundSettings{AllowTransparent: false, UserLevel: 0},
 			},
 		},
-		Outbounds: []xrayOutbound{
-			{
-				Tag:      "podlaz-proxy",
-				Protocol: "vless",
-				Settings: xrayVLESSSettings{
-					Address:    p.Server,
-					Port:       p.Port,
-					ID:         p.UserIdentity,
-					Encryption: vlessEncryption(p),
-					Flow:       strings.TrimSpace(p.Flow),
-					Level:      0,
-				},
-				StreamSettings: streamSettings,
-			},
-		},
+		Outbounds: []xrayOutbound{outbound},
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")

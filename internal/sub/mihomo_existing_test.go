@@ -246,8 +246,8 @@ func TestMihomoExistingProtocolsMatchShareURIConnectCapability(t *testing.T) {
 			if (a == nil) != (b == nil) {
 				t.Fatalf("%s YAML/share runtime acceptance differs", imported.Protocol)
 			}
-			if a == nil {
-				t.Fatalf("%s unexpectedly accepted by VLESS-only runtime; verify actual connectivity first", imported.Protocol)
+			if a != nil {
+				t.Fatalf("%s equivalent Mihomo and share profiles must now render in both modes: %v", imported.Protocol, a)
 			}
 		}
 	}

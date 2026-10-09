@@ -191,7 +191,7 @@ func TestGenerateXrayProxyOnlyConfigRejectsUnsupportedProfiles(t *testing.T) {
 				p.Protocol = "vmess"
 				return p
 			},
-			wantMessage: "supports VLESS profiles only",
+			wantMessage: "unsupported proxy-only vmess security settings",
 		},
 		{
 			name: "unsupported-transport",

@@ -111,7 +111,7 @@ func TestHostedSyntheticTUNScenarioOwnsCanonicalLifecycle(t *testing.T) {
 		"assert_public_artifact_privacy()",
 		"cleanup_outer_plumbing()",
 		"/dev/net/tun",
-		"settings\": {\"clients\"",
+		"inbound_settings",
 	)
 
 	forbidHostedSyntheticTUNMarkers(t, script,

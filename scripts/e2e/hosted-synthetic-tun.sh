@@ -40,6 +40,9 @@ HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-f
 EVIDENCE_KEYS=(
   candidate.provenance
   ordinary_user.boundary
+  proxy_only.connect
+  proxy_only.data_plane
+  proxy_only.clean_disconnect
   tun.verified_active
   tun.system_dns
   tun.https_tls
@@ -56,6 +59,9 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
   EVIDENCE_KEYS=(
     candidate.provenance
     ordinary_user.boundary
+    proxy_only.connect
+    proxy_only.data_plane
+    proxy_only.clean_disconnect
     tun.verified_active
     tun.terminal_cleanup
     tun.recovery_clean
@@ -668,6 +674,171 @@ PY
   XRAY_PROBE_PID=""
 }
 
+qualify_synthetic_typed_direct() {
+  local protocol="$1" xray_binary="$2" endpoint_port="$3" auth="$4"
+  local probe_port backend_port probe_config="${XRAY_ROOT}/${protocol}-probe.json" probe_result=0 outbound_settings stream_settings
+  probe_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  backend_port="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+  case "${protocol}" in
+    vmess)
+      outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"id\":\"${auth}\",\"security\":\"auto\"}"
+      stream_settings='{"network":"raw","security":"none"}'
+      ;;
+    trojan)
+      outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"password\":\"${auth}\"}"
+      stream_settings="{\"network\":\"raw\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"trojan.example.com\",\"certificates\":[{\"usage\":\"verify\",\"certificateFile\":\"${XRAY_ROOT}/ca.crt\"}]}}"
+      ;;
+    *) return 1 ;;
+  esac
+  cat >"${probe_config}" <<EOF_TYPED_PROBE
+{
+  "log": {"loglevel": "warning"},
+  "inbounds": [{
+    "listen": "127.0.0.1", "port": ${probe_port},
+    "protocol": "socks", "settings": {"auth": "noauth"}
+  }],
+  "outbounds": [{
+    "protocol": "${protocol}",
+    "settings": ${outbound_settings},
+    "streamSettings": ${stream_settings}
+  }]
+}
+EOF_TYPED_PROBE
+  chmod 0600 "${probe_config}"
+  "${xray_binary}" run -test -config "${probe_config}" >"${XRAY_ROOT}/${protocol}-probe-test.log" 2>&1 || return 1
+  "${xray_binary}" run -config "${probe_config}" >"${XRAY_ROOT}/${protocol}-probe-client.log" 2>&1 &
+  XRAY_PROBE_PID=$!
+  install -d -m 0700 "${XRAY_ROOT}/probe-web"
+  printf 'synthetic typed direct probe\n' >"${XRAY_ROOT}/probe-web/index.html"
+  python3 - "${backend_port}" >"${XRAY_ROOT}/${protocol}-probe-http.log" 2>&1 <<'PY' &
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body=b"synthetic typed direct probe\\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.wfile.flush()
+    def log_message(self, fmt, *args):
+        if fmt.startswith('"%s"'):
+            print("backend_request=received", flush=True)
+HTTPServer(("127.0.0.1",int(sys.argv[1])),Handler).serve_forever()
+PY
+  XRAY_HTTP_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${probe_port}" >/dev/null &&
+       ss -H -ltn | awk '{print $4}' | grep -Fx "127.0.0.1:${backend_port}" >/dev/null; then
+      break
+    fi
+    kill -0 "${XRAY_PROBE_PID}" >/dev/null 2>&1 || return 1
+    kill -0 "${XRAY_HTTP_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  if timeout 10 curl -4 -fsS --noproxy "" --max-time 5 \
+    -o /dev/null "http://127.0.0.1:${backend_port}/"; then
+    printf '%s-fixture-local-backend=pass\n' "${protocol}"
+  else
+    printf '%s-fixture-local-backend=fail\n' "${protocol}"
+    return 1
+  fi
+  timeout 35 curl -4 -vfsS --noproxy "" --socks5-hostname "127.0.0.1:${probe_port}" --max-time 25 \
+    -o /dev/null "http://127.0.0.1:${backend_port}/" >"${XRAY_ROOT}/${protocol}-probe-curl.log" 2>&1 || probe_result=$?
+  if (( probe_result != 0 )); then
+    printf '%s-fixture-direct-transport=fail\n' "${protocol}"
+    printf '%s-fixture-probe-exit=%d\n' "${protocol}" "${probe_result}"
+    if grep -qF 'SOCKS5 request granted' "${XRAY_ROOT}/${protocol}-probe-curl.log"; then
+      printf '%s-fixture-socks=granted\n' "${protocol}"
+    else
+      printf '%s-fixture-socks=not_granted\n' "${protocol}"
+    fi
+    if grep -qF 'backend_request=received' "${XRAY_ROOT}/${protocol}-probe-http.log"; then
+      printf '%s-fixture-backend=reached\n' "${protocol}"
+    else
+      printf '%s-fixture-backend=not_reached\n' "${protocol}"
+    fi
+    for signature in "failed to dial" "failed to read" "failed to send" "invalid user" "not authenticated" "connection refused" "context canceled" "timeout" "proxy/vmess"; do
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/${protocol}-probe-client.log"; then
+        printf '%s-fixture-client-class=%s\n' "${protocol}" "${signature// /_}"
+      fi
+      if grep -qiF -- "${signature}" "${XRAY_ROOT}/server.log"; then
+        printf '%s-fixture-server-class=%s\n' "${protocol}" "${signature// /_}"
+      fi
+    done
+    return 1
+  fi
+  printf '%s-fixture-direct-transport=pass\n' "${protocol}"
+  kill "${XRAY_PROBE_PID}" "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
+  wait "${XRAY_PROBE_PID}" >/dev/null 2>&1 || true
+  wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
+  XRAY_PROBE_PID=""
+  XRAY_HTTP_PID=""
+}
+
+start_synthetic_typed_reference_endpoint() {
+  local protocol="$1" port="$2" uuid="$3" password="$4"
+  local root="${XRAY_ROOT}/reference" asset url digest binary config="${XRAY_ROOT}/server.json"
+  install -d -m 0700 "${root}"
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 3 \
+    "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.2" >"${root}/release.json"
+  asset="sing-box-1.14.2-linux-amd64.tar.gz"
+  url="$(jq -er --arg asset "${asset}" '.assets[] | select(.name == $asset) | .browser_download_url' "${root}/release.json")"
+  digest="$(jq -er --arg asset "${asset}" '.assets[] | select(.name == $asset) | .digest' "${root}/release.json")"
+  [[ "${url}" == "https://github.com/SagerNet/sing-box/releases/download/v1.14.2/${asset}" ]] || return 1
+  [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 3 \
+    --output "${root}/reference.tar.gz" "${url}"
+  printf '%s  %s\n' "${digest#sha256:}" "${root}/reference.tar.gz" | sha256sum --check --status
+  tar -xzf "${root}/reference.tar.gz" -C "${root}"
+  binary="$(find "${root}" -type f -name sing-box -print -quit)"
+  [[ -n "${binary}" && -f "${binary}" ]] || return 1
+  chmod 0700 "${binary}"
+  jq -n --arg protocol "${protocol}" --arg listen "${ENDPOINT_IP}" \
+    --argjson port "${port}" --arg uuid "${uuid}" --arg password "${password}" \
+    --arg cert "${XRAY_ROOT}/server.crt" --arg key "${XRAY_ROOT}/server.key" '
+    {
+      log: {level:"warn"},
+      inbounds: [
+        (if $protocol == "vmess" then {
+          type:"vmess",listen:$listen,listen_port:$port,
+          users:[{name:"synthetic",uuid:$uuid,alterId:0}]
+        } else {
+          type:"trojan",listen:$listen,listen_port:$port,
+          users:[{name:"synthetic",password:$password}],
+          tls:{enabled:true,server_name:"trojan.example.com",
+               certificate_path:$cert,key_path:$key}
+        } end)
+      ],
+      outbounds:[{type:"direct"}]
+    }' >"${config}"
+  chmod 0600 "${config}"
+  "${binary}" check -c "${config}" >"${XRAY_ROOT}/config-test.log" 2>&1
+  "${binary}" run -c "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
+  XRAY_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null; then break; fi
+    kill -0 "${XRAY_PID}" >/dev/null 2>&1 || return 1
+    sleep 0.1
+  done
+  ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
+  printf 'independent-synthetic-reference=verified\n'
+}
+
 start_synthetic_xray_endpoint() {
   local extract="${XRAY_ROOT}/package" config="${XRAY_ROOT}/server.json" uuid port
   install -d -m 0700 "${XRAY_ROOT}" "${extract}"
@@ -686,19 +857,76 @@ print(sock.getsockname()[1])
 sock.close()
 PY
 )"
+  local inbound_protocol inbound_settings client_uri credential encoded
+  case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
+    vless)
+      inbound_protocol=vless
+      inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
+      client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
+      ;;
+    vmess)
+      inbound_protocol=vmess
+      inbound_settings="{\"users\":[{\"id\":\"${uuid}\",\"level\":0}]}"
+      encoded="$(printf '{"v":"2","ps":"hosted-synthetic","add":"%s","port":"%s","id":"%s","aid":0,"scy":"auto","net":"tcp","tls":"none"}' "${ENDPOINT_IP}" "${port}" "${uuid}" | base64 -w0)"
+      client_uri="vmess://${encoded}"
+      ;;
+    trojan)
+      inbound_protocol=trojan
+      credential="$(openssl rand -hex 24)"
+      inbound_settings="{\"users\":[{\"password\":\"${credential}\"}]}"
+      openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+        -keyout "${XRAY_ROOT}/ca.key" -out "${XRAY_ROOT}/ca.crt" \
+        -subj "/CN=Podlaz Synthetic Trojan CA" \
+        -addext "basicConstraints=critical,CA:TRUE" >"${XRAY_ROOT}/ca.log" 2>&1
+      openssl req -new -newkey rsa:2048 -nodes -sha256 \
+        -keyout "${XRAY_ROOT}/server.key" -out "${XRAY_ROOT}/server.csr" \
+        -subj "/CN=trojan.example.com" >"${XRAY_ROOT}/server-csr.log" 2>&1
+      printf 'subjectAltName=DNS:trojan.example.com\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' >"${XRAY_ROOT}/server.ext"
+      openssl x509 -req -sha256 -in "${XRAY_ROOT}/server.csr" \
+        -CA "${XRAY_ROOT}/ca.crt" -CAkey "${XRAY_ROOT}/ca.key" \
+        -CAcreateserial -days 1 -out "${XRAY_ROOT}/server.crt" \
+        -extfile "${XRAY_ROOT}/server.ext" >"${XRAY_ROOT}/server-cert.log" 2>&1
+      guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
+      guest_exec update-ca-certificates >/dev/null
+      client_uri="trojan://${credential}@${ENDPOINT_IP}:${port}?security=tls&type=tcp&sni=trojan.example.com#hosted-synthetic"
+      ;;
+    shadowsocks)
+      inbound_protocol=shadowsocks
+      credential="$(openssl rand -hex 24)"
+      inbound_settings="{\"method\":\"aes-128-gcm\",\"password\":\"${credential}\",\"network\":\"tcp,udp\"}"
+      encoded="$(printf 'aes-128-gcm:%s' "${credential}" | base64 -w0)"
+      client_uri="ss://${encoded}@${ENDPOINT_IP}:${port}#hosted-synthetic"
+      ;;
+    *) return 1 ;;
+  esac
+  local server_stream_settings='{"security":"none"}'
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+    server_stream_settings="{\"security\":\"tls\",\"tlsSettings\":{\"certificates\":[{\"certificateFile\":\"${XRAY_ROOT}/server.crt\",\"keyFile\":\"${XRAY_ROOT}/server.key\"}]}}"
+  fi
   cat >"${config}" <<EOF_XRAY
 {
   "log": {"loglevel": "warning"},
   "inbounds": [{
     "listen": "${ENDPOINT_IP}",
     "port": ${port},
-    "protocol": "vless",
-    "settings": {"clients": [{"id": "${uuid}"}], "decryption": "none"},
-    "streamSettings": {"security": "none"}
+    "protocol": "${inbound_protocol}",
+    "settings": ${inbound_settings},
+    "streamSettings": ${server_stream_settings}
   }],
   "outbounds": [{"protocol": "freedom", "settings": {}}]
 }
 EOF_XRAY
+  printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
+  chmod 0600 "${XRAY_ROOT}/client-uri"
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+    start_synthetic_typed_reference_endpoint "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" "${port}" "${uuid}" "${credential:-}"
+    if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
+      qualify_synthetic_typed_direct vmess "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+    else
+      qualify_synthetic_typed_direct trojan "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
+    fi
+    return
+  fi
   chmod 0600 "${config}"
   "${extract}/usr/lib/podlaz/xray" run -test -config "${config}" >"${XRAY_ROOT}/config-test.log" 2>&1
   "${extract}/usr/lib/podlaz/xray" run -config "${config}" >"${XRAY_ROOT}/server.log" 2>&1 &
@@ -709,8 +937,11 @@ EOF_XRAY
     sleep 0.1
   done
   ss -H -ltn | awk '{print $4}' | grep -Fx "${ENDPOINT_IP}:${port}" >/dev/null || return 1
-  printf 'vless://%s@%s:%s?type=tcp&security=none&encryption=none#hosted-synthetic\n' "${uuid}" "${ENDPOINT_IP}" "${port}" >"${XRAY_ROOT}/client-uri"
-  chmod 0600 "${XRAY_ROOT}/client-uri"
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
+    qualify_synthetic_typed_direct vmess "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+  elif [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+    qualify_synthetic_typed_direct trojan "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
+  fi
 }
 
 install_tun_authorization() {
@@ -736,6 +967,41 @@ run_guest_user() {
     XDG_STATE_HOME="${GUEST_XDG}/state" \
     XDG_CACHE_HOME="${GUEST_XDG}/cache" \
     "$@"
+}
+
+install_proxy_qualification_authorization() {
+  local rule_tmp
+  rule_tmp="$(mktemp "${PRIVATE_ROOT}/proxy-polkit.XXXXXX")"
+  cat >"${rule_tmp}" <<'EOF_RULE'
+polkit.addRule(function(action, subject) {
+    if (subject.user == "e2e" &&
+        action.id == "io.github.aidarkhusainov.podlaz.connect-proxy-only") {
+        return polkit.Result.YES;
+    }
+});
+EOF_RULE
+  sudo -n install -D -m 0644 "${rule_tmp}" "${GUEST_ROOT}/etc/polkit-1/rules.d/50-podlaz-hosted-proxy-qualification.rules"
+  rm -f "${rule_tmp}"
+  sleep 1
+}
+
+qualify_explicit_proxy_only() {
+  local selector
+  selector="$(guest_exec cat "${GUEST_PRIVATE}/profile-selector")"
+  [[ -n "${selector}" ]] || return 1
+  install_proxy_qualification_authorization
+  mark_failure product proxy_only.connect
+  run_guest_user /usr/bin/podlaz debug proxy "${selector}" >"${PRIVATE_ROOT}/proxy-connect.stdout" 2>"${PRIVATE_ROOT}/proxy-connect.stderr"
+  record_evidence proxy_only.connect pass
+  mark_failure product proxy_only.data_plane
+  guest_exec timeout 35 curl -4 -fsS --noproxy "" --socks5-hostname 127.0.0.1:1080 --max-time 30 -o /dev/null https://example.com/
+  record_evidence proxy_only.data_plane pass
+  mark_failure product proxy_only.disconnect
+  run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/proxy-disconnect.stdout" 2>"${PRIVATE_ROOT}/proxy-disconnect.stderr"
+  wait_guest_status clean-inactive 80
+  assert_guest_network_baseline_restored
+  assert_foreign_sentinel
+  record_evidence proxy_only.clean_disconnect pass
 }
 
 wait_guest_status() {
@@ -986,6 +1252,7 @@ run_scenario() {
   record_evidence ordinary_user.boundary pass
   create_foreign_sentinel
   capture_guest_network_baseline
+  qualify_explicit_proxy_only
   hosted_control_pause candidate-ready
 
   mark_failure diagnostic_unknown tun.connect
@@ -1063,7 +1330,7 @@ main() {
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
   case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
-    vless|hysteria2) ;;
+    vless|vmess|trojan|shadowsocks|hysteria2) ;;
     *) fail "unsupported synthetic endpoint protocol" ;;
   esac
   case "${HOSTED_EXPECT_CONNECT_FAILURE}:${HOSTED_EXPECT_EXTERNAL_TERMINAL}" in
@@ -1077,7 +1344,25 @@ main() {
   run_scenario
 }
 
+verify_packaged_vmess_transport() {
+  (($# == 1)) || fail "usage: $0 verify-vmess-transport CANDIDATE.deb"
+  require_cmd curl dpkg dpkg-deb mktemp openssl python3 ss timeout
+  VMESS_DIRECT_ROOT="$(mktemp -d "${RUNNER_TEMP:-/tmp}/podlaz-vmess-transport.XXXXXX")"
+  XRAY_ROOT="${VMESS_DIRECT_ROOT}/xray"
+  ENDPOINT_IP="127.0.0.1"
+  PODLAZ_E2E_SYNTHETIC_PROTOCOL=vmess
+  install -d -m 0700 "${XRAY_ROOT}"
+  trap 'stop_synthetic_xray_endpoint; rm -rf -- "${VMESS_DIRECT_ROOT}"' EXIT
+  validate_candidate "$1"
+  start_synthetic_xray_endpoint
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ "${1:-}" == verify-vmess-transport ]]; then
+    shift
+    verify_packaged_vmess_transport "$@"
+    exit
+  fi
   if [[ "${1:-}" == validate-report ]]; then
     validate_report
     exit 0
