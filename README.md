@@ -193,6 +193,21 @@ last committed subscription/profile state.
 No provider URL, token, endpoint, UUID, raw provider payload, or `x-hwid`
 value is part of public qualification evidence.
 
+For an optional manual provider acceptance pass, use a **disposable** Remnawave
+user/subscription only:
+
+1. Import the disposable subscription with `podlaz import '<url>'`.
+2. Confirm the imported profile(s), then run `podlaz subscription update '<id>'`
+   and verify the committed selection/profile set is still coherent.
+3. Run canonical `podlaz connect`, inspect `podlaz status`, and disconnect.
+4. If Proxy-only behavior itself is under test, exercise it explicitly with
+   `podlaz debug proxy '<profile>'`; never treat it as a TUN fallback.
+5. Revoke/delete the disposable provider identity after the check.
+
+Do not reuse a production subscription for this checklist, and redact the URL,
+client identity, endpoints, UUIDs, provider payload, and generated runtime
+material from any captured output.
+
 ## Failed connection and recovery
 
 Start with read-only product and diagnostic state:
