@@ -150,8 +150,8 @@ func TestReleasePublishesHumanReadableUpgradeNotes(t *testing.T) {
 	for _, required := range []string{
 		"--generate-notes",
 		"Install / upgrade:",
-		"https://github.com/${GH_REPO}#install-from-a-github-release",
-		"https://github.com/${GH_REPO}#upgrade-rollback-and-uninstall",
+		"https://github.com/${GH_REPO}#install",
+		"https://github.com/${GH_REPO}#recovery-upgrade-and-removal",
 		"SHA256SUMS",
 	} {
 		if !strings.Contains(workflow, required) {
