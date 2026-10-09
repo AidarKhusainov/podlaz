@@ -73,10 +73,12 @@ jobs:
             echo "APT publication release-manifest digest is invalid" >&2
             exit 1
           fi
-          echo "tag=${tag}" >>"${GITHUB_OUTPUT}"
-          echo "version=${version}" >>"${GITHUB_OUTPUT}"
-          echo "commit_sha=${PROVIDED_COMMIT}" >>"${GITHUB_OUTPUT}"
-          echo "release_manifest_sha256=${PROVIDED_MANIFEST_SHA256}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "commit_sha=${PROVIDED_COMMIT}"
+            echo "release_manifest_sha256=${PROVIDED_MANIFEST_SHA256}"
+          } >>"${GITHUB_OUTPUT}"
 
   qualify:
     name: Sign and qualify complete repository snapshot
