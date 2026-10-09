@@ -219,7 +219,8 @@ jobs:
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           bash scripts/e2e/hosted-apt-repository.sh \
             "dist/release/podlaz_${VERSION}_linux_amd64.deb" \
-            "dist/release/podlaz_${MAINTAINED_APT_BASELINE_VERSION}_linux_amd64.deb"
+            "dist/release/podlaz_${MAINTAINED_APT_BASELINE_VERSION}_linux_amd64.deb" \
+            "dist/release/podlaz_${VERSION}_linux_arm64.deb"
 
       - name: Validate repository acceptance report
         env:
