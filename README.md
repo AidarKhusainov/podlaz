@@ -292,7 +292,7 @@ Current executable evidence includes:
 The prepared Remnawave Awesome card uses a synthetic/secret-free terminal
 preview. It is presentation evidence, not the CLI specification:
 
-![Podlaz secret-free terminal preview](https://raw.githubusercontent.com/AidarKhusainov/panel/bad5425455bcf694a118065aa42618943907fc56/static/awesome/podlaz.webp)
+![Podlaz secret-free terminal preview](https://raw.githubusercontent.com/AidarKhusainov/panel/071c063097ffae3b8e95efff25c9c8a5b23b8493/static/awesome/podlaz.webp)
 
 ## Documentation and project links
 
