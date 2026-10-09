@@ -28,6 +28,7 @@ func TestSignedAPTRepositoryBuilderUsesExactPackagesAndSignedMetadata(t *testing
 		"gpgv --keyring",
 		"podlaz-archive-keyring.gpg",
 		"podlaz-archive-keyring.fingerprint",
+		"index.html",
 		"cmp -s --",
 		"package index lost exact checksum provenance",
 		"PODLAZ_APT_TEST_FAIL_STAGE",
