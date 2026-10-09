@@ -78,6 +78,8 @@ chmod 0700 "${gnupg_home}"
 repo_root="${stage}/apt"
 pool_dir="${repo_root}/pool/main/p/podlaz"
 install -d -m 0755 "${pool_dir}"
+printf '%s\n' '<!doctype html><meta charset="utf-8"><title>Podlaz APT repository</title><a href="apt/">Podlaz APT repository</a>' >"${stage}/index.html"
+: >"${stage}/.nojekyll"
 
 declare -A seen_package_versions=()
 declare -A seen_arches=()
