@@ -270,3 +270,26 @@ jobs:
       - name: Deploy complete Pages snapshot
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  verify-public:
+    name: Verify public signed APT install
+    needs:
+      - resolve
+      - deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    environment: apt-production
+    steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: master
+          persist-credentials: false
+
+      - name: Verify public HTTPS APT and exact deployed version
+        env:
+          PODLAZ_APT_EXPECTED_VERSION: ${{ needs.resolve.outputs.version }}
+          PODLAZ_APT_SIGNING_FINGERPRINT: ${{ vars.PODLAZ_APT_SIGNING_FINGERPRINT }}
+        run: bash scripts/ci/public-apt-smoke.sh
