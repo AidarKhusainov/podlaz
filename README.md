@@ -61,6 +61,58 @@ plz status
 
 Release assets include `SHA256SUMS` and GitHub build provenance attestations.
 
+### Signed APT repository (pending production publication)
+
+The signed APT publication path is implemented but is **not yet a supported
+public install method**. Issue [#423](https://github.com/AidarKhusainov/podlaz/issues/423)
+remains open until the production signing key and GitHub Pages endpoint are
+configured, the repository is actually deployed, and the public URL and exact
+key fingerprint below can be replaced with real values. Until then, keep using
+the verified GitHub Release installation above.
+
+The initial APT channel is intentionally scoped to Ubuntu 24.04 on `amd64`.
+GitHub Release packages remain available for the broader documented Debian/Ubuntu
+`amd64` and `arm64` package boundary.
+
+Once #423 is complete, setup uses a deb822 source with a repository-scoped key;
+it does not use `apt-key`. The production URL and fingerprint must be copied
+from this README after publication, not guessed:
+
+```bash
+APT_BASE_URL='<published APT base URL>'
+PUBLISHED_FINGERPRINT='<published uppercase signing-key fingerprint>'
+
+sudo apt update
+sudo apt install -y gnupg
+
+key_tmp="$(mktemp)"
+trap 'rm -f "$key_tmp"' EXIT
+curl -fsSL "$APT_BASE_URL/podlaz-archive-keyring.gpg" -o "$key_tmp"
+
+actual_fingerprint="$(
+  gpg --batch --show-keys --with-colons "$key_tmp" 2>/dev/null |
+    awk -F: '$1 == "fpr" { print toupper($10); exit }'
+)"
+test "$actual_fingerprint" = "$PUBLISHED_FINGERPRINT"
+
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo install -m 0644 "$key_tmp" /etc/apt/keyrings/podlaz-archive-keyring.gpg
+
+sudo tee /etc/apt/sources.list.d/podlaz.sources >/dev/null <<EOF
+Types: deb
+URIs: $APT_BASE_URL
+Suites: stable
+Components: main
+Architectures: amd64
+Signed-By: /etc/apt/keyrings/podlaz-archive-keyring.gpg
+EOF
+
+sudo apt update
+sudo apt install podlaz
+podlaz version
+systemctl is-active podlazd.service
+```
+
 ## Quick start
 
 Import a share URI, subscription URL, or supported local file:
@@ -227,8 +279,8 @@ For an upgrade, install the verified newer `.deb` using `sudo apt install
 ./<downloaded-package>.deb`, then check `podlaz version` and `podlaz status`.
 If an upgrade fails, inspect recovery rather than assuming the VPN is active.
 To roll back, install a separately verified earlier release package and inspect
-status again. There is no signed Podlaz APT repository yet (tracked in
-[#73](https://github.com/AidarKhusainov/podlaz/issues/73)).
+status again. There is no published signed Podlaz APT repository yet (tracked in
+[#423](https://github.com/AidarKhusainov/podlaz/issues/423)); use the verified GitHub Release path until that issue is closed.
 
 To uninstall:
 
