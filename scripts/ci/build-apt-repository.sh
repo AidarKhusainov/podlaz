@@ -159,7 +159,7 @@ for architecture in amd64 arm64; do
   }
 done
 
-(("${#architectures[@]}" > 0)) || {
+((${#architectures[@]} > 0)) || {
   printf 'build-apt-repository: no supported packages were supplied\n' >&2
   exit 1
 }
