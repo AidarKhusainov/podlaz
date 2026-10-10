@@ -17,7 +17,7 @@ PREVIOUS_SHA256="62acca173c0618ef3c13c7bdd810a128d42fd8c9df38d951dfb314167e2659d
 : "${PODLAZ_APT_SIGNING_FINGERPRINT:?Independent signing authority required}"
 
 fail() { printf 'public-apt-guest: %s\n' "$*" >&2; exit 1; }
-[[ "${PODLAZ_APT_SIGNING_FINGERPRINT^^}" == "${EXPECTED_FINGERPRINT}" ]] || fail "unexpected production signing fingerprint"
+[[ "$(printf %s "${PODLAZ_APT_SIGNING_FINGERPRINT}" | tr "[:lower:]" "[:upper:]")" == "${EXPECTED_FINGERPRINT}" ]] || fail "unexpected production signing fingerprint"
 [[ "${PODLAZ_APT_CURRENT_COMMIT}" =~ ^[a-f0-9]{40}$ ]] || fail "invalid release commit"
 [[ "${PODLAZ_APT_CURRENT_SHA256}" =~ ^[a-f0-9]{64}$ ]] || fail "invalid release package digest"
 
@@ -40,7 +40,7 @@ sudo -n chroot "${GUEST}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get up
 sudo -n chroot "${GUEST}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   systemd systemd-sysv dbus ca-certificates curl gnupg sudo iproute2 nftables polkitd >>"${ROOT}/bootstrap-apt.log" 2>&1
 sudo -n rm -f "${GUEST}/usr/sbin/policy-rc.d"
-sudo -n install -d -m 0755 "${GUEST}/etc/apt/keyrings"
+sudo -n install -d -m 0755 "${GUEST}/etc/apt/keyrings"\nsudo -n install -m 0644 "${PWD}/scripts/e2e/lib/package_provenance.sh" "${GUEST}/tmp/provenance.sh"
 
 sudo -n systemd-nspawn --quiet --boot --directory="${GUEST}" --machine="${MACHINE}" \
   --settings=no --drop-capability=CAP_NET_ADMIN,CAP_NET_RAW \
