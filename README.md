@@ -71,14 +71,17 @@ release-qualified `.deb` packages as GitHub Releases. GitHub Actions verifies
 install/upgrade before deployment. The package indexes also include `arm64`,
 but equivalent native `arm64` runtime qualification is not claimed.
 
-Before adding the source, **verify the repository signing-key fingerprint
-independently** against the production key fingerprint retained by the
-maintainer. Do not treat a fingerprint downloaded from the same website as an
-independent trust anchor. For the key created during provisioning, the
-maintainer can obtain the expected fingerprint from the isolated signing
-keyring using `gpg --list-secret-keys --fingerprint` or from the protected
-`PODLAZ_APT_SIGNING_FINGERPRINT` environment variable. Never export or share
-the private key when verifying the fingerprint.
+The production signing-key fingerprint, independently confirmed against the
+maintainer's signing keyring and the published public key, is:
+
+```text
+7C6F4EF9CDE73501E79CCC63E2F6F280766864C2
+```
+
+Before adding the source, compare this fingerprint with a trusted copy from
+the maintainer. Do not use a fingerprint obtained only from the same APT
+repository as an independent trust anchor. Never export or share the private
+key when verifying the fingerprint.
 
 On systemd-based Debian/Ubuntu with `amd64` or `arm64`, configure a scoped
 deb822 source (not `apt-key`):
@@ -86,7 +89,7 @@ deb822 source (not `apt-key`):
 ```bash
 set -euo pipefail
 APT_BASE_URL="https://aidarkhusainov.github.io/podlaz/apt"
-PUBLISHED_FINGERPRINT="<verified production key fingerprint>"
+PUBLISHED_FINGERPRINT="7C6F4EF9CDE73501E79CCC63E2F6F280766864C2"
 APT_ARCH="$(dpkg --print-architecture)"
 case "$APT_ARCH" in
   amd64|arm64) ;;

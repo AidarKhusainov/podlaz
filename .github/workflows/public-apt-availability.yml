@@ -52,3 +52,45 @@ jobs:
         env:
           PODLAZ_APT_SIGNING_FINGERPRINT: ${{ vars.PODLAZ_APT_SIGNING_FINGERPRINT }}
         run: bash scripts/ci/public-apt-smoke.sh
+
+  systemd-guest:
+    name: Public HTTPS APT systemd install and upgrade
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    environment: apt-production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve immutable release authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag_ref="$(gh api repos/"${GITHUB_REPOSITORY}"/git/ref/tags/v0.2.47 --jq '.object.sha')"
+          [[ "${tag_ref}" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          gh release download v0.2.47 --pattern SHA256SUMS --dir "${RUNNER_TEMP}"
+          digest="$(awk '$2 == "podlaz_0.2.47_linux_amd64.deb" {print $1}' "${RUNNER_TEMP}/SHA256SUMS")"
+          [[ "${digest}" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          {
+            echo "PODLAZ_APT_CURRENT_COMMIT=${tag_ref}"
+            echo "PODLAZ_APT_CURRENT_SHA256=${digest}"
+          } >>"${GITHUB_ENV}"
+
+      - name: Install isolated guest tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap systemd-container gnupg
+
+      - name: Exercise public HTTPS package lifecycle
+        env:
+          PODLAZ_APT_SIGNING_FINGERPRINT: ${{ vars.PODLAZ_APT_SIGNING_FINGERPRINT }}
+        run: bash scripts/e2e/public-apt-systemd-guest.sh
+
+      - name: Remove disposable guest on failure
+        if: failure()
+        run: |
+          sudo machinectl terminate podlaz-public-apt >/dev/null 2>&1 || true
+          sudo rm -rf -- "${RUNNER_TEMP}/podlaz-public-apt-guest"

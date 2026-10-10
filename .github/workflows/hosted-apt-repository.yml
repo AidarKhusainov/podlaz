@@ -135,3 +135,35 @@ jobs:
           path: ${{ runner.temp }}/podlaz-apt-repository-public/hosted-apt-repository.txt
           if-no-files-found: error
           retention-days: 7
+
+  public-https-systemd-guest:
+    name: Production HTTPS APT lifecycle in booted guest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Resolve published release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag_ref="$(gh api repos/"${GITHUB_REPOSITORY}"/git/ref/tags/v0.2.47 --jq '.object.sha')"
+          [[ "${tag_ref}" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          gh release download v0.2.47 --pattern SHA256SUMS --dir "${RUNNER_TEMP}"
+          digest="$(awk '$2 == "podlaz_0.2.47_linux_amd64.deb" {print $1}' "${RUNNER_TEMP}/SHA256SUMS")"
+          [[ "${digest}" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          {
+            echo "PODLAZ_APT_CURRENT_COMMIT=${tag_ref}"
+            echo "PODLAZ_APT_CURRENT_SHA256=${digest}"
+          } >>"${GITHUB_ENV}"
+      - name: Install guest tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap systemd-container gnupg
+      - name: Run public HTTPS installation and upgrade
+        env:
+          PODLAZ_APT_SIGNING_FINGERPRINT: 7C6F4EF9CDE73501E79CCC63E2F6F280766864C2
+        run: bash scripts/e2e/public-apt-systemd-guest.sh
