@@ -52,7 +52,8 @@ for _ in $(seq 1 200); do
   sleep 0.2
 done
 guest /bin/true || fail "guest boot failed"
-guest /bin/bash -lc 'state="$(timeout 30 systemctl is-system-running --wait 2>/dev/null || true)"; [[ "$state" == running || "$state" == degraded ]]'
+# Expansion is evaluated by the guest shell, not by the host.
+# shellcheck disable=SC2016\nguest /bin/bash -lc 'state="$(timeout 30 systemctl is-system-running --wait 2>/dev/null || true)"; [[ "$state" == running || "$state" == degraded ]]'
 
 guest curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
   "${APT_URL}/podlaz-archive-keyring.gpg" -o /tmp/podlaz-keyring.gpg
@@ -78,7 +79,8 @@ guest /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y "podlaz=${P
 guest podlaz version | grep -Fx "podlaz version ${PREVIOUS_VERSION}" >/dev/null
 guest /bin/bash -lc "source /opt/podlaz-provenance.sh; fail() { echo \"\$*\" >&2; return 1; }; assert_exact_podlaz_package_runtime_provenance '/tmp/podlaz-apt-packages/podlaz_${PREVIOUS_VERSION}_amd64.deb' '${PREVIOUS_COMMIT}'"
 guest /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
-[[ "$(guest dpkg-query -W '-f=${Version}' podlaz)" == "${CURRENT_VERSION}" ]] || fail "upgrade did not install expected release"
+# dpkg expands the literal ${Version} format field.
+# shellcheck disable=SC2016\n[[ "$(guest dpkg-query -W '-f=${Version}' podlaz)" == "${CURRENT_VERSION}" ]] || fail "upgrade did not install expected release"
 guest podlaz version | grep -Fx "podlaz version ${CURRENT_VERSION}" >/dev/null
 guest /bin/bash -lc "source /opt/podlaz-provenance.sh; fail() { echo \"\$*\" >&2; return 1; }; assert_exact_podlaz_package_runtime_provenance '/tmp/podlaz-apt-packages/podlaz_${CURRENT_VERSION}_amd64.deb' '${PODLAZ_APT_CURRENT_COMMIT}'"
 echo "public-apt-guest: signed HTTPS install, upgrade, service and exact runtime provenance passed"
