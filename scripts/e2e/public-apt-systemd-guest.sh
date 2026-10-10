@@ -41,7 +41,7 @@ sudo -n chroot "${GUEST}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get in
   systemd systemd-sysv dbus ca-certificates curl gnupg sudo iproute2 nftables polkitd >>"${ROOT}/bootstrap-apt.log" 2>&1
 sudo -n rm -f "${GUEST}/usr/sbin/policy-rc.d"
 sudo -n install -d -m 0755 "${GUEST}/etc/apt/keyrings"
-sudo -n install -m 0644 "${PWD}/scripts/e2e/lib/package_provenance.sh" "${GUEST}/tmp/provenance.sh"
+sudo -n install -m 0644 "${PWD}/scripts/e2e/lib/package_provenance.sh" "${GUEST}/opt/podlaz-provenance.sh"
 
 sudo -n systemd-nspawn --quiet --boot --directory="${GUEST}" --machine="${MACHINE}" \
   --settings=no --drop-capability=CAP_NET_ADMIN,CAP_NET_RAW \
@@ -76,9 +76,9 @@ done
 
 guest /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y "podlaz=${PREVIOUS_VERSION}"
 guest podlaz version | grep -Fx "podlaz version ${PREVIOUS_VERSION}" >/dev/null
-guest /bin/bash -lc "source /tmp/provenance.sh; fail() { echo \"\$*\" >&2; return 1; }; assert_exact_podlaz_package_runtime_provenance '/tmp/podlaz-apt-packages/podlaz_${PREVIOUS_VERSION}_amd64.deb' '${PREVIOUS_COMMIT}'"
+guest /bin/bash -lc "source /opt/podlaz-provenance.sh; fail() { echo \"\$*\" >&2; return 1; }; assert_exact_podlaz_package_runtime_provenance '/tmp/podlaz-apt-packages/podlaz_${PREVIOUS_VERSION}_amd64.deb' '${PREVIOUS_COMMIT}'"
 guest /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 [[ "$(guest dpkg-query -W '-f=${Version}' podlaz)" == "${CURRENT_VERSION}" ]] || fail "upgrade did not install expected release"
 guest podlaz version | grep -Fx "podlaz version ${CURRENT_VERSION}" >/dev/null
-guest /bin/bash -lc "source /tmp/provenance.sh; fail() { echo \"\$*\" >&2; return 1; }; assert_exact_podlaz_package_runtime_provenance '/tmp/podlaz-apt-packages/podlaz_${CURRENT_VERSION}_amd64.deb' '${PODLAZ_APT_CURRENT_COMMIT}'"
+guest /bin/bash -lc "source /opt/podlaz-provenance.sh; fail() { echo \"\$*\" >&2; return 1; }; assert_exact_podlaz_package_runtime_provenance '/tmp/podlaz-apt-packages/podlaz_${CURRENT_VERSION}_amd64.deb' '${PODLAZ_APT_CURRENT_COMMIT}'"
 echo "public-apt-guest: signed HTTPS install, upgrade, service and exact runtime provenance passed"
