@@ -15,14 +15,14 @@ func TestPublicAPTVerificationPreservesScopedTrust(t *testing.T) {
 	for _, required := range []string{
 		"--network bridge", "ubuntu:24.04", "EXPECTED_FINGERPRINT",
 		"Signed-By: /etc/apt/keyrings/podlaz.gpg", "apt-get update",
-		"apt-cache policy podlaz", "apt-get install -y", "podlaz version",
-		"/usr/lib/systemd/system/podlazd.service", "https://aidarkhusainov.github.io/podlaz/apt",
+		"apt-cache policy podlaz", "apt-get download", "dpkg-deb -x", "podlaz version",
+		"package-root/usr/lib/systemd/system/podlazd.service", "https://aidarkhusainov.github.io/podlaz/apt",
 	} {
 		if !strings.Contains(script, required) {
 			t.Errorf("missing public verification assertion: %q", required)
 		}
 	}
-	for _, forbidden := range []string{"apt-key", "Trusted: yes", "--privileged", "--network host", "systemctl start"} {
+	for _, forbidden := range []string{"apt-key", "Trusted: yes", "--privileged", "--network host", "systemctl start", `apt-get install -y --no-install-recommends "podlaz=`} {
 		if strings.Contains(script, forbidden) {
 			t.Errorf("unsafe public verifier operation: %q", forbidden)
 		}

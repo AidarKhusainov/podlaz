@@ -50,11 +50,19 @@ apt-cache policy podlaz | grep -F "${APT_URL}" >/dev/null || {
   echo "public-apt: candidate lacks expected HTTPS repository origin" >&2
   exit 1
 }
-apt-get install -y --no-install-recommends "podlaz=${EXPECTED_VERSION}"
-test "$(dpkg-query -W -f='${Version}' podlaz)" = "${EXPECTED_VERSION}"
-podlaz version | grep -Fx "podlaz version ${EXPECTED_VERSION}"
-test -f /usr/lib/systemd/system/podlazd.service
-test -x /usr/bin/podlazd
-echo "public-apt: HTTPS signed index, scoped key, install, version, and packaged service unit verified"
-echo "public-apt: service runtime is qualified separately in the systemd guest"
+mkdir -p /tmp/podlaz-public-apt
+cd /tmp/podlaz-public-apt
+apt-get download "podlaz=${EXPECTED_VERSION}"
+package="podlaz_${EXPECTED_VERSION}_amd64.deb"
+test -f "${package}"
+test "$(dpkg-deb --field "${package}" Version)" = "${EXPECTED_VERSION}"
+test "$(dpkg-deb --field "${package}" Architecture)" = amd64
+dpkg-deb -x "${package}" package-root
+test -x package-root/usr/bin/podlaz
+test -x package-root/usr/bin/podlazd
+test -x package-root/usr/lib/podlaz/xray
+test -f package-root/usr/lib/systemd/system/podlazd.service
+package-root/usr/bin/podlaz version | grep -Fx "podlaz version ${EXPECTED_VERSION}"
+echo "public-apt: signed HTTPS index and exact package acquisition verified"
+echo "public-apt: actual package install and daemon lifecycle are tested in the booted systemd guest"
 CONTAINER_SCRIPT
