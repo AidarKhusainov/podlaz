@@ -166,6 +166,7 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 wifi_fixture_phase=packages
 trap 'printf "wifi-fixture phase=%s failed\\n" "$wifi_fixture_phase" >&2' ERR
+wifi_packages_started="$(date +%s%3N)"
 
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
@@ -176,6 +177,7 @@ apt-get install -y -qq --no-install-recommends \
   network-manager \
   wpasupplicant \
   "linux-modules-extra-$(uname -r)"
+printf 'hosted-vm phase=wifi_packages duration_ms=%s\n' "$(( $(date +%s%3N) - wifi_packages_started ))" >&2
 
 systemctl stop NetworkManager.service >/dev/null 2>&1 || true
 systemctl stop wpa_supplicant.service >/dev/null 2>&1 || true
