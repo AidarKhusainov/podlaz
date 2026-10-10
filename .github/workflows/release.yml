@@ -374,6 +374,81 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  terminal-boot:
+    name: Qualify exact release terminal boot lifecycle
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Install VM qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cloud-image-utils jq nftables openssh-client qemu-system-x86 qemu-utils
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedVMTerminalBoot' -count=1
+
+      - name: Run exact-package terminal boot qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-terminal-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-vm-terminal-boot.sh "dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-terminal-public
+        run: bash scripts/e2e/hosted-vm-terminal-boot.sh validate-report
+
+      - name: Remove private VM state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-private
+        run: rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-terminal-boot-${{ needs.resolve.outputs.version }}
+          path: ${{ runner.temp }}/podlaz-release-terminal-public/hosted-vm-terminal-boot.txt
+          if-no-files-found: error
+          retention-days: 7
+
   attest-and-publish:
     name: Attest and publish GitHub Release
     needs:
@@ -382,6 +457,7 @@ jobs:
       - installed-runtime
       - synthetic-tun
       - remnawave-proxy
+      - terminal-boot
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
