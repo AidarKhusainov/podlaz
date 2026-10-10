@@ -71,7 +71,7 @@ done
 for version in "${PREVIOUS_VERSION}" "${CURRENT_VERSION}"; do
   expected="${PODLAZ_APT_CURRENT_SHA256}"
   if [[ "${version}" == "${PREVIOUS_VERSION}" ]]; then expected="${PREVIOUS_SHA256}"; fi
-  printf '%s  %s\n' "${expected}" "${GUEST}/tmp/podlaz-apt-packages/podlaz_${version}_amd64.deb" | sudo -n sha256sum -c -
+  guest /bin/bash -lc "printf '%s  %s\\n' '${expected}' '/tmp/podlaz-apt-packages/podlaz_${version}_amd64.deb' | sha256sum -c -"
 done
 
 guest /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y "podlaz=${PREVIOUS_VERSION}"
