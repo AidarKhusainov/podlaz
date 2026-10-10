@@ -166,4 +166,4 @@ jobs:
       - name: Run public HTTPS installation and upgrade
         env:
           PODLAZ_APT_SIGNING_FINGERPRINT: 7C6F4EF9CDE73501E79CCC63E2F6F280766864C2
-        run: bash -x scripts/e2e/public-apt-systemd-guest.sh
+        run: bash scripts/e2e/public-apt-systemd-guest.sh
