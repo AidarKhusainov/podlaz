@@ -67,6 +67,20 @@ hosted_vm_probe_acceleration() {
   fi
 }
 
+# Diagnostic only: emit coarse provisioning durations to job logs, not public
+# acceptance reports. Keep the commands themselves outside conditionals so that
+# their existing errexit/failure classification remains unchanged.
+hosted_vm_phase_start() {
+  HOSTED_VM_PHASE_START_MS="$(date +%s%3N)"
+}
+
+hosted_vm_phase_end() {
+  local name="$1" now_ms
+  now_ms="$(date +%s%3N)"
+  printf 'hosted-vm phase=%s duration_ms=%s\\n' \
+    "${name}" "$((now_ms - HOSTED_VM_PHASE_START_MS))" >&2
+}
+
 hosted_vm_prepare_image() {
   local free_kb sums expected actual user_data
   free_kb="$(df -Pk "${HOSTED_VM_ROOT}" | awk 'NR == 2 {print $4}')"
