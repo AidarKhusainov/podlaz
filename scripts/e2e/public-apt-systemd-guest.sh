@@ -40,7 +40,8 @@ sudo -n chroot "${GUEST}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get up
 sudo -n chroot "${GUEST}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   systemd systemd-sysv dbus ca-certificates curl gnupg sudo iproute2 nftables polkitd >>"${ROOT}/bootstrap-apt.log" 2>&1
 sudo -n rm -f "${GUEST}/usr/sbin/policy-rc.d"
-sudo -n install -d -m 0755 "${GUEST}/etc/apt/keyrings"\nsudo -n install -m 0644 "${PWD}/scripts/e2e/lib/package_provenance.sh" "${GUEST}/tmp/provenance.sh"
+sudo -n install -d -m 0755 "${GUEST}/etc/apt/keyrings"
+sudo -n install -m 0644 "${PWD}/scripts/e2e/lib/package_provenance.sh" "${GUEST}/tmp/provenance.sh"
 
 sudo -n systemd-nspawn --quiet --boot --directory="${GUEST}" --machine="${MACHINE}" \
   --settings=no --drop-capability=CAP_NET_ADMIN,CAP_NET_RAW \
