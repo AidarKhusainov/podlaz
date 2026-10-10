@@ -77,7 +77,7 @@ hosted_vm_phase_start() {
 hosted_vm_phase_end() {
   local name="$1" now_ms
   now_ms="$(date +%s%3N)"
-  printf 'hosted-vm phase=%s duration_ms=%s\\n' \
+  printf 'hosted-vm phase=%s duration_ms=%s\n' \
     "${name}" "$((now_ms - HOSTED_VM_PHASE_START_MS))" >&2
 }
 
