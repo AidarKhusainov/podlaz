@@ -166,6 +166,7 @@ set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 wifi_fixture_phase=packages
 trap 'printf "wifi-fixture phase=%s failed\\n" "$wifi_fixture_phase" >&2' ERR
+wifi_packages_started="$(date +%s%3N)"
 
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
@@ -176,6 +177,7 @@ apt-get install -y -qq --no-install-recommends \
   network-manager \
   wpasupplicant \
   "linux-modules-extra-$(uname -r)"
+printf 'hosted-vm phase=wifi_packages duration_ms=%s\n' "$(( $(date +%s%3N) - wifi_packages_started ))" >&2
 
 systemctl stop NetworkManager.service >/dev/null 2>&1 || true
 systemctl stop wpa_supplicant.service >/dev/null 2>&1 || true
@@ -518,26 +520,36 @@ run_scenario() {
   hosted_vm_tun_start_endpoint
 
   mark_failure infrastructure vm.image
+  hosted_vm_phase_start
   hosted_vm_prepare_image
+  hosted_vm_phase_end image
   record_evidence vm.image_checksum pass
 
   mark_failure infrastructure vm.boot
+  hosted_vm_phase_start
   hosted_vm_start
   hosted_vm_wait_ssh 180
   hosted_vm_wait_cloud_init
+  hosted_vm_phase_end initial_boot
   record_evidence vm.boot pass
 
   mark_failure product candidate.install
+  hosted_vm_phase_start
   hosted_vm_tun_install_candidate
+  hosted_vm_phase_end candidate_install
 
   mark_failure fixture guest.control
+  hosted_vm_phase_start
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
   hosted_vm_prepare_guest_agent
   hosted_vm_tun_install_helpers "${REPO_ROOT}"
   hosted_vm_tun_install_polkit "${PRIVATE_ROOT}/polkit.rules"
+  hosted_vm_phase_end guest_control
 
   mark_failure capability wifi.simulation_stack
+  hosted_vm_phase_start
   prepare_wifi_fixture
+  hosted_vm_phase_end wifi_fixture
   record_evidence wifi.simulation_stack pass
 
   mark_failure product candidate.provenance

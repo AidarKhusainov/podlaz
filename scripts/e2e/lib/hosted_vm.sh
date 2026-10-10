@@ -67,6 +67,27 @@ hosted_vm_probe_acceleration() {
   fi
 }
 
+# Diagnostic only: emit coarse provisioning durations to job logs, not public
+# acceptance reports. Keep the commands themselves outside conditionals so that
+# their existing errexit/failure classification remains unchanged.
+# Uses a caller-owned timestamp so nested measurements cannot overwrite outer phases.
+hosted_vm_phase_end_at() {
+  local name="$1" started_ms="$2" now_ms
+  now_ms="$(date +%s%3N)"
+  printf 'hosted-vm phase=%s duration_ms=%s\n' "${name}" "$((now_ms - started_ms))" >&2
+}
+
+hosted_vm_phase_start() {
+  HOSTED_VM_PHASE_START_MS="$(date +%s%3N)"
+}
+
+hosted_vm_phase_end() {
+  local name="$1" now_ms
+  now_ms="$(date +%s%3N)"
+  printf 'hosted-vm phase=%s duration_ms=%s\n' \
+    "${name}" "$((now_ms - HOSTED_VM_PHASE_START_MS))" >&2
+}
+
 hosted_vm_prepare_image() {
   local free_kb sums expected actual user_data
   free_kb="$(df -Pk "${HOSTED_VM_ROOT}" | awk 'NR == 2 {print $4}')"
@@ -343,14 +364,22 @@ hosted_vm_reboot() {
 }
 
 hosted_vm_install_candidate() {
-  local candidate="$1"
+  local candidate="$1" stage_ms
+  stage_ms="$(date +%s%3N)"
   hosted_vm_scp_to "${candidate}" /tmp/podlaz-candidate.deb
+  hosted_vm_phase_end_at candidate_transfer "${stage_ms}"
+  stage_ms="$(date +%s%3N)"
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  hosted_vm_phase_end_at candidate_apt_update "${stage_ms}"
+  stage_ms="$(date +%s%3N)"
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/podlaz-candidate.deb
+  hosted_vm_phase_end_at candidate_apt_install "${stage_ms}"
+  stage_ms="$(date +%s%3N)"
   hosted_vm_ssh sudo systemctl daemon-reload
   hosted_vm_ssh sudo systemctl reset-failed podlazd.service >/dev/null 2>&1 || true
   hosted_vm_ssh sudo systemctl start podlazd.service
   hosted_vm_ssh sudo systemctl is-active --quiet podlazd.service
+  hosted_vm_phase_end_at candidate_service_start "${stage_ms}"
 }
 
 hosted_vm_assert_candidate_provenance() {
