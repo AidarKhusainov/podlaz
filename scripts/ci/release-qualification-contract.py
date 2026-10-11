@@ -86,8 +86,18 @@ def exact_needs(jobs, job, expected):
 def validate(source):
     jobs = parse_jobs(source)
     exact_needs(jobs, "attest-and-publish", PUBLISH)
-    if re.search(r"(?m)^    if:", jobs["attest-and-publish"]):
-        raise ValueError("conditional publishing is not permitted")
+    if "if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}" not in jobs["attest-and-publish"]:
+        raise ValueError("publication must be forbidden on non-publishing PR runs")
+    exact_needs(jobs, "pr-release-qualification", PUBLISH)
+    pr_qualification = jobs["pr-release-qualification"]
+    if "github.event_name == 'pull_request' && always()" not in pr_qualification or 'length == 15 and all(.[]; .result == "success")' not in pr_qualification:
+        raise ValueError("PR candidate qualification must fail closed")
+    if "github.event_name != 'pull_request' && vars.PODLAZ_APT_PUBLISH_ENABLED == 'true'" not in jobs["apt-repository"]:
+        raise ValueError("APT publication must not run on PR candidates")
+    if "github.event.pull_request.head.repo.full_name == github.repository" not in jobs["resolve"]:
+        raise ValueError("PR qualification cannot accept fork builds")
+    if 'tag="${GITHUB_SHA}"' not in jobs["resolve"] or 'version="0.2.47+pr.${GITHUB_SHA:0:12}"' not in jobs["resolve"]:
+        raise ValueError("PR qualification must use unpublishable provenance-bound package version")
     for aggregator, children in (
         ("release-recovery-gate", tuple("release-" + n for n in RECOVERY)),
         ("release-package-gate", PACKAGE),
@@ -167,6 +177,7 @@ def validate(source):
 def negative_tests(source):
     mutations = (
         source.replace("      - release-package-gate\n", "", 1),
+        source.replace("if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}", "if: ${{ always() }}", 1),
         source.replace("      - release-daemon-recovery\n", "      - release-recovery-gate\n", 1),
         source.replace("bash scripts/e2e/hosted-daemon-recovery.sh", "bash scripts/e2e/hosted-xray-replacement.sh", 1),
         source.partition("  release-daemon-recovery:\n")[0]
