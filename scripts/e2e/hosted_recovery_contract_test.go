@@ -50,13 +50,27 @@ func TestHostedDaemonRecoveryWorkflowIsThinIsolatedQualification(t *testing.T) {
 		"runs-on: ubuntu-24.04",
 		"persist-credentials: false",
 		"CANDIDATE_COMMIT: ${{ github.sha }}",
-		"PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}",
+		"PODLAZ_COMMIT: ${{ github.sha }}",
 		"PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}",
 		"bash scripts/build-deb.sh",
+		"needs: candidate-package",
+		"actions/download-artifact@",
+		"EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}",
+		"sha256sum -c -",
 		"go test ./scripts/e2e -run '^TestHostedDaemonRecovery' -count=1",
 		"bash scripts/e2e/hosted-daemon-recovery.sh",
 		"hosted-daemon-recovery.txt",
 	)
+
+	if count := strings.Count(workflow, "bash scripts/build-deb.sh"); count != 1 {
+		t.Fatalf("hosted recovery must build one candidate, got %d builds", count)
+	}
+	if count := strings.Count(workflow, "needs: candidate-package"); count != 10 {
+		t.Fatalf("all ten recovery job definitions must need the immutable candidate: %d", count)
+	}
+	if count := strings.Count(workflow, "name: Verify candidate package handoff"); count != 10 {
+		t.Fatalf("all ten recovery job definitions must verify the SHA-256 handoff: %d", count)
+	}
 	for _, action := range []string{"actions/checkout", "actions/setup-go", "actions/upload-artifact"} {
 		re := regexp.MustCompile(regexp.QuoteMeta("uses: "+action+"@") + `[0-9a-f]{40}`)
 		if !re.MatchString(workflow) {
