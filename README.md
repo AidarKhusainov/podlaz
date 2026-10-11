@@ -21,7 +21,7 @@ Packages require `libc6 >= 2.34`, `iproute2`, `nftables`, systemd, and Polkit;
 interactive Polkit agent. The deepest hosted runtime qualification covers
 Ubuntu 24.04 `amd64`; `arm64` packages are built and package-validated.
 
-Install the latest release with one command:
+**Recommended: signed APT repository.** Install Podlaz with one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/scripts/install.sh | bash
@@ -37,16 +37,29 @@ The downloaded installer runs with user privileges and invokes `sudo` only
 for APT setup and package installation. Inspect the script before executing
 remote code, and independently verify the signing fingerprint below.
 
-For a downloaded package, compare its SHA256 with the matching entry in
-`SHA256SUMS`. Where GitHub build provenance is available, verify it with
-`gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`.
-
-For manual installation, download a package from
-[GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases) and install it:
+**Alternative: direct GitHub Release .deb installation.** This option does not
+configure an APT repository. Run the following command to install the latest
+published release, or rerun it later to download and install a newer release:
 
 ```bash
-sudo apt install ./podlaz_<version>_linux_<arch>.deb
+curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/scripts/install-deb.sh | bash
 ```
+
+The direct installer selects the matching `amd64`/`arm64` package, downloads
+the release `SHA256SUMS` manifest and verifies the package checksum before
+invoking `apt-get install ./<package>.deb`. It does **not** enable automatic
+Podlaz updates. If the latest release lacks the matching `.deb` or
+`SHA256SUMS`, installation fails; do not bypass verification. Check the
+GitHub Release assets before running the script. These checksums protect
+download integrity relative to the manifest from the same release. Where
+GitHub build provenance is available, additionally verify the downloaded
+artifact with `gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`.
+
+You can also download and verify a `.deb` manually from
+[GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases)
+and install it with `sudo apt install ./podlaz_<version>_linux_<arch>.deb`.
+Both options preserve the ordinary package/service lifecycle; neither attempts
+migration between installation channels.
 
 Check the installation:
 
@@ -304,8 +317,10 @@ cleanup authority; do not manually remove foreign routing, DNS or firewall
 resources. If Polkit authorization is unavailable, use an authorized desktop
 or TTY session with a working Polkit agent rather than running the CLI as root.
 
-For an upgrade, install the verified newer `.deb` using `sudo apt install
-./<downloaded-package>.deb`, then check `podlaz version` and `podlaz status`.
+For APT repository installations, use `sudo apt update && sudo apt upgrade`.
+For direct GitHub Release installations, rerun `scripts/install-deb.sh` or
+install the separately verified newer `.deb` using `sudo apt install
+./<downloaded-package>.deb`. Then check `podlaz version` and `podlaz status`.
 If an upgrade fails, inspect recovery rather than assuming the VPN is active.
 To roll back, install a separately verified earlier release package and inspect
 status again. A signed APT repository is also available as described in [Install](#signed-apt-repository); keep the repository signing key scoped with `Signed-By`.
