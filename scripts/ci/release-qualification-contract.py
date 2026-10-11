@@ -26,7 +26,7 @@ def parse_jobs(source):
     part = source.partition("\njobs:\n")
     if not part[1]:
         raise ValueError("missing jobs")
-    headers = list(re.finditer(r"(?m)^  ([a-z][a-z0-9-]*):\s*$", part[2]))
+    headers = list(re.finditer(r"(?m)^  ([a-z][a-z0-9-]*):[ \t]*$", part[2]))
     return {
         h[1]: part[2][h.start():headers[i + 1].start() if i + 1 < len(headers) else None]
         for i, h in enumerate(headers)
@@ -34,7 +34,7 @@ def parse_jobs(source):
 
 
 def dependencies(job):
-    found = re.search(r"(?m)^    needs:\s*(.*)$", job)
+    found = re.search(r"(?m)^    needs:[ \t]*(.*)$", job)
     if not found:
         return []
     if found[1]:
