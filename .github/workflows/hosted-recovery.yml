@@ -3,8 +3,6 @@ name: Hosted Recovery
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  schedule:
-    - cron: '47 4 * * 4'
   workflow_dispatch:
 
 permissions:
@@ -15,8 +13,56 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+
+  candidate-package:
+    name: Build one exact hosted recovery candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install pinned package tool
+        run: bash scripts/ci/install-go-tool.sh nfpm
+
+      - name: Build exact candidate package
+        env:
+          PODLAZ_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-deb.sh
+
+      - name: Capture exact candidate digest
+        id: digest
+        run: |
+          set -euo pipefail
+          package=dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+          test -f "${package}" && test ! -L "${package}"
+          test "$(dpkg-deb --field "${package}" Package)" = podlaz
+          test "$(dpkg-deb --field "${package}" Architecture)" = amd64
+          printf 'sha256=%s\n' "$(sha256sum "${package}" | awk '{print $1}')" >>"${GITHUB_OUTPUT}"
+
+      - name: Upload immutable candidate package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+          if-no-files-found: error
+          retention-days: 7
   daemon-recovery:
     name: Same-boot daemon recovery privacy
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -41,12 +87,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedDaemonRecovery' -count=1
@@ -85,6 +140,7 @@ jobs:
 
   xray-replacement:
     name: Xray replacement privacy
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -109,12 +165,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedXrayReplacement' -count=1
@@ -153,6 +218,7 @@ jobs:
 
   network-apply-rollback:
     name: Network apply rollback diagnostics
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -177,12 +243,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedFaultRollback' -count=1
@@ -221,6 +296,7 @@ jobs:
 
   network-verify-rollback:
     name: Network verify rollback diagnostics
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -245,12 +321,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedFaultRollback' -count=1
@@ -290,6 +375,7 @@ jobs:
 
   terminal-failure-convergence:
     name: Terminal failure convergence
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -314,12 +400,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedTerminalFailureConvergence' -count=1
@@ -358,6 +453,7 @@ jobs:
 
   network-reconciliation:
     name: Network reconciliation (${{ matrix.name }})
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     strategy:
@@ -394,12 +490,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedNetworkReconciliation' -count=1
@@ -437,6 +542,7 @@ jobs:
           retention-days: 7
   stale-observation:
     name: Stale observation convergence
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -461,12 +567,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedStaleObservationAndForeignStateSafety' -count=1
@@ -505,6 +620,7 @@ jobs:
 
   foreign-state-safety:
     name: Foreign state safety
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -529,12 +645,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedStaleObservationAndForeignStateSafety' -count=1
@@ -573,6 +698,7 @@ jobs:
 
   protected-gateway-lifecycle:
     name: Protected gateway recovery lifecycle
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -597,12 +723,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedProtectedGatewayLifecycle' -count=1
@@ -641,6 +776,7 @@ jobs:
 
   precommit-interruption:
     name: Pre-commit interruption ownership
+    needs: candidate-package
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     env:
@@ -665,12 +801,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
-          bash scripts/ci/install-go-tool.sh nfpm
 
-      - name: Build exact candidate package
+      - name: Download exact candidate package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-recovery-candidate-${{ github.sha }}
+          path: dist
+
+      - name: Verify candidate package handoff
         env:
-          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
-        run: bash scripts/build-deb.sh
+          EXPECTED_SHA256: ${{ needs.candidate-package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${EXPECTED_SHA256}" =~ ^[a-f0-9]{64}$ ]]
+          test -f "${DEV_DEB}" && test ! -L "${DEV_DEB}"
+          printf '%s  %s\n' "${EXPECTED_SHA256}" "${DEV_DEB}" | sha256sum -c -
 
       - name: Scenario contract
         run: go test ./scripts/e2e -run '^TestHostedCurrentRuntimeFailClosedOwnership' -count=1

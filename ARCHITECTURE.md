@@ -130,12 +130,22 @@ network mutator.
 Automated evidence has explicit roles instead of one undifferentiated acceptance checklist.
 
 - Ordinary merge-ready evidence is produced by deterministic CI/package contracts and the permanent hosted synthetic-TUN, recovery/fault, historical-package, VM lifecycle, and simulated Wi-Fi qualifications on pull requests where those workflows apply. These scenarios protect their domain invariants continuously; they are not rebuilt again merely to create a release checkbox.
-- The full resource soak remains a scheduled/manual-dispatch diagnostic because its multi-hour measurement budget is intentionally much larger than normal merge/release latency.
-- Pinned ephemeral Remnawave qualification owns provider compatibility without maintainer infrastructure. A fresh hosted fixture provisions Panel 3.4.5, Node 3.4.2, database/cache, TLS, users, subscription/HWID policy, and provider material from empty runner state. Subscription/HWID and proxy checks run as distinct hosted signals; full-TUN remains a distinct scheduled/manual-dispatch pre-release signal inside the isolated guest substrate.
+- The full resource soak is an explicit optional diagnostic via `workflow_dispatch`, not a time-triggered product regression or release prerequisite. Its multi-hour measurement budget is intentionally outside normal merge/release latency; unchanged source must not consume periodic three-hour hosted runner capacity.
+- Pinned ephemeral Remnawave qualification owns provider compatibility without maintainer infrastructure. A fresh hosted fixture provisions Panel 3.4.5, Node 3.4.2, database/cache, TLS, users, subscription/HWID policy, and provider material from empty runner state. Subscription/HWID, proxy and isolated full-TUN remain distinct hosted signals, automatically qualified after a changed master push and explicitly available on demand; focused PR checks run where the affected-path contract applies. No unchanged-source time schedule is needed. Exact-release gates are owned by the release workflow.
 - Required release publication depends on exact-package installed runtime checks, secret-free synthetic full-TUN qualification, and the exact-package ephemeral Remnawave proxy check. The Remnawave gate consumes the already-built release artifact set and pinned fixture image digests; missing fixture/runtime evidence fails publication while product, Remnawave compatibility, fixture, infrastructure, capability, and diagnostic failures remain distinguishable rather than being converted into PASS.
 - Capability-only/manual reproducers are informational. They do not satisfy a runtime acceptance owner and do not gate publication.
 
 Release provenance is build-once/promote-exactly. The release job builds the amd64/arm64 artifact set once, creates `SHA256SUMS`, and exports the checksum-manifest digest. Every required qualifier downloads that same workflow artifact set and verifies both the manifest digest and every asset checksum before exercising it. The publisher performs the same verification, attests those downloaded files, and publishes those exact files. A downstream retry may reuse the immutable uploaded candidate; it must not silently substitute a rebuild.
+
+The complete release publication gate also requires source/security and package
+contracts, independently validated Remnawave subscription/HWID and isolated
+full-TUN qualification, real guest terminal boot, Wi-Fi, boot-authority,
+reboot and suspend lifecycles, hosted recovery/fault/ownership, and pinned
+historical package upgrade/restart acceptance. Each migrated suite preserves
+its executable assertions, independent isolated guest, public verdict validator,
+failure classification and private-state cleanup. Recovery and package gates
+aggregate results fail-closed: failed, skipped, cancelled or absent mandatory
+evidence blocks attestation and publication.
 
 Signed APT distribution is a downstream promotion of that release evidence, never
 another package build. When explicitly enabled, the release workflow passes the

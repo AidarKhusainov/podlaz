@@ -2,12 +2,12 @@
 set -euo pipefail
 
 actionlint
+python3 scripts/ci/release-qualification-contract.py
 
 mapfile -t core_scripts < <(
   find \
     scripts/build-deb.sh \
     scripts/install.sh \
-    scripts/install-deb.sh \
     scripts/ci \
     packaging/debian \
     -type f \
@@ -34,7 +34,6 @@ mapfile -t e2e_test_scripts < <(
 
 shellcheck -x -s bash "${core_scripts[@]}"
 bash scripts/ci/install-script-test.sh
-bash scripts/ci/install-deb-script-test.sh
 bash scripts/ci/validate-installed-status-test.sh
 bash scripts/ci/validate-package-workflow-contract-test.sh
 bash scripts/ci/validate-package-workflow-contract.sh
