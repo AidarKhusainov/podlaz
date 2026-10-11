@@ -824,6 +824,797 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  release-daemon-recovery:
+    name: Same-boot daemon recovery privacy (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedDaemonRecovery' -count=1
+
+      - name: Run same-boot daemon recovery qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-recovery-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-recovery-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-daemon-recovery.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-recovery-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-recovery-public
+        run: bash scripts/e2e/hosted-daemon-recovery.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-recovery-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-daemon-recovery
+          path: ${{ runner.temp }}/podlaz-release-recovery-public/hosted-daemon-recovery.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-xray-replacement:
+    name: Xray replacement privacy (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedXrayReplacement' -count=1
+
+      - name: Run Xray replacement qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-xray-replacement-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-xray-replacement-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-xray-replacement.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-xray-replacement-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-xray-replacement-public
+        run: bash scripts/e2e/hosted-xray-replacement.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-xray-replacement-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-xray-replacement
+          path: ${{ runner.temp }}/podlaz-release-xray-replacement-public/hosted-xray-replacement.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-network-apply-rollback:
+    name: Network apply rollback diagnostics (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedFaultRollback' -count=1
+
+      - name: Run network apply rollback qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-apply-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-network-apply-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-network-apply-rollback.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-apply-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-network-apply-public
+        run: bash scripts/e2e/hosted-network-apply-rollback.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-apply-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-network-apply-rollback
+          path: ${{ runner.temp }}/podlaz-release-network-apply-public/hosted-network-apply-rollback.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-network-verify-rollback:
+    name: Network verify rollback diagnostics (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedFaultRollback' -count=1
+
+      - name: Run network verify rollback qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-verify-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-network-verify-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-network-verify-rollback.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-verify-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-network-verify-public
+        run: bash scripts/e2e/hosted-network-verify-rollback.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-verify-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-network-verify-rollback
+          path: ${{ runner.temp }}/podlaz-release-network-verify-public/hosted-network-verify-rollback.txt
+          if-no-files-found: error
+          retention-days: 7
+
+
+  release-terminal-failure-convergence:
+    name: Terminal failure convergence (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedTerminalFailureConvergence' -count=1
+
+      - name: Run terminal failure convergence qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-failure-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-terminal-failure-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-terminal-failure-convergence.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-failure-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-terminal-failure-public
+        run: bash scripts/e2e/hosted-terminal-failure-convergence.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-failure-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-terminal-failure-convergence
+          path: ${{ runner.temp }}/podlaz-release-terminal-failure-public/hosted-terminal-failure-convergence.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-network-reconciliation:
+    name: Network reconciliation (${{ matrix.name }}) (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: provider-observation
+            name: Provider observation failure
+          - scenario: resolved-unknown
+            name: Resolved unknown convergence
+          - scenario: route-replacement
+            name: Surrounding route replacement
+          - scenario: networkmanager-uplink
+            name: NetworkManager uplink down/up
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedNetworkReconciliation' -count=1
+
+      - name: Run bounded network reconciliation qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-network-reconciliation.sh "${{ matrix.scenario }}" "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-public
+        run: bash scripts/e2e/hosted-network-reconciliation.sh validate-report "${{ matrix.scenario }}"
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-network-reconciliation-${{ matrix.scenario }}
+          path: ${{ runner.temp }}/podlaz-release-network-reconciliation-${{ matrix.scenario }}-public/hosted-network-reconciliation-${{ matrix.scenario }}.txt
+          if-no-files-found: error
+          retention-days: 7
+  release-stale-observation:
+    name: Stale observation convergence (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedStaleObservationAndForeignStateSafety' -count=1
+
+      - name: Run stale observation qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-stale-observation-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-stale-observation-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-stale-observation.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-stale-observation-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-stale-observation-public
+        run: bash scripts/e2e/hosted-stale-observation.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-stale-observation-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-stale-observation
+          path: ${{ runner.temp }}/podlaz-release-stale-observation-public/hosted-stale-observation.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-foreign-state-safety:
+    name: Foreign state safety (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedStaleObservationAndForeignStateSafety' -count=1
+
+      - name: Run foreign state safety qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-foreign-state-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-foreign-state-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-foreign-state-safety.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-foreign-state-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-foreign-state-public
+        run: bash scripts/e2e/hosted-foreign-state-safety.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-foreign-state-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-foreign-state-safety
+          path: ${{ runner.temp }}/podlaz-release-foreign-state-public/hosted-foreign-state-safety.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-protected-gateway-lifecycle:
+    name: Protected gateway recovery lifecycle (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedProtectedGatewayLifecycle' -count=1
+
+      - name: Run protected gateway lifecycle qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-protected-gateway-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-protected-gateway-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-protected-gateway-lifecycle.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-protected-gateway-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-protected-gateway-public
+        run: bash scripts/e2e/hosted-protected-gateway-lifecycle.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-protected-gateway-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-protected-gateway-lifecycle
+          path: ${{ runner.temp }}/podlaz-release-protected-gateway-public/hosted-protected-gateway-lifecycle.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  release-precommit-interruption:
+    name: Pre-commit interruption ownership (exact release)
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
+      DEV_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+
+      - name: Download exact release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: podlaz-release-artifacts-${{ needs.resolve.outputs.version }}
+          path: dist/release
+
+      - name: Verify exact release artifact handoff
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_RELEASE_MANIFEST_SHA256: ${{ needs.build.outputs.release_manifest_sha256 }}
+        run: bash scripts/ci/verify-release-artifacts.sh
+
+      - name: Scenario contract
+        run: go test ./scripts/e2e -run '^TestHostedCurrentRuntimeFailClosedOwnership' -count=1
+
+      - name: Run pre-commit interruption qualification
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-precommit-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-precommit-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-precommit-interruption.sh "${DEV_DEB}"
+
+      - name: Validate public report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-precommit-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-precommit-public
+        run: bash scripts/e2e/hosted-precommit-interruption.sh validate-report
+
+      - name: Remove private qualification state
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-precommit-private
+        run: sudo -n rm -rf "${E2E_TMP_ROOT}"
+
+      - name: Upload public qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: podlaz-release-precommit-interruption
+          path: ${{ runner.temp }}/podlaz-release-precommit-public/hosted-precommit-interruption.txt
+          if-no-files-found: error
+          retention-days: 7
   attest-and-publish:
     name: Attest and publish GitHub Release
     needs:
@@ -838,6 +1629,16 @@ jobs:
       - suspend-resume
       - reboot-autostart-disabled
       - boot-continuation-ordering
+      - release-daemon-recovery
+      - release-xray-replacement
+      - release-network-apply-rollback
+      - release-network-verify-rollback
+      - release-terminal-failure-convergence
+      - release-network-reconciliation
+      - release-stale-observation
+      - release-foreign-state-safety
+      - release-protected-gateway-lifecycle
+      - release-precommit-interruption
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
