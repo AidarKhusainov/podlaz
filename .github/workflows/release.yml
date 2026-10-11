@@ -25,7 +25,7 @@ concurrency:
 jobs:
   resolve:
     name: Resolve release version
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'ci/release-terminal-boot-gate') }}
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (github.head_ref == 'ci/release-terminal-boot-gate' || github.head_ref == 'ci/430-integrated-qualification')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
