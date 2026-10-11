@@ -1,159 +1,87 @@
 # Podlaz
 
-Podlaz is an open-source command-line VPN client for Linux written in Go.\nIt provides full-system TUN routing with fail-closed protection, DNS recovery,\nautomatic reconnection, exact-owned cleanup, and panic rollback.
+Podlaz is an open-source command-line VPN client for Linux, written in Go.
+It routes system traffic through TUN, protects against direct egress during
+reconnection, and supports DNS recovery and safe rollback.
 
 [![CI](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml/badge.svg)](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/AidarKhusainov/podlaz)](https://github.com/AidarKhusainov/podlaz/releases/latest)
 
 ## Features
 
-- Import VPN profiles and subscriptions through one command.
-- Connect the selected profile as a full VPN by default.
+- Import share links, subscription URLs, and supported configuration files.
+- Connect the selected profile as a full-system VPN by default.
+- Reconnect or replace a session without an unprotected traffic gap.
 - Keep privileged networking in the `podlazd` service, not the CLI.
-- Preserve fail-closed protection while Podlaz reconnects or replaces its own session.
-- Keep diagnostics and recovery available without making them part of the normal workflow.
+- Diagnose failures and recover only exactly owned resources.
 
 ## Install
 
-Podlaz targets systemd-based Debian/Ubuntu Linux on `amd64` and `arm64`.
+Podlaz targets systemd-based Debian/Ubuntu on `amd64` and `arm64`.
 Packages require `libc6 >= 2.34`, `iproute2`, `nftables`, systemd, and Polkit;
-`apt` resolves packaged dependencies. Full-TUN authorization may require an
-interactive Polkit agent. The deepest hosted runtime qualification covers
-Ubuntu 24.04 `amd64`; `arm64` packages are built and package-validated.
+APT resolves dependencies. Full-TUN authorization may need an interactive Polkit
+agent. Runtime qualification is deepest on Ubuntu 24.04 `amd64`; `arm64`
+packages are built and package-validated.
 
-**Recommended: signed APT repository.** Install Podlaz with one command:
+**Recommended: signed APT repository.**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/scripts/install.sh | bash
 ```
 
-The installer detects the Debian architecture, verifies the APT repository
-signing key against a pinned fingerprint, and configures a `stable` deb822
-source with a dedicated `Signed-By` keyring. It refreshes that repository's
-index and installs Podlaz through APT; subsequent updates use normal
-`apt update && apt upgrade`. It does not disable repository signature
-verification or silently fall back to an unverified GitHub download.
-The downloaded installer runs with user privileges and invokes `sudo` only
-for APT setup and package installation. Inspect the script before executing
-remote code, and independently verify the signing fingerprint below.
+The installer verifies the repository signing key against a pinned fingerprint,
+configures a scoped `Signed-By` APT source, and installs Podlaz. Updates use
+`sudo apt update && sudo apt upgrade`.
 
-**Alternative: direct GitHub Release .deb installation.** This option does not
-configure an APT repository. Run the following command to install the latest
-published release, or rerun it later to download and install a newer release:
+**Alternative: verified GitHub Release package.**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/scripts/install-deb.sh | bash
 ```
 
-The direct installer selects the matching `amd64`/`arm64` package, downloads
-the release `SHA256SUMS` manifest and verifies the package checksum before
-invoking `apt-get install ./<package>.deb`. It does **not** enable automatic
-Podlaz updates. If the latest release lacks the matching `.deb` or
-`SHA256SUMS`, installation fails; do not bypass verification. Check the
-GitHub Release assets before running the script. These checksums protect
-download integrity relative to the manifest from the same release. Where
-GitHub build provenance is available, additionally verify the downloaded
-artifact with `gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`.
+This checks the matching `.deb` against the release `SHA256SUMS` before
+installation. It does not add an APT source or enable automatic updates; rerun
+it for a newer release. Missing package or checksum assets cause failure.
+You may also download the `.deb` and `SHA256SUMS` from
+[GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases),
+verify the checksum, and install manually:
 
-You can also download and verify a `.deb` manually from
-[GitHub Releases](https://github.com/AidarKhusainov/podlaz/releases)
-and install it with `sudo apt install ./podlaz_<version>_linux_<arch>.deb`.
-Both options preserve the ordinary package/service lifecycle; neither attempts
-migration between installation channels.
+```bash
+sudo apt install ./podlaz_<version>_linux_<arch>.deb
+```
 
-Check the installation:
+Where GitHub provenance is available, verify it separately with
+`gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`.
+Inspect either remote installer before running it.
+
+Verify installation (`plz` is an alias for `podlaz`):
 
 ```bash
 podlaz version
 systemctl is-active podlazd.service
-```
-
-`plz` is a short alias for `podlaz`:
-
-```bash
 plz status
 ```
 
-Release assets include `SHA256SUMS` and GitHub build provenance attestations.
-
 ### Signed APT repository
 
-The `stable` repository is deployed through GitHub Pages at
-`https://aidarkhusainov.github.io/podlaz/apt`. Its published snapshot is
-signed with a dedicated APT OpenPGP key and contains the same immutable
-release-qualified `.deb` packages as GitHub Releases. GitHub Actions verifies
-`InRelease`, checksums, and an isolated Ubuntu 24.04 `amd64`
-install/upgrade before deployment. The package indexes also include `arm64`,
-but equivalent native `arm64` runtime qualification is not claimed.
-
-The production signing-key fingerprint, independently confirmed against the
-maintainer's signing keyring and the published public key, is:
+The `stable` source is hosted at
+[aidarkhusainov.github.io/podlaz/apt](https://aidarkhusainov.github.io/podlaz/apt).
+Its production signing-key fingerprint is:
 
 ```text
 7C6F4EF9CDE73501E79CCC63E2F6F280766864C2
 ```
 
-Before adding the source, compare this fingerprint with a trusted copy from
-the maintainer. Do not use a fingerprint obtained only from the same APT
-repository as an independent trust anchor. Never export or share the private
-key when verifying the fingerprint.
+Verify it against an **independently trusted** maintainer copy; a key served
+by the same repository is not an independent trust anchor. For manual setup,
+follow the [APT installer's procedure](scripts/install.sh): verify the key,
+use a dedicated keyring and deb822 `Signed-By` source, then install through
+APT. Never bypass signature errors with `Trusted: yes` or disabled checks.
 
-The one-command installer above performs this setup for new installations.
-For manual setup on systemd-based Debian/Ubuntu with `amd64` or `arm64`,
-configure a scoped deb822 source (not `apt-key`):
-
-```bash
-set -euo pipefail
-APT_BASE_URL="https://aidarkhusainov.github.io/podlaz/apt"
-PUBLISHED_FINGERPRINT="7C6F4EF9CDE73501E79CCC63E2F6F280766864C2"
-APT_ARCH="$(dpkg --print-architecture)"
-case "$APT_ARCH" in
-  amd64|arm64) ;;
-  *) echo "unsupported Podlaz APT architecture: $APT_ARCH" >&2; exit 1 ;;
-esac
-
-[[ "$PUBLISHED_FINGERPRINT" =~ ^[0-9A-Fa-f]{40,64}$ ]] || {
-  echo "set the independently verified production signing fingerprint" >&2
-  exit 1
-}
-
-sudo apt-get update
-sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
-
-key_tmp="$(mktemp)"
-trap 'rm -f -- "$key_tmp"' EXIT
-curl --fail --silent --show-error --location --proto '=https' \
-  "$APT_BASE_URL/podlaz-archive-keyring.gpg" -o "$key_tmp"
-
-actual_fingerprint="$(
-  gpg --batch --show-keys --with-colons "$key_tmp" 2>/dev/null |
-    awk -F: '$1 == "fpr" { print toupper($10); exit }'
-)"
-test "$actual_fingerprint" = "${PUBLISHED_FINGERPRINT^^}" || {
-  echo "APT signing fingerprint mismatch" >&2
-  exit 1
-}
-
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo install -m 0644 "$key_tmp" /etc/apt/keyrings/podlaz-archive-keyring.gpg
-printf 'Types: deb\nURIs: %s\nSuites: stable\nComponents: main\nArchitectures: %s\nSigned-By: /etc/apt/keyrings/podlaz-archive-keyring.gpg\n' \
-  "$APT_BASE_URL" "$APT_ARCH" |
-  sudo tee /etc/apt/sources.list.d/podlaz.sources >/dev/null
-
-sudo apt-get update
-apt-cache policy podlaz
-sudo apt-get install -y podlaz
-podlaz version
-systemctl is-active podlazd.service
-```
-
-After repository setup, `apt-cache policy podlaz` must show the `stable/main`
-source and a candidate from that source; a version shown only at
-`/var/lib/dpkg/status` means no Podlaz repository candidate was indexed.
-Regular updates use `sudo apt-get update && sudo apt-get upgrade`. If the
-repository is unreachable, the signature is rejected, or metadata is missing,
-stop rather than setting `Trusted: yes` or disabling APT signature checks.
-The existing GitHub Release `.deb` installation path above remains supported.
+`apt-cache policy podlaz` must show a `stable/main` repository candidate,
+not only an installed version from `/var/lib/dpkg/status`. The published
+indexes include `arm64`, but equivalent native runtime qualification is
+not claimed.
 
 ## Quick start
 
@@ -163,37 +91,42 @@ Import a share URI, subscription URL, or supported local file:
 podlaz import '<uri-or-url-or-file>'
 ```
 
-If the import produces exactly one profile and no profile is selected, Podlaz
-selects it automatically. Otherwise choose one explicitly:
+A sole imported profile is selected automatically if no profile is selected.
+Otherwise choose one:
 
 ```bash
 podlaz profile list
 podlaz profile use work
 ```
 
-Connect, inspect status, run a read-only connection diagnostic, and disconnect:
-
 ```bash
 podlaz connect
 podlaz status
-podlaz debug doctor --tun
 podlaz disconnect
 ```
 
-An explicit profile is a one-shot choice and does not change the saved selection:
+`podlaz connect work` is a one-shot choice that does not change the saved
+selection. `connect` always requests full VPN/TUN and never silently
+falls back to Proxy-only.
 
-```bash
-podlaz connect work
-```
+## Supported formats and limitations
 
-Canonical `connect` always requests full VPN/TUN protection. It never silently
-falls back to Proxy-only operation.
+| Input | Support |
+| --- | --- |
+| VLESS, VMess (alterId 0), Trojan (TLS), Shadowsocks (supported AEAD) share URIs | Supported subsets in full-TUN and explicit Proxy-only |
+| HTTP(S) Base64 URI-list subscriptions | Import; connection per supported profile |
+| Native Xray JSON, including grouped configurations | Full-TUN when safe composition validates; explicit Proxy-only when supported |
+| Clash/Mihomo YAML `proxies` lists | Supported proxy subset, not a full Clash configuration |
+| Mihomo Hysteria2 proxy definitions | Strict subset; no Hysteria2 share URI support |
+
+Import does not guarantee connectivity for every transport/security combination.
+Clash rules, groups, DNS, and unrelated protocols are not translated; unsupported
+Hysteria2 options are rejected. Native Xray full-TUN composition must validate
+**before** host-network mutation. See [precise import boundaries](docs/cli.md#import).
 
 ## Profiles and subscriptions
 
-Normal profile selectors accept an exact stable ID or an exact unique
-case-insensitive display name. Ordinary completion and list output prefer human
-names.
+Profile selectors accept stable IDs or unique case-insensitive display names.
 
 ```bash
 podlaz profile list
@@ -207,12 +140,10 @@ podlaz subscription update <subscription-id>
 podlaz subscription delete <subscription-id>
 ```
 
-Profile/subscription deletion is destructive user-data removal and requires an
-explicit confirmation. In non-interactive use, pass `--yes`.
+Deletion needs confirmation (`--yes` for non-interactive use). Failed
+subscription updates preserve the last committed state.
 
 ## Autostart
-
-Enable the selected full-VPN intent for a future boot:
 
 ```bash
 podlaz autostart enable
@@ -220,133 +151,73 @@ podlaz autostart status
 podlaz autostart disable
 ```
 
-`autostart enable` snapshots the selected profile at that time. A later
-`profile use` does not silently rewrite the saved boot policy.
+Autostart snapshots the selected full-VPN profile for a future boot.
+A later `profile use` does not change that policy.
 
 ## Advanced diagnostics
 
-The normal workflow does not require manual validation, planning, health checks,
-or recovery commands. Advanced support tools are under `debug`:
+Normal connections do not need separate health or recovery commands:
 
 ```bash
-podlaz debug doctor
 podlaz debug doctor --tun
 podlaz debug logs --daemon --since 15m
 podlaz debug recover
 ```
 
-Exact-owned recovery may be executed explicitly:
+`podlaz debug recover` inspects the plan; adding `--execute` applies recovery
+only to proven Podlaz-owned resources. It never authorizes changes to unknown
+or foreign network state.
 
-```bash
-podlaz debug recover --execute
-```
+Explicit reduced-protection Proxy-only uses `podlaz debug proxy work`.
+It does not route system traffic through the VPN and is never an automatic
+fallback from `connect`.
 
-Proxy-only is an explicit reduced-protection advanced capability:
-
-```bash
-podlaz debug proxy work
-```
-
-Podlaz does not use Proxy-only as a fallback when a full VPN connection cannot be
-established safely. Proxy-only does not redirect the host's system traffic.
-
-See [docs/cli.md](docs/cli.md) for the full CLI contract and
-[ARCHITECTURE.md](ARCHITECTURE.md) for ownership, recovery, Privacy Envelope,
-restart, package-upgrade, and networking invariants.
-
-## Supported formats and limitations
-
-| Input | Import | Full-TUN | Explicit Proxy-only |
-| --- | --- | --- | --- |
-| VLESS share URI | Yes | Supported subset | Supported subset |
-| VMess share URI (alterId 0) | Yes | Supported subset | Supported subset |
-| Trojan (TLS) share URI | Yes | Supported subset | Supported subset |
-| Shadowsocks (supported AEAD) share URI | Yes | Supported subset | Supported subset |
-| HTTP(S) Base64 URI-list subscriptions | Yes | Per supported imported profile | Per supported imported profile |
-| Native Xray JSON, including grouped/provider-owned configurations | Yes | When safe composed Xray config validates | When supported by bundled Xray |
-| Clash/Mihomo YAML `proxies` list | Supported subset | Per imported profile | Per imported profile |
-| Mihomo Hysteria2 proxy definition | Strict subset | Supported subset | Supported subset |
-
-Importing a profile is not a guarantee that every transport and security
-combination can connect. The YAML importer does not translate full Clash
-configuration (rules, proxy groups, DNS, or unrelated protocols). Hysteria2
-share URIs and unsupported Hysteria2 options are not claimed. Native grouped
-Xray JSON is no longer unconditionally Proxy-only: full-TUN is attempted only
-when Podlaz can compose and validate a safe configuration before host-network
-mutation. See [the precise import and connection boundaries](docs/cli.md#import).
+See [docs/cli.md](docs/cli.md) for commands and [ARCHITECTURE.md](ARCHITECTURE.md)
+for networking, ownership, privacy, and recovery invariants.
 
 ## Remnawave subscriptions and privacy
 
-Import an authorized Remnawave HTTPS subscription using `podlaz import
-'<subscription-url>'`, then use `podlaz subscription list`, `podlaz profile
-list`, and `podlaz connect`. Refresh with `podlaz subscription update
-<subscription-id>`. HTTP(S) subscription fetches send a locally generated,
-stable, private `x-hwid` identity; it is **not** derived from physical hardware.
-Do not rotate it to bypass a provider's device limit. On fetch or device-limit
-failure, check the provider account and the redacted CLI error; the last
-committed subscription state is preserved by the update contract.
+Import authorized Remnawave HTTPS subscriptions with `podlaz import
+'<subscription-url>'` and refresh with `podlaz subscription update
+<subscription-id>`. HTTP(S) subscription requests include a locally generated,
+stable, private `x-hwid` identity, **not** a hardware-derived identifier.
+Do not rotate it to bypass device limits; failed updates preserve saved state.
 
-Disposable hosted qualification exercises Remnawave Panel **3.4.5**, Node
-**3.4.2**, subscription/HWID lifecycle (including a one-device limit), proxy
-traffic and isolated full-TUN. This is not a blanket claim for every Remnawave
-version or protocol/transport combination.
+Disposable hosted qualification covers Remnawave Panel **3.4.5** and Node
+**3.4.2**, including subscription/HWID, a one-device limit, proxy traffic,
+and isolated full-TUN. This is not a guarantee for every provider version or
+protocol/transport combination.
 
-Podlaz has no application analytics/telemetry subsystem. Expected network
-activity includes remote subscription requests, VPN/proxy traffic and explicit
-diagnostics. User-owned profile, subscription and client-identity state lives
-under the invoking user's XDG directories; privileged runtime and recovery
-state belongs to `podlazd`. Do not publish real subscription URLs, share URIs,
-credentials, endpoints, `x-hwid`, stored provider JSON or raw runtime configs.
-For sensitive reports, follow [private security reporting](.github/SECURITY.md),
-not a public issue.
+Podlaz has no analytics or telemetry subsystem; subscription requests, VPN
+traffic, and explicit diagnostics still involve network activity. User profiles,
+subscriptions, and identity are stored in user XDG directories; privileged
+runtime/recovery state belongs to `podlazd`. Never publish real subscription
+URLs, credentials, endpoints, `x-hwid`, provider JSON, or raw runtime configs.
+Report sensitive issues [privately](.github/SECURITY.md).
 
 ## Recovery, upgrade and removal
 
-If connection fails, inspect the current state and daemon diagnostics:
+On failure, inspect `podlaz status` and the diagnostics above. Review recovery
+before using `--execute`; never manually delete unknown routing, DNS, or
+firewall state. For Polkit authorization problems, use an authorized session
+with a working agent rather than running the CLI as root.
 
-```bash
-podlaz status
-podlaz debug doctor
-podlaz debug logs --daemon --since 15m
-podlaz debug recover
-```
-
-Review the recovery plan before explicitly applying exact-owned recovery with
-`podlaz debug recover --execute`. Unknown or unowned network state is never
-cleanup authority; do not manually remove foreign routing, DNS or firewall
-resources. If Polkit authorization is unavailable, use an authorized desktop
-or TTY session with a working Polkit agent rather than running the CLI as root.
-
-For APT repository installations, use `sudo apt update && sudo apt upgrade`.
-For direct GitHub Release installations, rerun `scripts/install-deb.sh` or
-install the separately verified newer `.deb` using `sudo apt install
-./<downloaded-package>.deb`. Then check `podlaz version` and `podlaz status`.
-If an upgrade fails, inspect recovery rather than assuming the VPN is active.
-To roll back, install a separately verified earlier release package and inspect
-status again. A signed APT repository is also available as described in [Install](#signed-apt-repository); keep the repository signing key scoped with `Signed-By`.
-
-To uninstall:
+APT installations use ordinary APT upgrades. Direct Release installations
+require rerunning the verified installer or installing a separately verified
+newer `.deb`. After upgrade, check `podlaz version` and `podlaz status`;
+do not assume the VPN is active. To roll back, install a separately verified
+earlier release and check status.
 
 ```bash
 podlaz disconnect
 sudo apt purge podlaz
 ```
 
-Purging the package does not erase user-owned XDG profile, subscription or
-client-identity data. Delete those deliberately only if the data is no longer
-needed. Read [Security](.github/SECURITY.md), [Releases](https://github.com/AidarKhusainov/podlaz/releases),
-and [Issues](https://github.com/AidarKhusainov/podlaz/issues) for trust,
-downloads and support.
-
-## Provider compatibility evidence
-
-Permanent hosted qualification pins and exercises Remnawave Panel 3.4.5 with
-Remnawave Node 3.4.2. The acceptance path provisions a disposable fixture from
-empty runner state and proves subscription import/refresh, stable private
-`x-hwid` identity with a one-device policy, proxy traffic, and isolated
-full-TUN DNS/TCP/TLS/HTTPS plus privacy/cleanup invariants. No maintainer-owned
-Remnawave account, subscription, API credential, or production provider state is
-required by these permanent checks.
+Purging does **not** erase user-owned XDG profile, subscription, or identity
+data. Remove those separately only when no longer needed. See
+[Releases](https://github.com/AidarKhusainov/podlaz/releases),
+[Issues](https://github.com/AidarKhusainov/podlaz/issues), and
+[Security](.github/SECURITY.md) for downloads and support.
 
 ## License
 
