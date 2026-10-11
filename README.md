@@ -84,7 +84,7 @@ podlaz status
 podlaz disconnect
 ```
 
-`podlaz connect work` connects to a specific profile without changing the saved selection. `plz` is an alias for `podlaz`.
+Replace `work` with the profile name shown by `podlaz profile list`. `podlaz connect work` connects to that profile without changing the saved selection. `plz` is an alias for `podlaz`.
 
 ### Profiles, subscriptions and autostart
 
@@ -92,7 +92,7 @@ podlaz disconnect
 podlaz profile list
 podlaz profile show work
 podlaz subscription list
-podlaz subscription update <subscription-id>
+podlaz subscription update YOUR_SUBSCRIPTION_ID
 podlaz autostart enable
 podlaz autostart status
 ```
