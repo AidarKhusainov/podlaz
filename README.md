@@ -66,22 +66,13 @@ plz status
 
 The `stable` source is hosted at
 [aidarkhusainov.github.io/podlaz/apt](https://aidarkhusainov.github.io/podlaz/apt).
-Its production signing-key fingerprint is:
+The [installer](scripts/install.sh) verifies its pinned signing key and uses a
+scoped `Signed-By` keyring. Key or signature mismatches stop installation; do
+not bypass APT signature verification.
 
-```text
-7C6F4EF9CDE73501E79CCC63E2F6F280766864C2
-```
-
-Verify it against an **independently trusted** maintainer copy; a key served
-by the same repository is not an independent trust anchor. For manual setup,
-follow the [APT installer's procedure](scripts/install.sh): verify the key,
-use a dedicated keyring and deb822 `Signed-By` source, then install through
-APT. Never bypass signature errors with `Trusted: yes` or disabled checks.
-
-`apt-cache policy podlaz` must show a `stable/main` repository candidate,
-not only an installed version from `/var/lib/dpkg/status`. The published
-indexes include `arm64`, but equivalent native runtime qualification is
-not claimed.
+After setup, `apt-cache policy podlaz` should show a `stable/main` candidate.
+The repository includes `arm64` packages, but equivalent native runtime
+qualification is not claimed.
 
 ## Quick start
 

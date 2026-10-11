@@ -1,0 +1,54 @@
+name: README
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - '.github/workflows/readme.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'README.md'
+      - '.github/workflows/readme.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: README structure and links
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Repository structure
+        run: bash scripts/ci/repository-structure.sh --final
+
+      - name: README Markdown links and fences
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          readme = Path('README.md').read_text(encoding='utf-8')
+          assert readme.startswith('# Podlaz\n'), 'Missing README title'
+          fences = re.findall(r'^```', readme, flags=re.MULTILINE)
+          assert len(fences) % 2 == 0, 'Unbalanced Markdown code fences'
+          for target in re.findall(r'\]\(([^)]+)\)', readme):
+              if target.startswith(('http://', 'https://', '#', 'mailto:')):
+                  continue
+              path, _, fragment = target.partition('#')
+              assert path and Path(path).is_file(), f'Broken local README link: {target}'
+              if fragment:
+                  referenced = Path(path).read_text(encoding='utf-8')
+                  headings = re.findall(r'^#{1,6} +(.+)$', referenced, flags=re.MULTILINE)
+                  slugs = {re.sub(r'[^a-z0-9 -]', '', h.lower()).strip().replace(' ', '-') for h in headings}
+                  assert fragment in slugs, f'Missing Markdown section: {target}'
+          print('README links and fences: ok')
+          PY

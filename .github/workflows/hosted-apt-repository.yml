@@ -3,6 +3,8 @@ name: Hosted APT Repository
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'README.md'
   schedule:
     - cron: '23 5 * * 3'
   workflow_dispatch:
