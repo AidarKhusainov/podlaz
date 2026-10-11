@@ -27,13 +27,15 @@ Install the latest release with one command:
 curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/scripts/install.sh | bash
 ```
 
-The installer detects the Debian architecture, downloads the matching package
-and `SHA256SUMS` from the latest GitHub Release, verifies the package checksum,
-and elevates privileges only for the package installation. **Before running it,
-check that the latest release contains the matching `.deb` and `SHA256SUMS`.**
-If either asset is missing, that release is incomplete: do not bypass
-verification or try to build from source as an installation workaround. Use a
-complete, verified earlier release until publication is repaired.
+The installer detects the Debian architecture, verifies the APT repository
+signing key against a pinned fingerprint, and configures a `stable` deb822
+source with a dedicated `Signed-By` keyring. It refreshes that repository's
+index and installs Podlaz through APT; subsequent updates use normal
+`apt update && apt upgrade`. It does not disable repository signature
+verification or silently fall back to an unverified GitHub download.
+The downloaded installer runs with user privileges and invokes `sudo` only
+for APT setup and package installation. Inspect the script before executing
+remote code, and independently verify the signing fingerprint below.
 
 For a downloaded package, compare its SHA256 with the matching entry in
 `SHA256SUMS`. Where GitHub build provenance is available, verify it with
@@ -83,8 +85,9 @@ the maintainer. Do not use a fingerprint obtained only from the same APT
 repository as an independent trust anchor. Never export or share the private
 key when verifying the fingerprint.
 
-On systemd-based Debian/Ubuntu with `amd64` or `arm64`, configure a scoped
-deb822 source (not `apt-key`):
+The one-command installer above performs this setup for new installations.
+For manual setup on systemd-based Debian/Ubuntu with `amd64` or `arm64`,
+configure a scoped deb822 source (not `apt-key`):
 
 ```bash
 set -euo pipefail
