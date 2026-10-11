@@ -102,10 +102,15 @@ as_root apt-get \
 policy="$(apt-cache policy podlaz)"
 candidate="$(awk '/^[[:space:]]*Candidate:/ { print $2; exit }' <<<"${policy}")"
 if [[ -z "${candidate}" || "${candidate}" == '(none)' ]] ||
-    ! grep -Fq "${PODLAZ_APT_URL} stable/main ${arch} Packages" <<<"${policy}"; then
-  fail 'no Podlaz candidate from the signed stable repository; refusing to install'
+    ! awk -v candidate="${candidate}" -v url="${PODLAZ_APT_URL}" -v arch="${arch}" '
+      $1 == "***" { selected = ($2 == candidate); next }
+      $2 ~ /^[0-9]+$/ && $1 !~ /^[0-9]+$/ { selected = ($1 == candidate); next }
+      selected && $1 ~ /^[0-9]+$/ && $2 == url &&
+        $3 == "stable/main" && $4 == arch && $5 == "Packages" { found = 1 }
+      END { exit !found }
+    ' <<<"${policy}"; then
+  fail 'APT candidate is not published by the signed Podlaz stable repository; refusing to install'
 fi
-
 printf 'Installing Podlaz %s through APT...\n' "${candidate}"
 as_root apt-get install -y -- "podlaz=${candidate}"
 printf 'Podlaz %s installed. Future updates use normal APT upgrades.\n' "${candidate}"

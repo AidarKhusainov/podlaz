@@ -82,6 +82,18 @@ EOF_POLICY
   foreign)
     printf 'podlaz:\n  Installed: (none)\n  Candidate: 1.2.3\n  Version table:\n     1.2.3 500\n        500 https://packages.example.org/repo stable/main amd64 Packages\n'
     ;;
+  foreign-newer)
+    cat <<EOF_POLICY
+podlaz:
+  Installed: (none)
+  Candidate: 9.9.9
+  Version table:
+     9.9.9 600
+        600 https://packages.example.org/repo stable/main amd64 Packages
+     1.2.3 500
+        500 https://aidarkhusainov.github.io/podlaz/apt stable/main ${TEST_ARCH} Packages
+EOF_POLICY
+    ;;
   *) exit 99 ;;
 esac
 MOCK
@@ -153,6 +165,7 @@ run_failure_case() (
     apt-update) export TEST_APT_FAIL=update ;;
     no-candidate) export TEST_POLICY_MODE=absent ;;
     foreign-source) export TEST_POLICY_MODE=foreign ;;
+    foreign-newer) export TEST_POLICY_MODE=foreign-newer ;;
     unsupported-arch) : ;;
     *) fail "unknown failure test: $label" ;;
   esac
@@ -177,6 +190,7 @@ run_failure_case extra-key amd64
 run_failure_case apt-update amd64
 run_failure_case no-candidate amd64
 run_failure_case foreign-source amd64
+run_failure_case foreign-newer amd64
 run_failure_case unsupported-arch armhf
 
 printf 'install-script-test: ok\n'
