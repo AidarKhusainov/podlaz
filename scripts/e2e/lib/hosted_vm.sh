@@ -365,8 +365,6 @@ hosted_vm_reboot() {
 
 hosted_vm_install_candidate() {
   local candidate="$1" stage_ms
-  shift
-  local -a extra_packages=("$@")
   stage_ms="$(date +%s%3N)"
   hosted_vm_scp_to "${candidate}" /tmp/podlaz-candidate.deb
   hosted_vm_phase_end_at candidate_transfer "${stage_ms}"
@@ -374,7 +372,7 @@ hosted_vm_install_candidate() {
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq
   hosted_vm_phase_end_at candidate_apt_update "${stage_ms}"
   stage_ms="$(date +%s%3N)"
-  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/podlaz-candidate.deb "${extra_packages[@]}"
+  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/podlaz-candidate.deb
   hosted_vm_phase_end_at candidate_apt_install "${stage_ms}"
   stage_ms="$(date +%s%3N)"
   hosted_vm_ssh sudo systemctl daemon-reload

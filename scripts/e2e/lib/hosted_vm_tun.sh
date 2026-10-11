@@ -73,7 +73,7 @@ hosted_vm_tun_stop_endpoint() {
 }
 
 hosted_vm_tun_install_candidate() {
-  hosted_vm_install_candidate "${HOSTED_VM_TUN_CANDIDATE}" "$@"
+  hosted_vm_install_candidate "${HOSTED_VM_TUN_CANDIDATE}"
   hosted_vm_assert_candidate_provenance "${HOSTED_VM_TUN_CANDIDATE}" "${HOSTED_VM_TUN_EXPECTED_COMMIT}"
 }
 
