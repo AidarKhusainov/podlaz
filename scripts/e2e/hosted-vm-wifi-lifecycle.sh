@@ -168,7 +168,8 @@ wifi_fixture_phase=packages
 trap 'printf "wifi-fixture phase=%s failed\\n" "$wifi_fixture_phase" >&2' ERR
 wifi_packages_started="$(date +%s%3N)"
 
-apt-get update -qq
+# hosted_vm_tun_install_candidate refreshed APT indexes in this guest boot.
+# Reuse that same snapshot instead of repeating expensive TCG-bound metadata work.
 apt-get install -y -qq --no-install-recommends \
   dnsmasq-base \
   hostapd \
