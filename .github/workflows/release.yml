@@ -1615,6 +1615,21 @@ jobs:
           path: ${{ runner.temp }}/podlaz-release-precommit-public/hosted-precommit-interruption.txt
           if-no-files-found: error
           retention-days: 7
+  release-recovery-gate:
+    name: Require all exact-release recovery and fault evidence
+    if: ${{ always() }}
+    needs:
+      - release-recovery-gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject failed, skipped, cancelled or missing qualification
+        env:
+          QUALIFICATION_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -e 'length == 10 and all(.[]; .result == "success")' <<<"${QUALIFICATION_RESULTS}"
+
   attest-and-publish:
     name: Attest and publish GitHub Release
     needs:
