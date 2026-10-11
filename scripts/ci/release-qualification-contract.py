@@ -94,8 +94,8 @@ def validate(source):
         raise ValueError("PR candidate qualification must fail closed")
     if "github.event_name != 'pull_request' && vars.PODLAZ_APT_PUBLISH_ENABLED == 'true'" not in jobs["apt-repository"]:
         raise ValueError("APT publication must not run on PR candidates")
-    if "github.event.pull_request.head.repo.full_name == github.repository" not in jobs["resolve"]:
-        raise ValueError("PR qualification cannot accept fork builds")
+    if "if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}" not in jobs["resolve"]:
+        raise ValueError("PR qualification must accept every trusted same-repository workflow change and reject fork candidates")
     if 'tag="${GITHUB_SHA}"' not in jobs["resolve"] or 'version="0.2.47+pr.${GITHUB_SHA:0:12}"' not in jobs["resolve"]:
         raise ValueError("PR qualification must use unpublishable provenance-bound package version")
     for aggregator, children in (
@@ -184,6 +184,16 @@ def negative_tests(source):
         + "  release-daemon-recovery:\n"
         + source.partition("  release-daemon-recovery:\n")[2].replace(
             "scripts/ci/verify-release-artifacts.sh", "true", 1
+        ),
+    )
+    mutations += (
+        source.replace(
+            "if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}",
+            "if: ${{ github.event_name != 'pull_request' || true }}", 1,
+        ),
+        source.replace(
+            "if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}",
+            "if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'ci/release-terminal-boot-gate') }}", 1,
         ),
     )
     for index, mutation in enumerate(mutations):
