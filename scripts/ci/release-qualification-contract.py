@@ -112,7 +112,11 @@ def negative_tests(source):
     mutations = (
         source.replace("      - release-package-gate\n", "", 1),
         source.replace("      - release-daemon-recovery\n", "      - release-recovery-gate\n", 1),
-        source.replace("scripts/ci/verify-release-artifacts.sh", "true", 1),
+        source.partition("  release-daemon-recovery:\n")[0]
+        + "  release-daemon-recovery:\n"
+        + source.partition("  release-daemon-recovery:\n")[2].replace(
+            "scripts/ci/verify-release-artifacts.sh", "true", 1
+        ),
     )
     for index, mutation in enumerate(mutations):
         if mutation == source:
