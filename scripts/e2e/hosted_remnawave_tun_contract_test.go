@@ -94,8 +94,6 @@ func TestIntegrationKeepsRemnawaveSignalsSeparateAndSecretFree(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
-		"- cron: '17 3 * * *'",
-		"- cron: '47 4 * * 0'",
 		"remnawave_subscription:",
 		"remnawave_proxy:",
 		"remnawave_tun:",
@@ -126,6 +124,7 @@ func TestIntegrationKeepsRemnawaveSignalsSeparateAndSecretFree(t *testing.T) {
 		"real-provider:",
 		"real-provider-tun:",
 		"pull_request_target:",
+		"schedule:",
 		"self-hosted",
 	} {
 		if strings.Contains(text, forbidden) {
