@@ -3,8 +3,6 @@ name: Hosted Synthetic TUN
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  schedule:
-    - cron: '29 4 * * 3'
   workflow_dispatch:
 
 permissions:
