@@ -87,7 +87,6 @@ func TestHostedRemnawaveTUNSeparatesSuccessValidationFromNormalizedFailureScan(t
 	}
 }
 
-
 func TestIntegrationQualifiesRemnawaveOnChangedMaster(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/integration.yml")
 	if err != nil {
