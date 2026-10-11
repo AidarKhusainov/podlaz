@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+<title id="title">Podlaz: underpass beneath a fence</title>
+<g fill="none" stroke="#161616" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke-width="5">
+    <path d="M24 25 v40 M64 30 v38 M104 25 v40"/>
+    <path d="M24 34 H104 M24 54 H104"/>
+    <path d="M11 70 H117"/>
+    <path d="M26 105 Q39 86 50 84 Q64 79 78 84 Q91 88 103 105"/>
+  </g>
+  <g stroke-width="3.5"><path d="M53 87 l-11 13 M62 85 l-11 15 M72 87 l-9 12 M80 92 l-5 8"/></g>
+</g>
+</svg>
