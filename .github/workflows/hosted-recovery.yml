@@ -3,8 +3,6 @@ name: Hosted Recovery
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - 'README.md'
   schedule:
     - cron: '47 4 * * 4'
   workflow_dispatch:

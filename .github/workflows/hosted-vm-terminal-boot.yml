@@ -3,8 +3,6 @@ name: Hosted VM Terminal Boot
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - 'README.md'
   workflow_dispatch:
 
 permissions:

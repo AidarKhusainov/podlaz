@@ -3,8 +3,6 @@ name: Hosted VM Boot Continuation Ordering
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - 'README.md'
   workflow_dispatch:
 
 permissions:
