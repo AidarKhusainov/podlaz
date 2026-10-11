@@ -71,6 +71,17 @@ jobs:
           bash scripts/ci/install-go-tool.sh govulncheck
           govulncheck ./...
 
+      - name: Install workflow and shell lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          bash scripts/ci/install-go-tool.sh actionlint
+
+      - name: Check release workflows, shell contracts, and repository structure
+        run: |
+          bash scripts/ci/workflow-lint.sh
+          bash scripts/ci/repository-structure.sh --final
+
   build:
     name: Build and validate release artifacts
     needs:
