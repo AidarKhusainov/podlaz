@@ -3,6 +3,8 @@ name: Hosted Package Restart
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: '13 5 * * 5'
   workflow_dispatch:
 
 permissions:

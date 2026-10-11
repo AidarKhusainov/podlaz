@@ -46,7 +46,7 @@ func forbidHostedResourceSoakMarkers(t *testing.T, text string, markers ...strin
 func TestHostedResourceSoakWorkflowIsLongRunningDisposableQualification(t *testing.T) {
 	workflow := readHostedResourceSoakFile(t, hostedResourceSoakWorkflow)
 	requireHostedResourceSoakMarkers(t, workflow,
-		"name: Hosted Resource Soak", "workflow_dispatch:",
+		"name: Hosted Resource Soak", "workflow_dispatch:", "schedule:", "cron: '37 3 * * 0'",
 		"runs-on: ubuntu-24.04", "timeout-minutes: 330",
 		"MIN_FREE_DISK_MIB: 6144", "MIN_AVAILABLE_MEMORY_MIB: 8192",
 		"MAX_PUBLIC_ARTIFACT_BYTES: 524288", "bash scripts/build-deb.sh",
@@ -59,7 +59,7 @@ func TestHostedResourceSoakWorkflowIsLongRunningDisposableQualification(t *testi
 		}
 	}
 	forbidHostedResourceSoakMarkers(t, workflow,
-		"pull_request:", "schedule:", "self-hosted", "${{ secrets.",
+		"pull_request:", "self-hosted", "${{ secrets.",
 		"PODLAZ_E2E_SOAK_",
 	)
 }

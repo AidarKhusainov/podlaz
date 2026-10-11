@@ -2,6 +2,8 @@ name: Hosted Resource Soak
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '37 3 * * 0'
 permissions:
   contents: read
 
