@@ -18,14 +18,27 @@ make_fixture() {
   mkdir -p "${root}/fixtures" "${root}/bin"
   printf 'package-%s\n' "${arch}" >"${root}/fixtures/${asset}"
 
-  if [[ "${checksum_mode}" == valid ]]; then
-    (
-      cd "${root}/fixtures"
-      sha256sum "${asset}" >SHA256SUMS
-    )
-  else
-    printf '%064d  %s\n' 0 "${asset}" >"${root}/fixtures/SHA256SUMS"
-  fi
+  case "${checksum_mode}" in
+    valid)
+      (cd "${root}/fixtures" && sha256sum "${asset}" >SHA256SUMS)
+      ;;
+    missing)
+      printf '%064d  unrelated.deb\n' 0 >"${root}/fixtures/SHA256SUMS"
+      ;;
+    duplicate)
+      (
+        cd "${root}/fixtures"
+        sha256sum "${asset}" >SHA256SUMS
+        cp SHA256SUMS second
+        cat second >>SHA256SUMS
+        rm second
+      )
+      ;;
+    invalid)
+      printf '%064d  %s\n' 0 "${asset}" >"${root}/fixtures/SHA256SUMS"
+      ;;
+    *) fail "unknown checksum fixture: ${checksum_mode}" ;;
+  esac
 
   cat >"${root}/bin/dpkg" <<'EOF'
 #!/usr/bin/env bash
@@ -61,12 +74,17 @@ done
 
 case "${url}" in
   https://github.com/AidarKhusainov/podlaz/releases/latest)
-    printf 'https://github.com/AidarKhusainov/podlaz/releases/tag/v1.2.3'
+    if [[ "${TEST_BAD_TAG:-}" == 1 ]]; then
+      printf 'https://github.com/AidarKhusainov/podlaz/releases/tag/not-a-release'
+    else
+      printf 'https://github.com/AidarKhusainov/podlaz/releases/tag/v1.2.3'
+    fi
     ;;
   */SHA256SUMS)
     cp "${TEST_FIXTURES:?}/SHA256SUMS" "${out}"
     ;;
   */podlaz_1.2.3_linux_*.deb)
+    if [[ "${TEST_MISSING_PACKAGE:-}" == 1 ]]; then exit 22; fi
     cp "${TEST_FIXTURES:?}/${url##*/}" "${out}"
     ;;
   *)
@@ -116,10 +134,10 @@ run_success_case() (
 )
 
 run_checksum_failure_case() (
-  local root
+  local mode="${1:-invalid}" root
   root="$(mktemp -d)"
   trap 'rm -rf -- "${root}"' EXIT
-  make_fixture "${root}" amd64 invalid
+  make_fixture "${root}" amd64 "${mode}"
 
   : >"${root}/apt.log"
   if PATH="${root}/bin:${PATH}" \
@@ -127,11 +145,16 @@ run_checksum_failure_case() (
     TEST_FIXTURES="${root}/fixtures" \
     TEST_APT_LOG="${root}/apt.log" \
     bash "${installer}" >"${root}/stdout" 2>"${root}/stderr"; then
-    fail "installer accepted a package with a mismatched checksum"
+    fail "installer accepted a package with an invalid manifest: ${mode}"
   fi
 
-  [[ ! -s "${root}/apt.log" ]] || fail "installer attempted installation after checksum failure"
-  grep -Fq "checksum mismatch" "${root}/stderr" || fail "checksum failure was not classified clearly"
+  [[ ! -s "${root}/apt.log" ]] || fail "installer attempted installation after manifest failure: ${mode}"
+  if [[ "${mode}" == invalid ]]; then
+    grep -Fq "checksum mismatch" "${root}/stderr" || fail "checksum failure was not classified clearly"
+  else
+    grep -Fq "SHA256SUMS does not contain exactly one valid checksum" "${root}/stderr" \
+      || fail "manifest validation failure was not classified clearly"
+  fi
 )
 
 run_unsupported_arch_case() (
@@ -175,10 +198,37 @@ run_repeated_case() (
     || fail "repeat run installed an unexpected asset"
 )
 
+
+run_download_failure_case() (
+  local kind="$1" root
+  root="$(mktemp -d)"
+  trap 'rm -rf -- "${root}"' EXIT
+  make_fixture "${root}" amd64
+
+  : >"${root}/apt.log"
+  if [[ "${kind}" == invalid-tag ]]; then
+    export TEST_BAD_TAG=1
+  else
+    export TEST_MISSING_PACKAGE=1
+  fi
+  if PATH="${root}/bin:${PATH}" \
+    TEST_ARCH=amd64 \
+    TEST_FIXTURES="${root}/fixtures" \
+    TEST_APT_LOG="${root}/apt.log" \
+    bash "${installer}" >"${root}/stdout" 2>"${root}/stderr"; then
+    fail "installer accepted invalid download: ${kind}"
+  fi
+  [[ ! -s "${root}/apt.log" ]] || fail "installer attempted installation after invalid download: ${kind}"
+)
+
 run_success_case amd64
 run_success_case arm64
 run_repeated_case
-run_checksum_failure_case
+run_checksum_failure_case invalid
+run_checksum_failure_case missing
+run_checksum_failure_case duplicate
+run_download_failure_case invalid-tag
+run_download_failure_case missing-package
 run_unsupported_arch_case
 
 printf 'install-deb-script-test: ok\n'
