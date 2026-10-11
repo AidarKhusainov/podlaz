@@ -67,7 +67,8 @@ jobs:
   remnawave-subscription:
     name: Remnawave subscription and HWID lifecycle
     if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
+      ${{ github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            inputs.remnawave_subscription }}
     runs-on: ubuntu-24.04
@@ -133,7 +134,8 @@ jobs:
   remnawave-proxy:
     name: Ephemeral Remnawave proxy data plane
     if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
+      ${{ github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            (inputs.remnawave_proxy || inputs.remnawave_tun) }}
     runs-on: ubuntu-24.04
@@ -202,7 +204,8 @@ jobs:
     name: Isolated ephemeral Remnawave full-TUN
     needs: remnawave-proxy
     if: >-
-      ${{ github.event_name == 'workflow_dispatch' &&
+      ${{ github.event_name == 'push' ||
+          (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            inputs.remnawave_tun }}
     runs-on: ubuntu-24.04

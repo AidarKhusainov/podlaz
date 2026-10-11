@@ -87,6 +87,31 @@ func TestHostedRemnawaveTUNSeparatesSuccessValidationFromNormalizedFailureScan(t
 	}
 }
 
+
+func TestIntegrationQualifiesRemnawaveOnChangedMaster(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/integration.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	for _, jobName := range []string{"remnawave-subscription", "remnawave-proxy", "remnawave-tun"} {
+		start := strings.Index(workflow, "\n  "+jobName+":\n")
+		if start < 0 {
+			t.Fatalf("missing integration job %s", jobName)
+		}
+		steps := strings.Index(workflow[start:], "\n    runs-on:")
+		if steps < 0 {
+			t.Fatalf("missing run boundary for %s", jobName)
+		}
+		jobHeader := workflow[start : start+steps]
+		for _, token := range []string{"github.event_name == 'push'", "github.event_name == 'workflow_dispatch'"} {
+			if !strings.Contains(jobHeader, token) {
+				t.Fatalf("%s must qualify both changed master and manual intent; missing %q", jobName, token)
+			}
+		}
+	}
+}
+
 func TestIntegrationKeepsRemnawaveSignalsSeparateAndSecretFree(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/integration.yml")
 	if err != nil {
