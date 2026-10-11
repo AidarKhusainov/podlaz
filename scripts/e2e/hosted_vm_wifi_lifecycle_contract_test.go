@@ -118,7 +118,6 @@ func TestHostedVMWiFiLifecycleWorkflowIsFocused(t *testing.T) {
 	}
 }
 
-
 func TestHostedVMWiFiFixtureReusesCandidateAPTIndexes(t *testing.T) {
 	scenario, err := os.ReadFile("hosted-vm-wifi-lifecycle.sh")
 	if err != nil {
