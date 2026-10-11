@@ -57,7 +57,7 @@ Inspect either remote installer before running it.
 Verify installation (`plz` is an alias for `podlaz`):
 
 ```bash
-podlaz version
+plz version
 systemctl is-active podlazd.service
 plz status
 ```
@@ -88,24 +88,24 @@ not claimed.
 Import a share URI, subscription URL, or supported local file:
 
 ```bash
-podlaz import '<uri-or-url-or-file>'
+plz import '<uri-or-url-or-file>'
 ```
 
 A sole imported profile is selected automatically if no profile is selected.
 Otherwise choose one:
 
 ```bash
-podlaz profile list
-podlaz profile use work
+plz profile list
+plz profile use work
 ```
 
 ```bash
-podlaz connect
-podlaz status
-podlaz disconnect
+plz connect
+plz status
+plz disconnect
 ```
 
-`podlaz connect work` is a one-shot choice that does not change the saved
+`plz connect work` is a one-shot choice that does not change the saved
 selection. `connect` always requests full VPN/TUN and never silently
 falls back to Proxy-only.
 
@@ -129,15 +129,15 @@ Hysteria2 options are rejected. Native Xray full-TUN composition must validate
 Profile selectors accept stable IDs or unique case-insensitive display names.
 
 ```bash
-podlaz profile list
-podlaz profile show work
-podlaz profile use work
-podlaz profile delete work
+plz profile list
+plz profile show work
+plz profile use work
+plz profile delete work
 
-podlaz subscription list
-podlaz subscription show <subscription-id>
-podlaz subscription update <subscription-id>
-podlaz subscription delete <subscription-id>
+plz subscription list
+plz subscription show <subscription-id>
+plz subscription update <subscription-id>
+plz subscription delete <subscription-id>
 ```
 
 Deletion needs confirmation (`--yes` for non-interactive use). Failed
@@ -146,9 +146,9 @@ subscription updates preserve the last committed state.
 ## Autostart
 
 ```bash
-podlaz autostart enable
-podlaz autostart status
-podlaz autostart disable
+plz autostart enable
+plz autostart status
+plz autostart disable
 ```
 
 Autostart snapshots the selected full-VPN profile for a future boot.
@@ -159,16 +159,16 @@ A later `profile use` does not change that policy.
 Normal connections do not need separate health or recovery commands:
 
 ```bash
-podlaz debug doctor --tun
-podlaz debug logs --daemon --since 15m
-podlaz debug recover
+plz debug doctor --tun
+plz debug logs --daemon --since 15m
+plz debug recover
 ```
 
-`podlaz debug recover` inspects the plan; adding `--execute` applies recovery
+`plz debug recover` inspects the plan; adding `--execute` applies recovery
 only to proven Podlaz-owned resources. It never authorizes changes to unknown
 or foreign network state.
 
-Explicit reduced-protection Proxy-only uses `podlaz debug proxy work`.
+Explicit reduced-protection Proxy-only uses `plz debug proxy work`.
 It does not route system traffic through the VPN and is never an automatic
 fallback from `connect`.
 
@@ -177,8 +177,8 @@ for networking, ownership, privacy, and recovery invariants.
 
 ## Remnawave subscriptions and privacy
 
-Import authorized Remnawave HTTPS subscriptions with `podlaz import
-'<subscription-url>'` and refresh with `podlaz subscription update
+Import authorized Remnawave HTTPS subscriptions with `plz import
+'<subscription-url>'` and refresh with `plz subscription update
 <subscription-id>`. HTTP(S) subscription requests include a locally generated,
 stable, private `x-hwid` identity, **not** a hardware-derived identifier.
 Do not rotate it to bypass device limits; failed updates preserve saved state.
@@ -197,19 +197,19 @@ Report sensitive issues [privately](.github/SECURITY.md).
 
 ## Recovery, upgrade and removal
 
-On failure, inspect `podlaz status` and the diagnostics above. Review recovery
+On failure, inspect `plz status` and the diagnostics above. Review recovery
 before using `--execute`; never manually delete unknown routing, DNS, or
 firewall state. For Polkit authorization problems, use an authorized session
 with a working agent rather than running the CLI as root.
 
 APT installations use ordinary APT upgrades. Direct Release installations
 require rerunning the verified installer or installing a separately verified
-newer `.deb`. After upgrade, check `podlaz version` and `podlaz status`;
+newer `.deb`. After upgrade, check `plz version` and `plz status`;
 do not assume the VPN is active. To roll back, install a separately verified
 earlier release and check status.
 
 ```bash
-podlaz disconnect
+plz disconnect
 sudo apt purge podlaz
 ```
 
