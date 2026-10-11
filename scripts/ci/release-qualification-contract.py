@@ -16,6 +16,31 @@ LIFECYCLE = (
     "reboot-autostart-disabled", "boot-continuation-ordering",
 )
 REMNAWAVE = ("release-remnawave-subscription", "release-remnawave-full-tun")
+# Exact scenario entrypoints and validators are part of the release safety contract.
+SCENARIOS = {
+    "release-daemon-recovery": "hosted-daemon-recovery",
+    "release-xray-replacement": "hosted-xray-replacement",
+    "release-network-apply-rollback": "hosted-network-apply-rollback",
+    "release-network-verify-rollback": "hosted-network-verify-rollback",
+    "release-terminal-failure-convergence": "hosted-terminal-failure-convergence",
+    "release-network-reconciliation": "hosted-network-reconciliation",
+    "release-stale-observation": "hosted-stale-observation",
+    "release-foreign-state-safety": "hosted-foreign-state-safety",
+    "release-protected-gateway-lifecycle": "hosted-protected-gateway-lifecycle",
+    "release-precommit-interruption": "hosted-precommit-interruption",
+    "terminal-boot": "hosted-vm-terminal-boot",
+    "wifi-lifecycle": "hosted-vm-wifi-lifecycle",
+    "boot-authority": "hosted-vm-boot-authority",
+    "suspend-resume": "hosted-vm-suspend-resume",
+    "reboot-autostart-disabled": "hosted-vm-reboot-autostart-disabled",
+    "boot-continuation-ordering": "hosted-vm-boot-continuation-ordering",
+    "release-maintained-upgrade": "hosted-maintained-package-upgrade",
+    "release-pinned-v029": "hosted-v029-package-recovery",
+    "release-package-restart": "hosted-package-restart-recovery",
+    "release-remnawave-subscription": "remnawave-subscription-acceptance",
+    "release-remnawave-full-tun": "hosted-remnawave-tun",
+}
+
 PUBLISH = (
     "resolve", "build", "installed-runtime", "synthetic-tun", "remnawave-proxy",
     *LIFECYCLE, "release-recovery-gate", "release-package-gate", *REMNAWAVE,
@@ -108,10 +133,41 @@ def validate(source):
             raise ValueError(f"{name}: missing public verdict")
 
 
+    for name, scenario in SCENARIOS.items():
+        text = jobs[name]
+        entrypoint = f"bash scripts/e2e/{scenario}.sh"
+        if entrypoint not in text:
+            raise ValueError(f"{name}: wrong executable acceptance entrypoint: {scenario}")
+        if name == "release-remnawave-subscription":
+            validator = "bash scripts/e2e/scan-remnawave-artifacts.sh subscription"
+        elif name == "release-remnawave-full-tun":
+            validator = entrypoint + " scan-report"
+        else:
+            validator = entrypoint + " validate-report"
+        if validator not in text:
+            raise ValueError(f"{name}: missing exact scenario verdict validator")
+        if "EXPECTED_RELEASE_MANIFEST_SHA256:" not in text:
+            raise ValueError(f"{name}: missing upstream manifest-digest authority")
+
+    reconciliation = jobs["release-network-reconciliation"]
+    for scenario in ("provider-observation", "resolved-unknown", "route-replacement", "networkmanager-uplink"):
+        if f"scenario: {scenario}" not in reconciliation:
+            raise ValueError(f"missing independent reconciliation variant: {scenario}")
+    if "fail-fast: false" not in reconciliation:
+        raise ValueError("reconciliation matrix must independently evaluate all variants")
+    for value in ("MAINTAINED_RELEASE_SHA256:", "MAINTAINED_RELEASE_COMMIT:", "MAINTAINED_RELEASE_VERSION:"):
+        if value not in jobs["release-maintained-upgrade"]:
+            raise ValueError(f"maintained upgrade lost its historical source authority: {value}")
+    if "V029_RELEASE_SHA256:" not in jobs["release-pinned-v029"]:
+        raise ValueError("legacy recovery lost the pinned historical package digest")
+    if "PREVIOUS_SHA256:" not in jobs["release-package-restart"]:
+        raise ValueError("package restart lost the pinned historical package digest")
+
 def negative_tests(source):
     mutations = (
         source.replace("      - release-package-gate\n", "", 1),
         source.replace("      - release-daemon-recovery\n", "      - release-recovery-gate\n", 1),
+        source.replace("bash scripts/e2e/hosted-daemon-recovery.sh", "bash scripts/e2e/hosted-xray-replacement.sh", 1),
         source.partition("  release-daemon-recovery:\n")[0]
         + "  release-daemon-recovery:\n"
         + source.partition("  release-daemon-recovery:\n")[2].replace(
