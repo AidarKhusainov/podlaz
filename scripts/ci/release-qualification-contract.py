@@ -136,8 +136,9 @@ def validate(source):
     for name, scenario in SCENARIOS.items():
         text = jobs[name]
         entrypoint = f"bash scripts/e2e/{scenario}.sh"
-        if entrypoint not in text:
-            raise ValueError(f"{name}: wrong executable acceptance entrypoint: {scenario}")
+        # A validator alone is not execution: require the scenario with real arguments.
+        if not any(line.strip().startswith(entrypoint + ' "') for line in text.splitlines()):
+            raise ValueError(f"{name}: wrong executable acceptance invocation: {scenario}")
         if name == "release-remnawave-subscription":
             validator = "bash scripts/e2e/scan-remnawave-artifacts.sh subscription"
         elif name == "release-remnawave-full-tun":
