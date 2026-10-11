@@ -2,6 +2,7 @@
 set -euo pipefail
 
 actionlint
+python3 scripts/ci/release-qualification-contract.py
 
 mapfile -t core_scripts < <(
   find \
