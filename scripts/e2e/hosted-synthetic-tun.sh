@@ -794,16 +794,14 @@ start_synthetic_typed_reference_endpoint() {
   local protocol="$1" port="$2" uuid="$3" password="$4"
   local root="${XRAY_ROOT}/reference" asset url digest binary config="${XRAY_ROOT}/server.json"
   install -d -m 0700 "${root}"
-  curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 3 \
-    "https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.2" >"${root}/release.json"
+  # Verified GitHub Release v1.14.2 asset digest. Avoid the unauthenticated
+  # release metadata API, which becomes rate-limited under parallel hosted CI.
   asset="sing-box-1.14.2-linux-amd64.tar.gz"
-  url="$(jq -er --arg asset "${asset}" '.assets[] | select(.name == $asset) | .browser_download_url' "${root}/release.json")"
-  digest="$(jq -er --arg asset "${asset}" '.assets[] | select(.name == $asset) | .digest' "${root}/release.json")"
-  [[ "${url}" == "https://github.com/SagerNet/sing-box/releases/download/v1.14.2/${asset}" ]] || return 1
-  [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  digest="a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6"
+  url="https://github.com/SagerNet/sing-box/releases/download/v1.14.2/${asset}"
   curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error --retry 3 \
     --output "${root}/reference.tar.gz" "${url}"
-  printf '%s  %s\n' "${digest#sha256:}" "${root}/reference.tar.gz" | sha256sum --check --status
+  printf '%s  %s\n' "${digest}" "${root}/reference.tar.gz" | sha256sum --check --status
   tar -xzf "${root}/reference.tar.gz" -C "${root}"
   binary="$(find "${root}" -type f -name sing-box -print -quit)"
   [[ -n "${binary}" && -f "${binary}" ]] || return 1
