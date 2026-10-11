@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+  schedule:
+    - cron: '47 4 * * 0'
   workflow_dispatch:
     inputs:
       remnawave_subscription:
@@ -67,7 +69,7 @@ jobs:
   remnawave-subscription:
     name: Remnawave subscription and HWID lifecycle
     if: >-
-      ${{ github.event_name == 'push' ||
+      ${{ github.event_name == 'schedule' ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            inputs.remnawave_subscription) }}
@@ -134,7 +136,7 @@ jobs:
   remnawave-proxy:
     name: Ephemeral Remnawave proxy data plane
     if: >-
-      ${{ github.event_name == 'push' ||
+      ${{ github.event_name == 'schedule' ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            (inputs.remnawave_proxy || inputs.remnawave_tun)) }}
@@ -204,7 +206,7 @@ jobs:
     name: Isolated ephemeral Remnawave full-TUN
     needs: remnawave-proxy
     if: >-
-      ${{ github.event_name == 'push' ||
+      ${{ github.event_name == 'schedule' ||
           (github.event_name == 'workflow_dispatch' &&
            github.ref == 'refs/heads/master' &&
            inputs.remnawave_tun) }}

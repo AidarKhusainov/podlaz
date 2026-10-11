@@ -47,6 +47,7 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 		"name: Hosted Synthetic TUN",
 		"pull_request:",
 		"workflow_dispatch:",
+		"schedule:",
 		"runs-on: ubuntu-24.04",
 		"persist-credentials: false",
 		"bash scripts/build-deb.sh",
@@ -62,7 +63,6 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 	}
 
 	forbidHostedSyntheticTUNMarkers(t, workflow,
-		"schedule:",
 		"self-hosted",
 		"${{ secrets.",
 		"PODLAZ_E2E_PROFILE_URI",

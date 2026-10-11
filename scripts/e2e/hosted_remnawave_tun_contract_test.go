@@ -87,26 +87,34 @@ func TestHostedRemnawaveTUNSeparatesSuccessValidationFromNormalizedFailureScan(t
 	}
 }
 
-func TestIntegrationQualifiesRemnawaveOnChangedMaster(t *testing.T) {
+func TestIntegrationQualifiesAllRemnawaveProtocolsWeeklyAndOnDemand(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/integration.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	workflow := string(data)
+	triggers, _, _ := strings.Cut(workflow, "\njobs:")
+	if strings.Count(triggers, "- cron: '47 4 * * 0'") != 1 ||
+		strings.Contains(triggers, "- cron: '17 3 * * *'") {
+		t.Fatal("the full Remnawave matrix must run once weekly, not daily or per master push")
+	}
 	for _, jobName := range []string{"remnawave-subscription", "remnawave-proxy", "remnawave-tun"} {
 		start := strings.Index(workflow, "\n  "+jobName+":\n")
 		if start < 0 {
 			t.Fatalf("missing integration job %s", jobName)
 		}
-		steps := strings.Index(workflow[start:], "\n    runs-on:")
-		if steps < 0 {
+		end := strings.Index(workflow[start:], "\n    runs-on:")
+		if end < 0 {
 			t.Fatalf("missing run boundary for %s", jobName)
 		}
-		jobHeader := workflow[start : start+steps]
-		for _, token := range []string{"github.event_name == 'push'", "github.event_name == 'workflow_dispatch'"} {
+		jobHeader := workflow[start : start+end]
+		for _, token := range []string{"github.event_name == 'schedule'", "github.event_name == 'workflow_dispatch'"} {
 			if !strings.Contains(jobHeader, token) {
-				t.Fatalf("%s must qualify both changed master and manual intent; missing %q", jobName, token)
+				t.Fatalf("%s lost weekly or on-demand coverage: %q", jobName, token)
 			}
+		}
+		if strings.Contains(jobHeader, "github.event_name == 'push'") {
+			t.Fatalf("%s must not qualify unchanged protocol behavior on every master push", jobName)
 		}
 	}
 }
@@ -118,6 +126,7 @@ func TestIntegrationKeepsRemnawaveSignalsSeparateAndSecretFree(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
+		"- cron: '47 4 * * 0'",
 		"remnawave_subscription:",
 		"remnawave_proxy:",
 		"remnawave_tun:",
@@ -148,7 +157,6 @@ func TestIntegrationKeepsRemnawaveSignalsSeparateAndSecretFree(t *testing.T) {
 		"real-provider:",
 		"real-provider-tun:",
 		"pull_request_target:",
-		"schedule:",
 		"self-hosted",
 	} {
 		if strings.Contains(text, forbidden) {

@@ -6,28 +6,32 @@ import (
 	"testing"
 )
 
-func TestHostedTimeBasedQualificationOnlyTracksExternalRisk(t *testing.T) {
-	// Expensive deterministic product scenarios must be triggered by source
-	// changes or explicit diagnostics, never simply by elapsed time.
-	for _, name := range []string{
-		"hosted-recovery.yml",
-		"hosted-synthetic-tun.yml",
-		"hosted-package-history.yml",
-		"hosted-package-restart.yml",
-		"hosted-apt-repository.yml",
+func TestRecurringHostedQualificationRetainsFullMatrix(t *testing.T) {
+	// Source changes and runner drift are independent failure domains.
+	// Keep low-frequency full regressions and explicitly requested diagnostics.
+	for _, item := range []struct{ name, cron string }{
+		{"hosted-recovery.yml", "47 4 * * 4"},
+		{"hosted-synthetic-tun.yml", "29 4 * * 3"},
+		{"hosted-package-history.yml", "41 4 * * 4"},
+		{"hosted-package-restart.yml", "13 5 * * 5"},
+		{"hosted-apt-repository.yml", "23 5 * * 3"},
+		{"hosted-resource-soak.yml", "37 3 * * 0"},
+		{"integration.yml", "47 4 * * 0"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			workflow := readScheduledQualificationWorkflow(t, name)
-			requireScheduledWorkflowMarkers(t, workflow, "pull_request:", "workflow_dispatch:")
-			forbidUnchangedSourceSchedule(t, workflow)
-		})
-	}
-
-	for _, name := range []string{"hosted-resource-soak.yml", "integration.yml"} {
-		t.Run(name, func(t *testing.T) {
-			workflow := readScheduledQualificationWorkflow(t, name)
-			requireScheduledWorkflowMarkers(t, workflow, "workflow_dispatch:")
-			forbidUnchangedSourceSchedule(t, workflow)
+		t.Run(item.name, func(t *testing.T) {
+			workflow := readScheduledQualificationWorkflow(t, item.name)
+			triggers, _, _ := strings.Cut(workflow, "\njobs:")
+			cron := "- cron: '" + item.cron + "'"
+			if strings.Count(triggers, cron) != 1 || strings.Count(triggers, "- cron:") != 1 {
+				t.Fatalf("%s must retain precisely one weekly regression schedule", item.name)
+			}
+			requireScheduledWorkflowMarkers(t, triggers, "workflow_dispatch:")
+			if item.name != "hosted-resource-soak.yml" && item.name != "integration.yml" {
+				requireScheduledWorkflowMarkers(t, triggers, "pull_request:")
+			}
+			if item.name == "integration.yml" {
+				requireScheduledWorkflowMarkers(t, triggers, "push:", "- master")
+			}
 		})
 	}
 }
@@ -39,7 +43,6 @@ func TestRecurringSecurityAndDeploymentMonitoringRemainIndependent(t *testing.T)
 	if strings.Contains(weekly, "scripts/build-deb.sh") || strings.Contains(weekly, "scripts/e2e/") {
 		t.Fatal("weekly dependency security must not build packages or run hosted product E2E")
 	}
-
 	availability := readScheduledQualificationWorkflow(t, "public-apt-availability.yml")
 	requireScheduledWorkflowMarkers(t, availability,
 		"schedule:", "workflow_dispatch:", "bash scripts/ci/public-apt-smoke.sh")
@@ -60,13 +63,5 @@ func requireScheduledWorkflowMarkers(t *testing.T, workflow string, markers ...s
 		if !strings.Contains(workflow, marker) {
 			t.Fatalf("workflow lost mandatory %q", marker)
 		}
-	}
-}
-
-func forbidUnchangedSourceSchedule(t *testing.T, workflow string) {
-	t.Helper()
-	triggers, _, _ := strings.Cut(workflow, "\njobs:")
-	if strings.Contains(triggers, "\n  schedule:") {
-		t.Fatal("expensive source-deterministic qualification unexpectedly runs on a timer")
 	}
 }
