@@ -1,5 +1,9 @@
 # Podlaz
 
+![Podlaz: a passage beneath a fence](assets/branding/podlaz-logo.svg)
+
+The [monochrome artwork](assets/branding/podlaz-logo.svg) depicts a path beneath a barrier. A simplified [square icon](assets/branding/podlaz-icon.svg) is available for small-size usage. Both assets are scalable SVGs with transparent backgrounds; they are repository branding, not desktop-entry or package-installed icon resources.
+
 Podlaz is an open-source command-line VPN client for Linux written in Go.\nIt provides full-system TUN routing with fail-closed protection, DNS recovery,\nautomatic reconnection, exact-owned cleanup, and panic rollback.
 
 [![CI](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml/badge.svg)](https://github.com/AidarKhusainov/podlaz/actions/workflows/ci.yml)
