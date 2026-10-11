@@ -569,8 +569,8 @@ jobs:
 
       - name: Run exact-package boot authority qualification
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-terminal-public
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-boot-authority-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-boot-authority-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
@@ -580,14 +580,14 @@ jobs:
       - name: Validate public report
         if: always()
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-terminal-public
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-boot-authority-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-release-boot-authority-public
         run: bash scripts/e2e/hosted-vm-boot-authority.sh validate-report
 
       - name: Remove private VM state
         if: always()
         env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-terminal-private
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-release-boot-authority-private
         run: rm -rf "${E2E_TMP_ROOT}"
 
       - name: Upload public qualification evidence
@@ -595,7 +595,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: podlaz-release-boot-authority-${{ needs.resolve.outputs.version }}
-          path: ${{ runner.temp }}/podlaz-release-terminal-public/hosted-vm-boot-authority.txt
+          path: ${{ runner.temp }}/podlaz-release-boot-authority-public/hosted-vm-boot-authority.txt
           if-no-files-found: error
           retention-days: 7
 
