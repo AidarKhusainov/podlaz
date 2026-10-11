@@ -536,12 +536,12 @@ run_scenario() {
 
   mark_failure product candidate.install
   hosted_vm_phase_start
-  hosted_vm_tun_install_candidate
+  # Install fixture-only curl/jq with the candidate in one APT transaction.
+  hosted_vm_tun_install_candidate curl jq
   hosted_vm_phase_end candidate_install
 
   mark_failure fixture guest.control
   hosted_vm_phase_start
-  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
   hosted_vm_prepare_guest_agent
   hosted_vm_tun_install_helpers "${REPO_ROOT}"
   hosted_vm_tun_install_polkit "${PRIVATE_ROOT}/polkit.rules"

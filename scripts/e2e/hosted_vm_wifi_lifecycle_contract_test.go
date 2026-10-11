@@ -132,7 +132,7 @@ func TestHostedVMWiFiFixtureReusesCandidateAPTIndexes(t *testing.T) {
 		"hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq") {
 		t.Fatal("candidate installation must refresh guest APT indexes before Wi-Fi setup")
 	}
-	install := strings.Index(text, "  hosted_vm_tun_install_candidate\n")
+	install := strings.Index(text, "  hosted_vm_tun_install_candidate curl jq\n")
 	fixture := strings.Index(text, "  prepare_wifi_fixture\n")
 	if install < 0 || fixture <= install {
 		t.Fatal("Wi-Fi fixture must execute after candidate installation in the same guest boot")
@@ -142,5 +142,37 @@ func TestHostedVMWiFiFixtureReusesCandidateAPTIndexes(t *testing.T) {
 	}
 	if !strings.Contains(text, "apt-get install -y -qq --no-install-recommends") {
 		t.Fatal("Wi-Fi fixture must install its complete runtime dependencies")
+	}
+}
+
+func TestHostedVMWiFiCandidateAndControlPackagesShareOneAPTTransaction(t *testing.T) {
+	scenario, err := os.ReadFile("hosted-vm-wifi-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmHelper, err := os.ReadFile("lib/hosted_vm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunHelper, err := os.ReadFile("lib/hosted_vm_tun.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vm := string(vmHelper)
+	wifi := string(scenario)
+	if !strings.Contains(vm, `apt-get install -y -qq /tmp/podlaz-candidate.deb "${extra_packages[@]}"`) {
+		t.Fatal("candidate APT installation must accept fixture-only packages in the same transaction")
+	}
+	if !strings.Contains(string(tunHelper), `hosted_vm_install_candidate "${HOSTED_VM_TUN_CANDIDATE}" "$@"`) {
+		t.Fatal("TUN candidate helper must forward optional installation packages")
+	}
+	if !strings.Contains(wifi, "hosted_vm_tun_install_candidate curl jq") {
+		t.Fatal("Wi-Fi candidate transaction must install curl and jq before guest control setup")
+	}
+	if strings.Contains(wifi, "apt-get install -y -qq curl jq") {
+		t.Fatal("Wi-Fi guest must not repeat APT package transactions after candidate install")
+	}
+	if strings.Index(wifi, "hosted_vm_tun_install_candidate curl jq") >= strings.Index(wifi, "hosted_vm_prepare_guest_agent") {
+		t.Fatal("candidate and tools must install before guest-control provisioning")
 	}
 }
