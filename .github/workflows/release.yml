@@ -1640,6 +1640,8 @@ jobs:
     timeout-minutes: 60
     env:
       MAINTAINED_RELEASE_VERSION: 0.2.42
+      MAINTAINED_RELEASE_COMMIT: 6e933a9f1b471c83ba884ee1f0569286f1dafdce
+      MAINTAINED_RELEASE_SHA256: 62acca173c0618ef3c13c7bdd810a128d42fd8c9df38d951dfb314167e2659da
       RELEASE_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
       CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
       PREVIOUS_DEB: dist/podlaz_0.2.42_linux_amd64.deb
@@ -1743,6 +1745,7 @@ jobs:
     timeout-minutes: 90
     env:
       V029_RELEASE_COMMIT: c846f5465a90a50d72f3fc393d639a402d590798
+      V029_RELEASE_SHA256: 91644dee9ca92ddc5c48793b926f20d18da4d4267cbfdd3b41303e1e5c52516e
       RELEASE_DEB: dist/release/podlaz_${{ needs.resolve.outputs.version }}_linux_amd64.deb
       CANDIDATE_COMMIT: ${{ needs.build.outputs.commit_sha }}
       V029_DEB: dist/podlaz_0.2.29_linux_amd64.deb
