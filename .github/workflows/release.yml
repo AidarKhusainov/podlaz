@@ -1619,8 +1619,16 @@ jobs:
     name: Require all exact-release recovery and fault evidence
     if: ${{ always() }}
     needs:
-      - release-recovery-gate
-      - release-package-gate
+      - release-daemon-recovery
+      - release-xray-replacement
+      - release-network-apply-rollback
+      - release-network-verify-rollback
+      - release-terminal-failure-convergence
+      - release-network-reconciliation
+      - release-stale-observation
+      - release-foreign-state-safety
+      - release-protected-gateway-lifecycle
+      - release-precommit-interruption
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1971,16 +1979,8 @@ jobs:
       - suspend-resume
       - reboot-autostart-disabled
       - boot-continuation-ordering
-      - release-daemon-recovery
-      - release-xray-replacement
-      - release-network-apply-rollback
-      - release-network-verify-rollback
-      - release-terminal-failure-convergence
-      - release-network-reconciliation
-      - release-stale-observation
-      - release-foreign-state-safety
-      - release-protected-gateway-lifecycle
-      - release-precommit-interruption
+      - release-recovery-gate
+      - release-package-gate
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
