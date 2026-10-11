@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/AidarKhusainov/podlaz/master/script
 
 This script downloads the latest release for the system architecture, checks the package against the release's `SHA256SUMS`, and installs the local `.deb` with APT. It does **not** configure automatic updates. Rerun it to install a newer release.
 
-You can also [download a release](https://github.com/AidarKhusainov/podlaz/releases) and install a separately verified package with `sudo apt install ./podlaz_<version>_linux_<arch>.deb`. Release assets include `SHA256SUMS` and build-provenance attestations. To verify provenance, use `gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`. A checksum served alongside the package checks integrity against that manifest; it does not independently authenticate the publisher.
+You can also [download a release](https://github.com/AidarKhusainov/podlaz/releases) and install a separately verified package with `sudo apt install ./podlaz_<version>_linux_<arch>.deb`. Release assets include `SHA256SUMS`; GitHub provides separate build-provenance attestations. To verify provenance, use `gh attestation verify <package-file>.deb -R AidarKhusainov/podlaz`. A checksum served alongside the package checks integrity against that manifest; it does not independently authenticate the publisher.
 
 Both installers are shell scripts fetched from the repository. Review them before execution. Neither performs migration between installation methods.
 
