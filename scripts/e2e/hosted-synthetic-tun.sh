@@ -1182,6 +1182,17 @@ run_active_traffic_checks() {
   record_evidence tun.https_tls pass
 }
 
+normalize_nm_connectivity() {
+  case "$1" in
+    full|'4 (full)'|'4') printf 'full' ;;
+    limited|'3 (limited)'|'3') printf 'limited' ;;
+    portal|'2 (portal)'|'2') printf 'portal' ;;
+    none|'1 (none)'|'1') printf 'none' ;;
+    unknown|'0 (unknown)'|'0') printf 'unknown' ;;
+    *) printf 'other' ;;
+  esac
+}
+
 assert_networkmanager_tun_connectivity() {
   local state tun_state second
   # NetworkManager's unconfigured interval defaults to 300 seconds. Observe
@@ -1190,7 +1201,7 @@ assert_networkmanager_tun_connectivity() {
   guest_exec /bin/bash -lc 'NetworkManager --version'
   for second in $(seq 1 360); do
     state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
-    tun_state="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')"
+    tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
     if [[ "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
       printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
       record_evidence tun.networkmanager_full pass
@@ -1212,15 +1223,7 @@ assert_networkmanager_tun_connectivity() {
       tun) state_value="${nm_tun}" ;;
       uplink) state_value="${nm_uplink}" ;;
     esac
-    case "${state_value}" in
-      full|limited|portal|none|unknown) ;;
-      '4 (full)') state_value=full ;;
-      '3 (portal)') state_value=portal ;;
-      '2 (limited)') state_value=limited ;;
-      '1 (none)') state_value=none ;;
-      '0 (unknown)') state_value=unknown ;;
-      *) state_value=other ;;
-    esac
+    state_value="$(normalize_nm_connectivity "${state_value}")"
     printf 'networkmanager-%s-connectivity=%s\n' "${state_name}" "${state_value}"
   done
   # Keep the raw per-device and CONCHECK traces private; report only the
