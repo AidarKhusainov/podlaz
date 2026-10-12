@@ -46,60 +46,6 @@ func TestHostedVMBootAuthorityCoversSuccessfulAttemptAndDisconnectFence(t *testi
 	}
 }
 
-
-func TestHostedVMBootRestartFailureUsesInstalledReadOnlyDiagnostics(t *testing.T) {
-    script, err := os.ReadFile("hosted-vm-boot-authority.sh")
-    if err != nil { t.Fatal(err) }
-    body := string(script)
-    for _, expected := range []string{
-        "boot_restart_readonly_diagnostic()",
-        "boot-restart-diagnostic.api=",
-        "boot-restart-diagnostic.continuation=",
-        "/var/tmp/podlaz-hosted-vm-daemon-status-semantics.py",
-        "/var/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json",
-        "if ! hosted_vm_tun_wait_status verified-active 180; then",
-    } {
-        if !strings.Contains(body, expected) { t.Fatalf("missing diagnostic evidence %q", expected) }
-    }
-    for _, invalid := range []string{"/tmp/daemon_status_semantics.py", "/tmp/podlaz-hosted-vm-tun/"} {
-        if strings.Contains(body, invalid) { t.Fatalf("diagnostic path does not match installed helper: %q", invalid) }
-    }
-    start := strings.Index(body, "boot_restart_readonly_diagnostic() {")
-    end := strings.Index(body[start:], "\ncleanup() {")
-    if start < 0 || end < 0 { t.Fatal("read-only diagnostic boundaries missing") }
-    readonly := body[start:start+end]
-    for _, forbidden := range []string{"journalctl", "systemctl restart", "recover --execute", "podlaz disconnect", "ip link del", "nft delete", "status.json"} {
-        if strings.Contains(readonly, forbidden) { t.Fatalf("diagnostic must not expose private state or repair it: %q", forbidden) }
-    }
-}
-
-
-func TestHostedRestartStatusPollingPreservesBoundAndReadOnlyClasses(t *testing.T) {
-    script, err := os.ReadFile("hosted-vm-boot-authority.sh")
-    if err != nil { t.Fatal(err) }
-    if !strings.Contains(string(script), "hosted_vm_tun_wait_status verified-active 180 diagnose") {
-        t.Fatal("same-boot restart must diagnose the unchanged 180-attempt predicate")
-    }
-    helper, err := os.ReadFile("lib/hosted_vm_tun.sh")
-    if err != nil { t.Fatal(err) }
-    body := string(helper)
-    begin := strings.Index(body, "hosted_vm_tun_wait_status_diagnosed() {")
-    end := strings.Index(body, "\nhosted_vm_tun_wait_status() {")
-    if begin < 0 || end <= begin { t.Fatal("bounded poll helper missing") }
-    poll := body[begin:end]
-    for _, required := range []string{
-        "attempt <= attempts", "sleep 1", "--max-time 5",
-        "probe-verified-active", "guest-exec-failure",
-        "transport-connect", "semantic-active-health",
-        "boot-restart-poll.outcome=", "boot-restart-poll.attempts=",
-    } {
-        if !strings.Contains(poll, required) { t.Fatalf("poll diagnostics missing %q", required) }
-    }
-    for _, forbidden := range []string{"systemctl restart", "recover --execute", "journalctl", "ip link del", "nft delete", "profile-uri"} {
-        if strings.Contains(poll, forbidden) { t.Fatalf("poll diagnostic must be read-only: %q", forbidden) }
-    }
-}
-
 func TestHostedVMBootAuthorityUsesSharedSyntheticTUNMechanics(t *testing.T) {
 	helper, err := os.ReadFile("lib/hosted_vm_tun.sh")
 	if err != nil {

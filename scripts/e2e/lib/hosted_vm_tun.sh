@@ -288,7 +288,7 @@ EOF
     sleep 1
   done
   printf 'boot-restart-poll.outcome=%s\n' "${outcome}" >&2
-  printf 'boot-restart-poll.attempts=%s\n' "${attempt}" >&2
+  printf 'boot-restart-poll.attempts=%s\n' "$(( attempt <= attempts ? attempt : attempts ))" >&2
   for category in transport-connect transport-http transport-timeout transport-reset transport-other semantic-cleanup semantic-terminal semantic-inactive semantic-active-health semantic-active-authority semantic-other semantic-invalid guest-output-invalid guest-exec-failure; do
     if (( ${counts["${category}"]:-0} > 0 )); then
       printf 'boot-restart-poll.%s=%s\n' "${category}" "${counts["${category}"]}" >&2
