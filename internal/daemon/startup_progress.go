@@ -13,18 +13,18 @@ const startupProgressFileName = "startup-progress"
 type startupStage string
 
 const (
-	startupStagePrepared startupStage = "startup-prepared"
-	startupStageSerialized startupStage = "startup-serialized"
-	startupStageSessionLoad startupStage = "session-state-load"
-	startupStagePrivacy startupStage = "privacy-reconcile"
-	startupStageExactRecovery startupStage = "exact-recovery"
+	startupStagePrepared        startupStage = "startup-prepared"
+	startupStageSerialized      startupStage = "startup-serialized"
+	startupStageSessionLoad     startupStage = "session-state-load"
+	startupStagePrivacy         startupStage = "privacy-reconcile"
+	startupStageExactRecovery   startupStage = "exact-recovery"
 	startupStageGenericRecovery startupStage = "generic-recovery"
-	startupStageConnectReplay startupStage = "connect-replay"
-	startupStageTerminal startupStage = "terminal-recovery"
-	startupStageBootAutostart startupStage = "boot-autostart"
-	startupStageScan startupStage = "startup-scan"
-	startupStageListenerOpen startupStage = "listener-opening"
-	startupStageListenerServe startupStage = "listener-serving"
+	startupStageConnectReplay   startupStage = "connect-replay"
+	startupStageTerminal        startupStage = "terminal-recovery"
+	startupStageBootAutostart   startupStage = "boot-autostart"
+	startupStageScan            startupStage = "startup-scan"
+	startupStageListenerOpen    startupStage = "listener-opening"
+	startupStageListenerServe   startupStage = "listener-serving"
 )
 
 func (stage startupStage) valid() bool {
@@ -40,10 +40,10 @@ func (stage startupStage) valid() bool {
 }
 
 type startupProgressRecorder struct {
-	path string
+	path       string
 	invocation string
-	pid int
-	started time.Time
+	pid        int
+	started    time.Time
 }
 
 func newStartupProgressRecorder(runtimeDir string) *startupProgressRecorder {
@@ -60,10 +60,10 @@ func newStartupProgressRecorder(runtimeDir string) *startupProgressRecorder {
 		}
 	}
 	progress := &startupProgressRecorder{
-		path: filepath.Join(runtimeDir, startupProgressFileName),
+		path:       filepath.Join(runtimeDir, startupProgressFileName),
 		invocation: invocation,
-		pid: os.Getpid(),
-		started: time.Now(),
+		pid:        os.Getpid(),
+		started:    time.Now(),
 	}
 	progress.record(startupStagePrepared)
 	return progress
