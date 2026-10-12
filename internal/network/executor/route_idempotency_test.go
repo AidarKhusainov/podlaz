@@ -57,3 +57,37 @@ func TestIPRouteAddFailsForConflictingExistingRoute(t *testing.T) {
 		t.Fatalf("unexpected commands:\nwant %#v\n got %#v", want, runner.commands)
 	}
 }
+
+func TestTunRouteScopeIsAppliedAndVerifiedWithoutWeakeningLegacyRoutes(t *testing.T) {
+	newRoute := planner.TunRoutePlan{Destination: "default", Interface: "podlaz0", Table: "51821", Scope: "global"}
+	wantAdd := []string{"-4", "route", "add", "default", "dev", "podlaz0", "table", "51821", "scope", "global"}
+	if got := routeArgs("add", newRoute); !reflect.DeepEqual(got, wantAdd) {
+		t.Fatalf("new TUN route add: got %#v, want %#v", got, wantAdd)
+	}
+	wantDelete := []string{"-4", "route", "del", "default", "dev", "podlaz0", "table", "51821"}
+	if got := routeArgs("del", newRoute); !reflect.DeepEqual(got, wantDelete) {
+		t.Fatalf("scope must not be a deletion authority: got %#v, want %#v", got, wantDelete)
+	}
+	for _, line := range []string{
+		"default dev podlaz0",
+		"default dev podlaz0 scope global",
+		"default dev podlaz0 scope 0",
+	} {
+		if err := verifyRouteLine(line, newRoute); err != nil {
+			t.Errorf("global TUN route %q rejected: %v", line, err)
+		}
+	}
+	for _, line := range []string{
+		"default dev podlaz0 scope link",
+		"default dev podlaz0 scope 253",
+	} {
+		if err := verifyRouteLine(line, newRoute); err == nil {
+			t.Errorf("link-scoped TUN route %q incorrectly verified as global", line)
+		}
+	}
+	legacy := newRoute
+	legacy.Scope = ""
+	if err := verifyRouteLine("default dev podlaz0 scope link", legacy); err != nil {
+		t.Fatalf("legacy persisted route should stay verifiable without migration: %v", err)
+	}
+}
