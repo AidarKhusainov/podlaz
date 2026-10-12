@@ -46,6 +46,45 @@ func TestHostedVMBootAuthorityCoversSuccessfulAttemptAndDisconnectFence(t *testi
 	}
 }
 
+func TestHostedVMBootAuthorityFailureDiagnosticsAreReadOnlyAndBounded(t *testing.T) {
+	data, err := os.ReadFile("hosted-vm-boot-authority.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "boot_restart_readonly_diagnostic() {")
+	end := strings.Index(text[start:], "\ncleanup() {")
+	if start < 0 || end < 0 {
+		t.Fatal("bounded boot restart diagnostics must precede cleanup")
+	}
+	body := text[start : start+end]
+	for _, required := range []string{
+		"boot-restart-diagnostic.service=",
+		"boot-restart-diagnostic.socket=",
+		"boot-restart-diagnostic.continuation=",
+		"boot-restart-diagnostic.api=",
+		"--max-time 5",
+		"--output /dev/null",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("read-only diagnostics lost %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"journalctl", "cat /run/podlaz/network-session-continuation.json",
+		"systemctl restart", "systemctl start", "recover --execute",
+		"podlaz connect", "podlaz disconnect", "ip link del", "nft delete",
+		"status.json", "profile-uri",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("read-only diagnostic contains forbidden %q", forbidden)
+		}
+	}
+	if !strings.Contains(text, "if ! hosted_vm_tun_wait_status verified-active 180; then\n    boot_restart_readonly_diagnostic") {
+		t.Fatal("boot restart must retain the 180-second verified-active bound")
+	}
+}
+
 func TestHostedVMBootAuthorityUsesSharedSyntheticTUNMechanics(t *testing.T) {
 	helper, err := os.ReadFile("lib/hosted_vm_tun.sh")
 	if err != nil {

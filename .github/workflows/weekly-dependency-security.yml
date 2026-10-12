@@ -1,0 +1,38 @@
+name: Weekly Dependency Security
+
+on:
+  schedule:
+    - cron: '43 7 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-dependency-security
+  cancel-in-progress: false
+
+jobs:
+  govulncheck:
+    name: Go dependency vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+
+      - name: Install pinned govulncheck
+        run: bash scripts/ci/install-go-tool.sh govulncheck
+
+      - name: Scan repository
+        run: govulncheck ./...

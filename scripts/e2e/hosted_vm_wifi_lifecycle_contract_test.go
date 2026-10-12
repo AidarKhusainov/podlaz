@@ -117,3 +117,30 @@ func TestHostedVMWiFiLifecycleWorkflowIsFocused(t *testing.T) {
 		}
 	}
 }
+
+func TestHostedVMWiFiFixtureReusesCandidateAPTIndexes(t *testing.T) {
+	scenario, err := os.ReadFile("hosted-vm-wifi-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmHelper, err := os.ReadFile("lib/hosted_vm.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(scenario)
+	if !strings.Contains(string(vmHelper),
+		"hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq") {
+		t.Fatal("candidate installation must refresh guest APT indexes before Wi-Fi setup")
+	}
+	install := strings.Index(text, "  hosted_vm_tun_install_candidate\n")
+	fixture := strings.Index(text, "  prepare_wifi_fixture\n")
+	if install < 0 || fixture <= install {
+		t.Fatal("Wi-Fi fixture must execute after candidate installation in the same guest boot")
+	}
+	if strings.Contains(text, "apt-get update -qq") {
+		t.Fatal("Wi-Fi fixture must not re-fetch guest APT indexes after candidate installation")
+	}
+	if !strings.Contains(text, "apt-get install -y -qq --no-install-recommends") {
+		t.Fatal("Wi-Fi fixture must install its complete runtime dependencies")
+	}
+}
