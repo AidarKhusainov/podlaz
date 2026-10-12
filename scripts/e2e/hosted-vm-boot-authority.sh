@@ -187,9 +187,9 @@ test -S /run/podlaz/podlazd.sock && socket_state=present
 status_token=unavailable
 status_transport=unavailable
 if curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
-    http://localhost/v1/status >/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null; then
+    http://localhost/v1/status >/var/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null; then
   status_transport=ok
-  status_token="$(python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null || printf unclassified)"
+  status_token="$(python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py diagnose-active /var/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null || printf unclassified)"
 else
   status_transport="curl-$?"
 fi
@@ -213,13 +213,13 @@ if ! test -e /run/podlaz/network-session-continuation.json; then
   printf 'authority-missing\n'
   exit 0
 fi
-status=/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json
+status=/var/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json
 if ! curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
     http://localhost/v1/status >"$status" 2>/dev/null; then
   printf 'status-unavailable\n'
   exit 0
 fi
-python3 /tmp/daemon_status_semantics.py diagnose-active "$status" /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf 'status-unclassified\n'
+python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py diagnose-active "$status" /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf 'status-unclassified\n'
 EOF
 }
 
@@ -236,6 +236,25 @@ elif systemctl is-failed --quiet podlazd.service; then
 else
   printf 'boot-restart-diagnostic.service=inactive\n'
 fi
+# Emit only allowlisted systemd state, service result and numeric process identity.
+active_state="$(timeout 3 systemctl show -p ActiveState --value podlazd.service 2>/dev/null || true)"
+case "${active_state}" in
+  active|inactive|activating|deactivating|failed|reloading|maintenance) ;;
+  *) active_state=unknown ;;
+esac
+printf 'boot-restart-diagnostic.active_state=%s\n' "${active_state}"
+main_pid="$(timeout 3 systemctl show -p MainPID --value podlazd.service 2>/dev/null || true)"
+if [[ "${main_pid}" =~ ^[0-9]{1,10}$ ]]; then
+  printf 'boot-restart-diagnostic.main_pid=%s\n' "${main_pid}"
+else
+  printf 'boot-restart-diagnostic.main_pid=unknown\n'
+fi
+service_result="$(timeout 3 systemctl show -p Result --value podlazd.service 2>/dev/null || true)"
+case "${service_result}" in
+  success|exit-code|signal|core-dump|timeout|watchdog|start-limit-hit|resources|protocol|oom-kill) ;;
+  *) service_result=other ;;
+esac
+printf 'boot-restart-diagnostic.result=%s\n' "${service_result}"
 if test -S /run/podlaz/podlazd.sock; then
   printf 'boot-restart-diagnostic.socket=present\n'
 else
@@ -375,7 +394,7 @@ run_scenario() {
 
   mark_failure product daemon.same_boot_restart
   hosted_vm_ga_bash 'systemctl restart podlazd.service'
-  if ! hosted_vm_tun_wait_status verified-active 180; then
+  if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
     boot_restart_readonly_diagnostic
     mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
     return 1
