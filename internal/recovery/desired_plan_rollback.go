@@ -282,7 +282,7 @@ func desiredRouteCounter(routes []txstate.RoutePlan) map[string]int {
 		if item.Operation != "add" || !ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) {
 			continue
 		}
-		out[routeRollbackKey(txstate.RouteRollback{Table: item.Table, CIDR: item.CIDR, Via: item.Via, Dev: item.Dev, Owner: item.Owner})]++
+		out[routeRollbackKey(txstate.RouteRollback{Scope: item.Scope, Table: item.Table, CIDR: item.CIDR, Via: item.Via, Dev: item.Dev, Owner: item.Owner})]++
 	}
 	return out
 }
@@ -296,7 +296,7 @@ func rollbackRouteCounter(routes []txstate.RouteRollback) map[string]int {
 }
 
 func routeRollbackKey(item txstate.RouteRollback) string {
-	return strings.Join([]string{strings.TrimSpace(item.Table), strings.TrimSpace(item.CIDR), strings.TrimSpace(item.Via), strings.TrimSpace(item.Dev), normalizedRollbackOwner(item.Owner, netexecutor.OwnerRoute)}, "\x00")
+	return strings.Join([]string{strings.TrimSpace(item.Table), strings.TrimSpace(item.CIDR), strings.TrimSpace(item.Via), strings.TrimSpace(item.Dev), strings.TrimSpace(item.Scope), normalizedRollbackOwner(item.Owner, netexecutor.OwnerRoute)}, "\x00")
 }
 
 func ambiguousDesiredRouteShortTargetMismatches(desired []txstate.RoutePlan, rollback []txstate.RouteRollback) []string {
