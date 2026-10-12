@@ -187,9 +187,9 @@ test -S /run/podlaz/podlazd.sock && socket_state=present
 status_token=unavailable
 status_transport=unavailable
 if curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
-    http://localhost/v1/status >/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null; then
+    http://localhost/v1/status >/var/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null; then
   status_transport=ok
-  status_token="$(python3 /tmp/daemon_status_semantics.py diagnose-active /tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null || printf unclassified)"
+  status_token="$(python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py diagnose-active /var/tmp/podlaz-hosted-vm-tun/boot-status-diagnostic.json 2>/dev/null || printf unclassified)"
 else
   status_transport="curl-$?"
 fi
@@ -213,14 +213,57 @@ if ! test -e /run/podlaz/network-session-continuation.json; then
   printf 'authority-missing\n'
   exit 0
 fi
-status=/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json
+status=/var/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json
 if ! curl --fail --silent --show-error --max-time 5 --unix-socket /run/podlaz/podlazd.sock \
     http://localhost/v1/status >"$status" 2>/dev/null; then
   printf 'status-unavailable\n'
   exit 0
 fi
-python3 /tmp/daemon_status_semantics.py diagnose-active "$status" /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf 'status-unclassified\n'
+python3 /var/tmp/podlaz-hosted-vm-daemon-status-semantics.py diagnose-active "$status" /run/podlaz/diagnostics/network-session-resume.json 2>/dev/null || printf 'status-unclassified\n'
 EOF
+}
+
+boot_restart_readonly_diagnostic() {
+  # Never emit private status JSON, journal, profile or endpoint material.
+  # These bounded classifications only sharpen the failure domain; they do
+  # not modify product state, retry the restart or extend acceptance deadlines.
+  if ! hosted_vm_ga_bash_stdin <<'EOF_DIAGNOSTIC' >&2
+set -u
+if systemctl is-active --quiet podlazd.service; then
+  printf 'boot-restart-diagnostic.service=active\n'
+elif systemctl is-failed --quiet podlazd.service; then
+  printf 'boot-restart-diagnostic.service=failed\n'
+else
+  printf 'boot-restart-diagnostic.service=inactive\n'
+fi
+if test -S /run/podlaz/podlazd.sock; then
+  printf 'boot-restart-diagnostic.socket=present\n'
+else
+  printf 'boot-restart-diagnostic.socket=absent\n'
+fi
+if test -f /run/podlaz/network-session-continuation.json; then
+  printf 'boot-restart-diagnostic.continuation=present\n'
+else
+  printf 'boot-restart-diagnostic.continuation=absent\n'
+fi
+code=0
+curl --fail --silent --show-error --max-time 5 \
+  --unix-socket /run/podlaz/podlazd.sock \
+  --output /dev/null http://localhost/v1/status 2>/dev/null || code=$?
+case "${code}" in
+  0) class=ok ;;
+  7) class=connect_failed ;;
+  22) class=http_error ;;
+  28) class=timeout ;;
+  52) class=empty_response ;;
+  55|56) class=transport_error ;;
+  *) class=other ;;
+esac
+printf 'boot-restart-diagnostic.api=%s\n' "${class}"
+EOF_DIAGNOSTIC
+  then
+    printf 'boot-restart-diagnostic.guest-control=unavailable\n' >&2
+  fi
 }
 
 cleanup() {
@@ -333,6 +376,7 @@ run_scenario() {
   mark_failure product daemon.same_boot_restart
   hosted_vm_ga_bash 'systemctl restart podlazd.service'
   if ! hosted_vm_tun_wait_status verified-active 180; then
+    boot_restart_readonly_diagnostic
     mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
     return 1
   fi

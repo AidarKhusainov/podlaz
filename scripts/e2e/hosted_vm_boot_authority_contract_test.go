@@ -46,6 +46,33 @@ func TestHostedVMBootAuthorityCoversSuccessfulAttemptAndDisconnectFence(t *testi
 	}
 }
 
+
+func TestHostedVMBootRestartFailureUsesInstalledReadOnlyDiagnostics(t *testing.T) {
+    script, err := os.ReadFile("hosted-vm-boot-authority.sh")
+    if err != nil { t.Fatal(err) }
+    body := string(script)
+    for _, expected := range []string{
+        "boot_restart_readonly_diagnostic()",
+        "boot-restart-diagnostic.api=",
+        "boot-restart-diagnostic.continuation=",
+        "/var/tmp/podlaz-hosted-vm-daemon-status-semantics.py",
+        "/var/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json",
+        "if ! hosted_vm_tun_wait_status verified-active 180; then",
+    } {
+        if !strings.Contains(body, expected) { t.Fatalf("missing diagnostic evidence %q", expected) }
+    }
+    for _, invalid := range []string{"/tmp/daemon_status_semantics.py", "/tmp/podlaz-hosted-vm-tun/"} {
+        if strings.Contains(body, invalid) { t.Fatalf("diagnostic path does not match installed helper: %q", invalid) }
+    }
+    start := strings.Index(body, "boot_restart_readonly_diagnostic() {")
+    end := strings.Index(body[start:], "\ncleanup() {")
+    if start < 0 || end < 0 { t.Fatal("read-only diagnostic boundaries missing") }
+    readonly := body[start:start+end]
+    for _, forbidden := range []string{"journalctl", "systemctl restart", "recover --execute", "podlaz disconnect", "ip link del", "nft delete", "status.json"} {
+        if strings.Contains(readonly, forbidden) { t.Fatalf("diagnostic must not expose private state or repair it: %q", forbidden) }
+    }
+}
+
 func TestHostedVMBootAuthorityUsesSharedSyntheticTUNMechanics(t *testing.T) {
 	helper, err := os.ReadFile("lib/hosted_vm_tun.sh")
 	if err != nil {
