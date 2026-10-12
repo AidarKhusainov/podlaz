@@ -205,6 +205,7 @@ func PlanTunForSessionWithAllocationEvidence(p profile.Profile, s snapshot.Snaps
 	routes := []TunRoutePlan{{
 		Family:      "ipv4",
 		Destination: IPv4DefaultRoute,
+		Scope:       "global",
 		Table:       table,
 		Interface:   snapshot.DefaultTunName,
 		Action:      "add",
