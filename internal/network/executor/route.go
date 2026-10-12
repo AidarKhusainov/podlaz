@@ -170,6 +170,9 @@ func routeArgs(op string, plan planner.TunRoutePlan) []string {
 		args = append(args, "dev", plan.Interface)
 	}
 	args = append(args, "table", routeTable(plan.Table))
+	if op == "add" && plan.Scope != "" {
+		args = append(args, "scope", plan.Scope)
+	}
 	return args
 }
 
@@ -184,7 +187,37 @@ func verifyRouteLine(line string, plan planner.TunRoutePlan) error {
 	if plan.Gateway != "" && !containsAdjacentFields(fields, "via", plan.Gateway) {
 		return fmt.Errorf("gateway mismatch: expected via %s in %q", plan.Gateway, line)
 	}
+	if plan.Scope != "" {
+		got, err := observedRouteScope(fields)
+		if err != nil {
+			return err
+		}
+		if got != plan.Scope {
+			return fmt.Errorf("route scope mismatch: expected %s, got %s in %q", plan.Scope, got, line)
+		}
+	}
 	return nil
+}
+
+// iproute2 omits scope global in its ordinary route output.
+func observedRouteScope(fields []string) (string, error) {
+	for i, field := range fields {
+		if field != "scope" {
+			continue
+		}
+		if i+1 >= len(fields) {
+			return "", fmt.Errorf("route scope value is missing")
+		}
+		switch fields[i+1] {
+		case "global", "universe", "0":
+			return "global", nil
+		case "link", "253":
+			return "link", nil
+		default:
+			return "", fmt.Errorf("unexpected route scope %q", fields[i+1])
+		}
+	}
+	return "global", nil
 }
 
 func routeDestinationMatches(fields []string, destination string) bool {
