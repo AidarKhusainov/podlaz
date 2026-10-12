@@ -22,8 +22,8 @@ func TestHostedVMBootAuthorityRestartPollingUsesInstalledVerifierAndBoundedAttem
 		"boot-restart-diagnostic.active_state=",
 		"boot-restart-diagnostic.main_pid=",
 		"boot-restart-diagnostic.result=",
-		"boot-restart-diagnostic.startup_phase=",
-		"_SYSTEMD_INVOCATION_ID=",
+		"boot-restart-diagnostic.sub_state=",
+		"boot-restart-diagnostic.restart_count=",
 		"boot-restart-timing.systemctl_seconds=",
 	} {
 		if !strings.Contains(text, token) {
