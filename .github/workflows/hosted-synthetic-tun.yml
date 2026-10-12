@@ -161,6 +161,8 @@ jobs:
     name: NetworkManager route scope (${{ matrix.release }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      CANDIDATE_COMMIT: ${{ github.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -187,13 +189,13 @@ jobs:
           bash scripts/ci/install-go-tool.sh nfpm
       - name: Build exact candidate package
         env:
-          PODLAZ_COMMIT: ${{ github.sha }}
+          PODLAZ_COMMIT: ${{ env.CANDIDATE_COMMIT }}
         run: bash scripts/build-deb.sh
       - name: Run installed NetworkManager connectivity qualification
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-public
-          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
           PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
           PODLAZ_E2E_NM_CONNECTIVITY: 'true'
         run: |
