@@ -59,6 +59,7 @@ func tunPlanFromTransaction(tx txstate.Transaction) planner.TunPlan {
 		}
 		plan.Routes = append(plan.Routes, planner.TunRoutePlan{
 			Family:      "ipv4",
+			Scope:       route.Scope,
 			Destination: route.CIDR,
 			Table:       route.Table,
 			Gateway:     route.Via,
