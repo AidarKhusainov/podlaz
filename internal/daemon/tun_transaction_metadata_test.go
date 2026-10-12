@@ -157,3 +157,19 @@ func boundTunAddressPlanForMetadataTest() planner.TunAddressPlan {
 func tunAddressStepTargetForMetadataTest(plan planner.TunAddressPlan) string {
 	return fmt.Sprintf("%s@ifindex=%d:%s", plan.Interface, plan.LinkIndex, plan.CIDR)
 }
+
+func TestTunDefaultRouteScopeSurvivesDesiredAndRollbackProjection(t *testing.T) {
+	plan := transactionPlanForTest()
+	if len(plan.Routes) != 1 {
+		t.Fatalf("expected one owned route in fixture, got %#v", plan.Routes)
+	}
+	plan.Routes[0].Scope = "global"
+	desired := desiredPlanFromTunPlan(plan)
+	if len(desired.Routes) != 1 || desired.Routes[0].Scope != "global" {
+		t.Fatalf("global route scope lost from desired plan: %#v", desired.Routes)
+	}
+	rollback := rollbackMetadataFromTunPlan(plan)
+	if len(rollback.Routes) != 1 || rollback.Routes[0].Scope != "global" {
+		t.Fatalf("global route scope lost from owned rollback metadata: %#v", rollback.Routes)
+	}
+}
