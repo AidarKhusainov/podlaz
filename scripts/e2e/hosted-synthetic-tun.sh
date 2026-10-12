@@ -1198,21 +1198,35 @@ assert_networkmanager_tun_connectivity() {
     fi
     sleep 1
   done
-  # Only emit bounded classifications; private CONCHECK details stay in guest.
-  # These two nmcli fields expose only connectivity enums, not network identities.
-  printf "networkmanager-global-state=%q\\n" "${state}"
-  printf "networkmanager-tun-state=%q\\n" "${tun_state}"
-  case "${state}" in
-    connected:full|connected:limited|connected:portal|connected:none|connected:unknown)
-      printf 'networkmanager-global-connectivity=%s\n' "${state#connected:}" ;;
-    *) printf 'networkmanager-global-connectivity=other\n' ;;
-  esac
-  case "${tun_state}" in
-    full|limited|portal|none|unknown)
-      printf 'networkmanager-tun-connectivity=%s\n' "${tun_state}" ;;
-    *) printf 'networkmanager-tun-connectivity=other\n' ;;
-  esac
+  # Do not publish raw routes, connection identifiers or CONCHECK logs:
+  # the job output is public, and those may contain private endpoint details.
+  # Query fixed fixture interfaces and publish only normalized state classes.
+  local uplink_state nm_global nm_tun nm_uplink
+  uplink_state="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')"
+  nm_global="$(guest_exec nmcli -g CONNECTIVITY general | tr -d '\r')"
+  nm_tun="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')"
+  nm_uplink="${uplink_state}"
+  for state_name in global tun uplink; do
+    case "${state_name}" in
+      global) state_value="${nm_global}" ;;
+      tun) state_value="${nm_tun}" ;;
+      uplink) state_value="${nm_uplink}" ;;
+    esac
+    case "${state_value}" in
+      full|limited|portal|none|unknown) ;;
+      '4 (full)') state_value=full ;;
+      '3 (portal)') state_value=portal ;;
+      '2 (limited)') state_value=limited ;;
+      '1 (none)') state_value=none ;;
+      '0 (unknown)') state_value=unknown ;;
+      *) state_value=other ;;
+    esac
+    printf 'networkmanager-%s-connectivity=%s\n' "${state_name}" "${state_value}"
+  done
+  # Keep the raw per-device and CONCHECK traces private; report only the
+  # existence of the two kernel default routes and their observed metrics.
   guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
+  guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '"'"'{ for (i=1; i<=NF; i++) if ($i=="metric") { printf "networkmanager-route-%s-metric=%s\\n", dev, $(i+1); found=1 } } END { if (!found) printf "networkmanager-route-%s-metric=implicit\\n",dev }'"'"'; done' || true
   return 1
 }
 
