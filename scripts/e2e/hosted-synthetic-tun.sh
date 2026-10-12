@@ -1228,7 +1228,7 @@ assert_networkmanager_tun_connectivity() {
   guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
   # This script is interpreted inside the guest, not expanded by the caller.
   # shellcheck disable=SC2016
-  guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '"'"'{ for (i=1; i<=NF; i++) if ($i=="metric") { printf "networkmanager-route-%s-metric=%s\\n", dev, $(i+1); found=1 } } END { if (!found) printf "networkmanager-route-%s-metric=implicit\\n",dev }'"'"'; done' || true
+  guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '"'"'{ for (i=1; i<=NF; i++) if ($i=="metric") { print "networkmanager-route-" dev "-metric=" $(i+1); found=1 } } END { if (!found) print "networkmanager-route-" dev "-metric=implicit" }'"'"'; done' || true
   return 1
 }
 
