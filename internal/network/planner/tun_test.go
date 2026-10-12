@@ -273,3 +273,16 @@ func fakeDesktopWithoutNftables() snapshot.Snapshot {
 	}
 	return s
 }
+
+func TestDefaultTunRouteHasGlobalScopeWithoutChangingServerBypass(t *testing.T) {
+	plan, err := PlanTun(testVLESSProfile(), snapshot.FakeResolvedDesktop())
+	if err != nil {
+		t.Fatalf("plan TUN: %v", err)
+	}
+	if len(plan.Routes) == 0 || plan.Routes[0].Destination != IPv4DefaultRoute || plan.Routes[0].Scope != "global" {
+		t.Fatalf("default TUN route must have global scope: %#v", plan.Routes)
+	}
+	if plan.ServerBypass.Scope != "" {
+		t.Fatalf("server bypass must retain its original route semantics: %#v", plan.ServerBypass)
+	}
+}
