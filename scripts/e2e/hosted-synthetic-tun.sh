@@ -36,6 +36,8 @@ HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active termi
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
+GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
+CHECK_NM_CONNECTIVITY="${PODLAZ_E2E_NM_CONNECTIVITY:-false}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -69,6 +71,11 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
     outer.cleanup
     artifact.privacy
   )
+fi
+
+if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+  [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" != true ]] || fail "NetworkManager check needs an active protected session"
+  EVIDENCE_KEYS+=(tun.networkmanager_full)
 fi
 
 CANDIDATE_DEB=""
@@ -378,13 +385,17 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  sudo -n debootstrap --variant=minbase "${GUEST_RELEASE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
     network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+    sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      network-manager-config-connectivity-ubuntu >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
 
@@ -1171,6 +1182,25 @@ run_active_traffic_checks() {
   record_evidence tun.https_tls pass
 }
 
+assert_networkmanager_tun_connectivity() {
+  local state tun_state
+  # Observe the normal NetworkManager connectivity cycle; never force a check.
+  guest_exec nmcli general logging level DEBUG domains CONCHECK
+  guest_exec /bin/bash -lc 'NetworkManager --version'
+  for _ in $(seq 1 180); do
+    state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+    tun_state="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')"
+    if [[ "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
+      record_evidence tun.networkmanager_full pass
+      return 0
+    fi
+    sleep 1
+  done
+  # Leave complete CONCHECK evidence in guest-private journal, never public logs.
+  guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
+  return 1
+}
+
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
@@ -1305,6 +1335,10 @@ run_scenario() {
   else
     mark_failure diagnostic_unknown tun.active_traffic
     run_active_traffic_checks
+    if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+      mark_failure diagnostic_unknown tun.networkmanager_full
+      assert_networkmanager_tun_connectivity
+    fi
     mark_failure diagnostic_unknown tun.doctor
     run_tun_doctor
 
@@ -1333,6 +1367,8 @@ run_scenario() {
 }
 
 main() {
+  case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported synthetic guest release" ;; esac
+  case "${CHECK_NM_CONNECTIVITY}" in true|false) ;; *) fail "invalid NetworkManager qualification toggle" ;; esac
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
