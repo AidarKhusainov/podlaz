@@ -50,6 +50,13 @@ type networkSessionContinuationStore struct {
 	reconcilePrivacy networkSessionPrivacyReconcileStage
 	recoverExact     networkSessionExactRecoveryStage
 	continueTeardown networkSessionTeardownRecoveryStage
+	startupProgress  func(startupStage) // best-effort, fixed-phase diagnostic only
+}
+
+func (s networkSessionContinuationStore) recordStartupPhase(stage startupStage) {
+	if s.startupProgress != nil {
+		s.startupProgress(stage)
+	}
 }
 
 func newNetworkSessionContinuationStore(runtimeDir string, readBootID bootIDReader) networkSessionContinuationStore {

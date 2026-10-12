@@ -203,6 +203,7 @@ func continueBootAutostartAttempt(
 	convergeTerminal bootAutostartTerminalConvergeFunc,
 	waitForNetwork bootAutostartNetworkReadyFunc,
 ) (bootAutostartStartupResult, error) {
+	continuation.recordStartupPhase(startupStageBootAutostart)
 	request := api.ConnectRequest{Mode: attempt.Configuration.Mode, Profile: attempt.Configuration.Profile}
 
 	// Readiness is part of the already-admitted logical attempt, not a retry of
