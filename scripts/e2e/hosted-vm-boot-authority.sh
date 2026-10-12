@@ -279,26 +279,19 @@ case "${code}" in
   *) class=other ;;
 esac
 printf 'boot-restart-diagnostic.api=%s\n' "${class}"
-# Inspect only this service invocation, and emit only fixed phase labels.
-# Journal content is never written to stdout, stderr or public artifacts.
-startup_phase=invocation-unavailable
-invocation="$(timeout 3 systemctl show -p InvocationID --value podlazd.service 2>/dev/null || true)"
-if [[ "${invocation}" =~ ^[a-fA-F0-9]{32}$ ]]; then
-  startup_phase=not-observed
-  if messages="$(timeout 5 journalctl --no-pager -o cat -n 256 "_SYSTEMD_INVOCATION_ID=${invocation}" 2>/dev/null)"; then
-    case "${messages}" in
-      *"podlazd: current-boot network session continuation converged"*) startup_phase=continuation-converged ;;
-      *"podlazd: boot autostart connection established"*) startup_phase=autostart-connected ;;
-      *"podlazd: boot autostart lifecycle reached terminal outcome"*) startup_phase=terminal ;;
-      *"podlazd: current-boot network session continuation paused because exact startup recovery is incomplete"*) startup_phase=recovery-incomplete ;;
-      *"podlazd: current-boot network session continuation could not be resumed"*) startup_phase=resume-failed ;;
-      *"podlazd: boot autostart was not started because startup authority is unavailable"*) startup_phase=authority-unavailable ;;
-    esac
-  else
-    startup_phase=journal-unavailable
-  fi
+# Read only bounded, allowlisted systemd properties: never query the journal.
+sub_state="$(timeout 3 systemctl show -p SubState --value podlazd.service 2>/dev/null || true)"
+case "${sub_state}" in
+  running|dead|failed|auto-restart|start|start-pre|start-post|stop|stop-sigterm|stop-sigkill|stop-post|exited|waiting) ;;
+  *) sub_state=unknown ;;
+esac
+printf 'boot-restart-diagnostic.sub_state=%s\n' "${sub_state}"
+restart_count="$(timeout 3 systemctl show -p NRestarts --value podlazd.service 2>/dev/null || true)"
+if [[ "${restart_count}" =~ ^[0-9]{1,6}$ ]]; then
+  printf 'boot-restart-diagnostic.restart_count=%s\n' "${restart_count}"
+else
+  printf 'boot-restart-diagnostic.restart_count=unknown\n'
 fi
-printf 'boot-restart-diagnostic.startup_phase=%s\n' "${startup_phase}"
 EOF_DIAGNOSTIC
   then
     printf 'boot-restart-diagnostic.guest-control=unavailable\n' >&2
