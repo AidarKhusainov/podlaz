@@ -39,8 +39,10 @@ func (s Server) Run(ctx context.Context) error {
 	defer runtime.lock.Close()
 	defer runtime.cancelEvents()
 
-	manifestStore := s.runStartup(ctx, runtime)
+	progress := newStartupProgressRecorder(runtime.runtimeDir)
+	manifestStore := s.runStartup(ctx, runtime, progress)
 
+	progress.record(startupStageListenerOpen)
 	listeners, cleanupListeners, err := openDaemonListeners(runtime.runtimeDir, runtime.authorizer)
 	if err != nil {
 		return err
@@ -51,6 +53,7 @@ func (s Server) Run(ctx context.Context) error {
 
 	httpServer := s.newHTTPServer(runtime, manifestStore)
 	errc := serveDaemonHTTP(httpServer, listeners)
+	progress.record(startupStageListenerServe)
 	return s.waitForShutdown(ctx, httpServer, errc, len(listeners), runtime)
 }
 

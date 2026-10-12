@@ -24,6 +24,9 @@ func TestHostedVMBootAuthorityRestartPollingUsesInstalledVerifierAndBoundedAttem
 		"boot-restart-diagnostic.result=",
 		"boot-restart-diagnostic.sub_state=",
 		"boot-restart-diagnostic.restart_count=",
+		"boot-restart-diagnostic.startup_phase=",
+		"boot-restart-diagnostic.startup_phase_age_seconds=",
+		"/run/podlaz/startup-progress",
 		"boot-restart-timing.systemctl_seconds=",
 	} {
 		if !strings.Contains(text, token) {

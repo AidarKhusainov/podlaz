@@ -255,6 +255,7 @@ func resumeNetworkSessionWithTerminalObservation(
 	recover networkSessionRecoveryFunc,
 	observeTerminal networkSessionTerminalObservationStage,
 ) (bool, error) {
+	continuation.recordStartupPhase(startupStageSessionLoad)
 	recoveryEpoch := uint64(0)
 	fail := func(stage, outcome string, legacyMigration, transactionPresent bool, err error) (bool, error) {
 		wrapped := newNetworkSessionResumeOutcomeError(stage, outcome, legacyMigration, transactionPresent, err)
@@ -306,6 +307,8 @@ func resumeNetworkSessionWithTerminalObservation(
 	}
 
 	if !exists {
+		continuation.recordStartupPhase(startupStageExactRecovery)
+		continuation.recordStartupPhase(startupStageExactRecovery)
 		exactRecovery := recoverExact(ctx, continuation.runtimeDir)
 		if !networkSessionRecoveryConverged(exactRecovery) {
 			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
@@ -321,6 +324,7 @@ func resumeNetworkSessionWithTerminalObservation(
 		if status == nil || recover == nil {
 			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, errors.New("network session resume requires status and recovery functions"))
 		}
+		continuation.recordStartupPhase(startupStagePrivacy)
 		if err := reconcilePrivacy(ctx, stateStore); err != nil {
 			return fail(api.NetworkSessionResumeStagePrivacyReconcile, api.NetworkSessionResumeOutcomeFailed, legacyMigration, false, fmt.Errorf("reconcile network session privacy protection: %w", err))
 		}
@@ -328,6 +332,7 @@ func resumeNetworkSessionWithTerminalObservation(
 		if !networkSessionRecoveryConverged(exactRecovery) {
 			return fail(api.NetworkSessionResumeStageExactRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(exactRecovery), errNetworkSessionRecoveryIncomplete)
 		}
+		continuation.recordStartupPhase(startupStageGenericRecovery)
 		recovery := recover(ctx, status(ctx))
 		if !networkSessionRecoveryConverged(recovery) {
 			return fail(api.NetworkSessionResumeStageGenericRecovery, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, networkSessionRecoveryResponseHasTransaction(recovery), errNetworkSessionRecoveryIncomplete)
@@ -374,6 +379,7 @@ func resumeNetworkSessionWithTerminalObservation(
 		if state.Intent != networkSessionIntentResume {
 			return fail(api.NetworkSessionResumeStageConnectReplay, api.NetworkSessionResumeOutcomeIncomplete, legacyMigration, false, fmt.Errorf("Network Session startup replay cancelled by intent %q", state.Intent))
 		}
+		continuation.recordStartupPhase(startupStageConnectReplay)
 		if _, err := lifecycle.Connect(ctx, state.Request); err != nil {
 			replayErr := persistNetworkSessionReplayFailure(ctx, continuation, state, legacyMigration, fmt.Errorf("resume network session: %w", err))
 			currentAttempt, currentAttemptExists, currentAttemptErr = currentNetworkSessionReplayAttempt(continuation, state)
@@ -405,6 +411,7 @@ func resumeNetworkSessionWithTerminalObservation(
 		return true, nil
 
 	case networkSessionIntentDisconnect, networkSessionIntentTerminal:
+		continuation.recordStartupPhase(startupStageTerminal)
 		// Same-daemon recovery first uses live supervisor authority when available.
 		// Restart recovery has no such authority and therefore skips this stage,
 		// relying only on the exact durable transaction evidence below.
