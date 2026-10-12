@@ -190,11 +190,14 @@ func rawTUNAddressRollbackEntryValid(item txstate.TUNAddressRollback) bool {
 }
 
 func rawRouteRollbackEntryValid(item txstate.RouteRollback) bool {
+	if item.Scope != "" && item.Scope != "global" {
+		return false
+	}
 	if !ownedRollbackMetadata(item.Owner, netexecutor.OwnerRoute) || strings.TrimSpace(item.CIDR) == "" || strings.TrimSpace(item.Table) == "" {
 		return false
 	}
 	if strings.TrimSpace(item.Table) == planner.MainRoutingTable {
-		return safeMainServerBypassRouteShape(item)
+		return item.Scope == "" && safeMainServerBypassRouteShape(item)
 	}
 	if _, ok := managedTableToken(item.Table); !ok && !planner.IsAllocatedTunRoutingTable(item.Table) {
 		return false
