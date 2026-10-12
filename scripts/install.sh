@@ -1,92 +1,116 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly PODLAZ_REPOSITORY="AidarKhusainov/podlaz"
-readonly PODLAZ_RELEASES_URL="https://github.com/${PODLAZ_REPOSITORY}/releases"
+readonly PODLAZ_APT_URL="https://aidarkhusainov.github.io/podlaz/apt"
+readonly PODLAZ_APT_FINGERPRINT="7C6F4EF9CDE73501E79CCC63E2F6F280766864C2"
+readonly PODLAZ_APT_KEYRING="/etc/apt/keyrings/podlaz-archive-keyring.gpg"
+readonly PODLAZ_APT_SOURCE="/etc/apt/sources.list.d/podlaz.sources"
+
+fail() {
+  printf 'podlaz installer: %s\n' "$*" >&2
+  exit 1
+}
 
 require_command() {
-  command -v "$1" >/dev/null 2>&1 || {
-    printf 'podlaz installer: required command is missing: %s\n' "$1" >&2
-    exit 1
-  }
+  command -v "$1" >/dev/null 2>&1 || fail "required command is missing: $1"
+}
+
+as_root() {
+  if (( EUID == 0 )); then
+    "$@"
+  else
+    sudo "$@"
+  fi
 }
 
 require_command curl
-require_command sha256sum
 require_command dpkg
 require_command apt-get
+require_command apt-cache
 require_command mktemp
+require_command install
+
+if (( EUID != 0 )); then
+  require_command sudo
+fi
 
 arch="$(dpkg --print-architecture)"
 case "${arch}" in
-  amd64|arm64)
-    ;;
-  *)
-    printf 'podlaz installer: unsupported Debian architecture: %s (supported: amd64, arm64)\n' "${arch}" >&2
-    exit 1
-    ;;
+  amd64|arm64) ;;
+  *) fail "unsupported Debian architecture: ${arch} (supported: amd64, arm64)" ;;
 esac
 
-latest_url="$(curl -fsSL -o /dev/null -w '%{url_effective}' "${PODLAZ_RELEASES_URL}/latest")"
-tag="${latest_url##*/}"
-if [[ ! "${tag}" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
-  printf 'podlaz installer: could not resolve a valid latest release tag from %s\n' "${latest_url}" >&2
-  exit 1
+# GnuPG is required for inspecting the downloaded signing key before trusting it.
+if ! command -v gpg >/dev/null 2>&1; then
+  printf 'Installing GnuPG for Podlaz repository key verification...\n'
+  as_root apt-get update
+  as_root apt-get install -y --no-install-recommends gnupg
+  require_command gpg
 fi
-
-version="${tag#v}"
-asset="podlaz_${version}_linux_${arch}.deb"
-download_base="${PODLAZ_RELEASES_URL}/download/${tag}"
 
 tmp_dir="$(mktemp -d)"
-cleanup() {
-  rm -rf -- "${tmp_dir}"
-}
-trap cleanup EXIT
+trap 'rm -rf -- "${tmp_dir}"' EXIT
+key_file="${tmp_dir}/podlaz-archive-keyring.gpg"
+source_file="${tmp_dir}/podlaz.sources"
 
-manifest="${tmp_dir}/SHA256SUMS"
-package="${tmp_dir}/${asset}"
+printf 'Verifying the Podlaz APT signing key...\n'
+curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+  "${PODLAZ_APT_URL}/podlaz-archive-keyring.gpg" -o "${key_file}"
 
-printf 'Downloading Podlaz %s for %s...\n' "${version}" "${arch}"
-curl -fsSL "${download_base}/SHA256SUMS" -o "${manifest}"
-curl -fsSL "${download_base}/${asset}" -o "${package}"
-
-expected_sha256="$(
-  awk -v asset="${asset}" '
-    $2 == asset || $2 == "*" asset {
-      count++
-      digest=$1
-    }
-    END {
-      if (count == 1) {
-        print digest
-      }
-    }
-  ' "${manifest}"
+# Reject extra primary keys; a matching fingerprint alone must not authorize
+# arbitrary additional signing identities in the same keyring.
+actual_fingerprint="$(
+  gpg --batch --show-keys --with-colons "${key_file}" 2>/dev/null |
+    awk -F: '
+      $1 == "pub" { primary_keys++ }
+      $1 == "fpr" && primary_keys == 1 && first == "" { first=toupper($10) }
+      END { if (primary_keys == 1) print first }
+    '
 )"
-
-if [[ ! "${expected_sha256}" =~ ^[[:xdigit:]]{64}$ ]]; then
-  printf 'podlaz installer: SHA256SUMS does not contain exactly one valid checksum for %s\n' "${asset}" >&2
-  exit 1
+if [[ "${actual_fingerprint}" != "${PODLAZ_APT_FINGERPRINT}" ]]; then
+  fail 'APT signing key fingerprint mismatch or unexpected additional key; no repository was configured'
 fi
 
-actual_sha256="$(sha256sum -- "${package}" | awk '{print $1}')"
-if [[ "${actual_sha256,,}" != "${expected_sha256,,}" ]]; then
-  printf 'podlaz installer: checksum mismatch for %s\n' "${asset}" >&2
-  printf 'expected: %s\n' "${expected_sha256}" >&2
-  printf 'actual:   %s\n' "${actual_sha256}" >&2
-  exit 1
-fi
+printf 'Types: deb\nURIs: %s\nSuites: stable\nComponents: main\nArchitectures: %s\nSigned-By: %s\n' \
+  "${PODLAZ_APT_URL}" "${arch}" "${PODLAZ_APT_KEYRING}" >"${source_file}"
 
-printf 'Checksum verified. Installing Podlaz %s...\n' "${version}"
-(
-  cd "${tmp_dir}"
-  if (( EUID == 0 )); then
-    apt-get install -y -- "./${asset}"
-  else
-    require_command sudo
-    sudo apt-get install -y -- "./${asset}"
+# Do not overwrite preexisting, possibly administrator-managed repository state.
+# Identical files are safe to reuse when running the installer again.
+if [[ -e "${PODLAZ_APT_SOURCE}" || -L "${PODLAZ_APT_SOURCE}" ||
+      -e "${PODLAZ_APT_KEYRING}" || -L "${PODLAZ_APT_KEYRING}" ]]; then
+  if [[ ! -f "${PODLAZ_APT_SOURCE}" || ! -f "${PODLAZ_APT_KEYRING}" ]] ||
+      ! cmp -s "${source_file}" "${PODLAZ_APT_SOURCE}" ||
+      ! cmp -s "${key_file}" "${PODLAZ_APT_KEYRING}"; then
+    fail 'existing Podlaz APT configuration differs; inspect it manually before installing'
   fi
-)
+else
+  as_root install -d -m 0755 /etc/apt/keyrings
+  as_root install -m 0644 "${key_file}" "${PODLAZ_APT_KEYRING}"
+  as_root install -m 0644 "${source_file}" "${PODLAZ_APT_SOURCE}"
+fi
 
-printf 'Podlaz %s installed successfully.\n' "${version}"
+# Refresh the Podlaz index strictly without unrelated third-party repositories
+# breaking this operation or clearing their cached package indexes.
+printf 'Refreshing the signed Podlaz APT index...\n'
+as_root apt-get \
+  -o "Dir::Etc::sourcelist=${PODLAZ_APT_SOURCE}" \
+  -o 'Dir::Etc::sourceparts=-' \
+  -o 'APT::Get::List-Cleanup=0' \
+  -o 'APT::Update::Error-Mode=any' \
+  update
+
+policy="$(apt-cache policy podlaz)"
+candidate="$(awk '/^[[:space:]]*Candidate:/ { print $2; exit }' <<<"${policy}")"
+if [[ -z "${candidate}" || "${candidate}" == '(none)' ]] ||
+    ! awk -v candidate="${candidate}" -v url="${PODLAZ_APT_URL}" -v arch="${arch}" '
+      $1 == "***" { selected = ($2 == candidate); next }
+      $2 ~ /^[0-9]+$/ && $1 !~ /^[0-9]+$/ { selected = ($1 == candidate); next }
+      selected && $1 ~ /^[0-9]+$/ && $2 == url &&
+        $3 == "stable/main" && $4 == arch && $5 == "Packages" { found = 1 }
+      END { exit !found }
+    ' <<<"${policy}"; then
+  fail 'APT candidate is not published by the signed Podlaz stable repository; refusing to install'
+fi
+printf 'Installing Podlaz %s through APT...\n' "${candidate}"
+as_root apt-get install -y -- "podlaz=${candidate}"
+printf 'Podlaz %s installed. Future updates use normal APT upgrades.\n' "${candidate}"
