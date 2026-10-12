@@ -254,6 +254,8 @@ EOF
 # fixed, privacy-safe causes only for the active-session daemon restart.
 hosted_vm_tun_wait_status_diagnosed() {
   local target="$1" attempts="$2" command sample outcome=fail attempt category
+  local start_seconds=$SECONDS first_http_attempt=0 last_class=none
+  local previous_class=none streak=0 longest_streak=0 longest_streak_class=none transitions=0
   local -A counts=()
   [[ "${target}" == verified-active ]] || return 2
   command="$(cat <<'EOF'
@@ -277,18 +279,44 @@ EOF
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     if sample="$(hosted_vm_ga_bash "${command}" 2>/dev/null)"; then
       case "${sample}" in
-        match) outcome=pass; break ;;
+        match)
+          [[ "${first_http_attempt}" != 0 ]] || first_http_attempt="${attempt}"
+          last_class=match
+          outcome=pass
+          break
+          ;;
         transport-connect|transport-http|transport-timeout|transport-reset|transport-other|semantic-cleanup|semantic-terminal|semantic-inactive|semantic-active-health|semantic-active-authority|semantic-other|semantic-invalid) ;;
         *) sample=guest-output-invalid ;;
       esac
     else
       sample=guest-exec-failure
     fi
+    case "${sample}" in
+      semantic-*) [[ "${first_http_attempt}" != 0 ]] || first_http_attempt="${attempt}" ;;
+    esac
+    last_class="${sample}"
+    if [[ "${sample}" == "${previous_class}" ]]; then
+      streak=$((streak + 1))
+    else
+      transitions=$((transitions + 1))
+      streak=1
+      previous_class="${sample}"
+    fi
+    if (( streak > longest_streak )); then
+      longest_streak="${streak}"
+      longest_streak_class="${sample}"
+    fi
     counts["${sample}"]=$(( ${counts["${sample}"]:-0} + 1 ))
     sleep 1
   done
   printf 'boot-restart-poll.outcome=%s\n' "${outcome}" >&2
   printf 'boot-restart-poll.attempts=%s\n' "$(( attempt <= attempts ? attempt : attempts ))" >&2
+  printf 'boot-restart-poll.elapsed_seconds=%s\n' "$(( SECONDS - start_seconds ))" >&2
+  printf 'boot-restart-poll.first_http_attempt=%s\n' "${first_http_attempt}" >&2
+  printf 'boot-restart-poll.last_class=%s\n' "${last_class}" >&2
+  printf 'boot-restart-poll.longest_streak_class=%s\n' "${longest_streak_class}" >&2
+  printf 'boot-restart-poll.longest_streak_attempts=%s\n' "${longest_streak}" >&2
+  printf 'boot-restart-poll.transitions=%s\n' "${transitions}" >&2
   for category in transport-connect transport-http transport-timeout transport-reset transport-other semantic-cleanup semantic-terminal semantic-inactive semantic-active-health semantic-active-authority semantic-other semantic-invalid guest-output-invalid guest-exec-failure; do
     if (( ${counts["${category}"]:-0} > 0 )); then
       printf 'boot-restart-poll.%s=%s\n' "${category}" "${counts["${category}"]}" >&2

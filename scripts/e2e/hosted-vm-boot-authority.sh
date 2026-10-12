@@ -279,6 +279,26 @@ case "${code}" in
   *) class=other ;;
 esac
 printf 'boot-restart-diagnostic.api=%s\n' "${class}"
+# Inspect only this service invocation, and emit only fixed phase labels.
+# Journal content is never written to stdout, stderr or public artifacts.
+startup_phase=invocation-unavailable
+invocation="$(timeout 3 systemctl show -p InvocationID --value podlazd.service 2>/dev/null || true)"
+if [[ "${invocation}" =~ ^[a-fA-F0-9]{32}$ ]]; then
+  startup_phase=not-observed
+  if messages="$(timeout 5 journalctl --no-pager -o cat -n 256 "_SYSTEMD_INVOCATION_ID=${invocation}" 2>/dev/null)"; then
+    case "${messages}" in
+      *"podlazd: current-boot network session continuation converged"*) startup_phase=continuation-converged ;;
+      *"podlazd: boot autostart connection established"*) startup_phase=autostart-connected ;;
+      *"podlazd: boot autostart lifecycle reached terminal outcome"*) startup_phase=terminal ;;
+      *"podlazd: current-boot network session continuation paused because exact startup recovery is incomplete"*) startup_phase=recovery-incomplete ;;
+      *"podlazd: current-boot network session continuation could not be resumed"*) startup_phase=resume-failed ;;
+      *"podlazd: boot autostart was not started because startup authority is unavailable"*) startup_phase=authority-unavailable ;;
+    esac
+  else
+    startup_phase=journal-unavailable
+  fi
+fi
+printf 'boot-restart-diagnostic.startup_phase=%s\n' "${startup_phase}"
 EOF_DIAGNOSTIC
   then
     printf 'boot-restart-diagnostic.guest-control=unavailable\n' >&2
@@ -302,6 +322,7 @@ cleanup() {
 run_scenario() {
   local profile_id boot_before boot_after generation attempt_before session_before
   local daemon_before daemon_after attempt_after session_after attempt_disconnected
+  local restart_start_seconds
 
   mark_failure capability vm.acceleration
   hosted_vm_probe_acceleration
@@ -393,7 +414,9 @@ run_scenario() {
   daemon_before="$(hosted_vm_ga_bash 'systemctl show -p MainPID --value podlazd.service' | tr -d '[:space:]')"
 
   mark_failure product daemon.same_boot_restart
+  restart_start_seconds=$SECONDS
   hosted_vm_ga_bash 'systemctl restart podlazd.service'
+  printf 'boot-restart-timing.systemctl_seconds=%s\n' "$(( SECONDS - restart_start_seconds ))" >&2
   if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
     boot_restart_readonly_diagnostic
     mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"

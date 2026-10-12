@@ -22,6 +22,9 @@ func TestHostedVMBootAuthorityRestartPollingUsesInstalledVerifierAndBoundedAttem
 		"boot-restart-diagnostic.active_state=",
 		"boot-restart-diagnostic.main_pid=",
 		"boot-restart-diagnostic.result=",
+		"boot-restart-diagnostic.startup_phase=",
+		"_SYSTEMD_INVOCATION_ID=",
+		"boot-restart-timing.systemctl_seconds=",
 	} {
 		if !strings.Contains(text, token) {
 			t.Fatalf("boot restart lost %q", token)
@@ -50,6 +53,9 @@ func TestHostedVMBootAuthorityRestartPollingUsesInstalledVerifierAndBoundedAttem
 		"attempt <= attempts", "sleep 1", "--max-time 5",
 		"probe-verified-active", "guest-exec-failure", "transport-connect",
 		"semantic-active-authority", "boot-restart-poll.attempts=",
+		"boot-restart-poll.elapsed_seconds=", "boot-restart-poll.first_http_attempt=",
+		"boot-restart-poll.last_class=", "boot-restart-poll.longest_streak_class=",
+		"boot-restart-poll.longest_streak_attempts=", "boot-restart-poll.transitions=",
 	} {
 		if !strings.Contains(poll, expected) {
 			t.Fatalf("poll lost %q", expected)
@@ -81,6 +87,11 @@ func TestHostedVMBootAuthorityRestartPollingCountsFailedGuestProbesWithoutLeakin
 		"boot-restart-poll.outcome=fail",
 		"boot-restart-poll.attempts=3",
 		"boot-restart-poll.transport-connect=3",
+		"boot-restart-poll.first_http_attempt=0",
+		"boot-restart-poll.last_class=transport-connect",
+		"boot-restart-poll.longest_streak_class=transport-connect",
+		"boot-restart-poll.longest_streak_attempts=3",
+		"boot-restart-poll.transitions=1",
 	} {
 		if !strings.Contains(string(out), token) {
 			t.Fatalf("poll counter missing %q: %s", token, out)
