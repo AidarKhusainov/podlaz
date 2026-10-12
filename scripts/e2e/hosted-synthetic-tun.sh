@@ -1183,20 +1183,32 @@ run_active_traffic_checks() {
 }
 
 assert_networkmanager_tun_connectivity() {
-  local state tun_state
-  # Observe the normal NetworkManager connectivity cycle; never force a check.
+  local state tun_state second
+  # NetworkManager's unconfigured interval defaults to 300 seconds. Observe
+  # one natural cycle plus a bounded probe timeout, without forcing refresh.
   guest_exec nmcli general logging level DEBUG domains CONCHECK
   guest_exec /bin/bash -lc 'NetworkManager --version'
-  for _ in $(seq 1 180); do
+  for second in $(seq 1 360); do
     state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
     tun_state="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')"
     if [[ "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
+      printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
       record_evidence tun.networkmanager_full pass
       return 0
     fi
     sleep 1
   done
-  # Leave complete CONCHECK evidence in guest-private journal, never public logs.
+  # Only emit bounded classifications; private CONCHECK details stay in guest.
+  case "${state}" in
+    connected:full|connected:limited|connected:portal|connected:none|connected:unknown)
+      printf 'networkmanager-global-connectivity=%s\n' "${state#connected:}" ;;
+    *) printf 'networkmanager-global-connectivity=other\n' ;;
+  esac
+  case "${tun_state}" in
+    full|limited|portal|none|unknown)
+      printf 'networkmanager-tun-connectivity=%s\n' "${tun_state}" ;;
+    *) printf 'networkmanager-tun-connectivity=other\n' ;;
+  esac
   guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
   return 1
 }
