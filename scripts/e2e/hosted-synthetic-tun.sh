@@ -75,7 +75,7 @@ fi
 
 if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
   [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" != true ]] || fail "NetworkManager check needs an active protected session"
-  EVIDENCE_KEYS+=(tun.networkmanager_full)
+  EVIDENCE_KEYS=(candidate.provenance ordinary_user.boundary proxy_only.connect proxy_only.data_plane proxy_only.clean_disconnect tun.verified_active tun.system_dns tun.https_tls tun.networkmanager_full tun.clean_disconnect tun.terminal_cleanup tun.recovery_clean guest.baseline_restored outer.cleanup artifact.privacy)
 fi
 
 CANDIDATE_DEB=""
@@ -1339,8 +1339,10 @@ run_scenario() {
       mark_failure diagnostic_unknown tun.networkmanager_full
       assert_networkmanager_tun_connectivity
     fi
-    mark_failure diagnostic_unknown tun.doctor
-    run_tun_doctor
+    if [[ "${CHECK_NM_CONNECTIVITY}" != true ]]; then
+      mark_failure diagnostic_unknown tun.doctor
+      run_tun_doctor
+    fi
 
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
