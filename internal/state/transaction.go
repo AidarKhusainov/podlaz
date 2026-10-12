@@ -91,6 +91,7 @@ type TUNAddressDesiredState struct {
 }
 
 type RoutePlan struct {
+	Scope     string `json:"scope,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Table     string `json:"table,omitempty"`
 	CIDR      string `json:"cidr,omitempty"`
@@ -175,6 +176,7 @@ type TUNAddressRollback struct {
 }
 
 type RouteRollback struct {
+	Scope string `json:"scope,omitempty"`
 	Table string `json:"table,omitempty"`
 	CIDR  string `json:"cidr,omitempty"`
 	Via   string `json:"via,omitempty"`
