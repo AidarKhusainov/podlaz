@@ -168,12 +168,16 @@ run_scenario(){
   local boot_before boot_after profile gen reboot_ids before_hash after_hash pid_before pid_after
   mark_failure capability vm.acceleration; hosted_vm_probe_acceleration; record_evidence vm.acceleration pass
   hosted_vm_tun_init "${CANDIDATE_DEB}" "${EXPECTED_COMMIT}" "${XRAY_ROOT}"
-  mark_failure infrastructure vm.image; hosted_vm_prepare_image; record_evidence vm.image_checksum pass
-  mark_failure infrastructure vm.initial_boot; hosted_vm_start; hosted_vm_wait_ssh 180; hosted_vm_wait_cloud_init; record_evidence vm.initial_boot pass
+  mark_failure infrastructure vm.image; hosted_vm_phase_start; hosted_vm_prepare_image; hosted_vm_phase_end image; record_evidence vm.image_checksum pass
+  mark_failure infrastructure vm.initial_boot; hosted_vm_phase_start; hosted_vm_start; hosted_vm_wait_ssh 180; hosted_vm_wait_cloud_init; hosted_vm_phase_end initial_boot; record_evidence vm.initial_boot pass
   mark_failure product candidate.install
+  hosted_vm_phase_start
   hosted_vm_tun_install_candidate
+  hosted_vm_phase_end candidate_install
   mark_failure fixture guest.control
+  hosted_vm_phase_start
   hosted_vm_tun_prepare_control
+  hosted_vm_phase_end guest_control
   mark_failure product candidate.provenance
   hosted_vm_tun_assert_candidate_provenance
   record_evidence candidate.provenance pass
