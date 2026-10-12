@@ -1199,6 +1199,9 @@ assert_networkmanager_tun_connectivity() {
     sleep 1
   done
   # Only emit bounded classifications; private CONCHECK details stay in guest.
+  # These two nmcli fields expose only connectivity enums, not network identities.
+  printf "networkmanager-global-state=%q\\n" "${state}"
+  printf "networkmanager-tun-state=%q\\n" "${tun_state}"
   case "${state}" in
     connected:full|connected:limited|connected:portal|connected:none|connected:unknown)
       printf 'networkmanager-global-connectivity=%s\n' "${state#connected:}" ;;
