@@ -236,6 +236,25 @@ elif systemctl is-failed --quiet podlazd.service; then
 else
   printf 'boot-restart-diagnostic.service=inactive\n'
 fi
+# Emit only allowlisted systemd state, service result and numeric process identity.
+active_state="$(timeout 3 systemctl show -p ActiveState --value podlazd.service 2>/dev/null || true)"
+case "\${active_state}" in
+  active|inactive|activating|deactivating|failed|reloading|maintenance) ;;
+  *) active_state=unknown ;;
+esac
+printf 'boot-restart-diagnostic.active_state=%s\n' "\${active_state}"
+main_pid="$(timeout 3 systemctl show -p MainPID --value podlazd.service 2>/dev/null || true)"
+if [[ "\${main_pid}" =~ ^[0-9]{1,10}$ ]]; then
+  printf 'boot-restart-diagnostic.main_pid=%s\n' "\${main_pid}"
+else
+  printf 'boot-restart-diagnostic.main_pid=unknown\n'
+fi
+service_result="$(timeout 3 systemctl show -p Result --value podlazd.service 2>/dev/null || true)"
+case "\${service_result}" in
+  success|exit-code|signal|core-dump|timeout|watchdog|start-limit-hit|resources|protocol|oom-kill) ;;
+  *) service_result=other ;;
+esac
+printf 'boot-restart-diagnostic.result=%s\n' "\${service_result}"
 if test -S /run/podlaz/podlazd.sock; then
   printf 'boot-restart-diagnostic.socket=present\n'
 else

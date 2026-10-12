@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestHostedBootRestartPollingUsesInstalledVerifierAndBoundedAttempt(t *testing.T) {
+func TestHostedVMBootAuthorityRestartPollingUsesInstalledVerifierAndBoundedAttempt(t *testing.T) {
 	script, err := os.ReadFile("hosted-vm-boot-authority.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -19,6 +19,9 @@ func TestHostedBootRestartPollingUsesInstalledVerifierAndBoundedAttempt(t *testi
 		"boot_restart_readonly_diagnostic",
 		"/var/tmp/podlaz-hosted-vm-daemon-status-semantics.py",
 		"/var/tmp/podlaz-hosted-vm-tun/restart-status-diagnostic.json",
+		"boot-restart-diagnostic.active_state=",
+		"boot-restart-diagnostic.main_pid=",
+		"boot-restart-diagnostic.result=",
 	} {
 		if !strings.Contains(text, token) {
 			t.Fatalf("boot restart lost %q", token)
@@ -61,7 +64,7 @@ func TestHostedBootRestartPollingUsesInstalledVerifierAndBoundedAttempt(t *testi
 	}
 }
 
-func TestHostedBootRestartPollingCountsFailedGuestProbesWithoutLeakingOutput(t *testing.T) {
+func TestHostedVMBootAuthorityRestartPollingCountsFailedGuestProbesWithoutLeakingOutput(t *testing.T) {
 	script := strings.Join([]string{
 		"set -Eeuo pipefail",
 		"HOSTED_VM_PROVIDER_ENDPOINT_IP=192.0.2.1",
