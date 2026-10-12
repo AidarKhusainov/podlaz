@@ -97,6 +97,7 @@ type TunAddressPlan struct {
 }
 
 type TunRoutePlan struct {
+	Scope       string
 	Family      string
 	Destination string
 	Table       string
@@ -202,6 +203,7 @@ func PlanTunWithOptions(p profile.Profile, s snapshot.Snapshot, opts TunOptions)
 	routes := []TunRoutePlan{{
 		Family:      "ipv4",
 		Destination: IPv4DefaultRoute,
+		Scope:       "global",
 		Table:       TunRoutingTable,
 		Interface:   snapshot.DefaultTunName,
 		Action:      "add",
