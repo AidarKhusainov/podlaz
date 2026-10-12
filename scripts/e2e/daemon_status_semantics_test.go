@@ -223,6 +223,36 @@ func TestDaemonStatusSemanticsDiagnosesRebuildFailureFromTunDiagnostic(t *testin
 	}
 }
 
+
+func TestVerifiedActivePollProbePreservesExactPredicateAndRedactsStatus(t *testing.T) {
+    cases := []struct {
+        name string
+        status map[string]any
+        want string
+    }{
+        {"match", map[string]any{"connection": "active", "mode": "tun", "active_transaction_id": "tx-example",
+            "tun_health": map[string]any{"state": "verified"},
+            "transactions": []map[string]any{{"id": "tx-example", "state": "committed", "requires_cleanup": false}}}, "match"},
+        {"unverified", map[string]any{"connection": "active", "mode": "tun",
+            "tun_health": map[string]any{"state": "revalidating"}}, "semantic-active-health"},
+        {"authority", map[string]any{"connection": "active", "mode": "tun",
+            "tun_health": map[string]any{"state": "verified"}}, "semantic-active-authority"},
+        {"inactive", map[string]any{"connection": "inactive"}, "semantic-inactive"},
+        {"terminal-redacted", map[string]any{"terminal_reason": "sensitive-profile-identifier"}, "semantic-terminal"},
+        {"cleanup", map[string]any{"transactions": []map[string]any{{"requires_cleanup": true}}}, "semantic-cleanup"},
+    }
+    for _, tc := range cases {
+        t.Run(tc.name, func(t *testing.T) {
+            path := writeDaemonStatusFixture(t, tc.status)
+            out, err := exec.Command("python3", filepath.Join("lib", "daemon_status_semantics.py"),
+                "probe-verified-active", path).CombinedOutput()
+            if err != nil { t.Fatalf("probe: %v: %s", err, out) }
+            if got := strings.TrimSpace(string(out)); got != tc.want { t.Fatalf("got %q, want %q", got, tc.want) }
+            runDaemonStatusPredicate(t, "verified-active", path, tc.want == "match")
+        })
+    }
+}
+
 func writeDaemonStatusFixture(t *testing.T, payload map[string]any) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "status.json")

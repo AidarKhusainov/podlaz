@@ -73,6 +73,33 @@ func TestHostedVMBootRestartFailureUsesInstalledReadOnlyDiagnostics(t *testing.T
     }
 }
 
+
+func TestHostedRestartStatusPollingPreservesBoundAndReadOnlyClasses(t *testing.T) {
+    script, err := os.ReadFile("hosted-vm-boot-authority.sh")
+    if err != nil { t.Fatal(err) }
+    if !strings.Contains(string(script), "hosted_vm_tun_wait_status verified-active 180 diagnose") {
+        t.Fatal("same-boot restart must diagnose the unchanged 180-attempt predicate")
+    }
+    helper, err := os.ReadFile("lib/hosted_vm_tun.sh")
+    if err != nil { t.Fatal(err) }
+    body := string(helper)
+    begin := strings.Index(body, "hosted_vm_tun_wait_status_diagnosed() {")
+    end := strings.Index(body, "\nhosted_vm_tun_wait_status() {")
+    if begin < 0 || end <= begin { t.Fatal("bounded poll helper missing") }
+    poll := body[begin:end]
+    for _, required := range []string{
+        "attempt <= attempts", "sleep 1", "--max-time 5",
+        "probe-verified-active", "guest-exec-failure",
+        "transport-connect", "semantic-active-health",
+        "boot-restart-poll.outcome=", "boot-restart-poll.attempts=",
+    } {
+        if !strings.Contains(poll, required) { t.Fatalf("poll diagnostics missing %q", required) }
+    }
+    for _, forbidden := range []string{"systemctl restart", "recover --execute", "journalctl", "ip link del", "nft delete", "profile-uri"} {
+        if strings.Contains(poll, forbidden) { t.Fatalf("poll diagnostic must be read-only: %q", forbidden) }
+    }
+}
+
 func TestHostedVMBootAuthorityUsesSharedSyntheticTUNMechanics(t *testing.T) {
 	helper, err := os.ReadFile("lib/hosted_vm_tun.sh")
 	if err != nil {

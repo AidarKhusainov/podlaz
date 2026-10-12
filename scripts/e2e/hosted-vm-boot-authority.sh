@@ -375,7 +375,7 @@ run_scenario() {
 
   mark_failure product daemon.same_boot_restart
   hosted_vm_ga_bash 'systemctl restart podlazd.service'
-  if ! hosted_vm_tun_wait_status verified-active 180; then
+  if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then
     boot_restart_readonly_diagnostic
     mark_failure product "daemon.same_boot_restart.$(daemon_restart_failure_token)"
     return 1
