@@ -130,6 +130,7 @@ func tunRevalidationRoutePlans(tx txstate.Transaction) ([]planner.TunRoutePlan, 
 		seen[key] = struct{}{}
 		route := planner.TunRoutePlan{
 			Family:      "ipv4",
+			Scope:       desired.Scope,
 			Destination: desired.CIDR,
 			Table:       desired.Table,
 			Interface:   desired.Dev,
