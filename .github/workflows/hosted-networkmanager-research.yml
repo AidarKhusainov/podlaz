@@ -60,6 +60,7 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+          PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
         run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
       - name: Remove private guest state
         if: always()
