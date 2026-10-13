@@ -1296,6 +1296,9 @@ experiment_nm_vpn_no_l3() {
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-vpn-before.json"
   guest_exec test -x /usr/libexec/podlaz-nm-vpn-observer
   guest_exec test -f /usr/lib/NetworkManager/VPN/podlaz-research.name
+  # The gateway is the actual guest-only Xray transport destination, not a
+  # special routing exception or an invented connectivity target.
+  guest_exec /bin/bash -lc "printf '%s\\n' '${ENDPOINT_IP}' > /run/podlaz-nm-vpn-actual-gateway && chmod 0600 /run/podlaz-nm-vpn-actual-gateway"
   guest_exec /usr/bin/python3 -c 'import dbus, gi'
   printf 'nm-vpn-observer-python-dependencies=pass\n'
   # The throwaway plugin must first prove that it can own its declared
@@ -1364,7 +1367,23 @@ PY
   printf 'nm-vpn-no-l3-tun-device=%s\n' "${kind}"
   [[ "${kind}" == external ]] || return 1
   if (( activation_rc == 0 )); then
+    guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null
     printf 'nm-vpn-no-l3-activation=active\n'
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
+    local second next_state previous_state=''
+    # Do not infer a persistent global connectivity state from cached FULL.
+    for second in $(seq 1 "${NM_RESEARCH_OBSERVATIONS}"); do
+      next_state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+      if [[ "${next_state}" != "${previous_state}" ]]; then
+        printf 'nm-vpn-natural-observation=%s global=%s\n' "${second}" "${next_state}"
+        guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
+        previous_state="${next_state}"
+      fi
+      sleep 1
+    done
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+    assert_verified_active_authority
+    printf 'nm-vpn-post-cycle-authority=pass\n'
     guest_exec nmcli -w 20 connection down podlaz-guest-research >/dev/null
   else
     # A rejected connection after an observed real Connect call is negative
@@ -1376,7 +1395,7 @@ PY
   # Any observed session must first be quiesced; do not leave NM with a
   # stale reference to an executable that cleanup subsequently removes.
   guest_exec nmcli connection delete podlaz-guest-research >/dev/null
-  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked /run/podlaz-nm-vpn-observer-bus-ready
+  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked /run/podlaz-nm-vpn-observer-bus-ready /run/podlaz-nm-vpn-actual-gateway
   if guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null; then
     return 1
   fi
