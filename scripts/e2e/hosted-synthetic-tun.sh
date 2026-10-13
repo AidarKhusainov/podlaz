@@ -413,6 +413,10 @@ prepare_system_guest() {
     network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
     sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends network-manager-config-connectivity-ubuntu python3-dbus python3-gi >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+    # Install the throwaway VPN service before the guest NetworkManager starts.
+    # NetworkManager is not required to dynamically rescan service descriptors.
+    sudo -n install -D -m 0755 "${SCRIPT_DIR}/nm_vpn_no_l3_plugin.py" "${GUEST_ROOT}/usr/libexec/podlaz-nm-vpn-observer"
+    sudo -n install -D -m 0644 "${SCRIPT_DIR}/nm_vpn_no_l3_service.name" "${GUEST_ROOT}/usr/lib/NetworkManager/VPN/podlaz-research.name"
   fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
@@ -1288,9 +1292,8 @@ experiment_nm_external_tun_registration() {
 experiment_nm_vpn_no_l3() {
   local activation_rc=0 kind state
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-vpn-before.json"
-  guest_exec install -m 0700 /workspace/scripts/e2e/nm_vpn_no_l3_plugin.py /run/podlaz-nm-vpn-observer
-  guest_exec install -D -m 0644 /workspace/scripts/e2e/nm_vpn_no_l3_service.name /usr/lib/NetworkManager/VPN/podlaz-research.name
-  guest_exec nmcli general reload
+  guest_exec test -x /usr/libexec/podlaz-nm-vpn-observer
+  guest_exec test -f /usr/lib/NetworkManager/VPN/podlaz-research.name
   guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
 
@@ -1298,6 +1301,12 @@ experiment_nm_vpn_no_l3() {
   guest_exec nmcli -w 30 connection up podlaz-guest-research >"${PRIVATE_ROOT}/nm-vpn-up.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-up.stderr" || activation_rc=$?
   if ! guest_exec test -f /run/podlaz-nm-vpn-observer-invoked; then
     printf 'nm-vpn-dbus-connect=not_invoked\n'
+    for signature in 'VPN service failed to start|service_start_failed' 'VPN plugin not available|plugin_unavailable' 'VPN service not available|service_unavailable' 'failed to activate|activation_failed' 'Connection activation failed|activation_failed'; do
+      local pattern="${signature%%|*}" label="${signature#*|}"
+      if grep -qiF -- "${pattern}" "${PRIVATE_ROOT}/nm-vpn-up.stderr"; then
+        printf 'nm-vpn-activation-class=%s\n' "${label}"
+      fi
+    done
     return 1
   fi
   printf 'nm-vpn-dbus-connect=invoked\n'
@@ -1314,7 +1323,7 @@ experiment_nm_vpn_no_l3() {
     printf 'nm-vpn-no-l3-activation=rejected\n'
   fi
   guest_exec nmcli connection delete podlaz-guest-research >/dev/null
-  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /run/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked
+  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked
   if guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null; then
     return 1
   fi
