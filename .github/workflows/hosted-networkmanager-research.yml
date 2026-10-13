@@ -33,6 +33,8 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
+      - name: Validate snapshot comparison contract
+        run: python3 -m unittest discover -s scripts/e2e -p 'nm_registration_evidence_test.py' -v
       - name: Install qualification tools
         run: |
           sudo apt-get update
