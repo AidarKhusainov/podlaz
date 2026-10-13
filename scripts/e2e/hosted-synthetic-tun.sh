@@ -1302,10 +1302,17 @@ experiment_nm_vpn_no_l3() {
   # system-bus name. A missing name is an activation/runtime defect, not
   # evidence for or against delegation of NM network configuration.
   # shellcheck disable=SC2016
-  if guest_exec /bin/bash -lc '/usr/libexec/podlaz-nm-vpn-observer >/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stdout 2>/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stderr & pid=$!; rc=1; for i in $(seq 1 30); do if busctl --system status org.freedesktop.NetworkManager.podlazresearch >/dev/null 2>&1; then rc=0; break; fi; kill -0 "$pid" >/dev/null 2>&1 || break; sleep 0.2; done; kill "$pid" >/dev/null 2>&1 || :; wait "$pid" >/dev/null 2>&1 || :; exit "$rc"'; then
+  if guest_exec /bin/bash -lc '/usr/libexec/podlaz-nm-vpn-observer >/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stdout 2>/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stderr & pid=$!; rc=1; for i in $(seq 1 30); do if [[ "$(busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.NetworkManager.podlazresearch 2>/dev/null)" == "b true" ]]; then rc=0; break; fi; kill -0 "$pid" >/dev/null 2>&1 || break; sleep 0.2; done; kill "$pid" >/dev/null 2>&1 || :; wait "$pid" >/dev/null 2>&1 || :; exit "$rc"'; then
     printf 'nm-vpn-bus-ownership=pass\n'
   else
     printf 'nm-vpn-bus-ownership=fail\n'
+    if guest_exec grep -qF 'Traceback' "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
+      printf 'nm-vpn-preflight-error=python_exception\n'
+    elif guest_exec grep -qiF 'dbus' "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
+      printf 'nm-vpn-preflight-error=dbus_exception\n'
+    else
+      printf 'nm-vpn-preflight-error=no_known_traceback\n'
+    fi
     for diagnostic in 'AccessDenied|dbus_access_denied' 'PermissionDenied|dbus_permission_denied' 'ImportError|python_import_failed' 'ModuleNotFoundError|python_import_failed' 'Traceback|observer_exception'; do
       local pattern="${diagnostic%%|*}" label="${diagnostic#*|}"
       if guest_exec grep -qF "${pattern}" "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
