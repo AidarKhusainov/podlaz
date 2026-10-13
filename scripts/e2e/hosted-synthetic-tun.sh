@@ -1314,7 +1314,7 @@ experiment_nm_vpn_no_l3() {
     else
       printf 'nm-vpn-preflight-error=no_known_traceback\n'
     fi
-    for diagnostic in 'AccessDenied|dbus_access_denied' 'PermissionDenied|dbus_permission_denied' 'ImportError|python_import_failed' 'ModuleNotFoundError|python_import_failed' 'Traceback|observer_exception'; do
+    for diagnostic in 'AttributeError|python_attribute_error' 'RuntimeError|python_runtime_error' 'TypeError|python_type_error' 'NameError|python_name_error' 'DBusException|python_dbus_exception' 'AccessDenied|dbus_access_denied' 'PermissionDenied|dbus_permission_denied' 'ImportError|python_import_failed' 'ModuleNotFoundError|python_import_failed' 'Traceback|observer_exception'; do
       local pattern="${diagnostic%%|*}" label="${diagnostic#*|}"
       if guest_exec grep -qF "${pattern}" "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
         printf 'nm-vpn-observer-error-class=%s\n' "${label}"
