@@ -1257,6 +1257,7 @@ experiment_nm_external_tun_registration() {
   kind_after="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
   printf 'nm-registration-after-managed=%s device=%s\n' "${after}" "${kind_after}"
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
 
   # Observe an unforced periodic NM cycle; immediate global FULL is not
   # attributable to this device if it was already FULL before VPN activation.
@@ -1264,6 +1265,7 @@ experiment_nm_external_tun_registration() {
     state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
     if [[ "${state}" != "${last_state}" ]]; then
       printf 'nm-registration-observation=%s global=%s\n' "${second}" "${state}"
+      guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
       last_state="${state}"
     fi
     sleep 1
