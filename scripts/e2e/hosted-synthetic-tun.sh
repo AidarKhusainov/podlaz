@@ -1384,6 +1384,10 @@ PY
   if (( activation_rc == 0 )); then
     guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null
     printf 'nm-vpn-no-l3-activation=active\n'
+    guest_exec resolvectl flush-caches
+    guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+    guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+    printf 'nm-vpn-protected-dns-https=pass\n'
     guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
     local second next_state previous_state=''
     # Do not infer a persistent global connectivity state from cached FULL.
@@ -1399,6 +1403,10 @@ PY
     guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
     assert_verified_active_authority
     printf 'nm-vpn-post-cycle-authority=pass\n'
+    guest_exec resolvectl flush-caches
+    guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+    guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+    printf 'nm-vpn-post-cycle-protected-dns-https=pass\n'
     guest_exec nmcli -w 20 connection down podlaz-guest-research >/dev/null
   else
     # A rejected connection after an observed real Connect call is negative
