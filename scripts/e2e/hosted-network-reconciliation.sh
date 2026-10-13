@@ -232,6 +232,42 @@ cleanup() {
   exit "${code}"
 }
 
+diagnose_base_candidate_ready_failure() {
+  # The base guest owns private bootstrap logs; print only bounded static
+  # classifications. Never expose guest stderr, routes or endpoint material.
+  local class=unavailable step=unavailable value source signature
+  if [[ -f "${BASE_REPORT}" && ! -L "${BASE_REPORT}" ]]; then
+    class="$(awk -F= '$1 == "failure.class" {print $2; exit}' "${BASE_REPORT}" 2>/dev/null || true)"
+    step="$(awk -F= '$1 == "failure.step" {print $2; exit}' "${BASE_REPORT}" 2>/dev/null || true)"
+  fi
+  case "${class}" in
+    product|fixture|infrastructure|capability|diagnostic_unknown) ;;
+    *) class=unavailable ;;
+  esac
+  [[ "${step}" =~ ^[a-zA-Z0-9_.-]+$ ]] || step=unavailable
+  printf 'reconciliation-base-precondition=failed class=%s step=%s\n' "${class}" "${step}"
+  # Inspect logs only inside this isolated qualification; the output contains
+  # fixed labels and never copies raw CLI, apt, resolver or network values.
+  for source in "${BASE_TMP_ROOT}/private/debootstrap.log" "${BASE_TMP_ROOT}/private/guest-apt.log" "${BASE_STDERR}"; do
+    [[ -f "${source}" && ! -L "${source}" ]] || continue
+    for signature in \
+      'Temporary failure resolving|dns_resolution' \
+      'Could not resolve|dns_resolution' \
+      'Connection timed out|network_timeout' \
+      'Connection failed|network_failure' \
+      '503 Service Unavailable|repository_unavailable' \
+      '429 Too Many Requests|repository_rate_limited' \
+      'Failed to fetch|package_fetch_failed' \
+      'No space left on device|storage_exhausted' \
+      'Permission denied|permission_denied'; do
+      value="${signature%%|*}"
+      if grep -qiF -- "${value}" "${source}"; then
+        printf 'reconciliation-base-bootstrap-class=%s\n' "${signature#*|}"
+      fi
+    done
+  done
+}
+
 wait_for_control_ready() {
   local phase="$1" ready attempt code
   ready="${CONTROL_DIR}/${phase}.ready"
@@ -513,7 +549,10 @@ run_scenario() {
 
   mark_failure diagnostic_unknown base.candidate_ready
   run_base_scenario "${candidate}"
-  wait_for_control_ready candidate-ready || fail "base synthetic TUN did not reach candidate-ready boundary"
+  if ! wait_for_control_ready candidate-ready; then
+    diagnose_base_candidate_ready_failure
+    fail "base synthetic TUN did not reach candidate-ready boundary"
+  fi
   grep -Fx 'candidate.provenance=pass' "${BASE_REPORT}" >/dev/null || fail "base candidate provenance did not pass"
   record_evidence candidate.positive_control pass
 
