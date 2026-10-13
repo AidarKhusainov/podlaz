@@ -24,6 +24,24 @@ COMMANDS = (
 )
 
 
+def strip_runtime_counters(value: object) -> object:
+    """Only ignore nftables packet counters, never ownership or rule identity."""
+    if isinstance(value, list):
+        return [strip_runtime_counters(item) for item in value]
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            if key == "counter" and isinstance(item, dict):
+                cleaned[key] = {
+                    subkey: number for subkey, number in item.items()
+                    if subkey not in {"packets", "bytes"}
+                }
+            else:
+                cleaned[key] = strip_runtime_counters(item)
+        return cleaned
+    return value
+
+
 def snapshot() -> dict[str, object]:
     result: dict[str, object] = {}
     for name, args in COMMANDS:
@@ -32,7 +50,8 @@ def snapshot() -> dict[str, object]:
             raise RuntimeError(f"inspection failed for {name}")
         value = proc.stdout
         if name in {"link", "address", "routes", "rules", "firewall"}:
-            result[name] = json.loads(value)
+            parsed = json.loads(value)
+            result[name] = strip_runtime_counters(parsed) if name == "firewall" else parsed
         else:
             result[name] = value
     return result
