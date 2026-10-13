@@ -224,7 +224,8 @@ jobs:
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          export PODLAZ_E2E_CANDIDATE_COMMIT="$(git rev-parse HEAD)"
+          PODLAZ_E2E_CANDIDATE_COMMIT="$(git rev-parse HEAD)"
+          export PODLAZ_E2E_CANDIDATE_COMMIT
           bash scripts/e2e/hosted-synthetic-tun.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb
       - name: Validate normalized evidence
         if: always()
