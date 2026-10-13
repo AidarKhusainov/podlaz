@@ -7,6 +7,35 @@ import sys
 from pathlib import Path
 
 
+# A compiler invocation containing --warn-error or -Werror is not a diagnostic.
+# Keep the recognized syntax and published vocabulary independent of log input.
+DIAGNOSTIC = re.compile(
+    r'(?:^|:\s*)(?:fatal\s+)?(?:error|fatal|failed)\s*:'
+    r'|\*\*\*.*\bError [0-9]+'
+    r'|^\s*(?:[A-Za-z]+(?:Error|Exception):|Traceback \(most recent call last\))'
+    r'|^\s*(?:Could not|Cannot|Can.t|Unable to)\b'
+    r'|\b(?:subcommand failed|Operation not permitted|Permission denied)\b'
+    r'|^\s*(?:Aborted|Segmentation fault|Bail out!)\b', re.I,
+)
+
+
+def failed_target_record(line: str) -> str | None:
+    if not line.startswith('FAILED: '):
+        return None
+    target = line.removeprefix('FAILED: ').strip()
+    kind = 'other'
+    for suffix, candidate in (
+        ('NM-1.0.gir', 'introspection'),
+        ('libnm.vapi', 'vala'),
+        ('NetworkManager', 'daemon'),
+        ('nm-manager.c.o', 'manager_object'),
+    ):
+        if target == suffix or target.endswith('/' + suffix):
+            kind = candidate
+            break
+    return 'nm-selector-build-detail=failed_target_' + kind
+
+
 def build_error_records(lines: list[str]) -> list[str]:
     """Classify build errors without publishing private compiler/apt messages."""
     patterns = (
@@ -29,6 +58,18 @@ def build_error_records(lines: list[str]) -> list[str]:
         ('undeclared_identifier', r'undeclared|not declared'),
         ('conflicting_types', r'conflicting types|incompatible pointer'),
         ('format_argument', r'format.*(?:expects|argument)|format-security'),
+        ('fatal_warnings', r'warnings configured as fatal|warnings.*treated as errors'),
+        ('encoding_error', r'Unicode(?:Decode|Encode)Error|codec.*(?:encode|decode)'),
+        ('constant_type', r'(?:determine|resolve).*type of constant'),
+        ('namespace', r'namespace|\bbwrap\b'),
+        ('locale_encoding', r'unsupported locale|locale.*(?:not supported|unknown)'),
+        ('introspection_annotation', r'annotation|not introspectable'),
+        ('introspection_symbol', r'unknown namespace|unresolved.*(?:type|symbol)'),
+        ('dbus', r'dbus|D-Bus'),
+        ('sandbox', r'sandbox|seccomp|uid map|gid map'),
+        ('temporary_file', r'temporary file|temporary directory|mkstemp'),
+        ('read_only_filesystem', r'read-only file system'),
+        ('internal_compiler_error', r'internal compiler error'),
         ('undefined_reference', r'undefined reference|undefined symbol'),
         ('missing_file', r'no such file|not found|does not exist|cannot (?:open|access|stat)'),
         ('missing_dependency', r'dependency.*(?:not found|not satisfied)|unmet.*dependenc'),
@@ -50,7 +91,11 @@ def build_error_records(lines: list[str]) -> list[str]:
     )
     output: list[str] = []
     for line in lines:
-        if not re.search(r'\berror\b|\bfatal\b|\bfailed\b|\bexception\b', line, re.I):
+        target_record = failed_target_record(line)
+        if target_record is not None:
+            output.append(target_record)
+            continue
+        if not DIAGNOSTIC.search(line):
             continue
         labels = [label for label, pattern in patterns if re.search(pattern, line, re.I)]
         for filename, label in (('nm-manager.c', 'nm_manager'), ('meson.build', 'meson'), ('debian/rules', 'debian_rules')):
