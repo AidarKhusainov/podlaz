@@ -1067,7 +1067,32 @@ assert_guest_network_baseline_restored() {
   local before="${PRIVATE_ROOT}/guest-baseline" after="${PRIVATE_ROOT}/guest-after" suffix
   capture_guest_network_snapshot "${after}"
   for suffix in addr.json routes.json rules.json nft.json nm.txt resolved.txt; do
-    cmp -s "${before}.${suffix}" "${after}.${suffix}" || return 1
+    if cmp -s "${before}.${suffix}" "${after}.${suffix}"; then
+      continue
+    fi
+    # An unforced NM connectivity cycle can penalize the guest fixture's
+    # physical uplink default metric. Only the research fixture may tolerate
+    # this one numeric change; all other routes and components stay exact.
+    if [[ "${NM_REGISTRATION_RESEARCH}" == true && "${suffix}" == routes.json ]] &&
+       PYTHONPATH="${SCRIPT_DIR}" python3 - "${before}.${suffix}" "${after}.${suffix}" <<'PY'
+import json
+import sys
+from nm_registration_evidence import normalized_ipv4_routes
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    before = json.load(source)
+with open(sys.argv[2], encoding="utf-8") as source:
+    after = json.load(source)
+sys.exit(0 if normalized_ipv4_routes(before) == normalized_ipv4_routes(after) else 1)
+PY
+    then
+      printf 'nm-baseline-uplink-health-metric-only=pass\n'
+      continue
+    fi
+    if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+      printf 'nm-baseline-unexpected-delta=%s\n' "${suffix//./_}"
+    fi
+    return 1
   done
 }
 
@@ -1414,6 +1439,7 @@ run_scenario() {
   assert_terminal_authority_clean
   record_evidence tun.terminal_cleanup pass
   hosted_control_pause terminal-clean
+  mark_failure diagnostic_unknown guest.baseline_restored
   assert_guest_network_baseline_restored
   record_evidence guest.baseline_restored pass
   mark_failure diagnostic_unknown guest.connectivity_restored
