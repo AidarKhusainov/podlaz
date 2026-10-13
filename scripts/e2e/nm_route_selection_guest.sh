@@ -14,10 +14,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 sudo -n test -x "${ROOT}/usr/sbin/policy-rc.d"
 sudo -n grep -qx 'exit 101' "${ROOT}/usr/sbin/policy-rc.d"
 
+# The export-version generator uses /dev/fd (Bash process substitution).
+# Give the build its own procfs and PID view; never mount over runner /proc.
+# Namespace lifetime also bounds every build subprocess on success/failure.
+run_build_guest() {
+  sudo -n unshare --mount --pid --fork --kill-child --mount-proc="${ROOT}/proc" -- \
+    chroot "${ROOT}" /bin/bash -s
+}
+sudo -n test -d "${ROOT}/proc"
+sudo -n test ! -L "${ROOT}/proc"
+
 stage=prepare
 build_log="${PRIVATE}/nm-selector-build.log"
 report_progress() {
-  grep -E '^nm-selector-build-progress=(version|sources|apt_update|dpkg_dev|build_dependencies|source_download|source_unpack|instrument|compile|install|verify|cleanup)$|^nm-selector-build-exit=[0-9]{1,3}$' "${build_log}" || true
+  grep -E '^nm-selector-build-progress=(procfs|version|sources|apt_update|dpkg_dev|build_dependencies|source_download|source_unpack|instrument|compile|install|verify|cleanup)$|^nm-selector-build-exit=[0-9]{1,3}$' "${build_log}" || true
 }
 report_failure() {
   local code=$?
@@ -49,18 +59,22 @@ sudo -n install -D -m 0644 "${SCRIPT_DIR}/nm_route_selection_probe.py" "${ROOT}/
 stage=distro_source_build
 # This is a diagnostic NM binary, not a promoted or release package. The normal
 # research matrix continues to run the unmodified distribution NetworkManager.
-if ! sudo -n chroot "${ROOT}" /bin/bash -s >"${build_log}" 2>&1 <<'GUEST'
+if ! run_build_guest >"${build_log}" 2>&1 <<'GUEST'
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export DEB_BUILD_OPTIONS='nocheck parallel=2'
 progress() {
   case "$1" in
-    version|sources|apt_update|dpkg_dev|build_dependencies|source_download|source_unpack|instrument|compile|install|verify|cleanup) ;;
+    procfs|version|sources|apt_update|dpkg_dev|build_dependencies|source_download|source_unpack|instrument|compile|install|verify|cleanup) ;;
     *) exit 1 ;;
   esac
   printf 'nm-selector-build-progress=%s\n' "$1"
 }
 trap 'code=$?; printf "nm-selector-build-exit=%s\n" "$code"' EXIT
+progress procfs
+test "$$" -eq 1
+test -d /proc/self/fd
+printf 'expected\n' | grep -Fx -f <(printf 'expected\n') >/dev/null
 progress version
 version="$(dpkg-query -W -f='${source:Version}' network-manager)"
 [[ "${version}" =~ ^[0-9][0-9A-Za-z.+:~_-]*$ ]]
