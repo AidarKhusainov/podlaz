@@ -66,5 +66,38 @@ class BuildDiagnosticContract(unittest.TestCase):
                          ['nm-selector-build-detail=unclassified_error'])
 
 
+class BuildDiagnosticFormatContract(unittest.TestCase):
+    def test_apt_sandbox_warning_is_not_a_build_error(self):
+        self.assertEqual(build_error_records([
+            "W: Download is performed unsandboxed as root as file 'private.example.dsc' couldn't be accessed by user '_apt'. - pkgAcquire::Run (13: Permission denied)",
+        ]), [])
+
+    def test_colored_compiler_diagnostic_is_not_lost(self):
+        plain = 'nm-manager.c:3874:5: error: private.example is undeclared'
+        colored = '\x1b[01mnm-manager.c:3874:5:\x1b[m\x1b[K \x1b[01;31merror: \x1b[m\x1b[Kprivate.example is undeclared'
+        self.assertEqual(build_error_records([colored]), build_error_records([plain]))
+        self.assertIn('nm-selector-build-detail=undeclared_identifier', build_error_records([colored]))
+
+    def test_colored_ninja_target_retains_its_closed_kind(self):
+        self.assertEqual(build_error_records(['\x1b[31mFAILED: \x1b[0msrc/core/NetworkManager']),
+                         ['nm-selector-build-detail=failed_target_daemon'])
+
+    def test_python_qualified_exception_type_is_not_lost(self):
+        records = build_error_records(['locale.Error: unsupported locale setting'])
+        self.assertIn('nm-selector-build-detail=locale_encoding', records)
+
+    def test_header_error_keeps_a_closed_source_location(self):
+        records = build_error_records([
+            '../src/libnm-glib-aux/nm-shared-utils.h:99:4: error: incompatible pointer private.example',
+        ])
+        self.assertIn('nm-selector-build-detail=source_nm_shared_utils_h line_99 column_4', records)
+        self.assertNotIn('private.example', '\n'.join(records))
+
+    def test_whitespace_and_multiple_ninja_outputs_do_not_hide_kind(self):
+        records = build_error_records(['FAILED:  src/libnm-client-impl/NM-1.0.gir other.private.example'])
+        self.assertIn('nm-selector-build-detail=failed_target_introspection', records)
+        self.assertNotIn('private.example', '\n'.join(records))
+
+
 if __name__ == '__main__':
     unittest.main()

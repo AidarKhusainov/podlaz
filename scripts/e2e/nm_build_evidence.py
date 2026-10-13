@@ -9,10 +9,11 @@ from pathlib import Path
 
 # A compiler invocation containing --warn-error or -Werror is not a diagnostic.
 # Keep the recognized syntax and published vocabulary independent of log input.
+TERMINAL_ESCAPE = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 DIAGNOSTIC = re.compile(
     r'(?:^|:\s*)(?:fatal\s+)?(?:error|fatal|failed)\s*:'
     r'|\*\*\*.*\bError [0-9]+'
-    r'|^\s*(?:[A-Za-z]+(?:Error|Exception):|Traceback \(most recent call last\))'
+    r'|^\s*(?:(?:[A-Za-z_]+\.)*(?:[A-Za-z_]*(?:Error|Exception)):|Traceback \(most recent call last\))'
     r'|^\s*(?:Could not|Cannot|Can.t|Unable to)\b'
     r'|\b(?:subcommand failed|Operation not permitted|Permission denied)\b'
     r'|^\s*(?:Aborted|Segmentation fault|Bail out!)\b', re.I,
@@ -22,7 +23,7 @@ DIAGNOSTIC = re.compile(
 def failed_target_record(line: str) -> str | None:
     if not line.startswith('FAILED: '):
         return None
-    target = line.removeprefix('FAILED: ').strip()
+    targets = line.removeprefix('FAILED: ').split()
     kind = 'other'
     for suffix, candidate in (
         ('NM-1.0.gir', 'introspection'),
@@ -30,7 +31,7 @@ def failed_target_record(line: str) -> str | None:
         ('NetworkManager', 'daemon'),
         ('nm-manager.c.o', 'manager_object'),
     ):
-        if target == suffix or target.endswith('/' + suffix):
+        if any(target == suffix or target.endswith('/' + suffix) for target in targets):
             kind = candidate
             break
     return 'nm-selector-build-detail=failed_target_' + kind
@@ -62,7 +63,7 @@ def build_error_records(lines: list[str]) -> list[str]:
         ('encoding_error', r'Unicode(?:Decode|Encode)Error|codec.*(?:encode|decode)'),
         ('constant_type', r'(?:determine|resolve).*type of constant'),
         ('namespace', r'namespace|\bbwrap\b'),
-        ('locale_encoding', r'unsupported locale|locale.*(?:not supported|unknown)'),
+        ('locale_encoding', r'unsupported locale|locale.*(?:not supported|unknown)|locale\.Error'),
         ('introspection_annotation', r'annotation|not introspectable'),
         ('introspection_symbol', r'unknown namespace|unresolved.*(?:type|symbol)'),
         ('dbus', r'dbus|D-Bus'),
@@ -90,7 +91,10 @@ def build_error_records(lines: list[str]) -> list[str]:
         ('symbol_selector_trace', r'\b_podlaz_research_selector_trace\b'),
     )
     output: list[str] = []
-    for line in lines:
+    for decorated in lines:
+        line = TERMINAL_ESCAPE.sub('', decorated)
+        if re.match(r'^\s*(?:W:|warning:)', line, re.I):
+            continue
         target_record = failed_target_record(line)
         if target_record is not None:
             output.append(target_record)
@@ -98,7 +102,12 @@ def build_error_records(lines: list[str]) -> list[str]:
         if not DIAGNOSTIC.search(line):
             continue
         labels = [label for label, pattern in patterns if re.search(pattern, line, re.I)]
-        for filename, label in (('nm-manager.c', 'nm_manager'), ('meson.build', 'meson'), ('debian/rules', 'debian_rules')):
+        for filename, label in (
+            ('nm-manager.c', 'nm_manager'), ('nm-device.c', 'nm_device'),
+            ('nm-shared-utils.h', 'nm_shared_utils_h'), ('nm-logging.h', 'nm_logging_h'),
+            ('nm-logging-fwd.h', 'nm_logging_fwd_h'), ('nm-default.h', 'nm_default_h'),
+            ('meson.build', 'meson'), ('debian/rules', 'debian_rules'),
+        ):
             location = re.search(re.escape(filename) + r':([0-9]{1,6})(?::([0-9]{1,6}))?:', line)
             if location:
                 output.append(f'nm-selector-build-detail=source_{label} line_{location[1]} column_{location[2] or 0}')
