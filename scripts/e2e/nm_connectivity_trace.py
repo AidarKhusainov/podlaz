@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path('/tmp/podlaz-hosted-synthetic-tun')
@@ -18,11 +19,11 @@ SERVICE = 'org.freedesktop.NetworkManager'
 MAX_RECORDS = 20000
 UINT = r'[0-9]{1,10}'
 PUBLIC_PATTERNS = tuple(re.compile(pattern) for pattern in (
-    rf'nm-decision-route=source_(?:nm|kernel) role_(?:tun|uplink|other) family_[46] table_(?:main|other) metric_{UINT} type_(?:unicast|other)',
+    rf'nm-decision-route=source_(?:nm|kernel) role_(?:tun|uplink|other) family_[46] table_(?:main|other) metric_{UINT} type_(?:unicast|other) scope_(?:global|link|host|other|unknown)',
     r'nm-decision-state=role_(?:tun|uplink|other|loopback) ipv4_[0-4] ipv6_[0-4]',
     r'nm-decision-global=[0-4] internal_winner_not_observed',
-    r'nm-decision-concheck=phase_(?:managed|vpn) role_(?:tun|uplink|other) family_[46] result_(?:unknown|none|portal|limited|full|error|fake|cancelled|disposing) reason_(?:timeout|resolve|transport|other)',
-    rf'nm-decision-journal=phase_(?:managed|vpn) records_{UINT} completions_{UINT}',
+    r'nm-decision-concheck=phase_(?:managed|vpn) role_(?:tun|uplink|other) family_[46] result_(?:unknown|none|portal|limited|full|error|fake|cancelled|disposing) reason_(?:timeout|resolve|transport|no_global_route|no_address|no_route|no_carrier|other)',
+    rf'nm-decision-journal=phase_(?:managed|vpn) records_{UINT} completions_{UINT} elapsed_ms_{UINT}',
 ))
 
 
@@ -54,9 +55,14 @@ def route_records(routes: list, source: str, family: int, device: str = '') -> l
             continue
         table = 'main' if route.get('table', 254) in (254, '254', 'main') else 'other'
         kind = 'unicast' if route.get('type', 'unicast') in ('unicast', 1) else 'other'
+        raw_scope = route.get('scope', 'global' if source == 'kernel' else 'unknown')
+        scope = ('global' if raw_scope in ('global', 0) else
+                 'link' if raw_scope in ('link', 253) else
+                 'host' if raw_scope in ('host', 254) else
+                 'unknown' if raw_scope == 'unknown' else 'other')
         result.append(
             f'nm-decision-route=source_{source} role_{role(device or route.get("dev", ""))}'
-            f' family_{family} table_{table} metric_{uint(route.get("metric", 0))} type_{kind}'
+            f' family_{family} table_{table} metric_{uint(route.get("metric", 0))} type_{kind} scope_{scope}'
         )
     return result
 
@@ -75,7 +81,10 @@ def concheck_records(messages: list[str], phase: str) -> list[str]:
             continue
         name, family, state, detail = match.groups()
         detail = detail.lower()
-        reason = ('timeout' if 'timeout' in detail or 'timed out' in detail else
+        gates = {'no global route configured': 'no_global_route',
+                 'no ip address configured': 'no_address',
+                 'no ip route configured': 'no_route', 'no carrier': 'no_carrier'}
+        reason = gates.get(detail) or ('timeout' if 'timeout' in detail or 'timed out' in detail else
                   'resolve' if 'resolve' in detail or 'resolution' in detail else
                   'transport' if 'curl' in detail else 'other')
         result.append(f'nm-decision-concheck=phase_{phase} role_{role(name)} family_{family}'
@@ -106,7 +115,7 @@ def start_trace(snapshot: Path) -> None:
         raise ValueError('journal cursor unavailable')
     descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
-        json.dump({'cursor': cursor}, handle)
+        json.dump({'cursor': cursor, 'start_ns': time.monotonic_ns()}, handle)
     # Runtime logging only. This guest (including its private journal) is destroyed
     # by the harness; no persistent NM configuration or network state is changed.
     command('nmcli', 'general', 'logging', 'level', 'TRACE', 'domains', 'CONCHECK,CORE')
@@ -116,7 +125,9 @@ def report_trace(snapshot: Path) -> None:
     path = private_trace_path(snapshot)
     if path.is_symlink() or path.stat().st_mode & 0o077:
         raise ValueError('unsafe private trace')
-    cursor = json.loads(path.read_text(encoding='utf-8'))['cursor']
+    metadata = json.loads(path.read_text(encoding='utf-8'))
+    cursor = metadata['cursor']
+    elapsed_ms = uint((time.monotonic_ns() - int(metadata['start_ns'])) // 1_000_000)
     if not isinstance(cursor, str) or not cursor:
         raise ValueError('invalid journal cursor')
     raw = command('journalctl', '--no-pager', '-u', 'NetworkManager', '-o', 'json',
@@ -129,7 +140,7 @@ def report_trace(snapshot: Path) -> None:
         raise ValueError('invalid journal message')
     phase = 'vpn' if snapshot.name == 'nm-vpn-before.json' else 'managed'
     records = concheck_records(messages, phase)
-    print(f'nm-decision-journal=phase_{phase} records_{len(lines)} completions_{len(records)}')
+    print(f'nm-decision-journal=phase_{phase} records_{len(lines)} completions_{len(records)} elapsed_ms_{elapsed_ms}')
     for record in records:
         print(record)
     observe()
@@ -199,6 +210,11 @@ def validate_output(path: Path) -> None:
                      'nm-decision-concheck=phase_managed', 'nm-decision-concheck=phase_vpn'):
         if not any(line.startswith(required) for line in lines):
             raise ValueError('missing passive connectivity evidence')
+    for phase in ('managed', 'vpn'):
+        pattern = re.compile(rf'nm-decision-journal=phase_{phase} records_[0-9]+ completions_([0-9]+) elapsed_ms_([0-9]+)')
+        windows = [match for line in lines if (match := pattern.fullmatch(line))]
+        if not any(int(match[1]) > 0 and int(match[2]) >= 330_000 for match in windows):
+            raise ValueError('natural-cycle trace window incomplete')
 
 
 if __name__ == '__main__':

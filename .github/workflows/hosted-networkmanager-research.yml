@@ -56,24 +56,26 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+          NM_DECISION_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-decisions-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
           PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
           PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
         run: |
-          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}" "${NM_DECISION_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}" "${NM_DECISION_ARTIFACT_DIR}"
           set -o pipefail
           bash scripts/e2e/hosted-synthetic-tun.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb |
-            python3 scripts/e2e/nm_connectivity_trace.py record "${E2E_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
+            python3 scripts/e2e/nm_connectivity_trace.py record "${NM_DECISION_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
       - name: Validate normalized report
         if: always()
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+          NM_DECISION_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-decisions-public
           PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
         run: |
           bash scripts/e2e/hosted-synthetic-tun.sh validate-report
-          python3 scripts/e2e/nm_connectivity_trace.py validate "${E2E_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
+          python3 scripts/e2e/nm_connectivity_trace.py validate "${NM_DECISION_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
       - name: Remove private guest state
         if: always()
         run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-registration-private"
@@ -84,6 +86,6 @@ jobs:
           name: nm-registration-${{ matrix.release }}
           path: |
             ${{ runner.temp }}/podlaz-nm-registration-public/hosted-synthetic-tun.txt
-            ${{ runner.temp }}/podlaz-nm-registration-public/nm-connectivity-decisions.txt
+            ${{ runner.temp }}/podlaz-nm-decisions-public/nm-connectivity-decisions.txt
           if-no-files-found: error
           retention-days: 7

@@ -56,7 +56,7 @@ class ConnectivityTraceContractTest(unittest.TestCase):
             {'dest': '0.0.0.0', 'prefix': 0, 'metric': 100, 'next-hop': '192.0.2.1'},
             {'dest': '192.0.2.0', 'prefix': 24, 'metric': 0},
         ], 'nm', 4, 'host0'), [
-            'nm-decision-route=source_nm role_uplink family_4 table_main metric_100 type_unicast'
+            'nm-decision-route=source_nm role_uplink family_4 table_main metric_100 type_unicast scope_unknown'
         ])
 
     def test_unknown_trace_is_not_fabricated_success(self):
@@ -67,7 +67,7 @@ class ConnectivityTraceContractTest(unittest.TestCase):
 
     def test_public_filter_rejects_trailing_or_unknown_data(self):
         trace = self.trace_module()
-        safe = 'nm-decision-route=source_kernel role_tun family_4 table_other metric_0 type_unicast'
+        safe = 'nm-decision-route=source_kernel role_tun family_4 table_other metric_0 type_unicast scope_global'
         self.assertTrue(trace.public_record(safe))
         self.assertFalse(trace.public_record(safe + ' next-hop=192.0.2.1'))
         self.assertFalse(trace.public_record('nm-decision-private=private.example'))
@@ -109,6 +109,51 @@ class ConnectivityTraceContractTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 trace.record_output(Path(directory) / 'decisions.txt')
         self.assertEqual(output.getvalue(), '')
+
+
+    def test_platform_gate_is_not_reported_as_a_network_timeout(self):
+        trace = self.trace_module()
+        self.assertEqual(trace.concheck_records([
+            'connectivity: (podlaz0,IPv4,42) check completed: LIMITED; no global route configured'
+        ], 'vpn'), [
+            'nm-decision-concheck=phase_vpn role_tun family_4 result_limited reason_no_global_route'
+        ])
+
+    def test_scope_and_routing_table_are_separate_observations(self):
+        trace = self.trace_module()
+        line = trace.route_records([
+            {'dst': 'default', 'dev': 'podlaz0', 'table': 51820, 'scope': 'link'}
+        ], 'kernel', 4)[0]
+        self.assertIn('table_other', line)
+        self.assertTrue(line.endswith('scope_link'))
+
+    def test_workflow_keeps_decisions_outside_harness_single_file_directory(self):
+        from pathlib import Path
+        workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/hosted-networkmanager-research.yml').read_text()
+        self.assertIn('record "${NM_DECISION_ARTIFACT_DIR}/nm-connectivity-decisions.txt"', workflow)
+        self.assertNotIn('record "${E2E_ARTIFACT_DIR}/nm-connectivity-decisions.txt"', workflow)
+
+
+    def test_complete_artifact_requires_both_natural_cycle_windows(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        trace = self.trace_module()
+        records = [
+            'nm-decision-global=3 internal_winner_not_observed',
+            'nm-decision-state=role_tun ipv4_3 ipv6_1',
+            'nm-decision-route=source_nm role_tun family_4 table_other metric_0 type_unicast scope_unknown',
+            'nm-decision-route=source_kernel role_tun family_4 table_other metric_0 type_unicast scope_link',
+        ]
+        for phase in ('managed', 'vpn'):
+            records.append(f'nm-decision-concheck=phase_{phase} role_tun family_4 result_limited reason_no_global_route')
+            records.append(f'nm-decision-journal=phase_{phase} records_10 completions_1 elapsed_ms_330001')
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'decisions.txt'
+            path.write_text('\n'.join(records))
+            trace.validate_output(path)
+            path.write_text('\n'.join(records).replace('elapsed_ms_330001', 'elapsed_ms_1000'))
+            with self.assertRaises(ValueError):
+                trace.validate_output(path)
 
 
 if __name__ == "__main__":
