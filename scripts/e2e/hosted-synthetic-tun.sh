@@ -38,6 +38,7 @@ PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
 CHECK_NM_CONNECTIVITY="${PODLAZ_E2E_NM_CONNECTIVITY:-false}"
+NM_SCOPE_VARIANT="${PODLAZ_E2E_NM_SCOPE_VARIANT:-global}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -75,7 +76,11 @@ fi
 
 if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
   [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" != true ]] || fail "NetworkManager check needs an active protected session"
+  if [[ "${NM_SCOPE_VARIANT}" == link ]]; then
+    EVIDENCE_KEYS=(candidate.provenance ordinary_user.boundary proxy_only.connect proxy_only.data_plane proxy_only.clean_disconnect tun.verified_active tun.system_dns tun.https_tls tun.networkmanager_observed tun.clean_disconnect tun.terminal_cleanup tun.recovery_clean guest.baseline_restored outer.cleanup artifact.privacy)
+  else
   EVIDENCE_KEYS=(candidate.provenance ordinary_user.boundary proxy_only.connect proxy_only.data_plane proxy_only.clean_disconnect tun.verified_active tun.system_dns tun.https_tls tun.networkmanager_full tun.clean_disconnect tun.terminal_cleanup tun.recovery_clean guest.baseline_restored outer.cleanup artifact.privacy)
+  fi
 fi
 
 CANDIDATE_DEB=""
@@ -1214,67 +1219,27 @@ assert_networkmanager_tun_connectivity() {
       last_tun="${tun_state}"
       last_uplink="${uplink_state}"
     fi
-    if [[ "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
+    if [[ "${NM_SCOPE_VARIANT}" == global && "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
       printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
       record_evidence tun.networkmanager_full pass
       return 0
     fi
     sleep 1
   done
+  if [[ "${NM_SCOPE_VARIANT}" == link ]]; then
+    # This is a control observation, not a FULL connectivity acceptance.
+    # Require that the protected session and exact ownership survived the
+    # complete natural NM check interval, regardless of the observed enum.
+    assert_verified_active_authority
+    record_evidence tun.networkmanager_observed pass
+    return 0
+  fi
   # Keep raw routes, connection identifiers and CONCHECK logs inside the private guest.
   guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
   # awk expressions execute inside the guest.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '\''{ for (i=1; i<=NF; i++) if ($i=="metric") { print "networkmanager-route-" dev "-metric=" $(i+1); found=1 } } END { if (!found) print "networkmanager-route-" dev "-metric=implicit" }'\''; done' || true
   return 1
-}
-
-# A/B is limited to an already exact-owned route in this disposable guest.
-# It never creates a route, changes NM profiles, or permits host-level mutation.
-compare_networkmanager_route_scopes() {
-  local table scope second state tun_state uplink_state previous=''
-  table="$(guest_exec jq -er '[.routes[] | select(.cidr == "default" and .dev == "podlaz0" and .via == "") | .table] | if length == 1 then .[0] else error("ambiguous owned default") end' "${GUEST_MANIFEST}")"
-  [[ "${table}" =~ ^[1-9][0-9]*$ ]] || return 1
-  guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
-  guest_exec nmcli general logging level DEBUG domains CONCHECK
-
-  # An error or shell interrupt restores the intended scope before teardown.
-  # If restoration is impossible, normal fail-closed guest teardown still runs.
-  (
-    trap 'guest_exec ip -4 route change default dev podlaz0 table "${table}" scope global >/dev/null 2>&1 || true' EXIT
-    for scope in link global; do
-      # Change cannot create an absent route (unlike replace/add).
-      guest_exec ip -4 route change default dev podlaz0 table "${table}" scope "${scope}"
-      if [[ "${scope}" == link ]]; then
-        guest_exec ip -4 route show table "${table}" exact default |
-          grep -E '^default dev podlaz0( |$).*scope link( |$)' >/dev/null
-      else
-        guest_exec ip -j -4 route show table "${table}" exact default |
-          python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if len(r)==1 and r[0].get("dev")=="podlaz0" and r[0].get("scope","global") in ("global","universe") else 1)'
-      fi
-      previous=''
-      # NM normally checks every 300s. Do not request an explicit check.
-      for second in $(seq 1 330); do
-        state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
-        tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
-        uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')")"
-        case "${state}" in
-          connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
-          *) state=other ;;
-        esac
-        if [[ "${state}/${tun_state}/${uplink_state}" != "${previous}" ]]; then
-          printf 'networkmanager-ab-scope=%s second=%s global=%s tun=%s uplink=%s\n' \
-            "${scope}" "${second}" "${state}" "${tun_state}" "${uplink_state}"
-          previous="${state}/${tun_state}/${uplink_state}"
-        fi
-        sleep 1
-      done
-    done
-    # Explicit success-path restoration is checked, not silently ignored.
-    guest_exec ip -4 route change default dev podlaz0 table "${table}" scope global
-    guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
-    trap - EXIT
-  )
 }
 
 run_tun_doctor() {
@@ -1426,9 +1391,6 @@ run_scenario() {
     run_active_traffic_checks
     if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
       mark_failure diagnostic_unknown tun.networkmanager_full
-      if [[ "${PODLAZ_E2E_NM_SCOPE_COMPARE:-false}" == true ]]; then
-        compare_networkmanager_route_scopes
-      fi
       assert_networkmanager_tun_connectivity
     fi
     if [[ "${CHECK_NM_CONNECTIVITY}" != true ]]; then
@@ -1463,6 +1425,7 @@ run_scenario() {
 main() {
   case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported synthetic guest release" ;; esac
   case "${CHECK_NM_CONNECTIVITY}" in true|false) ;; *) fail "invalid NetworkManager qualification toggle" ;; esac
+  case "${NM_SCOPE_VARIANT}" in global|link) ;; *) fail "invalid NetworkManager route-scope variant" ;; esac
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
