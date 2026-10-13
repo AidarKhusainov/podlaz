@@ -1225,6 +1225,10 @@ assert_networkmanager_tun_connectivity() {
     fi
     sleep 1
   done
+  # Read only NM-visible route metrics and journal decision classes. Prove the
+  # unmarked IPv4 HTTPS request traverses TUN and uplink-bound HTTPS cannot
+  # complete; no endpoint or raw packet/journal metadata leaves the guest.
+  guest_exec python3 /workspace/scripts/e2e/networkmanager_scope_evidence.py --uplink "${GUEST_IF}"
   if [[ "${NM_SCOPE_VARIANT}" == global && "${state}" == "connected:full" && "${tun_state}" == full ]]; then
     # Require a full natural interval so a cached uplink FULL at connect time
     # cannot satisfy the test before NetworkManager's next periodic probe.
