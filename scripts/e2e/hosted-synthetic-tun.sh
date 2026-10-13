@@ -1175,26 +1175,52 @@ run_active_traffic_checks() {
 }
 
 # Guest-only NM control experiment: never run against the physical host.
+normalize_nm_device_kind() {
+  case "$1" in
+    *externally*) printf 'external' ;;
+    *unmanaged*) printf 'unmanaged' ;;
+    *connected*) printf 'connected' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+normalize_nm_global_kind() {
+  case "$1" in
+    connected:full|'connected (global):full') printf 'full' ;;
+    connected:limited|'connected (site only):limited') printf 'limited' ;;
+    connected:portal|'connected (site only):portal') printf 'portal' ;;
+    *) printf 'other' ;;
+  esac
+}
+
 experiment_nm_external_tun_registration() {
-  local before after state
+  local before after kind_before kind_after state second last_state=''
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-before.json"
   before="$(guest_exec nmcli -g GENERAL.NM-MANAGED device show podlaz0 | tr -d '\r')"
   case "${before}" in yes|no) ;; *) return 1 ;; esac
-  printf 'nm-registration-original-managed=%s\n' "${before}"
-  # This is a mutation, not a passive registration. Compare exact L3 first.
+  kind_before="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
+  printf 'nm-registration-original-managed=%s device=%s\n' "${before}" "${kind_before}"
+  # Runtime-only mutation; a route/DNS/firewall change must fail closed.
   guest_exec nmcli device set podlaz0 managed yes
   sleep 5
   after="$(guest_exec nmcli -g GENERAL.NM-MANAGED device show podlaz0 | tr -d '\r')"
   case "${after}" in yes|no) ;; *) after=other ;; esac
-  printf 'nm-registration-after-managed=%s\n' "${after}"
+  kind_after="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
+  printf 'nm-registration-after-managed=%s device=%s\n' "${after}" "${kind_after}"
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
-  state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
-  case "${state}" in
-    connected:full|'connected (global):full') state=full ;;
-    connected:limited|'connected (site only):limited') state=limited ;;
-    *) state=other ;;
-  esac
-  printf 'nm-registration-global=%s\n' "${state}"
+
+  # Observe an unforced periodic NM cycle; immediate global FULL is not
+  # attributable to this device if it was already FULL before VPN activation.
+  for second in $(seq 1 330); do
+    state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+    if [[ "${state}" != "${last_state}" ]]; then
+      printf 'nm-registration-observation=%s global=%s\n' "${second}" "${state}"
+      last_state="${state}"
+    fi
+    sleep 1
+  done
+
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
   guest_exec nmcli device set podlaz0 managed "${before}"
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
   assert_verified_active_authority
