@@ -1194,44 +1194,36 @@ normalize_nm_connectivity() {
 }
 
 assert_networkmanager_tun_connectivity() {
-  local state tun_state second
-  # NetworkManager's unconfigured interval defaults to 300 seconds. Observe
-  # one natural cycle plus a bounded probe timeout, without forcing refresh.
+  local state tun_state uplink_state second
+  local last_state= last_tun= last_uplink=
+  # Observe a natural NetworkManager cycle without requesting a forced check.
   guest_exec nmcli general logging level DEBUG domains CONCHECK
   guest_exec /bin/bash -lc 'NetworkManager --version'
   for second in $(seq 1 360); do
-    state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
-    tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
+    state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\\r')"
+    tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\\r')")"
+    uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\\r')")"
+    # Emit sanitized transitions for both successful and failing runs.
+    if [[ "${state}" != "${last_state}" || "${tun_state}" != "${last_tun}" || "${uplink_state}" != "${last_uplink}" ]]; then
+      case "${state}" in
+        connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
+        *) state=other ;;
+      esac
+      printf 'networkmanager-observation=%s global=%s tun=%s uplink=%s\\n' "${second}" "${state}" "${tun_state}" "${uplink_state}"
+      last_state="${state}"
+      last_tun="${tun_state}"
+      last_uplink="${uplink_state}"
+    fi
     if [[ "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
-      printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
+      printf 'networkmanager-full-observed-seconds=%s\\n' "${second}"
       record_evidence tun.networkmanager_full pass
       return 0
     fi
     sleep 1
   done
-  # Do not publish raw routes, connection identifiers or CONCHECK logs:
-  # the job output is public, and those may contain private endpoint details.
-  # Query fixed fixture interfaces and publish only normalized state classes.
-  local uplink_state nm_global nm_tun nm_uplink
-  uplink_state="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')"
-  nm_global="$(guest_exec nmcli -g CONNECTIVITY general | tr -d '\r')"
-  nm_tun="$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')"
-  nm_uplink="${uplink_state}"
-  for state_name in global tun uplink; do
-    case "${state_name}" in
-      global) state_value="${nm_global}" ;;
-      tun) state_value="${nm_tun}" ;;
-      uplink) state_value="${nm_uplink}" ;;
-    esac
-    state_value="$(normalize_nm_connectivity "${state_value}")"
-    printf 'networkmanager-%s-connectivity=%s\n' "${state_name}" "${state_value}"
-  done
-  # Keep the raw per-device and CONCHECK traces private; report only the
-  # existence of the two kernel default routes and their observed metrics.
+  # Keep raw routes, connection identifiers and CONCHECK logs inside the private guest.
   guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
-  # This script is interpreted inside the guest, not expanded by the caller.
-  # shellcheck disable=SC2016
-  guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '"'"'{ for (i=1; i<=NF; i++) if ($i=="metric") { print "networkmanager-route-" dev "-metric=" $(i+1); found=1 } } END { if (!found) print "networkmanager-route-" dev "-metric=implicit" }'"'"'; done' || true
+  guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '\''{ for (i=1; i<=NF; i++) if ($i=="metric") { print "networkmanager-route-" dev "-metric=" $(i+1); found=1 } } END { if (!found) print "networkmanager-route-" dev "-metric=implicit" }'\''; done' || true
   return 1
 }
 
