@@ -1198,6 +1198,17 @@ normalize_nm_connectivity() {
   esac
 }
 
+normalize_nm_general_state() {
+  case "$1" in
+    connected:full|'connected (global):full') printf 'connected:full' ;;
+    connected:limited|'connected (site only):limited') printf 'connected:limited' ;;
+    connected:portal|'connected (site only):portal') printf 'connected:portal' ;;
+    connected:none|'connected (local only):none') printf 'connected:none' ;;
+    disconnected:*) printf '%s' "$1" ;;
+    *) printf 'other' ;;
+  esac
+}
+
 assert_networkmanager_tun_connectivity() {
   local state tun_state uplink_state second
   local last_state='' last_tun='' last_uplink=''
@@ -1205,7 +1216,7 @@ assert_networkmanager_tun_connectivity() {
   guest_exec nmcli general logging level DEBUG domains CONCHECK
   guest_exec /bin/bash -lc 'NetworkManager --version'
   for second in $(seq 1 360); do
-    state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+    state="$(normalize_nm_general_state "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
     tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
     uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')")"
     # Emit sanitized transitions for both successful and failing runs.
@@ -1348,7 +1359,7 @@ run_scenario() {
     # The result is a sanitized enum; no NM connection or network identifiers
     # enter the CI log. This is observation, never a forced connectivity probe.
     local nm_preconnect
-    nm_preconnect="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+    nm_preconnect="$(normalize_nm_general_state "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
     case "${nm_preconnect}" in
       connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
       *) nm_preconnect=other ;;
