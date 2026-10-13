@@ -80,8 +80,8 @@ func TestHostedVMBootAuthorityFailureDiagnosticsAreReadOnlyAndBounded(t *testing
 			t.Fatalf("read-only diagnostic contains forbidden %q", forbidden)
 		}
 	}
-	if !strings.Contains(text, "if ! hosted_vm_tun_wait_status verified-active 180; then\n    boot_restart_readonly_diagnostic") {
-		t.Fatal("boot restart must retain the 180-second verified-active bound")
+	if !strings.Contains(text, "if ! hosted_vm_tun_wait_status verified-active 180 diagnose; then\n    boot_restart_readonly_diagnostic") {
+		t.Fatal("boot restart must retain the 180-attempt verified-active bound")
 	}
 }
 

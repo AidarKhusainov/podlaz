@@ -51,6 +51,24 @@ def verified_active(status: dict) -> bool:
     )
 
 
+def probe_verified_active(status: dict) -> str:
+    """A fixed, non-sensitive classification using the unchanged exact predicate."""
+    if verified_active(status):
+        return "match"
+    if has_cleanup_required(transactions(status)):
+        return "semantic-cleanup"
+    if status.get("terminal_reason"):
+        return "semantic-terminal"
+    if status.get("connection") == "inactive":
+        return "semantic-inactive"
+    if status.get("connection") == "active" and status.get("mode") == "tun":
+        health = status.get("tun_health") or {}
+        if not isinstance(health, dict) or health.get("state") != "verified":
+            return "semantic-active-health"
+        return "semantic-active-authority"
+    return "semantic-other"
+
+
 def clean_inactive(status: dict) -> bool:
     txs = transactions(status)
     active_id = str(status.get("active_transaction_id") or "")
@@ -202,6 +220,11 @@ def main() -> int:
     target, path = sys.argv[1], sys.argv[2]
     try:
         status = load_status(path)
+        if target == "probe-verified-active":
+            if len(sys.argv) != 3:
+                return 2
+            print(probe_verified_active(status))
+            return 0
         if target == "diagnose-active":
             if len(sys.argv) not in (3, 4):
                 return 2
