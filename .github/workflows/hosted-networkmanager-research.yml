@@ -7,6 +7,9 @@ on:
       - '.github/workflows/hosted-networkmanager-research.yml'
       - 'scripts/e2e/hosted-synthetic-tun.sh'
       - 'scripts/e2e/nm_registration_evidence.py'
+      - 'scripts/e2e/nm_registration_evidence_test.py'
+      - 'scripts/e2e/nm_connectivity_trace.py'
+      - 'scripts/e2e/nm_connectivity_trace_test.py'
       - 'scripts/e2e/nm_vpn_no_l3_plugin.py'
       - 'scripts/e2e/nm_vpn_no_l3_service.name'
       - 'scripts/e2e/nm_vpn_no_l3_dbus.conf'
@@ -38,8 +41,8 @@ jobs:
             packaging/package-toolchain.env
       - name: Validate snapshot comparison contract
         run: |
-          python3 -m unittest discover -s scripts/e2e -p 'nm_registration_evidence_test.py' -v
-          python3 -m py_compile scripts/e2e/nm_vpn_no_l3_plugin.py
+          python3 -m unittest discover -s scripts/e2e -p 'nm_*test.py' -v
+          python3 -m py_compile scripts/e2e/nm_vpn_no_l3_plugin.py scripts/e2e/nm_connectivity_trace.py
       - name: Install qualification tools
         run: |
           sudo apt-get update
@@ -59,14 +62,18 @@ jobs:
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
-          bash scripts/e2e/hosted-synthetic-tun.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+          set -o pipefail
+          bash scripts/e2e/hosted-synthetic-tun.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb |
+            python3 scripts/e2e/nm_connectivity_trace.py record "${E2E_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
       - name: Validate normalized report
         if: always()
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
           PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
-        run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+        run: |
+          bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+          python3 scripts/e2e/nm_connectivity_trace.py validate "${E2E_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
       - name: Remove private guest state
         if: always()
         run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-registration-private"
@@ -75,6 +82,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: nm-registration-${{ matrix.release }}
-          path: ${{ runner.temp }}/podlaz-nm-registration-public/hosted-synthetic-tun.txt
+          path: |
+            ${{ runner.temp }}/podlaz-nm-registration-public/hosted-synthetic-tun.txt
+            ${{ runner.temp }}/podlaz-nm-registration-public/nm-connectivity-decisions.txt
           if-no-files-found: error
           retention-days: 7

@@ -17,6 +17,8 @@ COMMANDS = (
     ("address", ("ip", "-j", "address", "show", "dev", "podlaz0")),
     ("routes", ("ip", "-j", "-4", "route", "show", "table", "all")),
     ("rules", ("ip", "-j", "-4", "rule", "show")),
+    ("routes6", ("ip", "-j", "-6", "route", "show", "table", "all")),
+    ("rules6", ("ip", "-j", "-6", "rule", "show")),
     ("dns", ("resolvectl", "dns")),
     ("domains", ("resolvectl", "domain")),
     ("default-route", ("resolvectl", "default-route")),
@@ -71,7 +73,7 @@ def snapshot() -> dict[str, object]:
         if proc.returncode:
             raise RuntimeError(f"inspection failed for {name}")
         value = proc.stdout
-        if name in {"link", "address", "routes", "rules", "firewall"}:
+        if name in {"link", "address", "routes", "rules", "routes6", "rules6", "firewall"}:
             parsed = json.loads(value)
             result[name] = (strip_runtime_counters(parsed) if name == "firewall" else normalized_ipv4_routes(parsed) if name == "routes" else parsed)
         else:
@@ -202,6 +204,8 @@ def main() -> int:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(data, handle, sort_keys=True)
+        from nm_connectivity_trace import start_trace
+        start_trace(path)
         print("nm-registration-l3-baseline=captured")
         return 0
     if path.is_symlink() or path.stat().st_mode & 0o077:
@@ -216,12 +220,14 @@ def main() -> int:
             sanitized_route_delta(expected["routes"], observed["routes"])
         return 1
     print("nm-registration-l3-integrity=unchanged")
+    from nm_connectivity_trace import report_trace
+    report_trace(path)
     return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
         print("nm-registration-inspection=failed", file=sys.stderr)
         sys.exit(1)
