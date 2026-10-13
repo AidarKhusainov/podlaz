@@ -73,6 +73,26 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
   )
 fi
 
+if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+  EVIDENCE_KEYS=(
+    candidate.provenance
+    ordinary_user.boundary
+    proxy_only.connect
+    proxy_only.data_plane
+    proxy_only.clean_disconnect
+    tun.verified_active
+    tun.system_dns
+    tun.https_tls
+    tun.nm_registration_integrity
+    tun.clean_disconnect
+    tun.terminal_cleanup
+    tun.recovery_clean
+    guest.baseline_restored
+    outer.cleanup
+    artifact.privacy
+  )
+fi
+
 CANDIDATE_DEB=""
 EXPECTED_COMMIT="${PODLAZ_E2E_CANDIDATE_COMMIT:-${GITHUB_SHA:-}}"
 OUTER_DEFAULT_ROUTE=""
@@ -1223,7 +1243,12 @@ experiment_nm_external_tun_registration() {
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
   guest_exec nmcli device set podlaz0 managed "${before}"
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
-  assert_verified_active_authority
+  if ! assert_verified_active_authority; then
+    printf 'nm-registration-active-authority=fail\n'
+    return 1
+  fi
+  printf 'nm-registration-active-authority=pass\n'
+  record_evidence tun.nm_registration_integrity pass
 }
 
 run_tun_doctor() {
@@ -1364,8 +1389,10 @@ run_scenario() {
       mark_failure diagnostic_unknown tun.nm_registration
       experiment_nm_external_tun_registration
     fi
-    mark_failure diagnostic_unknown tun.doctor
-    run_tun_doctor
+    if [[ "${NM_REGISTRATION_RESEARCH}" != true ]]; then
+      mark_failure diagnostic_unknown tun.doctor
+      run_tun_doctor
+    fi
 
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
