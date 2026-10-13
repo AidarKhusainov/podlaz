@@ -530,6 +530,7 @@ run_scenario() {
   hosted_vm_phase_start
   # Use the candidate's refreshed APT indexes and install the Wi-Fi stack
   # together with guest control dependencies, before enabling the guest agent.
+  # shellcheck disable=SC2016 # $(uname -r) must expand inside the guest.
   hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive bash -c \
     'apt-get install -y -qq --no-install-recommends curl jq dnsmasq-base hostapd iw iptables network-manager wpasupplicant "linux-modules-extra-$(uname -r)"'
   hosted_vm_prepare_guest_agent
