@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Unit characterization of guest-private NM registration snapshot normalization."""
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 
-from nm_registration_evidence import normalized_ipv4_routes, strip_runtime_counters
+from nm_registration_evidence import normalized_ipv4_routes, sanitized_route_delta, strip_runtime_counters
 
 
 class SnapshotNormalizationTest(unittest.TestCase):
@@ -28,6 +30,16 @@ class SnapshotNormalizationTest(unittest.TestCase):
         self.assertEqual(normalized_ipv4_routes(before), normalized_ipv4_routes(after))
         unexpected = [{"dst": "default", "dev": "host0", "table": "main", "metric": 123}]
         self.assertNotEqual(normalized_ipv4_routes(before), normalized_ipv4_routes(unexpected))
+
+    def test_route_delta_classification_never_prints_addresses(self):
+        before = [{"dst": "default", "dev": "podlaz0", "table": "main", "metric": 0}]
+        after = before + [{"dst": "192.0.2.1/32", "dev": "host0", "table": "main", "metric": 100}]
+        output = StringIO()
+        with redirect_stdout(output):
+            sanitized_route_delta(before, after)
+        self.assertIn("nm-vpn-route-delta-class=added_uplink_main_host_count1", output.getvalue())
+        self.assertNotIn("192.0.2.1", output.getvalue())
+        self.assertNotIn("podlaz0", output.getvalue())
 
     def test_podlaz_default_route_remains_exact(self):
         baseline = [{"dst": "default", "dev": "podlaz0", "table": 51820, "scope": "link"}]
