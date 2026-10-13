@@ -79,7 +79,63 @@ def snapshot() -> dict[str, object]:
     return result
 
 
+def connectivity_observation() -> None:
+    """Publish only version, D-Bus connectivity enums, and route metrics."""
+    import re
+
+    def command(*args: str) -> str:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=15, check=True)
+        return result.stdout.strip()
+
+    version_raw = command("nmcli", "--version")
+    match = re.search(r"\b(\d+\.\d+\.\d+)\b", version_raw)
+    if not match:
+        raise ValueError("NM version unavailable")
+    version = match.group(1)
+
+    def property_uint(path: str, interface: str, field: str) -> int:
+        result = command(
+            "busctl", "--system", "get-property",
+            "org.freedesktop.NetworkManager", path, interface, field,
+        )
+        if not re.fullmatch(r"u [0-4]", result):
+            raise ValueError(f"invalid connectivity enum for {field}")
+        return int(result[2:])
+
+    global_value = property_uint(
+        "/org/freedesktop/NetworkManager",
+        "org.freedesktop.NetworkManager",
+        "Connectivity",
+    )
+
+    values: dict[str, int] = {}
+    for name in ("podlaz0", "host0"):
+        path = command("nmcli", "-g", "GENERAL.DBUS-PATH", "device", "show", name)
+        if not re.fullmatch(r"/org/freedesktop/NetworkManager/Devices/\d+", path):
+            raise ValueError("unexpected NetworkManager device path")
+        values[name] = property_uint(path, "org.freedesktop.NetworkManager.Device", "Ip4Connectivity")
+
+    # NetworkManager-visible candidates, not proof of its internal selected
+    # best-default-route. No addresses, gateways or probe hosts are logged.
+    metrics: dict[str, str] = {}
+    for name in ("podlaz0", "host0"):
+        routes = command("nmcli", "-g", "IP4.ROUTE", "device", "show", name)
+        numbers = sorted({int(x) for x in re.findall(r"\bmt\s*=\s*(\d+)", routes)})
+        metrics[name] = ",".join(str(x) for x in numbers) if numbers else "unknown"
+    print(
+        f"nm-connectivity-evidence=version_{version.replace('.', '_')}"
+        f" global_{global_value} tun_ipv4_{values['podlaz0']}"
+        f" uplink_ipv4_{values['host0']}"
+        f" tun_nm_metrics_{metrics['podlaz0']}"
+        f" uplink_nm_metrics_{metrics['host0']}"
+    )
+
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "observe":
+        connectivity_observation()
+        return 0
     if len(sys.argv) != 3 or sys.argv[1] not in {"snapshot", "compare"}:
         return 2
     path = Path(sys.argv[2])
@@ -108,6 +164,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError):
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError):
         print("nm-registration-inspection=failed", file=sys.stderr)
         sys.exit(1)
