@@ -120,6 +120,35 @@ func TestHostedV029RecoveryRunsPinnedLegacyHarnessWithoutChangingItsSemantics(t 
 	}
 }
 
+func TestPinnedHistoryFailureDiagnosticsRemainBoundedAndReadOnly(t *testing.T) {
+	script := readRequiredFile(t, hostedV029Recovery)
+	for _, required := range []string{
+		"run_pinned_v029_acceptance()",
+		"network-recovery-package-acceptance.sh",
+		"pinned-v029-diagnostic.category=",
+		"pinned-v029-diagnostic.lifecycle_phase=",
+		"pinned-v029-diagnostic.resume_snapshot=",
+		"return 1",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("pinned history failure diagnostics lost %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"print(status)",
+		"print(resume)",
+		"print(reason)",
+		"json.dumps(status)",
+		"journalctl",
+		"runuser -u e2e -- /usr/bin/podlaz connect",
+		"recover --execute",
+	} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("historical diagnostic may not leak private records or repair product state: %q", forbidden)
+		}
+	}
+}
+
 func TestHostedPackageHistoryDoesNotReuseV0240RegressionAsEitherBoundary(t *testing.T) {
 	workflow := readRequiredFile(t, hostedPackageHistoryWorkflow)
 	if strings.Contains(workflow, "v0.2.40") || strings.Contains(workflow, "podlaz_0.2.40") {

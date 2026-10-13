@@ -93,7 +93,56 @@ prepare_v029_workdir() {
 }
 
 run_pinned_v029_acceptance() {
-  guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/client-uri); cd '${GUEST_WORK}'; runuser -u e2e -- env E2E_TMP_ROOT='${GUEST_HISTORY_PRIVATE}' E2E_ARTIFACT_DIR='${GUEST_HISTORY_PUBLIC}' PODLAZ_E2E_BASE_DEB='${GUEST_V029_ALIAS}' PODLAZ_E2E_BASE_VERSION=v0.2.29 PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY=true PODLAZ_E2E_PROFILE_URI=\"\${uri}\" PODLAZ_E2E_DNS_CHECK_HOST=example.com PODLAZ_E2E_PUBLIC_IP_CHECK_URL=https://example.com/ bash /workspace/scripts/e2e/network-recovery-package-acceptance.sh"
+  if guest_exec /bin/bash -lc "uri=\$(cat /run/podlaz-synthetic-xray/client-uri); cd '${GUEST_WORK}'; runuser -u e2e -- env E2E_TMP_ROOT='${GUEST_HISTORY_PRIVATE}' E2E_ARTIFACT_DIR='${GUEST_HISTORY_PUBLIC}' PODLAZ_E2E_BASE_DEB='${GUEST_V029_ALIAS}' PODLAZ_E2E_BASE_VERSION=v0.2.29 PODLAZ_E2E_HISTORICAL_UPGRADE_ONLY=true PODLAZ_E2E_PROFILE_URI=\"\${uri}\" PODLAZ_E2E_DNS_CHECK_HOST=example.com PODLAZ_E2E_PUBLIC_IP_CHECK_URL=https://example.com/ bash /workspace/scripts/e2e/network-recovery-package-acceptance.sh"; then
+    return 0
+  fi
+  # The historical guest captured private, redacted diagnostic snapshots.
+  # Emit only enumerated failure details before guest teardown; never print
+  # private journal, profile, endpoint or raw status contents.
+  guest_exec python3 - "${GUEST_HISTORY_PUBLIC}/network-recovery-failure" <<'PY_DIAGNOSTIC' || true
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+try:
+    reason = (root / "reason.txt").read_text(encoding="utf-8")[:256]
+except (OSError, UnicodeError):
+    reason = ""
+if reason.startswith("released_to_candidate_upgrade_reconnected: semantic status timeout"):
+    category = "active_convergence_timeout"
+elif "terminal/impossible status" in reason:
+    category = "terminal_status"
+elif "incompatible status contract" in reason:
+    category = "incompatible_status"
+else:
+    category = "other"
+
+def snapshot(name):
+    try:
+        path = root / name
+        if path.is_symlink() or path.stat().st_size > 65536:
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, UnicodeError, ValueError):
+        return {}
+
+status = snapshot("status.json")
+resume = snapshot("network-session-resume.json")
+allowed = {
+    "connected", "connecting", "reconnecting", "disconnected",
+    "clean-inactive", "clean_inactive", "verified-active", "verified_active",
+    "active", "inactive", "unknown", "failed", "error",
+}
+phase = status.get("lifecycle_phase")
+phase_code = phase if isinstance(phase, str) and phase in allowed else "other"
+print("pinned-v029-diagnostic.category=" + category)
+print("pinned-v029-diagnostic.status_snapshot=" + ("present" if status else "absent"))
+print("pinned-v029-diagnostic.lifecycle_phase=" + phase_code)
+print("pinned-v029-diagnostic.resume_snapshot=" + ("present" if resume else "absent"))
+PY_DIAGNOSTIC
+  return 1
 }
 
 require_legacy_evidence() {
