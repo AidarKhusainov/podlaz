@@ -164,21 +164,8 @@ prepare_wifi_fixture() {
   guest_script="$(cat <<'EOF'
 set -Eeuo pipefail
 export DEBIAN_FRONTEND=noninteractive
-wifi_fixture_phase=packages
+wifi_fixture_phase=hwsim_radios
 trap 'printf "wifi-fixture phase=%s failed\\n" "$wifi_fixture_phase" >&2' ERR
-wifi_packages_started="$(date +%s%3N)"
-
-# hosted_vm_tun_install_candidate refreshed APT indexes in this guest boot.
-# Reuse that same snapshot instead of repeating expensive TCG-bound metadata work.
-apt-get install -y -qq --no-install-recommends \
-  dnsmasq-base \
-  hostapd \
-  iw \
-  iptables \
-  network-manager \
-  wpasupplicant \
-  "linux-modules-extra-$(uname -r)"
-printf 'hosted-vm phase=wifi_packages duration_ms=%s\n' "$(( $(date +%s%3N) - wifi_packages_started ))" >&2
 
 systemctl stop NetworkManager.service >/dev/null 2>&1 || true
 systemctl stop wpa_supplicant.service >/dev/null 2>&1 || true
@@ -541,7 +528,10 @@ run_scenario() {
 
   mark_failure fixture guest.control
   hosted_vm_phase_start
-  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq
+  # Use the candidate's refreshed APT indexes and install the Wi-Fi stack
+  # together with guest control dependencies, before enabling the guest agent.
+  hosted_vm_ssh sudo env DEBIAN_FRONTEND=noninteractive bash -c \
+    'apt-get install -y -qq --no-install-recommends curl jq dnsmasq-base hostapd iw iptables network-manager wpasupplicant "linux-modules-extra-$(uname -r)"'
   hosted_vm_prepare_guest_agent
   hosted_vm_tun_install_helpers "${REPO_ROOT}"
   hosted_vm_tun_install_polkit "${PRIVATE_ROOT}/polkit.rules"
