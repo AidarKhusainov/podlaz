@@ -1,0 +1,5 @@
+[VPN Connection]
+name=podlaz-guest-observer
+service=org.freedesktop.NetworkManager.podlazresearch
+program=/run/podlaz-nm-vpn-observer
+supports-multiple-connections=false
