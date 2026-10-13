@@ -7,6 +7,8 @@ on:
       - '.github/workflows/hosted-networkmanager-research.yml'
       - 'scripts/e2e/hosted-synthetic-tun.sh'
       - 'scripts/e2e/nm_registration_evidence.py'
+      - 'scripts/e2e/nm_vpn_no_l3_plugin.py'
+      - 'scripts/e2e/nm_vpn_no_l3_service.name'
 
 permissions:
   contents: read
@@ -34,7 +36,9 @@ jobs:
             go.mod
             packaging/package-toolchain.env
       - name: Validate snapshot comparison contract
-        run: python3 -m unittest discover -s scripts/e2e -p 'nm_registration_evidence_test.py' -v
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_registration_evidence_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_vpn_no_l3_plugin.py
       - name: Install qualification tools
         run: |
           sudo apt-get update
