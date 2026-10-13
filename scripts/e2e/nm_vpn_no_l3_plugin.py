@@ -9,6 +9,8 @@ so would delegate network configuration to a second writer.
 from __future__ import annotations
 
 from pathlib import Path
+import ipaddress
+import sys
 
 import dbus
 import dbus.bus
@@ -21,6 +23,7 @@ IFACE = "org.freedesktop.NetworkManager.VPN.Plugin"
 OBJECT = "/org/freedesktop/NetworkManager/VPN/Plugin"
 MARKER = Path("/run/podlaz-nm-vpn-observer-invoked")
 BUS_MARKER = Path("/run/podlaz-nm-vpn-observer-bus-ready")
+GATEWAY_FILE = Path("/run/podlaz-nm-vpn-actual-gateway")
 
 
 class Observer(dbus.service.Object):
@@ -36,6 +39,15 @@ class Observer(dbus.service.Object):
                 "Xray-owned TUN is missing",
                 name="org.freedesktop.NetworkManager.VPN.Error.BadArguments",
             )
+        # The gateway is the existing synthetic Xray transport destination,
+        # not a new route, a fabricated connectivity target or cleanup authority.
+        try:
+            address = ipaddress.IPv4Address(GATEWAY_FILE.read_text(encoding="ascii").strip())
+        except (OSError, ValueError) as exc:
+            raise dbus.exceptions.DBusException(
+                "Guest Xray endpoint authority unavailable",
+                name="org.freedesktop.NetworkManager.VPN.Error.BadArguments",
+            ) from exc
         self._state = 3
         self.StateChanged(dbus.UInt32(self._state))
         MARKER.write_text("invoked\n", encoding="ascii")
@@ -45,6 +57,7 @@ class Observer(dbus.service.Object):
             dbus.Dictionary(
                 {
                     "tundev": dbus.String("podlaz0"),
+                    "gateway": dbus.UInt32(int.from_bytes(address.packed, byteorder=sys.byteorder)),
                     "has-ip4": dbus.Boolean(False),
                     "has-ip6": dbus.Boolean(False),
                     "can-persist": dbus.Boolean(False),
