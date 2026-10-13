@@ -418,6 +418,7 @@ prepare_system_guest() {
     # NetworkManager is not required to dynamically rescan service descriptors.
     sudo -n install -D -m 0755 "${SCRIPT_DIR}/nm_vpn_no_l3_plugin.py" "${GUEST_ROOT}/usr/libexec/podlaz-nm-vpn-observer"
     sudo -n install -D -m 0644 "${SCRIPT_DIR}/nm_vpn_no_l3_service.name" "${GUEST_ROOT}/usr/lib/NetworkManager/VPN/podlaz-research.name"
+    sudo -n install -D -m 0644 "${SCRIPT_DIR}/nm_vpn_no_l3_dbus.conf" "${GUEST_ROOT}/etc/dbus-1/system.d/podlaz-nm-vpn-observer.conf"
   fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
@@ -1297,6 +1298,22 @@ experiment_nm_vpn_no_l3() {
   guest_exec test -f /usr/lib/NetworkManager/VPN/podlaz-research.name
   guest_exec /usr/bin/python3 -c 'import dbus, gi'
   printf 'nm-vpn-observer-python-dependencies=pass\n'
+  # The throwaway plugin must first prove that it can own its declared
+  # system-bus name. A missing name is an activation/runtime defect, not
+  # evidence for or against delegation of NM network configuration.
+  # shellcheck disable=SC2016
+  if guest_exec /bin/bash -lc '/usr/libexec/podlaz-nm-vpn-observer >/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stdout 2>/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stderr & pid=$!; rc=1; for i in $(seq 1 30); do if busctl --system status org.freedesktop.NetworkManager.podlazresearch >/dev/null 2>&1; then rc=0; break; fi; kill -0 "$pid" >/dev/null 2>&1 || break; sleep 0.2; done; kill "$pid" >/dev/null 2>&1 || :; wait "$pid" >/dev/null 2>&1 || :; exit "$rc"'; then
+    printf 'nm-vpn-bus-ownership=pass\n'
+  else
+    printf 'nm-vpn-bus-ownership=fail\n'
+    for diagnostic in 'AccessDenied|dbus_access_denied' 'PermissionDenied|dbus_permission_denied' 'ImportError|python_import_failed' 'ModuleNotFoundError|python_import_failed' 'Traceback|observer_exception'; do
+      local pattern="${diagnostic%%|*}" label="${diagnostic#*|}"
+      if guest_exec grep -qF "${pattern}" "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
+        printf 'nm-vpn-observer-error-class=%s\n' "${label}"
+      fi
+    done
+    return 1
+  fi
   guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
 
