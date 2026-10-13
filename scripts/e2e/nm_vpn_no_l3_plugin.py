@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import dbus
+import dbus.bus
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
@@ -24,7 +25,6 @@ BUS_MARKER = Path("/run/podlaz-nm-vpn-observer-bus-ready")
 
 class Observer(dbus.service.Object):
     def __init__(self, bus: dbus.SystemBus):
-        self._name = dbus.service.BusName(SERVICE, bus=bus)
         super().__init__(bus, OBJECT)
         self._state = 1
 
@@ -94,9 +94,12 @@ def main() -> None:
     # Keep the exported D-Bus object and its BusName alive for the whole
     # main loop; dropping the last reference can unregister the service.
     bus = dbus.SystemBus()
+    reply = bus.request_name(SERVICE, dbus.bus.NAME_FLAG_DO_NOT_QUEUE)
+    if reply != dbus.bus.REQUEST_NAME_REPLY_PRIMARY_OWNER:
+        raise RuntimeError("VPN observer failed to become primary bus name owner")
     observer = Observer(bus)
     if not bus.name_has_owner(SERVICE):
-        raise RuntimeError("VPN observer D-Bus name is not owned")
+        raise RuntimeError("VPN observer lost D-Bus name ownership")
     BUS_MARKER.write_text("owned\n", encoding="ascii")
     GLib.MainLoop().run()
     del observer
