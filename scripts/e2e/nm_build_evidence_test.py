@@ -99,5 +99,43 @@ class BuildDiagnosticFormatContract(unittest.TestCase):
         self.assertNotIn('private.example', '\n'.join(records))
 
 
+class BuildTargetInventoryContract(unittest.TestCase):
+    def test_only_a_manifest_known_relative_target_can_be_published(self):
+        from nm_build_evidence import build_error_records
+        records = build_error_records([
+            'FAILED: src/libnm-core-impl/nm-core-enum-types.c',
+            'FAILED: src/private.example/data.c',
+            'FAILED: /private.example/src/libnm-core-impl/nm-core-enum-types.c',
+        ], frozenset({'src/libnm-core-impl/nm-core-enum-types.c'}))
+        self.assertIn('nm-selector-build-target=src/libnm-core-impl/nm-core-enum-types.c', records)
+        self.assertNotIn('private.example', '\n'.join(records))
+
+    def test_manifest_parser_rejects_escaping_or_unbounded_paths(self):
+        from nm_build_evidence import ninja_targets
+        manifest = '\n'.join([
+            'build src/libnm-core-impl/nm-core-enum-types.c: CUSTOM_COMMAND upstream-public-input',
+            'build data/NetworkManager.service: CUSTOM_COMMAND public.service.in',
+            'build /private.example/secret: CUSTOM_COMMAND',
+            'build src/../private.example/secret: CUSTOM_COMMAND',
+            'build src/secret$ name: CUSTOM_COMMAND',
+            '  command = echo private.example',
+        ])
+        self.assertEqual(ninja_targets(manifest), frozenset({
+            'src/libnm-core-impl/nm-core-enum-types.c', 'data/NetworkManager.service',
+        }))
+
+    def test_failed_block_shell_errors_are_not_lost_or_confused_with_configure(self):
+        records = build_error_records([
+            'Checking for tool: not found',
+            'FAILED: data/NetworkManager.service',
+            'sed -f public.sed input',
+            'sed: cannot read /dev/fd/63: No such file or directory',
+            'ninja: build stopped: subcommand failed.',
+        ])
+        self.assertIn('nm-selector-build-detail=missing_file', records)
+        self.assertIn('nm-selector-build-detail=device_filesystem', records)
+        self.assertEqual(build_error_records(['Checking for tool: not found']), [])
+
+
 if __name__ == '__main__':
     unittest.main()

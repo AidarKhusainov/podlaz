@@ -26,7 +26,7 @@ report_failure() {
     # No raw apt/source/build output escapes the private directory.
     if [[ -f "${build_log}" ]]; then
       report_progress
-      python3 "${SCRIPT_DIR}/nm_build_evidence.py" "${build_log}" || printf 'nm-selector-build-detail=diagnostic_failed\n'
+      sudo -n python3 "${SCRIPT_DIR}/nm_build_evidence.py" "${build_log}" "${ROOT}/tmp/nm-selector-source/source" || printf 'nm-selector-build-detail=diagnostic_failed\n'
       if grep -q "You must put some 'deb-src'" "${build_log}"; then
         printf 'nm-selector-build-class=source_configuration\n'
       elif grep -q 'Unable to find a source package\|Unable to locate package' "${build_log}"; then
