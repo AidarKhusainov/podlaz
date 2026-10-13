@@ -137,6 +137,17 @@ Automated evidence has explicit roles instead of one undifferentiated acceptance
 
 Release provenance is build-once/promote-exactly. The release job builds the amd64/arm64 artifact set once, creates `SHA256SUMS`, and exports the checksum-manifest digest. Every required qualifier downloads that same workflow artifact set and verifies both the manifest digest and every asset checksum before exercising it. The publisher performs the same verification, attests those downloaded files, and publishes those exact files. A downstream retry may reuse the immutable uploaded candidate; it must not silently substitute a rebuild.
 
+The complete release publication gate also requires source/security and package
+contracts, independently validated Remnawave subscription/HWID and isolated
+full-TUN qualification, real guest terminal boot, Wi-Fi, boot-authority,
+reboot and suspend lifecycles, hosted recovery/fault/ownership, and pinned
+historical package upgrade/restart acceptance. Each migrated suite preserves
+its executable assertions, independent isolated guest, public verdict validator,
+failure classification and private-state cleanup. Recovery and package gates
+aggregate results fail-closed: failed, skipped, cancelled or absent mandatory
+evidence blocks attestation and publication.
+
+
 Signed APT distribution is a downstream promotion of that release evidence, never
 another package build. When explicitly enabled, the release workflow passes the
 same qualified artifact-set identity to a reusable APT publisher after GitHub
