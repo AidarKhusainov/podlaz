@@ -390,6 +390,9 @@ teardown_all() {
   if (( saved != 0 )) && [[ "${FAILURE_CLASS}" == none ]]; then
     mark_failure infrastructure scenario
   fi
+  if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+    printf 'nm-registration-scenario-result=%s step=%s\n' "${FAILURE_CLASS}" "${FAILURE_STEP}"
+  fi
   finalize_report
   validate_report || cleanup_failed=1
   set -e
