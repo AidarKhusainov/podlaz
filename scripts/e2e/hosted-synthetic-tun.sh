@@ -36,6 +36,8 @@ HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active termi
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
+NM_REGISTRATION_RESEARCH="${PODLAZ_E2E_NM_REGISTRATION_RESEARCH:-false}"
+GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -378,13 +380,16 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  sudo -n debootstrap --variant=minbase "${GUEST_RELEASE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
     network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+    sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends network-manager-config-connectivity-ubuntu >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
 
@@ -1169,6 +1174,32 @@ run_active_traffic_checks() {
   record_evidence tun.https_tls pass
 }
 
+# Guest-only NM control experiment: never run against the physical host.
+experiment_nm_external_tun_registration() {
+  local before after state
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-before.json"
+  before="$(guest_exec nmcli -g GENERAL.MANAGED device show podlaz0 | tr -d '\r')"
+  case "${before}" in yes|no) ;; *) return 1 ;; esac
+  printf 'nm-registration-original-managed=%s\n' "${before}"
+  # This is a mutation, not a passive registration. Compare exact L3 first.
+  guest_exec nmcli device set podlaz0 managed yes
+  sleep 5
+  after="$(guest_exec nmcli -g GENERAL.MANAGED device show podlaz0 | tr -d '\r')"
+  case "${after}" in yes|no) ;; *) after=other ;; esac
+  printf 'nm-registration-after-managed=%s\n' "${after}"
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
+  state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+  case "${state}" in
+    connected:full|'connected (global):full') state=full ;;
+    connected:limited|'connected (site only):limited') state=limited ;;
+    *) state=other ;;
+  esac
+  printf 'nm-registration-global=%s\n' "${state}"
+  guest_exec nmcli device set podlaz0 managed reset
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
+  assert_verified_active_authority
+}
+
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
@@ -1303,6 +1334,10 @@ run_scenario() {
   else
     mark_failure diagnostic_unknown tun.active_traffic
     run_active_traffic_checks
+    if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+      mark_failure diagnostic_unknown tun.nm_registration
+      experiment_nm_external_tun_registration
+    fi
     mark_failure diagnostic_unknown tun.doctor
     run_tun_doctor
 
@@ -1331,6 +1366,8 @@ run_scenario() {
 }
 
 main() {
+  case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported research guest release" ;; esac
+  case "${NM_REGISTRATION_RESEARCH}" in true|false) ;; *) fail "invalid NM registration research mode" ;; esac
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
