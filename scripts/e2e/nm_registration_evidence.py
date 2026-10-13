@@ -132,7 +132,34 @@ def connectivity_observation() -> None:
 
 
 
+def vpn_diagnose() -> None:
+    """Classify guest NM journal without exposing sensitive log messages."""
+    import re
+
+    result = subprocess.run(
+        ("journalctl", "--no-pager", "-o", "cat", "-u", "NetworkManager", "-n", "600"),
+        capture_output=True, text=True, timeout=15, check=True,
+    )
+    journal = result.stdout.lower()
+    patterns = (
+        ("source_connection_missing", r"could not find source connection"),
+        ("vpn_plugin_missing", r"vpn plugin.*(?:missing|not found|not available)"),
+        ("vpn_service_start_failed", r"vpn.*(?:failed to start|service start failed|cannot start)"),
+        ("vpn_service_timeout", r"vpn.*(?:timeout|timed out)"),
+        ("vpn_dbus_denied", r"vpn.*(?:access denied|permission denied)"),
+        ("vpn_ip_config_invalid", r"vpn.*(?:invalid ip|ip configuration failed)"),
+        ("vpn_connect_request_failed", r"vpn.*(?:connection activation failed|connect request failed)"),
+        ("vpn_child_exit", r"vpn.*(?:child.*exited|process.*exited|service.*exited)"),
+    )
+    labels = [name for name, pattern in patterns if re.search(pattern, journal)]
+    print("nm-vpn-journal-service-seen=" + ("yes" if "podlazresearch" in journal else "no"))
+    print("nm-vpn-journal-class=" + ("_".join(labels) if labels else "unclassified"))
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "vpn-diagnose":
+        vpn_diagnose()
+        return 0
     if len(sys.argv) == 2 and sys.argv[1] == "observe":
         connectivity_observation()
         return 0
