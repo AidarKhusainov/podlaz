@@ -42,6 +42,28 @@ def strip_runtime_counters(value: object) -> object:
     return value
 
 
+def normalize_host_uplink_route(item: object) -> object:
+    """Only normalize this fixture's NM-managed default health-penalty metric."""
+    if not isinstance(item, dict):
+        return item
+    result = dict(item)
+    if (
+        result.get("dev") == "host0"
+        and result.get("dst", "default") == "default"
+        and result.get("table", "main") in ("main", 254, "254")
+        and result.get("metric") in (100, 20100)
+    ):
+        result["metric"] = "nm-health-penalty"
+    return result
+
+
+def normalized_ipv4_routes(routes: object) -> list[object]:
+    if not isinstance(routes, list):
+        raise ValueError("IPv4 route inventory is not an array")
+    result = [normalize_host_uplink_route(route) for route in routes]
+    return sorted(result, key=lambda item: json.dumps(item, sort_keys=True))
+
+
 def snapshot() -> dict[str, object]:
     result: dict[str, object] = {}
     for name, args in COMMANDS:
@@ -51,7 +73,7 @@ def snapshot() -> dict[str, object]:
         value = proc.stdout
         if name in {"link", "address", "routes", "rules", "firewall"}:
             parsed = json.loads(value)
-            result[name] = strip_runtime_counters(parsed) if name == "firewall" else parsed
+            result[name] = (strip_runtime_counters(parsed) if name == "firewall" else normalized_ipv4_routes(parsed) if name == "routes" else parsed)
         else:
             result[name] = value
     return result
