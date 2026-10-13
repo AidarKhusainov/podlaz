@@ -1195,7 +1195,7 @@ experiment_nm_external_tun_registration() {
     *) state=other ;;
   esac
   printf 'nm-registration-global=%s\n' "${state}"
-  guest_exec nmcli device set podlaz0 managed reset
+  guest_exec nmcli device set podlaz0 managed "${before}"
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
   assert_verified_active_authority
 }
