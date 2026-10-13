@@ -1,0 +1,72 @@
+name: Hosted NetworkManager Registration Research
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-networkmanager-research.yml'
+      - 'scripts/e2e/hosted-synthetic-tun.sh'
+      - 'scripts/e2e/nm_registration_evidence.py'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    name: NM external TUN registration (${{ matrix.release }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+      - name: Build candidate package
+        env:
+          PODLAZ_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-deb.sh
+      - name: Research registration in disposable guest
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+          PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          bash scripts/e2e/hosted-synthetic-tun.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb
+      - name: Validate normalized report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+        run: bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+      - name: Remove private guest state
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-registration-private"
+      - name: Publish normalized guest evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: nm-registration-${{ matrix.release }}
+          path: ${{ runner.temp }}/podlaz-nm-registration-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7
