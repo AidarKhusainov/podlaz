@@ -198,6 +198,7 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.CANDIDATE_COMMIT }}
           PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
           PODLAZ_E2E_NM_CONNECTIVITY: 'true'
+          PODLAZ_E2E_NM_SCOPE_COMPARE: 'true'
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
