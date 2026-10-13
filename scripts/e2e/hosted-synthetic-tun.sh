@@ -1291,7 +1291,7 @@ experiment_nm_vpn_no_l3() {
   guest_exec install -m 0700 /workspace/scripts/e2e/nm_vpn_no_l3_plugin.py /run/podlaz-nm-vpn-observer
   guest_exec install -D -m 0644 /workspace/scripts/e2e/nm_vpn_no_l3_service.name /usr/lib/NetworkManager/VPN/podlaz-research.name
   guest_exec nmcli general reload
-  guest_exec nmcli connection add --temporary type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
+  guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
 
   # Do not export activation details or connection dictionaries from the guest.
