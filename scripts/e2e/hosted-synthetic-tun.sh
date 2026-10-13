@@ -1229,6 +1229,54 @@ assert_networkmanager_tun_connectivity() {
   return 1
 }
 
+# A/B is limited to an already exact-owned route in this disposable guest.
+# It never creates a route, changes NM profiles, or permits host-level mutation.
+compare_networkmanager_route_scopes() {
+  local table scope second state tun_state uplink_state previous=''
+  table="$(guest_exec jq -er '[.routes[] | select(.cidr == "default" and .dev == "podlaz0" and .via == "") | .table] | if length == 1 then .[0] else error("ambiguous owned default") end' "${GUEST_MANIFEST}")"
+  [[ "${table}" =~ ^[1-9][0-9]*$ ]] || return 1
+  guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
+  guest_exec nmcli general logging level DEBUG domains CONCHECK
+
+  # An error or shell interrupt restores the intended scope before teardown.
+  # If restoration is impossible, normal fail-closed guest teardown still runs.
+  (
+    trap 'guest_exec ip -4 route change default dev podlaz0 table "${table}" scope global >/dev/null 2>&1 || true' EXIT
+    for scope in link global; do
+      # Change cannot create an absent route (unlike replace/add).
+      guest_exec ip -4 route change default dev podlaz0 table "${table}" scope "${scope}"
+      if [[ "${scope}" == link ]]; then
+        guest_exec ip -4 route show table "${table}" exact default |
+          grep -E '^default dev podlaz0( |$).*scope link( |$)' >/dev/null
+      else
+        guest_exec ip -j -4 route show table "${table}" exact default |
+          python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if len(r)==1 and r[0].get("dev")=="podlaz0" and r[0].get("scope","global") in ("global","universe") else 1)'
+      fi
+      previous=''
+      # NM normally checks every 300s. Do not request an explicit check.
+      for second in $(seq 1 330); do
+        state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+        tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
+        uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')")"
+        case "${state}" in
+          connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
+          *) state=other ;;
+        esac
+        if [[ "${state}/${tun_state}/${uplink_state}" != "${previous}" ]]; then
+          printf 'networkmanager-ab-scope=%s second=%s global=%s tun=%s uplink=%s\n' \
+            "${scope}" "${second}" "${state}" "${tun_state}" "${uplink_state}"
+          previous="${state}/${tun_state}/${uplink_state}"
+        fi
+        sleep 1
+      done
+    done
+    # Explicit success-path restoration is checked, not silently ignored.
+    guest_exec ip -4 route change default dev podlaz0 table "${table}" scope global
+    guest_exec python3 "${HOSTED_NETWORK_AUTHORITY_HELPER}" verify-present "${GUEST_MANIFEST}" >/dev/null
+    trap - EXIT
+  )
+}
+
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
@@ -1378,6 +1426,9 @@ run_scenario() {
     run_active_traffic_checks
     if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
       mark_failure diagnostic_unknown tun.networkmanager_full
+      if [[ "${PODLAZ_E2E_NM_SCOPE_COMPARE:-false}" == true ]]; then
+        compare_networkmanager_route_scopes
+      fi
       assert_networkmanager_tun_connectivity
     fi
     if [[ "${CHECK_NM_CONNECTIVITY}" != true ]]; then
