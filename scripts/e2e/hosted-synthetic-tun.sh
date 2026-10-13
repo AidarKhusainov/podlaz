@@ -1301,8 +1301,9 @@ experiment_nm_vpn_no_l3() {
   # The throwaway plugin must first prove that it can own its declared
   # system-bus name. A missing name is an activation/runtime defect, not
   # evidence for or against delegation of NM network configuration.
+  guest_exec rm -f /run/podlaz-nm-vpn-observer-bus-ready
   # shellcheck disable=SC2016
-  if guest_exec /bin/bash -lc '/usr/libexec/podlaz-nm-vpn-observer >/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stdout 2>/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stderr & pid=$!; rc=1; for i in $(seq 1 30); do if [[ "$(busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.NetworkManager.podlazresearch 2>/dev/null)" == "b true" ]]; then rc=0; break; fi; kill -0 "$pid" >/dev/null 2>&1 || break; sleep 0.2; done; kill "$pid" >/dev/null 2>&1 || :; wait "$pid" >/dev/null 2>&1 || :; exit "$rc"'; then
+  if guest_exec /bin/bash -lc '/usr/libexec/podlaz-nm-vpn-observer >/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stdout 2>/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stderr & pid=$!; rc=1; for i in $(seq 1 30); do if [[ "$(busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.NetworkManager.podlazresearch 2>/dev/null)" == "b true" ]]; then rc=0; break; fi; kill -0 "$pid" >/dev/null 2>&1 || break; sleep 0.2; done; if test -f /run/podlaz-nm-vpn-observer-bus-ready; then printf "nm-vpn-preflight-internal-owner=pass\\n"; else printf "nm-vpn-preflight-internal-owner=fail\\n"; fi; kill "$pid" >/dev/null 2>&1 || :; wait "$pid" >/dev/null 2>&1 || :; exit "$rc"'; then
     printf 'nm-vpn-bus-ownership=pass\n'
   else
     printf 'nm-vpn-bus-ownership=fail\n'
@@ -1321,6 +1322,7 @@ experiment_nm_vpn_no_l3() {
     done
     return 1
   fi
+  guest_exec rm -f /run/podlaz-nm-vpn-observer-bus-ready
   guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
 
@@ -1372,7 +1374,7 @@ PY
   # Any observed session must first be quiesced; do not leave NM with a
   # stale reference to an executable that cleanup subsequently removes.
   guest_exec nmcli connection delete podlaz-guest-research >/dev/null
-  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked
+  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked /run/podlaz-nm-vpn-observer-bus-ready
   if guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null; then
     return 1
   fi
@@ -1562,7 +1564,10 @@ run_scenario() {
 main() {
   case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported research guest release" ;; esac
   case "${NM_REGISTRATION_RESEARCH}" in true|false) ;; *) fail "invalid NM registration research mode" ;; esac
-  [[ "${NM_RESEARCH_OBSERVATIONS}" =~ ^[1-9][0-9]*$ ]] && (( NM_RESEARCH_OBSERVATIONS <= 330 )) || fail "invalid NM research observation count"
+  [[ "${NM_RESEARCH_OBSERVATIONS}" =~ ^[1-9][0-9]*$ ]] || fail "invalid NM research observation count"
+  if (( NM_RESEARCH_OBSERVATIONS > 330 )); then
+    fail "invalid NM research observation count"
+  fi
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
