@@ -1304,7 +1304,9 @@ assert_terminal_authority_clean() {
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=xray-process-absent\n'
   assert_foreign_sentinel
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=foreign-sentinel-intact\n'
 }
 
 run_clean_recovery() {
