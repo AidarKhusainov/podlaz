@@ -292,36 +292,6 @@ if [[ "${restart_count}" =~ ^[0-9]{1,6}$ ]]; then
 else
   printf 'boot-restart-diagnostic.restart_count=unknown\n'
 fi
-# Private marker is not a source of network authority. Accept a phase only
-# when the marker's process and systemd invocation match the current service.
-startup_phase=absent
-startup_phase_age_seconds=unknown
-progress=/run/podlaz/startup-progress
-if test -f "$progress" && ! test -L "$progress"; then
-  startup_phase=stale
-  marker_pid="$(sed -n 's/^pid=//p' "$progress" 2>/dev/null || true)"
-  marker_invocation="$(sed -n 's/^invocation=//p' "$progress" 2>/dev/null || true)"
-  current_invocation="$(timeout 3 systemctl show -p InvocationID --value podlazd.service 2>/dev/null || true)"
-  if [[ "${marker_pid}" == "${main_pid}" && "${current_invocation}" =~ ^[0-9a-fA-F]{32}$ &&
-        "${marker_invocation}" == "${current_invocation}" ]]; then
-    candidate="$(sed -n 's/^stage=//p' "$progress" 2>/dev/null || true)"
-    case "${candidate}" in
-      startup-prepared|startup-serialized|session-state-load|privacy-reconcile|exact-recovery|generic-recovery|connect-replay|terminal-recovery|boot-autostart|startup-scan|listener-opening|listener-serving)
-        startup_phase="${candidate}" ;;
-      *) startup_phase=invalid ;;
-    esac
-    modified="$(stat -c %Y "$progress" 2>/dev/null || true)"
-    now="$(date +%s)"
-    if [[ "${modified}" =~ ^[0-9]{1,12}$ && "${now}" =~ ^[0-9]{1,12}$ ]]; then
-      age=$(( now - modified ))
-      if (( age >= 0 && age <= 3600 )); then
-        startup_phase_age_seconds="${age}"
-      fi
-    fi
-  fi
-fi
-printf 'boot-restart-diagnostic.startup_phase=%s\n' "${startup_phase}"
-printf 'boot-restart-diagnostic.startup_phase_age_seconds=%s\n' "${startup_phase_age_seconds}"
 EOF_DIAGNOSTIC
   then
     printf 'boot-restart-diagnostic.guest-control=unavailable\n' >&2

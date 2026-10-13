@@ -8,11 +8,8 @@ import (
 	"github.com/AidarKhusainov/podlaz/internal/api"
 )
 
-func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime, progress *startupProgressRecorder) bootAutostartManifestStore {
+func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime) bootAutostartManifestStore {
 	go runtime.coordinator.Run(runtime.eventCtx)
-	progress.record(startupStageSerialized)
-	continuation := runtime.continuation
-	continuation.startupProgress = progress.record
 
 	manifestStore := newBootAutostartManifestStore(runtime.stateDir, s.bootID)
 	attemptStore := newBootAutostartAttemptStore(runtime.runtimeDir, s.bootID)
@@ -21,12 +18,12 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime, progress
 			ctx,
 			manifestStore,
 			attemptStore,
-			continuation,
+			runtime.continuation,
 			runtime.sessionLifecycle,
 			func(resumeCtx context.Context) (networkSessionResumeResult, error) {
 				return resumeNetworkSessionResult(
 					resumeCtx,
-					continuation,
+					runtime.continuation,
 					runtime.sessionLifecycle,
 					runtime.currentStatus,
 					func(recoveryCtx context.Context, status api.StatusResponse) api.RecoveryResponse {
@@ -64,7 +61,6 @@ func (s Server) runStartup(ctx context.Context, runtime *daemonRuntime, progress
 			log.Printf("podlazd: boot autostart was not started because startup authority is unavailable")
 		}
 	}
-	progress.record(startupStageScan)
 	runtime.refreshStartupScan(ctx)
 	return manifestStore
 }

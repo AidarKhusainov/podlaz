@@ -47,7 +47,6 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 		"name: Hosted Synthetic TUN",
 		"pull_request:",
 		"workflow_dispatch:",
-		"schedule:",
 		"runs-on: ubuntu-24.04",
 		"persist-credentials: false",
 		"bash scripts/build-deb.sh",
@@ -63,6 +62,7 @@ func TestHostedSyntheticTUNWorkflowIsThinPermanentQualification(t *testing.T) {
 	}
 
 	forbidHostedSyntheticTUNMarkers(t, workflow,
+		"schedule:",
 		"self-hosted",
 		"${{ secrets.",
 		"PODLAZ_E2E_PROFILE_URI",
@@ -85,6 +85,26 @@ func TestHostedSyntheticTUNCandidateProvenanceMatchesCheckedOutCandidate(t *test
 	)
 	forbidHostedSyntheticTUNMarkers(t, workflow,
 		"PODLAZ_COMMIT: ${{ github.sha }}",
+	)
+}
+
+func TestHostedTypedReferenceUsesPinnedReleaseDigest(t *testing.T) {
+	script := readHostedSyntheticTUNFile(t, hostedSyntheticTUNScript)
+	start := strings.Index(script, "start_synthetic_typed_reference_endpoint() {")
+	end := strings.Index(script, "\nstart_synthetic_xray_endpoint() {")
+	if start < 0 || end <= start {
+		t.Fatal("independent typed reference fixture boundaries are missing")
+	}
+	reference := script[start:end]
+	requireHostedSyntheticTUNMarkers(t, reference,
+		"sing-box-1.14.2-linux-amd64.tar.gz",
+		"a684484d7477d1437282ee411f4d131d0340aaad60a7868841ebd5d87dd8a0c6",
+		"https://github.com/SagerNet/sing-box/releases/download/v1.14.2/",
+		"sha256sum --check --status",
+	)
+	forbidHostedSyntheticTUNMarkers(t, reference,
+		"api.github.com/repos/SagerNet/sing-box/releases/tags",
+		"release.json",
 	)
 }
 
