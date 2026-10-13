@@ -1288,14 +1288,19 @@ PY
 
 assert_terminal_authority_clean() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=resources-absent\n'
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=session-absent\n'
   if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1; then
     return 1
   fi
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=privacy-envelope-absent\n'
   if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then
     return 1
   fi
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=nm-tun-connection-absent\n'
   guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -Fx "synthetic-uplink:${GUEST_IF}" >/dev/null
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=uplink-active\n'
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
