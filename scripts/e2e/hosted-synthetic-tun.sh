@@ -38,6 +38,7 @@ PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 NM_REGISTRATION_RESEARCH="${PODLAZ_E2E_NM_REGISTRATION_RESEARCH:-false}"
 GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
+NM_RESEARCH_OBSERVATIONS="${PODLAZ_E2E_NM_RESEARCH_OBSERVATIONS:-330}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -1265,7 +1266,7 @@ experiment_nm_external_tun_registration() {
 
   # Observe an unforced periodic NM cycle; immediate global FULL is not
   # attributable to this device if it was already FULL before VPN activation.
-  for second in $(seq 1 330); do
+  for second in $(seq 1 "${NM_RESEARCH_OBSERVATIONS}"); do
     state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
     if [[ "${state}" != "${last_state}" ]]; then
       printf 'nm-registration-observation=%s global=%s\n' "${second}" "${state}"
@@ -1303,6 +1304,26 @@ experiment_nm_vpn_no_l3() {
   guest_exec nmcli -w 30 connection up podlaz-guest-research ifname host0 >"${PRIVATE_ROOT}/nm-vpn-up.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-up.stderr" || activation_rc=$?
   if ! guest_exec test -f /run/podlaz-nm-vpn-observer-invoked; then
     printf 'nm-vpn-dbus-connect=not_invoked\n'
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py vpn-diagnose
+    python3 - "${PRIVATE_ROOT}/nm-vpn-up.stderr" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
+classes = (
+    ("source_connection_missing", r"could not find source connection"),
+    ("base_device_missing", r"could not find a suitable device|no suitable device"),
+    ("vpn_service_unavailable", r"vpn service (?:was not installed|not available|not found)"),
+    ("vpn_service_start_failed", r"vpn service (?:failed|could not be started)"),
+    ("vpn_secrets_required", r"vpn secrets|no valid vpn secrets"),
+    ("permissions", r"not authorized|permission denied|access denied"),
+    ("plugin_unavailable", r"vpn plugin (?:not available|not found)"),
+    ("ip_config_invalid", r"ip configuration (?:failed|invalid)"),
+)
+matched = [label for label, pattern in classes if re.search(pattern, text)]
+print("nm-vpn-cli-detail=" + ("_".join(matched) if matched else "unclassified"))
+PY
     for signature in 'Could not find source connection|missing_source_connection' 'Could not find a suitable device|missing_base_device' 'Unknown VPN service|unknown_vpn_service' 'VPN service failed to start|service_start_failed' 'VPN plugin not available|plugin_unavailable' 'VPN service not available|service_unavailable' 'failed to activate|activation_failed' 'Connection activation failed|activation_failed'; do
       local pattern="${signature%%|*}" label="${signature#*|}"
       if grep -qiF -- "${pattern}" "${PRIVATE_ROOT}/nm-vpn-up.stderr"; then
@@ -1517,6 +1538,7 @@ run_scenario() {
 main() {
   case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported research guest release" ;; esac
   case "${NM_REGISTRATION_RESEARCH}" in true|false) ;; *) fail "invalid NM registration research mode" ;; esac
+  [[ "${NM_RESEARCH_OBSERVATIONS}" =~ ^[1-9][0-9]*$ ]] && (( NM_RESEARCH_OBSERVATIONS <= 330 )) || fail "invalid NM research observation count"
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
