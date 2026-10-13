@@ -1200,22 +1200,22 @@ assert_networkmanager_tun_connectivity() {
   guest_exec nmcli general logging level DEBUG domains CONCHECK
   guest_exec /bin/bash -lc 'NetworkManager --version'
   for second in $(seq 1 360); do
-    state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\\r')"
-    tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\\r')")"
-    uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\\r')")"
+    state="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+    tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
+    uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')")"
     # Emit sanitized transitions for both successful and failing runs.
     if [[ "${state}" != "${last_state}" || "${tun_state}" != "${last_tun}" || "${uplink_state}" != "${last_uplink}" ]]; then
       case "${state}" in
         connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
         *) state=other ;;
       esac
-      printf 'networkmanager-observation=%s global=%s tun=%s uplink=%s\\n' "${second}" "${state}" "${tun_state}" "${uplink_state}"
+      printf 'networkmanager-observation=%s global=%s tun=%s uplink=%s\n' "${second}" "${state}" "${tun_state}" "${uplink_state}"
       last_state="${state}"
       last_tun="${tun_state}"
       last_uplink="${uplink_state}"
     fi
     if [[ "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
-      printf 'networkmanager-full-observed-seconds=%s\\n' "${second}"
+      printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
       record_evidence tun.networkmanager_full pass
       return 0
     fi
