@@ -19,6 +19,7 @@ SERVICE = "org.freedesktop.NetworkManager.podlazresearch"
 IFACE = "org.freedesktop.NetworkManager.VPN.Plugin"
 OBJECT = "/org/freedesktop/NetworkManager/VPN/Plugin"
 MARKER = Path("/run/podlaz-nm-vpn-observer-invoked")
+BUS_MARKER = Path("/run/podlaz-nm-vpn-observer-bus-ready")
 
 
 class Observer(dbus.service.Object):
@@ -92,7 +93,11 @@ def main() -> None:
     DBusGMainLoop(set_as_default=True)
     # Keep the exported D-Bus object and its BusName alive for the whole
     # main loop; dropping the last reference can unregister the service.
-    observer = Observer(dbus.SystemBus())
+    bus = dbus.SystemBus()
+    observer = Observer(bus)
+    if not bus.name_has_owner(SERVICE):
+        raise RuntimeError("VPN observer D-Bus name is not owned")
+    BUS_MARKER.write_text("owned\n", encoding="ascii")
     GLib.MainLoop().run()
     del observer
 
