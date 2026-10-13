@@ -1320,6 +1320,19 @@ run_scenario() {
   qualify_explicit_proxy_only
   hosted_control_pause candidate-ready
 
+  if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+    # Capture the pre-TUN global state, not just a post-connect FULL snapshot.
+    # The result is a sanitized enum; no NM connection or network identifiers
+    # enter the CI log. This is observation, never a forced connectivity probe.
+    local nm_preconnect
+    nm_preconnect="$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')"
+    case "${nm_preconnect}" in
+      connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
+      *) nm_preconnect=other ;;
+    esac
+    printf 'networkmanager-preconnect-global=%s\n' "${nm_preconnect}"
+  fi
+
   mark_failure diagnostic_unknown tun.connect
   set +e
   guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect >${GUEST_PRIVATE}/connect.stdout 2>${GUEST_PRIVATE}/connect.stderr"
