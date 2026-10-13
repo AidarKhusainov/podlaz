@@ -84,6 +84,7 @@ if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
     tun.system_dns
     tun.https_tls
     tun.nm_registration_integrity
+    tun.nm_vpn_no_l3
     tun.clean_disconnect
     tun.terminal_cleanup
     tun.recovery_clean
@@ -411,7 +412,7 @@ prepare_system_guest() {
     systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
     network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
-    sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends network-manager-config-connectivity-ubuntu >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+    sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends network-manager-config-connectivity-ubuntu python3-dbus python3-gi >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
@@ -1279,6 +1280,48 @@ experiment_nm_external_tun_registration() {
   record_evidence tun.nm_registration_integrity pass
 }
 
+# An actual guest-only VPN service protocol experiment, not an NM device
+# managed-flag toggle. The plugin only observes the already-protected Xray TUN;
+# it refuses to delegate IP configuration to a competing NetworkManager writer.
+experiment_nm_vpn_no_l3() {
+  local activation_rc=0 kind state
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-vpn-before.json"
+  guest_exec install -m 0700 /workspace/scripts/e2e/nm_vpn_no_l3_plugin.py /run/podlaz-nm-vpn-observer
+  guest_exec install -D -m 0644 /workspace/scripts/e2e/nm_vpn_no_l3_service.name /usr/lib/NetworkManager/VPN/podlaz-research.name
+  guest_exec nmcli general reload
+  guest_exec nmcli connection add --temporary type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+
+  # Do not export activation details or connection dictionaries from the guest.
+  guest_exec nmcli -w 30 connection up podlaz-guest-research >"${PRIVATE_ROOT}/nm-vpn-up.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-up.stderr" || activation_rc=$?
+  if ! guest_exec test -f /run/podlaz-nm-vpn-observer-invoked; then
+    printf 'nm-vpn-dbus-connect=not_invoked\n'
+    return 1
+  fi
+  printf 'nm-vpn-dbus-connect=invoked\n'
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+  kind="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
+  printf 'nm-vpn-no-l3-tun-device=%s\n' "${kind}"
+  [[ "${kind}" == external ]] || return 1
+  if (( activation_rc == 0 )); then
+    printf 'nm-vpn-no-l3-activation=active\n'
+    guest_exec nmcli -w 20 connection down podlaz-guest-research >/dev/null
+  else
+    # A rejected connection after an observed real Connect call is negative
+    # evidence for notification-only activation, not an adopted product VPN.
+    printf 'nm-vpn-no-l3-activation=rejected\n'
+  fi
+  guest_exec nmcli connection delete podlaz-guest-research >/dev/null
+  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /run/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked
+  if guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null; then
+    return 1
+  fi
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+  state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+  printf 'nm-vpn-no-l3-global=%s\n' "${state}"
+  record_evidence tun.nm_vpn_no_l3 pass
+}
+
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
@@ -1423,6 +1466,8 @@ run_scenario() {
     if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
       mark_failure diagnostic_unknown tun.nm_registration
       experiment_nm_external_tun_registration
+      mark_failure diagnostic_unknown tun.nm_vpn_no_l3
+      experiment_nm_vpn_no_l3
     fi
     if [[ "${NM_REGISTRATION_RESEARCH}" != true ]]; then
       mark_failure diagnostic_unknown tun.doctor
