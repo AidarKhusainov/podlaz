@@ -1178,13 +1178,13 @@ run_active_traffic_checks() {
 experiment_nm_external_tun_registration() {
   local before after state
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-before.json"
-  before="$(guest_exec nmcli -g GENERAL.MANAGED device show podlaz0 | tr -d '\r')"
+  before="$(guest_exec nmcli -g GENERAL.NM-MANAGED device show podlaz0 | tr -d '\r')"
   case "${before}" in yes|no) ;; *) return 1 ;; esac
   printf 'nm-registration-original-managed=%s\n' "${before}"
   # This is a mutation, not a passive registration. Compare exact L3 first.
   guest_exec nmcli device set podlaz0 managed yes
   sleep 5
-  after="$(guest_exec nmcli -g GENERAL.MANAGED device show podlaz0 | tr -d '\r')"
+  after="$(guest_exec nmcli -g GENERAL.NM-MANAGED device show podlaz0 | tr -d '\r')"
   case "${after}" in yes|no) ;; *) after=other ;; esac
   printf 'nm-registration-after-managed=%s\n' "${after}"
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
