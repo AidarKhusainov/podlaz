@@ -56,6 +56,8 @@ jobs:
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
           PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
           PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
+          # Temporary targeted diagnostic: classify only the rejected route mutation.
+          PODLAZ_E2E_NM_RESEARCH_OBSERVATIONS: '10'
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
