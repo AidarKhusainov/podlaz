@@ -1195,7 +1195,7 @@ normalize_nm_connectivity() {
 
 assert_networkmanager_tun_connectivity() {
   local state tun_state uplink_state second
-  local last_state= last_tun= last_uplink=
+  local last_state='' last_tun='' last_uplink=''
   # Observe a natural NetworkManager cycle without requesting a forced check.
   guest_exec nmcli general logging level DEBUG domains CONCHECK
   guest_exec /bin/bash -lc 'NetworkManager --version'
@@ -1223,6 +1223,7 @@ assert_networkmanager_tun_connectivity() {
   done
   # Keep raw routes, connection identifiers and CONCHECK logs inside the private guest.
   guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
+  # shellcheck disable=SC2016 -- awk expressions execute inside the guest.
   guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '\''{ for (i=1; i<=NF; i++) if ($i=="metric") { print "networkmanager-route-" dev "-metric=" $(i+1); found=1 } } END { if (!found) print "networkmanager-route-" dev "-metric=implicit" }'\''; done' || true
   return 1
 }
