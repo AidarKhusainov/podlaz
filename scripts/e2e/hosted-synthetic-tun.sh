@@ -1294,14 +1294,16 @@ experiment_nm_vpn_no_l3() {
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-vpn-before.json"
   guest_exec test -x /usr/libexec/podlaz-nm-vpn-observer
   guest_exec test -f /usr/lib/NetworkManager/VPN/podlaz-research.name
+  guest_exec /usr/bin/python3 -c 'import dbus, gi'
+  printf 'nm-vpn-observer-python-dependencies=pass\n'
   guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no >/dev/null
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
 
   # Do not export activation details or connection dictionaries from the guest.
-  guest_exec nmcli -w 30 connection up podlaz-guest-research >"${PRIVATE_ROOT}/nm-vpn-up.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-up.stderr" || activation_rc=$?
+  guest_exec nmcli -w 30 connection up podlaz-guest-research ifname host0 >"${PRIVATE_ROOT}/nm-vpn-up.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-up.stderr" || activation_rc=$?
   if ! guest_exec test -f /run/podlaz-nm-vpn-observer-invoked; then
     printf 'nm-vpn-dbus-connect=not_invoked\n'
-    for signature in 'VPN service failed to start|service_start_failed' 'VPN plugin not available|plugin_unavailable' 'VPN service not available|service_unavailable' 'failed to activate|activation_failed' 'Connection activation failed|activation_failed'; do
+    for signature in 'Could not find source connection|missing_source_connection' 'Could not find a suitable device|missing_base_device' 'Unknown VPN service|unknown_vpn_service' 'VPN service failed to start|service_start_failed' 'VPN plugin not available|plugin_unavailable' 'VPN service not available|service_unavailable' 'failed to activate|activation_failed' 'Connection activation failed|activation_failed'; do
       local pattern="${signature%%|*}" label="${signature#*|}"
       if grep -qiF -- "${pattern}" "${PRIVATE_ROOT}/nm-vpn-up.stderr"; then
         printf 'nm-vpn-activation-class=%s\n' "${label}"
@@ -1322,6 +1324,8 @@ experiment_nm_vpn_no_l3() {
     # evidence for notification-only activation, not an adopted product VPN.
     printf 'nm-vpn-no-l3-activation=rejected\n'
   fi
+  # Any observed session must first be quiesced; do not leave NM with a
+  # stale reference to an executable that cleanup subsequently removes.
   guest_exec nmcli connection delete podlaz-guest-research >/dev/null
   guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked
   if guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null; then
