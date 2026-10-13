@@ -144,3 +144,30 @@ func TestHostedVMWiFiFixtureReusesCandidateAPTIndexes(t *testing.T) {
 		t.Fatal("Wi-Fi fixture must install its complete runtime dependencies")
 	}
 }
+
+func TestHostedVMWiFiPackagesInstalledDuringGuestControl(t *testing.T) {
+	script, err := os.ReadFile("hosted-vm-wifi-lifecycle.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	guestControl := strings.Index(text, "  mark_failure fixture guest.control")
+	fixture := strings.Index(text, "  mark_failure capability wifi.simulation_stack")
+	if guestControl < 0 || fixture <= guestControl {
+		t.Fatal("guest control must precede Wi-Fi fixture")
+	}
+	guestBlock := text[guestControl:fixture]
+	for _, pkg := range []string{"dnsmasq-base", "hostapd", "iw", "iptables", "network-manager", "wpasupplicant", "linux-modules-extra-$(uname -r)"} {
+		if !strings.Contains(guestBlock, pkg) {
+			t.Errorf("Wi-Fi prerequisite %q must be installed during guest control", pkg)
+		}
+	}
+	start := strings.Index(text, "prepare_wifi_fixture() {")
+	end := strings.Index(text, "assert_wifi_associated() {")
+	if start < 0 || end <= start {
+		t.Fatal("missing Wi-Fi fixture boundary")
+	}
+	if strings.Contains(text[start:end], "apt-get install") {
+		t.Fatal("Wi-Fi fixture must not perform a second package installation transaction")
+	}
+}
