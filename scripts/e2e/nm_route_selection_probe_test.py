@@ -53,6 +53,32 @@ device_connectivity_changed(NMDevice *device) {}
 '''
 
 
+SELECTOR_SOURCE = SOURCE
+UPDATE_GETTER = '''
+static void
+update_connectivity_value(NMManager *self)
+{
+    NMManagerPrivate *priv = NM_MANAGER_GET_PRIVATE(self);
+    NMConnectivityState best_state;
+    best_state = _get_best_connectivity(self, AF_UNSPEC);
+    if (best_state == priv->connectivity_state)
+        return;
+    priv->connectivity_state = best_state;
+}
+static void
+get_property(NMManager *self, int property, unsigned *value)
+{
+    NMManagerPrivate *priv = NM_MANAGER_GET_PRIVATE(self);
+    switch (property) {
+    case PROP_CONNECTIVITY:
+        g_value_set_uint(value, priv->connectivity_state);
+        break;
+    }
+}
+'''
+
+SOURCE += UPDATE_GETTER
+
 class InstrumentationTest(unittest.TestCase):
     def test_insertions_are_reversible_and_leave_selector_unchanged(self):
         result = probe.instrument_manager(SOURCE)
@@ -81,7 +107,7 @@ class InstrumentationTest(unittest.TestCase):
             probe.instrument_manager(probe.instrument_manager(SOURCE))
 
     def test_fixture_hook_precedes_removal_of_policy_rc(self):
-        original = 'prepare_system_guest() {\n  sudo -n rm -f "${policy_rc}"\n}\n'
+        original = 'prepare_system_guest() {\n  sudo -n rm -f "${policy_rc}"\n}\n    guest_exec nmcli -w 20 connection down podlaz-guest-research >/dev/null\n'
         result = probe.prepare_harness(original)
         self.assertLess(result.index('nm_route_selection_guest.sh'), result.index('rm -f'))
         self.assertEqual(probe.strip_instrumentation(result), original)
