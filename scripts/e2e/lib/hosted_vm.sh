@@ -264,10 +264,15 @@ hosted_vm_provider_cleanup_host() {
 }
 
 hosted_vm_start() {
-  local cpu pidfile="${HOSTED_VM_ROOT}/qemu.pid"
+  local cpu vcpus=2 pidfile="${HOSTED_VM_ROOT}/qemu.pid"
   local -a provider_args=()
   [[ "${HOSTED_VM_ACCEL}" == kvm || "${HOSTED_VM_ACCEL}" == tcg ]] || fail "hosted VM acceleration was not selected"
-  if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then cpu=host; else cpu=max; fi
+  if [[ "${HOSTED_VM_ACCEL}" == kvm ]]; then
+    cpu=host
+  else
+    cpu=max
+    vcpus=4
+  fi
   HOSTED_VM_SSH_PORT="$(hosted_vm_find_loopback_port)"
   if [[ -n "${HOSTED_VM_PROVIDER_TAP}" ]]; then
     provider_args=(
@@ -279,7 +284,7 @@ hosted_vm_start() {
   qemu-system-x86_64 \
     -machine "q35,accel=${HOSTED_VM_ACCEL}" \
     -cpu "${cpu}" \
-    -smp 2 \
+    -smp "${vcpus}" \
     -m 2048 \
     -drive "if=virtio,file=${HOSTED_VM_OVERLAY},format=qcow2" \
     -drive "if=virtio,file=${HOSTED_VM_SEED},format=raw,readonly=on" \
