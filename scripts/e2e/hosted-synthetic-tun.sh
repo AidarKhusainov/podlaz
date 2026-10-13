@@ -224,7 +224,7 @@ if set(meta) != {"class", "step"}:
 if meta["class"] not in {"none", "product", "fixture", "infrastructure", "capability", "diagnostic_unknown"}:
     raise SystemExit("invalid failure class")
 for key in expected:
-    allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
+    allowed = {"pass", "observed"} if key in {"tun.doctor", "tun.nm_vpn_no_l3"} else {"pass"}
     if values[key] not in allowed:
         raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
 if meta != {"class": "none", "step": "none"}:
@@ -1292,7 +1292,7 @@ experiment_nm_external_tun_registration() {
 # managed-flag toggle. The plugin only observes the already-protected Xray TUN;
 # it refuses to delegate IP configuration to a competing NetworkManager writer.
 experiment_nm_vpn_no_l3() {
-  local activation_rc=0 kind state
+  local activation_rc=0 kind state result=pass
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-vpn-before.json"
   guest_exec test -x /usr/libexec/podlaz-nm-vpn-observer
   guest_exec test -f /usr/lib/NetworkManager/VPN/podlaz-research.name
@@ -1370,6 +1370,8 @@ PY
     # A rejected connection after an observed real Connect call is negative
     # evidence for notification-only activation, not an adopted product VPN.
     printf 'nm-vpn-no-l3-activation=rejected\n'
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py vpn-diagnose
+    result=observed
   fi
   # Any observed session must first be quiesced; do not leave NM with a
   # stale reference to an executable that cleanup subsequently removes.
@@ -1381,7 +1383,7 @@ PY
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
   state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
   printf 'nm-vpn-no-l3-global=%s\n' "${state}"
-  record_evidence tun.nm_vpn_no_l3 pass
+  record_evidence tun.nm_vpn_no_l3 "${result}"
 }
 
 run_tun_doctor() {
