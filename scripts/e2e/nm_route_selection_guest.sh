@@ -67,7 +67,19 @@ upstream="$(nmcli --version)"
 case "${upstream}" in *' 1.46.0'|*' 1.54.3') ;; *) exit 1 ;; esac
 progress sources
 # Use the very same signed archive/source suite used by debootstrap, not a PPA.
-sed -n 's/^deb /deb-src /p' /etc/apt/sources.list > /etc/apt/sources.list.d/nm-selector-source.list
+# NM's distro source Build-Depends include gtk-doc-tools (Ubuntu universe).
+# debootstrap's runtime-only main component cannot satisfy this build graph.
+# Keep the same signed archive and suite; no PPA or product dependency changes.
+{
+# BEGIN BUILD SOURCE INPUT
+awk '$1 == "deb" && $2 == "http://archive.ubuntu.com/ubuntu" && $3 ~ /^(noble|resolute)$/ && $4 == "main" && NF == 4 {
+  print "deb-src", $2, $3, "main"
+  print "deb", $2, $3, "universe"
+  matched++
+}
+END { if (matched != 1) exit 1 }'
+# END BUILD SOURCE INPUT
+} < /etc/apt/sources.list > /etc/apt/sources.list.d/nm-selector-source.list
 test -s /etc/apt/sources.list.d/nm-selector-source.list
 progress apt_update
 apt-get update
