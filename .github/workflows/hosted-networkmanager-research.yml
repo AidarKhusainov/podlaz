@@ -9,6 +9,7 @@ on:
       - 'scripts/e2e/nm_registration_evidence.py'
       - 'scripts/e2e/nm_vpn_no_l3_plugin.py'
       - 'scripts/e2e/nm_vpn_no_l3_service.name'
+      - 'scripts/e2e/nm_vpn_no_l3_dbus.conf'
 
 permissions:
   contents: read
