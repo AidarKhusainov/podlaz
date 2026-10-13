@@ -2,7 +2,7 @@
 """Unit characterization of guest-private NM registration snapshot normalization."""
 import unittest
 
-from nm_registration_evidence import strip_runtime_counters
+from nm_registration_evidence import normalized_ipv4_routes, strip_runtime_counters
 
 
 class SnapshotNormalizationTest(unittest.TestCase):
@@ -21,6 +21,18 @@ class SnapshotNormalizationTest(unittest.TestCase):
         old = {"nftables": [{"rule": {"expr": [{"drop": None}, {"counter": {"packets": 5}}]}}]}
         changed = {"nftables": [{"rule": {"expr": [{"accept": None}, {"counter": {"packets": 5}}]}}]}
         self.assertNotEqual(strip_runtime_counters(old), strip_runtime_counters(changed))
+
+    def test_only_known_host_uplink_health_metric_is_normalized(self):
+        before = [{"dst": "default", "dev": "host0", "table": "main", "metric": 100}]
+        after = [{"dst": "default", "dev": "host0", "table": "main", "metric": 20100}]
+        self.assertEqual(normalized_ipv4_routes(before), normalized_ipv4_routes(after))
+        unexpected = [{"dst": "default", "dev": "host0", "table": "main", "metric": 123}]
+        self.assertNotEqual(normalized_ipv4_routes(before), normalized_ipv4_routes(unexpected))
+
+    def test_podlaz_default_route_remains_exact(self):
+        baseline = [{"dst": "default", "dev": "podlaz0", "table": 51820, "scope": "link"}]
+        changed = [{"dst": "default", "dev": "podlaz0", "table": 51820, "scope": "global"}]
+        self.assertNotEqual(normalized_ipv4_routes(baseline), normalized_ipv4_routes(changed))
 
     def test_nested_unrelated_values_are_preserved(self):
         value = {"routes": [{"table": 123, "dst": "default"}], "nftables": [
