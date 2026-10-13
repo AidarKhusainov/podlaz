@@ -79,6 +79,35 @@ def snapshot() -> dict[str, object]:
     return result
 
 
+def sanitized_route_delta(expected: object, observed: object) -> None:
+    """Classify unexpected route mutations; never emit addresses or gateways."""
+    from collections import Counter
+
+    if not isinstance(expected, list) or not isinstance(observed, list):
+        print("nm-vpn-route-delta=invalid")
+        return
+
+    previous = Counter(json.dumps(route, sort_keys=True) for route in expected)
+    current = Counter(json.dumps(route, sort_keys=True) for route in observed)
+    changes = {"added": current - previous, "removed": previous - current}
+
+    for action, difference in changes.items():
+        print(f"nm-vpn-route-delta-{action}={sum(difference.values())}")
+        for serialized, count in difference.items():
+            route = json.loads(serialized)
+            if not isinstance(route, dict):
+                print(f"nm-vpn-route-delta-class={action}_invalid")
+                continue
+            dev = route.get("dev")
+            device = "tun" if dev == "podlaz0" else "uplink" if dev == "host0" else "other"
+            table = route.get("table", "main")
+            table_kind = "main" if table in ("main", 254, "254") else "other"
+            destination = str(route.get("dst", "default"))
+            kind = "default" if destination == "default" else "host" if destination.endswith("/32") else "specific"
+            # No actual destination, next-hop, protocol, mark or metric is printed.
+            print(f"nm-vpn-route-delta-class={action}_{device}_{table_kind}_{kind}_count{count}")
+
+
 def connectivity_observation() -> None:
     """Publish only version, D-Bus connectivity enums, and route metrics."""
     import re
@@ -183,6 +212,8 @@ def main() -> int:
     if modified:
         print("nm-registration-l3-integrity=changed")
         print("nm-registration-changed-components=" + ",".join(modified))
+        if "routes" in modified:
+            sanitized_route_delta(expected["routes"], observed["routes"])
         return 1
     print("nm-registration-l3-integrity=unchanged")
     return 0
