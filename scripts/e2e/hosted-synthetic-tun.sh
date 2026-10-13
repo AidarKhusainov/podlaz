@@ -1326,10 +1326,22 @@ experiment_nm_vpn_no_l3() {
     return 1
   fi
   guest_exec rm -f /run/podlaz-nm-vpn-observer-bus-ready
-  guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no ipv4.auto-route-ext-gw no ipv6.auto-route-ext-gw no >/dev/null
-  guest_exec nmcli -g ipv4.auto-route-ext-gw connection show podlaz-guest-research | grep -Fx no >/dev/null
-  guest_exec nmcli -g ipv6.auto-route-ext-gw connection show podlaz-guest-research | grep -Fx no >/dev/null
-  printf 'nm-vpn-auto-gateway-route=disabled\n'
+  if ! guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no ipv4.auto-route-ext-gw no ipv6.auto-route-ext-gw no >"${PRIVATE_ROOT}/nm-vpn-profile-create.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-profile-create.stderr"; then
+    printf 'nm-vpn-profile-creation=failed\n'
+    return 1
+  fi
+  printf 'nm-vpn-profile-creation=pass\n'
+  local route_setting family
+  for family in ipv4 ipv6; do
+    if ! route_setting="$(guest_exec nmcli -g "${family}.auto-route-ext-gw" connection show podlaz-guest-research | tr -d '\r')"; then
+      printf 'nm-vpn-profile-route-setting-query=failed_%s\n' "${family}"
+      return 1
+    fi
+    case "${route_setting}" in
+      no|0|false) printf 'nm-vpn-auto-gateway-route=disabled_%s\n' "${family}" ;;
+      *) printf 'nm-vpn-auto-gateway-route=unexpected_%s\n' "${family}"; return 1 ;;
+    esac
+  done
   guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
 
   # Do not export activation details or connection dictionaries from the guest.
