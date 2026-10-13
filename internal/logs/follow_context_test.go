@@ -6,15 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 type followObservedWriter struct {
 	bytes.Buffer
-	once sync.Once
+	once     sync.Once
 	observed chan struct{}
 }
 
