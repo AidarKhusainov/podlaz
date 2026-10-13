@@ -1219,13 +1219,19 @@ assert_networkmanager_tun_connectivity() {
       last_tun="${tun_state}"
       last_uplink="${uplink_state}"
     fi
-    if [[ "${NM_SCOPE_VARIANT}" == global && "${state}" == "connected:full" && "${tun_state}" == "full" ]]; then
-      printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
-      record_evidence tun.networkmanager_full pass
-      return 0
+    if [[ "${tun_state}" == other ]] && ! guest_exec ip link show dev podlaz0 >/dev/null 2>&1; then
+      printf 'networkmanager-observation-failed=protected-tun-lost\n'
+      return 1
     fi
     sleep 1
   done
+  if [[ "${NM_SCOPE_VARIANT}" == global && "${state}" == "connected:full" && "${tun_state}" == full ]]; then
+    # Require a full natural interval so a cached uplink FULL at connect time
+    # cannot satisfy the test before NetworkManager's next periodic probe.
+    printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
+    record_evidence tun.networkmanager_full pass
+    return 0
+  fi
   if [[ "${NM_SCOPE_VARIANT}" == link ]]; then
     # This is a control observation, not a FULL connectivity acceptance.
     # Require that the protected session and exact ownership survived the
