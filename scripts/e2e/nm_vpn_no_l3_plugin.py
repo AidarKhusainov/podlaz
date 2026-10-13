@@ -90,8 +90,11 @@ class Observer(dbus.service.Object):
 
 def main() -> None:
     DBusGMainLoop(set_as_default=True)
-    Observer(dbus.SystemBus())
+    # Keep the exported D-Bus object and its BusName alive for the whole
+    # main loop; dropping the last reference can unregister the service.
+    observer = Observer(dbus.SystemBus())
     GLib.MainLoop().run()
+    del observer
 
 
 if __name__ == "__main__":
