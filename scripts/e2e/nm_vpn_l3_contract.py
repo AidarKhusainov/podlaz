@@ -65,7 +65,7 @@ def vpn_profile_settings(service: str, name: str, profile_uuid: str,
     Reject an unqualified metric instead of using it to override other
     connections or assuming a successful connectivity result.
     """
-    if service != "org.freedesktop.NetworkManager.podlazresearch" or name != "podlaz-guest-nm-l3":
+    if service != "org.freedesktop.NetworkManager.podlazl3research" or name != "podlaz-guest-nm-l3":
         raise ValueError("not the disposable VPN service")
     try:
         if str(uuid.UUID(profile_uuid)) != profile_uuid:

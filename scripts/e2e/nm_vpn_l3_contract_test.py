@@ -25,7 +25,7 @@ class GuestL3Contract(unittest.TestCase):
         self.assertIs(ip4["never-default"], False)
 
     def test_explicit_nm_main_default_and_gateway_route_suppression(self):
-        settings = vpn_profile_settings("org.freedesktop.NetworkManager.podlazresearch", "podlaz-guest-nm-l3", "b870759a-8643-4e10-9496-823603871b8d", 10)
+        settings = vpn_profile_settings("org.freedesktop.NetworkManager.podlazl3research", "podlaz-guest-nm-l3", "b870759a-8643-4e10-9496-823603871b8d", 10)
         self.assertEqual(settings["ipv4"]["route-table"], 254)
         self.assertFalse(settings["ipv4"]["never-default"])
         self.assertFalse(settings["ipv4"]["auto-route-ext-gw"])
@@ -56,9 +56,9 @@ class GuestL3Contract(unittest.TestCase):
     def test_reject_non_unique_or_unsafe_nm_profile(self):
         for metric in (0, -1, 101, 4294967295):
             with self.subTest(metric=metric), self.assertRaises(ValueError):
-                vpn_profile_settings("org.freedesktop.NetworkManager.podlazresearch", "podlaz-guest-nm-l3", "b870759a-8643-4e10-9496-823603871b8d", metric)
+                vpn_profile_settings("org.freedesktop.NetworkManager.podlazl3research", "podlaz-guest-nm-l3", "b870759a-8643-4e10-9496-823603871b8d", metric)
         with self.assertRaises(ValueError):
-            vpn_profile_settings("org.freedesktop.NetworkManager.podlazresearch", "podlaz-guest-nm-l3", "not-a-uuid", 10)
+            vpn_profile_settings("org.freedesktop.NetworkManager.podlazl3research", "podlaz-guest-nm-l3", "not-a-uuid", 10)
 
 
 if __name__ == "__main__":
