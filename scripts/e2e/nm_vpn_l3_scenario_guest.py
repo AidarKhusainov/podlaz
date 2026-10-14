@@ -546,7 +546,24 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
                              if r.get('priority') == plan.rule_priority or
                              _numeric_table(r.get('table',r.get('lookup',-1))) == plan.table]
                 _stage('cleanup-underlay-verify')
-                verify_owned_underlay(plan,current,owned_rules)
+                try:
+                    verify_owned_underlay(plan,current,owned_rules)
+                except ValueError:
+                    # Fixed public reason buckets only. No interface, route,
+                    # gateway or foreign state is exported to CI.
+                    if not isinstance(current,list):
+                        _stage('cleanup-underlay-no-inventory')
+                    elif len(current)==0:
+                        _stage('cleanup-underlay-no-routes')
+                    elif len(current)==1:
+                        _stage('cleanup-underlay-one-route')
+                    elif len(current)>2:
+                        _stage('cleanup-underlay-extra-routes')
+                    elif len(owned_rules)!=1:
+                        _stage('cleanup-underlay-rule-count')
+                    else:
+                        _stage('cleanup-underlay-route-or-rule-mismatch')
+                    raise
                 _stage('cleanup-underlay-rule')
                 run('ip','-4','rule','del','pref',str(plan.rule_priority),'fwmark',str(plan.tunnel_mark),'lookup',str(plan.table))
                 _stage('cleanup-underlay-default')
