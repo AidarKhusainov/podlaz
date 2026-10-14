@@ -20,6 +20,8 @@ class GateAHostIsolation(unittest.TestCase):
         self.assertIn('assert_terminal_authority_clean', source)
         self.assertIn('tun.nm_l3_gate_a', source)
         self.assertIn('nm-l3-failure-protection', source)
+        self.assertIn('nm-l3-invalid-ip4-rejected', source)
+        self.assertIn('nm-l3-foreign-collision-rejected', source)
         self.assertNotIn('ip route flush', source)
         self.assertEqual(subprocess.run(['bash', '-n', str(SCRIPT)], check=False).returncode, 0)
 

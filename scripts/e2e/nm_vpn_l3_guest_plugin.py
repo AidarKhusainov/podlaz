@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import subprocess
 
 import dbus
@@ -59,8 +60,19 @@ class GuestPlugin(dbus.service.Object):
             ) from exc
         self._state = 3
         self.StateChanged(dbus.UInt32(self._state))
-        emit_nm_ipv4_config(config, dbus,
-                            lambda name, value: getattr(self, name)(value))
+        def publish(name: str, value: object) -> None:
+            # Guest-only deterministic malformed-IP4 fault. Never infer a
+            # successful apply from D-Bus signal emission.
+            fault = Path('/run/podlaz-nm-l3/reject-ip4-apply')
+            if name == 'Ip4Config' and fault.is_file() and not fault.is_symlink():
+                broken = dbus.Dictionary(dict(value), signature='sv')
+                broken['prefix'] = dbus.UInt32(33)  # Forbidden IPv4 prefix.
+                self.Ip4Config(broken)
+                Path('/run/podlaz-nm-l3/bad-ip4-emitted').write_text(
+                    'emitted\\n', encoding='ascii')
+                return
+            getattr(self, name)(value)
+        emit_nm_ipv4_config(config, dbus, publish)
         self._state = 4
         self.StateChanged(dbus.UInt32(self._state))
 

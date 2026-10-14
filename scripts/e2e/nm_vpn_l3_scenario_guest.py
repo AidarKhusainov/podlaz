@@ -255,6 +255,65 @@ def _start_underlay(p: UnderlayPlan) -> None:
     run('ip','-4','rule','add','pref',str(p.rule_priority),'fwmark',str(p.tunnel_mark),'lookup',str(p.table))
 
 
+def _qualify_foreign_profile_collision() -> None:
+    """A foreign UUID with our display name must block adoption pre-apply."""
+    foreign_uuid = str(uuid.uuid4())
+    candidate_uuid = str(uuid.uuid4())
+    run('nmcli', 'connection', 'add', 'save', 'no', 'type', 'vpn',
+        'con-name', VPN, 'vpn.service-type', SERVICE,
+        'connection.uuid', foreign_uuid, 'connection.autoconnect', 'no')
+    try:
+        try:
+            _owned_nm_profile_present(candidate_uuid)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('foreign profile name was mistaken for owned UUID')
+        if _owned_nm_profile_present(foreign_uuid, active=True):
+            raise ValueError('foreign collision unexpectedly activated')
+    finally:
+        # This UUID was created by this isolated guest fixture; never delete
+        # arbitrary profile objects merely because the names resemble ours.
+        run('nmcli', 'connection', 'delete', foreign_uuid)
+    if _owned_nm_profile_present(foreign_uuid):
+        raise ValueError('foreign collision fixture leaked')
+
+
+def _qualify_invalid_ip4_apply() -> None:
+    """NM must reject real malformed Ip4Config with protected underlay armed."""
+    rejected = INTENT.parent / 'reject-ip4-apply'
+    emitted = INTENT.parent / 'bad-ip4-emitted'
+    broken_uuid = str(uuid.uuid4())
+    fd = os.open(rejected, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    os.close(fd)
+    try:
+        try:
+            _activate_ephemeral_profile(10, broken_uuid)
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise ValueError('NM accepted an invalid 33-bit IPv4 prefix')
+        if not emitted.is_file() or emitted.is_symlink():
+            raise ValueError('real malformed Ip4Config was never emitted')
+        if _owned_nm_profile_present(broken_uuid, active=True):
+            raise ValueError('bad IP4 config unexpectedly became active')
+        if any(item.get('family') == 'inet'
+               for link in ip_json('address', 'show', 'dev', 'podlaz0')
+               for item in link.get('addr_info', [])):
+            raise ValueError('rejected NM IP4 applied a partial TUN address')
+        if any(route.get('dev') == 'podlaz0'
+               for route in ip_json('-4', 'route', 'show', 'table', 'main')):
+            raise ValueError('rejected NM IP4 left a VPN route')
+        _prove_physical_drop()
+    finally:
+        rejected.unlink(missing_ok=True)
+        emitted.unlink(missing_ok=True)
+        if _owned_nm_profile_present(broken_uuid, active=True):
+            run('nmcli', '-w', '20', 'connection', 'down', broken_uuid, timeout=25)
+        if _owned_nm_profile_present(broken_uuid):
+            run('nmcli', 'connection', 'delete', broken_uuid)
+
+
 def _activate_ephemeral_profile(metric: int, profile_uuid: str) -> None:
     expected=vpn_profile_settings(SERVICE,VPN,
                                   profile_uuid,metric)
@@ -339,6 +398,10 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             index=links[0]['ifindex']
             validate_xray_tun(index,links,addresses)
             _write_private_intent(external_gateway,index)
+            _qualify_foreign_profile_collision()
+            print('nm-l3-foreign-collision-rejected=pass',flush=True)
+            _qualify_invalid_ip4_apply()
+            print('nm-l3-invalid-ip4-rejected=pass',flush=True)
             _activate_ephemeral_profile(10, profile_uuid)
             print('nm-l3-real-dbus-ip4=pass',flush=True)
             _verify_paths(plan.tunnel_mark)

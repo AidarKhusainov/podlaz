@@ -65,6 +65,20 @@ class PhysicalEgressCounterTest(unittest.TestCase):
                 physical_unmarked_drop_packets({'nftables':bad})
 
 
+class NegativeAcceptanceContractTest(unittest.TestCase):
+    def test_invalid_ip4_must_emit_and_leave_no_address_or_main_route(self):
+        from pathlib import Path
+        source = Path(__file__).with_name('nm_vpn_l3_scenario_guest.py').read_text()
+        adapter = Path(__file__).with_name('nm_vpn_l3_guest_plugin.py').read_text()
+        self.assertIn("broken['prefix'] = dbus.UInt32(33)", adapter)
+        self.assertIn("'bad-ip4-emitted'", adapter)
+        self.assertIn('if not emitted.is_file()', source)
+        self.assertIn("'NM accepted an invalid 33-bit IPv4 prefix'", source)
+        self.assertIn("'rejected NM IP4 left a VPN route'", source)
+        self.assertIn("'foreign profile name was mistaken for owned UUID'", source)
+        self.assertIn("run('nmcli', 'connection', 'delete', foreign_uuid)", source)
+
+
 class NaturalConnectivityLivenessTest(unittest.TestCase):
     def test_does_not_accept_cached_full_after_xray_has_exited(self):
         from unittest.mock import patch
