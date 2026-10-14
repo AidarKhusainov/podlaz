@@ -82,6 +82,38 @@ def verify_owned_underlay(plan: UnderlayPlan, routes: object, rules: object) -> 
         raise ValueError('underlay RPDB rule differs from exact ownership')
 
 
+
+def exact_owned_nm_profile_present(rows: object, profile_uuid: str) -> bool:
+    """Identify only this ephemeral VPN profile; reject name/UUID collisions."""
+    if not isinstance(rows, list):
+        raise ValueError('invalid NM profile inventory')
+    found = 0
+    for row in rows:
+        if not isinstance(row, tuple) or len(row) != 2 or any(not isinstance(x, str) or not x for x in row):
+            raise ValueError('malformed NM profile inventory')
+        observed_uuid, name = row
+        if observed_uuid == profile_uuid or name == VPN:
+            if observed_uuid != profile_uuid or name != VPN:
+                raise ValueError('foreign NM profile collision')
+            found += 1
+    if found > 1:
+        raise ValueError('duplicate NM VPN profile authority')
+    return found == 1
+
+
+def _owned_nm_profile_present(profile_uuid: str, active: bool = False) -> bool:
+    args = ['nmcli', '-t', '-f', 'UUID,NAME', 'connection', 'show']
+    if active:
+        args.append('--active')
+    rows = []
+    for line in run(*args, output=True).splitlines():
+        uuid_text, separator, name = line.partition(':')
+        if not separator:
+            raise ValueError('invalid NM profile row')
+        rows.append((uuid_text, name))
+    return exact_owned_nm_profile_present(rows, profile_uuid)
+
+
 def run(*args: str, timeout: int = 20, output: bool = False) -> str:
     done = subprocess.run(args, capture_output=True, text=True, check=True, timeout=timeout)
     return done.stdout if output else ''
@@ -165,8 +197,7 @@ def _start_underlay(p: UnderlayPlan) -> None:
     run('ip','-4','rule','add','pref',str(p.rule_priority),'fwmark',str(p.tunnel_mark),'lookup',str(p.table))
 
 
-def _activate_ephemeral_profile(metric: int) -> None:
-    profile_uuid=str(uuid.uuid4())
+def _activate_ephemeral_profile(metric: int, profile_uuid: str) -> None:
     expected=vpn_profile_settings(SERVICE,VPN,
                                   profile_uuid,metric)
     # New guest service has a distinct bus identity; pure contract above only
@@ -181,8 +212,10 @@ def _activate_ephemeral_profile(metric: int) -> None:
         'ipv6.auto-route-ext-gw','no')
     if not expected['ipv4']['auto-route-ext-gw'] is False:
         raise ValueError('unexpected NM guest profile')
-    run('nmcli','-w','40','connection','up',VPN,'ifname','host0',timeout=45)
-    if VPN not in run('nmcli','-t','-f','NAME','connection','show','--active',output=True).splitlines():
+    if not _owned_nm_profile_present(profile_uuid):
+        raise ValueError('ephemeral NM profile is not owned')
+    run('nmcli','-w','40','connection','up',profile_uuid,'ifname','host0',timeout=45)
+    if not _owned_nm_profile_present(profile_uuid, active=True):
         raise ValueError('guest NM VPN not active')
 
 
@@ -197,11 +230,13 @@ def _verify_paths(mark: int) -> None:
     run('timeout','35','curl','-4','-fsS','-o','/dev/null','https://example.com/',timeout=40)
 
 
-def _natural_full() -> None:
+def _natural_full(xray: subprocess.Popen) -> None:
     # Do not force NetworkManager connectivity checks: the observed state
     # must outlive more than one real periodic interval in stock NM.
     observed=0
     for _ in range(660):
+        if xray.poll() is not None:
+            raise ValueError('tracked Xray process stopped during natural connectivity qualification')
         state=run('nmcli','-g','CONNECTIVITY','general',output=True).strip()
         if state=='full':
             observed+=1
@@ -225,7 +260,7 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
     xray=None
     protected=False
     installed=False
-    vpn_created=False
+    profile_uuid=str(uuid.uuid4())
     with (ROOT/'nm-l3-xray.stdout').open('w') as output, (ROOT/'nm-l3-xray.stderr').open('w') as errors:
         try:
             _nft_protect(plan.tunnel_mark)
@@ -246,22 +281,21 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             index=links[0]['ifindex']
             validate_xray_tun(index,links,addresses)
             _write_private_intent(external_gateway,index)
-            _activate_ephemeral_profile(10)
-            vpn_created=True
+            _activate_ephemeral_profile(10, profile_uuid)
             print('nm-l3-real-dbus-ip4=pass',flush=True)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-protected-routes-and-https=pass',flush=True)
-            _natural_full()
+            _natural_full(xray)
             print('nm-l3-natural-full=pass',flush=True)
         finally:
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.
-            if vpn_created:
-                run('nmcli','-w','20','connection','down',VPN,timeout=25)
+            if _owned_nm_profile_present(profile_uuid, active=True):
+                run('nmcli','-w','20','connection','down',profile_uuid,timeout=25)
             # The volatile guest profile has a fixed name/UUID created only
             # after collision-free preflight. No name-based foreign deletion.
-            if VPN in run('nmcli','-t','-f','NAME','connection','show',output=True).splitlines():
-                run('nmcli','connection','delete',VPN)
+            if _owned_nm_profile_present(profile_uuid):
+                run('nmcli','connection','delete',profile_uuid)
             if xray is not None:
                 xray.terminate()
                 xray.wait(timeout=12)
@@ -279,7 +313,7 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             if protected:
                 # The guest is disposable; never remove barrier while an
                 # unknown owner or active VPN might still use the underlay.
-                if VPN in run('nmcli','-t','-f','NAME','connection','show','--active',output=True).splitlines():
+                if _owned_nm_profile_present(profile_uuid, active=True):
                     raise ValueError('VPN remains active; barrier retained')
                 run('nft','delete','table','inet',TABLE)
             if INTENT.exists():
