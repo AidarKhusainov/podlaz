@@ -49,6 +49,24 @@ class NMProfileOwnershipTest(unittest.TestCase):
                 exact_owned_nm_profile_present(inventory,owned)
 
 
+class IPv6PhysicalGuardTest(unittest.TestCase):
+    def test_ipv6_has_independent_drop_counter_and_physical_packet_probe(self):
+        from nm_vpn_l3_scenario_guest import physical_unmarked_drop_packets
+        ipv6 = {'rule': {'family':'inet','table':'podlaz_nm_l3_guest',
+                         'chain':'egress','comment':'podlaz_nm_l3_ipv6',
+                         'expr':[{'counter':{'packets':4}}, {'drop':None}]}}
+        self.assertEqual(physical_unmarked_drop_packets(
+            {'nftables':[ipv6]}, marker='podlaz_nm_l3_ipv6'), 4)
+        with self.assertRaises(ValueError):
+            physical_unmarked_drop_packets({'nftables':[ipv6]})
+        from pathlib import Path
+        source=Path(__file__).with_name('nm_vpn_l3_scenario_guest.py').read_text()
+        self.assertIn("oifname','!=','podlaz0'", source)
+        self.assertIn("oifname','!=','lo'", source)
+        self.assertIn('socket.AF_INET6', source)
+        self.assertIn('_qualify_uplink_churn(xray)', source)
+
+
 class PhysicalEgressCounterTest(unittest.TestCase):
     def test_proof_rejects_other_rules_and_missing_counter(self):
         from nm_vpn_l3_scenario_guest import physical_unmarked_drop_packets

@@ -10,6 +10,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import socket
 from pathlib import Path
 import signal
 import subprocess
@@ -26,6 +27,8 @@ INTENT = Path('/run/podlaz-nm-l3/intent.json')
 SERVICE = 'org.freedesktop.NetworkManager.podlazl3research'
 VPN = 'podlaz-guest-nm-l3'
 TABLE = 'podlaz_nm_l3_guest'  # Owned exclusively by this disposable guest.
+IPV6_GUEST_CIDR = '2001:db8:460::2/64'
+IPV6_HOST_PEER = '2001:db8:460::1'
 
 
 def _numeric_table(table: object) -> int:
@@ -84,7 +87,7 @@ def verify_owned_underlay(plan: UnderlayPlan, routes: object, rules: object) -> 
 
 
 
-def physical_unmarked_drop_packets(snapshot: object) -> int:
+def physical_unmarked_drop_packets(snapshot: object, *, marker: str = 'podlaz_nm_l3_unmarked') -> int:
     """Require the exact guest-only output drop counter as packet evidence."""
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get('nftables'), list):
         raise ValueError('incomplete guest firewall evidence')
@@ -94,7 +97,7 @@ def physical_unmarked_drop_packets(snapshot: object) -> int:
             continue
         rule = item['rule']
         if (rule.get('table'), rule.get('chain'), rule.get('family'), rule.get('comment')) != (
-                TABLE, 'egress', 'inet', 'podlaz_nm_l3_unmarked'):
+                TABLE, 'egress', 'inet', marker):
             continue
         expr = rule.get('expr')
         if not isinstance(expr, list) or not any(isinstance(x, dict) and 'drop' in x for x in expr):
@@ -213,14 +216,73 @@ def _write_private_intent(gateway: str, index: int) -> GuestVPNConfig:
 def _nft_protect(mark: int) -> None:
     run('nft','add','table','inet',TABLE)
     run('nft','add','chain','inet',TABLE,'egress','{ type filter hook output priority -150; policy accept; }')
-    run('nft','add','rule','inet',TABLE,'egress','oifname','host0','meta','mark','!=',str(mark),'counter','drop','comment','podlaz_nm_l3_unmarked')
-    run('nft','add','rule','inet',TABLE,'egress','meta','nfproto','ipv6','oifname','host0','drop')
+    # With IPv6 VPN routing unqualified, block any physical IPv6 output,
+    # including an additional foreign interface or a marked IPv6 socket.
+    run('nft','add','rule','inet',TABLE,'egress','meta','nfproto','ipv6',
+        'oifname','!=','lo','oifname','!=','podlaz0','counter','drop',
+        'comment','podlaz_nm_l3_ipv6')
+    run('nft','add','rule','inet',TABLE,'egress','meta','nfproto','ipv4',
+        'oifname','host0','meta','mark','!=',str(mark),'counter','drop',
+        'comment','podlaz_nm_l3_unmarked')
 
 
 
 def _physical_drop_snapshot() -> int:
     evidence = json.loads(run('nft', '-j', 'list', 'chain', 'inet', TABLE, 'egress', output=True))
     return physical_unmarked_drop_packets(evidence)
+
+
+def _prove_ipv6_no_leak() -> None:
+    """Make host0 genuinely IPv6-capable, then prove netfilter drops a packet."""
+    sysctl = Path('/proc/sys/net/ipv6/conf/host0/disable_ipv6')
+    original = sysctl.read_text(encoding='ascii').strip()
+    if original not in ('0', '1'):
+        raise ValueError('unknown IPv6 guest uplink state')
+    addr_installed = False
+    try:
+        # The outer synthetic veth peer has RFC3849 2001:db8:460::1.
+        if original == '1':
+            sysctl.write_text('0\n', encoding='ascii')
+        run('ip', '-6', 'address', 'add', IPV6_GUEST_CIDR, 'dev', 'host0')
+        addr_installed = True
+        routes = ip_json('-6', 'route', 'get', IPV6_HOST_PEER)
+        if len(routes) != 1 or routes[0].get('dev') != 'host0':
+            raise ValueError('IPv6 probe lacks a real physical path')
+        snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))
+        before = physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6')
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b'guest-ipv6-no-leak', (IPV6_HOST_PEER, 5353))
+        time.sleep(0.2)
+        snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))
+        if physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6') <= before:
+            raise ValueError('physically routable IPv6 packet escaped nft blocking')
+    finally:
+        if addr_installed:
+            run('ip', '-6', 'address', 'del', IPV6_GUEST_CIDR, 'dev', 'host0')
+        if sysctl.read_text(encoding='ascii').strip() != original:
+            sysctl.write_text(original + '\n', encoding='ascii')
+
+
+def _qualify_uplink_churn(xray: subprocess.Popen) -> None:
+    """Prove fail-closed physical egress while the NM-owned uplink churns."""
+    if xray.poll() is not None:
+        raise ValueError('Xray exited before uplink churn')
+    before = _physical_drop_snapshot()
+    run('ip','link','set','dev','host0','down')
+    try:
+        if _physical_drop_snapshot() < before:
+            raise ValueError('physical barrier was lost during uplink loss')
+    finally:
+        run('ip','link','set','dev','host0','up')
+    run('nmcli','-w','35','connection','up','synthetic-uplink',
+        'ifname','host0',timeout=45)
+    if 'synthetic-uplink' not in run(
+            'nmcli','-t','-f','NAME','connection','show','--active',
+            output=True).splitlines():
+        raise ValueError('synthetic NM uplink did not recover')
+    _prove_physical_drop()
+    if xray.poll() is not None:
+        raise ValueError('tracked Xray died during uplink churn')
 
 
 def _prove_physical_drop() -> None:
@@ -238,15 +300,17 @@ def _prove_physical_drop() -> None:
 
 def _qualify_failure_protection(xray: subprocess.Popen) -> None:
     _prove_physical_drop()
+    _prove_ipv6_no_leak()
     if xray.poll() is not None:
         raise ValueError('Xray already failed before crash qualification')
     xray.terminate()
     xray.wait(timeout=12)
     _prove_physical_drop()
-    # The network service may remove the VPN main default. Even so, an
-    # unmarked physical packet remains blocked until the session ends.
+    _prove_ipv6_no_leak()
+    # Loss/restart of NM must never open direct physical IPv4/IPv6 egress.
     run('systemctl', 'restart', 'NetworkManager.service', timeout=75)
     _prove_physical_drop()
+    _prove_ipv6_no_leak()
 
 
 def _start_underlay(p: UnderlayPlan) -> None:
@@ -409,8 +473,11 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             _natural_full(xray)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-natural-full=pass',flush=True)
+            _qualify_uplink_churn(xray)
+            print('nm-l3-uplink-churn-protected=pass',flush=True)
             _qualify_failure_protection(xray)
             print('nm-l3-failure-protection=pass',flush=True)
+            print('nm-l3-ipv6-physical-block=pass',flush=True)
         finally:
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.

@@ -437,6 +437,9 @@ setup_outer_plumbing() {
   done
   ip link show dev "${HOST_VETH}" >/dev/null 2>&1 || return 1
   sudo -n ip addr add "${HOST_CIDR}" dev "${HOST_VETH}"
+  if [[ "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ]]; then
+    sudo -n ip -6 addr add 2001:db8:460::1/64 dev "${HOST_VETH}"
+  fi
   sudo -n ip link set dev "${HOST_VETH}" up
   sudo -n ip link add dev "${HOST_ENDPOINT_DEV}" type dummy
   sudo -n ip addr add "${ENDPOINT_CIDR}" dev "${HOST_ENDPOINT_DEV}"
