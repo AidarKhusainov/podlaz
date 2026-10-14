@@ -321,12 +321,33 @@ def select_missing_underlay_recovery(plan: UnderlayPlan, main_defaults: object,
     if len(defaults)!=1 or defaults[0].get('gateway')!=plan.default_route[1]:
         raise ValueError('physical default differs from initial underlay authority')
     _stage('underlay-link-route')
-    links=[r for r in link_routes if isinstance(r,dict) and
-           r.get('dst')==plan.connected_route[0] and
-           r.get('dev')==plan.connected_route[1] and
-           r.get('scope')=='link']
-    if len(links)!=1:
-        raise ValueError('physical connected route changed during uplink recovery')
+    # A real NM down/up may remove the kernel connected route even while
+    # the restored physical address/default gateway remain authoritative.
+    # Validate the actual current physical subnet instead of insisting on
+    # a transient main-table prefix route that may have been removed.
+    if len(link_routes)!=1 or not isinstance(link_routes[0],dict) or (
+            link_routes[0].get('ifname') != plan.connected_route[1]):
+        raise ValueError('physical uplink address inventory ambiguous')
+    addr_info = link_routes[0].get('addr_info')
+    if not isinstance(addr_info,list):
+        raise ValueError('missing physical address inventory')
+    ipv4 = [item for item in addr_info if isinstance(item,dict)
+            and item.get('family')=='inet']
+    if len(ipv4)!=1:
+        raise ValueError('physical uplink IPv4 address ambiguous')
+    local, prefix = ipv4[0].get('local'), ipv4[0].get('prefixlen')
+    if not isinstance(local,str) or type(prefix) is not int:
+        raise ValueError('physical uplink IPv4 address incomplete')
+    try:
+        current_ip = ipaddress.IPv4Interface(f'{local}/{prefix}')
+        expected_subnet = ipaddress.IPv4Network(plan.connected_route[0])
+    except ValueError as exc:
+        raise ValueError('invalid physical IPv4 subnet') from exc
+    if (current_ip.network != expected_subnet or
+            current_ip.ip == ipaddress.IPv4Address(plan.default_route[1]) or
+            current_ip.ip in (expected_subnet.network_address,
+                              expected_subnet.broadcast_address)):
+        raise ValueError('physical uplink subnet/identity changed')
     _stage('underlay-rule-check')
     rule_present,default_present,connected_present=verify_owned_underlay(
         plan,routes,rules)
@@ -344,7 +365,7 @@ def _reconcile_guest_underlay(plan: UnderlayPlan) -> None:
     _stage('underlay-baseline-observe')
     add_connected,add_default=select_missing_underlay_recovery(
         plan,ip_json('-4','route','show','table','main','default'),
-        ip_json('-4','route','show','dev',plan.connected_route[1],'scope','link'),
+        ip_json('-4','address','show','dev',plan.connected_route[1]),
         current,rules)
     _stage('underlay-connected-apply')
     if add_connected:

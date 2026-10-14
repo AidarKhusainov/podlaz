@@ -158,7 +158,8 @@ class UnderlayUplinkRecoveryTest(unittest.TestCase):
             frozenset((253,254,255))),10)
         current_default=[{'dst':'default','dev':'host0',
                           'gateway':'172.31.254.1','metric':20100}]
-        link=[{'dst':plan.connected_route[0],'dev':'host0','scope':'link'}]
+        link=[{'ifname':'host0','addr_info':[
+            {'family':'inet','local':'172.31.254.2','prefixlen':30}]}]
         rule=[{'priority':plan.rule_priority,'fwmark':hex(plan.tunnel_mark),
                'fwmask':'0xffffffff','table':plan.table}]
         connected={'dst':plan.connected_route[0],'dev':'host0','scope':'link','table':plan.table}
@@ -173,6 +174,16 @@ class UnderlayUplinkRecoveryTest(unittest.TestCase):
             ([],rule,[{**current_default[0],'gateway':'172.31.254.2'}],link),
             ([],rule,[],link),
             ([],rule,current_default,[]),
+            ([],rule,current_default,[{'ifname':'host0','addr_info':[]}]),
+            ([],rule,current_default,[{'ifname':'host0','addr_info':[
+                {'family':'inet','local':'172.31.254.1','prefixlen':30}]}]),
+            ([],rule,current_default,[{'ifname':'host0','addr_info':[
+                {'family':'inet','local':'172.31.254.6','prefixlen':30}]}]),
+            ([],rule,current_default,[{'ifname':'foreign0','addr_info':[
+                {'family':'inet','local':'172.31.254.2','prefixlen':30}]}]),
+            ([],rule,current_default,[{'ifname':'host0','addr_info':[
+                {'family':'inet','local':'172.31.254.2','prefixlen':30},
+                {'family':'inet','local':'172.31.254.3','prefixlen':30}]}]),
             ([],[],current_default,link),
             ([{**default,'gateway':'172.31.254.2'}],rule,current_default,link),
             ([connected,connected],rule,current_default,link),
