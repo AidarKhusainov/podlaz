@@ -7,7 +7,7 @@ STAGES = frozenset(('foreign-collision','invalid-ip4','nm-activation',
                     'natural-full','uplink-churn','uplink-down',
                     'uplink-reconnect','core-preflight','core-stopped',
                     'nm-restarted','nm-restart-request','core-stop-request','cleanup-entry','ipv6-sysctl','ipv6-route',
-                    'ipv6-counter','guest-cleanup'))
+                    'ipv6-counter','ipv6-send','ipv6-observe','ipv6-no-increment','guest-cleanup'))
 PROOFS = frozenset(('nm-l3-foreign-collision-rejected',
                     'nm-l3-invalid-ip4-rejected','nm-l3-real-dbus-ip4',
                     'nm-l3-natural-full','nm-l3-uplink-churn-protected',
