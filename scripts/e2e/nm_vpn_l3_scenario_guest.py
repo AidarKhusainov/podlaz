@@ -313,14 +313,16 @@ def _qualify_failure_protection(xray: subprocess.Popen) -> None:
     _prove_ipv6_no_leak()
     if xray.poll() is not None:
         raise ValueError('Xray already failed before crash qualification')
+    _stage('core-stop-request')
     xray.terminate()
-    _stage('core-stopped')
     xray.wait(timeout=12)
+    _stage('core-stopped')
     _prove_physical_drop()
     _prove_ipv6_no_leak()
     # Loss/restart of NM must never open direct physical IPv4/IPv6 egress.
-    _stage('nm-restarted')
+    _stage('nm-restart-request')
     run('systemctl', 'restart', 'NetworkManager.service', timeout=75)
+    _stage('nm-restarted')
     _prove_physical_drop()
     _prove_ipv6_no_leak()
 
@@ -495,8 +497,8 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             _qualify_failure_protection(xray)
             print('nm-l3-failure-protection=pass',flush=True)
             print('nm-l3-ipv6-physical-block=pass',flush=True)
+            _stage('cleanup-entry')
         finally:
-            _stage('guest-cleanup')
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.
             if _owned_nm_profile_present(profile_uuid, active=True):
