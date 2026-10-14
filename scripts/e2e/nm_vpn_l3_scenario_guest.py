@@ -7,6 +7,7 @@ All stdout is closed-schema result labels; subprocess logs stay private.
 """
 from __future__ import annotations
 
+import errno
 import ipaddress
 import json
 import os
@@ -236,6 +237,24 @@ def _stage(label: str) -> None:
     print('nm-l3-progress=' + label, flush=True)
 
 
+
+def _send_ipv6_probe(peer: str) -> str:
+    """Attempt a genuine IPv6 packet; output DROP can synchronously return EPERM.
+
+    This is not proof of protection by itself. The caller MUST subsequently
+    observe a strict increment of its dedicated nftables drop counter.
+    Non-firewall socket errors are still fatal.
+    """
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
+            sock.sendto(b'guest-ipv6-no-leak', (peer, 5353))
+    except OSError as exc:
+        if exc.errno != errno.EPERM:
+            raise
+        return 'firewall-denied'
+    return 'sent'
+
+
 def _prove_ipv6_no_leak() -> None:
     """Make host0 genuinely IPv6-capable, then prove netfilter drops a packet."""
     sysctl = Path('/proc/sys/net/ipv6/conf/host0/disable_ipv6')
@@ -258,8 +277,7 @@ def _prove_ipv6_no_leak() -> None:
         _stage('ipv6-counter')
         before = physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6')
         _stage('ipv6-send')
-        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
-            sock.sendto(b'guest-ipv6-no-leak', (IPV6_HOST_PEER, 5353))
+        _send_ipv6_probe(IPV6_HOST_PEER)
         _stage('ipv6-observe')
         time.sleep(0.2)
         snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))

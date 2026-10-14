@@ -67,6 +67,37 @@ class IPv6PhysicalGuardTest(unittest.TestCase):
         self.assertIn('_qualify_uplink_churn(xray)', source)
 
 
+
+class IPv6FirewallSocketContractTest(unittest.TestCase):
+    def test_output_drop_eperm_requires_counter_proof_in_caller(self):
+        import errno
+        from unittest.mock import patch
+        from nm_vpn_l3_scenario_guest import _send_ipv6_probe
+        with patch('nm_vpn_l3_scenario_guest.socket.socket') as factory:
+            sock = factory.return_value.__enter__.return_value
+            sock.sendto.side_effect = PermissionError(errno.EPERM, 'Operation not permitted')
+            self.assertEqual(_send_ipv6_probe('2001:db8:460::1'), 'firewall-denied')
+            sock.sendto.assert_called_once()
+
+    def test_unrelated_network_errors_still_fail_closed(self):
+        import errno
+        from unittest.mock import patch
+        from nm_vpn_l3_scenario_guest import _send_ipv6_probe
+        for code in (errno.ENETUNREACH, errno.EHOSTUNREACH,
+                     errno.EADDRNOTAVAIL, errno.EINVAL):
+            with self.subTest(code=code), patch('nm_vpn_l3_scenario_guest.socket.socket') as factory:
+                factory.return_value.__enter__.return_value.sendto.side_effect = OSError(code, 'socket failure')
+                with self.assertRaises(OSError) as failure:
+                    _send_ipv6_probe('2001:db8:460::1')
+                self.assertEqual(failure.exception.errno, code)
+
+    def test_successful_send_is_not_proof_without_nft_counter(self):
+        from unittest.mock import patch
+        from nm_vpn_l3_scenario_guest import _send_ipv6_probe
+        with patch('nm_vpn_l3_scenario_guest.socket.socket') as factory:
+            factory.return_value.__enter__.return_value.sendto.return_value = 18
+            self.assertEqual(_send_ipv6_probe('2001:db8:460::1'), 'sent')
+
 class PhysicalEgressCounterTest(unittest.TestCase):
     def test_proof_rejects_other_rules_and_missing_counter(self):
         from nm_vpn_l3_scenario_guest import physical_unmarked_drop_packets
