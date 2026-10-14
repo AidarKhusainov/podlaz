@@ -176,7 +176,7 @@ class LiveNetworkManagerRestartTest(unittest.TestCase):
             if args[:3] == ('systemctl','show','-P'):
                 return next(pids)
             if args[:5] == ('nmcli','-t','-f','NAME','connection'):
-                return 'synthetic-uplink\\n'
+                return 'synthetic-uplink\n'
             if args[:3] == ('systemctl','restart','NetworkManager.service'):
                 stages.append('restart')
                 return ''
