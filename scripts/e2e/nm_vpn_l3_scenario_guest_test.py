@@ -148,6 +148,36 @@ if __name__=='__main__':
 
 
 class ExactUnderlayCleanup(unittest.TestCase):
+
+    def test_kernel_removed_underlay_routes_require_no_route_delete(self):
+        from nm_vpn_l3_scenario_guest import verify_owned_underlay
+        from nm_vpn_underlay_guest import select_underlay, UnderlayEvidence
+        plan = select_underlay(UnderlayEvidence(
+            'host0','172.31.254.1','172.31.254.0/30',100,
+            ((0,255,0,0),(32766,254,0,0),(32767,253,0,0)),
+            frozenset((253,254,255))),10)
+        rule = [{'priority':plan.rule_priority,'fwmark':hex(plan.tunnel_mark),
+                 'fwmask':'0xffffffff','table':plan.table}]
+        connected = {'dst':plan.connected_route[0],'dev':'host0',
+                     'scope':'link','table':plan.table}
+        default = {'dst':'default','gateway':plan.default_route[1],
+                   'dev':'host0','table':plan.table}
+        self.assertEqual(verify_owned_underlay(plan, [], rule), (True,False,False))
+        self.assertEqual(verify_owned_underlay(plan, [], []), (False,False,False))
+        self.assertEqual(verify_owned_underlay(plan, [connected], rule), (True,False,True))
+        self.assertEqual(verify_owned_underlay(plan, [default], rule), (True,True,False))
+        self.assertEqual(verify_owned_underlay(plan, [connected,default],rule), (True,True,True))
+        for routes, rules in (
+            ([connected],[]),
+            ([connected,connected],rule),
+            ([{**connected,'dev':'foreign0'}],rule),
+            ([{**default,'gateway':'172.31.254.2'}],rule),
+            ([connected,default,{'dst':'198.51.100.0/24','dev':'host0','table':plan.table}],rule),
+            ([connected,default],[{**rule[0],'fwmark':'0x1'}]),
+        ):
+            with self.subTest(routes=routes,rules=rules), self.assertRaises(ValueError):
+                verify_owned_underlay(plan,routes,rules)
+
     def test_refuses_foreign_routes_and_rule_replacements(self):
         from nm_vpn_l3_scenario_guest import verify_owned_underlay
         from nm_vpn_underlay_guest import select_underlay, UnderlayEvidence

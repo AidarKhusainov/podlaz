@@ -53,23 +53,31 @@ def verify_route_selection(main_defaults: object, ordinary: object, marked: obje
         raise ValueError('unprotected ordinary egress or looping Xray transport')
 
 
-def verify_owned_underlay(plan: UnderlayPlan, routes: object, rules: object) -> None:
-    """Refuse destructive cleanup without exact currently observed identities."""
+def verify_owned_underlay(plan: UnderlayPlan, routes: object, rules: object) -> tuple[bool, bool, bool]:
+    """Verify exact remaining authority, including kernel-removed uplink routes.
+
+    Return (rule_present, default_present, connected_present). A network link
+    down/restart can remove originally owned routes automatically; absence
+    authorizes no deletion. Any foreign route, replacement or duplicate fails.
+    """
     if not isinstance(routes, list) or not isinstance(rules, list):
         raise ValueError('incomplete underlay ownership inspection')
-    expected_routes = {
-        (plan.connected_route[0], plan.connected_route[1], '', 'link', plan.table),
-        ('default', plan.default_route[2], plan.default_route[1], '', plan.table),
-    }
+    connected = (plan.connected_route[0], plan.connected_route[1], '', 'link', plan.table)
+    default = ('default', plan.default_route[2], plan.default_route[1], '', plan.table)
+    expected_routes = {connected, default}
     observed = set()
     for route in routes:
         if not isinstance(route, dict):
             raise ValueError('invalid observed underlay route')
-        entry = (route.get('dst'), route.get('dev'), route.get('gateway',''),
-                 route.get('scope',''), _numeric_table(route.get('table',plan.table)))
+        entry = (route.get('dst'), route.get('dev'), route.get('gateway', ''),
+                 route.get('scope', ''), _numeric_table(route.get('table',plan.table)))
         observed.add(entry)
-    if len(routes) != 2 or observed != expected_routes:
-        raise ValueError('foreign or mutated underlay routes')
+    if len(routes) != len(observed) or not observed.issubset(expected_routes):
+        raise ValueError('foreign, duplicate or mutated underlay routes')
+    if not rules:
+        if observed:
+            raise ValueError('remaining underlay routes without exact policy rule')
+        return False, False, False
     if len(rules) != 1 or not isinstance(rules[0], dict):
         raise ValueError('underlay rule is absent or foreign')
     rule=rules[0]
@@ -84,8 +92,7 @@ def verify_owned_underlay(plan: UnderlayPlan, routes: object, rules: object) -> 
         to_int(rule.get('fwmark')) != plan.tunnel_mark or
         to_int(rule.get('fwmask',0xffffffff)) != 0xffffffff):
         raise ValueError('underlay RPDB rule differs from exact ownership')
-
-
+    return True, default in observed, connected in observed
 
 
 def physical_unmarked_drop_packets(snapshot: object, *, marker: str = 'podlaz_nm_l3_unmarked') -> int:
@@ -547,7 +554,7 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
                              _numeric_table(r.get('table',r.get('lookup',-1))) == plan.table]
                 _stage('cleanup-underlay-verify')
                 try:
-                    verify_owned_underlay(plan,current,owned_rules)
+                    rule_present, default_present, link_present = verify_owned_underlay(plan,current,owned_rules)
                 except ValueError:
                     # Fixed public reason buckets only. No interface, route,
                     # gateway or foreign state is exported to CI.
@@ -564,12 +571,21 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
                     else:
                         _stage('cleanup-underlay-route-or-rule-mismatch')
                     raise
-                _stage('cleanup-underlay-rule')
-                run('ip','-4','rule','del','pref',str(plan.rule_priority),'fwmark',str(plan.tunnel_mark),'lookup',str(plan.table))
-                _stage('cleanup-underlay-default')
-                run('ip','-4','route','del','default','via',plan.default_route[1],'dev',plan.default_route[2],'table',str(plan.table))
-                _stage('cleanup-underlay-link')
-                run('ip','-4','route','del',plan.connected_route[0],'dev',plan.connected_route[1],'table',str(plan.table))
+                if rule_present:
+                    _stage('cleanup-underlay-rule')
+                    run('ip','-4','rule','del','pref',str(plan.rule_priority),'fwmark',str(plan.tunnel_mark),'lookup',str(plan.table))
+                if default_present:
+                    _stage('cleanup-underlay-default')
+                    run('ip','-4','route','del','default','via',plan.default_route[1],'dev',plan.default_route[2],'table',str(plan.table))
+                if link_present:
+                    _stage('cleanup-underlay-link')
+                    run('ip','-4','route','del',plan.connected_route[0],'dev',plan.connected_route[1],'table',str(plan.table))
+                if ip_json('-4','route','show','table',str(plan.table)):
+                    raise ValueError('underlay routes remained after exact rollback')
+                if any(r.get('priority') == plan.rule_priority or
+                       _numeric_table(r.get('table',r.get('lookup',-1))) == plan.table
+                       for r in ip_json('-4','rule','show')):
+                    raise ValueError('underlay policy rule remained after exact rollback')
             _stage('cleanup-nft')
             if protected:
                 # The guest is disposable; never remove barrier while an
