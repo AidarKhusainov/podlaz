@@ -175,6 +175,14 @@ class IPv6FirewallSocketContractTest(unittest.TestCase):
             self.assertEqual(_send_ipv6_probe('2001:db8:460::1'), 'sent')
 
 class LiveNetworkManagerRestartTest(unittest.TestCase):
+    @staticmethod
+    def live_tun_inventory(*args):
+        if 'address' in args:
+            return [{'ifname':'podlaz0','ifindex':42,'addr_info':[
+                {'family':'inet','local':'198.18.0.17','prefixlen':32}]}]
+        return [{'ifname':'podlaz0','ifindex':42,
+                 'linkinfo':{'info_kind':'tun'}}]
+
     def test_restart_requires_running_xray_and_owned_active_vpn(self):
         from unittest.mock import Mock, patch
         from nm_vpn_l3_scenario_guest import _qualify_live_nm_restart
@@ -209,12 +217,15 @@ class LiveNetworkManagerRestartTest(unittest.TestCase):
             self.fail(f'unexpected guest command {args!r}')
         with patch('nm_vpn_l3_scenario_guest.run',side_effect=command), patch(
              'nm_vpn_l3_scenario_guest._owned_nm_profile_present',return_value=True), patch(
+             'nm_vpn_l3_scenario_guest.load_guest_intent',
+             return_value=(Mock(address='198.18.0.17/32'),42)), patch(
+             'nm_vpn_l3_scenario_guest.ip_json',side_effect=self.live_tun_inventory), patch(
              'nm_vpn_l3_scenario_guest._prove_physical_drop'), patch(
              'nm_vpn_l3_scenario_guest._prove_ipv6_no_leak'), patch(
              'nm_vpn_l3_scenario_guest._reconcile_guest_underlay',
              side_effect=lambda p: stages.append('underlay')), patch(
              'nm_vpn_l3_scenario_guest._reactivate_pinned_nm_vpn',
-             side_effect=lambda u,x,**kw: stages.append('vpn')), patch(
+             side_effect=lambda u,x,**kw: stages.append('vpn' if kw.get('allow_retained_l3') else 'missing-permit')), patch(
              'nm_vpn_l3_scenario_guest._verify_paths',
              side_effect=lambda m: stages.append('traffic')), patch(
              'nm_vpn_l3_scenario_guest._natural_full',
@@ -230,6 +241,9 @@ class LiveNetworkManagerRestartTest(unittest.TestCase):
         with patch('nm_vpn_l3_scenario_guest._owned_nm_profile_present',return_value=True), patch(
              'nm_vpn_l3_scenario_guest.run',
              side_effect=lambda *a,**k: '1001' if a[:3] == ('systemctl','show','-P') else ''), patch(
+             'nm_vpn_l3_scenario_guest.load_guest_intent',
+             return_value=(Mock(address='198.18.0.17/32'),42)), patch(
+             'nm_vpn_l3_scenario_guest.ip_json',side_effect=self.live_tun_inventory), patch(
              'nm_vpn_l3_scenario_guest._prove_physical_drop'), patch(
              'nm_vpn_l3_scenario_guest._prove_ipv6_no_leak'), patch(
              'nm_vpn_l3_scenario_guest._reactivate_pinned_nm_vpn') as reactivate:
