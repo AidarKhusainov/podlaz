@@ -20,7 +20,7 @@ from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 
 from nm_vpn_l3_contract import emit_nm_ipv4_config
-from nm_vpn_l3_intent import load_guest_intent
+from nm_vpn_l3_intent import load_guest_intent, retained_ipv4_reapply_authorized
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 
 SERVICE = "org.freedesktop.NetworkManager.podlazl3research"
@@ -51,7 +51,11 @@ class GuestPlugin(dbus.service.Object):
                 raise ValueError("root-only isolated guest adapter")
             config, ifindex = load_guest_intent()
             links, addresses = _read_kernel_inventory()
-            validate_xray_tun(ifindex, links, addresses)
+            # Initial activation is strict. Only a root-owned single-use
+            # recovery permit can recognize the previously NM-owned IPv4.
+            permitted = retained_ipv4_reapply_authorized()
+            validate_xray_tun(ifindex, links, addresses,
+                              delegated_ipv4=config.address if permitted else None)
         except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             # Do not forward sensitive guest state or network values to D-Bus.
             raise dbus.exceptions.DBusException(

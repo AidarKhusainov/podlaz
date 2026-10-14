@@ -10,6 +10,26 @@ import stat
 
 from nm_vpn_l3_contract import GuestVPNConfig, config_dicts
 
+# A temporary single-activation permit. The guest orchestrator creates it
+# only after verifying the original active NM profile before daemon restart.
+REAPPLY_MARKER = Path("/run/podlaz-nm-l3/retained-ip4-reapply")
+
+
+def retained_ipv4_reapply_authorized(path: Path = REAPPLY_MARKER, *,
+                                     expected_uid: int = 0) -> bool:
+    """Authorize *inspection* of a retained NM IPv4 assignment, not deletion."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except FileNotFoundError:
+        return False
+    with os.fdopen(fd, "rb") as stream:
+        meta = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(meta.st_mode) or
+                stat.S_IMODE(meta.st_mode) != 0o600 or
+                meta.st_uid != expected_uid or meta.st_size != 0):
+            raise ValueError("invalid private NM reapply permit")
+    return True
+
 
 @dataclass(frozen=True)
 class GuestPaths:

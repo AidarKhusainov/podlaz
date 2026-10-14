@@ -20,7 +20,7 @@ import time
 import uuid
 
 from nm_vpn_l3_contract import GuestVPNConfig, config_dicts, vpn_profile_settings
-from nm_vpn_l3_intent import load_guest_intent
+from nm_vpn_l3_intent import load_guest_intent, REAPPLY_MARKER
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 from nm_vpn_underlay_guest import UnderlayEvidence, UnderlayPlan, select_underlay
 
@@ -386,7 +386,8 @@ def _reconcile_guest_underlay(plan: UnderlayPlan) -> None:
         raise ValueError('guest underlay did not recover exact route authority')
 
 
-def _reactivate_pinned_nm_vpn(profile_uuid: str, xray: subprocess.Popen) -> None:
+def _reactivate_pinned_nm_vpn(profile_uuid: str, xray: subprocess.Popen,
+                              *, allow_retained_l3: bool = False) -> None:
     """Continue the *same* session after NM drops its base connection.
 
     Only after marked underlay is exactly requalified and the privacy
@@ -401,15 +402,29 @@ def _reactivate_pinned_nm_vpn(profile_uuid: str, xray: subprocess.Popen) -> None
     if not _owned_nm_profile_present(profile_uuid):
         raise ValueError('original NM VPN profile authority is missing')
     _stage('postchurn-tun-preflight')
-    _config, ifindex = load_guest_intent()
-    validate_xray_tun(ifindex,
-                      ip_json('-d','link','show','dev','podlaz0'),
-                      ip_json('address','show','dev','podlaz0'))
-    _stage('postchurn-vpn-reactivate')
-    run('nmcli','-w','40','connection','up',profile_uuid,
-        'ifname','host0',timeout=45)
-    if not _owned_nm_profile_present(profile_uuid,active=True):
-        raise ValueError('original NM VPN did not reactivate')
+    config, ifindex = load_guest_intent()
+    links=ip_json('-d','link','show','dev','podlaz0')
+    addresses=ip_json('address','show','dev','podlaz0')
+    validate_xray_tun(ifindex,links,addresses,
+                      delegated_ipv4=config.address if allow_retained_l3 else None)
+    retained=any(item.get('family')=='inet' for address in addresses
+                 for item in address.get('addr_info',[]))
+    if retained and not allow_retained_l3:
+        raise ValueError('unexpected previously configured TUN')
+    if retained:
+        _stage('postchurn-retained-nm-ip4')
+        # Permit is one-use, root-private and never authorizes deletion.
+        fd=os.open(REAPPLY_MARKER,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+        os.close(fd)
+    try:
+        _stage('postchurn-vpn-reactivate')
+        run('nmcli','-w','40','connection','up',profile_uuid,
+            'ifname','host0',timeout=45)
+        if not _owned_nm_profile_present(profile_uuid,active=True):
+            raise ValueError('original NM VPN did not reactivate')
+    finally:
+        if retained:
+            REAPPLY_MARKER.unlink()
 
 
 def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan, profile_uuid: str) -> None:
@@ -468,6 +483,13 @@ def _qualify_live_nm_restart(xray: subprocess.Popen, plan: UnderlayPlan,
     _stage('live-nm-preflight')
     if xray.poll() is not None or not _owned_nm_profile_present(profile_uuid,active=True):
         raise ValueError('original live VPN session absent')
+    config,ifindex=load_guest_intent()
+    before_addrs=ip_json('address','show','dev','podlaz0')
+    validate_xray_tun(ifindex,ip_json('-d','link','show','dev','podlaz0'),
+                      before_addrs,delegated_ipv4=config.address)
+    if not any(item.get('family')=='inet' for addr in before_addrs
+               for item in addr.get('addr_info',[])):
+        raise ValueError('active NM VPN lacks its delegated IPv4 address')
     _prove_physical_drop()
     _prove_ipv6_no_leak()
     before=run('systemctl','show','-P','MainPID','NetworkManager.service',
@@ -494,7 +516,7 @@ def _qualify_live_nm_restart(xray: subprocess.Popen, plan: UnderlayPlan,
     _stage('live-nm-underlay')
     _reconcile_guest_underlay(plan)
     _stage('live-nm-vpn-reactivation')
-    _reactivate_pinned_nm_vpn(profile_uuid,xray)
+    _reactivate_pinned_nm_vpn(profile_uuid,xray,allow_retained_l3=True)
     _stage('live-nm-traffic-restored')
     _verify_paths(plan.tunnel_mark)
     _stage('live-nm-natural-full')

@@ -71,6 +71,32 @@ class PinnedNMReactivationTest(unittest.TestCase):
                 call('pinned-session-uuid'),
                 call('pinned-session-uuid',active=True)])
 
+    def test_retained_nm_address_is_not_deleted_and_permit_is_one_shot(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import Mock, patch
+        from nm_vpn_l3_scenario_guest import _reactivate_pinned_nm_vpn
+        xray=Mock()
+        xray.poll.return_value=None
+        config=Mock(address='198.18.0.17/32')
+        links=[{'ifname':'podlaz0','ifindex':42,'linkinfo':{'info_kind':'tun'}}]
+        addresses=[{'ifname':'podlaz0','ifindex':42,'addr_info':[
+                   {'family':'inet','local':'198.18.0.17','prefixlen':32}]}]
+        with tempfile.TemporaryDirectory() as tmp:
+            marker=Path(tmp)/'reapply'
+            def command(*args,**kwargs):
+                self.assertTrue(marker.is_file())
+                return ''
+            with patch('nm_vpn_l3_scenario_guest.REAPPLY_MARKER',marker), patch(
+                 'nm_vpn_l3_scenario_guest._owned_nm_profile_present',
+                 side_effect=[False,True,True]), patch(
+                 'nm_vpn_l3_scenario_guest.load_guest_intent',return_value=(config,42)), patch(
+                 'nm_vpn_l3_scenario_guest.ip_json',side_effect=[links,addresses]), patch(
+                 'nm_vpn_l3_scenario_guest.run',side_effect=command) as runner:
+                _reactivate_pinned_nm_vpn('pinned-uuid',xray,allow_retained_l3=True)
+                runner.assert_called_once()
+            self.assertFalse(marker.exists())
+
     def test_rejects_tun_ownership_collision_before_nm_mutation(self):
         from unittest.mock import Mock, patch
         from nm_vpn_l3_scenario_guest import _reactivate_pinned_nm_vpn
@@ -188,7 +214,7 @@ class LiveNetworkManagerRestartTest(unittest.TestCase):
              'nm_vpn_l3_scenario_guest._reconcile_guest_underlay',
              side_effect=lambda p: stages.append('underlay')), patch(
              'nm_vpn_l3_scenario_guest._reactivate_pinned_nm_vpn',
-             side_effect=lambda u,x: stages.append('vpn')), patch(
+             side_effect=lambda u,x,**kw: stages.append('vpn')), patch(
              'nm_vpn_l3_scenario_guest._verify_paths',
              side_effect=lambda m: stages.append('traffic')), patch(
              'nm_vpn_l3_scenario_guest._natural_full',

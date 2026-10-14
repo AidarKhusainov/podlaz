@@ -25,6 +25,23 @@ class RuntimeGuardTest(unittest.TestCase):
             with self.subTest(addrs=addrs), self.assertRaises(ValueError):
                 validate_xray_tun(72, LINK, [{"ifname":"podlaz0", "ifindex":72, "addr_info":addrs}])
 
+    def test_exact_prior_nm_ipv4_requires_explicit_delegation(self):
+        owned=[{"family":"inet", "local":"198.18.0.17", "prefixlen":32}]
+        def inspect(values, **kwargs):
+            validate_xray_tun(72, LINK,
+                [{"ifname":"podlaz0", "ifindex":72, "addr_info":values}],**kwargs)
+        with self.assertRaises(ValueError):
+            inspect(owned)
+        inspect(owned,delegated_ipv4="198.18.0.17/32")
+        for values in (
+            [{"family":"inet","local":"198.18.0.18","prefixlen":32}],
+            [{"family":"inet","local":"198.18.0.17","prefixlen":24}],
+            owned+owned,
+            owned+[{"family":"inet6","local":"2001:db8::2","prefixlen":128}],
+        ):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                inspect(values,delegated_ipv4="198.18.0.17/32")
+
     def test_refuses_missing_or_malformed_kernel_snapshot(self):
         for broken in (None, [{"ifname":"podlaz0","ifindex":72}], [*LINK, *LINK]):
             with self.subTest(broken=broken), self.assertRaises(ValueError):

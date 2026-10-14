@@ -4,7 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 import unittest
-from nm_vpn_l3_intent import load_guest_intent, GuestPaths
+from nm_vpn_l3_intent import load_guest_intent, GuestPaths, retained_ipv4_reapply_authorized
 
 
 DATA = {
@@ -59,6 +59,24 @@ class GuestIntentTest(unittest.TestCase):
         self.intent.symlink_to(self.intent.with_suffix(".real"))
         with self.assertRaises(ValueError):
             load_guest_intent(self.paths(), expected_uid=os.getuid())
+
+    def test_reapply_permit_is_private_empty_and_regular(self):
+        marker=self.root / "run/podlaz-nm-l3/retained-ip4-reapply"
+        self.assertFalse(retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid()))
+        marker.touch(mode=0o600)
+        self.assertTrue(retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid()))
+        marker.write_text("foreign")
+        with self.assertRaises(ValueError):
+            retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid())
+        marker.write_text("")
+        marker.chmod(0o644)
+        with self.assertRaises(ValueError):
+            retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid())
+        marker.chmod(0o600)
+        marker.rename(marker.with_suffix(".real"))
+        marker.symlink_to(marker.with_suffix(".real"))
+        with self.assertRaises(OSError):
+            retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid())
 
     def test_refuses_weak_permissions_and_opaque_invalid_data(self):
         self.intent.chmod(0o644)

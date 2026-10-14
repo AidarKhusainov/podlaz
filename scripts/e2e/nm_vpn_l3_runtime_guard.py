@@ -5,7 +5,8 @@ from __future__ import annotations
 import ipaddress
 
 
-def validate_xray_tun(expected_ifindex: int, links: object, addresses: object) -> None:
+def validate_xray_tun(expected_ifindex: int, links: object, addresses: object,
+                      *, delegated_ipv4: str | None = None) -> None:
     if type(expected_ifindex) is not int or expected_ifindex <= 0:
         raise ValueError("invalid persisted TUN ifindex")
     if not isinstance(links, list) or len(links) != 1 or not isinstance(addresses, list) or len(addresses) != 1:
@@ -22,13 +23,20 @@ def validate_xray_tun(expected_ifindex: int, links: object, addresses: object) -
     addr_info = addr.get("addr_info")
     if not isinstance(addr_info, list):
         raise ValueError("missing TUN address inventory")
+    retained_ipv4 = 0
+    expected = ipaddress.IPv4Interface(delegated_ipv4) if delegated_ipv4 is not None else None
     for item in addr_info:
         if not isinstance(item, dict):
             raise ValueError("malformed TUN address")
         # Link-local IPv6 may be implicit. Any global address belongs to
         # someone; NM must never race an existing L3 writer on that link.
         if item.get("family") == "inet":
-            raise ValueError("VPN TUN already owns an IPv4 address")
+            retained_ipv4 += 1
+            if (expected is None or retained_ipv4 != 1 or
+                item.get("local") != str(expected.ip) or
+                item.get("prefixlen") != expected.network.prefixlen):
+                raise ValueError("VPN TUN has unowned IPv4 configuration")
+            continue
         if item.get("family") == "inet6":
             try:
                 if ipaddress.IPv6Address(item.get("local", "")).is_link_local:
