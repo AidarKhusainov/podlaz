@@ -5,7 +5,12 @@ import sys
 
 STAGES = frozenset(('foreign-collision','invalid-ip4','nm-activation',
                     'natural-full','uplink-churn','uplink-down',
-                    'uplink-reconnect','guest-preflight','underlay-reconcile','uplink-traffic-restored','core-preflight','core-stopped',
+                    'uplink-reconnect','guest-preflight','underlay-reconcile',
+                    'underlay-current-inventory','underlay-baseline-observe',
+                    'underlay-main-default','underlay-link-route','underlay-rule-check',
+                    'underlay-connected-apply','underlay-default-apply',
+                    'underlay-postapply-inspect','underlay-postapply-verify',
+                    'uplink-traffic-restored','core-preflight','core-stopped',
                     'nm-restarted','nm-restart-request','core-stop-request','cleanup-entry','cleanup-active-query','cleanup-nm-down',
                     'cleanup-owned-query','cleanup-nm-delete','cleanup-xray',
                     'cleanup-underlay-inspect','cleanup-underlay-verify',

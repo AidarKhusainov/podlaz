@@ -2,6 +2,15 @@ import unittest
 from nm_vpn_l3_failure_trace import last_safe_stage
 
 class SanitizedStageTest(unittest.TestCase):
+    def test_bounded_reconcile_failure_stage(self):
+        self.assertEqual(last_safe_stage([
+            'nm-l3-progress=underlay-reconcile',
+            'nm-l3-progress=underlay-link-route',
+            'nm-l3-failure-origin=underlay-link-route',
+            'nm-l3-progress=cleanup-intent']), 'origin-underlay-link-route')
+        self.assertEqual(last_safe_stage([
+            'nm-l3-failure-origin=underlay-secret-gateway']), 'not-reached')
+
     def test_fixed_underlay_failure_bucket(self):
         self.assertEqual(last_safe_stage(['nm-l3-progress=cleanup-underlay-one-route',
                                           'private-neighbor=2001:db8:460::1']),

@@ -315,16 +315,19 @@ def select_missing_underlay_recovery(plan: UnderlayPlan, main_defaults: object,
     """
     if not isinstance(main_defaults, list) or not isinstance(link_routes, list):
         raise ValueError('incomplete current underlay-uplink authority')
+    _stage('underlay-main-default')
     defaults=[r for r in main_defaults if isinstance(r,dict) and
               r.get('dev')==plan.default_route[2]]
     if len(defaults)!=1 or defaults[0].get('gateway')!=plan.default_route[1]:
         raise ValueError('physical default differs from initial underlay authority')
+    _stage('underlay-link-route')
     links=[r for r in link_routes if isinstance(r,dict) and
            r.get('dst')==plan.connected_route[0] and
            r.get('dev')==plan.connected_route[1] and
            r.get('scope')=='link']
     if len(links)!=1:
         raise ValueError('physical connected route changed during uplink recovery')
+    _stage('underlay-rule-check')
     rule_present,default_present,connected_present=verify_owned_underlay(
         plan,routes,rules)
     if not rule_present:
@@ -333,24 +336,30 @@ def select_missing_underlay_recovery(plan: UnderlayPlan, main_defaults: object,
 
 
 def _reconcile_guest_underlay(plan: UnderlayPlan) -> None:
+    _stage('underlay-current-inventory')
     current=ip_json('-4','route','show','table',str(plan.table))
     rules=[r for r in ip_json('-4','rule','show')
            if r.get('priority')==plan.rule_priority or
            _numeric_table(r.get('table',r.get('lookup',-1)))==plan.table]
+    _stage('underlay-baseline-observe')
     add_connected,add_default=select_missing_underlay_recovery(
         plan,ip_json('-4','route','show','table','main','default'),
         ip_json('-4','route','show','dev',plan.connected_route[1],'scope','link'),
         current,rules)
+    _stage('underlay-connected-apply')
     if add_connected:
         run('ip','-4','route','add',plan.connected_route[0],
             'dev',plan.connected_route[1],'scope','link','table',str(plan.table))
+    _stage('underlay-default-apply')
     if add_default:
         run('ip','-4','route','add','default','via',plan.default_route[1],
             'dev',plan.default_route[2],'table',str(plan.table))
+    _stage('underlay-postapply-inspect')
     refreshed=ip_json('-4','route','show','table',str(plan.table))
     refreshed_rules=[r for r in ip_json('-4','rule','show')
                     if r.get('priority')==plan.rule_priority or
                     _numeric_table(r.get('table',r.get('lookup',-1)))==plan.table]
+    _stage('underlay-postapply-verify')
     if verify_owned_underlay(plan,refreshed,refreshed_rules)!=(True,True,True):
         raise ValueError('guest underlay did not recover exact route authority')
 
