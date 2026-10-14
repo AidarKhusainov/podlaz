@@ -523,15 +523,21 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
         finally:
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.
+            _stage('cleanup-active-query')
             if _owned_nm_profile_present(profile_uuid, active=True):
+                _stage('cleanup-nm-down')
                 run('nmcli','-w','20','connection','down',profile_uuid,timeout=25)
             # The volatile guest profile has a fixed name/UUID created only
             # after collision-free preflight. No name-based foreign deletion.
+            _stage('cleanup-owned-query')
             if _owned_nm_profile_present(profile_uuid):
+                _stage('cleanup-nm-delete')
                 run('nmcli','connection','delete',profile_uuid)
+            _stage('cleanup-xray')
             if xray is not None:
                 xray.terminate()
                 xray.wait(timeout=12)
+            _stage('cleanup-underlay-inspect')
             if installed:
                 # Fail closed if any foreign route/rule appears: guard exact
                 # U composition before deleting its initial owned identity.
@@ -539,16 +545,22 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
                 owned_rules=[r for r in ip_json('-4','rule','show')
                              if r.get('priority') == plan.rule_priority or
                              _numeric_table(r.get('table',r.get('lookup',-1))) == plan.table]
+                _stage('cleanup-underlay-verify')
                 verify_owned_underlay(plan,current,owned_rules)
+                _stage('cleanup-underlay-rule')
                 run('ip','-4','rule','del','pref',str(plan.rule_priority),'fwmark',str(plan.tunnel_mark),'lookup',str(plan.table))
+                _stage('cleanup-underlay-default')
                 run('ip','-4','route','del','default','via',plan.default_route[1],'dev',plan.default_route[2],'table',str(plan.table))
+                _stage('cleanup-underlay-link')
                 run('ip','-4','route','del',plan.connected_route[0],'dev',plan.connected_route[1],'table',str(plan.table))
+            _stage('cleanup-nft')
             if protected:
                 # The guest is disposable; never remove barrier while an
                 # unknown owner or active VPN might still use the underlay.
                 if _owned_nm_profile_present(profile_uuid, active=True):
                     raise ValueError('VPN remains active; barrier retained')
                 run('nft','delete','table','inet',TABLE)
+            _stage('cleanup-intent')
             if INTENT.exists():
                 INTENT.unlink()
                 INTENT.parent.rmdir()
