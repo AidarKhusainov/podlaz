@@ -83,6 +83,32 @@ def verify_owned_underlay(plan: UnderlayPlan, routes: object, rules: object) -> 
 
 
 
+
+def physical_unmarked_drop_packets(snapshot: object) -> int:
+    """Require the exact guest-only output drop counter as packet evidence."""
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get('nftables'), list):
+        raise ValueError('incomplete guest firewall evidence')
+    matches = []
+    for item in snapshot['nftables']:
+        if not isinstance(item, dict) or not isinstance(item.get('rule'), dict):
+            continue
+        rule = item['rule']
+        if (rule.get('table'), rule.get('chain'), rule.get('family'), rule.get('comment')) != (
+                TABLE, 'egress', 'inet', 'podlaz_nm_l3_unmarked'):
+            continue
+        expr = rule.get('expr')
+        if not isinstance(expr, list) or not any(isinstance(x, dict) and 'drop' in x for x in expr):
+            raise ValueError('unmarked physical drop rule was changed')
+        counters = [x['counter'].get('packets') for x in expr
+                    if isinstance(x, dict) and isinstance(x.get('counter'), dict)]
+        if len(counters) != 1 or type(counters[0]) is not int or counters[0] < 0:
+            raise ValueError('unmarked physical drop counter unavailable')
+        matches.append(counters[0])
+    if len(matches) != 1:
+        raise ValueError('unmarked physical drop rule identity ambiguous')
+    return matches[0]
+
+
 def exact_owned_nm_profile_present(rows: object, profile_uuid: str) -> bool:
     """Identify only this ephemeral VPN profile; reject name/UUID collisions."""
     if not isinstance(rows, list):
@@ -187,8 +213,40 @@ def _write_private_intent(gateway: str, index: int) -> GuestVPNConfig:
 def _nft_protect(mark: int) -> None:
     run('nft','add','table','inet',TABLE)
     run('nft','add','chain','inet',TABLE,'egress','{ type filter hook output priority -150; policy accept; }')
-    run('nft','add','rule','inet',TABLE,'egress','oifname','host0','meta','mark','!=',str(mark),'drop')
+    run('nft','add','rule','inet',TABLE,'egress','oifname','host0','meta','mark','!=',str(mark),'counter','drop','comment','podlaz_nm_l3_unmarked')
     run('nft','add','rule','inet',TABLE,'egress','meta','nfproto','ipv6','oifname','host0','drop')
+
+
+
+def _physical_drop_snapshot() -> int:
+    evidence = json.loads(run('nft', '-j', 'list', 'chain', 'inet', TABLE, 'egress', output=True))
+    return physical_unmarked_drop_packets(evidence)
+
+
+def _prove_physical_drop() -> None:
+    """A direct host0 SYN must hit the real unmarked-egress nft counter."""
+    before = _physical_drop_snapshot()
+    attempt = subprocess.run(
+        ('curl', '-4', '--noproxy', '*', '--interface', 'host0',
+         '--connect-timeout', '3', '--max-time', '5', '--fail', '-sS',
+         'http://172.31.253.1:9/'), capture_output=True, text=True, timeout=10)
+    if attempt.returncode == 0:
+        raise ValueError('ordinary egress escaped guest physical barrier')
+    if _physical_drop_snapshot() <= before:
+        raise ValueError('no observed packet blocked at physical uplink')
+
+
+def _qualify_failure_protection(xray: subprocess.Popen) -> None:
+    _prove_physical_drop()
+    if xray.poll() is not None:
+        raise ValueError('Xray already failed before crash qualification')
+    xray.terminate()
+    xray.wait(timeout=12)
+    _prove_physical_drop()
+    # The network service may remove the VPN main default. Even so, an
+    # unmarked physical packet remains blocked until the session ends.
+    run('systemctl', 'restart', 'NetworkManager.service', timeout=75)
+    _prove_physical_drop()
 
 
 def _start_underlay(p: UnderlayPlan) -> None:
@@ -286,7 +344,10 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-protected-routes-and-https=pass',flush=True)
             _natural_full(xray)
+            _verify_paths(plan.tunnel_mark)
             print('nm-l3-natural-full=pass',flush=True)
+            _qualify_failure_protection(xray)
+            print('nm-l3-failure-protection=pass',flush=True)
         finally:
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.

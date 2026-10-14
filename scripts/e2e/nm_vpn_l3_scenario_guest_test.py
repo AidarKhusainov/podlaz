@@ -49,6 +49,22 @@ class NMProfileOwnershipTest(unittest.TestCase):
                 exact_owned_nm_profile_present(inventory,owned)
 
 
+class PhysicalEgressCounterTest(unittest.TestCase):
+    def test_proof_rejects_other_rules_and_missing_counter(self):
+        from nm_vpn_l3_scenario_guest import physical_unmarked_drop_packets
+        table='podlaz_nm_l3_guest'
+        exact={'rule': {'family':'inet','table':table,'chain':'egress',
+                        'comment':'podlaz_nm_l3_unmarked',
+                        'expr':[{'counter':{'packets':7,'bytes':300}}, {'drop':None}]}}
+        self.assertEqual(physical_unmarked_drop_packets({'nftables':[exact]}),7)
+        for bad in ([], [{'rule':{**exact['rule'],'comment':'foreign'}}],
+                    [{'rule':{**exact['rule'],'expr':[{'drop':None}]}}],
+                    [{'rule':{**exact['rule'],'chain':'other'}}],
+                    [exact,exact]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                physical_unmarked_drop_packets({'nftables':bad})
+
+
 class NaturalConnectivityLivenessTest(unittest.TestCase):
     def test_does_not_accept_cached_full_after_xray_has_exited(self):
         from unittest.mock import patch

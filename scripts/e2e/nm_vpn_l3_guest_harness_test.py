@@ -19,6 +19,7 @@ class GateAHostIsolation(unittest.TestCase):
                         source.index('nm_vpn_l3_scenario_guest.py'))
         self.assertIn('assert_terminal_authority_clean', source)
         self.assertIn('tun.nm_l3_gate_a', source)
+        self.assertIn('nm-l3-failure-protection', source)
         self.assertNotIn('ip route flush', source)
         self.assertEqual(subprocess.run(['bash', '-n', str(SCRIPT)], check=False).returncode, 0)
 
