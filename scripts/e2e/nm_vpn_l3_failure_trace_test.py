@@ -30,6 +30,14 @@ class SanitizedStageTest(unittest.TestCase):
             'nm-l3-failure-origin=postchurn-vpn-inactive']),
                          'origin-postchurn-vpn-inactive')
 
+    def test_active_nm_restart_failure_is_closed_and_without_identity(self):
+        self.assertEqual(last_safe_stage([
+            'nm-l3-progress=live-nm-restart-request',
+            'private-profile-uuid=unknown',
+            'nm-l3-failure-origin=live-nm-vpn-reactivation',
+            'nm-l3-progress=cleanup-intent']),
+            'origin-live-nm-vpn-reactivation')
+
     def test_data_plane_failure_is_closed_and_unambiguous(self):
         self.assertEqual(last_safe_stage(['nm-l3-progress=uplink-traffic-restored',
                                           'nm-l3-progress=data-route-selection',

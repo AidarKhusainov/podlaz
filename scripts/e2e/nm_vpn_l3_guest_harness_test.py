@@ -22,6 +22,7 @@ class GateAHostIsolation(unittest.TestCase):
         self.assertIn('nm-l3-failure-protection', source)
         self.assertIn('nm-l3-invalid-ip4-rejected', source)
         self.assertIn('nm-l3-uplink-churn-protected', source)
+        self.assertIn('nm-l3-live-nm-restart-recovered', source)
         self.assertIn('nm-l3-ipv6-physical-block', source)
         self.assertIn('PODLAZ_E2E_NM_L3_GUEST=true', source)
         self.assertIn('nm-l3-foreign-collision-rejected', source)

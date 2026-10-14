@@ -17,7 +17,10 @@ STAGES = frozenset(('foreign-collision','invalid-ip4','nm-activation',
                     'data-ordinary-route-wrong','data-marked-route-wrong',
                     'data-metric-mark-invalid',
                     'uplink-traffic-restored','core-preflight','core-stopped',
-                    'nm-restarted','nm-restart-request','core-stop-request','cleanup-entry','cleanup-active-query','cleanup-nm-down',
+                    'nm-restarted','nm-restart-request','core-stop-request',
+                    'live-nm-preflight','live-nm-restart-request','live-nm-restarted',
+                    'live-nm-uplink','live-nm-underlay','live-nm-vpn-reactivation',
+                    'live-nm-traffic-restored','live-nm-natural-full','cleanup-entry','cleanup-active-query','cleanup-nm-down',
                     'cleanup-owned-query','cleanup-nm-delete','cleanup-xray',
                     'cleanup-underlay-inspect','cleanup-underlay-verify',
                     'cleanup-underlay-no-inventory','cleanup-underlay-no-routes',
@@ -29,7 +32,8 @@ STAGES = frozenset(('foreign-collision','invalid-ip4','nm-activation',
 PROOFS = frozenset(('nm-l3-foreign-collision-rejected',
                     'nm-l3-invalid-ip4-rejected','nm-l3-real-dbus-ip4',
                     'nm-l3-natural-full','nm-l3-uplink-churn-protected',
-                    'nm-l3-failure-protection','nm-l3-result'))
+                    'nm-l3-failure-protection','nm-l3-live-nm-restart-recovered',
+                    'nm-l3-result'))
 
 def last_safe_stage(lines: list[str]) -> str:
     # A failure in the try body must not be hidden by unconditional

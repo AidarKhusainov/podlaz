@@ -457,6 +457,53 @@ def _prove_physical_drop() -> None:
         raise ValueError('no observed packet blocked at physical uplink')
 
 
+def _qualify_live_nm_restart(xray: subprocess.Popen, plan: UnderlayPlan,
+                             profile_uuid: str) -> None:
+    """Exercise NM service replacement while the original Xray child lives.
+
+    In-memory NM VPN profiles are not product recovery authority. Only the
+    exact guest-owned UUID, tracked TUN, validated underlay and armed barrier
+    may authorize reactivation; a missing profile fails closed.
+    """
+    _stage('live-nm-preflight')
+    if xray.poll() is not None or not _owned_nm_profile_present(profile_uuid,active=True):
+        raise ValueError('original live VPN session absent')
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+    before=run('systemctl','show','-P','MainPID','NetworkManager.service',
+               output=True).strip()
+    if not before.isdecimal() or int(before)<=0:
+        raise ValueError('NM daemon identity unavailable before restart')
+    _stage('live-nm-restart-request')
+    run('systemctl','restart','NetworkManager.service',timeout=75)
+    _stage('live-nm-restarted')
+    after=run('systemctl','show','-P','MainPID','NetworkManager.service',
+              output=True).strip()
+    if not after.isdecimal() or int(after)<=0 or before==after:
+        raise ValueError('NM daemon did not restart')
+    if xray.poll() is not None:
+        raise ValueError('Xray exited during live NM restart')
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+    _stage('live-nm-uplink')
+    if 'synthetic-uplink' not in run(
+            'nmcli','-t','-f','NAME','connection','show','--active',
+            output=True).splitlines():
+        run('nmcli','-w','35','connection','up','synthetic-uplink',
+            'ifname','host0',timeout=45)
+    _stage('live-nm-underlay')
+    _reconcile_guest_underlay(plan)
+    _stage('live-nm-vpn-reactivation')
+    _reactivate_pinned_nm_vpn(profile_uuid,xray)
+    _stage('live-nm-traffic-restored')
+    _verify_paths(plan.tunnel_mark)
+    _stage('live-nm-natural-full')
+    _natural_full(xray)
+    _verify_paths(plan.tunnel_mark)
+    _prove_physical_drop()
+    _prove_ipv6_no_leak()
+
+
 def _qualify_failure_protection(xray: subprocess.Popen) -> None:
     _stage('core-preflight')
     _prove_physical_drop()
@@ -665,6 +712,8 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             _natural_full(xray)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-natural-full=pass',flush=True)
+            _qualify_live_nm_restart(xray,plan,profile_uuid)
+            print('nm-l3-live-nm-restart-recovered=pass',flush=True)
             _qualify_failure_protection(xray)
             print('nm-l3-failure-protection=pass',flush=True)
             print('nm-l3-ipv6-physical-block=pass',flush=True)

@@ -112,7 +112,7 @@ run_scenario() {
   guest_exec python3 /workspace/scripts/e2e/nm_vpn_l3_scenario_guest.py \
     "${GUEST_PRIVATE}/nm-l3-generated-xray.json" "${ENDPOINT_IP}" \
     >"${PRIVATE_ROOT}/nm-l3-result.stdout" 2>"${PRIVATE_ROOT}/nm-l3-result.stderr"
-  for label in nm-l3-foreign-collision-rejected nm-l3-invalid-ip4-rejected nm-l3-real-dbus-ip4 nm-l3-protected-routes-and-https nm-l3-natural-full nm-l3-failure-protection nm-l3-uplink-churn-protected nm-l3-ipv6-physical-block nm-l3-exact-guest-cleanup nm-l3-result; do
+  for label in nm-l3-foreign-collision-rejected nm-l3-invalid-ip4-rejected nm-l3-real-dbus-ip4 nm-l3-protected-routes-and-https nm-l3-natural-full nm-l3-failure-protection nm-l3-uplink-churn-protected nm-l3-live-nm-restart-recovered nm-l3-ipv6-physical-block nm-l3-exact-guest-cleanup nm-l3-result; do
     grep -Fx "${label}=pass" "${PRIVATE_ROOT}/nm-l3-result.stdout" >/dev/null
   done
   record_evidence tun.nm_l3_gate_a pass
