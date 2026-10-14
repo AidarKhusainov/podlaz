@@ -1,0 +1,5 @@
+[VPN Connection]
+name=podlaz-guest-nm-l3
+service=org.freedesktop.NetworkManager.podlazl3research
+program=/usr/libexec/podlaz-nm-l3-guest
+supports-multiple-connections=false
