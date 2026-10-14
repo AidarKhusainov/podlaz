@@ -7,6 +7,22 @@ class SanitizedStageTest(unittest.TestCase):
                                           'private-neighbor=2001:db8:460::1']),
                          'cleanup-underlay-one-route')
 
+
+    def test_precleanup_failure_is_never_hidden_by_finally(self):
+        self.assertEqual(last_safe_stage([
+            'nm-l3-progress=uplink-traffic-restored',
+            'nm-l3-failure-origin=uplink-traffic-restored',
+            'nm-l3-progress=cleanup-entry',
+            'nm-l3-progress=cleanup-intent',
+            'nm-l3-result=fail']), 'origin-uplink-traffic-restored')
+        self.assertEqual(last_safe_stage([
+            'nm-l3-progress=cleanup-entry',
+            'nm-l3-progress=cleanup-intent',
+            'nm-l3-result=pass']), 'guest-success')
+        self.assertEqual(last_safe_stage([
+            'nm-l3-failure-origin=PRIVATE_PASSWORD',
+            'nm-l3-progress=cleanup-underlay-verify']), 'cleanup-underlay-verify')
+
     def test_only_closed_cleanup_stage_is_public(self):
         self.assertEqual(last_safe_stage(['nm-l3-progress=cleanup-underlay-verify',
                                           'private gateway data']), 'cleanup-underlay-verify')

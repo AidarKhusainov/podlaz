@@ -5,7 +5,7 @@ import sys
 
 STAGES = frozenset(('foreign-collision','invalid-ip4','nm-activation',
                     'natural-full','uplink-churn','uplink-down',
-                    'uplink-reconnect','underlay-reconcile','uplink-traffic-restored','core-preflight','core-stopped',
+                    'uplink-reconnect','guest-preflight','underlay-reconcile','uplink-traffic-restored','core-preflight','core-stopped',
                     'nm-restarted','nm-restart-request','core-stop-request','cleanup-entry','cleanup-active-query','cleanup-nm-down',
                     'cleanup-owned-query','cleanup-nm-delete','cleanup-xray',
                     'cleanup-underlay-inspect','cleanup-underlay-verify',
@@ -21,6 +21,15 @@ PROOFS = frozenset(('nm-l3-foreign-collision-rejected',
                     'nm-l3-failure-protection','nm-l3-result'))
 
 def last_safe_stage(lines: list[str]) -> str:
+    # A failure in the try body must not be hidden by unconditional
+    # finally-cleanup stage events printed afterward.
+    for line in reversed(lines):
+        if line.startswith('nm-l3-failure-origin='):
+            origin=line.split('=',1)[1]
+            if origin in STAGES:
+                return 'origin-' + origin
+    if 'nm-l3-result=pass' in lines:
+        return 'guest-success'
     for line in reversed(lines):
         if line.startswith('nm-l3-progress=') and line.split('=',1)[1] in STAGES:
             return line.split('=',1)[1]

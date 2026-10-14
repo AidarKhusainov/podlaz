@@ -240,7 +240,12 @@ def _physical_drop_snapshot() -> int:
     return physical_unmarked_drop_packets(evidence)
 
 
+_CURRENT_GUEST_STAGE = 'guest-preflight'
+
+
 def _stage(label: str) -> None:
+    global _CURRENT_GUEST_STAGE
+    _CURRENT_GUEST_STAGE = label
     print('nm-l3-progress=' + label, flush=True)
 
 
@@ -585,6 +590,9 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             print('nm-l3-failure-protection=pass',flush=True)
             print('nm-l3-ipv6-physical-block=pass',flush=True)
             _stage('cleanup-entry')
+        except Exception:
+            print('nm-l3-failure-origin=' + _CURRENT_GUEST_STAGE, flush=True)
+            raise
         finally:
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.
