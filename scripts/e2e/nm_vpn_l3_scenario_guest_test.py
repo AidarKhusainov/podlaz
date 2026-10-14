@@ -71,7 +71,7 @@ class NegativeAcceptanceContractTest(unittest.TestCase):
         source = Path(__file__).with_name('nm_vpn_l3_scenario_guest.py').read_text()
         adapter = Path(__file__).with_name('nm_vpn_l3_guest_plugin.py').read_text()
         self.assertIn("broken['prefix'] = dbus.UInt32(33)", adapter)
-        self.assertIn("'bad-ip4-emitted'", adapter)
+        self.assertIn("'/run/podlaz-nm-l3/bad-ip4-emitted'", adapter)
         self.assertIn('if not emitted.is_file()', source)
         self.assertIn("'NM accepted an invalid 33-bit IPv4 prefix'", source)
         self.assertIn("'rejected NM IP4 left a VPN route'", source)
