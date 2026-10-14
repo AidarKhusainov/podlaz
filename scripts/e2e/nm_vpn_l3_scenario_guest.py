@@ -232,9 +232,14 @@ def _physical_drop_snapshot() -> int:
     return physical_unmarked_drop_packets(evidence)
 
 
+def _stage(label: str) -> None:
+    print('nm-l3-progress=' + label, flush=True)
+
+
 def _prove_ipv6_no_leak() -> None:
     """Make host0 genuinely IPv6-capable, then prove netfilter drops a packet."""
     sysctl = Path('/proc/sys/net/ipv6/conf/host0/disable_ipv6')
+    _stage('ipv6-sysctl')
     original = sysctl.read_text(encoding='ascii').strip()
     if original not in ('0', '1'):
         raise ValueError('unknown IPv6 guest uplink state')
@@ -245,10 +250,12 @@ def _prove_ipv6_no_leak() -> None:
             sysctl.write_text('0\n', encoding='ascii')
         run('ip', '-6', 'address', 'add', IPV6_GUEST_CIDR, 'dev', 'host0')
         addr_installed = True
+    _stage('ipv6-route')
         routes = ip_json('-6', 'route', 'get', IPV6_HOST_PEER)
         if len(routes) != 1 or routes[0].get('dev') != 'host0':
             raise ValueError('IPv6 probe lacks a real physical path')
         snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))
+    _stage('ipv6-counter')
         before = physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6')
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
             sock.sendto(b'guest-ipv6-no-leak', (IPV6_HOST_PEER, 5353))
@@ -267,6 +274,7 @@ def _qualify_uplink_churn(xray: subprocess.Popen) -> None:
     """Prove fail-closed physical egress while the NM-owned uplink churns."""
     if xray.poll() is not None:
         raise ValueError('Xray exited before uplink churn')
+    _stage('uplink-down')
     before = _physical_drop_snapshot()
     run('ip','link','set','dev','host0','down')
     try:
@@ -274,6 +282,7 @@ def _qualify_uplink_churn(xray: subprocess.Popen) -> None:
             raise ValueError('physical barrier was lost during uplink loss')
     finally:
         run('ip','link','set','dev','host0','up')
+    _stage('uplink-reconnect')
     run('nmcli','-w','35','connection','up','synthetic-uplink',
         'ifname','host0',timeout=45)
     if 'synthetic-uplink' not in run(
@@ -299,15 +308,18 @@ def _prove_physical_drop() -> None:
 
 
 def _qualify_failure_protection(xray: subprocess.Popen) -> None:
+    _stage('core-preflight')
     _prove_physical_drop()
     _prove_ipv6_no_leak()
     if xray.poll() is not None:
         raise ValueError('Xray already failed before crash qualification')
     xray.terminate()
+    _stage('core-stopped')
     xray.wait(timeout=12)
     _prove_physical_drop()
     _prove_ipv6_no_leak()
     # Loss/restart of NM must never open direct physical IPv4/IPv6 egress.
+    _stage('nm-restarted')
     run('systemctl', 'restart', 'NetworkManager.service', timeout=75)
     _prove_physical_drop()
     _prove_ipv6_no_leak()
@@ -462,23 +474,29 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             index=links[0]['ifindex']
             validate_xray_tun(index,links,addresses)
             _write_private_intent(external_gateway,index)
+            _stage('foreign-collision')
             _qualify_foreign_profile_collision()
             print('nm-l3-foreign-collision-rejected=pass',flush=True)
+            _stage('invalid-ip4')
             _qualify_invalid_ip4_apply()
             print('nm-l3-invalid-ip4-rejected=pass',flush=True)
+            _stage('nm-activation')
             _activate_ephemeral_profile(10, profile_uuid)
             print('nm-l3-real-dbus-ip4=pass',flush=True)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-protected-routes-and-https=pass',flush=True)
+            _stage('natural-full')
             _natural_full(xray)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-natural-full=pass',flush=True)
+            _stage('uplink-churn')
             _qualify_uplink_churn(xray)
             print('nm-l3-uplink-churn-protected=pass',flush=True)
             _qualify_failure_protection(xray)
             print('nm-l3-failure-protection=pass',flush=True)
             print('nm-l3-ipv6-physical-block=pass',flush=True)
         finally:
+            _stage('guest-cleanup')
             # Explicit request first; never treat a similar-looking foreign
             # route or NM object path as cleanup authority.
             if _owned_nm_profile_present(profile_uuid, active=True):

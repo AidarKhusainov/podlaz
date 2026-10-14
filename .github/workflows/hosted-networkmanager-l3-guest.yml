@@ -67,6 +67,7 @@ jobs:
             2>"${RUNNER_TEMP}/podlaz-nm-l3-result.stderr"; then
             printf 'nm-l3-guest=completed\n'
           else
+            python3 scripts/e2e/nm_vpn_l3_failure_trace.py "${E2E_TMP_ROOT}/private/nm-l3-result.stdout"
             printf 'nm-l3-guest=failed\n' >&2
             exit 1
           fi
