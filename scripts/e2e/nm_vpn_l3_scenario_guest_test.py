@@ -64,7 +64,7 @@ class IPv6PhysicalGuardTest(unittest.TestCase):
         self.assertIn("oifname','!=','podlaz0'", source)
         self.assertIn("oifname','!=','lo'", source)
         self.assertIn('socket.AF_INET6', source)
-        self.assertIn('_qualify_uplink_churn(xray)', source)
+        self.assertIn('_qualify_uplink_churn(xray,plan)', source)
 
 
 
@@ -146,6 +146,39 @@ class NaturalConnectivityLivenessTest(unittest.TestCase):
 if __name__=='__main__':
     unittest.main()
 
+
+
+class UnderlayUplinkRecoveryTest(unittest.TestCase):
+    def test_recovers_only_missing_exact_routes_after_verified_uplink(self):
+        from nm_vpn_l3_scenario_guest import select_missing_underlay_recovery
+        from nm_vpn_underlay_guest import select_underlay, UnderlayEvidence
+        plan=select_underlay(UnderlayEvidence(
+            'host0','172.31.254.1','172.31.254.0/30',100,
+            ((0,255,0,0),(32766,254,0,0),(32767,253,0,0)),
+            frozenset((253,254,255))),10)
+        current_default=[{'dst':'default','dev':'host0',
+                          'gateway':'172.31.254.1','metric':20100}]
+        link=[{'dst':plan.connected_route[0],'dev':'host0','scope':'link'}]
+        rule=[{'priority':plan.rule_priority,'fwmark':hex(plan.tunnel_mark),
+               'fwmask':'0xffffffff','table':plan.table}]
+        connected={'dst':plan.connected_route[0],'dev':'host0','scope':'link','table':plan.table}
+        default={'dst':'default','dev':'host0','gateway':'172.31.254.1','table':plan.table}
+        decide=lambda routes,rules=rule,defaults=current_default,links=link: (
+            select_missing_underlay_recovery(plan,defaults,links,routes,rules))
+        self.assertEqual(decide([]),(True,True))
+        self.assertEqual(decide([connected]),(False,True))
+        self.assertEqual(decide([default]),(True,False))
+        self.assertEqual(decide([connected,default]),(False,False))
+        for routes,rules,defaults,links in (
+            ([],rule,[{**current_default[0],'gateway':'172.31.254.2'}],link),
+            ([],rule,[],link),
+            ([],rule,current_default,[]),
+            ([],[],current_default,link),
+            ([{**default,'gateway':'172.31.254.2'}],rule,current_default,link),
+            ([connected,connected],rule,current_default,link),
+        ):
+            with self.subTest(routes=routes,rules=rules,defaults=defaults,links=links), self.assertRaises(ValueError):
+                decide(routes,rules,defaults,links)
 
 class ExactUnderlayCleanup(unittest.TestCase):
 

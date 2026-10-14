@@ -299,7 +299,58 @@ def _prove_ipv6_no_leak() -> None:
             sysctl.write_text(original + '\n', encoding='ascii')
 
 
-def _qualify_uplink_churn(xray: subprocess.Popen) -> None:
+
+def select_missing_underlay_recovery(plan: UnderlayPlan, main_defaults: object,
+                                     link_routes: object, routes: object,
+                                     rules: object) -> tuple[bool, bool]:
+    """Select ONLY missing previously allocated routes on the same physical uplink.
+
+    Guest-only recovery reuses the original table, rule, gateway and interface.
+    A changed/ambiguous uplink or foreign state must stop before mutation.
+    """
+    if not isinstance(main_defaults, list) or not isinstance(link_routes, list):
+        raise ValueError('incomplete current underlay-uplink authority')
+    defaults=[r for r in main_defaults if isinstance(r,dict) and
+              r.get('dev')==plan.default_route[2]]
+    if len(defaults)!=1 or defaults[0].get('gateway')!=plan.default_route[1]:
+        raise ValueError('physical default differs from initial underlay authority')
+    links=[r for r in link_routes if isinstance(r,dict) and
+           r.get('dst')==plan.connected_route[0] and
+           r.get('dev')==plan.connected_route[1] and
+           r.get('scope')=='link']
+    if len(links)!=1:
+        raise ValueError('physical connected route changed during uplink recovery')
+    rule_present,default_present,connected_present=verify_owned_underlay(
+        plan,routes,rules)
+    if not rule_present:
+        raise ValueError('allocated marked-transport rule is no longer owned')
+    return not connected_present, not default_present
+
+
+def _reconcile_guest_underlay(plan: UnderlayPlan) -> None:
+    current=ip_json('-4','route','show','table',str(plan.table))
+    rules=[r for r in ip_json('-4','rule','show')
+           if r.get('priority')==plan.rule_priority or
+           _numeric_table(r.get('table',r.get('lookup',-1)))==plan.table]
+    add_connected,add_default=select_missing_underlay_recovery(
+        plan,ip_json('-4','route','show','table','main','default'),
+        ip_json('-4','route','show','dev',plan.connected_route[1],'scope','link'),
+        current,rules)
+    if add_connected:
+        run('ip','-4','route','add',plan.connected_route[0],
+            'dev',plan.connected_route[1],'scope','link','table',str(plan.table))
+    if add_default:
+        run('ip','-4','route','add','default','via',plan.default_route[1],
+            'dev',plan.default_route[2],'table',str(plan.table))
+    refreshed=ip_json('-4','route','show','table',str(plan.table))
+    refreshed_rules=[r for r in ip_json('-4','rule','show')
+                    if r.get('priority')==plan.rule_priority or
+                    _numeric_table(r.get('table',r.get('lookup',-1)))==plan.table]
+    if verify_owned_underlay(plan,refreshed,refreshed_rules)!=(True,True,True):
+        raise ValueError('guest underlay did not recover exact route authority')
+
+
+def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan) -> None:
     """Prove fail-closed physical egress while the NM-owned uplink churns."""
     if xray.poll() is not None:
         raise ValueError('Xray exited before uplink churn')
@@ -321,6 +372,13 @@ def _qualify_uplink_churn(xray: subprocess.Popen) -> None:
     _prove_physical_drop()
     if xray.poll() is not None:
         raise ValueError('tracked Xray died during uplink churn')
+    # An NM-managed physical link cycle can discard private routes. Restore
+    # only the originally allocated underlay entries after rechecking exact
+    # current gateway and marked rule authority, then prove real VPN traffic.
+    _stage('underlay-reconcile')
+    _reconcile_guest_underlay(plan)
+    _stage('uplink-traffic-restored')
+    _verify_paths(plan.tunnel_mark)
 
 
 def _prove_physical_drop() -> None:
@@ -521,7 +579,7 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-natural-full=pass',flush=True)
             _stage('uplink-churn')
-            _qualify_uplink_churn(xray)
+            _qualify_uplink_churn(xray,plan)
             print('nm-l3-uplink-churn-protected=pass',flush=True)
             _qualify_failure_protection(xray)
             print('nm-l3-failure-protection=pass',flush=True)
