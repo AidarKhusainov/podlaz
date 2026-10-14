@@ -35,6 +35,7 @@ HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
+GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 
 EVIDENCE_KEYS=(
@@ -378,7 +379,7 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  sudo -n debootstrap --variant=minbase "${GUEST_RELEASE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
@@ -1331,6 +1332,7 @@ run_scenario() {
 }
 
 main() {
+  case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported guest release" ;; esac
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"

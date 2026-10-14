@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hosted-synthetic-tun.sh
 source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL=vmess
+case "${PODLAZ_E2E_GUEST_RELEASE:-noble}" in
+  noble|resolute) ;;
+  *) fail "unsupported disposable NM guest release" ;;
+esac
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -53,6 +57,8 @@ run_scenario() {
   prepare_system_guest
   guest_prepare_adapter
   start_system_guest
+  # Prove the actual guest release; a matrix label alone is insufficient.
+  guest_exec cat /etc/os-release | grep -Fx "VERSION_CODENAME=${GUEST_RELEASE}" >/dev/null
   mark_failure product candidate.provenance
   install_candidate_in_guest
   assert_guest_package_provenance

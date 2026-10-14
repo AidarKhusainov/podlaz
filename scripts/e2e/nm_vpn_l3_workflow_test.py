@@ -8,6 +8,9 @@ class GuestGateWorkflow(unittest.TestCase):
     def test_always_requires_normalized_report_and_private_cleanup(self):
         source=WORKFLOW.read_text()
         self.assertIn('fail-fast: false',source)
+        self.assertIn('release: [noble, resolute]', source)
+        self.assertIn("'scripts/e2e/hosted-synthetic-tun.sh'", source)
+        self.assertIn('PODLAZ_E2E_GUEST_RELEASE:', source)
         self.assertIn('ubuntu-24.04',source)
         self.assertIn('bash scripts/e2e/nm_vpn_l3_guest_harness.sh',source)
         self.assertIn('Validate normalized guest report',source)
