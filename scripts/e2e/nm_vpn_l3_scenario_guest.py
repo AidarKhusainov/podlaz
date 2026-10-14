@@ -250,12 +250,12 @@ def _prove_ipv6_no_leak() -> None:
             sysctl.write_text('0\n', encoding='ascii')
         run('ip', '-6', 'address', 'add', IPV6_GUEST_CIDR, 'dev', 'host0')
         addr_installed = True
-    _stage('ipv6-route')
+        _stage('ipv6-route')
         routes = ip_json('-6', 'route', 'get', IPV6_HOST_PEER)
         if len(routes) != 1 or routes[0].get('dev') != 'host0':
             raise ValueError('IPv6 probe lacks a real physical path')
         snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))
-    _stage('ipv6-counter')
+        _stage('ipv6-counter')
         before = physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6')
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
             sock.sendto(b'guest-ipv6-no-leak', (IPV6_HOST_PEER, 5353))
