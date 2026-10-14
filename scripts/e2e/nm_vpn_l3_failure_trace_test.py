@@ -17,6 +17,13 @@ class SanitizedStageTest(unittest.TestCase):
                          'cleanup-underlay-one-route')
 
 
+    def test_closed_postchurn_vpn_state_does_not_echo_guest_identity(self):
+        self.assertEqual(last_safe_stage([
+            'nm-l3-progress=postchurn-nm-active',
+            'nm-l3-progress=postchurn-vpn-inactive',
+            'nm-l3-failure-origin=postchurn-vpn-inactive']),
+                         'origin-postchurn-vpn-inactive')
+
     def test_data_plane_failure_is_closed_and_unambiguous(self):
         self.assertEqual(last_safe_stage(['nm-l3-progress=uplink-traffic-restored',
                                           'nm-l3-progress=data-route-selection',

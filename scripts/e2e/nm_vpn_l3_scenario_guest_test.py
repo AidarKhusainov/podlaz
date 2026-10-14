@@ -64,7 +64,7 @@ class IPv6PhysicalGuardTest(unittest.TestCase):
         self.assertIn("oifname','!=','podlaz0'", source)
         self.assertIn("oifname','!=','lo'", source)
         self.assertIn('socket.AF_INET6', source)
-        self.assertIn('_qualify_uplink_churn(xray,plan)', source)
+        self.assertIn('_qualify_uplink_churn(xray,plan,profile_uuid)', source)
 
 
 

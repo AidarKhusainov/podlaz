@@ -385,7 +385,7 @@ def _reconcile_guest_underlay(plan: UnderlayPlan) -> None:
         raise ValueError('guest underlay did not recover exact route authority')
 
 
-def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan) -> None:
+def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan, profile_uuid: str) -> None:
     """Prove fail-closed physical egress while the NM-owned uplink churns."""
     if xray.poll() is not None:
         raise ValueError('Xray exited before uplink churn')
@@ -412,6 +412,10 @@ def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan) -> None:
     # current gateway and marked rule authority, then prove real VPN traffic.
     _stage('underlay-reconcile')
     _reconcile_guest_underlay(plan)
+    _stage('postchurn-nm-active')
+    if not _owned_nm_profile_present(profile_uuid,active=True):
+        _stage('postchurn-vpn-inactive')
+        raise ValueError('tracked NM VPN disconnected on uplink churn')
     _stage('uplink-traffic-restored')
     _verify_paths(plan.tunnel_mark)
 
@@ -539,11 +543,26 @@ def _activate_ephemeral_profile(metric: int, profile_uuid: str) -> None:
 def _verify_paths(mark: int) -> None:
     # Closed stages distinguish kernel path loss from protected DNS and HTTPS.
     _stage('data-route-selection')
-    verify_route_selection(
-        ip_json('-4','route','show','table','main','default'),
-        ip_json('-4','route','get','1.1.1.1'),
-        ip_json('-4','route','get','1.1.1.1','mark',str(mark)),
-        'host0',mark)
+    main=ip_json('-4','route','show','table','main','default')
+    ordinary=ip_json('-4','route','get','1.1.1.1')
+    marked=ip_json('-4','route','get','1.1.1.1','mark',str(mark))
+    try:
+        verify_route_selection(main,ordinary,marked,'host0',mark)
+    except ValueError:
+        # Only closed failure categories may be exported, never route data.
+        if not any(isinstance(r,dict) and r.get('dst')=='default'
+                   and r.get('dev')=='podlaz0' for r in main):
+            _stage('data-vpn-default-missing')
+        elif not any(isinstance(r,dict) and r.get('dst')=='default'
+                     and r.get('dev')=='host0' for r in main):
+            _stage('data-uplink-default-missing')
+        elif len(ordinary)!=1 or ordinary[0].get('dev')!='podlaz0':
+            _stage('data-ordinary-route-wrong')
+        elif len(marked)!=1 or marked[0].get('dev')!='host0':
+            _stage('data-marked-route-wrong')
+        else:
+            _stage('data-metric-mark-invalid')
+        raise
     _stage('data-protected-dns')
     run('resolvectl','flush-caches')
     run('timeout','30','getent','ahostsv4','example.com',timeout=35)
@@ -616,7 +635,7 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             # Recover the real underlay first; qualify sustained natural
             # NM FULL only after the actual NM-managed uplink lifecycle.
             _stage('uplink-churn')
-            _qualify_uplink_churn(xray,plan)
+            _qualify_uplink_churn(xray,plan,profile_uuid)
             print('nm-l3-uplink-churn-protected=pass',flush=True)
             _stage('natural-full')
             _natural_full(xray)
