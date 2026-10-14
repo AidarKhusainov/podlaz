@@ -537,13 +537,17 @@ def _activate_ephemeral_profile(metric: int, profile_uuid: str) -> None:
 
 
 def _verify_paths(mark: int) -> None:
+    # Closed stages distinguish kernel path loss from protected DNS and HTTPS.
+    _stage('data-route-selection')
     verify_route_selection(
         ip_json('-4','route','show','table','main','default'),
         ip_json('-4','route','get','1.1.1.1'),
         ip_json('-4','route','get','1.1.1.1','mark',str(mark)),
         'host0',mark)
+    _stage('data-protected-dns')
     run('resolvectl','flush-caches')
     run('timeout','30','getent','ahostsv4','example.com',timeout=35)
+    _stage('data-protected-https')
     run('timeout','35','curl','-4','-fsS','-o','/dev/null','https://example.com/',timeout=40)
 
 
@@ -609,13 +613,15 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             print('nm-l3-real-dbus-ip4=pass',flush=True)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-protected-routes-and-https=pass',flush=True)
+            # Recover the real underlay first; qualify sustained natural
+            # NM FULL only after the actual NM-managed uplink lifecycle.
+            _stage('uplink-churn')
+            _qualify_uplink_churn(xray,plan)
+            print('nm-l3-uplink-churn-protected=pass',flush=True)
             _stage('natural-full')
             _natural_full(xray)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-natural-full=pass',flush=True)
-            _stage('uplink-churn')
-            _qualify_uplink_churn(xray,plan)
-            print('nm-l3-uplink-churn-protected=pass',flush=True)
             _qualify_failure_protection(xray)
             print('nm-l3-failure-protection=pass',flush=True)
             print('nm-l3-ipv6-physical-block=pass',flush=True)

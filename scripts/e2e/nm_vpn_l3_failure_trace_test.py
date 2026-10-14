@@ -17,6 +17,13 @@ class SanitizedStageTest(unittest.TestCase):
                          'cleanup-underlay-one-route')
 
 
+    def test_data_plane_failure_is_closed_and_unambiguous(self):
+        self.assertEqual(last_safe_stage(['nm-l3-progress=uplink-traffic-restored',
+                                          'nm-l3-progress=data-route-selection',
+                                          'nm-l3-failure-origin=data-route-selection',
+                                          'nm-l3-progress=cleanup-intent']),
+                         'origin-data-route-selection')
+
     def test_precleanup_failure_is_never_hidden_by_finally(self):
         self.assertEqual(last_safe_stage([
             'nm-l3-progress=uplink-traffic-restored',
