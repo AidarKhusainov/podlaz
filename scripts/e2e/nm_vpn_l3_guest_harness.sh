@@ -60,6 +60,13 @@ run_scenario() {
   start_system_guest
   # Prove the actual guest release; a matrix label alone is insufficient.
   guest_exec cat /etc/os-release | grep -Fx "VERSION_CODENAME=${GUEST_RELEASE}" >/dev/null
+  # Bind the actual installed NetworkManager series, not just the distro label.
+  local expected_nm_series
+  case "${GUEST_RELEASE}" in
+    noble) expected_nm_series=1.46 ;;
+    resolute) expected_nm_series=1.54 ;;
+  esac
+  guest_exec nmcli --version | grep -Ex "nmcli tool, version ${expected_nm_series}\\.[0-9]+" >/dev/null
   mark_failure product candidate.provenance
   install_candidate_in_guest
   assert_guest_package_provenance

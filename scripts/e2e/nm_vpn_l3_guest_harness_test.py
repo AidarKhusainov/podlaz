@@ -36,6 +36,9 @@ class GateAHostIsolation(unittest.TestCase):
         self.assertIn('case "${GUEST_RELEASE}" in', shared)
         self.assertIn('guest_exec cat /etc/os-release', harness)
         self.assertIn('VERSION_CODENAME=${GUEST_RELEASE}', harness)
+        self.assertIn('noble) expected_nm_series=1.46', harness)
+        self.assertIn('resolute) expected_nm_series=1.54', harness)
+        self.assertIn('guest_exec nmcli --version | grep -Ex', harness)
 
     def test_plugin_only_in_guest_and_separate_service(self):
         source = SCRIPT.read_text()
