@@ -33,6 +33,56 @@ class RouteSelectionTest(unittest.TestCase):
                 verify_route_selection(defaults, ordinary, marked, "host0", 20570)
 
 
+class PinnedNMReactivationTest(unittest.TestCase):
+    def test_active_same_uuid_requires_no_second_activation(self):
+        from unittest.mock import Mock, patch
+        from nm_vpn_l3_scenario_guest import _reactivate_pinned_nm_vpn
+        xray=Mock()
+        xray.poll.return_value=None
+        with patch('nm_vpn_l3_scenario_guest._owned_nm_profile_present',return_value=True) as present, patch('nm_vpn_l3_scenario_guest.run') as writer:
+            _reactivate_pinned_nm_vpn('pinned-session-uuid', xray)
+            present.assert_called_once_with('pinned-session-uuid', active=True)
+            writer.assert_not_called()
+
+    def test_missing_session_or_exited_xray_cannot_create_another_profile(self):
+        from unittest.mock import Mock, patch
+        from nm_vpn_l3_scenario_guest import _reactivate_pinned_nm_vpn
+        for stopped in (True,False):
+            with self.subTest(stopped=stopped):
+                xray=Mock()
+                xray.poll.return_value=1 if stopped else None
+                with patch('nm_vpn_l3_scenario_guest._owned_nm_profile_present',return_value=False), patch('nm_vpn_l3_scenario_guest.run') as writer:
+                    with self.assertRaises(ValueError):
+                        _reactivate_pinned_nm_vpn('pinned-session-uuid', xray)
+                    writer.assert_not_called()
+
+    def test_exact_tracked_tun_is_requalified_before_uuid_reactivation(self):
+        from unittest.mock import Mock, patch, call
+        from nm_vpn_l3_scenario_guest import _reactivate_pinned_nm_vpn
+        xray=Mock()
+        xray.poll.return_value=None
+        with patch('nm_vpn_l3_scenario_guest._owned_nm_profile_present',side_effect=[False,True,True]) as profiles, patch('nm_vpn_l3_scenario_guest.load_guest_intent',return_value=(Mock(),42)), patch('nm_vpn_l3_scenario_guest.ip_json',side_effect=[[{'ifindex':42}],[{'ifindex':42}]]), patch('nm_vpn_l3_scenario_guest.validate_xray_tun') as guard, patch('nm_vpn_l3_scenario_guest.run') as writer:
+            _reactivate_pinned_nm_vpn('pinned-session-uuid',xray)
+            guard.assert_called_once()
+            writer.assert_called_once_with('nmcli','-w','40','connection','up',
+                                           'pinned-session-uuid','ifname','host0',timeout=45)
+            self.assertEqual(profiles.call_args_list,[
+                call('pinned-session-uuid',active=True),
+                call('pinned-session-uuid'),
+                call('pinned-session-uuid',active=True)])
+
+    def test_rejects_tun_ownership_collision_before_nm_mutation(self):
+        from unittest.mock import Mock, patch
+        from nm_vpn_l3_scenario_guest import _reactivate_pinned_nm_vpn
+        xray=Mock()
+        xray.poll.return_value=None
+        with patch('nm_vpn_l3_scenario_guest._owned_nm_profile_present',side_effect=[False,True]), patch('nm_vpn_l3_scenario_guest.load_guest_intent',return_value=(Mock(),42)), patch('nm_vpn_l3_scenario_guest.ip_json',return_value=[]), patch('nm_vpn_l3_scenario_guest.validate_xray_tun',side_effect=ValueError('foreign TUN')) as guard, patch('nm_vpn_l3_scenario_guest.run') as writer:
+            with self.assertRaises(ValueError):
+                _reactivate_pinned_nm_vpn('pinned-session-uuid',xray)
+            guard.assert_called_once()
+            writer.assert_not_called()
+
+
 class NMProfileOwnershipTest(unittest.TestCase):
     def test_exact_uuid_and_name_are_required_for_mutation(self):
         from nm_vpn_l3_scenario_guest import exact_owned_nm_profile_present

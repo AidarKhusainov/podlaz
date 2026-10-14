@@ -17,6 +17,12 @@ class SanitizedStageTest(unittest.TestCase):
                          'cleanup-underlay-one-route')
 
 
+    def test_reactivation_errors_emit_no_profile_identity(self):
+        self.assertEqual(last_safe_stage([
+            'nm-l3-progress=postchurn-vpn-reactivate',
+            'nm-l3-failure-origin=postchurn-vpn-reactivate']),
+                         'origin-postchurn-vpn-reactivate')
+
     def test_closed_postchurn_vpn_state_does_not_echo_guest_identity(self):
         self.assertEqual(last_safe_stage([
             'nm-l3-progress=postchurn-nm-active',

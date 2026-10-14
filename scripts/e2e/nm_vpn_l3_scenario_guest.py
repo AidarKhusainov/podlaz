@@ -20,6 +20,7 @@ import time
 import uuid
 
 from nm_vpn_l3_contract import GuestVPNConfig, config_dicts, vpn_profile_settings
+from nm_vpn_l3_intent import load_guest_intent
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 from nm_vpn_underlay_guest import UnderlayEvidence, UnderlayPlan, select_underlay
 
@@ -385,6 +386,32 @@ def _reconcile_guest_underlay(plan: UnderlayPlan) -> None:
         raise ValueError('guest underlay did not recover exact route authority')
 
 
+def _reactivate_pinned_nm_vpn(profile_uuid: str, xray: subprocess.Popen) -> None:
+    """Continue the *same* session after NM drops its base connection.
+
+    Only after marked underlay is exactly requalified and the privacy
+    envelope remains armed. Never infer ownership from a profile name alone.
+    """
+    _stage('postchurn-nm-active')
+    if xray.poll() is not None:
+        raise ValueError('tracked Xray process exited before NM reactivation')
+    if _owned_nm_profile_present(profile_uuid, active=True):
+        return
+    _stage('postchurn-vpn-inactive')
+    if not _owned_nm_profile_present(profile_uuid):
+        raise ValueError('original NM VPN profile authority is missing')
+    _stage('postchurn-tun-preflight')
+    _config, ifindex = load_guest_intent()
+    validate_xray_tun(ifindex,
+                      ip_json('-d','link','show','dev','podlaz0'),
+                      ip_json('address','show','dev','podlaz0'))
+    _stage('postchurn-vpn-reactivate')
+    run('nmcli','-w','40','connection','up',profile_uuid,
+        'ifname','host0',timeout=45)
+    if not _owned_nm_profile_present(profile_uuid,active=True):
+        raise ValueError('original NM VPN did not reactivate')
+
+
 def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan, profile_uuid: str) -> None:
     """Prove fail-closed physical egress while the NM-owned uplink churns."""
     if xray.poll() is not None:
@@ -412,10 +439,7 @@ def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan, profile_uu
     # current gateway and marked rule authority, then prove real VPN traffic.
     _stage('underlay-reconcile')
     _reconcile_guest_underlay(plan)
-    _stage('postchurn-nm-active')
-    if not _owned_nm_profile_present(profile_uuid,active=True):
-        _stage('postchurn-vpn-inactive')
-        raise ValueError('tracked NM VPN disconnected on uplink churn')
+    _reactivate_pinned_nm_vpn(profile_uuid, xray)
     _stage('uplink-traffic-restored')
     _verify_paths(plan.tunnel_mark)
 
