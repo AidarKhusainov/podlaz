@@ -84,8 +84,9 @@ class PinnedNMReactivationTest(unittest.TestCase):
                    {'family':'inet','local':'198.18.0.17','prefixlen':32}]}]
         with tempfile.TemporaryDirectory() as tmp:
             marker=Path(tmp)/'reapply'
+            pinned='12345678-1234-4234-8234-1234567890ab'
             def command(*args,**kwargs):
-                self.assertTrue(marker.is_file())
+                self.assertEqual(marker.read_text(),pinned)
                 return ''
             with patch('nm_vpn_l3_scenario_guest.REAPPLY_MARKER',marker), patch(
                  'nm_vpn_l3_scenario_guest._owned_nm_profile_present',
@@ -93,7 +94,7 @@ class PinnedNMReactivationTest(unittest.TestCase):
                  'nm_vpn_l3_scenario_guest.load_guest_intent',return_value=(config,42)), patch(
                  'nm_vpn_l3_scenario_guest.ip_json',side_effect=[links,addresses]), patch(
                  'nm_vpn_l3_scenario_guest.run',side_effect=command) as runner:
-                _reactivate_pinned_nm_vpn('pinned-uuid',xray,allow_retained_l3=True)
+                _reactivate_pinned_nm_vpn(pinned,xray,allow_retained_l3=True)
                 runner.assert_called_once()
             self.assertFalse(marker.exists())
 

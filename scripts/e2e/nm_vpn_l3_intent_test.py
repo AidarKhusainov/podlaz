@@ -4,7 +4,8 @@ import os
 import tempfile
 from pathlib import Path
 import unittest
-from nm_vpn_l3_intent import load_guest_intent, GuestPaths, retained_ipv4_reapply_authorized
+from nm_vpn_l3_intent import (load_guest_intent, GuestPaths,
+                              retained_ipv4_reapply_uuid, require_retained_nm_profile)
 
 
 DATA = {
@@ -60,23 +61,44 @@ class GuestIntentTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_guest_intent(self.paths(), expected_uid=os.getuid())
 
-    def test_reapply_permit_is_private_empty_and_regular(self):
+    def test_reapply_permit_is_pinned_private_and_canonical(self):
         marker=self.root / "run/podlaz-nm-l3/retained-ip4-reapply"
-        self.assertFalse(retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid()))
-        marker.touch(mode=0o600)
-        self.assertTrue(retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid()))
-        marker.write_text("foreign")
-        with self.assertRaises(ValueError):
-            retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid())
-        marker.write_text("")
+        owned='12345678-1234-4234-8234-1234567890ab'
+        self.assertIsNone(retained_ipv4_reapply_uuid(marker,expected_uid=os.getuid()))
+        marker.write_text(owned,encoding='ascii')
+        marker.chmod(0o600)
+        self.assertEqual(retained_ipv4_reapply_uuid(marker,expected_uid=os.getuid()),owned)
+        for malformed in ('', 'foreign', owned.upper(), owned+' ', '0'*36):
+            with self.subTest(malformed=malformed):
+                marker.write_text(malformed,encoding='ascii')
+                with self.assertRaises(ValueError):
+                    retained_ipv4_reapply_uuid(marker,expected_uid=os.getuid())
+        marker.write_text(owned,encoding='ascii')
         marker.chmod(0o644)
         with self.assertRaises(ValueError):
-            retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid())
+            retained_ipv4_reapply_uuid(marker,expected_uid=os.getuid())
         marker.chmod(0o600)
         marker.rename(marker.with_suffix(".real"))
         marker.symlink_to(marker.with_suffix(".real"))
         with self.assertRaises(OSError):
-            retained_ipv4_reapply_authorized(marker,expected_uid=os.getuid())
+            retained_ipv4_reapply_uuid(marker,expected_uid=os.getuid())
+
+    def test_reapply_connection_must_be_original_uuid_and_service(self):
+        owned='12345678-1234-4234-8234-1234567890ab'
+        connection={
+            'connection': {'uuid':owned, 'id':'podlaz-guest-nm-l3', 'type':'vpn'},
+            'vpn': {'service-type':'org.freedesktop.NetworkManager.podlazl3research'},
+        }
+        require_retained_nm_profile(connection,owned)
+        for bad in (
+            {}, {'connection':connection['connection']},
+            {**connection,'connection':{**connection['connection'],'uuid':'foreign'}},
+            {**connection,'connection':{**connection['connection'],'id':'foreign'}},
+            {**connection,'connection':{**connection['connection'],'type':'ethernet'}},
+            {**connection,'vpn':{'service-type':'foreign'}},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                require_retained_nm_profile(bad,owned)
 
     def test_refuses_weak_permissions_and_opaque_invalid_data(self):
         self.intent.chmod(0o644)

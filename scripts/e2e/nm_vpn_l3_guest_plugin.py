@@ -20,7 +20,8 @@ from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 
 from nm_vpn_l3_contract import emit_nm_ipv4_config
-from nm_vpn_l3_intent import load_guest_intent, retained_ipv4_reapply_authorized
+from nm_vpn_l3_intent import (REAPPLY_MARKER, load_guest_intent,
+                              retained_ipv4_reapply_uuid, require_retained_nm_profile)
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 
 SERVICE = "org.freedesktop.NetworkManager.podlazl3research"
@@ -44,24 +45,30 @@ class GuestPlugin(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="a{sa{sv}}", out_signature="")
     def Connect(self, connection: object) -> None:
-        # Input is ignored intentionally. The root-owned bounded intent is
-        # the sole configuration source in this throwaway experiment.
+        # The root-owned intent is the configuration source. For retained-L3
+        # recovery, the incoming NM UUID must also match the private permit.
         try:
             if os.geteuid() != 0:
                 raise ValueError("root-only isolated guest adapter")
             config, ifindex = load_guest_intent()
             links, addresses = _read_kernel_inventory()
-            # Initial activation is strict. Only a root-owned single-use
-            # recovery permit can recognize the previously NM-owned IPv4.
-            permitted = retained_ipv4_reapply_authorized()
+            # Initial activation remains strict; reapply is allowed only for
+            # the exact original UUID, not an arbitrary VPN using this plugin.
+            pinned_uuid = retained_ipv4_reapply_uuid()
+            if pinned_uuid is not None:
+                require_retained_nm_profile(connection, pinned_uuid)
             validate_xray_tun(ifindex, links, addresses,
-                              delegated_ipv4=config.address if permitted else None)
+                              delegated_ipv4=config.address if pinned_uuid is not None else None)
         except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             # Do not forward sensitive guest state or network values to D-Bus.
             raise dbus.exceptions.DBusException(
                 "Guest NM L3 authority or TUN preflight failed",
                 name="org.freedesktop.NetworkManager.VPN.Error.BadArguments",
             ) from exc
+        if pinned_uuid is not None:
+            # Consume the permit before emitting any L3 signal. A second
+            # Connect must not reapply a retained address on resemblance.
+            REAPPLY_MARKER.unlink()
         self._state = 3
         self.StateChanged(dbus.UInt32(self._state))
         def publish(name: str, value: object) -> None:

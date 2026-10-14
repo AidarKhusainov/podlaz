@@ -414,8 +414,11 @@ def _reactivate_pinned_nm_vpn(profile_uuid: str, xray: subprocess.Popen,
     if retained:
         _stage('postchurn-retained-nm-ip4')
         # Permit is one-use, root-private and never authorizes deletion.
+        if str(uuid.UUID(profile_uuid)) != profile_uuid:
+            raise ValueError('invalid retained NM UUID authority')
         fd=os.open(REAPPLY_MARKER,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
-        os.close(fd)
+        with os.fdopen(fd,'w',encoding='ascii') as stream:
+            stream.write(profile_uuid)
     try:
         _stage('postchurn-vpn-reactivate')
         run('nmcli','-w','40','connection','up',profile_uuid,
@@ -424,7 +427,7 @@ def _reactivate_pinned_nm_vpn(profile_uuid: str, xray: subprocess.Popen,
             raise ValueError('original NM VPN did not reactivate')
     finally:
         if retained:
-            REAPPLY_MARKER.unlink()
+            REAPPLY_MARKER.unlink(missing_ok=True)
 
 
 def _qualify_uplink_churn(xray: subprocess.Popen, plan: UnderlayPlan, profile_uuid: str) -> None:
