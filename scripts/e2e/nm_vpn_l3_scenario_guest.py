@@ -257,11 +257,15 @@ def _prove_ipv6_no_leak() -> None:
         snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))
         _stage('ipv6-counter')
         before = physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6')
+        _stage('ipv6-send')
         with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
             sock.sendto(b'guest-ipv6-no-leak', (IPV6_HOST_PEER, 5353))
+        _stage('ipv6-observe')
         time.sleep(0.2)
         snapshot = json.loads(run('nft','-j','list','chain','inet',TABLE,'egress',output=True))
-        if physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6') <= before:
+        observed = physical_unmarked_drop_packets(snapshot, marker='podlaz_nm_l3_ipv6')
+        if observed <= before:
+            _stage('ipv6-no-increment')
             raise ValueError('physically routable IPv6 packet escaped nft blocking')
     finally:
         if addr_installed:
