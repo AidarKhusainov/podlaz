@@ -60,13 +60,22 @@ zsh -n /usr/share/zsh/vendor-completions/_podlaz
 zsh -n /usr/share/zsh/vendor-completions/_plz
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish'
-! bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz; COMP_WORDS=(podlaz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
-! bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'
+if bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz; COMP_WORDS=(podlaz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'; then
+  echo "hidden completion command appeared in installed shell suggestions" >&2
+  exit 1
+fi
+if bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'; then
+  echo "hidden completion command appeared in installed shell suggestions" >&2
+  exit 1
+fi
 podlaz completion bash >/dev/null
 plz completion zsh >/dev/null
 podlaz completion fish >/dev/null
 zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _podlaz; whence _podlaz >/dev/null'
-! fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F completion'
+if fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F completion'; then
+  echo "hidden completion command appeared in installed shell suggestions" >&2
+  exit 1
+fi
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F "Connect full VPN"'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz debug " | grep -F "doctor"'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz debug logs -" | grep -F -- "--follow"'
