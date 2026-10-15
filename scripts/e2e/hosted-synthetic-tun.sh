@@ -36,6 +36,9 @@ HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active termi
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
+NM_REGISTRATION_RESEARCH="${PODLAZ_E2E_NM_REGISTRATION_RESEARCH:-false}"
+GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
+NM_RESEARCH_OBSERVATIONS="${PODLAZ_E2E_NM_RESEARCH_OBSERVATIONS:-330}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -63,6 +66,27 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
     proxy_only.data_plane
     proxy_only.clean_disconnect
     tun.verified_active
+    tun.terminal_cleanup
+    tun.recovery_clean
+    guest.baseline_restored
+    outer.cleanup
+    artifact.privacy
+  )
+fi
+
+if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+  EVIDENCE_KEYS=(
+    candidate.provenance
+    ordinary_user.boundary
+    proxy_only.connect
+    proxy_only.data_plane
+    proxy_only.clean_disconnect
+    tun.verified_active
+    tun.system_dns
+    tun.https_tls
+    tun.nm_registration_integrity
+    tun.nm_vpn_no_l3
+    tun.clean_disconnect
     tun.terminal_cleanup
     tun.recovery_clean
     guest.baseline_restored
@@ -200,7 +224,7 @@ if set(meta) != {"class", "step"}:
 if meta["class"] not in {"none", "product", "fixture", "infrastructure", "capability", "diagnostic_unknown"}:
     raise SystemExit("invalid failure class")
 for key in expected:
-    allowed = {"pass", "observed"} if key == "tun.doctor" else {"pass"}
+    allowed = {"pass", "observed"} if key in {"tun.doctor", "tun.nm_vpn_no_l3"} else {"pass"}
     if values[key] not in allowed:
         raise SystemExit(f"required evidence is not successful: {key}={values[key]}")
 if meta != {"class": "none", "step": "none"}:
@@ -368,6 +392,9 @@ teardown_all() {
   if (( saved != 0 )) && [[ "${FAILURE_CLASS}" == none ]]; then
     mark_failure infrastructure scenario
   fi
+  if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+    printf 'nm-registration-scenario-result=%s step=%s\n' "${FAILURE_CLASS}" "${FAILURE_STEP}"
+  fi
   finalize_report
   validate_report || cleanup_failed=1
   set -e
@@ -378,13 +405,21 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  sudo -n debootstrap --variant=minbase "${GUEST_RELEASE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
     network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+    sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends network-manager-config-connectivity-ubuntu python3-dbus python3-gi >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+    # Install the throwaway VPN service before the guest NetworkManager starts.
+    # NetworkManager is not required to dynamically rescan service descriptors.
+    sudo -n install -D -m 0755 "${SCRIPT_DIR}/nm_vpn_no_l3_plugin.py" "${GUEST_ROOT}/usr/libexec/podlaz-nm-vpn-observer"
+    sudo -n install -D -m 0644 "${SCRIPT_DIR}/nm_vpn_no_l3_service.name" "${GUEST_ROOT}/usr/lib/NetworkManager/VPN/podlaz-research.name"
+    sudo -n install -D -m 0644 "${SCRIPT_DIR}/nm_vpn_no_l3_dbus.conf" "${GUEST_ROOT}/etc/dbus-1/system.d/podlaz-nm-vpn-observer.conf"
+  fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
 
@@ -1039,7 +1074,32 @@ assert_guest_network_baseline_restored() {
   local before="${PRIVATE_ROOT}/guest-baseline" after="${PRIVATE_ROOT}/guest-after" suffix
   capture_guest_network_snapshot "${after}"
   for suffix in addr.json routes.json rules.json nft.json nm.txt resolved.txt; do
-    cmp -s "${before}.${suffix}" "${after}.${suffix}" || return 1
+    if cmp -s "${before}.${suffix}" "${after}.${suffix}"; then
+      continue
+    fi
+    # An unforced NM connectivity cycle can penalize the guest fixture's
+    # physical uplink default metric. Only the research fixture may tolerate
+    # this one numeric change; all other routes and components stay exact.
+    if [[ "${NM_REGISTRATION_RESEARCH}" == true && "${suffix}" == routes.json ]] &&
+       PYTHONPATH="${SCRIPT_DIR}" python3 - "${before}.${suffix}" "${after}.${suffix}" <<'PY'
+import json
+import sys
+from nm_registration_evidence import normalized_ipv4_routes
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    before = json.load(source)
+with open(sys.argv[2], encoding="utf-8") as source:
+    after = json.load(source)
+sys.exit(0 if normalized_ipv4_routes(before) == normalized_ipv4_routes(after) else 1)
+PY
+    then
+      printf 'nm-baseline-uplink-health-metric-only=pass\n'
+      continue
+    fi
+    if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+      printf 'nm-baseline-unexpected-delta=%s\n' "${suffix//./_}"
+    fi
+    return 1
   done
 }
 
@@ -1169,6 +1229,205 @@ run_active_traffic_checks() {
   record_evidence tun.https_tls pass
 }
 
+# Guest-only NM control experiment: never run against the physical host.
+normalize_nm_device_kind() {
+  case "$1" in
+    *externally*) printf 'external' ;;
+    *unmanaged*) printf 'unmanaged' ;;
+    *connected*) printf 'connected' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+normalize_nm_global_kind() {
+  case "$1" in
+    connected:full|'connected (global):full') printf 'full' ;;
+    connected:limited|'connected (site only):limited') printf 'limited' ;;
+    connected:portal|'connected (site only):portal') printf 'portal' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+experiment_nm_external_tun_registration() {
+  local before after kind_before kind_after state second last_state=''
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-before.json"
+  before="$(guest_exec nmcli -g GENERAL.NM-MANAGED device show podlaz0 | tr -d '\r')"
+  case "${before}" in yes|no) ;; *) return 1 ;; esac
+  kind_before="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
+  printf 'nm-registration-original-managed=%s device=%s\n' "${before}" "${kind_before}"
+  # Runtime-only mutation; a route/DNS/firewall change must fail closed.
+  guest_exec nmcli device set podlaz0 managed yes
+  sleep 5
+  after="$(guest_exec nmcli -g GENERAL.NM-MANAGED device show podlaz0 | tr -d '\r')"
+  case "${after}" in yes|no) ;; *) after=other ;; esac
+  kind_after="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
+  printf 'nm-registration-after-managed=%s device=%s\n' "${after}" "${kind_after}"
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
+
+  # Observe an unforced periodic NM cycle; immediate global FULL is not
+  # attributable to this device if it was already FULL before VPN activation.
+  for second in $(seq 1 "${NM_RESEARCH_OBSERVATIONS}"); do
+    state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+    if [[ "${state}" != "${last_state}" ]]; then
+      printf 'nm-registration-observation=%s global=%s\n' "${second}" "${state}"
+      guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
+      last_state="${state}"
+    fi
+    sleep 1
+  done
+
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
+  guest_exec nmcli device set podlaz0 managed "${before}"
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-before.json"
+  if ! assert_verified_active_authority; then
+    printf 'nm-registration-active-authority=fail\n'
+    return 1
+  fi
+  printf 'nm-registration-active-authority=pass\n'
+  record_evidence tun.nm_registration_integrity pass
+}
+
+# An actual guest-only VPN service protocol experiment, not an NM device
+# managed-flag toggle. The plugin only observes the already-protected Xray TUN;
+# it refuses to delegate IP configuration to a competing NetworkManager writer.
+experiment_nm_vpn_no_l3() {
+  local activation_rc=0 kind state result=pass
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py snapshot "${GUEST_PRIVATE}/nm-vpn-before.json"
+  guest_exec test -x /usr/libexec/podlaz-nm-vpn-observer
+  guest_exec test -f /usr/lib/NetworkManager/VPN/podlaz-research.name
+  # The gateway is the actual guest-only Xray transport destination, not a
+  # special routing exception or an invented connectivity target.
+  guest_exec /bin/bash -lc "printf '%s\\n' '${ENDPOINT_IP}' > /run/podlaz-nm-vpn-actual-gateway && chmod 0600 /run/podlaz-nm-vpn-actual-gateway"
+  guest_exec /usr/bin/python3 -c 'import dbus, gi'
+  printf 'nm-vpn-observer-python-dependencies=pass\n'
+  # The throwaway plugin must first prove that it can own its declared
+  # system-bus name. A missing name is an activation/runtime defect, not
+  # evidence for or against delegation of NM network configuration.
+  guest_exec rm -f /run/podlaz-nm-vpn-observer-bus-ready
+  # shellcheck disable=SC2016
+  if guest_exec /bin/bash -lc '/usr/libexec/podlaz-nm-vpn-observer >/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stdout 2>/tmp/podlaz-hosted-synthetic-tun/nm-vpn-preflight.stderr & pid=$!; rc=1; for i in $(seq 1 30); do if [[ "$(busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s org.freedesktop.NetworkManager.podlazresearch 2>/dev/null)" == "b true" ]]; then rc=0; break; fi; kill -0 "$pid" >/dev/null 2>&1 || break; sleep 0.2; done; if test -f /run/podlaz-nm-vpn-observer-bus-ready; then printf "nm-vpn-preflight-internal-owner=pass\\n"; else printf "nm-vpn-preflight-internal-owner=fail\\n"; fi; kill "$pid" >/dev/null 2>&1 || :; wait "$pid" >/dev/null 2>&1 || :; exit "$rc"'; then
+    printf 'nm-vpn-bus-ownership=pass\n'
+  else
+    printf 'nm-vpn-bus-ownership=fail\n'
+    if guest_exec grep -qF 'Traceback' "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
+      printf 'nm-vpn-preflight-error=python_exception\n'
+    elif guest_exec grep -qiF 'dbus' "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
+      printf 'nm-vpn-preflight-error=dbus_exception\n'
+    else
+      printf 'nm-vpn-preflight-error=no_known_traceback\n'
+    fi
+    for diagnostic in 'AttributeError|python_attribute_error' 'RuntimeError|python_runtime_error' 'TypeError|python_type_error' 'NameError|python_name_error' 'DBusException|python_dbus_exception' 'AccessDenied|dbus_access_denied' 'PermissionDenied|dbus_permission_denied' 'ImportError|python_import_failed' 'ModuleNotFoundError|python_import_failed' 'Traceback|observer_exception'; do
+      local pattern="${diagnostic%%|*}" label="${diagnostic#*|}"
+      if guest_exec grep -qF "${pattern}" "${GUEST_PRIVATE}/nm-vpn-preflight.stderr"; then
+        printf 'nm-vpn-observer-error-class=%s\n' "${label}"
+      fi
+    done
+    return 1
+  fi
+  guest_exec rm -f /run/podlaz-nm-vpn-observer-bus-ready
+  if ! guest_exec nmcli connection add save no type vpn con-name podlaz-guest-research vpn.service-type org.freedesktop.NetworkManager.podlazresearch connection.autoconnect no ipv4.auto-route-ext-gw no ipv6.auto-route-ext-gw no >"${PRIVATE_ROOT}/nm-vpn-profile-create.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-profile-create.stderr"; then
+    printf 'nm-vpn-profile-creation=failed\n'
+    return 1
+  fi
+  printf 'nm-vpn-profile-creation=pass\n'
+  local route_setting family
+  for family in ipv4 ipv6; do
+    if ! route_setting="$(guest_exec nmcli -g "${family}.auto-route-ext-gw" connection show podlaz-guest-research | tr -d '\r')"; then
+      printf 'nm-vpn-profile-route-setting-query=failed_%s\n' "${family}"
+      return 1
+    fi
+    case "${route_setting}" in
+      no|0|false) printf 'nm-vpn-auto-gateway-route=disabled_%s\n' "${family}" ;;
+      *) printf 'nm-vpn-auto-gateway-route=unexpected_%s\n' "${family}"; return 1 ;;
+    esac
+  done
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+
+  # Do not export activation details or connection dictionaries from the guest.
+  guest_exec nmcli -w 30 connection up podlaz-guest-research ifname host0 >"${PRIVATE_ROOT}/nm-vpn-up.stdout" 2>"${PRIVATE_ROOT}/nm-vpn-up.stderr" || activation_rc=$?
+  if ! guest_exec test -f /run/podlaz-nm-vpn-observer-invoked; then
+    printf 'nm-vpn-dbus-connect=not_invoked\n'
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py vpn-diagnose
+    python3 - "${PRIVATE_ROOT}/nm-vpn-up.stderr" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
+classes = (
+    ("source_connection_missing", r"could not find source connection"),
+    ("base_device_missing", r"could not find a suitable device|no suitable device"),
+    ("vpn_service_unavailable", r"vpn service (?:was not installed|not available|not found)"),
+    ("vpn_service_start_failed", r"vpn service (?:failed|could not be started)"),
+    ("vpn_secrets_required", r"vpn secrets|no valid vpn secrets"),
+    ("permissions", r"not authorized|permission denied|access denied"),
+    ("plugin_unavailable", r"vpn plugin (?:not available|not found)"),
+    ("ip_config_invalid", r"ip configuration (?:failed|invalid)"),
+)
+matched = [label for label, pattern in classes if re.search(pattern, text)]
+print("nm-vpn-cli-detail=" + ("_".join(matched) if matched else "unclassified"))
+PY
+    for signature in 'Could not find source connection|missing_source_connection' 'Could not find a suitable device|missing_base_device' 'Unknown VPN service|unknown_vpn_service' 'VPN service failed to start|service_start_failed' 'VPN plugin not available|plugin_unavailable' 'VPN service not available|service_unavailable' 'failed to activate|activation_failed' 'Connection activation failed|activation_failed'; do
+      local pattern="${signature%%|*}" label="${signature#*|}"
+      if grep -qiF -- "${pattern}" "${PRIVATE_ROOT}/nm-vpn-up.stderr"; then
+        printf 'nm-vpn-activation-class=%s\n' "${label}"
+      fi
+    done
+    return 1
+  fi
+  printf 'nm-vpn-dbus-connect=invoked\n'
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+  kind="$(normalize_nm_device_kind "$(guest_exec nmcli -g GENERAL.STATE device show podlaz0 | tr -d '\r')")"
+  printf 'nm-vpn-no-l3-tun-device=%s\n' "${kind}"
+  [[ "${kind}" == external ]] || return 1
+  if (( activation_rc == 0 )); then
+    guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null
+    printf 'nm-vpn-no-l3-activation=active\n'
+    guest_exec resolvectl flush-caches
+    guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+    guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+    printf 'nm-vpn-protected-dns-https=pass\n'
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
+    local second next_state previous_state=''
+    # Do not infer a persistent global connectivity state from cached FULL.
+    for second in $(seq 1 "${NM_RESEARCH_OBSERVATIONS}"); do
+      next_state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+      if [[ "${next_state}" != "${previous_state}" ]]; then
+        printf 'nm-vpn-natural-observation=%s global=%s\n' "${second}" "${next_state}"
+        guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py observe
+        previous_state="${next_state}"
+      fi
+      sleep 1
+    done
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+    assert_verified_active_authority
+    printf 'nm-vpn-post-cycle-authority=pass\n'
+    guest_exec resolvectl flush-caches
+    guest_exec timeout 20 getent ahostsv4 example.com >/dev/null
+    guest_exec timeout 30 curl -4 -fsS -o /dev/null https://example.com/
+    printf 'nm-vpn-post-cycle-protected-dns-https=pass\n'
+    guest_exec nmcli -w 20 connection down podlaz-guest-research >/dev/null
+  else
+    # A rejected connection after an observed real Connect call is negative
+    # evidence for notification-only activation, not an adopted product VPN.
+    printf 'nm-vpn-no-l3-activation=rejected\n'
+    guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py vpn-diagnose
+    result=observed
+  fi
+  # Any observed session must first be quiesced; do not leave NM with a
+  # stale reference to an executable that cleanup subsequently removes.
+  guest_exec nmcli connection delete podlaz-guest-research >/dev/null
+  guest_exec rm -f /usr/lib/NetworkManager/VPN/podlaz-research.name /usr/libexec/podlaz-nm-vpn-observer /run/podlaz-nm-vpn-observer-invoked /run/podlaz-nm-vpn-observer-bus-ready /run/podlaz-nm-vpn-actual-gateway
+  if guest_exec nmcli -t -f NAME connection show --active | grep -Fx podlaz-guest-research >/dev/null; then
+    return 1
+  fi
+  guest_exec python3 /workspace/scripts/e2e/nm_registration_evidence.py compare "${GUEST_PRIVATE}/nm-vpn-before.json"
+  state="$(normalize_nm_global_kind "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+  printf 'nm-vpn-no-l3-global=%s\n' "${state}"
+  record_evidence tun.nm_vpn_no_l3 "${result}"
+}
+
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
@@ -1203,18 +1462,25 @@ PY
 
 assert_terminal_authority_clean() {
   guest_exec /bin/bash -lc "cd /workspace && source scripts/e2e/lib/e2e.sh && source scripts/e2e/lib/tun_package_assertions.sh && verify_tun_package_resources_absent terminal '${HOSTED_NETWORK_AUTHORITY_HELPER}' '${GUEST_MANIFEST}'"
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=resources-absent\n'
   guest_exec test ! -e /run/podlaz/network-session-continuation.json
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=session-absent\n'
   if guest_exec /bin/bash -lc "nft list tables | grep -E 'table inet podlaz_pe_[0-9a-f]+'" >/dev/null 2>&1; then
     return 1
   fi
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=privacy-envelope-absent\n'
   if guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -F ':podlaz0' >/dev/null; then
     return 1
   fi
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=nm-tun-connection-absent\n'
   guest_exec nmcli -t -f NAME,DEVICE connection show --active | grep -Fx "synthetic-uplink:${GUEST_IF}" >/dev/null
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=uplink-active\n'
   # Expansion is intentionally evaluated by guest bash.
   # shellcheck disable=SC2016
   guest_exec /bin/bash -lc 'daemon="$(systemctl show -p MainPID --value podlazd.service)"; for pid in $(pgrep -P "$daemon" 2>/dev/null || true); do [[ "$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)" != /usr/lib/podlaz/xray ]] || exit 1; done'
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=xray-process-absent\n'
   assert_foreign_sentinel
+  [[ "${NM_REGISTRATION_RESEARCH}" != true ]] || printf 'nm-terminal-proof=foreign-sentinel-intact\n'
 }
 
 run_clean_recovery() {
@@ -1303,8 +1569,16 @@ run_scenario() {
   else
     mark_failure diagnostic_unknown tun.active_traffic
     run_active_traffic_checks
-    mark_failure diagnostic_unknown tun.doctor
-    run_tun_doctor
+    if [[ "${NM_REGISTRATION_RESEARCH}" == true ]]; then
+      mark_failure diagnostic_unknown tun.nm_registration
+      experiment_nm_external_tun_registration
+      mark_failure diagnostic_unknown tun.nm_vpn_no_l3
+      experiment_nm_vpn_no_l3
+    fi
+    if [[ "${NM_REGISTRATION_RESEARCH}" != true ]]; then
+      mark_failure diagnostic_unknown tun.doctor
+      run_tun_doctor
+    fi
 
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
@@ -1316,6 +1590,7 @@ run_scenario() {
   assert_terminal_authority_clean
   record_evidence tun.terminal_cleanup pass
   hosted_control_pause terminal-clean
+  mark_failure diagnostic_unknown guest.baseline_restored
   assert_guest_network_baseline_restored
   record_evidence guest.baseline_restored pass
   mark_failure diagnostic_unknown guest.connectivity_restored
@@ -1331,6 +1606,12 @@ run_scenario() {
 }
 
 main() {
+  case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported research guest release" ;; esac
+  case "${NM_REGISTRATION_RESEARCH}" in true|false) ;; *) fail "invalid NM registration research mode" ;; esac
+  [[ "${NM_RESEARCH_OBSERVATIONS}" =~ ^[1-9][0-9]*$ ]] || fail "invalid NM research observation count"
+  if (( NM_RESEARCH_OBSERVATIONS > 330 )); then
+    fail "invalid NM research observation count"
+  fi
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"

@@ -1,0 +1,148 @@
+name: Hosted NetworkManager Registration Research
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-networkmanager-research.yml'
+      - 'scripts/e2e/hosted-synthetic-tun.sh'
+      - 'scripts/e2e/nm_registration_evidence.py'
+      - 'scripts/e2e/nm_registration_evidence_test.py'
+      - 'scripts/e2e/nm_connectivity_trace.py'
+      - 'scripts/e2e/nm_connectivity_trace_test.py'
+      - 'scripts/e2e/nm_route_selection_probe.py'
+      - 'scripts/e2e/nm_route_selection_probe_test.py'
+      - 'scripts/e2e/nm_route_selection_guest.sh'
+      - 'scripts/e2e/nm_vpn_no_l3_plugin.py'
+      - 'scripts/e2e/nm_vpn_no_l3_service.name'
+      - 'scripts/e2e/nm_vpn_no_l3_dbus.conf'
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    name: NM external TUN registration (${{ matrix.release }}, ${{ matrix.selector }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+        selector: [stock, global-selector]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Validate snapshot comparison contract
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_*test.py' -v
+          python3 -m py_compile scripts/e2e/nm_vpn_no_l3_plugin.py scripts/e2e/nm_connectivity_trace.py scripts/e2e/nm_route_selection_probe.py
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+      - name: Prepare isolated selector candidate
+        env:
+          SELECTOR: ${{ matrix.selector }}
+        run: |
+          candidate="${GITHUB_SHA}"
+          if [[ "${SELECTOR}" == global-selector ]]; then
+            # Read-only reuse of the exact scope experiment; neither source ref
+            # is changed. Only its coherent product scope diff enters this
+            # disposable candidate. No experimental workflows are imported.
+            scope_base=5e56ae43e4ec6d9bc987d0302649227b8b175a44
+            scope_head=6d14e7c13495916aa4a31ecf188aba8b0e6de027
+            git fetch --no-tags --depth=1 origin "${scope_base}" "${scope_head}"
+            files=(
+              internal/daemon/tun_revalidation_plan.go
+              internal/daemon/tun_status_helpers.go
+              internal/daemon/tun_transaction_metadata.go
+              internal/daemon/tun_transaction_metadata_test.go
+              internal/network/executor/route.go
+              internal/network/executor/route_idempotency_test.go
+              internal/network/planner/tun.go
+              internal/network/planner/tun_resources.go
+              internal/network/planner/tun_resources_test.go
+              internal/network/planner/tun_test.go
+              internal/recovery/desired_plan_rollback.go
+              internal/recovery/desired_plan_rollback_test.go
+              internal/recovery/rollback_raw_validation.go
+              internal/state/transaction.go
+            )
+            diff -u <(printf '%s\n' "${files[@]}" | sort) <(git diff --name-only "${scope_base}" "${scope_head}" -- internal | sort)
+            git diff --full-index "${scope_base}" "${scope_head}" -- "${files[@]}" > "${RUNNER_TEMP}/nm-scope-candidate.patch"
+            test -s "${RUNNER_TEMP}/nm-scope-candidate.patch"
+            git apply --check "${RUNNER_TEMP}/nm-scope-candidate.patch"
+            git apply --index "${RUNNER_TEMP}/nm-scope-candidate.patch"
+            test -z "$(gofmt -l .)"
+            go test ./...
+            go vet ./...
+            GIT_AUTHOR_DATE="$(git show -s --format=%aI HEAD)"
+            export GIT_AUTHOR_DATE
+            export GIT_COMMITTER_DATE="${GIT_AUTHOR_DATE}"
+            git -c user.name='Podlaz Research' -c user.email='research@example.invalid' commit -m 'test: compose disposable global-scope selector candidate'
+            candidate="$(git rev-parse HEAD)"
+            printf 'nm-selector-scope-source=%s candidate=%s\n' "${scope_head}" "${candidate}"
+            sha256sum "${RUNNER_TEMP}/nm-scope-candidate.patch"
+            # Diagnostic insertions affect only this temporary checkout and the
+            # guest's rebuilt NM source. The product commit above stays exact.
+            python3 scripts/e2e/nm_route_selection_probe.py fixture .
+            bash -n scripts/e2e/hosted-synthetic-tun.sh scripts/e2e/nm_route_selection_guest.sh
+            python3 -m py_compile scripts/e2e/nm_connectivity_trace.py
+          fi
+          printf 'NM_CANDIDATE_COMMIT=%s\n' "${candidate}" >> "${GITHUB_ENV}"
+      - name: Build candidate package
+        env:
+          PODLAZ_COMMIT: ${{ env.NM_CANDIDATE_COMMIT }}
+        run: bash scripts/build-deb.sh
+      - name: Research registration in disposable guest
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+          NM_DECISION_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-decisions-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ env.NM_CANDIDATE_COMMIT }}
+          PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+          PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}" "${NM_DECISION_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}" "${NM_DECISION_ARTIFACT_DIR}"
+          set -o pipefail
+          bash scripts/e2e/hosted-synthetic-tun.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb |
+            python3 scripts/e2e/nm_connectivity_trace.py record "${NM_DECISION_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
+      - name: Validate normalized report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-registration-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-registration-public
+          NM_DECISION_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-decisions-public
+          PODLAZ_E2E_NM_REGISTRATION_RESEARCH: 'true'
+        run: |
+          bash scripts/e2e/hosted-synthetic-tun.sh validate-report
+          python3 scripts/e2e/nm_connectivity_trace.py validate "${NM_DECISION_ARTIFACT_DIR}/nm-connectivity-decisions.txt"
+      - name: Validate actual selector evidence
+        if: always() && matrix.selector == 'global-selector'
+        run: python3 scripts/e2e/nm_route_selection_probe.py validate "${RUNNER_TEMP}/podlaz-nm-decisions-public/nm-connectivity-decisions.txt"
+      - name: Remove private guest state
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-registration-private"
+      - name: Publish normalized guest evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: nm-registration-${{ matrix.release }}-${{ matrix.selector }}
+          path: |
+            ${{ runner.temp }}/podlaz-nm-registration-public/hosted-synthetic-tun.txt
+            ${{ runner.temp }}/podlaz-nm-decisions-public/nm-connectivity-decisions.txt
+          if-no-files-found: error
+          retention-days: 7

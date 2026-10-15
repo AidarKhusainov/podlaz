@@ -7,11 +7,27 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-func TestRunJournalctlFollowStopsWhenContextExpires(t *testing.T) {
+type followObservedWriter struct {
+	bytes.Buffer
+	once     sync.Once
+	observed chan struct{}
+}
+
+func (w *followObservedWriter) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if bytes.Contains(p[:n], []byte("follow line")) {
+		w.once.Do(func() { close(w.observed) })
+	}
+	return n, err
+}
+
+// Wait until the test child is actually streaming before cancelling it.
+func TestRunJournalctlFollowStopsOnContextCancellation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake journalctl script uses POSIX shell")
 	}
@@ -29,20 +45,32 @@ func TestRunJournalctlFollowStopsWhenContextExpires(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("JOURNALCTL_ARGS_FILE", argsFile)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	out := &followObservedWriter{observed: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() { done <- RunJournalctl(ctx, out, Options{Follow: true}) }()
 
-	started := time.Now()
-	var out bytes.Buffer
-	err := RunJournalctl(ctx, &out, Options{Follow: true})
-	if err == nil {
-		t.Fatal("expected context cancellation error")
+	select {
+	case <-out.observed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fake journalctl did not produce an initial line")
 	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
-		t.Fatalf("follow command was not bounded by context timeout; elapsed=%s err=%v", elapsed, err)
+	cancel()
+	started := time.Now()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected context cancellation error")
+		}
+		if elapsed := time.Since(started); elapsed > 2*time.Second {
+			t.Fatalf("follow command did not stop promptly; elapsed=%s err=%v", elapsed, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow command did not stop after cancellation")
 	}
 	if !strings.Contains(out.String(), "follow line") {
-		t.Fatalf("expected fake journalctl output to be rendered before cancellation, got %q", out.String())
+		t.Fatalf("expected fake journalctl output before cancellation, got %q", out.String())
 	}
 	args, readErr := os.ReadFile(argsFile)
 	if readErr != nil {
