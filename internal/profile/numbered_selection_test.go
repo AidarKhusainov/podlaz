@@ -179,3 +179,29 @@ func TestNumberedSelectorKeepsAmbiguousNameRules(t *testing.T) {
 		}
 	}
 }
+
+func TestSubscriptionRefreshReordersNumbersWithoutRetargetingSelection(t *testing.T) {
+	store, _ := NewStore(filepath.Join(t.TempDir(), "profiles.json"))
+	first := subscriptionProfile("b", "first.example.test")
+	second := subscriptionProfile("c", "second.example.test")
+	if _, err := store.ReplaceSubscriptionProfiles(nil, []Profile{first, second}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Select("2"); err != nil {
+		t.Fatal(err)
+	}
+	newFirst := subscriptionProfile("a", "new.example.test")
+	if _, err := store.ReplaceSubscriptionProfiles([]string{first.ID, second.ID}, []Profile{newFirst, first, second}); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := store.SelectedID()
+	if err != nil || selected != second.ID {
+		t.Fatalf("refresh retargeted persisted selection: %q, %v", selected, err)
+	}
+	for selector, want := range map[string]string{"1": newFirst.ID, "2": first.ID, "3": second.ID} {
+		got, err := store.Resolve(selector)
+		if err != nil || got.ID != want {
+			t.Fatalf("post-refresh %s = %q, %v; want %q", selector, got.ID, err, want)
+		}
+	}
+}
