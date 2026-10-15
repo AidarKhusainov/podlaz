@@ -54,10 +54,20 @@ def last_safe_stage(lines: list[str]) -> str:
     return 'not-reached'
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         raise SystemExit(2)
     try:
         content = Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
     except (OSError, UnicodeError):
         content = []
     print('nm-l3-last-safe-stage=' + last_safe_stage(content))
+    if len(sys.argv) == 3:
+        try:
+            report = Path(sys.argv[2]).read_text(encoding='utf-8').splitlines()
+        except (OSError, UnicodeError):
+            report = []
+        allowed = ('addr.json', 'routes.json', 'rules.json', 'nft.json',
+                   'nm.txt', 'resolved.txt')
+        for category in allowed:
+            if 'nm-l3-baseline-mismatch=' + category in report:
+                print('nm-l3-baseline-mismatch=' + category)
