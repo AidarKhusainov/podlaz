@@ -830,8 +830,10 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
 
 
 def run_guest(config_file: Path, external_gateway: str) -> None:
+    _stage('hostname-preflight')
     _is_synthetic_guest()
     with hostname_fixture(config_file, external_gateway) as hostname:
+        _stage('hostname-fixture-ready')
         _run_guest_with_resolver(hostname.config_path, external_gateway, hostname)
 
 
