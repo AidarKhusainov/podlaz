@@ -61,8 +61,10 @@ func TestCompletionSetupHiddenFromSuggestionsButExplicitlyAvailable(t *testing.T
 		if !strings.Contains(out.String(), "__complete "+shell) {
 			t.Fatalf("missing runtime dispatch in generated %s script", shell)
 		}
-		if strings.Contains(strings.SplitN(out.String(), "\n", 3)[1], "completion ") {
-			t.Fatalf("generated %s command summary advertises setup", shell)
+		for _, line := range strings.Split(out.String(), "\n") {
+			if strings.HasPrefix(line, "# commands:") && strings.Contains(" "+line+" ", " completion ") {
+				t.Fatalf("generated %s command summary advertises setup", shell)
+			}
 		}
 	}
 }
