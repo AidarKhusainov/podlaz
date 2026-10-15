@@ -21,6 +21,8 @@ HOSTNAME = "podlaz-gateway.example"
 DNS_ADDR = "127.0.0.55"
 DNS_UPSTREAM = "127.0.0.53"
 OTHER_IPV4 = "172.31.254.1"
+NEXT_IPV4 = "172.31.253.2"
+EXTERNAL_DNS_PORT = 53535
 OTHER_IPV6 = "2001:db8:460::1"
 RESOLV = Path("/etc/resolv.conf")
 
@@ -144,6 +146,7 @@ class HostnameFixture:
             self.thread.join(timeout=5)
         self.config_path.unlink(missing_ok=True)
         self.pinned_path.unlink(missing_ok=True)
+        self.pinned_path.with_name("nm-l3-next-xray.json").unlink(missing_ok=True)
 
     def answer(self, ipv4: tuple[str, ...], ipv6: tuple[str, ...] = (),
                *, fail: bool = False) -> None:
@@ -161,14 +164,20 @@ class HostnameFixture:
         if addresses != {self.gateway}:
             raise ValueError("hostname DNS is ambiguous or has changed")
 
-    def write_pinned_generation(self) -> None:
+    def write_pinned_generation(self, *, address: str | None = None,
+                                output: Path | None = None, allow_changed_dns: bool = False) -> Path:
         """Research-only immutable dial target, NOT an arbitrary profile gateway extractor.
 
         The source is the one generated VMess outbound from this disposable
         fixture. NM's already-known gateway is *not* derived from an observed
         TCP peer or arbitrary provider JSON.
         """
-        self.assert_single_gateway()
+        if not allow_changed_dns:
+            self.assert_single_gateway()
+        target = address if address is not None else self.gateway
+        if target not in (self.gateway, NEXT_IPV4):
+            raise ValueError("unqualified provider target")
+        destination = output if output is not None else self.pinned_path
         data = json.loads(self.config_path.read_text())
         outbounds = data.get("outbounds")
         if not isinstance(outbounds, list) or len(outbounds) != 1:
@@ -193,11 +202,12 @@ class HostnameFixture:
             # REALITY/native/grouped configs require their own explicit
             # identity and routing qualification; never silently rewrite.
             raise ValueError("unsupported transport security for pinning")
-        settings["address"] = self.gateway
-        fd = os.open(self.pinned_path,
+        settings["address"] = target
+        fd = os.open(destination,
                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as handle:
             json.dump(data, handle)
+        return destination
 
     def install_tcp_syn_counter(self, table: str, mark: int) -> None:
         """Count actual marked provider TCP SYNs, not generic traffic."""
@@ -254,7 +264,36 @@ class HostnameFixture:
         self.answer((self.gateway,))
         self.assert_single_gateway()
 
-    def verify_actual_peer(self, pid: int) -> None:
+    def resolve_external_marked(self, mark: int) -> str:
+        """Resolve the exact synthetic domain via a protected marked underlay."""
+        transaction = b"\\x41\\x62"
+        question = b"".join(bytes((len(label),)) + label.encode("ascii")
+                            for label in HOSTNAME.split(".")) + b"\\x00"
+        request = (transaction + b"\\x01\\x00\\x00\\x01"
+                   + b"\\x00\\x00\\x00\\x00\\x00\\x00"
+                   + question + b"\\x00\\x01\\x00\\x01")
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
+            sock.settimeout(5)
+            sock.sendto(request, (NEXT_IPV4, EXTERNAL_DNS_PORT))
+            result, source = sock.recvfrom(512)
+        if source != (NEXT_IPV4, EXTERNAL_DNS_PORT):
+            raise ValueError("unrecognized protected DNS peer")
+        if len(result) != len(request) + 16 or result[:2] != transaction:
+            raise ValueError("invalid protected DNS transaction")
+        if (result[2:4] != b"\\x81\\x80" or result[4:8] != b"\\x00\\x01\\x00\\x01"
+                or result[8:12] != b"\\x00\\x00\\x00\\x00"
+                or result[12:len(request)] != question + b"\\x00\\x01\\x00\\x01"):
+            raise ValueError("ambiguous protected DNS answer")
+        answer = result[len(request):]
+        if (answer[:12] != b"\\xc0\\x0c\\x00\\x01\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x04"):
+            raise ValueError("unsupported DNS answer structure")
+        resolved = str(ipaddress.IPv4Address(answer[12:]))
+        if resolved != NEXT_IPV4:
+            raise ValueError("DNS answer does not match real second fixture")
+        return resolved
+
+    def verify_actual_peer(self, pid: int, gateway: str | None = None) -> None:
         # Observe Xray's actual remote TCP peer rather than equating the DNS
         # snapshot with the transport. The provider server uses real TCP.
         observed = subprocess.run(("ss", "-H", "-t", "-n", "-p"),
@@ -263,7 +302,8 @@ class HostnameFixture:
                  if "pid=" + str(pid) + "," in line and ":" + str(self.port) in line]
         if not peers:
             raise ValueError("no real tracked Xray transport socket to verify")
-        if any(self.gateway + ":" + str(self.port) not in line for line in peers):
+        wanted = self.gateway if gateway is None else gateway
+        if any(wanted + ":" + str(self.port) not in line for line in peers):
             raise ValueError("NM gateway differs from observed Xray transport peer")
 
 
@@ -271,3 +311,26 @@ class HostnameFixture:
 def hostname_fixture(source: Path, gateway: str):
     with HostnameFixture(source, gateway) as fixture:
         yield fixture
+
+class _ExternalDNSHandler(_DNSHandler):
+    def handle(self) -> None:
+        # Do not forward unexpected queries to the outer runner's resolver.
+        packet = self.request[0]
+        if b"\\x0epodlaz-gateway\\x07example\\x00" not in packet:
+            return
+        super().handle()
+
+
+def _serve_external_dns(address: str, port: int) -> None:
+    if address != NEXT_IPV4 or port != EXTERNAL_DNS_PORT:
+        raise SystemExit("external DNS requires reserved disposable endpoint")
+    with _Server((address, port), _ExternalDNSHandler) as server:
+        server.records = ((NEXT_IPV4,), (), False)
+        server.serve_forever()
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 4 or sys.argv[1] != "--external-dns":
+        raise SystemExit(2)
+    _serve_external_dns(sys.argv[2], int(sys.argv[3]))

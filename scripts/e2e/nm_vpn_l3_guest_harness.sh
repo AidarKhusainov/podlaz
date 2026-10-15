@@ -24,6 +24,7 @@ EVIDENCE_KEYS=(
   tun.nm_l3_gate_a
   tun.nm_l3_hostname_admission
   tun.nm_l3_pinned_redial
+  tun.nm_l3_dns_rebind
   tun.clean_disconnect
   tun.terminal_cleanup
   tun.recovery_clean
@@ -79,6 +80,17 @@ run_scenario() {
     "${GUEST_XDG}/cache" "${GUEST_PRIVATE}"
   mark_failure fixture synthetic.endpoint
   start_synthetic_xray_endpoint
+  # Host DNS and the second provider IP are restricted to the ephemeral dummy/veth.
+  python3 "${SCRIPT_DIR}/nm_vpn_l3_hostname_guest.py" --external-dns \
+    "${NM_SECOND_ENDPOINT_IP}" "${NM_DNS_PORT}" \
+    >"${PRIVATE_ROOT}/external-dns.stdout" 2>"${PRIVATE_ROOT}/external-dns.stderr" &
+  HOSTED_NM_DNS_PID=$!
+  for _ in $(seq 1 100); do
+    if ss -H -lun | awk '{print $5}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null; then break; fi
+    kill -0 "${HOSTED_NM_DNS_PID}" >/dev/null || return 1
+    sleep 0.1
+  done
+  ss -H -lun | awk '{print $5}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null
   install_tun_authorization
   mark_failure diagnostic_unknown profile.import
   # Guest endpoint URI and credentials stay inside private guest state.
@@ -114,12 +126,13 @@ run_scenario() {
   guest_exec python3 /workspace/scripts/e2e/nm_vpn_l3_scenario_guest.py \
     "${GUEST_PRIVATE}/nm-l3-generated-xray.json" "${ENDPOINT_IP}" \
     >"${PRIVATE_ROOT}/nm-l3-result.stdout" 2>"${PRIVATE_ROOT}/nm-l3-result.stderr"
-  for label in nm-l3-foreign-collision-rejected nm-l3-invalid-ip4-rejected nm-l3-real-dbus-ip4 nm-l3-protected-routes-and-https nm-l3-hostname-peer-observed nm-l3-hostname-unsafe-rebind-rejected nm-l3-hostname-pinned-redial nm-l3-natural-full nm-l3-failure-protection nm-l3-uplink-churn-protected nm-l3-live-nm-restart-recovered nm-l3-ipv6-physical-block nm-l3-exact-guest-cleanup nm-l3-result; do
+  for label in nm-l3-foreign-collision-rejected nm-l3-invalid-ip4-rejected nm-l3-real-dbus-ip4 nm-l3-protected-routes-and-https nm-l3-hostname-peer-observed nm-l3-hostname-unsafe-rebind-rejected nm-l3-hostname-pinned-redial nm-l3-hostname-dns-rebind nm-l3-natural-full nm-l3-failure-protection nm-l3-uplink-churn-protected nm-l3-live-nm-restart-recovered nm-l3-ipv6-physical-block nm-l3-exact-guest-cleanup nm-l3-result; do
     grep -Fx "${label}=pass" "${PRIVATE_ROOT}/nm-l3-result.stdout" >/dev/null
   done
   record_evidence tun.nm_l3_gate_a pass
   record_evidence tun.nm_l3_hostname_admission pass
   record_evidence tun.nm_l3_pinned_redial pass
+  record_evidence tun.nm_l3_dns_rebind pass
   record_evidence tun.clean_disconnect pass
 
   mark_failure product tun.terminal_cleanup

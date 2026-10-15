@@ -20,6 +20,9 @@ GUEST_CIDR="172.31.254.2/30"
 HOST_IP="172.31.254.1"
 ENDPOINT_CIDR="172.31.253.1/32"
 ENDPOINT_IP="172.31.253.1"
+NM_SECOND_ENDPOINT_IP="172.31.253.2"
+NM_DNS_PORT=53535
+HOSTED_NM_DNS_PID=""
 GUEST_ROOT="${E2E_TMP_ROOT}/system-guest"
 PRIVATE_ROOT="${E2E_TMP_ROOT}/private"
 XRAY_ROOT="${PRIVATE_ROOT}/synthetic-xray"
@@ -309,6 +312,11 @@ cleanup_outer_plumbing() {
 }
 
 stop_synthetic_xray_endpoint() {
+  if [[ -n "${HOSTED_NM_DNS_PID}" ]]; then
+    kill "${HOSTED_NM_DNS_PID}" >/dev/null 2>&1 || true
+    wait "${HOSTED_NM_DNS_PID}" >/dev/null 2>&1 || true
+    HOSTED_NM_DNS_PID=""
+  fi
   if [[ -n "${XRAY_HTTP_PID}" ]]; then
     kill "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
     wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
@@ -443,6 +451,9 @@ setup_outer_plumbing() {
   sudo -n ip link set dev "${HOST_VETH}" up
   sudo -n ip link add dev "${HOST_ENDPOINT_DEV}" type dummy
   sudo -n ip addr add "${ENDPOINT_CIDR}" dev "${HOST_ENDPOINT_DEV}"
+  if [[ "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ]]; then
+    sudo -n ip addr add "${NM_SECOND_ENDPOINT_IP}/32" dev "${HOST_ENDPOINT_DEV}"
+  fi
   sudo -n ip link set dev "${HOST_ENDPOINT_DEV}" up
   printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
   sudo -n iptables -I DOCKER-USER 1 -i "${HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s "${NETWORK_CIDR}" -m comment --comment podlaz-hosted-synthetic-tun-out -j ACCEPT
@@ -811,21 +822,22 @@ start_synthetic_typed_reference_endpoint() {
   [[ -n "${binary}" && -f "${binary}" ]] || return 1
   chmod 0700 "${binary}"
   jq -n --arg protocol "${protocol}" --arg listen "${ENDPOINT_IP}" \
+    --arg secondary "${NM_SECOND_ENDPOINT_IP}" \
+    --argjson nm_guest "${PODLAZ_E2E_NM_L3_GUEST:-false}" \
     --argjson port "${port}" --arg uuid "${uuid}" --arg password "${password}" \
     --arg cert "${XRAY_ROOT}/server.crt" --arg key "${XRAY_ROOT}/server.key" '
     {
       log: {level:"warn"},
-      inbounds: [
-        (if $protocol == "vmess" then {
-          type:"vmess",listen:$listen,listen_port:$port,
+      inbounds: ((if $nm_guest then [$listen,$secondary] else [$listen] end) |
+        map(. as $address | if $protocol == "vmess" then {
+          type:"vmess",listen:$address,listen_port:$port,
           users:[{name:"synthetic",uuid:$uuid,alterId:0}]
         } else {
-          type:"trojan",listen:$listen,listen_port:$port,
+          type:"trojan",listen:$address,listen_port:$port,
           users:[{name:"synthetic",password:$password}],
           tls:{enabled:true,server_name:"trojan.example.com",
                certificate_path:$cert,key_path:$key}
-        } end)
-      ],
+        } end)),
       outbounds:[{type:"direct"}]
     }' >"${config}"
   chmod 0600 "${config}"

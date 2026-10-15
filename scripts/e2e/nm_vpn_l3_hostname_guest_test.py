@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from nm_vpn_l3_hostname_guest import (_Server, _DNSHandler, HOSTNAME,
-                                     HostnameFixture, OTHER_IPV4, OTHER_IPV6)
+                                     HostnameFixture, OTHER_IPV4, OTHER_IPV6, NEXT_IPV4)
 
 
 def query(host: str, qtype: int) -> bytes:
@@ -125,6 +125,24 @@ class DnsFixtureTest(unittest.TestCase):
                    return_value=SimpleNamespace(stdout=json.dumps({"nftables": []}))):
             with self.assertRaises(ValueError):
                 fixture.tcp_syn_packets("podlaz_nm_l3_guest")
+
+    def test_generation_rebind_is_new_file_and_preserves_mark_and_tls_name(self):
+        with TemporaryDirectory() as directory:
+            fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")
+            fixture.config_path.write_text(json.dumps({"outbounds": [{
+                "protocol": "vmess", "settings": {"address": HOSTNAME, "port": 443},
+                "streamSettings": {"security": "tls", "tlsSettings": {"serverName": HOSTNAME},
+                                   "sockopt": {"mark": 19022}}
+            }]}))
+            with patch.object(fixture, "assert_single_gateway"):
+                dest = fixture.write_pinned_generation(
+                    address=NEXT_IPV4, allow_changed_dns=True,
+                    output=Path(directory) / "next.json")
+            outbound = json.loads(dest.read_text())["outbounds"][0]
+            self.assertEqual(outbound["settings"]["address"], NEXT_IPV4)
+            self.assertEqual(outbound["streamSettings"]["tlsSettings"]["serverName"], HOSTNAME)
+            self.assertEqual(outbound["streamSettings"]["sockopt"]["mark"], 19022)
+            self.assertEqual(dest.stat().st_mode & 0o777, 0o600)
 
     def test_a_peer_with_different_address_is_not_a_gateway_proof(self):
         fixture = HostnameFixture(Path("/tmp/missing-xray"), "172.31.253.1")
