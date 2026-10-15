@@ -20,6 +20,8 @@ class GateAHostIsolation(unittest.TestCase):
         self.assertIn('assert_terminal_authority_clean', source)
         self.assertIn('tun.nm_l3_gate_a', source)
         self.assertIn('nm-l3-failure-protection', source)
+        self.assertIn('nm-l3-hostname-peer-observed', source)
+        self.assertIn('nm-l3-hostname-unsafe-rebind-rejected', source)
         self.assertIn('nm-l3-invalid-ip4-rejected', source)
         self.assertIn('nm-l3-uplink-churn-protected', source)
         self.assertIn('nm-l3-live-nm-restart-recovered', source)
