@@ -158,3 +158,29 @@ func TestCompletionCandidatesResolveToTheirOwnStableIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletionNumericLookingProfileIDsRemainSelectable(t *testing.T) {
+	opts := options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")}
+	for _, id := range []string{"1.0", "1e2", "0x2", "1_0", "-1"} {
+		storeCompletionProfile(t, opts, id, id)
+	}
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "connect", ""}}, opts)
+	for _, id := range []string{"1.0", "1e2", "0x2", "1_0", "-1"} {
+		want := "id:" + id
+		assertCompletionCandidate(t, candidates, want)
+		resolved, err := store.Resolve(want)
+		if err != nil || resolved.ID != id {
+			t.Errorf("completion %q resolves to %q, %v, want %q", want, resolved.ID, err, id)
+		}
+	}
+	for _, candidate := range candidates.Candidates {
+		resolved, err := store.Resolve(candidate.Value)
+		if err != nil || resolved.ID != strings.TrimPrefix(candidate.Value, "id:") {
+			t.Errorf("candidate %q is not a usable exact ID: %v", candidate.Value, err)
+		}
+	}
+}
