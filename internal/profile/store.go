@@ -299,23 +299,9 @@ func (s Store) Delete(id string) error {
 	if err != nil {
 		return err
 	}
-	kept := state.Profiles[:0]
-	deleted := false
-	for _, p := range state.Profiles {
-		if p.ID == id {
-			deleted = true
-			continue
-		}
-		kept = append(kept, p)
-	}
-	if !deleted {
+	if !deleteProfileFromState(&state, id) {
 		return fmt.Errorf("%w: %s", ErrNotFound, id)
 	}
-	state.Profiles = kept
-	if state.SelectedProfileID == id {
-		state.SelectedProfileID = ""
-	}
-	SortStable(state.Profiles)
 	return s.saveState(state)
 }
 
@@ -331,18 +317,31 @@ func (s Store) DeleteResolved(selector string, confirmed Profile) error {
 	if err != nil || current.ID != confirmed.ID || !reflect.DeepEqual(current, confirmed) {
 		return fmt.Errorf("%w: run `podlaz profile list` and retry", ErrProfileChanged)
 	}
-	kept := make([]Profile, 0, len(state.Profiles)-1)
+	if !deleteProfileFromState(&state, confirmed.ID) {
+		return fmt.Errorf("%w: run `podlaz profile list` and retry", ErrProfileChanged)
+	}
+	return s.saveState(state)
+}
+
+func deleteProfileFromState(state *storeFile, id string) bool {
+	kept := state.Profiles[:0]
+	deleted := false
 	for _, p := range state.Profiles {
-		if p.ID != confirmed.ID {
-			kept = append(kept, p)
+		if p.ID == id {
+			deleted = true
+			continue
 		}
+		kept = append(kept, p)
+	}
+	if !deleted {
+		return false
 	}
 	state.Profiles = kept
-	if state.SelectedProfileID == confirmed.ID {
+	if state.SelectedProfileID == id {
 		state.SelectedProfileID = ""
 	}
 	SortStable(state.Profiles)
-	return s.saveState(state)
+	return true
 }
 
 // ReplaceSubscriptionProfiles atomically replaces the profiles previously owned
