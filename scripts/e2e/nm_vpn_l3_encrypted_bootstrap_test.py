@@ -24,7 +24,7 @@ class ProtectedBootstrapTest(unittest.TestCase):
         self.assertEqual(parse_answer(query, reply), SERVER_IP)
         self.assertEqual(parse_answer(query, answer_query(query, address=INITIAL_IP)), INITIAL_IP)
         self.assertEqual(parse_https_response(query, https_response(reply)), SERVER_IP)
-        for wrong in (reply[:-1], reply[:-4] + socket.inet_aton("172.31.253.1"),
+        for wrong in (reply[:-1], reply[:-4] + socket.inet_aton("203.0.113.11"),
                       b"\x11\x11" + reply[2:], reply + b"\x00"):
             with self.subTest(wrong=wrong[:3]), self.assertRaises(ValueError):
                 parse_answer(query, wrong)
