@@ -159,6 +159,26 @@ class DnsFixtureTest(unittest.TestCase):
         self.assertEqual(sock.mark, (socket.SOL_SOCKET, socket.SO_MARK, 20570))
         self.assertEqual(sock.peer, (NEXT_IPV4, 53535))
 
+    def test_next_generation_preflight_is_isolated_from_tracked_tun(self):
+        with TemporaryDirectory() as directory:
+            fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")
+            source = Path(directory) / "future.json"
+            contents = {"inbounds": [{
+                "protocol": "tun", "settings": {"name": "podlaz0", "MTU": 1500}
+            }], "outbounds": [{"protocol": "vmess", "settings": {
+                "address": NEXT_IPV4}, "streamSettings": {"sockopt": {"mark": 20570}}}]}
+            source.write_text(json.dumps(contents))
+            def preflight(args, **kwargs):
+                config = json.loads(Path(args[-1]).read_text())
+                self.assertEqual(config["inbounds"][0]["settings"]["name"], "podlaz-pf0")
+                self.assertEqual(config["outbounds"], contents["outbounds"])
+                return SimpleNamespace(returncode=0)
+            with patch("nm_vpn_l3_hostname_guest.subprocess.run", side_effect=preflight) as called:
+                fixture.preflight_next_generation(source)
+            called.assert_called_once()
+            self.assertEqual(json.loads(source.read_text()), contents)
+            self.assertFalse((Path(directory) / "nm-l3-next-preflight.json").exists())
+
     def test_generation_rebind_is_new_file_and_preserves_mark_and_tls_name(self):
         with TemporaryDirectory() as directory:
             fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")

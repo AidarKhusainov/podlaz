@@ -209,6 +209,29 @@ class HostnameFixture:
             json.dump(data, handle)
         return destination
 
+    def preflight_next_generation(self, path: Path) -> None:
+        """Match production's separate preflight TUN identity while old core lives."""
+        data = json.loads(path.read_text())
+        inbounds = data.get("inbounds")
+        if not isinstance(inbounds, list) or len(inbounds) != 1:
+            raise ValueError("unsupported Xray preflight topology")
+        inbound = inbounds[0]
+        settings = inbound.get("settings") if isinstance(inbound, dict) else None
+        if (inbound.get("protocol") != "tun" or not isinstance(settings, dict)
+                or settings.get("name") != "podlaz0"):
+            raise ValueError("unexpected Xray TUN preflight identity")
+        settings["name"] = "podlaz-pf0"
+        preflight = path.with_name("nm-l3-next-preflight.json")
+        fd = os.open(preflight, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump(data, handle)
+            subprocess.run(("/usr/lib/podlaz/xray", "run", "-test", "-config",
+                            str(preflight)), capture_output=True, text=True,
+                           check=True, timeout=20)
+        finally:
+            preflight.unlink(missing_ok=True)
+
     def install_tcp_syn_counter(self, table: str, mark: int) -> None:
         """Count actual marked provider TCP SYNs, not generic traffic."""
         subprocess.run(("nft", "add", "rule", "inet", table, "egress",

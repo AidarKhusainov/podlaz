@@ -778,7 +778,7 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
             _stage('hostname-next-generation-mark')
             _xray_marked_config(next_path,plan.tunnel_mark)
             _stage('hostname-next-generation-xray-validate')
-            run('/usr/lib/podlaz/xray','run','-test','-config',str(next_path),timeout=15)
+            hostname.preflight_next_generation(next_path)
             _stage('hostname-transition-current-authority')
             if not _owned_nm_profile_present(profile_uuid,active=True):
                 raise ValueError('original NM profile absent before rebind')
