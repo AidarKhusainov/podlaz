@@ -767,14 +767,19 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
             # underlay and replace the NM+Xray generation under the SAME
             # continuously armed output barrier.
             _stage('hostname-protected-external-dns')
+            _stage('hostname-external-dns-query')
             next_gateway = hostname.resolve_external_marked(plan.tunnel_mark)
             if next_gateway != NEXT_IPV4:
                 raise ValueError('unqualified second transport gateway')
+            _stage('hostname-external-dns-qualified')
             next_path = hostname.pinned_path.with_name('nm-l3-next-xray.json')
             hostname.write_pinned_generation(address=next_gateway, output=next_path,
                                              allow_changed_dns=True)
+            _stage('hostname-next-generation-mark')
             _xray_marked_config(next_path,plan.tunnel_mark)
+            _stage('hostname-next-generation-xray-validate')
             run('/usr/lib/podlaz/xray','run','-test','-config',str(next_path),timeout=15)
+            _stage('hostname-transition-current-authority')
             if not _owned_nm_profile_present(profile_uuid,active=True):
                 raise ValueError('original NM profile absent before rebind')
             _prove_physical_drop()
