@@ -20,7 +20,7 @@ import time
 import uuid
 
 from nm_vpn_l3_contract import GuestVPNConfig, config_dicts, vpn_profile_settings
-from nm_vpn_l3_hostname_guest import HostnameFixture, hostname_fixture
+from nm_vpn_l3_hostname_guest import HostnameFixture, hostname_fixture, NEXT_IPV4
 from nm_vpn_l3_intent import load_guest_intent, REAPPLY_MARKER
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 from nm_vpn_underlay_guest import UnderlayEvidence, UnderlayPlan, select_underlay
@@ -696,6 +696,7 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
     plan=select_underlay(evidence,10)
     _xray_marked_config(config_file,plan.tunnel_mark)
     xray=None
+    children: list[subprocess.Popen] = []
     protected=False
     installed=False
     profile_uuid=str(uuid.uuid4())
@@ -707,6 +708,7 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
             installed=True  # Cleanup must remain fail-closed even if apply aborts midway.
             _start_underlay(plan)
             xray=subprocess.Popen(('/usr/lib/podlaz/xray','run','-c',str(config_file)),stdout=output,stderr=errors)
+            children.append(xray)
             for _ in range(100):
                 if xray.poll() is not None:
                     raise ValueError('tracked Xray TUN child exited')
@@ -760,6 +762,71 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
                 print('nm-l3-hostname-pinned-redial=pass',flush=True)
             finally:
                 hostname.answer((external_gateway,))
+            # The first immutable generation works without trusting subsequent
+            # DNS. Now actually resolve a NEW peer via the private marked
+            # underlay and replace the NM+Xray generation under the SAME
+            # continuously armed output barrier.
+            _stage('hostname-protected-external-dns')
+            next_gateway = hostname.resolve_external_marked(plan.tunnel_mark)
+            if next_gateway != NEXT_IPV4:
+                raise ValueError('unqualified second transport gateway')
+            next_path = hostname.pinned_path.with_name('nm-l3-next-xray.json')
+            hostname.write_pinned_generation(address=next_gateway, output=next_path,
+                                             allow_changed_dns=True)
+            _xray_marked_config(next_path,plan.tunnel_mark)
+            run('/usr/lib/podlaz/xray','run','-test','-config',str(next_path),timeout=15)
+            if not _owned_nm_profile_present(profile_uuid,active=True):
+                raise ValueError('original NM profile absent before rebind')
+            _prove_physical_drop()
+            _prove_ipv6_no_leak()
+            _stage('hostname-transition-nm-down')
+            run('nmcli','-w','20','connection','down',profile_uuid,timeout=25)
+            if _owned_nm_profile_present(profile_uuid,active=True):
+                raise ValueError('old NM VPN still active')
+            _prove_physical_drop()
+            _stage('hostname-transition-old-xray-stop')
+            xray.terminate()
+            xray.wait(timeout=12)
+            for _ in range(50):
+                if not Path('/sys/class/net/podlaz0').exists():
+                    break
+                time.sleep(.1)
+            if Path('/sys/class/net/podlaz0').exists():
+                raise ValueError('owned old TUN not released')
+            old_config, old_index = load_guest_intent()
+            if old_config.gateway != external_gateway or old_index != index:
+                raise ValueError('old generation intent lost')
+            INTENT.unlink()
+            INTENT.parent.rmdir()
+            _stage('hostname-transition-new-xray-start')
+            xray = subprocess.Popen(('/usr/lib/podlaz/xray','run','-c',str(next_path)),
+                                    stdout=output,stderr=errors)
+            children.append(xray)
+            for _ in range(100):
+                if xray.poll() is not None:
+                    raise ValueError('replacement Xray terminated')
+                if Path('/sys/class/net/podlaz0').exists():
+                    break
+                time.sleep(.2)
+            else:
+                raise ValueError('new Xray TUN missing')
+            new_links=ip_json('-d','link','show','dev','podlaz0')
+            if len(new_links)!=1 or new_links[0]['ifindex']==index:
+                raise ValueError('new TUN is not a distinct generation')
+            new_index=new_links[0]['ifindex']
+            validate_xray_tun(new_index,new_links,
+                              ip_json('address','show','dev','podlaz0'))
+            _write_private_intent(next_gateway,new_index)
+            _stage('hostname-transition-new-nm-up')
+            _reactivate_pinned_nm_vpn(profile_uuid,xray)
+            _verify_paths(plan.tunnel_mark)
+            _stage('hostname-transition-new-peer')
+            run('timeout','30','curl','-4','-fsS','-o','/dev/null',
+                'https://example.com/',timeout=35)
+            hostname.verify_actual_peer(xray.pid,next_gateway)
+            _prove_physical_drop()
+            _prove_ipv6_no_leak()
+            print('nm-l3-hostname-dns-rebind=pass',flush=True)
             # Recover the real underlay first; qualify sustained natural
             # NM FULL only after the actual NM-managed uplink lifecycle.
             _stage('uplink-churn')
@@ -792,9 +859,10 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
                 _stage('cleanup-nm-delete')
                 run('nmcli','connection','delete',profile_uuid)
             _stage('cleanup-xray')
-            if xray is not None:
-                xray.terminate()
-                xray.wait(timeout=12)
+            for child in reversed(children):
+                if child.poll() is None:
+                    child.terminate()
+                    child.wait(timeout=12)
             _stage('cleanup-underlay-inspect')
             if installed:
                 # Fail closed if any foreign route/rule appears: guard exact
