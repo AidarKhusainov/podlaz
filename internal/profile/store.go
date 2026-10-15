@@ -548,6 +548,13 @@ func invalidNumericForm(selector string) bool {
 	return true
 }
 
+// ResolveInSnapshot applies Store.Resolve semantics to an already-loaded
+// snapshot. Completion uses it to verify that a suggested name resolves to
+// the intended stable ID without rereading user state for every candidate.
+func ResolveInSnapshot(profiles []Profile, selector string) (Profile, error) {
+	return resolveProfile(profiles, selector)
+}
+
 func resolveProfile(profiles []Profile, selector string) (Profile, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
