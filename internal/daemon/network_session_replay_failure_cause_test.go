@@ -85,6 +85,7 @@ func TestPersistNetworkSessionReplayFailureKeepsBoundedDNSCause(t *testing.T) {
 }
 
 type wrongLinkReplayRunner struct{}
+
 func (wrongLinkReplayRunner) Run(context.Context, string, ...string) (netexecutor.CommandResult, error) {
 	return netexecutor.CommandResult{Stdout: "example.com: 93.184.216.34 -- link: foreign0\n"}, nil
 }
