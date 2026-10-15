@@ -54,11 +54,11 @@ class DnsFixtureTest(unittest.TestCase):
         fixture.port = 18443
         with patch("nm_vpn_l3_hostname_guest.subprocess.run",
                    return_value=SimpleNamespace(stdout=
-                     'ESTAB 0 0 172.31.254.2:3333 172.31.253.1:18443 users:(("xray",pid=1234,fd=4))'))):
+                     'ESTAB 0 0 172.31.254.2:3333 172.31.253.1:18443 users:(("xray",pid=1234,fd=4))')):
             fixture.verify_actual_peer(1234)
         with patch("nm_vpn_l3_hostname_guest.subprocess.run",
                    return_value=SimpleNamespace(stdout=
-                     'ESTAB 0 0 172.31.254.2:3333 172.31.254.1:18443 users:(("xray",pid=1234,fd=4))'))):
+                     'ESTAB 0 0 172.31.254.2:3333 172.31.254.1:18443 users:(("xray",pid=1234,fd=4))')):
             with self.assertRaisesRegex(ValueError, "differs"):
                 fixture.verify_actual_peer(1234)
         with patch("nm_vpn_l3_hostname_guest.subprocess.run",
