@@ -100,9 +100,9 @@ func successfulAddressVerifyCommands(index int) []scriptedCommand {
 
 func TestResolvedScopedQueryFailureCausesAreBounded(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		runner *recordingRunner
-		want string
+		want   string
 	}{
 		{name: "wrong-link", runner: &recordingRunner{stdout: "example.com: 93.184.216.34 -- link: wlan0\n"}, want: ResolvedScopedCauseLinkNotMatched},
 		{name: "no-ipv4", runner: &recordingRunner{stdout: "example.com: -- link: podlaz0\n"}, want: ResolvedScopedCauseNoIPv4},
