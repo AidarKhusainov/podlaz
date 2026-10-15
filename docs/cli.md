@@ -37,11 +37,13 @@ podlaz subscription <list|show|update|delete>
 podlaz autostart <enable|disable|status>
 podlaz help
 podlaz version
-podlaz completion ...
 ```
 
-Top-level help and completion expose this product surface plus the single
-`debug` namespace. They do not advertise the internal validation/planning/check
+Top-level help and command suggestions expose this product surface plus the single
+`debug` namespace. Shell completion setup remains available through explicit
+`podlaz completion bash|zsh|fish`, `podlaz help completion`, or
+`podlaz completion --help`, but is not advertised in everyday help or top-level
+command suggestions. They do not advertise the internal validation/planning/check
 or handoff policy machinery.
 
 ## Import
