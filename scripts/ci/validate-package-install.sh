@@ -60,11 +60,13 @@ zsh -n /usr/share/zsh/vendor-completions/_podlaz
 zsh -n /usr/share/zsh/vendor-completions/_plz
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish'
 fish --no-config --command 'source /usr/share/fish/vendor_completions.d/plz.fish'
-if bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz; COMP_WORDS=(podlaz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'; then
+bash_candidates="$(bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/podlaz || exit; COMP_WORDS=(podlaz ""); COMP_CWORD=1; _podlaz || exit; printf "%s\n" "${COMPREPLY[@]}"')"
+if grep -Fxq completion <<<"$bash_candidates"; then
   echo "hidden completion command appeared in installed shell suggestions" >&2
   exit 1
 fi
-if bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz; printf "%s\n" "${COMPREPLY[@]}" | grep -Fx completion'; then
+bash_candidates="$(bash --noprofile --norc -c 'source /usr/share/bash-completion/completions/plz || exit; COMP_WORDS=(plz ""); COMP_CWORD=1; _podlaz || exit; printf "%s\n" "${COMPREPLY[@]}"')"
+if grep -Fxq completion <<<"$bash_candidates"; then
   echo "hidden completion command appeared in installed shell suggestions" >&2
   exit 1
 fi
@@ -72,7 +74,8 @@ podlaz completion bash >/dev/null
 plz completion zsh >/dev/null
 podlaz completion fish >/dev/null
 zsh -fc 'autoload -Uz compinit; fpath=(/usr/share/zsh/vendor-completions $fpath); compinit -D; autoload -Uz _podlaz; whence _podlaz >/dev/null'
-if fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; complete -C "podlaz " | grep -F completion'; then
+fish_candidates="$(fish --no-config --command 'source /usr/share/fish/vendor_completions.d/podlaz.fish; or exit 1; complete -C "podlaz "')"
+if grep -Eq '^completion([[:space:]]|$)' <<<"$fish_candidates"; then
   echo "hidden completion command appeared in installed shell suggestions" >&2
   exit 1
 fi
