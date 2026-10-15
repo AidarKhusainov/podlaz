@@ -13,8 +13,10 @@ from pathlib import Path
 import socket
 import ssl
 import sys
+import threading
 
 SERVER_IP = "172.31.253.2"
+INITIAL_IP = "172.31.253.1"
 SERVER_NAME = "bootstrap.podlaz.example"
 VPN_HOSTNAME = "podlaz-gateway.example"
 PORT = 53535
@@ -30,20 +32,23 @@ def make_query(txid: bytes) -> bytes:
     return txid + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + QUESTION
 
 
-def answer_query(query: bytes) -> bytes:
+def answer_query(query: bytes, *, address: str = SERVER_IP) -> bytes:
     if (len(query) != 12 + len(QUESTION) or
             query[2:12] != b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" or
             query[12:] != QUESTION):
         raise ValueError("unsupported or malformed bootstrap DNS query")
+    if address not in (INITIAL_IP, SERVER_IP):
+        raise ValueError("unsupported fixture DNS destination")
     return (query[:2] + b"\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00\x00\x00"
             + QUESTION + b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04"
-            + ipaddress.IPv4Address(SERVER_IP).packed)
+            + ipaddress.IPv4Address(address).packed)
 
 
 def parse_answer(query: bytes, answer: bytes) -> str:
-    if answer != answer_query(query):
-        raise ValueError("untrusted, ambiguous or unsupported DNS bootstrap answer")
-    return str(ipaddress.IPv4Address(answer[-4:]))
+    for address in (INITIAL_IP, SERVER_IP):
+        if answer == answer_query(query, address=address):
+            return address
+    raise ValueError("untrusted, ambiguous or unsupported DNS bootstrap answer")
 
 
 def parse_https_response(query: bytes, response: bytes) -> str:
@@ -117,7 +122,8 @@ class _DoHHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400)
             return
         try:
-            answer = answer_query(self.rfile.read(int(size)))
+            question = self.rfile.read(int(size))
+            answer = answer_query(question, address=self.server.next_dns_ip())
         except ValueError:
             self.send_error(400)
             return
@@ -133,12 +139,24 @@ class _DoHHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _DoHServer(http.server.ThreadingHTTPServer):
+    def __init__(self, address: tuple[str, int]):
+        super().__init__(address, _DoHHandler)
+        self._query_lock = threading.Lock()
+        self._query_count = 0
+
+    def next_dns_ip(self) -> str:
+        with self._query_lock:
+            self._query_count += 1
+            return INITIAL_IP if self._query_count == 1 else SERVER_IP
+
+
 def serve(ip: str, port: int, certificate: Path, key: Path) -> None:
     if ip != SERVER_IP or port != PORT:
         raise ValueError("DoH fixture must bind only disposable endpoint")
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(certfile=str(certificate), keyfile=str(key))
-    with http.server.ThreadingHTTPServer((ip, port), _DoHHandler) as server:
+    with _DoHServer((ip, port)) as server:
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
         server.serve_forever()
 
