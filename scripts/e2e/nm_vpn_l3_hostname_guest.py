@@ -18,7 +18,7 @@ import subprocess
 import threading
 
 HOSTNAME = "podlaz-gateway.example"
-DNS_ADDR = "127.0.0.54"
+DNS_ADDR = "127.0.0.55"
 DNS_UPSTREAM = "127.0.0.53"
 OTHER_IPV4 = "172.31.254.1"
 OTHER_IPV6 = "2001:db8:460::1"
