@@ -124,8 +124,12 @@ func profileCandidates(opts options) []completionCandidate {
 		key := strings.ToLower(strings.TrimSpace(p.Name))
 		value := render.Redact(p.Name)
 		description := render.Redact(p.Protocol)
-		if nameCounts[key] > 1 {
+		resolved, err := profile.ResolveInSnapshot(profiles, p.Name)
+		if nameCounts[key] > 1 || profile.IsPositionalSelector(p.Name) || err != nil || resolved.ID != p.ID {
 			value = render.Redact(p.ID)
+			if profile.IsPositionalSelector(p.ID) {
+				value = "id:" + value
+			}
 			description = render.Redact(p.Name) + " · stable ID"
 		}
 		if p.ID == selectedID {
