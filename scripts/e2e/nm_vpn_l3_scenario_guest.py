@@ -20,6 +20,7 @@ import time
 import uuid
 
 from nm_vpn_l3_contract import GuestVPNConfig, config_dicts, vpn_profile_settings
+from nm_vpn_l3_hostname_guest import HostnameFixture, hostname_fixture
 from nm_vpn_l3_intent import load_guest_intent, REAPPLY_MARKER
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 from nm_vpn_underlay_guest import UnderlayEvidence, UnderlayPlan, select_underlay
@@ -684,7 +685,8 @@ def _natural_full(xray: subprocess.Popen) -> None:
     raise ValueError('natural sustained NM FULL not observed')
 
 
-def run_guest(config_file: Path, external_gateway: str) -> None:
+def _run_guest_with_resolver(config_file: Path, external_gateway: str,
+                             hostname: HostnameFixture) -> None:
     _is_synthetic_guest()
     # Synthetic endpoint is tied to the disposable veth/dummy fixture. It is
     # not a guessed provider address extracted from arbitrary Xray payloads.
@@ -728,6 +730,14 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
             print('nm-l3-real-dbus-ip4=pass',flush=True)
             _verify_paths(plan.tunnel_mark)
             print('nm-l3-protected-routes-and-https=pass',flush=True)
+            _stage('hostname-transport-peer')
+            hostname.verify_actual_peer(xray.pid)
+            print('nm-l3-hostname-peer-observed=pass',flush=True)
+            _stage('hostname-dns-change-admission')
+            hostname.qualify_negative_answers()
+            _prove_physical_drop()
+            _prove_ipv6_no_leak()
+            print('nm-l3-hostname-unsafe-rebind-rejected=pass',flush=True)
             # Recover the real underlay first; qualify sustained natural
             # NM FULL only after the actual NM-managed uplink lifecycle.
             _stage('uplink-churn')
@@ -817,6 +827,12 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
                 INTENT.unlink()
                 INTENT.parent.rmdir()
     print('nm-l3-exact-guest-cleanup=pass',flush=True)
+
+
+def run_guest(config_file: Path, external_gateway: str) -> None:
+    _is_synthetic_guest()
+    with hostname_fixture(config_file, external_gateway) as hostname:
+        _run_guest_with_resolver(hostname.config_path, external_gateway, hostname)
 
 
 def main() -> None:
