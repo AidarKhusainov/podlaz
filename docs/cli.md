@@ -350,8 +350,11 @@ podlaz completion fish
 ```
 
 Generated completion supports both `podlaz` and `plz`. Dynamic profile
-completion prefers human-readable names and descriptions. When normalized names
-are ambiguous, completion exposes stable IDs so automation remains deterministic.
+completion prefers human-readable names and descriptions when they resolve to
+the intended stable ID. Ambiguous names, numeric names, and names shadowed by
+an exact stable ID complete to that profile's stable ID instead; numeric IDs
+use the explicit `id:<stable-id>` form. Completion never suggests a profile
+selector that would resolve to a different row or profile.
 
 Completion is read-only and does not contact the daemon or mutate networking.
 
