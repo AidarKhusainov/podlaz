@@ -111,6 +111,11 @@ func (s Store) Resolve(selector string) (Profile, error) {
 // Select persists the stable ID resolved from selector. Selection is user-owned
 // preference only; it does not change the current lifecycle or boot policy.
 func (s Store) Select(selector string) (Profile, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return Profile{}, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return Profile{}, err
@@ -151,6 +156,11 @@ func (s Store) SelectedID() (string, error) {
 // one profile remains, persists that profile as the selection before returning
 // it. It never retargets by display-name resemblance.
 func (s Store) ResolveSelected() (Profile, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return Profile{}, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return Profile{}, err
@@ -187,6 +197,11 @@ func (s Store) ResolveSelected() (Profile, error) {
 // import workflows that produced exactly one logical profile. A stale selected
 // ID is cleared instead of being name-retargeted.
 func (s Store) SelectIfUnset(id string) (bool, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return false, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return false, err
@@ -217,6 +232,11 @@ func (s Store) AddAndSelectIfUnset(p Profile) (bool, error) {
 	if err := Validate(p); err != nil {
 		return false, err
 	}
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return false, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return false, err
@@ -244,6 +264,11 @@ func (s Store) Add(p Profile) error {
 	if err := Validate(p); err != nil {
 		return err
 	}
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -263,6 +288,11 @@ func (s Store) Add(p Profile) error {
 // left untouched when validation or duplicate detection fails before the atomic
 // file replacement.
 func (s Store) AddProfiles(next []Profile) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -295,6 +325,11 @@ func (s Store) AddProfiles(next []Profile) error {
 // Delete removes an exact stable profile ID and atomically clears selection when
 // that ID was selected.
 func (s Store) Delete(id string) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -309,6 +344,11 @@ func (s Store) Delete(id string) error {
 // changed profile or a reordered positional selector when the store is reread
 // after confirmation; the index itself is never persisted.
 func (s Store) DeleteResolved(selector string, confirmed Profile) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -349,6 +389,11 @@ func deleteProfileFromState(state *storeFile, id string) bool {
 // Profiles not owned by the subscription are preserved. Removing the selected
 // stable ID clears selection in the same profile-store replacement.
 func (s Store) ReplaceSubscriptionProfiles(previousIDs []string, next []Profile) (SubscriptionUpdateDiff, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return SubscriptionUpdateDiff{}, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return SubscriptionUpdateDiff{}, err
@@ -467,6 +512,11 @@ func (s Store) loadState() (storeFile, error) {
 }
 
 func (s Store) save(profiles []Profile) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -479,6 +529,11 @@ func (s Store) save(profiles []Profile) error {
 }
 
 func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(string) error) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -488,6 +543,8 @@ func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(stri
 	return s.saveStateWithDirectorySync(state, syncParentDir)
 }
 
+// saveState is a low-level persistence helper; production read-modify-write
+// callers hold lockForMutation from before loading through this write.
 func (s Store) saveState(state storeFile) error {
 	return s.saveStateWithDirectorySync(state, storejson.SyncDir)
 }
