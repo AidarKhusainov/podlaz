@@ -49,13 +49,13 @@ type completionFlag struct {
 }
 
 type completionCommand struct {
-	HiddenFromSuggestions       bool
-	Name         string
-	Description  string
-	Children     []*completionCommand
-	Flags        []completionFlag
-	Dynamic      completionDynamicKind
-	DefaultFiles bool
+	HiddenFromSuggestions bool
+	Name                  string
+	Description           string
+	Children              []*completionCommand
+	Flags                 []completionFlag
+	Dynamic               completionDynamicKind
+	DefaultFiles          bool
 }
 
 type completionAnalysis struct {
