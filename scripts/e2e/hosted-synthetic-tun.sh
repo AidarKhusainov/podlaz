@@ -711,6 +711,10 @@ PY
       outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"id\":\"${auth}\",\"security\":\"auto\"}"
       stream_settings='{"network":"raw","security":"none"}'
       ;;
+    vless)
+      outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"id\":\"${auth}\",\"encryption\":\"none\"}"
+      stream_settings="{\"network\":\"raw\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"vless.example.com\",\"certificates\":[{\"usage\":\"verify\",\"certificateFile\":\"${XRAY_ROOT}/ca.crt\"}]}}"
+      ;;
     trojan)
       outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"password\":\"${auth}\"}"
       stream_settings="{\"network\":\"raw\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"trojan.example.com\",\"certificates\":[{\"usage\":\"verify\",\"certificateFile\":\"${XRAY_ROOT}/ca.crt\"}]}}"
@@ -832,6 +836,11 @@ start_synthetic_typed_reference_endpoint() {
         map(. as $address | if $protocol == "vmess" then {
           type:"vmess",listen:$address,listen_port:$port,
           users:[{name:"synthetic",uuid:$uuid,alterId:0}]
+        } elif $protocol == "vless" then {
+          type:"vless",listen:$address,listen_port:$port,
+          users:[{name:"synthetic",uuid:$uuid}],
+          tls:{enabled:true,server_name:"vless.example.com",
+               certificate_path:$cert,key_path:$key}
         } else {
           type:"trojan",listen:$address,listen_port:$port,
           users:[{name:"synthetic",password:$password}],
@@ -877,6 +886,23 @@ PY
       inbound_protocol=vless
       inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
       client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
+      if [[ "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ]]; then
+        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+          -keyout "${XRAY_ROOT}/ca.key" -out "${XRAY_ROOT}/ca.crt" \
+          -subj "/CN=Podlaz Synthetic VLESS CA" \
+          -addext "basicConstraints=critical,CA:TRUE" >"${XRAY_ROOT}/ca.log" 2>&1
+        openssl req -new -newkey rsa:2048 -nodes -sha256 \
+          -keyout "${XRAY_ROOT}/server.key" -out "${XRAY_ROOT}/server.csr" \
+          -subj "/CN=vless.example.com" >"${XRAY_ROOT}/server-csr.log" 2>&1
+        printf 'subjectAltName=DNS:vless.example.com\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' >"${XRAY_ROOT}/server.ext"
+        openssl x509 -req -sha256 -in "${XRAY_ROOT}/server.csr" \
+          -CA "${XRAY_ROOT}/ca.crt" -CAkey "${XRAY_ROOT}/ca.key" \
+          -CAcreateserial -days 1 -out "${XRAY_ROOT}/server.crt" \
+          -extfile "${XRAY_ROOT}/server.ext" >"${XRAY_ROOT}/server-cert.log" 2>&1
+        guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
+        guest_exec update-ca-certificates >/dev/null
+        client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=tls&encryption=none&sni=vless.example.com#hosted-synthetic"
+      fi
       ;;
     vmess)
       inbound_protocol=vmess
@@ -932,10 +958,13 @@ PY
 EOF_XRAY
   printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
-  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ||
+        ( "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vless && "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ) ]]; then
     start_synthetic_typed_reference_endpoint "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" "${port}" "${uuid}" "${credential:-}"
     if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
       qualify_synthetic_typed_direct vmess "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+    elif [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vless ]]; then
+      qualify_synthetic_typed_direct vless "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
     else
       qualify_synthetic_typed_direct trojan "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
     fi

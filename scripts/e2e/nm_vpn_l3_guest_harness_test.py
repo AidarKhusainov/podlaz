@@ -11,7 +11,7 @@ class GateAHostIsolation(unittest.TestCase):
         source = SCRIPT.read_text()
         self.assertIn('source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"', source)
         self.assertIn('PODLAZ_E2E_NM_L3_PROTOCOL:-vmess', source)
-        self.assertIn('vmess|trojan)', source)
+        self.assertIn('vmess|trojan|vless)', source)
         self.assertIn('start_system_guest', source)
         self.assertIn('qualify_explicit_proxy_only', source)
         self.assertIn('assert_verified_active_authority', source)

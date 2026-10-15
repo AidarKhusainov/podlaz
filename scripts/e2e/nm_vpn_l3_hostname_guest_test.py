@@ -21,6 +21,33 @@ def query(host: str, qtype: int) -> bytes:
 
 
 class DnsFixtureTest(unittest.TestCase):
+    def test_guest_vless_requires_explicit_mark_and_preserves_tls_identity(self):
+        data = {"protocol": "vless", "settings": {"vnext": [{
+                    "address": "172.31.253.1", "port": 443,
+                    "users": [{"id": "00000000-0000-4000-8000-000000000001"}]}]},
+                "streamSettings": {"network": "raw", "security": "tls",
+                                   "tlsSettings": {"serverName": "vless.example.com"}}}
+        self.assertEqual(initial_guest_endpoint(data, "172.31.253.1"), 443)
+        with self.assertRaises(ValueError):
+            initial_guest_endpoint({"protocol": "vless", "settings": {
+                "vnext": [data["settings"]["vnext"][0]] * 2},
+                "streamSettings": data["streamSettings"]}, "172.31.253.1")
+        with TemporaryDirectory() as directory:
+            fixture = HostnameFixture(Path(directory) / "original.json", "172.31.253.1")
+            fixture.config_path.write_text(json.dumps({"outbounds": [{
+                "protocol": "vless", "settings": {"vnext": [{
+                    "address": HOSTNAME, "port": 443,
+                    "users": data["settings"]["vnext"][0]["users"]}]},
+                "streamSettings": {"network": "raw", "security": "tls",
+                                   "tlsSettings": {"serverName": "vless.example.com"},
+                                   "sockopt": {"mark": 20570}}}]}))
+            with patch.object(fixture, "assert_single_gateway"):
+                output = fixture.write_pinned_generation()
+            result = json.loads(output.read_text())["outbounds"][0]
+            self.assertEqual(result["settings"]["vnext"][0]["address"], "172.31.253.1")
+            self.assertEqual(result["streamSettings"]["tlsSettings"]["serverName"], "vless.example.com")
+            self.assertEqual(result["streamSettings"]["sockopt"]["mark"], 20570)
+
     def test_initial_trojan_requires_real_tls_identity(self):
         base = {"protocol": "trojan", "settings": {
             "address": "172.31.253.1", "port": 443, "password": "test-only"},

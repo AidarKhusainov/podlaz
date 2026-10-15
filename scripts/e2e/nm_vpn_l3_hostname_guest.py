@@ -79,31 +79,41 @@ class _Server(socketserver.ThreadingUDPServer):
 
 def initial_guest_endpoint(outbound: object, gateway: str) -> int:
     """Admit only the exact single typed synthetic TCP server, never native JSON."""
-    if not isinstance(outbound, dict) or outbound.get("protocol") not in ("vmess", "trojan"):
+    if not isinstance(outbound, dict) or outbound.get("protocol") not in ("vmess", "trojan", "vless"):
         raise ValueError("unqualified synthetic provider protocol")
     settings = outbound.get("settings")
     stream = outbound.get("streamSettings")
-    if (not isinstance(settings, dict) or settings.get("address") != gateway or
-            type(settings.get("port")) is not int or
-            not (0 < settings["port"] <= 65535) or
-            not isinstance(stream, dict) or
+    if not isinstance(settings, dict) or not isinstance(stream, dict):
+        raise ValueError("unqualified synthetic endpoint fields")
+    if outbound["protocol"] == "vless":
+        vnext = settings.get("vnext")
+        if not isinstance(vnext, list) or len(vnext) != 1 or not isinstance(vnext[0], dict):
+            raise ValueError("unqualified single VLESS endpoint")
+        endpoint = vnext[0]
+    else:
+        endpoint = settings
+    if (endpoint.get("address") != gateway or
+            type(endpoint.get("port")) is not int or
+            not (0 < endpoint["port"] <= 65535) or
             stream.get("network", "raw") not in ("raw", "tcp")):
         raise ValueError("unqualified synthetic provider endpoint")
-    if outbound["protocol"] == "trojan":
+    if outbound["protocol"] in ("trojan", "vless"):
         tls = stream.get("tlsSettings")
+        expected_name = "vless.example.com" if outbound["protocol"] == "vless" else "trojan.example.com"
         if (stream.get("security") != "tls" or not isinstance(tls, dict) or
-                tls.get("serverName") != "trojan.example.com" or
+                tls.get("serverName") != expected_name or
                 tls.get("allowInsecure") is True):
             raise ValueError("synthetic TLS identity not authenticated")
     elif stream.get("security", "none") != "none":
         raise ValueError("unexpected synthetic VMess transport security")
-    return settings["port"]
+    return endpoint["port"]
 
 
 class HostnameFixture:
-    def __init__(self, source: Path, gateway: str):
+    def __init__(self, source: Path, gateway: str, *, guest_vless_mark: int | None = None):
         self.source = source
         self.gateway = gateway
+        self.guest_vless_mark = guest_vless_mark
         self.server = None
         self.thread = None
         self.previous_link = None
@@ -125,7 +135,19 @@ class HostnameFixture:
             raise ValueError("fixture requires one known typed outbound")
         outbound = outbounds[0]
         self.port = initial_guest_endpoint(outbound, self.gateway)
-        outbound["settings"]["address"] = HOSTNAME
+        if outbound["protocol"] == "vless":
+            # Only in the disposable experiment: product VLESS does NOT yet
+            # provide an NM-safe marked provider route. Do not claim otherwise.
+            if type(self.guest_vless_mark) is not int or self.guest_vless_mark <= 0:
+                raise ValueError("guest VLESS marked-underlay allocation absent")
+            stream = outbound["streamSettings"]
+            sockopt = stream.setdefault("sockopt", {})
+            if not isinstance(sockopt, dict) or "mark" in sockopt:
+                raise ValueError("guest VLESS provider marks are not independently owned")
+            sockopt["mark"] = self.guest_vless_mark
+            outbound["settings"]["vnext"][0]["address"] = HOSTNAME
+        else:
+            outbound["settings"]["address"] = HOSTNAME
         # Do not change TLS/REALITY settings, marks, or resolution strategy.
         if "domainStrategy" in outbound.get("streamSettings", {}).get("sockopt", {}):
             raise ValueError("fixture requires unchanged AsIs resolution")
@@ -362,6 +384,6 @@ class HostnameFixture:
 
 
 @contextmanager
-def hostname_fixture(source: Path, gateway: str):
-    with HostnameFixture(source, gateway) as fixture:
+def hostname_fixture(source: Path, gateway: str, *, guest_vless_mark: int | None = None):
+    with HostnameFixture(source, gateway, guest_vless_mark=guest_vless_mark) as fixture:
         yield fixture

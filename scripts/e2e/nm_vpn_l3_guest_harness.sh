@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_NM_L3_PROTOCOL:-vmess}"
 case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
-  vmess|trojan) ;;
+  vmess|trojan|vless) ;;
   *) fail "unsupported NM research transport class" ;;
 esac
 PODLAZ_E2E_NM_L3_GUEST=true
