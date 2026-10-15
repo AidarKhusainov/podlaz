@@ -19,7 +19,7 @@ def query(host: str, qtype: int) -> bytes:
 
 class DnsFixtureTest(unittest.TestCase):
     def test_real_loopback_dns_responses_are_controlled_and_multi_family(self):
-        with _Server(("127.0.0.54", 0), _DNSHandler) as server:
+        with _Server(("127.0.0.55", 0), _DNSHandler) as server:
             server.records = (("172.31.253.1", OTHER_IPV4), (OTHER_IPV6,), False)
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
                 client.settimeout(2)
