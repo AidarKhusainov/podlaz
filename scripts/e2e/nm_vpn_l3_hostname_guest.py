@@ -131,6 +131,11 @@ class HostnameFixture:
                 raise ValueError("resolver identity unexpectedly changed")
             RESOLV.unlink()
             RESOLV.symlink_to(self.previous_link)
+            # A temporary foreign resolv.conf is read by systemd-resolved.
+            # Recreate the resolver after restoring the managed symlink;
+            # the unchanged guest baseline comparator verifies the result.
+            subprocess.run(("systemctl", "restart", "systemd-resolved.service"),
+                           capture_output=True, text=True, check=True, timeout=30)
         if self.server:
             self.server.shutdown()
             self.server.server_close()
