@@ -49,6 +49,7 @@ type completionFlag struct {
 }
 
 type completionCommand struct {
+	Hidden       bool
 	Name         string
 	Description  string
 	Children     []*completionCommand
@@ -236,7 +237,7 @@ func completionRegistry() *completionCommand {
 			},
 		},
 		{
-			Name: "completion", Description: "Generate completion", Children: []*completionCommand{
+			Name: "completion", Description: "Generate completion", Hidden: true, Children: []*completionCommand{
 				{Name: "bash", Description: "Bash script"},
 				{Name: "zsh", Description: "Zsh script"},
 				{Name: "fish", Description: "Fish script"},
@@ -253,7 +254,7 @@ func completionRegistry() *completionCommand {
 				{Name: "autostart", Description: "Autostart help"},
 				{Name: "status", Description: "Status help"},
 				{Name: "debug", Description: "Advanced help"},
-				{Name: "completion", Description: "Completion help"},
+				{Name: "completion", Description: "Completion help", Hidden: true},
 				{Name: "help", Description: "Help help"},
 			},
 		},
