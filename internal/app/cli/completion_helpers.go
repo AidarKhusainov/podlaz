@@ -22,6 +22,9 @@ func mustCompletionCommand(path ...string) *completionCommand {
 func childNames(command *completionCommand) []string {
 	names := make([]string, 0, len(command.Children))
 	for _, child := range command.Children {
+		if child.HiddenFromSuggestions {
+			continue
+		}
 		names = append(names, child.Name)
 	}
 	return names
@@ -66,6 +69,9 @@ func noFileCompletion(candidates []completionCandidate) completionResult {
 func commandCandidates(commands []*completionCommand) []completionCandidate {
 	candidates := make([]completionCandidate, 0, len(commands))
 	for _, command := range commands {
+		if command.HiddenFromSuggestions {
+			continue
+		}
 		candidates = append(candidates, completionCandidate{Value: command.Name, Description: command.Description})
 	}
 	return candidates

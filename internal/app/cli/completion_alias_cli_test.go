@@ -29,6 +29,6 @@ func TestRunCLICompletionGeneratesPlzAliasSupport(t *testing.T) {
 func TestRunCLICompletionRuntimeAcceptsPlzCommandName(t *testing.T) {
 	got := runCompletionRuntime(t, options{}, bashCompleteArgs(1, "plz", "")...)
 	assertContainsCandidateLine(t, got, "connect", "Connect full VPN")
-	assertContainsCandidateLine(t, got, "completion", "Generate completion")
+	assertNotContainsCandidateValue(t, got, "completion")
 	assertContainsCandidateLine(t, got, "debug", "Advanced diagnostics")
 }

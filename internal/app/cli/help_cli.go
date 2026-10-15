@@ -21,7 +21,6 @@ Profiles and startup:
 
 Other:
   podlaz version
-  podlaz completion <bash|zsh|fish>
   podlaz debug
   podlaz help [command]
 
