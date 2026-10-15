@@ -89,24 +89,3 @@ jobs:
           path: ${{ runner.temp }}/podlaz-nm-l3-guest-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
- "${RUNNER_TEMP}/podlaz-nm-l3-result.stdout" || true
-            printf 'nm-l3-guest=failed\n' >&2
-            exit 1
-          fi
-      - name: Validate normalized guest report
-        if: always()
-        env:
-          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-l3-guest-private
-          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-l3-guest-public
-        run: bash scripts/e2e/nm_vpn_l3_guest_harness.sh validate-report
-      - name: Remove private guest root
-        if: always()
-        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-l3-guest-private" "${RUNNER_TEMP}/podlaz-nm-l3-result.stdout" "${RUNNER_TEMP}/podlaz-nm-l3-result.stderr"
-      - name: Publish fixed-schema acceptance
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: nm-l3-gate-a-${{ matrix.release }}
-          path: ${{ runner.temp }}/podlaz-nm-l3-guest-public/hosted-synthetic-tun.txt
-          if-no-files-found: error
-          retention-days: 7
