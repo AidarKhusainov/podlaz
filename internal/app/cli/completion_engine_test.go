@@ -123,3 +123,38 @@ func assertNoCompletionCandidate(t *testing.T, result completionResult, want str
 		}
 	}
 }
+
+func TestCompletionCandidatesResolveToTheirOwnStableIDs(t *testing.T) {
+	opts := options{profileStorePath: filepath.Join(t.TempDir(), "profiles.json")}
+	for _, entry := range []struct {
+		id   string
+		name string
+	}{
+		{"a", "2"},
+		{"2", "Shared"},
+		{"c", "shared"},
+		{"d", "1.0"},
+		{"e", "a"},
+	} {
+		storeCompletionProfile(t, opts, entry.id, entry.name)
+	}
+	store, err := profile.NewStore(opts.profileStorePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := completepodlaz(completionRequest{Shell: "bash", Cursor: 2, Words: []string{"podlaz", "connect", ""}}, opts)
+	expected := map[string]string{"a": "a", "id:2": "2", "c": "c", "d": "d", "e": "e"}
+	if len(got.Candidates) != len(expected) {
+		t.Fatalf("completion candidates = %#v", got.Candidates)
+	}
+	for _, candidate := range got.Candidates {
+		want, ok := expected[candidate.Value]
+		if !ok {
+			t.Fatalf("unsafe completion candidate: %#v", candidate)
+		}
+		actual, err := store.Resolve(candidate.Value)
+		if err != nil || actual.ID != want {
+			t.Fatalf("completion %q resolves to %q, %v; want %q", candidate.Value, actual.ID, err, want)
+		}
+	}
+}
