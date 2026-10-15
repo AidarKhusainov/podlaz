@@ -58,7 +58,7 @@ class DnsFixtureTest(unittest.TestCase):
             fixture.previous_link = "/run/systemd/resolve/stub-resolv.conf"
             fixture.changed_resolver = True
             fixture.config_path.write_text("{}")
-            resolv.write_text("nameserver 127.0.0.55\\n")
+            resolv.write_text("nameserver 127.0.0.55\n")
             def restart(*args, **kwargs):
                 self.assertTrue(resolv.is_symlink())
                 self.assertEqual(resolv.readlink().as_posix(), fixture.previous_link)
