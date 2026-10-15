@@ -67,9 +67,8 @@ jobs:
             2>"${RUNNER_TEMP}/podlaz-nm-l3-result.stderr"; then
             printf 'nm-l3-guest=completed\n'
           else
-            python3 scripts/e2e/nm_vpn_l3_failure_trace.py "${E2E_TMP_ROOT}/private/nm-l3-result.stdout"
+            python3 scripts/e2e/nm_vpn_l3_failure_trace.py "${E2E_TMP_ROOT}/private/nm-l3-result.stdout" "${RUNNER_TEMP}/podlaz-nm-l3-result.stdout"
             # Allowlisted category only; private host/guest snapshots remain private.
-            grep -E '^nm-l3-baseline-mismatch=(addr\.json|routes\.json|rules\.json|nft\.json|nm\.txt|resolved\.txt)
             printf 'nm-l3-guest=failed\n' >&2
             exit 1
           fi
