@@ -5,7 +5,8 @@ import sys
 
 STAGES = frozenset(('foreign-collision','invalid-ip4','nm-activation',
                     'natural-full','uplink-churn','uplink-down',
-                    'uplink-reconnect','guest-preflight','underlay-reconcile',
+                    'uplink-reconnect','guest-preflight','hostname-preflight','hostname-fixture-ready',
+                    'hostname-transport-peer','hostname-dns-change-admission','underlay-reconcile',
                     'underlay-current-inventory','underlay-baseline-observe',
                     'underlay-main-default','underlay-link-route','underlay-rule-check',
                     'underlay-connected-apply','underlay-default-apply',
