@@ -184,24 +184,66 @@ class HostnameFixture:
         outbound = outbounds[0]
         settings = outbound.get("settings")
         stream = outbound.get("streamSettings")
-        if (outbound.get("protocol") != "vmess" or not isinstance(settings, dict)
-                or settings.get("address") != HOSTNAME or not isinstance(stream, dict)):
+        # Caller has already proved that this is a single Podlaz-generated
+        # typed outbound. Native/grouped Xray JSON is never flattened into
+        # inferred gateway authority by this guest-only experiment.
+        protocol = outbound.get("protocol")
+        if not isinstance(settings, dict) or not isinstance(stream, dict):
             raise ValueError("unsupported outbound generation")
+        if stream.get("network", "raw") not in ("raw", "tcp"):
+            raise ValueError("unqualified transport method for pinned generation")
+        sockopt = stream.get("sockopt")
+        if (not isinstance(sockopt, dict) or type(sockopt.get("mark")) is not int
+                or sockopt["mark"] <= 0 or
+                sockopt.get("domainStrategy", "AsIs") != "AsIs"):
+            raise ValueError("marked transport authority unavailable")
+        if protocol == "vless":
+            vnext = settings.get("vnext")
+            if (not isinstance(vnext, list) or len(vnext) != 1 or
+                    not isinstance(vnext[0], dict) or
+                    vnext[0].get("address") != HOSTNAME or
+                    type(vnext[0].get("port")) is not int or
+                    not isinstance(vnext[0].get("users"), list) or
+                    len(vnext[0]["users"]) == 0):
+                raise ValueError("VLESS transport endpoint not uniquely qualified")
+            endpoint = vnext[0]
+        elif protocol in ("vmess", "trojan", "shadowsocks"):
+            if (settings.get("address") != HOSTNAME or
+                    type(settings.get("port")) is not int):
+                raise ValueError("typed transport endpoint not uniquely qualified")
+            endpoint = settings
+        else:
+            raise ValueError("unsupported or opaque provider outbound")
         security = stream.get("security", "none")
         if security == "tls":
             tls = stream.get("tlsSettings")
-            if not isinstance(tls, dict):
-                raise ValueError("unqualified TLS server identity")
+            if tls is None:
+                tls = {}
+                stream["tlsSettings"] = tls
+            if not isinstance(tls, dict) or tls.get("allowInsecure") is True:
+                raise ValueError("unqualified TLS certificate verification")
             name = tls.get("serverName")
             if name is None or name == "":
                 tls["serverName"] = HOSTNAME
             elif not isinstance(name, str):
                 raise ValueError("unqualified TLS server identity")
-        elif security != "none":
-            # REALITY/native/grouped configs require their own explicit
-            # identity and routing qualification; never silently rewrite.
-            raise ValueError("unsupported transport security for pinning")
-        settings["address"] = target
+        elif security == "reality":
+            if protocol != "vless":
+                raise ValueError("REALITY is not qualified for this protocol")
+            reality = stream.get("realitySettings")
+            if (not isinstance(reality, dict) or
+                    not isinstance(reality.get("serverName"), str) or
+                    not reality["serverName"].strip() or
+                    not isinstance(reality.get("publicKey"), str) or
+                    not reality["publicKey"].strip() or
+                    not isinstance(reality.get("fingerprint"), str) or
+                    not reality["fingerprint"].strip()):
+                raise ValueError("missing exact REALITY identity")
+            # REALITY identities are provider-owned: never rewrite them to
+            # the resolved IP or to the dial hostname.
+        elif security != "none" or protocol == "trojan":
+            raise ValueError("unsupported or missing transport security")
+        endpoint["address"] = target
         fd = os.open(destination,
                      os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as handle:
