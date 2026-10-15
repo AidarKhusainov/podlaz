@@ -1,5 +1,6 @@
 """Fixture-only tests: DNS wire, multiple answers and actual Xray peer checks."""
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import socket
 import struct
 from types import SimpleNamespace
@@ -48,6 +49,32 @@ class DnsFixtureTest(unittest.TestCase):
             fixture.qualify_negative_answers()
         self.assertEqual(guard.call_count, 5)
         self.assertEqual(fixture.server.records, (("172.31.253.1",), (), False))
+
+    def test_managed_resolver_restored_before_service_restart(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            resolv = root / "resolv.conf"
+            fixture = HostnameFixture(root / "original.json", "172.31.253.1")
+            fixture.previous_link = "/run/systemd/resolve/stub-resolv.conf"
+            fixture.changed_resolver = True
+            fixture.config_path.write_text("{}")
+            resolv.write_text("nameserver 127.0.0.55\\n")
+            def restart(*args, **kwargs):
+                self.assertTrue(resolv.is_symlink())
+                self.assertEqual(resolv.readlink().as_posix(), fixture.previous_link)
+                self.assertEqual(args[0], ("systemctl", "restart", "systemd-resolved.service"))
+                return SimpleNamespace()
+            with patch("nm_vpn_l3_hostname_guest.RESOLV", resolv), patch(
+                 "nm_vpn_l3_hostname_guest.subprocess.run", side_effect=restart) as command:
+                fixture.__exit__(None, None, None)
+            command.assert_called_once()
+            self.assertFalse(fixture.config_path.exists())
+
+    def test_unmodified_resolver_requires_no_service_mutation(self):
+        fixture = HostnameFixture(Path("/tmp/source-missing"), "172.31.253.1")
+        with patch("nm_vpn_l3_hostname_guest.subprocess.run") as command:
+            fixture.__exit__(None, None, None)
+        command.assert_not_called()
 
     def test_a_peer_with_different_address_is_not_a_gateway_proof(self):
         fixture = HostnameFixture(Path("/tmp/missing-xray"), "172.31.253.1")
