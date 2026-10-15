@@ -124,7 +124,7 @@ func profileCandidates(opts options) []completionCandidate {
 		value := render.Redact(p.Name)
 		description := render.Redact(p.Protocol)
 		resolved, err := profile.ResolveInSnapshot(profiles, p.Name)
-		if nameCounts[key] > 1 || err != nil || resolved.ID != p.ID {
+		if nameCounts[key] > 1 || profile.IsPositionalSelector(p.Name) || err != nil || resolved.ID != p.ID {
 			// Some valid stable IDs resemble malformed numbers (for example
 			// "1.0"). Even an exact ID must go through the same selector
 			// parser; prefix any ID that would not resolve to this profile.
