@@ -124,7 +124,16 @@ run_scenario() {
   assert_terminal_authority_clean
   record_evidence tun.terminal_cleanup pass
   mark_failure product guest.baseline_restored
-  assert_guest_network_baseline_restored
+  if ! assert_guest_network_baseline_restored; then
+    # Only fixed snapshot categories enter CI, never private route/DNS contents.
+    local suffix
+    for suffix in addr.json routes.json rules.json nft.json nm.txt resolved.txt; do
+      if ! cmp -s "${PRIVATE_ROOT}/guest-baseline.${suffix}" "${PRIVATE_ROOT}/guest-after.${suffix}"; then
+        printf 'nm-l3-baseline-mismatch=%s\n' "${suffix}"
+      fi
+    done
+    return 1
+  fi
   record_evidence guest.baseline_restored pass
   mark_failure product guest.connectivity_restored
   guest_exec resolvectl flush-caches
