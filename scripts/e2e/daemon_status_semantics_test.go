@@ -262,9 +262,9 @@ func runDaemonStatusDiagnosis(t *testing.T, statusPath string, diagnosticPath ..
 
 func TestDaemonStatusSemanticsBoundedDNSScopeFailureEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name string
+		name   string
 		record map[string]any
-		want string
+		want   string
 	}{
 		{"valid", map[string]any{"schema_version": "podlaz.network-session-resume-diagnostic.v1",
 			"owner": "podlaz", "current": map[string]any{
