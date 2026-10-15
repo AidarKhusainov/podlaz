@@ -86,11 +86,11 @@ run_scenario() {
     >"${PRIVATE_ROOT}/external-dns.stdout" 2>"${PRIVATE_ROOT}/external-dns.stderr" &
   HOSTED_NM_DNS_PID=$!
   for _ in $(seq 1 100); do
-    if ss -H -lun | awk '{print $5}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null; then break; fi
+    if ss -H -lun | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null; then break; fi
     kill -0 "${HOSTED_NM_DNS_PID}" >/dev/null || return 1
     sleep 0.1
   done
-  ss -H -lun | awk '{print $5}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null
+  ss -H -lun | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null
   install_tun_authorization
   mark_failure diagnostic_unknown profile.import
   # Guest endpoint URI and credentials stay inside private guest state.
