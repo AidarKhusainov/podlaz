@@ -97,3 +97,28 @@ func successfulAddressVerifyCommands(index int) []scriptedCommand {
 		linkCommandResult(index, "", nil),
 	}
 }
+
+func TestResolvedScopedQueryFailureCausesAreBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		runner *recordingRunner
+		want string
+	}{
+		{name: "wrong-link", runner: &recordingRunner{stdout: "example.com: 93.184.216.34 -- link: wlan0\\n"}, want: ResolvedScopedCauseLinkNotMatched},
+		{name: "no-ipv4", runner: &recordingRunner{stdout: "example.com: -- link: podlaz0\\n"}, want: ResolvedScopedCauseNoIPv4},
+		{name: "stderr", runner: &recordingRunner{stdout: "example.com: 93.184.216.34 -- link: podlaz0\\n", stderr: "private-value"}, want: ResolvedScopedCauseUnexpectedStderr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := (ResolvedScopedQueryVerifier{Runner: tc.runner}).Query(context.Background(), "podlaz0", 7, "example.com")
+			if !errors.Is(err, ErrResolvedLinkQueryFailure) {
+				t.Fatalf("classified DNS error no longer wraps scope failure: %v", err)
+			}
+			if got := ResolvedScopedQueryFailureCause(err); got != tc.want {
+				t.Fatalf("DNS cause=%q, want %q", got, tc.want)
+			}
+		})
+	}
+	if got := ResolvedScopedQueryFailureCause(errors.New("private 192.0.2.33")); got != "" {
+		t.Fatalf("untyped error produced public DNS failure class %q", got)
+	}
+}

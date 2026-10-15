@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/AidarKhusainov/podlaz/internal/api"
+	netexecutor "github.com/AidarKhusainov/podlaz/internal/network/executor"
 )
 
 const (
@@ -44,6 +45,7 @@ type networkSessionReplayAttempt struct {
 	TUNFailurePhase          string                          `json:"tun_failure_phase,omitempty"`
 	NetworkApplySubphase     string                          `json:"network_apply_subphase,omitempty"`
 	NetworkApplyFailureCause string                          `json:"network_apply_failure_cause,omitempty"`
+	DNSFailureCause          string                          `json:"dns_failure_cause,omitempty"`
 	RollbackStatus           string                          `json:"rollback_status,omitempty"`
 	TransactionPresent       bool                            `json:"transaction_present"`
 	TransactionID            string                          `json:"transaction_id,omitempty"`
@@ -253,6 +255,14 @@ func validateNetworkSessionReplayAttempt(attempt networkSessionReplayAttempt) er
 	}
 	if attempt.NetworkApplySubphase != "" && !validNetworkSessionApplySubphase(attempt.NetworkApplySubphase) {
 		return fmt.Errorf("invalid replay apply subphase %q", attempt.NetworkApplySubphase)
+	}
+	if attempt.DNSFailureCause != "" {
+		if attempt.TUNFailurePhase != "resolved-link-query-verify" {
+			return errors.New("DNS failure cause requires resolved-link-query-verify phase")
+		}
+		if !netexecutor.ValidResolvedScopedQueryFailureCause(attempt.DNSFailureCause) {
+			return errors.New("invalid scoped DNS failure cause")
+		}
 	}
 	if attempt.NetworkApplyFailureCause != "" {
 		if attempt.TUNFailurePhase != "network-apply" {

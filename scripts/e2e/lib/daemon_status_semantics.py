@@ -69,6 +69,26 @@ def probe_verified_active(status: dict) -> str:
     return "semantic-other"
 
 
+_DNS_SCOPE_CAUSES = frozenset((
+    "invalid-input", "command-timeout", "command-unavailable",
+    "command-failure", "output-too-large", "unexpected-stderr",
+    "link-not-matched", "no-ipv4", "identity-changed",
+))
+
+
+def diagnose_dns_scope_cause(record: object) -> str:
+    if not isinstance(record, dict):
+        return "unknown"
+    if (record.get("schema_version") != "podlaz.network-session-resume-diagnostic.v1"
+            or record.get("owner") != "podlaz"):
+        return "unknown"
+    current = record.get("current")
+    if not isinstance(current, dict) or current.get("tun_failure_phase") != "resolved-link-query-verify":
+        return "unknown"
+    cause = current.get("dns_failure_cause")
+    return cause if isinstance(cause, str) and cause in _DNS_SCOPE_CAUSES else "unknown"
+
+
 def clean_inactive(status: dict) -> bool:
     txs = transactions(status)
     active_id = str(status.get("active_transaction_id") or "")
@@ -220,6 +240,11 @@ def main() -> int:
     target, path = sys.argv[1], sys.argv[2]
     try:
         status = load_status(path)
+        if target == "diagnose-dns-scope-cause":
+            if len(sys.argv) != 3:
+                return 2
+            print(diagnose_dns_scope_cause(status))
+            return 0
         if target == "probe-verified-active":
             if len(sys.argv) != 3:
                 return 2
