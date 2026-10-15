@@ -5,7 +5,11 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=hosted-synthetic-tun.sh
 source "${SCRIPT_DIR}/hosted-synthetic-tun.sh"
-PODLAZ_E2E_SYNTHETIC_PROTOCOL=vmess
+PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_NM_L3_PROTOCOL:-vmess}"
+case "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" in
+  vmess|trojan) ;;
+  *) fail "unsupported NM research transport class" ;;
+esac
 PODLAZ_E2E_NM_L3_GUEST=true
 case "${PODLAZ_E2E_GUEST_RELEASE:-noble}" in
   noble|resolute) ;;
@@ -116,7 +120,7 @@ run_scenario() {
   qualify_explicit_proxy_only
 
   # The packaged Podlaz connects once only to generate and qualify the actual
-  # synthetic VMess Xray runtime config. The entire Podlaz-owned L3 session is
+  # generated typed Xray runtime config. The entire Podlaz-owned L3 session is
   # then removed and proven absent BEFORE NM is granted ownership.
   mark_failure product tun.legacy_preparation
   run_guest_user /usr/bin/podlaz connect >"${PRIVATE_ROOT}/connect.stdout" 2>"${PRIVATE_ROOT}/connect.stderr"

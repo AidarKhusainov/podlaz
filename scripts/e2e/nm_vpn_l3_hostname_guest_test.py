@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from nm_vpn_l3_hostname_guest import (_Server, _DNSHandler, HOSTNAME,
-                                     HostnameFixture, OTHER_IPV4, OTHER_IPV6, NEXT_IPV4)
+                                     HostnameFixture, OTHER_IPV4, OTHER_IPV6, NEXT_IPV4,
+                                     initial_guest_endpoint)
 
 
 def query(host: str, qtype: int) -> bytes:
@@ -20,6 +21,31 @@ def query(host: str, qtype: int) -> bytes:
 
 
 class DnsFixtureTest(unittest.TestCase):
+    def test_initial_trojan_requires_real_tls_identity(self):
+        base = {"protocol": "trojan", "settings": {
+            "address": "172.31.253.1", "port": 443, "password": "test-only"},
+            "streamSettings": {"network": "raw", "security": "tls",
+                               "tlsSettings": {"serverName": "trojan.example.com"},
+                               "sockopt": {"mark": 20570}}}
+        self.assertEqual(initial_guest_endpoint(base, "172.31.253.1"), 443)
+        for invalid in (
+            {"protocol": "vless", "settings": base["settings"],
+             "streamSettings": base["streamSettings"]},
+            {"protocol": "trojan", "settings": {"address": "172.31.253.2", "port": 443},
+             "streamSettings": base["streamSettings"]},
+            {"protocol": "trojan", "settings": base["settings"],
+             "streamSettings": {"network": "raw", "security": "none"}},
+            {"protocol": "trojan", "settings": base["settings"],
+             "streamSettings": {"network": "raw", "security": "tls",
+                                "tlsSettings": {"serverName": "wrong.example"}}},
+            {"protocol": "trojan", "settings": base["settings"],
+             "streamSettings": {"network": "raw", "security": "tls",
+                                "tlsSettings": {"serverName": "trojan.example.com",
+                                                "allowInsecure": True}}},
+        ):
+            with self.subTest(case=invalid["protocol"]), self.assertRaises(ValueError):
+                initial_guest_endpoint(invalid, "172.31.253.1")
+
     def test_real_loopback_dns_responses_are_controlled_and_multi_family(self):
         with _Server(("127.0.0.55", 0), _DNSHandler) as server:
             server.records = (("172.31.253.1", OTHER_IPV4), (OTHER_IPV6,), False)

@@ -77,6 +77,29 @@ class _Server(socketserver.ThreadingUDPServer):
     daemon_threads = True
 
 
+def initial_guest_endpoint(outbound: object, gateway: str) -> int:
+    """Admit only the exact single typed synthetic TCP server, never native JSON."""
+    if not isinstance(outbound, dict) or outbound.get("protocol") not in ("vmess", "trojan"):
+        raise ValueError("unqualified synthetic provider protocol")
+    settings = outbound.get("settings")
+    stream = outbound.get("streamSettings")
+    if (not isinstance(settings, dict) or settings.get("address") != gateway or
+            type(settings.get("port")) is not int or
+            not (0 < settings["port"] <= 65535) or
+            not isinstance(stream, dict) or
+            stream.get("network", "raw") not in ("raw", "tcp")):
+        raise ValueError("unqualified synthetic provider endpoint")
+    if outbound["protocol"] == "trojan":
+        tls = stream.get("tlsSettings")
+        if (stream.get("security") != "tls" or not isinstance(tls, dict) or
+                tls.get("serverName") != "trojan.example.com" or
+                tls.get("allowInsecure") is True):
+            raise ValueError("synthetic TLS identity not authenticated")
+    elif stream.get("security", "none") != "none":
+        raise ValueError("unexpected synthetic VMess transport security")
+    return settings["port"]
+
+
 class HostnameFixture:
     def __init__(self, source: Path, gateway: str):
         self.source = source
@@ -101,10 +124,7 @@ class HostnameFixture:
         if not isinstance(outbounds, list) or len(outbounds) != 1:
             raise ValueError("fixture requires one known typed outbound")
         outbound = outbounds[0]
-        if (outbound.get("protocol") != "vmess" or
-                outbound.get("settings", {}).get("address") != self.gateway or
-                not isinstance(outbound.get("settings", {}).get("port"), int)):
-            raise ValueError("fixture cannot bind generated provider address")
+        self.port = initial_guest_endpoint(outbound, self.gateway)
         outbound["settings"]["address"] = HOSTNAME
         # Do not change TLS/REALITY settings, marks, or resolution strategy.
         if "domainStrategy" in outbound.get("streamSettings", {}).get("sockopt", {}):
@@ -112,7 +132,6 @@ class HostnameFixture:
         fd = os.open(self.config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "w") as handle:
             json.dump(data, handle)
-        self.port = outbound["settings"]["port"]
         try:
             self.server = _Server((DNS_ADDR, 53), _DNSHandler)
             self.server.records = ((self.gateway,), (), False)

@@ -18,13 +18,14 @@ permissions:
 
 jobs:
   guest:
-    name: Genuine NM VPN L3 (${{ matrix.release }}, disposable guest)
+    name: Genuine NM VPN L3 (${{ matrix.release }}, ${{ matrix.protocol }}, disposable guest)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         release: [noble, resolute]
+        protocol: [vmess, trojan]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -59,6 +60,7 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-l3-guest-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
           PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+          PODLAZ_E2E_NM_L3_PROTOCOL: ${{ matrix.protocol }}
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
           install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
@@ -85,7 +87,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: nm-l3-gate-a-${{ matrix.release }}
+          name: nm-l3-gate-a-${{ matrix.release }}-${{ matrix.protocol }}
           path: ${{ runner.temp }}/podlaz-nm-l3-guest-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
