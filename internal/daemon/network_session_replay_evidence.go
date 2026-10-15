@@ -104,6 +104,7 @@ func persistNetworkSessionReplayFailure(
 		TUNFailurePhase:          record.TUNFailurePhase,
 		NetworkApplySubphase:     record.NetworkApplySubphase,
 		NetworkApplyFailureCause: applyFailureCause,
+		DNSFailureCause:          dnsReplayQueryFailureCause(record.TUNFailurePhase, err),
 		RollbackStatus:           record.RollbackStatus,
 		TransactionPresent:       record.TransactionPresent,
 		TransactionID:            transactionID,
@@ -122,6 +123,13 @@ func persistNetworkSessionReplayFailure(
 		}
 	}
 	return projected
+}
+
+func dnsReplayQueryFailureCause(phase string, err error) string {
+	if phase != "resolved-link-query-verify" {
+		return ""
+	}
+	return netexecutor.ResolvedScopedQueryFailureCause(err)
 }
 
 var errNetworkSessionReplayIncomplete = errors.New("network session replay outcome remains incomplete")

@@ -52,3 +52,40 @@ type unavailableReplayApplyRunner struct{}
 func (unavailableReplayApplyRunner) Run(_ context.Context, name string, _ ...string) (netexecutor.CommandResult, error) {
 	return netexecutor.CommandResult{ExitCode: -1}, &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
+
+func TestPersistNetworkSessionReplayFailureKeepsBoundedDNSCause(t *testing.T) {
+	runtimeDir := t.TempDir()
+	continuation := newNetworkSessionContinuationStore(runtimeDir, fixedBootID("boot-a"))
+	if err := continuation.Save(testContinuationRequest()); err != nil {
+		t.Fatal(err)
+	}
+	state, exists, err := continuation.stateStore().BeginRecoveryAttempt()
+	if err != nil || !exists {
+		t.Fatalf("begin recovery attempt: exists=%v err=%v", exists, err)
+	}
+	_, scopedErr := (netexecutor.ResolvedScopedQueryVerifier{
+		Runner: wrongLinkReplayRunner{},
+	}).Query(context.Background(), "podlaz0", 7, "example.com")
+	if scopedErr == nil {
+		t.Fatal("expected wrong-link scoped DNS rejection")
+	}
+	err = withTunFailurePhase("connectivity-verify", "", "completed",
+		withTunRollbackCompleted(newTunVerificationError("resolved-link-query",
+			"Uncached DNS scoped query failed", scopedErr)))
+	if err := persistNetworkSessionReplayFailure(context.Background(), continuation, state, false, err); err == nil {
+		t.Fatal("expected failed replay")
+	}
+	record := loadReplayEvidenceDiagnostic(t, continuation)
+	if record.Current == nil || record.Current.DNSFailureCause != netexecutor.ResolvedScopedCauseLinkNotMatched {
+		t.Fatalf("missing bounded scoped DNS cause: %#v", record.Current)
+	}
+	if record.Current.ReplayDisposition != networkSessionReplayDispositionIncomplete {
+		t.Fatalf("DNS diagnostic reclassified incomplete replay: %q", record.Current.ReplayDisposition)
+	}
+}
+
+type wrongLinkReplayRunner struct{}
+
+func (wrongLinkReplayRunner) Run(context.Context, string, ...string) (netexecutor.CommandResult, error) {
+	return netexecutor.CommandResult{Stdout: "example.com: 93.184.216.34 -- link: foreign0\n"}, nil
+}
