@@ -65,31 +65,28 @@ func runProfileList(store profile.Store, args []string, stdout io.Writer) error 
 	if err != nil {
 		return err
 	}
-	profiles, err := store.List()
-	if err != nil {
-		return err
-	}
-	selectedID, err := store.SelectedID()
+	profiles, selectedID, err := store.ListWithSelectedID()
 	if err != nil {
 		return err
 	}
 
 	rows := make([][]string, 0, len(profiles))
-	for _, p := range profiles {
+	for i, p := range profiles {
+		number := fmt.Sprint(i + 1)
 		selected := ""
 		if p.ID == selectedID {
 			selected = "*"
 		}
 		if showIDs {
-			rows = append(rows, []string{selected, p.ID, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
+			rows = append(rows, []string{number, selected, p.ID, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
 			continue
 		}
-		rows = append(rows, []string{selected, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
+		rows = append(rows, []string{number, selected, render.Redact(p.Name), render.Redact(p.Protocol), render.Redact(string(p.Source))})
 	}
 	if showIDs {
-		return writeTable(stdout, []string{"SELECTED", "ID", "NAME", "PROTOCOL", "SOURCE"}, rows)
+		return writeTable(stdout, []string{"#", "SELECTED", "ID", "NAME", "PROTOCOL", "SOURCE"}, rows)
 	}
-	return writeTable(stdout, []string{"SELECTED", "NAME", "PROTOCOL", "SOURCE"}, rows)
+	return writeTable(stdout, []string{"#", "SELECTED", "NAME", "PROTOCOL", "SOURCE"}, rows)
 }
 
 func parseProfileListArgs(args []string) (bool, error) {
@@ -148,6 +145,9 @@ func runProfileDelete(store profile.Store, args []string, stdout io.Writer, opts
 	if err != nil {
 		return err
 	}
+	if yes && profile.IsPositionalSelector(selector) {
+		return usageError("profile delete --yes requires a stable ID; list numbers may change")
+	}
 	p, err := store.Resolve(selector)
 	if err != nil {
 		return profileCommandError(err)
@@ -161,7 +161,7 @@ func runProfileDelete(store profile.Store, args []string, stdout io.Writer, opts
 			return err
 		}
 	}
-	if err := store.Delete(p.ID); err != nil {
+	if err := store.DeleteResolved(selector, p); err != nil {
 		return profileCommandError(err)
 	}
 	fmt.Fprintf(stdout, "Profile deleted: %s\n", render.Redact(p.Name))
@@ -228,6 +228,8 @@ func profileCommandError(err error) error {
 	switch {
 	case errors.Is(err, profile.ErrNotFound), errors.Is(err, profile.ErrNoSelection):
 		return exitError{code: 1, err: err}
+	case errors.Is(err, profile.ErrInvalidPosition), errors.Is(err, profile.ErrProfileChanged):
+		return exitError{code: 1, err: err}
 	case errors.Is(err, profile.ErrAmbiguousSelector):
 		return exitError{code: 1, err: err}
 	case errors.Is(err, profile.ErrAlreadyExists):
@@ -282,11 +284,13 @@ func printProfileHelp(w io.Writer) {
   podlaz profile use <profile>
   podlaz profile delete <profile> [--yes]
 
-Profiles may be addressed by exact stable ID or an exact unique display name.
-"profile use" changes only the selected profile for future user intent; it does
-not connect, disconnect, or rewrite an existing autostart policy. The default
-list view marks the selected profile and intentionally omits stable IDs,
-endpoints, and credential data. Use "profile list --ids" explicitly when a
-stable ID is needed to disambiguate duplicate display names.
+The list shows one-based positions. A number selects that current row; positions
+can change after import, subscription updates, or deletion, and must never be
+used for automation. Use exact stable IDs in scripts (prefix numeric IDs with
+"id:") or exact unique display names interactively.
+"profile use" saves the stable ID, never the position. "profile delete N"
+requires interactive default-No confirmation; "--yes" rejects row numbers.
+The default list marks the selected profile and hides IDs, endpoints, and
+credentials. "profile list --ids" preserves the same numbering and adds IDs.
 `)
 }
