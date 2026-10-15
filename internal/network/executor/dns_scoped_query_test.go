@@ -104,9 +104,9 @@ func TestResolvedScopedQueryFailureCausesAreBounded(t *testing.T) {
 		runner *recordingRunner
 		want string
 	}{
-		{name: "wrong-link", runner: &recordingRunner{stdout: "example.com: 93.184.216.34 -- link: wlan0\\n"}, want: ResolvedScopedCauseLinkNotMatched},
-		{name: "no-ipv4", runner: &recordingRunner{stdout: "example.com: -- link: podlaz0\\n"}, want: ResolvedScopedCauseNoIPv4},
-		{name: "stderr", runner: &recordingRunner{stdout: "example.com: 93.184.216.34 -- link: podlaz0\\n", stderr: "private-value"}, want: ResolvedScopedCauseUnexpectedStderr},
+		{name: "wrong-link", runner: &recordingRunner{stdout: "example.com: 93.184.216.34 -- link: wlan0\n"}, want: ResolvedScopedCauseLinkNotMatched},
+		{name: "no-ipv4", runner: &recordingRunner{stdout: "example.com: -- link: podlaz0\n"}, want: ResolvedScopedCauseNoIPv4},
+		{name: "stderr", runner: &recordingRunner{results: []CommandResult{{Stdout: "example.com: 93.184.216.34 -- link: podlaz0\n", Stderr: "private-value"}}}, want: ResolvedScopedCauseUnexpectedStderr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := (ResolvedScopedQueryVerifier{Runner: tc.runner}).Query(context.Background(), "podlaz0", 7, "example.com")
