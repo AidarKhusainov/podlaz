@@ -1,5 +1,6 @@
 """Fixture-only tests: DNS wire, multiple answers and actual Xray peer checks."""
 from pathlib import Path
+import json
 from tempfile import TemporaryDirectory
 import socket
 import struct
@@ -75,6 +76,55 @@ class DnsFixtureTest(unittest.TestCase):
         with patch("nm_vpn_l3_hostname_guest.subprocess.run") as command:
             fixture.__exit__(None, None, None)
         command.assert_not_called()
+
+    def test_pin_is_per_generation_and_does_not_rewrite_tls_identity_or_mark(self):
+        with TemporaryDirectory() as d:
+            source = Path(d) / "source.json"
+            fixture = HostnameFixture(source, "172.31.253.1")
+            generated = {"outbounds": [{"protocol": "vmess",
+                "settings": {"address": HOSTNAME, "port": 443},
+                "streamSettings": {"security": "tls",
+                                   "tlsSettings": {}, "sockopt": {"mark": 19022}}}]}
+            fixture.config_path.write_text(json.dumps(generated))
+            with patch.object(fixture, "assert_single_gateway"):
+                fixture.write_pinned_generation()
+            pinned = json.loads(fixture.pinned_path.read_text())
+            self.assertEqual(pinned["outbounds"][0]["settings"]["address"], fixture.gateway)
+            self.assertEqual(pinned["outbounds"][0]["streamSettings"]["tlsSettings"]["serverName"], HOSTNAME)
+            self.assertEqual(pinned["outbounds"][0]["streamSettings"]["sockopt"]["mark"], 19022)
+            self.assertEqual(json.loads(fixture.config_path.read_text()), generated)
+            self.assertEqual(fixture.pinned_path.stat().st_mode & 0o777, 0o600)
+
+    def test_unsafe_generation_rejected_before_pinning(self):
+        with TemporaryDirectory() as d:
+            fixture = HostnameFixture(Path(d) / "source.json", "172.31.253.1")
+            base = {"outbounds": [{"protocol": "vmess",
+                    "settings": {"address": HOSTNAME, "port": 443},
+                    "streamSettings": {"security": "reality",
+                                       "realitySettings": {"serverName": HOSTNAME}}}]}
+            with patch.object(fixture, "assert_single_gateway"):
+                for payload in (base, {"outbounds": base["outbounds"] * 2},
+                                {"outbounds": [{"protocol": "vmess",
+                                 "settings": {"address": "172.31.253.1"},
+                                 "streamSettings": {"security": "none"}}]}):
+                    fixture.config_path.write_text(json.dumps(payload))
+                    with self.assertRaises(ValueError):
+                        fixture.write_pinned_generation()
+                    self.assertFalse(fixture.pinned_path.exists())
+
+    def test_real_provider_syn_counter_requires_exact_marker(self):
+        fixture = HostnameFixture(Path("/tmp/unused"), "172.31.253.1")
+        valid = {"nftables": [{"rule": {"family": "inet",
+                 "table": "podlaz_nm_l3_guest", "chain": "egress",
+                 "comment": "podlaz_nm_l3_provider_syn",
+                 "expr": [{"counter": {"packets": 9}}]}}]}
+        with patch("nm_vpn_l3_hostname_guest.subprocess.run",
+                   return_value=SimpleNamespace(stdout=json.dumps(valid))):
+            self.assertEqual(fixture.tcp_syn_packets("podlaz_nm_l3_guest"), 9)
+        with patch("nm_vpn_l3_hostname_guest.subprocess.run",
+                   return_value=SimpleNamespace(stdout=json.dumps({"nftables": []}))):
+            with self.assertRaises(ValueError):
+                fixture.tcp_syn_packets("podlaz_nm_l3_guest")
 
     def test_a_peer_with_different_address_is_not_a_gateway_proof(self):
         fixture = HostnameFixture(Path("/tmp/missing-xray"), "172.31.253.1")

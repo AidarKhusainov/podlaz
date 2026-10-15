@@ -702,6 +702,7 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
     with (ROOT/'nm-l3-xray.stdout').open('w') as output, (ROOT/'nm-l3-xray.stderr').open('w') as errors:
         try:
             _nft_protect(plan.tunnel_mark)
+            hostname.install_tcp_syn_counter(TABLE, plan.tunnel_mark)
             protected=True
             installed=True  # Cleanup must remain fail-closed even if apply aborts midway.
             _start_underlay(plan)
@@ -738,6 +739,27 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
             _prove_physical_drop()
             _prove_ipv6_no_leak()
             print('nm-l3-hostname-unsafe-rebind-rejected=pass',flush=True)
+            # DNS changes while the VPN is active. Force a NEW real marked
+            # transport TCP SYN, not merely inspect an old established peer.
+            _stage('hostname-pinned-redial')
+            before_syn = hostname.tcp_syn_packets(TABLE)
+            hostname.answer(('172.31.254.1',))
+            try:
+                try:
+                    hostname.assert_single_gateway()
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError('changed DNS re-admitted old NM gateway')
+                _verify_paths(plan.tunnel_mark)
+                if hostname.tcp_syn_packets(TABLE) <= before_syn:
+                    raise ValueError('no fresh pinned transport TCP handshake after DNS change')
+                hostname.verify_actual_peer(xray.pid)
+                _prove_physical_drop()
+                _prove_ipv6_no_leak()
+                print('nm-l3-hostname-pinned-redial=pass',flush=True)
+            finally:
+                hostname.answer((external_gateway,))
             # Recover the real underlay first; qualify sustained natural
             # NM FULL only after the actual NM-managed uplink lifecycle.
             _stage('uplink-churn')
@@ -834,7 +856,7 @@ def run_guest(config_file: Path, external_gateway: str) -> None:
     _is_synthetic_guest()
     with hostname_fixture(config_file, external_gateway) as hostname:
         _stage('hostname-fixture-ready')
-        _run_guest_with_resolver(hostname.config_path, external_gateway, hostname)
+        _run_guest_with_resolver(hostname.pinned_path, external_gateway, hostname)
 
 
 def main() -> None:

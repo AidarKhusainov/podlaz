@@ -85,6 +85,7 @@ class HostnameFixture:
         self.previous_link = None
         self.changed_resolver = False
         self.config_path = source.with_name("nm-l3-hostname-xray.json")
+        self.pinned_path = source.with_name("nm-l3-pinned-xray.json")
 
     def __enter__(self) -> "HostnameFixture":
         if os.geteuid() != 0 or Path("/run/systemd/container").read_text().strip() != "systemd-nspawn":
@@ -120,6 +121,7 @@ class HostnameFixture:
             RESOLV.write_text("nameserver " + DNS_ADDR + "\noptions timeout:1 attempts:1\n", encoding="ascii")
             self.changed_resolver = True
             self.assert_single_gateway()
+            self.write_pinned_generation()
             return self
         except BaseException:
             self.__exit__(None, None, None)
@@ -141,6 +143,7 @@ class HostnameFixture:
             self.server.server_close()
             self.thread.join(timeout=5)
         self.config_path.unlink(missing_ok=True)
+        self.pinned_path.unlink(missing_ok=True)
 
     def answer(self, ipv4: tuple[str, ...], ipv6: tuple[str, ...] = (),
                *, fail: bool = False) -> None:
@@ -157,6 +160,80 @@ class HostnameFixture:
             raise ValueError("hostname DNS resolution unavailable") from exc
         if addresses != {self.gateway}:
             raise ValueError("hostname DNS is ambiguous or has changed")
+
+    def write_pinned_generation(self) -> None:
+        """Research-only immutable dial target, NOT an arbitrary profile gateway extractor.
+
+        The source is the one generated VMess outbound from this disposable
+        fixture. NM's already-known gateway is *not* derived from an observed
+        TCP peer or arbitrary provider JSON.
+        """
+        self.assert_single_gateway()
+        data = json.loads(self.config_path.read_text())
+        outbounds = data.get("outbounds")
+        if not isinstance(outbounds, list) or len(outbounds) != 1:
+            raise ValueError("unsupported multi-outbound generation")
+        outbound = outbounds[0]
+        settings = outbound.get("settings")
+        stream = outbound.get("streamSettings")
+        if (outbound.get("protocol") != "vmess" or not isinstance(settings, dict)
+                or settings.get("address") != HOSTNAME or not isinstance(stream, dict)):
+            raise ValueError("unsupported outbound generation")
+        security = stream.get("security", "none")
+        if security == "tls":
+            tls = stream.get("tlsSettings")
+            if not isinstance(tls, dict):
+                raise ValueError("unqualified TLS server identity")
+            name = tls.get("serverName")
+            if name is None or name == "":
+                tls["serverName"] = HOSTNAME
+            elif not isinstance(name, str):
+                raise ValueError("unqualified TLS server identity")
+        elif security != "none":
+            # REALITY/native/grouped configs require their own explicit
+            # identity and routing qualification; never silently rewrite.
+            raise ValueError("unsupported transport security for pinning")
+        settings["address"] = self.gateway
+        fd = os.open(self.pinned_path,
+                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            json.dump(data, handle)
+
+    def install_tcp_syn_counter(self, table: str, mark: int) -> None:
+        """Count actual marked provider TCP SYNs, not generic traffic."""
+        subprocess.run(("nft", "add", "rule", "inet", table, "egress",
+                        "meta", "mark", str(mark), "ip", "daddr", self.gateway,
+                        "tcp", "dport", str(self.port), "tcp", "flags",
+                        "&", "0x12", "==", "0x02",
+                        "counter", "comment", "podlaz_nm_l3_provider_syn"),
+                       capture_output=True, text=True, check=True, timeout=10)
+
+    def tcp_syn_packets(self, table: str) -> int:
+        result = subprocess.run(("nft", "-j", "list", "chain", "inet", table, "egress"),
+                                capture_output=True, text=True, check=True, timeout=10)
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict) or not isinstance(payload.get("nftables"), list):
+            raise ValueError("missing real transport SYN counter inventory")
+        matched = []
+        for item in payload["nftables"]:
+            rule = item.get("rule") if isinstance(item, dict) else None
+            if not isinstance(rule, dict):
+                continue
+            if (rule.get("family"), rule.get("table"), rule.get("chain"),
+                    rule.get("comment")) != ("inet", table, "egress",
+                                             "podlaz_nm_l3_provider_syn"):
+                continue
+            expr = rule.get("expr")
+            if not isinstance(expr, list):
+                raise ValueError("unqualified real provider SYN rule")
+            counts = [element["counter"].get("packets") for element in expr
+                      if isinstance(element, dict) and isinstance(element.get("counter"), dict)]
+            if len(counts) != 1 or type(counts[0]) is not int or counts[0] < 0:
+                raise ValueError("invalid real provider SYN counter")
+            matched.append(counts[0])
+        if len(matched) != 1:
+            raise ValueError("ambiguous real provider SYN counter")
+        return matched[0]
 
     def qualify_negative_answers(self) -> None:
         # A changed singleton, multi-A, A+AAAA and NXDOMAIN must not be
