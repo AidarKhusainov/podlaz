@@ -24,15 +24,15 @@ var (
 // ResolvedScopedQueryFailureCause is diagnostic evidence only, not a permission
 // to retry a failed Network Session or infer cleanup authority.
 const (
-	ResolvedScopedCauseInvalidInput      = "invalid-input"
-	ResolvedScopedCauseCommandTimeout    = "command-timeout"
+	ResolvedScopedCauseInvalidInput       = "invalid-input"
+	ResolvedScopedCauseCommandTimeout     = "command-timeout"
 	ResolvedScopedCauseCommandUnavailable = "command-unavailable"
-	ResolvedScopedCauseCommandFailure    = "command-failure"
-	ResolvedScopedCauseOutputTooLarge    = "output-too-large"
-	ResolvedScopedCauseUnexpectedStderr  = "unexpected-stderr"
-	ResolvedScopedCauseLinkNotMatched    = "link-not-matched"
-	ResolvedScopedCauseNoIPv4            = "no-ipv4"
-	ResolvedScopedCauseIdentityChanged   = "identity-changed"
+	ResolvedScopedCauseCommandFailure     = "command-failure"
+	ResolvedScopedCauseOutputTooLarge     = "output-too-large"
+	ResolvedScopedCauseUnexpectedStderr   = "unexpected-stderr"
+	ResolvedScopedCauseLinkNotMatched     = "link-not-matched"
+	ResolvedScopedCauseNoIPv4             = "no-ipv4"
+	ResolvedScopedCauseIdentityChanged    = "identity-changed"
 )
 
 type resolvedScopedQueryCauseError struct {
@@ -71,7 +71,6 @@ func ResolvedScopedQueryFailureCause(err error) string {
 func resolvedScopedQueryFailure(cause string, err error) error {
 	return resolvedScopedQueryCauseError{cause: cause, err: err}
 }
-
 
 // ResolvedScopedQueryVerifier performs one uncached IPv4 lookup bound to the
 // exact systemd-resolved link. It accepts an answer only when resolvectl
