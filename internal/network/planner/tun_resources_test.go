@@ -86,6 +86,12 @@ func TestPlanTunForSessionUsesAllocatedNumericIdentitiesAndActualServerPath(t *t
 	if len(plan.Routes) == 0 || plan.Routes[0].Table == TunRoutingTable || plan.Routes[0].Table == strconv.Itoa(TunRoutingTableID) {
 		t.Fatalf("expected exact reallocated numeric routing table, got %#v", plan.Routes)
 	}
+	if plan.Routes[0].Scope != "global" || plan.Routes[0].Interface != snapshot.DefaultTunName {
+		t.Fatalf("reallocated TUN default route lost explicit global scope or interface: %#v", plan.Routes[0])
+	}
+	if plan.ServerBypass.Scope != "" {
+		t.Fatalf("server bootstrap must retain its original scope: %#v", plan.ServerBypass)
+	}
 }
 
 func TestPlanTunForSessionUsesExactExistingServerRouteAsUnownedPrerequisite(t *testing.T) {

@@ -39,7 +39,7 @@ func desiredPlanFromTunPlan(plan planner.TunPlan) txstate.DesiredPlan {
 		default:
 			continue
 		}
-		routes = append(routes, txstate.RoutePlan{Kind: "route", Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: owner, Operation: operation})
+		routes = append(routes, txstate.RoutePlan{Kind: "route", Scope: route.Scope, Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: owner, Operation: operation})
 	}
 	for _, step := range plan.Steps {
 		steps = append(steps, txstate.PlannedStep{Kind: "plan", Target: planner.ModeTun, Description: step, Owner: txstate.TransactionOwner})
@@ -77,7 +77,7 @@ func rollbackMetadataFromTunPlan(plan planner.TunPlan) txstate.RollbackMetadata 
 		if !planner.IsTunAddAction(route.Action) {
 			continue
 		}
-		routes = append(routes, txstate.RouteRollback{Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute})
+		routes = append(routes, txstate.RouteRollback{Scope: route.Scope, Table: route.Table, CIDR: route.Destination, Via: route.Gateway, Dev: route.Interface, Owner: netexecutor.OwnerRoute})
 	}
 	rules := make([]txstate.PolicyRuleRollback, 0, len(plan.PolicyRules))
 	for _, rule := range plan.PolicyRules {

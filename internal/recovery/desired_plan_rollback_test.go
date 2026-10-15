@@ -155,3 +155,38 @@ func TestProjectRollbackMetadataPreservesExactMarkedPolicyRule(t *testing.T) {
 		t.Fatalf("unexpected marked rollback projection: %#v", projection.Rollback.PolicyRules)
 	}
 }
+
+func TestRouteScopeIsPartOfPersistedRollbackOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		desiredScope  string
+		rollbackScope string
+		allow         bool
+	}{
+		{name: "new global", desiredScope: "global", rollbackScope: "global", allow: true},
+		{name: "legacy absent", allow: true},
+		{name: "different scope", desiredScope: "global", allow: false},
+		{name: "invalid rollback scope", desiredScope: "global", rollbackScope: "link", allow: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := txstate.NewTransaction("tx-scope", "example-profile", planner.ModeTun, time.Now().UTC())
+			tx.State = txstate.TransactionCommitted
+			tx.DesiredPlan.Routes = []txstate.RoutePlan{{
+				Kind: "route", Table: "51821", CIDR: "default", Dev: managedInterface,
+				Scope: tc.desiredScope, Owner: netexecutor.OwnerRoute, Operation: "add",
+			}}
+			tx.Rollback.Routes = []txstate.RouteRollback{{
+				Table: "51821", CIDR: "default", Dev: managedInterface,
+				Scope: tc.rollbackScope, Owner: netexecutor.OwnerRoute,
+			}}
+			tx.AppliedSteps = []txstate.AppliedStep{{
+				Kind: "route", Target: "51821 default", Owner: netexecutor.OwnerRoute,
+				AppliedAt: time.Now().UTC(),
+			}}
+			got := ProjectRollbackMetadata(tx)
+			if got.Incomplete == tc.allow {
+				t.Fatalf("unexpected rollback authority for desired=%q rollback=%q: %#v", tc.desiredScope, tc.rollbackScope, got)
+			}
+		})
+	}
+}

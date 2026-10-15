@@ -36,6 +36,9 @@ HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active termi
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
+GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
+CHECK_NM_CONNECTIVITY="${PODLAZ_E2E_NM_CONNECTIVITY:-false}"
+NM_SCOPE_VARIANT="${PODLAZ_E2E_NM_SCOPE_VARIANT:-global}"
 
 EVIDENCE_KEYS=(
   candidate.provenance
@@ -69,6 +72,15 @@ if [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" == true ]]; then
     outer.cleanup
     artifact.privacy
   )
+fi
+
+if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+  [[ "${HOSTED_EXPECT_EXTERNAL_TERMINAL}" != true ]] || fail "NetworkManager check needs an active protected session"
+  if [[ "${NM_SCOPE_VARIANT}" == link ]]; then
+    EVIDENCE_KEYS=(candidate.provenance ordinary_user.boundary proxy_only.connect proxy_only.data_plane proxy_only.clean_disconnect tun.verified_active tun.system_dns tun.https_tls tun.networkmanager_observed tun.clean_disconnect tun.terminal_cleanup tun.recovery_clean guest.baseline_restored outer.cleanup artifact.privacy)
+  else
+  EVIDENCE_KEYS=(candidate.provenance ordinary_user.boundary proxy_only.connect proxy_only.data_plane proxy_only.clean_disconnect tun.verified_active tun.system_dns tun.https_tls tun.networkmanager_full tun.clean_disconnect tun.terminal_cleanup tun.recovery_clean guest.baseline_restored outer.cleanup artifact.privacy)
+  fi
 fi
 
 CANDIDATE_DEB=""
@@ -378,13 +390,17 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  sudo -n debootstrap --variant=minbase "${GUEST_RELEASE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     systemd systemd-sysv dbus ca-certificates sudo iproute2 nftables curl python3 gawk grep sed procps util-linux iputils-ping \
     network-manager systemd-resolved polkitd git jq openssl >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+    sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      network-manager-config-connectivity-ubuntu >>"${PRIVATE_ROOT}/guest-apt.log" 2>&1
+  fi
   sudo -n rm -f "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" apt-get clean >/dev/null 2>&1
 
@@ -1169,6 +1185,82 @@ run_active_traffic_checks() {
   record_evidence tun.https_tls pass
 }
 
+normalize_nm_connectivity() {
+  case "$1" in
+    full|'4 (full)'|'4') printf 'full' ;;
+    limited|'3 (limited)'|'3') printf 'limited' ;;
+    portal|'2 (portal)'|'2') printf 'portal' ;;
+    none|'1 (none)'|'1') printf 'none' ;;
+    unknown|'0 (unknown)'|'0') printf 'unknown' ;;
+    *) printf 'other' ;;
+  esac
+}
+
+normalize_nm_general_state() {
+  case "$1" in
+    connected:full|'connected (global):full') printf 'connected:full' ;;
+    connected:limited|'connected (site only):limited') printf 'connected:limited' ;;
+    connected:portal|'connected (site only):portal') printf 'connected:portal' ;;
+    connected:none|'connected (local only):none') printf 'connected:none' ;;
+    disconnected:*) printf '%s' "$1" ;;
+    *) printf 'other' ;;
+  esac
+}
+
+assert_networkmanager_tun_connectivity() {
+  local state tun_state uplink_state second
+  local last_state='' last_tun='' last_uplink=''
+  # Observe a natural NetworkManager cycle without requesting a forced check.
+  guest_exec nmcli general logging level DEBUG domains CONCHECK
+  guest_exec /bin/bash -lc 'NetworkManager --version'
+  for second in $(seq 1 360); do
+    state="$(normalize_nm_general_state "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+    tun_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show podlaz0 | tr -d '\r')")"
+    uplink_state="$(normalize_nm_connectivity "$(guest_exec nmcli -g GENERAL.IP4-CONNECTIVITY device show "${GUEST_IF}" | tr -d '\r')")"
+    # Emit sanitized transitions for both successful and failing runs.
+    if [[ "${state}" != "${last_state}" || "${tun_state}" != "${last_tun}" || "${uplink_state}" != "${last_uplink}" ]]; then
+      case "${state}" in
+        connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
+        *) state=other ;;
+      esac
+      printf 'networkmanager-observation=%s global=%s tun=%s uplink=%s\n' "${second}" "${state}" "${tun_state}" "${uplink_state}"
+      last_state="${state}"
+      last_tun="${tun_state}"
+      last_uplink="${uplink_state}"
+    fi
+    if [[ "${tun_state}" == other ]] && ! guest_exec ip link show dev podlaz0 >/dev/null 2>&1; then
+      printf 'networkmanager-observation-failed=protected-tun-lost\n'
+      return 1
+    fi
+    sleep 1
+  done
+  # Read only NM-visible route metrics and journal decision classes. Prove the
+  # unmarked IPv4 HTTPS request traverses TUN and uplink-bound HTTPS cannot
+  # complete; no endpoint or raw packet/journal metadata leaves the guest.
+  guest_exec python3 /workspace/scripts/e2e/networkmanager_scope_evidence.py --uplink "${GUEST_IF}"
+  if [[ "${NM_SCOPE_VARIANT}" == global && "${state}" == "connected:full" && "${tun_state}" == full ]]; then
+    # Require a full natural interval so a cached uplink FULL at connect time
+    # cannot satisfy the test before NetworkManager's next periodic probe.
+    printf 'networkmanager-full-observed-seconds=%s\n' "${second}"
+    record_evidence tun.networkmanager_full pass
+    return 0
+  fi
+  if [[ "${NM_SCOPE_VARIANT}" == link ]]; then
+    # This is a control observation, not a FULL connectivity acceptance.
+    # Require that the protected session and exact ownership survived the
+    # complete natural NM check interval, regardless of the observed enum.
+    assert_verified_active_authority
+    record_evidence tun.networkmanager_observed pass
+    return 0
+  fi
+  # Keep raw routes, connection identifiers and CONCHECK logs inside the private guest.
+  guest_exec /bin/bash -lc "journalctl -u NetworkManager.service --no-pager -o short-monotonic >'${GUEST_PRIVATE}/nm-concheck.log'" || true
+  # awk expressions execute inside the guest.
+  # shellcheck disable=SC2016
+  guest_exec /bin/bash -lc 'for dev in podlaz0 host0; do ip -4 route show table all default dev "$dev" | awk -v dev="$dev" '\''{ for (i=1; i<=NF; i++) if ($i=="metric") { print "networkmanager-route-" dev "-metric=" $(i+1); found=1 } } END { if (!found) print "networkmanager-route-" dev "-metric=implicit" }'\''; done' || true
+  return 1
+}
+
 run_tun_doctor() {
   local doctor_code doctor_state
   set +e
@@ -1260,6 +1352,19 @@ run_scenario() {
   qualify_explicit_proxy_only
   hosted_control_pause candidate-ready
 
+  if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+    # Capture the pre-TUN global state, not just a post-connect FULL snapshot.
+    # The result is a sanitized enum; no NM connection or network identifiers
+    # enter the CI log. This is observation, never a forced connectivity probe.
+    local nm_preconnect
+    nm_preconnect="$(normalize_nm_general_state "$(guest_exec nmcli -t -f STATE,CONNECTIVITY general | tr -d '\r')")"
+    case "${nm_preconnect}" in
+      connected:full|connected:limited|connected:portal|connected:none|disconnected:*) ;;
+      *) nm_preconnect=other ;;
+    esac
+    printf 'networkmanager-preconnect-global=%s\n' "${nm_preconnect}"
+  fi
+
   mark_failure diagnostic_unknown tun.connect
   set +e
   guest_exec /bin/bash -lc "runuser -u e2e -- env XDG_CONFIG_HOME='${GUEST_XDG}/config' XDG_STATE_HOME='${GUEST_XDG}/state' XDG_CACHE_HOME='${GUEST_XDG}/cache' /usr/bin/podlaz connect >${GUEST_PRIVATE}/connect.stdout 2>${GUEST_PRIVATE}/connect.stderr"
@@ -1303,8 +1408,14 @@ run_scenario() {
   else
     mark_failure diagnostic_unknown tun.active_traffic
     run_active_traffic_checks
-    mark_failure diagnostic_unknown tun.doctor
-    run_tun_doctor
+    if [[ "${CHECK_NM_CONNECTIVITY}" == true ]]; then
+      mark_failure diagnostic_unknown tun.networkmanager_full
+      assert_networkmanager_tun_connectivity
+    fi
+    if [[ "${CHECK_NM_CONNECTIVITY}" != true ]]; then
+      mark_failure diagnostic_unknown tun.doctor
+      run_tun_doctor
+    fi
 
     mark_failure diagnostic_unknown tun.disconnect
     run_guest_user /usr/bin/podlaz disconnect >"${PRIVATE_ROOT}/disconnect.stdout" 2>"${PRIVATE_ROOT}/disconnect.stderr"
@@ -1331,6 +1442,9 @@ run_scenario() {
 }
 
 main() {
+  case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported synthetic guest release" ;; esac
+  case "${CHECK_NM_CONNECTIVITY}" in true|false) ;; *) fail "invalid NetworkManager qualification toggle" ;; esac
+  case "${NM_SCOPE_VARIANT}" in global|link) ;; *) fail "invalid NetworkManager route-scope variant" ;; esac
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"
