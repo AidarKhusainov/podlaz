@@ -266,12 +266,12 @@ class HostnameFixture:
 
     def resolve_external_marked(self, mark: int) -> str:
         """Resolve the exact synthetic domain via a protected marked underlay."""
-        transaction = b"\\x41\\x62"
+        transaction = b"\x41\x62"
         question = b"".join(bytes((len(label),)) + label.encode("ascii")
-                            for label in HOSTNAME.split(".")) + b"\\x00"
-        request = (transaction + b"\\x01\\x00\\x00\\x01"
-                   + b"\\x00\\x00\\x00\\x00\\x00\\x00"
-                   + question + b"\\x00\\x01\\x00\\x01")
+                            for label in HOSTNAME.split(".")) + b"\x00"
+        request = (transaction + b"\x01\x00\x00\x01"
+                   + b"\x00\x00\x00\x00\x00\x00"
+                   + question + b"\x00\x01\x00\x01")
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
             sock.settimeout(5)
@@ -281,12 +281,12 @@ class HostnameFixture:
             raise ValueError("unrecognized protected DNS peer")
         if len(result) != len(request) + 16 or result[:2] != transaction:
             raise ValueError("invalid protected DNS transaction")
-        if (result[2:4] != b"\\x81\\x80" or result[4:8] != b"\\x00\\x01\\x00\\x01"
-                or result[8:12] != b"\\x00\\x00\\x00\\x00"
-                or result[12:len(request)] != question + b"\\x00\\x01\\x00\\x01"):
+        if (result[2:4] != b"\x81\x80" or result[4:8] != b"\x00\x01\x00\x01"
+                or result[8:12] != b"\x00\x00\x00\x00"
+                or result[12:len(request)] != question + b"\x00\x01\x00\x01"):
             raise ValueError("ambiguous protected DNS answer")
         answer = result[len(request):]
-        if (answer[:12] != b"\\xc0\\x0c\\x00\\x01\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x04"):
+        if (answer[:12] != b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04"):
             raise ValueError("unsupported DNS answer structure")
         resolved = str(ipaddress.IPv4Address(answer[12:]))
         if resolved != NEXT_IPV4:
@@ -316,7 +316,7 @@ class _ExternalDNSHandler(_DNSHandler):
     def handle(self) -> None:
         # Do not forward unexpected queries to the outer runner's resolver.
         packet = self.request[0]
-        if b"\\x0epodlaz-gateway\\x07example\\x00" not in packet:
+        if b"\x0epodlaz-gateway\x07example\x00" not in packet:
             return
         super().handle()
 
