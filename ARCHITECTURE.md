@@ -33,6 +33,12 @@ Important durable authorities are intentionally separate:
 
 State carrying authority is strict/versioned, bounded where appropriate, atomically replaced, private (`0600` where applicable), and redaction-safe. Current-boot records are boot-ID scoped. Concurrent Network Session transitions use one serialized load-transition-validate-save boundary so stale snapshots cannot overwrite newer intent/protection state.
 
+User-owned profile-store mutations (selection, import, deletion and subscription
+refresh) serialize the complete read-modify-write transaction across CLI
+processes using a persistent private sidecar lock, independent of the atomically
+replaced `profiles.json` inode. Readers remain read-only. The sidecar is not
+profile identity or a cleanup authority and must not be unlinked between writes.
+
 Read-only commands may inspect state but must not clean it up.
 
 ## Subscription compatibility and identity boundary

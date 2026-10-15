@@ -108,11 +108,10 @@ func profileCandidates(opts options) []completionCandidate {
 	if err != nil {
 		return nil
 	}
-	profiles, err := store.List()
+	profiles, selectedID, err := store.ListWithSelectedID()
 	if err != nil {
 		return nil
 	}
-	selectedID, _ := store.SelectedID()
 
 	nameCounts := make(map[string]int, len(profiles))
 	for _, p := range profiles {
@@ -124,8 +123,17 @@ func profileCandidates(opts options) []completionCandidate {
 		key := strings.ToLower(strings.TrimSpace(p.Name))
 		value := render.Redact(p.Name)
 		description := render.Redact(p.Protocol)
-		if nameCounts[key] > 1 {
-			value = render.Redact(p.ID)
+		resolved, err := profile.ResolveInSnapshot(profiles, p.Name)
+		if nameCounts[key] > 1 || profile.IsPositionalSelector(p.Name) || err != nil || resolved.ID != p.ID {
+			// Some valid stable IDs resemble malformed numbers (for example
+			// "1.0"). Even an exact ID must go through the same selector
+			// parser; prefix any ID that would not resolve to this profile.
+			candidate := p.ID
+			byID, idErr := profile.ResolveInSnapshot(profiles, candidate)
+			if idErr != nil || byID.ID != p.ID {
+				candidate = "id:" + p.ID
+			}
+			value = render.Redact(candidate)
 			description = render.Redact(p.Name) + " · stable ID"
 		}
 		if p.ID == selectedID {

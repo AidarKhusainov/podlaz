@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/AidarKhusainov/podlaz/internal/storejson"
 )
@@ -19,6 +21,8 @@ var ErrNotFound = errors.New("profile not found")
 var ErrAlreadyExists = errors.New("profile already exists")
 var ErrNoSelection = errors.New("no profile selected")
 var ErrAmbiguousSelector = errors.New("profile selector is ambiguous")
+var ErrInvalidPosition = errors.New("invalid profile number")
+var ErrProfileChanged = errors.New("profile changed since it was chosen")
 
 // Store persists user-owned profiles and the selected profile ID under the
 // documented podlaz user state location.
@@ -64,13 +68,23 @@ func DefaultStorePath() (string, error) {
 func (s Store) Path() string { return s.path }
 
 func (s Store) List() ([]Profile, error) {
+	profiles, _, err := s.ListWithSelectedID()
+	return profiles, err
+}
+
+// ListWithSelectedID returns the sorted list and valid selected ID from the
+// same store snapshot so a displayed position and marker cannot disagree.
+func (s Store) ListWithSelectedID() ([]Profile, string, error) {
 	state, err := s.loadState()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	profiles := append([]Profile(nil), state.Profiles...)
 	SortStable(profiles)
-	return profiles, nil
+	if _, found := profileByID(profiles, state.SelectedProfileID); !found {
+		return profiles, "", nil
+	}
+	return profiles, state.SelectedProfileID, nil
 }
 
 func (s Store) Get(id string) (Profile, error) {
@@ -84,8 +98,8 @@ func (s Store) Get(id string) (Profile, error) {
 	return Profile{}, fmt.Errorf("%w: %s", ErrNotFound, id)
 }
 
-// Resolve accepts an exact stable ID first, otherwise an exact trimmed,
-// case-insensitive display name. A display name must resolve uniquely.
+// Resolve accepts one-based numbers in List order, explicit id:<ID>, an
+// exact nonnumeric stable ID, or an exact unique trimmed display name.
 func (s Store) Resolve(selector string) (Profile, error) {
 	state, err := s.loadState()
 	if err != nil {
@@ -97,6 +111,11 @@ func (s Store) Resolve(selector string) (Profile, error) {
 // Select persists the stable ID resolved from selector. Selection is user-owned
 // preference only; it does not change the current lifecycle or boot policy.
 func (s Store) Select(selector string) (Profile, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return Profile{}, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return Profile{}, err
@@ -137,6 +156,11 @@ func (s Store) SelectedID() (string, error) {
 // one profile remains, persists that profile as the selection before returning
 // it. It never retargets by display-name resemblance.
 func (s Store) ResolveSelected() (Profile, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return Profile{}, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return Profile{}, err
@@ -173,6 +197,11 @@ func (s Store) ResolveSelected() (Profile, error) {
 // import workflows that produced exactly one logical profile. A stale selected
 // ID is cleared instead of being name-retargeted.
 func (s Store) SelectIfUnset(id string) (bool, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return false, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return false, err
@@ -203,6 +232,11 @@ func (s Store) AddAndSelectIfUnset(p Profile) (bool, error) {
 	if err := Validate(p); err != nil {
 		return false, err
 	}
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return false, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return false, err
@@ -230,6 +264,11 @@ func (s Store) Add(p Profile) error {
 	if err := Validate(p); err != nil {
 		return err
 	}
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -249,6 +288,11 @@ func (s Store) Add(p Profile) error {
 // left untouched when validation or duplicate detection fails before the atomic
 // file replacement.
 func (s Store) AddProfiles(next []Profile) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -281,10 +325,45 @@ func (s Store) AddProfiles(next []Profile) error {
 // Delete removes an exact stable profile ID and atomically clears selection when
 // that ID was selected.
 func (s Store) Delete(id string) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
 	}
+	if !deleteProfileFromState(&state, id) {
+		return fmt.Errorf("%w: %s", ErrNotFound, id)
+	}
+	return s.saveState(state)
+}
+
+// DeleteResolved deletes only the identity the user confirmed. It refuses a
+// changed profile or a reordered positional selector when the store is reread
+// after confirmation; the index itself is never persisted.
+func (s Store) DeleteResolved(selector string, confirmed Profile) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
+	state, err := s.loadState()
+	if err != nil {
+		return err
+	}
+	current, err := resolveProfile(state.Profiles, selector)
+	if err != nil || current.ID != confirmed.ID || !reflect.DeepEqual(current, confirmed) {
+		return fmt.Errorf("%w: run `podlaz profile list` and retry", ErrProfileChanged)
+	}
+	if !deleteProfileFromState(&state, confirmed.ID) {
+		return fmt.Errorf("%w: run `podlaz profile list` and retry", ErrProfileChanged)
+	}
+	return s.saveState(state)
+}
+
+func deleteProfileFromState(state *storeFile, id string) bool {
 	kept := state.Profiles[:0]
 	deleted := false
 	for _, p := range state.Profiles {
@@ -295,14 +374,14 @@ func (s Store) Delete(id string) error {
 		kept = append(kept, p)
 	}
 	if !deleted {
-		return fmt.Errorf("%w: %s", ErrNotFound, id)
+		return false
 	}
 	state.Profiles = kept
 	if state.SelectedProfileID == id {
 		state.SelectedProfileID = ""
 	}
 	SortStable(state.Profiles)
-	return s.saveState(state)
+	return true
 }
 
 // ReplaceSubscriptionProfiles atomically replaces the profiles previously owned
@@ -310,6 +389,11 @@ func (s Store) Delete(id string) error {
 // Profiles not owned by the subscription are preserved. Removing the selected
 // stable ID clears selection in the same profile-store replacement.
 func (s Store) ReplaceSubscriptionProfiles(previousIDs []string, next []Profile) (SubscriptionUpdateDiff, error) {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return SubscriptionUpdateDiff{}, lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return SubscriptionUpdateDiff{}, err
@@ -428,6 +512,11 @@ func (s Store) loadState() (storeFile, error) {
 }
 
 func (s Store) save(profiles []Profile) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -440,6 +529,11 @@ func (s Store) save(profiles []Profile) error {
 }
 
 func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(string) error) error {
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.Close()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -449,6 +543,8 @@ func (s Store) saveWithDirectorySync(profiles []Profile, syncParentDir func(stri
 	return s.saveStateWithDirectorySync(state, syncParentDir)
 }
 
+// saveState is a low-level persistence helper; production read-modify-write
+// callers hold lockForMutation from before loading through this write.
 func (s Store) saveState(state storeFile) error {
 	return s.saveStateWithDirectorySync(state, storejson.SyncDir)
 }
@@ -467,10 +563,78 @@ func (s Store) saveStateWithDirectorySync(state storeFile, syncParentDir func(st
 	return nil
 }
 
+// IsPositionalSelector reports whether the selector claims a list position,
+// including zero and overflowing decimals. It is used to forbid unsafe --yes
+// deletion, regardless of whether a particular position currently exists.
+func IsPositionalSelector(selector string) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return false
+	}
+	for i := 0; i < len(selector); i++ {
+		if selector[i] < '0' || selector[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func invalidNumericForm(selector string) bool {
+	if selector == "" {
+		return false
+	}
+	// Signed/hex/fraction/exponent and non-ASCII decimal-looking values must
+	// not accidentally resolve as names. Names such as "2nd" remain names.
+	first := []rune(selector)[0]
+	if unicode.IsDigit(first) && (first < '0' || first > '9') {
+		return true
+	}
+	if first == '+' || first == '-' {
+		rest := strings.TrimPrefix(strings.TrimPrefix(selector, "+"), "-")
+		return rest != "" && rest[0] >= '0' && rest[0] <= '9'
+	}
+	if first < '0' || first > '9' {
+		return false
+	}
+	for _, ch := range selector {
+		if ch >= '0' && ch <= '9' || strings.ContainsRune(".+_-xXeE", ch) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// ResolveInSnapshot applies Store.Resolve semantics to an already-loaded
+// snapshot. Completion uses it to verify that a suggested name resolves to
+// the intended stable ID without rereading user state for every candidate.
+func ResolveInSnapshot(profiles []Profile, selector string) (Profile, error) {
+	return resolveProfile(profiles, selector)
+}
+
 func resolveProfile(profiles []Profile, selector string) (Profile, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
 		return Profile{}, fmt.Errorf("%w: empty selector", ErrNotFound)
+	}
+	if strings.HasPrefix(selector, "id:") {
+		id := strings.TrimPrefix(selector, "id:")
+		if p, ok := profileByID(profiles, id); ok {
+			return p, nil
+		}
+		return Profile{}, fmt.Errorf("%w: stable ID %q", ErrNotFound, id)
+	}
+	if IsPositionalSelector(selector) {
+		position, err := strconv.Atoi(selector)
+		if err != nil || position < 1 || position > len(profiles) {
+			return Profile{}, fmt.Errorf("%w: %q is not a row in `podlaz profile list` (1..%d)", ErrInvalidPosition, selector, len(profiles))
+		}
+		sorted := append([]Profile(nil), profiles...)
+		SortStable(sorted)
+		return sorted[position-1], nil
+	}
+	if invalidNumericForm(selector) {
+		return Profile{}, fmt.Errorf("%w: %q; use a positive ASCII decimal row or id:<stable-id>", ErrInvalidPosition, selector)
 	}
 	if p, ok := profileByID(profiles, selector); ok {
 		return p, nil
