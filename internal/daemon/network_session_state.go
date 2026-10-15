@@ -79,6 +79,8 @@ var (
 	privacyEnvelopeTablePattern  = regexp.MustCompile(`^podlaz_pe_[0-9a-f]{12}(?:_[1-9][0-9]{0,2})?$`)
 	networkSessionInterfaceRegex = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	networkSessionStateLocks     sync.Map
+
+	errProtectedNetworkSessionChangeWithoutHandoff = errors.New("unable to switch profiles while another protected Podlaz session requires verified replacement; run podlaz debug doctor --tun")
 )
 
 func newNetworkSessionStateStore(runtimeDir string, readBootID bootIDReader) networkSessionStateStore {
@@ -136,7 +138,7 @@ func (s networkSessionStateStore) BeginOrResume(request api.ConnectRequest) (net
 				return cloneNetworkSessionState(current), nil
 			}
 			if !networkSessionRequestsEquivalentIgnoringHandoff(current.Request, request) {
-				return networkSessionState{}, errors.New("protected Network Session change requires replace-podlaz handoff")
+				return networkSessionState{}, errProtectedNetworkSessionChangeWithoutHandoff
 			}
 		}
 		current.Request = request
