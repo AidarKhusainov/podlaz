@@ -17,6 +17,12 @@ func (s Store) DeleteSubscriptionProfiles(ids []string) (int, error) {
 		owned[id] = struct{}{}
 	}
 
+	lock, lockErr := s.lockForMutation()
+	if lockErr != nil {
+		return 0, lockErr
+	}
+	defer lock.Close()
+
 	state, err := s.loadState()
 	if err != nil {
 		return 0, err
