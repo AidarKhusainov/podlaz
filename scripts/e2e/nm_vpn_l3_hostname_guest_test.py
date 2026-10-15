@@ -112,6 +112,89 @@ class DnsFixtureTest(unittest.TestCase):
                         fixture.write_pinned_generation()
                     self.assertFalse(fixture.pinned_path.exists())
 
+    def test_vless_reality_generation_pins_dial_without_changing_identity(self):
+        with TemporaryDirectory() as directory:
+            fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")
+            original = {"outbounds": [{
+                "protocol": "vless",
+                "settings": {"vnext": [{
+                    "address": HOSTNAME, "port": 443,
+                    "users": [{"id": "00000000-0000-4000-8000-000000000001",
+                               "encryption": "none", "flow": "xtls-rprx-vision"}]}]},
+                "streamSettings": {
+                    "network": "raw", "security": "reality",
+                    "realitySettings": {
+                        "serverName": "www.example.com", "publicKey": "fixture-public-key",
+                        "fingerprint": "chrome", "shortId": "aabb", "spiderX": "/"},
+                    "sockopt": {"mark": 20570}}
+            }]}
+            fixture.config_path.write_text(json.dumps(original))
+            with patch.object(fixture, "assert_single_gateway"):
+                first = fixture.write_pinned_generation()
+                second = fixture.write_pinned_generation(
+                    address=NEXT_IPV4, allow_changed_dns=True,
+                    output=Path(directory) / "next.json")
+            for path, target in ((first, fixture.gateway), (second, NEXT_IPV4)):
+                result = json.loads(path.read_text())["outbounds"][0]
+                self.assertEqual(result["settings"]["vnext"][0]["address"], target)
+                self.assertEqual(result["streamSettings"], original["outbounds"][0]["streamSettings"])
+                self.assertEqual(result["settings"]["vnext"][0]["users"],
+                                 original["outbounds"][0]["settings"]["vnext"][0]["users"])
+            self.assertEqual(json.loads(fixture.config_path.read_text()), original)
+
+    def test_vless_tls_and_trojan_keep_explicit_server_identity(self):
+        for protocol in ("vless", "trojan"):
+            with self.subTest(protocol=protocol), TemporaryDirectory() as directory:
+                fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")
+                settings = ({"vnext": [{"address": HOSTNAME, "port": 443,
+                                       "users": [{"id": "00000000-0000-4000-8000-000000000001"}]}]}
+                            if protocol == "vless" else
+                            {"address": HOSTNAME, "port": 443, "password": "fixture-only"})
+                data = {"outbounds": [{"protocol": protocol, "settings": settings,
+                       "streamSettings": {"network": "raw", "security": "tls",
+                                          "tlsSettings": {"serverName": "cdn.example.com"},
+                                          "sockopt": {"mark": 20570}}}]}
+                fixture.config_path.write_text(json.dumps(data))
+                with patch.object(fixture, "assert_single_gateway"):
+                    target = fixture.write_pinned_generation()
+                result = json.loads(target.read_text())["outbounds"][0]
+                self.assertEqual(result["streamSettings"]["tlsSettings"]["serverName"],
+                                 "cdn.example.com")
+                new_address = (result["settings"]["vnext"][0]["address"] if protocol == "vless"
+                               else result["settings"]["address"])
+                self.assertEqual(new_address, fixture.gateway)
+
+    def test_ambiguous_or_unmarked_reality_never_produces_gateway(self):
+        valid = {"outbounds": [{"protocol": "vless",
+                    "settings": {"vnext": [{"address": HOSTNAME, "port": 443,
+                                           "users": [{"id": "example-uuid"}]}]},
+                    "streamSettings": {"network": "raw", "security": "reality",
+                        "realitySettings": {"serverName": "www.example.com",
+                                            "publicKey": "fixture-public-key",
+                                            "fingerprint": "chrome"},
+                        "sockopt": {"mark": 20570}}}]}
+        mutations = (
+            lambda d: d["outbounds"].append(dict(d["outbounds"][0])),
+            lambda d: d["outbounds"][0]["streamSettings"]["sockopt"].pop("mark"),
+            lambda d: d["outbounds"][0]["streamSettings"]["sockopt"].update({"domainStrategy": "UseIP"}),
+            lambda d: d["outbounds"][0]["streamSettings"]["realitySettings"].pop("publicKey"),
+            lambda d: d["outbounds"][0]["streamSettings"]["realitySettings"].pop("serverName"),
+            lambda d: d["outbounds"][0]["settings"]["vnext"].append(
+                {"address": "another.example", "port": 443, "users": [{"id": "fixture"}]}),
+            lambda d: d["outbounds"][0]["streamSettings"].update({"network": "grpc"}),
+            lambda d: d["outbounds"][0].update({"protocol": "freedom"}),
+        )
+        with TemporaryDirectory() as directory:
+            fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")
+            with patch.object(fixture, "assert_single_gateway"):
+                for mutate in mutations:
+                    test_input = json.loads(json.dumps(valid))
+                    mutate(test_input)
+                    fixture.config_path.write_text(json.dumps(test_input))
+                    with self.subTest(input=test_input), self.assertRaises(ValueError):
+                        fixture.write_pinned_generation()
+                    self.assertFalse(fixture.pinned_path.exists())
+
     def test_real_provider_syn_counter_requires_exact_marker(self):
         fixture = HostnameFixture(Path("/tmp/unused"), "172.31.253.1")
         valid = {"nftables": [{"rule": {"family": "inet",
