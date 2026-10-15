@@ -38,7 +38,7 @@ jobs:
           cache-dependency-path: |
             go.mod
             packaging/package-toolchain.env
-      - name: Validate Gate A contracts
+      - name: Validate NM guest and hostname contracts
         run: |
           python3 -m unittest discover -s scripts/e2e -p 'nm_vpn_l3_*test.py' -v
           python3 -m unittest discover -s scripts/e2e -p 'nm_vpn_underlay_guest_test.py' -v
