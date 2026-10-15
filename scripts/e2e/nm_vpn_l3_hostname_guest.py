@@ -22,7 +22,6 @@ DNS_ADDR = "127.0.0.55"
 DNS_UPSTREAM = "127.0.0.53"
 OTHER_IPV4 = "172.31.254.1"
 NEXT_IPV4 = "172.31.253.2"
-EXTERNAL_DNS_PORT = 53535
 OTHER_IPV6 = "2001:db8:460::1"
 RESOLV = Path("/etc/resolv.conf")
 
@@ -287,35 +286,6 @@ class HostnameFixture:
         self.answer((self.gateway,))
         self.assert_single_gateway()
 
-    def resolve_external_marked(self, mark: int) -> str:
-        """Resolve the exact synthetic domain via a protected marked underlay."""
-        transaction = b"\x41\x62"
-        question = b"".join(bytes((len(label),)) + label.encode("ascii")
-                            for label in HOSTNAME.split(".")) + b"\x00"
-        request = (transaction + b"\x01\x00\x00\x01"
-                   + b"\x00\x00\x00\x00\x00\x00"
-                   + question + b"\x00\x01\x00\x01")
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
-            sock.settimeout(5)
-            sock.sendto(request, (NEXT_IPV4, EXTERNAL_DNS_PORT))
-            result, source = sock.recvfrom(512)
-        if source != (NEXT_IPV4, EXTERNAL_DNS_PORT):
-            raise ValueError("unrecognized protected DNS peer")
-        if len(result) != len(request) + 16 or result[:2] != transaction:
-            raise ValueError("invalid protected DNS transaction")
-        if (result[2:4] != b"\x81\x80" or result[4:8] != b"\x00\x01\x00\x01"
-                or result[8:12] != b"\x00\x00\x00\x00"
-                or result[12:len(request)] != question + b"\x00\x01\x00\x01"):
-            raise ValueError("ambiguous protected DNS answer")
-        answer = result[len(request):]
-        if (answer[:12] != b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00\x00\x04"):
-            raise ValueError("unsupported DNS answer structure")
-        resolved = str(ipaddress.IPv4Address(answer[12:]))
-        if resolved != NEXT_IPV4:
-            raise ValueError("DNS answer does not match real second fixture")
-        return resolved
-
     def verify_actual_peer(self, pid: int, gateway: str | None = None) -> None:
         # Observe Xray's actual remote TCP peer rather than equating the DNS
         # snapshot with the transport. The provider server uses real TCP.
@@ -334,26 +304,3 @@ class HostnameFixture:
 def hostname_fixture(source: Path, gateway: str):
     with HostnameFixture(source, gateway) as fixture:
         yield fixture
-
-class _ExternalDNSHandler(_DNSHandler):
-    def handle(self) -> None:
-        # Do not forward unexpected queries to the outer runner's resolver.
-        packet = self.request[0]
-        if b"\x0epodlaz-gateway\x07example\x00" not in packet:
-            return
-        super().handle()
-
-
-def _serve_external_dns(address: str, port: int) -> None:
-    if address != NEXT_IPV4 or port != EXTERNAL_DNS_PORT:
-        raise SystemExit("external DNS requires reserved disposable endpoint")
-    with _Server((address, port), _ExternalDNSHandler) as server:
-        server.records = ((NEXT_IPV4,), (), False)
-        server.serve_forever()
-
-
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) != 4 or sys.argv[1] != "--external-dns":
-        raise SystemExit(2)
-    _serve_external_dns(sys.argv[2], int(sys.argv[3]))

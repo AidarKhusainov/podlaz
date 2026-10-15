@@ -81,16 +81,27 @@ run_scenario() {
   mark_failure fixture synthetic.endpoint
   start_synthetic_xray_endpoint
   # Host DNS and the second provider IP are restricted to the ephemeral dummy/veth.
-  python3 "${SCRIPT_DIR}/nm_vpn_l3_hostname_guest.py" --external-dns \
+  # Untrusted underlay DNS responses must not replace a generation:
+  # only authenticated DoH using the explicitly trusted disposable CA.
+  openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+    -keyout "${XRAY_ROOT}/bootstrap.key" \
+    -out "${XRAY_ROOT}/bootstrap-ca.crt" \
+    -subj '/CN=bootstrap.podlaz.example' \
+    -addext 'subjectAltName=DNS:bootstrap.podlaz.example' \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    >"${PRIVATE_ROOT}/bootstrap-certificate.log" 2>&1
+  chmod 0600 "${XRAY_ROOT}/bootstrap.key" "${XRAY_ROOT}/bootstrap-ca.crt"
+  python3 "${SCRIPT_DIR}/nm_vpn_l3_encrypted_bootstrap.py" --serve \
     "${NM_SECOND_ENDPOINT_IP}" "${NM_DNS_PORT}" \
-    >"${PRIVATE_ROOT}/external-dns.stdout" 2>"${PRIVATE_ROOT}/external-dns.stderr" &
+    "${XRAY_ROOT}/bootstrap-ca.crt" "${XRAY_ROOT}/bootstrap.key" \
+    >"${PRIVATE_ROOT}/bootstrap-doh.stdout" 2>"${PRIVATE_ROOT}/bootstrap-doh.stderr" &
   HOSTED_NM_DNS_PID=$!
   for _ in $(seq 1 100); do
-    if ss -H -lun | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null; then break; fi
+    if ss -H -ltn | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null; then break; fi
     kill -0 "${HOSTED_NM_DNS_PID}" >/dev/null || return 1
     sleep 0.1
   done
-  ss -H -lun | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null
+  ss -H -ltn | awk '{print $4}' | grep -Fx "${NM_SECOND_ENDPOINT_IP}:${NM_DNS_PORT}" >/dev/null
   install_tun_authorization
   mark_failure diagnostic_unknown profile.import
   # Guest endpoint URI and credentials stay inside private guest state.

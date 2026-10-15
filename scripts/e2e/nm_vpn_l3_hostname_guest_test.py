@@ -126,39 +126,6 @@ class DnsFixtureTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fixture.tcp_syn_packets("podlaz_nm_l3_guest")
 
-    def test_external_dns_queries_are_real_wire_packets_and_marked(self):
-        fixture = HostnameFixture(Path("/tmp/not-created"), "172.31.253.1")
-        class WireSocket:
-            def __init__(self):
-                self.sent = None
-                self.mark = None
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                return False
-            def setsockopt(self, level, option, value):
-                self.mark = (level, option, value)
-            def settimeout(self, timeout):
-                self.timeout = timeout
-            def sendto(self, data, peer):
-                self.sent = data
-                self.peer = peer
-            def recvfrom(self, size):
-                self.assertion(self.sent is not None)
-                answer = (self.sent[:2] + b"\x81\x80\x00\x01\x00\x01"
-                          + b"\x00\x00\x00\x00" + self.sent[12:]
-                          + b"\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x00"
-                          + b"\x00\x04" + socket.inet_aton(NEXT_IPV4))
-                return answer, (NEXT_IPV4, 53535)
-        sock = WireSocket()
-        sock.assertion = self.assertTrue
-        with patch("nm_vpn_l3_hostname_guest.socket.socket", return_value=sock):
-            self.assertEqual(fixture.resolve_external_marked(20570), NEXT_IPV4)
-        self.assertEqual(sock.sent[:12], b"\x41\x62\x01\x00\x00\x01"
-                                            b"\x00\x00\x00\x00\x00\x00")
-        self.assertEqual(sock.mark, (socket.SOL_SOCKET, socket.SO_MARK, 20570))
-        self.assertEqual(sock.peer, (NEXT_IPV4, 53535))
-
     def test_next_generation_preflight_is_isolated_from_tracked_tun(self):
         with TemporaryDirectory() as directory:
             fixture = HostnameFixture(Path(directory) / "source.json", "172.31.253.1")

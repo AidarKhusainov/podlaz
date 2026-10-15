@@ -21,6 +21,7 @@ import uuid
 
 from nm_vpn_l3_contract import GuestVPNConfig, config_dicts, vpn_profile_settings
 from nm_vpn_l3_hostname_guest import HostnameFixture, hostname_fixture, NEXT_IPV4
+from nm_vpn_l3_encrypted_bootstrap import resolve_marked_doh
 from nm_vpn_l3_intent import load_guest_intent, REAPPLY_MARKER
 from nm_vpn_l3_runtime_guard import validate_xray_tun
 from nm_vpn_underlay_guest import UnderlayEvidence, UnderlayPlan, select_underlay
@@ -768,7 +769,7 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
             # continuously armed output barrier.
             _stage('hostname-protected-external-dns')
             _stage('hostname-external-dns-query')
-            next_gateway = hostname.resolve_external_marked(plan.tunnel_mark)
+            next_gateway = resolve_marked_doh(plan.tunnel_mark)
             if next_gateway != NEXT_IPV4:
                 raise ValueError('unqualified second transport gateway')
             _stage('hostname-external-dns-qualified')
