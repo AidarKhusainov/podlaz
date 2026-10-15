@@ -89,13 +89,21 @@ podlaz profile delete <profile> [--yes]
 
 A `<profile>` selector resolves in this order:
 
-1. exact stable profile ID;
-2. otherwise an exact trimmed, case-insensitive display name that matches exactly one profile.
+1. a positive ASCII decimal (`1`, `2`, …) selects the corresponding **one-based row** in the current sorted `profile list`;
+2. `id:<stable-id>` explicitly selects the exact stable ID (required to address an ID made entirely of digits);
+3. otherwise an exact stable profile ID;
+4. otherwise an exact trimmed, case-insensitive display name that matches exactly one profile.
 
-Ambiguous names fail without guessing. When a stable ID is needed for
-disambiguation, `podlaz profile list --ids` explicitly reveals the exact IDs;
-the default list continues to hide them. Display names are never ownership or
-cleanup authority.
+A numeric selector always identifies its numbered row, even if another profile
+has that numeric display name or stable ID. Missing, zero, overflowing or
+unsupported numeric forms fail rather than selecting a name. Ambiguous names
+fail without guessing; duplicates remain independently selectable by number.
+`profile list --ids` reveals stable IDs for disambiguation and scripts. A
+number is only a temporary UI selector: rows can change after import,
+subscription refresh or deletion, so automation must always use stable IDs.
+Every operation resolves the row to its stable ID before changing any state or
+sending a request to the daemon. Display names and positions are never
+ownership or cleanup authority.
 
 Selected-profile rules:
 
@@ -108,17 +116,23 @@ Selected-profile rules:
 - deleting the selected profile clears selection in the same atomic profile-store update;
 - subscription refresh/removal that removes the selected stable ID clears selection and never retargets by display-name resemblance.
 
-`profile list` is human-oriented. It marks the selected profile and omits
-server endpoints, credentials, raw provider configuration, and stable IDs by
-default. `profile list --ids` is the explicit disambiguation/automation view
-that adds exact stable IDs; those IDs can be opaque and may encode provider
-address material, so they are not shown by the normal list. `profile show` may
-show the stable ID and redacted technical metadata, but not credentials or raw
-provider JSON.
+`profile list` is human-oriented. It prints a `#` column starting at
+`1` in the exact stable `profile.Store.List()` order, marks the selected
+profile, and omits server endpoints, credentials, raw provider configuration,
+and stable IDs by default. `profile list --ids` retains the same row numbers
+and selected marker and adds exact stable IDs. Those IDs can be opaque and
+may encode provider address material, so they are not shown by the normal list.
+`profile show` may show the stable ID and redacted technical metadata, but
+not credentials or raw provider JSON.
 
 Profile deletion is destructive persisted user-data removal. Interactive
-confirmation defaults to **No**; empty input and EOF never authorize deletion.
-Non-interactive deletion requires `--yes`.
+confirmation names the **resolved** profile and defaults to **No**; empty input
+and EOF never authorize deletion. Before removal, the confirmed identity and
+the original selector are checked again against current persisted state. If
+the profile changed, disappeared, or its numbered row now points elsewhere,
+deletion aborts without removing another profile. Non-interactive deletion
+requires `--yes`, which rejects **all** positional selectors (even from a
+terminal). Use a stable ID for automation.
 
 ## Connect
 
