@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from nm_vpn_l3_encrypted_bootstrap import (
-    SERVER_IP, SERVER_NAME, PORT, make_query, answer_query, parse_answer,
+    SERVER_IP, INITIAL_IP, SERVER_NAME, PORT, _DoHServer, make_query, answer_query, parse_answer,
     parse_https_response, resolve_marked_doh,
 )
 
@@ -22,6 +22,7 @@ class ProtectedBootstrapTest(unittest.TestCase):
         query = make_query(b"\x46\x21")
         reply = answer_query(query)
         self.assertEqual(parse_answer(query, reply), SERVER_IP)
+        self.assertEqual(parse_answer(query, answer_query(query, address=INITIAL_IP)), INITIAL_IP)
         self.assertEqual(parse_https_response(query, https_response(reply)), SERVER_IP)
         for wrong in (reply[:-1], reply[:-4] + socket.inet_aton("172.31.253.1"),
                       b"\x11\x11" + reply[2:], reply + b"\x00"):
@@ -31,6 +32,12 @@ class ProtectedBootstrapTest(unittest.TestCase):
             make_query(b"\x01")
         with self.assertRaises(ValueError):
             answer_query(query[:-1])
+
+    def test_same_authenticated_resolver_rotates_a_answer(self):
+        with _DoHServer(("127.0.0.1", 0)) as server:
+            self.assertEqual(server.next_dns_ip(), INITIAL_IP)
+            self.assertEqual(server.next_dns_ip(), SERVER_IP)
+            self.assertEqual(server.next_dns_ip(), SERVER_IP)
 
     def test_http_requires_exact_success_content_length_and_type(self):
         query = make_query(b"\x55\x66")

@@ -708,6 +708,9 @@ def _run_guest_with_resolver(config_file: Path, external_gateway: str,
             protected=True
             installed=True  # Cleanup must remain fail-closed even if apply aborts midway.
             _start_underlay(plan)
+            _stage('hostname-protected-dns-initial')
+            if resolve_marked_doh(plan.tunnel_mark) != external_gateway:
+                raise ValueError('initial authenticated DNS gateway disagrees')
             xray=subprocess.Popen(('/usr/lib/podlaz/xray','run','-c',str(config_file)),stdout=output,stderr=errors)
             children.append(xray)
             for _ in range(100):
