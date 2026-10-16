@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import struct
 from pathlib import Path
 import subprocess
@@ -112,6 +113,37 @@ def _cleanup_underlay(plan: object) -> None:
             "dev", plan.connected_route[1], "table", str(plan.table))
     if ip_json("-4", "route", "show", "table", str(plan.table)):
         raise ValueError("NM TUN research underlay did not clean exactly")
+
+
+def inspect_nm_tun_netlink_events(events: str) -> int:
+    """Reject administrative DOWN, deletion or ambiguous identity changes.
+
+    iproute2's `state DOWN` is *operstate*, not the administrative IFF_UP
+    flag. Closing the last TUN packet FD may remove carrier even while the
+    independent NetworkManager owner keeps IFF_UP. That event is not
+    authorization to change the link's administrative state or L3.
+    The input is strictly private and bounded; no raw event is exported.
+    """
+    if not isinstance(events, str) or len(events) > 65536:
+        raise ValueError("invalid bounded netlink observation")
+    carrier_loss = 0
+    for line in events.splitlines():
+        if not line.strip() or line.lstrip().startswith(("link/", "    ")):
+            continue
+        if "Deleted " in line:
+            raise ValueError("NM-owned TUN deleted during Xray lifecycle")
+        match = re.fullmatch(
+            r"\\d+:\\s+podlaz0(?:@[^: ]+)?\\s*:\\s*<([^>]*)>.*",
+            line.strip(),
+        )
+        if match is None:
+            raise ValueError("ambiguous NM-owned TUN netlink event")
+        flags = match.group(1).split(",")
+        if "UP" not in flags:
+            raise ValueError("NM-owned TUN administrative IFF_UP cleared")
+        if "state DOWN" in line:
+            carrier_loss += 1
+    return carrier_loss
 
 
 def start_externally_managed_xray(
@@ -219,18 +251,28 @@ def run_guest(config_file: Path) -> None:
                         monitor.terminate()
                         monitor.wait(timeout=5)
             observed = monitor_path.read_text(encoding="utf-8")
-            if len(observed) > 65536:
-                raise ValueError("unbounded netlink lifecycle evidence")
-            if "state DOWN" in observed or "Deleted " in observed:
-                print("nm-owned-transient-link-down=observed", flush=True)
-                raise ValueError("Xray closed a link managed by NM")
-            # The final UP state is necessary but not proof of a single
-            # writer: Xray v26.3.27 calls LinkSetDown() on Close().
+            try:
+                carrier_loss = inspect_nm_tun_netlink_events(observed)
+            except ValueError:
+                print("nm-owned-admin-lifecycle-violation=observed", flush=True)
+                raise
+            if carrier_loss:
+                # Only the closed category may be exported; raw private
+                # link flags/addresses and netlink payload never leave guest.
+                print("nm-owned-carrier-only-down=observed", flush=True)
+            # IFF_UP remained set in every event, but a post-stop identity,
+            # L3 and NM active-profile check must still complete.
             state = _profile_present(profile_id, active=True)
             link = _link()
             if link["ifindex"] != nm_index:
                 raise ValueError("NM TUN ifindex replaced during Xray exit")
             verify_nm_survives_xray_exit(state, "UP" in link.get("flags", []))
+            after_addresses = ip_json("address", "show", "dev", "podlaz0")
+            if len(after_addresses) != 1 or not any(
+                entry.get("family") == "inet" and entry.get("local") == "198.18.0.17"
+                for entry in after_addresses[0].get("addr_info", [])
+            ):
+                raise ValueError("NM-owned TUN L3 changed after Xray exit")
             _prove_physical_drop()
             _prove_ipv6_no_leak()
             print("nm-owned-nm-post-xray-active=pass", flush=True)
