@@ -7,6 +7,8 @@ on:
       - 'scripts/e2e/nm_owned_tun_guest.py'
       - 'scripts/e2e/nm_owned_tun_guest_test.py'
       - 'scripts/e2e/nm_owned_tun_guest_harness.sh'
+      - 'scripts/e2e/nm_owned_tun_grouped_guest.py'
+      - 'scripts/e2e/nm_owned_tun_grouped_guest_test.py'
       - 'scripts/e2e/nm_owned_tun_xray_patch.py'
       - 'scripts/e2e/nm_owned_tun_xray_patch_test.py'
   workflow_dispatch:
@@ -62,13 +64,14 @@ jobs:
 
   guest:
     needs: guest-only-xray
-    name: NM-owned TUN + packaged Xray (${{ matrix.release }}, disposable guest)
+    name: NM-owned external-FD Xray (${{ matrix.release }}, ${{ matrix.profile }}, guest)
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
         release: [noble, resolute]
+        profile: [typed, grouped]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -90,8 +93,9 @@ jobs:
       - name: Check isolated TUN ownership contracts
         run: |
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_guest_test.py' -v
+          python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_grouped_guest_test.py' -v
           python3 -m unittest discover -s scripts/e2e -p 'nm_owned_tun_xray_patch_test.py' -v
-          python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py scripts/e2e/nm_owned_tun_xray_patch.py
+          python3 -m py_compile scripts/e2e/nm_owned_tun_guest.py scripts/e2e/nm_owned_tun_grouped_guest.py scripts/e2e/nm_owned_tun_xray_patch.py
           bash -n scripts/e2e/nm_owned_tun_guest_harness.sh
           test -f "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
           test ! -L "${RUNNER_TEMP}/nm-owned-engine/nm-owned-external-xray"
@@ -111,6 +115,7 @@ jobs:
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
           PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
           PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+          PODLAZ_E2E_NM_TUN_PROFILE: ${{ matrix.profile }}
           PODLAZ_NM_EXTERNAL_XRAY_BINARY: ${{ runner.temp }}/nm-owned-engine/nm-owned-external-xray
         run: |
           rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
@@ -123,7 +128,7 @@ jobs:
             # Strict allowlisted checkpoint from the private child report.
             # NEVER export Xray logs, TUN addresses, certificates or config.
             if [[ -f "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" ]]; then
-              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|nm-created|xray-attaching|real-traffic|natural-global-full|xray-release|cleanup-xray|cleanup-nm|cleanup-underlay|cleanup-barrier)$' \
+              grep -E '^nm-owned-failure-step=(barrier-armed|underlay-allocated|nm-created|xray-attaching|real-traffic|natural-global-full|xray-release|cleanup-xray|cleanup-nm|grouped-independent-outbounds|cleanup-underlay|cleanup-barrier)$' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
               grep -Fx 'nm-owned-admin-lifecycle-violation=observed' \
                 "${E2E_TMP_ROOT}/private/nm-owned-result.stdout" || true
@@ -144,7 +149,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: nm-owned-tun-feasibility-${{ matrix.release }}
+          name: nm-owned-tun-feasibility-${{ matrix.release }}-${{ matrix.profile }}
           path: ${{ runner.temp }}/podlaz-nm-owned-tun-public/hosted-synthetic-tun.txt
           if-no-files-found: error
           retention-days: 7
