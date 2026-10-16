@@ -202,16 +202,15 @@ def _qualified_peer_packets() -> tuple[bool, bool]:
         expressions = entry["rule"].get("expr")
         if not isinstance(expressions, list):
             raise ValueError("malformed exact peer counter")
-        names = [expr.get("comment") for expr in expressions
-                 if isinstance(expr, dict) and isinstance(expr.get("comment"), str)]
-        for name in names:
-            if name not in ("nm_owned_peer_a", "nm_owned_peer_b"):
-                continue
-            counters = [expr["counter"].get("packets") for expr in expressions
-                        if isinstance(expr, dict) and isinstance(expr.get("counter"), dict)]
-            if name in counted or len(counters) != 1 or type(counters[0]) is not int:
-                raise ValueError("ambiguous exact peer counter")
-            counted[name] = counters[0]
+        # nft -j exposes a rule's comment on the rule object, NOT in expr.
+        name = entry["rule"].get("comment")
+        if name not in ("nm_owned_peer_a", "nm_owned_peer_b"):
+            continue
+        counters = [expr["counter"].get("packets") for expr in expressions
+                    if isinstance(expr, dict) and isinstance(expr.get("counter"), dict)]
+        if name in counted or len(counters) != 1 or type(counters[0]) is not int:
+            raise ValueError("ambiguous exact peer counter")
+        counted[name] = counters[0]
     if set(counted) != {"nm_owned_peer_a", "nm_owned_peer_b"}:
         raise ValueError("missing exact independent peer counters")
     return counted["nm_owned_peer_a"] > 0, counted["nm_owned_peer_b"] > 0
