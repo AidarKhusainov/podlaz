@@ -7,7 +7,7 @@ from nm_owned_tun_xray_patch import patch_linux_tun
 SOURCE = """//go:build linux && !android
 package tun
 import (
-    "github.com/vishvananga/netlink"
+    "github.com/vishvananda/netlink"
 )
 type LinuxTun struct {
     tunFd int
@@ -26,7 +26,7 @@ func (t *LinuxTun) Close() error {
     _ = netlink.LinkSetDown(t.tunLink)
     return nil
 }
-""".replace('    "github.com/vishvananga/netlink"', '\t"github.com/vishvananga/netlink"').replace(
+""".replace('    "github.com/vishvananda/netlink"', '\t"github.com/vishvananda/netlink"').replace(
     '    tunLink netlink.Link\n    options TunOptions',
     '\ttunLink netlink.Link\n\toptions TunOptions'
 ).replace('    tunFd, err := open(options.Name)', '\ttunFd, err := open(options.Name)').replace(
