@@ -164,15 +164,16 @@ def run_guest(config_file: Path) -> None:
             stage("xray-release")
             xray.terminate()
             xray.wait(timeout=12)
-            # Proof of single-writer lifecycle semantics; a shared writer
-            # that drops NM's interface is an explicitly NEGATIVE result.
+            # The final UP state is necessary but not proof of a single
+            # writer: Xray v26.3.27 calls LinkSetDown() on Close().
             state = _profile_present(profile_id, active=True)
             link = _link()
-            verify_attached_tun(nm_index, link["ifindex"], True)
+            if link["ifindex"] != nm_index:
+                raise ValueError("NM TUN ifindex replaced during Xray exit")
             verify_nm_survives_xray_exit(state, "UP" in link.get("flags", []))
             _prove_physical_drop()
             _prove_ipv6_no_leak()
-            print("nm-owned-xray-release-safe=pass", flush=True)
+            print("nm-owned-nm-post-xray-active=pass", flush=True)
         except Exception:
             print("nm-owned-failure-step=" + CURRENT_STEP, flush=True)
             raise
