@@ -141,6 +141,7 @@ jobs:
         env:
           E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-owned-tun-private
           E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-owned-tun-public
+          PODLAZ_E2E_NM_TUN_PROFILE: ${{ matrix.profile }}
         run: bash scripts/e2e/nm_owned_tun_guest_harness.sh validate-report
       - name: Remove all private guest material
         if: always()
