@@ -134,7 +134,7 @@ def start_externally_managed_xray(
         # TUNSETIFF attaches an FD to NM's existing persistent TUN.
         request = bytearray(struct.pack("16sH22x", b"podlaz0", 0x0001 | 0x1000))
         fcntl.ioctl(fd, 0x400454ca, request, True)
-        if request[:16].split(b"\\0", 1)[0] != b"podlaz0":
+        if request[:16].split(b"\x00", 1)[0] != b"podlaz0":
             raise ValueError("external FD attached to another interface")
         if _link().get("ifindex") != index:
             raise ValueError("NM-owned TUN changed during FD handoff")
