@@ -115,6 +115,29 @@ bypass, forged FULL signal or synthetic default route is acceptable.
    supported distributions. Do not silently fork or mandate a newer
    NetworkManager; that is a separate explicit product compatibility decision.
 
+**Bounded experimental evidence (2026-10-16; not production admission).**
+In two installed disposable guests with NM 1.46.x and 1.54.x, an NM-created
+persistent native TUN with NM-owned address/default route/DNS carried real
+protected DNS/HTTPS through a *separately built* Xray v26.3.27 prototype
+against exact upstream commit `d2758a023cd7f4174a5a5fa4ff66e487d4342ba0`.
+The guest-only patch accepts an inherited, pre-opened TUN FD pinned to the
+expected name, ifindex, MTU and UP flag. It does not create or change the
+link, MTU, L3 or administrative state in external-FD mode. Both guests
+qualified sustained natural global FULL, IPv4/IPv6 physical egress protection,
+NM's continuing exact active TUN identity/administrative IFF_UP after Xray
+exit, and exact guest/outer cleanup: [hosted research evidence](https://github.com/AidarKhusainov/podlaz/actions/runs/38852272785).
+An earlier test that classified any `state DOWN` as administrative ownership
+loss was overbroad: Linux [operational states](https://docs.kernel.org/networking/operstates.html)
+distinguish carrier/operstate from administrative `IFF_UP`. The corrected
+guest test still rejects any actual `IFF_UP` clear, deletion, ambiguous event
+or identity/L3 loss. This evidence qualifies only a one-outbound VMess
+research mechanism and **does not** establish an upstream-supported Xray
+external-FD contract, GNOME/KDE VPN connection classification, native/grouped
+multi-outbound or REALITY interoperability, product opt-in, DNS generation
+churn, crash/boot recovery or all-profile option-B completion. Never ship
+the guest-modified Xray binary as a silent package dependency or claim that
+an ordinary NM `tun` profile is an NM VPN Plugin.
+
 Any future implementation has one writer per resource: NetworkManager for
 delegated link L3, DNS and VPN/device activation where applicable; Podlaz for
 boot-ID-scoped session intent, Privacy Envelope, firewall/policy protection,
