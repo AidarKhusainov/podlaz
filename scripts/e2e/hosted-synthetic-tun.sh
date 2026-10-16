@@ -20,6 +20,9 @@ GUEST_CIDR="172.31.254.2/30"
 HOST_IP="172.31.254.1"
 ENDPOINT_CIDR="172.31.253.1/32"
 ENDPOINT_IP="172.31.253.1"
+NM_SECOND_ENDPOINT_IP="172.31.253.2"
+NM_DNS_PORT=53535
+HOSTED_NM_DNS_PID=""
 GUEST_ROOT="${E2E_TMP_ROOT}/system-guest"
 PRIVATE_ROOT="${E2E_TMP_ROOT}/private"
 XRAY_ROOT="${PRIVATE_ROOT}/synthetic-xray"
@@ -35,6 +38,7 @@ HOSTED_CONTROL_TIMEOUT_SECONDS="${PODLAZ_E2E_HOSTED_CONTROL_TIMEOUT_SECONDS:-180
 HOSTED_CONTROL_PHASES="${PODLAZ_E2E_HOSTED_CONTROL_PHASES:-verified-active terminal-clean}"
 HOSTED_EXPECT_CONNECT_FAILURE="${PODLAZ_E2E_HOSTED_EXPECT_CONNECT_FAILURE:-false}"
 PODLAZ_E2E_SYNTHETIC_PROTOCOL="${PODLAZ_E2E_SYNTHETIC_PROTOCOL:-vless}"
+GUEST_RELEASE="${PODLAZ_E2E_GUEST_RELEASE:-noble}"
 HOSTED_EXPECT_EXTERNAL_TERMINAL="${PODLAZ_E2E_HOSTED_EXPECT_EXTERNAL_TERMINAL:-false}"
 
 EVIDENCE_KEYS=(
@@ -308,6 +312,11 @@ cleanup_outer_plumbing() {
 }
 
 stop_synthetic_xray_endpoint() {
+  if [[ -n "${HOSTED_NM_DNS_PID}" ]]; then
+    kill "${HOSTED_NM_DNS_PID}" >/dev/null 2>&1 || true
+    wait "${HOSTED_NM_DNS_PID}" >/dev/null 2>&1 || true
+    HOSTED_NM_DNS_PID=""
+  fi
   if [[ -n "${XRAY_HTTP_PID}" ]]; then
     kill "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
     wait "${XRAY_HTTP_PID}" >/dev/null 2>&1 || true
@@ -378,7 +387,7 @@ teardown_all() {
 prepare_system_guest() {
   local policy_rc="${GUEST_ROOT}/usr/sbin/policy-rc.d" nm_tmp sudoers_tmp
   sudo -n rm -rf "${GUEST_ROOT}"
-  sudo -n debootstrap --variant=minbase noble "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
+  sudo -n debootstrap --variant=minbase "${GUEST_RELEASE}" "${GUEST_ROOT}" http://archive.ubuntu.com/ubuntu >"${PRIVATE_ROOT}/debootstrap.log" 2>&1
   printf '#!/bin/sh\nexit 101\n' | sudo -n tee "${policy_rc}" >/dev/null
   sudo -n chmod 0755 "${policy_rc}"
   sudo -n chroot "${GUEST_ROOT}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update >"${PRIVATE_ROOT}/guest-apt.log" 2>&1
@@ -436,9 +445,15 @@ setup_outer_plumbing() {
   done
   ip link show dev "${HOST_VETH}" >/dev/null 2>&1 || return 1
   sudo -n ip addr add "${HOST_CIDR}" dev "${HOST_VETH}"
+  if [[ "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ]]; then
+    sudo -n ip -6 addr add 2001:db8:460::1/64 dev "${HOST_VETH}"
+  fi
   sudo -n ip link set dev "${HOST_VETH}" up
   sudo -n ip link add dev "${HOST_ENDPOINT_DEV}" type dummy
   sudo -n ip addr add "${ENDPOINT_CIDR}" dev "${HOST_ENDPOINT_DEV}"
+  if [[ "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ]]; then
+    sudo -n ip addr add "${NM_SECOND_ENDPOINT_IP}/32" dev "${HOST_ENDPOINT_DEV}"
+  fi
   sudo -n ip link set dev "${HOST_ENDPOINT_DEV}" up
   printf '1\n' | sudo -n tee /proc/sys/net/ipv4/ip_forward >/dev/null
   sudo -n iptables -I DOCKER-USER 1 -i "${HOST_VETH}" -o "${OUTER_EGRESS_IF}" -s "${NETWORK_CIDR}" -m comment --comment podlaz-hosted-synthetic-tun-out -j ACCEPT
@@ -696,6 +711,10 @@ PY
       outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"id\":\"${auth}\",\"security\":\"auto\"}"
       stream_settings='{"network":"raw","security":"none"}'
       ;;
+    vless)
+      outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"id\":\"${auth}\",\"encryption\":\"none\"}"
+      stream_settings="{\"network\":\"raw\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"vless.example.com\",\"certificates\":[{\"usage\":\"verify\",\"certificateFile\":\"${XRAY_ROOT}/ca.crt\"}]}}"
+      ;;
     trojan)
       outbound_settings="{\"address\":\"${ENDPOINT_IP}\",\"port\":${endpoint_port},\"password\":\"${auth}\"}"
       stream_settings="{\"network\":\"raw\",\"security\":\"tls\",\"tlsSettings\":{\"serverName\":\"trojan.example.com\",\"certificates\":[{\"usage\":\"verify\",\"certificateFile\":\"${XRAY_ROOT}/ca.crt\"}]}}"
@@ -807,21 +826,27 @@ start_synthetic_typed_reference_endpoint() {
   [[ -n "${binary}" && -f "${binary}" ]] || return 1
   chmod 0700 "${binary}"
   jq -n --arg protocol "${protocol}" --arg listen "${ENDPOINT_IP}" \
+    --arg secondary "${NM_SECOND_ENDPOINT_IP}" \
+    --argjson nm_guest "${PODLAZ_E2E_NM_L3_GUEST:-false}" \
     --argjson port "${port}" --arg uuid "${uuid}" --arg password "${password}" \
     --arg cert "${XRAY_ROOT}/server.crt" --arg key "${XRAY_ROOT}/server.key" '
     {
       log: {level:"warn"},
-      inbounds: [
-        (if $protocol == "vmess" then {
-          type:"vmess",listen:$listen,listen_port:$port,
+      inbounds: ((if $nm_guest then [$listen,$secondary] else [$listen] end) |
+        map(. as $address | if $protocol == "vmess" then {
+          type:"vmess",listen:$address,listen_port:$port,
           users:[{name:"synthetic",uuid:$uuid,alterId:0}]
+        } elif $protocol == "vless" then {
+          type:"vless",listen:$address,listen_port:$port,
+          users:[{name:"synthetic",uuid:$uuid}],
+          tls:{enabled:true,server_name:"vless.example.com",
+               certificate_path:$cert,key_path:$key}
         } else {
-          type:"trojan",listen:$listen,listen_port:$port,
+          type:"trojan",listen:$address,listen_port:$port,
           users:[{name:"synthetic",password:$password}],
           tls:{enabled:true,server_name:"trojan.example.com",
                certificate_path:$cert,key_path:$key}
-        } end)
-      ],
+        } end)),
       outbounds:[{type:"direct"}]
     }' >"${config}"
   chmod 0600 "${config}"
@@ -861,6 +886,23 @@ PY
       inbound_protocol=vless
       inbound_settings="{\"clients\":[{\"id\":\"${uuid}\"}],\"decryption\":\"none\"}"
       client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=none&encryption=none#hosted-synthetic"
+      if [[ "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ]]; then
+        openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
+          -keyout "${XRAY_ROOT}/ca.key" -out "${XRAY_ROOT}/ca.crt" \
+          -subj "/CN=Podlaz Synthetic VLESS CA" \
+          -addext "basicConstraints=critical,CA:TRUE" >"${XRAY_ROOT}/ca.log" 2>&1
+        openssl req -new -newkey rsa:2048 -nodes -sha256 \
+          -keyout "${XRAY_ROOT}/server.key" -out "${XRAY_ROOT}/server.csr" \
+          -subj "/CN=vless.example.com" >"${XRAY_ROOT}/server-csr.log" 2>&1
+        printf 'subjectAltName=DNS:vless.example.com\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth\n' >"${XRAY_ROOT}/server.ext"
+        openssl x509 -req -sha256 -in "${XRAY_ROOT}/server.csr" \
+          -CA "${XRAY_ROOT}/ca.crt" -CAkey "${XRAY_ROOT}/ca.key" \
+          -CAcreateserial -days 1 -out "${XRAY_ROOT}/server.crt" \
+          -extfile "${XRAY_ROOT}/server.ext" >"${XRAY_ROOT}/server-cert.log" 2>&1
+        guest_exec install -D -m 0644 /run/podlaz-synthetic-xray/ca.crt /usr/local/share/ca-certificates/podlaz-synthetic-ca.crt
+        guest_exec update-ca-certificates >/dev/null
+        client_uri="vless://${uuid}@${ENDPOINT_IP}:${port}?type=tcp&security=tls&encryption=none&sni=vless.example.com#hosted-synthetic"
+      fi
       ;;
     vmess)
       inbound_protocol=vmess
@@ -916,10 +958,13 @@ PY
 EOF_XRAY
   printf '%s\n' "${client_uri}" >"${XRAY_ROOT}/client-uri"
   chmod 0600 "${XRAY_ROOT}/client-uri"
-  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ]]; then
+  if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess || "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == trojan ||
+        ( "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vless && "${PODLAZ_E2E_NM_L3_GUEST:-false}" == true ) ]]; then
     start_synthetic_typed_reference_endpoint "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" "${port}" "${uuid}" "${credential:-}"
     if [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vmess ]]; then
       qualify_synthetic_typed_direct vmess "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
+    elif [[ "${PODLAZ_E2E_SYNTHETIC_PROTOCOL}" == vless ]]; then
+      qualify_synthetic_typed_direct vless "${extract}/usr/lib/podlaz/xray" "${port}" "${uuid}"
     else
       qualify_synthetic_typed_direct trojan "${extract}/usr/lib/podlaz/xray" "${port}" "${credential}"
     fi
@@ -1331,6 +1376,7 @@ run_scenario() {
 }
 
 main() {
+  case "${GUEST_RELEASE}" in noble|resolute) ;; *) fail "unsupported guest release" ;; esac
   (($# == 1)) || fail "usage: $0 CANDIDATE.deb"
   require_cmd openssl awk bash chmod cmp curl debootstrap dpkg dpkg-deb find grep install ip iptables jq mktemp nft python3 readlink rm seq sha256sum sleep ss sudo systemd-nspawn systemd-run timeout
   validate_candidate "$1"

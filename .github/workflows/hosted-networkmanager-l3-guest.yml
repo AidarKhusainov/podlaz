@@ -1,0 +1,93 @@
+name: Hosted NetworkManager L3 Guest Qualification
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-networkmanager-l3-guest.yml'
+      - 'scripts/e2e/nm_vpn_l3_*.py'
+      - 'scripts/e2e/nm_vpn_l3_guest_harness.sh'
+      - 'scripts/e2e/hosted-synthetic-tun.sh'
+      - 'scripts/e2e/nm_vpn_l3_guest_service.name'
+      - 'scripts/e2e/nm_vpn_l3_guest_dbus.conf'
+      - 'scripts/e2e/nm_vpn_underlay_guest.py'
+      - 'scripts/e2e/nm_vpn_underlay_guest_test.py'
+
+permissions:
+  contents: read
+
+jobs:
+  guest:
+    name: Genuine NM VPN L3 (${{ matrix.release }}, ${{ matrix.protocol }}, disposable guest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        release: [noble, resolute]
+        protocol: [vmess, trojan, vless]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.mod
+            packaging/package-toolchain.env
+      - name: Validate NM guest and hostname contracts
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_vpn_l3_*test.py' -v
+          python3 -m unittest discover -s scripts/e2e -p 'nm_vpn_underlay_guest_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_vpn_l3_*.py scripts/e2e/nm_vpn_underlay_guest.py
+          bash -n scripts/e2e/nm_vpn_l3_guest_harness.sh scripts/e2e/hosted-synthetic-tun.sh
+      - name: Install qualification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends debootstrap jq nftables systemd-container iptables
+          bash scripts/ci/install-go-tool.sh nfpm
+      - name: Build exact package
+        env:
+          PODLAZ_COMMIT: ${{ github.sha }}
+        run: bash scripts/build-deb.sh
+      - name: Exercise genuine VPN L3 in disposable nspawn
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-l3-guest-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-l3-guest-public
+          PODLAZ_E2E_CANDIDATE_COMMIT: ${{ github.sha }}
+          PODLAZ_E2E_GUEST_RELEASE: ${{ matrix.release }}
+          PODLAZ_E2E_NM_L3_PROTOCOL: ${{ matrix.protocol }}
+        run: |
+          rm -rf "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          install -d -m 0700 "${E2E_TMP_ROOT}" "${E2E_ARTIFACT_DIR}"
+          if bash scripts/e2e/nm_vpn_l3_guest_harness.sh dist/podlaz_0.0.0~dev-1_linux_amd64.deb \
+            >"${RUNNER_TEMP}/podlaz-nm-l3-result.stdout" \
+            2>"${RUNNER_TEMP}/podlaz-nm-l3-result.stderr"; then
+            printf 'nm-l3-guest=completed\n'
+          else
+            python3 scripts/e2e/nm_vpn_l3_failure_trace.py "${E2E_TMP_ROOT}/private/nm-l3-result.stdout" "${RUNNER_TEMP}/podlaz-nm-l3-result.stdout"
+            # Allowlisted category only; private host/guest snapshots remain private.
+            printf 'nm-l3-guest=failed\n' >&2
+            exit 1
+          fi
+      - name: Validate normalized guest report
+        if: always()
+        env:
+          E2E_TMP_ROOT: ${{ runner.temp }}/podlaz-nm-l3-guest-private
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/podlaz-nm-l3-guest-public
+        run: bash scripts/e2e/nm_vpn_l3_guest_harness.sh validate-report
+      - name: Remove private guest root
+        if: always()
+        run: sudo -n rm -rf "${RUNNER_TEMP}/podlaz-nm-l3-guest-private" "${RUNNER_TEMP}/podlaz-nm-l3-result.stdout" "${RUNNER_TEMP}/podlaz-nm-l3-result.stderr"
+      - name: Publish fixed-schema acceptance
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nm-l3-gate-a-${{ matrix.release }}-${{ matrix.protocol }}
+          path: ${{ runner.temp }}/podlaz-nm-l3-guest-public/hosted-synthetic-tun.txt
+          if-no-files-found: error
+          retention-days: 7

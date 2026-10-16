@@ -89,6 +89,12 @@ jobs:
           set -o pipefail
           bash scripts/ci/go-core.sh 2>&1 | tee /tmp/podlaz-go-core.txt
 
+      - name: Qualify disposable NetworkManager L3 safety contracts
+        run: |
+          python3 -m unittest discover -s scripts/e2e -p 'nm_vpn_l3_*test.py' -v
+          python3 -m unittest discover -s scripts/e2e -p 'nm_vpn_underlay_guest_test.py' -v
+          python3 -m py_compile scripts/e2e/nm_vpn_l3_*.py scripts/e2e/nm_vpn_underlay_guest.py
+
       - name: Upload Go diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
