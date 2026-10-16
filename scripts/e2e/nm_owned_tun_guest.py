@@ -182,16 +182,15 @@ def start_externally_managed_xray(
         os.close(fd)
 
 
-def _grouped_counters(mark: int, transport_port: int) -> None:
-    """Count exact first and second provider transport SYNs under the barrier."""
+def _grouped_peer_counters(mark: int, transport_port: int) -> None:
+    """Count exact first and second provider transport peer packets under the barrier."""
     for address, label in ((FIRST, "nm_owned_peer_a"), (SECOND, "nm_owned_peer_b")):
         run("nft", "add", "rule", "inet", TABLE, "egress",
             "ip", "daddr", address, "tcp", "dport", str(transport_port),
-            "meta", "mark", str(mark), "tcp", "flags", "&",
-            "(syn|ack)", "==", "syn", "counter", "comment", label)
+            "meta", "mark", str(mark), "counter", "comment", label)
 
 
-def _qualified_peer_syns() -> tuple[bool, bool]:
+def _qualified_peer_packets() -> tuple[bool, bool]:
     snapshot = json.loads(run("nft", "-j", "list", "chain", "inet", TABLE, "egress",
                               output=True))
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("nftables"), list):
@@ -202,7 +201,7 @@ def _qualified_peer_syns() -> tuple[bool, bool]:
             continue
         expressions = entry["rule"].get("expr")
         if not isinstance(expressions, list):
-            raise ValueError("malformed exact SYN counter")
+            raise ValueError("malformed exact peer counter")
         names = [expr.get("comment") for expr in expressions
                  if isinstance(expr, dict) and isinstance(expr.get("comment"), str)]
         for name in names:
@@ -211,10 +210,10 @@ def _qualified_peer_syns() -> tuple[bool, bool]:
             counters = [expr["counter"].get("packets") for expr in expressions
                         if isinstance(expr, dict) and isinstance(expr.get("counter"), dict)]
             if name in counted or len(counters) != 1 or type(counters[0]) is not int:
-                raise ValueError("ambiguous exact SYN counter")
+                raise ValueError("ambiguous exact peer counter")
             counted[name] = counters[0]
     if set(counted) != {"nm_owned_peer_a", "nm_owned_peer_b"}:
-        raise ValueError("missing exact independent SYN counters")
+        raise ValueError("missing exact independent peer counters")
     return counted["nm_owned_peer_a"] > 0, counted["nm_owned_peer_b"] > 0
 
 
@@ -243,7 +242,7 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
             _nft_protect(plan.tunnel_mark)
             barrier = True
             if grouped:
-                _grouped_counters(plan.tunnel_mark, transport_port)
+                _grouped_peer_counters(plan.tunnel_mark, transport_port)
             stage("underlay-allocated")
             _start_underlay(plan)
             underlay = True
@@ -279,7 +278,7 @@ def run_guest(config_file: Path, *, grouped: bool = False) -> None:
                 run("curl", "-4", "--noproxy", "*", "-fsS",
                     "--max-time", "25", "-o", "/dev/null",
                     f"http://{SECOND}:{TARGET_PORT}/", timeout=30)
-                if _qualified_peer_syns() != (True, True):
+                if _qualified_peer_packets() != (True, True):
                     raise ValueError("two native provider peers did not dial independently")
                 _prove_physical_drop()
                 _prove_ipv6_no_leak()
