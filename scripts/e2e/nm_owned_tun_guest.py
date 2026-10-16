@@ -162,8 +162,32 @@ def run_guest(config_file: Path) -> None:
             _natural_full(xray)
             print("nm-owned-natural-full=pass", flush=True)
             stage("xray-release")
-            xray.terminate()
-            xray.wait(timeout=12)
+            # Catch transient link-down transitions, not only NM's later
+            # possibly recovered UP state. This monitor is read-only; all
+            # observed kernel inventory remains inside the disposable guest.
+            monitor_path = ROOT / "nm-owned-link-events.private"
+            with monitor_path.open("w") as events, \
+                 (ROOT / "nm-owned-link-monitor.stderr").open("w") as monitor_errors:
+                monitor = subprocess.Popen(
+                    ("ip", "monitor", "link", "dev", "podlaz0"),
+                    stdout=events, stderr=monitor_errors)
+                try:
+                    time.sleep(0.5)
+                    if monitor.poll() is not None:
+                        raise ValueError("netlink lifecycle observer unavailable")
+                    xray.terminate()
+                    xray.wait(timeout=12)
+                    time.sleep(1)
+                finally:
+                    if monitor.poll() is None:
+                        monitor.terminate()
+                        monitor.wait(timeout=5)
+            observed = monitor_path.read_text(encoding="utf-8")
+            if len(observed) > 65536:
+                raise ValueError("unbounded netlink lifecycle evidence")
+            if "state DOWN" in observed or "Deleted " in observed:
+                print("nm-owned-transient-link-down=observed", flush=True)
+                raise ValueError("Xray closed a link managed by NM")
             # The final UP state is necessary but not proof of a single
             # writer: Xray v26.3.27 calls LinkSetDown() on Close().
             state = _profile_present(profile_id, active=True)
