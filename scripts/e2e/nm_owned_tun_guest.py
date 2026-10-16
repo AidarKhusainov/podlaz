@@ -24,6 +24,7 @@ from nm_vpn_l3_scenario_guest import (
     _numeric_table, ip_json, run,
 )
 from nm_vpn_underlay_guest import select_underlay
+from nm_owned_tun_grouped_guest import (FIRST, SECOND, TARGET_PORT, verify_composed_grouped)
 
 NAME = "podlaz-guest-nm-owned-tun"
 CURRENT_STEP = "preflight"
@@ -181,13 +182,55 @@ def start_externally_managed_xray(
         os.close(fd)
 
 
-def run_guest(config_file: Path) -> None:
+def _grouped_counters(mark: int, transport_port: int) -> None:
+    """Count exact first and second provider transport SYNs under the barrier."""
+    for address, label in ((FIRST, "nm_owned_peer_a"), (SECOND, "nm_owned_peer_b")):
+        run("nft", "add", "rule", "inet", TABLE, "egress",
+            "ip", "daddr", address, "tcp", "dport", str(transport_port),
+            "meta", "mark", str(mark), "tcp", "flags", "&",
+            "(syn|ack)", "==", "syn", "counter", "comment", label)
+
+
+def _qualified_peer_syns() -> tuple[bool, bool]:
+    snapshot = json.loads(run("nft", "-j", "list", "chain", "inet", TABLE, "egress",
+                              output=True))
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("nftables"), list):
+        raise ValueError("missing protected egress counter inventory")
+    counted: dict[str, int] = {}
+    for entry in snapshot["nftables"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("rule"), dict):
+            continue
+        expressions = entry["rule"].get("expr")
+        if not isinstance(expressions, list):
+            raise ValueError("malformed exact SYN counter")
+        names = [expr.get("comment") for expr in expressions
+                 if isinstance(expr, dict) and isinstance(expr.get("comment"), str)]
+        for name in names:
+            if name not in ("nm_owned_peer_a", "nm_owned_peer_b"):
+                continue
+            counters = [expr["counter"].get("packets") for expr in expressions
+                        if isinstance(expr, dict) and isinstance(expr.get("counter"), dict)]
+            if name in counted or len(counters) != 1 or type(counters[0]) is not int:
+                raise ValueError("ambiguous exact SYN counter")
+            counted[name] = counters[0]
+    if set(counted) != {"nm_owned_peer_a", "nm_owned_peer_b"}:
+        raise ValueError("missing exact independent SYN counters")
+    return counted["nm_owned_peer_a"] > 0, counted["nm_owned_peer_b"] > 0
+
+
+def run_guest(config_file: Path, *, grouped: bool = False) -> None:
     _is_synthetic_guest()
     if run("nmcli", "-t", "-f", "NAME", "connection", "show",
            output=True).splitlines().count(NAME):
         raise ValueError("NM profile name collision")
     plan = select_underlay(_underlay_evidence(), 10)
     _xray_marked_config(config_file, plan.tunnel_mark)
+    transport_port = None
+    if grouped:
+        if config_file.is_symlink() or not config_file.is_file() or config_file.stat().st_mode & 0o077:
+            raise ValueError("unqualified private grouped generated Xray config")
+        transport_port = verify_composed_grouped(
+            json.loads(config_file.read_text(encoding="utf-8")), plan.tunnel_mark)
     profile_id = str(uuid.uuid4())
     xray = None
     barrier = False
@@ -199,6 +242,8 @@ def run_guest(config_file: Path) -> None:
             stage("barrier-armed")
             _nft_protect(plan.tunnel_mark)
             barrier = True
+            if grouped:
+                _grouped_counters(plan.tunnel_mark, transport_port)
             stage("underlay-allocated")
             _start_underlay(plan)
             underlay = True
@@ -226,6 +271,19 @@ def run_guest(config_file: Path) -> None:
             _prove_physical_drop()
             _prove_ipv6_no_leak()
             print("nm-owned-protected-traffic=pass", flush=True)
+            if grouped:
+                stage("grouped-independent-outbounds")
+                # This request enters NM's TUN as ordinary traffic. Xray's
+                # provider-authored port routing must select secondary peer B.
+                # There is no direct-uplink exception for the target.
+                run("curl", "-4", "--noproxy", "*", "-fsS",
+                    "--max-time", "25", "-o", "/dev/null",
+                    f"http://{SECOND}:{TARGET_PORT}/", timeout=30)
+                if _qualified_peer_syns() != (True, True):
+                    raise ValueError("two native provider peers did not dial independently")
+                _prove_physical_drop()
+                _prove_ipv6_no_leak()
+                print("nm-owned-grouped-outbounds=pass", flush=True)
             stage("natural-global-full")
             _natural_full(xray)
             print("nm-owned-natural-full=pass", flush=True)
@@ -302,10 +360,10 @@ def run_guest(config_file: Path) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: nm_owned_tun_guest.py GENERATED_CONFIG")
+    if len(sys.argv) != 3 or sys.argv[2] not in ("typed", "grouped"):
+        raise SystemExit("usage: nm_owned_tun_guest.py GENERATED_CONFIG typed|grouped")
     try:
-        run_guest(Path(sys.argv[1]))
+        run_guest(Path(sys.argv[1]), grouped=sys.argv[2] == "grouped")
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError,
             KeyError, TypeError, json.JSONDecodeError):
         print("nm-owned-result=fail", flush=True)
